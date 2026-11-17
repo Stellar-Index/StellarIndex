@@ -67,7 +67,7 @@ func TestCachedMarketsReader_StalePageServedWhenNoSlot(t *testing.T) {
 	}
 	expireMarketsEntries(c)
 	for range marketsFillSlots {
-		c.fills <- struct{}{}
+		c.refreshes <- struct{}{}
 	}
 
 	rows, _, err := c.AllPools(context.Background(), f, "", 50, order)
@@ -78,12 +78,39 @@ func TestCachedMarketsReader_StalePageServedWhenNoSlot(t *testing.T) {
 		t.Fatalf("upstream scans = %d, want 1 (no refresh without a slot)", got)
 	}
 
-	<-c.fills
+	<-c.refreshes
 	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
 		t.Fatalf("stale read with a slot: %v", err)
 	}
 	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
 		t.Fatalf("upstream scans = %d, want the refresh to have started", up.calls.Load())
+	}
+}
+
+// TestCachedMarketsReader_ColdKeysCannotStarveRefresh pins the slot classes: client-chosen cold keys holding every fill slot must
+// not stop an expired, already-served page from refreshing.
+func TestCachedMarketsReader_ColdKeysCannotStarveRefresh(t *testing.T) {
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}}
+	c := NewCachedMarketsReader(up, time.Minute)
+	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+	order := timescale.MarketsOrderVolume24hDesc
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("cold read: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return len(c.fills) == 0 }) {
+		t.Fatal("cold fill did not return its slot")
+	}
+	expireMarketsEntries(c)
+	for range marketsFillSlots {
+		c.fills <- struct{}{}
+	}
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("stale read: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("upstream scans = %d, want the refresh started though every cold slot is held", up.calls.Load())
 	}
 }
 

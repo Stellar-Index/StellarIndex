@@ -28,8 +28,10 @@ type CachedMarketsReader struct {
 	mu      sync.Mutex
 	entries map[string]*marketsCacheEntry
 
-	// fills holds one token per detached page scan in flight; see marketsFillSlots.
+	// fills holds one token per cold (client-chosen key) page scan in flight; see marketsFillSlots.
 	fills chan struct{}
+	// refreshes holds one token per stale-while-revalidate refresh of an already-served key, a class cold keys cannot use up.
+	refreshes chan struct{}
 
 	// sparks caches the per-listing sparkline batch, which adds ~200 ms to a /v1/markets page on r1.
 	sparks *swrCache[map[string][]timescale.PairVolumePoint]
@@ -79,12 +81,13 @@ type marketsCacheEntry struct {
 // NewCachedMarketsReader wraps upstream with a TTL cache (ttl=0 disables); the 30s production default is tighter than sources_stats's 60s because /v1/markets is the front page.
 func NewCachedMarketsReader(upstream MarketsReader, ttl time.Duration) *CachedMarketsReader {
 	return &CachedMarketsReader{
-		logger:   slog.Default(),
-		upstream: upstream,
-		ttl:      ttl,
-		entries:  map[string]*marketsCacheEntry{},
-		fills:    make(chan struct{}, marketsFillSlots),
-		sparks:   newSWRCache[map[string][]timescale.PairVolumePoint](nil, "markets", "api-markets-sparkline-fill", ttl, marketsSparklineMaxEntries),
+		logger:    slog.Default(),
+		upstream:  upstream,
+		ttl:       ttl,
+		entries:   map[string]*marketsCacheEntry{},
+		fills:     make(chan struct{}, marketsFillSlots),
+		refreshes: make(chan struct{}, marketsFillSlots),
+		sparks:    newSWRCache[map[string][]timescale.PairVolumePoint](nil, "markets", "api-markets-sparkline-fill", ttl, marketsSparklineMaxEntries),
 	}
 }
 
@@ -95,20 +98,26 @@ const marketsFillSlots = 6
 // errMarketsFillBusy is a cold miss that found every fill slot taken: nothing was read, so the caller answers a retryable 503.
 var errMarketsFillBusy = errors.New("markets cache: all fill slots busy")
 
-// tryFillSlot takes a fill slot without waiting.
-func (c *CachedMarketsReader) tryFillSlot() bool {
+// tryFillSlot takes a cold-fill slot without waiting.
+func (c *CachedMarketsReader) tryFillSlot() bool { return trySlot(c.fills) }
+
+// tryRefreshSlot takes a refresh slot without waiting. Refreshes have their own pool so client-chosen cold keys (any cursor, limit,
+// asset) holding every fill slot cannot freeze the head pages at a stale snapshot.
+func (c *CachedMarketsReader) tryRefreshSlot() bool { return trySlot(c.refreshes) }
+
+func trySlot(slots chan struct{}) bool {
 	select {
-	case c.fills <- struct{}{}:
+	case slots <- struct{}{}:
 		return true
 	default:
 		return false
 	}
 }
 
-// holdingFillSlot wraps a page fill so its slot is returned when the scan ends, panic included.
-func holdingFillSlot[T any](c *CachedMarketsReader, upstream func(context.Context) (marketsPage[T], error)) func(context.Context) (marketsPage[T], error) {
+// holdingSlot wraps a page fill so its slot is returned to slots when the scan ends, panic included.
+func holdingSlot[T any](slots chan struct{}, upstream func(context.Context) (marketsPage[T], error)) func(context.Context) (marketsPage[T], error) {
 	return func(ctx context.Context) (marketsPage[T], error) {
-		defer func() { <-c.fills }()
+		defer func() { <-slots }()
 		return upstream(ctx)
 	}
 }
@@ -283,14 +292,14 @@ func (c *CachedMarketsReader) fetchPairs(
 	// refreshes ride out on old-but-real data and observedAt/stale=true tell the truth.
 	if ok && !e.at.IsZero() {
 		out, next, at := e.pairs, e.cursor, e.at
-		if e.flight == nil && c.tryFillSlot() {
+		if e.flight == nil && c.tryRefreshSlot() {
 			done := make(chan struct{})
 			e.flight = done
 			entry := e
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
-			go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, done, holdingFillSlot(c, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
+			go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, done, holdingSlot(c.refreshes, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
 			return slices.Clone(out), next, at, true, nil
 		}
 		c.mu.Unlock()
@@ -310,7 +319,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	}
 	if leader {
 		//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
-		go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, entry.flight, holdingFillSlot(c, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
+		go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, entry.flight, holdingSlot(c.fills, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
 	}
 	ch := entry.flight
 	c.mu.Unlock()
@@ -418,14 +427,14 @@ func (c *CachedMarketsReader) fetchPools(
 	// (A') Stale-while-revalidate.
 	if ok && !e.at.IsZero() {
 		out, next, at := e.pools, e.cursor, e.at
-		if e.flight == nil && c.tryFillSlot() {
+		if e.flight == nil && c.tryRefreshSlot() {
 			done := make(chan struct{})
 			e.flight = done
 			entry := e
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
-			go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, done, holdingFillSlot(c, marketsPageFill(upstream)), c.settlePools(op, key, entry))
+			go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, done, holdingSlot(c.refreshes, marketsPageFill(upstream)), c.settlePools(op, key, entry))
 			return slices.Clone(out), next, at, true, nil
 		}
 		c.mu.Unlock()
@@ -442,7 +451,7 @@ func (c *CachedMarketsReader) fetchPools(
 	}
 	if leader {
 		//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
-		go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, entry.flight, holdingFillSlot(c, marketsPageFill(upstream)), c.settlePools(op, key, entry))
+		go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, entry.flight, holdingSlot(c.fills, marketsPageFill(upstream)), c.settlePools(op, key, entry))
 	}
 	ch := entry.flight
 	c.mu.Unlock()
