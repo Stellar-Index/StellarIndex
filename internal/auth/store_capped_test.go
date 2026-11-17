@@ -16,7 +16,13 @@ import (
 
 // TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling: an identifier one key below its ceiling firing a concurrent burst must get exactly one key;
 // a count taken apart from the write would let every request read 24 < 25 and mint.
+// The delegated case covers child-key mints, whose cap count is serialised by the same lock.
 func TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling(t *testing.T) {
+	t.Run("own key", func(t *testing.T) { testCappedBurst(t, false) })
+	t.Run("delegated", func(t *testing.T) { testCappedBurst(t, true) })
+}
+
+func testCappedBurst(t *testing.T, delegated bool) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 64})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -28,10 +34,22 @@ func TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling(t *testing.T) {
 		ceiling = 25
 		burst   = 40
 	)
-	for range ceiling - 1 {
+	_, rootPlain, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: owner})
+	if err != nil {
+		t.Fatalf("seed root: %v", err)
+	}
+	for range ceiling - 2 {
 		if _, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: owner}); err != nil {
 			t.Fatalf("seed Create: %v", err)
 		}
+	}
+	req := CreateAPIKeyRequest{Identifier: owner}
+	if delegated {
+		root, err := NewRedisAPIKeyValidator(rdb).Lookup(ctx, rootPlain)
+		if err != nil {
+			t.Fatalf("Lookup root: %v", err)
+		}
+		req = ChildKeyRequest(root, "child", nil)
 	}
 
 	var (
@@ -44,7 +62,7 @@ func TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			_, _, err := s.CreateCapped(ctx, CreateAPIKeyRequest{Identifier: owner}, ceiling)
+			_, _, err := s.CreateCapped(ctx, req, ceiling)
 			var over *KeyQuotaExceededError
 			switch {
 			case err == nil:

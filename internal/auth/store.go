@@ -218,20 +218,12 @@ func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKey
 }
 
 // Create implements APIKeyStore: requires an Identifier, generates KeyID and plaintext, and SETs apikey:<sha256(plaintext)> (with MirroredKeyIdleTTL when req.SelfService); on Redis failure the plaintext is not surfaced.
-// A delegated mint (ParentKeyID set) runs under the identifier's mint lock.
+// It takes no lock: a delegated key's minter is re-checked inside the atomic write.
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
-	if req.ParentKeyID == "" || req.Identifier == "" {
-		return s.create(ctx, req)
-	}
-	release, err := s.lockMint(ctx, req.Identifier)
-	if err != nil {
-		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
-	}
-	defer release()
 	return s.create(ctx, req)
 }
 
-// create is Create for a caller already holding the identifier's mint lock, or minting no delegated key.
+// create is Create, shared with CreateCapped, which calls it under the identifier's mint lock.
 func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: Create: Identifier is required")
