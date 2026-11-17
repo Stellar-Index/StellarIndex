@@ -115,6 +115,35 @@ READ_TABLES="${LAKE_TABLES}|%[sv]"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
+# LAKE_TABLES must cover every ReplacingMergeTree the DDL creates, or the next
+# one is unwatched by default. Fixture trees carry no DDL and are skipped; the
+# real tree (tier1_schema.sql present) must derive at least one table.
+if [ -d deploy/clickhouse ] || [ -d internal/storage/clickhouse ]; then
+  ddl_files=()
+  while IFS= read -r f; do ddl_files+=("$f"); done < <(
+    find deploy/clickhouse internal/storage/clickhouse -maxdepth 1 \
+      \( -name '*.sql' -o -name '*.go' \) ! -name '*_test.go' 2>/dev/null | sort)
+  rmt_tables=""
+  if [ "${#ddl_files[@]}" -gt 0 ]; then
+    rmt_tables="$(LC_ALL=C awk '
+      { l = tolower($0) }
+      l ~ /create[ ]+table/ { cur = ""; if (match(l, /stellar\.[a-z0-9_]+/)) cur = substr(l, RSTART + 8, RLENGTH - 8) }
+      l ~ /engine[ ]*=[ ]*replacingmergetree/ { if (cur != "") print cur; cur = "" }
+    ' "${ddl_files[@]}" | sort -u)"
+  fi
+  if [ -z "$rmt_tables" ] && [ -f deploy/clickhouse/tier1_schema.sql ]; then
+    die "derived no ReplacingMergeTree table from deploy/clickhouse or internal/storage/clickhouse.
+  A drift check that derives nothing passes forever. Fix the derivation, do not delete the check."
+  fi
+  for t in $rmt_tables; do
+    case "|${LAKE_TABLES}|" in
+      *"|${t}|"*) : ;;
+      *) die "stellar.${t} is a ReplacingMergeTree in the DDL but is not in LAKE_TABLES.
+  Add it to LAKE_TABLES in scripts/ci/lint-lake-dedup.sh so its aggregating reads are watched." ;;
+    esac
+  done
+fi
+
 # Subject files: every tracked-or-untracked .go/.sql that NAMES a
 # duplicate-bearing table (others cannot violate; the pre-filter keeps this to
 # one awk pass over ~60 files).
@@ -124,6 +153,7 @@ die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 # repo copies in the walk.
 subjects=()
 verb_only="|"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
@@ -140,7 +170,7 @@ done < <(
         if grep -qiE "stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" "$f"; then
           echo "$f"
         elif [[ "$f" == *.go && "$f" != *_test.go && "$f" != internal/storage/timescale/* ]] &&
-             grep -qE '(FROM|JOIN)[ ]+%[sv]|(FROM|JOIN)[ ]*["`][ ]*\+|(from|join)[ ]+%[sv][ ]*$' "$f"; then
+             grep -qiE '(from|join)[ ]+%(\[[0-9]+\])?[sqv]|(from|join)[ ]*["`][ ]*\+|stellar\.["`][ ]*\+' "$f"; then
           # names no watched table: its table comes from elsewhere
           echo ">$f"
         fi
@@ -353,9 +383,8 @@ violations="$(
         part = l; cut = index(part, "//"); if (cut > 0) part = substr(part, 1, cut - 1)
         # A file naming no watched table is judged on upper-case SQL only:
         # its lower-case "from" strings are log and error prose.
-        if (verb_file) {
-          if (part ~ /(FROM|JOIN)[ ]+%[sv]|(FROM|JOIN)[ ]*"[ ]*\+/) printf "#interp\t%s:%d\n", FILENAME, FNR
-        } else if (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/) printf "#interp\t%s:%d\n", FILENAME, FNR
+        if (part ~ /(FROM|JOIN)[ ]+%(\[[0-9]+\])?[sqv]|(FROM|JOIN)[ ]*"[ ]*\+/ || tolower(part) ~ /(from|join)[ ]+stellar\.[ ]*"[ ]*\+/) printf "#interp\t%s:%d\n", FILENAME, FNR
+        else if (!verb_file && (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/)) printf "#interp\t%s:%d\n", FILENAME, FNR
       }
       if (index(l, "`") > 0) {
         l = go_mask(l, in_raw)
@@ -380,11 +409,11 @@ violations="$(
           if (match(part, /--([ \t]|$)/) > 0) part = substr(part, 1, RSTART - 1)
           add(part)
           lastraw = tolower(part)
-          if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]+%[sv]/) printf "#interp\t%s:%d\n", FILENAME, FNR
+          if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]+%(\[[0-9]+\])?[sqv]/) printf "#interp\t%s:%d\n", FILENAME, FNR
         } else {
           glue = glue part
           if (i < n) {
-            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*$/ && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*$/) printf "#interp\t%s:%d\n", FILENAME, FNR
+            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*(stellar\.)?[ ]*$/ && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*$/) printf "#interp\t%s:%d\n", FILENAME, FNR
             # Glue between two literals: `+ ident +` splices them,
             # anything else ends the statement.
             if (U != "" && glue !~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/) flush()
@@ -456,11 +485,6 @@ examined="$(printf '%s\n' "$violations" | awk '/^#counts /{print $2}')"
 aggregating="$(printf '%s\n' "$violations" | awk '/^#counts /{print $3}')"
 interpreted="$(printf '%s\n' "$violations" | sed -n 's/^#interp\t/  /p')"
 violations="$(printf '%s\n' "$violations" | grep -v '^#counts \|^#interp' || true)"
-if [ -n "$interpreted" ]; then
-  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
-  printf '%s\n' "$interpreted" >&2
-  exit 1
-fi
 
 if [ -z "${examined:-}" ] || [ -z "${aggregating:-}" ]; then
   die "the analyser produced no #counts line — a gate reporting clean over
@@ -518,6 +542,21 @@ in_baseline() {
   done
   return 1
 }
+
+# An unexaminable read (double-quoted or spliced string) is grandfathered per
+# file as `<file>:#interp`.
+unbaselined_interp=""
+while IFS= read -r il; do
+  [ -n "$il" ] || continue
+  ifile="${il#"${il%%[![:space:]]*}"}"
+  ifile="${ifile%:*}"
+  in_baseline "${ifile}:#interp" || unbaselined_interp="${unbaselined_interp}${il}"$'\n'
+done <<<"$interpreted"
+if [ -n "$unbaselined_interp" ]; then
+  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
+  printf '%s' "$unbaselined_interp" >&2
+  exit 1
+fi
 
 fail=0
 observed=""
