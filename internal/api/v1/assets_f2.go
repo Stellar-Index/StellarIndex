@@ -608,30 +608,34 @@ func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 	return rat.Num().String(), true
 }
 
-// usdMarketValue computes amountStroops x usdPriceStr / 10^decimals as a 2-dp decimal string with big.Rat (exact for huge
-// supplies); zero amount yields "0.00". A NEGATIVE result is an error, as in [computeMarketCapUSD]: burns exceeding mints is a
-// data error and callers leave the field unset.
-func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (string, error) {
+// usdValueRat is amountStroops x usdPriceStr / 10^decimals, exact and signed.
+func usdValueRat(amountStroops *big.Int, usdPriceStr string, decimals int) (*big.Rat, error) {
 	if amountStroops == nil {
-		return "", errors.New("usdMarketValue: amountStroops is nil")
+		return nil, errors.New("usdMarketValue: amountStroops is nil")
 	}
 	if decimals < 0 {
-		return "", fmt.Errorf("usdMarketValue: negative decimals (%d)", decimals)
+		return nil, fmt.Errorf("usdMarketValue: negative decimals (%d)", decimals)
 	}
 	price, ok := new(big.Rat).SetString(usdPriceStr)
 	if !ok {
-		return "", fmt.Errorf("usdMarketValue: parse price %q", usdPriceStr)
+		return nil, fmt.Errorf("usdMarketValue: parse price %q", usdPriceStr)
 	}
-
-	// amount × price
 	valueRat := new(big.Rat).Mul(new(big.Rat).SetInt(amountStroops), price)
-
-	// divide by 10^decimals
 	if decimals > 0 {
 		divisor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 		valueRat.Quo(valueRat, new(big.Rat).SetInt(divisor))
 	}
+	return valueRat, nil
+}
 
+// usdMarketValue computes amountStroops x usdPriceStr / 10^decimals as a 2-dp decimal string with big.Rat (exact for huge
+// supplies); zero amount yields "0.00". A NEGATIVE result is an error, as in [computeMarketCapUSD]: burns exceeding mints is a
+// data error and callers leave the field unset.
+func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (string, error) {
+	valueRat, err := usdValueRat(amountStroops, usdPriceStr, decimals)
+	if err != nil {
+		return "", err
+	}
 	if valueRat.Sign() < 0 {
 		return "", fmt.Errorf("usdMarketValue: negative market value (amount=%s price=%s)",
 			amountStroops.String(), usdPriceStr)

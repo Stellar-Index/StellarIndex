@@ -4603,7 +4603,30 @@ paths:
         decimal strings; `decimals` is the reserve's, null when unread or
         for a backstop. Emission claims are sums of the claim events
         projected so far, in the pool's emission token, and always a
-        lower bound. No USD values.
+        lower bound.
+
+        USD: each supply and borrow leg's `value_usd` and `accrued_usd`
+        are `current_value` and `accrued` at the price
+        `/v1/lending/pools/{pool}/reserves` serves for that reserve
+        (`price_usd`, same cache), exact and rendered at 2 dp.
+        `value_usd` is null with `usd_reason`: `withheld` (the leg's
+        `reason` is set, other than a `history_*` reason, which concerns
+        `net_flow` only) or `unpriced` (the reserve has no USD price;
+        always so for a backstop leg, whose token is not a reserve).
+        `pools[]` and `totals` sum the valued legs into `supplied_usd`,
+        `borrowed_usd` and `net_usd`; a leg left out is named in
+        `unpriced` as `pool:side:asset` and sets `lower_bound`. Backstop
+        legs are not part of these totals. `net_apr` is
+        (Σ supply value × reserve `supply_apr` − Σ borrow value ×
+        reserve `borrow_apr`) / `net_usd`, with the APRs
+        `/v1/lending/rates` serves; it is an APR, not an APY, and
+        excludes emissions. It is null with `net_apr_reason`:
+        `inputs_partial` (a leg is unpriced or withheld),
+        `apr_unavailable` (a valued reserve has no APR) or
+        `net_value_not_positive`. No health factor is served: the
+        account's on-chain `Positions` read sums collateral and
+        non-collateral supply, and the repo does not establish either
+        protocol's health formula.
       parameters:
         - { name: account, in: path, required: true, description: Account G-strkey or contract C-strkey (an M-strkey resolves to its base account)., schema: { type: string } }
       responses:
@@ -4615,7 +4638,10 @@ paths:
                 data:
                   account: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7
                   legs:
-                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, side: supply, tier: null, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, decimals: 7, net_flow: '1000000000', folded_tokens: '950000000', onchain_tokens: '950000000', current_value: '1045000000', rate_as_of: '2026-07-03T22:31:05Z', accrued: '45000000', reconciled: true, reason: null }
+                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, side: supply, tier: null, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, decimals: 7, net_flow: '1000000000', folded_tokens: '950000000', onchain_tokens: '950000000', current_value: '1045000000', rate_as_of: '2026-07-03T22:31:05Z', accrued: '45000000', reconciled: true, reason: null, value_usd: '104.50', accrued_usd: '4.50', usd_reason: null }
+                  pools:
+                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', lower_bound: false, unpriced: [], net_apr: '0.041300', net_apr_reason: null }
+                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', lower_bound: false, unpriced: [], net_apr: '0.041300', net_apr_reason: null }
                   emissions:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, claimed: '120000000', lower_bound: true }
                   note: accrued is current_value - net_flow, served only when the token balance folded from this account's events equals its current on-chain balance.
@@ -4659,7 +4685,22 @@ paths:
                                 accrued: { type: [string, "null"] }
                                 reconciled: { type: boolean }
                                 reason: { type: [string, "null"], enum: [auction_moved, projection_behind, balance_mismatch, onchain_unread, fold_inconsistent, rate_unread, rate_behind, history_unverified, history_verdict_stale, history_verdict_unread, blend_v1_unsupported, pool_lineage_unknown, null] }
-                              required: [protocol, pool, side, tier, asset, decimals, net_flow, folded_tokens, onchain_tokens, current_value, rate_as_of, accrued, reconciled, reason]
+                                value_usd: { type: [string, "null"], description: "current_value in USD at the reserve's /reserves price_usd." }
+                                accrued_usd: { type: [string, "null"], description: "accrued in USD at the same price; null when accrued or value_usd is." }
+                                usd_reason: { type: [string, "null"], enum: [withheld, unpriced, null] }
+                              required: [protocol, pool, side, tier, asset, decimals, net_flow, folded_tokens, onchain_tokens, current_value, rate_as_of, accrued, reconciled, reason, value_usd, accrued_usd, usd_reason]
+                          pools:
+                            type: array
+                            description: USD totals of the supply and borrow legs, one per pool.
+                            items:
+                              allOf:
+                                - type: object
+                                  properties:
+                                    protocol: { type: string, enum: [blend, blnt] }
+                                    pool: { type: string }
+                                  required: [protocol, pool]
+                                - { $ref: "#/components/schemas/LendingUSDTotals" }
+                          totals: { $ref: "#/components/schemas/LendingUSDTotals" }
                           emissions:
                             type: array
                             items:
@@ -4670,7 +4711,7 @@ paths:
                                 claimed: { type: string }
                                 lower_bound: { type: boolean }
                               required: [protocol, pool, claimed, lower_bound]
-                        required: [account, legs, emissions, note]
+                        required: [account, legs, emissions, note, pools, totals]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -16178,6 +16219,18 @@ components:
                 instance: "/v1/assets"
 
   schemas:
+    LendingUSDTotals:
+      type: object
+      description: USD sums of a lending account's valued supply and borrow legs, decimal strings at 2 dp.
+      properties:
+        supplied_usd: { type: string }
+        borrowed_usd: { type: string }
+        net_usd: { type: string, description: "supplied_usd - borrowed_usd; may be negative." }
+        lower_bound: { type: boolean, description: "True when a leg is left out of the sums; `unpriced` names each." }
+        unpriced: { type: array, items: { type: string }, description: "Legs left out, as `pool:side:asset`." }
+        net_apr: { type: [string, "null"], description: "(Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; 6 dp." }
+        net_apr_reason: { type: [string, "null"], enum: [inputs_partial, apr_unavailable, net_value_not_positive, null] }
+      required: [supplied_usd, borrowed_usd, net_usd, lower_bound, unpriced, net_apr, net_apr_reason]
     LendingReserveConfig:
       type: object
       description: |

@@ -2221,7 +2221,30 @@ export interface paths {
          *     decimal strings; `decimals` is the reserve's, null when unread or
          *     for a backstop. Emission claims are sums of the claim events
          *     projected so far, in the pool's emission token, and always a
-         *     lower bound. No USD values.
+         *     lower bound.
+         *
+         *     USD: each supply and borrow leg's `value_usd` and `accrued_usd`
+         *     are `current_value` and `accrued` at the price
+         *     `/v1/lending/pools/{pool}/reserves` serves for that reserve
+         *     (`price_usd`, same cache), exact and rendered at 2 dp.
+         *     `value_usd` is null with `usd_reason`: `withheld` (the leg's
+         *     `reason` is set, other than a `history_*` reason, which concerns
+         *     `net_flow` only) or `unpriced` (the reserve has no USD price;
+         *     always so for a backstop leg, whose token is not a reserve).
+         *     `pools[]` and `totals` sum the valued legs into `supplied_usd`,
+         *     `borrowed_usd` and `net_usd`; a leg left out is named in
+         *     `unpriced` as `pool:side:asset` and sets `lower_bound`. Backstop
+         *     legs are not part of these totals. `net_apr` is
+         *     (Σ supply value × reserve `supply_apr` − Σ borrow value ×
+         *     reserve `borrow_apr`) / `net_usd`, with the APRs
+         *     `/v1/lending/rates` serves; it is an APR, not an APY, and
+         *     excludes emissions. It is null with `net_apr_reason`:
+         *     `inputs_partial` (a leg is unpriced or withheld),
+         *     `apr_unavailable` (a valued reserve has no APR) or
+         *     `net_value_not_positive`. No health factor is served: the
+         *     account's on-chain `Positions` read sums collateral and
+         *     non-collateral supply, and the repo does not establish either
+         *     protocol's health formula.
          */
         get: operations["getLendingAccountEarnings"];
         put?: never;
@@ -6684,6 +6707,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description USD sums of a lending account's valued supply and borrow legs, decimal strings at 2 dp. */
+        LendingUSDTotals: {
+            supplied_usd: string;
+            borrowed_usd: string;
+            /** @description supplied_usd - borrowed_usd; may be negative. */
+            net_usd: string;
+            /** @description True when a leg is left out of the sums; `unpriced` names each. */
+            lower_bound: boolean;
+            /** @description Legs left out, as `pool:side:asset`. */
+            unpriced: string[];
+            /** @description (Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; 6 dp. */
+            net_apr: string | null;
+            /** @enum {string|null} */
+            net_apr_reason: "inputs_partial" | "apr_unavailable" | "net_value_not_positive" | null;
+        };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's
          *     raw fixed-point integers as decimal strings at `config_decimals`
@@ -18976,9 +19014,34 @@ export interface operations {
                      *             "rate_as_of": "2026-07-03T22:31:05Z",
                      *             "accrued": "45000000",
                      *             "reconciled": true,
-                     *             "reason": null
+                     *             "reason": null,
+                     *             "value_usd": "104.50",
+                     *             "accrued_usd": "4.50",
+                     *             "usd_reason": null
                      *           }
                      *         ],
+                     *         "pools": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "supplied_usd": "104.50",
+                     *             "borrowed_usd": "0.00",
+                     *             "net_usd": "104.50",
+                     *             "lower_bound": false,
+                     *             "unpriced": [],
+                     *             "net_apr": "0.041300",
+                     *             "net_apr_reason": null
+                     *           }
+                     *         ],
+                     *         "totals": {
+                     *           "supplied_usd": "104.50",
+                     *           "borrowed_usd": "0.00",
+                     *           "net_usd": "104.50",
+                     *           "lower_bound": false,
+                     *           "unpriced": [],
+                     *           "net_apr": "0.041300",
+                     *           "net_apr_reason": null
+                     *         },
                      *         "emissions": [
                      *           {
                      *             "protocol": "blend",
@@ -19037,7 +19100,20 @@ export interface operations {
                                 reconciled: boolean;
                                 /** @enum {string|null} */
                                 reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "rate_behind" | "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                                /** @description current_value in USD at the reserve's /reserves price_usd. */
+                                value_usd: string | null;
+                                /** @description accrued in USD at the same price; null when accrued or value_usd is. */
+                                accrued_usd: string | null;
+                                /** @enum {string|null} */
+                                usd_reason: "withheld" | "unpriced" | null;
                             }[];
+                            /** @description USD totals of the supply and borrow legs, one per pool. */
+                            pools: ({
+                                /** @enum {string} */
+                                protocol: "blend" | "blnt";
+                                pool: string;
+                            } & components["schemas"]["LendingUSDTotals"])[];
+                            totals: components["schemas"]["LendingUSDTotals"];
                             emissions: {
                                 /** @enum {string} */
                                 protocol: "blend" | "blnt";
