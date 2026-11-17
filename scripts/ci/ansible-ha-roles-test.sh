@@ -221,6 +221,8 @@ check(confirm.get("uri", {}).get("url", "").endswith("/replica") and "_replica_c
 check('ETCD_INITIAL_CLUSTER_STATE="{{ etcd_initial_cluster_state }}"' in text("patroni/templates/etcd.conf.j2")
       and yaml.safe_load(text("patroni/defaults/main.yml"))["etcd_initial_cluster_state"] == "new",
       "etcd initial cluster state is a variable defaulting to new")
+check(re.search(r'^ETCD_AUTO_COMPACTION_RETENTION="(?!0")[^"]+"', code("patroni/templates/etcd.conf.j2"), re.M) is not None,
+      "etcd auto-compaction is enabled")
 etcd_refuse = next(t for t in tasks("patroni/tasks/03-etcd-configure.yml")
                    if t.get("name") == "refuse to bootstrap a new etcd cluster beside a live one")["when"]
 group = ["db-01", "db-02", "db-03"]

@@ -17,6 +17,11 @@ ETCD_INITIAL_CLUSTER_STATE="{{ etcd_initial_cluster_state }}"
 
 ETCD_HEARTBEAT_INTERVAL="{{ etcd_heartbeat_interval }}"
 ETCD_ELECTION_TIMEOUT="{{ etcd_election_timeout }}"
+
+# etcd keeps every revision unless compacted (retention 0 disables it), and
+# Patroni rewrites its keys each loop_wait, so the backend would reach its quota.
+ETCD_AUTO_COMPACTION_MODE="periodic"
+ETCD_AUTO_COMPACTION_RETENTION="1h"
 {% if etcd_tls_enabled %}
 
 # TLS with mutual client-cert auth on both the client and peer ports.
