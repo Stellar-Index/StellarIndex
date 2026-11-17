@@ -24,8 +24,15 @@
 -- where that last ledger holds several transactions without intra-ledger order
 -- (intra_ledger_seq 0) is refused rather than stored by tx_hash.
 --
--- After a lake re-derive of ledger_entry_changes over [lo, hi], delete the
--- range before replaying it (ingest-pipeline.md, the replay decision rule):
+-- The version is (ledger_seq, insert time), not (ledger_seq, intra_ledger_seq):
+-- a replay after a lake re-derive that renumbered a ledger's intra order must
+-- displace the old row even when the true last change now has a lower intra.
+-- A later ledger still always wins, so an hour split across windows collapses
+-- to its last change.
+--
+-- After a lake re-derive of ledger_entry_changes over [lo, hi] that may have
+-- removed changes, delete the range before replaying it (ingest-pipeline.md,
+-- the replay decision rule):
 --   ALTER TABLE stellar.lending_state_hourly
 --     DELETE WHERE ledger_seq BETWEEN {lo} AND {hi};
 
@@ -39,8 +46,14 @@ CREATE TABLE IF NOT EXISTS stellar.lending_state_hourly
     intra_ledger_seq UInt32,
     close_time       DateTime('UTC'),
     entry_xdr        String CODEC(ZSTD(3)),
-    version          UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq
+    version          UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + toUInt32(now())
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(hour)
 ORDER BY (contract_id, key_xdr, hour);
+
+-- Converges a table created with the (ledger_seq, intra_ledger_seq) version.
+-- Metadata only: existing rows keep their stored version, which any new row
+-- at the same ledger outranks (an insert time exceeds every intra_ledger_seq).
+ALTER TABLE stellar.lending_state_hourly
+    MODIFY COLUMN version UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + toUInt32(now());

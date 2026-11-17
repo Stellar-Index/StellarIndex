@@ -27,4 +27,6 @@
     group: "{{ alertmanager_user }}"
     mode: "0640"
     validate: "amtool check-config %s"
+  # The template inlines the pager key and webhook URLs; --diff would print them.
+  diff: false
   notify: "alertmanager config changed"

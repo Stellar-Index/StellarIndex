@@ -82,6 +82,8 @@ groups:
       - alert: LiteralStripDead
         expr: |-
           increase(stellarindex_fixture_literalstrip_total[5m]) == 0
+      - alert: PrefixOnlyDead
+        expr: rate(stellarindex_fixture_prefix[5m]) > 1
 YML
 
 # Go emitter: emits the "real" metric via a Name: literal, but mentions
@@ -92,6 +94,10 @@ package internal
 // stellarindex_fixture_commentonly_total is planned but NOT yet wired.
 var _ = struct{ Name string }{
 	Name: "stellarindex_fixture_real_total",
+}
+
+var _ = struct{ Name string }{
+	Name: "stellarindex_fixture_prefix_total",
 }
 GO
 
@@ -207,6 +213,8 @@ GO
 run
 expect_present 'a metric named only in a Go block comment stays dead' 'stellarindex_fixture_blockcomment_total'
 expect_absent 'a /* inside a Go string does not open a comment' 'stellarindex_fixture_afterglob_total'
+
+expect_present 'a token that is only a prefix of an emitted name is dead' 'stellarindex_fixture_prefix'
 
 # 6. Producer -> alert direction (advisory). A metric emitted with
 # a real Name: literal but referenced by NO rule expr must be reported

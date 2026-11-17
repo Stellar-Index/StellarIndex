@@ -53,20 +53,6 @@ func ServedBaselineValidated(trailing []*big.Rat) bool {
 	return ok
 }
 
-// WithinPublishedBand reports whether price lies in [published/GuardThinRatioBound, published*GuardThinRatioBound]: the
-// served guard's band around a one-value centre. A nil or non-positive published value cannot be judged and reports true.
-func WithinPublishedBand(price, published *big.Rat) bool {
-	if published == nil || published.Sign() <= 0 {
-		return true
-	}
-	if price == nil || price.Sign() <= 0 {
-		return false
-	}
-	lo := new(big.Rat).Quo(published, GuardThinRatioBound)
-	hi := new(big.Rat).Mul(published, GuardThinRatioBound)
-	return withinBand(price, lo, hi)
-}
-
 // robustBand returns the acceptance interval [lo, hi] around the median of positive trailing values; ok is false only for an empty baseline (guard fails open).
 // With >= GuardMinSamples values it is the union of the tight ratio band and the ratio-symmetric MAD band; with fewer, the finite [GuardThinRatioBound] band.
 func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {

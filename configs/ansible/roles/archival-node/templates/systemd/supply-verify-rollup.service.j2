@@ -22,8 +22,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# Defaults first: Environment=/EnvironmentFile= apply in file order and the
-# later one wins, so the operator's /etc/default files must come after.
+# Defaults. Values from EnvironmentFile= override Environment= wherever
+# either sits (systemd.exec(5)); between the files below, the later wins.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/supply_verify_rollup.prom
 Environment=RUN_TIMEOUT=2h

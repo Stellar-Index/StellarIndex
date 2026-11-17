@@ -34,5 +34,25 @@ func (s *Server) AgeRWASeriesCachesForTest(d time.Duration) {
 	s.rwaPremMu.Unlock()
 }
 
+// AgeRWAAssetsViewForTest moves the cached /v1/rwa/assets view and its expiry d into the past.
+func (s *Server) AgeRWAAssetsViewForTest(d time.Duration) {
+	s.rwaViewMu.Lock()
+	defer s.rwaViewMu.Unlock()
+	if s.rwaViewCache != nil {
+		s.rwaViewCache.builtAt = s.rwaViewCache.builtAt.Add(-d)
+	}
+	s.rwaViewExpires = s.rwaViewExpires.Add(-d)
+}
+
+// RWAAssetsViewLifetimeForTest is how long the cached /v1/rwa/assets view has left before it expires.
+func (s *Server) RWAAssetsViewLifetimeForTest() time.Duration {
+	s.rwaViewMu.Lock()
+	defer s.rwaViewMu.Unlock()
+	return time.Until(s.rwaViewExpires)
+}
+
+// RWAAssetsDegradedTTL is the production lifetime of a degraded /v1/rwa/assets view.
+const RWAAssetsDegradedTTL = rwaAssetsDegradedTTL
+
 // RWAHistoryTTL is the production /v1/rwa/history cache TTL.
 const RWAHistoryTTL = rwaHistoryTTL

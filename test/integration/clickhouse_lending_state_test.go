@@ -157,6 +157,13 @@ func TestChEntryHistoryLending_HourlyLastChange(t *testing.T) {
 
 	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2, base + 3}, 1, false)
 	at := func(h, m int) time.Time { return time.Date(2027, 2, 10, h, m, 0, 0, time.UTC) }
+	// The count proof reads the watermark's hour from stellar.ledgers, so each ledger closes when its changes do.
+	for i, ts := range []time.Time{at(10, 10), at(10, 50), at(11, 5), at(11, 30)} {
+		if err := conn.Exec(ctx, `ALTER TABLE stellar.ledgers UPDATE close_time = ? WHERE ledger_seq = ? SETTINGS mutations_sync = 2`,
+			ts, base+uint32(i)); err != nil {
+			t.Fatalf("align ledger %d close time: %v", base+uint32(i), err)
+		}
+	}
 	change := func(seq uint32, ts time.Time, ct, k, e string, intra uint32) chstore.LedgerEntryChangeRow {
 		return chstore.LedgerEntryChangeRow{
 			LedgerSeq: seq, CloseTime: ts, TxHash: "1e" + strconv.FormatUint(uint64(seq), 10),
@@ -230,6 +237,19 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	if err := chops.Run(prove); err == nil || !strings.Contains(err.Error(), "row counts disagree") {
 		t.Fatalf("proof with a missing middle hour: err = %v, want a row-count mismatch", err)
 	}
+	// A row past the watermark in an hour that does not hold the watermark cannot hide that hour's missing row.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_state_hourly
+		(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2027-02-10 10:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 10:50:00', 'UTC'), 'A2')`,
+		pool, key, base+4); err != nil {
+		t.Fatal(err)
+	}
+	if err := chops.Run(prove); err == nil || !strings.Contains(err.Error(), "row counts disagree") {
+		t.Fatalf("proof with a missing hour under a row past the watermark: err = %v, want a row-count mismatch", err)
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE ledger_seq > ? SETTINGS mutations_sync = 2`, base+3); err != nil {
+		t.Fatal(err)
+	}
 	if err := runLendingWrite(t, addr, base, base+3); err != nil {
 		t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
 	}
@@ -247,6 +267,45 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	}
 	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE entry_xdr = 'TAMPER' SETTINGS mutations_sync = 2`); err != nil {
 		t.Fatal(err)
+	}
+	// A wrong row at or below the watermark is still compared when a later hour holds a row past it.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_state_hourly
+		(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2027-02-10 11:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 11:30:00', 'UTC'), 'TAMPER'),
+		       (?, 'blnt', ?, toDateTime('2027-02-10 12:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 12:10:00', 'UTC'), 'A5')`,
+		pool, key, base+3, pool, key, base+4); err != nil {
+		t.Fatal(err)
+	}
+	if err := chops.Run(prove); err == nil || !strings.Contains(err.Error(), "disagree with the lake") {
+		t.Fatalf("proof with a tampered row below a row past the watermark: err = %v, want a state mismatch", err)
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE entry_xdr = 'TAMPER' OR ledger_seq > ?
+		SETTINGS mutations_sync = 2`, base+3); err != nil {
+		t.Fatal(err)
+	}
+	if err := runLendingWrite(t, addr, base, base+3); err != nil {
+		t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
+	}
+	if err := chops.Run(prove); err != nil {
+		t.Fatalf("proof after re-deriving the tampered hour: %v", err)
+	}
+	// Rows written past the watermark by a window it refused, one replacing the watermark's own hour: not a mismatch.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_state_hourly
+		(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2027-02-10 11:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 11:59:00', 'UTC'), 'LATE'),
+		       (?, 'blnt', ?, toDateTime('2027-02-10 12:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 12:10:00', 'UTC'), 'A5')`,
+		pool, key, base+4, pool, key, base+4); err != nil {
+		t.Fatal(err)
+	}
+	if err := chops.Run(prove); err != nil {
+		t.Fatalf("proof with history rows past the watermark: %v", err)
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE ledger_seq > ? SETTINGS mutations_sync = 2`, base+3); err != nil {
+		t.Fatal(err)
+	}
+	// A merge may already have dropped the hour's row the late one replaced.
+	if err := runLendingWrite(t, addr, base, base+3); err != nil {
+		t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
 	}
 	// The yield pool gains a live reserve the table has never seen: the proof names it.
 	yieldID := xdr.ContractId(strkey.MustDecode(strkey.VersionByteContract, blnt.MainnetYieldBlentPool))
@@ -357,5 +416,83 @@ func TestChEntryHistoryLending_SupersededRowsAreIgnored(t *testing.T) {
 	}
 	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, want) {
 		t.Fatalf("history = %q, want %q", got, want)
+	}
+}
+
+// A lake re-derive that renumbers a ledger's intra order can give the hour's true last change a lower intra than the
+// stale row already in the table. On a table converged by lending_state.sql the replayed row still replaces it.
+func TestChEntryHistoryLending_ReplayDisplacesRenumberedRow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	stmts, err := clickHouseDeployStatements("lending_state.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Later tests share the table: converge its version even when this test fails after the downgrade below.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), time.Minute)
+		defer ccancel()
+		for _, s := range stmts {
+			if err := conn.Exec(cctx, s); err != nil {
+				t.Errorf("re-apply lending_state.sql: %.72q: %v", s, err)
+			}
+		}
+	})
+	for _, q := range []string{
+		`TRUNCATE TABLE stellar.entry_history_watermark`, `TRUNCATE TABLE stellar.lending_state_hourly`,
+		// The live host's table before lending_state.sql converged its version.
+		`ALTER TABLE stellar.lending_state_hourly MODIFY COLUMN version UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq`,
+	} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	const base = uint32(171_360_000)
+	pool := seedLendingDeploy(t, ctx, addr, base)
+	var poolID, asset xdr.ContractId
+	copy(poolID[:], strkey.MustDecode(strkey.VersionByteContract, pool))
+	asset[0] = 0x5d
+	key := resDataKeyB64(t, poolID, asset)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base}, 1, false)
+	closeAt := time.Date(2027, 2, 12, 9, 10, 0, 0, time.UTC)
+	oldWalk := func(tx, e string, intra uint32) {
+		t.Helper()
+		if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
+			(ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, intra_ledger_seq)
+			VALUES (?, ?, ?, 0, 0, 'updated', 'contract_data', ?, ?, '2026-01-01 00:00:00', ?)`,
+			base, closeAt, tx, key, e, intra); err != nil {
+			t.Fatalf("insert old-walk row: %v", err)
+		}
+	}
+	oldWalk("aa", "MID", 57)
+	oldWalk("bb", "END", 12)
+	if err := runLendingWrite(t, addr, base, base); err != nil {
+		t.Fatalf("first derive: %v", err)
+	}
+	row := func(e string) []string {
+		return []string{"2027-02-12 09:00:00 " + strconv.FormatUint(uint64(base), 10) + " " + e}
+	}
+	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, row("MID")) {
+		t.Fatalf("history before the re-derive = %q, want %q", got, row("MID"))
+	}
+
+	for _, s := range stmts {
+		if err := conn.Exec(ctx, s); err != nil {
+			t.Fatalf("apply lending_state.sql over the existing table: %.72q: %v", s, err)
+		}
+	}
+	// The re-derived walk keeps each change's identity and moves the stale one before the real last change.
+	ts := chstore.LedgerEntryChangeRow{LedgerSeq: base, CloseTime: closeAt, ChangeType: "updated", EntryType: "contract_data", KeyXDR: key}
+	mid, end := ts, ts
+	mid.TxHash, mid.EntryXDR, mid.IntraLedgerSeq = "aa", "MID", 5
+	end.TxHash, end.EntryXDR, end.IntraLedgerSeq = "bb", "END", 12
+	insertEntryChanges(t, ctx, mid, end)
+	if err := runLendingWrite(t, addr, base, base); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, row("END")) {
+		t.Fatalf("history after the replay = %q, want %q", got, row("END"))
 	}
 }

@@ -103,23 +103,67 @@ func (r lendingRun) exec(ctx context.Context, hb *opsutil.JobHeartbeat) error {
 	}
 	runStart := time.Now()
 	var windows uint64
+	return deriveLendingWindows(start, last, os.Stderr,
+		func(lo, hi uint32) (uint64, error) { return clickhouse.DeriveLendingWindow(ctx, r.chAddr, lo, hi, ps) },
+		func(lo, hi uint32, txLedgers uint64) error {
+			return clickhouse.SetLendingStateWatermark(ctx, r.chAddr, lo, hi, txLedgers)
+		},
+		func(lo, hi uint32) {
+			windows++
+			hb.Progress(windows, uint64(hi))
+			fmt.Fprintf(os.Stderr, "%s: window [%d,%d] done (elapsed %s)\n", lendingJob, lo, hi, time.Since(runStart).Round(time.Second))
+		})
+}
+
+// deriveLendingWindows derives [start, last] window by window, advancing the watermark (mark) after each range is
+// written, in ledger order; a range over the lake's memory limit is derived as halves.
+func deriveLendingWindows(start, last uint32, log io.Writer, derive func(lo, hi uint32) (uint64, error),
+	mark func(lo, hi uint32, txLedgers uint64) error, done func(lo, hi uint32),
+) error {
 	for lo := start; ; {
 		hi := lendingWindowEnd(lo, last)
-		txLedgers, err := clickhouse.DeriveLendingWindow(ctx, r.chAddr, lo, hi, ps)
+		err := splitOnMemoryLimit(lo, hi, "window", log, func(lo, hi uint32) error {
+			txLedgers, err := derive(lo, hi)
+			if err != nil {
+				return fmt.Errorf("window [%d,%d]: %w — resume with no -from (the watermark holds)", lo, hi, err)
+			}
+			if err := mark(lo, hi, txLedgers); err != nil {
+				return fmt.Errorf("advance lending_state watermark to %d: %w", hi, err)
+			}
+			done(lo, hi)
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("window [%d,%d]: %w — resume with no -from (the watermark holds)", lo, hi, err)
+			return err
 		}
-		if err := clickhouse.SetLendingStateWatermark(ctx, r.chAddr, lo, hi, txLedgers); err != nil {
-			return fmt.Errorf("advance lending_state watermark to %d: %w", hi, err)
-		}
-		windows++
-		hb.Progress(windows, uint64(hi))
-		fmt.Fprintf(os.Stderr, "%s: window [%d,%d] done (elapsed %s)\n", lendingJob, lo, hi, time.Since(runStart).Round(time.Second))
 		if hi >= last {
 			return nil
 		}
 		lo = hi + 1
 	}
+}
+
+// lendingSplitFloor is the narrowest range a memory-limit split retries: a 100k-ledger window halved five times.
+const lendingSplitFloor = lendingWindow / 32
+
+// splitOnMemoryLimit runs [lo, hi]; on ClickHouse's memory-limit error it runs the two halves in order instead,
+// recursively down to lendingSplitFloor ledgers. Halves stay inside the window, so inside its partition.
+func splitOnMemoryLimit(lo, hi uint32, what string, log io.Writer, run func(lo, hi uint32) error) error {
+	err := run(lo, hi)
+	if err == nil || !clickhouse.IsMemoryLimitExceeded(err) {
+		return err
+	}
+	if hi-lo+1 <= lendingSplitFloor {
+		return fmt.Errorf("%s [%d,%d] exceeds the ClickHouse memory limit at the %d-ledger split floor: %w", what, lo, hi, lendingSplitFloor, err)
+	}
+	mid := lo + (hi-lo)/2
+	// A lost progress line must not stop the fill.
+	_, _ = fmt.Fprintf(log, "%s: %s [%d,%d] exceeded the ClickHouse memory limit; splitting into [%d,%d] and [%d,%d]\n",
+		lendingJob, what, lo, hi, lo, mid, mid+1, hi)
+	if err := splitOnMemoryLimit(lo, mid, what, log, run); err != nil {
+		return err
+	}
+	return splitOnMemoryLimit(mid+1, hi, what, log, run)
 }
 
 // lendingWindowEnd is the last ledger of the window starting at lo: the next lendingWindow boundary, or last.
@@ -179,7 +223,8 @@ func (r lendingRun) proveLendingState(ctx context.Context, out io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "lending_state @%d: %d keys, %d mismatched\n", wm, p.Keys, p.Mismatched); err != nil {
+	if _, err := fmt.Fprintf(out, "lending_state @%d: %d keys, %d mismatched, %d not compared (history row past the watermark)\n",
+		wm, p.Keys, p.Mismatched, p.Ahead); err != nil {
 		return err
 	}
 	if p.Mismatched > 0 {
@@ -239,12 +284,19 @@ func (r lendingRun) proveLendingCounts(ctx context.Context, ps []clickhouse.Lend
 	var bad []string
 	for ; lo <= last; lo = lendingWindowEnd(lo, last) + 1 {
 		hi := lendingWindowEnd(lo, last)
-		ms, err := clickhouse.ProveLendingCounts(ctx, r.chAddr, ps, lo, hi, wm)
+		// Each (key, hour) counts in the one range holding its last change, so halves sum to the window.
+		err := splitOnMemoryLimit(lo, hi, "count window", os.Stderr, func(lo, hi uint32) error {
+			ms, err := clickhouse.ProveLendingCounts(ctx, r.chAddr, ps, lo, hi, wm)
+			if err != nil {
+				return err
+			}
+			for _, m := range ms {
+				bad = append(bad, fmt.Sprintf("[%d,%d] %s: %d (key, hour) pairs in the lake, %d rows", lo, hi, m.Contract, m.Lake, m.Table))
+			}
+			return nil
+		})
 		if err != nil {
 			return err
-		}
-		for _, m := range ms {
-			bad = append(bad, fmt.Sprintf("[%d,%d] %s: %d (key, hour) pairs in the lake, %d rows", lo, hi, m.Contract, m.Lake, m.Table))
 		}
 		if hi >= last {
 			break

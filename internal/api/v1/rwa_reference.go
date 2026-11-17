@@ -189,8 +189,8 @@ const (
 	RWAPremiumMarketNotObserved = "market_price_not_observed"
 	// RWAPremiumReferenceNotPositive — the oracle published a non-positive value; nothing divides by it.
 	RWAPremiumReferenceNotPositive = "reference_not_positive"
-	// RWAPremiumMarketOutsideBand — the market price is outside [robuststat.WithinPublishedBand] of the oracle's value,
-	// the band /v1/rwa/premium refuses a day by, so the two surfaces never disagree on one print.
+	// RWAPremiumMarketOutsideBand — the market price is outside [rwaPremiumWithinReference] of the oracle's value,
+	// the judge /v1/rwa/premium refuses a day by, so the two surfaces never disagree on one print.
 	RWAPremiumMarketOutsideBand = RWAPremiumExcludedMarketOutsideBand
 	// RWAPremiumReferenceNotOracle: the reference is a listing price, so no premium is computed
 	// (R-C) though the reference valuation is still published; it aggregates the same markets ours does.
@@ -514,7 +514,7 @@ func rwaApplyReference(
 		a.Premium = RWAPremium{Status: RWAPremiumMarketNotObserved}
 	case ref.priceUSD == nil || ref.priceUSD.Sign() <= 0:
 		a.Premium = RWAPremium{Status: RWAPremiumReferenceNotPositive}
-	case !robuststat.WithinPublishedBand(market, ref.priceUSD):
+	case !rwaPremiumWithinReference(market, ref.priceUSD):
 		a.Premium = RWAPremium{Status: RWAPremiumMarketOutsideBand}
 	default:
 		pct := new(big.Rat).Sub(market, ref.priceUSD)
@@ -523,6 +523,18 @@ func rwaApplyReference(
 		s := pct.FloatString(4)
 		a.Premium = RWAPremium{Status: RWAPremiumPublished, Pct: &s}
 	}
+}
+
+// rwaPremiumWithinReference reports whether a market price may carry a premium against the published value `ref`: it must
+// sit inside the served guard's tight [robuststat.GuardRatioBound] around `ref` alone. The one judge for /v1/rwa/assets and
+// /v1/rwa/premium; a trailing-market centre would let sustained wash prints refuse a price at the published value.
+func rwaPremiumWithinReference(market, ref *big.Rat) bool {
+	if market == nil || ref == nil || market.Sign() <= 0 || ref.Sign() <= 0 {
+		return false
+	}
+	lo := new(big.Rat).Quo(ref, robuststat.GuardRatioBound)
+	hi := new(big.Rat).Mul(ref, robuststat.GuardRatioBound)
+	return market.Cmp(lo) >= 0 && market.Cmp(hi) <= 0
 }
 
 // rwaApplyUnboundReference values a row no oracle feed binds: a fund share's own NAV, else the prospectus NAV of a CNAV class

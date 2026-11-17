@@ -5,7 +5,8 @@
 # running as root by omission, a timer at host-local 02:00) shared one cause:
 # nothing noticed a directive that was simply absent.
 #
-# Rules, over $ROLE/templates/systemd:
+# Rules, over $ROLE/templates/systemd and every deploy/systemd unit a role
+# task installs verbatim (same rules, minus the .j2 suffix):
 #   *.service.j2  — User= or DynamicUser=yes (running as root must be
 #                   written down, not inherited), and each of
 #                   NoNewPrivileges PrivateTmp ProtectKernelTunables
@@ -27,7 +28,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
-ROLE="${SYSTEMD_HARDENING_ROLE:-configs/ansible/roles/archival-node}"
+DEFAULT_ROLE=configs/ansible/roles/archival-node
+ROLE="${SYSTEMD_HARDENING_ROLE:-$DEFAULT_ROLE}"
+DEPLOY_DIR="${SYSTEMD_HARDENING_DEPLOY_DIR:-deploy/systemd}"
 DIR="$ROLE/templates/systemd"
 EXCEPTIONS="$DIR/HARDENING-EXCEPTIONS"
 BASELINE="NoNewPrivileges PrivateTmp ProtectKernelTunables ProtectKernelModules ProtectControlGroups"
@@ -52,9 +55,9 @@ enabled() {
   [ -n "$1" ] && ! grep -qixE 'no|false|off|0' <<<"$1"
 }
 
-for f in "$DIR"/*.service.j2; do
-  [ -f "$f" ] || continue
-  unit=$(basename "$f" .j2)
+# check_service <file> <unit> <timer-file>
+check_service() {
+  local f="$1" unit="$2" timer="$3" dynamic missing d dep
   units=$((units + 1))
   dynamic=$(value_of "$f" DynamicUser)
   missing=""
@@ -67,7 +70,7 @@ for f in "$DIR"/*.service.j2; do
     fi
     enabled "$(value_of "$f" "$d")" || missing="$missing $d"
   done
-  if [ -f "${f%.service.j2}.timer.j2" ]; then
+  if [ -f "$timer" ]; then
     while IFS= read -r dep; do
       echo "  STARTS-DATASTORE: $f is timer-driven and has '$dep' — each tick starts a stopped datastore; keep After= only"
       fail=$((fail + 1))
@@ -85,10 +88,11 @@ for f in "$DIR"/*.service.j2; do
       fail=$((fail + 1))
     fi
   done < <(awk -F: -v u="$unit" '$1 == u { print $2 }' <<<"$declared")
-done
+}
 
-for f in "$DIR"/*.timer.j2; do
-  [ -f "$f" ] || continue
+# check_timer <file>
+check_timer() {
+  local f="$1" cal
   timers=$((timers + 1))
   while IFS= read -r cal; do
     case "$cal" in *'{{'*) continue ;; esac
@@ -97,7 +101,41 @@ for f in "$DIR"/*.timer.j2; do
     echo "  UNPINNED: $f OnCalendar=$cal fixes an hour but not a zone — append UTC"
     fail=$((fail + 1))
   done < <(grep -E '^[[:space:]]*OnCalendar[[:space:]]*=' "$f" | sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]+$//')
+}
+
+for f in "$DIR"/*.service.j2; do
+  [ -f "$f" ] || continue
+  check_service "$f" "$(basename "$f" .j2)" "${f%.service.j2}.timer.j2"
 done
+for f in "$DIR"/*.timer.j2; do
+  [ -f "$f" ] || continue
+  check_timer "$f"
+done
+
+# Units the role installs verbatim from deploy/systemd run as written there,
+# so they carry the same baseline (exceptions in the same file).
+verbatim=0
+if [ -d "$ROLE/tasks" ]; then
+  installed=$(python3 "$(dirname "$0")/deploy-systemd-authoritative.py" "$ROLE") || exit 2
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    f="$DEPLOY_DIR/$b"
+    if [ ! -f "$f" ]; then
+      echo "  MISSING: the role installs $b from $DEPLOY_DIR, which has no such file"
+      fail=$((fail + 1))
+      continue
+    fi
+    verbatim=$((verbatim + 1))
+    case "$b" in
+      *.service) check_service "$f" "$b" "${f%.service}.timer" ;;
+      *.timer) check_timer "$f" ;;
+    esac
+  done <<<"$installed"
+fi
+if [ "$ROLE" = "$DEFAULT_ROLE" ] && [ "$verbatim" -eq 0 ]; then
+  echo "lint-systemd-hardening: FAIL — no unit installed from $DEPLOY_DIR was found; the scan is broken"
+  exit 2
+fi
 
 if [ "$units" -eq 0 ] || [ "$timers" -eq 0 ]; then
   echo "lint-systemd-hardening: FAIL — found $units service and $timers timer template(s); the scan is broken"

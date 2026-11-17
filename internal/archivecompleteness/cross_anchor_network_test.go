@@ -4,9 +4,13 @@
 package archivecompleteness
 
 import (
+	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/stellar/go-stellar-sdk/network"
 )
 
 // TestNewCrossAnchorFiller_NetworkGuard pins that, since DefaultCrossAnchorSources are all PUBNET archives, a filler
@@ -40,6 +44,40 @@ func TestNewCrossAnchorFiller_NetworkGuard(t *testing.T) {
 	// empty Network + no sources → allowed (back-compat: existing pubnet callers).
 	if _, err := NewCrossAnchorFiller(FillerOptions{ArchiveRoot: dir}); err != nil {
 		t.Errorf("NewCrossAnchorFiller(no Network, no Sources) = %v; want nil (pubnet back-compat)", err)
+	}
+}
+
+// TestNewCrossAnchorFiller_RefusesArchiveOfAnotherNetwork pins that the archive's own
+// stellar-history.json outranks a defaulted Network: a testnet mirror is never filled from pubnet.
+func TestNewCrossAnchorFiller_RefusesArchiveOfAnotherNetwork(t *testing.T) {
+	writeHAS := func(t *testing.T, passphrase string) string {
+		t.Helper()
+		dir := t.TempDir()
+		wk := filepath.Join(dir, ".well-known")
+		if err := os.MkdirAll(wk, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"version":1,"currentLedger":63,"networkPassphrase":"` + passphrase + `"}`
+		if err := os.WriteFile(filepath.Join(wk, "stellar-history.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	testnetRoot := writeHAS(t, network.TestNetworkPassphrase)
+	for _, n := range []string{"", "pubnet"} {
+		if _, err := NewCrossAnchorFiller(FillerOptions{ArchiveRoot: testnetRoot, Network: n}); err == nil {
+			t.Errorf("NewCrossAnchorFiller(testnet archive, Network=%q, no Sources) = nil error; want refusal", n)
+		}
+	}
+	if _, err := NewCrossAnchorFiller(FillerOptions{
+		ArchiveRoot: testnetRoot,
+		Sources:     []Source{{Name: "testnet-mirror", URL: "https://history.example.test"}},
+	}); err != nil {
+		t.Errorf("NewCrossAnchorFiller(testnet archive, explicit Sources) = %v; want nil", err)
+	}
+	if _, err := NewCrossAnchorFiller(FillerOptions{ArchiveRoot: writeHAS(t, network.PublicNetworkPassphrase)}); err != nil {
+		t.Errorf("NewCrossAnchorFiller(pubnet archive, no Sources) = %v; want nil", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"slices"
@@ -397,13 +398,21 @@ type rwaTruncation struct {
 	// unread counts contract candidates refused because the listing, curated-tag or symbol read
 	// did not answer: an outage, not a finding about the candidate.
 	unread int
+	// notServed counts admitted classic members with no catalogue row, so absent from every total; notServedIssuers splits it by issuer.
+	notServed        int
+	notServedIssuers map[string]int
 }
 
 func (t rwaTruncation) capped() bool {
 	return t.overIssuerCap > 0 || t.overContractCap > 0 || t.issuerPagesFull > 0
 }
 
-func (t rwaTruncation) any() bool { return t.capped() || t.unread > 0 }
+func (t rwaTruncation) any() bool { return t.capped() || t.unread > 0 || t.notServed > 0 }
+
+// issuerPartial is true when a member of this issuer may be missing from its group.
+func (t rwaTruncation) issuerPartial(issuer string) bool {
+	return t.fullPageIssuers[issuer] || t.notServedIssuers[issuer] > 0
+}
 
 // rwaTruncationOf gathers the caps from the membership and the catalogue join.
 func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
@@ -414,6 +423,8 @@ func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
 		fullPageIssuers: join.fullPageIssuers,
 		unread: m.listingCensus.listingUnavailable + m.listingCensus.tagsUnavailable +
 			m.listingCensus.symbolsUnread + m.contractCensus.symbolsUnread,
+		notServed:        join.notObserved,
+		notServedIssuers: join.notObservedIssuers,
 	}
 }
 
@@ -953,21 +964,28 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	if served != nil {
 		return s.stampRWAServeState(*served)
 	}
+	// The empty set is stamped too, so a failed cold build reaches the flags as rebuildFailedAt.
 	if flight == nil {
 		// Never built and an attempt is gapped out; the handler states the absence.
-		return rwaMembership{refusals: map[string]int{}}
+		return s.stampRWAServeState(rwaMembership{refusals: map[string]int{}})
 	}
 	select {
 	case <-flight:
 	case <-ctx.Done():
-		return rwaMembership{refusals: map[string]int{}}
+		return s.stampRWAServeState(rwaMembership{refusals: map[string]int{}})
 	}
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
 	if s.rwaCache != nil {
 		return s.stampServeStateLocked(*s.rwaCache)
 	}
-	return rwaMembership{refusals: map[string]int{}}
+	return s.stampServeStateLocked(rwaMembership{refusals: map[string]int{}})
+}
+
+// serveFlags is the envelope verdict on a served set: past its lifetime is stale, and a failed latest rebuild is degraded.
+// readFailed is not read here: a build that set it is never cached, so no served set carries it.
+func (m rwaMembership) serveFlags() Flags {
+	return Flags{Stale: m.servedStale, Degraded: m.servedStale || !m.rebuildFailedAt.IsZero()}
 }
 
 // rwaMembershipSetOf dates the served set, or returns nil when there is none. Gated on the build
@@ -1122,7 +1140,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 
 	m := s.cachedRWAMembership(r.Context())
 	if rwaMembershipUnavailable(m) {
-		writeEnvelope(w, Envelope{Data: rwaUnavailableView(m), Flags: Flags{Degraded: m.readFailed}})
+		writeEnvelope(w, Envelope{Data: rwaUnavailableView(m), Flags: m.serveFlags()})
 		return
 	}
 	if !middleware.ChargeRateLimit(w, r, rwaAssetsCost(m)) {
@@ -1133,30 +1151,49 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
+		if errors.Is(err, errRWAViewTooOld) {
+			s.logger.Warn("rwa assets view unavailable", "err", err)
+			w.Header().Set("Retry-After", rwaSeriesRetryAfter)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/rwa-assets-unavailable",
+				"RWA assets unavailable", http.StatusServiceUnavailable,
+				"the last assets view is past its maximum age and its rebuild has not answered; retry shortly")
+			return
+		}
 		s.logger.Error("rwa listing read failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	writeEnvelope(w, Envelope{Data: b.view, Flags: b.flags})
+	writeEnvelope(w, Envelope{Data: b.view, Flags: b.flags, AsOf: WireTime(b.observedAt)})
 }
 
 // buildRWAAssetsView assembles the full /v1/rwa/assets view from the cached membership.
 func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error) {
 	m := s.cachedRWAMembership(ctx)
 	if rwaMembershipUnavailable(m) {
-		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: Flags{Degraded: m.readFailed}}, nil
+		at := time.Now()
+		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: m.serveFlags(), builtAt: at, observedAt: at}, nil
 	}
 	view := rwaMembershipView(m)
-	rows, join, err := s.rwaListingRows(ctx, m)
+	now := time.Now()
+	listCtx, listReads := withReadReport(ctx)
+	rows, join, err := s.rwaListingRows(listCtx, m)
 	if err != nil {
 		return rwaAssetsBuild{}, err
 	}
+	join.unanswered = join.unanswered || listReads.unread.Load() || listReads.stale.Load()
+	observedAt := now
+	if !join.observedAt.IsZero() && join.observedAt.Before(observedAt) {
+		observedAt = join.observedAt
+	}
 
-	now := time.Now()
 	classicAssets, unobserved := s.rwaAssetRows(m, rows, now)
-	join.notObserved = unobserved
+	join.notObservedIssuers = unobserved
+	for _, n := range unobserved {
+		join.notObserved += n
+	}
 
 	// The contract arm fails the build as the classic arm does: degrading to zero rows would
 	// drop admitted members from the totals without a lower_bound. Both contract arms share one
@@ -1174,6 +1211,9 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	contractAssets := rwaContractAssetRows(m.contracts, contractRows)
 
 	view.Assets = append(classicAssets, contractAssets...)
+	for i := range view.Assets {
+		rwaWithholdFlaggedIdentity(&view.Assets[i])
+	}
 
 	// Ordering runs ONCE over the combined set so both kinds rank by the same rule.
 	rwaSortAssets(view.Assets)
@@ -1200,7 +1240,13 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
 	stale := degraded || curatedDegraded || join.unanswered || rwaReferencesUnanswered(view.Assets)
-	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed || trunc.unread > 0}}, nil
+	ms := m.serveFlags()
+	return rwaAssetsBuild{
+		view:       view,
+		flags:      Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0},
+		builtAt:    now,
+		observedAt: observedAt,
+	}, nil
 }
 
 // rwaMembershipUnavailable is true when NEITHER arm answered. One arm failing beside a reporting one is a partial measurement, not an
@@ -1279,9 +1325,13 @@ type rwaCatalogueJoin struct {
 	fullPageIssuers map[string]bool
 	// notObserved counts admitted members with no catalogue row: attested but never seen on chain.
 	notObserved int
+	// notObservedIssuers splits notObserved by member issuer.
+	notObservedIssuers map[string]int
 	// unanswered is true when a gate or directory read behind a row's figures failed: the rows are
 	// served with those figures withheld, and the response must say it is degraded.
 	unanswered bool
+	// observedAt is when the oldest listing page was read from its store; zero when every page answered live.
+	observedAt time.Time
 }
 
 // rwaAssetsCost is the rate-limit price in tokens of one /v1/rwa/assets request: one per store listing read (per member issuer, plus one
@@ -1327,7 +1377,7 @@ func (s *Server) rwaListingRows(
 
 	out := make(map[string]AssetDetail, len(m.members))
 	for _, issuer := range issuers {
-		rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
+		rows, at, stale, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{
 			Limit:  rwaAssetsPerIssuer,
 			Issuer: issuer,
 			Type:   "classic",
@@ -1335,15 +1385,7 @@ func (s *Server) rwaListingRows(
 		if err != nil {
 			return nil, join, err
 		}
-		// A full page means a member in the unread tail would vanish silently; count the
-		// truncation so it is reported.
-		if len(rows) >= rwaAssetsPerIssuer {
-			join.pagesTruncated++
-			if join.fullPageIssuers == nil {
-				join.fullPageIssuers = map[string]bool{}
-			}
-			join.fullPageIssuers[issuer] = true
-		}
+		join.notePage(issuer, at, stale, len(rows))
 		keep, memberCodes := rwaMatchMemberRows(codesByIssuer[issuer], rows)
 		if len(keep) == 0 {
 			continue
@@ -1372,6 +1414,23 @@ func (s *Server) rwaListingRows(
 	return out, join, nil
 }
 
+// notePage folds one issuer page's freshness and truncation into the join.
+func (j *rwaCatalogueJoin) notePage(issuer string, at time.Time, stale bool, n int) {
+	j.unanswered = j.unanswered || stale
+	if !at.IsZero() && (j.observedAt.IsZero() || at.Before(j.observedAt)) {
+		j.observedAt = at
+	}
+	// A full page means a member in the unread tail would vanish silently; count the
+	// truncation so it is reported.
+	if n >= rwaAssetsPerIssuer {
+		j.pagesTruncated++
+		if j.fullPageIssuers == nil {
+			j.fullPageIssuers = map[string]bool{}
+		}
+		j.fullPageIssuers[issuer] = true
+	}
+}
+
 // rwaFillMissingSupply attaches circulating supply to rows the market-cap fill left without one. Only rows with no reading at all
 // are touched, so a deliberately attached supply (dust-suppressed and ticker-collision branches) is never overwritten; supply is
 // a chain fact, so no valuation or gate changes.
@@ -1380,8 +1439,8 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) (
 		return false
 	}
 	precise, supplyUnread := s.latestPreciseSupply(ctx)
-	broad := s.cachedClassicSupply(ctx)
-	lake := s.classicLakeSupply(ctx, rows)
+	broad, broadUnread := s.classicSupplyMap(ctx)
+	lake, lakeMissing := s.classicLakeSupplyRead(ctx, rows)
 	for i := range rows {
 		if rows[i].CirculatingSupply != nil {
 			continue
@@ -1389,6 +1448,8 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) (
 		// Same preference chain as the market-cap fill, naming the arm it took.
 		circ, basis := classicSupplyReading(rows[i].AssetID, precise, lake, broad)
 		if circ == "" {
+			// No figure because a reader did not answer is an outage, not "this asset has no supply".
+			supplyUnread = supplyUnread || broadUnread || slices.Contains(lakeMissing, rows[i].AssetID)
 			continue
 		}
 		stampCirculatingSupply(&rows[i], circ, basis)
@@ -1431,15 +1492,15 @@ func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.
 	return keep, memberCodes
 }
 
-// rwaAssetRows joins the membership evidence to the valued listing rows and returns how many members the join could not place; a
-// member with no listing row is dropped but counted, because "admitted then never served" is otherwise invisible.
-func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now time.Time) ([]RWAAsset, int) {
+// rwaAssetRows joins the membership evidence to the valued listing rows and returns, per issuer, how many members the join could not
+// place; a member with no listing row is dropped but counted, because "admitted then never served" is otherwise invisible.
+func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now time.Time) ([]RWAAsset, map[string]int) {
 	out := make([]RWAAsset, 0, len(m.members))
-	notObserved := 0
+	notObserved := map[string]int{}
 	for _, mem := range m.members {
 		d, ok := rows[rwaKey(mem.code, mem.issuer)]
 		if !ok {
-			notObserved++
+			notObserved[mem.issuer]++
 			continue
 		}
 		a := RWAAsset{
@@ -1477,6 +1538,17 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now 
 		out = append(out, a)
 	}
 	return out, notObserved
+}
+
+// rwaWithholdFlaggedIdentity is [suppressFlaggedIssuerIdentity] for an RWA row: membership is cached past a later scam tag, so a
+// row whose issuer is now flagged or unchecked must not keep serving the brand name and instrument it claims. The bound SEP-1
+// home domain stays, as on /v1/assets, because that toml lists the asset back.
+func rwaWithholdFlaggedIdentity(a *RWAAsset) {
+	if a.Valuation.Status != RWAValuationIssuerFlagged && a.Valuation.Status != RWAValuationIssuerUnchecked {
+		return
+	}
+	a.Name, a.Symbol, a.AnchorAsset = "", "", ""
+	a.ISINCollision, a.VettedISIN = nil, nil
 }
 
 // rwaSupplyProvenance carries the listing row's supply basis onto the RWA row, with whether that figure is a floor
@@ -1905,6 +1977,9 @@ func rwaWriteTruncation(b *strings.Builder, t rwaTruncation, totalPublished bool
 	}
 	if t.unread > 0 {
 		b.WriteString(" " + strconv.Itoa(t.unread) + " contract candidate(s) went unevaluated because a read the definition depends on did not answer (the funnel names which)" + consequence)
+	}
+	if t.notServed > 0 {
+		b.WriteString(" " + strconv.Itoa(t.notServed) + " admitted classic member(s) have no asset catalogue row yet and are not in this set" + consequence)
 	}
 }
 

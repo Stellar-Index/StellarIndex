@@ -50,17 +50,26 @@ const (
 	earningsReasonOnchainUnread    = "onchain_unread"
 	earningsReasonBalanceMismatch  = "balance_mismatch"
 	earningsReasonRateUnread       = "rate_unread"
+	// earningsReasonRateBehind withholds a leg whose read reserve rate was stored before its newest folded event: net_flow then
+	// holds a flow made at a later rate than the one valuing it.
+	earningsReasonRateBehind = "rate_behind"
 	// earningsReasonHistoryUnverified withholds a leg whose event history is not verified back to its protocol's first ledger.
-	earningsReasonHistoryUnverified = "history_unverified"
+	earningsReasonHistoryUnverified    = "history_unverified"
+	earningsReasonHistoryVerdictStale  = "history_verdict_stale"
+	earningsReasonHistoryVerdictUnread = "history_verdict_unread"
 )
 
 const lendingEarningsNote = "accrued is current_value - net_flow, served only when the token balance folded from this account's " +
 	"events equals its current on-chain balance (reconciled); otherwise it is null and reason names why. A pool leg is valued at " +
-	"the reserve's last on-chain rate update (rate_as_of). net_flow is " +
+	"the reserve's last on-chain rate update (rate_as_of), and accrued is withheld (rate_behind) when that update predates the " +
+	"leg's newest folded event. net_flow is " +
 	"underlying deposited minus withdrawn (supply), borrowed minus repaid (borrow), or backstop tokens deposited minus " +
 	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. A BLNT clawback counts as a withdrawal, so " +
 	"accrued does not include the clawed-back amount as a loss. Emission claims are sums of the " +
-	"claim events projected so far and are a lower bound."
+	"claim events projected so far and are a lower bound. USD values use the price /v1/lending/pools/{pool}/reserves serves for " +
+	"the reserve; a backstop leg is unpriced. A leg without a USD value is left out of supplied_usd and borrowed_usd, which " +
+	"are then a lower bound naming it in excluded, and net_usd and net_apr are null. No health " +
+	"factor is served: the account read sums collateral and non-collateral supply."
 
 // LendingEarningsView is the GET /v1/lending/accounts/{account}/earnings body.
 type LendingEarningsView struct {
@@ -72,6 +81,9 @@ type LendingEarningsView struct {
 	// LowerBound is set when a read hit the per-account row cap; CoverageNote then names the capped reads.
 	LowerBound   bool   `json:"lower_bound"`
 	CoverageNote string `json:"coverage_note,omitempty"`
+	// Pools and Totals value the supply and borrow legs in USD, per pool and across all of them.
+	Pools  []LendingEarningsPool `json:"pools"`
+	Totals LendingUSDTotals      `json:"totals"`
 }
 
 // LendingEarningsLeg is one (pool, asset, side) or (pool, tier) backstop position; amounts are base-unit decimal strings.
@@ -92,6 +104,10 @@ type LendingEarningsLeg struct {
 	Accrued    *string   `json:"accrued"` // interest earned (supply), interest paid (borrow), earned (backstop)
 	Reconciled bool      `json:"reconciled"`
 	Reason     *string   `json:"reason"`
+	// ValueUSD and AccruedUSD are current_value and accrued at the reserve's /reserves price; UsdReason names why ValueUSD is null.
+	ValueUSD   *string `json:"value_usd"`
+	AccruedUSD *string `json:"accrued_usd"`
+	UsdReason  *string `json:"usd_reason"`
 }
 
 // LendingEmissionsClaim is the pool emissions one account claimed from one pool, in the pool's emission token.
@@ -110,6 +126,8 @@ type legInputs struct {
 	moved   bool
 	behind  bool                            // the lake entry changed after the newest folded event
 	value   func(*big.Int) (*big.Int, bool) // tokens to asset amount; false when the rate or price is unread
+	// rateBehind: the rate value uses was stored before the newest folded event, so it cannot value tokens that event minted.
+	rateBehind bool
 }
 
 // reconcileLeg applies the earnings invariant: accrued is served only when the folded balance equals the on-chain one
@@ -141,6 +159,8 @@ func reconcileLeg(leg *LendingEarningsLeg, in legInputs) {
 		reason = earningsReasonBalanceMismatch
 	case value == nil:
 		reason = earningsReasonRateUnread
+	case in.rateBehind && in.onchain.Sign() != 0:
+		reason = earningsReasonRateBehind
 	}
 	if reason != "" {
 		leg.Reason = strRef(reason)
@@ -186,36 +206,37 @@ func (s *Server) handleLendingAccountEarnings(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
-	view, degraded, err := s.buildLendingEarnings(ctx, er, sr, account)
+	view, flags, err := s.buildLendingEarnings(ctx, er, sr, account)
 	if err != nil {
 		s.writeLendingLookupError(ctx, w, r, "lending earnings", account, err)
 		return
 	}
 	wm, stale, _ := s.lakeWatermark(ctx)
 	view.AsOfLedger = wm
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale, Degraded: degraded}})
+	flags.Stale = flags.Stale || stale
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 
 // buildLendingEarnings reads the account's folds, then each pool's lake state; a pool whose lake read fails withholds its legs
-// as unread and sets degraded instead of failing the response.
-func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsReader, sr lendingAccountStateReader, account string) (LendingEarningsView, bool, error) {
+// as unread and sets degraded instead of failing the response. Stale is set by a stale cached reserve rate or history verdict.
+func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsReader, sr lendingAccountStateReader, account string) (LendingEarningsView, Flags, error) {
 	view := LendingEarningsView{Account: account, Legs: []LendingEarningsLeg{}, Emissions: []LendingEmissionsClaim{}, Note: lendingEarningsNote}
 	var capped []string
 	blendFolds, err := er.BlendPositionsByUser(ctx, account)
 	if err = noteCapped(&capped, "blend positions", err); err != nil {
-		return view, false, err
+		return view, Flags{}, err
 	}
 	blntFolds, err := er.BLNTPositionsByUser(ctx, account)
 	if err = noteCapped(&capped, "blnt positions", err); err != nil {
-		return view, false, err
+		return view, Flags{}, err
 	}
 	flows, err := er.LendingAccountFlows(ctx, account)
 	if err = noteCapped(&capped, "emission claims and backstop token flows", err); err != nil {
-		return view, false, err
+		return view, Flags{}, err
 	}
 	backstop, err := s.backstopEarningsJobs(ctx, er, account, flows, &capped)
 	if err != nil {
-		return view, false, err
+		return view, Flags{}, err
 	}
 	if len(capped) > 0 {
 		view.LowerBound = true
@@ -226,20 +247,31 @@ func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsRea
 	jobs := append(poolEarningsJobs("blend", blendFolds), poolEarningsJobs(blnt.SourceName, blntFolds)...)
 	jobs = append(jobs, backstop...)
 	legs := make([][]LendingEarningsLeg, len(jobs))
-	failed := make([]bool, len(jobs))
+	reserves := make([]map[string]ReserveView, len(jobs))
+	failed, stale := make([]bool, len(jobs)), make([]bool, len(jobs))
 	forEachBounded(s.logger, len(jobs), readFanoutConcurrency, func(i int) {
 		failed[i] = true // stays set if the read panics
-		legs[i], failed[i] = s.earningsJobLegs(ctx, sr, account, jobs[i])
+		legs[i], reserves[i], failed[i], stale[i] = s.earningsJobLegs(ctx, sr, account, jobs[i])
 	})
 	view.Legs = append(view.Legs, slices.Concat(legs...)...)
-	historyFailed := s.withholdUnverifiedHistory(ctx, view.Legs)
+	historyFailed, historyStale := s.withholdUnverifiedHistory(ctx, view.Legs)
+	poolReserveViews := map[string]map[string]ReserveView{}
+	for i, rv := range reserves {
+		if rv != nil {
+			poolReserveViews[jobs[i].pool] = rv
+		}
+	}
+	view.Pools, view.Totals = valueEarningsLegs(view.Legs, poolReserveViews)
 	for _, c := range flows.BlendClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: "blend", Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
 	for _, c := range flows.BLNTClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: blnt.SourceName, Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
-	return view, historyFailed || slices.Contains(failed, true) || view.LowerBound, nil
+	return view, Flags{
+		Stale:    historyStale || slices.Contains(stale, true),
+		Degraded: historyFailed || slices.Contains(failed, true) || view.LowerBound,
+	}, nil
 }
 
 // noteCapped records a fold read that hit the per-account row cap under `what` and passes any other error through.
@@ -264,30 +296,37 @@ func earningsLegSource(leg LendingEarningsLeg) string {
 }
 
 // withholdUnverifiedHistory withholds every otherwise-exact leg whose source is not verified from its genesis: events
-// before the projected range would be missing from net_flow while the token balances still match. failed reports an
-// errored verdict read.
-func (s *Server) withholdUnverifiedHistory(ctx context.Context, legs []LendingEarningsLeg) (failed bool) {
-	verified := map[string]bool{}
-	if s.CompletenessReader != nil {
-		snaps, stale, err := s.completenessVerdicts(ctx)
-		if err != nil {
-			s.logger.Warn("lending earnings: completeness read failed", "err", err)
-			failed = true
-		}
-		if stale {
-			snaps = nil // a verdict past its freshness gate verifies nothing
-		}
-		for _, sn := range snaps {
-			verified[sn.Source] = sn.ProjectionOK && sn.ProjectionVerifiedFrom != 0 && sn.ProjectionVerifiedFrom <= sn.Genesis
+// before the projected range would be missing from net_flow while the token balances still match. Only the legs' own
+// sources' verdicts are judged; failed reports an unread one and stale one past its freshness gate.
+func (s *Server) withholdUnverifiedHistory(ctx context.Context, legs []LendingEarningsLeg) (failed, stale bool) {
+	var sources []string
+	for _, leg := range legs {
+		if src := earningsLegSource(leg); leg.Reconciled && !slices.Contains(sources, src) {
+			sources = append(sources, src)
 		}
 	}
+	if len(sources) == 0 {
+		return false, false
+	}
+	verdicts := s.projectionHistoryVerdicts(ctx, sources...)
 	for i := range legs {
-		if legs[i].Reconciled && !verified[earningsLegSource(legs[i])] {
-			legs[i].Reconciled, legs[i].Accrued = false, nil
-			legs[i].Reason = strRef(earningsReasonHistoryUnverified)
+		if !legs[i].Reconciled {
+			continue
 		}
+		reason := earningsReasonHistoryUnverified
+		switch verdicts[earningsLegSource(legs[i])] {
+		case historyVerified:
+			continue
+		case historyVerdictStale:
+			reason, stale = earningsReasonHistoryVerdictStale, true
+		case historyVerdictUnread:
+			reason, failed = earningsReasonHistoryVerdictUnread, true
+		case historyUnverified:
+		}
+		legs[i].Reconciled, legs[i].Accrued = false, nil
+		legs[i].Reason = strRef(reason)
 	}
-	return failed
+	return failed, stale
 }
 
 // earningsJob is one pool's legs to build: its supply/borrow folds, or its backstop tiers.
@@ -314,17 +353,20 @@ func poolEarningsJobs(protocol string, folds []timescale.BlendPositionFold) []ea
 	return jobs
 }
 
-func (s *Server) earningsJobLegs(ctx context.Context, sr lendingAccountStateReader, account string, job earningsJob) ([]LendingEarningsLeg, bool) {
+func (s *Server) earningsJobLegs(ctx context.Context, sr lendingAccountStateReader, account string, job earningsJob,
+) (legs []LendingEarningsLeg, views map[string]ReserveView, failed, stale bool) {
 	if job.backstop != nil {
-		return s.poolBackstopLegs(ctx, sr, job, account)
+		legs, failed = s.poolBackstopLegs(ctx, sr, job, account)
+		return legs, nil, failed, false
 	}
 	return s.poolEarningsLegs(ctx, sr, job, account)
 }
 
-// poolEarningsLegs builds one pool's supply and borrow legs from its cached reserve state and the account's Positions entry.
-func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string) ([]LendingEarningsLeg, bool) {
-	failed := false
-	reserves, err := s.earningsReserveStates(ctx, job.pool)
+// poolEarningsLegs builds one pool's supply and borrow legs from its cached reserve state and the account's Positions entry,
+// and returns the reserve views that price them; stale reports a cached reserve state past its TTL or built from a stale lake.
+func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string,
+) (out []LendingEarningsLeg, views map[string]ReserveView, failed, stale bool) {
+	reserves, views, stale, err := s.earningsReserveStates(ctx, job.pool)
 	if err != nil {
 		s.logger.Warn("lending earnings: reserve read failed", "err", err, "pool", job.pool)
 		failed = true
@@ -335,11 +377,10 @@ func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateRea
 		pos, failed = clickhouse.LendingAccountPositions{}, true
 	}
 	behind := pos.Ledger > newestFoldedLedger(job.folds)
-	var out []LendingEarningsLeg
 	for _, f := range job.folds {
 		out = append(out, poolFoldLegs(job.protocol, f, reserves[f.Asset], pos, behind)...)
 	}
-	return out, failed
+	return out, views, failed, stale
 }
 
 // newestFoldedLedger is the newest event ledger folded into a pool's legs. Every transaction that changes an account's
@@ -352,21 +393,25 @@ func newestFoldedLedger(folds []timescale.BlendPositionFold) uint32 {
 	return newest
 }
 
-// earningsReserveStates reads a pool's reserve state through the reserves endpoint's cache, by asset; a pool of unknown lineage
-// has none.
-func (s *Server) earningsReserveStates(ctx context.Context, pool string) (map[string]clickhouse.BlendReserveState, error) {
-	res, _, _, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
+// earningsReserveStates reads a pool's reserve states and their served views through the reserves endpoint's cache, by asset;
+// a pool of unknown lineage has none.
+func (s *Server) earningsReserveStates(ctx context.Context, pool string) (map[string]clickhouse.BlendReserveState, map[string]ReserveView, bool, error) {
+	res, _, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
 	if errors.Is(err, errPoolLineageUnknown) {
-		return map[string]clickhouse.BlendReserveState{}, nil
+		return map[string]clickhouse.BlendReserveState{}, map[string]ReserveView{}, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, false, err
 	}
 	out := make(map[string]clickhouse.BlendReserveState, len(res.states))
 	for _, st := range res.states {
 		out[st.Asset] = st
 	}
-	return out, nil
+	views := make(map[string]ReserveView, len(res.view.Reserves))
+	for _, rv := range res.view.Reserves {
+		views[rv.Asset] = rv
+	}
+	return out, views, cacheStale || res.flags.Stale, nil
 }
 
 // poolFoldLegs turns one (pool, asset) fold into its supply and borrow legs.
@@ -382,11 +427,12 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 		has       bool
 		net, toks string
 		moved     bool
+		last      time.Time
 		onchain   map[string]*big.Int
 		convert   func(blend.ReserveData, *big.Int) *big.Int
 	}{
-		{earningsSideSupply, f.HasSupplyLeg, f.SupplyNet, f.SupplyTokens, f.SupplySuperseded, pos.Supply, blend.ReserveData.BTokensToUnderlying},
-		{earningsSideBorrow, f.HasBorrowLeg, f.BorrowNet, f.BorrowTokens, f.BorrowSuperseded, pos.Borrow, blend.ReserveData.DTokensToUnderlying},
+		{earningsSideSupply, f.HasSupplyLeg, f.SupplyNet, f.SupplyTokens, f.SupplySuperseded, f.SupplyLastActivity, pos.Supply, blend.ReserveData.BTokensToUnderlying},
+		{earningsSideBorrow, f.HasBorrowLeg, f.BorrowNet, f.BorrowTokens, f.BorrowSuperseded, f.BorrowLastActivity, pos.Borrow, blend.ReserveData.DTokensToUnderlying},
 	}
 	var out []LendingEarningsLeg
 	for _, sd := range sides {
@@ -397,7 +443,10 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 		if haveRate {
 			leg.RateAsOf = reserveLastUpdate(st.Data.LastTime)
 		}
-		in := legInputs{moved: sd.moved, behind: behind, value: func(n *big.Int) (*big.Int, bool) {
+		// Every pool action accrues and stores its reserve, so a rate stored before the leg's newest event is a stale read.
+		// A BLNT clawback is assumed to do so too (no contract evidence in the repo); if not, its leg is withheld, not misvalued.
+		rateBehind := haveRate && !sd.last.IsZero() && st.Data.LastTime < uint64(max(sd.last.Unix(), 0))
+		in := legInputs{moved: sd.moved, behind: behind, rateBehind: rateBehind, value: func(n *big.Int) (*big.Int, bool) {
 			if !haveRate {
 				return nil, false
 			}

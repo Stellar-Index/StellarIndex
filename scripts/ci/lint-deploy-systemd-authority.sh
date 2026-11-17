@@ -46,6 +46,7 @@ declared=""
 [ -f "$ORPHANS" ] && declared=$(grep -vE '^\s*#|^\s*$' "$ORPHANS" | sed -E 's/\s*#.*//; s/\s+$//')
 
 declared_div=""
+reported_div=""
 [ -f "$DIVERGENCES" ] && declared_div=$(grep -vE '^\s*#|^\s*$' "$DIVERGENCES" | sed -E 's/\s*#.*//; s/\s+$//')
 
 for f in "$DIR"/*.service "$DIR"/*.timer; do
@@ -74,6 +75,7 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
         [ -n "$line" ] || continue
         key="${line%% = *}"
         if grep -qxF "$b:$key" <<<"$declared_div"; then
+          reported_div+="$b:$key"$'\n'
           echo "  known divergence (declared in $DIVERGENCES): $b:$key"
           continue
         fi
@@ -95,6 +97,16 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   echo "          reason it is kept."
   fail=$((fail + 1))
 done
+
+# A declared entry that no longer diverges is closed: delete it, or the list
+# stops meaning "still open".
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  grep -qxF "$entry" <<<"$reported_div" && continue
+  echo "  STALE: $DIVERGENCES declares $entry, but the reference and template no"
+  echo "         longer disagree on it. Delete the line."
+  fail=$((fail + 1))
+done <<<"$declared_div"
 
 if [ "$checked" -eq 0 ]; then
   echo "lint-deploy-systemd-authority: FAIL — no unit files found; the scan is broken"

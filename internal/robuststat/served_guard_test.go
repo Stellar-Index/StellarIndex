@@ -313,32 +313,3 @@ func TestGuardServedVWAP_ThinHistoryNotFullyOpen(t *testing.T) {
 		t.Fatalf("empty baseline must fail open (accept=%v lkg=%d)", accept, lkg)
 	}
 }
-
-// TestWithinPublishedBand_IsTheServedGuardAroundOneValue: the published-value band is the served guard's band around a
-// one-value centre, inclusive at both edges, and it judges a non-positive price as outside.
-func TestWithinPublishedBand_IsTheServedGuardAroundOneValue(t *testing.T) {
-	published := rat(t, "1.07")
-	for _, tc := range []struct {
-		price string
-		want  bool
-	}{
-		{"1.07", true},
-		{"10.70", true},
-		{"10.71", false},
-		{"0.107", true},
-		{"0.1069", false},
-		{"0", false},
-		{"-1", false},
-	} {
-		price := rat(t, tc.price)
-		if got := WithinPublishedBand(price, published); got != tc.want {
-			t.Errorf("price %s vs 1.07: within = %v, want %v", tc.price, got, tc.want)
-		}
-		if served, _ := GuardServedVWAP(price, []*big.Rat{published}); served != tc.want {
-			t.Errorf("price %s: the served guard says %v, the published band %v", tc.price, served, tc.want)
-		}
-	}
-	if !WithinPublishedBand(rat(t, "1000"), nil) || !WithinPublishedBand(rat(t, "1000"), rat(t, "0")) {
-		t.Error("a published value that cannot be divided by refused the price")
-	}
-}

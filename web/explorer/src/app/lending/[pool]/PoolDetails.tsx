@@ -6,6 +6,7 @@ import { Panel } from '@/components/reveal';
 import { Fact, FactList } from '@/components/ui/Facts';
 import { asExample } from '@/api/client';
 import { fixedPct, poolStatusText } from '../poolConfig';
+import { amountText } from '../lendingInsights';
 import { usePoolReserves } from './usePoolReserves';
 
 function addressHref(a: string): string {
@@ -58,7 +59,9 @@ export function PoolDetails({ pool }: { pool: string }) {
             : '—'}
         </Fact>
         <Fact label="Min collateral" title={cfg.min_collateral}>
-          {cfg.min_collateral ?? '—'}
+          {cfg.min_collateral != null
+            ? amountText(cfg.min_collateral, null)
+            : '—'}
         </Fact>
       </FactList>
     </Panel>

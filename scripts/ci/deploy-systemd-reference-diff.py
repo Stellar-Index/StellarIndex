@@ -22,7 +22,16 @@ import sys
 
 
 def directives(path):
+    """Map (section, key) to the ordered list of values the key is given.
+
+    Repeated directives (EnvironmentFile, ReadWritePaths, ExecStartPre)
+    compare as the whole ordered list, not the last line: two units can
+    end on the same EnvironmentFile and still load different files first.
+    An empty assignment resets the list, as systemd does. A key with any
+    templated line is dropped, since its rendered list is unknown.
+    """
     out = {}
+    templated = set()
     section = None
     with open(path) as fh:
         for raw in fh:
@@ -36,14 +45,20 @@ def directives(path):
                 continue
             key, _, val = line.partition("=")
             key, val = key.strip(), val.strip()
-            if "{{" in val or "{%" in val:
-                continue
             if key == "Environment" and "=" in val:
                 name, _, v = val.partition("=")
-                out[(section, "Environment:" + name.strip())] = v.strip()
+                k, val = (section, "Environment:" + name.strip()), v.strip()
+                out[k] = []
             else:
-                out[(section, key)] = val
-    return out
+                k = (section, key)
+            if "{{" in val or "{%" in val:
+                templated.add(k)
+                continue
+            if val == "":
+                out[k] = []
+            else:
+                out.setdefault(k, []).append(val)
+    return {k: v for k, v in out.items() if k not in templated}
 
 
 def diverged(ref_path, j2_path):
@@ -51,7 +66,8 @@ def diverged(ref_path, j2_path):
     for key in sorted(set(ref) & set(j2)):
         if ref[key] != j2[key]:
             _, name = key
-            yield f'{name} = "{ref[key]}" in {ref_path} vs "{j2[key]}" in {j2_path}'
+            a, b = " | ".join(ref[key]), " | ".join(j2[key])
+            yield f'{name} = "{a}" in {ref_path} vs "{b}" in {j2_path}'
 
 
 if __name__ == "__main__":
