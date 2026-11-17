@@ -537,3 +537,15 @@ func TestCatalogueReads_RoundAfterTheDecimalsCorrection(t *testing.T) {
 		}
 	}
 }
+
+// The listing's 24h window and the detail/batch anchor bound are one tolerance; the windows stay SQL literals
+// (plan-time chunk pruning), so this pins them to the constant the anchor reader uses.
+func TestPriceWindow24hMatchesChange24hAnchorTolerance(t *testing.T) {
+	tol := int(Change24hAnchorTolerance / time.Minute)
+	if want := fmt.Sprintf("now() - INTERVAL '24 hours %d minutes'", tol); priceWindow24hLo != want {
+		t.Errorf("priceWindow24hLo = %q, want %q", priceWindow24hLo, want)
+	}
+	if want := fmt.Sprintf("now() - INTERVAL '23 hours %d minutes'", 60-tol); priceWindow24hHi != want {
+		t.Errorf("priceWindow24hHi = %q, want %q", priceWindow24hHi, want)
+	}
+}
