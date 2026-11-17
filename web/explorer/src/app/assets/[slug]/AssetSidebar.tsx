@@ -147,12 +147,16 @@ export function AssetSidebar({
   coin,
   detail,
   priceUSD,
+  priceProvenance,
+  priceStale,
   homeDomain,
 }: {
   coin: SidebarCoin;
   detail: SidebarDetail | null;
   /** Wire decimal string; the converter and range bar compute in floats. */
   priceUSD: string | null;
+  priceProvenance?: PriceProvenance;
+  priceStale?: boolean;
   homeDomain?: string | null;
 }) {
   const seed = positiveDecimal(priceUSD);
@@ -341,7 +345,9 @@ export function AssetSidebar({
             symbol={code}
             assetId={coin.asset_id}
             image={coin.image}
-            priceUSD={priceNum}
+            priceUSD={seed}
+            priceProvenance={priceProvenance ?? null}
+            priceStale={priceStale}
           />
           <PerformanceRange
             points={coin.price_history_24h ?? []}

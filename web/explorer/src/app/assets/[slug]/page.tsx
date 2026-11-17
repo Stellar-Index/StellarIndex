@@ -1150,6 +1150,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             coin={coin}
             detail={detail}
             priceUSD={headlinePrice}
+            priceProvenance={headlinePriceProvenance(price, coin)}
+            priceStale={Boolean(price?.flags?.stale)}
             homeDomain={detail?.home_domain}
           />
         </aside>

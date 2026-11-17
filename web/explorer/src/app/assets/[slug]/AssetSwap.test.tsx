@@ -58,7 +58,7 @@ function renderSwap() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <AssetSwap symbol="XLM" assetId="native" priceUSD={0.195} />
+      <AssetSwap symbol="XLM" assetId="native" priceUSD="0.195" />
     </QueryClientProvider>,
   );
 }
@@ -144,6 +144,42 @@ describe('AssetSwap fiat leg basis', () => {
     }
 
     await vi.waitFor(() => expect(legCallCount()).toBeGreaterThan(before));
+  });
+});
+
+// The page asset's leg must follow the live /v1/price poll the headline
+// reads, not the build-time baked price, and blank when the server withholds.
+describe('AssetSwap page-asset leg', () => {
+  function stubPrice(status: number, body: unknown) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (input: string | URL) => {
+        const hit = String(input).includes('/v1/price?');
+        const code = hit ? status : 500;
+        return { status: code, ok: code === 200, json: async () => body };
+      }),
+    );
+  }
+  const receiveValue = () =>
+    (screen.getAllByRole('textbox')[1] as HTMLInputElement).value;
+
+  it('converts at the live price, not the baked one', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.26' } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    vi.unstubAllGlobals();
+  });
+
+  it('stops converting once the server withholds the price', async () => {
+    stubApi();
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+      title: 'withheld',
+    });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe(''));
+    vi.unstubAllGlobals();
   });
 });
 

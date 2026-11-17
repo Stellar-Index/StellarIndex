@@ -17,12 +17,15 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 import {
   formatRelative,
   formatSubunitPrice,
+  positiveDecimal,
   truncateMiddle,
 } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
 import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
+
+import { useResolvedAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -34,7 +37,7 @@ import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
  *
  * Conversion is pure client-side maths through each token's USD price:
  * amount(out) = amount(in) × usdPrice(in) / usdPrice(out). The page asset's
- * price is the LIVE prop (refreshes with the parent); every other token
+ * price is the headline's live resolution (useResolvedAssetPrice); every other token
  * carries its snapshot USD price from the catalogue / forex batch, which is
  * exactly the freshness the old converter used. A forex-batch leg says so:
  * the batch's `price_type` and `observed_at` ride with the rate and are
@@ -300,15 +303,28 @@ export function AssetSwap({
   symbol,
   assetId,
   image,
-  priceUSD,
+  priceUSD: bakedPriceUSD,
+  priceProvenance = null,
+  priceStale,
 }: {
   symbol: string;
   assetId: string;
   image?: string | null;
-  priceUSD: number | null;
+  /** Build-time seed (wire decimal string); the live price replaces it. */
+  priceUSD: string | null;
+  priceProvenance?: PriceProvenance;
+  priceStale?: boolean;
 }) {
-  // The page asset is the default "pay" leg; USD is the default "receive"
-  // leg. The page asset's price is kept live off the prop.
+  // The headline's own resolution: polled live, blanked when withheld.
+  const resolved = useResolvedAssetPrice(
+    assetId,
+    bakedPriceUSD,
+    priceProvenance,
+    priceStale,
+  );
+  const livePrice = resolved.withheld ? null : positiveDecimal(resolved.price);
+  const priceUSD = livePrice != null ? Number(livePrice) : null;
+  // The page asset is the default "pay" leg; USD is the default "receive" leg.
   const pageToken = useMemo<SwapToken>(
     () => ({
       key: assetId,
@@ -798,8 +814,7 @@ function TokenPicker({
 
 /**
  * useLegRate — the live USD price for one converter leg. The page-asset
- * leg is priced off the live `priceUSD` prop (already refreshing with the
- * page); every other leg would otherwise freeze at its pick-time snapshot from
+ * leg is priced off the page's live resolved price; every other leg would otherwise freeze at its pick-time snapshot from
  * the picker's `topCoins`/`searchedCoins` read, with no
  * refetch and no way to tell the number on screen had gone stale.
  * Re-fetches that leg's own price on the same 60s cadence as
