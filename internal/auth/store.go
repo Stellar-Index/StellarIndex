@@ -265,6 +265,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	}
 	req.Restrictions.applyTo(&rec)
 	if req.MintedBy != nil {
+		rec.AncestorKeyIDs = lineageOf(*req.MintedBy, req.ParentKeyID)
 		if err := checkWithinMinter(*req.MintedBy, rec); err != nil {
 			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
 		}

@@ -55,6 +55,7 @@ var mintBoundRules = map[string]mintBound{
 	"RevokedAt":        boundRevokedAt,
 	"Identifier":       boundIdentifier,
 	"ParentKeyID":      boundParentKeyID,
+	"AncestorKeyIDs":   boundAncestorKeyIDs,
 	"Tier":             boundTier,
 	"Scopes":           boundScopes,
 	"RateLimitPerMin":  boundRateLimit,
@@ -105,6 +106,23 @@ func boundParentKeyID(m Subject, rec APIKeyRecord) error {
 		return exceeds("must name the minting key on its own identifier")
 	}
 	return nil
+}
+
+// The chain is derived, never requested: a child that could name its own ancestors could drop
+// the one an owner later revokes.
+func boundAncestorKeyIDs(m Subject, rec APIKeyRecord) error {
+	if !slices.Equal(rec.AncestorKeyIDs, lineageOf(m, rec.ParentKeyID)) {
+		return exceeds("must be exactly this key's own ancestors followed by this key")
+	}
+	return nil
+}
+
+// lineageOf is the ancestor chain of a key minted by minter: none unless it is delegated (parentKeyID set).
+func lineageOf(minter Subject, parentKeyID string) []string {
+	if parentKeyID == "" {
+		return nil
+	}
+	return append(slices.Clone(minter.AncestorKeyIDs), minter.KeyID)
 }
 
 func boundTier(m Subject, rec APIKeyRecord) error {

@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -404,11 +406,17 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 	if err != nil {
 		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	if !found || rec.Identifier != identifier {
-		return ErrKeyNotFound
-	}
-	if err := s.revokeDescendants(ctx, identifier, keyID); err != nil {
+	// The sweep runs even without the root's own record: a key can authenticate from Postgres
+	// with no mirror record here, and its delegated keys must still die with it.
+	removed, err := s.revokeDescendants(ctx, identifier, keyID)
+	if err != nil {
 		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	if !found || rec.Identifier != identifier {
+		if len(removed) == 0 {
+			return ErrKeyNotFound
+		}
+		return nil
 	}
 	if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
 		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
@@ -416,32 +424,68 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 	return nil
 }
 
-// revokeDescendants deletes every key whose ParentKeyID chain on identifier reaches keyID. It runs
-// before the root is deleted, so a failure leaves the root findable and a retry re-walks the chain.
-func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, keyID string) error {
+// revokeDescendants deletes every key on identifier delegated from keyID at any depth, deepest
+// first, and returns their KeyIDs. It runs before the root is deleted, so a failure leaves the
+// root and every not-yet-deleted link findable and a retry finishes the job.
+func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, keyID string) ([]string, error) {
 	owned, err := s.recordsForIdentifier(ctx, identifier)
 	if err != nil {
-		return fmt.Errorf("list keys delegated from %s: %w", keyID, err)
+		return nil, fmt.Errorf("list keys delegated from %s: %w", keyID, err)
 	}
+	doomed := descendantsOf(owned, keyID)
+	removed := make([]string, 0, len(doomed))
+	for _, o := range doomed {
+		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
+			return removed, err
+		}
+		removed = append(removed, o.rec.KeyID)
+	}
+	return removed, nil
+}
+
+// descendantsOf returns the records in owned delegated from keyID (by AncestorKeyIDs, or the
+// ParentKeyID chain for records minted before the chain was stored), deepest first, keyID excluded.
+func descendantsOf(owned []ownedRecord, keyID string) []ownedRecord {
 	doomed := map[string]bool{keyID: true}
+	inDoomed := func(id string) bool { return doomed[id] }
 	for grew := true; grew; {
 		grew = false
 		for _, o := range owned {
-			if !doomed[o.rec.KeyID] && doomed[o.rec.ParentKeyID] {
+			if !doomed[o.rec.KeyID] && (doomed[o.rec.ParentKeyID] || slices.ContainsFunc(o.rec.AncestorKeyIDs, inDoomed)) {
 				doomed[o.rec.KeyID] = true
 				grew = true
 			}
 		}
 	}
+	var out []ownedRecord
 	for _, o := range owned {
-		if o.rec.KeyID == keyID || !doomed[o.rec.KeyID] {
-			continue
-		}
-		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
-			return err
+		if o.rec.KeyID != keyID && doomed[o.rec.KeyID] {
+			out = append(out, o)
 		}
 	}
-	return nil
+	depth := delegationDepths(owned)
+	slices.SortStableFunc(out, func(a, b ownedRecord) int { return cmp.Compare(depth[b.rec.KeyID], depth[a.rec.KeyID]) })
+	return out
+}
+
+// delegationDepths maps each KeyID to its depth below its root. A legacy record's depth comes from
+// its ParentKeyID chain, so a child is always deleted before the parent that links it to the root.
+func delegationDepths(owned []ownedRecord) map[string]int {
+	parent := make(map[string]string, len(owned))
+	depth := make(map[string]int, len(owned))
+	for _, o := range owned {
+		parent[o.rec.KeyID] = o.rec.ParentKeyID
+		depth[o.rec.KeyID] = len(o.rec.AncestorKeyIDs)
+	}
+	// Relaxation bounded by the record count, so a corrupt parent cycle cannot loop forever.
+	for range owned {
+		for id, p := range parent {
+			if d, ok := depth[p]; ok && d+1 > depth[id] {
+				depth[id] = d + 1
+			}
+		}
+	}
+	return depth
 }
 
 // removeRecord deletes one record and its index entries.

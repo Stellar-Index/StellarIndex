@@ -93,6 +93,10 @@ type APIKeyRecord struct {
 	// a key they did not create to the credential that did; revoking the parent revokes it (RevokeKeyByID).
 	ParentKeyID string `json:"parent_key_id,omitempty"`
 
+	// AncestorKeyIDs is every key this one was delegated from, root first. Revoking any of them finds
+	// this key by it, even once an intermediate key has expired or been deleted; ParentKeyID alone cannot.
+	AncestorKeyIDs []string `json:"ancestor_key_ids,omitempty"`
+
 	// Tier is the [Tier] this key authenticates as: [TierAPIKey], or [TierOperator] to unlock admin endpoints.
 	Tier Tier `json:"tier"`
 
@@ -256,6 +260,7 @@ func subjectFromRecord(rec APIKeyRecord) (Subject, error) {
 		MonthlyQuota:        rec.MonthlyQuota,
 		EmailVerifiedAt:     rec.EmailVerifiedAt,
 		ExpiresAt:           rec.ExpiresAt,
+		AncestorKeyIDs:      rec.AncestorKeyIDs,
 	}, nil
 }
 
@@ -278,6 +283,7 @@ func recordFromSubject(sub Subject) APIKeyRecord {
 		DenyPermissions:  sub.DenyPermissions,
 		MonthlyQuota:     sub.MonthlyQuota,
 		EmailVerifiedAt:  sub.EmailVerifiedAt,
+		AncestorKeyIDs:   sub.AncestorKeyIDs,
 	}
 }
 
