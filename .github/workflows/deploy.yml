@@ -690,7 +690,8 @@ jobs:
         # on production" as the step above, so it runs the same three
         # lints ci.yml runs on every PR, against this checkout (pinned
         # to the tag being deployed by the `ref:` on this job's
-        # checkout step).
+        # checkout step). The numbering check needs the host's live
+        # version as its base; it runs again with it before the playbook.
         run: |
           set -euo pipefail
           bash scripts/ci/lint-migrations.sh
@@ -1218,6 +1219,30 @@ jobs:
             exit 1
           fi
           bash "$gate" "$VERSION" "$FOLLOWUPS_ACK" "$BASELINE"
+
+      - name: Migration numbering gate against the host's live version
+        # Without BASE_SHA, lint-migrations.sh compares the tag with its
+        # merge-base with origin/main, which is the tag itself, so a migration
+        # back-numbered into a gap passed. Compare with what the host runs.
+        env:
+          VERSION: ${{ inputs.version }}
+          BASELINE: ${{ steps.baseline.outputs.live }}
+        run: |
+          set -euo pipefail
+          base="${BASELINE:-}"
+          if [ -z "$base" ]; then
+            base="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
+            echo "::warning::no live version read from the host; comparing migrations with the previous tag by ancestry (${base:-none})."
+          fi
+          if [ -z "$base" ]; then
+            echo "::notice::no earlier release to compare with; the numbering check has nothing to judge."
+            exit 0
+          fi
+          if ! base_sha="$(git rev-parse -q --verify "${base}^{commit}")"; then
+            echo "::error::migration numbering gate: '${base}' is not a commit in this checkout; refusing to deploy (fail-closed)."
+            exit 1
+          fi
+          BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh
 
       - name: Run deploy playbook
         id: playbook

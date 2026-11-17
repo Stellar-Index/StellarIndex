@@ -51,6 +51,23 @@ done
 # The follow-up gate must run before the playbook applies migrations, and on
 # its own acknowledgement: config_acknowledged asserts a surface is already
 # applied, which a replay that has not run yet can never be.
+# With no BASE_SHA the numbering check compares the tag with itself and sees nothing.
+numbering="$(python3 - "$WORKFLOW" <<'PY'
+import sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"].get("steps", [])
+play = next((i for i, s in enumerate(steps) if s.get("id") == "playbook"), len(steps))
+ok = any('BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh' in (s.get("run") or "")
+         and "steps.baseline.outputs.live" in str(s.get("env", {}))
+         for s in steps[:play])
+print("based" if ok else "unbased")
+PY
+)" || { echo "deploy-migration-gate-coverage-test: could not read the numbering gate step" >&2; exit 2; }
+if [ "$numbering" = based ]; then
+  ok "numbering gate runs against the host's live version before the playbook"
+else
+  bad "no step runs lint-migrations.sh with BASE_SHA from steps.baseline.outputs.live before the playbook — the back-numbering check compares the tag with itself"
+fi
+
 followup="$(python3 - "$WORKFLOW" <<'PY'
 import sys, yaml
 wf = yaml.safe_load(open(sys.argv[1]))
