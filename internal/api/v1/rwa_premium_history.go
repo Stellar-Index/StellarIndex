@@ -13,7 +13,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
-	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -196,6 +195,7 @@ var rwaPremiumExcludedDetail = map[string]string{
 	RWAHistoryExcludedContract:           rwaHistoryExcludedDetail[RWAHistoryExcludedContract],
 	RWAHistoryExcludedIssuerFlagged:      rwaHistoryExcludedDetail[RWAHistoryExcludedIssuerFlagged],
 	RWAHistoryExcludedNoReferenceHistory: rwaHistoryExcludedDetail[RWAHistoryExcludedNoReferenceHistory],
+	RWAHistoryExcludedISINMismatch:       rwaHistoryExcludedDetail[RWAHistoryExcludedISINMismatch],
 	RWAPremiumExcludedNoMarketHistory:    "No dollar-quoted trade in this token is in the served price history, so there is no market price to compare the instrument's published value against. That history begins at `market_observed_from`; trading before it is not read here. This is the ordinary condition of a tokenized bill that is bought and held rather than traded.",
 	RWAPremiumExcludedMarketBelowFloor:   "Trades exist, but no single day cleared the thin-market floor a published price claim requires, so no day may carry one. Honest low volume is fully visible through the raw trade surfaces; what is withheld here is only the aggregated claim that the price of this token WAS some number on that day.",
 	RWAPremiumExcludedMarketOutsideBand:  "Days with enough trading to clear the thin-market floor exist, but every one of them priced the token outside the band around the instrument's published value or the market's own accepted days, so no day may carry a premium. This is a market far from its reference, not a thin one; the trades are fully visible through the raw trade surfaces.",
@@ -605,13 +605,9 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 func rwaPremiumCandidates(m rwaMembership, excluded map[string]int) []rwaHistoryCandidate {
 	out := make([]rwaHistoryCandidate, 0, len(m.members))
 	for _, mem := range m.members {
-		if pricingguard.IsDirectoryScamFlagged(mem.dirTags) {
-			excluded[RWAHistoryExcludedIssuerFlagged]++
-			continue
-		}
-		feed, bound := rwa.InstrumentFeed(mem.code, mem.issuer)
-		if !bound {
-			excluded[RWAHistoryExcludedNotBound]++
+		feed, refusal := rwaClassicMemberFeed(mem)
+		if refusal != "" {
+			excluded[refusal]++
 			continue
 		}
 		asset := canonical.Asset{Type: canonical.AssetClassic, Code: mem.code, Issuer: mem.issuer}

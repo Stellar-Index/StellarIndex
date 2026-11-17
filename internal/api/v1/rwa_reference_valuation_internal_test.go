@@ -374,3 +374,16 @@ func TestRWAValuationStages_DropOrderIsStable(t *testing.T) {
 		}
 	}
 }
+
+// TestRWAValuationOf_CuratedScamIssuerIsFlagged: the curated scam list withholds dollar figures as the directory flag does,
+// so the row reads flagged and no reference arm values it.
+func TestRWAValuationOf_CuratedScamIssuerIsFlagged(t *testing.T) {
+	d := AssetDetail{IssuerScamReason: "Deprecated issuer", IssuerDirectoryTags: []string{"issuer"}}
+	a := RWAAsset{Valuation: rwaValuationOf(d)}
+	if a.Valuation.Status != RWAValuationIssuerFlagged {
+		t.Fatalf("status = %q, want %q", a.Valuation.Status, RWAValuationIssuerFlagged)
+	}
+	if !rwaRefuseWithheldIssuer(&a) || a.ReferenceValuation.Status != RWAPremiumIssuerFlagged {
+		t.Errorf("reference_valuation = %+v, want refused as issuer flagged", a.ReferenceValuation)
+	}
+}

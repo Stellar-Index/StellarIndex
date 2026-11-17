@@ -439,7 +439,7 @@ func rwaApplyReference(
 		rwaApplyContractReference(a, listings[a.ContractID], now)
 		return
 	}
-	if rwa.ConstantNAVISINConflict(a.Code, a.Issuer, a.AnchorAsset) || rwa.VettedISINConflict(a.Code, a.Issuer, a.AnchorAsset) {
+	if rwaISINConflict(a.Code, a.Issuer, a.AnchorAsset) {
 		rwaRefuseReference(a, RWAPremiumReferenceISINMismatch)
 		return
 	}
@@ -690,6 +690,12 @@ func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bo
 func rwaRefuseReference(a *RWAAsset, status string) {
 	a.Premium = RWAPremium{Status: status}
 	a.ReferenceValuation = RWAReferenceValuation{Status: status}
+}
+
+// rwaISINConflict reports a declared ISIN that contradicts a curated binding; every surface that values a classic member
+// on a bound instrument refuses on it.
+func rwaISINConflict(code, issuer, anchorAsset string) bool {
+	return rwa.ConstantNAVISINConflict(code, issuer, anchorAsset) || rwa.VettedISINConflict(code, issuer, anchorAsset)
 }
 
 // rwaRefuseWithheldIssuer refuses every reference figure for a row whose issuer is scam-flagged or could not be checked,

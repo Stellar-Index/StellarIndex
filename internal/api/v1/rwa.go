@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
-	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -1530,7 +1529,7 @@ func rwaDecimalsOf(d AssetDetail) *int {
 // rwaValuationOf reads the valuation off the already-gated listing row. It never recomputes a
 // price or market cap, so a figure withheld upstream cannot reappear here as a number.
 func rwaValuationOf(d AssetDetail) RWAValuation {
-	if pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
+	if issuerScamFlagged(&d) {
 		return RWAValuation{Status: RWAValuationIssuerFlagged}
 	}
 	if d.issuerDirectoryUnchecked {

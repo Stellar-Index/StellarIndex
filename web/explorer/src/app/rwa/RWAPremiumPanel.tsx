@@ -263,6 +263,7 @@ const EXCLUDED_LABEL: Record<string, string> = {
   contract_not_bound: 'contract-issued, which the binding table cannot key',
   issuer_flagged: 'withheld for a scam-class issuer flag',
   no_reference_history: 'whose instrument has no published value history',
+  reference_isin_mismatch: 'whose declared ISIN contradicts a curated binding',
   no_market_history: 'with no dollar trade in the price history we hold',
   market_below_floor: 'whose market never cleared the thin-market floor',
   market_outside_band: 'whose market traded far from its published value',

@@ -9229,7 +9229,7 @@ export interface components {
         };
         /**
          * @description One reason a set member is absent from a series. Shared by
-         *     `/rwa/history` and `/rwa/premium`: the first four reasons are the
+         *     `/rwa/history` and `/rwa/premium`: the first five reasons are the
          *     same refusal by the same rule on both, and two spellings of one
          *     reason is how a funnel starts lying. The last six are specific
          *     to one series — the supply pair to the value series, the market
@@ -9237,7 +9237,7 @@ export interface components {
          */
         RWAHistoryExcluded: {
             /** @enum {string} */
-            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation";
+            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "reference_isin_mismatch" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation";
             /** @description How many set members this reason accounts for. */
             assets: number;
             /** @description What the reason means and, where it matters, who can move it. */
