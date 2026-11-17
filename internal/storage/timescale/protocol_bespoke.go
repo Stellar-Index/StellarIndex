@@ -311,8 +311,9 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 	// ordered most-recently-updated pool first and capped.
 	const maxRows = 100
 	tbl := BespokeTable{
-		Title:   "Pool liquidity depth (latest reserves)",
-		Columns: []string{"Pool", "Token", "Reserve (base units)", "Observed (UTC)"},
+		Title:       "Pool liquidity depth (latest reserves)",
+		Columns:     []string{"Pool", "Token", "Reserve", "Observed (UTC)"},
+		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeCol(BespokeKindTime)},
 	}
 	for _, p := range pools {
 		if len(tbl.Rows) >= maxRows {
@@ -441,7 +442,10 @@ func aquariusClaimKPIs(claims *AquariusClaimRewardWindow) []BespokeKPI {
 // aquariusClaimVolumeTable renders the 30d claim_reward volume per reward
 // token, busiest token first.
 func aquariusClaimVolumeTable(claims *AquariusClaimRewardWindow) BespokeTable {
-	tbl := BespokeTable{Title: "Reward volume by token (30d)", Columns: []string{"Reward token", "Claims", "Amount (token base units)"}}
+	tbl := BespokeTable{
+		Title: "Reward volume by token (30d)", Columns: []string{"Reward token", "Claims", "Amount"},
+		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindAsset), BespokeCol(BespokeKindCount), BespokeAmountOf(0)},
+	}
 	for _, t := range claims.ByToken {
 		tbl.Rows = append(tbl.Rows, []string{aquariusRewardTokenLabel(t.RewardToken), strconv.FormatInt(t.Events, 10), t.Amount.String()})
 	}
@@ -464,7 +468,10 @@ func (s *Store) aquariusGovernanceTable(ctx context.Context, blk *BespokeBlock) 
 	if len(events) == 0 {
 		return nil
 	}
-	tbl := BespokeTable{Title: "Recent governance events", Columns: []string{"When", "Kind", "Contract", "Admin", "Target", "Ledger"}}
+	tbl := BespokeTable{
+		Title: "Recent governance events", Columns: []string{"When", "Kind", "Contract", "Admin", "Target", "Ledger"},
+		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindContract), BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindText), BespokeCol(BespokeKindText)},
+	}
 	for _, e := range events {
 		admin, target := e.Admin, e.Target
 		if admin == "" {
@@ -521,8 +528,9 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 
 	const maxRows = 100
 	tbl := BespokeTable{
-		Title:   "Net liquidity flow by pool/token (window)",
-		Columns: []string{"Pool", "Token", "Added", "Removed", "Net", "Events"},
+		Title:       "Net liquidity flow by pool/token (window)",
+		Columns:     []string{"Pool", "Token", "Added", "Removed", "Net", "Events"},
+		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeAmountOf(1), BespokeAmountOf(1), BespokeCol(BespokeKindCount)},
 	}
 	for _, f := range flows {
 		if len(tbl.Rows) >= maxRows {
@@ -582,8 +590,9 @@ func (s *Store) phoenixLiquidityBlocks(ctx context.Context, blk *BespokeBlock, w
 
 	const maxRows = 100
 	tbl := BespokeTable{
-		Title:   "Net liquidity flow by pool (window)",
-		Columns: []string{"Pool", "Token A", "Net A", "Token B", "Net B", "Provides", "Withdraws"},
+		Title:       "Net liquidity flow by pool (window)",
+		Columns:     []string{"Pool", "Token A", "Net A", "Token B", "Net B", "Provides", "Withdraws"},
+		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeCol(BespokeKindAsset), BespokeAmountOf(3), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount)},
 	}
 	for _, f := range flows {
 		if len(tbl.Rows) >= maxRows {
@@ -659,8 +668,9 @@ const soroswapSkimPairTableLimit = 25
 // soroswapSkimPairTable renders the per-pair skim totals, most-skimmed first.
 func soroswapSkimPairTable(pairs []SoroswapSkimPairTotal) BespokeTable {
 	tbl := BespokeTable{
-		Title:   "Skims by pair",
-		Columns: []string{"Pair", "Skims", "Token0", "Token0 skimmed", "Token1", "Token1 skimmed"},
+		Title:       "Skims by pair",
+		Columns:     []string{"Pair", "Skims", "Token0", "Token0 skimmed", "Token1", "Token1 skimmed"},
+		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindAsset), BespokeAmountOf(2), BespokeCol(BespokeKindAsset), BespokeAmountOf(4)},
 	}
 	orDash := func(v string) string {
 		if v == "" {
