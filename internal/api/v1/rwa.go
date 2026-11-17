@@ -1678,8 +1678,24 @@ func rwaSummariseReference(assets []RWAAsset, trunc rwaTruncation) RWAReferenceS
 		LowerBound: len(assets)-valued > 0 || trunc.any() ||
 			rwaSumsAFloor(assets, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }),
 		Sources: rwaReferenceSources(assets),
-		Basis:   rwaReferenceBasis(len(assets), valued, provenances, trunc),
+		Basis:   rwaReferenceBasis(len(assets), valued, provenances, trunc) + rwaReferenceOutageNote(assets),
 	}
+}
+
+// rwaReferenceOutageNote names the rows refused because the oracle reference read did not answer, which the basis's
+// "no bound and current oracle feed" would otherwise pass off as a binding gap.
+func rwaReferenceOutageNote(assets []RWAAsset) string {
+	n := 0
+	for _, a := range assets {
+		if a.ReferenceValuation.Status == RWAPremiumReferenceUnavailable {
+			n++
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return " " + strconv.Itoa(n) + " of these carry no reference valuation because the oracle reference read did not answer: " +
+		"an outage, not a missing feed, and the response is flagged stale until it answers."
 }
 
 // rwaReferenceProvenanceProse describes the kinds of claim in the total from the provenances actually present (oracle NAV values
