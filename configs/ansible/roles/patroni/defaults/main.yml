@@ -41,6 +41,9 @@ patroni_synchronous_node_count: 1   # ANY 1 of 2 replicas
 etcd_data_dir: /var/lib/etcd
 # "existing" only for a member added with `etcdctl member add` (README, Replacing an etcd member).
 etcd_initial_cluster_state: new
+# Lets an empty member start with state new although a peer has quorum, could not
+# be asked, or the play is partial: only to finish a half-done first bootstrap (README).
+etcd_allow_new_bootstrap: false
 etcd_client_port: 2379
 etcd_peer_port: 2380
 # Heartbeat / election timeouts in ms.

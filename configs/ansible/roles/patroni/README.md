@@ -136,6 +136,20 @@ etcdctl member add db-02 --peer-urls=https://10.0.0.12:2380
 ansible-playbook ... --limit db-02 -e etcd_initial_cluster_state=existing
 ```
 
+Once a host's etcd data dir holds a member, `/etc/default/etcd` renders
+`existing` regardless of the variable, so later full runs do not need the
+`-e` and do not restart etcd over it.
+
+The role also refuses `new` when a peer cannot be asked at all (TLS,
+firewall, timeout), because that is not evidence that no cluster exists.
+
+Finishing a half-done first bootstrap is the one case where `new` beside a
+live quorum is correct: the other members started from the same
+`initial-cluster` and token, and this listed member has never run etcd and
+was never removed. Re-run against it with
+`-e etcd_allow_new_bootstrap=true` (default `false`). Never set it for a
+replaced host: that one needs `member add` and `existing` as above.
+
 ## Smoke test
 
 After the playbook finishes:

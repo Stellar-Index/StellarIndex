@@ -305,22 +305,63 @@ check(confirm.get("uri", {}).get("url", "").endswith("/replica") and "_replica_c
       "replica join asserts /replica answers 200")
 
 # patroni/etcd: "new" on an empty data dir is refused beside a live quorum or on a partial play.
-check('ETCD_INITIAL_CLUSTER_STATE="{{ etcd_initial_cluster_state }}"' in text("patroni/templates/etcd.conf.j2")
-      and yaml.safe_load(text("patroni/defaults/main.yml"))["etcd_initial_cluster_state"] == "new",
-      "etcd initial cluster state is a variable defaulting to new")
+pdefaults = yaml.safe_load(text("patroni/defaults/main.yml"))
+check(pdefaults["etcd_initial_cluster_state"] == "new" and pdefaults.get("etcd_allow_new_bootstrap") is False,
+      "etcd initial cluster state defaults to new; the new-bootstrap override defaults to false")
+etcd_conf = jinja2.Environment(undefined=jinja2.ChainableUndefined).from_string(text("patroni/templates/etcd.conf.j2"))
+for member_dir, state, want in ((False, "new", "new"), (False, "existing", "existing"), (True, "new", "existing"),
+                                (True, "existing", "existing")):
+    out = etcd_conf.render(**{**pdefaults, "inventory_hostname": "db-02", "ansible_host": "10.0.0.12",
+                              "groups": {"postgres_cluster": ["db-01", "db-02"]},
+                              "hostvars": {"db-01": {"ansible_host": "10.0.0.11"}, "db-02": {"ansible_host": "10.0.0.12"}},
+                              "etcd_initial_cluster_state": state, "_etcd_member_dir": {"stat": {"exists": member_dir}}})
+    check(f'ETCD_INITIAL_CLUSTER_STATE="{want}"' in out,
+          f"etcd.conf renders initial state {want} for member dir={member_dir} variable={state}")
 check(re.search(r'^ETCD_AUTO_COMPACTION_RETENTION="(?!0")[^"]+"', code("patroni/templates/etcd.conf.j2"), re.M) is not None,
       "etcd auto-compaction is enabled")
-etcd_refuse = next(t for t in tasks("patroni/tasks/03-etcd-configure.yml")
-                   if t.get("name") == "refuse to bootstrap a new etcd cluster beside a live one")["when"]
+etcd_tasks = {t.get("name"): t for t in tasks("patroni/tasks/03-etcd-configure.yml")}
+etcd_refuse = etcd_tasks["refuse to bootstrap a new etcd cluster beside a live one"]["when"]
+etcd_unasked = etcd_tasks.get("refuse to bootstrap a new etcd cluster without knowing whether one is live", {}).get("when")
 group = ["db-01", "db-02", "db-03"]
-for member, state, quorum, play, want in ((False, "new", 1, group, False), (False, "new", 0, group, True),
-                                          (False, "new", 1, ["db-02"], True), (True, "new", 0, ["db-02"], False),
-                                          (False, "existing", 0, ["db-02"], False)):
+ansible_env.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+for member, state, quorum, play, allow, want in (
+        (False, "new", 1, group, False, False), (False, "new", 0, group, False, True),
+        (False, "new", 1, ["db-02"], False, True), (True, "new", 0, ["db-02"], False, False),
+        (False, "existing", 0, ["db-02"], False, False),
+        (False, "new", 0, group, True, False), (False, "new", 1, ["db-02"], True, False)):
     v = dict(_etcd_member_dir={"stat": {"exists": member}}, etcd_initial_cluster_state=state,
-             _etcd_peer_quorum={"rc": quorum}, groups={"postgres_cluster": group}, ansible_play_hosts_all=play)
-    ansible_env.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+             _etcd_peer_quorum={"rc": quorum}, groups={"postgres_cluster": group}, ansible_play_hosts_all=play,
+             etcd_allow_new_bootstrap=allow)
     check(fires(etcd_refuse, **v) == want,
-          f"etcd refuse (member dir={member} state={state} peer quorum rc={quorum} play={play}) -> {want}")
+          f"etcd refuse (member dir={member} state={state} peer quorum rc={quorum} play={play} allow={allow}) -> {want}")
+for member, quorum, allow, want in ((False, 2, False, True), (False, 2, True, False), (False, 1, False, False),
+                                    (True, 2, False, False)):
+    v = dict(_etcd_member_dir={"stat": {"exists": member}}, etcd_initial_cluster_state="new",
+             _etcd_peer_quorum={"rc": quorum}, etcd_allow_new_bootstrap=allow)
+    check(etcd_unasked is not None and fires(etcd_unasked, **v) == want,
+          f"etcd could-not-ask refusal (member dir={member} probe rc={quorum} allow={allow}) -> {want}")
+refuse_msg = etcd_tasks["refuse to bootstrap a new etcd cluster beside a live one"]["fail"]["msg"]
+check("half-done first bootstrap" in refuse_msg and "-e etcd_allow_new_bootstrap=true" in refuse_msg,
+      "etcd refusal names the half-done first bootstrap way through")
+
+# etcd peer probe: a peer that could not be asked (TLS, firewall) is not "no quorum".
+probe = etcd_tasks["ask the other members whether an etcd cluster already has quorum"]["shell"]["cmd"]
+probe_sh = ansible_env.from_string(probe).render(
+    groups={"postgres_cluster": group}, inventory_hostname="db-01", etcd_tls_enabled=False, etcd_client_port=2379,
+    hostvars={"db-02": {"ansible_host": "10.0.0.12"}, "db-03": {"ansible_host": "10.0.0.13"}})
+peer_cases = {"healthy": 'exit 0', "no-quorum": 'case "$*" in *health*) echo "unhealthy: context deadline exceeded" >&2; exit 1 ;; esac; exit 0',
+              "refused": 'echo "dial tcp 10.0.0.1:2379: connect: connection refused" >&2; exit 1',
+              "tls": 'echo "transport: authentication handshake failed: x509: certificate signed by unknown authority" >&2; exit 1'}
+for p2, p3, want in (("refused", "healthy", 0), ("no-quorum", "refused", 1), ("refused", "refused", 1),
+                     ("tls", "refused", 2), ("refused", "tls", 2), ("tls", "healthy", 0)):
+    with tempfile.TemporaryDirectory() as d:
+        with open(f"{d}/etcdctl", "w") as f:
+            f.write("#!/bin/bash\ncase \"$*\" in\n"
+                    f"  *10.0.0.12*) {peer_cases[p2]} ;;\n  *10.0.0.13*) {peer_cases[p3]} ;;\nesac\n")
+        os.chmod(f"{d}/etcdctl", 0o755)
+        rc = subprocess.run(["bash", "-c", probe_sh], env={**os.environ, "PATH": f"{d}:{os.environ['PATH']}"},
+                            stdin=subprocess.DEVNULL, capture_output=True).returncode
+    check(rc == want, f"etcd peer probe (db-02 {p2}, db-03 {p3}) -> rc {want} (got {rc})")
 
 # redis: the live maxmemory-policy enforce runs only on a managed host whose Sentinel answered;
 # a fresh host (distro redis on loopback, AUTH failing with rc 0 and no output) is left to the template.
