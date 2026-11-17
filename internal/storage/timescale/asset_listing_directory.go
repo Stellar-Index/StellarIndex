@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 	"time"
 )
@@ -121,7 +123,7 @@ const listingPriceFreshSQL = `price_usd IS NOT NULL
 const listingUpsertChunk = 500
 
 // ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows the upstream no longer carries.
-// ambiguous counts addresses withheld because more than one listing id claimed them.
+// ambiguous counts addresses more than one listing id claimed; they are kept unpriced and logged.
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
 ) (upserted, pruned int64, ambiguous int, err error) {
@@ -133,9 +135,10 @@ func (s *Store) ReplaceListingDirectory(
 	if len(entries) == 0 {
 		return 0, 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
-	entries, ambiguous = dedupListingEntriesByAddress(entries)
-	if len(entries) == 0 {
-		return 0, 0, ambiguous, errors.New("listing directory: every address was ambiguous (would prune the whole source)")
+	entries, contested := dedupListingEntriesByAddress(entries)
+	if ambiguous = len(contested); ambiguous > 0 {
+		slog.Warn("listing directory: addresses claimed by more than one listing id are kept unpriced",
+			"source", source, "count", ambiguous, "addresses", contested)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -176,34 +179,31 @@ func (s *Store) ReplaceListingDirectory(
 	return upserted, pruned, ambiguous, nil
 }
 
-// dedupListingEntriesByAddress collapses repeats of one claim and withholds every address that two listing ids claim: the
-// address -> instrument pairing is then ambiguous, and picking one would publish an arbitrary claimant's price. Order is kept; an
-// upsert chunk may hold each conflict key once.
-func dedupListingEntriesByAddress(entries []ListingEntry) (out []ListingEntry, ambiguous int) {
+// dedupListingEntriesByAddress collapses repeats of one claim, keeping first-appearance order; an upsert chunk may hold each conflict
+// key once. An address two listing ids claim is kept (dropping it would prune the row and read as not listed) with no price, time or
+// ticker, since picking one would publish an arbitrary claimant's; it keeps the lowest id so the row is stable across syncs.
+func dedupListingEntriesByAddress(entries []ListingEntry) (out []ListingEntry, contested []string) {
 	idx := make(map[string]int, len(entries))
-	contested := make(map[string]bool)
 	out = make([]ListingEntry, 0, len(entries))
 	for _, e := range entries {
-		if i, seen := idx[e.Address]; seen {
-			if out[i].ListingID != e.ListingID {
-				contested[e.Address] = true
-			}
+		i, seen := idx[e.Address]
+		if !seen {
+			idx[e.Address] = len(out)
+			out = append(out, e)
+			continue
+		}
+		prev := out[i]
+		if prev.ListingID == e.ListingID && !slices.Contains(contested, e.Address) {
 			out[i] = e
 			continue
 		}
-		idx[e.Address] = len(out)
-		out = append(out, e)
-	}
-	if len(contested) == 0 {
-		return out, 0
-	}
-	kept := out[:0]
-	for _, e := range out {
-		if !contested[e.Address] {
-			kept = append(kept, e)
+		if !slices.Contains(contested, e.Address) {
+			contested = append(contested, e.Address)
 		}
+		out[i] = ListingEntry{Address: e.Address, ListingID: min(prev.ListingID, e.ListingID), Source: e.Source}
 	}
-	return kept, len(contested)
+	slices.Sort(contested)
+	return out, contested
 }
 
 // buildListingUpsert renders a multi-row upsert: 5 params per row plus a shared source at len(chunk)*5+1; synced_at is the tx-stable now().

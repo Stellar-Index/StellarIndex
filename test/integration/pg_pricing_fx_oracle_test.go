@@ -2401,3 +2401,58 @@ func TestStorage_LatestOracleStreams_NewestRowPerStream(t *testing.T) {
 		}
 	}
 }
+
+// TestListingDirectory_ContestedAddressStaysListedUnpriced: once a second coin id claims an address, a resync must keep its
+// row (a pruned row reads as not listed, which is false) with no price either claimant could have supplied.
+func TestListingDirectory_ContestedAddressStaysListedUnpriced(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	contested := "C" + strings.Repeat("K", 55)
+	other := "C" + strings.Repeat("O", 55)
+	at := time.Now().UTC().Add(-time.Hour)
+	first := []timescale.ListingEntry{
+		{Address: contested, ListingID: "acme", Symbol: "acm", PriceUSD: "1.00", PricedAt: at},
+		{Address: other, ListingID: "other", Symbol: "oth", PriceUSD: "2.00", PricedAt: at},
+	}
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, first, "coingecko"); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	second := []timescale.ListingEntry{
+		first[0], first[1],
+		{Address: contested, ListingID: "acme-wrapped", Symbol: "wacm", PriceUSD: "0.004", PricedAt: at},
+	}
+	_, pruned, ambiguous, err := store.ReplaceListingDirectory(ctx, second, "coingecko")
+	if err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if ambiguous != 1 || pruned != 0 {
+		t.Errorf("second sync ambiguous=%d pruned=%d, want 1 and 0", ambiguous, pruned)
+	}
+
+	byAddr, census, err := store.ListingDirectoryByAddress(ctx)
+	if err != nil {
+		t.Fatalf("ListingDirectoryByAddress: %v", err)
+	}
+	row, ok := byAddr[contested]
+	if !ok {
+		t.Fatal("contested address was pruned; the valuation would report not_listed")
+	}
+	if row.PriceUSD != "" || !row.PricedAt.IsZero() {
+		t.Errorf("contested row priced %q at %v, want no price (no_listing_price)", row.PriceUSD, row.PricedAt)
+	}
+	if got := byAddr[other].PriceUSD; got != "2.00" {
+		t.Errorf("uncontested row price = %q, want 2.00", got)
+	}
+	if census.Priced != 1 {
+		t.Errorf("census.Priced = %d, want 1 (the contested row is unpriced)", census.Priced)
+	}
+}

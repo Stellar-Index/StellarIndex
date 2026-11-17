@@ -166,25 +166,33 @@ func TestBuildListingUpsert_CarriesPriceAsDecimalString(t *testing.T) {
 	}
 }
 
-// TestDedupListingEntriesByAddress pins collapsing before chunking: an address may appear once per multi-row upsert, or Postgres
-// rejects the statement. An address two coin ids claim is ambiguous and is left out, so no reader can take either claimant's price.
+// TestDedupListingEntriesByAddress: an upsert chunk may hold each address once, or Postgres rejects the statement. An address two
+// coin ids claim stays listed (dropping it would prune its row and read as not_listed) but unpriced, so no reader can take either
+// claimant's price.
 func TestDedupListingEntriesByAddress(t *testing.T) {
 	t.Parallel()
 
+	priced := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	in := []ListingEntry{
-		{Address: "A", ListingID: "acme", PriceUSD: "1.00"},
+		{Address: "A", ListingID: "acme", Symbol: "ACM", PriceUSD: "1.00", PricedAt: priced},
 		{Address: "B", ListingID: "only-b"},
-		{Address: "A", ListingID: "acme-old", PriceUSD: "0.004"}, // a second instrument claims A
+		{Address: "A", ListingID: "acme-old", Symbol: "ACMO", PriceUSD: "0.004", PricedAt: priced}, // a second instrument claims A
 		{Address: "C", ListingID: "only-c"},
 		{Address: "B", ListingID: "only-b"}, // the same claim repeated is not ambiguous
 	}
-	got, ambiguous := dedupListingEntriesByAddress(in)
+	got, contested := dedupListingEntriesByAddress(in)
 
-	if ambiguous != 1 {
-		t.Errorf("ambiguous = %d, want 1 (address A)", ambiguous)
+	if len(contested) != 1 || contested[0] != "A" {
+		t.Errorf("contested = %v, want [A]", contested)
 	}
-	if len(got) != 2 || got[0].Address != "B" || got[1].Address != "C" {
-		t.Fatalf("got %+v, want B then C (A withheld, first-appearance order kept)", got)
+	if len(got) != 3 || got[0].Address != "A" || got[1].Address != "B" || got[2].Address != "C" {
+		t.Fatalf("got %+v, want A, B, C (first-appearance order kept)", got)
+	}
+	if a := got[0]; a.PriceUSD != "" || !a.PricedAt.IsZero() || a.Symbol != "" {
+		t.Errorf("contested row = %+v, want no price, no publication time, no claimant's ticker", a)
+	}
+	if got[0].ListingID != "acme" {
+		t.Errorf("contested row listing_id = %q, want the lowest claimant id (stable whatever the upstream order)", got[0].ListingID)
 	}
 }
 

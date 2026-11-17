@@ -176,7 +176,7 @@ func listingSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Synced: %d upserted, %d pruned, %d ambiguous address(es) withheld (source=%s).\n", upserted, pruned, ambiguous, listingSource)
+	fmt.Printf("Synced: %d upserted, %d pruned, %d contested address(es) kept unpriced (source=%s).\n", upserted, pruned, ambiguous, listingSource)
 	return nil
 }
 
