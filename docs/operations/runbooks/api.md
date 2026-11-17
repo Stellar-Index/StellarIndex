@@ -653,7 +653,7 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_registration_table_growing
 
-**Trigger.** `max(stellarindex_accounts_rows) - min(min_over_time((stellarindex_accounts_rows > 0)[6h:5m])) > 500` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
+**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
 
 **Check.** `stellarindex_api_keys_rows` moves in step; request rate and distinct client addresses on `/v1/register` in the API log. **Likely causes.** Rotating addresses (IPv6 /48s, proxy pools) each staying under the per-IP sign-up cap; or a real traffic spike. **Fix.** Limit the source ranges at the edge. Deleting the rows is a judgement call per account: they are real accounts with live keys. **Escalate:** growth continues past an edge block.
 
