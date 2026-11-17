@@ -51,7 +51,7 @@ else
   echo "baseline: ${PREV} (previous release tag by ancestry)"
 fi
 
-if ! ADDED="$(git diff --name-only --diff-filter=A "$PREV" "$VERSION" -- 'migrations/*.up.sql')"; then
+if ! ADDED="$(git diff --no-renames --name-only --diff-filter=A "$PREV" "$VERSION" -- 'migrations/*.up.sql')"; then
   echo "::error::migration follow-up gate: git diff ${PREV}..${VERSION} failed — cannot list the migrations this deploy adds; refusing to pass (fail-closed)."
   exit 1
 fi
