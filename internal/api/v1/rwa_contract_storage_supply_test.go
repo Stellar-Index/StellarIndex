@@ -67,8 +67,8 @@ func TestContractArmReadsStorageWhenTheEventLogIsEmpty(t *testing.T) {
 	}
 }
 
-// TestContractArmKeepsTheEventReadingWhenThereIsHistory is the control: a token whose log has flows is answered by the
-// log and storage is never consulted, so the two bases are never summed or swapped.
+// TestContractArmKeepsTheEventReadingWhenThereIsHistory is the control: a log whose net is at or above the storage level
+// answers, and the two bases are never summed.
 func TestContractArmKeepsTheEventReadingWhenThereIsHistory(t *testing.T) {
 	const contractID = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
 	total, _ := new(big.Int).SetString("28327867109034", 10)
@@ -91,9 +91,39 @@ func TestContractArmKeepsTheEventReadingWhenThereIsHistory(t *testing.T) {
 	if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != supply.BasisSEP41LakeFlows.String() {
 		t.Errorf("supply_basis = %v, want %q", rows[0].SupplyBasis, supply.BasisSEP41LakeFlows)
 	}
-	if len(storage.asked) != 0 {
-		t.Errorf("storage was read for a token whose event log has %d flows; the two bases "+
-			"hold the SAME tokens, so consulting both is how they get summed", 1828)
+}
+
+// TestContractArmServesTheStorageFloorWhenTheLogIsProvablyPartial: storage is a floor, so a level above the event net proves the
+// log missed issuance. The row must take the storage reading (a lower-bound basis) and its cap must carry the bound.
+func TestContractArmServesTheStorageFloorWhenTheLogIsProvablyPartial(t *testing.T) {
+	const contractID = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
+	net := big.NewInt(10_000_0000000)
+	held := big.NewInt(1_010_000_0000000)
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+			contractID: {ContractID: contractID, Total: net, Mint: net, Burn: big.NewInt(0), FlowCount: 12},
+		}}, ContractStorageSupply: &storageSupplyStub{byContract: map[string]clickhouse.ContractStorageSupply{
+			contractID: {ContractID: contractID, Total: held, BalanceEntries: 40},
+		}}},
+		logger: discardLogger(),
+	}
+	price := "1.00"
+	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7, PriceUSD: &price}}
+
+	s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}})
+
+	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != held.String() {
+		t.Fatalf("circulating_supply = %v, want the storage level %s, not the partial event net %s",
+			rows[0].CirculatingSupply, held, net)
+	}
+	if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != supply.BasisContractStorageBalances.String() {
+		t.Errorf("supply_basis = %v, want %q", rows[0].SupplyBasis, supply.BasisContractStorageBalances)
+	}
+	if rows[0].MarketCapUSD == nil || *rows[0].MarketCapUSD != "1010000.00" {
+		t.Fatalf("market_cap_usd = %v, want 1010000.00", rows[0].MarketCapUSD)
+	}
+	if !rows[0].MarketCapLowerBound {
+		t.Error("market_cap_lower_bound is false on a cap built from a floor supply")
 	}
 }
 
@@ -160,6 +190,26 @@ func TestContractArmWithNoStorageReaderWiredPublishesNoZero(t *testing.T) {
 	}
 	if rows[1].CirculatingSupply == nil || *rows[1].CirculatingSupply != "0" {
 		t.Errorf("minted then fully burned: supply = %v, want 0 from the event log", rows[1].CirculatingSupply)
+	}
+}
+
+// A failed storage read could have proved the event net partial, so the member is unread, not valued on the net.
+func TestContractArmCountsAFailedStorageReadAsACutWhenTheLogHasFlows(t *testing.T) {
+	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	net := big.NewInt(10_000_0000000)
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+			contractID: {ContractID: contractID, Total: net, Mint: net, Burn: big.NewInt(0), FlowCount: 12},
+		}}, ContractStorageSupply: &storageSupplyStub{err: errors.New("clickhouse down")}},
+		logger: discardLogger(),
+	}
+	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
+
+	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}}); !cut {
+		t.Error("cut = false after the storage read failed")
+	}
+	if rows[0].CirculatingSupply != nil {
+		t.Errorf("supply = %v, want none: the net is unproven", *rows[0].CirculatingSupply)
 	}
 }
 

@@ -55,8 +55,8 @@ const (
 	BasisClassicTrustlineSum Basis = "classic_trustline_sum"
 
 	// BasisContractStorageBalances sums per-holder BALANCE ledger entries (`Balance(Address) → i128`) for
-	// tokens emitting no SEP-41 events, which supply_flows sums to a confident zero. It supersedes the
-	// event reading and is never summed with it (double-count). A lower bound.
+	// tokens emitting no SEP-41 events (which supply_flows sums to a confident zero) or whose event net
+	// is below it. It supersedes the event reading and is never summed with it (double-count). A lower bound.
 	BasisContractStorageBalances Basis = "contract_storage_balances"
 
 	// BasisNoMetadata means there is no defensible value for at least one of total / circulating / max;
