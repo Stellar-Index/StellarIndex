@@ -28,13 +28,14 @@ import (
 const assetPriceSnapshotMaxAge = "15 minutes"
 
 // priceArmPickExpr names the pricing arm: 'native' (xlm_usd anchor), 'direct' (USD-proxy market) or 'xlm' (XLM market via anchor `ax`
-// at its own minute). The newer observation wins (fixed order would serve a days-old USD print as current); ties go direct. No anchor
-// within [xlmUSDAnchorMaxAge] means the xlm arm cannot price.
+// at its own minute). An arm whose minute cleared the $0.01 notional floor beats one that did not, whatever their age (a sub-cent
+// print costs nothing to place); between arms of equal floor status the newer observation wins and ties go direct. No anchor within
+// [xlmUSDAnchorMaxAge] means the xlm arm cannot price.
 const priceArmPickExpr = `CASE
 		      WHEN ca.asset_id = 'native'
 		        THEN CASE WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL THEN 'native' END
 		      WHEN direct.vwap IS NOT NULL
-		           AND (ax.vwap IS NULL OR direct.bucket >= vs_xlm.bucket)
+		           AND (ax.vwap IS NULL OR (direct.floored, direct.bucket) >= (vs_xlm.floored, vs_xlm.bucket))
 		        THEN 'direct'
 		      WHEN ax.vwap IS NOT NULL
 		        THEN 'xlm'
@@ -72,6 +73,16 @@ func xlmUSDLateralJoin(sac string) func(alias, ts string) string {
 	}
 }
 
+// xlmUSDGridMissing is true when [xlmUSDGridJoin] would leave the anchor at ts NULL; NOT IN over the uncorrelated grid hashes once.
+func xlmUSDGridMissing(ts string) string {
+	return "(" + ts + " NOT IN (SELECT minute FROM xlm_usd_grid WHERE vwap IS NOT NULL))"
+}
+
+// xlmUSDLateralMissing is true when [xlmUSDLateralJoin] would leave the anchor at ts NULL; the SAC is the detail query's $2.
+func xlmUSDLateralMissing(ts string) string {
+	return "NOT EXISTS (SELECT 1 FROM (" + xlmUSDAnchorAt(ts, "$2::text") + ") fa WHERE fa.vwap IS NOT NULL)"
+}
+
 // snapshotPriceUSDExpr is the headline USD price through the arm [priceArmPickExpr] chose (read back as `aps.price_usd`).
 const snapshotPriceUSDExpr = `CASE pick.arm
 		      WHEN 'native' THEN (SELECT vwap FROM xlm_usd)
@@ -81,15 +92,18 @@ const snapshotPriceUSDExpr = `CASE pick.arm
 
 // priceChangePctExpr is the unrounded change over lookback ("1h", "24h", "7d"), both legs through the arm that priced the asset
 // (mixing arms would compare against a possibly stale "now"); NULL when that arm has no lookback row. Also NULL unless the lookback
-// minute is strictly older than the headline minute: the headline may fall back days to a floored trade, the lookback does not.
+// minute is strictly older than the headline minute: the headline may fall back days to a floored trade, the lookback does not. NULL
+// too when the headline cleared the notional floor and the lookback did not: a sub-cent minute is no baseline for a real price.
 func priceChangePctExpr(lookback string) string {
 	return fmt.Sprintf(`CASE pick.arm
 		      WHEN 'native' THEN CASE WHEN (SELECT vwap FROM xlm_usd_%[1]s) > 0
 		          AND (SELECT bucket FROM xlm_usd_%[1]s) < (SELECT bucket FROM xlm_usd)
 		        THEN ((SELECT vwap FROM xlm_usd) / (SELECT vwap FROM xlm_usd_%[1]s) - 1) * 100 END
 		      WHEN 'direct' THEN CASE WHEN direct_%[1]s.vwap > 0 AND direct_%[1]s.bucket < direct.bucket
+		          AND (direct_%[1]s.floored OR NOT direct.floored)
 		        THEN (direct.vwap / direct_%[1]s.vwap - 1) * 100 END
 		      WHEN 'xlm' THEN CASE WHEN vs_xlm_%[1]s.vwap > 0 AND ax_%[1]s.vwap > 0 AND vs_xlm_%[1]s.bucket < vs_xlm.bucket
+		          AND (vs_xlm_%[1]s.floored OR NOT vs_xlm.floored)
 		        THEN ((vs_xlm.vwap * ax.vwap)
 		            / (vs_xlm_%[1]s.vwap * ax_%[1]s.vwap) - 1) * 100 END
 		    END`, lookback)
@@ -124,8 +138,8 @@ const (
 
 // unionPriceArmCTE renders CTE pair `<name>_rows`/`<name>`: per asset, the newest 1m bucket in window against any of quotes in either
 // direction, its VWAP and venues. Rows are re-expressed as two legs and re-divided (see [combineDirVWAP]), weighted by volume_priced
-// (vwap covers only both-leg-positive trades). asset "" means all assets.
-func unionPriceArmCTE(name, quotes, window, asset string) string {
+// (vwap covers only both-leg-positive trades). asset "" means all assets; floored is the arm's floor flag over prices_1m row `p`.
+func unionPriceArmCTE(name, quotes, window, asset, floored string) string {
 	var baseSide, flipped string
 	if asset != "" {
 		baseSide = " AND base_asset = " + asset
@@ -133,7 +147,7 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 	}
 	return fmt.Sprintf(`
 		%[1]s_rows AS (
-		  SELECT asset_id, bucket, asset_leg, quote_leg, sources
+		  SELECT asset_id, bucket, asset_leg, quote_leg, sources, floored
 		    FROM (
 		      -- vwap carries no notional floor, so prefer the newest minute holding a trade over $0.01 and fall back to the newest
 		      -- minute only when the window has none; within the chosen minute a sub-cent direction is dropped too.
@@ -142,14 +156,14 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		             bool_or(u.floored) OVER w AS any_floored
 		        FROM (
 		          SELECT base_asset AS asset_id, bucket, volume_priced AS asset_leg,
-		                 vwap * volume_priced AS quote_leg, sources, notional_trade_count > 0 AS floored
-		            FROM prices_1m
+		                 vwap * volume_priced AS quote_leg, sources, %[6]s AS floored
+		            FROM prices_1m p
 		           WHERE quote_asset IN (%[2]s)%[4]s
 		             AND %[3]s
 		             AND vwap > 0 AND volume_priced > 0
 		          UNION ALL
-		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, notional_trade_count > 0 AS floored
-		            FROM prices_1m
+		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, %[6]s AS floored
+		            FROM prices_1m p
 		           WHERE base_asset IN (%[2]s)%[5]s
 		             AND %[3]s
 		             AND vwap > 0 AND volume_priced > 0
@@ -159,25 +173,35 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		   WHERE bucket = newest AND (floored OR NOT any_floored)
 		),
 		%[1]s AS (
-		  SELECT v.asset_id, v.bucket, v.vwap, s.source_count
+		  SELECT v.asset_id, v.bucket, v.vwap, v.floored, s.source_count
 		    FROM (SELECT asset_id, max(bucket) AS bucket,
-		                 sum(quote_leg) / sum(asset_leg) AS vwap
+		                 sum(quote_leg) / sum(asset_leg) AS vwap,
+		                 bool_or(floored) AS floored
 		            FROM %[1]s_rows
 		           GROUP BY asset_id) v
 		    LEFT JOIN (SELECT asset_id, count(DISTINCT src)::int AS source_count
 		                 FROM %[1]s_rows CROSS JOIN LATERAL unnest(sources) AS src
 		                GROUP BY asset_id) s ON s.asset_id = v.asset_id
-		)`, name, quotes, window, baseSide, flipped)
+		)`, name, quotes, window, baseSide, flipped, floored)
+}
+
+// xlmArmFlooredSQL is the XLM arm's floor flag: an unstamped minute (volume_usd = 0) is floored only while its anchor is missing at read
+// time too, so ingest and read agree it is an anchor gap; with an anchor present it may be a crumb, so it ranks as one.
+func xlmArmFlooredSQL(anchorMissing func(ts string) string) string {
+	return `CASE WHEN p.notional_trade_count > 0 THEN true
+		                      WHEN p.volume_usd = 0 THEN ` + anchorMissing("p.bucket") + `
+		                      ELSE false END`
 }
 
 // assetPriceArmCTEs renders the eight arms [priceArmJoins] reads: `direct_usd*` against [usdProxyQuotes], `asset_vs_xlm*` against
 // [xlmQuotes]. TestProxyQuoteLists_Lockstep pins both IN-lists; xlmQuoteList is an [xlmQuotesBound] form whose placeholder the caller
-// binds to the native SAC.
-func assetPriceArmCTEs(asset, xlmQuoteList string) string {
+// binds to the native SAC. anchorMissing must agree with the anchor join the caller hands [priceArmJoins].
+func assetPriceArmCTEs(asset, xlmQuoteList string, anchorMissing func(ts string) string) string {
 	arms := make([]string, 0, 8)
-	for _, arm := range []struct{ name, quotes string }{
-		{"direct_usd", usdProxyQuotes},
-		{"asset_vs_xlm", xlmQuoteList},
+	// A direct USD minute stamped 0 means missing peg config or dust that rounds to zero, never an anchor gap: it is a crumb.
+	for _, arm := range []struct{ name, quotes, floored string }{
+		{"direct_usd", usdProxyQuotes, notionalMinuteSQL},
+		{"asset_vs_xlm", xlmQuoteList, xlmArmFlooredSQL(anchorMissing)},
 	} {
 		for _, lb := range []struct{ suffix, window string }{
 			{"", priceWindowNow},
@@ -185,17 +209,22 @@ func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 			{"_24h", priceWindow24h},
 			{"_7d", priceWindow7d},
 		} {
-			arms = append(arms, unionPriceArmCTE(arm.name+lb.suffix, arm.quotes, lb.window, asset))
+			arms = append(arms, unionPriceArmCTE(arm.name+lb.suffix, arm.quotes, lb.window, asset, arm.floored))
 		}
 	}
 	return strings.Join(arms, ",")
 }
 
-// assetPriceCTEs is the rollup's price substrate (eight arms, XLM scalars, anchor grid); no pushdown markers since the recompute is
-// all-asset. $1 is canonical.NativeSACContractID().
-var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," +
-	xlmUSDNativeCTEs(nativeSACParam(1)) + "," +
-	xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1))
+// assetPriceCTEs is the rollup's price substrate (anchor grid, eight arms, XLM scalars); no pushdown markers since the recompute is
+// all-asset. The grid comes first because the XLM arms read it. $1 is canonical.NativeSACContractID().
+var assetPriceCTEs = xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1)) + "," +
+	assetPriceArmCTEs("", xlmQuotesBound1, xlmUSDGridMissing) + "," +
+	xlmUSDNativeCTEs(nativeSACParam(1))
+
+// notionalMinuteSQL is true for a prices_1m row holding a trade over the $0.01 notional floor. volume_usd = 0 means no trade in the
+// minute was USD-stamped (no anchor at ingest; nothing restamps it) or every stamp rendered 0 at FloatString(8): unpriced or dust, never
+// proof of a real trade. Series picks rank on this alone since they price XLM per period, not at the minute.
+const notionalMinuteSQL = `(notional_trade_count > 0)`
 
 // usdQuotePref ranks the USD quote forms (true USD, classic USDC, its SAC) when two tie on a
 // bucket; without it the newest-bucket pick falls to scan order.
@@ -213,8 +242,8 @@ const (
 )
 
 // refreshAssetPriceSnapshotUpsert recomputes each priceable asset's price, 1h/24h/7d change and source count from [assetPriceCTEs].
-// Money stays NUMERIC and unrounded (ADR-0003); the decimals correction happens here, before any rounding; computed_at is the tx
-// timestamp for the prune.
+// Money stays NUMERIC and unrounded (ADR-0003); the decimals correction happens here, before any rounding; computed_at is
+// [rollupStampSQL].
 var refreshAssetPriceSnapshotUpsert = `
 INSERT INTO asset_price_snapshot AS s
        (asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct,
@@ -253,7 +282,7 @@ WITH ` + assetPriceCTEs + `,
 		  LEFT JOIN nonstandard_decimals_assets nda ON nda.asset = ca.asset_id
 		)
 		SELECT asset_id, price_usd, change_1h_pct, change_24h_pct,
-		       change_7d_pct, source_count, now()
+		       change_7d_pct, source_count, ` + rollupStampSQL + `
 		  FROM derived
 		 WHERE price_usd IS NOT NULL
 ON CONFLICT (asset_id) DO UPDATE
@@ -264,8 +293,12 @@ ON CONFLICT (asset_id) DO UPDATE
        source_count   = EXCLUDED.source_count,
        computed_at    = EXCLUDED.computed_at`
 
-// refreshAssetPriceSnapshotPrune drops assets no longer priceable this pass; just-upserted rows carry computed_at = now() (one tx) and
-// survive.
+// rollupStampSQL is both listing rollups' computed_at: the wall clock when the row is written, not the tx start, so a slow but successful
+// sweep (two statements of up to 10 minutes) does not commit rows already past [assetPriceSnapshotMaxAge].
+const rollupStampSQL = `clock_timestamp()`
+
+// refreshAssetPriceSnapshotPrune drops assets no longer priceable this pass; just-upserted rows carry a stamp at or after the tx start
+// (now()) and survive.
 const refreshAssetPriceSnapshotPrune = `DELETE FROM asset_price_snapshot WHERE computed_at < now()`
 
 // refreshAssetPriceSnapshotPruneExpired is the zero-row pass's prune ([pruneRollup]): past assetPriceSnapshotMaxAge the join ignores a row.

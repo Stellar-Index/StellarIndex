@@ -21,8 +21,9 @@
 # Ordering only (After=, no Requires=), as the deployed templates: a
 # Requires= on a unit the host does not have (Postgres in a container
 # or managed) refuses to start, and a datastore stop leaves this unit
-# stopped, not failed, so nothing restarts it or alerts. The binary
-# retries its connections at boot.
+# stopped, not failed, so nothing restarts it or alerts. Postgres is
+# pinged once at boot and a failure exits the process, so the restart
+# limit below, not the binary, is what rides out a Postgres restart.
 # Dependencies:
 #   - minio.service (the source of ledger meta)
 #   - postgresql.service (the trade-row destination)
