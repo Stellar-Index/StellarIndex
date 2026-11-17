@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowDownUp, BadgeCheck, ChevronDown, Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
+import { thinMarketNote } from '@/components/ThinMarketBadge';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
@@ -26,7 +27,11 @@ import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
 import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
 
-import { useResolvedAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+import {
+  THIN_MARKET_CAPTION,
+  useResolvedAssetPrice,
+  type PriceProvenance,
+} from './LiveAssetPrice';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -78,6 +83,8 @@ export interface SwapToken {
   collision?: boolean;
   /** Issuer or contract address, the only thing that tells same-code rows apart. */
   issuer?: string | null;
+  /** The price comes from a market below the substance floor. */
+  thin?: boolean;
 }
 
 /** assetIssuer — the G…/C… address in a canonical asset id, if it has one. */
@@ -282,6 +289,7 @@ function swapBasisNote(tokens: SwapToken[]): string | null {
   for (const t of tokens) {
     if (t.usdPrice == null) continue;
     const bits: string[] = [];
+    if (t.thin) bits.push(THIN_MARKET_CAPTION);
     if (t.basis === 'peg') {
       bits.push('declared 1:1 peg, not an observed market rate');
     }
@@ -371,18 +379,23 @@ export function AssetSwap({
   const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
   // What the legs' USD prices actually are, for the legs whose price
   // came with a declared basis and an observation time.
+  const fromThin = resolved.thin && fromToken.key === pageToken.key;
+  const toThin = resolved.thin && toToken.key === pageToken.key;
+  const thinShown = (fromThin && pFrom != null) || (toThin && pTo != null);
   const basisNote = swapBasisNote([
     {
       ...fromToken,
       usdPrice: pFrom,
       basis: fromRate.basis,
       observedAt: fromRate.observedAt,
+      thin: fromThin,
     },
     {
       ...toToken,
       usdPrice: pTo,
       basis: toRate.basis,
       observedAt: toRate.observedAt,
+      thin: toThin,
     },
   ]);
 
@@ -483,6 +496,11 @@ export function AssetSwap({
       </div>
       {basisNote != null && (
         <p className="text-ink-muted mt-3 text-xs">{basisNote}</p>
+      )}
+      {thinShown && (
+        <p className="text-warn-700 mt-1 text-xs">
+          {thinMarketNote(resolved.poll.substance)}
+        </p>
       )}
     </Panel>
   );

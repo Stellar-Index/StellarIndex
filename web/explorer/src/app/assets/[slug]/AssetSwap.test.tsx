@@ -181,6 +181,18 @@ describe('AssetSwap page-asset leg', () => {
     await vi.waitFor(() => expect(receiveValue()).toBe(''));
     vi.unstubAllGlobals();
   });
+
+  it('carries the thin-market warning when the live price is thin', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.26' }, flags: { thin_market: true } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    expect(
+      screen.getByText(/thin market · low confidence · in no total/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Low confidence:/)).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
 });
 
 // Production serves a catalogue row with asset_id = its slug, which

@@ -34,6 +34,8 @@ export type PriceProvenance =
   | 'transitive'
   | null;
 
+export const THIN_MARKET_CAPTION = 'thin market · low confidence · in no total';
+
 /** A tip tick is "live" while fresher than this (producer window is
  * 5s; 30s of silence = wedged stream or backgrounded tab). */
 const TIP_LIVE_STALE_MS = 30_000;
@@ -183,7 +185,7 @@ export function LiveAssetPrice({
           (poll.withheldDetail ?? poll.withheldTitle ?? 'price withheld')}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
         {!withheld && tipActive && caveat && ` · ${caveat}`}
-        {thin && shown != null && 'thin market · low confidence · in no total'}
+        {thin && shown != null && THIN_MARKET_CAPTION}
         {!withheld &&
           !thin &&
           !tipActive &&
