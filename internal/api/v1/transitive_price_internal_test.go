@@ -112,7 +112,7 @@ func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 	viaUSDC := timescale.TransitivePrice{PriceUSD: "9999999.00", Hop: hopID, HopVolume24hUSD: "18755.68", HopQuote: usdcID}
 
 	// Both legs allowed: near leg (asset,hop) and the hop standing on its
-	// own against XLM — the same shape listingPriceAllowed checks.
+	// own against XLM — the same shape listingSubstanceVerdict checks.
 	bothLegs := map[string]bool{
 		assetID + "|" + hopID: true,
 		hopID + "|native":     true,

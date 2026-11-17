@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,11 +14,14 @@ import (
 // memoisation and the lookup routing.
 type stubFXHistory struct {
 	points []FXQuotePoint
+	mu     sync.Mutex // the verified listing reads fiat rates from parallel workers
 	calls  int
 	ticker string
 }
 
 func (s *stubFXHistory) ListFXHistory(_ context.Context, ticker string, _, _ time.Time) ([]FXQuotePoint, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
 	s.ticker = ticker
 	return s.points, nil
