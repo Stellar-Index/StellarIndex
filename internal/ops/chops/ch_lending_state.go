@@ -222,7 +222,8 @@ func (r lendingRun) proveLendingState(ctx context.Context, out io.Writer) error 
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "lending_state @%d: %d keys, %d mismatched\n", wm, p.Keys, p.Mismatched); err != nil {
+	if _, err := fmt.Fprintf(out, "lending_state @%d: %d keys, %d mismatched, %d not compared (history row past the watermark)\n",
+		wm, p.Keys, p.Mismatched, p.Ahead); err != nil {
 		return err
 	}
 	if p.Mismatched > 0 {

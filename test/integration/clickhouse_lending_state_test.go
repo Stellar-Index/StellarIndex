@@ -248,6 +248,24 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE entry_xdr = 'TAMPER' SETTINGS mutations_sync = 2`); err != nil {
 		t.Fatal(err)
 	}
+	// Rows written past the watermark by a window it refused, one replacing the watermark's own hour: not a mismatch.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_state_hourly
+		(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2027-02-10 11:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 11:59:00', 'UTC'), 'LATE'),
+		       (?, 'blnt', ?, toDateTime('2027-02-10 12:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 12:10:00', 'UTC'), 'A5')`,
+		pool, key, base+4, pool, key, base+4); err != nil {
+		t.Fatal(err)
+	}
+	if err := chops.Run(prove); err != nil {
+		t.Fatalf("proof with history rows past the watermark: %v", err)
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE ledger_seq > ? SETTINGS mutations_sync = 2`, base+3); err != nil {
+		t.Fatal(err)
+	}
+	// A merge may already have dropped the hour's row the late one replaced.
+	if err := runLendingWrite(t, addr, base, base+3); err != nil {
+		t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
+	}
 	// The yield pool gains a live reserve the table has never seen: the proof names it.
 	yieldID := xdr.ContractId(strkey.MustDecode(strkey.VersionByteContract, blnt.MainnetYieldBlentPool))
 	var asset xdr.ContractId
