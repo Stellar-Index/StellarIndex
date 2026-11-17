@@ -253,9 +253,11 @@ type SourceHealthRow struct {
 	Entries24h int64 `json:"entries_24h"`
 	// Enabled distinguishes "switched on and quiet" from "never switched on". The table lists
 	// every external.Registry entry, so an unwired source would otherwise read as broken, not off.
-	Enabled         bool   `json:"enabled"`
-	VolumeUSD24h    string `json:"volume_24h_usd,omitempty"`
-	MarketsCount24h int64  `json:"markets_count_24h"`
+	Enabled      bool   `json:"enabled"`
+	VolumeUSD24h string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound is true when VolumeUSD24h excludes unpriced trades, as on /v1/sources.
+	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
+	MarketsCount24h  int64 `json:"markets_count_24h"`
 }
 
 // handleDiagnosticsIngestion serves GET /v1/diagnostics/ingestion. Readers fan out under one deadline and soft-fail per reader
@@ -894,6 +896,7 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			if st.VolumeUSD24h.Valid {
 				row.VolumeUSD24h = st.VolumeUSD24h.String
 			}
+			row.VolumeLowerBound = st.VolumeLowerBound()
 		}
 		row.Entries24h = entries24h[name]
 		row.Enabled = enabledSources[name]

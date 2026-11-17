@@ -25,6 +25,9 @@ type SourceStats struct {
 	MarketsCount24h int64
 }
 
+// VolumeLowerBound reports whether VolumeUSD24h excludes unpriced trades and so is a floor, not the source's volume.
+func (ss SourceStats) VolumeLowerBound() bool { return ss.UnpricedTrades24h > 0 }
+
 // GetSourceStats returns trailing-24h trade counts and volume grouped by source; sources with no trades are absent, and volume is SUM(usd_volume) stamped at trade time, so unvalued trades are never repriced at today's rate.
 func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 	q := sourceStatsQuery()

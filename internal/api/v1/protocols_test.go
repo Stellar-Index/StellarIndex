@@ -712,11 +712,20 @@ func TestHandleProtocolDetail_CacheKeyIncludesWindow(t *testing.T) {
 // ─── DEX TVL join ────────────────────────────────────────────────────
 
 type stubTVLAquariusReader struct {
-	pools []timescale.AquariusPoolReserve
+	pools      []timescale.AquariusPoolReserve
+	registered []string
 }
 
 func (s stubTVLAquariusReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	return s.pools, nil
+}
+
+func (s stubTVLAquariusReader) ListProtocolContracts(_ context.Context, source string) ([]timescale.ProtocolContract, error) {
+	out := make([]timescale.ProtocolContract, 0, len(s.registered))
+	for _, id := range s.registered {
+		out = append(out, timescale.ProtocolContract{Source: source, ContractID: id})
+	}
+	return out, nil
 }
 
 type stubTVLPricerT struct{}
@@ -781,6 +790,74 @@ func TestHandleProtocols_TVLJoin(t *testing.T) {
 	}
 	if denv.Data.TVL == nil || denv.Data.TVL.TVLUSD != "10.00" {
 		t.Errorf("detail tvl = %+v, want 10.00", denv.Data.TVL)
+	}
+}
+
+// TestHandleProtocols_AquariusQuietPoolIsLowerBound pins that an Aquarius pool with no snapshot in the window is counted
+// unpriced and named unavailable_state, making tvl_total a lower bound, while the read pool's figure is unchanged.
+func TestHandleProtocols_AquariusQuietPoolIsLowerBound(t *testing.T) {
+	const quietPool = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
+	readPool := timescale.AquariusPoolReserve{
+		ContractID: "CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV",
+		ObservedAt: time.Now(),
+		Legs: []timescale.AquariusReserveLeg{
+			{TokenIndex: 0, Token: canonical.XLMSacContractID, Reserve: canonical.NewAmount(big.NewInt(400_000_000))},
+		},
+	}
+	for _, tc := range []struct {
+		name                    string
+		registered              []string
+		wantTotal, wantUnpriced int
+		wantNamed               bool
+	}{
+		{name: "all pools read", registered: []string{readPool.ContractID}, wantTotal: 1, wantUnpriced: 0},
+		{name: "one pool quiet", registered: []string{readPool.ContractID, quietPool}, wantTotal: 2, wantUnpriced: 1, wantNamed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
+				AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{readPool}, registered: tc.registered},
+				Pricer:           stubTVLPricerT{},
+			})
+			if err := cache.Refresh(context.Background()); err != nil {
+				t.Fatalf("cache refresh: %v", err)
+			}
+			ts := httpTestServer(t, v1.New(v1.Options{DEXTVL: cache}))
+
+			var env struct {
+				Data v1.ProtocolsView `json:"data"`
+			}
+			if err := json.NewDecoder(mustGet(t, ts.URL+"/v1/protocols").Body).Decode(&env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			aq := protocolRow(t, env.Data.Protocols, "aquarius")
+			if aq.TVL == nil || aq.TVL.TVLUSD != "10.00" || aq.TVL.PoolsPriced != 1 ||
+				aq.TVL.PoolsTotal != tc.wantTotal || aq.TVL.UnpricedPools != tc.wantUnpriced {
+				t.Fatalf("aquarius tvl = %+v, want 10.00 with %d pools, 1 priced, %d unpriced",
+					aq.TVL, tc.wantTotal, tc.wantUnpriced)
+			}
+			// Unwired venues set lower_bound here regardless, so the aquarius-owned term is unpriced_pools; lower_bound from
+			// aquarius alone is pinned by TestDEXTVLCache_AquariusRegisteredPoolMissedByWindowReadIsUnavailable.
+			total := env.Data.TVLTotal
+			if total == nil || total.TVLUSD != "10.00" || total.UnpricedPools != tc.wantUnpriced {
+				t.Fatalf("tvl_total = %+v, want 10.00 with %d unpriced pools", total, tc.wantUnpriced)
+			}
+
+			var denv struct {
+				Data v1.ProtocolTVLDetailView `json:"data"`
+			}
+			if err := json.NewDecoder(mustGet(t, ts.URL+"/v1/protocols/aquarius/tvl").Body).Decode(&denv); err != nil {
+				t.Fatalf("decode tvl detail: %v", err)
+			}
+			named := false
+			for _, p := range denv.Data.Pools {
+				if p.Pool == quietPool {
+					named = p.Excluded == v1.DEXTVLPoolUnavailable && p.TVLUSD == "0.00" && !p.Priced
+				}
+			}
+			if named != tc.wantNamed {
+				t.Errorf("quiet pool named unavailable_state = %v, want %v (pools %+v)", named, tc.wantNamed, denv.Data.Pools)
+			}
+		})
 	}
 }
 

@@ -34,6 +34,10 @@ func (s *countingAquariusReader) LatestAquariusReserves(context.Context, int) ([
 	return s.pools, s.err
 }
 
+func (s *countingAquariusReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
+	return nil, nil
+}
+
 // countingTVLPricer is the stub pricer with a call counter, so a test
 // can prove the drill-down consults no price tier per request. The
 // price rule stays in one place — this only counts the way through it.
@@ -407,6 +411,10 @@ func TestHandleProtocolTVL_CarriedForwardIsNoStore(t *testing.T) {
 // cycles publish distinct verifiable tvl_usd figures rather than as_of stamps that could collide at one-second resolution.
 type togglingAquariusReader struct {
 	n atomic.Int64
+}
+
+func (*togglingAquariusReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
+	return nil, nil
 }
 
 func (r *togglingAquariusReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {

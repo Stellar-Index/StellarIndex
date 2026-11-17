@@ -111,7 +111,7 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		sv := SourceVolume{
 			Source:           ss.Source,
 			TradeCount24h:    ss.TradeCount24h,
-			VolumeLowerBound: ss.UnpricedTrades24h > 0,
+			VolumeLowerBound: ss.VolumeLowerBound(),
 		}
 		if ss.VolumeUSD24h.Valid {
 			v := ss.VolumeUSD24h.String

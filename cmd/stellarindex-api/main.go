@@ -66,6 +66,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/forex"
@@ -780,6 +781,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SoroswapPairs:    store,
 		SoroswapReserves: soroswapTVLReserves,
 		AquariusReserves: store,
+		AquariusPools:    aquarius.MainnetGatedSet(),
 		Cursors:          store,
 		AquariusWriters:  aquariusReserveWriters(cfg.Ingestion.Projector),
 		// Curated pool sets only (ADR-0035). Phoenix stake contracts are excluded because they
