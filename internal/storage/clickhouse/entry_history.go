@@ -86,9 +86,11 @@ type SponsorshipEvent struct {
 const sponsorshipOps = `('OperationTypeSetOptions', 'OperationTypeRevokeSponsorship', 'OperationTypeAccountMerge')`
 
 // sponsorshipCandidateQuery streams, in the source's sort-key order (each 'state' pre-image directly before its change),
-// every classic entry change of an operation that can hold a sponsorship transition: a group with a sponsored image, or
-// one of sponsorshipOps. That is a few percent of the window's rows. No FINAL: an unmerged duplicate re-derives a
-// byte-identical event row, and the target is a ReplacingMergeTree on the same identity.
+// every classic entry change of an operation that can hold a sponsorship transition: a group with a sponsored image, one
+// of sponsorshipOps, or a tx-level group (op_index -1) where an account's image changes size. The last is how core's
+// consumed pre-auth signer removal shows up; the fee and sequence bumps that fill every -1 group keep the size. That is
+// a few percent of the window's rows. No FINAL: an unmerged duplicate re-derives a byte-identical event row, and the
+// target is a ReplacingMergeTree on the same identity.
 const sponsorshipCandidateQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
 	       change_type, entry_type, key_xdr, entry_xdr
@@ -101,7 +103,12 @@ const sponsorshipCandidateQuery = `
 	         WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != '' AND entry_xdr != '' AND ` + sponsoredEntryPredicate + `
 	        UNION ALL
 	        SELECT tx_hash, toInt32(op_index) FROM stellar.operations
-	         WHERE ledger_seq BETWEEN ? AND ? AND op_type IN ` + sponsorshipOps + `)
+	         WHERE ledger_seq BETWEEN ? AND ? AND op_type IN ` + sponsorshipOps + `
+	        UNION ALL
+	        SELECT tx_hash, op_index FROM stellar.ledger_entry_changes
+	         WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != '' AND op_index < 0 AND entry_type = 'account'
+	         GROUP BY tx_hash, op_index, key_xdr
+	        HAVING min(length(entry_xdr)) != max(length(entry_xdr)))
 	ORDER BY ledger_seq, tx_hash, op_index, change_index
 `
 
@@ -135,7 +142,7 @@ func StreamSponsorshipCandidates(ctx context.Context, addr string, from, to uint
 	if err := sponsorshipOperationsCovered(ctx, conn, from, to); err != nil {
 		return err
 	}
-	rows, err := conn.Query(ctx, sponsorshipCandidateQuery, from, to, from, to, from, to)
+	rows, err := conn.Query(ctx, sponsorshipCandidateQuery, from, to, from, to, from, to, from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query sponsorship candidates [%d,%d]: %w", from, to, err)
 	}
