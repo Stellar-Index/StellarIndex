@@ -8,7 +8,6 @@
 # list only shrinks. To retire an entry, make the self-test pass, invoke it from
 # ci.yml's import-checks job and from verify.sh, and delete its line here.
 
-ansible-archival-datadirs-ownership-test.sh
 ansible-exporter-service-gating-test.sh
 ansible-fact-cache-path-test.sh
 ansible-galexie-admin-firewall-test.sh
@@ -19,7 +18,6 @@ ansible-ingestion-oracle-sources-gate-test.sh
 ansible-lint-tasks-path-test.sh
 ansible-loki-firewall-ipv6-test.sh
 ansible-minio-buckets-var-test.sh
-ansible-zfs-import-guard-test.sh
 audit-remediation-operator-actions-test.sh
 cache-r1-annotation-test.sh
 check-deploy-relax-test.sh

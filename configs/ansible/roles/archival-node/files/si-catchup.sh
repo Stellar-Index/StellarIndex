@@ -16,10 +16,14 @@ while [ ! -e "$D/STOP" ]; do
   if [ -z "$next" ]; then sleep 60; continue; fi
   if ! mine_only "$D" || ! mine_only "$Q"; then log "REFUSE $Q is writable by another user"; exit 1; fi
   name=${next%%	*}; cmd=${next#*	}
-  log "START $name"; t0=$SECONDS
+  [ "${deferred:-}" = "$name" ] || log "START $name"; t0=$SECONDS
   bash -c "$cmd" >>"$D/$name.log" 2>&1; rc=$?
+  if [ $rc -eq 75 ]; then
+    # 75 = run-heavy-job deferred: a scheduled heavy job holds the host lock and operator jobs never wait for it.
+    # Kept out of the lane log, whose last line the stall alert reads as progress.
+    deferred=$name; echo "$(date -u +%FT%TZ) DEFER $name rc=75" >"$D/$LANE.deferred"; sleep 300; continue
+  fi
+  deferred=""; rm -f "$D/$LANE.deferred"
   if [ $rc -eq 0 ]; then echo "$name" >>"$DONE"; log "DONE $name $((SECONDS-t0))s"
-  # 75 = run-heavy-job deferred: a scheduled heavy job holds the host lock and operator jobs never wait for it.
-  elif [ $rc -eq 75 ]; then log "DEFER $name rc=75"; sleep 300
   else echo "$name rc=$rc" >"$D/$LANE.failed"; log "FAIL $name rc=$rc $((SECONDS-t0))s"; fi
 done
