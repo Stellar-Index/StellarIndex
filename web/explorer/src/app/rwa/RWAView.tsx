@@ -1059,25 +1059,36 @@ export function sumUsd(values: (string | null | undefined)[]): {
 export function sumStablecoins(
   rows: {
     market_cap_usd?: string | null;
-    listing_valuation?: { status: string; value_usd?: string | null } | null;
+    market_cap_lower_bound?: boolean;
+    listing_valuation?: {
+      status: string;
+      value_usd?: string | null;
+      value_lower_bound?: boolean;
+    } | null;
   }[],
 ): {
   total: string | null;
   valued: number;
   unvalued: number;
   listingPriced: number;
+  floor: boolean;
 } {
   let listingPriced = 0;
+  let floor = false;
   const values = rows.map((r) => {
-    if (r.market_cap_usd != null) return r.market_cap_usd;
+    if (r.market_cap_usd != null) {
+      if (r.market_cap_lower_bound === true) floor = true;
+      return r.market_cap_usd;
+    }
     const lv = r.listing_valuation;
     if (lv?.status === 'published' && lv.value_usd != null) {
       listingPriced += 1;
+      if (lv.value_lower_bound === true) floor = true;
       return lv.value_usd;
     }
     return null;
   });
-  return { ...sumUsd(values), listingPriced };
+  return { ...sumUsd(values), listingPriced, floor };
 }
 
 /**
@@ -1100,14 +1111,19 @@ export function splitBasis(
 ): { lead: string; rest: string } {
   const text = (basis ?? '').trim();
   if (!text) return { lead: '', rest: '' };
-  const sentences = text.match(/[^.]+\.(?:\s+|$)/g);
-  if (sentences == null || sentences.length <= leadSentences) {
-    return { lead: text, rest: '' };
+  // Slice the original at the boundary so no character can be dropped,
+  // whatever the heuristic decides about a mid-token period.
+  let end = -1;
+  let seen = 0;
+  for (const m of text.matchAll(/\.(?:\s+|$)/g)) {
+    seen += 1;
+    if (seen === leadSentences) {
+      end = m.index + m[0].length;
+      break;
+    }
   }
-  return {
-    lead: sentences.slice(0, leadSentences).join('').trim(),
-    rest: sentences.slice(leadSentences).join('').trim(),
-  };
+  if (end < 0 || end >= text.length) return { lead: text, rest: '' };
+  return { lead: text.slice(0, end).trim(), rest: text.slice(end).trim() };
 }
 
 /**
@@ -1348,6 +1364,8 @@ export type StablecoinTotals = {
   total: string | null;
   valued: number;
   unvalued: number;
+  /** True when a contributing row's own figure is a floor. */
+  floor: boolean;
   /**
    * How many of the valued rows were priced by an independent listing
    * platform rather than by observed trades. Non-zero means the
@@ -1401,7 +1419,7 @@ function SectorTotals({
       ? sumUsd([rwaTotal, stableTotal]).total
       : null;
   const combinedFloor =
-    (reference?.lower_bound ?? false) || stable.unvalued > 0;
+    (reference?.lower_bound ?? false) || stable.unvalued > 0 || stable.floor;
   return (
     <div className="space-y-2">
       <p className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
@@ -1419,7 +1437,7 @@ function SectorTotals({
                 </span>
               ) : (
                 <>
-                  {stable.unvalued > 0 && (
+                  {(stable.unvalued > 0 || stable.floor) && (
                     <span className="text-ink-muted" aria-hidden>
                       ≥{' '}
                     </span>
@@ -1649,6 +1667,7 @@ const RWA_CSV_COLUMNS = [
   'anchor_asset',
   'basis',
   'circulating_supply',
+  'circulating_supply_lower_bound',
   'market_cap_usd',
   'market_cap_status',
   'price_usd',
@@ -1656,6 +1675,7 @@ const RWA_CSV_COLUMNS = [
   'reference_value_status',
   'reference_price_usd',
   'reference_source',
+  'reference_provenance',
   'reference_as_of',
   'premium_pct',
   'premium_status',
@@ -1672,6 +1692,9 @@ export function rwaCsvRow(a: RWAAsset): Record<string, string> {
     anchor_asset: a.anchor_asset ?? '',
     basis: a.basis,
     circulating_supply: a.circulating_supply ?? '',
+    circulating_supply_lower_bound: a.circulating_supply_lower_bound
+      ? 'true'
+      : 'false',
     market_cap_usd: a.valuation.market_cap_usd ?? '',
     market_cap_status: a.valuation.status,
     price_usd: a.valuation.price_usd ?? '',
@@ -1679,6 +1702,7 @@ export function rwaCsvRow(a: RWAAsset): Record<string, string> {
     reference_value_status: a.reference_valuation.status,
     reference_price_usd: a.reference?.price_usd ?? '',
     reference_source: a.reference?.source ?? '',
+    reference_provenance: a.reference?.provenance ?? '',
     reference_as_of: a.reference?.as_of ?? '',
     premium_pct: a.premium.pct ?? '',
     premium_status: a.premium.status,
@@ -1699,7 +1723,7 @@ function AssetTable({ assets }: { assets: RWAAsset[] }) {
           <Th align="right">Value of backing</Th>
           <Th align="right">Market cap</Th>
           <Th align="right">Price</Th>
-          <Th align="right">Instrument value</Th>
+          <Th align="right">Reference value</Th>
           <Th align="right">vs instrument</Th>
           <Th align="right">24h volume</Th>
           <Th align="right">First seen</Th>
@@ -1731,7 +1755,10 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
           href={assetHref(asset.slug || asset.asset_id)}
           className="hover:text-brand-600 font-medium"
         >
-          {asset.code}
+          {asset.code ||
+            asset.symbol ||
+            asset.name ||
+            truncateMiddle(asset.contract_id ?? asset.asset_id, 6, 6)}
         </Link>
         {asset.name && (
           <div className="text-ink-muted text-xs">{asset.name}</div>
@@ -1742,7 +1769,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
           <span>
             {asset.issuer_directory_name ||
               asset.home_domain ||
-              truncateMiddle(asset.issuer, 6, 6)}
+              truncateMiddle(asset.issuer || asset.contract_id || '', 6, 6)}
           </span>
           {flagged && <Badge tone="bad">Flagged</Badge>}
         </div>
@@ -1750,7 +1777,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
             third-party convenience. Showing both keeps a reader from
             confusing the two. */}
         <div className="text-ink-faint font-mono text-[11px]">
-          {truncateMiddle(asset.issuer, 6, 6)}
+          {truncateMiddle(asset.issuer || asset.contract_id || '', 6, 6)}
         </div>
       </Td>
       <Td>
@@ -1882,6 +1909,18 @@ function referenceValueWhose(ref: RWAAsset['reference']): string {
  * publisher and the vintage sit under the figure because a valuation
  * whose age is invisible invites a comparison it cannot support.
  */
+/** What the figure is, by provenance: a listing platform's token price is not an instrument value. */
+function referenceCaption(ref: NonNullable<RWAAsset['reference']>): string {
+  switch (ref.provenance) {
+    case 'prospectus_constant_nav':
+      return 'prospectus NAV';
+    case 'listing_platform_price':
+      return `${ref.source}’s price for the token`;
+    default:
+      return ref.source;
+  }
+}
+
 function ReferenceCell({ asset }: { asset: RWAAsset }) {
   const ref = asset.reference;
   if (!ref) {
@@ -1891,7 +1930,7 @@ function ReferenceCell({ asset }: { asset: RWAAsset }) {
     <div>
       <div className="tnum">${formatOraclePrice(ref.price_usd)}</div>
       <div className="text-ink-faint text-[11px]">
-        {ref.source} · {formatRelative(ref.as_of)}
+        {referenceCaption(ref)} · {formatRelative(ref.as_of)}
         {ref.stale && (
           <span
             className="text-ink-muted ml-1"
