@@ -95,7 +95,7 @@ PROBE="$WORK/probe.sh"
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; $1 must not expand here
   printf 'TMP="$1"\n'
-  printf 'CH_NETRC=/dev/null\n'
+  printf 'CH_NETRC=/dev/null\nPROBE_FAILED=0\n'
   awk '/^SF_AGE/ { p = 1 } /^chmod 0644 "\$TMP"$/ { p = 0 } p' "$SRC"
 } > "$PROBE"
 if grep -q 'stellar.supply_flows' "$PROBE" && grep -q 'curl' "$PROBE" \
@@ -269,7 +269,7 @@ PUBLISH="$WORK/publish.sh"
 {
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; $1/$2 must not expand here
-  printf 'TMP="$1"\nOUT="$2"\n'
+  printf 'TMP="$1"\nOUT="$2"\nPROBE_FAILED=0\n'
   awk '/^CHECKED=/ { p = 1 } p' "$SRC"
 } > "$PUBLISH"
 # shellcheck disable=SC2016  # the literal $TMP/$OUT are the patterns being searched for
@@ -427,7 +427,7 @@ QSRC="$WORK/queries.sh"
 {
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; must not expand here
-  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\n'
+  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\nPROBE_FAILED=0\n'
   awk '/^# shellcheck disable=SC2129/ { p = 1; next } /^SF_AGE=""$/ { p = 0 } p' "$SRC"
 } > "$QSRC"
 guarded_count="$(grep -c '^if ! PGDSN=' "$QSRC")"
@@ -474,6 +474,43 @@ if [[ "$QERR" == *"recognition_ok verdict query failed"* ]]; then
   ok "the skipped query is named on stderr (journal-visible)"
 else
   bad "no mention of the failed query on stderr: $QERR"
+fi
+
+# Real psql exits 0 on a SQL error read from stdin unless ON_ERROR_STOP is set, so the
+# `if !` guards above never saw one: a schema or grant change that broke a query left its
+# gauge absent with the unit green. The stub below behaves like psql in that respect.
+cat > "$WORK/psqlbin/psql-sqlerr" <<'SH'
+#!/usr/bin/env bash
+body="$(cat)"
+case "$body" in
+  *"${PSQL_FAIL_MARKER}"*)
+    echo 'ERROR:  relation "completeness_snapshots" does not exist' >&2
+    case " $* " in *" ON_ERROR_STOP=1 "*) exit 3 ;; esac
+    exit 0
+    ;;
+esac
+echo "stellarindex_test_sample 1"
+exit 0
+SH
+chmod +x "$WORK/psqlbin/psql-sqlerr"
+# shellcheck disable=SC2016  # emitted into the harness verbatim
+{ cat "$QSRC"; printf 'printf "PROBE_FAILED=%%s\\n" "$PROBE_FAILED"\n'; } > "$WORK/queries-tally.sh"
+: > "$QTMP"
+QERR2="$(PSQL_FAIL_MARKER='stellarindex_recognition_ok{source="' bash "$WORK/queries-tally.sh" "$WORK/psqlbin/psql-sqlerr" "$QTMP" 2>&1 >"$WORK/tally.out")"
+if [[ "$QERR2" == *"recognition_ok verdict query failed"* ]]; then
+  ok "a SQL error inside psql (exit 0 without ON_ERROR_STOP) is reported as a failed probe"
+else
+  bad "a SQL error in one query went unnoticed: $QERR2"
+fi
+if grep -qx 'PROBE_FAILED=1' "$WORK/tally.out"; then
+  ok "the failed probe is tallied so the unit exits non-zero after publishing"
+else
+  bad "probe tally missing or wrong: $(cat "$WORK/tally.out")"
+fi
+if grep -q 'PROBE_FAILED' "$SRC" && grep -qE 'exit 1' <(awk '/PROBE_FAILED. -gt 0/{p=1} p' "$SRC"); then
+  ok "script exits non-zero after the swap when a probe was skipped"
+else
+  bad "no non-zero exit for a skipped probe"
 fi
 
 # ─── 9. sep1 freshness measures a successful fetch, not an attempt ───
