@@ -330,11 +330,15 @@ func monthFloor(t time.Time) time.Time {
 type preWalkProbe interface {
 	storedTradeProbe
 	sourceSetProbe
+	prices1mRetentionProbe
 }
 
 // refuseStoredRows runs the pre-walk refusals. -allow-overlap waives only the overlap check: a re-run
 // of a vendor window is still a vendor window, so the mixed-bucket check always runs.
 func refuseStoredRows(ctx context.Context, probe preWalkProbe, source string, pair canonical.Pair, from, to time.Time, allowOverlap bool) error {
+	if err := refuseArmedRetention(ctx, probe); err != nil {
+		return err
+	}
 	if !allowOverlap {
 		if err := refuseStoredOverlap(ctx, probe, source, pair, from, to); err != nil {
 			return err
@@ -563,17 +567,40 @@ func insertRefreshingCAGGs(store backfillTradeStore, log io.Writer, insert func(
 	if !rec.seen {
 		return insErr
 	}
-	_, _ = fmt.Fprintf(log, "backfill-external: refreshing trades continuous aggregates over [%s, %s]; if it fails or is interrupted, re-run this command (inserts are idempotent)\n",
-		rec.from.UTC().Format(time.RFC3339), rec.to.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(log, "backfill-external: refreshing trades continuous aggregates over [%s, %s]; if it fails or is interrupted, %s\n",
+		rec.from.UTC().Format(time.RFC3339), rec.to.UTC().Format(time.RFC3339), backfillRefreshRecovery)
 	ctx, cancel := context.WithTimeout(context.Background(), externalInsertBudget)
 	defer cancel()
 	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
 		return timescale.PadRefreshWindow(rec.from, rec.to, c.MinWindow)
 	})
 	if err := runCAGGRefreshPlan(ctx, slog.New(slog.NewTextHandler(log, nil)), store, plan); err != nil {
-		return errors.Join(insErr, fmt.Errorf("backfill-external: %w", err))
+		return errors.Join(insErr, fmt.Errorf("backfill-external: %w; %s", err, backfillRefreshRecovery))
 	}
 	return insErr
+}
+
+// backfillRefreshRecovery is the retry for a failed post-write refresh. A plain re-run is refused by the overlap check, because
+// the rows this run wrote are now stored; -allow-overlap re-writes the same identities (idempotent) and refreshes again.
+const backfillRefreshRecovery = "re-run this command with -allow-overlap (the rows are already written and re-inserting them is idempotent)"
+
+// prices1mRetentionProbe is the storage seam refuseArmedRetention depends on.
+type prices1mRetentionProbe interface {
+	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+}
+
+// refuseArmedRetention refuses a write before the walk while prices_1m's retention policy is armed: the post-write refresh would
+// then refuse every view built on prices_1m, leaving the written rows' twap rungs unmaterialised after hours of fetching.
+func refuseArmedRetention(ctx context.Context, probe prices1mRetentionProbe) error {
+	armed, err := probe.Prices1mRetentionArmed(ctx)
+	if err != nil {
+		return fmt.Errorf("backfill-external: read prices_1m retention state: %w", err)
+	}
+	if armed {
+		return errors.New("backfill-external: refused: prices_1m's retention policy is armed, so the post-write refresh of the " +
+			"aggregates built on it would be refused; disarm it as migrations/0156_prices_1m_retention.up.sql states, confirm, and re-run")
+	}
+	return nil
 }
 
 // spanRecorder passes writes through and keeps the time hull of every trade offered, written or not: a failed batch may have

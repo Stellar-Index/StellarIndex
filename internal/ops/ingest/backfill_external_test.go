@@ -447,6 +447,48 @@ func TestBucketSpan(t *testing.T) {
 type fakePreWalkProbe struct {
 	fakeTradeProbe
 	fakeSourceProbe
+	armed bool
+}
+
+func (f *fakePreWalkProbe) Prices1mRetentionArmed(context.Context) (bool, error) { return f.armed, nil }
+
+// TestRefuseStoredRows_RefusesWhileRetentionArmed: with prices_1m retention armed the post-write refresh is refused for every
+// view on prices_1m, so the write is refused before the walk, -allow-overlap or not.
+func TestRefuseStoredRows_RefusesWhileRetentionArmed(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+	probe := &fakePreWalkProbe{armed: true}
+	for _, allow := range []bool{false, true} {
+		err := refuseStoredRows(context.Background(), probe, "kraken", pair, from, from.AddDate(0, 2, 0), allow)
+		if err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
+			t.Errorf("allowOverlap=%v: err = %v, want the armed-retention refusal", allow, err)
+		}
+	}
+}
+
+// TestBackfillRefreshRecovery_NamesAnAdmittedRerun: the printed retry must pass the pre-walk refusals once the run's own rows are
+// stored; a plain re-run is refused by the overlap check.
+func TestBackfillRefreshRecovery_NamesAnAdmittedRerun(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+	probe := &fakePreWalkProbe{
+		fakeTradeProbe:  fakeTradeProbe{first: from, found: true},
+		fakeSourceProbe: fakeSourceProbe{sources: []string{"kraken"}},
+	}
+	allow := strings.Contains(backfillRefreshRecovery, "-allow-overlap")
+	if err := refuseStoredRows(context.Background(), probe, "kraken", pair, from, from.AddDate(0, 2, 0), allow); err != nil {
+		t.Fatalf("the recovery %q is refused against the run's own stored rows: %v", backfillRefreshRecovery, err)
+	}
 }
 
 // TestRefuseStoredRows_AllowOverlapWaivesOnlyTheOverlapCheck: a vendor re-run over Kraken buckets is refused
