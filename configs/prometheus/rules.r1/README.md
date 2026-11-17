@@ -45,20 +45,23 @@ and the wrapper script defaults `SLA_PROBE_TEXTFILE_OUTPUT`.
 
 ## Apply to R1
 
-On every deploy, `.github/workflows/deploy.yml` scp's
-[`configs/prometheus/apply-rules.sh`](../apply-rules.sh) to the host and
-runs it over ssh — it validates with `promtool`, installs atomically with
-a restorable backup, prunes rule files removed from the repo, reloads
-Prometheus, and POLLS `/api/v1/rules` until every expected alert has
-loaded and is healthy (or restores the backup and fails). See that
-script's header for the outage history that made a bare copy-and-reload
-insufficient. Manual apply, same script:
+On every deploy, `.github/workflows/deploy.yml` (and
+`prometheus-rules-apply.yml` on a main push) pipes
+[`configs/prometheus/apply-rules.sh`](../apply-rules.sh) and the rule
+files to the host as a tar and runs it over ssh — it validates with
+`promtool`, takes a host-side lock, installs with a restorable backup,
+prunes rule files removed from the repo, reloads Prometheus, waits for
+the reload to complete, and POLLS `/api/v1/rules` until every expected
+alert has loaded and is healthy (or restores the backup and fails). See
+that script's header for the outage history that made a bare
+copy-and-reload insufficient. Manual apply, same script, from a fresh
+`mktemp -d` on the host (never a fixed `/tmp` path another host user
+could pre-plant):
 
 ```sh
-scp configs/prometheus/apply-rules.sh root@136.243.90.96:/tmp/apply-rules.sh
-ssh root@136.243.90.96 'mkdir -p /tmp/rules.r1.incoming'
-scp configs/prometheus/rules.r1/*.yml root@136.243.90.96:/tmp/rules.r1.incoming/
-ssh root@136.243.90.96 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
+(cd configs/prometheus && tar -cf - apply-rules.sh rules.r1/*.yml) |
+  ssh root@136.243.90.96 \
+    'set -eu; d=$(mktemp -d); trap "rm -rf -- \"\$d\"" EXIT; tar -xf - -C "$d"; bash "$d/apply-rules.sh" "$d/rules.r1"'
 ```
 
 `prometheus.r1.yml` loads `/etc/prometheus/rules.r1/*.yml`
