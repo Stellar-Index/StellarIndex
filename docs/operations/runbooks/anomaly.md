@@ -180,12 +180,22 @@ stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
 5. Bulk SQL is a last resort and MUST be gated on the durable hold: blanket-closing drops the ladder's Redis-flush protection. `recovered_at_ledger` stays NULL (0 violates the CHECK). `hold_until IS NULL` rows predate migration 0119:
 
 ```sql
+BEGIN;
+-- Preview: the rows the UPDATE will close. Stop if the count or the assets are not what you expect.
+SELECT count(*) FROM freeze_events
+ WHERE recovered_at IS NULL
+   AND frozen_at > now() - interval '7 days'
+   AND (hold_until IS NULL OR hold_until < now() - interval '10 minutes');
+
 UPDATE freeze_events
    SET recovered_at = now(),
        recovered_at_ledger = NULL
  WHERE recovered_at IS NULL
    AND frozen_at > now() - interval '7 days'
-   AND (hold_until IS NULL OR hold_until < now() - interval '10 minutes');
+   AND (hold_until IS NULL OR hold_until < now() - interval '10 minutes')
+RETURNING asset_id, quote_id, frozen_at;
+-- UPDATE n must equal the preview count. If it does not, ROLLBACK; otherwise COMMIT.
+COMMIT;
 ```
 
 Verify `stellarindex_anomaly_freeze_recovered_total` resumes climbing within 60 s.

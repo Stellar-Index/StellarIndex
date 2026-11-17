@@ -126,11 +126,26 @@ ADR-0035-gated sources; `backfill` builds gated decoders with an EMPTY
 identity registry, so on an older binary it decodes nothing and **exits 0
 after your DELETE**. Current binaries refuse projector-owned sources at flag
 parse and name `projector-replay`, which reads the lake through the real
-gated registry. For a rewind larger than about **1M ledgers** use
-`stellarindex-ops projected-rebuild … -write` instead (`projector-replay` is
-bound by the live projector's 5 s tick and 60 s per-source timeout; see
-[runbooks/projector.md#stellarindex_projector_replay_stalled](runbooks/projector.md#stellarindex_projector_replay_stalled)). Never run the
-two concurrently over the same source's history.
+gated registry. Never run the two concurrently over the same source's history.
+
+**The replay range must equal the DELETE range.** `projector-replay` has no
+`-to`: it rewinds the cursor to `-from` and the projector re-projects every
+ledger up to the live tip. A re-projected row uses the new `op_index`
+encoding, so it does not conflict with an old-encoded row the DELETE did not
+remove, and the trade is stored twice (served volume and the CAGGs double).
+So either:
+
+- replay with `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml
+  -source <s> -from <from> -to <to> -write`, which takes the same bounds as the
+  DELETE (also the tool for a rewind larger than about **1M ledgers**:
+  `projector-replay` is bound by the live projector's 5 s tick and 60 s
+  per-source timeout, see
+  [runbooks/projector.md#stellarindex_projector_replay_stalled](runbooks/projector.md#stellarindex_projector_replay_stalled)); or
+- use `projector-replay` only when `<to>` is the live tip (the DELETE covers
+  everything the replay will rewrite), or at least at or above the ledger
+  where the `op_index` fix was deployed.
+
+Process every range up to the fix ledger before calling the step complete.
 
 ```sh
 # Dry-run first — prints the dirty window and cursor rewind it would do.

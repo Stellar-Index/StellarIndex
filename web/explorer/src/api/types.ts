@@ -4421,7 +4421,14 @@ export interface paths {
          *     path) via the operator override endpoints.
          *
          *     Abuse posture: rides the per-IP signup throttle
-         *     (default 5/hour/IP → 429),
+         *     (default 5/hour/IP → 429), then an hourly budget shared by
+         *     ALL callers (`api.register_max_per_hour`, default 60). The
+         *     budget is spent before the account is created and reopens at
+         *     the top of the hour, so a burst from a few addresses can
+         *     exhaust it for everyone; past it the route answers
+         *     `503 registration-unavailable` with `Retry-After`. Operators
+         *     can also switch the route off (same 503). Passkey sign-up
+         *     (`/auth/passkey/*-signup`) does not draw on this budget. Sits
          *     underneath the global anonymous rate limit. The
          *     `Content-Type: application/json` header is REQUIRED — not
          *     merely validated when present — because a header-less POST is
@@ -8283,6 +8290,13 @@ export interface components {
              *                           "<X-StellarIndex-Delivery-Id>" + "." +
              *                           "<X-StellarIndex-Event>" + "." + <raw request body>
              *       expected_v2       = "sha256=" + hex(HMAC_SHA256(secret, signed_message_v2))
+             *
+             *     The fields are joined by bare dots with no length prefix, and
+             *     event names contain a dot, so a different split of the same
+             *     bytes between Delivery-Id and Event yields the same MAC.
+             *     Before trusting V2, require `X-StellarIndex-Delivery-Id` to be
+             *     a canonical 36-character UUID and `X-StellarIndex-Event` to be
+             *     one of the documented event types.
              *
              *     Verify V2 whenever you dedupe on the Delivery-Id or route on
              *     the Event header. Both headers are sent on every delivery.
@@ -13880,6 +13894,13 @@ export interface components {
              *     posture).
              */
             scopes?: string[];
+            /**
+             * Format: date-time
+             * @description When the key stops authenticating. A key minted by an
+             *     expiring credential inherits that credential's expiry.
+             *     Absent = the key does not expire.
+             */
+            expires_at?: string;
         };
         KeyCreatedEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["KeyCreated"];
@@ -23818,6 +23839,8 @@ export interface operations {
              * @description Caller is not an account tier (`apikey` or `operator`):
              *     a SEP-10 wallet token gets `key-mint-not-available`, any
              *     other non-account credential `account-tier-required`.
+             *     A key that would exceed the caller's own scopes, rate
+             *     limit, expiry or monthly quota gets `scope-exceeds-caller`.
              */
             403: {
                 headers: {
@@ -24007,7 +24030,11 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description Caller is not operator-tier. */
+            /**
+             * @description Caller is not operator-tier, or the key would exceed the
+             *     caller's own scopes, rate limit, expiry or monthly quota
+             *     (`scope-exceeds-caller`).
+             */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -24481,7 +24508,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description Platform account store not configured (Postgres unavailable). */
+            /** @description `registration-unavailable`: registration is switched off or the all-caller hourly budget is spent (`Retry-After` is set to the top of the hour); or the platform account store is not configured (Postgres unavailable). */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -570,6 +570,12 @@ them because it is a latest-observation surface with no closed-bucket
 contract at all; it previously inherited the 300 s catalogue band from the
 `/v1/oracle/` prefix (#344).
 
+Cache-Control is chosen from the route path alone; the auth mode and the caller
+are not consulted. Under `api.auth_mode` `apikey` or `sep10`, a 200 for an
+authenticated caller on a row above still carries `public`, and
+`api.cdn_enabled=false` removes only `s-maxage`, not `public, max-age`. Do not
+front such a deployment with a shared cache.
+
 The current stack does **not** emit `ETag`, `Server-Timing`,
 `X-Correlation-ID`, or conditional-GET 304 responses in this
 snapshot.

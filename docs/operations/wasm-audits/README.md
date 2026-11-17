@@ -154,16 +154,18 @@ expectations" in each per-source log):
 | Event body field renamed | by-name extraction (per ADR-0007) returns missing-field error — explicit failure, but every trade in the range is dropped |
 | Event body field added | by-name extraction ignores the new field — fine |
 | Event body field removed | extraction errors out — every trade dropped |
-| i128 / u128 sign or scale change | decoder may produce wrong magnitudes — caught only by Hubble cross-check, not by a parse error |
+| i128 / u128 sign or scale change | decoder may produce wrong magnitudes with no parse error. Hubble covers SDEX only (section 4), so the only catch is a decode fixture with a captured event from that hash and an asserted amount |
 | Event split into multiple events (e.g. `swap` → `swap_in` + `swap_out`) | correlation logic breaks; decoder may emit 0 or 2 trades per swap |
 | Topic arity changed (2-tuple → 3-tuple) | classification matches on `topic[0..2]` so a longer topic still matches — but our position-based assumptions about further topic slots break |
+
+Every hash needs a decode fixture test under `internal/sources/<source>/`: a captured event from that hash, with the decoded amounts and fields asserted. Eyeballing the disassembly is not evidence for the scale and sign rows above, and no gate checks that a fixture exists, so the PR reviewer must.
 
 If every hash passes, document the findings, add each hash to
 `internal/wasmaudit/audited_wasm.json` and set `Backfill: BackfillPerWASM` in
 `internal/sources/external/registry.go`, in the same PR as the audit log.
 
-If any hash diverges, fix the decoder (plus a fixture test under
-`internal/sources/<source>/` against that hash) in the same PR. Don't add a
+If any hash diverges, fix the decoder (the fixture test against that hash
+already exists per the rule above) in the same PR. Don't add a
 hash to `audited_wasm.json` if it needs a decoder change that isn't deployed yet.
 
 ### 4. Hubble cross-check (where applicable)

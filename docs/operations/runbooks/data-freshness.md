@@ -534,7 +534,7 @@ ssh r1 'cat /var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom'
 ssh r1 'grep -c "^DUNE_API_KEY=." /etc/default/curated-rwa-sync'   # 1 = set, 0 = empty placeholder
 
 # 5. Arm state per the API
-curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, assets, census, published: (.published | {total_usd, as_of, executed_at, gap_vs_verified_usd})}'
+curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.data.curated | {status, assets, census, published: (.published | {total_usd, as_of, executed_at, gap_vs_verified_usd})}'
 ```
 
 ### stellarindex_curated_rwa_sync_stale

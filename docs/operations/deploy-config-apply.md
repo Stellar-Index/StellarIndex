@@ -142,10 +142,12 @@ If the step fails its surface stays in the gate and the gate goes red; the
 binaries are already live, so that is a signal to act, not a rollback. By
 hand (or from a laptop for a hotfix):
 
+One session into a fresh `mktemp -d` (0700): nothing is staged at a fixed
+`/tmp` name that another host user could pre-plant before root executes it.
+
 ```
-scp configs/prometheus/apply-rules.sh r1:/tmp/
-scp -r configs/prometheus/rules.r1 r1:/tmp/rules.r1.incoming
-ssh r1 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
+(cd configs/prometheus && tar -cf - apply-rules.sh rules.r1/*.yml) |
+  ssh r1 'set -eu; d=$(mktemp -d); trap "rm -rf -- \"\$d\"" EXIT; tar -xf - -C "$d"; bash "$d/apply-rules.sh" "$d/rules.r1"'
 ```
 
 `--check-only` validates without installing (what CI runs).

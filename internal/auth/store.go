@@ -99,6 +99,33 @@ func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]stri
 	return scopes, nil
 }
 
+// clampExpiryToMinter bounds a minted key's lifetime by its minter's: an unset expiry inherits the minter's, a later one is refused with ErrMintExceedsCaller.
+func clampExpiryToMinter(minter Subject, expiresAt time.Time) (time.Time, error) {
+	if minter.ExpiresAt.IsZero() {
+		return expiresAt, nil
+	}
+	if expiresAt.IsZero() {
+		return minter.ExpiresAt, nil
+	}
+	if expiresAt.After(minter.ExpiresAt) {
+		return time.Time{}, fmt.Errorf("%w: expires_at %s is later than this key's own %s",
+			ErrMintExceedsCaller, expiresAt.UTC().Format(time.RFC3339), minter.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	return expiresAt, nil
+}
+
+// clampMonthlyQuotaToMinter bounds a minted key's monthly quota by a metered minter's: an inherited quota above the minter's is lowered to it, an explicit one is refused with ErrMintExceedsCaller.
+func clampMonthlyQuotaToMinter(minter Subject, requested, resolved int64) (int64, error) {
+	if minter.MonthlyQuota <= 0 || (resolved > 0 && resolved <= minter.MonthlyQuota) {
+		return resolved, nil
+	}
+	if requested > 0 {
+		return 0, fmt.Errorf("%w: monthly_quota %d exceeds this key's own %d",
+			ErrMintExceedsCaller, requested, minter.MonthlyQuota)
+	}
+	return minter.MonthlyQuota, nil
+}
+
 // ChildKeyRequest builds the mint request for a key parent delegates to itself, the one place every delegated dimension is copied; the store re-checks scopes via MintedBy (ClampToMinter).
 func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
 	return CreateAPIKeyRequest{
@@ -206,6 +233,11 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
 		}
 		req.Scopes = scopes
+		expiresAt, err := clampExpiryToMinter(*req.MintedBy, req.ExpiresAt)
+		if err != nil {
+			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+		}
+		req.ExpiresAt = expiresAt
 	}
 	monthlyQuota := req.MonthlyQuota
 	if monthlyQuota <= 0 {
@@ -217,6 +249,13 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: inherit monthly quota: %w", err)
 		}
 		monthlyQuota = inherited
+	}
+	if req.MintedBy != nil {
+		q, err := clampMonthlyQuotaToMinter(*req.MintedBy, req.MonthlyQuota, monthlyQuota)
+		if err != nil {
+			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+		}
+		monthlyQuota = q
 	}
 
 	keyID, err := generateID(s.randRead, "kid_", 8)

@@ -164,7 +164,7 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 
 **Likely causes.**
 
-- Bad release: the binary fails `config.Validate()` and exits; systemd parks the unit `failed` after `StartLimitBurst=10` in 5 min.
+- Bad release: the binary fails `config.Validate()` and exits; systemd parks the unit `failed` after `StartLimitBurst=100` in 15 min (about 8-10 min of restarts).
 - Credential or config rotation without a restart (`/etc/stellarindex.toml`, `/etc/default/stellarindex`).
 - Stale `/etc/caddy/MAINTENANCE_MODE`, Caddy, Cloudflare or DNS: customers are down while `up==1` and this does NOT fire.
 - Whole host down: expect `stellarindex_deadmansswitch` instead.
@@ -177,6 +177,8 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
    ```sh
    gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f migrations_skip=true
    ```
+
+   Same flags and skew-gate rules as the rollback above; see [rollback.md](../rollback.md).
 
    Manual fallback (a brief full outage; single instance):
 
@@ -427,7 +429,7 @@ Fix:
 
 **What.** `stellar.entry_history_watermark` has no row for the index (or the table is missing). Reads gated on it (contract activity walk, contract stats, sponsorships, entry and signer history) serve their scan or lower-bound fallback.
 
-**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -genesis -full`; `contract_instance_changes` → `ch-instance-backfill`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`; `lending_state` → lending-state.timer (`ch-entry-history -lending-only`). The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
+**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -full -write`; `contract_instance_changes` → `ch-instance-backfill -full -write`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`; `lending_state` → lending-state.timer (`ch-entry-history -lending-only`). The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
 
 ## stellarindex_customer_webhook_delivery_failing
 

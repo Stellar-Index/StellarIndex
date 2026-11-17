@@ -19,8 +19,10 @@ Wants=network-online.target
 # which node_systemd_unit_state{state="failed"} pages on instead of
 # hot-looping forever (resource governance — this
 # had drifted from the deploy/systemd/*.service reference copies).
-StartLimitIntervalSec=5min
-StartLimitBurst=10
+# Sized as a dependency-outage budget: 5 min x 10 restarts parked the unit
+# ~50-100 s into a Postgres outage; this holds ~8-10 min of restarts first.
+StartLimitIntervalSec=15min
+StartLimitBurst=60
 
 [Service]
 Type=simple

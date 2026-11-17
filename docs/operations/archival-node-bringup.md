@@ -85,17 +85,17 @@ ssh <host> 'systemd-run --unit=archivist-sweep --no-block bash -c "
         for f in \\\$@; do
           gzip -t \\\"\\\$f\\\" 2>/dev/null || echo \\\"\\\$f\\\"
         done
-      \" _ > /tmp/corrupt-gz.txt
-  echo done > /tmp/sweep-done
+      \" _ > /root/corrupt-gz.txt
+  echo done > /root/sweep-done
 "'
 
-ssh <host> 'wc -l /tmp/corrupt-gz.txt'   # after /tmp/sweep-done appears
+ssh <host> 'wc -l /root/corrupt-gz.txt'   # after /root/sweep-done appears
 ```
 
 Delete first (archivist only fetches absent files), then re-fetch:
 
 ```sh
-ssh <host> 'xargs -a /tmp/corrupt-gz.txt -r rm -f'
+ssh <host> 'xargs -a /root/corrupt-gz.txt -r rm -f'
 ssh <host> "systemd-run --unit=archivist-refetch --no-block \
   stellar-archivist mirror \
     https://history.stellar.org/prd/core-live/core_live_001 \

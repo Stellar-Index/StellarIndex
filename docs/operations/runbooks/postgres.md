@@ -18,8 +18,8 @@ P1 (page, `for: 30s`). `pg_up == 0` from `postgres_exporter` (`localhost:9187`),
 Check:
 
 ```sh
-# Step 1: /v1/readyz; `checks` is an array of {name, ok, error}. No -f: readyz returns 503 on outage.
-curl -sS https://api.stellarindex.io/v1/readyz | jq '.checks[] | select(.name=="postgres")'
+# Step 1: /v1/readyz; `.data.checks` is an array of {name, ok, error}. No -f: readyz returns 503 on outage.
+curl -sS https://api.stellarindex.io/v1/readyz | jq '.data.checks[] | select(.name=="postgres")'
 # {"name":"postgres","ok":false,"error":"dial tcp ... connection refused"} = real DB outage.
 
 # Step 2: the unit (the CLUSTER unit, NOT the `postgresql` umbrella), exporter, direct psql.

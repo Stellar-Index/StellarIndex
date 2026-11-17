@@ -68,15 +68,15 @@ Required before the daily timer enforces anything on a node.
    jq -r '.gaps[] | "\(.start) \(.end)"' /var/lib/galexie/detect-gaps.json \
      | awk '{for(i=$1;i<=$2;i++) printf "%d\n", int(i/64000)*64000}' \
      | sort -un \
-     > /tmp/partials-starts.txt
+     > /var/lib/galexie/partials-starts.txt
    ```
 
-   Map each start to its hex-prefixed partition name into `/tmp/partials.txt` (no script ships).
+   Map each start to its hex-prefixed partition name into `/var/lib/galexie/partials.txt` (no script ships).
 
 3. **Re-mirror those partitions:**
 
    ```sh
-   PARTIALS="$(cat /tmp/partials.txt)" galexie-archive-fill
+   PARTIALS="$(cat /var/lib/galexie/partials.txt)" galexie-archive-fill
    ```
 
    Deletes each named partition, then re-mirrors it from AWS (8 workers; `PARALLEL` env);
