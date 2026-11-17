@@ -168,3 +168,27 @@ func assertChartServed(t *testing.T, srv *v1.Server, label string) {
 		t.Errorf("%s: chart points = %+v, want the two seeded buckets 0.16, 0.17", label, env.Data.Points)
 	}
 }
+
+// TestOHLCWithholdsScamFlaggedIssuer: /v1/ohlc publishes the same aggregated trajectory /v1/chart withholds, in single-bar mode,
+// series mode and the fiat-combined series alike.
+func TestOHLCWithholdsScamFlaggedIssuer(t *testing.T) {
+	base := chartFlaggedBase(t)
+	for name, query := range map[string]string{
+		"single-bar":      "&quote=native&window=24h",
+		"series":          "&quote=native&interval=1d&limit=10",
+		"fiat-usd series": "&quote=fiat:USD&interval=1d&limit=10",
+	} {
+		t.Run(name, func(t *testing.T) {
+			gate := &chartScamGate{withheld: map[string]bool{base.String(): true}}
+			ts := httpTestServer(t, v1.New(v1.Options{History: &pairAwareHistoryReader{}, Scam: gate}))
+			resp := mustGet(t, ts.URL+"/v1/ohlc?base="+base.String()+query)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "errors/price-withheld") {
+				t.Fatalf("/v1/ohlc status = %d, want 404 price-withheld for a scam-flagged issuer. Body: %s", resp.StatusCode, body)
+			}
+			if len(gate.surfaces) == 0 || gate.surfaces[0] != "ohlc" {
+				t.Errorf("gate surfaces = %v, want the first to be \"ohlc\"", gate.surfaces)
+			}
+		})
+	}
+}

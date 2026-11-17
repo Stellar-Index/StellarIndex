@@ -150,6 +150,7 @@ func registerPricingMetrics() {
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
+		AggregatorBaselineRefreshLastSuccessUnix,
 		AggregatorBootstrapCapped,
 		AggregatorBaselineDensityDays,
 
@@ -519,10 +520,10 @@ func seedBoundedLabelSeries() {
 	for _, mode := range []string{"auto", "operator", "lapsed"} {
 		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
 	}
-	// Durable freeze-row and ladder write sites (migration 0119). Bounded set of three;
+	// Durable freeze-row and ladder write sites (migration 0119) plus the Redis marker. Bounded set of four;
 	// seeded because this counter's whole purpose is to make a SILENT
 	// failure visible, and an absent series is itself a silence.
-	for _, op := range []string{"record_freeze", "mark_hold", "clear"} {
+	for _, op := range []string{"record_freeze", "mark_hold", "clear", "marker_set"} {
 		AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op)
 	}
 	// Privileged-mutation surfaces whose audit row can fail to land, enumerated at the six call
@@ -2490,11 +2491,11 @@ var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeLadderWriteFailuresTotal counts durable freeze-event row and ladder writes that did not land, by call site; `record_freeze` and `mark_hold` are the dangerous directions. All labels are pre-seeded.
+// AnomalyFreezeLadderWriteFailuresTotal counts freeze marker, durable freeze-event row and ladder writes that did not land, by call site; `record_freeze` and `mark_hold` are the dangerous directions. All labels are pre-seeded.
 var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_ladder_write_failures_total",
-		Help: "Durable freeze-event row and freeze-ladder writes that did not land, by call site (record_freeze|mark_hold|clear). Sustained non-zero = SQL readers miss the freeze and the Redis-flush protection is inert.",
+		Help: "Durable freeze-event row and freeze-ladder writes that did not land, by call site (record_freeze|mark_hold|clear|marker_set). Sustained non-zero = SQL readers miss the freeze and the Redis-flush protection is inert.",
 	},
 	[]string{"op"},
 )
@@ -2668,6 +2669,14 @@ var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 		Help: "Confidence-score compute outcomes per (pair, window) × tick. See package docs for the full label vocabulary.",
 	},
 	[]string{"outcome"},
+)
+
+// AggregatorBaselineRefreshLastSuccessUnix is the time of the last baseline refresh pass that finished in time with no store error; powers stellarindex_aggregator_baseline_refresh_stale.
+var AggregatorBaselineRefreshLastSuccessUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_baseline_refresh_last_success_unix",
+		Help: "Unix seconds of the last volatility-baseline refresh pass that finished within its timeout, read at least one pair and hit no read or write error; seeded at worker start, 0 when the worker is not running.",
+	},
 )
 
 // AggregatorBaselineAgeSeconds is the per-pair age of the volatility baseline row the confidence step read; shows a single pair whose refresh keeps failing.

@@ -71,6 +71,8 @@ import (
 const (
 	// baselineRefreshCadence: the 30-day rolling MAD barely moves minute to minute, so hourly is plenty (and cheap on the hypertable).
 	baselineRefreshCadence = 1 * time.Hour
+	// baselineRefreshPassTimeout bounds one pass below the cadence so a hung read cannot stall every later tick.
+	baselineRefreshPassTimeout = 45 * time.Minute
 	// baselineRefreshConcurrency: 4 pairs in flight keeps the DB pool fed without saturating it even on the largest pair sets.
 	baselineRefreshConcurrency = 4
 )
@@ -1403,28 +1405,43 @@ func (a supplyAggregatorSEP41Store) SEP41GenesisBaselineSeeded(ctx context.Conte
 	return a.s.SEP41GenesisBaselineSeeded(ctx, contractID)
 }
 
+// refreshBaselinesOnce runs one bounded refresh pass. A hung read would otherwise block the loop forever while every baseline ages past
+// maxBaselineAge and the Phase-2 freeze goes unscored; the last-success gauge advances only when the pass finished in time, answered at
+// least one pair, and had no read or write error.
+func refreshBaselinesOnce(ctx context.Context, r *baseline.Refresher, pairs []canonical.Pair, timeout time.Duration, logger *slog.Logger) baseline.RefreshSummary {
+	started := time.Now()
+	pctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	sum := r.RefreshAll(pctx, pairs, baselineRefreshConcurrency)
+	timedOut := pctx.Err() != nil
+	obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok").Add(float64(sum.OK))
+	obs.AggregatorBaselineRefreshTotal.WithLabelValues("not_enough_samples").Add(float64(sum.NotEnoughSamples))
+	obs.AggregatorBaselineRefreshTotal.WithLabelValues("read_error").Add(float64(sum.ReadErrors))
+	obs.AggregatorBaselineRefreshTotal.WithLabelValues("write_error").Add(float64(sum.WriteErrors))
+	obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_per_minute_fallback").Add(float64(sum.OKPerMinuteFallback))
+	obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_unvalued").Add(float64(sum.OKUnvalued))
+	answered := sum.OK + sum.OKUnvalued + sum.OKPerMinuteFallback + sum.NotEnoughSamples
+	if !timedOut && answered > 0 && sum.ReadErrors == 0 && sum.WriteErrors == 0 {
+		obs.AggregatorBaselineRefreshLastSuccessUnix.Set(float64(time.Now().Unix()))
+	}
+	logger.Info("baseline refresh complete",
+		"ok", sum.OK,
+		"ok_unvalued", sum.OKUnvalued,
+		"not_enough_samples", sum.NotEnoughSamples,
+		"ok_per_minute_fallback", sum.OKPerMinuteFallback,
+		"read_errors", sum.ReadErrors,
+		"write_errors", sum.WriteErrors,
+		"timed_out", timedOut,
+		"elapsed", time.Since(started).String(),
+	)
+	return sum
+}
+
 // runBaselineRefresh ticks the baseline refresher on baselineRefreshCadence, counting per-outcome; the first cycle runs at startup so
 // the API has baselines for the confidence score without waiting an interval.
 func runBaselineRefresh(ctx context.Context, r *baseline.Refresher, pairs []canonical.Pair, logger *slog.Logger) {
-	tick := func() {
-		started := time.Now()
-		sum := r.RefreshAll(ctx, pairs, baselineRefreshConcurrency)
-		obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok").Add(float64(sum.OK))
-		obs.AggregatorBaselineRefreshTotal.WithLabelValues("not_enough_samples").Add(float64(sum.NotEnoughSamples))
-		obs.AggregatorBaselineRefreshTotal.WithLabelValues("read_error").Add(float64(sum.ReadErrors))
-		obs.AggregatorBaselineRefreshTotal.WithLabelValues("write_error").Add(float64(sum.WriteErrors))
-		obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_per_minute_fallback").Add(float64(sum.OKPerMinuteFallback))
-		obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_unvalued").Add(float64(sum.OKUnvalued))
-		logger.Info("baseline refresh complete",
-			"ok", sum.OK,
-			"ok_unvalued", sum.OKUnvalued,
-			"not_enough_samples", sum.NotEnoughSamples,
-			"ok_per_minute_fallback", sum.OKPerMinuteFallback,
-			"read_errors", sum.ReadErrors,
-			"write_errors", sum.WriteErrors,
-			"elapsed", time.Since(started).String(),
-		)
-	}
+	obs.AggregatorBaselineRefreshLastSuccessUnix.Set(float64(time.Now().Unix()))
+	tick := func() { refreshBaselinesOnce(ctx, r, pairs, baselineRefreshPassTimeout, logger) }
 
 	tick() // immediate first refresh
 

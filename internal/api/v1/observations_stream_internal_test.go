@@ -200,3 +200,32 @@ func TestObservationsStreamTick_ScanPanicIsAnError(t *testing.T) {
 		t.Fatal("a panicking scan returned no error")
 	}
 }
+
+// A stream connect must not bypass the shared scan budget: 50 preludes for one key cost one compute, like 50 ticks do.
+func TestObservationsStreamPrelude_ConnectsShareAScan(t *testing.T) {
+	pair := observationsTestPair(t, "crypto:BTC")
+	perCompute := scansPerCompute(t, pair)
+	g := newGatedObservationsReader()
+	s := observationsTickServer(g)
+
+	const connects = 50
+	var wg sync.WaitGroup
+	errs := make([]error, connects)
+	for i := range connects {
+		wg.Go(func() {
+			_, errs[i] = s.observationsStreamPrelude(context.Background(), pair, "", "", 5)
+		})
+	}
+	<-g.started
+	time.Sleep(50 * time.Millisecond) // let every connect reach the shared flight
+	close(g.gate)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("connect %d: %v", i, err)
+		}
+	}
+	if got := g.calls.Load(); got != perCompute {
+		t.Errorf("%d connects cost %d scans, want one compute (%d)", connects, got, perCompute)
+	}
+}

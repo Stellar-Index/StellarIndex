@@ -10835,7 +10835,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Single-bar mode only — no trades in window. Series mode\nreturns 200 with `intervals: []` instead.",
+              "name": "Single-bar mode only — no trades in window. Series mode\nreturns 200 with `intervals: []` instead. Both modes return\na `price-withheld` 404 when the base's issuer carries a\nscam-class directory tag, as `/v1/chart` and `/v1/vwap` do.",
               "originalRequest": {
                 "url": {
                   "path": [

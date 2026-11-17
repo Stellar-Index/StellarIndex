@@ -231,7 +231,7 @@ Hosting: static export (`output: 'export'`) on Cloudflare Pages with Pages Funct
 
 ## 16. Cross-cutting
 
-- **Caching** (ADR-0018, [cdn-setup.md](../operations/cdn-setup.md)): closed-bucket VWAP, history, OHLC, since-inception: `public, max-age=60, s-maxage=300`; tip prices `public, max-age=1`; catalogues `public, max-age=60, s-maxage=300`; account, auth and OG: `private, no-store`; SSE `no-store`; immutable WASM bytecode `public, max-age=31536000, immutable`.
+- **Caching** (ADR-0018, [cdn-setup.md](../operations/cdn-setup.md)): history and since-inception: `public, max-age=60, s-maxage=300`; scam-gated price surfaces (VWAP, TWAP, OHLC, chart, price-at): `public, max-age=30, s-maxage=5`; tip prices `public, max-age=1`; catalogues `public, max-age=60, s-maxage=300`; account, auth and OG: `private, no-store`; SSE `no-store`; immutable WASM bytecode `public, max-age=31536000, immutable`.
 - **Rate limits**: limits in §3; embeds use the anonymous tier, so embedders should cache.
 - **Auth**: only `/dashboard` and `/v1/account/*` require it (SEP-10 challenge to JWT, or API key).
 - **Per-region consistency** (ADR-0015/0018): closed-bucket endpoints are identical across regions; tip and raw surfaces are explicitly per-region; the UI shows a freshness badge.

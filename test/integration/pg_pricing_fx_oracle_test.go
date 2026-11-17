@@ -2402,6 +2402,46 @@ func TestStorage_LatestOracleStreams_NewestRowPerStream(t *testing.T) {
 	}
 }
 
+// TestListingDirectory_RefusesMassPrune: a parseable but shrunken catalogue must not delist the source; nothing is written.
+func TestListingDirectory_RefusesMassPrune(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	at := time.Now().UTC().Add(-time.Hour)
+	full := make([]timescale.ListingEntry, 0, 50)
+	const b32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" // the address check admits base32 only
+	for i := range 50 {
+		full = append(full, timescale.ListingEntry{
+			Address: "C" + strings.Repeat("A", 53) + string(b32[i/32]) + string(b32[i%32]), ListingID: fmt.Sprintf("coin-%d", i), Symbol: "c", PriceUSD: "1.00", PricedAt: at,
+		})
+	}
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, full, "coingecko"); err != nil {
+		t.Fatalf("full sync: %v", err)
+	}
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, full[:1], "coingecko"); !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		t.Fatalf("shrunken sync: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
+	byAddr, _, err := store.ListingDirectoryByAddress(ctx)
+	if err != nil {
+		t.Fatalf("ListingDirectoryByAddress: %v", err)
+	}
+	if len(byAddr) != len(full) {
+		t.Fatalf("rows after refused sync = %d, want %d", len(byAddr), len(full))
+	}
+	_, pruned, _, err := store.ReplaceListingDirectoryWithin(ctx, full[:1], "coingecko", timescale.DirectoryChurnUnbounded)
+	if err != nil || pruned != int64(len(full)-1) {
+		t.Fatalf("opt-in sync: pruned=%d err=%v, want %d", pruned, err, len(full)-1)
+	}
+}
+
 // TestListingDirectory_ContestedAddressStaysListedUnpriced: once a second coin id claims an address, a resync must keep its
 // row (a pruned row reads as not listed, which is false) with no price either claimant could have supplied.
 func TestListingDirectory_ContestedAddressStaysListedUnpriced(t *testing.T) {

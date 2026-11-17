@@ -17236,7 +17236,9 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             /**
              * @description Single-bar mode only — no trades in window. Series mode
-             *     returns 200 with `intervals: []` instead.
+             *     returns 200 with `intervals: []` instead. Both modes return
+             *     a `price-withheld` 404 when the base's issuer carries a
+             *     scam-class directory tag, as `/v1/chart` and `/v1/vwap` do.
              */
             404: {
                 headers: {

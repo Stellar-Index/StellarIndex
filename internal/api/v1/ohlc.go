@@ -102,6 +102,10 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 			"Invalid pair", http.StatusBadRequest, err.Error())
 		return
 	}
+	// Candles are an aggregated price trajectory, not raw trades: withhold them before either mode reads the store.
+	if s.seriesWithheldForScam(w, r, pair, "ohlc") {
+		return
+	}
 
 	// Branch to the multi-bar series handler when `interval` is
 	// supplied. Invalid intervals 400 before any other work.

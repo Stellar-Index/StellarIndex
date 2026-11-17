@@ -350,8 +350,8 @@ func (o *Orchestrator) engageFreeze(
 		o.markerUnwritten[stateKey] = struct{}{}
 		o.logger.Warn("freeze marker write failed",
 			"pair", pair.String(), "window", window, "err", err)
-		// Soft-fail: the anomaly was detected but the marker write failed, so the API won't see flags.frozen. Operators alert on
-		// AnomalyFreezeEngagedTotal vs the API-side flag rate (a sustained gap = broken writer). Don't fail the tick.
+		// Soft-fail: the API won't see flags.frozen. The writer counts op=marker_set, which
+		// stellarindex_anomaly_freeze_ladder_write_failures alerts on. Don't fail the tick.
 		return
 	}
 	delete(o.markerUnwritten, stateKey)

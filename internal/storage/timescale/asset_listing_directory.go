@@ -122,16 +122,28 @@ const listingPriceFreshSQL = `price_usd IS NOT NULL
 // under Postgres's 65535 bind-param cap. Chunking exists because a third party sets the row count.
 const listingUpsertChunk = 500
 
-// ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows the upstream no longer carries.
-// ambiguous counts addresses more than one listing id claimed; they are kept unpriced and logged.
+// DefaultListingChurnLimit is the listing prune ceiling: 20% of held rows, floor 5. The table holds ~50 rows, so the
+// account-directory floor of 100 would let one sync delete all of them.
+var DefaultListingChurnLimit = DirectoryChurnLimit{Fraction: 0.2, Floor: 5}
+
+// ReplaceListingDirectory is [Store.ReplaceListingDirectoryWithin] under [DefaultListingChurnLimit].
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
+) (upserted, pruned int64, ambiguous int, err error) {
+	return s.ReplaceListingDirectoryWithin(ctx, entries, source, DefaultListingChurnLimit)
+}
+
+// ReplaceListingDirectoryWithin upserts the full entry set for one source and prunes that source's rows the upstream no longer carries,
+// refusing the whole snapshot (ErrDirectoryChurnExceeded, nothing written) when the prune exceeds `limit`.
+// ambiguous counts addresses more than one listing id claimed; they are kept unpriced and logged.
+func (s *Store) ReplaceListingDirectoryWithin(
+	ctx context.Context, entries []ListingEntry, source string, limit DirectoryChurnLimit,
 ) (upserted, pruned int64, ambiguous int, err error) {
 	if source == "" {
 		return 0, 0, 0, errors.New("listing directory: source must be non-empty")
 	}
 	// An empty set means the fetch or parse broke, not a mass delisting; proceeding would prune the
-	// whole source and report success. Same refusal as [ReplaceDirectory].
+	// whole source and report success.
 	if len(entries) == 0 {
 		return 0, 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
@@ -150,6 +162,13 @@ func (s *Store) ReplaceListingDirectory(
 			_ = tx.Rollback()
 		}
 	}()
+
+	var held int64
+	if err = tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM asset_listing_directory WHERE source = $1`, source).Scan(&held); err != nil {
+		err = fmt.Errorf("listing directory: count held rows: %w", err)
+		return 0, 0, 0, err
+	}
 
 	for start := 0; start < len(entries); start += listingUpsertChunk {
 		end := min(start+listingUpsertChunk, len(entries))
@@ -172,11 +191,21 @@ func (s *Store) ReplaceListingDirectory(
 		return 0, 0, 0, err
 	}
 	pruned, _ = res.RowsAffected()
+	// A parseable but shrunken upstream catalogue would otherwise delist most of the source in one hourly run.
+	if err = checkListingPrune(limit, held, pruned); err != nil {
+		return 0, 0, 0, err
+	}
 
 	if err = tx.Commit(); err != nil {
 		return 0, 0, 0, fmt.Errorf("listing directory: commit: %w", err)
 	}
 	return upserted, pruned, ambiguous, nil
+}
+
+// checkListingPrune applies `limit` to a listing sync that held `held` rows.
+func checkListingPrune(limit DirectoryChurnLimit, held, pruned int64) error {
+	c := directoryChurn{rows: held}
+	return c.check(limit, DirectorySyncResult{Pruned: pruned})
 }
 
 // dedupListingEntriesByAddress collapses repeats of one claim, keeping first-appearance order; an upsert chunk may hold each conflict
