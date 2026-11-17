@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,11 +78,12 @@ func chBackfill(args []string) error {
 	prog := newBackfillProgress(*heartbeat)
 	defer prog.stop()
 
+	loss := &extractLoss{}
 	g, gctx := errgroup.WithContext(ctx)
 	for i, chunk := range chunks {
 		i, chunk := i, chunk // capture
 		g.Go(func() error {
-			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, dryRun, *changesOnly, prog.record)
+			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, dryRun, *changesOnly, loss, prog.record)
 		})
 	}
 	walkErr := g.Wait()
@@ -94,6 +97,9 @@ func chBackfill(args []string) error {
 	// backfillCoverage.
 	if cerr := backfillCoverage(uint32(*from), uint32(*to), total, streamBucket, ctx.Err() != nil); cerr != nil {
 		return fmt.Errorf("ch-backfill: %w", cerr)
+	}
+	if lerr := loss.err(); lerr != nil {
+		return fmt.Errorf("ch-backfill: %w", lerr)
 	}
 	prog.markOK()
 	if dryRun {
@@ -220,6 +226,7 @@ func chBackfillChunk(
 	passphrase, chAddr string,
 	flushEvery int,
 	dryRun, changesOnly bool,
+	loss *extractLoss,
 	logProgress func(workerIdx int, seq uint32),
 ) error {
 	var sink *clickhouse.Sink
@@ -238,6 +245,11 @@ func chBackfillChunk(
 			if eerr != nil {
 				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d extract ledger %d: %v\n", idx, lcm.LedgerSequence(), eerr)
 				return nil
+			}
+			if loss.record(ext, changesOnly) {
+				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d\n",
+					idx, lcm.LedgerSequence(), ext.TxReadErrors, ext.TxEventReadErrors, ext.EntryMetaUnsupported,
+					ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable)
 			}
 			if changesOnly {
 				ext = changesOnlyExtract(ext)
@@ -260,6 +272,62 @@ func chBackfillChunk(
 	// Clean completion: flush the chunk's tail before Close so the final
 	// partial batch lands.
 	return sink.Flush(ctx)
+}
+
+// extractLoss tallies what ExtractLedger read short across every worker. The ledger is still written to keep the lake
+// contiguous, so its ledgers row reads complete and only this tally can fail the run.
+type extractLoss struct {
+	mu      sync.Mutex
+	ledgers int64
+	kinds   map[string]int64
+}
+
+// record adds one ledger's undercounts and reports whether it had any. Changes-only writes no txs or events, so only
+// the entry-change undercounts lose rows there.
+func (l *extractLoss) record(ext clickhouse.LedgerExtract, changesOnly bool) bool {
+	kinds := map[string]int{
+		"entry_meta_unsupported":    ext.EntryMetaUnsupported,
+		"entry_changes_unencodable": ext.EntryChangesUnencodable,
+		"evicted_keys_unreadable":   ext.EvictedKeysUnreadable,
+	}
+	if !changesOnly {
+		kinds["tx_read_errors"] = ext.TxReadErrors
+		kinds["tx_event_read_errors"] = ext.TxEventReadErrors
+		kinds["soroban_fee_meta_unsupported"] = ext.SorobanFeeMetaUnsupported
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	short := false
+	for k, n := range kinds {
+		if n == 0 {
+			continue
+		}
+		if l.kinds == nil {
+			l.kinds = map[string]int64{}
+		}
+		l.kinds[k] += int64(n)
+		short = true
+	}
+	if short {
+		l.ledgers++
+	}
+	return short
+}
+
+// err fails a run that wrote any ledger short, naming the totals per kind.
+func (l *extractLoss) err() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ledgers == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(l.kinds))
+	for k, n := range l.kinds {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, n))
+	}
+	sort.Strings(parts)
+	return fmt.Errorf("%d ledger(s) extracted with a read undercount (%s) — those ledgers are written but MISSING rows (see the per-ledger lines above); the range is NOT complete",
+		l.ledgers, strings.Join(parts, " "))
 }
 
 // changesOnlyExtract keeps the ledgers row (Sink.Flush writes it last as the per-ledger commit marker) and the entry

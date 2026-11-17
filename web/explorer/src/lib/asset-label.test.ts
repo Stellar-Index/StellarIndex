@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest';
 
 import { assetSlug } from '@/components/AssetLink';
+import { assetIdentityLabel } from './asset-label';
+
+// Two pools whose leg shares a code must not render the same pair text.
+describe('assetIdentityLabel', () => {
+  const real = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  const fake = 'USDC-GBADSCAMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWXYZ';
+
+  it('qualifies a classic code with its issuer', () => {
+    expect(assetIdentityLabel(real)).toBe('USDC (GA5ZSE…KZVN)');
+    expect(assetIdentityLabel(fake)).not.toBe(assetIdentityLabel(real));
+  });
+
+  it('leaves ids with no issuer as shortAssetText renders them', () => {
+    expect(assetIdentityLabel('native')).toBe('XLM');
+    expect(assetIdentityLabel('fiat:USD')).toBe('USD');
+    expect(assetIdentityLabel(null)).toBe('—');
+  });
+});
+
 import {
   isNativeXlmSac,
   isRawOracleAsset,

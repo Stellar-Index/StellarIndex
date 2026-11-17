@@ -1250,6 +1250,9 @@ func TestSep1AttestationAge(t *testing.T) {
 		}
 	})
 
+	// The store's writers below are this binary's, which readiness only runs against the migrations/ head.
+	applyMigrations(t, dsn)
+
 	t.Run("a failed attempt does not renew the payload's age", func(t *testing.T) {
 		if stored, err := store.SetIssuerSep1Payload(ctx, dead, "coinonstellar.com", []byte(sep1BondPayload(dead))); err != nil || !stored {
 			t.Fatalf("SetIssuerSep1Payload = (%v, %v), want (true, nil)", stored, err)
@@ -1423,6 +1426,109 @@ func TestSep1IdentityHistoryAndFreshness(t *testing.T) {
 	key := `stellarindex_data_freshness_stale{domain="sep1",source="issuers"}`
 	if v := samples[key]; v != "1" {
 		t.Errorf("%s = %q, want 1 — no payload fetched in 40 days, yet a failing refresh read as fresh", key, v)
+	}
+}
+
+// A home_domain change clears the held payload; the new domain's first fetch must still be diffed against the payload last
+// served, however many moves came before it, and exactly once.
+func TestSep1IdentityHistoryAcrossHomeDomainChange(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	const (
+		moved     = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
+		same      = "GCDNJUBQSX7AJWLJACMJ7I4BC3Z47BQUTMHEICZLE6MU4KQBRYG5JY6B"
+		neverHeld = "GAP5LETOV6YIE62YAM56STDANPRDO7ZFDBGSNHJQIYGGKSMOZAHOOS2S"
+	)
+	seedIssuers(t, ctx, store, []seedIssuer{
+		{g: moved, homeDomain: "old.example"},
+		{g: same, homeDomain: "old.example"},
+		{g: neverHeld, homeDomain: "old.example"},
+	})
+	write := func(g, domain, payload string) {
+		t.Helper()
+		if stored, err := store.SetIssuerSep1Payload(ctx, g, domain, []byte(payload)); err != nil || !stored {
+			t.Fatalf("SetIssuerSep1Payload(%s, %s) = (%v, %v), want (true, nil)", g, domain, stored, err)
+		}
+	}
+	move := func(g string, domains ...string) {
+		t.Helper()
+		for _, d := range domains {
+			if changed, err := store.SyncIssuerHomeDomain(ctx, g, d); err != nil || !changed {
+				t.Fatalf("SyncIssuerHomeDomain(%s, %s) = (%v, %v), want (true, nil)", g, d, changed, err)
+			}
+		}
+	}
+	history := func(g string) [][4]string {
+		t.Helper()
+		rows, err := db.QueryContext(ctx, `
+            SELECT home_domain, field, COALESCE(old_value, ''), COALESCE(new_value, '')
+              FROM issuer_identity_history WHERE g_strkey = $1 ORDER BY field`, g)
+		if err != nil {
+			t.Fatalf("read history: %v", err)
+		}
+		defer rows.Close()
+		var got [][4]string
+		for rows.Next() {
+			var r [4]string
+			if err := rows.Scan(&r[0], &r[1], &r[2], &r[3]); err != nil {
+				t.Fatalf("scan history: %v", err)
+			}
+			got = append(got, r)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("history rows: %v", err)
+		}
+		return got
+	}
+	const acme = `{"OrgName":"Acme Bank","Documentation":{"ORG_LOGO":"https://old.example/logo.png"}}`
+
+	// Two moves before any fetch: the payload the first move cleared must survive the second.
+	write(moved, "old.example", acme)
+	move(moved, "mid.example", "new.example")
+	write(moved, "new.example", `{"OrgName":"Circle","Documentation":{"ORG_LOGO":"https://new.example/logo.png"}}`)
+	want := [][4]string{
+		{"new.example", "org_logo", "https://old.example/logo.png", "https://new.example/logo.png"},
+		{"new.example", "org_name", "Acme Bank", "Circle"},
+	}
+	if got := history(moved); !slices.Equal(got, want) {
+		t.Fatalf("identity history = %v, want %v — the identity a home_domain change replaced must be recoverable", got, want)
+	}
+	var previous sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT sep1_payload_previous::text FROM issuers WHERE g_strkey = $1`, moved).Scan(&previous); err != nil {
+		t.Fatalf("read sep1_payload_previous: %v", err)
+	}
+	if previous.Valid {
+		t.Errorf("sep1_payload_previous = %s after the new domain's fetch, want NULL", previous.String)
+	}
+	write(moved, "new.example", `{"OrgName":"Circle","Documentation":{"ORG_LOGO":"https://new.example/logo.png"}}`)
+	if got := history(moved); !slices.Equal(got, want) {
+		t.Fatalf("a refresh after the recorded change rewrote history: %v, want %v", got, want)
+	}
+
+	// The same identity served from the new domain, key order and whitespace aside, is no change.
+	write(same, "old.example", acme)
+	move(same, "new.example")
+	write(same, "new.example", `{ "Documentation": {"ORG_LOGO": "https://old.example/logo.png"}, "OrgName": "Acme Bank" }`)
+	if got := history(same); len(got) != 0 {
+		t.Errorf("an unchanged identity across a home_domain move wrote history %v, want none", got)
+	}
+
+	// No payload was ever held: the new domain's fetch is a first fetch.
+	move(neverHeld, "new.example")
+	write(neverHeld, "new.example", acme)
+	if got := history(neverHeld); len(got) != 0 {
+		t.Errorf("a first-ever fetch wrote history %v, want none", got)
 	}
 }
 

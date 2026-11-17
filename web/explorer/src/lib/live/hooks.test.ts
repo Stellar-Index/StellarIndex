@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
+import { createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { usePricePoll } from './hooks';
@@ -26,7 +28,11 @@ describe('usePricePoll', () => {
       }),
     );
 
-    const { unmount } = renderHook(() => usePricePoll({ asset: 'native' }));
+    const client = new QueryClient();
+    const { unmount } = renderHook(() => usePricePoll({ asset: 'native' }), {
+      wrapper: ({ children }) =>
+        createElement(QueryClientProvider, { client }, children),
+    });
 
     await waitFor(() => expect(capturedSignal).toBeInstanceOf(AbortSignal));
     expect(capturedSignal?.aborted).toBe(false);

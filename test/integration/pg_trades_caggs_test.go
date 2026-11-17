@@ -1671,12 +1671,12 @@ func TestTradesCAGGRefresh_NonForcedRefusesBelowDroppedPrices1m(t *testing.T) {
 	seedCAGGTrade(t, ctx, db, 50_000_001, 0, old.Add(time.Hour), 5)
 	seedCAGGTrade(t, ctx, db, 61_000_300, 0, time.Date(2025, 3, 4, 13, 0, 0, 0, time.UTC), 7)
 
-	// The drop logged twap_1d's invalidation from the dropped chunk's start;
-	// the late 2024 trade, and the never-refreshed stretch between the two
+	// The drop logged twap_1d's invalidation from the dropped chunk's start,
+	// the epoch-aligned 7-day prices_1m chunk holding the old trades; the late 2024 trade, and the never-refreshed stretch between the two
 	// forced runs, sit below the floor too.
 	size := mustRun("-size")
 	for _, want := range []string{
-		"trades-cagg-refresh: pending twap_1d below-floor from=2023-11-09T00:00:00Z to=2025-02-27T23:59:59Z: starts before 2025-03-03T00:00:00Z, " +
+		"trades-cagg-refresh: pending twap_1d below-floor from=2024-01-04T00:00:00Z to=2025-02-27T23:59:59Z: starts before 2025-03-03T00:00:00Z, " +
 			"where twap windows reach below prices_1m's earliest bucket 2025-03-01T12:00:00Z, so -force=false refuses it; refresh it with -force=true\n",
 		"trades-cagg-refresh: pending prices_1m below-floor from=2024-01-10T13:00:00Z to=",
 		"trades-cagg-refresh: pending hull=[2025-03-04T13:00:00Z,2025-03-04T13:00:00Z] ledgers=[61000300,61000300] catch-up: -force=false -from 61000300 -to 61000300 -write\n",

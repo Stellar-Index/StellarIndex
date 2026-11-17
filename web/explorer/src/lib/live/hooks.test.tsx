@@ -1,7 +1,18 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { usePriceFlash, usePricePoll } from './hooks';
+
+function queryWrapper() {
+  const client = new QueryClient();
+  return function QueryWrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+  };
+}
 
 // The /v1/price poll fetch had no signal, so a hung connection left
 // the poll (and anything reading `polled`) waiting forever with no way to
@@ -26,8 +37,9 @@ describe('usePricePoll', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    const { result } = renderHook(() =>
-      usePricePoll({ asset: 'native', quote: 'fiat:USD' }),
+    const { result } = renderHook(
+      () => usePricePoll({ asset: 'native', quote: 'fiat:USD' }),
+      { wrapper: queryWrapper() },
     );
 
     await waitFor(() => expect(result.current.polled).toBe(true));
@@ -55,8 +67,10 @@ describe('usePricePoll', () => {
 
     const hiddenSpy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
 
-    renderHook(() =>
-      usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 1000 }),
+    renderHook(
+      () =>
+        usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 1000 }),
+      { wrapper: queryWrapper() },
     );
 
     // Initial synchronous tick is skipped because the tab is hidden.
@@ -94,8 +108,10 @@ describe('usePricePoll', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    renderHook(() =>
-      usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 1000 }),
+    renderHook(
+      () =>
+        usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 1000 }),
+      { wrapper: queryWrapper() },
     );
 
     // Initial tick fires synchronously and is left pending.
@@ -142,8 +158,14 @@ describe('usePricePoll', () => {
         await vi.advanceTimersByTimeAsync(ms);
       });
 
-    const { result } = renderHook(() =>
-      usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 20_000 }),
+    const { result } = renderHook(
+      () =>
+        usePricePoll({
+          asset: 'native',
+          quote: 'fiat:USD',
+          intervalMs: 20_000,
+        }),
+      { wrapper: queryWrapper() },
     );
     await advance(0);
     expect(result.current.polled).toBe(true);
@@ -193,7 +215,7 @@ describe('usePricePoll', () => {
 
     const { result, rerender } = renderHook(
       ({ asset }) => usePricePoll({ asset, quote: 'fiat:USD' }),
-      { initialProps: { asset: 'other' } },
+      { initialProps: { asset: 'other' }, wrapper: queryWrapper() },
     );
 
     await waitFor(() => expect(result.current.polled).toBe(true));
