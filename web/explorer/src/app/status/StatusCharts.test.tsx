@@ -38,4 +38,24 @@ describe('SourceVolumeCharts', () => {
     expect(list.textContent).not.toContain('off');
     expect(screen.getAllByRole('img').length).toBeGreaterThan(0);
   });
+
+  it('marks a volume that excludes unpriced trades as a floor', () => {
+    render(
+      <SourceVolumeCharts
+        rows={[
+          {
+            name: 'sdex',
+            class: 'exchange',
+            volume_24h_usd: '2500000',
+            volume_lower_bound: true,
+          },
+          { name: 'soroswap', class: 'exchange', volume_24h_usd: '1000' },
+        ]}
+      />,
+    );
+    const items = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(items[0]).toContain('≥ $2.5M');
+    expect(items[1]).toContain('$1K');
+    expect(items[1]).not.toContain('≥');
+  });
 });

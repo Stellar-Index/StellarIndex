@@ -51,6 +51,7 @@ export type SourceRow = {
   class: string;
   enabled?: boolean;
   volume_24h_usd?: string | null;
+  volume_lower_bound?: boolean;
 };
 
 /** Per-source 24h USD volume bars (top N) plus a class-mix donut. */
@@ -68,7 +69,7 @@ export function SourceVolumeCharts({
   const bars: HBarItem[] = withVolume.slice(0, limit).map(({ r, v }) => ({
     label: r.name,
     value: v,
-    display: `$${formatCompact(v)}`,
+    display: `${r.volume_lower_bound ? '≥ ' : ''}$${formatCompact(v)}`,
   }));
   const mix = new Map<string, number>();
   for (const r of rows) mix.set(r.class, (mix.get(r.class) ?? 0) + 1);
