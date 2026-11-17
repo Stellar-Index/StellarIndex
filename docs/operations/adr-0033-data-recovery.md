@@ -97,7 +97,8 @@ DELETE decompresses every chunk). Paste the `ts` bounds as literals: a
 DELETE then matches nothing and still reports success.
 
 ```sql
--- one source + bounded range at a time; verify the range first.
+-- ONE source + bounded range at a time (<s> is one of aquarius, comet,
+-- soroswap, phoenix); replay that source before deleting the next.
 -- 1. Resolve the ts bounds. Expect exactly 2 rows; stop if either is missing.
 SELECT ledger_seq, ledger_close_time
   FROM ledger_ingest_log
@@ -105,14 +106,14 @@ SELECT ledger_seq, ledger_close_time
 
 -- 2. Count what the DELETE must remove (ledger predicate only).
 SELECT count(*) FROM trades
- WHERE source IN ('aquarius','comet','soroswap','phoenix')
+ WHERE source = '<s>'
    AND ledger BETWEEN <from> AND <to>;
 
 -- 3. Delete. trades.ts is the ledger close time, so the inclusive
 --    bounds from step 1 cover every row in the ledger range.
 BEGIN;
 DELETE FROM trades
- WHERE source IN ('aquarius','comet','soroswap','phoenix')
+ WHERE source = '<s>'
    AND ledger BETWEEN <from> AND <to>
    AND ts >= '<from_close_time>'::timestamptz
    AND ts <= '<to_close_time>'::timestamptz;
@@ -136,8 +137,10 @@ remove, and the trade is stored twice (served volume and the CAGGs double).
 So either:
 
 - replay with `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml
-  -source <s> -from <from> -to <to> -write`, which takes the same bounds as the
-  DELETE (also the tool for a rewind larger than about **1M ledgers**:
+  -source <s> -from <from> -to <to> -resume=false -write`, which takes the same
+  bounds as the DELETE (`-resume=false` because the default skips windows an
+  earlier run of this build checkpointed, rows the DELETE just removed;
+  also the tool for a rewind larger than about **1M ledgers**:
   `projector-replay` is bound by the live projector's 5 s tick and 60 s
   per-source timeout, see
   [runbooks/projector.md#stellarindex_projector_replay_stalled](runbooks/projector.md#stellarindex_projector_replay_stalled)); or
@@ -169,7 +172,21 @@ stellarindex-ops projector-replay -config /etc/stellarindex.toml \
 > non-zero row count for the replayed range **before deleting the next one**.
 
 Only delete rows you are about to replay, and never a range you cannot
-replay. soroswap requires the pair-registry seed for token identities.
+replay. soroswap requires the pair-registry seed for token identities. Each
+replay records a projection dirty window for its own `-source` only, which is
+why the DELETE is per source.
+
+`projected-rebuild` does not refresh the trades continuous aggregates, and
+their policies only roll forward, so served OHLC, VWAP and volume keep the
+deleted rows' figures until refreshed. After the last source's replay over a
+range:
+
+```sh
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml \
+  -from <from> -to <to> -write
+```
+
+`projector-replay` refreshes them itself (`-refresh-caggs`, default true).
 
 ### 4. Truthful watermarks + verification
 

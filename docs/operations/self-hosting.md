@@ -228,8 +228,15 @@ EOT
 sudo chmod 640 /etc/default/stellarindex-ops
 
 # Optional but recommended: the internet-facing API should not hold the owner
-# DSN. The API unit reads this file after the ops file, so this DSN wins
-# (migration 0213 creates the least-privilege stellarindex_api role).
+# DSN. The API unit reads this file after the ops file, so this DSN wins.
+# Migration 0213 defines the grants but creates no role (migrations run
+# without CREATEROLE), so create the role as the superuser, then apply the
+# grants as the owner role (never as a superuser: the owner can redefine the
+# function body):
+sudo -u postgres psql -v ON_ERROR_STOP=1 \
+  -c "CREATE ROLE stellarindex_api LOGIN PASSWORD '<password>'"
+psql "postgres://stellarindex:<owner-password>@127.0.0.1:5432/stellarindex" \
+  -v ON_ERROR_STOP=1 -c "SELECT apply_api_role_grants()"
 sudo tee /etc/default/stellarindex-api >/dev/null <<'EOT'
 STELLARINDEX_POSTGRES_DSN=postgres://stellarindex_api:<password>@127.0.0.1:5432/stellarindex?sslmode=disable
 EOT

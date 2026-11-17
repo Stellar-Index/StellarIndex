@@ -162,7 +162,10 @@ tracked in the private inventory.
    deliveries to those webhooks fail terminally with no retry and no notice to the
    customer. Rotate it only when it is known exposed. Afterwards each customer must call
    rotate-secret on their webhook (the dashboard edit and delete still work), and
-   deliveries failed in the meantime are lost. Restoring the old value makes the keys
+   deliveries failed in the meantime are lost. Nothing tells them: in the same cycle,
+   notify every account in `SELECT DISTINCT account_id FROM customer_webhooks` through
+   the incident-comms path ([sev-playbook.md §5.3](sev-playbook.md)), and keep the
+   rotation open until each has rotated or been told. Restoring the old value makes the keys
    readable again for new deliveries.
 8. **GitHub Actions secrets.** `DEPLOY_SSH_PRIVATE_KEY` with the matching `authorized_keys`
    entry on every host, `CLOUDFLARE_API_TOKEN`, `DEPLOY_PROTECTION_TOKEN`,

@@ -58,10 +58,8 @@ Detect = monitoring catches it. Respond = responder acknowledges. Triage = root 
 | Prometheus / AlertManager | Every alert in [alerts-catalog.md](alerts-catalog.md) | Instantly |
 | SLA probe on r1 ([sla-probe.md](sla-probe.md)) | API latency and errors as r1 sees them; blind to proxy, certificate, DNS and network failures | Every 15 min |
 | User report (email, Discord) | Whatever we missed | Variable |
-| On-call rotation dashboard | Passive; reviewed every 15 min during oncall | - |
 
-There is no off-host synthetic probe or Cloudflare load-balancer check, so a public outage that r1 cannot see (proxy, certificate, DNS, network) pages nobody: it surfaces as a user report. Every SEV-1 needs at least two independent detection channels. If only one fires, assume false positive after a
-30 s re-probe, except a user report of a public outage: probe from outside r1 before dismissing it.
+There is no off-host synthetic probe, Cloudflare load-balancer check or on-call rotation, so a public outage that r1 cannot see (proxy, certificate, DNS, network) pages nobody: it surfaces as a user report. Prometheus and the SLA probe both run on r1, so they are one vantage point, not two independent channels: when r1 itself is down or partitioned, neither fires. Confirm a single alert with a 30 s re-probe before treating it as a false positive, and probe from outside r1 (`curl -sf https://api.stellarindex.io/v1/healthz` from any other machine) before dismissing a user report of a public outage.
 
 ---
 
