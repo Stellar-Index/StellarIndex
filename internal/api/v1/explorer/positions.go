@@ -534,7 +534,8 @@ func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) 
 	}
 	e.Amount = net
 	e.AmountSemantics = AmountSemanticsNetUnderlying
-	e.closed = isZeroDecimal(net)
+	// Closure is the b/d-token balance: a full exit returns principal plus interest, so the underlying net is almost never zero.
+	e.closed = tokens == "0"
 	return e
 }
 
