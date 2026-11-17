@@ -529,6 +529,7 @@ rejects a row that is not.
 | 0224 | Adds `blnt_events`, the decoded role-aware event history for the separately gated BLNT V3 source: promoted pool, user, asset, tier and `NUMERIC` amount columns plus an `attributes` jsonb. |
 | 0225 | Adds a partial `(user_address, ledger_close_time DESC)` index on `blnt_events` for the per-account position fold. |
 | 0226 | Adds nullable `blnt_events.tx_index`, the transaction's 0-based apply position in its ledger (as `stellar.transactions.tx_index`), so readers order same-ledger events without guessing. |
+| 0230 | Replaces `audit_log_erase_metadata(jsonb)` so an account erasure also strips `reason` (staff free-text justification) and `actor_email` (a staff actor's address) from kept audit rows. No back-fill. |
 
 ## References
 
