@@ -1482,9 +1482,10 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		           sum(quote_vol) AS quote_vol,
 		           sum(tc)        AS tc,
 		           COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
-		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs
+		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs,
+		           bool_or(floored) AS floored
 		      FROM (
-		        SELECT bucket, (base_asset = $1) AS req,
+		        SELECT bucket, (base_asset = $1) AS req, floored,
 		               CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
 		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
 		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
@@ -1517,18 +1518,25 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		           array_agg(DISTINCT s ORDER BY s)      AS sources
 		      FROM norm, unnest(norm.srcs) AS s
 		     GROUP BY 1
+		),
+		-- The floor again across the fold: a crumb-only source bucket must not set the bar's prices beside a floored one,
+		-- as the native views (floored over the whole bucket) already guarantee.
+		fold AS (
+		    SELECT n.*,
+		           (n.floored OR NOT bool_or(n.floored) OVER (PARTITION BY time_bucket(INTERVAL '%[2]s', n.bucket))) AS keep
+		      FROM norm n
 		)
 		SELECT
-		    time_bucket(INTERVAL '%[2]s', n.bucket)                     AS out_bucket,
-		    (array_agg(n.open  ORDER BY n.bucket ASC))[1]::text         AS open,
-		    max(n.high)::text                                           AS high,
-		    min(n.low)::text                                            AS low,
-		    (array_agg(n.close ORDER BY n.bucket DESC))[1]::text        AS close,
-		    sum(n.base_vol)::text                                       AS base_volume,
-		    sum(n.quote_vol)::text                                      AS quote_volume,
-		    sum(n.tc)::bigint                                           AS trade_count,
-		    COALESCE(sc.sources, ARRAY[]::text[])                       AS sources
-		  FROM norm n
+		    time_bucket(INTERVAL '%[2]s', n.bucket)                                    AS out_bucket,
+		    (array_agg(n.open  ORDER BY n.bucket ASC)  FILTER (WHERE n.keep))[1]::text AS open,
+		    (max(n.high) FILTER (WHERE n.keep))::text                                  AS high,
+		    (min(n.low)  FILTER (WHERE n.keep))::text                                  AS low,
+		    (array_agg(n.close ORDER BY n.bucket DESC) FILTER (WHERE n.keep))[1]::text AS close,
+		    sum(n.base_vol)::text                                                      AS base_volume,
+		    sum(n.quote_vol)::text                                                     AS quote_volume,
+		    sum(n.tc)::bigint                                                          AS trade_count,
+		    COALESCE(sc.sources, ARRAY[]::text[])                                      AS sources
+		  FROM fold n
 		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
 		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'

@@ -12280,24 +12280,24 @@ export interface components {
             change_7d_pct?: string | null;
             /**
              * Format: int64
-             * @description First ledger this asset was observed trading.
+             * @description Earliest ledger at which this asset has been observed, by a trade or (for a classic asset) by trustline/holdings evidence. An upper bound on the asset's first appearance, not its issuance ledger.
              */
             first_seen_ledger?: number | null;
             /**
              * Format: int64
-             * @description Most recent ledger this asset was observed trading.
+             * @description Most recent ledger at which this asset has been observed, by a trade or (for a classic asset) by trustline/holdings evidence. Not a last-trade ledger: an asset that only gained a trustline also moves it.
              */
             last_seen_ledger?: number | null;
             /**
              * Format: int64
-             * @description Total observed trade rows for this asset. Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and "unknown" are distinguishable).
+             * @description Deduplicated activity counter, NOT a trade count. For a classic asset it rises by at most one per asset per 60 seconds per indexer process (holdings evidence never moves it); for a Soroban contract asset it is the indexed event count. Useful only as a coarse activity rank (the default listing order). Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and "unknown" are distinguishable).
              */
             observation_count?: number | null;
             /** @description Distinct (base, quote) pairs over the trailing 24h. */
             markets_count?: number | null;
             /** @description Trades the asset participated in over the trailing 24h. */
             trade_count_24h?: number | null;
-            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering; also the listing `include=sparkline24h` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
+            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering; also the listing `include=sparkline24h` series. Each sample comes from a minute with a trade of at least $0.01 notional whenever the hour has one. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_24h?: {
                 /** Format: date-time */
                 t: string;

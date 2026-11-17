@@ -22377,14 +22377,14 @@ components:
         class:              { type: string, enum: [crypto, stablecoin, fiat], description: "Verified-currency taxonomy when catalogued." }
         change_1h_pct:      { type: [string, "null"], description: "Trailing-1h price change, signed decimal percentage." }
         change_7d_pct:      { type: [string, "null"], description: "Trailing-7d price change, signed decimal percentage." }
-        first_seen_ledger:  { type: [integer, "null"], format: int64, description: "First ledger this asset was observed trading." }
-        last_seen_ledger:   { type: [integer, "null"], format: int64, description: "Most recent ledger this asset was observed trading." }
-        observation_count:  { type: [integer, "null"], format: int64, description: "Total observed trade rows for this asset. Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and \"unknown\" are distinguishable)." }
+        first_seen_ledger:  { type: [integer, "null"], format: int64, description: "Earliest ledger at which this asset has been observed, by a trade or (for a classic asset) by trustline/holdings evidence. An upper bound on the asset's first appearance, not its issuance ledger." }
+        last_seen_ledger:   { type: [integer, "null"], format: int64, description: "Most recent ledger at which this asset has been observed, by a trade or (for a classic asset) by trustline/holdings evidence. Not a last-trade ledger: an asset that only gained a trustline also moves it." }
+        observation_count:  { type: [integer, "null"], format: int64, description: "Deduplicated activity counter, NOT a trade count. For a classic asset it rises by at most one per asset per 60 seconds per indexer process (holdings evidence never moves it); for a Soroban contract asset it is the indexed event count. Useful only as a coarse activity rank (the default listing order). Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and \"unknown\" are distinguishable)." }
         markets_count:      { type: [integer, "null"], description: "Distinct (base, quote) pairs over the trailing 24h." }
         trade_count_24h:    { type: [integer, "null"], description: "Trades the asset participated in over the trailing 24h." }
         price_history_24h:
           type: [array, "null"]
-          description: "24 hourly USD-price samples (oldest first) for sparkline rendering; also the listing `include=sparkline24h` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations."
+          description: "24 hourly USD-price samples (oldest first) for sparkline rendering; also the listing `include=sparkline24h` series. Each sample comes from a minute with a trade of at least $0.01 notional whenever the hour has one. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations."
           items:
             type: object
             properties:

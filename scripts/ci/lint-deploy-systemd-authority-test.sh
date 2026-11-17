@@ -135,5 +135,30 @@ else
   pass=$((pass + 1))
 fi
 
+# ── 6. A repeated directive compares as its whole ordered list ───────
+# Same last EnvironmentFile, different first one: last-wins parsing hid this.
+cat > "$DEPLOY_DIR/example.service" <<'EOF'
+[Service]
+EnvironmentFile=-/etc/default/ops
+EnvironmentFile=-/etc/default/example
+ExecStart=/usr/local/bin/example
+EOF
+cat > "$ROLE_DIR/templates/systemd/example.service.j2" <<'EOF'
+[Service]
+EnvironmentFile=/etc/default/base
+EnvironmentFile=-/etc/default/example
+ExecStart=/usr/local/bin/example
+EOF
+run
+expect 'a differing non-final EnvironmentFile fails the gate' 1 'EnvironmentFile'
+
+# ── 7. A declared entry that no longer diverges is stale ─────────────
+cp "$DEPLOY_DIR/example.service" "$ROLE_DIR/templates/systemd/example.service.j2"
+cat > "$DEPLOY_DIR/DIVERGENCES" <<'EOF'
+example.service:EnvironmentFile
+EOF
+run
+expect 'a declared divergence that no longer diverges fails as stale' 1 'STALE'
+
 echo "lint-deploy-systemd-authority-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
