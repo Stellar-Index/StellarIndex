@@ -3,6 +3,8 @@ package v1
 import (
 	"context"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // rwaAssetsViewTTL matches the membership TTL; PrewarmRWA rebuilds on a 5-minute cadence, so a reader never waits on the build.
@@ -77,6 +79,9 @@ func (s *Server) settleRWAAssetsView(built rwaAssetsBuild, err error) {
 	s.rwaViewFlight = nil
 	s.rwaViewErr = err
 	if err != nil {
+		// The last good build keeps serving under flags.stale, so this counter is the only signal stellarindex_api_cache_refresh_failing sees.
+		obs.APICacheOpsTotal.WithLabelValues("rwa_assets", "build", "refresh_error").Inc()
+		s.logger.Warn("rwa assets view build failed; serving the last good build", "err", err)
 		return
 	}
 	ttl := rwaAssetsViewTTL
