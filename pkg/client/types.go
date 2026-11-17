@@ -99,7 +99,7 @@ type Flags struct {
 	// sent them ("type", "code", "issuer", "q"); omitted when everything supplied was applied. `/v1/assets` sets it
 	// on listings that cannot narrow. A page that dropped a filter otherwise looks identical to one that matched.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
-	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`).
+	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`, `/v1/markets`).
 	IncludesUnread []string `json:"includes_unread,omitempty"`
 }
 
