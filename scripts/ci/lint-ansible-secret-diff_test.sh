@@ -102,3 +102,19 @@ if [[ $STATUS -eq 0 || "$OUTPUT" != *"fake_service_secret_key"* ]]; then
 fi
 
 echo "PASS: lint-ansible-secret-diff catches a template inlining *_secret_key"
+
+# Pager keys and webhook or healthcheck URLs are credentials too.
+for var in fake_pagerduty_key fake_discord_webhook_url_pages fake_healthchecks_alert_delivery_url; do
+  printf 'x = {{ %s }}\n' "$var" > "$TMPDIR/configs/ansible/roles/fakerole/templates/leak.conf.j2"
+  set +e
+  OUTPUT="$(cd "$TMPDIR" && python3 "$LINT" 2>&1)"
+  STATUS=$?
+  set -e
+  if [[ $STATUS -eq 0 || "$OUTPUT" != *"$var"* ]]; then
+    echo "FAIL: lint did not flag a template inlining $var" >&2
+    echo "$OUTPUT" >&2
+    exit 1
+  fi
+done
+
+echo "PASS: lint-ansible-secret-diff catches pager keys and webhook or healthcheck URLs"

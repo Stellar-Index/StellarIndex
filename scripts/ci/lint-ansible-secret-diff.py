@@ -46,7 +46,8 @@ TASKS_DIR = "configs/ansible/tasks"
 # `*_cipher_pass`, `*_s3_key`, `*_s3_key_secret`, `*_secret_key`, `*_token`,
 # `*_password`, `vault_*_api_key` must.
 SECRET_VAR = re.compile(
-    r"\b[A-Za-z0-9_]*(_password|_pass|_secret|_token|_api_key|_s3_key|_secret_key|_seal_key)\b"
+    r"\b[A-Za-z0-9_]*(_password|_pass|_secret|_token|_api_key|_s3_key|_secret_key|_seal_key"
+    r"|_pagerduty_key|_webhook_url(_[a-z0-9]+)*|_healthchecks_[a-z0-9_]+_url)\b"
 )
 JINJA_EXPR = re.compile(r"\{\{(.*?)\}\}", re.S)
 
