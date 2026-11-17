@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
@@ -340,18 +341,67 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	}
 	netTip := completeness.NetworkTipLowerBound(live.LatestLedger, time.Time(live.IngestedAt), now)
 	for _, sn := range snaps {
-		if haveTip && netTip > sn.Tip && netTip-sn.Tip > coverageVerdictStaleLedgers {
-			return true
-		}
-		if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {
-			return true
-		}
-		if sn.ProjectionOK && !completeness.IsAuditAxis(sn.Source) &&
-			completeness.ProjectionEvidenceExpired(sn.ProjectionEvidencedAt, now, coverageVerdictEvidenceStaleAge) {
+		if coverageVerdictStale(sn, now, netTip, haveTip) {
 			return true
 		}
 	}
 	return false
+}
+
+// coverageVerdictStale is one verdict's share of [Server.coverageVerdictsStale], for a consumer that relies on named sources only.
+func coverageVerdictStale(sn timescale.CompletenessSnapshot, now time.Time, netTip uint32, haveTip bool) bool {
+	if haveTip && netTip > sn.Tip && netTip-sn.Tip > coverageVerdictStaleLedgers {
+		return true
+	}
+	if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {
+		return true
+	}
+	return sn.ProjectionOK && !completeness.IsAuditAxis(sn.Source) &&
+		completeness.ProjectionEvidenceExpired(sn.ProjectionEvidencedAt, now, coverageVerdictEvidenceStaleAge)
+}
+
+// historyVerdict is whether one source's events are projected back to its genesis, judged on that source's verdict alone.
+type historyVerdict int
+
+const (
+	historyUnverified historyVerdict = iota // no verdict, or its projection floor is unknown or after genesis
+	historyVerified
+	historyVerdictStale  // the verdict is past its freshness gate
+	historyVerdictUnread // the verdict read failed
+)
+
+// projectionHistoryVerdicts judges each named source's projection floor on its own verdict, so a stale verdict for an
+// unrelated source verifies or withholds nothing here.
+func (s *Server) projectionHistoryVerdicts(ctx context.Context, sources ...string) map[string]historyVerdict {
+	out := make(map[string]historyVerdict, len(sources))
+	if s.CompletenessReader == nil {
+		return out
+	}
+	snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		s.logger.Warn("completeness read failed", "err", err)
+		for _, src := range sources {
+			out[src] = historyVerdictUnread
+		}
+		return out
+	}
+	live, haveTip := s.liveTip(ctx)
+	now := time.Now()
+	netTip := completeness.NetworkTipLowerBound(live.LatestLedger, time.Time(live.IngestedAt), now)
+	for _, sn := range snaps {
+		if !slices.Contains(sources, sn.Source) {
+			continue
+		}
+		switch {
+		case coverageVerdictStale(sn, now, netTip, haveTip):
+			out[sn.Source] = historyVerdictStale
+		case sn.ProjectionOK && sn.ProjectionVerifiedFrom != 0 && sn.ProjectionVerifiedFrom <= sn.Genesis:
+			out[sn.Source] = historyVerified
+		default:
+			out[sn.Source] = historyUnverified
+		}
+	}
+	return out
 }
 
 // liveTip returns the ledgerstream cursor's last ledger and write time; ok=false when no reader, no row or a failed read
