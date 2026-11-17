@@ -2227,6 +2227,9 @@ jobs:
         # not listen on. Jinja only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/loki-push-target-test.sh
+      - name: HA roles self-test (patroni, redis-sentinel, loki defaults and templates)
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-ha-roles-test.sh
       - name: haproxy http-request timeout test (SL01)
         # defaults block set connect/client/server timeouts but no
         # timeout http-request, leaving a slow-header client holding a

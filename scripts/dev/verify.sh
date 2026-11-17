@@ -561,6 +561,7 @@ lane_d() { # everything else
     echo "=== Ansible galexie-backfill-status empty-log self-test ===" && ./scripts/ci/ansible-galexie-backfill-status-test.sh
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh
     echo "=== Loki push target self-test ===" && ./scripts/ci/loki-push-target-test.sh
+    echo "=== HA roles self-test ===" && ./scripts/ci/ansible-ha-roles-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
     echo "=== Ansible env-file secret guard self-test ===" && ./scripts/ci/ansible-envfile-secret-guard-test.sh
     echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
