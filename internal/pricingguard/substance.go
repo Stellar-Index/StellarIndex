@@ -3,8 +3,9 @@
 // The trailing-baseline guard in guard.go is blind to a market whose ENTIRE history is
 // attacker-authored: anyone can mint a token and seed a "market" with dust trades. This gate
 // refuses an AGGREGATED price claim for an on-chain pair whose trailing activity is below an
-// operator-set floor (USD volume, distinct 1-minute buckets, wall-clock span). Raw surfaces
-// (/v1/ohlc, /v1/observations, /v1/history) stay visible (ADR-0018).
+// operator-set floor (USD volume, distinct 1-minute buckets, wall-clock span). /v1/ohlc,
+// /v1/observations and /v1/history are not substance-gated (ADR-0018); /v1/ohlc is still
+// scam-gated, since candles are an aggregated price trajectory.
 //
 // Fail postures are asymmetric: below floor withholds (fail-closed); a substance query ERROR
 // serves (fail-open), so a DB blip cannot 404 the price surface. Pairs with no on-chain leg

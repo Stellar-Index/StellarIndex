@@ -20,8 +20,8 @@ import (
 // must too: it serves the same pair over the same CAGG VWAP chain, differing only in the read
 // closure, and `?timeframe=all` and since-inception answer the same question.
 //
-// scam.go promises the RAW surfaces stay visible (/v1/history's trade rows, /v1/observations,
-// /v1/ohlc). The distinction is raw trades versus an AGGREGATED price claim, not the route
+// scam.go promises the RAW surfaces stay visible (/v1/history's trade rows, /v1/observations).
+// The distinction is raw trades versus an AGGREGATED price claim, not the route
 // prefix: this endpoint is named for the raw family but serves bucketed VWAP.
 
 // A flagged base must be withheld — and withheld BEFORE the read, so a
