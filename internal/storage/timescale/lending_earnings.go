@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -73,24 +74,36 @@ const (
 		 ORDER BY pool, tier LIMIT $2`
 )
 
-// LendingAccountFlows reads one account's emission claims and backstop token flows; every query is bound to the account.
+// LendingAccountFlows reads one account's emission claims and backstop token flows; every query is bound to the account. A
+// list past PositionsVenueLimit keeps its first rows and the result wraps ErrPositionsTruncated naming it.
 func (s *Store) LendingAccountFlows(ctx context.Context, address string) (LendingAccountFlows, error) {
 	var out LendingAccountFlows
-	args := []any{address, positionsVenueLimit}
+	var truncated []error
+	read := func(err error) error {
+		if errors.Is(err, ErrPositionsTruncated) {
+			truncated = append(truncated, err)
+			return nil
+		}
+		return err
+	}
 	var err error
-	if out.BlendClaims, err = queryFold(ctx, s.db, "LendingAccountFlows blend claims", blendClaimsByUserSQL, args, scanClaimFold); err != nil {
+	out.BlendClaims, err = queryVenueFold(ctx, s.db, "LendingAccountFlows blend claims", blendClaimsByUserSQL, address, scanClaimFold)
+	if err = read(err); err != nil {
 		return out, err
 	}
-	if out.BLNTClaims, err = queryFold(ctx, s.db, "LendingAccountFlows blnt claims", blntClaimsByUserSQL, args, scanClaimFold); err != nil {
+	out.BLNTClaims, err = queryVenueFold(ctx, s.db, "LendingAccountFlows blnt claims", blntClaimsByUserSQL, address, scanClaimFold)
+	if err = read(err); err != nil {
 		return out, err
 	}
-	if out.BlendBackstop, err = queryFold(ctx, s.db, "LendingAccountFlows blend backstop", blendBackstopTokensByUserSQL, args, scanBackstopTokenFold); err != nil {
+	out.BlendBackstop, err = queryVenueFold(ctx, s.db, "LendingAccountFlows blend backstop", blendBackstopTokensByUserSQL, address, scanBackstopTokenFold)
+	if err = read(err); err != nil {
 		return out, err
 	}
-	if out.BLNTBackstop, err = queryFold(ctx, s.db, "LendingAccountFlows blnt backstop", blntBackstopTokensByUserSQL, args, scanBackstopTokenFold); err != nil {
+	out.BLNTBackstop, err = queryVenueFold(ctx, s.db, "LendingAccountFlows blnt backstop", blntBackstopTokensByUserSQL, address, scanBackstopTokenFold)
+	if err = read(err); err != nil {
 		return out, err
 	}
-	return out, nil
+	return out, errors.Join(truncated...)
 }
 
 func scanClaimFold(rows *sql.Rows) (LendingClaimFold, error) {

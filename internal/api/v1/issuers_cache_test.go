@@ -191,8 +191,8 @@ func TestCachedIssuersReader_LimitSweepSharesOneFill(t *testing.T) {
 	if got := up.listCalls.Load(); got != 1 {
 		t.Errorf("upstream called %d times across a 1..%d limit sweep; want 1", got, IssuersListMaxLimit)
 	}
-	if got := up.lastLimit.Load(); got != IssuersListMaxLimit {
-		t.Errorf("upstream asked for limit=%d; want the ceiling %d", got, IssuersListMaxLimit)
+	if got := up.lastLimit.Load(); got != IssuersListMaxLimit+1 {
+		t.Errorf("upstream asked for limit=%d; want the ceiling plus one, %d", got, IssuersListMaxLimit+1)
 	}
 
 	// A caller appending to its slice must not corrupt the shared entry.

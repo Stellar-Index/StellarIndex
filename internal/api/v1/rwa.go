@@ -1678,8 +1678,38 @@ func rwaSummariseReference(assets []RWAAsset, trunc rwaTruncation) RWAReferenceS
 		LowerBound: len(assets)-valued > 0 || trunc.any() ||
 			rwaSumsAFloor(assets, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }),
 		Sources: rwaReferenceSources(assets),
-		Basis:   rwaReferenceBasis(len(assets), valued, provenances, trunc),
+		Basis:   rwaReferenceBasis(len(assets), valued, provenances, trunc) + rwaReferenceOutageNote(assets),
 	}
+}
+
+// rwaReferenceOutageNote names the rows refused because a reference read did not answer, and which read, which the basis's
+// "no bound and current oracle feed" would otherwise pass off as a binding gap.
+func rwaReferenceOutageNote(assets []RWAAsset) string {
+	counts := map[string]int{}
+	for _, a := range assets {
+		if a.ReferenceValuation.Status == RWAPremiumReferenceUnavailable {
+			counts[a.ReferenceValuation.unansweredBy]++
+		}
+	}
+	var parts []string
+	for _, by := range []string{rwaUnansweredOracle, rwaUnansweredListing, rwaUnansweredBoth, ""} {
+		n := counts[by]
+		if n == 0 {
+			continue
+		}
+		if by == "" {
+			by = "a reference read"
+		}
+		if len(parts) == 0 {
+			parts = append(parts, strconv.Itoa(n)+" of these carry no reference valuation because "+by+" did not answer")
+			continue
+		}
+		parts = append(parts, strconv.Itoa(n)+" because "+by+" did not answer")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, ", and ") + ": an outage, not a missing feed, and the response is flagged stale until it answers."
 }
 
 // rwaReferenceProvenanceProse describes the kinds of claim in the total from the provenances actually present (oracle NAV values

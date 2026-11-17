@@ -485,8 +485,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// Both enrichment readers are pair-wide (every venue). Beside a
 	// ?source= row's single-venue headline they would contradict it, so omit them.
 	pairWide := source == ""
-	// A dropped enrichment is a partial page the next request fills.
-	enrichFailed := false
+	// A dropped enrichment is a partial page the next request fills; flags.includes_unread names it on the wire.
+	var unread []string
 	if includeInception && pairWide && len(rows) > 0 {
 		pairs := make([][2]string, len(rows))
 		for i, m := range rows {
@@ -496,7 +496,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// page without inception rather than 5xx-ing a listing.
 		if firsts, fErr := reader.FirstTradeBatch(mCtx, pairs); fErr != nil {
 			s.logger.Warn("markets inception batch failed", "err", fErr)
-			enrichFailed = true
+			unread = append(unread, "inception")
 		} else {
 			for i, m := range rows {
 				if t, ok := firsts[m.Base+"|"+m.Quote]; ok {
@@ -524,7 +524,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 		if hErr != nil {
 			s.logger.Warn("markets sparkline batch failed", "err", hErr)
-			enrichFailed = true
+			unread = append(unread, "sparkline")
 		} else {
 			for i, m := range rows {
 				key := m.Base + "|" + m.Quote
@@ -546,7 +546,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// observedAt zero and writeEnvelope defaults as_of to now.
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed, Truncated: truncated},
+		Flags: Flags{Stale: stale, Degraded: stale || len(unread) > 0, Truncated: truncated, IncludesUnread: unread},
 	}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())

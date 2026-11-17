@@ -118,7 +118,8 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 		out = append(out, lendingPoolRow(blnt.SourceName, p))
 	}
 	slices.SortStableFunc(out, func(a, b LendingPool) int { return cmp.Compare(b.AuctionsTotal, a.AuctionsTotal) })
-	flags := Flags{Stale: stale || blntStale, Degraded: blntFailed}
+	// Omitted BLNT rows make the list a lower bound; Degraded alone is header-only.
+	flags := Flags{Stale: stale || blntStale, Degraded: blntFailed, Truncated: blntFailed}
 	if s.attachLendingSummaries(out, &vintage, &flags) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
@@ -179,7 +180,7 @@ func listBlendPools(ctx context.Context, reader LendingReader, vintage *dataVint
 }
 
 // listBLNTPools reads the BLNT pool rows when the reader serves them. A failed read leaves them out and
-// reports failed, which the list serves as flags.degraded rather than failing the Blend rows with it.
+// reports failed, which the list serves as flags.truncated rather than failing the Blend rows with it.
 func (s *Server) listBLNTPools(ctx context.Context, reader LendingReader, vintage *dataVintage) (rows []timescale.BlendPoolSummary, stale, failed bool) {
 	br, ok := reader.(blntLendingReader)
 	if !ok {

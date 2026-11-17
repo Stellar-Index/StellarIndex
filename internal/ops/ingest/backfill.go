@@ -594,6 +594,17 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRe
 	if err != nil || len(plan) == 0 {
 		return err
 	}
+	return runCAGGRefreshPlan(ctx, logger, store, plan)
+}
+
+// planStepRefresher is the slice of *timescale.Store [runCAGGRefreshPlan] needs.
+type planStepRefresher interface {
+	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+	timescale.CAGGStepRefresher
+}
+
+// runCAGGRefreshPlan runs plan in order under caggRefreshMu. Any failure errors; prices_1m dependents are skipped when it failed.
+func runCAGGRefreshPlan(ctx context.Context, logger *slog.Logger, store planStepRefresher, plan []timescale.CAGGRefreshStep) error {
 	// One worker at a time through the whole plan — see caggRefreshMu. Held across the loop rather than per view: releasing
 	// between rungs would just hand the next worker a view this one is about to ask for, which is the collision the lock exists
 	// to remove.

@@ -3,14 +3,32 @@ package timescale
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
 
-// positionsVenueLimit bounds each per-venue fold (GET /v1/accounts/{g_strkey}/positions); folds order by venue key first so survivors
+// PositionsVenueLimit bounds each per-venue fold (GET /v1/accounts/{g_strkey}/positions); folds order by venue key first so survivors
 // are not plan-dependent. Nets are SUMs of signed per-event deltas ("event_derived"); sorocredit's credit_positions is "stateful"
 // (latest statement).
-const positionsVenueLimit = 500
+const PositionsVenueLimit = 500
+
+// ErrPositionsTruncated wraps a fold that holds more than PositionsVenueLimit venues. Its rows are still returned: the first
+// PositionsVenueLimit by venue key, which the caller must disclose as a partial list.
+var ErrPositionsTruncated = errors.New("positions fold exceeds the venue limit")
+
+// queryVenueFold runs a positions fold `WHERE <user_col> = $1 ... LIMIT $2`, reading one row past PositionsVenueLimit so a
+// capped fold is told apart from one holding exactly the limit.
+func queryVenueFold[T any](ctx context.Context, db *sql.DB, label, query, address string, scan func(*sql.Rows) (T, error)) ([]T, error) {
+	out, err := queryFold(ctx, db, label, query, []any{address, PositionsVenueLimit + 1}, scan)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > PositionsVenueLimit {
+		return out[:PositionsVenueLimit], fmt.Errorf("timescale: %s: %w (%d)", label, ErrPositionsTruncated, PositionsVenueLimit)
+	}
+	return out, nil
+}
 
 // queryFold runs one `WHERE <user_col> = $1 ... LIMIT $2` fold query and scans each row; label names the caller in the wrapped error.
 func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args []any, scan func(*sql.Rows) (T, error)) ([]T, error) {
@@ -149,7 +167,7 @@ const blendPositionsByUserSQL = `
 
 // BlendPositionsByUser folds blend_positions into one row per (pool, asset) the user touched, with independent supply and borrow nets (see BlendPositionFold); sargable on `user_address = $1`.
 func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
-	return queryFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, []any{address, positionsVenueLimit}, scanLendingPositionFold)
+	return queryVenueFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, address, scanLendingPositionFold)
 }
 
 // scanLendingPositionFold reads one Blend-shaped (pool, asset) supply/borrow fold row.
@@ -201,7 +219,7 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 		 GROUP BY pool
 		 ORDER BY pool
 		 LIMIT $2`
-	return queryFold(ctx, s.db, "BlendBackstopSharesByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendBackstopFold, error) {
+	return queryVenueFold(ctx, s.db, "BlendBackstopSharesByUser", q, address, func(rows *sql.Rows) (BlendBackstopFold, error) {
 		var (
 			f       BlendBackstopFold
 			ledger  int64
@@ -238,7 +256,7 @@ func (s *Store) PhoenixStakeByUser(ctx context.Context, address string) ([]Phoen
 		 GROUP BY stake_contract, lp_token
 		 ORDER BY stake_contract, lp_token
 		 LIMIT $2`
-	return queryFold(ctx, s.db, "PhoenixStakeByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (PhoenixStakeFold, error) {
+	return queryVenueFold(ctx, s.db, "PhoenixStakeByUser", q, address, func(rows *sql.Rows) (PhoenixStakeFold, error) {
 		var (
 			f       PhoenixStakeFold
 			ledger  int64
@@ -274,7 +292,7 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 		 GROUP BY contract_id
 		 ORDER BY contract_id
 		 LIMIT $2`
-	return queryFold(ctx, s.db, "DefindexVaultSharesByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (DefindexVaultFold, error) {
+	return queryVenueFold(ctx, s.db, "DefindexVaultSharesByUser", q, address, func(rows *sql.Rows) (DefindexVaultFold, error) {
 		var (
 			f       DefindexVaultFold
 			ledger  int64
@@ -322,7 +340,7 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 		 WHERE p.owner = $1
 		 ORDER BY p.collateral_contract, p.position_uuid, p.ledger
 		 LIMIT $2`
-	return queryFold(ctx, s.db, "CreditPositionsByOwner", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (CreditPositionFold, error) {
+	return queryVenueFold(ctx, s.db, "CreditPositionsByOwner", q, address, func(rows *sql.Rows) (CreditPositionFold, error) {
 		var (
 			f            CreditPositionFold
 			opened       time.Time
@@ -370,7 +388,7 @@ func (s *Store) AquariusGaugeByUser(ctx context.Context, address string) ([]Aqua
 		 GROUP BY contract_id
 		 ORDER BY contract_id
 		 LIMIT $2`
-	return queryFold(ctx, s.db, "AquariusGaugeByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (AquariusGaugeFold, error) {
+	return queryVenueFold(ctx, s.db, "AquariusGaugeByUser", q, address, func(rows *sql.Rows) (AquariusGaugeFold, error) {
 		var (
 			f       AquariusGaugeFold
 			ledger  int64

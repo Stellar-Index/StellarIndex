@@ -24,7 +24,8 @@ func (r *statsReader) ContractStats(context.Context) (clickhouse.ContractStats, 
 			{Month: time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC), SAC: 2, Wasm: 3},
 			{Month: time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC), SAC: 1, Wasm: 4},
 		},
-		Active90d: &n,
+		Active90d:     &n,
+		CensusThrough: time.Now().UTC().Truncate(24 * time.Hour),
 	}, nil
 }
 
@@ -53,7 +54,7 @@ func newStatsHandler(typesErr error) (*Handler, *statsReader) {
 func TestBuildContractStatsView_TotalsAndLowerBound(t *testing.T) {
 	r := &statsReader{}
 	stats, _ := r.ContractStats(context.Background())
-	v := buildContractStatsView(stats)
+	v := buildContractStatsView(stats, time.Now())
 	if v.TotalSAC != 3 || v.TotalWasm != 7 || v.TotalDeployed != 10 {
 		t.Fatalf("totals = %d/%d/%d, want 3/7/10", v.TotalSAC, v.TotalWasm, v.TotalDeployed)
 	}
@@ -64,8 +65,39 @@ func TestBuildContractStatsView_TotalsAndLowerBound(t *testing.T) {
 		t.Fatalf("lower_bound=%v history_complete=%v, want a lower bound without a watermark", v.LowerBound, v.HistoryComplete)
 	}
 	stats.HistoryComplete = true
-	if v = buildContractStatsView(stats); v.LowerBound {
+	if v = buildContractStatsView(stats, time.Now()); v.LowerBound {
 		t.Fatal("lower_bound set despite a complete history")
+	}
+}
+
+// A stalled census silently shrinks the 90-day window, so the count is a lower bound that
+// names the census's last day.
+func TestBuildContractStatsView_CensusLagIsLowerBound(t *testing.T) {
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	n := int64(40)
+	stats := clickhouse.ContractStats{Active90d: &n, HistoryComplete: true}
+	cases := []struct {
+		through time.Time
+		lower   bool
+	}{
+		{time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC), false},
+		{time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC), false},
+		{time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC), true},
+		{time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), true},
+	}
+	for _, tc := range cases {
+		stats.CensusThrough = tc.through
+		v := buildContractStatsView(stats, now)
+		if v.LowerBound != tc.lower {
+			t.Errorf("through %s: lower_bound = %v, want %v", tc.through.Format("2006-01-02"), v.LowerBound, tc.lower)
+		}
+		if v.Active90dThrough == nil || *v.Active90dThrough != tc.through.Format("2006-01-02") {
+			t.Errorf("through %s: active_90d_through = %v", tc.through.Format("2006-01-02"), v.Active90dThrough)
+		}
+	}
+	stats.Active90d = nil
+	if v := buildContractStatsView(stats, now); v.LowerBound || v.Active90dThrough != nil {
+		t.Errorf("census unavailable: lower_bound=%v through=%v, want false/nil", v.LowerBound, v.Active90dThrough)
 	}
 }
 

@@ -19,6 +19,7 @@ type assetDetailEntry struct {
 	// degraded: the body was built over a failed or slow read, so a replay
 	// must not carry the route's shared-cache band.
 	degraded bool
+	stale    bool
 }
 
 // assetDetailResponseCache caches the whole /v1/assets/{id} response by normalised asset_id, so new fields and overlays flow
@@ -61,7 +62,7 @@ const assetDetailCacheMaxEntries = 4096
 
 // put stores a rendered response under assetID, last-write-wins: concurrent writers are accepted as a stampede cost over a
 // single-flight layer. Callers pass marshalled bytes so the lock is not held during encoding.
-func (c *assetDetailResponseCache) put(assetID string, body []byte, degraded bool) {
+func (c *assetDetailResponseCache) put(assetID string, body []byte, flags Flags) {
 	if c == nil || c.ttl <= 0 {
 		return
 	}
@@ -73,7 +74,8 @@ func (c *assetDetailResponseCache) put(assetID string, body []byte, degraded boo
 	c.entries[assetID] = &assetDetailEntry{
 		body:     body,
 		cachedAt: time.Now(),
-		degraded: degraded,
+		degraded: flags.Degraded,
+		stale:    flags.Stale,
 	}
 }
 
@@ -124,6 +126,7 @@ func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
 	if entry.degraded {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	obs.MarkResponseFlags(w, entry.degraded, entry.stale)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Stellarindex-Cache", "HIT")
 	_, _ = w.Write(entry.body)

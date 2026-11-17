@@ -2041,8 +2041,9 @@ func assertVenueCapFolds(ctx context.Context, t *testing.T, plan string, store *
 	t.Helper()
 	check := func(label string, got []string, err error) {
 		t.Helper()
-		if err != nil {
-			t.Fatalf("%s (%s): %v", label, plan, err)
+		// The seed exceeds the cap, so each fold must keep its rows and report the truncation.
+		if !errors.Is(err, timescale.ErrPositionsTruncated) {
+			t.Fatalf("%s (%s): err = %v, want ErrPositionsTruncated", label, plan, err)
 		}
 		if !slices.Equal(got, want) {
 			t.Errorf("%s (%s) returned %d venues, want the lowest %d by key in key order; %s",

@@ -53,7 +53,7 @@ func (r *stubIssuersReader) ListIssuers(_ context.Context, limit int) ([]timesca
 	if r.listErr != nil {
 		return nil, r.listErr
 	}
-	return r.list, nil
+	return r.list[:min(limit, len(r.list))], nil
 }
 
 // ─── /v1/issuers (list) ───────────────────────────────────────────
@@ -76,8 +76,8 @@ func TestHandleIssuersList_DefaultLimit(t *testing.T) {
 	ts := startHTTPTest(t, srv.Handler())
 
 	_ = mustGet(t, ts.URL+"/v1/issuers")
-	if reader.lastLimit != 100 {
-		t.Errorf("default limit = %d, want 100", reader.lastLimit)
+	if reader.lastLimit != 101 {
+		t.Errorf("default limit read = %d, want 100 plus the one row that detects a capped list", reader.lastLimit)
 	}
 }
 
@@ -124,8 +124,8 @@ func TestHandleIssuersList_HappyPath(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if reader.lastLimit != 10 {
-		t.Errorf("forwarded limit = %d, want 10", reader.lastLimit)
+	if reader.lastLimit != 11 {
+		t.Errorf("forwarded limit = %d, want 10 plus the one row that detects a capped list", reader.lastLimit)
 	}
 	var env struct {
 		Data []v1.IssuerListEntry `json:"data"`

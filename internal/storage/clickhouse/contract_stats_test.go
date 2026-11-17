@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/strkey"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 type contractStatsConn struct {
@@ -21,7 +24,7 @@ func (c *contractStatsConn) QueryRow(_ context.Context, query string, _ ...any) 
 	case strings.Contains(query, "entry_history_watermark"):
 		return &stubRow{data: []any{c.watermark}}
 	case strings.Contains(query, "contracts_census_daily"):
-		return &stubRow{data: []any{int64(42)}}
+		return &stubRow{data: []any{int64(42), time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)}}
 	}
 	return &stubRow{data: nil}
 }
@@ -57,6 +60,13 @@ func TestContractStats_CompleteHistory(t *testing.T) {
 	}
 	if got.Active90d == nil || *got.Active90d != 42 {
 		t.Fatalf("active90d = %v, want 42", got.Active90d)
+	}
+	through := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	if !got.CensusThrough.Equal(through) {
+		t.Fatalf("census through = %v, want %v", got.CensusThrough, through)
+	}
+	if g := testutil.ToFloat64(obs.ContractsCensusLatestDay); g != float64(through.Unix()) {
+		t.Fatalf("census latest-day gauge = %v, want %d", g, through.Unix())
 	}
 	if !got.HistoryComplete || got.ThruLedger != 62_000_000 {
 		t.Fatalf("history = %v/%d, want complete at 62000000", got.HistoryComplete, got.ThruLedger)

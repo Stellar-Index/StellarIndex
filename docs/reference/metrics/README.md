@@ -140,6 +140,18 @@ Histogram, labels `method`, `route`.
 
 The non-5xx twin of `http_request_duration_seconds`, recorded only for status < 500 and not 499. Pair with `http_request_duration_seconds_count` for the latency-SLO ratio.
 
+### `stellarindex_api_flagged_responses_total`
+
+Counter, labels `route`, `flag` (`degraded` / `stale`).
+
+Responses served with `flags.degraded` (a carried-forward or partial body, sent with `Cache-Control: no-store`) or `flags.stale`, counted by `obs.HTTPMetrics` from the envelope writer and the cached asset detail and listing replays. These are 200s, so the 5xx availability SLO never sees a backend read that fails on every request; divide by `http_requests_total` for the route's degraded share. `route` is the route pattern, as in `http_requests_total`. Synthetic probes are excluded. Not alerted.
+
+### `stellarindex_contracts_census_latest_day_timestamp_seconds`
+
+Gauge, no labels.
+
+Newest day in `stellar.contracts_census_daily` (UTC midnight, Unix seconds), set by the API each time the `/v1/contracts/stats` snapshot refreshes (hourly, while the page is read). `time() - value > 2*86400` means the census rollup has stalled; `/v1/contracts/stats` then serves `active_90d` as a lower bound. 0 until the first read. Not alerted.
+
 ### `stellarindex_api_cache_ops_total`
 
 Counter, labels `cache`, `op`, `result`.

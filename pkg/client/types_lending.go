@@ -2,7 +2,7 @@ package client
 
 import "time"
 
-// LendingPool is one Blend pool from [Client.LendingPools] observed in the trailing 7d auction stream; the shape is designed to grow with new fields.
+// LendingPool is one Blend or BLNT pool (Protocol says which) from [Client.LendingPools]; the shape is designed to grow with new fields.
 type LendingPool struct {
 	Protocol       string    `json:"protocol"`
 	Pool           string    `json:"pool"`

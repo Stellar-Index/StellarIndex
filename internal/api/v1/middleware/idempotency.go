@@ -133,6 +133,9 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
+// Unwrap lets outer middleware reach the writer this one wraps (obs.MarkResponseFlags walks it to the metrics recorder).
+func (rec *idempotencyRecorder) Unwrap() http.ResponseWriter { return rec.ResponseWriter }
+
 // Idempotency replays the ORIGINAL 2xx response for a repeated Idempotency-Key within the store's TTL; scoped per subject, method and
 // path, and only 2xx is cached so fixed errors are not frozen.
 func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) string) Middleware {

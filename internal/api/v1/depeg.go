@@ -74,14 +74,15 @@ func (s *Server) proxyDeviationChecked(ctx context.Context, at time.Time) (devia
 	return false, unread
 }
 
-// withProxyDeviation stamps a triangulated answer's depeg flag; one whose peg check did not answer is degraded (no-store), so the
-// missing warning is not cached.
+// withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire and is
+// degraded (no-store), so the missing warning is neither read as a verdict nor cached.
 func (s *Server) withProxyDeviation(ctx context.Context, f Flags, at time.Time) Flags {
 	if !f.Triangulated {
 		return f
 	}
 	deviated, unread := s.proxyDeviationChecked(ctx, at)
 	f.ProxyDeviation = deviated
+	f.ProxyDeviationUnchecked = unread
 	f.Degraded = f.Degraded || unread
 	return f
 }
