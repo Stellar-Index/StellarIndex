@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -104,6 +105,7 @@ func TestAssetPriceSnapshot_NotionalFloorAcrossArms(t *testing.T) {
 	xlmArm := "TARM-" + zeroLegIssuer  // real XLM market, crumb-only USDC market
 	pillArm := "TPIL-" + zeroLegIssuer // real USDC market, crumb-only 1h lookback
 	mirror := "TMIR-" + zeroLegIssuer  // real USDC market, crumb-only XLM market
+	unstamped := "TFRZ-" + zeroLegIssuer
 	now := time.Now().UTC().Truncate(time.Minute)
 
 	// XLM anchor at 0.30 USD; TARM at 1/3 XLM = 0.10 USD ten minutes ago.
@@ -134,6 +136,17 @@ func TestAssetPriceSnapshot_NotionalFloorAcrossArms(t *testing.T) {
 		{off: 0, base: "1", quote: "50", usd: "0.0000015"},
 	}, now.Add(-2*time.Minute))
 
+	// TFRZ priced three hours ago; its newer XLM trades are unstamped (no fresh XLM/USD anchor), so it has no current USD price.
+	seed(t, db, ctx, ohlcDustPair{base: "native", quote: usdcID}, []seedTrade{
+		{off: 0, base: "1000000000", quote: "300000000", usd: "30"},
+	}, now.Add(-3*time.Hour))
+	seed(t, db, ctx, ohlcDustPair{base: unstamped, quote: "native"}, []seedTrade{
+		{off: 0, base: "300000000", quote: "100000000", usd: "3"},
+	}, now.Add(-3*time.Hour))
+	seed(t, db, ctx, ohlcDustPair{base: unstamped, quote: "native"}, []seedTrade{
+		{off: 0, base: "300000000", quote: "200000000", usd: ""},
+	}, now.Add(-30*time.Minute))
+
 	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
@@ -159,6 +172,13 @@ func TestAssetPriceSnapshot_NotionalFloorAcrossArms(t *testing.T) {
 	t.Run("floored USD arm beats newer crumb XLM arm", func(t *testing.T) {
 		if price, ok, _ := read(mirror); !ok {
 			t.Errorf("price_usd = %s, want 0.1 from the floored USD arm", price)
+		}
+	})
+	t.Run("unstamped minute is unpriced, not sub-cent", func(t *testing.T) {
+		var price string
+		err := db.QueryRowContext(ctx, `SELECT price_usd::text FROM asset_price_snapshot WHERE asset_id = $1`, unstamped).Scan(&price)
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("price_usd = %s (err %v), want no row: the pre-freeze minute must not be served as current", price, err)
 		}
 	})
 	t.Run("crumb lookback yields no change pill", func(t *testing.T) {

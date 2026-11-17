@@ -116,7 +116,7 @@ func TestPriceArms_PreferNewestNotionalMinute(t *testing.T) {
 	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
 	arms := fold(assetPriceArmCTEs("", xlmQuotesBound1))
 	for _, want := range []string{
-		"notional_trade_count > 0 AS floored",
+		"(notional_trade_count > 0 OR volume_usd = 0) AS floored",
 		"COALESCE(max(u.bucket) FILTER (WHERE u.floored) OVER w, max(u.bucket) OVER w) AS newest",
 		"WHERE bucket = newest AND (floored OR NOT any_floored)",
 	} {

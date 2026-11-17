@@ -140,19 +140,20 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		  SELECT asset_id, bucket, asset_leg, quote_leg, sources, floored
 		    FROM (
 		      -- vwap carries no notional floor, so prefer the newest minute holding a trade over $0.01 and fall back to the newest
-		      -- minute only when the window has none; within the chosen minute a sub-cent direction is dropped too.
+		      -- minute only when the window has none; within the chosen minute a sub-cent direction is dropped too. A minute nothing
+		      -- stamped (volume_usd = 0: no USD anchor, e.g. an XLM/USD freeze) is unpriced, not sub-cent, so it still counts as newest.
 		      SELECT u.*,
 		             COALESCE(max(u.bucket) FILTER (WHERE u.floored) OVER w, max(u.bucket) OVER w) AS newest,
 		             bool_or(u.floored) OVER w AS any_floored
 		        FROM (
 		          SELECT base_asset AS asset_id, bucket, volume_priced AS asset_leg,
-		                 vwap * volume_priced AS quote_leg, sources, notional_trade_count > 0 AS floored
+		                 vwap * volume_priced AS quote_leg, sources, (notional_trade_count > 0 OR volume_usd = 0) AS floored
 		            FROM prices_1m
 		           WHERE quote_asset IN (%[2]s)%[4]s
 		             AND %[3]s
 		             AND vwap > 0 AND volume_priced > 0
 		          UNION ALL
-		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, notional_trade_count > 0 AS floored
+		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, (notional_trade_count > 0 OR volume_usd = 0) AS floored
 		            FROM prices_1m
 		           WHERE base_asset IN (%[2]s)%[5]s
 		             AND %[3]s
