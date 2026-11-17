@@ -443,10 +443,16 @@ fi
 # two passes at fixture trees; the passes above always read migrations/.
 MIG_DIR="${MIG_DIR:-migrations}"
 
-# sql_stmts <file>: one SQL statement per line, `--` comments stripped
-# and whitespace collapsed, so a statement split across lines matches.
+# sql_stmts <file>: one SQL statement per line, `--` and `/* */` comments
+# stripped and whitespace collapsed, so a statement split across lines matches.
 sql_stmts() {
   sed -E 's/--.*$//' "$1" | tr '\n\t' '  ' \
+    | awk '{ s = $0; o = ""
+        while ((i = index(s, "/*")) > 0) {
+          o = o substr(s, 1, i - 1) " "; s = substr(s, i + 2)
+          j = index(s, "*/"); if (j == 0) { s = ""; break }; s = substr(s, j + 2)
+        }
+        print o s }' \
     | awk 'BEGIN { RS = ";" } { gsub(/ +/, " "); sub(/^ /, ""); if ($0 != "") print }'
 }
 
@@ -480,7 +486,11 @@ hyper_indexes() {
       if (w[3] == "unlogged") t = (w[4] == "if") ? w[7] : w[4]
       sub(/\(.*/, "", t); sub(/^public\./, "", t); here[t] = 1
     }
-    s ~ /^set (local )?lock_timeout/ { lt = 1 }
+    # 0 (or DEFAULT, which is 0 unless the server overrides it) waits forever: no timeout.
+    s ~ /^set (local )?lock_timeout/ {
+      v = s; sub(/^set (local )?lock_timeout( to | ?= ?)/, "", v); gsub(/[\047" ]/, "", v)
+      lt = (v ~ /^0+(us|ms|s|min|h|d)?$/ || v == "default") ? 0 : 1
+    }
     s ~ /^create (unique )?index / && s !~ /^create (unique )?index concurrently/ {
       j = (w[2] == "unique") ? 4 : 3; ine = (w[j] == "if"); if (ine) j += 3
       tbl = ""
@@ -499,7 +509,6 @@ hyper_indexes() {
     END { for (i = 1; i <= k; i++) if (!(on[i] in here)) printf "%s|%s|%d|%d|%s\n", idx[i], on[i], ok[i], lt + 0, kind[i] }'
 }
 
-# Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction
 # Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction build
 # holds a SHARE lock that blocks every write for the whole build, and a partial
 # index still scans every row. 0037's header is the recipe: `IF NOT EXISTS`, so
@@ -546,7 +555,8 @@ fi
 hi_seen=""
 hi_checked=0
 for f in "$MIG_DIR"/*.up.sql; do
-  grep -qiE 'create +(unique +)?index|add +(constraint|primary|unique)' "$f" || continue
+  stmts="$(sql_stmts "$f")"
+  grep -qiE 'create (unique )?index|add (constraint|primary|unique)' <<<"$stmts" || continue
   b="$(basename "$f")"
   while IFS='|' read -r idx tbl ine lt kind; do
     [ -n "$idx" ] || continue
@@ -579,7 +589,6 @@ while IFS= read -r entry; do
 done <<<"$hyper_index_baseline"
 echo "lint-migrations: hypertable-index pass checked ${hi_checked} index build(s) on existing hypertables under ${MIG_DIR}."
 
-# Pass 7 — a continuous aggregate dropped and recreated WITH NO DATA is
 # Pass 7 — a continuous aggregate dropped and recreated WITH NO DATA is EMPTY
 # until refreshed, and a migration cannot do that: refresh_continuous_aggregate
 # refuses a transaction block, and golang-migrate runs each file as one. So the
@@ -594,7 +603,6 @@ cagg_refresh_baseline='0002_create_price_aggregates.up.sql
 cr_seen=""
 cagg_files=0
 for f in "$MIG_DIR"/*.sql; do
-  grep -qi 'with no data' "$f" || continue
   stmts="$(sql_stmts "$f")"
   grep -qi 'with no data' <<<"$stmts" || continue
   cagg_files=$((cagg_files + 1))
@@ -811,9 +819,9 @@ rebuild_ckpt_missing() {
 }
 
 # blanking_stmts <file>: `<relation>\t<statement>` for each relation the file
-# blanks: TRUNCATE (every name in its list), DELETE with no WHERE, a table
-# dropped and recreated with no INSERT refilling it, and cagg_views. A ranged
-# delete (DELETE … WHERE, drop_chunks) is a repair, not a blank; the compat
+# blanks: TRUNCATE (every name in its list), DELETE with no WHERE or WHERE true,
+# a table dropped and recreated with no INSERT or CREATE TABLE … AS refilling it,
+# and cagg_views. A ranged delete (DELETE … WHERE, drop_chunks) is a repair, not a blank; the compat
 # lint's dml class guards those.
 # Inside a DO block the verb follows BEGIN/THEN/ELSE/LOOP (a DECLARE's `;`
 # starts a new statement there). A CREATE FUNCTION body runs when called, not
@@ -822,6 +830,15 @@ blanking_stmts() {
   sql_stmts "$1" | awk '
     function rel(t) { sub(/^ +/, "", t); sub(/^only /, "", t); sub(/[ (].*/, "", t); gsub(/"/, "", t); sub(/^.*\./, "", t); return t }
     function out(t, st) { t = rel(t); if (t != "") printf "%s\t%s\n", t, st }
+    # ctas(<rest after CREATE TABLE>): true for CREATE TABLE <name> [(cols)] [WITH (…)] AS <query>.
+    function ctas(r,   i, d, c) {
+      sub(/^[^ (]+ ?/, "", r)
+      if (r ~ /^\(/) {
+        for (i = 1; i <= length(r); i++) { c = substr(r, i, 1); if (c == "(") d++; else if (c == ")" && --d == 0) break }
+        r = substr(r, i + 1); sub(/^ /, "", r)
+      }
+      return r ~ /^(with \([^)]*\) )?as /
+    }
     { s = tolower($0) }
     infn { if (gsub(/\$\$/, "&", s) % 2) infn = 0; next }
     s ~ /^create (or replace )?function / { if (gsub(/\$\$/, "&", s) % 2) infn = 1; next }
@@ -830,10 +847,14 @@ blanking_stmts() {
       if (s ~ /^(truncate|delete from) /) st = s
       else if (match(s, /(^| )(begin|then|else|loop) (truncate|delete from) /)) { st = substr(s, RSTART); sub(/^ ?[a-z]+ /, "", st) }
       if (st ~ /^truncate /) { l = st; sub(/^truncate (table )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) out(p[i], st); next }
-      if (st ~ /^delete from / && st !~ / where /) { l = st; sub(/^delete from /, "", l); out(l, st); next }
+      if (st ~ /^delete from / && (st !~ / where / || st ~ / where \(?true\)?( returning .*)? ?$/)) { l = st; sub(/^delete from /, "", l); out(l, st); next }
     }
     s ~ /^drop table / { l = s; sub(/^drop table (if exists )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) gone[rel(p[i])] = 1; next }
-    s ~ /^create (unlogged )?table / { l = s; sub(/^create (unlogged )?table (if not exists )?/, "", l); t = rel(l); if (t in gone) made[t] = s; next }
+    s ~ /^create (unlogged )?table / {
+      l = s; sub(/^create (unlogged )?table (if not exists )?/, "", l); t = rel(l)
+      if (ctas(l) && s !~ / with no data ?$/) { filled[t] = 1; next }
+      if (t in gone) made[t] = s; next
+    }
     s ~ /insert into / { l = s; sub(/.*insert into /, "", l); filled[rel(l)] = 1 }
     END { for (t in made) if (!(t in filled)) printf "%s\tdrop table %s, then %s\n", t, t, made[t] }'
   cagg_views "$1" | awk '{ printf "%s\tmaterialized view %s left empty (with no data)\n", $0, $0 }'
