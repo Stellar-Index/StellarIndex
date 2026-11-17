@@ -1906,27 +1906,32 @@ export interface paths {
         /**
          * Lending protocols — token and totals for Blend and BLNT.
          * @description One entry per lending protocol (`blend`, then `blnt`). `token` is
-         *     the protocol token (BLND, BLNT) with the USD price, supply and
-         *     market cap that `/v1/assets/{asset_id}` reads; `market_cap_usd`
-         *     is null, never zero, without a price.
+         *     the protocol token (BLND, BLNT), resolved by ticker through the
+         *     verified-currency catalogue and read through
+         *     `/v1/assets/{asset_id}`, so its price, supply and market cap are
+         *     that route's; `market_cap_usd` is null, never zero, without a
+         *     price or supply. A token missing from the catalogue is null and
+         *     named in `excluded`.
          *
          *     The USD totals are exact decimal sums over every pool
-         *     `/v1/lending/pools` lists, taken from the same per-pool view
+         *     `/v1/lending/pools` lists (a pool on both the Blend and BLNT
+         *     lists counts once, as Blend), taken from the same per-pool view
          *     `/v1/lending/pools/{pool}/reserves` serves, so they cannot
          *     disagree with it. A reserve counts only when it carries both
-         *     `supplied_usd` and `borrowed_usd`; `tvl_usd` is supplied minus
-         *     borrowed over those reserves (what the pools hold, unlike the
-         *     per-pool `tvl_usd`, which is supplied). `backstop` sums each
-         *     pool's backstop tier balances per backstop token, in that
-         *     token's base units.
+         *     `supplied_usd` and `borrowed_usd`; `available_usd` is supplied
+         *     minus borrowed over those reserves: the liquidity the pools still
+         *     hold. `backstop` sums each pool's backstop tier balances per
+         *     backstop token, in that token's base units.
          *
-         *     Anything a total leaves out is named in `excluded` with a reason:
-         *     a pool whose reserves could not be read (`pool`), an unpriced
-         *     reserve or one with no decoded state (`reserve`), a backstop
-         *     that could not be read (`backstop`, including every Blend V1
-         *     pool), or the BLNT pool list (`pool_list`). `lower_bound` is then
-         *     true, the totals are floors, and the response is sent
-         *     `Cache-Control: no-store`.
+         *     Anything left out is named in `excluded` with a `reason` code.
+         *     A `pool_list`, `pool` or `reserve` exclusion makes the USD totals
+         *     floors and sets `lower_bound`; a `backstop` exclusion (including
+         *     every Blend V1 pool, which has no backstop read) makes the
+         *     `backstop` sums floors and sets `backstop_lower_bound` only. The
+         *     response is sent `Cache-Control: no-store` when `lower_bound` is
+         *     set or a read failed (`backstop_read_failed`,
+         *     `backstop_reader_unavailable`, `token_read_failed`); a backstop
+         *     or token gap the chain itself explains leaves it cacheable.
          */
         get: operations["getLendingProtocols"];
         put?: never;
@@ -18248,14 +18253,15 @@ export interface operations {
                      *           "reserve_count": 41,
                      *           "total_supplied_usd": "81234567.89",
                      *           "total_borrowed_usd": "52345678.90",
-                     *           "tvl_usd": "28888888.99",
+                     *           "available_usd": "28888888.99",
                      *           "backstop": [
                      *             {
                      *               "backstop_token": "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM",
                      *               "tokens": "312345678901234"
                      *             }
                      *           ],
-                     *           "lower_bound": true,
+                     *           "lower_bound": false,
+                     *           "backstop_lower_bound": true,
                      *           "excluded": [
                      *             {
                      *               "kind": "backstop",
@@ -18268,8 +18274,7 @@ export interface operations {
                      *       ],
                      *       "as_of": "2026-11-17T07:00:00Z",
                      *       "flags": {
-                     *         "stale": false,
-                     *         "degraded": true
+                     *         "stale": false
                      *       }
                      *     }
                      */
@@ -18277,6 +18282,7 @@ export interface operations {
                         data?: {
                             /** @enum {string} */
                             protocol?: "blend" | "blnt";
+                            /** @description Null when the token is not in the verified catalogue. */
                             token?: {
                                 /** @description Canonical CODE-ISSUER id. */
                                 asset_id?: string;
@@ -18291,7 +18297,7 @@ export interface operations {
                                 total_supply?: string | null;
                                 /** @description As `/v1/assets/{asset_id}` `market_cap_usd`; null without a price or supply, or when a valuation guard withholds it. */
                                 market_cap_usd?: string | null;
-                            };
+                            } | null;
                             /** @description Pools listed, including any in `excluded`. */
                             pool_count?: number;
                             /** @description Reserves of the pools that were read, priced or not. */
@@ -18300,23 +18306,26 @@ export interface operations {
                             total_supplied_usd?: string | null;
                             /** @description Sum of priced reserves' `borrowed_usd`; null when none is priced. */
                             total_borrowed_usd?: string | null;
-                            /** @description `total_supplied_usd` minus `total_borrowed_usd`; null when none is priced. */
-                            tvl_usd?: string | null;
+                            /** @description `total_supplied_usd` minus `total_borrowed_usd`: the liquidity the pools still hold; null when none is priced. */
+                            available_usd?: string | null;
                             backstop?: {
                                 /** @description Backstop token contract C-strkey. */
                                 backstop_token?: string;
                                 /** @description Backstop deposits across the protocol's pools, base units of `backstop_token`. */
                                 tokens?: string;
                             }[];
-                            /** @description True when `excluded` is non-empty: every total is a floor. */
+                            /** @description True when a `pool_list`, `pool` or `reserve` exclusion leaves something out of the USD totals, which are then floors. */
                             lower_bound?: boolean;
+                            /** @description True when a `backstop` exclusion leaves a pool's deposits out of the `backstop` sums, which are then floors. */
+                            backstop_lower_bound?: boolean;
                             excluded?: {
                                 /** @enum {string} */
-                                kind?: "pool_list" | "pool" | "reserve" | "backstop";
+                                kind?: "pool_list" | "pool" | "reserve" | "backstop" | "token";
                                 pool?: string | null;
-                                /** @description Reserve token C-strkey for a `reserve` exclusion. */
+                                /** @description Reserve token C-strkey for a `reserve` exclusion; the ticker for a `token` exclusion. */
                                 asset?: string | null;
-                                reason?: string;
+                                /** @enum {string} */
+                                reason?: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed";
                             }[];
                         }[];
                     };
