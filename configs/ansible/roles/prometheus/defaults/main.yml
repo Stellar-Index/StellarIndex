@@ -49,6 +49,12 @@ prometheus_basic_auth_username: "operator"
 prometheus_basic_auth_password_hash: ""
 alertmanager_basic_auth_username: "operator"
 alertmanager_basic_auth_password_hash: ""
+# Plaintext counterparts of the hashes above (vault). Prometheus must
+# present them to its peers and to Alertmanager; a hash cannot be used
+# as a client credential. Required whenever the matching hash is set
+# (preflight refuses otherwise) and written to root:prometheus 0640 files.
+prometheus_basic_auth_password: ""
+alertmanager_basic_auth_password: ""
 # Cluster gossip between AlertManager peers. Bound to the host's
 # private IP (must be reachable from the peer).
 alertmanager_cluster_listen_port: 9094

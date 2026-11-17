@@ -8,14 +8,26 @@ global:
 {% for k, v in prometheus_external_labels.items() %}
     {{ k }}: {{ v }}
 {% endfor %}
-    instance: {{ inventory_hostname }}
+    replica: {{ inventory_hostname }}
 
 rule_files:
   - /etc/prometheus/rules.d/*.yml
 
 alerting:
+  # `replica` differs per HA member; left on, Alertmanager sees two
+  # distinct alerts instead of one it can deduplicate.
+  alert_relabel_configs:
+    - action: labeldrop
+      regex: replica
   alertmanagers:
+{% if alertmanager_basic_auth_password_hash | length > 0 %}
+    - basic_auth:
+        username: {{ alertmanager_basic_auth_username }}
+        password_file: /etc/prometheus/alertmanager-client-password
+      static_configs:
+{% else %}
     - static_configs:
+{% endif %}
         - targets:
 {% for h in groups['prometheus_pair'] %}
             - "{{ hostvars[h].ansible_host }}:{{ alertmanager_port }}"
@@ -24,6 +36,11 @@ alerting:
 scrape_configs:
   # ── Self-scrape: Prometheus + AlertManager ──────────────────
   - job_name: "prometheus_pair"
+{% if prometheus_basic_auth_password_hash | length > 0 %}
+    basic_auth:
+      username: {{ prometheus_basic_auth_username }}
+      password_file: /etc/prometheus/prometheus-client-password
+{% endif %}
     static_configs:
       - targets:
 {% for h in groups['prometheus_pair'] %}
@@ -33,6 +50,11 @@ scrape_configs:
           service: prometheus
 
   - job_name: "alertmanager_pair"
+{% if alertmanager_basic_auth_password_hash | length > 0 %}
+    basic_auth:
+      username: {{ alertmanager_basic_auth_username }}
+      password_file: /etc/prometheus/alertmanager-client-password
+{% endif %}
     static_configs:
       - targets:
 {% for h in groups['prometheus_pair'] %}
@@ -105,6 +127,19 @@ scrape_configs:
 {% endfor %}
         labels:
           service: redis
+{% endif %}
+
+{% if 'log_aggregator' in groups and groups['log_aggregator'] %}
+  # ── Loki (log tier; the targets answer on loki_http_port) ────
+  - job_name: "loki"
+    scrape_interval: {{ prometheus_default_scrape_interval }}
+    static_configs:
+      - targets:
+{% for h in groups['log_aggregator'] %}
+          - "{{ hostvars[h].ansible_host }}:{{ loki_http_port | default(3100) }}"
+{% endfor %}
+        labels:
+          service: loki
 {% endif %}
 
   # ── Data-tier exporters ──────────────────────────────────────

@@ -184,7 +184,8 @@ The preflight task warns when neither is set.
 ## Storage + retention
 
 - TSDB at `/var/lib/prometheus/data`.
-- Retention: 30d (override via `prometheus_retention_days`).
+- Retention: 30d (override via `prometheus_retention_days`; a changed
+  unit restarts Prometheus, since flags are not re-read on SIGHUP).
 - Block compaction defaults: 2h blocks, compacted to 24h.
 - Disk sizing: ~13 GB at 30d for our scrape volume; preflight
   asserts ≥ 20 GB free for headroom.
