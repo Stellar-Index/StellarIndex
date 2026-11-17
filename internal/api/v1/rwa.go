@@ -952,21 +952,28 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	if served != nil {
 		return s.stampRWAServeState(*served)
 	}
+	// The empty set is stamped too, so a failed cold build reaches the flags as rebuildFailedAt.
 	if flight == nil {
 		// Never built and an attempt is gapped out; the handler states the absence.
-		return rwaMembership{refusals: map[string]int{}}
+		return s.stampRWAServeState(rwaMembership{refusals: map[string]int{}})
 	}
 	select {
 	case <-flight:
 	case <-ctx.Done():
-		return rwaMembership{refusals: map[string]int{}}
+		return s.stampRWAServeState(rwaMembership{refusals: map[string]int{}})
 	}
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
 	if s.rwaCache != nil {
 		return s.stampServeStateLocked(*s.rwaCache)
 	}
-	return rwaMembership{refusals: map[string]int{}}
+	return s.stampServeStateLocked(rwaMembership{refusals: map[string]int{}})
+}
+
+// serveFlags is the envelope verdict on a served set: past its lifetime is stale, and a failed latest rebuild is degraded.
+// readFailed is not read here: a build that set it is never cached, so no served set carries it.
+func (m rwaMembership) serveFlags() Flags {
+	return Flags{Stale: m.servedStale, Degraded: m.servedStale || !m.rebuildFailedAt.IsZero()}
 }
 
 // rwaMembershipSetOf dates the served set, or returns nil when there is none. Gated on the build
@@ -1118,7 +1125,7 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 
 	m := s.cachedRWAMembership(r.Context())
 	if rwaMembershipUnavailable(m) {
-		writeEnvelope(w, Envelope{Data: rwaUnavailableView(m), Flags: Flags{Degraded: m.readFailed}})
+		writeEnvelope(w, Envelope{Data: rwaUnavailableView(m), Flags: m.serveFlags()})
 		return
 	}
 	if !middleware.ChargeRateLimit(w, r, rwaAssetsCost(m)) {
@@ -1135,22 +1142,29 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	writeEnvelope(w, Envelope{Data: b.view, Flags: b.flags})
+	writeEnvelope(w, Envelope{Data: b.view, Flags: b.flags, AsOf: WireTime(b.observedAt)})
 }
 
 // buildRWAAssetsView assembles the full /v1/rwa/assets view from the cached membership.
 func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error) {
 	m := s.cachedRWAMembership(ctx)
 	if rwaMembershipUnavailable(m) {
-		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: Flags{Degraded: m.readFailed}}, nil
+		at := time.Now()
+		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: m.serveFlags(), builtAt: at, observedAt: at}, nil
 	}
 	view := rwaMembershipView(m)
-	rows, join, err := s.rwaListingRows(ctx, m)
+	now := time.Now()
+	listCtx, listReads := withReadReport(ctx)
+	rows, join, err := s.rwaListingRows(listCtx, m)
 	if err != nil {
 		return rwaAssetsBuild{}, err
 	}
+	join.unanswered = join.unanswered || listReads.unread.Load() || listReads.stale.Load()
+	observedAt := now
+	if !join.observedAt.IsZero() && join.observedAt.Before(observedAt) {
+		observedAt = join.observedAt
+	}
 
-	now := time.Now()
 	classicAssets, unobserved := s.rwaAssetRows(m, rows, now)
 	join.notObserved = unobserved
 
@@ -1196,7 +1210,13 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
 	stale := degraded || curatedDegraded || join.unanswered || rwaReferencesUnanswered(view.Assets)
-	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed || trunc.unread > 0}}, nil
+	ms := m.serveFlags()
+	return rwaAssetsBuild{
+		view:       view,
+		flags:      Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0},
+		builtAt:    now,
+		observedAt: observedAt,
+	}, nil
 }
 
 // rwaMembershipUnavailable is true when NEITHER arm answered. One arm failing beside a reporting one is a partial measurement, not an
@@ -1278,6 +1298,8 @@ type rwaCatalogueJoin struct {
 	// unanswered is true when a gate or directory read behind a row's figures failed: the rows are
 	// served with those figures withheld, and the response must say it is degraded.
 	unanswered bool
+	// observedAt is when the oldest listing page was read from its store; zero when every page answered live.
+	observedAt time.Time
 }
 
 // rwaAssetsCost is the rate-limit price in tokens of one /v1/rwa/assets request: one per store listing read (per member issuer, plus one
@@ -1323,13 +1345,17 @@ func (s *Server) rwaListingRows(
 
 	out := make(map[string]AssetDetail, len(m.members))
 	for _, issuer := range issuers {
-		rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
+		rows, at, stale, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{
 			Limit:  rwaAssetsPerIssuer,
 			Issuer: issuer,
 			Type:   "classic",
 		})
 		if err != nil {
 			return nil, join, err
+		}
+		join.unanswered = join.unanswered || stale
+		if !at.IsZero() && (join.observedAt.IsZero() || at.Before(join.observedAt)) {
+			join.observedAt = at
 		}
 		// A full page means a member in the unread tail would vanish silently; count the
 		// truncation so it is reported.
