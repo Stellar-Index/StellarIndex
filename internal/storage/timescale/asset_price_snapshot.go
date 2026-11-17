@@ -80,14 +80,16 @@ const snapshotPriceUSDExpr = `CASE pick.arm
 		    END`
 
 // priceChangePctExpr is the unrounded change over lookback ("1h", "24h", "7d"), both legs through the arm that priced the asset
-// (mixing arms would compare against a possibly stale "now"); NULL when that arm has no lookback row.
+// (mixing arms would compare against a possibly stale "now"); NULL when that arm has no lookback row. Also NULL unless the lookback
+// minute is strictly older than the headline minute: the headline may fall back days to a floored trade, the lookback does not.
 func priceChangePctExpr(lookback string) string {
 	return fmt.Sprintf(`CASE pick.arm
 		      WHEN 'native' THEN CASE WHEN (SELECT vwap FROM xlm_usd_%[1]s) > 0
+		          AND (SELECT bucket FROM xlm_usd_%[1]s) < (SELECT bucket FROM xlm_usd)
 		        THEN ((SELECT vwap FROM xlm_usd) / (SELECT vwap FROM xlm_usd_%[1]s) - 1) * 100 END
-		      WHEN 'direct' THEN CASE WHEN direct_%[1]s.vwap > 0
+		      WHEN 'direct' THEN CASE WHEN direct_%[1]s.vwap > 0 AND direct_%[1]s.bucket < direct.bucket
 		        THEN (direct.vwap / direct_%[1]s.vwap - 1) * 100 END
-		      WHEN 'xlm' THEN CASE WHEN vs_xlm_%[1]s.vwap > 0 AND ax_%[1]s.vwap > 0
+		      WHEN 'xlm' THEN CASE WHEN vs_xlm_%[1]s.vwap > 0 AND ax_%[1]s.vwap > 0 AND vs_xlm_%[1]s.bucket < vs_xlm.bucket
 		        THEN ((vs_xlm.vwap * ax.vwap)
 		            / (vs_xlm_%[1]s.vwap * ax_%[1]s.vwap) - 1) * 100 END
 		    END`, lookback)

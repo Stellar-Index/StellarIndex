@@ -711,6 +711,80 @@ func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 	})
 }
 
+// TestAssetListing_ChangeNeedsLookbackOlderThanHeadline: the headline arm falls back days to the newest trade over the
+// notional floor while the 1h arm settles for a sub-cent minute, so the "1h ago" leg is newer than "now". Both the
+// listing rollup and the detail query must serve the old price with no change_1h_pct, never old / newer - 1.
+func TestAssetListing_ChangeNeedsLookbackOlderThanHeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	id := mustClassicID(t, "STALE", goodIssuer)
+	seedRankAsset(t, ctx, db, id, "STALE", goodIssuer, 100)
+	for i, tr := range []struct {
+		ago, price, usd string
+	}{
+		{"2 days", "2", "2"},           // newest trade over the $0.01 floor
+		{"60 minutes", "1", "0.005"},   // the 1h arm's only minute, sub-cent
+		{"10 minutes", "1.5", "0.005"}, // sub-cent, after the floored trade
+	} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO trades
+			    (source, ledger, tx_hash, op_index, ts,
+			     base_asset, quote_asset, base_amount, quote_amount, usd_volume)
+			VALUES ('sdex', $1, $2, 0, now() - $3::interval,
+			        $4, 'fiat:USD', 1::numeric, $5::numeric, $6::numeric)`,
+			61_000_000+i, fmt.Sprintf("%064x", 910_000+i), tr.ago, id, tr.price, tr.usd,
+		); err != nil {
+			t.Fatalf("seed trade %s ago: %v", tr.ago, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx,
+		"CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)"); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+	if err := store.RefreshAssetListingRollups(ctx); err != nil {
+		t.Fatalf("RefreshAssetListingRollups: %v", err)
+	}
+
+	check := func(name string, row timescale.AssetRow) {
+		t.Helper()
+		if row.PriceUSD == nil {
+			t.Fatalf("%s: price_usd nil, want the floored 2-day-old price", name)
+		}
+		if p, ok := new(big.Rat).SetString(*row.PriceUSD); !ok || p.Cmp(big.NewRat(2, 1)) != 0 {
+			t.Errorf("%s: price_usd = %s, want 2", name, *row.PriceUSD)
+		}
+		if row.Change1hPct != nil {
+			t.Errorf("%s: change_1h_pct = %s, want nil (lookback minute is newer than the headline minute)",
+				name, *row.Change1hPct)
+		}
+	}
+	listed := false
+	for _, r := range listRankOrder(t, ctx, store, timescale.AssetsOrderObservationCountDesc, 50) {
+		if r.AssetID == id {
+			listed = true
+			check("listing", r)
+		}
+	}
+	if !listed {
+		t.Fatalf("%s missing from the listing", id)
+	}
+	detail, err := store.GetAssetBySlug(ctx, id)
+	if err != nil {
+		t.Fatalf("GetAssetBySlug: %v", err)
+	}
+	check("detail", detail)
+}
+
 // Two batches inside the registry dedupe TTL, the second with a lower first
 // ledger: first_* must take the overall minimum, last_* the overall maximum.
 func TestAssetRegistry_BatchRangeKeepsBothEnds(t *testing.T) {
