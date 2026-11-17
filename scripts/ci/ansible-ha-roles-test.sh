@@ -73,6 +73,24 @@ check("delete_request_store: s3" in cfg, "loki compactor names a delete_request_
 check(any("uri" in t and "/ready" in t["uri"]["url"] for t in tasks("loki/tasks/server-04-systemd.yml")),
       "loki start is followed by a /ready wait")
 
+# loki: a bad config or missing credentials must fail the play, not leave
+# a green run over a crash-looping or non-flushing Loki.
+check(any("loki-config.yaml" in str(t.get("template", {}).get("dest", "")) and
+          "-verify-config" in str(t["template"].get("validate", ""))
+          for t in tasks("loki/tasks/server-03-configure.yml")),
+      "loki config is validated with -verify-config before it lands")
+srv = tasks("loki/tasks/server-04-systemd.yml")
+names = [t.get("name", "") for t in srv]
+start = next(i for i, t in enumerate(srv) if t.get("name") == "enable + start loki")
+ready = next(i for i, t in enumerate(srv) if "uri" in t and "/ready" in t["uri"]["url"])
+check(any(t.get("meta") == "flush_handlers" for t in srv[start:ready]),
+      "loki restart handlers run before the /ready wait")
+check(any("/etc/default/loki" in str(t.get("shell", "")) and "AWS_SECRET_ACCESS_KEY" in str(t.get("shell", ""))
+          for t in srv[:start]),
+      "loki refuses to start without S3 credentials in /etc/default/loki")
+check(any("archival_nodes" in str(t.get("assert", {})) for t in tasks("loki/tasks/server-01-preflight.yml")),
+      "loki server preflight refuses archival nodes (the role replaces the whole firewall)")
+
 # textfile scrapers: node_exporter is not root, mktemp files are 0600.
 for path, name in (("patroni/tasks/11-monitoring.yml", "install patroni-textfile scraper"),
                    ("redis-sentinel/tasks/07-monitoring.yml", "install sentinel-state textfile scraper")):
