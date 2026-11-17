@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -135,6 +136,10 @@ const (
 	priceWindow24h = `bucket BETWEEN ` + priceWindow24hLo + ` AND ` + priceWindow24hHi
 	priceWindow7d  = `bucket BETWEEN ` + priceWindow7dLo + ` AND ` + priceWindow7dHi
 )
+
+// Change24hAnchorTolerance is the 24h change arm's tolerance, the half-width of priceWindow24hLo/Hi; the detail and
+// /v1/price batch anchor read (stellarindex-api's storeChange24hReader) refuses a bucket older than 24h ago minus it.
+const Change24hAnchorTolerance = 30 * time.Minute
 
 // unionPriceArmCTE renders CTE pair `<name>_rows`/`<name>`: per asset, the newest 1m bucket in window against any of quotes in either
 // direction, its VWAP and venues. Rows are re-expressed as two legs and re-divided (see [combineDirVWAP]), weighted by volume_priced

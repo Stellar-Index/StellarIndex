@@ -575,8 +575,9 @@ type RWAAsset struct {
 	// re-derived (circulating_supply / 10^decimals times price). nil (null) when a contract's
 	// scale could not be read; both bases then refuse to divide rather than assume 7.
 	Decimals *int `json:"decimals"`
-	// Volume24hUSD is the trailing-24h USD trade volume as served on /v1/assets.
-	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
+	// Volume24hUSD is the trailing-24h USD trade volume and VolumeLowerBound its floor flag, both as served on /v1/assets.
+	Volume24hUSD     *string `json:"volume_24h_usd,omitempty"`
+	VolumeLowerBound bool    `json:"volume_lower_bound,omitempty"`
 	// FirstSeenLedger is the ledger this asset was first observed at, from an index complete
 	// since genesis.
 	FirstSeenLedger  uint32 `json:"first_seen_ledger,omitempty"`
@@ -1522,8 +1523,9 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now 
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale: the reference valuation divides by it, and a constant would
 			// misprice every asset whose scale differs (see [rwaReferenceValueUSD]).
-			Decimals:     rwaDecimalsOf(d),
-			Volume24hUSD: d.VolumeUSD24h,
+			Decimals:         rwaDecimalsOf(d),
+			Volume24hUSD:     d.VolumeUSD24h,
+			VolumeLowerBound: d.VolumeLowerBound,
 		}
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
 		if len(a.IssuerDirectoryTags) == 0 {

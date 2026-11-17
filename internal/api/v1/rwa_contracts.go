@@ -658,8 +658,9 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			Valuation:             rwaValuationOf(d),
 			CirculatingSupply:     d.CirculatingSupply,
 			// The REAL scale from fillContractDecimals, not the default 7 (served as null instead).
-			Decimals:     rwaDecimalsOf(d),
-			Volume24hUSD: d.VolumeUSD24h,
+			Decimals:         rwaDecimalsOf(d),
+			Volume24hUSD:     d.VolumeUSD24h,
+			VolumeLowerBound: d.VolumeLowerBound,
 		}
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = rwaSupplyProvenance(d)
 		if len(a.IssuerDirectoryTags) == 0 {

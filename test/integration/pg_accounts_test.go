@@ -1837,9 +1837,10 @@ func TestPositionsFold_AllSixProtocols(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BlendBackstopSharesByUser: %v", err)
 	}
-	if len(backstopFolds) != 1 || backstopFolds[0].SharesNet != "600" {
-		t.Errorf("BlendBackstopSharesByUser = %+v, want SharesNet=600 (900 deposit shares - 300 withdraw shares; queue_withdrawal excluded)", backstopFolds)
+	if len(backstopFolds) != 1 || backstopFolds[0].SharesNet != "600" || backstopFolds[0].Claimed {
+		t.Errorf("BlendBackstopSharesByUser = %+v, want SharesNet=600 (900 deposit shares - 300 withdraw shares; queue_withdrawal excluded), not claimed", backstopFolds)
 	}
+	assertBlendBackstopClaimMarksFold(ctx, t, store, user, t0)
 
 	// ─── phoenix stake: bond 500, unbond 150 -> net 350.
 	const stakeContract = "CBRGNWGAC25AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -2118,6 +2119,30 @@ func firstVenueDiff(got, want []string) string {
 
 // assertBlendFlashLoanFolds: a flash_loan settled by a repay in the same tx folds to a closed (zero) borrow and a kept
 // one is an open borrow, never a negative debt or a missing leg.
+// assertBlendBackstopClaimMarksFold: a backstop `claim` names no pool, so it marks every one of the claimer's folds as no
+// longer an exact count and leaves the net untouched; another account's claim marks nothing.
+func assertBlendBackstopClaimMarksFold(ctx context.Context, t *testing.T, store *timescale.Store, user string, t0 time.Time) {
+	t.Helper()
+	const backstop = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
+	claim := func(who string, n int) {
+		if err := store.InsertBlendBackstopEvent(ctx, timescale.BlendBackstopEvent{
+			ContractID: backstop, Ledger: uint32(71_000_010 + n), TxHash: pad64("c", n), ObservedAt: t0.Add(time.Hour), //nolint:gosec // small n
+			EventType: timescale.BackstopClaim, UserAddress: who, Amount: "50",
+		}); err != nil {
+			t.Fatalf("InsertBlendBackstopEvent (claim): %v", err)
+		}
+	}
+	claim("GOTHERCLAIMERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 0)
+	if folds, err := store.BlendBackstopSharesByUser(ctx, user); err != nil || len(folds) != 1 || folds[0].Claimed {
+		t.Errorf("after another account's claim: %+v (%v), want one fold, not claimed", folds, err)
+	}
+	claim(user, 1)
+	folds, err := store.BlendBackstopSharesByUser(ctx, user)
+	if err != nil || len(folds) != 1 || !folds[0].Claimed || folds[0].SharesNet != "600" {
+		t.Errorf("after the user's claim: %+v (%v), want one fold, claimed, SharesNet still 600", folds, err)
+	}
+}
+
 func assertBlendFlashLoanFolds(ctx context.Context, t *testing.T, store *timescale.Store, pool string, t0 time.Time) {
 	t.Helper()
 	const (
