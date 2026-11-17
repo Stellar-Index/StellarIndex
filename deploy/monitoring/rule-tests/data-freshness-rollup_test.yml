@@ -1,0 +1,61 @@
+---
+# promtool unit tests for stellarindex_data_source_stale on the `rollup`
+# domain: data-freshness.sh ages the output of the daily ClickHouse rollups
+# (cohort-rollup, trades-by-account), because a run deferred behind the heavy
+# lock exits 75 and systemd records it as success.
+#
+#   promtool test rules deploy/monitoring/rule-tests/data-freshness-rollup_test.yml
+
+rule_files:
+  - ../rules/data-freshness.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a rollup whose output aged past its threshold fires after 1h
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="rollup",source="cohort-rollup",instance="r1",job="node"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_data_source_stale
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: stellarindex_data_source_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: data-freshness
+              domain: rollup
+              source: cohort-rollup
+              instance: r1
+              job: node
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_data_source_stale
+              summary: "Data source rollup/cohort-rollup is stale"
+              description: |
+                stellarindex_data_freshness_stale{domain="rollup",source="cohort-rollup"} = 1
+                — no fresh rows for rollup/cohort-rollup beyond its expected
+                cadence. A feed died (e.g. coingecko hit its API quota), a poller wedged, or a
+                writer/timer stopped. The age is on
+                stellarindex_data_freshness_age_seconds{domain="rollup",source="cohort-rollup"}.
+
+                If rollup/cohort-rollup was retired on
+                purpose, this alert does NOT resolve on its own — see
+                "Retiring a source" in the runbook below for both exit
+                mechanisms. Never silence this alert at Alertmanager instead;
+                it hides every other source's real outage too.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#retiring-a-source
+
+  - interval: 1m
+    name: a rollup within its threshold stays quiet
+    input_series:
+      - series: 'stellarindex_data_freshness_stale{domain="rollup",source="trades-by-account",instance="r1",job="node"}'
+        values: '0x180'
+    alert_rule_test:
+      - eval_time: 170m
+        alertname: stellarindex_data_source_stale
+        exp_alerts: []
