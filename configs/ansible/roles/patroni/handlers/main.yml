@@ -8,12 +8,34 @@
   throttle: 1
   listen: "etcd config changed"
 
+# Type=simple returns before postgres is back, so the wait lives in the same
+# task: throttle then holds the next member until this one is healthy, and a
+# member refuses to restart unless every member is up and a leader exists.
 - name: restart patroni
-  systemd:
-    name: patroni
-    state: restarted
-    daemon_reload: yes
-  # One member at a time, or the cluster has no leader until every node is back.
+  shell: |
+    set -eu
+    cluster_healthy() {
+      curl -fsS --max-time 5 "http://{{ patroni_rest_connect_address }}/cluster" | jq -e '
+        (.members | length) == {{ groups['postgres_cluster'] | length }}
+        and all(.members[]; .state == "running" or .state == "streaming")
+        and any(.members[]; .role == "leader")' >/dev/null
+    }
+    if ! cluster_healthy; then
+      echo "refusing to restart patroni on {{ inventory_hostname }}: cluster is not fully healthy" >&2
+      exit 1
+    fi
+    systemctl daemon-reload
+    systemctl restart patroni
+    for _ in $(seq 60); do
+      if curl -fsS --max-time 5 -o /dev/null "http://{{ patroni_rest_connect_address }}/health" && cluster_healthy; then
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "patroni on {{ inventory_hostname }} not healthy 300s after restart" >&2
+    exit 1
+  args:
+    executable: /bin/bash
   throttle: 1
   listen: "patroni config changed"
 

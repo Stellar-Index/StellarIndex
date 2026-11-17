@@ -3,6 +3,10 @@
   import_tasks: 01-preflight.yml
   tags: [patroni, preflight]
 
+- name: data dir ownership gate (every host, before anything is stopped)
+  import_tasks: data-dir-gate.yml
+  tags: [always]
+
 - name: 02 — etcd install
   import_tasks: 02-etcd-install.yml
   tags: [patroni, etcd, install]

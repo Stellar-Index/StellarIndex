@@ -138,12 +138,16 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
    package is installed.
 2. **etcd** — install + configure + start the 3-node quorum.
 3. **Patroni** — install + render config + start.
-4. **Bootstrap** — the distro's `postgresql@<ver>-main` unit is masked
-   on every host. On `db-01`, initialise the cluster (or restore from
-   pgBackRest); on `db-02` / `03`, join as replicas. Bootstrap fails if
-   the data dir already holds a cluster Patroni did not create (the
-   distro auto-creates one at the default path) unless
-   `patroni_adopt_existing_data_dir: true`.
+4. **Bootstrap** — before anything is stopped, every host refuses a
+   data dir that holds a cluster Patroni did not create (the distro
+   auto-creates one at the default path; drop it with
+   `pg_dropcluster --stop <ver> main`). The only exception is `db-01`
+   restoring over it from pgBackRest with
+   `patroni_adopt_existing_data_dir: true`. Then the distro's
+   `postgresql@<ver>-main` unit is masked on every host. On `db-01`,
+   initialise the cluster (or restore from pgBackRest); on `db-02` /
+   `03`, join as replicas and wait until each answers Patroni's
+   `/replica` check.
 5. **Firewall** — open 5432 / 8008 / 2379 / 2380 to the internal
    network only.
 6. **Monitoring** — wire `node_exporter` textfile collectors so

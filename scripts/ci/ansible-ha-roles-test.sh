@@ -28,8 +28,15 @@ if [ -z "$PY" ]; then
 fi
 
 "$PY" - "$ROLES" <<'PYEOF'
+import itertools
+import json
+import os
 import re
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 
 import jinja2
 import yaml
@@ -85,9 +92,46 @@ check(not re.search(r'redis-cli[^\n]*\n?[^\n]*-a\s+"?\$', sentinel) and "REDISCL
       "sentinel scraper passes the password by environment, not on argv")
 
 # clustered restarts go one member at a time.
-for h in yaml.safe_load(text("patroni/handlers/main.yml")):
-    if h["name"] in ("restart etcd", "restart patroni"):
-        check(h.get("throttle") == 1, f"patroni handler '{h['name']}' is throttled to one host")
+handlers = {h["name"]: h for h in yaml.safe_load(text("patroni/handlers/main.yml"))}
+for name in ("restart etcd", "restart patroni"):
+    check(handlers[name].get("throttle") == 1, f"patroni handler '{name}' is throttled to one host")
+
+
+def run_patroni_restart(cluster_json):
+    """Run the rendered restart handler with curl/systemctl stubbed; return (rc, systemctl log)."""
+    script = jinja2.Environment().from_string(handlers["restart patroni"]["shell"]).render(
+        patroni_rest_connect_address="10.0.0.11:8008", inventory_hostname="db-01",
+        groups={"postgres_cluster": ["db-01", "db-02", "db-03"]})
+    with tempfile.TemporaryDirectory() as d:
+        stub = {"curl": f'case "$*" in *"/cluster"*) cat {d}/cluster.json ;; esac\n',
+                "systemctl": f'echo "$*" >> {d}/systemctl.log\n', "sleep": ""}
+        for name, body in stub.items():
+            with open(f"{d}/{name}", "w") as f:
+                f.write("#!/bin/sh\n" + body)
+            os.chmod(f"{d}/{name}", 0o755)
+        with open(f"{d}/cluster.json", "w") as f:
+            f.write(json.dumps(cluster_json))
+        env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}"}
+        rc = subprocess.run(["bash", "-c", script], env=env, stdin=subprocess.DEVNULL,
+                            capture_output=True).returncode
+        log = open(f"{d}/systemctl.log").read() if os.path.exists(f"{d}/systemctl.log") else ""
+    return rc, log
+
+
+if shutil.which("jq") is None and os.environ.get("CI") != "true":
+    print("  skip — patroni restart handler run (no jq locally; CI enforces)")
+else:
+    healthy = {"members": [{"role": "leader", "state": "running"},
+                           {"role": "sync_standby", "state": "streaming"},
+                           {"role": "replica", "state": "streaming"}]}
+    rc, log = run_patroni_restart(healthy)
+    check(rc == 0 and "restart patroni" in log, "patroni restart handler restarts a healthy cluster's member")
+    degraded = {"members": healthy["members"][:2]}
+    rc, log = run_patroni_restart(degraded)
+    check(rc != 0 and "restart" not in log, "patroni restart handler refuses while a member is missing")
+    leaderless = {"members": [{"role": "replica", "state": "streaming"}] * 3}
+    rc, log = run_patroni_restart(leaderless)
+    check(rc != 0 and "restart" not in log, "patroni restart handler refuses while there is no leader")
 
 # redis: credentials live here, so eviction and failover loss are bounded.
 rd = yaml.safe_load(text("redis-sentinel/defaults/main.yml"))
@@ -112,9 +156,47 @@ for blk in [t for t in boot if "block" in t]:
         if t["name"] in ("bootstrap via pgBackRest restore", "ensure restored data dir ownership"):
             check("_patroni_initialized.stat.exists" in str(t["when"]) and "_pg_data_present" not in str(t["when"]),
                   f"'{t['name']}' is gated on Patroni's marker, not PG_VERSION")
-check(any("adopt" in str(t.get("when")) for t in boot), "bootstrap refuses a foreign cluster without an explicit opt-in")
 check(yaml.safe_load(text("patroni/defaults/main.yml")).get("patroni_adopt_existing_data_dir", True) is False, "adopting a foreign data dir is off by default")
 check(any("mask" in str(t.get("command", "")) for t in tasks("patroni/tasks/07-patroni-systemd.yml")), "the distro postgresql unit is masked")
+
+# patroni: the data-dir gate runs on every host, untagged-proof, before 07 masks anything.
+order = [t.get("import_tasks") for t in tasks("patroni/tasks/main.yml")]
+gate_entry = next(t for t in tasks("patroni/tasks/main.yml") if t.get("import_tasks") == "data-dir-gate.yml")
+check(order.index("data-dir-gate.yml") < order.index("07-patroni-systemd.yml") and "when" not in gate_entry
+      and "always" in gate_entry.get("tags", []), "data-dir gate runs on every host before the distro unit is masked")
+
+ansible_env = jinja2.Environment()
+ansible_env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes")
+
+
+def fires(conds, **v):
+    conds = conds if isinstance(conds, list) else [conds]
+    return all(ansible_env.from_string("{{ (%s) | bool }}" % c).render(**v) == "True" for c in conds)
+
+
+gate = {t["name"]: t for t in tasks("patroni/tasks/data-dir-gate.yml")}
+refuse = gate["refuse to start Patroni on a cluster it did not create"]["when"]
+adopt_ok = gate["refuse adopting a foreign data dir outside a pgBackRest restore"]["assert"]["that"]
+for host, marker, pgv, method, adopt in itertools.product(["db-01", "db-02"], [True, False], [True, False],
+                                                          ["initdb", "pgbackrest"], [True, False]):
+    v = dict(inventory_hostname=host, groups={"postgres_cluster": ["db-01", "db-02", "db-03"]},
+             _patroni_initialized={"stat": {"exists": marker}}, _pg_data_present={"stat": {"exists": pgv}},
+             patroni_bootstrap_method=method, patroni_adopt_existing_data_dir=adopt)
+    want = pgv and not marker and not (host == "db-01" and method == "pgbackrest" and adopt)
+    check(fires(refuse, **v) == want, f"data-dir gate on {host} marker={marker} PG_VERSION={pgv} {method} adopt={adopt} -> refuse={want}")
+    check(fires(adopt_ok, **v) == (not adopt or method == "pgbackrest"), f"adopt={adopt} accepted only with pgbackrest ({method})")
+
+# patroni: --target-action is valid only with a recovery target (pgBackRest error 031).
+restore = next(t for blk in boot if "block" in blk for t in blk["block"] if t["name"] == "bootstrap via pgBackRest restore")
+ansible_env.filters["quote"] = shlex.quote
+for target, want in (("latest", False), ("immediate", True), ("time:2026-04-30 14:00:00", True)):
+    cmd = ansible_env.from_string(restore["command"]).render(patroni_pgbackrest_stanza="s", patroni_pgbackrest_restore_target=target)
+    check(("--target-action=promote" in cmd) == want, f"pgbackrest restore for {target} has target-action={want}")
+
+# patroni: a replica join is confirmed by the member's own /replica check, retried through the base backup.
+confirm = next(t for t in tasks("patroni/tasks/09-patroni-join.yml") if t["name"] == "confirm we joined as a replica")
+check(confirm.get("uri", {}).get("url", "").endswith("/replica") and "_replica_check" in str(confirm.get("until")),
+      "replica join asserts /replica answers 200")
 
 if failed:
     sys.exit(1)

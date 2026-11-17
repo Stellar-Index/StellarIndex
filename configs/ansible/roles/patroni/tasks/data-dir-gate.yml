@@ -1,0 +1,49 @@
+---
+# Patroni must never start on a data dir it did not create. The distro
+# package auto-creates a cluster at this path; a replica with a foreign system
+# id crash-loops, and an adopted initdb-less dir has no pg_hba or roles.
+# Runs on every host before 07 stops or masks anything.
+
+- name: refuse adopting a foreign data dir outside a pgBackRest restore
+  assert:
+    that:
+      - not (patroni_adopt_existing_data_dir | bool) or patroni_bootstrap_method == 'pgbackrest'
+    fail_msg: >-
+      patroni_adopt_existing_data_dir=true only lets a pgBackRest restore
+      overwrite the data dir. With initdb, Patroni would take over the foreign
+      cluster without running bootstrap, so pg_hba and the replicator/admin
+      roles would never be created.
+
+# PG_VERSION says nothing about Patroni. patroni.dynamic.json is written only
+# once Patroni has bootstrapped or joined the data dir.
+- name: detect a data dir Patroni already owns
+  stat:
+    path: "{{ patroni_data_dir }}/patroni.dynamic.json"
+  register: _patroni_initialized
+
+- name: detect an existing postgres cluster in the data dir
+  stat:
+    path: "{{ patroni_data_dir }}/PG_VERSION"
+  register: _pg_data_present
+
+- name: refuse to start Patroni on a cluster it did not create
+  fail:
+    msg: >-
+      {{ patroni_data_dir }} holds a postgres cluster Patroni did not create
+      (typically the distro's auto-created main cluster). Nothing was stopped
+      or masked.
+      {% if inventory_hostname == groups['postgres_cluster'][0] %}
+      If it holds nothing, drop it (pg_dropcluster --stop
+      {{ patroni_postgres_version }} main) and re-run; to restore over it, set
+      patroni_bootstrap_method=pgbackrest and patroni_adopt_existing_data_dir=true.
+      {% else %}
+      A replica is rebuilt from the primary by pg_basebackup: drop it
+      (pg_dropcluster --stop {{ patroni_postgres_version }} main) or empty the
+      directory, then re-run.
+      {% endif %}
+  when:
+    - not _patroni_initialized.stat.exists
+    - _pg_data_present.stat.exists
+    - not (inventory_hostname == groups['postgres_cluster'][0]
+      and patroni_bootstrap_method == 'pgbackrest'
+      and (patroni_adopt_existing_data_dir | bool))
