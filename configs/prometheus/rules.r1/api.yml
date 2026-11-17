@@ -751,6 +751,28 @@ groups:
             window closes on them, then fix whatever made the audit store
             unwritable.
 
+      # An admin tier downgrade answered 200 but a key's budget clamp failed:
+      # the key keeps its old (higher) per-minute budget, and re-sending the
+      # PATCH does not retry because the tier no longer drops. One failure is
+      # worth a ticket; the series is pre-seeded so increase() sees the first.
+      - alert: stellarindex_admin_key_budget_clamp_failed
+        expr: sum(increase(stellarindex_admin_key_budget_clamps_total{outcome="failed"}[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_key_budget_clamp_failed
+          summary: "{{ $value | humanize }} API key budget clamp(s) failed after a tier downgrade"
+          description: |
+            An admin tier downgrade left at least one API key above its
+            new tier's per-minute budget: the clamp hit a store error
+            (Redis or Postgres). The PATCH still returned 200 and the
+            account shows the lower tier. Find the account in the audit
+            row's `clampFailed` field, then lower or revoke its keys by
+            hand. Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_key_budget_clamp_failed
+
       # A passkey assertion verified but its sign counter went BACKWARDS: at
       # least two copies of the private key exist. Sign-in is already refused;
       # this tickets a human to contact the owner. increase() over 1h with
