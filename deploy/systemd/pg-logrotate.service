@@ -21,7 +21,9 @@ NoNewPrivileges=true
 # `full`, not `strict`: logrotate must write /var/log/postgresql and the
 # shared state file under /var/lib/logrotate.
 ProtectSystem=full
+PrivateTmp=true
 ProtectKernelTunables=true
+ProtectKernelModules=true
 ProtectControlGroups=true
 
 # A normal run is milliseconds; a rotation of a multi-GB file under
