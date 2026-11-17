@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,17 +11,36 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // fakeDirectoryOverrideStore applies the takeover with the real tag
 // filter, so the tags asserted below are the ones the store would write.
 type fakeDirectoryOverrideStore struct {
-	rows    map[string]timescale.DirectoryEntry
-	cleared []string
-	reasons []string
-	actors  []string
-	deleted []string
+	rows     map[string]timescale.DirectoryEntry
+	cleared  []string
+	reasons  []string
+	actors   []string
+	deleted  []string
+	audits   []platform.AuditEntry
+	auditErr error
+	// unaudited counts mutations that ran with no audit row appended before them.
+	unaudited int
+}
+
+func (f *fakeDirectoryOverrideStore) Append(_ context.Context, e platform.AuditEntry) error {
+	if f.auditErr != nil {
+		return f.auditErr
+	}
+	f.audits = append(f.audits, e)
+	return nil
+}
+
+func (f *fakeDirectoryOverrideStore) mutated() {
+	if len(f.audits) <= len(f.cleared)+len(f.deleted)-1 {
+		f.unaudited++
+	}
 }
 
 func (f *fakeDirectoryOverrideStore) DirectoryEntryByAddress(_ context.Context, a string) (timescale.DirectoryEntry, bool, error) {
@@ -30,6 +50,7 @@ func (f *fakeDirectoryOverrideStore) DirectoryEntryByAddress(_ context.Context, 
 
 func (f *fakeDirectoryOverrideStore) ClearDirectoryScamFlag(_ context.Context, a, operator, reason string) (before, after timescale.DirectoryEntry, found bool, err error) {
 	f.cleared = append(f.cleared, a)
+	f.mutated()
 	f.reasons = append(f.reasons, reason)
 	f.actors = append(f.actors, operator)
 	before = f.rows[a]
@@ -42,6 +63,7 @@ func (f *fakeDirectoryOverrideStore) ClearDirectoryScamFlag(_ context.Context, a
 
 func (f *fakeDirectoryOverrideStore) DeleteDirectoryOverride(_ context.Context, a string) (bool, error) {
 	f.deleted = append(f.deleted, a)
+	f.mutated()
 	delete(f.rows, a)
 	return true, nil
 }
@@ -63,7 +85,7 @@ func TestDirectoryOverride_ClearKeepsRecognitionTags(t *testing.T) {
 	f := newOverrideFake("stellar-expert", "issuer", "unsafe", "memo-required")
 	var out bytes.Buffer
 	req := directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor, write: true}
-	if err := runDirectoryOverride(context.Background(), f, &out, req); err != nil {
+	if err := runDirectoryOverride(context.Background(), f, f, &out, req); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	if !slices.Equal(f.cleared, []string{overrideIssuer}) {
@@ -87,7 +109,7 @@ func TestDirectoryOverride_ClearKeepsRecognitionTags(t *testing.T) {
 func TestDirectoryOverride_DryRunWritesNothing(t *testing.T) {
 	f := newOverrideFake("stellar-expert", "issuer", "unsafe")
 	var out bytes.Buffer
-	if err := runDirectoryOverride(context.Background(), f, &out,
+	if err := runDirectoryOverride(context.Background(), f, f, &out,
 		directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor}); err != nil {
 		t.Fatalf("dry-run clear: %v", err)
 	}
@@ -133,7 +155,17 @@ func TestDirectoryOverride_Refusals(t *testing.T) {
 		},
 		{
 			"delete an upstream row", newOverrideFake("stellar-expert", "unsafe"),
-			directoryOverrideRequest{address: overrideIssuer, remove: true, write: true},
+			directoryOverrideRequest{address: overrideIssuer, remove: true, reason: overrideReason, actor: overrideActor, write: true},
+			nil,
+		},
+		{
+			"delete without a reason", newOverrideFake(timescale.DirectoryOperatorOverrideSource, "issuer"),
+			directoryOverrideRequest{address: overrideIssuer, remove: true, actor: overrideActor, write: true},
+			nil,
+		},
+		{
+			"delete without an operator", newOverrideFake(timescale.DirectoryOperatorOverrideSource, "issuer"),
+			directoryOverrideRequest{address: overrideIssuer, remove: true, reason: overrideReason, write: true},
 			nil,
 		},
 		{
@@ -159,7 +191,7 @@ func TestDirectoryOverride_Refusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runDirectoryOverride(context.Background(), tc.f, &bytes.Buffer{}, tc.req)
+			err := runDirectoryOverride(context.Background(), tc.f, tc.f, &bytes.Buffer{}, tc.req)
 			if err == nil {
 				t.Fatal("got nil error, want a refusal")
 			}
@@ -175,12 +207,62 @@ func TestDirectoryOverride_Refusals(t *testing.T) {
 
 func TestDirectoryOverride_DeleteOverride(t *testing.T) {
 	f := newOverrideFake(timescale.DirectoryOperatorOverrideSource, "issuer")
-	if err := runDirectoryOverride(context.Background(), f, &bytes.Buffer{},
-		directoryOverrideRequest{address: overrideIssuer, remove: true, write: true}); err != nil {
+	if err := runDirectoryOverride(context.Background(), f, f, &bytes.Buffer{},
+		directoryOverrideRequest{address: overrideIssuer, remove: true, reason: overrideReason, actor: overrideActor, write: true}); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if !slices.Equal(f.deleted, []string{overrideIssuer}) {
 		t.Fatalf("DeleteDirectoryOverride calls = %v, want exactly one for %s", f.deleted, overrideIssuer)
+	}
+}
+
+// TestDirectoryOverride_AuditsEveryWriteFirst: each write appends one staff audit_log row naming the action, the address, who and
+// why before it mutates, and an audit failure changes nothing.
+func TestDirectoryOverride_AuditsEveryWriteFirst(t *testing.T) {
+	cases := []struct {
+		name, action string
+		f            *fakeDirectoryOverrideStore
+		req          directoryOverrideRequest
+	}{
+		{
+			"clear", "directory.clear_scam_flag", newOverrideFake("stellar-expert", "issuer", "unsafe"),
+			directoryOverrideRequest{address: overrideIssuer, clearScamFlag: true, reason: overrideReason, actor: overrideActor, write: true},
+		},
+		{
+			"delete", "directory.delete_override", newOverrideFake(timescale.DirectoryOperatorOverrideSource, "issuer"),
+			directoryOverrideRequest{address: overrideIssuer, remove: true, reason: overrideReason, actor: overrideActor, write: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := runDirectoryOverride(context.Background(), tc.f, tc.f, &bytes.Buffer{}, tc.req); err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.f.audits) != 1 || tc.f.unaudited != 0 {
+				t.Fatalf("audit rows = %d, mutations before an audit row = %d; want 1 and 0", len(tc.f.audits), tc.f.unaudited)
+			}
+			e := tc.f.audits[0]
+			var meta map[string]any
+			if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+				t.Fatal(err)
+			}
+			if e.ActorKind != platform.ActorStaff || e.Action != tc.action || e.TargetKind != "account_directory" || e.TargetID != overrideIssuer ||
+				meta["actor"] != overrideActor || meta["reason"] != overrideReason {
+				t.Errorf("audit row = %+v meta %v; want staff %s on account_directory/%s by %q for %q", e, meta, tc.action, overrideIssuer, overrideActor, overrideReason)
+			}
+
+			failing := newOverrideFake("stellar-expert", "issuer", "unsafe")
+			if tc.req.remove {
+				failing = newOverrideFake(timescale.DirectoryOperatorOverrideSource, "issuer")
+			}
+			failing.auditErr = errors.New("audit_log unavailable")
+			if err := runDirectoryOverride(context.Background(), failing, failing, &bytes.Buffer{}, tc.req); err == nil {
+				t.Fatal("audit failure: got nil, want a refusal")
+			}
+			if len(failing.cleared) != 0 || len(failing.deleted) != 0 {
+				t.Errorf("audit failure still wrote: cleared=%v deleted=%v", failing.cleared, failing.deleted)
+			}
+		})
 	}
 }
 
