@@ -57,10 +57,10 @@ type AssetRow struct {
 	ObservationCountUnmeasured bool
 
 	// Headline USD price from asset_price_snapshot (USD-proxy or XLM arm, see [priceArmPickExpr]); nil when no arm can price the
-	// asset. Not gated on a freeze of the asset's own pair: only the XLM/USD anchor honours freeze_events.
+	// asset or the snapshot row is older than [assetPriceSnapshotMaxAge]. Only the XLM/USD anchor honours freeze_events.
 	PriceUSD *string
-	// Trailing-24h USD-denominated trade volume. Nil when no
-	// trades hit `usd_volume`-eligible quotes in 24h.
+	// Trailing-24h USD-denominated trade volume. Nil when no trades hit `usd_volume`-eligible quotes in 24h or the rollup row is
+	// older than [assetPriceSnapshotMaxAge].
 	Volume24hUSD *string
 	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time
 	// usd_volume (asset_volume_24h.unpriced_trades > 0).
@@ -555,8 +555,8 @@ func listAssetsSQL(order AssetsOrder, where, limitPlaceholder string) string {
 	return base + " ORDER BY ca.rank_tier ASC, ca.observation_count DESC, ca.asset_id ASC"
 }
 
-// refreshAssetVolumeUpsert recomputes trailing-24h per-asset USD volume (base OR quote) as NUMERIC (ADR-0003); computed_at is the tx
-// timestamp for the prune. unpriced_trades counts zero-valued trades so readers treat vol_usd as a lower bound; it is LEFT JOINed,
+// refreshAssetVolumeUpsert recomputes trailing-24h per-asset USD volume (base OR quote) as NUMERIC (ADR-0003); computed_at is
+// [rollupStampSQL]. unpriced_trades counts zero-valued trades so readers treat vol_usd as a lower bound; it is LEFT JOINed,
 // never creates a row, and may over-flag at edges, never under-flag.
 const refreshAssetVolumeUpsert = `
 WITH vol AS (
@@ -586,7 +586,7 @@ unpriced AS (
    GROUP BY leg.asset_id
 )
 INSERT INTO asset_volume_24h AS t (asset_id, vol_usd, unpriced_trades, computed_at)
-SELECT vol.asset_id, vol.vol_usd, COALESCE(unpriced.n, 0), now()
+SELECT vol.asset_id, vol.vol_usd, COALESCE(unpriced.n, 0), ` + rollupStampSQL + `
   FROM vol
   LEFT JOIN unpriced ON unpriced.asset_id = vol.asset_id
 ON CONFLICT (asset_id) DO UPDATE
@@ -594,8 +594,8 @@ ON CONFLICT (asset_id) DO UPDATE
        unpriced_trades = EXCLUDED.unpriced_trades,
        computed_at     = EXCLUDED.computed_at`
 
-// refreshAssetVolumePrune drops assets whose volume lapsed: upserted rows carry computed_at = now() (fixed per tx), stale rows an older
-// one.
+// refreshAssetVolumePrune drops assets whose volume lapsed: upserted rows carry a stamp at or after the tx start, stale rows one
+// before it.
 const refreshAssetVolumePrune = `DELETE FROM asset_volume_24h WHERE computed_at < now()`
 
 // refreshAssetVolumePruneExpired is the zero-row pass's prune ([pruneRollup]): keeps last-good rows, never one older than the 24h window.

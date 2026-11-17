@@ -170,6 +170,26 @@ func TestPriceSeries_RankFlooredMinuteFirst(t *testing.T) {
 	}
 }
 
+// TestAssetListingRollups_StampAtWriteTime pins both rollups' computed_at to the wall clock at write time: with now() (tx start) a
+// sweep whose two statements run near their 10-minute timeouts commits rows already past assetPriceSnapshotMaxAge, blanking the listing.
+func TestAssetListingRollups_StampAtWriteTime(t *testing.T) {
+	t.Parallel()
+	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
+	for name, c := range map[string]struct{ q, stamp string }{
+		"volume": {refreshAssetVolumeUpsert, "SELECT vol.asset_id, vol.vol_usd, COALESCE(unpriced.n, 0), clock_timestamp() FROM vol"},
+		"price":  {refreshAssetPriceSnapshotUpsert, "change_7d_pct, source_count, clock_timestamp() FROM derived"},
+	} {
+		if !strings.Contains(fold(c.q), c.stamp) {
+			t.Errorf("%s upsert does not stamp computed_at with clock_timestamp() at write time", name)
+		}
+	}
+	for name, q := range map[string]string{"volume": refreshAssetVolumePrune, "price": refreshAssetPriceSnapshotPrune} {
+		if !strings.HasSuffix(q, "WHERE computed_at < now()") {
+			t.Errorf("%s prune must keep rows stamped at or after the tx start: %s", name, q)
+		}
+	}
+}
+
 // TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL pins fail-closed staleness: the join floors
 // computed_at, so a wedged aggregator makes the row render with no price rather than serve stale prices as
 // current. It asserts the rendered predicate, since a constant nothing splices in bounds nothing.

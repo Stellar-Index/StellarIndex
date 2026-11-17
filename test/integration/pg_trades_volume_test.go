@@ -490,6 +490,9 @@ func TestAssetListing_StaleVolumeRollupNotServed(t *testing.T) {
 		if stale.Volume24hUSD != nil {
 			t.Errorf("order %d: stale volume_24h_usd = %s, want absent (rollup older than its ceiling)", order, *stale.Volume24hUSD)
 		}
+		if stale.VolumeLowerBound {
+			t.Errorf("order %d: stale volume_lower_bound = true, want false: its unpriced_trades belong to the unserved row", order)
+		}
 	}
 }
 
@@ -819,6 +822,18 @@ func TestAssetVolume_UnpricedTradesFlagLowerBound(t *testing.T) {
 		if err != nil || row.VolumeLowerBound != tc.want {
 			t.Errorf("GetAssetByAssetID(%s) volume_lower_bound=%v err=%v, want %v", tc.a, row.VolumeLowerBound, err, tc.want)
 		}
+	}
+
+	// /v1/contracts bounds the volume rollup like the listing: a row past the ceiling serves no volume and no lower-bound flag.
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE asset_volume_24h SET computed_at = now() - INTERVAL '1 hour' WHERE asset_id = $1`, tokA.String()); err != nil {
+		t.Fatalf("age A's rollup row: %v", err)
+	}
+	if cat, err = store.ContractCatalogueRows(ctx, []string{tokA.String()}); err != nil {
+		t.Fatalf("ContractCatalogueRows (stale): %v", err)
+	}
+	if r := cat[tokA.String()]; r.Volume24hUSD != nil || r.VolumeLowerBound {
+		t.Errorf("/v1/contracts stale A: volume_24h_usd=%v volume_lower_bound=%v, want absent/false", r.Volume24hUSD, r.VolumeLowerBound)
 	}
 
 	// Read-only plan of the count over a 24h window with a second, older

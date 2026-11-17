@@ -244,8 +244,8 @@ const (
 )
 
 // refreshAssetPriceSnapshotUpsert recomputes each priceable asset's price, 1h/24h/7d change and source count from [assetPriceCTEs].
-// Money stays NUMERIC and unrounded (ADR-0003); the decimals correction happens here, before any rounding; computed_at is the tx
-// timestamp for the prune.
+// Money stays NUMERIC and unrounded (ADR-0003); the decimals correction happens here, before any rounding; computed_at is
+// [rollupStampSQL].
 var refreshAssetPriceSnapshotUpsert = `
 INSERT INTO asset_price_snapshot AS s
        (asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct,
@@ -284,7 +284,7 @@ WITH ` + assetPriceCTEs + `,
 		  LEFT JOIN nonstandard_decimals_assets nda ON nda.asset = ca.asset_id
 		)
 		SELECT asset_id, price_usd, change_1h_pct, change_24h_pct,
-		       change_7d_pct, source_count, now()
+		       change_7d_pct, source_count, ` + rollupStampSQL + `
 		  FROM derived
 		 WHERE price_usd IS NOT NULL
 ON CONFLICT (asset_id) DO UPDATE
@@ -295,8 +295,12 @@ ON CONFLICT (asset_id) DO UPDATE
        source_count   = EXCLUDED.source_count,
        computed_at    = EXCLUDED.computed_at`
 
-// refreshAssetPriceSnapshotPrune drops assets no longer priceable this pass; just-upserted rows carry computed_at = now() (one tx) and
-// survive.
+// rollupStampSQL is both listing rollups' computed_at: the wall clock when the row is written, not the tx start, so a slow but successful
+// sweep (two statements of up to 10 minutes) does not commit rows already past [assetPriceSnapshotMaxAge].
+const rollupStampSQL = `clock_timestamp()`
+
+// refreshAssetPriceSnapshotPrune drops assets no longer priceable this pass; just-upserted rows carry a stamp at or after the tx start
+// (now()) and survive.
 const refreshAssetPriceSnapshotPrune = `DELETE FROM asset_price_snapshot WHERE computed_at < now()`
 
 // refreshAssetPriceSnapshotPruneExpired is the zero-row pass's prune ([pruneRollup]): past assetPriceSnapshotMaxAge the join ignores a row.

@@ -1578,7 +1578,8 @@ var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// AssetVolumeRollupSweepsTotal counts assetvolrollup sweeps feeding asset_volume_24h; refresh_error keeps the previous rows (stale, not blank).
+// AssetVolumeRollupSweepsTotal counts assetvolrollup sweeps feeding asset_volume_24h; refresh_error keeps the previous rows, which readers
+// serve as nil once older than 15 minutes.
 var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_asset_volume_rollup_sweeps_total",
