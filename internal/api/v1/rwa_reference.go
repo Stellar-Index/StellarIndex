@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/tiingo"
@@ -159,8 +160,8 @@ const (
 	RWAPremiumReferenceISINMismatch = "reference_isin_mismatch"
 	// RWAPremiumNoReference — the pair IS bound, but the oracle stream carries no row for its feed.
 	RWAPremiumNoReference = "no_reference_feed"
-	// RWAPremiumReferenceUnavailable — the oracle read failed, so nothing is known either way. A
-	// failed read must not report an absence as a finding.
+	// RWAPremiumReferenceUnavailable — a read the row depends on did not answer: the oracle read, or for an unbound row the
+	// listing-directory read (failed, unwired, or no fresh rows). A failed read must not report an absence as a finding.
 	RWAPremiumReferenceUnavailable = "reference_unavailable"
 	// RWAPremiumReferenceExpired — the bound feed's latest observation is older than the 7-day
 	// active-stream window. Reached only when a snapshot is carried across a sustained read failure.
@@ -179,6 +180,9 @@ const (
 	RWAPremiumMarketNotObserved = "market_price_not_observed"
 	// RWAPremiumReferenceNotPositive — the oracle published a non-positive value; nothing divides by it.
 	RWAPremiumReferenceNotPositive = "reference_not_positive"
+	// RWAPremiumMarketOutsideBand — the market price is outside [robuststat.WithinPublishedBand] of the oracle's value,
+	// the band /v1/rwa/premium refuses a day by, so the two surfaces never disagree on one print.
+	RWAPremiumMarketOutsideBand = RWAPremiumExcludedMarketOutsideBand
 	// RWAPremiumReferenceNotOracle: the reference is a listing price, so no premium is computed
 	// (R-C) though the reference valuation is still published; it aggregates the same markets ours does.
 	RWAPremiumReferenceNotOracle = "reference_is_a_listing_price"
@@ -500,6 +504,8 @@ func rwaApplyReference(
 		a.Premium = RWAPremium{Status: RWAPremiumMarketNotObserved}
 	case ref.priceUSD == nil || ref.priceUSD.Sign() <= 0:
 		a.Premium = RWAPremium{Status: RWAPremiumReferenceNotPositive}
+	case !robuststat.WithinPublishedBand(market, ref.priceUSD):
+		a.Premium = RWAPremium{Status: RWAPremiumMarketOutsideBand}
 	default:
 		pct := new(big.Rat).Sub(market, ref.priceUSD)
 		pct.Quo(pct, ref.priceUSD)

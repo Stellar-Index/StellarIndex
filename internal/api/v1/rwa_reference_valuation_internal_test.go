@@ -300,7 +300,7 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 	// an actor to a comparison failure would put it in a funnel arm that
 	// does not account for comparisons.
 	for _, premiumOnly := range []string{
-		RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished,
+		RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished, RWAPremiumMarketOutsideBand,
 		// The non-oracle refusals are premium-only BY DESIGN: each
 		// refuses a premium while the reference valuation beside it is
 		// published — so none may appear as a valuation drop.

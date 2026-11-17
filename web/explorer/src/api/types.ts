@@ -10563,9 +10563,12 @@ export interface components {
              *     `anchor_asset` names no security and contradicts nothing.
              *     `no_reference_feed` — the pair IS bound, but the oracle stream
              *     carries no row for its feed.
-             *     `reference_unavailable` — the oracle read did not answer, so
-             *     nothing is known either way. NOT an absence: a failed read has
-             *     not learned what the oracles carry, and must not report it.
+             *     `reference_unavailable` — a read the row depends on did not
+             *     answer, so nothing is known either way: the oracle read, or,
+             *     for a row no oracle feed binds, the listing-directory read
+             *     (failed, or returned no fresh rows). NOT an absence: a failed
+             *     read has not learned what the sources carry, and must not
+             *     report it.
              *     `reference_expired` — the bound feed's most recent observation
              *     is older than the seven-day window an active stream is defined
              *     by. Reached only when a snapshot is carried across a sustained
@@ -10585,6 +10588,11 @@ export interface components {
              *     report the issuer's own claim as a market finding.
              *     `reference_not_positive` — the oracle published a
              *     non-positive value; nothing is divided by it.
+             *     `market_outside_band` — the market price is more than ten
+             *     times, or less than a tenth of, the oracle's value: the band
+             *     `/v1/rwa/premium` refuses a day by, so the two surfaces never
+             *     disagree on one print. The row and its reference are still
+             *     published.
              *     `reference_is_a_prospectus_nav` — the row carries a
              *     reference, and it is a prospectus's constant NAV rather than
              *     an oracle's valuation of the instrument, so no premium may
@@ -10601,7 +10609,7 @@ export interface components {
              *     percent on a one-dollar share.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
+            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "market_outside_band" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
