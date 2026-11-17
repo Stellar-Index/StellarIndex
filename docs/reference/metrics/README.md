@@ -140,6 +140,18 @@ Histogram, labels `method`, `route`.
 
 The non-5xx twin of `http_request_duration_seconds`, recorded only for status < 500 and not 499. Pair with `http_request_duration_seconds_count` for the latency-SLO ratio.
 
+### `stellarindex_api_flagged_responses_total`
+
+Counter, labels `route`, `flag` (`degraded` / `stale`).
+
+Responses served with `flags.degraded` (a carried-forward or partial body, sent with `Cache-Control: no-store`) or `flags.stale`, counted by `obs.HTTPMetrics` from the envelope writer and the cached asset detail and listing replays. These are 200s, so the 5xx availability SLO never sees a backend read that fails on every request; divide by `http_requests_total` for the route's degraded share. `route` is the route pattern, as in `http_requests_total`. Synthetic probes are excluded. Not alerted.
+
+### `stellarindex_contracts_census_latest_day_timestamp_seconds`
+
+Gauge, no labels.
+
+Newest day in `stellar.contracts_census_daily` (UTC midnight, Unix seconds), set by the API each time the `/v1/contracts/stats` snapshot refreshes (hourly, while the page is read). `time() - value > 2*86400` means the census rollup has stalled; `/v1/contracts/stats` then serves `active_90d` as a lower bound. 0 until the first read. Not alerted.
+
 ### `stellarindex_api_cache_ops_total`
 
 Counter, labels `cache`, `op`, `result`.
@@ -1010,6 +1022,12 @@ Counter, label `outcome` (`ok` / `partial` / `failed`).
 
 Per-pass outcome of the explorer delta-strip worker. `partial` = some entities failed (a pair with no recent trades fails every pass); `failed` = none upserted, so `change_summary_5m` goes stale.
 
+### `stellarindex_aggregator_baseline_refresh_last_success_unix`
+
+Gauge, no labels.
+
+Unix seconds of the last volatility-baseline refresh pass that finished within its 45-minute timeout, read at least one pair and hit no read or write error (one failing pair holds it back). Seeded with start time; 0 on binaries without the worker. Alert: `stellarindex_aggregator_baseline_refresh_stale` (> 3 h), aggregator only.
+
 ### `stellarindex_change_summary_last_success_unix`
 
 Gauge, no labels.
@@ -1201,6 +1219,7 @@ The `surface` values are shared by all four price-serve gate counters (this one,
 | `history_series` | scam | `/v1/history` series |
 | `listing` | substance | `/v1/assets` listing rows, catalogue listing price, asset-detail overlay |
 | `markets` | scam | `/v1/markets` last price |
+| `ohlc` | scam | `/v1/ohlc` single bar and series |
 | `oracle` | both | SEP-40 oracle passthrough |
 | `pairs` | scam | `/v1/pairs` last price |
 | `pools` | scam | `/v1/pools` last price |
@@ -1549,7 +1568,9 @@ API-side freeze-marker reads that errored (Redis outage or timeout); client abor
 
 ### `stellarindex_anomaly_freeze_ladder_write_failures_total`
 
-Counter, label `op` (`record_freeze` / `mark_hold` / `clear`).
+Counter, label `op` (`record_freeze` / `mark_hold` / `clear` / `marker_set`).
+
+`marker_set` is a Redis freeze-marker write that failed: the freeze was decided but the API serves `flags.frozen=false`, and no durable row or ladder follows. A write cut off by a cancelled context (shutdown) is not counted.
 
 Durable freeze writes that did not land: the `freeze_events` row (`record_freeze`) or its ladder (`mark_hold` / `clear`). `record_freeze` is worse: Redis still freezes but SQL readers treat the minute as unfrozen. An unapplied migration makes every ladder write match zero rows (`ErrNotFound`, counted here). Sustained non-zero means Redis-flush protection is inert; `mark_hold` is the dangerous direction. Labels are pre-seeded.
 

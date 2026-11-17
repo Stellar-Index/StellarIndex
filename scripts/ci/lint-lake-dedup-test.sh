@@ -31,6 +31,14 @@
 #     nor a SELECT DISTINCT sample, nor prose;
 #   - the baseline needs a reason, silences the site it names, and
 #     fails STALE once the site stops violating;
+#   - every ReplacingMergeTree in the stellar database is watched:
+#     a multi-line raw-string count() over ledger_entry_changes (the
+#     lending-history class) is CAUGHT, its FINAL, argMax two-level and
+#     LIMIT 1 BY detail forms pass;
+#   - a Sprintf-built `stellar.%s` read is analysed (CAUGHT without
+#     FINAL, passes with it), FAILS in a double-quoted string, and a
+#     `FROM %s` or `"FROM " + const` in a file naming no lake table
+#     FAILS, while lower-case log prose there passes;
 #   - a tree naming no lake table FAILS rather than passing vacuously.
 #
 # Run: bash scripts/ci/lint-lake-dedup-test.sh
@@ -649,10 +657,88 @@ printf 'package clickhouse\n\nconst want = "FROM stellar.transactions FINAL"\n' 
 check "a quoted fragment in a test file is not a read" 0 "$interptest"
 
 check "a scalar subquery aggregate in the select list is not this read" 0 \
-  "$(shape scalar 'SELECT ledger_seq, (SELECT count() FROM stellar.ledgers) AS n FROM stellar.operations WHERE ledger_seq = 5')"
+  "$(shape scalar 'SELECT ledger_seq, (SELECT count() FROM stellar.ledgers FINAL) AS n FROM stellar.operations WHERE ledger_seq = 5')"
 
 check "a count() above a collapsing subquery still passes" 0 \
   "$(shape above 'SELECT count() FROM (SELECT ledger_seq, tx_index, op_index FROM stellar.operations GROUP BY ledger_seq, tx_index, op_index)')"
+
+# ── every ReplacingMergeTree, and Go-built SQL ──────────────────────
+# The lending-history derivation read ledger_entry_changes without FINAL;
+# the gate did not watch that table, nor reads built by Sprintf.
+lecraw="$(mk lecraw)"
+cat > "$lecraw/$GODIR/lec.go" <<'GO'
+package clickhouse
+
+const keyChangesQuery = `
+	SELECT key_xdr,
+	       count() AS changes
+	FROM stellar.ledger_entry_changes
+	WHERE ledger_seq BETWEEN ? AND ?
+	GROUP BY key_xdr`
+GO
+catches "a multi-line Go raw string counting ledger_entry_changes without FINAL is caught" \
+  "$lecraw" stellar.ledger_entry_changes
+
+lecok="$(mk lecok)"
+cat > "$lecok/$GODIR/lec.go" <<'GO'
+package clickhouse
+
+const keyChangesFinal = `
+	SELECT key_xdr, count() AS changes
+	FROM stellar.ledger_entry_changes FINAL
+	WHERE ledger_seq BETWEEN ? AND ?
+	GROUP BY key_xdr`
+
+const keyChangesTwoLevel = `
+	SELECT key_xdr, count() AS changes FROM (
+		SELECT key_xdr, argMax(entry_xdr, ingested_at) AS entry
+		FROM stellar.ledger_entry_changes
+		WHERE ledger_seq BETWEEN ? AND ?
+		GROUP BY ledger_seq, tx_hash, op_index, change_index, key_xdr)
+	GROUP BY key_xdr`
+
+const latestChange = `
+	SELECT key_xdr, entry_xdr
+	FROM stellar.ledger_entry_changes
+	WHERE key_xdr = ?
+	ORDER BY ledger_seq DESC, ingested_at DESC
+	LIMIT 1 BY key_xdr`
+GO
+check "ledger_entry_changes through FINAL, argMax two-level and a LIMIT 1 BY detail read pass" 0 "$lecok"
+
+for tbl in lending_state_hourly ledger_entries_current ttl_live_until operation_participants; do
+  catches "a count() over $tbl is caught" \
+    "$(shape "rmt_$tbl" "SELECT count() FROM stellar.$tbl WHERE ledger_seq > 1")" "stellar.$tbl"
+done
+
+sprintfq="$(mk sprintfq)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nfunc q(t string) string {\n\treturn fmt.Sprintf(`SELECT count()\n\t\tFROM stellar.%%s\n\t\tWHERE ledger_seq BETWEEN ? AND ?`, t)\n}\n' > "$sprintfq/$GODIR/sprintfq.go"
+catches "a Sprintf-built read of stellar.%s with no FINAL is caught" "$sprintfq" 'stellar.%s'
+
+sprintfok="$(mk sprintfok)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nfunc q(t string) string {\n\treturn fmt.Sprintf(`SELECT count() FROM stellar.%%s FINAL WHERE ledger_seq BETWEEN ? AND ?`, t)\n}\n' > "$sprintfok/$GODIR/sprintfok.go"
+check "a Sprintf-built read of stellar.%s through FINAL passes" 0 "$sprintfok"
+
+sprintfdq="$(mk sprintfdq)"
+printf 'package clickhouse\n\nfunc q(t string) string {\n\treturn fmt.Sprintf("SELECT count() FROM stellar.%%s FINAL", t)\n}\n' > "$sprintfdq/$GODIR/sprintfdq.go"
+check "a Sprintf read of stellar.%s in a double-quoted string fails" 1 "$sprintfdq"
+
+xfile="$(mk xfile)"
+printf 'package clickhouse\n\nconst lecTable = "stellar.ledger_entry_changes"\n' > "$xfile/$GODIR/tables.go"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = fmt.Sprintf(`SELECT count() FROM %%s WHERE ledger_seq > ?`, lecTable)\n' > "$xfile/$GODIR/reader.go"
+check "a raw FROM %s in a file naming no lake table (constant defined elsewhere) fails" 1 "$xfile"
+
+xsplice="$(mk xsplice)"
+printf 'package clickhouse\n\nconst lecTable = "stellar.ledger_entry_changes"\n' > "$xsplice/$GODIR/tables.go"
+printf 'package clickhouse\n\nvar q = "SELECT count() FROM " + lecTable\n' > "$xsplice/$GODIR/reader.go"
+check "a double-quoted FROM spliced to a constant in another file fails" 1 "$xsplice"
+
+xprose="$(mk xprose)"
+printf 'package clickhouse\n\nfunc e(b string) error {\n\treturn fmt.Errorf("read 0 ledgers from %%s; absent from "+\n\t\t"the bucket", b)\n}\n' > "$xprose/$GODIR/prose.go"
+check "lower-case log prose with from %s in a file naming no lake table passes" 0 "$xprose"
 
 empty="$TMP/empty"
 mkdir -p "$empty/$GODIR"

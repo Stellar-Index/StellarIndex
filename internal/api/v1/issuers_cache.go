@@ -34,7 +34,7 @@ func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey stri
 	return c.upstream.ListIssuerAssets(ctx, gStrkey)
 }
 
-// ListIssuers is cached as one IssuersListMaxLimit page that every request prefix-slices, so sweeping `?limit=` cannot force one upstream scan per value.
+// ListIssuers is cached as one IssuersListMaxLimit+1 page that every request prefix-slices, so sweeping `?limit=` cannot force one upstream scan per value.
 func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error) {
 	list, _, _, err := c.ListIssuersAt(ctx, limit)
 	return list, err
@@ -46,9 +46,9 @@ func (c *CachedIssuersReader) ListIssuersAt(ctx context.Context, limit int) ([]t
 		list, err := c.upstream.ListIssuers(ctx, limit)
 		return list, time.Time{}, false, err
 	}
-	key := newCacheKey("ListIssuers").int(IssuersListMaxLimit).build()
+	key := newCacheKey("ListIssuers").int(IssuersListMaxLimit + 1).build()
 	list, at, stale, err := c.list.get(ctx, "list_issuers", key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
-		return c.upstream.ListIssuers(ctx, IssuersListMaxLimit)
+		return c.upstream.ListIssuers(ctx, IssuersListMaxLimit+1)
 	})
 	if err != nil || limit <= 0 || limit >= len(list) {
 		return list, at, stale, err

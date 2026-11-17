@@ -162,7 +162,10 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// flag flips would serve the pre-flip price while the origin's withheld 404 is no-store.
 		path == "/v1/price/at",
 		path == "/v1/vwap",
-		path == "/v1/twap":
+		path == "/v1/twap",
+		path == "/v1/ohlc",
+		path == "/v1/chart",
+		path == "/v1/history/since-inception":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=5", true
 		}
@@ -310,9 +313,8 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 	// Closed buckets are immutable (ADR-0015) but the trailing edge advances; s-maxage=300 caps
 	// how long a CDN entry can lag it.
 	case strings.HasPrefix(path, "/v1/history"),
-		// /v1/price/at, /v1/vwap and /v1/twap are in shortBandPolicy: scam-gated, so they must
-		// not outlive a withhold flip the way an immutable OHLC bucket safely can.
-		path == "/v1/ohlc",
+		// /v1/price/at, /v1/vwap, /v1/twap, /v1/ohlc and /v1/chart are in shortBandPolicy:
+		// scam-gated, so a CDN entry must not outlive a withhold flip.
 		path == "/v1/markets",
 		// Trailing-24h volume-by-source aggregate; same cadence as /v1/markets.
 		path == "/v1/markets/sources",
@@ -323,8 +325,6 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		path == "/v1/search",
 		path == "/v1/sources",
 		strings.HasPrefix(path, "/v1/oracle/"),
-		// Closed-bucket OHLCV (ADR-0015), same semantics as /v1/ohlc.
-		path == "/v1/chart",
 		path == "/v1/pools",
 		// Embedded with the binary, changes only on redeploy (.atom sets its own header).
 		path == "/v1/incidents",

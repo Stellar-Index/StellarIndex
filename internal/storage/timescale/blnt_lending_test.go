@@ -97,7 +97,7 @@ func TestBLNTPositionsByUser_FoldShape(t *testing.T) {
 		t.Fatalf("fold = %+v, want %+v", got, want)
 	}
 	stmt := conn.only(t)
-	if len(stmt.args) != 2 || stmt.args[0] != blntTestUser || fmt.Sprint(stmt.args[1]) != fmt.Sprint(positionsVenueLimit) {
+	if len(stmt.args) != 2 || stmt.args[0] != blntTestUser || fmt.Sprint(stmt.args[1]) != fmt.Sprint(PositionsVenueLimit+1) {
 		t.Errorf("args = %v", stmt.args)
 	}
 	for _, s := range []string{"event_kind = 'fill_auction'", "event_kind = 'bad_debt'", "filled_auction_data", "supply_burned", "WHERE user_address = $1"} {

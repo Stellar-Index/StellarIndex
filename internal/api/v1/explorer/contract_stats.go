@@ -28,14 +28,17 @@ type ContractDeploymentMonth struct {
 
 // ContractStatsView is the wire response for GET /v1/contracts/stats.
 type ContractStatsView struct {
-	Deployments     []ContractDeploymentMonth `json:"deployments"`
-	TotalDeployed   int64                     `json:"total_deployed"`
-	TotalSAC        int64                     `json:"total_sac"`
-	TotalWasm       int64                     `json:"total_wasm"`
-	Active90d       *int64                    `json:"active_90d"`
-	HistoryComplete bool                      `json:"history_complete"`
-	// LowerBound is set while the instance history is not genesis-complete: the totals
-	// then exclude every contract deployed before the backfilled range.
+	Deployments   []ContractDeploymentMonth `json:"deployments"`
+	TotalDeployed int64                     `json:"total_deployed"`
+	TotalSAC      int64                     `json:"total_sac"`
+	TotalWasm     int64                     `json:"total_wasm"`
+	Active90d     *int64                    `json:"active_90d"`
+	// Active90dThrough is the activity census's newest day (YYYY-MM-DD); nil with Active90d.
+	Active90dThrough *string `json:"active_90d_through"`
+	HistoryComplete  bool    `json:"history_complete"`
+	// LowerBound is set while the instance history is not genesis-complete (the totals exclude
+	// every contract deployed before the backfilled range) or while the census lags (active_90d
+	// excludes the days after active_90d_through).
 	LowerBound bool `json:"lower_bound"`
 }
 
@@ -66,12 +69,16 @@ func (c *contractStatsCache) put(e contractStatsEntry) {
 	c.entry = &e
 }
 
-func buildContractStatsView(s clickhouse.ContractStats) ContractStatsView {
+func buildContractStatsView(s clickhouse.ContractStats, now time.Time) ContractStatsView {
 	v := ContractStatsView{
 		Deployments:     make([]ContractDeploymentMonth, len(s.Deployments)),
 		Active90d:       s.Active90d,
 		HistoryComplete: s.HistoryComplete,
-		LowerBound:      !s.HistoryComplete,
+		LowerBound:      !s.HistoryComplete || censusLags(s, now),
+	}
+	if s.Active90d != nil {
+		through := s.CensusThrough.UTC().Format("2006-01-02")
+		v.Active90dThrough = &through
 	}
 	for i, d := range s.Deployments {
 		v.Deployments[i] = ContractDeploymentMonth{Month: d.Month.UTC().Format("2006-01"), SAC: d.SAC, Wasm: d.Wasm}
@@ -80,6 +87,16 @@ func buildContractStatsView(s clickhouse.ContractStats) ContractStatsView {
 	}
 	v.TotalDeployed = v.TotalSAC + v.TotalWasm
 	return v
+}
+
+// censusLags reports a census missing a whole day before today: the rollup recomputes today as it
+// goes, so only an absent earlier day drops activity from the 90-day window.
+func censusLags(s clickhouse.ContractStats, now time.Time) bool {
+	if s.Active90d == nil {
+		return false
+	}
+	yesterday := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
+	return s.CensusThrough.UTC().Before(yesterday)
 }
 
 // refreshContractStats kicks ONE detached stats aggregation (no-op when one is already
@@ -113,7 +130,8 @@ func (h *Handler) refreshContractStats() *keyFlight {
 			h.Logger.Warn("contract stats detached refresh failed", "err", err)
 			return
 		}
-		h.contractStats.put(contractStatsEntry{view: buildContractStatsView(stats), cachedAt: time.Now()})
+		now := time.Now()
+		h.contractStats.put(contractStatsEntry{view: buildContractStatsView(stats, now), cachedAt: now})
 	}()
 	return fl
 }

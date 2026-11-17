@@ -1707,6 +1707,57 @@ func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 	}
 }
 
+// A superseded version of a change, still in its own part, must neither count as a second snapshot nor win the
+// same-ledger tie through a stale intra_ledger_seq.
+func TestQueryAccountBalance_IgnoresSupersededVersion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	const (
+		account  = "lake-dedup-account-balance-GTEST"
+		ledger   = uint32(71_000_003)
+		finalBal = int64(200)
+		staleBal = int64(100)
+	)
+	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
+	key := base64.StdEncoding.EncodeToString([]byte("lake-dedup-account-balance-key"))
+	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	rows := []chstore.LedgerEntryChangeRow{
+		{
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "acctdup", OpIndex: 0, ChangeIndex: 0,
+			IntraLedgerSeq: 4, ChangeType: "updated", EntryType: "account", KeyXDR: key,
+			AccountID: account, Balance: staleBal,
+		},
+		{
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "acctdup", OpIndex: 1, ChangeIndex: 0,
+			IntraLedgerSeq: 5, ChangeType: "updated", EntryType: "account", KeyXDR: key,
+			AccountID: account, Balance: finalBal,
+		},
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+	// An OLDER version of the op-0 change whose stale intra_ledger_seq sorts after op 1: a merge discards it.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
+		SELECT * REPLACE (toUInt32(9) AS intra_ledger_seq, ingested_at - INTERVAL 1 HOUR AS ingested_at)
+		FROM stellar.ledger_entry_changes WHERE ledger_seq = ? AND tx_hash = 'acctdup' AND op_index = 0`, ledger); err != nil {
+		t.Fatalf("insert superseded version: %v", err)
+	}
+
+	snap, found, err := chstore.QueryAccountBalance(ctx, addr, account)
+	if err != nil || !found {
+		t.Fatalf("QueryAccountBalance: found=%v err=%v", found, err)
+	}
+	if snap.Stroops != finalBal {
+		t.Errorf("Stroops = %d, want %d (a superseded version's intra_ledger_seq won the tie)", snap.Stroops, finalBal)
+	}
+	if snap.Snapshots != 2 {
+		t.Errorf("Snapshots = %d, want 2 (a superseded version was counted as a change)", snap.Snapshots)
+	}
+}
+
 // lakeFixturePartitionLedgers mirrors stellar.ledger_entry_changes'
 // `PARTITION BY intDiv(ledger_seq, 1000000)` (deploy/clickhouse/tier1_schema.sql).
 const lakeFixturePartitionLedgers = uint32(1_000_000)

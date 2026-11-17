@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"net/http"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -67,6 +69,9 @@ type LendingEarningsView struct {
 	Emissions  []LendingEmissionsClaim `json:"emissions"`
 	Note       string                  `json:"note"`
 	AsOfLedger uint32                  `json:"as_of_ledger,omitempty"`
+	// LowerBound is set when a read hit the per-account row cap; CoverageNote then names the capped reads.
+	LowerBound   bool   `json:"lower_bound"`
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
 // LendingEarningsLeg is one (pool, asset, side) or (pool, tier) backstop position; amounts are base-unit decimal strings.
@@ -195,21 +200,28 @@ func (s *Server) handleLendingAccountEarnings(w http.ResponseWriter, r *http.Req
 // as unread and sets degraded instead of failing the response.
 func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsReader, sr lendingAccountStateReader, account string) (LendingEarningsView, bool, error) {
 	view := LendingEarningsView{Account: account, Legs: []LendingEarningsLeg{}, Emissions: []LendingEmissionsClaim{}, Note: lendingEarningsNote}
+	var capped []string
 	blendFolds, err := er.BlendPositionsByUser(ctx, account)
-	if err != nil {
+	if err = noteCapped(&capped, "blend positions", err); err != nil {
 		return view, false, err
 	}
 	blntFolds, err := er.BLNTPositionsByUser(ctx, account)
-	if err != nil {
+	if err = noteCapped(&capped, "blnt positions", err); err != nil {
 		return view, false, err
 	}
 	flows, err := er.LendingAccountFlows(ctx, account)
+	if err = noteCapped(&capped, "emission claims and backstop token flows", err); err != nil {
+		return view, false, err
+	}
+	backstop, err := s.backstopEarningsJobs(ctx, er, account, flows, &capped)
 	if err != nil {
 		return view, false, err
 	}
-	backstop, err := s.backstopEarningsJobs(ctx, er, account, flows)
-	if err != nil {
-		return view, false, err
+	if len(capped) > 0 {
+		view.LowerBound = true
+		view.CoverageNote = "TRUNCATED: " + strings.Join(capped, ", ") + " exceed the per-account cap; only the first " +
+			strconv.Itoa(timescale.PositionsVenueLimit) + " rows of each, in pool order, are read, so legs and emission claims " +
+			"past them are missing and this response is a lower bound."
 	}
 	jobs := append(poolEarningsJobs("blend", blendFolds), poolEarningsJobs(blnt.SourceName, blntFolds)...)
 	jobs = append(jobs, backstop...)
@@ -227,7 +239,16 @@ func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsRea
 	for _, c := range flows.BLNTClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: blnt.SourceName, Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
-	return view, historyFailed || slices.Contains(failed, true), nil
+	return view, historyFailed || slices.Contains(failed, true) || view.LowerBound, nil
+}
+
+// noteCapped records a fold read that hit the per-account row cap under `what` and passes any other error through.
+func noteCapped(capped *[]string, what string, err error) error {
+	if errors.Is(err, timescale.ErrPositionsTruncated) {
+		*capped = append(*capped, what)
+		return nil
+	}
+	return err
 }
 
 // earningsLegSource names the completeness source whose projection wrote a leg's events.
@@ -399,9 +420,11 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 }
 
 // backstopEarningsJobs groups the account's backstop flows into one job per (protocol, pool).
-func (s *Server) backstopEarningsJobs(ctx context.Context, er lendingEarningsReader, account string, flows timescale.LendingAccountFlows) ([]earningsJob, error) {
+func (s *Server) backstopEarningsJobs(ctx context.Context, er lendingEarningsReader, account string, flows timescale.LendingAccountFlows,
+	capped *[]string,
+) ([]earningsJob, error) {
 	blendShares, err := er.BlendBackstopSharesByUser(ctx, account)
-	if err != nil {
+	if err = noteCapped(capped, "blend backstop shares", err); err != nil {
 		return nil, err
 	}
 	blntShares, err := er.BLNTBackstopByUser(ctx, account)

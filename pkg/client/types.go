@@ -83,15 +83,15 @@ type Flags struct {
 	ThinMarket bool `json:"thin_market,omitempty"`
 	// UnderReview: an operator hold covers the asset, contract or ledger; figures are served unchanged but unconfirmed.
 	UnderReview bool `json:"under_review,omitempty"`
-	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
-	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
-	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the requested asset's code matches a verified
-	// currency's Stellar ticker but its issuer does not match the verified entry, i.e. someone issued their own
-	// "USDC". The decoder ignores unknown fields, so older SDK builds are unaffected.
+	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1. Read it only
+	// when ProxyDeviationUnchecked is false: that marks a failed peg read, so an absent deviation is not a "peg holds" verdict.
+	ProxyDeviation          bool `json:"proxy_deviation,omitempty"`
+	ProxyDeviationUnchecked bool `json:"proxy_deviation_unchecked,omitempty"`
+	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the requested asset's code matches a verified currency's
+	// Stellar ticker but its issuer does not match the verified entry, i.e. someone issued their own "USDC".
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
-	// DetectorsPartial fires on `/v1/mev` when the detection worker has
-	// not completed a full run within its heartbeat TTL, so a quiet feed is
-	// a detection gap rather than a quiet network.
+	// DetectorsPartial fires on `/v1/mev` when the detection worker has not completed a full run within its heartbeat TTL,
+	// so a quiet feed is a detection gap rather than a quiet network.
 	DetectorsPartial bool `json:"detectors_partial,omitempty"`
 	// Truncated: the list was capped and no cursor continues it, so its length is a lower bound.
 	Truncated bool `json:"truncated,omitempty"`
@@ -99,7 +99,7 @@ type Flags struct {
 	// sent them ("type", "code", "issuer", "q"); omitted when everything supplied was applied. `/v1/assets` sets it
 	// on listings that cannot narrow. A page that dropped a filter otherwise looks identical to one that matched.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
-	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`).
+	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`, `/v1/markets`).
 	IncludesUnread []string `json:"includes_unread,omitempty"`
 }
 

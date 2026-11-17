@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Envelope is the shape of every 2xx JSON response (docs/reference/api-design.md section 4).
@@ -73,6 +74,8 @@ type Flags struct {
 	// ProxyDeviation: a TRIANGULATED fiat:USD price assumes a declared USD peg is $1, and a declared
 	// peg's observed dollar price is more than 2% from $1.
 	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
+	// ProxyDeviationUnchecked: a peg read behind ProxyDeviation failed, so its false is not a "peg holds" verdict.
+	ProxyDeviationUnchecked bool `json:"proxy_deviation_unchecked,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the asset's code matches a verified
 	// currency's ticker but its issuer does not (someone issued their own "USDC"); the
 	// `unverified_warning` body points at the verified asset.
@@ -189,6 +192,7 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	if env.Flags.Degraded {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	obs.MarkResponseFlags(w, env.Flags.Degraded, env.Flags.Stale)
 	w.WriteHeader(status)
 	_, _ = w.Write(append(body, '\n'))
 }

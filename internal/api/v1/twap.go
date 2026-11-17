@@ -62,10 +62,6 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	// SCAM ONLY, not the substance gate: that would newly 404 every THIN pair, a breaking change,
 	// and ADR-0015 positions /v1/vwap as the "compute it yourself" surface opposite /v1/price.
 	// Owner call.
-	//
-	// The gate lives in the HANDLER, not tradesInRangeWithStablecoinFallback, which also feeds the
-	// single-bar /v1/ohlc that scam.go, substance.go and the withheld problem's text promise stays
-	// visible.
 	if s.writeIfScamWithheld(w, r, base, quote, "twap") {
 		return
 	}

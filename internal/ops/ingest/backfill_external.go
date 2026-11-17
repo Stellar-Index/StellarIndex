@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -146,7 +147,9 @@ func backfillExternal(args []string) error {
 			return err
 		}
 	}
-	insErr := insertBackfilledTrades(insCtx, store, trades, *progressEvery, os.Stderr, t0)
+	insErr := insertRefreshingCAGGs(store, os.Stderr, func(w tradeInserter) error {
+		return insertBackfilledTrades(insCtx, w, trades, *progressEvery, os.Stderr, t0)
+	})
 	if partial {
 		return partialWalkError(len(trades), resumeFrom, insErr)
 	}
@@ -440,11 +443,13 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 	defer func() { _ = store.Close() }()
 
 	t0 := time.Now()
-	return walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
-		insCtx, insCancel := context.WithTimeout(context.Background(), externalInsertBudget)
-		defer insCancel()
-		return insertBackfilledTrades(insCtx, store, trades, progressEvery, os.Stderr, t0)
-	}, os.Stderr)
+	return insertRefreshingCAGGs(store, os.Stderr, func(w tradeInserter) error {
+		return walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
+			insCtx, insCancel := context.WithTimeout(context.WithoutCancel(ctx), externalInsertBudget)
+			defer insCancel()
+			return insertBackfilledTrades(insCtx, w, trades, progressEvery, os.Stderr, t0)
+		}, os.Stderr)
+	})
 }
 
 // walkWindowed fetches [from, to) window by window, handing each to sink before the next.
@@ -541,6 +546,64 @@ func windowStopError(start, end time.Time, written int, causes []error) error {
 type tradeInserter interface {
 	InsertTrade(ctx context.Context, t canonical.Trade) error
 	BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error
+}
+
+// backfillTradeStore is the trades store plus the refresh surface [refreshBackfilledTradesCAGGs] needs.
+type backfillTradeStore interface {
+	tradeInserter
+	planStepRefresher
+}
+
+// insertRefreshingCAGGs runs insert, then refreshes the trades continuous aggregates over every row it handed the store: their
+// policies reach back only a bounded offset, and off-chain rows carry ledger 0, so trades-cagg-refresh cannot find them by ledger.
+// The window is printed first so an interrupted refresh is visible.
+func insertRefreshingCAGGs(store backfillTradeStore, log io.Writer, insert func(tradeInserter) error) error {
+	rec := &spanRecorder{tradeInserter: store}
+	insErr := insert(rec)
+	if !rec.seen {
+		return insErr
+	}
+	_, _ = fmt.Fprintf(log, "backfill-external: refreshing trades continuous aggregates over [%s, %s]; if it fails or is interrupted, re-run this command (inserts are idempotent)\n",
+		rec.from.UTC().Format(time.RFC3339), rec.to.UTC().Format(time.RFC3339))
+	ctx, cancel := context.WithTimeout(context.Background(), externalInsertBudget)
+	defer cancel()
+	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+		return timescale.PadRefreshWindow(rec.from, rec.to, c.MinWindow)
+	})
+	if err := runCAGGRefreshPlan(ctx, slog.New(slog.NewTextHandler(log, nil)), store, plan); err != nil {
+		return errors.Join(insErr, fmt.Errorf("backfill-external: %w", err))
+	}
+	return insErr
+}
+
+// spanRecorder passes writes through and keeps the time hull of every trade offered, written or not: a failed batch may have
+// committed nothing, and refreshing a window with no new rows is harmless.
+type spanRecorder struct {
+	tradeInserter
+	seen     bool
+	from, to time.Time
+}
+
+func (s *spanRecorder) observe(trades []canonical.Trade) {
+	for _, t := range trades {
+		if !s.seen || t.Timestamp.Before(s.from) {
+			s.from = t.Timestamp
+		}
+		if !s.seen || t.Timestamp.After(s.to) {
+			s.to = t.Timestamp
+		}
+		s.seen = true
+	}
+}
+
+func (s *spanRecorder) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
+	s.observe(trades)
+	return s.tradeInserter.BatchInsertTrades(ctx, trades)
+}
+
+func (s *spanRecorder) InsertTrade(ctx context.Context, t canonical.Trade) error {
+	s.observe([]canonical.Trade{t})
+	return s.tradeInserter.InsertTrade(ctx, t)
 }
 
 // backfillInsertChunk is the rows per BatchInsertTrades call: well under the

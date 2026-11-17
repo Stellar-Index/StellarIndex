@@ -127,10 +127,13 @@ type IssuerSummary struct {
 	TotalObservationCount int64
 }
 
-// ListIssuers returns the issuer directory ordered by total observation count desc, the activity proxy /v1/issuers exposes. limit
-// clamps to [1, 500].
+// issuersListReadLimit is the 500-row served ceiling plus one row that tells a full directory from a capped one.
+const issuersListReadLimit = 501
+
+// ListIssuers returns the issuer directory ordered by total observation count desc, the activity proxy /v1/issuers exposes. A limit
+// outside [1, issuersListReadLimit] reads 100.
 func (s *Store) ListIssuers(ctx context.Context, limit int) ([]IssuerSummary, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > issuersListReadLimit {
 		limit = 100
 	}
 	// The outlived predicate reads issuers columns outside the GROUP BY; grouping on the primary

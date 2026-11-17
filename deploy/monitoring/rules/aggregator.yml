@@ -671,3 +671,25 @@ groups:
             `first_err`, and
             stellarindex_change_summary_passes_total{outcome="failed"}.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_change_summary_stale
+      - alert: stellarindex_aggregator_baseline_refresh_stale
+        expr: |
+          (time() - stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex_aggregator"}) > 10800
+            and stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex_aggregator"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_baseline_refresh_stale
+          summary: "No volatility-baseline refresh pass has succeeded in over 3 h — the Phase-2 z-score freeze goes unscored once baselines pass 24 h"
+          description: |
+            No baseline refresh pass has finished within its 45-minute
+            timeout with a store answer for over 3 hours (three hourly
+            passes) plus a 15-minute for-duration. Baselines older than
+            24 h make every pair's confidence step return baseline_stale,
+            so the ADR-0019 Phase-2 freeze can neither fire nor unfreeze.
+            Look at the aggregator's `baseline refresh complete` log for
+            `timed_out` and `read_errors`, and
+            stellarindex_aggregator_baseline_refresh_total{outcome="read_error"}.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_baseline_refresh_stale

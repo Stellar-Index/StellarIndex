@@ -31,6 +31,8 @@ func registerAppMetrics() {
 		HTTPRequestsTotal,
 		HTTPRequestDuration,
 		HTTPRequestSuccessDuration,
+		APIFlaggedResponsesTotal,
+		ContractsCensusLatestDay,
 		IngestGapLedgers,
 		IngestGapCount,
 		IngestGapMaxSize,
@@ -148,6 +150,7 @@ func registerPricingMetrics() {
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
+		AggregatorBaselineRefreshLastSuccessUnix,
 		AggregatorBootstrapCapped,
 		AggregatorBaselineDensityDays,
 
@@ -517,10 +520,10 @@ func seedBoundedLabelSeries() {
 	for _, mode := range []string{"auto", "operator", "lapsed"} {
 		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
 	}
-	// Durable freeze-row and ladder write sites (migration 0119). Bounded set of three;
+	// Durable freeze-row and ladder write sites (migration 0119) plus the Redis marker. Bounded set of four;
 	// seeded because this counter's whole purpose is to make a SILENT
 	// failure visible, and an absent series is itself a silence.
-	for _, op := range []string{"record_freeze", "mark_hold", "clear"} {
+	for _, op := range []string{"record_freeze", "mark_hold", "clear", "marker_set"} {
 		AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op)
 	}
 	// Privileged-mutation surfaces whose audit row can fail to land, enumerated at the six call
@@ -721,6 +724,23 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2.5, 5, 10},
 	},
 	[]string{"method", "route"},
+)
+
+// APIFlaggedResponsesTotal counts API responses written with flags.degraded or flags.stale, by route pattern and flag; synthetic probes are excluded as in [HTTPRequestsTotal].
+var APIFlaggedResponsesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_flagged_responses_total",
+		Help: "API responses served with flags.degraded (carried-forward or partial body) or flags.stale, labelled by route pattern and flag (degraded|stale).",
+	},
+	[]string{"route", "flag"},
+)
+
+// ContractsCensusLatestDay is the newest day in stellar.contracts_census_daily as a Unix timestamp, set on each /v1/contracts/stats snapshot read; a stalled census shrinks active_90d.
+var ContractsCensusLatestDay = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_contracts_census_latest_day_timestamp_seconds",
+		Help: "Newest day (UTC midnight, Unix seconds) present in the contracts census, read with the /v1/contracts/stats snapshot. 0 until the first read.",
+	},
 )
 
 // DependencyUp reports each /v1/readyz check as a gauge (1 answered, 0 not); alert on `== 0`, never on `absent()` alone.
@@ -2471,11 +2491,11 @@ var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeLadderWriteFailuresTotal counts durable freeze-event row and ladder writes that did not land, by call site; `record_freeze` and `mark_hold` are the dangerous directions. All labels are pre-seeded.
+// AnomalyFreezeLadderWriteFailuresTotal counts freeze marker, durable freeze-event row and ladder writes that did not land, by call site; `record_freeze` and `mark_hold` are the dangerous directions. All labels are pre-seeded.
 var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_ladder_write_failures_total",
-		Help: "Durable freeze-event row and freeze-ladder writes that did not land, by call site (record_freeze|mark_hold|clear). Sustained non-zero = SQL readers miss the freeze and the Redis-flush protection is inert.",
+		Help: "Durable freeze-event row and freeze-ladder writes that did not land, by call site (record_freeze|mark_hold|clear|marker_set). Sustained non-zero = SQL readers miss the freeze and the Redis-flush protection is inert.",
 	},
 	[]string{"op"},
 )
@@ -2649,6 +2669,14 @@ var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 		Help: "Confidence-score compute outcomes per (pair, window) × tick. See package docs for the full label vocabulary.",
 	},
 	[]string{"outcome"},
+)
+
+// AggregatorBaselineRefreshLastSuccessUnix is the time of the last baseline refresh pass that finished in time with no store error; powers stellarindex_aggregator_baseline_refresh_stale.
+var AggregatorBaselineRefreshLastSuccessUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_baseline_refresh_last_success_unix",
+		Help: "Unix seconds of the last volatility-baseline refresh pass that finished within its timeout, read at least one pair and hit no read or write error; seeded at worker start, 0 when the worker is not running.",
+	},
 )
 
 // AggregatorBaselineAgeSeconds is the per-pair age of the volatility baseline row the confidence step read; shows a single pair whose refresh keeps failing.
@@ -3183,7 +3211,7 @@ var CHSchemaProbePresent = prometheus.NewGaugeVec(
 var DerivedIndexWatermarkLedger = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_derived_index_watermark_ledger",
-		Help: "Ledger each derived ClickHouse index is proven complete through, as last read from stellar.entry_history_watermark (0 = no watermark row or no table; the fast paths gated on it serve their fallback).",
+		Help: "Ledger each derived ClickHouse index is proven complete through, as last read from the stellar.entry_history_watermark table (0 = no watermark row or no table; the fast paths gated on it serve their fallback).",
 	},
 	[]string{"index"},
 )

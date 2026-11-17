@@ -115,7 +115,16 @@ type RWAReferenceValuation struct {
 	// ValueUSD is circulating supply (scaled by the asset's decimals) times the reference price, as
 	// a 2-dp decimal string from exact rational arithmetic, never a float. Present iff published.
 	ValueUSD *string `json:"value_usd,omitempty"`
+	// unansweredBy names the read that did not answer on a reference_unavailable row, for the summary basis.
+	unansweredBy string
 }
+
+// The reads whose silence refuses a row as reference_unavailable.
+const (
+	rwaUnansweredOracle  = "the oracle reference read"
+	rwaUnansweredListing = "the listing directory read"
+	rwaUnansweredBoth    = "the oracle and listing directory reads"
+)
 
 // RWAReferenceValuation statuses NOT shared with the premium; every other value is an RWAPremium
 // constant, because the rule that refused the premium refused this too.
@@ -460,6 +469,7 @@ func rwaApplyReference(
 	// it, since the unbound arm above falls through to the listing arm.
 	if !snap.available {
 		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
+		a.ReferenceValuation.unansweredBy = rwaUnansweredOracle
 		return
 	}
 	ref, ok := snap.byFeed[feed]
@@ -529,8 +539,16 @@ func rwaApplyUnboundReference(a *RWAAsset, snap rwaReferences, classicListings a
 		notFound = RWAPremiumNotInstrumentScoped
 	}
 	// "Nothing prices this row" is a finding only when every read that could have priced it answered.
+	unansweredBy := ""
 	if _, fundBound := rwaFundNAVTicker(a.Code, a.Issuer); !classicListings.available || (fundBound && !snap.available) {
 		notFound = RWAPremiumReferenceUnavailable
+		unansweredBy = rwaUnansweredListing
+		if fundBound && !snap.available {
+			unansweredBy = rwaUnansweredOracle
+			if !classicListings.available {
+				unansweredBy = rwaUnansweredBoth
+			}
+		}
 	}
 	// The listing row for this exact asset, by the rule /v1/assets uses ([listingEntryIn]): the
 	// `CODE-GISSUER` id, then the derived SAC address, since the directory lists each asset under
@@ -547,6 +565,9 @@ func rwaApplyUnboundReference(a *RWAAsset, snap rwaReferences, classicListings a
 	// No oracle binds this pair, a statement about one source only; the address-exact listing
 	// directory that prices the contract arm is read for classic rows too.
 	rwaApplyListingReference(a, listing, notFound, now)
+	if a.ReferenceValuation.Status == RWAPremiumReferenceUnavailable {
+		a.ReferenceValuation.unansweredBy = unansweredBy
+	}
 }
 
 // rwaApplyContractReference attaches the listing-priced reference to a contract member, or the reason there is none. Nothing binds a

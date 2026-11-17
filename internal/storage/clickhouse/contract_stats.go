@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // ContractDeployMonth is one month of first-seen contract deployments, split by executable type.
@@ -21,6 +23,8 @@ type ContractStats struct {
 	Deployments []ContractDeployMonth
 	// Active90d is nil when the census is unavailable; unknown must not read as zero.
 	Active90d *int64
+	// CensusThrough is the census's newest day; the 90-day window counts no activity after it.
+	CensusThrough time.Time
 	// HistoryComplete is true only with a genesis-complete watermark on the instance table;
 	// without it Deployments undercount and callers must render a lower bound.
 	HistoryComplete bool
@@ -39,7 +43,9 @@ const contractDeploymentsQuery = `SELECT toStartOfMonth(f) AS m,
 		GROUP BY m
 		ORDER BY m` + explorerScanSettings + `, max_execution_time = 120`
 
-const contractActive90dQuery = `SELECT toInt64(uniqExact(contract_id)) FROM stellar.contracts_census_daily WHERE day >= today() - 90`
+const contractActive90dQuery = `SELECT toInt64(uniqExact(contract_id)),
+		       (SELECT max(day) FROM stellar.contracts_census_daily)
+		FROM stellar.contracts_census_daily WHERE day >= today() - 90`
 
 // ContractStats reads the deployment histogram, the 90-day active count and the instance table's genesis watermark.
 func (r *ExplorerReader) ContractStats(ctx context.Context) (ContractStats, error) {
@@ -62,10 +68,11 @@ func (r *ExplorerReader) ContractStats(ctx context.Context) (ContractStats, erro
 
 	if r.censusAvailable(ctx) {
 		var n int64
-		if err := r.conn.QueryRow(ctx, contractActive90dQuery).Scan(&n); err != nil {
+		if err := r.conn.QueryRow(ctx, contractActive90dQuery).Scan(&n, &out.CensusThrough); err != nil {
 			return out, fmt.Errorf("clickhouse: contracts active 90d: %w", err)
 		}
 		out.Active90d = &n
+		obs.ContractsCensusLatestDay.Set(float64(out.CensusThrough.Unix()))
 	}
 
 	// An unreadable watermark degrades to a lower bound rather than failing the stats.

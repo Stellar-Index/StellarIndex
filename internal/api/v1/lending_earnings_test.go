@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +22,8 @@ const earningsAccount = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN
 
 type stubEarningsPositions struct {
 	*stubPositionsReader
-	flows timescale.LendingAccountFlows
+	flows    timescale.LendingAccountFlows
+	flowsErr error
 }
 
 func (*stubEarningsPositions) BLNTPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
@@ -33,7 +35,7 @@ func (*stubEarningsPositions) BLNTBackstopByUser(context.Context, string) ([]tim
 }
 
 func (s *stubEarningsPositions) LendingAccountFlows(context.Context, string) (timescale.LendingAccountFlows, error) {
-	return s.flows, nil
+	return s.flows, s.flowsErr
 }
 
 type stubEarningsExplorer struct {
@@ -328,5 +330,36 @@ func TestLendingAccountEarnings_PoolReadFailureDegrades(t *testing.T) {
 	}
 	if bstop := body.Data.Legs[1]; bstop.Reconciled || strOrNull(bstop.Reason) != "fold_inconsistent" {
 		t.Fatalf("backstop = %+v", bstop)
+	}
+}
+
+// TestLendingAccountEarnings_CappedFoldsAreALowerBound: a position fold and a flows read over the per-account row cap keep
+// their rows and are served as a degraded lower bound naming both, not as a 500 or as the complete history.
+func TestLendingAccountEarnings_CappedFoldsAreALowerBound(t *testing.T) {
+	pool, asset := mkCStrkey(t, 1), mkCStrkey(t, 2)
+	ex := &stubEarningsExplorer{stubExplorerReader: &stubExplorerReader{}, positions: clickhouse.LendingAccountPositions{Readable: true}}
+	pr := &stubEarningsPositions{
+		stubPositionsReader: &stubPositionsReader{
+			blend:    []timescale.BlendPositionFold{{Pool: pool, Asset: asset, HasSupplyLeg: true, SupplyNet: "90", SupplyTokens: "100"}},
+			blendErr: fmt.Errorf("probe: %w", timescale.ErrPositionsTruncated),
+		},
+		flows:    timescale.LendingAccountFlows{BlendClaims: []timescale.LendingClaimFold{{Pool: pool, Claimed: "7"}}},
+		flowsErr: fmt.Errorf("probe: %w", timescale.ErrPositionsTruncated),
+	}
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/accounts/"+earningsAccount+"/earnings", nil))
+	var body struct{ Data v1.LendingEarningsView }
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+	got := body.Data
+	if len(got.Legs) != 1 || got.Legs[0].NetFlow != "90" || len(got.Emissions) != 1 || got.Emissions[0].Claimed != "7" {
+		t.Fatalf("capped rows not kept: legs %+v emissions %+v", got.Legs, got.Emissions)
+	}
+	degraded := strings.Contains(rec.Header().Get("Cache-Control"), "no-store")
+	if !got.LowerBound || !degraded ||
+		!strings.Contains(got.CoverageNote, "TRUNCATED: blend positions, emission claims and backstop token flows") {
+		t.Fatalf("lower_bound %v degraded %v coverage_note %q", got.LowerBound, degraded, got.CoverageNote)
 	}
 }

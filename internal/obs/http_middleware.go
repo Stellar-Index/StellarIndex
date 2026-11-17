@@ -46,6 +46,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		}
 
 		HTTPRequestsTotal.WithLabelValues(method, route, strconv.Itoa(status)).Inc()
+		countFlaggedResponse(route, rec)
 
 		// A stream's elapsed time is connection lifetime, which would pin p99 at +Inf; count it
 		// but skip the duration.
@@ -152,8 +153,39 @@ func routeFromPattern(p string) string {
 // statusRecorder duplicates middleware's recorder because middleware imports obs.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
-	wrote  bool
+	status   int
+	wrote    bool
+	degraded bool
+	stale    bool
+}
+
+// MarkResponseFlags tells [HTTPMetrics] the response carries flags.degraded or flags.stale. It walks
+// Unwrap past inner middleware wrappers to the recorder; a 200 with these flags never reaches the 5xx SLO.
+func MarkResponseFlags(w http.ResponseWriter, degraded, stale bool) {
+	if !degraded && !stale {
+		return
+	}
+	for w != nil {
+		if rec, ok := w.(*statusRecorder); ok {
+			rec.degraded = rec.degraded || degraded
+			rec.stale = rec.stale || stale
+			return
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
+}
+
+func countFlaggedResponse(route string, rec *statusRecorder) {
+	if rec.degraded {
+		APIFlaggedResponsesTotal.WithLabelValues(route, "degraded").Inc()
+	}
+	if rec.stale {
+		APIFlaggedResponsesTotal.WithLabelValues(route, "stale").Inc()
+	}
 }
 
 func (r *statusRecorder) WriteHeader(code int) {

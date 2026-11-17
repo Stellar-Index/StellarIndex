@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 302 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 303 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -481,6 +481,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_decimals_guard_unconfirmed` | `decimals_guard_pending_writes{job="stellarindex_aggregator"}` or `decimals_guard_unresolved_asset{job=…}` | pending > 0, or an unresolved asset that was not in the set at any time in the previous day, for 1 h. A confirmed correction is unwritten, or a newly traded asset's `decimals()` could not be read | ticket | [aggregator](runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed) |
 | `stellarindex_decimals_guard_sweep_stale` | `time() - decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}` > 2700, gauge > 0 | 15 min (sweep wedged). Lake-less aggregator holds 0 and stays silent. Offender counters above are untrustworthy while this fires | ticket | [dex-nonstandard-decimals](runbooks/aggregator.md#stellarindex_decimals_guard_sweep_stale) |
 | `stellarindex_change_summary_stale` | `time() - change_summary_last_success_unix{job="stellarindex_aggregator"}` > 1800, gauge > 0 | 15 min (`change_summary_5m` frozen; explorer deltas stale) | ticket | [change-summary-stale](runbooks/aggregator.md#stellarindex_change_summary_stale) |
+| `stellarindex_aggregator_baseline_refresh_stale` | `time() - aggregator_baseline_refresh_last_success_unix{job="stellarindex_aggregator"}` > 10800, gauge > 0 | 15 min (volatility baselines ageing; Phase-2 freeze unscored past 24 h) | ticket | [baseline-refresh-stale](runbooks/aggregator.md#stellarindex_aggregator_baseline_refresh_stale) |
 | `stellarindex_price_alert_eval_failing` | `rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |
 | `stellarindex_price_alert_eval_no_successful_sweeps` | `ok` sweep rate == 0 and `partial_error` rate > 0 | 30 min (`list_error` cannot see this) | ticket | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |
 | `stellarindex_price_alert_evaluations_failing` | error+timeout share of `price_alert_evaluated_total[15m]` | > 0.5 for 30 min (`partial_error` cannot tell one bad alert from all) | ticket | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |

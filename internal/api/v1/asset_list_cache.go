@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -54,26 +55,26 @@ func newAssetListResponseCache(ttl, maxAge time.Duration) *assetListResponseCach
 
 // lookup returns the body to replay for key. Past the TTL it returns the stale-flagged body and refresh=true to exactly one
 // caller until the refresh settles; past maxAge it misses.
-func (c *assetListResponseCache) lookup(key string) (body []byte, refresh, ok bool) {
+func (c *assetListResponseCache) lookup(key string) (body []byte, stale, refresh, ok bool) {
 	if c == nil || c.ttl <= 0 {
-		return nil, false, false
+		return nil, false, false, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, found := c.entries[key]
 	if !found {
-		return nil, false, false
+		return nil, false, false, false
 	}
 	age := c.now().Sub(e.cachedAt)
 	switch {
 	case age < c.ttl:
-		return e.fresh, false, true
+		return e.fresh, false, false, true
 	case age <= c.maxAge:
 		refresh = !e.flight
 		e.flight = true
-		return e.stale, refresh, true
+		return e.stale, true, refresh, true
 	default:
-		return nil, false, false
+		return nil, false, false, false
 	}
 }
 
@@ -185,7 +186,8 @@ func (s *Server) refreshAssetListPage(
 }
 
 // writeCachedAssetList replays a cached listing body.
-func writeCachedAssetList(w http.ResponseWriter, body []byte) {
+func writeCachedAssetList(w http.ResponseWriter, body []byte, stale bool) {
+	obs.MarkResponseFlags(w, false, stale)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Stellarindex-Cache", "HIT")
 	_, _ = w.Write(body)

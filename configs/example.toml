@@ -574,7 +574,9 @@ trusted_proxy_cidrs      = []
 # (asset, contract_id, ledger_from, ledger_to, reason; all set selectors
 # must match) that flag matching supply, balance and holder responses
 # `flags.under_review`. Re-read every 15s; a missing file means no
-# holds, an invalid or zero-byte one keeps the previous list. Empty path disables it.
+# holds. An invalid file at startup stops the API (and fails -dry-run);
+# once running, an invalid or zero-byte one keeps the previous list.
+# Empty path disables it.
 # holds_file = "/etc/stellarindex/holds.toml"
 
 # prometheus_url — Prometheus HTTP API root backing /v1/status. Empty

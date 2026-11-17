@@ -10,13 +10,9 @@
 # whose site no longer violates is STALE and fails the gate until it is
 # deleted.
 #
-# CURRENT STATE: 0 entries. The tree's one aggregating read of a lake
-# archive — opTypeStatsQuery in
-# internal/storage/clickhouse/explorer_reader.go — already collapses
-# with FINAL, for this reason: a re-ingested
-# operation leaves an un-merged duplicate part that inflates count()
-# until a background merge. Keeping this file empty is the goal, not an
-# accident.
+# Every entry below counts physical rows on purpose, tests only for
+# emptiness, or reads a table that is not a ReplacingMergeTree; the
+# reason says which.
 test/integration/clickhouse_accounts_test.go:stellar.transactions  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
 test/integration/clickhouse_accounts_test.go:stellar.operations  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
 test/integration/clickhouse_lake_test.go:stellar.account_movements  asserts the physical rows one fixture insert wrote; FINAL would hide a writer that emits a row twice
@@ -25,3 +21,11 @@ deploy/clickhouse/contract_event_shapes.sql:stellar.contract_events  the shape t
 deploy/clickhouse/tier1_schema.sql:stellar.contract_events  the same contract_event_shapes view as contract_event_shapes.sql
 internal/storage/clickhouse/recognition.go:stellar.contract_events  cnt only orders shapes for recognition and is never served as a count; FINAL over the whole window would more than double a bounded discovery scan
 test/integration/clickhouse_reads_test.go:stellar.contract_events  an EXPLAIN of the planner's granule pruning, not a count that is read
+internal/storage/clickhouse/contiguity_reader.go:stellar.ledgers  count() is the physical row total on purpose: DuplicateRows() = count() - uniqExact(ledger_seq) is the duplicate surplus the contiguity check reports
+internal/storage/clickhouse/contracts_census.go:stellar.%s  the %s is the census's private staging copy of stellar.contracts_census_daily, a plain MergeTree filled by one INSERT
+internal/storage/clickhouse/participant_backfill.go:stellar.operation_participants  count() only tests emptiness (cnt == 0), which a duplicate cannot change; an unfiltered count() is answered from part metadata, FINAL would merge the table
+internal/storage/clickhouse/sponsorship_totals.go:stellar.sponsorship_events  count() only tests emptiness (n > 0), which a duplicate cannot change; an unfiltered count() is answered from part metadata
+test/integration/clickhouse_accounts_test.go:stellar.ledger_entry_changes  the fixture purge counts physical rows before and after DELETE; FINAL would hide a surviving version
+test/integration/clickhouse_entries_test.go:stellar.ledger_entry_changes  count() only tests whether the lake is empty, which a duplicate cannot change
+test/integration/clickhouse_reads_test.go:stellar.ledger_entry_changes  counts the physical versions of one key: the precondition that the stale twin exists unmerged
+test/integration/clickhouse_reads_test.go:stellar.entry_history_watermark  asserts a lower mark wrote no physical row; FINAL would hide the extra version under test

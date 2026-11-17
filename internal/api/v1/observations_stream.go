@@ -211,9 +211,17 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	// Synchronous first compute. We commit to streaming here — even
 	// an empty array is a valid steady-state for this surface, so we
 	// don't 404 on emptiness (the request endpoint doesn't either).
-	first, err := s.computeObservations(withFreshHistory(r.Context()), pair, source, aggregate)
+	first, err := s.observationsStreamPrelude(r.Context(), pair, source, aggregate, interval)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, errObservationsTickShed) {
+			w.Header().Set("Retry-After", strconv.Itoa(interval))
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/observations-unavailable",
+				"Observations scan budget exhausted", http.StatusServiceUnavailable,
+				"every shared observations scan slot is busy; retry after the interval")
 			return
 		}
 		if IsCacheUnavailable(err) {
@@ -240,6 +248,18 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	)
 
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
+}
+
+// observationsStreamPrelude is the stream's first compute. It goes through the shared tick path so a connect costs no more than a tick:
+// it joins an in-flight scan or reuses a fresh one, and otherwise waits for one of the fixed scan slots.
+func (s *Server) observationsStreamPrelude(
+	ctx context.Context, pair canonical.Pair, source, aggregate string, intervalSeconds int,
+) ([]canonical.Trade, error) {
+	tick, err := s.observationsStreamTick(ctx, pair, source, aggregate, intervalSeconds)
+	if err != nil {
+		return nil, err
+	}
+	return tick.trades, nil
 }
 
 // computeObservations is the shared core of [Server.handleObservations] and the stream. Alias fan-in: trades are stored under whichever

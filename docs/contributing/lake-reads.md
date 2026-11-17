@@ -8,7 +8,9 @@ status: current
 
 `stellar.transactions` and `stellar.operations` are
 `ReplacingMergeTree(ingested_at)` archives, and their duplicate rows are not
-merged away. Measured on r1 2026-09-07 over ledgers
+merged away. The same holds for every other ReplacingMergeTree in the
+`stellar` database — `ledger_entry_changes`, `contract_events`, the state
+tables and the rollups — and the gate watches all of them. Measured on r1 2026-09-07 over ledgers
 63,000,000–63,099,999: **every one** of the 33,380,486 distinct
 `(ledger_seq, tx_index)` keys in `stellar.transactions` carries more than one
 row, and `stellar.operations` runs at exactly **2.0x** — 170,836 rows against
@@ -48,6 +50,7 @@ Guard: `scripts/ci/lint-lake-dedup.sh` (+ its self-test), in CI's
       stellar.transactions  (ledger_seq, tx_index)
       stellar.operations    (ledger_seq, tx_index, op_index)
                          or (ledger_seq, tx_hash,  op_index)
+      stellar.ledger_entry_changes  (ledger_seq, tx_hash, op_index, change_index)
 
 - [ ] A join collapses **neither side**. Carry the collapse for each
       duplicate-bearing table the statement reads, the same way the window

@@ -333,6 +333,23 @@ sudo -u postgres psql stellarindex -c \
 2. Postgres down or locked: follow the storage runbook. The alert clears on the next good sweep; the full trailing-24h volume is recomputed, so no catch-up step.
 
 
+## stellarindex_aggregator_baseline_refresh_stale
+
+P3, `for: 15m`. Expr: `(time() - stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"}) > 10800 and stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"} > 0`. No hourly volatility-baseline pass has finished within its 45-minute timeout without a read or write error for 3 h; `baseline_refresh_total{outcome=~"read_error|write_error"}` names which. Past 24 h every pair's confidence step returns `baseline_stale` and the ADR-0019 Phase-2 freeze is unscored.
+
+### Check
+
+```sh
+journalctl -u stellarindex-aggregator --since "-4h" | grep 'baseline refresh complete'
+```
+
+`timed_out=true` means a `prices_1m` read hung (lock wait, migration); `read_errors` equal to the pair count means every read failed.
+
+### Fix
+
+1. Clear the blocking lock or Postgres fault; the next hourly pass refreshes every pair.
+2. Verify `stellarindex_aggregator_baseline_refresh_last_success_unix` advances within 1 h.
+
 ## stellarindex_change_summary_stale
 
 P3, `for: 15m`. Expr: `(time() - stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"}) > 1800 and stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"} > 0`. No pass upserted any entity for 30 min (`stellarindex_change_summary_passes_total{outcome="failed"}` usually rising); explorer delta strips serve frozen rows. `partial` passes are normal.
