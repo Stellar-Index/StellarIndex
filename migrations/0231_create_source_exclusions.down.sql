@@ -1,5 +1,6 @@
--- 0231 down — drop source_exclusions. Refuses while any row exists: the rows
--- are the operator record of which sources were excluded and when.
+-- 0231 down — drop source_exclusions and its append-only trigger function.
+-- Refuses while any row exists: the rows are the operator record of which
+-- sources were excluded and when.
 
 BEGIN;
 
@@ -13,6 +14,9 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS source_exclusions_no_truncate ON source_exclusions;
+DROP TRIGGER IF EXISTS source_exclusions_append_only ON source_exclusions;
 DROP TABLE IF EXISTS source_exclusions;
+DROP FUNCTION IF EXISTS source_exclusions_append_only();
 
 COMMIT;

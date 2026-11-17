@@ -538,7 +538,7 @@ rejects a row that is not.
 | 0228 | Sets 7-day chunks on the materialization hypertables of the thirteen trades-derived continuous aggregates (`prices_*`, `twap_*`, `pools_per_source_1h`, `trade_sums_1m`, `dex_volume_by_pair_1d`, `source_volume_1h`), which a recreate resets to 10x the source interval. New chunks only; catalog-only. |
 | 0229 | Adds nullable `issuers.sep1_payload_previous`: the payload a `home_domain` change clears is held there until the new domain's first fetch diffs against it into `issuer_identity_history`, so a domain move no longer erases an identity change. Never served. Nullable, no default: catalog-only, old-binary-safe (rule 9). |
 | 0230 | Replaces `audit_log_erase_metadata(jsonb)` so an account erasure also strips `reason` (staff free-text justification) and `actor_email` (a staff actor's address) from kept audit rows. No back-fill. |
-| 0231 | Creates `source_exclusions`, the operator control table behind `stellarindex-ops source-exclude`: a price source, optionally one stored pair, excluded over a time window, with lifts stamped and never deleted. New empty plain table, old-binary-safe (rule 9); the down refuses while rows exist. |
+| 0231 | Creates `source_exclusions`, the operator control table behind `stellarindex-ops source-exclude`: a price source, optionally one pair (stored in canonical orientation; readers match both directions and every alias form), excluded over a time window. An append-only trigger refuses DELETE, TRUNCATE and any UPDATE but a one-time lift. New empty plain table, old-binary-safe (rule 9); the down refuses while rows exist. |
 
 ## References
 
