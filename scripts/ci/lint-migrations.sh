@@ -92,11 +92,13 @@ name='[a-z0-9_]*(amount|price|supply|balance|volume|reserve|fee|stroop|wei|circu
 # Non-NUMERIC types that must never hold money: wide ints (bigint/int8), narrower
 # ints (integer/smallint/int4/int2/int), floats (double precision/float[n]/real)
 # and `money` (fixed 2-decimal, locale-dependent, never right for an i128
-# amount). NUMERIC is the only allowed home.
+# amount). NUMERIC is the only allowed home, unbounded: NUMERIC(p,s) silently
+# rounds a value with more than s fractional digits.
 type='bigint|integer|smallint|int8|int4|int2|int|money|double precision|float[0-9]*|real'
+tre="(${type})\\b|(numeric|decimal)[[:space:]]*\\("
 
-for f in migrations/*.up.sql; do
-  hits=$(grep -nEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${type})\b" "$f" \
+for f in "${MIG_DIR:-migrations}"/*.up.sql; do
+  hits=$(grep -nEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${tre})" "$f" \
     | grep -vE '^[0-9]+:[[:space:]]*--' \
     | grep -viE -- '-- *lint-money:ok +[^ ]' || true)
   if [ -n "$hits" ]; then
@@ -107,7 +109,7 @@ for f in migrations/*.up.sql; do
   # Stale escapes: a lint-money:ok marker on a line the pattern does not flag is
   # dead weight; the allowlist only shrinks.
   stale=$(grep -nEi -- '-- *lint-money:ok' "$f" \
-    | grep -vEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${type})\b" || true)
+    | grep -vEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${tre})" || true)
   if [ -n "$stale" ]; then
     echo "lint-migrations ❌ ${f}: stale lint-money:ok marker (line no longer matches the lint) — remove it:" >&2
     indent "$stale" >&2
@@ -211,12 +213,27 @@ if [ -n "$base_sha" ] && git cat-file -e "${base_sha}^{commit}" 2>/dev/null; the
     fi
     n="$(basename "$f" | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//')"
     [ -n "$n" ] || n=0
-    [ "${st#R}" != "$st" ] && [ "$was" = "$n" ] && continue
+    if [ "${st#R}" != "$st" ]; then
+      [ "$was" = "$n" ] && continue
+      if [ "$n" -gt "$base_max" ]; then
+        echo "lint-migrations ❌ ${f}: renumbered from ${was} — golang-migrate tracks the version number, so an applied host never runs the new one and a fresh database gets a different history (migrations/README.md)" >&2
+        fail=1
+        continue
+      fi
+    fi
     if [ "$n" -le "$base_max" ]; then
       echo "lint-migrations ❌ ${f}: new migration numbered ${n} does not exceed the comparison base's head (${base_max}) — a migration back-numbered into a gap is invisible to any deployment already past it (GH-1164)" >&2
       fail=1
     fi
-  done < <(git diff --name-status -M --diff-filter=AR "${base_sha}...HEAD" -- 'migrations/*.up.sql' 2>/dev/null || true)
+  done < <(git diff --name-status -M100% --diff-filter=AR "${base_sha}...HEAD" -- 'migrations/*.up.sql' 2>/dev/null || true)
+  # -M100% pairs only byte-identical renames: a rename that edits the body is a
+  # delete plus an add here, so it cannot slip a changed migration past the
+  # immutability manifest under a new file name.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    echo "lint-migrations ❌ ${f}: a migration present at the comparison base is deleted — golang-migrate cannot advance a database whose version has no file (migrations/README.md)" >&2
+    fail=1
+  done < <(git diff --name-only -M100% --diff-filter=D "${base_sha}...HEAD" -- 'migrations/*.sql' 2>/dev/null || true)
 else
   echo "lint-migrations: no comparison base (BASE_SHA unset and origin/main unresolvable) — skipping the GH-1164 back-numbering guard." >&2
 fi
@@ -523,7 +540,8 @@ echo "lint-migrations: CAGG re-materialization pass inspected ${cagg_files} WITH
 # runs as one implicit transaction. An explicit COMMIT/ROLLBACK ends it, so every
 # later statement runs in a fresh transaction: a failure there leaves the earlier
 # half durable and the version dirty. BEGIN; … COMMIT; around the whole body is
-# fine; anything but comments after the COMMIT is not. TXN_DIR is the fixture
+# fine; anything but comments after the COMMIT is not. END [WORK], COMMIT AND
+# CHAIN and a COMMIT sharing a line with another statement count the same. TXN_DIR is the fixture
 # seam for scripts/ci/lint-migrations-test.sh.
 #
 # 0030's up is the one shipped instance; its body is immutable, so it is
@@ -536,10 +554,29 @@ for f in "$TXN_DIR"/*.sql; do
   txn_files=$((txn_files + 1))
   [ "$(basename "$f")" = "$txn_exempt" ] && continue
   after="$(awk '
-    { line = $0; sub(/--.*/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line)
-      if (line == "") next
-      if (ended) { print FNR ": " $0; exit }
-      if (toupper(line) ~ /^(COMMIT|ROLLBACK|ABORT)([ \t]+(WORK|TRANSACTION))?[ \t]*;$/) ended = 1 }
+    function endstmt(    u) {
+      u = toupper(st); gsub(/^[ \t]+|[ \t]+$/, "", u); st = ""
+      if (u == "") return
+      if (ended) { print first ": " firstraw; done = 1; exit }
+      if (u ~ /^(COMMIT|ROLLBACK|ABORT|END)([ \t]+(WORK|TRANSACTION))?([ \t]+AND[ \t]+(NO[ \t]+)?CHAIN)?$/) ended = 1
+    }
+    { line = $0; n = length(line); i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        if (dq != "") {
+          if (c == "$" && match(substr(line, i), /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/) && substr(line, i, RLENGTH) == dq) { i += RLENGTH; dq = ""; continue }
+          i++; continue
+        }
+        if (sq) { if (c == "\047") sq = 0; i++; continue }
+        if (c == "-" && substr(line, i, 2) == "--") break
+        if (c == ";") { endstmt(); i++; continue }
+        if (c !~ /[ \t]/ && st == "") { first = FNR; firstraw = line }
+        if (c == "\047") sq = 1
+        if (c == "$" && match(substr(line, i), /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/)) { dq = substr(line, i, RLENGTH); st = st "$Q"; i += RLENGTH; continue }
+        st = st c; i++
+      }
+    }
+    END { if (!done) endstmt() }
   ' "$f")"
   if [ -n "$after" ]; then
     echo "lint-migrations ❌ ${f}:${after%%:*}: SQL after the file's COMMIT/ROLLBACK runs in a separate transaction — a failure there leaves the migration half-applied. Keep every statement inside the one transaction." >&2
@@ -690,9 +727,24 @@ blanking_stmts() {
     s ~ /^create (or replace )?function / { if (gsub(/\$\$/, "&", s) % 2) infn = 1; next }
     s ~ /^truncate / || s ~ / begin truncate / { print; next }
     (s ~ /^delete from / || s ~ / begin delete from /) && s !~ / where / { print; next }
-    s ~ /^drop materialized view / { dropped = 1 }
+    s ~ /^drop materialized view / { v = (s ~ /^drop materialized view if exists /) ? 6 : 4; split(s, w, " "); views = views w[v] " " }
     s ~ /with no data/ { nodata = 1 }
-    END { if (dropped && nodata) print "DROP MATERIALIZED VIEW … WITH NO DATA" }'
+    END { if (nodata) { n = split(views, w, " "); for (i = 1; i <= n; i++) print "DROP MATERIALIZED VIEW " w[i] " … WITH NO DATA" } }'
+}
+
+# uncovered_followup_targets <file> <blanks>: each relation the file blanks (a
+# DELETE/TRUNCATE target or a recreated view) that no REQUIRED-FOLLOWUP line
+# names, either whole or minus its last `_word` (cctp_events -> cctp, the
+# `-source` a replay takes).
+uncovered_followup_targets() {
+  local markers t name stem
+  markers="$(grep -E '^-- REQUIRED-FOLLOWUP: [^[:space:]]' "$1")"
+  printf '%s\n' "$2" | tr '[:upper:]' '[:lower:]' \
+    | sed -nE 's/.*(delete from|truncate( table)?( only)?|drop materialized view) +([a-z0-9_."]+).*/\4/p' \
+    | while IFS= read -r t; do
+        name="${t##*.}"; name="${name//\"/}"; stem="${name%_*}"
+        grep -qiE "(^|[^a-z0-9_])(${name}|${stem})([^a-z0-9_]|\$)" <<<"$markers" || echo "$name"
+      done
 }
 
 fu_seen=""
@@ -721,7 +773,15 @@ for f in "$MIG_DIR"/*.up.sql; do
   blanks="$(blanking_stmts "$f")"
   [ -n "$blanks" ] || continue
   fu_blanking=$((fu_blanking + 1))
-  grep -qE '^-- REQUIRED-FOLLOWUP: [^[:space:]]' "$f" && continue
+  if grep -qE '^-- REQUIRED-FOLLOWUP: [^[:space:]]' "$f"; then
+    unnamed="$(uncovered_followup_targets "$f" "$blanks")"
+    if [ -n "$unnamed" ]; then
+      echo "lint-migrations ❌ ${f}: blanks relations no \`-- REQUIRED-FOLLOWUP:\` line names — the deploy gate shows the operator only the marker lines, so the rebuild of each blanked table or view must be written there (migrations/README.md rule 12):" >&2
+      indent "$unnamed" >&2
+      fail=1
+    fi
+    continue
+  fi
   if grep -qx "$b" <<<"$followup_baseline"; then
     fu_seen="${fu_seen}${b}"$'\n'
     continue

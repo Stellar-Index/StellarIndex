@@ -50,6 +50,8 @@ COMMIT;' || exit 1
 commit_tag v0.3.0 migrations/0003_add.up.sql 'ALTER TABLE cctp_events ADD COLUMN x int;' || exit 1
 commit_tag v0.4.0 migrations/0003_add.down.sql '-- REQUIRED-FOLLOWUP: never asked — deploys run ups only
 ALTER TABLE cctp_events DROP COLUMN x;' || exit 1
+git -C "$REPO" mv migrations/0002_disarm.up.sql migrations/0005_disarm.up.sql || exit 1
+git -C "$REPO" commit -qm v0.5.0 && git -C "$REPO" tag v0.5.0 || exit 1
 
 # expect <desc> <want-exit> <needle-or-empty> <gate args...>
 expect() {
@@ -78,6 +80,9 @@ expect "a marker in a down.sql is not asked for" 0 "" v0.4.0 false
 expect "a marker already shipped at the baseline is not asked again" 0 "" v0.4.0 false v0.2.0
 expect "an unresolvable version fails closed" 1 "does not resolve" v9.9.9 true
 expect "an unresolvable baseline fails closed" 1 "does not resolve" v0.2.0 true v9.9.9
+
+expect "a renamed marked migration is asked for again under its new name" 1 \
+  "0005_disarm.up.sql: stellarindex-ops projector-replay" v0.5.0 false v0.4.0
 
 echo "migration-followup-gate-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]
