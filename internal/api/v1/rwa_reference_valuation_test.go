@@ -2622,3 +2622,54 @@ func (d answeredListingDirectory) ListingDirectoryByAddress(
 ) (map[string]timescale.ListingEntry, timescale.ListingDirectoryCensus, error) {
 	return d, timescale.ListingDirectoryCensus{Entries: len(d)}, nil
 }
+
+// An unanswered listing directory read leaves an unbound row's reference unknown, so /v1/rwa/assets must be served stale and
+// uncacheable; the same server with the directory answering is not.
+func TestRWAAssets_UnansweredListingReadDegradesTheResponse(t *testing.T) {
+	build := func(listings v1.AssetListingDirectoryReader) *v1.Server {
+		return v1.New(v1.Options{
+			Listings: listings,
+			Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+				rwaBound("AUMTL", rwaGoodIssuer, "etherfuse.com", "commodity"),
+			}},
+			Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{
+				rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+			}},
+			Oracle: rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "1074182", 6)),
+			AssetsReader: &rwaListStub{
+				stubAssetsReaderExt: &stubAssetsReaderExt{},
+				byIssuer: map[string][]timescale.AssetRow{
+					rwaGoodIssuer: {rwaRow("AUMTL", rwaGoodIssuer, nil, 902)},
+				},
+				supply: map[string]string{"AUMTL-" + rwaGoodIssuer: rwaAUMTLSupply},
+			},
+		})
+	}
+	for _, tc := range []struct {
+		name      string
+		listings  v1.AssetListingDirectoryReader
+		wantStale bool
+		wantRef   string
+	}{
+		{"listing reader unwired", nil, true, v1.RWAPremiumReferenceUnavailable},
+		{"listing directory answered", rwaNothingListed, false, v1.RWAPremiumNotBound},
+	} {
+		resp := mustGet(t, httpTestServer(t, build(tc.listings)).URL+"/v1/rwa/assets")
+		var body struct {
+			Data  v1.RWAAssetsView `json:"data"`
+			Flags v1.Flags         `json:"flags"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("%s: decode: %v", tc.name, err)
+		}
+		if len(body.Data.Assets) != 1 || body.Data.Assets[0].ReferenceValuation.Status != tc.wantRef {
+			t.Fatalf("%s: assets = %+v, want one row refused as %q", tc.name, body.Data.Assets, tc.wantRef)
+		}
+		// Degraded is not on the wire; it shows as a response no cache may keep.
+		noStore := resp.Header.Get("Cache-Control") == "no-store"
+		if body.Flags.Stale != tc.wantStale || noStore != tc.wantStale {
+			t.Errorf("%s: stale = %v, Cache-Control = %q; want stale and degraded = %v",
+				tc.name, body.Flags.Stale, resp.Header.Get("Cache-Control"), tc.wantStale)
+		}
+	}
+}
