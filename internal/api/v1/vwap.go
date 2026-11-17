@@ -174,7 +174,7 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 			" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
 }
 
-// thinMarketEvidence is the live substance measurement behind flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears the
+// thinMarketEvidence is the live substance measurement behind flags.thin_market on /v1/vwap, /v1/twap and /v1/ohlc, or nil when the pair clears the
 // floor.
 // These raw-trade surfaces admit a thin market (ADR-0018) rather than withhold it; the scam half already ran, hence the nil scam gate.
 func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {

@@ -59,6 +59,60 @@ func TestTradesInRangeClearsNotionalFloor(t *testing.T) {
 	}
 }
 
+// A folded bar is below the floor only when none of its source minutes cleared it: dust and unstamped (NULL usd_volume) minutes
+// alone set the bit, as they leave notional_trade_count at 0, and one cleared minute among them clears it.
+func TestOHLCSeriesReBucketed_BelowFloorAcrossMinutes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	base, err := canonical.NewClassicAsset("BLWM", issuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := canonical.NewPair(base, canonical.NativeAsset())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const fold = 30 * time.Minute
+	t0 := timeBucket(fold, time.Now().UTC().Add(-30*time.Hour))
+	p := ohlcDustPair{base: "BLWM-" + issuer, quote: "native"}
+	seed(t, store.DB(), ctx, p, []seedTrade{
+		{off: time.Minute, base: "2", quote: "15", usd: "0.00000027"},
+		{off: 5 * time.Minute, base: "10000000", quote: "54875000"},
+		{off: 9 * time.Minute, base: "10000000", quote: "10000", usd: "0.000001"},
+	}, t0)
+	seed(t, store.DB(), ctx, p, []seedTrade{
+		{off: time.Minute, base: "2", quote: "15", usd: "0.00000027"},
+		{off: 7 * time.Minute, base: "10000000", quote: "54875000", usd: "1000"},
+		{off: 12 * time.Minute, base: "10000000", quote: "10000", usd: "0.000001"},
+	}, t0.Add(fold))
+	refreshPriceCAGGs(t, store.DB(), ctx)
+
+	bars, err := store.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1m, "30 minutes", t0, t0.Add(2*fold), 0)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(bars) != 2 {
+		t.Fatalf("got %d bars, want 2", len(bars))
+	}
+	if !bars[0].BelowFloor || bars[0].TradeCount != 3 {
+		t.Errorf("dust + unstamped bar at %s: BelowFloor=%v trades=%d, want true over 3 trades", bars[0].Bucket, bars[0].BelowFloor, bars[0].TradeCount)
+	}
+	if bars[1].BelowFloor || bars[1].TradeCount != 3 {
+		t.Errorf("bar with one cleared minute at %s: BelowFloor=%v trades=%d, want false over 3 trades", bars[1].Bucket, bars[1].BelowFloor, bars[1].TradeCount)
+	}
+}
+
 // Both OHLC readers' below_floor bit on real CAGG rows: a bucket whose every trade is under the $0.01 notional floor
 // is below the floor, and a bucket with one trade clearing it is not, even beside dust. 1m reads notional_trade_count,
 // coarser grains read volume_usd, so both predicates are exercised.

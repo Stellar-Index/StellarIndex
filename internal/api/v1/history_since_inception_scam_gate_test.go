@@ -368,7 +368,7 @@ func TestHistorySinceInception_GranularityForwarded(t *testing.T) {
 func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
 	const historyMaxPoints = 50_000 // internal/api/v1/history.go
 	t0 := time.Unix(1_000_000_000, 0).UTC()
-	points := make([]v1.HistoryPoint, historyMaxPoints)
+	points := make([]v1.HistoryPoint, historyMaxPoints+1)
 	for i := range points {
 		points[i] = v1.HistoryPoint{Bucket: t0.Add(time.Duration(i) * time.Hour), VWAP: "1.0"}
 	}
@@ -386,9 +386,9 @@ func TestHistorySinceInception_RowCapTruncated(t *testing.T) {
 	mustDecode(t, resp, &env)
 
 	if !env.Data.RowCapTruncated {
-		t.Error("row_cap_truncated = false, want true (read returned exactly historyMaxPoints rows)")
+		t.Error("row_cap_truncated = false, want true (the read overran historyMaxPoints)")
 	}
-	wantEnds := points[len(points)-1].Bucket
+	wantEnds := points[historyMaxPoints-1].Bucket
 	if env.Data.DataEndsAt == nil {
 		t.Fatal("data_ends_at = nil, want the last served bucket")
 	}

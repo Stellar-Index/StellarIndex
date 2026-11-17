@@ -104,13 +104,37 @@ const marketsHeadRefreshSlots = 2
 // errMarketsFillBusy is a cold miss that found every fill slot taken: nothing was read, so the caller answers a retryable 503.
 var errMarketsFillBusy = errors.New("markets cache: all fill slots busy")
 
-// takeColdSlot takes a cold-fill slot without waiting and returns its pool, nil when none is free. A head page falls back to the
-// reserved pool, so client keys holding every shared slot cannot 503 it after a restart.
-func (c *CachedMarketsReader) takeColdSlot(head bool) chan struct{} {
+// marketsKeyClass is the slot class of a cached page key.
+type marketsKeyClass uint8
+
+const (
+	marketsKeyClient  marketsKeyClass = iota // client-chosen: shared pool only
+	marketsKeyHead                           // a [marketsHeadKey] page: reserved refreshes, never evicted
+	marketsKeyDexHead                        // the DEX-wide head page: also the only key a cold fill may take a reserved slot for
+)
+
+func (k marketsKeyClass) head() bool { return k != marketsKeyClient }
+
+// marketsKeyClassOf classes a page key. Per-source heads stay off the reserved pool on a cold fill: ?source= is the caller's choice,
+// so after a restart a client could otherwise spend both reserved slots on cold fills.
+func marketsKeyClassOf(head bool, sources ...string) marketsKeyClass {
+	switch {
+	case !head:
+		return marketsKeyClient
+	case len(sources) == 0 || slices.Equal(slices.Sorted(slices.Values(sources)), DexSourceNames()):
+		return marketsKeyDexHead
+	default:
+		return marketsKeyHead
+	}
+}
+
+// takeColdSlot takes a cold-fill slot without waiting and returns its pool, nil when none is free. The DEX-wide head page falls back to
+// the reserved pool, so client keys holding every shared slot cannot 503 it after a restart.
+func (c *CachedMarketsReader) takeColdSlot(k marketsKeyClass) chan struct{} {
 	if trySlot(c.fills) {
 		return c.fills
 	}
-	if head && trySlot(c.refreshes) {
+	if k == marketsKeyDexHead && trySlot(c.refreshes) {
 		return c.refreshes
 	}
 	return nil
@@ -206,7 +230,7 @@ func (c *CachedMarketsReader) DistinctPairsExtAt(ctx context.Context, cursor str
 	}
 	fetch := headLimit(cursor, limit)
 	key := newCacheKey("DistinctPairsExt").str(cursor).int(fetch).order(int(order)).build()
-	rows, next, at, stale, err := c.fetchPairs(ctx, "distinct_pairs", key, marketsHeadKey(cursor, fetch), func(ctx context.Context) ([]Market, string, error) {
+	rows, next, at, stale, err := c.fetchPairs(ctx, "distinct_pairs", key, marketsKeyClassOf(marketsHeadKey(cursor, fetch)), func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.DistinctPairsExt(ctx, cursor, fetch, order)
 	})
 	rows, next = sliceHead(rows, next, limit, func(m Market) string {
@@ -228,7 +252,8 @@ func (c *CachedMarketsReader) SourceMarketsAt(ctx context.Context, source, curso
 		return rows, next, time.Time{}, false, err
 	}
 	key := newCacheKey("SourceMarkets").str(source).str(cursor).int(limit).order(int(order)).build()
-	return c.fetchPairs(ctx, "source_markets", key, source != "" && marketsHeadKey(cursor, limit, source), func(ctx context.Context) ([]Market, string, error) {
+	class := marketsKeyClassOf(source != "" && marketsHeadKey(cursor, limit, source), source)
+	return c.fetchPairs(ctx, "source_markets", key, class, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
 	})
 }
@@ -246,7 +271,7 @@ func (c *CachedMarketsReader) AssetMarketsAt(ctx context.Context, asset, cursor 
 		return rows, next, time.Time{}, false, err
 	}
 	key := newCacheKey("AssetMarkets").str(asset).str(cursor).int(limit).order(int(order)).build()
-	return c.fetchPairs(ctx, "asset_markets", key, false, func(ctx context.Context) ([]Market, string, error) {
+	return c.fetchPairs(ctx, "asset_markets", key, marketsKeyClient, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
 	})
 }
@@ -269,7 +294,7 @@ func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescal
 		str(filter.Base).str(filter.Quote).str(filter.Asset).
 		str(cursor).int(fetch).order(int(order)).build()
 	head := filter.Base == "" && filter.Quote == "" && filter.Asset == "" && marketsHeadKey(cursor, fetch, filter.Sources...)
-	rows, next, at, stale, err := c.fetchPools(ctx, "all_pools", key, head, func(ctx context.Context) ([]Pool, string, error) {
+	rows, next, at, stale, err := c.fetchPools(ctx, "all_pools", key, marketsKeyClassOf(head, filter.Sources...), func(ctx context.Context) ([]Pool, string, error) {
 		return c.upstream.AllPools(ctx, filter, cursor, fetch, order)
 	})
 	rows, next = sliceHead(rows, next, limit, func(p Pool) string {
@@ -307,7 +332,7 @@ const marketsRefreshBudget = 30 * time.Second
 func (c *CachedMarketsReader) fetchPairs(
 	ctx context.Context,
 	op, key string,
-	head bool,
+	class marketsKeyClass,
 	upstream func(context.Context) ([]Market, string, error),
 ) ([]Market, string, time.Time, bool, error) {
 	c.mu.Lock()
@@ -327,7 +352,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	// refreshes ride out on old-but-real data and observedAt/stale=true tell the truth.
 	if ok && !e.at.IsZero() {
 		out, next, at := e.pairs, e.cursor, e.at
-		if slots := c.refreshSlots(head); e.flight == nil && trySlot(slots) {
+		if slots := c.refreshSlots(class.head()); e.flight == nil && trySlot(slots) {
 			done := make(chan struct{})
 			e.flight = done
 			entry := e
@@ -346,7 +371,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	// caller's ctx. The fill runs detached (runDetachedFill), so one caller's abort cannot fail
 	// the others or leave the key unfilled. The entry pointer is captured so result/err is read
 	// off the SAME struct we joined, surviving the fill's delete-on-error.
-	entry, leader, slots := c.joinOrStartColdLocked(e, ok, key, head)
+	entry, leader, slots := c.joinOrStartColdLocked(e, ok, key, class)
 	if entry == nil {
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "busy").Inc()
@@ -383,15 +408,15 @@ func (c *CachedMarketsReader) fetchPairs(
 
 // joinOrStartColdLocked returns key's in-flight cold entry or installs a fresh one (leader=true) the caller must fill; nil when a
 // fresh fill is needed and no slot is free. A leader gets the pool its slot came from. Caller holds c.mu.
-func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok bool, key string, head bool) (*marketsCacheEntry, bool, chan struct{}) {
+func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok bool, key string, class marketsKeyClass) (*marketsCacheEntry, bool, chan struct{}) {
 	if ok && e.flight != nil {
 		return e, false, nil
 	}
-	slots := c.takeColdSlot(head)
+	slots := c.takeColdSlot(class)
 	if slots == nil {
 		return nil, false, nil
 	}
-	entry := &marketsCacheEntry{flight: make(chan struct{}), head: head}
+	entry := &marketsCacheEntry{flight: make(chan struct{}), head: class.head()}
 	evictOldestMarketsEntry(c.entries)
 	c.entries[key] = entry
 	return entry, true, slots
@@ -447,7 +472,7 @@ func (c *CachedMarketsReader) settlePairs(op, key string, entry *marketsCacheEnt
 func (c *CachedMarketsReader) fetchPools(
 	ctx context.Context,
 	op, key string,
-	head bool,
+	class marketsKeyClass,
 	upstream func(context.Context) ([]Pool, string, error),
 ) ([]Pool, string, time.Time, bool, error) {
 	c.mu.Lock()
@@ -464,7 +489,7 @@ func (c *CachedMarketsReader) fetchPools(
 	// (A') Stale-while-revalidate.
 	if ok && !e.at.IsZero() {
 		out, next, at := e.pools, e.cursor, e.at
-		if slots := c.refreshSlots(head); e.flight == nil && trySlot(slots) {
+		if slots := c.refreshSlots(class.head()); e.flight == nil && trySlot(slots) {
 			done := make(chan struct{})
 			e.flight = done
 			entry := e
@@ -480,7 +505,7 @@ func (c *CachedMarketsReader) fetchPools(
 	}
 
 	// (B)/(C) Cold: join or start a detached fill — see fetchPairs.
-	entry, leader, slots := c.joinOrStartColdLocked(e, ok, key, head)
+	entry, leader, slots := c.joinOrStartColdLocked(e, ok, key, class)
 	if entry == nil {
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "busy").Inc()

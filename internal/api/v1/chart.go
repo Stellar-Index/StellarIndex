@@ -811,13 +811,20 @@ type chartWalkResult struct {
 	cappedAt time.Time
 }
 
-// noteCap records a source read that filled the row cap, judged on the
-// raw read before any merge so a union of uncapped sources never trips it.
-func (r *chartWalkResult) noteCap(win chartWindow, points []HistoryPoint, limit int) {
-	if !win.from.IsZero() || limit != historyMaxPoints || len(points) != limit {
-		return
+// chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
+const chartReadLimit = historyMaxPoints + 1
+
+// noteCap records a source read that overran the row cap and returns it trimmed to the cap, judged on the raw read before any merge so
+// a union of uncapped sources never trips it.
+func (r *chartWalkResult) noteCap(win chartWindow, points []HistoryPoint) []HistoryPoint {
+	if len(points) <= historyMaxPoints {
+		return points
 	}
-	r.mergeCap(points[len(points)-1].Bucket)
+	points = points[:historyMaxPoints]
+	if win.from.IsZero() {
+		r.mergeCap(points[len(points)-1].Bucket)
+	}
+	return points
 }
 
 func (r *chartWalkResult) mergeCap(at time.Time) {
@@ -956,7 +963,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 	if w.merge.empty() {
 		// Nothing merged yet: this read can still be the answer, so it keeps the handler's
 		// ceiling and, for an alias source, its error handling.
-		points, err := w.read(ctx, sp, w.win.from, time.Time{}, historyMaxPoints)
+		points, err := w.read(ctx, sp, w.win.from, time.Time{}, chartReadLimit)
 		if err != nil {
 			if class == chartSourceAlias {
 				return false, err
@@ -964,8 +971,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 			w.res.degraded = true
 			return true, nil //nolint:nilerr // a proxy failure is never the answer — see above
 		}
-		w.res.noteCap(w.win, points, historyMaxPoints)
-		w.claim(sp, points)
+		w.claim(sp, w.res.noteCap(w.win, points))
 		return true, nil
 	}
 	now := w.s.now().UTC()
@@ -995,12 +1001,11 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 		}
 	}
 	for _, span := range spans {
-		points, cont, ok := w.readSpan(ctx, sp, span, historyMaxPoints)
+		points, cont, ok := w.readSpan(ctx, sp, span, chartReadLimit)
 		if !ok {
 			return cont
 		}
-		w.res.noteCap(w.win, points, historyMaxPoints)
-		w.claim(sp, points)
+		w.claim(sp, w.res.noteCap(w.win, points))
 	}
 	return true
 }

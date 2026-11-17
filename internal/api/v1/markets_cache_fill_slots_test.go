@@ -114,19 +114,33 @@ func TestCachedMarketsReader_ColdKeysCannotStarveRefresh(t *testing.T) {
 	}
 }
 
-// A head page with no entry (every key after a restart) must still fill while client keys hold every shared slot, and a flood of
-// client keys must not evict it back into that state.
+// The DEX-wide head page with no entry (every key after a restart) must still fill while client keys hold every shared slot, and a
+// flood of client keys must not evict it back into that state. A per-source head is client-chosen and must not take a reserved slot.
 func TestCachedMarketsReader_ColdHeadPageFillsWhenSharedSlotsAreHeld(t *testing.T) {
 	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}}
 	c := NewCachedMarketsReader(up, time.Minute)
-	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+	f := timescale.PoolsFilter{}
 	order := timescale.MarketsOrderVolume24hDesc
 	for range marketsFillSlots {
 		c.fills <- struct{}{}
 	}
 
+	perSource := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+	if _, _, err := c.AllPools(context.Background(), perSource, "", 50, order); !errors.Is(err, errMarketsFillBusy) {
+		t.Fatalf("cold per-source head read with the shared pool full: err = %v, want errMarketsFillBusy", err)
+	}
+	if _, _, _, _, err := c.SourceMarketsAt(context.Background(), "aquarius", "", marketsHeadLimit, order); !errors.Is(err, errMarketsFillBusy) {
+		t.Fatalf("cold ?source= markets head with the shared pool full: err = %v, want errMarketsFillBusy", err)
+	}
+	if got := len(c.refreshes); got != 0 {
+		t.Fatalf("per-source heads took %d reserved slots, want 0", got)
+	}
+
 	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
-		t.Fatalf("cold head read with the shared pool full: %v", err)
+		t.Fatalf("cold DEX-wide head read with the shared pool full: %v", err)
+	}
+	if _, _, _, _, err := c.DistinctPairsExtAt(context.Background(), "", 50, order); err != nil {
+		t.Fatalf("cold DEX-wide pairs head read with the shared pool full: %v", err)
 	}
 	if _, _, err := c.AllPools(context.Background(), f, "cursor-x", 50, order); !errors.Is(err, errMarketsFillBusy) {
 		t.Fatalf("cold client-key read with the shared pool full: err = %v, want errMarketsFillBusy", err)
@@ -147,8 +161,8 @@ func TestCachedMarketsReader_ColdHeadPageFillsWhenSharedSlotsAreHeld(t *testing.
 			heads++
 		}
 	}
-	if heads != 1 {
-		t.Fatalf("head entries left after %d newer client fills: %d, want 1", marketsCacheMaxEntries, heads)
+	if heads != 2 {
+		t.Fatalf("head entries left after %d newer client fills: %d, want the 2 DEX-wide heads", marketsCacheMaxEntries, heads)
 	}
 }
 
