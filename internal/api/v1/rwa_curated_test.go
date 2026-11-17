@@ -6,7 +6,6 @@ package v1_test
 import (
 	"context"
 	"errors"
-	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -423,15 +422,6 @@ func TestRWACurated_PublishedSplitCarriesItsOwnExecution(t *testing.T) {
 	if len(p.BySubclass) != 0 || p.BySubclassExecutedAt != nil {
 		t.Errorf("8-day-old split served: %+v at %v, want it withheld", p.BySubclass, p.BySubclassExecutedAt)
 	}
-}
-
-func ratFromStr(t *testing.T, s string) *big.Rat {
-	t.Helper()
-	r, ok := new(big.Rat).SetString(s)
-	if !ok {
-		t.Fatalf("not a decimal: %q", s)
-	}
-	return r
 }
 
 func derefStr(p *string) string {
