@@ -45,7 +45,7 @@ func backfillExternal(args []string) error {
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
 	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles, so an older window returns none). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
-	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity).")
+	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle or -raw-trades run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity, or candles under fills).")
 	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
 	if err := fs.Parse(args); err != nil {
@@ -100,7 +100,7 @@ func backfillExternal(args []string) error {
 		if !ok {
 			return fmt.Errorf("-raw-trades is kraken-only (venue %q has no fills-pagination path)", *source)
 		}
-		return backfillKrakenRawTrades(kr, pair, from, to, dryRun, *cfgPath, *progressEvery)
+		return backfillKrakenRawTrades(kr, pair, from, to, dryRun, *allowOverlap, *cfgPath, *progressEvery)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -366,9 +366,9 @@ func refuseForeignRows(ctx context.Context, probe foreignTradeProbe, source stri
 	if n == 0 {
 		return nil
 	}
-	return fmt.Errorf("backfill-external: %w: %s %s has %d stored row(s) from %s inside the walked window that this run's candles would not overwrite "+
-		"(another -granularity, the live stream, or pre-granularity candle identities); writing would count their volume twice. "+
-		"Re-run at the granularity that wrote the window, or end the run with -to %s",
+	return fmt.Errorf("backfill-external: %w: %s %s has %d stored row(s) from %s inside the walked window that this run would not overwrite "+
+		"(another -granularity, candles under -raw-trades fills, the live stream, or pre-granularity candle identities); writing would count their volume twice. "+
+		"Re-run the path and granularity that wrote the window, or end the run with -to %s",
 		errBackfillForeignRows, source, pair.String(), n, first.UTC().Format(time.RFC3339Nano), first.UTC().Format(time.RFC3339Nano))
 }
 
@@ -419,7 +419,7 @@ type (
 
 // backfillKrakenRawTrades walks kraken fills one window at a time, writing each before fetching the next, so memory is bounded by a
 // window.
-func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, from, to time.Time, dryRun bool, cfgPath string, progressEvery int) error {
+func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, from, to time.Time, dryRun, allowOverlap bool, cfgPath string, progressEvery int) error {
 	// Deep pagination is slow by design (venue rate limit), so the walk
 	// gets a day rather than the 30-minute candle budget.
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
@@ -447,6 +447,7 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 	defer func() { _ = store.Close() }()
 
 	t0 := time.Now()
+	fetch = refusingForeignFetch(fetch, store, externalkraken.SourceName, pair, allowOverlap)
 	return insertRefreshingCAGGs(store, os.Stderr, func(w tradeInserter) error {
 		return walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
 			insCtx, insCancel := context.WithTimeout(context.WithoutCancel(ctx), externalInsertBudget)
@@ -454,6 +455,26 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 			return insertBackfilledTrades(insCtx, w, trades, progressEvery, os.Stderr, t0)
 		}, os.Stderr)
 	})
+}
+
+// refusingForeignFetch bounds an -allow-overlap fills walk as refuseForeignRows bounds a candle run: each fetched window is probed
+// against everything the fetch returned (overlap included) before any of it is written, and a refusal stops the walk there.
+func refusingForeignFetch(fetch windowFetch, probe foreignTradeProbe, source string, pair canonical.Pair, allowOverlap bool) windowFetch {
+	if !allowOverlap {
+		return fetch
+	}
+	return func(ctx context.Context, from, to time.Time) ([]canonical.Trade, error) {
+		trades, err := fetch(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		if err := refuseForeignRows(probeCtx, probe, source, pair, from, to, trades); err != nil {
+			return nil, err
+		}
+		return trades, nil
+	}
 }
 
 // walkWindowed fetches [from, to) window by window, handing each to sink before the next.

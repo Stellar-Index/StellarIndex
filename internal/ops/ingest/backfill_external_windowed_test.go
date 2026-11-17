@@ -142,6 +142,47 @@ func windowTrades(from, to time.Time) []canonical.Trade {
 	return out
 }
 
+// candleUnderFillsProbe reports one stored kraken candle row (a foreign identity to the fills) in any window containing at.
+type candleUnderFillsProbe struct {
+	at    time.Time
+	calls int
+}
+
+func (p *candleUnderFillsProbe) TradesInWindowOutside(_ context.Context, _ string, _ canonical.Pair, from, to time.Time, _ []canonical.Trade) (int64, time.Time, error) {
+	p.calls++
+	if !p.at.Before(from) && p.at.Before(to) {
+		return 1, p.at, nil
+	}
+	return 0, time.Time{}, nil
+}
+
+// TestRefusingForeignFetch_StopsBeforeWritingOverCandles: an -allow-overlap fills walk must not write a window that holds rows its
+// fills would not overwrite (candles), or that window's volume is counted twice.
+func TestRefusingForeignFetch_StopsBeforeWritingOverCandles(t *testing.T) {
+	fetch := func(_ context.Context, f, to time.Time) ([]canonical.Trade, error) { return windowTrades(f, to), nil }
+	plan := windowPlan{size: 24 * time.Hour}
+	day2 := windowDay1.Add(24 * time.Hour)
+	probe := &candleUnderFillsProbe{at: day2.Add(time.Hour)}
+	store := &fakeTradeInserter{}
+
+	err := walkWindowed(context.Background(), plan, windowDay1, windowDay1.Add(72*time.Hour),
+		refusingForeignFetch(fetch, probe, "kraken", xlmUSD(t), true),
+		func(tr []canonical.Trade) error {
+			return insertBackfilledTrades(context.Background(), store, tr, 0, io.Discard, time.Now())
+		}, io.Discard)
+	if !errors.Is(err, errBackfillForeignRows) || !strings.Contains(err.Error(), "resume with -from "+day2.Format(time.RFC3339)) {
+		t.Fatalf("err = %v, want errBackfillForeignRows stopping at %s", err, day2.Format(time.RFC3339))
+	}
+	if len(store.got) != 4 {
+		t.Fatalf("wrote %d trade(s), want only day 1's 4: nothing from the window holding candles", len(store.got))
+	}
+
+	quiet := &candleUnderFillsProbe{at: day2}
+	if _, err := refusingForeignFetch(fetch, quiet, "kraken", xlmUSD(t), false)(context.Background(), windowDay1, day2); err != nil || quiet.calls != 0 {
+		t.Fatalf("without -allow-overlap the pre-walk overlap refusal already applies: err=%v probe calls=%d, want nil and 0", err, quiet.calls)
+	}
+}
+
 // TestWalkWindowed_WriteFaults: an infra write fault stops the walk; a per-row fault keeps walking but never exits 0.
 func TestWalkWindowed_WriteFaults(t *testing.T) {
 	fetch := func(_ context.Context, f, to time.Time) ([]canonical.Trade, error) { return windowTrades(f, to), nil }
