@@ -3,6 +3,8 @@ package accounterasure
 import (
 	"context"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -95,4 +97,21 @@ func TestSweepAbandonedRegistrations(t *testing.T) {
 			t.Fatal("sweep without Redis erased an account")
 		}
 	})
+}
+
+// An erasure whose cleanup never finished must fail the sweep, so the reaper's failure alert fires,
+// even when the last attempt died on the cleanup deadline.
+func TestSweepAbandonedRegistrations_IncompleteCleanupFailsTheSweep(t *testing.T) {
+	e, st, _, _ := newRig(t)
+	st.renameErr = fmt.Errorf("rename: %w", context.DeadlineExceeded)
+	n, err := e.SweepAbandonedRegistrations(context.Background(), &fakeLister{ids: []uuid.UUID{st.plan.AccountID}}, time.Now())
+	if !errors.Is(err, ErrCleanupIncomplete) {
+		t.Fatalf("err = %v, want ErrCleanupIncomplete", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v matches context.DeadlineExceeded; the reaper would drop it as a shutdown", err)
+	}
+	if n != 1 || !st.erased {
+		t.Errorf("erased = %d, store erased = %v; want 1, true", n, st.erased)
+	}
 }

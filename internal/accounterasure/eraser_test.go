@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -27,6 +28,9 @@ type fakeStore struct {
 	requests  []postgresstore.ErasureRequest
 	renames   []string
 	renameErr error
+	// renameFailures fails that many RenameUsageSubjects calls before
+	// renameErr applies.
+	renameFailures int
 	// afterPlan, when set, runs after each PlanErasure has taken its
 	// snapshot: the account changing between two reads.
 	afterPlan func(*fakeStore)
@@ -56,6 +60,10 @@ func (f *fakeStore) EraseAccount(_ context.Context, req postgresstore.ErasureReq
 
 func (f *fakeStore) RenameUsageSubjects(_ context.Context, _ []string, erased string) (int64, error) {
 	f.renames = append(f.renames, erased)
+	if f.renameFailures > 0 {
+		f.renameFailures--
+		return 0, errors.New("transient")
+	}
 	return 0, f.renameErr
 }
 
@@ -67,7 +75,7 @@ func newRig(t *testing.T) (*Eraser, *fakeStore, *redis.Client, *miniredis.Minire
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	st := &fakeStore{plan: postgresstore.ErasurePlan{AccountID: uuid.New(), Slug: "john"}}
-	return &Eraser{Store: st, Redis: rdb}, st, rdb, mr
+	return &Eraser{Store: st, Redis: rdb, cleanupTimeout: 300 * time.Millisecond}, st, rdb, mr
 }
 
 func mint(ctx context.Context, t *testing.T, rdb *redis.Client, slug string) (auth.APIKeyRecord, string) {
@@ -207,5 +215,22 @@ func TestErase_PostCommitFailureIsMarkedCommitted(t *testing.T) {
 	if _, err := e.Erase(context.Background(), st.plan.AccountID, platform.ActorUser); err == nil ||
 		errors.Is(err, ErrCleanupIncomplete) {
 		t.Errorf("pre-commit failure = %v, want a plain error", err)
+	}
+}
+
+// A transient post-commit failure is retried in place: once the account is gone a repeat Erase reports
+// AlreadyErased, so an unretried blip would leave live key records behind an "erased" answer.
+func TestErase_RetriesATransientCleanupFailure(t *testing.T) {
+	e, st, rdb, _ := newRig(t)
+	_, plaintext := mint(context.Background(), t, rdb, "john")
+	st.renameFailures = 1
+	if _, err := e.Erase(context.Background(), st.plan.AccountID, platform.ActorUser); err != nil {
+		t.Fatalf("Erase = %v, want the retry to finish the cleanup", err)
+	}
+	if len(st.renames) != 2 || st.renames[0] != st.renames[1] {
+		t.Errorf("renames = %v, want two attempts with one erased subject", st.renames)
+	}
+	if authenticates(rdb, plaintext) {
+		t.Error("erased account's key still authenticates")
 	}
 }
