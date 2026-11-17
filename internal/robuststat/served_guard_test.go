@@ -146,7 +146,7 @@ func TestServedBaselineValidated_PopulatedAndThinAreValidated(t *testing.T) {
 	if !ServedBaselineValidated(repeatRat(t, "1.0", 10)) {
 		t.Fatal("populated baseline must report validated=true (confident)")
 	}
-	if !ServedBaselineValidated(repeatRat(t, "1.0", guardMinSamples-1)) {
+	if !ServedBaselineValidated(repeatRat(t, "1.0", GuardMinSamples-1)) {
 		t.Fatal("thin but non-empty baseline must report validated=true (confident)")
 	}
 }
@@ -220,7 +220,7 @@ func TestMedianRat_ExactAndNonMutating(t *testing.T) {
 }
 
 func TestRobustBand_ContainsCentreAndRatioBounds(t *testing.T) {
-	// Flat history (>= guardMinSamples): MAD = 0, so the FULL band
+	// Flat history (>= GuardMinSamples): MAD = 0, so the FULL band
 	// collapses to the tight ratio band [centre/3, centre*3] (R = 3
 	// post-M11(a); was 10).
 	trailing := repeatRat(t, "1.0", 10)
@@ -241,10 +241,10 @@ func TestRobustBand_ContainsCentreAndRatioBounds(t *testing.T) {
 }
 
 func TestRobustBand_ThinHistoryWiderFiniteBand(t *testing.T) {
-	// A thin baseline (1..guardMinSamples-1 usable
+	// A thin baseline (1..GuardMinSamples-1 usable
 	// buckets) yields a WIDER but finite ratio-only band
 	// [centre/10, centre*10] — not fail-open, not the tight R=3.
-	trailing := repeatRat(t, "1.0", guardMinSamples-1)
+	trailing := repeatRat(t, "1.0", GuardMinSamples-1)
 	lo, hi, ok := robustBand(trailing)
 	if !ok {
 		t.Fatal("thin history must still produce a finite band (ok=true), not fail open")
@@ -297,9 +297,9 @@ func TestGuardServedVWAP_Catches5xManipulation(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_ThinHistoryNotFullyOpen is the thin-history proof: fewer than guardMinSamples buckets fall back to a wider finite 10x band, not fully open; only an empty baseline fails open.
+// TestGuardServedVWAP_ThinHistoryNotFullyOpen is the thin-history proof: fewer than GuardMinSamples buckets fall back to a wider finite 10x band, not fully open; only an empty baseline fails open.
 func TestGuardServedVWAP_ThinHistoryNotFullyOpen(t *testing.T) {
-	thin := repeatRat(t, "1.0", guardMinSamples-1) // 4 samples
+	thin := repeatRat(t, "1.0", GuardMinSamples-1) // 4 samples
 	if accept, lkg := GuardServedVWAP(rat(t, "1000.0"), thin); accept || lkg < 0 {
 		t.Fatalf("thin-history 1000x must be HELD (accept=%v lkg=%d), not fully-open", accept, lkg)
 	}
@@ -311,5 +311,34 @@ func TestGuardServedVWAP_ThinHistoryNotFullyOpen(t *testing.T) {
 	// No usable baseline at all → nothing to judge against → fail open.
 	if accept, lkg := GuardServedVWAP(rat(t, "1000.0"), nil); !accept || lkg != -1 {
 		t.Fatalf("empty baseline must fail open (accept=%v lkg=%d)", accept, lkg)
+	}
+}
+
+// TestWithinPublishedBand_IsTheServedGuardAroundOneValue: the published-value band is the served guard's band around a
+// one-value centre, inclusive at both edges, and it judges a non-positive price as outside.
+func TestWithinPublishedBand_IsTheServedGuardAroundOneValue(t *testing.T) {
+	published := rat(t, "1.07")
+	for _, tc := range []struct {
+		price string
+		want  bool
+	}{
+		{"1.07", true},
+		{"10.70", true},
+		{"10.71", false},
+		{"0.107", true},
+		{"0.1069", false},
+		{"0", false},
+		{"-1", false},
+	} {
+		price := rat(t, tc.price)
+		if got := WithinPublishedBand(price, published); got != tc.want {
+			t.Errorf("price %s vs 1.07: within = %v, want %v", tc.price, got, tc.want)
+		}
+		if served, _ := GuardServedVWAP(price, []*big.Rat{published}); served != tc.want {
+			t.Errorf("price %s: the served guard says %v, the published band %v", tc.price, served, tc.want)
+		}
+	}
+	if !WithinPublishedBand(rat(t, "1000"), nil) || !WithinPublishedBand(rat(t, "1000"), rat(t, "0")) {
+		t.Error("a published value that cannot be divided by refused the price")
 	}
 }

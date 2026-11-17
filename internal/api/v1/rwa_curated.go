@@ -315,7 +315,7 @@ func (s *Server) rwaCuratedRows(
 			recognition: rwa.RecognitionThirdPartyCurator,
 		})
 	}
-	details, notObserved, cut, err := s.rwaContractListingRows(ctx, cm)
+	details, cut, err := s.rwaContractListingRows(ctx, cm)
 	if err != nil {
 		s.logger.Error("rwa curated listing read failed", "err", err)
 		return nil, len(members), true, false
@@ -336,7 +336,7 @@ func (s *Server) rwaCuratedRows(
 		rwaApplyCuratorReference(&rows[i], m.entry, now)
 	}
 	rwaSortAssets(rows)
-	return rows, notObserved, cut, rwaRowsUnanswered(details)
+	return rows, 0, cut, rwaRowsUnanswered(details)
 }
 
 // rwaApplyCuratorReference attaches the curator's price as the row's reference. No premium is published against it, for a stronger

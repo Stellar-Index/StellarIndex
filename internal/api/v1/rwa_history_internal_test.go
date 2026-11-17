@@ -323,3 +323,29 @@ func TestRWAHistoryWindowStart_AllIsOpenEnded(t *testing.T) {
 		t.Errorf("1w from the 30th = %v, want the 23rd", got)
 	}
 }
+
+// TestRWAClassicCandidates_HistorySurfacesRefuseWhatThePointInTimeSurfaceRefuses: a curated scam issuer and an
+// oracle-bound pair declaring an ISIN vetted to another pair are refused by both history surfaces, as /v1/rwa/assets
+// refuses them, and the reason names the rule.
+func TestRWAClassicCandidates_HistorySurfacesRefuseWhatThePointInTimeSurfaceRefuses(t *testing.T) {
+	const etherfuse = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	const curatedScam = "GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK"
+	for name, tc := range map[string]struct {
+		mem    rwaMember
+		reason string
+	}{
+		"curated scam issuer":         {rwaMember{code: "USTRY", issuer: curatedScam, dirTags: []string{"issuer"}}, RWAHistoryExcludedIssuerFlagged},
+		"isin vetted to another pair": {rwaMember{code: "USTRY", issuer: etherfuse, anchorAsset: "DE000A2TR7Q2"}, RWAHistoryExcludedISINMismatch},
+	} {
+		for surface, candidates := range map[string]func(rwaMembership, map[string]int) []rwaHistoryCandidate{
+			"history": rwaHistoryCandidates,
+			"premium": rwaPremiumCandidates,
+		} {
+			excluded := map[string]int{}
+			got := candidates(rwaMembership{members: []rwaMember{tc.mem}}, excluded)
+			if len(got) != 0 || excluded[tc.reason] != 1 {
+				t.Errorf("%s, %s: candidates = %+v, excluded = %v, want none and %s×1", name, surface, got, excluded, tc.reason)
+			}
+		}
+	}
+}
