@@ -20,8 +20,9 @@
 # Ordering only (After=, no Requires=), as the deployed templates: a
 # Requires= on a unit the host does not have (Postgres in a container
 # or managed) refuses to start, and a datastore stop leaves this unit
-# stopped, not failed, so nothing restarts it or alerts. The binary
-# retries its connections at boot.
+# stopped, not failed, so nothing restarts it or alerts. Postgres is
+# pinged once at boot and a failure exits the process, so the restart
+# limit below, not the binary, is what rides out a Postgres restart.
 # Dependencies:
 #   - postgresql.service — fallback path when Redis is empty
 #   - redis-server.service — primary read path for VWAP +
@@ -50,8 +51,10 @@ Wants=network-online.target
 # placed under [Service]. When more than StartLimitBurst restarts occur
 # within StartLimitIntervalSec the unit enters `failed`, which the
 # node_systemd_unit_state{state="failed"} alert pages on.
-StartLimitIntervalSec=5min
-StartLimitBurst=10
+# Sized as a dependency-outage budget: 5 min x 10 restarts parked the unit
+# ~50-100 s into a Postgres outage; this holds ~8-10 min of restarts first.
+StartLimitIntervalSec=15min
+StartLimitBurst=100
 
 [Service]
 Type=simple
