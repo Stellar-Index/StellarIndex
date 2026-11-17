@@ -19,7 +19,7 @@ Retention is decided: account data and audit-log entries are kept indefinitely; 
 
 Never ask for an API key, sign-in link or code, session cookie or passkey. If one is sent, revoke it (`DELETE /v1/admin/keys/{keyID}`) and tell them.
 
-- **Dashboard account (has a `users` row).** The request must come from that row's `email`; otherwise one reply asking them to write from the account's address, confirming nothing.
+- **Dashboard account (has a `users` row).** The From header alone proves nothing. Look the row up, then send a random one-time string to that row's `email` (never to the From or Reply-To address of the request) and act only on a reply from that address that returns the string. A request whose headers show no DKIM, SPF or DMARC pass is unverified until the challenge is returned. Otherwise one reply asking them to write from the account's address, confirming nothing. This challenge precedes every disclosure, correction, restriction, closure and erasure below.
   ```sql
   SELECT u.id, u.account_id, u.role, a.slug, a.status
     FROM users u JOIN accounts a ON a.id = u.account_id
@@ -57,7 +57,7 @@ Shared accounts: only an `owner` may act for the whole account (export, restrict
 No self-service edit: correct in `psql`, one row, in a transaction, and quote before and after values in the reply.
 
 - `users.display_name`, `accounts.name` (owner only): update directly.
-- `users.email` (the sign-in identity): only after the request comes from the old address AND a reply from the new address confirms it.
+- `users.email` (the sign-in identity): only after the challenge in section 1 was returned from the old address (the one on the row) AND a reply from the new address confirms it. The new address alone proves nothing.
 - `accounts.billing_email` on a register account: possession route, then update.
 - `accounts.slug` is never corrected in place: offer erasure and a new account.
 
@@ -95,6 +95,7 @@ Objection covers only the legitimate-interests processing in `/privacy` §3:
   DELETE FROM users WHERE id = '<user_id>' AND account_id = '<account_id>';   -- cascades sessions and passkeys
   COMMIT;
   ```
+  Nothing records this erasure: write `user_id`, `account_id` and the UTC time of the `COMMIT` in the request's ticket (not the address). After a point-in-time restore that predates it, [`account-erasure.md`](account-erasure.md#after-a-point-in-time-restore) re-erases only whole accounts, so re-run this transaction for each recorded member whose `users` row exists again.
   Their audit entries lose the user link but keep IP, user agent and any address in the details (the scrub is only allowed while erasing a whole account). Tell the requester.
 
 ## 6. Complaints
