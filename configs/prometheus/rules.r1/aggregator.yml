@@ -356,28 +356,30 @@ groups:
 
       # ── Asset-volume rollup worker ──
       #
-      # assetvolrollup folds the trailing-24h per-asset USD volume over
-      # prices_1m into asset_volume_24h. A sustained refresh-error rate leaves
-      # the /v1/assets volume_24h_usd stale, not blank; informational, no
-      # pricing impact.
+      # assetvolrollup refreshes BOTH listing rollups, asset_volume_24h and
+      # asset_price_snapshot, every ~2 min. Listings drop snapshot rows older
+      # than 15 min (assetPriceSnapshotMaxAge), so it alerts on the absence
+      # of a successful sweep, not on errors: a hung pass emits no outcome.
       - alert: stellarindex_asset_volume_rollup_failing
         expr: |
-          sum(rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0
-        for: 30m
+          sum(increase(stellarindex_asset_volume_rollup_sweeps_total{outcome="ok"}[10m])) < 1
+        for: 5m
         labels:
           severity: ticket
           team: stellarindex
           component: aggregator
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_asset_volume_rollup_failing
-          summary: "Asset-volume rollup sweeps failing ({{ $value | humanize }}/s error rate)"
+          summary: "Asset listing rollups: no successful sweep for 15+ minutes"
           description: |
-            The aggregator's asset-volume rollup worker has been failing
-            its refresh (the trailing-24h prices_1m SUM + upsert into
-            asset_volume_24h) for 30+ minutes. The /v1/assets listing's
-            volume_24h_usd column stops advancing (last-good values
-            persist, not zeros). Customer pricing surface is unaffected.
-            Fix the failing Postgres backend and the next sweep catches up.
+            The aggregator's asset-volume rollup worker has not completed
+            a sweep (asset_volume_24h + asset_price_snapshot upsert) for
+            15+ minutes, either failing or hung. Price, change and market
+            cap on the asset and contract listings, and the snapshot
+            fallback of change summaries, are now blank (snapshot rows
+            older than 15 min are ignored); volume_24h_usd is stale.
+            /v1/price is unaffected. Fix the failing Postgres backend or
+            restart a hung aggregator; the next sweep restores the rows.
 
       # ── asset-volume-character rollup worker ──
       #

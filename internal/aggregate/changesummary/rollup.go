@@ -10,12 +10,14 @@ import (
 	"log/slog"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 )
 
@@ -260,19 +262,45 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 		}
 	}
 
+	// Every figure below reads only points the served-price guard accepts, as current and the anchors do.
+	g := newGuarded(series)
+
 	// ATH / ATL across the full series, compared with big.Rat so prices with more digits than float64 are never truncated into the ratcheted columns.
 	// This is a 30d ATH/ATL, not all-time: the worker only fetches 30d.
-	if athValue, athAt, atlValue, atlAt, ok := extremes(series, current); ok {
+	if athValue, athAt, atlValue, atlAt, ok := extremes(g, current); ok {
 		row.ATHValue = ptrStr(athValue)
 		row.ATHAt = ptrTime(athAt)
 		row.ATLValue = ptrStr(atlValue)
 		row.ATLAt = ptrTime(atlAt)
 	}
 
-	row.StreakDirection, row.StreakDays = computeStreak(series)
-	row.Acceleration = computeAcceleration(series)
+	row.StreakDirection, row.StreakDays = computeStreak(g)
+	row.Acceleration = computeAcceleration(g)
 
 	return row
+}
+
+// guarded is a series with the served-price guard's verdict on each point, evaluated lazily: a liquid
+// pair has ~43k points and only a few dozen (daily closes, extreme candidates, quarter ends) are read.
+type guarded struct {
+	series  []TimedValue
+	verdict []int8 // 0 unknown, 1 accepted, -1 refused
+}
+
+func newGuarded(series []TimedValue) *guarded {
+	return &guarded{series: series, verdict: make([]int8, len(series))}
+}
+
+// accepted reports whether the guard judged series[i] against a baseline and passed it. A point with no baseline
+// (the first after a quiet day) is served fail-open, but ratcheting it would refuse every later genuine bucket.
+func (g *guarded) accepted(i int) bool {
+	if g.verdict[i] == 0 {
+		g.verdict[i] = -1
+		if served, validated := guardVerdict(g.series, i); served == i && validated {
+			g.verdict[i] = 1
+		}
+	}
+	return g.verdict[i] > 0
 }
 
 // extremeBand bounds how far a point may sit from the series median and still count toward ATH/ATL. The sink ratchets those with
@@ -284,10 +312,11 @@ const extremeBand = 1000
 const minPointsForBand = 3
 
 // extremes returns the ATH and ATL over series, ignoring unparseable/zero points and (once long enough) points further than extremeBand from the median.
-// ok is false when current is out of band or nothing qualifies: ATH/ATL stay NULL so the sink's GREATEST/LEAST keep stored extremes.
+// A point the served-price guard refuses or cannot judge never qualifies: the sink ratchets, so it would outlive the window.
+// ok is false when current is out of band or not guard-accepted: ATH/ATL stay NULL so the sink's GREATEST/LEAST keep stored extremes.
 // A zero mid-series must not become the ATL ([100,5,0,90] has ATL 5).
-func extremes(series []TimedValue, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
-	pts := positivePoints(series)
+func extremes(g *guarded, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
+	pts := positivePoints(g.series)
 	var lo, hi *big.Rat
 	if len(pts) >= minPointsForBand {
 		vals := make([]*big.Rat, len(pts))
@@ -299,40 +328,66 @@ func extremes(series []TimedValue, current TimedValue) (athValue string, athAt t
 		band := new(big.Rat).SetInt64(extremeBand)
 		lo, hi = new(big.Rat).Quo(med, band), new(big.Rat).Mul(med, band)
 	}
-	var athRat, atlRat *big.Rat
+	inBand := make([]ratPoint, 0, len(pts))
 	currentIn := false
 	for _, q := range pts {
 		if hi != nil && (q.v.Cmp(lo) < 0 || q.v.Cmp(hi) > 0) {
 			continue
 		}
-		if q.p.At.Equal(current.At) && q.p.Value == current.Value {
+		if q.p.At.Equal(current.At) && q.p.Value == current.Value && g.accepted(q.i) {
 			currentIn = true
 		}
-		if athRat == nil || q.v.Cmp(athRat) > 0 {
-			athRat, athValue, athAt = q.v, q.p.Value, q.p.At
+		inBand = append(inBand, q)
+	}
+	if !currentIn {
+		return "", time.Time{}, "", time.Time{}, false
+	}
+	atl, atlFound := extremeAccepted(g, inBand, -1)
+	ath, athFound := extremeAccepted(g, inBand, 1)
+	if !atlFound || !athFound {
+		return "", time.Time{}, "", time.Time{}, false
+	}
+	return ath.p.Value, ath.p.At, atl.p.Value, atl.p.At, true
+}
+
+// extremeAccepted returns the guard-accepted point of the oldest-first pts with the highest (sign 1) or lowest (sign -1)
+// value, the earliest on a tie. Each refusal is cached in g.verdict, so the rescan skips it; refusals are rare.
+func extremeAccepted(g *guarded, pts []ratPoint, sign int) (ratPoint, bool) {
+	for {
+		best := -1
+		for j, q := range pts {
+			if g.verdict[q.i] < 0 {
+				continue
+			}
+			if best < 0 || q.v.Cmp(pts[best].v)*sign > 0 {
+				best = j
+			}
 		}
-		if atlRat == nil || q.v.Cmp(atlRat) < 0 {
-			atlRat, atlValue, atlAt = q.v, q.p.Value, q.p.At
+		if best < 0 {
+			return ratPoint{}, false
+		}
+		if g.accepted(pts[best].i) {
+			return pts[best], true
 		}
 	}
-	return athValue, athAt, atlValue, atlAt, currentIn
 }
 
 type ratPoint struct {
 	v *big.Rat
 	p TimedValue
+	i int // index in the series
 }
 
 // positivePoints keeps the parseable, strictly positive points with their
 // exact value.
 func positivePoints(series []TimedValue) []ratPoint {
 	pts := make([]ratPoint, 0, len(series))
-	for _, p := range series {
+	for i, p := range series {
 		v, ok := new(big.Rat).SetString(p.Value)
 		if !ok || v.Sign() <= 0 {
 			continue
 		}
-		pts = append(pts, ratPoint{v, p})
+		pts = append(pts, ratPoint{v, p, i})
 	}
 	return pts
 }
@@ -354,32 +409,31 @@ func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 	return series[idx].Value, true
 }
 
-// The served-price guard's baseline: pricingguard.SampleFetch buckets within pricingguard.BaselineMaxAge. Restated
-// here because that package reads storage and this worker does not.
-const (
-	guardSample = 40
-	guardMaxAge = 24 * time.Hour
-)
-
 // guardedIdx returns the point that stands for series[idx]: itself, or the newest in-band point before it when the
 // served-price guard refuses it. /v1/price holds such a bucket back, so a change measured from it would contradict the price.
 func guardedIdx(series []TimedValue, idx int) int {
+	served, _ := guardVerdict(series, idx)
+	return served
+}
+
+// guardVerdict returns the index guardedIdx serves for series[idx] and whether a non-empty baseline judged it.
+func guardVerdict(series []TimedValue, idx int) (served int, validated bool) {
 	cand, ok := new(big.Rat).SetString(series[idx].Value)
 	if !ok {
-		return idx
+		return idx, false
 	}
 	var trailing []*big.Rat
-	for j := idx - 1; j >= 0 && len(trailing) < guardSample; j-- {
-		if series[idx].At.Sub(series[j].At) > guardMaxAge {
+	for j := idx - 1; j >= 0 && len(trailing) < pricingguard.SampleFetch; j-- {
+		if series[idx].At.Sub(series[j].At) > pricingguard.BaselineMaxAge {
 			break
 		}
 		v, _ := new(big.Rat).SetString(series[j].Value)
 		trailing = append(trailing, v)
 	}
 	if accept, lkg := robuststat.GuardServedVWAP(cand, trailing); !accept {
-		return idx - 1 - lkg
+		return idx - 1 - lkg, true
 	}
-	return idx
+	return idx, robuststat.ServedBaselineValidated(trailing)
 }
 
 // deltaPct = (current - past) / past * 100; 0 on past=0 or an unparseable leg (undefined delta, avoids Inf%).
@@ -401,33 +455,23 @@ type dailyPoint struct {
 	Value float64
 }
 
-// dailyize buckets a minute-level series into daily-last-value
-// observations. Returns nil if every value parses as invalid.
-func dailyize(series []TimedValue) []dailyPoint {
-	days := make([]dailyPoint, 0, 32)
-	var current dailyPoint
-	started := false
-	for _, p := range series {
-		v, err := strconv.ParseFloat(p.Value, 64)
-		if err != nil {
-			continue
-		}
+// dailyize buckets a minute-level series into each day's last parseable, guard-accepted value,
+// oldest day first. Walking newest-first judges only each day's close, not every minute.
+func dailyize(g *guarded) []dailyPoint {
+	var days []dailyPoint
+	for i := len(g.series) - 1; i >= 0; i-- {
+		p := g.series[i]
 		dayStart := p.At.Truncate(24 * time.Hour)
-		if !started {
-			current = dailyPoint{Day: dayStart, Value: v}
-			started = true
+		if len(days) > 0 && days[len(days)-1].Day.Equal(dayStart) {
 			continue
 		}
-		if !dayStart.Equal(current.Day) {
-			days = append(days, current)
-			current = dailyPoint{Day: dayStart, Value: v}
-		} else {
-			current.Value = v
+		v, err := strconv.ParseFloat(p.Value, 64)
+		if err != nil || !g.accepted(i) {
+			continue
 		}
+		days = append(days, dailyPoint{Day: dayStart, Value: v})
 	}
-	if started {
-		days = append(days, current)
-	}
+	slices.Reverse(days)
 	return days
 }
 
@@ -445,8 +489,8 @@ func directionOf(diff float64) string {
 
 // computeStreak walks the daily-summarised series back-to-front for the longest run of same-direction moves ending at the latest
 // day. Per-day granularity avoids intraday noise that yields ~0 streaks at minute level.
-func computeStreak(series []TimedValue) (string, *int) {
-	days := dailyize(series)
+func computeStreak(g *guarded) (string, *int) {
+	days := dailyize(g)
 	if len(days) < 2 {
 		return "", nil
 	}
@@ -470,18 +514,19 @@ func computeStreak(series []TimedValue) (string, *int) {
 // computeAcceleration returns increasing / flat / decreasing for whether the MAGNITUDE of recent per-step moves exceeds older ones (direction-agnostic: a steepening downtrend is increasing).
 // It compares the absolute mean per-step delta of the last quarter against the previous with a ±5% deadband; signed deltas mislabelled negative trends.
 // Returns empty (NULL) if the series is too short.
-func computeAcceleration(series []TimedValue) string {
-	if len(series) < 4 {
+func computeAcceleration(g *guarded) string {
+	n := len(g.series)
+	if n < 4 {
 		return ""
 	}
 	// Compare the last quarter of the series against the previous
 	// quarter. Cheap proxy for "is the move accelerating?"
-	q := len(series) / 4
+	q := n / 4
 	if q < 1 {
 		return ""
 	}
-	last := math.Abs(avgDelta(series[len(series)-q:]))
-	prev := math.Abs(avgDelta(series[len(series)-2*q : len(series)-q]))
+	last := math.Abs(avgDelta(g, n-q, n))
+	prev := math.Abs(avgDelta(g, n-2*q, n-q))
 	switch {
 	case last > prev*1.05:
 		return "increasing"
@@ -492,27 +537,29 @@ func computeAcceleration(series []TimedValue) string {
 	}
 }
 
-// avgDelta returns the mean per-step change across a slice. Used by
-// computeAcceleration; returns 0 on input < 2.
-func avgDelta(slice []TimedValue) float64 {
-	if len(slice) < 2 {
-		return 0
+// avgDelta returns the mean per-step change across series[from:to], 0 with fewer than two usable points.
+// The step sum telescopes to last-first, so only the end points need to be parseable and guard-accepted.
+func avgDelta(g *guarded, from, to int) float64 {
+	usable := func(i int) (float64, bool) {
+		v, err := strconv.ParseFloat(g.series[i].Value, 64)
+		return v, err == nil && g.accepted(i)
 	}
-	var sum float64
-	count := 0
-	for i := 1; i < len(slice); i++ {
-		a, errA := strconv.ParseFloat(slice[i-1].Value, 64)
-		b, errB := strconv.ParseFloat(slice[i].Value, 64)
-		if errA != nil || errB != nil {
-			continue
+	first, firstOK := 0.0, false
+	for ; from < to; from++ {
+		if first, firstOK = usable(from); firstOK {
+			break
 		}
-		sum += b - a
-		count++
 	}
-	if count == 0 {
+	last, lastOK := 0.0, false
+	for to--; to > from; to-- {
+		if last, lastOK = usable(to); lastOK {
+			break
+		}
+	}
+	if !firstOK || !lastOK {
 		return 0
 	}
-	return sum / float64(count)
+	return (last - first) / float64(to-from)
 }
 
 func ptr(f float64) *float64         { return &f }

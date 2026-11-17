@@ -951,7 +951,7 @@ Wall-clock of one sweep. Rising `ok` p95/p99 means the census is growing heavier
 
 Counter, label `outcome` (`ok` / `refresh_error`).
 
-Per-sweep outcome of the asset-volume rollup, which feeds `volume_24h_usd` on `/v1/assets`. Sustained `refresh_error` leaves the column stale, not blank. Informational. Alert: `stellarindex_asset_volume_rollup_failing`.
+Per-sweep outcome of the asset-volume rollup, which feeds `volume_24h_usd` and the listing price snapshot (`asset_price_snapshot`). With no `ok` sweep for 15 min the listings' price, change and market cap go blank. Alert: `stellarindex_asset_volume_rollup_failing` (no `ok` sweep).
 
 ### `stellarindex_asset_volume_rollup_sweep_duration_seconds`
 
@@ -1559,6 +1559,12 @@ Freeze rows the recovery worker closed (`MarkRecovered`). Trails `stellarindex_a
 Counter, no labels.
 
 Freezes restored from the durable ladder (`freeze_events.hold_until` / `extensions_used` / `escalated` / `corroborated`) because the Redis marker was missing. Not alerted: non-zero means the safety net worked. A burst after a Redis restart is expected; a slow trickle means markers are evicted (`maxmemory-policy`) or expiring early.
+
+### `stellarindex_anomaly_freeze_ladder_read_failures_total`
+
+Counter, no labels.
+
+Freeze-marker rebuilds (marker missing) that could not read the durable `freeze_events` ladder, so no ladder was restored and a live freeze may restart from its first rung. Each is also logged at Error. Not alerted.
 
 ### `stellarindex_api_freeze_lookup_failures_total`
 
