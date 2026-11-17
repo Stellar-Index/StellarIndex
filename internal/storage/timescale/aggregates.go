@@ -1490,15 +1490,15 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		                    volume, volume_quote, trade_count, sources, volume_usd
 		               FROM %[1]s
 		              WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
-		                AND bucket >= $3
-		                AND bucket <  $4)
+		                AND bucket >= %[3]s
+		                AND bucket <  %[4]s)
 		            UNION ALL
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
 		                    volume, volume_quote, trade_count, sources, volume_usd
 		               FROM %[1]s
 		              WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
-		                AND bucket >= $3
-		                AND bucket <  $4)
+		                AND bucket >= %[3]s
+		                AND bucket <  %[4]s)
 		          ) AS both_directions
 		      ) raw
 		     GROUP BY bucket
@@ -1524,7 +1524,13 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
 		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'
 		    AND ($5::timestamptz IS NULL OR time_bucket(INTERVAL '%[2]s', n.bucket) <= $5::timestamptz - INTERVAL '%[2]s')
-	`, table, outInterval)
+	`, table, outInterval, foldGridCeil(outInterval, "$3"), foldGridCeil(outInterval, "$4"))
+}
+
+// foldGridCeil renders the first fold-grid boundary at or after param. Reading source buckets in [ceil(from), ceil(to)) serves exactly
+// the out-buckets that start in [from, to), each read whole, as a native route does; a raw window would serve partial edge bars.
+func foldGridCeil(outInterval, param string) string {
+	return fmt.Sprintf("(time_bucket(INTERVAL '%[1]s', %[2]s::timestamptz - INTERVAL '1 microsecond') + INTERVAL '%[1]s')", outInterval, param)
 }
 
 // OHLCSeriesReBucketed re-buckets [Store.OHLCSeries] into a coarser `outInterval` via `time_bucket` (open/close first/last, high/low max/min, volumes sum); `outInterval` must be an integer multiple of the source bucket.

@@ -204,3 +204,21 @@ func intervalLiteralWidth(t *testing.T, lit string) time.Duration {
 	}
 	return time.Duration(n) * unit
 }
+
+// TestOHLCReBucketed_SnapsWindowToFoldGrid pins that a folded route reads its source rows over [from, to) snapped up to the fold
+// grid, so an off-grid from/to serves only whole out-buckets starting in [from, to), never a partial edge bar.
+func TestOHLCReBucketed_SnapsWindowToFoldGrid(t *testing.T) {
+	t.Parallel()
+	q := strings.Join(strings.Fields(ohlcReBucketedQuery("prices_1d", "3 days")), " ")
+	for _, want := range []string{
+		"AND bucket >= (time_bucket(INTERVAL '3 days', $3::timestamptz - INTERVAL '1 microsecond') + INTERVAL '3 days')",
+		"AND bucket < (time_bucket(INTERVAL '3 days', $4::timestamptz - INTERVAL '1 microsecond') + INTERVAL '3 days')",
+	} {
+		if got := strings.Count(q, want); got != 2 {
+			t.Errorf("%d of 2 direction arms carry %q", got, want)
+		}
+	}
+	if strings.Contains(q, "bucket >= $3") || strings.Contains(q, "bucket < $4") {
+		t.Error("a direction arm still reads the raw, off-grid window")
+	}
+}
