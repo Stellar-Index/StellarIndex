@@ -111,9 +111,10 @@ Fix (nothing degrades while open; no runtime mitigation):
 3. Promote recorded history: the oracle writer's `ON CONFLICT ... DO UPDATE ... WHERE oracle_updates.derive_generation <= EXCLUDED.derive_generation` (`internal/storage/timescale/oracle.go`) lets a re-derive rewrite `raw:X` to `crypto:X` on the same PK. All oracle sources are PROJECTED except `band` (see the [replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)). Run bulk forms under `run-heavy-job.sh` on r1:
 
    ```sh
-   # rewind under ~1M ledgers — -config is REQUIRED
+   # rewind under ~1M ledgers. -config, -source, -from are required; without
+   # -write it is a dry run that rewinds nothing and exits 0.
    stellarindex-ops projector-replay \
-     -config /etc/stellarindex.toml -source <src> -from <first raw ledger>
+     -config /etc/stellarindex.toml -source <src> -from <first raw ledger> -write
 
    # bulk catch-up beyond that; defaults to dry-run, -write persists
    stellarindex-ops projected-rebuild \

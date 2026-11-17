@@ -88,6 +88,10 @@ adds WAF, edge rate limiting and bot blocking.
    :80/:443 directly and skip the edge WAF and rate limits. Set
    `http_origin_lock_enabled: true` in the inventory to admit those ports only from
    `cloudflare_ip_ranges`, `internal_cidrs` and `http_origin_lock_extra_cidrs`.
+   The lock admits every Cloudflare customer's traffic, not only this zone's: anyone
+   can point their own Cloudflare zone at the origin IP and still skip this zone's WAF
+   and rate limits. Closing that needs Authenticated Origin Pulls (a client
+   certificate Caddy verifies) or a Cloudflare Tunnel; the role configures neither.
    Turn it on only after the `api.` record is proxied (orange cloud) and
    certificates no longer depend on Let's Encrypt HTTP-01/TLS-ALPN-01 (step 4, or
    DNS-01); otherwise it takes the API offline or stalls renewal.

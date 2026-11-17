@@ -28,10 +28,24 @@ live tip. Require the prev_hash break or a human-confirmed reset.
 
 Every command below is destructive and the same shell could be on r1 (mainnet, never reset). Run them only on the test-net VM, reached through the jump host (`scripts/dev/region-binaries.tsv`: testnet `192.168.122.10`, futurenet `192.168.122.20`). First confirm where you are: `hostname -I` shows that VM's address, and r1's `136.243.90.96` is NOT in the output. The passphrase is unchanged across a reset, so it cannot tell the networks apart.
 
+The role also starts unprefixed ops-job timers and the `si-catchup-*`
+services on every network, test nets included; they write the DBs and the
+lake. Stop them too:
+
 ```sh
-systemctl stop stellarindex-indexer galexie cap67-movements.service stellarindex-api stellarindex-sla-probe
-systemctl list-units 'stellarindex-*' 'cap67-*' --state=active   # nothing may still write or read the DBs
+# the ops-jobs timer loop in roles/archival-node/tasks/14-stellarindex-services.yml
+TIMERS="verify-archive-tier-a supply-snapshot sep1-refresh directory-sync curated-rwa-sync holders-rollup creators-rollup sponsors-rollup cohort-rollup census-rollup compute-completeness verify-usd-volume compute-completeness-sdex verify-lake verify-network-state data-freshness ch-supply issuer-flags asset-registry-backfill"
+for t in $TIMERS; do systemctl stop "$t.timer" "$t.service"; done
+systemctl stop stellarindex-indexer galexie cap67-movements.service stellarindex-api stellarindex-sla-probe 'si-catchup-*'
+
+# nothing may still write or read the DBs: both must print nothing
+systemctl list-units 'stellarindex-*' 'cap67-*' 'si-catchup-*' galexie.service --state=active --no-legend
+for t in $TIMERS; do systemctl list-units "$t.timer" "$t.service" --state=active --no-legend; done
+systemctl list-timers --no-pager   # stop any other timer whose unit runs stellarindex-ops
 ```
+
+Re-check the list against the role's loop before running: a timer the role
+gained since is not in it.
 
 The aggregator is off on testnet and absent on futurenet; stop it if the listing shows it active.
 

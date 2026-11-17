@@ -250,7 +250,7 @@ Symptom: `stellarindex_gate_admission_persist_failures_total{source=...}` rose i
 
 Check: `journalctl -u stellarindex-indexer --since "-2 h" | grep "gate admission"`. `gate admission persisted on retry` means nothing was lost; `gate admission LOST at shutdown` means it was.
 
-Fix: if lost, `stellarindex-ops seed-protocol-contracts -source <source>`, restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+Fix: if lost, restore the row with the per-label command in [stellarindex_gate_admission_unpersisted](#stellarindex_gate_admission_unpersisted) step 2 (each needs `-config` and `-write`; `soroswap` and `sushiswap_v3_pools` are not `seed-protocol-contracts` cases), restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
 
 ## stellarindex_gate_admission_unpersisted
 
