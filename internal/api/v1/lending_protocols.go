@@ -2,8 +2,11 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -11,30 +14,45 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// lendingProtocolTokens are the lending protocols in serve order, each with its token's canonical (code, issuer) id.
-var lendingProtocolTokens = []struct{ protocol, asset string }{
-	{"blend", "BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY"},
-	{blnt.SourceName, "BLNT-GAP2ACGH3O6TRFAERGM4USJ6XWU3U2BFIK224JPV6NI3CUNEEEGTBTFB"},
+// lendingProtocols are the lending protocols in serve order, each with its token's verified-catalogue ticker.
+var lendingProtocols = []struct{ protocol, ticker string }{
+	{"blend", "BLND"},
+	{blnt.SourceName, "BLNT"},
 }
+
+// Exclusion reasons this route adds to those readRatePool and the backstop route already name.
+const (
+	exclusionPoolListFailed     = "pool_list_read_failed"
+	exclusionPoolReadFailed     = "pool_read_failed"
+	exclusionNoDecodedState     = "no_decoded_reserve_state"
+	exclusionNoUSDValue         = "no_usd_value"
+	exclusionBackstopNoReader   = "backstop_reader_unavailable"
+	exclusionBackstopReadFailed = "backstop_read_failed"
+	exclusionBackstopNoBalance  = "backstop_balance_unavailable"
+	exclusionTokenNotVerified   = "token_not_in_catalogue"
+	exclusionTokenReadFailed    = "token_read_failed"
+)
 
 // LendingProtocolStats is one GET /v1/lending/protocols entry: a lending protocol's token and its pools' totals, summed from the
 // same cached per-pool view /v1/lending/pools/{pool}/reserves serves.
 type LendingProtocolStats struct {
-	Protocol         string               `json:"protocol"`
-	Token            LendingProtocolToken `json:"token"`
-	PoolCount        int                  `json:"pool_count"`
-	ReserveCount     int                  `json:"reserve_count"`
-	TotalSuppliedUSD *string              `json:"total_supplied_usd"`
-	TotalBorrowedUSD *string              `json:"total_borrowed_usd"`
-	// TVLUSD is supplied minus borrowed: what the pools hold, not what they have lent out.
-	TVLUSD   *string                   `json:"tvl_usd"`
-	Backstop []LendingProtocolBackstop `json:"backstop"`
-	// LowerBound is true when Excluded is non-empty: every total leaves something out and the protocol holds at least it.
-	LowerBound bool                    `json:"lower_bound"`
-	Excluded   []LendingStatsExclusion `json:"excluded"`
+	Protocol         string                `json:"protocol"`
+	Token            *LendingProtocolToken `json:"token"`
+	PoolCount        int                   `json:"pool_count"`
+	ReserveCount     int                   `json:"reserve_count"`
+	TotalSuppliedUSD *string               `json:"total_supplied_usd"`
+	TotalBorrowedUSD *string               `json:"total_borrowed_usd"`
+	// AvailableUSD is supplied minus borrowed: the liquidity the pools still hold, not what they have lent out.
+	AvailableUSD *string                   `json:"available_usd"`
+	Backstop     []LendingProtocolBackstop `json:"backstop"`
+	// LowerBound covers the USD totals: a pool_list, pool or reserve exclusion leaves something out of them.
+	LowerBound bool `json:"lower_bound"`
+	// BackstopLowerBound covers the backstop sums: a backstop exclusion leaves a pool's deposits out of them.
+	BackstopLowerBound bool                    `json:"backstop_lower_bound"`
+	Excluded           []LendingStatsExclusion `json:"excluded"`
 }
 
-// LendingProtocolToken is the protocol token's price, supply and market cap, read as /v1/assets/{id} reads them.
+// LendingProtocolToken is the protocol token's price, supply and market cap as /v1/assets/{id} serves them.
 type LendingProtocolToken struct {
 	AssetID           string  `json:"asset_id"`
 	Code              string  `json:"code"`
@@ -52,12 +70,25 @@ type LendingProtocolBackstop struct {
 	Tokens        string `json:"tokens"`
 }
 
-// LendingStatsExclusion names what a protocol's totals leave out and why.
+// LendingStatsExclusion names what a protocol's figures leave out and why.
 type LendingStatsExclusion struct {
-	Kind   string  `json:"kind"` // pool_list | pool | reserve | backstop
+	Kind   string  `json:"kind"` // pool_list | pool | reserve | backstop | token
 	Pool   *string `json:"pool"`
 	Asset  *string `json:"asset"`
 	Reason string  `json:"reason"`
+}
+
+// readFailed reports an exclusion caused by a failed read rather than by what the chain holds.
+func (e LendingStatsExclusion) readFailed() bool {
+	switch e.Kind {
+	case "pool_list", "pool":
+		return true
+	case "backstop":
+		return e.Reason == exclusionBackstopReadFailed || e.Reason == exclusionBackstopNoReader
+	case "token":
+		return e.Reason == exclusionTokenReadFailed
+	}
+	return false
 }
 
 // protocolPoolRead is one pool's cached reserves view and its backstop read.
@@ -67,8 +98,20 @@ type protocolPoolRead struct {
 	backstopReason string
 }
 
-// handleLendingProtocols serves GET /v1/lending/protocols: per protocol, its token and its pools' USD totals. A pool, reserve or
-// backstop that could not be read or priced is named in excluded and the totals are a lower bound.
+// lendingProtocolsBuild is one built GET /v1/lending/protocols body.
+type lendingProtocolsBuild struct {
+	stats []LendingProtocolStats
+	flags Flags
+	asOf  WireTime
+}
+
+// lendingProtocolsPartial carries a build that hit a failed read: served to the requests waiting on it, never cached as good.
+type lendingProtocolsPartial struct{ build lendingProtocolsBuild }
+
+func (e *lendingProtocolsPartial) Error() string { return "lending protocols: a read failed" }
+
+// handleLendingProtocols serves GET /v1/lending/protocols: per protocol, its token and its pools' USD totals. A pool, reserve,
+// backstop or token that could not be read or priced is named in excluded.
 func (s *Server) handleLendingProtocols(w http.ResponseWriter, r *http.Request) {
 	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -80,31 +123,64 @@ func (s *Server) handleLendingProtocols(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
-	var vintage dataVintage
-	pools, flags, err := s.lendingRatePools(ctx, "", &vintage)
+	b, _, cacheStale, err := s.lendingProtocolsCache.get(ctx, "lending_protocols", "all", s.buildLendingProtocols)
+	var partial *lendingProtocolsPartial
+	if errors.As(err, &partial) {
+		b, err = partial.build, nil
+	}
 	if err != nil {
 		s.writeListBlendPoolsError(ctx, w, r, err)
 		return
 	}
+	flags := b.flags
+	flags.Stale = flags.Stale || cacheStale
+	writeEnvelope(w, Envelope{Data: b.stats, AsOf: b.asOf, Flags: flags})
+}
+
+// buildLendingProtocols reads every listed pool and both tokens; a failed read returns the build as a lendingProtocolsPartial.
+func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBuild, error) {
+	var vintage dataVintage
+	pools, flags, err := s.lendingRatePools(ctx, "", &vintage)
+	if err != nil {
+		return lendingProtocolsBuild{}, err
+	}
 	blntListFailed := flags.Degraded
 	reads := make([]protocolPoolRead, len(pools))
+	for i := range pools {
+		// A panicking read leaves its slot as written here, so the pool is still named rather than silently dropped.
+		reads[i] = protocolPoolRead{ratePoolRead: ratePoolRead{ratePool: pools[i], omitted: exclusionPoolReadFailed, reason: exclusionPoolReadFailed}}
+	}
 	forEachBounded(s.logger, len(pools), readFanoutConcurrency, func(i int) {
 		reads[i] = s.readProtocolPool(ctx, pools[i]) // distinct indices — no mutex needed
 	})
-	out := make([]LendingProtocolStats, 0, len(lendingProtocolTokens))
-	for _, pt := range lendingProtocolTokens {
+	out := make([]LendingProtocolStats, 0, len(lendingProtocols))
+	lowerBound := false
+	for _, pt := range lendingProtocols {
 		st := LendingProtocolStats{Protocol: pt.protocol, Backstop: []LendingProtocolBackstop{}, Excluded: []LendingStatsExclusion{}}
-		tokenFlags := s.fillProtocolToken(ctx, &st.Token, pt.asset)
-		flags.Stale, flags.Degraded = flags.Stale || tokenFlags.Stale, flags.Degraded || tokenFlags.Degraded
+		var reason string
+		st.Token, reason = s.readProtocolToken(ctx, pt.ticker, &flags)
+		if reason != "" {
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "token", Asset: strRef(pt.ticker), Reason: reason})
+		}
 		if pt.protocol == blnt.SourceName && blntListFailed {
-			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "pool_list", Reason: "BLNT pool list read failed"})
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "pool_list", Reason: exclusionPoolListFailed})
 		}
 		sumProtocolPools(&st, reads, &vintage, &flags)
-		st.LowerBound = len(st.Excluded) > 0
-		flags.Degraded = flags.Degraded || st.LowerBound
+		for _, e := range st.Excluded {
+			st.LowerBound = st.LowerBound || e.Kind == "pool_list" || e.Kind == "pool" || e.Kind == "reserve"
+			st.BackstopLowerBound = st.BackstopLowerBound || e.Kind == "backstop"
+			flags.Degraded = flags.Degraded || e.readFailed()
+		}
+		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}
-	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: flags})
+	failed := flags.Degraded
+	flags.Degraded = failed || lowerBound
+	b := lendingProtocolsBuild{stats: out, flags: flags, asOf: vintage.asOf()}
+	if failed {
+		return b, &lendingProtocolsPartial{build: b}
+	}
+	return b, nil
 }
 
 // readProtocolPool reads one pool through the reserves cache and, when that succeeds, its backstop balances.
@@ -114,22 +190,25 @@ func (s *Server) readProtocolPool(ctx context.Context, p ratePool) protocolPoolR
 		return out
 	}
 	br, ok := s.Explorer.(lendingBackstopReader)
+	isBLNT := p.protocol == blnt.SourceName
 	switch {
 	case !ok:
-		out.backstopReason = "backstop reader unavailable"
-	case p.protocol != blnt.SourceName && out.res.version != blend.PoolV2:
+		out.backstopReason = exclusionBackstopNoReader
+	case !isBLNT && out.res.version == blend.PoolV1:
 		out.backstopReason = backstopReasonV1
+	case !isBLNT && out.res.version != blend.PoolV2:
+		out.backstopReason = backstopReasonUnknown
 	default:
 		var err error
-		if out.backstop, err = br.LendingBackstop(ctx, p.pool, p.protocol == blnt.SourceName); err != nil {
+		if out.backstop, err = br.LendingBackstop(ctx, p.pool, isBLNT); err != nil {
 			s.logger.Warn("lending protocols: backstop read failed", "err", err, "pool", p.pool)
-			out.backstopReason = "backstop read failed"
+			out.backstopReason = exclusionBackstopReadFailed
 		}
 	}
 	return out
 }
 
-// sumProtocolPools totals st.Protocol's pools in exact decimals. A reserve counts only with both USD values, so TVL stays
+// sumProtocolPools totals st.Protocol's pools in exact decimals. A reserve counts only with both USD values, so available stays
 // supplied minus borrowed over the same reserves.
 func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintage *dataVintage, flags *Flags) {
 	supplied, borrowed := new(big.Rat), new(big.Rat)
@@ -144,7 +223,7 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 		st.PoolCount++
 		pool := pr.pool
 		if pr.omitted != "" {
-			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "pool", Pool: &pool, Reason: pr.omitted})
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "pool", Pool: &pool, Reason: pr.reason})
 			continue
 		}
 		vintage.note(pr.at)
@@ -153,13 +232,13 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 		v := pr.res.view
 		st.ReserveCount += len(v.Reserves) + len(v.OmittedReserves)
 		for _, a := range v.OmittedReserves {
-			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(a), Reason: "no decoded reserve state"})
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(a), Reason: exclusionNoDecodedState})
 		}
 		for _, rv := range v.Reserves {
 			sup, supOK := parseUSD(rv.SuppliedUSD)
 			bor, borOK := parseUSD(rv.BorrowedUSD)
 			if !supOK || !borOK {
-				st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(rv.Asset), Reason: "no USD value"})
+				st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(rv.Asset), Reason: exclusionNoUSDValue})
 				continue
 			}
 			supplied.Add(supplied, sup)
@@ -169,8 +248,8 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 		tokens = addProtocolBackstop(st, pr, backstop, tokens)
 	}
 	if priced > 0 {
-		sup, bor, tvl := supplied.FloatString(2), borrowed.FloatString(2), new(big.Rat).Sub(supplied, borrowed).FloatString(2)
-		st.TotalSuppliedUSD, st.TotalBorrowedUSD, st.TVLUSD = &sup, &bor, &tvl
+		sup, bor, avail := supplied.FloatString(2), borrowed.FloatString(2), new(big.Rat).Sub(supplied, borrowed).FloatString(2)
+		st.TotalSuppliedUSD, st.TotalBorrowedUSD, st.AvailableUSD = &sup, &bor, &avail
 	}
 	for _, t := range tokens {
 		st.Backstop = append(st.Backstop, LendingProtocolBackstop{BackstopToken: t, Tokens: backstop[t].String()})
@@ -198,7 +277,7 @@ func addProtocolBackstop(st *LendingProtocolStats, pr *protocolPoolRead, sums ma
 			token = pr.backstop.Token
 		}
 		if t.Balance == nil || token == "" {
-			exclude("backstop tier balance unread")
+			exclude(exclusionBackstopNoBalance)
 			continue
 		}
 		if sums[token] == nil {
@@ -210,16 +289,50 @@ func addProtocolBackstop(st *LendingProtocolStats, pr *protocolPoolRead, sums ma
 	return tokens
 }
 
-// fillProtocolToken reads the token's price, supply and market cap through the /v1/assets/{id} F2 overlay, so the two agree.
-func (s *Server) fillProtocolToken(ctx context.Context, tok *LendingProtocolToken, id string) Flags {
-	a, err := canonical.ParseAsset(id)
-	if err != nil {
-		s.logger.Error("lending protocols: protocol token id does not parse", "asset", id, "err", err)
-		return Flags{Degraded: true}
+// readProtocolToken resolves ticker through the verified catalogue and reads it through the /v1/assets/{id} handler and its
+// response cache, so the figures are that route's by construction. A non-empty reason means the block is absent or incomplete.
+func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Flags) (*LendingProtocolToken, string) {
+	var a canonical.Asset
+	found := false
+	if vc, ok := s.VerifiedCurrencies.LookupByTicker(ticker); ok {
+		for _, n := range vc.Issuance {
+			if parsed, err := canonical.ParseAsset(n.AssetID); err == nil && n.Network == "stellar" && parsed.Code == ticker && parsed.Issuer != "" {
+				a, found = parsed, true
+				break
+			}
+		}
 	}
-	d := detailFromAsset(a)
-	s.applyF2Fields(ctx, &d, a)
-	tok.AssetID, tok.Code, tok.Issuer, tok.Decimals = a.String(), a.Code, a.Issuer, d.Decimals
-	tok.PriceUSD, tok.CirculatingSupply, tok.TotalSupply, tok.MarketCapUSD = d.PriceUSD, d.CirculatingSupply, d.TotalSupply, d.MarketCapUSD
-	return Flags{Stale: d.priceStale || d.SupplyStale, Degraded: d.f2ReadFailed}
+	if !found {
+		return nil, exclusionTokenNotVerified
+	}
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/assets/"+a.String(), nil)
+	req.SetPathValue("asset_id", a.String())
+	rec := httptest.NewRecorder()
+	s.handleAssetGet(rec, req)
+	var body struct {
+		Data struct {
+			Decimals          int     `json:"decimals"`
+			PriceUSD          *string `json:"price_usd"`
+			CirculatingSupply *string `json:"circulating_supply"`
+			TotalSupply       *string `json:"total_supply"`
+			MarketCapUSD      *string `json:"market_cap_usd"`
+		} `json:"data"`
+		Flags Flags `json:"flags"`
+	}
+	degraded := rec.Header().Get("Cache-Control") == "no-store" // Flags.Degraded never reaches the wire
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
+		s.logger.Warn("lending protocols: token read failed", "asset", a.String(), "status", rec.Code)
+		return nil, exclusionTokenReadFailed
+	}
+	d := body.Data
+	tok := &LendingProtocolToken{
+		AssetID: a.String(), Code: a.Code, Issuer: a.Issuer, Decimals: d.Decimals,
+		PriceUSD: d.PriceUSD, CirculatingSupply: d.CirculatingSupply, TotalSupply: d.TotalSupply, MarketCapUSD: d.MarketCapUSD,
+	}
+	flags.Stale = flags.Stale || body.Flags.Stale
+	// The asset body is degraded by reads this route does not serve too; only a missing served figure counts as a failure.
+	if degraded && (d.PriceUSD == nil || d.CirculatingSupply == nil) {
+		return tok, exclusionTokenReadFailed
+	}
+	return tok, ""
 }

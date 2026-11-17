@@ -197,12 +197,12 @@ type Server struct {
 	// Last-good cache for the bespoke analytics block of that detail view, which is built last and
 	// would otherwise vanish when the rebuild's budget runs out. See protocol_bespoke_cache.go.
 	protocolBespokeCache bespokeCache
-	// Prewarmed SWR cache for the per-source contract_count on GET /v1/protocols. The roster is a
-	// served-tier `SELECT DISTINCT ... LIMIT 5000` scan on an unauthenticated route, so scanning on
-	// every origin miss would be a DoS surface.
+	// Prewarmed SWR cache for the per-source contract_count on GET /v1/protocols: the roster is a served-tier
+	// `SELECT DISTINCT ... LIMIT 5000` scan on an unauthenticated route, so scanning per origin miss is a DoS surface.
 	protocolRosterCache rosterCache
-	// Per-pool built reserves views for GET /v1/lending/pools/{pool}/reserves; see buildPoolReserves.
-	lendingReserves *swrCache[poolReserves]
+	// Per-pool built reserves views (see buildPoolReserves), and the GET /v1/lending/protocols totals built from them.
+	lendingReserves       *swrCache[poolReserves]
+	lendingProtocolsCache *swrCache[lendingProtocolsBuild]
 	// lendingSummaryFailed maps a pool to when the list last saw its reserves build fail; see attachLendingSummaries.
 	lendingSummaryMu     sync.Mutex
 	lendingSummaryFailed map[string]time.Time
@@ -954,22 +954,22 @@ func New(opts Options) *Server {
 		logger = slog.Default()
 	}
 	s := &Server{
-		Options:            opts,
-		logger:             logger,
-		coverageFloorCache: &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
-		lendingReserves:    newSWRCache[poolReserves](logger, "lending_reserves", "api-lending-reserves-fill", lendingReservesTTL, lendingReservesMaxEntries),
-		fxCrossMaxAge:      fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
-		fxFixings:          newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
-		streamDrain:        streaming.NewDrain(),
-		backupMetrics:      backupMetricsFor(opts),
-		regionName:         valueOr(opts.RegionName, "unknown"),
-		regionDeployment:   valueOr(opts.RegionDeployment, "production"),
-		statusServices:     statusServicesOr(opts.StatusServices),
-		globalPrice:        newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
-		globalPriceOpts:    globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		// 120s TTL on /v1/assets/{id}. MUST exceed the selfPrewarmAssetEndpoints cadence (60s)
-		// with margin, or the cache expires between prewarm passes and probes pay the full cold
-		// rebuild. Data moves per-minute at fastest, so 120s fits the closed-bucket-only contract.
+		Options:               opts,
+		logger:                logger,
+		coverageFloorCache:    &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
+		lendingReserves:       newSWRCache[poolReserves](logger, "lending_reserves", "api-lending-reserves-fill", lendingReservesTTL, lendingReservesMaxEntries),
+		lendingProtocolsCache: newSWRCache[lendingProtocolsBuild](logger, "lending_protocols", "api-lending-protocols-fill", lendingReservesTTL, 1),
+		fxCrossMaxAge:         fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
+		fxFixings:             newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
+		streamDrain:           streaming.NewDrain(),
+		backupMetrics:         backupMetricsFor(opts),
+		regionName:            valueOr(opts.RegionName, "unknown"),
+		regionDeployment:      valueOr(opts.RegionDeployment, "production"),
+		statusServices:        statusServicesOr(opts.StatusServices),
+		globalPrice:           newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
+		globalPriceOpts:       globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
+		// 120s TTL on /v1/assets/{id}: MUST exceed the selfPrewarmAssetEndpoints cadence (60s) with margin, or probes pay
+		// the full cold rebuild between passes. Data moves per-minute at fastest, so 120s fits the closed-bucket contract.
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
 		assetListCache:   newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge),
 		mux:              http.NewServeMux(),
