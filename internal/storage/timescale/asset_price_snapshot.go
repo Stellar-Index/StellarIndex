@@ -147,13 +147,13 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		             bool_or(u.floored) OVER w AS any_floored
 		        FROM (
 		          SELECT base_asset AS asset_id, bucket, volume_priced AS asset_leg,
-		                 vwap * volume_priced AS quote_leg, sources, (notional_trade_count > 0 OR volume_usd = 0) AS floored
+		                 vwap * volume_priced AS quote_leg, sources, `+flooredMinuteSQL+` AS floored
 		            FROM prices_1m
 		           WHERE quote_asset IN (%[2]s)%[4]s
 		             AND %[3]s
 		             AND vwap > 0 AND volume_priced > 0
 		          UNION ALL
-		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, (notional_trade_count > 0 OR volume_usd = 0) AS floored
+		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, `+flooredMinuteSQL+` AS floored
 		            FROM prices_1m
 		           WHERE base_asset IN (%[2]s)%[5]s
 		             AND %[3]s
@@ -202,6 +202,10 @@ func assetPriceArmCTEs(asset, xlmQuoteList string) string {
 var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," +
 	xlmUSDNativeCTEs(nativeSACParam(1)) + "," +
 	xlmUSDAnchorGridCTE("xlm_usd_grid", priceWindow7dLo, nativeSACParam(1))
+
+// flooredMinuteSQL is true for a prices_1m row whose vwap may set a served price: it holds a trade over the $0.01 notional floor, or
+// nothing was USD-stamped (unpriced, not sub-cent). vwap itself has no floor, so every reader that picks a minute ranks this first.
+const flooredMinuteSQL = `(notional_trade_count > 0 OR volume_usd = 0)`
 
 // usdQuotePref ranks the USD quote forms (true USD, classic USDC, its SAC) when two tie on a
 // bucket; without it the newest-bucket pick falls to scan order.

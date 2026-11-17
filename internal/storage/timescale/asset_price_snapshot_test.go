@@ -126,6 +126,23 @@ func TestPriceArms_PreferNewestNotionalMinute(t *testing.T) {
 	}
 }
 
+// TestPriceSeries_RankFlooredMinuteFirst pins the floor on every sparkline read: its direct arm and both XLM-arm directions
+// carry [flooredMinuteSQL] (behaviour: TestAssetPriceHistory_NotionalFloor).
+func TestPriceSeries_RankFlooredMinuteFirst(t *testing.T) {
+	t.Parallel()
+	for name, q := range map[string]string{
+		"24h": getAssetPriceHistory24hSQL, "7d": getAssetPriceHistory7dSQL,
+		"24h batch": getAssetsPriceHistory24hBatchSQL, "7d batch": getAssetsPriceHistory7dBatchSQL,
+	} {
+		if got := strings.Count(q, flooredMinuteSQL); got != 3 {
+			t.Errorf("%s: %d picks carry the notional floor, want 3", name, got)
+		}
+		if got := strings.Count(q, "floored DESC"); got < 1 {
+			t.Errorf("%s: no pick ranks floored minutes first", name)
+		}
+	}
+}
+
 // TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL pins fail-closed staleness: the join floors
 // computed_at, so a wedged aggregator makes the row render with no price rather than serve stale prices as
 // current. It asserts the rendered predicate, since a constant nothing splices in bounds nothing.

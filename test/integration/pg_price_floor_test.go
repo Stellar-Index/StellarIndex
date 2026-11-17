@@ -86,6 +86,90 @@ func TestOHLCSeriesReBucketed_NotionalFloorAcrossFold(t *testing.T) {
 	}
 }
 
+// A sparkline point (24h hourly, 7d daily; single and batch reads) comes from a minute over the $0.01 notional floor whenever the
+// period has one, so a newer sub-cent crumb on the USD or XLM book cannot draw a 10x / 1000x spike.
+func TestAssetPriceHistory_NotionalFloor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	usdcID := "USDC-" + zeroLegIssuer
+	direct := "TSPD-" + zeroLegIssuer // USDC book
+	viaXLM := "TSPX-" + zeroLegIssuer // XLM book only
+	h := time.Now().UTC().Truncate(time.Hour).Add(-3 * time.Hour)
+
+	// XLM at 0.30 USD; both tokens at 0.10 USD, then a crumb thirty minutes later at 1 USD (direct) and 100 XLM (via XLM).
+	seed(t, db, ctx, ohlcDustPair{base: "native", quote: usdcID}, []seedTrade{
+		{off: 0, base: "1000000000", quote: "300000000", usd: "30"},
+	}, h.Add(5*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: direct, quote: usdcID}, []seedTrade{
+		{off: 0, base: "100000000", quote: "10000000", usd: "1"},
+	}, h.Add(10*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: direct, quote: usdcID}, []seedTrade{
+		{off: 0, base: "1", quote: "1", usd: "0.0000001"},
+	}, h.Add(40*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: viaXLM, quote: "native"}, []seedTrade{
+		{off: 0, base: "300000000", quote: "100000000", usd: "3"},
+	}, h.Add(10*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: viaXLM, quote: "native"}, []seedTrade{
+		{off: 0, base: "1", quote: "100", usd: "0.000003"},
+	}, h.Add(40*time.Minute))
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	tenth := new(big.Rat).SetFrac64(1, 10)
+	check := func(t *testing.T, pts []timescale.AssetPricePoint, at time.Time) {
+		t.Helper()
+		want := at.Format("2006-01-02T15:04:05Z")
+		for _, pt := range pts {
+			if pt.T != want {
+				continue
+			}
+			if pt.P == nil {
+				t.Fatalf("point %s has no price, want 0.1", want)
+			}
+			got, ok := new(big.Rat).SetString(*pt.P)
+			if !ok || got.Cmp(tenth) != 0 {
+				t.Errorf("point %s = %s, want 0.1 from the floored minute", want, *pt.P)
+			}
+			return
+		}
+		t.Fatalf("no point at %s in %d points", want, len(pts))
+	}
+	day := h.Truncate(24 * time.Hour)
+	for _, asset := range []string{direct, viaXLM} {
+		t.Run(asset[:4], func(t *testing.T) {
+			pts, err := store.GetAssetPriceHistory24h(ctx, asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, pts, h)
+			if pts, err = store.GetAssetPriceHistory7d(ctx, asset); err != nil {
+				t.Fatal(err)
+			}
+			check(t, pts, day)
+			batch, err := store.GetAssetsPriceHistory24hBatch(ctx, []string{asset})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, batch[asset], h)
+			if batch, err = store.GetAssetsPriceHistory7dBatch(ctx, []string{asset}); err != nil {
+				t.Fatal(err)
+			}
+			check(t, batch[asset], day)
+		})
+	}
+}
+
 // A sub-cent print must not set the listing's headline price or change pills while a minute over the $0.01 notional floor exists:
 // the arm pick ranks a floored arm over a newer crumb-only one, and a crumb lookback is no baseline for a floored headline.
 func TestAssetPriceSnapshot_NotionalFloorAcrossArms(t *testing.T) {

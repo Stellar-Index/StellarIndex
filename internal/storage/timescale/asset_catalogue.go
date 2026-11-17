@@ -841,11 +841,12 @@ var getAssetPriceHistory24hSQL = `
 		  -- per the stablecoin-proxy policy (see the listing
 		  -- query's direct_usd CTE): a USDC-quoted vwap is taken
 		  -- AS the USD price.
+		  -- Every series pick ranks a floored minute (flooredMinuteSQL) first: one sub-cent crumb must not draw a point.
 		  SELECT h, vwap FROM (
 		    SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		           row_number() OVER (
 		             PARTITION BY date_trunc('hour', bucket)
-		             ORDER BY array_position($1::text[], base_asset), bucket DESC,
+		             ORDER BY ` + flooredMinuteSQL + ` DESC, array_position($1::text[], base_asset), bucket DESC,
 		                      ` + usdQuotePref + `
 		           ) AS rn
 		      FROM prices_1m
@@ -875,12 +876,13 @@ var getAssetPriceHistory24hSQL = `
 		    SELECT h, vwap,
 		           row_number() OVER (
 		             PARTITION BY h
-		             ORDER BY inverted, prio, bucket DESC, xlm_prio
+		             ORDER BY floored DESC, inverted, prio, bucket DESC, xlm_prio
 		           ) AS rn
 		      FROM (
 		        SELECT date_trunc('hour', bucket) AS h, vwap::numeric AS vwap,
 		               array_position($1::text[], base_asset) AS prio,
-		               bucket, 0 AS inverted, ` + xlmFormPrefOpenBound2 + `quote_asset) AS xlm_prio
+		               bucket, 0 AS inverted, ` + xlmFormPrefOpenBound2 + `quote_asset) AS xlm_prio,
+		               ` + flooredMinuteSQL + ` AS floored
 		          FROM prices_1m
 		         WHERE base_asset = ANY($1)
 		           AND quote_asset IN ('native', $2::text)
@@ -889,7 +891,7 @@ var getAssetPriceHistory24hSQL = `
 		        UNION ALL
 		        SELECT date_trunc('hour', bucket), 1::numeric / vwap,
 		               array_position($1::text[], quote_asset),
-		               bucket, 1, ` + xlmFormPrefOpenBound2 + `base_asset)
+		               bucket, 1, ` + xlmFormPrefOpenBound2 + `base_asset), ` + flooredMinuteSQL + `
 		          FROM prices_1m
 		         WHERE base_asset IN ('native', $2::text)
 		           AND quote_asset = ANY($1)
@@ -969,7 +971,7 @@ var getAssetPriceHistory7dSQL = `
 		    SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		           row_number() OVER (
 		             PARTITION BY date_trunc('day', bucket)
-		             ORDER BY array_position($1::text[], base_asset), bucket DESC,
+		             ORDER BY ` + flooredMinuteSQL + ` DESC, array_position($1::text[], base_asset), bucket DESC,
 		                      ` + usdQuotePref + `
 		           ) AS rn
 		      FROM prices_1m
@@ -999,12 +1001,13 @@ var getAssetPriceHistory7dSQL = `
 		    SELECT d, vwap,
 		           row_number() OVER (
 		             PARTITION BY d
-		             ORDER BY inverted, prio, bucket DESC, xlm_prio
+		             ORDER BY floored DESC, inverted, prio, bucket DESC, xlm_prio
 		           ) AS rn
 		      FROM (
 		        SELECT date_trunc('day', bucket) AS d, vwap::numeric AS vwap,
 		               array_position($1::text[], base_asset) AS prio,
-		               bucket, 0 AS inverted, ` + xlmFormPrefOpenBound2 + `quote_asset) AS xlm_prio
+		               bucket, 0 AS inverted, ` + xlmFormPrefOpenBound2 + `quote_asset) AS xlm_prio,
+		               ` + flooredMinuteSQL + ` AS floored
 		          FROM prices_1m
 		         WHERE base_asset = ANY($1)
 		           AND quote_asset IN ('native', $2::text)
@@ -1013,7 +1016,7 @@ var getAssetPriceHistory7dSQL = `
 		        UNION ALL
 		        SELECT date_trunc('day', bucket), 1::numeric / vwap,
 		               array_position($1::text[], quote_asset),
-		               bucket, 1, ` + xlmFormPrefOpenBound2 + `base_asset)
+		               bucket, 1, ` + xlmFormPrefOpenBound2 + `base_asset), ` + flooredMinuteSQL + `
 		          FROM prices_1m
 		         WHERE base_asset IN ('native', $2::text)
 		           AND quote_asset = ANY($1)
@@ -1683,7 +1686,7 @@ var getAssetsPriceHistory24hBatchSQL = `
 		  SELECT DISTINCT ON (asset_id, h) asset_id, h, vwap
 		    FROM (
 		      SELECT w.asset_id, date_trunc('hour', p.bucket) AS h, p.vwap::numeric AS vwap,
-		             w.prio, p.bucket, ` + usdQuotePref + ` AS quote_prio
+		             w.prio, p.bucket, ` + usdQuotePref + ` AS quote_prio, ` + flooredMinuteSQL + ` AS floored
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
@@ -1695,7 +1698,7 @@ var getAssetsPriceHistory24hBatchSQL = `
 		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		         AND vwap IS NOT NULL
 		    ) z
-		   ORDER BY asset_id, h, prio, bucket DESC, quote_prio
+		   ORDER BY asset_id, h, floored DESC, prio, bucket DESC, quote_prio
 		),
 		asset_xlm_per_hour AS (
 		  -- XLM leg in BOTH identity forms ('native' + SAC) and BOTH
@@ -1704,7 +1707,8 @@ var getAssetsPriceHistory24hBatchSQL = `
 		  SELECT DISTINCT ON (asset_id, h) asset_id, h, vwap
 		    FROM (
 		      SELECT w.asset_id, date_trunc('hour', p.bucket) AS h, p.vwap::numeric AS vwap,
-		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpenBound4 + `quote_asset) AS xlm_prio
+		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpenBound4 + `quote_asset) AS xlm_prio,
+		             ` + flooredMinuteSQL + ` AS floored
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
@@ -1713,7 +1717,7 @@ var getAssetsPriceHistory24hBatchSQL = `
 		         AND vwap IS NOT NULL
 		      UNION ALL
 		      SELECT w.asset_id, date_trunc('hour', p.bucket), 1::numeric / p.vwap,
-		             w.prio, p.bucket, 1, ` + xlmFormPrefOpenBound4 + `base_asset)
+		             w.prio, p.bucket, 1, ` + xlmFormPrefOpenBound4 + `base_asset), ` + flooredMinuteSQL + `
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.quote_asset
 		       WHERE base_asset IN ('native', $4::text)
@@ -1721,7 +1725,7 @@ var getAssetsPriceHistory24hBatchSQL = `
 		         AND bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
 		         AND vwap > 0
 		    ) u
-		   ORDER BY asset_id, h, inverted, prio, bucket DESC, xlm_prio
+		   ORDER BY asset_id, h, floored DESC, inverted, prio, bucket DESC, xlm_prio
 		),
 		` + xlmUSDSeriesCTE("xlm_usd_per_hour", "h", 5) + `
 		SELECT
@@ -1803,7 +1807,7 @@ var getAssetsPriceHistory7dBatchSQL = `
 		  SELECT DISTINCT ON (asset_id, d) asset_id, d, vwap
 		    FROM (
 		      SELECT w.asset_id, date_trunc('day', p.bucket) AS d, p.vwap::numeric AS vwap,
-		             w.prio, p.bucket, ` + usdQuotePref + ` AS quote_prio
+		             w.prio, p.bucket, ` + usdQuotePref + ` AS quote_prio, ` + flooredMinuteSQL + ` AS floored
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
@@ -1815,7 +1819,7 @@ var getAssetsPriceHistory7dBatchSQL = `
 		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		         AND vwap IS NOT NULL
 		    ) z
-		   ORDER BY asset_id, d, prio, bucket DESC, quote_prio
+		   ORDER BY asset_id, d, floored DESC, prio, bucket DESC, quote_prio
 		),
 		asset_xlm_per_day AS (
 		  -- XLM leg in BOTH identity forms ('native' + SAC) and BOTH
@@ -1824,7 +1828,8 @@ var getAssetsPriceHistory7dBatchSQL = `
 		  SELECT DISTINCT ON (asset_id, d) asset_id, d, vwap
 		    FROM (
 		      SELECT w.asset_id, date_trunc('day', p.bucket) AS d, p.vwap::numeric AS vwap,
-		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpenBound4 + `quote_asset) AS xlm_prio
+		             w.prio, p.bucket, 0 AS inverted, ` + xlmFormPrefOpenBound4 + `quote_asset) AS xlm_prio,
+		             ` + flooredMinuteSQL + ` AS floored
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.base_asset
 		       WHERE base_asset = ANY($1)
@@ -1833,7 +1838,7 @@ var getAssetsPriceHistory7dBatchSQL = `
 		         AND vwap IS NOT NULL
 		      UNION ALL
 		      SELECT w.asset_id, date_trunc('day', p.bucket), 1::numeric / p.vwap,
-		             w.prio, p.bucket, 1, ` + xlmFormPrefOpenBound4 + `base_asset)
+		             w.prio, p.bucket, 1, ` + xlmFormPrefOpenBound4 + `base_asset), ` + flooredMinuteSQL + `
 		        FROM prices_1m p
 		        JOIN want w ON w.form = p.quote_asset
 		       WHERE base_asset IN ('native', $4::text)
@@ -1841,7 +1846,7 @@ var getAssetsPriceHistory7dBatchSQL = `
 		         AND bucket >= date_trunc('day', now() - INTERVAL '6 days')
 		         AND vwap > 0
 		    ) u
-		   ORDER BY asset_id, d, inverted, prio, bucket DESC, xlm_prio
+		   ORDER BY asset_id, d, floored DESC, inverted, prio, bucket DESC, xlm_prio
 		),
 		` + xlmUSDSeriesCTE("xlm_usd_per_day", "d", 5) + `
 		SELECT
