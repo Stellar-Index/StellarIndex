@@ -18627,9 +18627,9 @@ components:
         One reason a set member is absent from a series. Shared by
         `/rwa/history` and `/rwa/premium`: the first four reasons are the
         same refusal by the same rule on both, and two spellings of one
-        reason is how a funnel starts lying. The last five are specific
+        reason is how a funnel starts lying. The last six are specific
         to one series — the supply pair to the value series, the market
-        trio to the premium series.
+        four to the premium series.
       required: [reason, assets, detail]
       properties:
         reason:
@@ -18643,6 +18643,7 @@ components:
             - supply_incomplete
             - no_market_history
             - market_below_floor
+            - market_outside_band
             - no_same_day_observation
         assets:
           type: integer

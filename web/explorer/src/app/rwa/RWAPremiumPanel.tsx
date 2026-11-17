@@ -265,6 +265,7 @@ const EXCLUDED_LABEL: Record<string, string> = {
   no_reference_history: 'whose instrument has no published value history',
   no_market_history: 'with no dollar trade in the price history we hold',
   market_below_floor: 'whose market never cleared the thin-market floor',
+  market_outside_band: 'whose market traded far from its published value',
   no_same_day_observation:
     'whose market and oracle were never observed on the same day',
 };
