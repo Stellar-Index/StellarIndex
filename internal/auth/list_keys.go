@@ -407,8 +407,47 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 	if !found || rec.Identifier != identifier {
 		return ErrKeyNotFound
 	}
+	if err := s.revokeDescendants(ctx, identifier, keyID); err != nil {
+		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
+		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	return nil
+}
+
+// revokeDescendants deletes every key whose ParentKeyID chain on identifier reaches keyID. It runs
+// before the root is deleted, so a failure leaves the root findable and a retry re-walks the chain.
+func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, keyID string) error {
+	owned, err := s.recordsForIdentifier(ctx, identifier)
+	if err != nil {
+		return fmt.Errorf("list keys delegated from %s: %w", keyID, err)
+	}
+	doomed := map[string]bool{keyID: true}
+	for grew := true; grew; {
+		grew = false
+		for _, o := range owned {
+			if !doomed[o.rec.KeyID] && doomed[o.rec.ParentKeyID] {
+				doomed[o.rec.KeyID] = true
+				grew = true
+			}
+		}
+	}
+	for _, o := range owned {
+		if o.rec.KeyID == keyID || !doomed[o.rec.KeyID] {
+			continue
+		}
+		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeRecord deletes one record and its index entries.
+func (s *RedisAPIKeyStore) removeRecord(ctx context.Context, hash, keyID, identifier string) error {
 	recordKey := cachekeys.APIKey(hash).String()
-	err = removeIndexedRecordScript.Run(ctx, s.rdb,
+	err := removeIndexedRecordScript.Run(ctx, s.rdb,
 		[]string{cachekeys.APIKeyIndex().String(), recordKey},
 		hash, keyID, identifier, "1").Err()
 	if isRedisNoPerm(err) {
@@ -417,7 +456,7 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 		err = s.rdb.Del(ctx, recordKey).Err()
 	}
 	if err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: redis del %s: %w", recordKey, err)
+		return fmt.Errorf("redis del %s: %w", recordKey, err)
 	}
 	return nil
 }

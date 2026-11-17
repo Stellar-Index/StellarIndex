@@ -55,9 +55,12 @@ type CreateAPIKeyRequest struct {
 	// EmailVerifiedAt zero means the owner never proved their signup email. Rotation copies the parent's stamp: verification belongs to the identifier's owner, and no path verifies a non-signup KeyID later.
 	EmailVerifiedAt time.Time
 
-	// MintedBy is the authenticated credential issuing this key. When
-	// set, Create refuses a request exceeding it ([ClampToMinter]). Nil
-	// only for mints with no HTTP subject: signup and the operator CLI.
+	// Restrictions is the key's IP/Referer/permission policy; nil means full access with no allowlist.
+	Restrictions *KeyRestrictions
+
+	// MintedBy is the authenticated credential issuing this key. When set, Create refuses a record
+	// exceeding it in any field ([ClampToMinter], checkWithinMinter). Nil only for mints with no
+	// HTTP subject: signup and the operator CLI.
 	MintedBy *Subject
 
 	// ParentKeyID is the KeyID of the credential that delegated this key to itself; empty for every other mint.
@@ -126,9 +129,10 @@ func clampMonthlyQuotaToMinter(minter Subject, requested, resolved int64) (int64
 	return minter.MonthlyQuota, nil
 }
 
-// ChildKeyRequest builds the mint request for a key parent delegates to itself, the one place every delegated dimension is copied; the store re-checks scopes via MintedBy (ClampToMinter).
+// ChildKeyRequest builds the mint request for a key parent delegates to itself, the one place every delegated dimension is copied; the store re-checks the whole record against MintedBy.
 func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
 	return CreateAPIKeyRequest{
+		Restrictions:    restrictionsOf(parent),
 		MintedBy:        &parent,
 		ParentKeyID:     parent.KeyID,
 		Identifier:      parent.Identifier,
@@ -282,9 +286,14 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		CreatedAt:       s.now().UTC(),
 		ExpiresAt:       req.ExpiresAt,
 		EmailVerifiedAt: req.EmailVerifiedAt,
-		// Operator-minted keys are full-access by default (Permissions.All=true): with no allow entries and PermissionsAll=false the permission middleware's closed posture 403s every request from the new key.
-		// Per-endpoint restriction stays a dashboard feature.
+		// Unrestricted mints are full-access (Permissions.All=true): with no allow entries and PermissionsAll=false the permission middleware's closed posture 403s every request from the new key.
 		PermissionsAll: true,
+	}
+	req.Restrictions.applyTo(&rec)
+	if req.MintedBy != nil {
+		if err := checkWithinMinter(*req.MintedBy, rec); err != nil {
+			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+		}
 	}
 	body, err := json.Marshal(rec)
 	if err != nil {

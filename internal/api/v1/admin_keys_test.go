@@ -83,6 +83,8 @@ func operatorSubject() auth.Subject {
 		Identifier: "operator:staff-1",
 		Tier:       auth.TierOperator,
 		KeyID:      "kid_operator1",
+		// As the validators surface a full-access key; a closed-posture minter may mint nothing.
+		AllowAllPermissions: true,
 	}
 }
 
