@@ -50,7 +50,8 @@ func TestFillMarketCapsFromSupply_ExpiredBroadMapFlagsStale(t *testing.T) {
 	}
 }
 
-// cachedClassicSupply's callers carry no read report, so it stays silent even for an expired entry.
+// cachedClassicSupply never reports, even for an expired entry: its only caller is the background prewarm, which serves
+// nothing. Request paths use classicSupplyMap.
 func TestCachedClassicSupply_ExpiredEntryDoesNotReport(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "")
 	s.Explorer = failingClassicExplorer{}

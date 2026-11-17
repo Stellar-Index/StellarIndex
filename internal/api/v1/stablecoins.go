@@ -159,7 +159,8 @@ func (s *Server) stablecoinFillAliasSupply(ctx context.Context, rows map[string]
 		return false
 	}
 	precise, supplyUnread := s.latestPreciseSupply(ctx)
-	broad := s.cachedClassicSupply(ctx)
+	broad, broadUnread := s.classicSupplyMap(ctx)
+	supplyUnread = supplyUnread || broadUnread
 	lake := s.classicLakeSupply(ctx, missing)
 	for key, d := range rows {
 		if d.CirculatingSupply != nil {
@@ -314,7 +315,8 @@ func (s *Server) handleStablecoins(w http.ResponseWriter, r *http.Request) {
 	if !middleware.ChargeRateLimit(w, r, rwaAssetsCost(rm)) {
 		return
 	}
-	rows, join, err := s.rwaListingRows(r.Context(), rm)
+	ctx, reads := withReadReport(r.Context())
+	rows, join, err := s.rwaListingRows(ctx, rm)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -324,7 +326,8 @@ func (s *Server) handleStablecoins(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	join.unanswered = s.stablecoinFillAliasSupply(r.Context(), rows) || join.unanswered
+	join.unanswered = s.stablecoinFillAliasSupply(ctx, rows) || join.unanswered
+	join.unanswered = join.unanswered || reads.unread.Load() || reads.stale.Load()
 
 	for _, m := range members {
 		d, ok := rows[rwaKey(m.code, m.issuer)]

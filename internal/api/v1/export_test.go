@@ -15,6 +15,17 @@ func (s *Server) SetStreamTimingForTest(second, divergenceBudget time.Duration) 
 	s.streamSecondFor, s.tipDivergenceBudgetFor = second, divergenceBudget
 }
 
+// ClassicSupplyTTL is the production broad classic supply map TTL.
+const ClassicSupplyTTL = classicSupplyTTL
+
+// SeedClassicSupplyForTest installs m as the broad classic supply map, filled age ago, with the refresh retry gap just
+// started so no refresh can replace it.
+func (s *Server) SeedClassicSupplyForTest(m map[string]string, age time.Duration) {
+	s.classicSupplyMu.Lock()
+	defer s.classicSupplyMu.Unlock()
+	s.classicSupplyCache, s.classicSupplyAt, s.classicSupplyAttemptAt = m, time.Now().Add(-age), time.Now()
+}
+
 // AgeLivezLakeCacheForTest moves the cached lake-ping round d into the
 // past, as if d had elapsed since it ran.
 func (s *Server) AgeLivezLakeCacheForTest(d time.Duration) {
