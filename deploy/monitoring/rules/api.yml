@@ -780,6 +780,44 @@ groups:
             account and credential; contact the owner and have them remove
             that passkey.
 
+      # Passkeys added across accounts in a burst look like hijacked
+      # sessions made durable; the per-user notice does not help when the
+      # attacker controls the mailbox or hits many accounts. The counters
+      # are pre-seeded, so increase() sees the first event.
+      - alert: stellarindex_passkey_credential_added_burst
+        expr: sum(increase(stellarindex_passkey_credential_changes_total{change="added"}[1h])) > 10
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_passkey_credential_added_burst
+          summary: "{{ $value | humanize }} passkeys added in the last hour"
+          description: |
+            More than 10 passkeys were added to dashboard accounts within
+            an hour. Normal enrolment is a trickle; a burst across
+            accounts is what stolen sessions made durable look like.
+            Review the `passkey.register` audit_log rows for shared client
+            addresses or user agents.
+
+      # A finish-login ceremony was replayed: a captured assertion was
+      # presented a second time. Refused, but only an attacker produces it.
+      - alert: stellarindex_passkey_ceremony_replay
+        expr: sum(increase(stellarindex_passkey_login_refusals_total{reason="ceremony_replay"}[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_passkey_ceremony_replay
+          summary: "{{ $value | humanize }} passkey sign-in(s) refused as a replayed ceremony"
+          description: |
+            A passkey sign-in finish call replayed an already-consumed
+            ceremony. The sign-in was refused. A replay means a captured
+            request was resent; check the API log for the client address.
+
       # The failed-auth throttle caps each client IP and API-key prefix at
       # failed_auth_rate_limit_per_min (20/min), so guessing spread over many
       # of both never 429s; this fleet-wide rate is where API-key guessing shows.
@@ -874,16 +912,13 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
 
       # POST /v1/register is unauthenticated and every call leaves a
-      # permanent accounts row and a live key. The reaper removes only
-      # userless sign-up orphans, so nothing bounds this table. The
-      # subquery drops the zero a restarted process reports before its
-      # first sweep. 500 in 6h is far above today's rate (single digits
-      # a month); revisit it when sign-ups are real traffic.
+      # permanent accounts row and a live key. Counts creations, not
+      # the table size: the reaper erases unused rows and a restart
+      # zeroes the gauge, either of which hides paced farming. 50 in 6h
+      # sits below the default hourly cap (60/h = 360/6h) and far above
+      # today's rate (single digits a month).
       - alert: stellarindex_registration_table_growing
-        expr: |
-          max(stellarindex_accounts_rows)
-            - min(min_over_time((stellarindex_accounts_rows > 0)[6h:5m]))
-            > 500
+        expr: sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50
         for: 30m
         labels:
           severity: ticket
@@ -891,10 +926,10 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
-          summary: "accounts grew by {{ $value | humanize }} rows in 6 hours"
+          summary: "{{ $value | humanize }} registrations in 6 hours"
           description: |
-            `accounts` gained more than 500 rows in six hours. Each row
-            from POST /v1/register is permanent and carries a live
+            POST /v1/register created more than 50 accounts in six hours.
+            Each one is permanent and carries a live
             free-tier key with its own quota, so sustained growth
             outside expected sign-ups is abuse of the open registration
             path, not a table that cleans itself up.
@@ -904,8 +939,8 @@ groups:
       # (api.register_max_per_hour) is the bound the per-IP throttle
       # cannot give against rotating addresses. Reaching it means either
       # a wave, or real sign-ups being turned away; both need a person.
-      # With the default cap of 60 the table-growth rule above cannot
-      # reach its 500, so this is the wave's signal.
+      # This is the burst signal; the growth rule above catches farming
+      # paced under the cap.
       - alert: stellarindex_registration_budget_exhausted
         expr: sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0
         for: 0m

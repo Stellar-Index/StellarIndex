@@ -1299,3 +1299,48 @@ tests:
                 sponsorship_events (or the table is missing), so the
                 explorer cannot prove that index complete and every read
                 gated on it serves its slow or lower-bound fallback.
+
+  # ── passkey hijack signals ──────────────────────────────────────
+  - interval: 1m
+    name: a burst of passkeys added and a replayed ceremony each ticket
+    input_series:
+      - series: 'stellarindex_passkey_credential_changes_total{job="stellarindex_api",change="added"}'
+        values: '0+1x200'
+      - series: 'stellarindex_passkey_credential_changes_total{job="stellarindex_api",change="removed"}'
+        values: '0+0x200'
+      - series: 'stellarindex_passkey_login_refusals_total{job="stellarindex_api",reason="ceremony_replay"}'
+        values: '0x30 1+0x200'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: stellarindex_passkey_credential_added_burst
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_passkey_credential_added_burst
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_passkey_credential_added_burst
+              summary: "60 passkeys added in the last hour"
+              description: |
+                More than 10 passkeys were added to dashboard accounts within
+                an hour. Normal enrolment is a trickle; a burst across
+                accounts is what stolen sessions made durable look like.
+                Review the `passkey.register` audit_log rows for shared client
+                addresses or user agents.
+      - eval_time: 40m
+        alertname: stellarindex_passkey_ceremony_replay
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_passkey_ceremony_replay
+              summary: "1 passkey sign-in(s) refused as a replayed ceremony"
+              description: |
+                A passkey sign-in finish call replayed an already-consumed
+                ceremony. The sign-in was refused. A replay means a captured
+                request was resent; check the API log for the client address.

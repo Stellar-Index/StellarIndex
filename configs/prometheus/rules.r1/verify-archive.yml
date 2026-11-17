@@ -75,11 +75,9 @@ groups:
       # gauge perfectly fresh, and this page would be defeated by exactly
       # the scenario it exists for.
       #
-      # The `> 0` guard is retained deliberately: a host that has never
-      # completed a run emits an explicit 0, and 0 would otherwise read
-      # as "stale since 1970" on first install. That keeps
-      # a fresh host quiet; making a never-verified host page is
-      # a separate operator decision.
+      # No `> 0` guard: the writer emits an explicit 0 for a run that
+      # failed with no earlier success, and that must read as stale
+      # (absent_over_time below covers "never ran").
       #
       # absent_over_time branch (OBS-2 pattern; same shape as
       # stellarindex_api_price_stale in api.yml and
@@ -97,9 +95,9 @@ groups:
           (
             time()
             -
-            (stellarindex_verify_archive_last_success_unix{
+            stellarindex_verify_archive_last_success_unix{
               tier="chain"
-            } > 0)
+            }
           ) > (36 * 3600)
           or
           absent_over_time(stellarindex_verify_archive_last_success_unix{tier="chain"}[36h]) == 1
@@ -172,9 +170,9 @@ groups:
           (
             time()
             -
-            (stellarindex_verify_archive_last_success_unix{
+            stellarindex_verify_archive_last_success_unix{
               tier="checkpoint"
-            } > 0)
+            }
           ) > (36 * 3600)
           or
           absent_over_time(stellarindex_verify_archive_last_success_unix{tier="checkpoint"}[36h]) == 1
@@ -213,9 +211,9 @@ groups:
           (
             time()
             -
-            (stellarindex_verify_archive_last_success_unix{
+            stellarindex_verify_archive_last_success_unix{
               tier="peers"
-            } > 0)
+            }
           ) > (8 * 24 * 3600)
           or
           absent_over_time(stellarindex_verify_archive_last_success_unix{tier="peers"}[8d])

@@ -14,7 +14,7 @@
 # signal, and what is indistinguishable from health on the timer gauge.
 #
 # Both rules select `stellarindex_verify_archive_last_success_unix
-# {tier=...} > 0`, so a host that has NEVER written the textfile at all
+# {tier=...}`, so a host that has NEVER written the textfile at all
 # (node_exporter down, the collector directory misconfigured, the unit
 # never scheduled) leaves the series absent — not old. `time() - x` over
 # an empty vector is itself empty, so the bare comparison can never fire,
@@ -137,3 +137,29 @@ tests:
             - is the /srv/history-archive mirror synced to the checked range?
 
           Runbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed
+
+# ── Textfile present but last_success is 0 (ran, never succeeded) ──
+# The writer reports 0 for a run that failed with no prior success, so
+# the staleness arm must read it as maximally stale rather than drop it.
+# PROVEN-RED: re-adding `> 0` to the run_stale selector makes this case
+# report 0 firing alerts (FAIL).
+- interval: 1m
+  name: chain tier whose every run failed since the textfile was created pages
+  input_series:
+  - series: stellarindex_verify_archive_last_success_unix{job="node",instance="r1:9100",tier="chain"}
+    values: 0x3000
+  alert_rule_test:
+  - eval_time: 40h
+    alertname: stellarindex_verify_archive_run_stale
+    exp_alerts:
+    - exp_labels:
+        job: node
+        instance: r1:9100
+        tier: chain
+        severity: page
+        team: stellarindex
+        component: archive
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_run_stale
+        summary: (R1 integrity-leader) verify-archive Tier A hasn't run cleanly in 1d 16h 0m 0s
+        description: "R1 is the integrity leader per ADR-0016 — its nightly chain-link\nverification is what R2/R3 trust. 36h without a clean run means\neither the timer isn't enabled or every recent attempt failed.\nEscalate immediately; the cross-region trust property degrades\nwith each missed cycle. Diagnosis:\n  - `systemctl status verify-archive-tier-a.timer` — is it active?\n  - `journalctl -u verify-archive-tier-a.service` — what's failing?\n  - check `archive_files_missing` — a gap upstream blocks verify.\n"

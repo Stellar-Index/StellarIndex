@@ -479,6 +479,34 @@ groups:
             restart the creation event is behind the cursor, the contract
             is no longer gated in, and its events are dropped as foreign.
 
+      # The gauge above vanishes with the process, so a restart that loses
+      # the admission also clears that alert. The failure counter outlives
+      # the gauge's resolution inside the 2h window, and its first sample
+      # (a series born at 1) needs the second arm. Ticket-level: a failure
+      # the retry later landed also tickets, and that is acceptable noise.
+      - alert: stellarindex_gate_admission_persist_failed
+        expr: |
+          sum by (source) (increase(stellarindex_gate_admission_persist_failures_total[2h])) > 0
+          or sum by (source) (
+            stellarindex_gate_admission_persist_failures_total
+            unless max_over_time(stellarindex_gate_admission_persist_failures_total[2h] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 10800)
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_gate_admission_persist_failed
+          summary: "Gate admission write for {{ $labels.source }} failed in the last 2h"
+          description: |
+            A factory child's gate admission failed to write for
+            {{ $labels.source }}. If the indexer restarted since, the
+            admission may be lost and the contract's events are dropped as
+            foreign. Check the journal for `gate admission LOST at
+            shutdown`, then re-walk the factory with
+            `stellarindex-ops seed-protocol-contracts`.
+
       # Recorder.Record failures in the async sink; without this a recorder outage
       # silently stops discovered_assets growing. Informational posture as
       # discovery_drops (the contract re-appears on a later event).

@@ -71,20 +71,21 @@ tests:
                 client IP of each lockout.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
 
-  # ── registration growth, and a restart that is not growth ────────
+  # ── registration farming paced under the hourly cap ──────────────
+  # 59 an hour is one below the default register_max_per_hour (60): the
+  # budget alert never trips, so the growth alert must.
   - interval: 5m
-    name: 600 new accounts in six hours ticket; a restart's zero does not
+    name: 59 registrations an hour for six hours ticket; two a day do not
     input_series:
-      # 100k rows, a restart reporting 0 for two samples, then growth.
-      - series: 'stellarindex_accounts_rows{job="stellarindex_api"}'
-        values: '100000+0x60 0 0 100000+0x40 100000+10x80'
-      - series: 'stellarindex_accounts_rows{job="stellarindex_aggregator"}'
+      - series: 'stellarindex_registrations_total{job="stellarindex_api",outcome="created"}'
+        values: '0+5x200'
+      - series: 'stellarindex_registrations_total{job="stellarindex_aggregator",outcome="created"}'
         values: '0+0x200'
     alert_rule_test:
-      - eval_time: 6h
+      - eval_time: 1h
         alertname: stellarindex_registration_table_growing
         exp_alerts: []
-      - eval_time: 14h
+      - eval_time: 8h
         alertname: stellarindex_registration_table_growing
         exp_alerts:
           - exp_labels:
@@ -93,14 +94,23 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
-              summary: "accounts grew by 640 rows in 6 hours"
+              summary: "360 registrations in 6 hours"
               description: |
-                `accounts` gained more than 500 rows in six hours. Each row
-                from POST /v1/register is permanent and carries a live
+                POST /v1/register created more than 50 accounts in six hours.
+                Each one is permanent and carries a live
                 free-tier key with its own quota, so sustained growth
                 outside expected sign-ups is abuse of the open registration
                 path, not a table that cleans itself up.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
+  - interval: 5m
+    name: a trickle of registrations stays quiet
+    input_series:
+      - series: 'stellarindex_registrations_total{job="stellarindex_api",outcome="created"}'
+        values: '0+0x100 1+0x100'
+    alert_rule_test:
+      - eval_time: 12h
+        alertname: stellarindex_registration_table_growing
+        exp_alerts: []
 
   # ── the hourly registration cap is spent ─────────────────────────
   - interval: 1m
