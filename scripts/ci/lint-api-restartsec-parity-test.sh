@@ -55,6 +55,20 @@ fi
 
 expect_no_diverged 'authority gate reports no undeclared RestartSec divergence for stellarindex-api.service'
 
+# Without the backoff a fixed-delay restart loop exhausts StartLimitBurst ~10
+# min into a Postgres outage and the daemon stays down after Postgres returns.
+for unit in stellarindex-api stellarindex-aggregator; do
+  for f in "deploy/systemd/$unit.service" "configs/ansible/roles/archival-node/templates/systemd/$unit.service.j2"; do
+    if grep -q '^RestartSteps=[1-9]' "$f" && grep -q '^RestartMaxDelaySec=2min$' "$f"; then
+      echo "ok: $f backs restarts off to 2min"
+      pass=$((pass + 1))
+    else
+      echo "FAIL: $f lacks RestartSteps= / RestartMaxDelaySec=2min — a long dependency outage parks it in failed" >&2
+      fail=$((fail + 1))
+    fi
+  done
+done
+
 echo
 echo "lint-api-restartsec-parity-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
