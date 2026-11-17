@@ -1676,7 +1676,7 @@ func rwaReferenceProvenances(assets []RWAAsset) []string {
 }
 
 // rwaSummariseReference builds the reference-basis aggregate.
-func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
+func rwaSummariseReference(assets []RWAAsset, trunc rwaTruncation) RWAReferenceSummary {
 	total, valued := rwaSumReferenceValues(assets)
 	provenances := rwaReferenceProvenances(assets)
 	return RWAReferenceSummary{
@@ -1684,10 +1684,10 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 		ValueUSD:       total,
 		AssetsValued:   valued,
 		AssetsUnvalued: len(assets) - valued,
-		LowerBound: len(assets)-valued > 0 ||
+		LowerBound: len(assets)-valued > 0 || trunc.any() ||
 			rwaSumsAFloor(assets, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }),
 		Sources: rwaReferenceSources(assets),
-		Basis:   rwaReferenceBasis(len(assets), valued, provenances),
+		Basis:   rwaReferenceBasis(len(assets), valued, provenances, trunc),
 	}
 }
 
@@ -1747,24 +1747,38 @@ var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 
 // rwaReferenceBasis states what the reference total measured and what it is not: unlike
 // `market_cap_usd`, it is an uncorroborated assertion about the backing, not a gated observation.
-func rwaReferenceBasis(total, valued int, provenances []string) string {
+func rwaReferenceBasis(total, valued int, provenances []string, trunc rwaTruncation) string {
 	var b strings.Builder
 	b.WriteString("Sum of each member's circulating supply times an independent published price for it. ")
 	b.WriteString("THIS IS NOT A MARKET CAPITALISATION: no row in it passed the substance, dust-liquidity and scam-issuer gates that stand behind market_cap_usd, and an asset that has never traded carries this figure at full size. ")
 	b.WriteString(rwaReferenceProvenanceProse(provenances))
 	b.WriteString("Published beside market_cap_usd and never added to it: the two are different bases over different rows, and market_cap_usd is exactly what it was before this figure existed. ")
 	b.WriteString("Every contributing row names the kind of claim, the publisher, the key, the denominator and the vintage behind its number in `reference`, and the funnel's `valuation` arm counts every row that carries no figure under the reason that refused it. ")
+	if total > 0 && valued == 0 {
+		b.WriteString("No member currently carries a reference valuation, so no total is published rather than a zero.")
+	} else {
+		rwaWriteCompleteness(&b, total, valued, trunc, "carries a reference valuation",
+			"Assets with no bound and current oracle feed, or no circulating-supply reading, contribute nothing and are counted separately, so the total is a LOWER BOUND on the reference-priced value of the set.")
+	}
+	rwaWriteTruncation(&b, trunc)
+	return b.String()
+}
+
+// rwaWriteCompleteness states whether every row carries the basis's figure. A set a cap or an unanswered read cut short
+// is never described as the whole set; [rwaWriteTruncation] then names what was left out.
+func rwaWriteCompleteness(b *strings.Builder, total, valued int, trunc rwaTruncation, figure, partial string) {
 	switch {
+	case total == 0 && trunc.any():
+		b.WriteString("No asset could be served.")
 	case total == 0:
 		b.WriteString("No asset currently meets the definition.")
-	case valued == 0:
-		b.WriteString("No member currently carries a reference valuation, so no total is published rather than a zero.")
+	case valued == total && trunc.any():
+		b.WriteString("Every served asset " + figure + ".")
 	case valued == total:
-		b.WriteString("Every asset in the set carries a reference valuation.")
+		b.WriteString("Every asset in the set " + figure + ".")
 	default:
-		b.WriteString("Assets with no bound and current oracle feed, or no circulating-supply reading, contribute nothing and are counted separately, so the total is a LOWER BOUND on the reference-priced value of the set.")
+		b.WriteString(partial)
 	}
-	return b.String()
 }
 
 // rwaIssuerCount is the single definition of "how many issuers" for the RWA set, shared by /v1/rwa/assets, /v1/rwa/history and
@@ -1799,8 +1813,7 @@ func rwaSummarise(assets []RWAAsset, trunc rwaTruncation) RWASummary {
 		}
 	}
 	referenced, compared := rwaReferenceCounts(assets)
-	ref := rwaSummariseReference(assets)
-	ref.LowerBound = ref.LowerBound || trunc.any()
+	ref := rwaSummariseReference(assets, trunc)
 	return RWASummary{
 		Assets:         len(assets),
 		Issuers:        rwaAssetIssuerCount(assets),
@@ -1826,16 +1839,8 @@ func rwaBasis(total, valued, compared int, trunc rwaTruncation) string {
 	b.WriteString("Sum of the published market caps of the assets meeting the four-requirement definition. ")
 	b.WriteString("Market cap is circulating supply times the served USD price, both as /v1/assets serves them, ")
 	b.WriteString("under the same substance, dust-liquidity and scam-issuer gates. ")
-	switch {
-	case total == 0:
-		b.WriteString("No asset currently meets the definition.")
-	case valued == total && trunc.any():
-		b.WriteString("Every served asset publishes a valuation.")
-	case valued == total:
-		b.WriteString("Every asset in the set publishes a valuation.")
-	default:
-		b.WriteString("Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set.")
-	}
+	rwaWriteCompleteness(&b, total, valued, trunc, "publishes a valuation",
+		"Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set.")
 	if compared > 0 {
 		// The comparison rests on the issuer's own declaration that the token anchors to the
 		// instrument; say so beside the figure so a percentage implies no unestablished certainty.

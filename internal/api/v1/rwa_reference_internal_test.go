@@ -624,7 +624,7 @@ func TestRWASummaryProvenance_NamesProspectusCNAV(t *testing.T) {
 		t.Fatalf("fixture did not produce a valued CNAV row: ref=%+v val=%+v", a.Reference, a.ReferenceValuation)
 	}
 
-	s := rwaSummariseReference([]RWAAsset{a})
+	s := rwaSummariseReference([]RWAAsset{a}, rwaTruncation{})
 	if strings.Join(s.Provenances, ",") != RWAReferenceProspectusCNAV {
 		t.Fatalf("provenances = %v, want [%s]", s.Provenances, RWAReferenceProspectusCNAV)
 	}
@@ -818,5 +818,36 @@ func TestRWASummarise_EveryCapMakesALowerBound(t *testing.T) {
 	}
 	if !strings.Contains(sum.Basis, "Every asset in the set publishes a valuation") {
 		t.Errorf("untruncated basis = %q", sum.Basis)
+	}
+}
+
+// TestRWASummary_ATruncatedSetIsNotCalledCompleteByEitherBasis: when a cap or an unanswered read left members out, both
+// lower-bounded totals name the exclusion, and neither claims the whole set or an empty definition.
+func TestRWASummary_ATruncatedSetIsNotCalledCompleteByEitherBasis(t *testing.T) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	supply := "566742721191613"
+	a := RWAAsset{
+		AssetID: "gBENJI-GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", Code: "gBENJI",
+		Issuer: "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", CirculatingSupply: &supply, Decimals: intPtr(7),
+	}
+	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
+	rwaApplyReference(&a, snap, nil, map[string]timescale.ListingEntry{}, now)
+	if a.ReferenceValuation.ValueUSD == nil {
+		t.Fatalf("fixture did not produce a valued row: %+v", a.ReferenceValuation)
+	}
+	trunc := rwaTruncation{unread: 3}
+	for name, assets := range map[string][]RWAAsset{"every served row valued": {a}, "nothing served": nil} {
+		s := rwaSummarise(assets, trunc)
+		for basis, text := range map[string]string{"summary": s.Basis, "reference_valuation": s.ReferenceValuation.Basis} {
+			if strings.Contains(text, "Every asset in the set") || strings.Contains(text, "No asset currently meets the definition") {
+				t.Errorf("%s, %s basis claims completeness:\n%s", name, basis, text)
+			}
+			if !strings.Contains(text, "3 contract candidate(s) went unevaluated") {
+				t.Errorf("%s, %s basis does not name the exclusion:\n%s", name, basis, text)
+			}
+		}
+		if !s.ReferenceValuation.LowerBound {
+			t.Errorf("%s: reference_valuation.lower_bound = false", name)
+		}
 	}
 }
