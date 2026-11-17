@@ -1166,6 +1166,47 @@ public_allow_ports_base:
 public_allow_ports_primary_core:
   - { port: 11625, proto: "tcp", comment: "stellar-core SCP peer (Phase 3 validator)" }
 
+# Cloudflare's published edge ranges (https://www.cloudflare.com/ips-v4 +
+# ips-v6). The one copy the role renders: Caddy's trusted_proxies and the
+# nftables origin lock below both read it, so a refresh updates both.
+cloudflare_ip_ranges:
+  - "173.245.48.0/20"
+  - "103.21.244.0/22"
+  - "103.22.200.0/22"
+  - "103.31.4.0/22"
+  - "141.101.64.0/18"
+  - "108.162.192.0/18"
+  - "190.93.240.0/20"
+  - "188.114.96.0/20"
+  - "197.234.240.0/22"
+  - "198.41.128.0/17"
+  - "162.158.0.0/15"
+  - "104.16.0.0/13"
+  - "104.24.0.0/14"
+  - "172.64.0.0/13"
+  - "131.0.72.0/22"
+  - "2400:cb00::/32"
+  - "2606:4700::/32"
+  - "2803:f800::/32"
+  - "2405:b500::/32"
+  - "2405:8100::/32"
+  - "2a06:98c0::/29"
+  - "2c0f:f248::/32"
+
+# Origin lock: when true, http_origin_lock_ports accept only from
+# cloudflare_ip_ranges, internal_cidrs and http_origin_lock_extra_cidrs, so
+# a direct-to-IP client cannot skip the Cloudflare WAF/edge limits. Off by
+# default because it is only safe once the API hostname is orange-clouded
+# AND certificates no longer need Let's Encrypt HTTP-01/TLS-ALPN-01 from
+# non-Cloudflare validators (switch to DNS-01 or a Cloudflare Origin Cert
+# first); otherwise it firewalls off the API or stalls renewal. SSH and the
+# SCP peer port are never affected.
+http_origin_lock_enabled: false
+http_origin_lock_ports: [80, 443]
+# Extra sources (operator, external monitoring) allowed straight to the
+# origin while the lock is on. v4 and v6 CIDRs both accepted.
+http_origin_lock_extra_cidrs: []
+
 # No default on purpose: SSH is the one port on this box that grants
 # root, and a `0.0.0.0/0` default would give the whole internet to any
 # inventory that simply never mentioned allowed_ssh_cidrs — silently, by
