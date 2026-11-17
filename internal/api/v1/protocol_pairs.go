@@ -40,22 +40,44 @@ func (r *tokenSymbolResolver) symbol(contractC string) string {
 // resolve is the uncached resolution: SAC → canonical asset → ticker, else a
 // truncated contract fallback.
 func (r *tokenSymbolResolver) resolve(contractC string) string {
-	if id, ok := r.s.resolveSACAsset(contractC); ok {
-		if id == "native" {
-			return "XLM"
-		}
-		if r.s.VerifiedCurrencies != nil {
-			if vc, ok := r.s.VerifiedCurrencies.LookupByStellarAssetID(id); ok && vc.Ticker != "" {
-				return vc.Ticker
-			}
-		}
-		// Known SAC but not a catalogued currency — fall back to the classic
-		// asset CODE (CODE-ISSUER → CODE) rather than the raw contract.
-		if code, _, cut := strings.Cut(id, "-"); cut && code != "" {
-			return code
-		}
+	if sym, ok := r.lookup(contractC); ok {
+		return sym
 	}
 	return truncContract(contractC)
+}
+
+// lookup is resolve without the truncated fallback: ok=false when the contract is not a known SAC with a ticker or code.
+func (r *tokenSymbolResolver) lookup(contractC string) (string, bool) {
+	id, ok := r.s.resolveSACAsset(contractC)
+	if !ok {
+		return "", false
+	}
+	return r.s.assetIDTicker(id)
+}
+
+// assetIDTicker labels a canonical asset id ("native", "CODE-ISSUER"): XLM, the catalogue ticker, else the classic code.
+func (s *Server) assetIDTicker(id string) (string, bool) {
+	if sym, ok := s.verifiedTicker(id); ok {
+		return sym, true
+	}
+	// Known but not a catalogued currency: the classic CODE rather than the raw id.
+	if code, _, cut := strings.Cut(id, "-"); cut && code != "" {
+		return code, true
+	}
+	return "", false
+}
+
+// verifiedTicker is XLM for "native" or the verified catalogue's ticker; ok=false for any other asset, whose bare code proves nothing.
+func (s *Server) verifiedTicker(id string) (string, bool) {
+	if id == "native" {
+		return "XLM", true
+	}
+	if s.VerifiedCurrencies != nil {
+		if vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(id); ok && vc.Ticker != "" {
+			return vc.Ticker, true
+		}
+	}
+	return "", false
 }
 
 // truncContract is the fallback label for an unresolvable token: first 4 + last 4 ("CAS3...OWMA"); short or empty input passes through.

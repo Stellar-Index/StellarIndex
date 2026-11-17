@@ -228,12 +228,12 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 		for _, p := range s.Points {
 			pts = append(pts, BespokeSeriesPt{Date: p.Date, Value: p.Value})
 		}
-		out.Series = append(out.Series, BespokeSeries{Name: s.Name, Unit: s.Unit, Points: pts})
+		out.Series = append(out.Series, BespokeSeries{Name: s.Name, Unit: s.Unit, Points: pts, ID: s.ID, Kind: s.Kind})
 	}
 	for _, bd := range b.Breakdowns {
 		rows := make([]BespokeBreakdownRow, 0, len(bd.Rows))
 		for _, r := range bd.Rows {
-			rows = append(rows, BespokeBreakdownRow{Label: r.Label, Value: r.Value, Count: r.Count})
+			rows = append(rows, BespokeBreakdownRow{Label: r.Label, Value: r.Value, Count: r.Count, ID: r.ID, Kind: r.Kind})
 		}
 		out.Breakdowns = append(out.Breakdowns, BespokeBreakdown{Title: bd.Title, Unit: bd.Unit, Rows: rows})
 	}
@@ -243,7 +243,11 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 			// An empty table serves `rows: []`, never null — the spec types rows as an array.
 			rows = [][]string{}
 		}
-		out.Tables = append(out.Tables, BespokeTable{Title: t.Title, Columns: t.Columns, Rows: rows})
+		var kinds []BespokeColumnKind
+		for _, k := range t.ColumnKinds {
+			kinds = append(kinds, BespokeColumnKind{Kind: k.Kind, AssetColumn: k.AssetColumn, Decimals: k.Decimals, poolTokenColumns: k.PoolTokenColumns})
+		}
+		out.Tables = append(out.Tables, BespokeTable{Title: t.Title, Columns: t.Columns, Rows: rows, ColumnKinds: kinds})
 	}
 	return out
 }
@@ -408,6 +412,10 @@ type BespokeSeries struct {
 	Name   string            `json:"name"`
 	Unit   string            `json:"unit,omitempty"`
 	Points []BespokeSeriesPt `json:"points"`
+	// ID, Kind and Display name the entity a series is about; Display is absent when the id did not resolve.
+	ID      string `json:"id,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Display string `json:"display,omitempty"`
 }
 
 // BespokeSeriesPt is one (date, value) point; Value is a numeric STRING (ADR-0003).
@@ -428,6 +436,10 @@ type BespokeBreakdownRow struct {
 	Label string `json:"label"`
 	Value string `json:"value"`
 	Count int64  `json:"count"`
+	// ID, Kind and Display name the entity a slice is about; Display is absent when the id did not resolve.
+	ID      string `json:"id,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Display string `json:"display,omitempty"`
 }
 
 // BespokeTable is a named top-N table of columns and server-formatted string rows.
@@ -435,6 +447,20 @@ type BespokeTable struct {
 	Title   string     `json:"title"`
 	Columns []string   `json:"columns"`
 	Rows    [][]string `json:"rows"`
+	// ColumnKinds types each column, parallel to Columns; absent for an untyped table.
+	ColumnKinds []BespokeColumnKind `json:"column_kinds,omitempty"`
+	// Display is parallel to Rows: a resolved name or human-unit amount per cell, "" where nothing resolved (an unscaled amount stays
+	// base units).
+	Display [][]string `json:"display,omitempty"`
+}
+
+// BespokeColumnKind types a table column; an amount column scales by the asset in AssetColumn of the same row, or by fixed Decimals.
+type BespokeColumnKind struct {
+	Kind        string `json:"kind"`
+	AssetColumn *int   `json:"asset_column,omitempty"`
+	Decimals    *int   `json:"decimals,omitempty"`
+	// poolTokenColumns names a pool cell from these same-row asset columns when the pool registry has no token list for it.
+	poolTokenColumns []int
 }
 
 // ProtocolActivityPointView is one day of a protocol's event-activity series.
@@ -663,9 +689,10 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	attachProtocolTVL(&v.ProtocolView, tvls)
 	lakeOK := s.enrichProtocolAnalytics(ctx, meta, &v)
 	bespokeOK, bespokeStale, bespokeAt := s.enrichBespoke(ctx, meta, &v, windowDays)
+	namesOK := s.resolveBespoke(ctx, meta.Name, v.Bespoke)
 	status := protocolAnalyticsOK
 	switch {
-	case !rosterOK || !tokensOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
+	case !rosterOK || !tokensOK || !namesOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
 	case bespokeStale:
 		status = protocolAnalyticsStale

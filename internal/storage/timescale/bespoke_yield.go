@@ -15,6 +15,8 @@ package timescale
 import (
 	"context"
 	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // Window-stable series names (the grain lives in the point timestamps).
@@ -239,6 +241,9 @@ func (s *Store) yieldVaultBreakdown(ctx context.Context, blk *BespokeBlock, sinc
 		if err := rows.Scan(&row.Label, &row.Value, &row.Count); err != nil {
 			return fmt.Errorf("timescale: bespokeYield vault breakdown scan: %w", err)
 		}
+		if canonical.IsContractID(row.Label) { // a curated router name needs no resolving
+			row.ID, row.Kind = row.Label, BespokeKindVault
+		}
 		bd.Rows = append(bd.Rows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -255,7 +260,7 @@ func (s *Store) yieldVaultBreakdown(ctx context.Context, blk *BespokeBlock, sinc
 // amounts where truthful) and the long-standing per-strategy net-flow table.
 func (s *Store) yieldTables(ctx context.Context, blk *BespokeBlock, since string) error {
 	vaults, err := s.scanTable(ctx,
-		BespokeTable{Title: "Flows by vault", Columns: []string{"Vault", "Deposits", "Withdrawals", "Deposited (vault asset, base units)", "Withdrawn (vault asset, base units)"}},
+		defindexVaultFlowsHeader,
 		defindexVaultFlowsTableQuery(), since)
 	if err != nil {
 		return err
@@ -265,7 +270,7 @@ func (s *Store) yieldTables(ctx context.Context, blk *BespokeBlock, since string
 	}
 
 	strategies, err := s.scanTable(ctx,
-		BespokeTable{Title: "Net flow by strategy", Columns: []string{"Strategy", "Deposits", "Withdrawals", "Net flow", "Flows"}},
+		defindexStrategyHeader,
 		defindexStrategyTableQuery(), since)
 	if err != nil {
 		return err
@@ -274,4 +279,24 @@ func (s *Store) yieldTables(ctx context.Context, blk *BespokeBlock, since string
 		blk.Tables = append(blk.Tables, strategies)
 	}
 	return nil
+}
+
+// Typed table headers (title, columns, kinds): each builder copies one; bespoke_headers_test.go checks them all.
+var defindexVaultFlowsHeader = BespokeTable{
+	Title:   "Flows by vault",
+	Columns: []string{"Vault", "Deposits", "Withdrawals", "Deposited (vault asset, base units)", "Withdrawn (vault asset, base units)"},
+	// The amounts are in each vault's underlying asset, which this table does not carry, so they stay base units.
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindVault), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
+		BespokeCol(BespokeKindAmount), BespokeCol(BespokeKindAmount),
+	},
+}
+
+var defindexStrategyHeader = BespokeTable{
+	Title:   "Net flow by strategy",
+	Columns: []string{"Strategy", "Deposits", "Withdrawals", "Net flow", "Flows"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindContract), BespokeCol(BespokeKindAmount), BespokeCol(BespokeKindAmount),
+		BespokeCol(BespokeKindAmount), BespokeCol(BespokeKindCount),
+	},
 }
