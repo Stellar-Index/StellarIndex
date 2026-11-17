@@ -162,9 +162,9 @@ Immediately after a deploy a restart shows zero events briefly; every tier's sus
 
 ## stellarindex_ingestion_decode_error_ratio_high
 
-P3: per source, `increase(stellarindex_source_decode_errors_total[1h]) / increase(stellarindex_source_matched_events_total[1h]) > 0.005` with at least 10 failures in the hour, for 15 min. It catches what the rate alert below cannot: a decoder rejecting one shape of input on a busy source (SDEX claim atoms after a protocol upgrade) or everything on a quiet one. For `sdex`, `band` and `soroswap_router` no projector alert covers the loss, and the SDEX reconcile mirrors the same reject, so it reads zero.
+P3: per source, `increase(stellarindex_source_decode_errors_total[1h]) / increase(stellarindex_source_matched_events_total[1h]) > 0.005` with at least 10 failures in the hour, for 15 min. It catches what the rate alert below cannot: a decoder rejecting one shape of input on a busy source (SDEX claim atoms after a protocol upgrade) or everything on a quiet one. For `sdex`, `band` and `soroswap-router` no projector alert covers the loss, and the SDEX reconcile mirrors the same reject, so it reads zero.
 
-Check, causes and fix are those of [`stellarindex_ingestion_decode_error`](#stellarindex_ingestion_decode_error). After the decoder is fixed, re-drive the affected range: `ch-rebuild` (`-sdex`) for a source the dispatcher writes alone, `stellarindex-ops projector-replay -source <source>` for a projected one.
+Check, causes and fix are those of [`stellarindex_ingestion_decode_error`](#stellarindex_ingestion_decode_error). After the decoder is fixed, re-drive the affected range per the [replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <l> -to <l> -sdex -write` for `sdex`, `ch-rebuild ... -contract-calls -sources band` (or `soroswap-router`) `-write` for the two contract-call sources (dry run first; without `-contract-calls` the run re-derives neither), `stellarindex-ops projector-replay -source <source>` for a projected one.
 
 ## stellarindex_ingestion_decode_error
 
@@ -216,7 +216,7 @@ Fix (no runtime mitigation; dropped events cannot be un-dropped):
    stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -write
    ```
 
-   Non-projected sources (`sdex`, external CEX/FX, `band`, `soroswap-router`) use `stellarindex-ops backfill -write -config /etc/stellarindex.toml -from N -to N -source <name>`, which refuses any source not `BackfillSafe` in `internal/sources/external/registry.go`. On r1 a re-derive is a heavy one-shot: `/usr/local/sbin/run-heavy-job.sh`, one at a time.
+   Non-projected lake sources re-derive with `ch-rebuild` (`stellarindex-ops backfill` refuses projected sources and is not the replay path): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from N -to N -sdex -write` for `sdex`, `... -contract-calls -sources band|soroswap-router -write` for the contract-call sources. Run without `-write` first (dry run). External CEX/FX have no lake re-derive; ask first. On r1 a re-derive is a heavy one-shot: `/usr/local/sbin/run-heavy-job.sh`, one at a time.
 3. Regression: `git revert` the commit and deploy.
 4. Verify the rate is under 1/s within 5 min.
 
