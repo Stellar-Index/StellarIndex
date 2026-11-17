@@ -1,16 +1,20 @@
 package accounterasure
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
 type fakeLister struct {
@@ -113,5 +117,69 @@ func TestSweepAbandonedRegistrations_IncompleteCleanupFailsTheSweep(t *testing.T
 	}
 	if n != 1 || !st.erased {
 		t.Errorf("erased = %d, store erased = %v; want 1, true", n, st.erased)
+	}
+}
+
+// sweepStore serves one plan per account; RenameUsageSubjects fails for the slug last planned when renameErr names it.
+type sweepStore struct {
+	plans     map[uuid.UUID]postgresstore.ErasurePlan
+	planErr   map[uuid.UUID]error
+	renameErr map[string]error
+	current   string
+	erased    []uuid.UUID
+}
+
+func (s *sweepStore) PlanErasure(_ context.Context, id uuid.UUID) (postgresstore.ErasurePlan, error) {
+	if err := s.planErr[id]; err != nil {
+		return postgresstore.ErasurePlan{}, err
+	}
+	s.current = s.plans[id].Slug
+	return s.plans[id], nil
+}
+
+func (s *sweepStore) EraseAccount(_ context.Context, req postgresstore.ErasureRequest) (postgresstore.ErasureCounts, error) {
+	s.erased = append(s.erased, req.Plan.AccountID)
+	return postgresstore.ErasureCounts{}, nil
+}
+
+func (s *sweepStore) RenameUsageSubjects(context.Context, []string, string) (int64, error) {
+	return 0, s.renameErr[s.current]
+}
+
+func (s *sweepStore) SlugErased(context.Context, string) (bool, error) { return false, nil }
+
+// A hard error on a later account must not drop an earlier account's incomplete cleanup, and each
+// incomplete cleanup is logged with what an operator needs to finish it.
+func TestSweepAbandonedRegistrations_HardErrorKeepsIncomplete(t *testing.T) {
+	e, _, _, _ := newRig(t)
+	first, second, third := uuid.New(), uuid.New(), uuid.New()
+	st := &sweepStore{
+		plans: map[uuid.UUID]postgresstore.ErasurePlan{
+			first:  {AccountID: first, Slug: "first-slug"},
+			second: {AccountID: second, Slug: "second-slug"},
+		},
+		planErr:   map[uuid.UUID]error{third: errors.New("plan read failed")},
+		renameErr: map[string]error{"first-slug": errors.New("pg gone")},
+	}
+	var logs bytes.Buffer
+	e.Store, e.Logger = st, slog.New(slog.NewTextHandler(&logs, nil))
+
+	n, err := e.SweepAbandonedRegistrations(context.Background(),
+		&fakeLister{ids: []uuid.UUID{first, second, third}}, time.Now())
+	if !errors.Is(err, ErrCleanupIncomplete) || !strings.Contains(err.Error(), first.String()) ||
+		!strings.Contains(err.Error(), "plan read failed") {
+		t.Fatalf("err = %v, want the first account's incomplete cleanup and the hard error", err)
+	}
+	if n != 2 || len(st.erased) != 2 || st.erased[1] != second {
+		t.Errorf("erased = %d, store erased = %v; want both the first and second account", n, st.erased)
+	}
+	line := ""
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "level=ERROR") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "account_id="+first.String()) || !strings.Contains(line, "finish_slug=first-slug") {
+		t.Errorf("error log = %q, want account_id and finish_slug of the first account", line)
 	}
 }

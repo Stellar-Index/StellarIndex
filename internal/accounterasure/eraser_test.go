@@ -234,3 +234,18 @@ func TestErase_RetriesATransientCleanupFailure(t *testing.T) {
 		t.Error("erased account's key still authenticates")
 	}
 }
+
+// The HTTP path answers a committed erasure inside the request timeout even when cleanup never succeeds.
+func TestEraseForRequest_BoundsAFailingCleanup(t *testing.T) {
+	e, st, _, _ := newRig(t)
+	e.cleanupTimeout = 0
+	st.renameErr = errors.New("pg gone")
+	start := time.Now()
+	rep, err := e.EraseForRequest(context.Background(), st.plan.AccountID, platform.ActorUser)
+	if elapsed := time.Since(start); elapsed > requestCleanupTimeout+2*time.Second {
+		t.Errorf("EraseForRequest took %v, want about %v", elapsed, requestCleanupTimeout)
+	}
+	if !errors.Is(err, ErrCleanupIncomplete) || !st.erased || rep.Plan.Slug != "john" {
+		t.Fatalf("err = %v, erased = %v, report = %+v; want committed with incomplete cleanup", err, st.erased, rep)
+	}
+}

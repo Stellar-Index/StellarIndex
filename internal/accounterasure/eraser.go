@@ -37,6 +37,10 @@ import (
 // from the caller's context and is retried within it.
 const afterCommitTimeout = 30 * time.Second
 
+// requestCleanupTimeout is EraseForRequest's cleanup budget: the response to a committed erasure has to be
+// written inside the API's 15 s request timeout, which also covers the plan and the commit.
+const requestCleanupTimeout = 5 * time.Second
+
 // cleanupRetryBackoff is the first wait between post-commit cleanup attempts; it doubles up to cleanupRetryMaxBackoff.
 const (
 	cleanupRetryBackoff    = 100 * time.Millisecond
@@ -66,7 +70,7 @@ type Eraser struct {
 	// betweenPasses, when set, runs between the two post-commit Redis
 	// passes. Test seam for the in-flight-mint race.
 	betweenPasses func()
-	// cleanupTimeout overrides afterCommitTimeout. Test seam.
+	// cleanupTimeout overrides afterCommitTimeout, not requestCleanupTimeout. Test seam.
 	cleanupTimeout time.Duration
 }
 
@@ -89,7 +93,20 @@ type Report struct {
 
 // Erase erases the account; a repeat reports AlreadyErased. An error before the commit leaves the account untouched; one after it wraps ErrCleanupIncomplete, carries the full Report, and leaves Redis state for FinishBySlug.
 func (e *Eraser) Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
-	return e.erase(ctx, id, actor, nil)
+	return e.erase(ctx, id, actor, nil, e.defaultCleanupTimeout())
+}
+
+// EraseForRequest is Erase with a post-commit cleanup budget short enough for an HTTP handler to answer
+// a committed erasure; a cleanup still failing at the budget is left to FinishBySlug.
+func (e *Eraser) EraseForRequest(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
+	return e.erase(ctx, id, actor, nil, requestCleanupTimeout)
+}
+
+func (e *Eraser) defaultCleanupTimeout() time.Duration {
+	if e.cleanupTimeout > 0 {
+		return e.cleanupTimeout
+	}
+	return afterCommitTimeout
 }
 
 // errNotAdmitted is erase's answer when admit refused the plan.
@@ -99,7 +116,7 @@ var errNotAdmitted = errors.New("account erasure: plan not admitted")
 // it executes, so a caller's precondition cannot go stale between plans.
 func (e *Eraser) erase(
 	ctx context.Context, id uuid.UUID, actor platform.ActorKind,
-	admit func(postgresstore.ErasurePlan) (bool, error),
+	admit func(postgresstore.ErasurePlan) (bool, error), cleanupTimeout time.Duration,
 ) (Report, error) {
 	plan, err := e.Store.PlanErasure(ctx, id)
 	if errors.Is(err, platform.ErrNotFound) {
@@ -149,11 +166,7 @@ func (e *Eraser) erase(
 	keyIDs := append(append([]string{}, plan.KeyIDs...), extra...)
 	// The commit is durable; a caller that hangs up now must not strand
 	// the Redis cleanup.
-	timeout := afterCommitTimeout
-	if e.cleanupTimeout > 0 {
-		timeout = e.cleanupTimeout
-	}
-	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
 	if err := e.afterCommitRetrying(postCtx, plan.Slug, keyIDs, plan.KeyHashes, erased, &rep); err != nil {
 		return rep, fmt.Errorf("%w (finish with: stellarindex-ops account-erase -finish-slug %s): %w",
@@ -300,16 +313,18 @@ func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLis
 	var erased int64
 	var incomplete []error
 	for _, id := range ids {
-		rep, err := e.erase(ctx, id, platform.ActorSystem, abandoned)
+		rep, err := e.erase(ctx, id, platform.ActorSystem, abandoned, e.defaultCleanupTimeout())
 		if errors.Is(err, errNotAdmitted) || errors.Is(err, ErrBlocked) {
 			continue
 		}
 		if errors.Is(err, ErrCleanupIncomplete) {
+			e.logger().Error("abandoned registration erased but cleanup incomplete; run stellarindex-ops account-erase -finish-slug",
+				"account_id", id, "finish_slug", rep.Plan.Slug, "err", err)
 			// Keep sweeping, but fail the sweep so the reaper's failure alert surfaces it. The cause is
 			// flattened: a wrapped context.DeadlineExceeded would make the reaper discard the error as a shutdown.
 			incomplete = append(incomplete, fmt.Errorf("account %s: %w: %s", id, ErrCleanupIncomplete, err))
 		} else if err != nil {
-			return erased, err
+			return erased, errors.Join(append(incomplete, err)...)
 		}
 		if !rep.AlreadyErased {
 			erased++
