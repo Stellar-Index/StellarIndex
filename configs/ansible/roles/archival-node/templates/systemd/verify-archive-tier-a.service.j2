@@ -33,11 +33,8 @@ Type=notify
 NotifyAccess=main
 WatchdogSec=1h
 
-# Defaults. Environment= is evaluated in file order, so these must
-# come BEFORE EnvironmentFile= below — systemd lets a later directive
-# win over an earlier one for the same key, and an EnvironmentFile=
-# preceding these Environment= lines would make the file's operator
-# overrides get silently clobbered by the defaults on every run.
+# Defaults. Values from EnvironmentFile= override Environment= wherever
+# either sits (systemd.exec(5)), so the operator's file below wins.
 # MAX_RUNTIME=0 = uncapped: the binary's graceful self-cap is
 # disabled, systemd's TimeoutStartSec is the only bound. The
 # bootstrap full pass needs to run to completion to seed the
