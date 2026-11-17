@@ -228,7 +228,7 @@ func writeIdempotencyKeyTooLong(w http.ResponseWriter, r *http.Request) {
 		Title:    "Idempotency-Key too long",
 		Status:   http.StatusBadRequest,
 		Detail:   "Idempotency-Key must be at most 256 bytes",
-		Instance: r.URL.RequestURI(),
+		Instance: RequestInstance(r),
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -242,7 +242,7 @@ func writeIdempotencyKeyInFlight(w http.ResponseWriter, r *http.Request) {
 		Title:    "Request with this Idempotency-Key still in progress",
 		Status:   http.StatusConflict,
 		Detail:   "the original request carrying this Idempotency-Key has not finished; retry shortly to receive its response",
-		Instance: r.URL.RequestURI(),
+		Instance: RequestInstance(r),
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")

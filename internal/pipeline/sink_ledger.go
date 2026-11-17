@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"sync"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -36,6 +37,9 @@ type ShutdownLoss struct {
 	// LedgerUnknown is set when an abandoned row carried no ledger (an off-chain trade or event), so no cursor
 	// position covers it.
 	LedgerUnknown bool
+	// OffChainFrom and OffChainTo bound the timestamps of the abandoned ledgerless trades, the window to refetch
+	// from the venues; zero when none.
+	OffChainFrom, OffChainTo time.Time
 }
 
 // lossTracker accumulates one PersistEvents run's [ShutdownLoss] across
@@ -56,9 +60,23 @@ func (l *lossTracker) trades(abandoned []canonical.Trade) {
 		switch {
 		case t.Ledger == 0: // off-chain trade: no ledger to cap on
 			l.loss.LedgerUnknown = true
+			l.offChain(t.Timestamp)
 		case l.loss.MinLedger == 0 || t.Ledger < l.loss.MinLedger:
 			l.loss.MinLedger = t.Ledger
 		}
+	}
+}
+
+// offChain widens the off-chain window to ts. Caller holds l.mu.
+func (l *lossTracker) offChain(ts time.Time) {
+	if ts.IsZero() {
+		return
+	}
+	if l.loss.OffChainFrom.IsZero() || ts.Before(l.loss.OffChainFrom) {
+		l.loss.OffChainFrom = ts
+	}
+	if ts.After(l.loss.OffChainTo) {
+		l.loss.OffChainTo = ts
 	}
 }
 

@@ -752,9 +752,43 @@ func TestAccountErasureTrigger(t *testing.T) {
 		return tx.Commit()
 	}
 
+	// A staff row's address may be cleared only when its actor is a user of the account being erased.
+	var own, stranger, ownStaffRow, strangerStaffRow, ownMetaRow uuid.UUID
+	mustScan(t, ctx, db, &own, `INSERT INTO users (account_id, email, role) VALUES ($1, 'own@x.example', 'owner') RETURNING id`, acct)
+	mustScan(t, ctx, db, &stranger, `INSERT INTO users (account_id, email, role) VALUES ($1, 'stranger@x.example', 'owner') RETURNING id`, other)
+	mustScan(t, ctx, db, &ownStaffRow, `INSERT INTO audit_log (account_id, actor_kind, actor_user_id, action, metadata, ip, user_agent)
+		VALUES ($1, 'staff', $2, 'admin.account.read', '{}', '203.0.113.9', 'S') RETURNING id`, acct, own)
+	mustScan(t, ctx, db, &strangerStaffRow, `INSERT INTO audit_log (target_kind, target_id, actor_kind, actor_user_id, action, metadata, ip, user_agent)
+		VALUES ('account', $1::text, 'staff', $2, 'admin.account.read', '{}', '203.0.113.9', 'S') RETURNING id`, acct, stranger)
+	mustScan(t, ctx, db, &ownMetaRow, `INSERT INTO audit_log (account_id, actor_kind, actor_user_id, action, metadata, ip, user_agent)
+		VALUES ($1, 'staff', $2, 'admin.account.read', '{"name":"k","scopes":["a"]}', '203.0.113.9', 'S') RETURNING id`, acct, own)
+
 	requireAppendOnlyRefusal(t, "scrub without the GUC", inTx("", scrub, userRow))
 	requireAppendOnlyRefusal(t, "scrub of an active account", inTx(acct.String(), scrub, userRow))
+	requireAppendOnlyRefusal(t, "own staff address cleared on an active account", inTx(acct.String(), scrub, ownStaffRow))
 	mustExec(t, ctx, db, `UPDATE accounts SET status = 'closed' WHERE id = $1`, acct)
+	// other is closed too, so a rule loosened to "any closed account's users" still fails the stranger case.
+	mustExec(t, ctx, db, `UPDATE accounts SET status = 'closed' WHERE id = $1`, other)
+	requireAppendOnlyRefusal(t, "staff address of another account's user", inTx(acct.String(), scrub, strangerStaffRow))
+	requireAppendOnlyRefusal(t, "own staff ip rewritten, not cleared",
+		inTx(acct.String(), `UPDATE audit_log SET metadata = audit_log_erase_metadata(metadata), ip = '198.51.100.99' WHERE id = $1`, ownStaffRow))
+	requireAppendOnlyRefusal(t, "own staff user agent rewritten, not cleared",
+		inTx(acct.String(), `UPDATE audit_log SET metadata = audit_log_erase_metadata(metadata), user_agent = 'forged' WHERE id = $1`, ownStaffRow))
+	requireAppendOnlyRefusal(t, "own staff address cleared with foreign metadata",
+		inTx(acct.String(), `UPDATE audit_log SET metadata = '{}', ip = NULL, user_agent = NULL WHERE id = $1`, ownMetaRow))
+	requireAppendOnlyRefusal(t, "own staff address cleared with another column",
+		inTx(acct.String(), `UPDATE audit_log SET metadata = audit_log_erase_metadata(metadata), ip = NULL, action = 'x' WHERE id = $1`, ownStaffRow))
+	requireAppendOnlyRefusal(t, "own staff address cleared under another account's flag", inTx(other.String(), scrub, ownStaffRow))
+	if err := inTx(acct.String(), scrub, ownStaffRow); err != nil {
+		t.Fatalf("permitted own staff address scrub refused: %v", err)
+	}
+	var ownAddr, strangerAddr string
+	mustScan(t, ctx, db, &ownAddr, `SELECT coalesce(host(ip), '') || ' ' || coalesce(user_agent, '') FROM audit_log WHERE id = $1`, ownStaffRow)
+	mustScan(t, ctx, db, &strangerAddr, `SELECT coalesce(host(ip), '') || ' ' || coalesce(user_agent, '') FROM audit_log WHERE id = $1`, strangerStaffRow)
+	if ownAddr != " " || strangerAddr != "203.0.113.9 S" {
+		t.Errorf("after the own scrub: own row = %q, want both NULL; stranger row = %q, want 203.0.113.9 S", ownAddr, strangerAddr)
+	}
+
 	requireAppendOnlyRefusal(t, "scrub of another account's row", inTx(acct.String(), scrub, otherRow))
 	requireAppendOnlyRefusal(t, "scrub that rewrites action",
 		inTx(acct.String(), `UPDATE audit_log SET metadata = audit_log_erase_metadata(metadata), action = 'x' WHERE id = $1`, userRow))

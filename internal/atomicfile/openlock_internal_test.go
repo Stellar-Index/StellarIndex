@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // recordOpens swaps openFile for one that records each call's flags.
@@ -65,6 +66,35 @@ func TestOpenLock_AbsentFileIsCreatedExclusively(t *testing.T) {
 	st, err := os.Stat(path)
 	if err != nil || st.Mode().Perm()&^0o640 != 0 {
 		t.Errorf("created lock: %v mode %v, want at most 0640", err, st.Mode().Perm())
+	}
+}
+
+// A FIFO planted at the lock path must be refused at once, not block the read-only fallback open until a writer
+// appears.
+func TestOpenLock_PlantedFIFOIsRefusedWithoutBlocking(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "planted.lock")
+	if err := syscall.Mkfifo(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		f, err := OpenLock(path, 0o600)
+		if f != nil {
+			_ = f.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("OpenLock accepted a FIFO")
+		}
+	case <-time.After(2 * time.Second):
+		// Release the blocked open so the goroutine can exit.
+		if w, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil { //nolint:gosec // test path under t.TempDir
+			_ = w.Close()
+		}
+		t.Fatal("OpenLock blocked on a planted FIFO")
 	}
 }
 

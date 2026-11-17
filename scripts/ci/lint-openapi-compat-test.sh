@@ -48,6 +48,10 @@ components:
       type: object
       properties:
         level: { type: string }
+    Quote:
+      oneOf:
+        - { $ref: "#/components/schemas/Price" }
+        - { $ref: "#/components/schemas/KeyRequest" }
 YAML
 
 check() { # <name> <ok|red> <needle> <python edit of the parsed spec `d`> [<commit messages>]
@@ -96,6 +100,22 @@ check "a new required request field is rejected" red 'now requires `scope`' "S['
 check "a new required field in a nested request schema is rejected" red 'now requires `level`' "S['Scope']['required'] = ['level']"
 check "a request body made required is rejected" red "now requires a request body" \
   "d['paths']['/keys']['post']['requestBody']['required'] = True"
+
+check "a response re-pointed to a schema without a field is rejected" red 'lost `price`' \
+  "S['Price2'] = {'type': 'object', 'properties': {'basis': {'type': 'string'}}}; d['paths']['/price']['get']['responses']['200']['content']['application/json']['schema'] = {'\$ref': '#/components/schemas/Price2'}"
+check "an inline schema swapped for a \$ref keeps its fields checked" red 'lost `basis`' \
+  "S['Small'] = {'type': 'object', 'properties': {'price': {'type': 'string'}}}; S['Price'] = {'\$ref': '#/components/schemas/Small'}"
+check "a decimal-string field changed to a number is rejected" red 'changed-type: components/schemas/Price/properties/price' \
+  "S['Price']['properties']['price']['type'] = 'number'"
+check "a field retyped under a new \$ref is rejected" red 'changed-type: components/schemas/Price/properties/price' \
+  "S['Num'] = {'type': 'object', 'properties': {'price': {'type': 'number'}, 'basis': {'type': 'string', 'enum': ['market', 'peg']}}}; S['Price'] = {'\$ref': '#/components/schemas/Num'}"
+check "a nested field removed under a new \$ref is rejected" red 'lost `level`' \
+  "S['KR2'] = {'type': 'object', 'required': ['name'], 'properties': {'name': {'type': 'string'}, 'scope': {'type': 'object', 'properties': {}}}}; S['KeyRequest'] = {'\$ref': '#/components/schemas/KR2'}"
+check "reordered oneOf variants pass" ok "" "S['Quote']['oneOf'].reverse()"
+check "an inserted oneOf variant passes" ok "" "S['Quote']['oneOf'].insert(0, {'\$ref': '#/components/schemas/Scope'})"
+check "a field made nullable passes" ok "" "S['Price']['properties']['price']['type'] = ['string', 'null']"
+check "a removed optional parameter is rejected" red "removed-parameter: GET /price no longer takes parameter mode (in query)" \
+  "del d['paths']['/price']['get']['parameters'][1]"
 
 check "a break declared by a trailer passes" ok "" "del d['paths']['/price']" \
   "$(printf 'api: drop /price\n\nOpenAPI-Break: replaced by /v2/price\n')"

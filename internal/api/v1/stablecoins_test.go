@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"testing"
@@ -247,6 +248,46 @@ func TestStablecoins_GlobalFilledPriceIsNotSummedAndShowsItsBasis(t *testing.T) 
 	}
 	if !named {
 		t.Errorf("not_summed = %v, want USDC/market_cap_withheld", v.Total.NotSummed)
+	}
+}
+
+type scFailingClassic struct {
+	v1.ExplorerReader // nil: only ClassicCirculatingSupply is called
+}
+
+func (scFailingClassic) ClassicCirculatingSupply(context.Context) (map[string]string, error) {
+	return nil, errors.New("classic supply GROUP BY exceeded its budget")
+}
+
+// A market cap built from a broad supply map past its TTL (refresh failing) is served flagged stale, never as fresh.
+func TestStablecoins_ExpiredBroadSupplyMapFlagsStale(t *testing.T) {
+	for name, tc := range map[string]struct {
+		age       time.Duration
+		wantStale bool
+	}{
+		"fresh":   {time.Minute, false},
+		"expired": {v1.ClassicSupplyTTL + time.Minute, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows := map[string][]timescale.AssetRow{scUSDT0: {rwaRow("USDT0", scUSDT0, sptr("1"), 9000)}}
+			srv := scServer(t, nil, rows)
+			srv.Explorer = scFailingClassic{}
+			srv.SeedClassicSupplyForTest(map[string]string{"USDT0-" + scUSDT0: "10000000"}, tc.age)
+			resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/stablecoins")
+			var body struct {
+				Data  v1.StablecoinsView `json:"data"`
+				Flags v1.Flags           `json:"flags"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if got := scAsset(t, body.Data, "USDT0").CirculatingSupply; got == nil {
+				t.Fatal("USDT0 has no supply; the broad map was not used")
+			}
+			if body.Flags.Stale != tc.wantStale {
+				t.Errorf("flags.stale = %v, want %v", body.Flags.Stale, tc.wantStale)
+			}
+		})
 	}
 }
 

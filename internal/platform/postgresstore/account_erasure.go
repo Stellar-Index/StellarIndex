@@ -175,20 +175,26 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 		{nil, "close", `UPDATE accounts SET status = 'closed' WHERE id = $1`, []any{p.AccountID}},
 		{nil, "guc", `SELECT set_config('stellarindex.erasing_account', $1, true)`, []any{p.AccountID.String()}},
 		{
+			// Members are read here, under the account lock, not from the plan: the trigger checks this same set,
+			// and a user who joined after the plan is deleted below.
 			&c.AuditRowsScrubbed, "audit scrub", `
+			WITH members AS (SELECT id FROM users WHERE account_id = $1)
 			UPDATE audit_log
 			   SET metadata   = audit_log_erase_metadata(metadata),
-			       ip         = CASE WHEN actor_kind = 'staff' THEN ip END,
-			       user_agent = CASE WHEN actor_kind = 'staff' THEN user_agent END
+			       ip         = CASE WHEN actor_kind = 'staff' AND NOT COALESCE(actor_user_id IN (SELECT id FROM members), false)
+			                         THEN ip END,
+			       user_agent = CASE WHEN actor_kind = 'staff' AND NOT COALESCE(actor_user_id IN (SELECT id FROM members), false)
+			                         THEN user_agent END
 			 WHERE (account_id = $1
 			        OR (target_kind = 'account' AND target_id = $1::text)
-			        OR actor_user_id = ANY($2::uuid[])
-			        OR (target_kind = 'api_key' AND target_id = ANY($3::text[]))
-			        OR metadata ->> 'target_identifier' = $4
-			        OR metadata ->> 'actor_identifier' = $4)
+			        OR actor_user_id IN (SELECT id FROM members)
+			        OR (target_kind = 'api_key' AND target_id = ANY($2::text[]))
+			        OR metadata ->> 'target_identifier' = $3
+			        OR metadata ->> 'actor_identifier' = $3)
 			   AND (metadata IS DISTINCT FROM audit_log_erase_metadata(metadata)
-			        OR (actor_kind <> 'staff' AND (ip IS NOT NULL OR user_agent IS NOT NULL)))`,
-			[]any{p.AccountID, users, keyIDs, identifier},
+			        OR ((actor_kind <> 'staff' OR COALESCE(actor_user_id IN (SELECT id FROM members), false))
+			            AND (ip IS NOT NULL OR user_agent IS NOT NULL)))`,
+			[]any{p.AccountID, keyIDs, identifier},
 		},
 		{
 			&c.Invites, "invites", `

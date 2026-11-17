@@ -60,8 +60,12 @@ var openFile = os.OpenFile
 // openLockFile opens an existing lock file WITHOUT O_CREAT and creates it only when it is absent. In a sticky,
 // group-writable directory Linux (fs.protected_regular) refuses an O_CREAT open of a file owned by neither the caller
 // nor the directory's owner, root included, so a root run could not take a lock the service user had created.
+//
+// O_NONBLOCK keeps a FIFO planted at path from blocking the open until a writer appears, so OpenLock's regular-file
+// check gets to refuse it. On a regular file it changes nothing: reads, writes and flock (which blocks on LOCK_NB
+// alone) ignore it.
 func openLockFile(path string, mode os.FileMode) (*os.File, error) {
-	const base = syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+	const base = syscall.O_NOFOLLOW | syscall.O_CLOEXEC | syscall.O_NONBLOCK
 	for range 3 {
 		f, err := openFile(path, os.O_RDWR|base, 0) //nolint:gosec // caller-supplied lock path; O_NOFOLLOW plus OpenLock's checks bound what it can reach
 		if errors.Is(err, os.ErrPermission) {

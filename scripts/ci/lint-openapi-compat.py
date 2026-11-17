@@ -31,19 +31,29 @@ METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
 ZERO_SHA = "0" * 40
 
 
+SKIP = ("example", "examples")  # sample payloads, not schema
+
+
+def list_key(i, child):
+    """A parameter is keyed by name and location and a $ref item by its target, so reordering or inserting one is not
+    a change; anything else is keyed by index."""
+    if isinstance(child, dict) and "name" in child and "in" in child:
+        return f"{child['name']}:{child['in']}"
+    if isinstance(child, dict) and isinstance(child.get("$ref"), str):
+        return child["$ref"]
+    return str(i)
+
+
 def walk(node, path=()):
-    """Yields (path, dict) for every mapping. A parameter list is keyed by name and location, so
-    reordering it is not a change; other lists are keyed by index."""
+    """Yields (path, dict) for every mapping outside example payloads."""
     if isinstance(node, dict):
         yield path, node
         for key, child in node.items():
-            yield from walk(child, path + (str(key),))
+            if key not in SKIP:
+                yield from walk(child, path + (str(key),))
     elif isinstance(node, list):
         for i, child in enumerate(node):
-            key = str(i)
-            if isinstance(child, dict) and "name" in child and "in" in child:
-                key = f"{child['name']}:{child['in']}"
-            yield from walk(child, path + (key,))
+            yield from walk(child, path + (list_key(i, child),))
 
 
 def at(doc, path):
@@ -56,10 +66,7 @@ def at(doc, path):
         elif isinstance(node, list):
             found = None
             for i, child in enumerate(node):
-                name = str(i)
-                if isinstance(child, dict) and "name" in child and "in" in child:
-                    name = f"{child['name']}:{child['in']}"
-                if name == key:
+                if list_key(i, child) == key:
                     found = child
                     break
             if found is None:
@@ -95,13 +102,34 @@ def operations(doc):
                 yield (path, method), item, item[method]
 
 
-def required_params(doc, item, op):
+def params(doc, item, op, required_only=False):
     out = set()
     for raw in (item.get("parameters") or []) + (op.get("parameters") or []):
         p = resolve(doc, raw)
-        if p.get("required"):
+        if p and (p.get("required") or not required_only):
             out.add(f"{p.get('name')} (in {p.get('in')})")
     return out
+
+
+def required_params(doc, item, op):
+    return params(doc, item, op, required_only=True)
+
+
+def types(node):
+    t = node.get("type")
+    if isinstance(t, list):
+        return set(t)
+    return {t} if isinstance(t, str) else set()
+
+
+def type_change(b_node, h_node):
+    """A type the base allowed that head no longer does, or a changed format; widening (adding null) is not a break."""
+    bt, ht = types(b_node), types(h_node)
+    if bt and ht and not bt <= ht:
+        return f"type {sorted(bt)} became {sorted(ht)}"
+    if "format" in b_node and h_node.get("format") != b_node["format"] and (ht or "format" in h_node):
+        return f"format `{b_node['format']}` became `{h_node.get('format')}`"
+    return None
 
 
 def request_schemas(doc, op):
@@ -143,6 +171,8 @@ def compare(base, head):
         label = f"{method.upper()} {path}"
         for name in sorted(required_params(head, h_item, h_op) - required_params(base, b_item, b_op)):
             problems.append(f"new-required-input: {label} now requires parameter {name}")
+        for name in sorted(params(base, b_item, b_op) - params(head, h_item, h_op)):
+            problems.append(f"removed-parameter: {label} no longer takes parameter {name}")
         b_body = resolve(base, b_op.get("requestBody") or {})
         h_body = resolve(head, h_op.get("requestBody") or {})
         if h_body.get("required") and not b_body.get("required"):
@@ -164,14 +194,58 @@ def compare(base, head):
         h_node = at(head, path)
         if not isinstance(h_node, dict):
             continue
-        if isinstance(b_node.get("properties"), dict) and isinstance(h_node.get("properties"), dict):
-            for prop in sorted(set(b_node["properties"]) - set(h_node["properties"])):
-                problems.append(f"removed-property: {show(path)} lost `{prop}`")
-        if isinstance(b_node.get("enum"), list) and isinstance(h_node.get("enum"), list):
-            gone = [v for v in b_node["enum"] if v not in h_node["enum"]]
-            for value in gone:
-                problems.append(f"removed-enum-value: {show(path)} lost `{value}`")
+        # A node swapped for, or re-pointed to, another $ref is compared in depth as the schema each side resolves
+        # to; the walk cannot follow it, since the two sides no longer share paths below it.
+        if ref_changed(b_node, h_node):
+            compare_resolved(base, head, b_node, h_node, path, problems, set())
+        else:
+            compare_node(b_node, h_node, path, problems)
     return problems
+
+
+def ref_changed(b_node, h_node):
+    return ("$ref" in b_node or "$ref" in h_node) and b_node.get("$ref") != h_node.get("$ref")
+
+
+def compare_node(b_node, h_node, path, problems):
+    if isinstance(b_node.get("properties"), dict) and isinstance(h_node.get("properties"), dict):
+        for prop in sorted(set(b_node["properties"]) - set(h_node["properties"])):
+            problems.append(f"removed-property: {show(path)} lost `{prop}`")
+    if isinstance(b_node.get("enum"), list) and isinstance(h_node.get("enum"), list):
+        for value in [v for v in b_node["enum"] if v not in h_node["enum"]]:
+            problems.append(f"removed-enum-value: {show(path)} lost `{value}`")
+    change = type_change(b_node, h_node)
+    if change:
+        problems.append(f"changed-type: {show(path)} {change}")
+
+
+def schema_children(node):
+    """Yields (key, child) for every sub-schema of a resolved schema node."""
+    for prop, child in (node.get("properties") or {}).items():
+        yield ("properties", str(prop)), child
+    for key in ("items", "additionalProperties"):
+        if isinstance(node.get(key), dict):
+            yield (key,), node[key]
+    for key in ("allOf", "oneOf", "anyOf"):
+        for i, child in enumerate(node.get(key) or []):
+            yield (key, list_key(i, child)), child
+
+
+def compare_resolved(base, head, b_node, h_node, path, problems, seen):
+    """Compares two schemas through their $refs, child by child; a child whose $ref is unchanged is left to the
+    component's own walk."""
+    b_node, h_node = resolve(base, b_node), resolve(head, h_node)
+    if (id(b_node), id(h_node)) in seen:
+        return
+    seen.add((id(b_node), id(h_node)))
+    compare_node(b_node, h_node, path, problems)
+    h_children = dict(schema_children(h_node))
+    for key, b_child in schema_children(b_node):
+        h_child = h_children.get(key)
+        if isinstance(b_child, dict) and isinstance(h_child, dict):
+            if "$ref" in b_child and not ref_changed(b_child, h_child):
+                continue
+            compare_resolved(base, head, b_child, h_child, path + key, problems, seen)
 
 
 def git(*args):
