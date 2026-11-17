@@ -33,12 +33,15 @@ func TestAccountErasureStripsReasonAndActorEmail(t *testing.T) {
 
 	const reason = "onboarding Fakeco, contact jane@f.example"
 	var mintRow, lookupRow uuid.UUID
-	mustScan(t, ctx, db, &mintRow, `INSERT INTO audit_log (account_id, actor_kind, action, metadata)
+	// mintRow's staff actor is someone else, so its ip and user agent are not the erased person's and stay; lookupRow's
+	// actor is the erased account's own user, so they go.
+	mustScan(t, ctx, db, &mintRow, `INSERT INTO audit_log (account_id, actor_kind, action, metadata, ip, user_agent)
 		VALUES ($1, 'staff', 'key.mint', jsonb_build_object('reason', $2::text, 'target_identifier', 'acct:' || $3::text,
-		        'scopes', '["read"]'::jsonb)) RETURNING id`, x.accountID, reason, x.slug)
-	mustScan(t, ctx, db, &lookupRow, `INSERT INTO audit_log (actor_kind, actor_user_id, action, metadata)
+		        'scopes', '["read"]'::jsonb), '192.0.2.10', 'staff-console/1') RETURNING id`, x.accountID, reason, x.slug)
+	mustScan(t, ctx, db, &lookupRow, `INSERT INTO audit_log (actor_kind, actor_user_id, action, metadata, ip, user_agent)
 		VALUES ('staff', $1, 'staff.customer.lookup', jsonb_build_object('actor_email', 'rita@f.example',
-		        'before', jsonb_build_object('reason', $2::text), 'result_count', 1)) RETURNING id`, x.ownerID, reason)
+		        'before', jsonb_build_object('reason', $2::text), 'result_count', 1), '192.0.2.20', 'rita-laptop/1')
+		RETURNING id`, x.ownerID, reason)
 
 	eraser := &accounterasure.Eraser{Store: postgresstore.NewAccountStore(postgresstore.New(db)), Redis: rdb}
 	if _, err := eraser.Erase(ctx, x.accountID, platform.ActorUser); err != nil {
@@ -62,6 +65,14 @@ func TestAccountErasureStripsReasonAndActorEmail(t *testing.T) {
 		}
 		if _, ok := meta[kept]; !ok {
 			t.Errorf("row %s lost the non-identifying key %q: %s", row, kept, raw)
+		}
+	}
+
+	for row, want := range map[uuid.UUID]string{mintRow: "192.0.2.10 staff-console/1", lookupRow: " "} {
+		var got string
+		mustScan(t, ctx, db, &got, `SELECT coalesce(host(ip), '') || ' ' || coalesce(user_agent, '') FROM audit_log WHERE id = $1`, row)
+		if got != want {
+			t.Errorf("row %s ip and user agent = %q after erasure, want %q", row, got, want)
 		}
 	}
 }

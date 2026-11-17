@@ -178,8 +178,10 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 			&c.AuditRowsScrubbed, "audit scrub", `
 			UPDATE audit_log
 			   SET metadata   = audit_log_erase_metadata(metadata),
-			       ip         = CASE WHEN actor_kind = 'staff' THEN ip END,
-			       user_agent = CASE WHEN actor_kind = 'staff' THEN user_agent END
+			       ip         = CASE WHEN actor_kind = 'staff' AND NOT COALESCE(actor_user_id = ANY($2::uuid[]), false)
+			                         THEN ip END,
+			       user_agent = CASE WHEN actor_kind = 'staff' AND NOT COALESCE(actor_user_id = ANY($2::uuid[]), false)
+			                         THEN user_agent END
 			 WHERE (account_id = $1
 			        OR (target_kind = 'account' AND target_id = $1::text)
 			        OR actor_user_id = ANY($2::uuid[])
@@ -187,7 +189,8 @@ func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (Er
 			        OR metadata ->> 'target_identifier' = $4
 			        OR metadata ->> 'actor_identifier' = $4)
 			   AND (metadata IS DISTINCT FROM audit_log_erase_metadata(metadata)
-			        OR (actor_kind <> 'staff' AND (ip IS NOT NULL OR user_agent IS NOT NULL)))`,
+			        OR ((actor_kind <> 'staff' OR COALESCE(actor_user_id = ANY($2::uuid[]), false))
+			            AND (ip IS NOT NULL OR user_agent IS NOT NULL)))`,
 			[]any{p.AccountID, users, keyIDs, identifier},
 		},
 		{
