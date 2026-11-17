@@ -175,9 +175,9 @@ export function AssetSidebar({
   // Floors come from the same payload as the figure they qualify.
   const volFloor = (detail ?? coin).volume_lower_bound === true;
   const capFloor = supplyIsFloor(detail ?? coin);
-  const circFloor = supplyIsFloor(
-    detail?.circulating_supply != null ? detail : coin,
-  );
+  const circSrc = detail?.circulating_supply != null ? detail : coin;
+  const circFloor = supplyIsFloor(circSrc);
+  const circDerived = !circFloor && supplyIsDerived(circSrc);
   // A floor over an exact cap is "at least", an exact volume over a floor
   // cap is "at most"; with both floors the ratio is bounded on neither side.
   const derived = !capFloor && supplyIsDerived(detail ?? coin);
@@ -192,7 +192,7 @@ export function AssetSidebar({
             ? '≤ '
             : '';
   const capTitle = supplyHint(capFloor, derived);
-  const circTitle = supplyHint(circFloor, !circFloor && derived);
+  const circTitle = supplyHint(circFloor, circDerived);
   const code = coin.code || coin.slug || '—';
   const source = asExample(`/v1/assets/${coin.asset_id}`);
 
@@ -247,11 +247,7 @@ export function AssetSidebar({
               className="text-ink min-w-0 text-right font-mono text-sm tabular-nums"
               title={circTitle}
             >
-              {floorMark(
-                supply(circulating, code),
-                circFloor,
-                !circFloor && derived,
-              )}
+              {floorMark(supply(circulating, code), circFloor, circDerived)}
             </span>
           </div>
           {circPct != null && (
