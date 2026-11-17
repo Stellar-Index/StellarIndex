@@ -377,3 +377,71 @@ func TestChEntryHistoryLending_SupersededRowsAreIgnored(t *testing.T) {
 		t.Fatalf("history = %q, want %q", got, want)
 	}
 }
+
+// A lake re-derive that renumbers a ledger's intra order can give the hour's true last change a lower intra than the
+// stale row already in the table. On a table converged by lending_state.sql the replayed row still replaces it.
+func TestChEntryHistoryLending_ReplayDisplacesRenumberedRow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	for _, q := range []string{
+		`TRUNCATE TABLE stellar.entry_history_watermark`, `TRUNCATE TABLE stellar.lending_state_hourly`,
+		// The live host's table before lending_state.sql converged its version.
+		`ALTER TABLE stellar.lending_state_hourly MODIFY COLUMN version UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq`,
+	} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	const base = uint32(171_360_000)
+	pool := seedLendingDeploy(t, ctx, addr, base)
+	var poolID, asset xdr.ContractId
+	copy(poolID[:], strkey.MustDecode(strkey.VersionByteContract, pool))
+	asset[0] = 0x5d
+	key := resDataKeyB64(t, poolID, asset)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base}, 1, false)
+	closeAt := time.Date(2027, 2, 12, 9, 10, 0, 0, time.UTC)
+	oldWalk := func(tx, e string, intra uint32) {
+		t.Helper()
+		if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
+			(ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, intra_ledger_seq)
+			VALUES (?, ?, ?, 0, 0, 'updated', 'contract_data', ?, ?, '2026-01-01 00:00:00', ?)`,
+			base, closeAt, tx, key, e, intra); err != nil {
+			t.Fatalf("insert old-walk row: %v", err)
+		}
+	}
+	oldWalk("aa", "MID", 57)
+	oldWalk("bb", "END", 12)
+	if err := runLendingWrite(t, addr, base, base); err != nil {
+		t.Fatalf("first derive: %v", err)
+	}
+	row := func(e string) []string {
+		return []string{"2027-02-12 09:00:00 " + strconv.FormatUint(uint64(base), 10) + " " + e}
+	}
+	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, row("MID")) {
+		t.Fatalf("history before the re-derive = %q, want %q", got, row("MID"))
+	}
+
+	stmts, err := clickHouseDeployStatements("lending_state.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range stmts {
+		if err := conn.Exec(ctx, s); err != nil {
+			t.Fatalf("apply lending_state.sql over the existing table: %.72q: %v", s, err)
+		}
+	}
+	// The re-derived walk keeps each change's identity and moves the stale one before the real last change.
+	ts := chstore.LedgerEntryChangeRow{LedgerSeq: base, CloseTime: closeAt, ChangeType: "updated", EntryType: "contract_data", KeyXDR: key}
+	mid, end := ts, ts
+	mid.TxHash, mid.EntryXDR, mid.IntraLedgerSeq = "aa", "MID", 5
+	end.TxHash, end.EntryXDR, end.IntraLedgerSeq = "bb", "END", 12
+	insertEntryChanges(t, ctx, mid, end)
+	if err := runLendingWrite(t, addr, base, base); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, row("END")) {
+		t.Fatalf("history after the replay = %q, want %q", got, row("END"))
+	}
+}

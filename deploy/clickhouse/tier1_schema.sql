@@ -1601,7 +1601,7 @@ CREATE TABLE IF NOT EXISTS stellar.lending_state_hourly
     intra_ledger_seq UInt32,
     close_time       DateTime('UTC'),
     entry_xdr        String CODEC(ZSTD(3)),
-    version          UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq
+    version          UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + toUInt32(now())
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(hour)
