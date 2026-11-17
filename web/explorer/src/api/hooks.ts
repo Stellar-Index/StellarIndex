@@ -64,44 +64,6 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
 
 export type StatusResponse = Schemas['StatusResponse'];
 
-/**
- * useIssuerLookup — fetches /v1/issuers once, builds a
- * g_strkey → { home_domain, org_name } map cached for the
- * session. Used by AssetLabel to render classic-asset rows with
- * the issuer's known display name (e.g. "USDC · Circle" instead
- * of "USDC · GA5Z…KZVN") whenever the API knows the issuer.
- *
- * Cache-friendly because /v1/issuers is small (a few hundred
- * rows max) and changes only when the curated `known_issuers`
- * fallback gets a new entry or the operator's eventual
- * issuer-upsert path lands.
- */
-/**
- * useVerifiedSlugs — fetches the lowercase slug set of every
- * verified-currency catalogue entry via /v1/assets/verified
- * Used by listing / homepage components to mark
- * verified rows with a green check badge.
- *
- * Catalogue changes only at API restart (the catalogue is embedded
- * in the binary), so a 1-hour stale window is plenty. The hook
- * exposes a `has(slug)` helper so callers don't re-derive the Set
- * on every render.
- */
-export function useVerifiedSlugs() {
-  return useQuery<Set<string>>({
-    queryKey: ['/v1/assets/verified', 'slug-set'],
-    queryFn: async () => {
-      const env = await apiGet<{
-        data: Array<{ slug: string }>;
-      }>('/v1/assets/verified');
-      return new Set((env.data ?? []).map((e) => e.slug.toLowerCase()));
-    },
-    staleTime: 60 * 60 * 1000,
-    gcTime: 24 * 60 * 60 * 1000,
-    retry: false,
-  });
-}
-
 /** Lowercase slugs and Stellar asset ids of every verified catalogue entry. */
 export type VerifiedIndex = { slugs: Set<string>; assetIds: Set<string> };
 
@@ -130,6 +92,18 @@ export function useVerifiedIndex() {
   });
 }
 
+/**
+ * useIssuerLookup — fetches /v1/issuers once, builds a
+ * g_strkey → { home_domain, org_name } map cached for the
+ * session. Used by AssetLabel to render classic-asset rows with
+ * the issuer's known display name (e.g. "USDC · Circle" instead
+ * of "USDC · GA5Z…KZVN") whenever the API knows the issuer.
+ *
+ * Cache-friendly because /v1/issuers is small (a few hundred
+ * rows max) and changes only when the curated `known_issuers`
+ * fallback gets a new entry or the operator's eventual
+ * issuer-upsert path lands.
+ */
 export function useIssuerLookup() {
   return useQuery<
     IssuerListEntry[],
