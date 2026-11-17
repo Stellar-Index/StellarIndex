@@ -14,6 +14,8 @@ type LendingClaimTotals struct {
 	Claims, Claims30d     int64
 	Claimers, Claimers30d int64
 	Amount, Amount30d     canonical.Amount // base units of the claimed amount, summed as NUMERIC
+	// AmountUnread counts claims with a NULL amount: counted in Claims but missing from Amount.
+	AmountUnread int64
 }
 
 // BLNTBackstopClaimTotals is one BLNT backstop tier's claims for a pool: Amount is the BLNT claimed, LP the backstop
@@ -37,7 +39,8 @@ const claimWindow = `ledger_close_time > $2::timestamptz - INTERVAL '30 days'`
 // claimTotalsCols selects the LendingClaimTotals columns in scan order.
 const claimTotalsCols = `count(*), count(*) FILTER (WHERE ` + claimWindow + `),
 		count(DISTINCT user_address), count(DISTINCT user_address) FILTER (WHERE ` + claimWindow + `),
-		COALESCE(sum(amount), 0)::text, COALESCE(sum(amount) FILTER (WHERE ` + claimWindow + `), 0)::text`
+		COALESCE(sum(amount), 0)::text, COALESCE(sum(amount) FILTER (WHERE ` + claimWindow + `), 0)::text,
+		count(*) FILTER (WHERE amount IS NULL)`
 
 const (
 	blendPoolClaimsSQL = `SELECT ` + claimTotalsCols + `
@@ -57,7 +60,7 @@ const (
 )
 
 func (t *LendingClaimTotals) dests() []any {
-	return []any{&t.Claims, &t.Claims30d, &t.Claimers, &t.Claimers30d, &t.Amount, &t.Amount30d}
+	return []any{&t.Claims, &t.Claims30d, &t.Claimers, &t.Claimers30d, &t.Amount, &t.Amount30d, &t.AmountUnread}
 }
 
 // LendingEmissionClaims totals a pool's emission claims up to asOf: Blend's from blend_emissions, BLNT's pool and
