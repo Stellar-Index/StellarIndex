@@ -51,7 +51,7 @@ Tested against Stellar protocol 27. Migrations 0227-0230: 0227 corrects the stor
 ### Fixed
 
 - **api:** account positions are exact only when every event that moves them is counted, and a Blend or BLNT leg closes on a zero token balance; the curated gap compares totals of the same day.
-- **lending:** earnings, claims and auctions that may be incomplete are withheld or flagged; hourly state survives a replay that renumbers a ledger; memory-limited fill windows are split.
+- **lending:** earnings, claims and auctions that may be incomplete are withheld or flagged; a memory-limited history fill splits its window instead of failing, and a replayed hourly state row replaces the older one.
 - **rwa:** premiums are judged against the published value, and partial and stale views are flagged.
 - **pricing:** change summaries use only guard-validated prices, and a failed freeze-ladder read is no longer reported as never frozen.
 - **auth:** account erasure leaves no free-text reason, staff email, or own ip and user agent in the audit log; a request line is never logged with a key in it, at any escape depth.
