@@ -501,23 +501,23 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			"the key's live credential could not be removed; it is still active, retry", r.URL.Path)
 		return
 	}
+	// The postgres validator serves the derived `apikey-cache:` row until its TTL, so it is evicted
+	// before the row is revoked: a failed eviction leaves the row active for a retry, never a 204
+	// over a key that still authenticates.
+	if h.cfg.CacheInvalidator != nil && len(existing.KeyHash) > 0 {
+		if err := h.cfg.CacheInvalidator.InvalidateCachedKey(r.Context(), hex.EncodeToString(existing.KeyHash)); err != nil {
+			h.cfg.Logger.Error("evict auth cache before revoke", "err", err, "key_id", id)
+			writeProblem(w, http.StatusInternalServerError,
+				"the key's cached credential could not be removed; it is still active, retry", r.URL.Path)
+			return
+		}
+	}
 	if err := h.cfg.Keys.Revoke(r.Context(), sc.Account.ID, id, sc.User.ID, "revoked from dashboard"); err != nil {
 		h.cfg.Logger.Error("revoke key in postgres", "err", err, "key_id", id)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
 	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing)
-	// Best-effort cache invalidation. A failure here means the
-	// runtime auth cache keeps authenticating the revoked key
-	// until the TTL rolls it off; we log + 204 anyway so the
-	// dashboard UI updates and the operator notices via the log.
-	if h.cfg.CacheInvalidator != nil && len(existing.KeyHash) > 0 {
-		hexHash := hex.EncodeToString(existing.KeyHash)
-		if err := h.cfg.CacheInvalidator.InvalidateCachedKey(r.Context(), hexHash); err != nil {
-			h.cfg.Logger.Warn("invalidate auth cache after revoke",
-				"err", err, "key_id", id)
-		}
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

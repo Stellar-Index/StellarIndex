@@ -1107,6 +1107,41 @@ func TestDashboardRevoke_ThroughPostgresWiredHandler_KillsRedisRecord(t *testing
 	}
 }
 
+type failingInvalidator struct{}
+
+func (failingInvalidator) InvalidateCachedKey(context.Context, string) error {
+	return errors.New("injected redis failure")
+}
+
+// A revoke whose auth-cache eviction fails must not answer 204 with the cached row still
+// authenticating: the management row stays active so the caller retries.
+func TestDashboardRevoke_CacheEvictionFailureFailsClosed(t *testing.T) {
+	rdb := newMiniRedis(t)
+	store := newFakeKeyStore()
+	_, _, sc := newTestRig(t)
+	h := newMirroredHandlers(t, store, rdb)
+	resp, w := mintViaDashboard(t, h, sc, createRequest{Name: "cached"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("mint status = %d, body = %s", w.Code, w.Body.String())
+	}
+	h.cfg.CacheInvalidator = failingInvalidator{}
+
+	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/"+resp.Key.ID, nil, sc)
+	req.SetPathValue("id", resp.Key.ID)
+	rw := httptest.NewRecorder()
+	h.HandleRevoke(rw, req)
+	if rw.Code == http.StatusNoContent {
+		t.Fatal("revoke answered 204 although the auth-cache row could not be evicted")
+	}
+	row, err := store.Get(context.Background(), resp.Key.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !row.RevokedAt.IsZero() {
+		t.Error("management row revoked although the cached credential survived; a retry would now 204 without evicting it")
+	}
+}
+
 type failingCreateStore struct {
 	*fakeKeyStore
 	err error
