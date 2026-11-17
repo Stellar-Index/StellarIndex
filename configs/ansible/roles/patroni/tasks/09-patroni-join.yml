@@ -35,6 +35,6 @@
     url: "http://{{ patroni_rest_connect_address }}/replica"
     status_code: 200
   register: _replica_check
-  retries: 180
+  retries: "{{ patroni_join_retries | int }}"
   delay: 10
   until: _replica_check.status == 200

@@ -71,6 +71,11 @@ patroni_bootstrap_method: initdb
 # Every host refuses a data dir that holds a postgres cluster Patroni has not
 # initialised. true lets db-01's pgBackRest restore overwrite it; initdb rejects it.
 patroni_adopt_existing_data_dir: false
+# Tries (10s apart) for a replica to report /replica 200; the first base backup
+# of a large database needs more.
+patroni_join_retries: 180
+# The restart handler counts a replica healthy only while streaming within this lag.
+patroni_restart_max_lag_bytes: 16777216
 # Used when method=pgbackrest:
 patroni_pgbackrest_stanza: stellarindex
 patroni_pgbackrest_restore_target: latest   # "latest" | "time:..."
