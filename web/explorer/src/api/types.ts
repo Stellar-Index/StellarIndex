@@ -18779,6 +18779,10 @@ export interface operations {
                              * @description Highest ledger the lake had captured at serve time.
                              */
                             as_of_ledger?: number;
+                            /** @description True when a read hit the per-account cap of 500 rows: `legs` and `emissions` then omit rows past it and `coverage_note` names the capped reads. The response is also marked degraded. */
+                            lower_bound?: boolean;
+                            /** @description Present only when `lower_bound` is true; starts `TRUNCATED:` and names the reads that hit the cap. */
+                            coverage_note?: string;
                             legs: {
                                 /** @enum {string} */
                                 protocol: "blend" | "blnt";

@@ -4498,6 +4498,8 @@ paths:
                           account: { type: string }
                           note: { type: string }
                           as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured at serve time." }
+                          lower_bound: { type: boolean, description: "True when a read hit the per-account cap of 500 rows: `legs` and `emissions` then omit rows past it and `coverage_note` names the capped reads. The response is also marked degraded." }
+                          coverage_note: { type: string, description: "Present only when `lower_bound` is true; starts `TRUNCATED:` and names the reads that hit the cap." }
                           legs:
                             type: array
                             items:
