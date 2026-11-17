@@ -19,7 +19,8 @@ make verify-changed    # vet + tests for the Go packages your change reaches, ty
 ```
 
 - **CI on the pull request is the landing gate.** Every change lands as a PR that merges only when
-  CI is green. Locally, `make lint-changed` and `make verify-changed` before pushing; that is the
+  CI is green. That is our rule, not a GitHub setting: `main`'s ruleset blocks only deletion and
+  force-push, so nothing server-side stops a direct push or a red merge. Locally, `make lint-changed` and `make verify-changed` before pushing; that is the
   whole local requirement. ALWAYS run `make lint-changed` before committing (`make hooks` installs it).
 - Verify with `make verify-changed`, NEVER `go test ./...`: it prints counts, failing lines and the
   log path (grep the log). Wait for CI with `~/.claude/bin/wait-for pr <n>` in the background, NEVER a sleep loop.
