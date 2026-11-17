@@ -3931,8 +3931,7 @@ paths:
                         asset: null
                         reason: blend_v1_unsupported
                 as_of: '2026-11-17T07:00:00Z'
-                flags:
-                  stale: false
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
               schema:
                 allOf:
                   - { $ref: "#/components/schemas/EnvelopeMeta" }
