@@ -158,6 +158,20 @@ for down in migrations/*.down.sql; do
   fi
 done
 
+# migrate_versions: `<version>.<up|down>` for each name on stdin that
+# golang-migrate's file source loads (its regex, top level of migrations/ only).
+migrate_versions() {
+  grep -E '^[0-9]+_.*\.(up|down)\..*$' | sed -E 's/^0*([0-9]+)_.*\.(up|down)\..*$/\1.\2/' | sort -u || true
+}
+
+# golang-migrate reads one directory level: a migration in a subdirectory never runs.
+nested="$(find migrations -mindepth 2 -name '*.sql' 2>/dev/null || true)"
+if [ -n "$nested" ]; then
+  echo "lint-migrations ❌ migration file(s) below migrations/ — golang-migrate reads only the top level, so these never run:" >&2
+  indent "$nested" >&2
+  fail=1
+fi
+
 # Duplicate NNNN prefixes among *.up.sql (two migrations claiming one number).
 dupes=$(find migrations -maxdepth 1 -name '*.up.sql' \
   | sed -E 's#.*/([0-9]+)_.*#\1#' | sort | uniq -d || true)
@@ -234,6 +248,18 @@ if [ -n "$base_sha" ] && git cat-file -e "${base_sha}^{commit}" 2>/dev/null; the
     echo "lint-migrations ❌ ${f}: a migration present at the comparison base is deleted — golang-migrate cannot advance a database whose version has no file (migrations/README.md)" >&2
     fail=1
   done < <(git diff --name-only -M100% --diff-filter=D "${base_sha}...HEAD" -- 'migrations/*.sql' 2>/dev/null || true)
+  # git sees a move into a subdirectory or off the .up/.down suffix as a rename;
+  # golang-migrate sees a version it no longer loads. Compare what it loads.
+  mb="$(git merge-base "$base_sha" HEAD 2>/dev/null || true)"
+  if [ -n "$mb" ]; then
+    now_loaded="$(find migrations -maxdepth 1 -type f | sed 's#.*/##' | migrate_versions)"
+    while IFS= read -r v; do
+      [ -n "$v" ] || continue
+      grep -qxF "$v" <<<"$now_loaded" && continue
+      echo "lint-migrations ❌ migration ${v%.*} (${v##*.}) loads at the comparison base but not here — it was moved out of migrations/ or renamed off NNNN_name.(up|down).sql, so golang-migrate never runs it on a fresh database (migrations/README.md)" >&2
+      fail=1
+    done < <(git ls-tree --name-only "${mb}:migrations" 2>/dev/null | migrate_versions)
+  fi
 else
   echo "lint-migrations: no comparison base (BASE_SHA unset and origin/main unresolvable) — skipping the GH-1164 back-numbering guard." >&2
 fi
