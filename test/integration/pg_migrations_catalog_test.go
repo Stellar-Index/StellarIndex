@@ -144,3 +144,52 @@ func TestTrades0191DownOverCompressedChunks(t *testing.T) {
 		t.Error("zero base_amount accepted after 0191 down; the CHECK was not restored")
 	}
 }
+
+// 0191 down must refuse while a zero-leg row exists, leaving the CHECKs absent and the rows intact.
+func TestTrades0191DownRefusesZeroLegRows(t *testing.T) {
+	ctx, db := openMigrated(t)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount)
+		VALUES ('t', 1, 'z1', 0, now(), 'native', 'native', 0, 2),
+		       ('t', 2, 'z2', 0, now(), 'native', 'native', 3, 4)`); err != nil {
+		t.Fatalf("insert trades: %v", err)
+	}
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations", "0191_trades_drop_amount_checks.down.sql"))
+	if err != nil {
+		t.Fatalf("read 0191 down: %v", err)
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	_, downErr := conn.ExecContext(ctx, string(body))
+	// The refused body leaves its explicit transaction aborted on this session.
+	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		t.Fatalf("rollback after refused down: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close conn: %v", err)
+	}
+	if downErr == nil || !strings.Contains(downErr.Error(), "zero or negative leg") {
+		t.Fatalf("0191 down over a zero-leg row: err = %v, want the zero-or-negative-leg refusal", downErr)
+	}
+
+	var checks, rows int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM pg_constraint
+		 WHERE conrelid = 'trades'::regclass
+		   AND conname IN ('trades_base_amount_check', 'trades_quote_amount_check')`).Scan(&checks); err != nil {
+		t.Fatalf("count constraints: %v", err)
+	}
+	if checks != 0 {
+		t.Errorf("refused 0191 down left %d amount CHECKs on trades, want 0", checks)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM trades WHERE tx_hash IN ('z1', 'z2')`).Scan(&rows); err != nil {
+		t.Fatalf("count trades: %v", err)
+	}
+	if rows != 2 {
+		t.Errorf("trades rows after refused 0191 down = %d, want 2 (the down must not delete)", rows)
+	}
+}

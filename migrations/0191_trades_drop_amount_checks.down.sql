@@ -6,7 +6,9 @@
 -- REFUSES rather than deletes (LOUD, not silent) when any trades row has a
 -- zero or negative leg: the restored CHECKs would reject the table's own
 -- contents; delete those rows explicitly first if that is really what you
--- want.
+-- want. Production holds such rows (0191 exists to store them), so there
+-- the down refuses; golang-migrate is then dirty at 190 with the schema
+-- still at 191, and `force 191` recovers it.
 --
 -- Compressed chunks need no decompression: TimescaleDB 2.26.4 validates an
 -- ADD CONSTRAINT CHECK against compressed rows in place. It does scan every
@@ -18,6 +20,8 @@
 -- indistinguishable.
 
 BEGIN;
+
+SET LOCAL lock_timeout = '5s';
 
 DO $$
 BEGIN
