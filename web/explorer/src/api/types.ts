@@ -2263,6 +2263,11 @@ export interface paths {
          *     events (`amount_claimed`, in the emission token). Blend's backstop
          *     `claim` event names no pool, so `claims.backstop` is null with
          *     `backstop_unavailable_reason: blend_backstop_claim_names_no_pool`.
+         *     The totals sum the claim events projected so far: unless the
+         *     protocol's projection is verified back to its first ledger,
+         *     `claims.lower_bound` is true and `claims.lower_bound_reason` says
+         *     why (`history_unverified`; `history_verdict_stale`, with
+         *     `flags.stale`; `history_verdict_unread`, not cacheable).
          *     A BLNT backstop claim is per pool and tier: `amount` is the BLNT
          *     claimed, `lp_tokens` the backstop tokens it bought and
          *     `shares_minted` the tier shares minted to the claimer; it is not a
@@ -19055,7 +19060,8 @@ export interface operations {
                      *             "amount_30d": "9000000000000"
                      *           },
                      *           "backstop": null,
-                     *           "backstop_unavailable_reason": "blend_backstop_claim_names_no_pool"
+                     *           "backstop_unavailable_reason": "blend_backstop_claim_names_no_pool",
+                     *           "lower_bound": false
                      *         },
                      *         "as_of_ledger": 63340102,
                      *         "as_of_time": "2026-11-16T12:00:00Z"
@@ -19124,6 +19130,10 @@ export interface operations {
                                 })[] | null;
                                 /** @enum {string} */
                                 backstop_unavailable_reason?: "blend_backstop_claim_names_no_pool";
+                                /** @description The totals may miss claims made before the protocol's verified projection range. */
+                                lower_bound?: boolean;
+                                /** @enum {string} */
+                                lower_bound_reason?: "history_unverified" | "history_verdict_stale" | "history_verdict_unread";
                             };
                             /**
                              * Format: int64

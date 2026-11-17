@@ -82,6 +82,10 @@ type LendingEmissionClaimsView struct {
 	Pool                      *LendingClaimTotalsView        `json:"pool"`
 	Backstop                  []LendingBackstopClaimTierView `json:"backstop"`
 	BackstopUnavailableReason *string                        `json:"backstop_unavailable_reason,omitempty"`
+	// LowerBound: the totals sum the projected claim events, and the protocol's projection is not verified back to its first
+	// ledger, so earlier claims may be missing; LowerBoundReason is history_unverified, history_verdict_stale or _unread.
+	LowerBound       bool    `json:"lower_bound"`
+	LowerBoundReason *string `json:"lower_bound_reason,omitempty"`
 }
 
 // LendingClaimTotalsView is one claim stream's totals; amount is the emission token claimed, in base units.
@@ -150,13 +154,15 @@ func (s *Server) handleLendingPoolEmissions(w http.ResponseWriter, r *http.Reque
 		s.writeLendingLookupError(ctx, w, r, "LendingEmissions", pool, err)
 		return
 	}
-	if err := s.fillEmissionClaims(ctx, &view, isBLNT, asOf); err != nil {
+	var flags Flags
+	if err := s.fillEmissionClaims(ctx, &view, isBLNT, asOf, &flags); err != nil {
 		s.writeLendingLookupError(ctx, w, r, "LendingEmissionClaims", pool, err)
 		return
 	}
 	wm, stale, _ := s.lakeWatermark(ctx)
 	view.AsOfLedger = wm
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(asOf), Flags: Flags{Stale: stale}})
+	flags.Stale = flags.Stale || stale
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(asOf), Flags: flags})
 }
 
 func writeLendingPoolNotFound(w http.ResponseWriter, r *http.Request) {
@@ -215,7 +221,7 @@ func unixSeconds(u uint64) time.Time {
 	return time.Unix(int64(u), 0).UTC() //nolint:gosec // clamped above
 }
 
-func (s *Server) fillEmissionClaims(ctx context.Context, view *LendingEmissionsView, isBLNT bool, asOf time.Time) error {
+func (s *Server) fillEmissionClaims(ctx context.Context, view *LendingEmissionsView, isBLNT bool, asOf time.Time, flags *Flags) error {
 	cr, ok := s.Lending.(lendingEmissionClaimReader)
 	if !ok {
 		view.Claims.UnavailableReason = strRef(emissionsReasonNoClaims)
@@ -231,6 +237,20 @@ func (s *Server) fillEmissionClaims(ctx context.Context, view *LendingEmissionsV
 	}
 	pool := claimTotalsView(c.Pool)
 	view.Claims.Available, view.Claims.Pool = true, &pool
+	// Pool and BLNT backstop claims are both written by the protocol's own projection.
+	source := "blend"
+	if isBLNT {
+		source = blnt.SourceName
+	}
+	switch s.projectionHistoryVerdicts(ctx, source)[source] {
+	case historyVerified:
+	case historyVerdictStale:
+		view.Claims.LowerBound, view.Claims.LowerBoundReason, flags.Stale = true, strRef(earningsReasonHistoryVerdictStale), true
+	case historyVerdictUnread:
+		view.Claims.LowerBound, view.Claims.LowerBoundReason, flags.Degraded = true, strRef(earningsReasonHistoryVerdictUnread), true
+	case historyUnverified:
+		view.Claims.LowerBound, view.Claims.LowerBoundReason = true, strRef(earningsReasonHistoryUnverified)
+	}
 	if !isBLNT {
 		view.Claims.BackstopUnavailableReason = strRef(emissionsReasonBlendBstop)
 		return nil

@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,6 +105,41 @@ func TestLendingPoolEmissions_BlendV2(t *testing.T) {
 	if !c.Available || c.Pool == nil || c.Pool.Amount != "18446744073709551621" || c.Pool.Claims != 3 || c.Backstop != nil ||
 		c.BackstopUnavailableReason == nil {
 		t.Fatalf("claims = %+v", c)
+	}
+}
+
+// TestLendingPoolEmissions_ClaimsLowerBoundUnlessVerifiedFromGenesis: claim totals sum projected events, so they are served as
+// a lower bound naming why unless the protocol's projection is verified back to its first ledger, as account earnings do.
+func TestLendingPoolEmissions_ClaimsLowerBoundUnlessVerifiedFromGenesis(t *testing.T) {
+	ex := &stubEmissionsExplorer{stubExplorerReader: &stubExplorerReader{}, state: emissionStreams(t, 1)}
+	lr := &stubEmissionClaimReader{claims: timescale.LendingEmissionClaims{Pool: timescale.LendingClaimTotals{
+		Claims: 1, Amount: mustAmount(t, "1200000000"), Amount30d: mustAmount(t, "0"),
+	}}}
+	pool := mkCStrkey(t, 1)
+	now := time.Now().UTC()
+	floorAfterGenesis := &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+		{Source: "blend", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 5000, ComputedAt: now, ProjectionEvidencedAt: now},
+	}}
+	cases := []struct {
+		name   string
+		reader *stubCompletenessReader
+		reason string
+	}{
+		{name: "verified from genesis", reader: verifiedLendingHistory()},
+		{name: "projection floor after genesis", reader: floorAfterGenesis, reason: "history_unverified"},
+		{name: "verdict read fails", reader: &stubCompletenessReader{err: errors.New("pg down")}, reason: "history_verdict_unread"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := getEmissions(t, v1.New(v1.Options{Explorer: ex, Lending: lr, CompletenessReader: tc.reader}), pool, http.StatusOK).Claims
+			want := tc.reason
+			if want == "" {
+				want = "null"
+			}
+			if c.Pool == nil || c.Pool.Amount != "1200000000" || c.LowerBound != (tc.reason != "") || strOrNull(c.LowerBoundReason) != want {
+				t.Fatalf("claims = %+v reason %s", c, strOrNull(c.LowerBoundReason))
+			}
+		})
 	}
 }
 
