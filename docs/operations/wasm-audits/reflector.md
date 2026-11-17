@@ -1,9 +1,9 @@
 ---
 title: Reflector WASM-history audit
 last_verified: 2026-10-21
-status: ratified — v2 walk confirms two-hash inventory
+status: partial — the two attested hashes emit no events; the event-emitting hash is unaudited
 sources: reflector-dex, reflector-cex, reflector-fx
-backfill_safe: true
+backfill_safe: false
 ---
 
 # Reflector WASM audit
@@ -16,29 +16,26 @@ contract. Audited as one unit for wire format, with per-variant
 
 See `README.md` for the full procedure.
 
-> **2026-05-03 update — v2 walk confirms two-hash inventory.**
-> The 2026-04-30 wide-net r1 walk re-observed the v2 (`4a64c8c8…`)
-> → v3 (`df88820e…`) transition on DEX (`CALI2BYU…`) + CEX
-> (`CAFJZQWS…`) at L51,656,689-91, and confirmed the FX
-> (`CBKGPWGK…`) contract has been on `df88820e…` since first
-> deploy at L56,733,481. **No further upgrades observed** through
-> the walk's upper bound (L62,249,727). All three contracts
-> currently run `df88820e…`. Bytes SHA-256-verified
-> for both hashes at `evidence/r1-walk-2026-05-01/wasm-bytes/`
-> on r1.
->
-> **2026-05-01 update.** Hashes cross-checked against the 2026-04-30 r1 walk;
-> see [r1-walk-2026-05-01.md](r1-walk-2026-05-01.md).
+> **The two attested hashes emit no events.** Neither `4a64c8c8…` (v2)
+> nor `df88820e…` (v3) imports the host's `contract_event` function
+> (`x.1`); see the committed bytes at
+> `evidence/r1-walk-2026-05-01/wasm-bytes/`. A replay over the ranges
+> they ran writes no rows, which is correct, and their attestation says
+> nothing about the event wire format. The walk ended at L59,301,651
+> ([WASM timeline](#wasm-timeline)); the captured events from L62.25M
+> came from a later, event-emitting WASM, and it is not in
+> `audited_wasm.json`. The replay gate therefore
+> refuses any Reflector range that holds events until those hashes are
+> string-checked against the decoder below and attested. Their values
+> are not recorded in this repo and are unverified here.
 
 ## Status
 
-**Ratified 2026-04-29.** All three Reflector variants (DEX, CEX,
-FX) flip `BackfillSafe: false → true` in this PR. Two unique WASM
-hashes across the three contracts; both fetched via `stellar contract fetch` against
-mainnet.sorobanrpc.com — interface diff between v2 (`4a64c8c8…`)
-and v3 (`df88820e…`) is **cosmetic** (one removed governance
-function, struct definition reordering); event-emitting types and
-SDK-family are identical, so the wire format is preserved.
+**Attested 2026-04-29:** `4a64c8c8…` (DEX, CEX) and `df88820e…`
+(DEX, CEX, FX), as event-less builds. Fetched via `stellar contract fetch`
+against mainnet.sorobanrpc.com. `Backfill: BackfillPerWASM` admits only
+ranges where every contract ran one of those two; no event-bearing Reflector
+range is replay-safe yet.
 
 ## Contracts under audit
 
@@ -57,34 +54,37 @@ the decoder's contract list.
 
 ## Decoder expectations
 
-Captured from `internal/sources/reflector/{events,decode}.go` at
-HEAD as of 2026-04-29. Re-verified 2026-04-23 against the upstream
-`#[contractevent]` macro expansion.
+From `internal/sources/reflector/{events,decode}.go`; the wire shape is
+pinned by the captured events in `test/fixtures/reflector/v6-2026-04-23/`
+(`real_fixture_test.go`). That directory is named for the upstream release,
+not a WASM hash, so it does not identify which attested hash emitted them.
 
 ### Topic structure
 
     topic[0] = ScvSymbol("REFLECTOR")
     topic[1] = ScvSymbol("update")
     topic[2] = ScvU64(timestamp)        // unix milliseconds
-    body     = ScvVec<(ScVal, ScI128)>  // per-entry tuple
+    body     = ScvMap{"update_data": ScvVec<(ScVal, ScI128)>}
 
-`timestamp` is hoisted into a `#[topic]` slot by the `#[contractevent]`
-macro. The body is NOT `Map{"prices": Vec<(Asset, i128)>, "timestamp": u64}`:
-`#[contractevent]` expands tuple-shaped fields to ScvVec in declaration order.
+`update_data` is looked up by name. A body that is not a Map, lacks
+`update_data`, or whose `update_data` is not a Vec fails the whole event
+with `ErrMalformedPayload`.
 
 Classification is byte-equal against `TopicSymbolReflector` +
 `TopicSymbolUpdate`; drift silently drops every event.
 
 ### Body extraction
 
-Each tuple in the outer `Vec<(ScVal, I128)>` is one (asset, price)
-pair. First element:
+Each tuple in `update_data` is one (asset, price) pair. First element:
 
-- `ScvAddress` (Soroban contract address — DEX/CEX)
-- `ScvSymbol` (fiat code like "USD" or asset symbol — FX)
+- `ScvAddress` (Soroban asset contract) → `canonical.NewSorobanAsset`
+- `ScvSymbol` (ticker: fiat for FX, crypto for CEX) →
+  `canonical.MapOracleSymbol`, which records an unmapped symbol as
+  `raw:<symbol>` rather than dropping it
 
-Other types are skipped (`ErrUnknownAssetIdentifier`). The second
-element is the price as `i128` at the documented 14-decimal scale.
+Any other type, a tuple that is not a 2-tuple, or a non-`i128` price fails
+the whole event with `ErrMalformedPayload`. The second element is the price
+as `i128` at the documented 14-decimal scale.
 
 **One event** fans out into **N OracleUpdate rows**, one per tuple; to keep
 `(source, ledger, tx_hash, op_index)` unique, fanout uses a per-entry op_index
@@ -102,14 +102,16 @@ Swapping DEX from Address to Symbol (or vice versa) would still decode but miscl
 
 1. **Topic[0] / topic[1] symbol change** — `"REFLECTOR"` or
    `"update"` to anything else silently drops every event.
-2. **Topic[2] type change** — `u64` → `i64` or `Symbol` errors per
-   event (`AsU64FromTopic` strict); fail-loud, range dropped.
-3. **Body shape change Vec → Map** — every event errors at extraction.
+2. **Topic[2] type change** — `u64` → `i64` or `Symbol` does NOT fail:
+   the decoder falls back to the ledger close time and keeps the prices.
+   **Silent**: every row is restamped; only timestamp drift reveals it.
+3. **Body shape change Map → bare Vec** (or `update_data` renamed) — every
+   event fails with `ErrMalformedPayload`; the source goes dark for the range.
 4. **Per-entry tuple field reorder** — `(asset, price)` → `(price, asset)`
-   (i128 parsed as Address). **Almost certainly fail-loud
-   per entry**; every event dropped under that WASM.
+   (i128 parsed as Address). Fail-loud: the whole event fails with
+   `ErrMalformedPayload`; every event dropped under that WASM.
 5. **Per-entry tuple length change** (e.g. a confidence
-   score) — errors at the AsTupleN(2) check; entries skipped.
+   score) — fails the AsTupleN(2) check; the whole event fails.
 6. **Asset identifier type mix-up across variants** — DEX/CEX
    emitting Symbols (or FX Addresses): silent misclassification.
    Per-WASM source review must verify each variant's tuple type.
@@ -162,43 +164,31 @@ Two unique hashes total across all three contracts:
   wall time). Replaced at L51,656,689 (CEX) / L51,656,692 (DEX) —
   the 3-second offset between contracts indicates a coordinated
   upgrade pushed in the same operator session.
-- **`df88820e…`** — current production hash on **all three**
-  variants. DEX + CEX adopted at the v2→v3 upgrade (~2024-04-26);
-  FX deployed fresh on this hash at L56,733,481 (~2025-06) and
-  has never been on any other.
+- **`df88820e…`** — DEX + CEX from the v2→v3 upgrade (~2024-04-26);
+  FX from its first deploy at L56,733,481 (~2025-06). Ran on all three
+  through the walk's end (L59,301,651).
 
-Matches Reflector's documented v2→v3 transition; every fixture in
-`internal/sources/reflector/` was captured against the v3-era binary.
-
-Live ingest from walk-end (L59,301,651) through r1's tip
-(L62,342,614): no further upgrades; `df88820e` is still production.
+Neither hash imports `contract_event`, so neither emitted the events the
+decoder reads. The captured events in `test/fixtures/reflector/v6-2026-04-23/`
+are from L62.25M, after the walk's end, so a later, unattested WASM was running
+by then. Which hash, and when each contract switched, has not been recorded.
 
 ## Per-hash review findings
 
 | variant | hash (first 16) | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
-| FX | `df88820e231ad8f3` | L56,733,481 → L59,301,651 (walk-end; current per live ingest) | maintainer@2026-04-29 | matches current decoder |
-| DEX (post-v3) | `df88820e231ad8f3` | L51,656,692 → L59,301,651 (walk-end) | maintainer@2026-04-29 | matches current decoder |
-| CEX (post-v3) | `df88820e231ad8f3` | L51,656,689 → L59,301,651 (walk-end) | maintainer@2026-04-29 | matches current decoder |
-| DEX (pre-v3) | `4a64c8c8502df326` | L50,644,229 → L51,656,691 | maintainer@2026-04-29 | matches current decoder (disassembly) |
-| CEX (pre-v3) | `4a64c8c8502df326` | L50,644,239 → L51,656,688 | maintainer@2026-04-29 | matches current decoder (disassembly) |
+| FX | `df88820e231ad8f3` | L56,733,481 → at least L59,301,651 (walk-end) | maintainer@2026-04-29 | emits no events |
+| DEX (post-v3) | `df88820e231ad8f3` | L51,656,692 → at least L59,301,651 (walk-end) | maintainer@2026-04-29 | emits no events |
+| CEX (post-v3) | `df88820e231ad8f3` | L51,656,689 → at least L59,301,651 (walk-end) | maintainer@2026-04-29 | emits no events |
+| DEX (pre-v3) | `4a64c8c8502df326` | L50,644,229 → L51,656,691 | maintainer@2026-04-29 | emits no events |
+| CEX (pre-v3) | `4a64c8c8502df326` | L50,644,239 → L51,656,688 | maintainer@2026-04-29 | emits no events |
+| DEX, CEX, FX (post-walk) | unrecorded | after L59,301,651 → tip | — | not audited; the replay gate refuses these ranges |
 
-### `df88820e231ad8f3` — current production, all three variants
+### `df88820e231ad8f3` — v3, all three variants
 
-- Fixtures (`internal/sources/reflector/decode_test.go`,
-  `real_fixture_test.go`) captured from this WASM's events; topic shape
-  `("REFLECTOR", "update", <u64 ms>)` and body
-  `Vec<(asset, i128)>` match.
-- All three variants emit the SAME wire format from
-  this WASM (decoder is variant-agnostic apart from the
-  ScvAddress vs ScvSymbol asset slot, handled by
-  `ErrUnknownAssetIdentifier` skipping).
-- 14-decimal price scale matches the constant in the decoder.
-- Live ingest health: 0 `ErrMalformedPayload` /
-  `ErrUnknownAssetIdentifier` rate spikes since FX support landed
-  (PR #161, 2026-03 cutover).
-- No `update_current_contract_wasm` from
-  L51,656,689 (DEX+CEX) / L56,733,481 (FX) through walk-end and live ingest.
+- No `x.1` (`contract_event`) import in the committed bytes: it emits no
+  events, so a replay over its ranges writes no rows.
+- Not the source of the fixtures in `test/fixtures/reflector/` (see above).
 
 ### `4a64c8c8502df326` — DEX + CEX pre-v3 hash (disassembly-confirmed)
 
@@ -232,25 +222,21 @@ interface` + data-section string analysis:
    (tuple field -> `ScvVec` in declaration order; topics -> small-symbol
    `ScvSymbol`). No change between 20.2.0 and 20.3.2
    touches event encoding.
-4. **Source at the v3-era release** (the only one in our
-   `.discovery-repos/reflector-contract` checkout) shows the
-   `#[contractevent(topics = ["REFLECTOR", "update"])] struct
-   UpdateEvent { #[topic] timestamp: u64, update_data: Vec<(Val,
-   i128)> }` pattern that matches the decoder's expected
-   `topic[0..2] = ("REFLECTOR", "update", <u64>)` + `body =
-   Vec<(Val, i128)>`. With spec, data section and SDK
-   family identical between v2 and v3, the event shape is preserved.
+4. **The upstream `#[contractevent]` `UpdateEvent` source** is a later
+   release than v2/v3, which import no `contract_event` and emit nothing.
+   Its body is `Map{"update_data": Vec<(Val, i128)>}`, as the decoder reads.
 
-**Conclusion**: the v3-tuned decoder will correctly decode v2-era
-events. Backfill replays of L50,644,229 → L51,656,691 are safe.
+**Conclusion**: v2 and v3 emit no events, so replays of their ranges are
+admitted and correctly write no rows. Items 1-3 do not bear on the event
+wire format.
 
 ## Decision
 
-| source | BackfillSafe | rationale |
+| source | Backfill | rationale |
 | --- | --- | --- |
-| `reflector-fx` | **`true`** (flipped in commit 950891bde) | Single WASM hash since first deploy; matches current decoder; live ingest healthy. |
-| `reflector-dex` | **`true`** (flipped in this PR) | v2 (`4a64c8c8…`) + v3 (`df88820e…`) hashes both verified. v3 from fixtures + production health; v2 from disassembly + interface diff (cosmetic) + SDK-family compat. |
-| `reflector-cex` | **`true`** (flipped in this PR) | Same evidence as DEX — both contracts share the same two hashes and the same disassembly findings apply. |
+| `reflector-fx` | `BackfillPerWASM` | `df88820e…` attested as event-less; event-bearing ranges refused until the later hash is audited. |
+| `reflector-dex` | `BackfillPerWASM` | `4a64c8c8…` + `df88820e…` attested as event-less; same refusal. |
+| `reflector-cex` | `BackfillPerWASM` | Same as DEX. |
 
 ## References
 
@@ -258,6 +244,7 @@ events. Backfill replays of L50,644,229 → L51,656,691 are safe.
 - Decoder source: `internal/sources/reflector/{events,decode}.go`
 - Schema-evolution stance: `docs/architecture/ingest-pipeline.md#contract-schema-evolution`
 - Backfill gate: `internal/sources/external/registry.go` —
-  `Registry["reflector-{dex,cex,fx}"].BackfillSafe` (three entries)
+  `Registry["reflector-{dex,cex,fx}"].Backfill` (three entries), checked per
+  range against `internal/wasmaudit/audited_wasm.json`
 - Upstream contract source: `https://github.com/reflector-network/reflector-contract`
 - WASM-history walk JSON (full): `r1:/var/log/wasm-history-all.json`

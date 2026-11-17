@@ -16,14 +16,17 @@ change land in one PR.
 
 Why (AGENTS.md, "gate a Soroban backfill behind a per-WASM-hash decoder audit"):
 Soroban contracts can each `update_contract` at
-the same address, changing event body schemas / topic shapes. Live ingest sees
-only the current WASM; a since-inception backfill replays every prior version,
-and a current-only decoder silently produces wrong trades.
+the same address, changing event body schemas / topic shapes. A since-inception
+backfill replays every prior version, and a current-only decoder silently
+produces wrong trades. Live ingest has no hash check either: it decodes whatever
+WASM a contract runs now. An in-place upgrade to an unaudited hash is caught only
+by the daily `wasm-drift` run (`stellarindex_wasm_drift`, ticket severity), so
+live rows can decode against unaudited bytes for up to a day before anyone is told.
 
 ## Files in this directory
 
 - `README.md` — this file. Procedure + checklist.
-- `internal/wasmaudit/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks each gated contract against ([runbook](../runbooks/wasm-drift.md)).
+- `internal/wasmaudit/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks every contract of each gated or `BackfillPerWASM` source against ([runbook](../runbooks/wasm-drift.md)).
 - `<source>.md` — one audit log per source (e.g. `soroswap.md`, `aquarius.md`,
   `phoenix.md`, `comet.md`, `blend.md`, `spectra.md`); `ls` this directory for
   the current set.
@@ -158,7 +161,9 @@ expectations" in each per-source log):
 | Event split into multiple events (e.g. `swap` → `swap_in` + `swap_out`) | correlation logic breaks; decoder may emit 0 or 2 trades per swap |
 | Topic arity changed (2-tuple → 3-tuple) | classification matches on `topic[0..2]` so a longer topic still matches — but our position-based assumptions about further topic slots break |
 
-Every hash needs a decode fixture test under `internal/sources/<source>/`: a captured event from that hash, with the decoded amounts and fields asserted. Eyeballing the disassembly is not evidence for the scale and sign rows above, and no gate checks that a fixture exists, so the PR reviewer must.
+Every new hash needs a captured event under `test/fixtures/<source>/<wasm_hash>/` and a decode test in `internal/sources/<source>/` that asserts its decoded amounts and fields. Assert the amount against an anchor independent of the event under test, such as the SEP-41 transfers in the same transaction: the event's own i128 cannot reveal a scale change. Eyeballing the disassembly is not evidence for the scale and sign rows above.
+
+What CI enforces: `TestManifest_NewHashNeedsFixture` (`internal/wasmaudit/fixture_test.go`) fails when an attested hash has no file under `test/fixtures/*/<wasm_hash>/` beyond the pinned count of older hashes that predate the rule (that count may only fall). It does not check that a test decodes the fixture, what it asserts, or that the amount anchor is independent; the PR reviewer must.
 
 If every hash passes, document the findings, add each hash to
 `internal/wasmaudit/audited_wasm.json` and set `Backfill: BackfillPerWASM` in
