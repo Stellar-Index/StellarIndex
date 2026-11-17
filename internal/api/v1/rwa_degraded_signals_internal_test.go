@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -228,5 +229,22 @@ func TestStablecoinOf_UncheckedIssuerIsWithheld(t *testing.T) {
 	a := stablecoinAssetOf(stablecoinMember{ticker: "USDX", code: "USDX", issuer: "GISSUER"}, d, true)
 	if a.ValuationStatus != stablecoinWithheld {
 		t.Errorf("valuation status = %q, want %q", a.ValuationStatus, stablecoinWithheld)
+	}
+}
+
+// A reference basis with no valued member publishes no total, so a cut-short set may say members are missing but may not
+// call a total it withheld a lower bound; once a member is valued, the lower-bound sentence is back.
+func TestRWAReferenceBasis_NoTotalIsNotCalledALowerBound(t *testing.T) {
+	for _, trunc := range []rwaTruncation{{overIssuerCap: 2}, {unread: 1}} {
+		none := rwaReferenceBasis(3, 0, nil, trunc)
+		if !strings.Contains(none, "no total is published") || !strings.Contains(none, "members may be missing") {
+			t.Errorf("%+v: basis = %q, want the withheld total and the cut named", trunc, none)
+		}
+		if strings.Contains(none, "LOWER BOUND") {
+			t.Errorf("%+v: basis calls a total it does not publish a lower bound: %q", trunc, none)
+		}
+		if some := rwaReferenceBasis(3, 1, nil, trunc); !strings.Contains(some, "the total is a LOWER BOUND on the value of the set") {
+			t.Errorf("%+v: a valued, cut-short set lost its lower-bound sentence: %q", trunc, some)
+		}
 	}
 }

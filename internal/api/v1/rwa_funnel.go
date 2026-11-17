@@ -417,9 +417,6 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 			// This arm's OWN admissions: m.contracts carries both C2 arms' rows, and counting all of
 			// them would claim the other arm's and stop the arithmetic closing.
 			Stage: rwaStageContractsAdmitted, Unit: rwaUnitAssets, Count: rwaDirectoryAdmitted(m),
-			Dropped: rwaDrops(RWAFunnelDrop{
-				Reason: rwaDropNotInCatalogue, Count: m.contractsNotObserved, Actor: rwaActorIssuer,
-			}),
 		},
 		{Stage: rwaStageContractsServed, Unit: rwaUnitAssets, Count: served},
 		{
@@ -484,9 +481,6 @@ func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
 		},
 		{
 			Stage: rwaStageListingAdmitted, Unit: rwaUnitAssets, Count: rwaListingAdmitted(m),
-			Dropped: rwaDrops(RWAFunnelDrop{
-				Reason: rwaDropNotInCatalogue, Count: m.listingNotObserved, Actor: rwaActorIssuer,
-			}),
 		},
 		{Stage: rwaStageListingServed, Unit: rwaUnitAssets, Count: served},
 		{

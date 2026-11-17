@@ -1849,6 +1849,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending markets — compare supply and borrow rates across every pool.
+         * @description One row per (pool, reserve) across every lending pool that
+         *     `/v1/lending/pools` lists (Blend V1/V2 and BLNT V3), to compare
+         *     where an asset earns the most or borrows cheapest. Every figure
+         *     is copied from the same per-pool view
+         *     `/v1/lending/pools/{pool}/reserves` serves, so the two never
+         *     disagree; see that endpoint for how amounts, APRs, USD values
+         *     and `price_stale` are derived.
+         *
+         *     Rows are INCLUDED but marked `obtainable: false` when their APR
+         *     is not a yield a new position can earn or pay: the pool is not
+         *     active (`pool_not_active`, e.g. on ice or frozen), its status is
+         *     not known (`pool_status_unknown`, every Blend V1 pool, whose
+         *     status codes are not verified), the reserve is disabled
+         *     (`reserve_disabled`), its config is not known
+         *     (`reserve_config_unknown`), or its APRs are withheld
+         *     (`rate_unavailable`). Exclude them for a "best rate" answer.
+         *
+         *     A pool whose reserves cannot be read is named in
+         *     `omitted_pools` with a reason and its rows are absent; `partial`
+         *     is then true and the response is sent `Cache-Control: no-store`.
+         *     `partial` is also true when the BLNT pool list could not be
+         *     read. Asset identity is the reserve token contract plus, for a
+         *     SAC, the classic or native asset it wraps (`asset_id`), never
+         *     the code alone. At most 2,000 rows are served; `truncated` is
+         *     true when that cap cut the list.
+         */
+        get: operations["getLendingRates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools/{pool}/reserves": {
         parameters: {
             query?: never;
@@ -2069,6 +2113,62 @@ export interface paths {
          *     the pool.
          */
         get: operations["getLendingBackstopHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/accounts/{account}/earnings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending account — earnings and interest paid.
+         * @description What one account has earned and paid in Blend (V1/V2) and BLNT V3
+         *     lending, per (pool, reserve, side) and per backstop (pool, tier).
+         *     Unknown or never-active accounts return 200 with empty lists.
+         *
+         *     Each leg serves `net_flow` (supply: underlying deposited minus
+         *     withdrawn, collateral included; borrow: borrowed minus repaid;
+         *     backstop: backstop tokens deposited minus withdrawn), folded from
+         *     the account's events; `folded_tokens`, the b-token, d-token or
+         *     backstop-share balance those events imply; `onchain_tokens`, the
+         *     same balance read from the pool's `Positions` or the backstop's
+         *     `UserBalance` storage in the lake (queued shares included);
+         *     `current_value`, `onchain_tokens` in the asset valued at the
+         *     reserve's last on-chain rate update (b_rate/d_rate move only when
+         *     the reserve is touched; `rate_as_of` is that update's time) or at
+         *     the backstop's share price; and
+         *     `accrued = current_value - net_flow` (interest earned, interest
+         *     paid, or backstop earnings including emissions claimed into it),
+         *     true as of `rate_as_of`. A BLNT clawback counts as a withdrawal,
+         *     so `accrued` does not include the clawed-back amount as a loss.
+         *
+         *     `accrued` is served only when `folded_tokens` equals
+         *     `onchain_tokens` and no auction moved the leg (`reconciled:
+         *     true`). Otherwise it is null and `reason` names why:
+         *     `auction_moved` (a liquidation, bad-debt fill or write-off moved
+         *     the position without an underlying flow), `projection_behind`
+         *     (the on-chain entry changed after the newest projected event),
+         *     `balance_mismatch` (an event the fold does not cover, or history
+         *     not yet projected), `onchain_unread` (also when one pool's lake
+         *     read failed; the response is then marked degraded),
+         *     `fold_inconsistent`, `rate_unread`, `history_unverified` (the
+         *     protocol's event history is not verified back to its first
+         *     ledger, so earlier flows could be missing), or for a
+         *     Blend V1 backstop `blend_v1_unsupported`. Amounts are base-unit
+         *     decimal strings; `decimals` is the reserve's, null when unread or
+         *     for a backstop. Emission claims are sums of the claim events
+         *     projected so far, in the pool's emission token, and always a
+         *     lower bound. No USD values.
+         */
+        get: operations["getLendingAccountEarnings"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9199,15 +9299,15 @@ export interface components {
         };
         /**
          * @description One reason a set member is absent from a series. Shared by
-         *     `/rwa/history` and `/rwa/premium`: the first four reasons are the
+         *     `/rwa/history` and `/rwa/premium`: the first five reasons are the
          *     same refusal by the same rule on both, and two spellings of one
-         *     reason is how a funnel starts lying. The last five are specific
+         *     reason is how a funnel starts lying. The last six are specific
          *     to one series — the supply pair to the value series, the market
-         *     trio to the premium series.
+         *     four to the premium series.
          */
         RWAHistoryExcluded: {
             /** @enum {string} */
-            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "no_same_day_observation";
+            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "reference_isin_mismatch" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation";
             /** @description How many set members this reason accounts for. */
             assets: number;
             /** @description What the reason means and, where it matters, who can move it. */
@@ -10533,9 +10633,12 @@ export interface components {
              *     `anchor_asset` names no security and contradicts nothing.
              *     `no_reference_feed` — the pair IS bound, but the oracle stream
              *     carries no row for its feed.
-             *     `reference_unavailable` — the oracle read did not answer, so
-             *     nothing is known either way. NOT an absence: a failed read has
-             *     not learned what the oracles carry, and must not report it.
+             *     `reference_unavailable` — a read the row depends on did not
+             *     answer, so nothing is known either way: the oracle read, or,
+             *     for a row no oracle feed binds, the listing-directory read
+             *     (failed, or returned no fresh rows). NOT an absence: a failed
+             *     read has not learned what the sources carry, and must not
+             *     report it.
              *     `reference_expired` — the bound feed's most recent observation
              *     is older than the seven-day window an active stream is defined
              *     by. Reached only when a snapshot is carried across a sustained
@@ -10555,6 +10658,11 @@ export interface components {
              *     report the issuer's own claim as a market finding.
              *     `reference_not_positive` — the oracle published a
              *     non-positive value; nothing is divided by it.
+             *     `market_outside_band` — the market price is more than ten
+             *     times, or less than a tenth of, the oracle's value: the band
+             *     `/v1/rwa/premium` refuses a day by, so the two surfaces never
+             *     disagree on one print. The row and its reference are still
+             *     published.
              *     `reference_is_a_prospectus_nav` — the row carries a
              *     reference, and it is a prospectus's constant NAV rather than
              *     an oracle's valuation of the instrument, so no premium may
@@ -10571,7 +10679,7 @@ export interface components {
              *     percent on a one-dollar share.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
+            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "market_outside_band" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
@@ -11122,7 +11230,10 @@ export interface components {
              *     is the pair, so it is the same asset.
              *     `over_issuer_cap` — the rebuild's issuer cap bound the set.
              *     `admitted_but_never_observed_on_chain` — the asset met every
-             *     requirement but the index holds no row for it.
+             *     requirement but the index holds no row for it. Emitted by the
+             *     classic arm only: an admitted contract with no catalogue row
+             *     is still valued, so the contract and listing-corroborated arms
+             *     never report it.
              *     `issuer_asset_page_truncated` — counts ISSUERS whose classic
              *     asset list filled one read, so a member in the unread tail
              *     could not be found. It counts issuers, not assets, so it is
@@ -17873,6 +17984,153 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getLendingRates: {
+        parameters: {
+            query?: {
+                /** @description Only this asset's reserves: a token contract C-strkey or a canonical asset id. Every alias matches, so `native`, `crypto:XLM` and the XLM SAC select the same rows. */
+                asset?: string;
+                protocol?: "blend" | "blnt";
+                /** @description `supply_apr` (default, highest first), `borrow_apr` (lowest first) or `supplied_usd` (largest first). Rows without the key sort last; ties by pool then asset. */
+                sort?: "supply_apr" | "borrow_apr" | "supplied_usd";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rate rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "rates": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool_version": "v2",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "pool_status": "active",
+                     *             "pool_status_code": 1,
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "asset_code": "USDC",
+                     *             "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "supply_apr": 0.0819,
+                     *             "borrow_apr": 0.1091,
+                     *             "utilization_pct": 75.07,
+                     *             "decimals": 7,
+                     *             "supplied": "589262319356640",
+                     *             "borrowed": "442359640330233",
+                     *             "supplied_usd": "58926231.94",
+                     *             "borrowed_usd": "44235964.03",
+                     *             "price_usd": "1",
+                     *             "price_stale": false,
+                     *             "collateral_factor": "9500000",
+                     *             "liability_factor": "9500000",
+                     *             "supply_cap": "10000000000000000",
+                     *             "enabled": true,
+                     *             "last_update": "2026-07-03T22:37:51Z",
+                     *             "obtainable": true,
+                     *             "exclusions": []
+                     *           }
+                     *         ],
+                     *         "omitted_pools": [],
+                     *         "partial": false,
+                     *         "truncated": false,
+                     *         "config_decimals": 7
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            rates?: {
+                                /** @enum {string} */
+                                protocol?: "blend" | "blnt";
+                                /**
+                                 * @description Blend V1 or V2, or v3 for BLNT. Null when the Blend lineage is not known.
+                                 * @enum {string|null}
+                                 */
+                                pool_version?: "v1" | "v2" | "v3" | null;
+                                /** @description Pool contract C-strkey. */
+                                pool?: string;
+                                /** @description Pool status label (`admin_active`, `active`, `admin_on_ice`, `on_ice`, `admin_frozen`, `frozen`, `setup`). Null for a Blend V1 pool or when the pool config is not known. */
+                                pool_status?: string | null;
+                                /** @description Raw PoolConfig status code. Null when the pool config is not known. */
+                                pool_status_code?: number | null;
+                                /** @description Reserve token contract C-strkey. */
+                                asset?: string;
+                                /** @description Canonical id of the classic or native asset a SAC reserve wraps. Null when the token is not a known SAC. */
+                                asset_id?: string | null;
+                                /** @description Classic asset code; null for native and non-SAC tokens. */
+                                asset_code?: string | null;
+                                /** @description Classic asset issuer; null for native and non-SAC tokens. */
+                                asset_issuer?: string | null;
+                                /** @description Supply APR as a fraction (0.05 = 5%). Null when the rate-model config is not known. */
+                                supply_apr?: number | null;
+                                /** @description Borrow APR as a fraction. Null when the rate-model config is not known. */
+                                borrow_apr?: number | null;
+                                /** @description Borrowed/supplied, 0..100. */
+                                utilization_pct?: number;
+                                /** @description The token's decimal exponent; null when not established. */
+                                decimals?: number | null;
+                                /** @description Total supplied, underlying token base units. */
+                                supplied?: string;
+                                /** @description Total borrowed, underlying token base units. */
+                                borrowed?: string;
+                                supplied_usd?: string | null;
+                                borrowed_usd?: string | null;
+                                /** @description USD price per whole token the USD values use; null whenever they are. */
+                                price_usd?: string | null;
+                                price_stale?: boolean;
+                                /** @description Raw integer at `config_decimals`; null when the reserve config is not known. */
+                                collateral_factor?: string | null;
+                                /** @description Raw integer at `config_decimals`; null when the reserve config is not known. */
+                                liability_factor?: string | null;
+                                /** @description Base units; null on a V1 pool, which has no cap, or when the config is not known. */
+                                supply_cap?: string | null;
+                                /** @description Null when the reserve config is not known. */
+                                enabled?: boolean | null;
+                                /**
+                                 * Format: date-time
+                                 * @description Ledger close time of the reserve's last interest accrual.
+                                 */
+                                last_update?: string | null;
+                                /** @description False when `exclusions` is non-empty. */
+                                obtainable?: boolean;
+                                exclusions?: ("pool_not_active" | "pool_status_unknown" | "reserve_disabled" | "reserve_config_unknown" | "rate_unavailable")[];
+                            }[];
+                            omitted_pools?: {
+                                /** @enum {string} */
+                                protocol?: "blend" | "blnt";
+                                pool?: string;
+                                reason?: string;
+                            }[];
+                            /** @description True when a listed pool, or the BLNT pool list, is missing from `rates`. */
+                            partial?: boolean;
+                            /** @description True when `rates` was cut at 2,000 rows. */
+                            truncated?: boolean;
+                            /** @description Fixed-point scale of `collateral_factor` and `liability_factor`. Always 7. */
+                            config_decimals?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getLendingPoolReserves: {
         parameters: {
             query?: never;
@@ -18455,6 +18713,116 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingAccountEarnings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account G-strkey or contract C-strkey (an M-strkey resolves to its base account). */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Earnings per leg. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+                     *         "legs": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "side": "supply",
+                     *             "tier": null,
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "decimals": 7,
+                     *             "net_flow": "1000000000",
+                     *             "folded_tokens": "950000000",
+                     *             "onchain_tokens": "950000000",
+                     *             "current_value": "1045000000",
+                     *             "rate_as_of": "2026-07-03T22:31:05Z",
+                     *             "accrued": "45000000",
+                     *             "reconciled": true,
+                     *             "reason": null
+                     *           }
+                     *         ],
+                     *         "emissions": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "claimed": "120000000",
+                     *             "lower_bound": true
+                     *           }
+                     *         ],
+                     *         "note": "accrued is current_value - net_flow, served only when the token balance folded from this account's events equals its current on-chain balance.",
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            account: string;
+                            note: string;
+                            /**
+                             * Format: int64
+                             * @description Highest ledger the lake had captured at serve time.
+                             */
+                            as_of_ledger?: number;
+                            legs: {
+                                /** @enum {string} */
+                                protocol: "blend" | "blnt";
+                                pool: string;
+                                /** @enum {string} */
+                                side: "supply" | "borrow" | "backstop";
+                                /** @enum {string|null} */
+                                tier: "FirstLoss" | "SecondLoss" | "ThirdLoss" | null;
+                                /** @description Reserve underlying or backstop token contract; null when unread. */
+                                asset: string | null;
+                                decimals: number | null;
+                                net_flow: string;
+                                folded_tokens: string | null;
+                                onchain_tokens: string | null;
+                                current_value: string | null;
+                                /**
+                                 * Format: date-time
+                                 * @description When the reserve's stored rate was last updated on chain; current_value and accrued are valued at the reserve's last on-chain rate update. Null for a backstop leg or an unread rate.
+                                 */
+                                rate_as_of: string | null;
+                                accrued: string | null;
+                                reconciled: boolean;
+                                /** @enum {string|null} */
+                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "history_unverified" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                            }[];
+                            emissions: {
+                                /** @enum {string} */
+                                protocol: "blend" | "blnt";
+                                pool: string;
+                                claimed: string;
+                                lower_bound: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

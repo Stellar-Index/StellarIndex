@@ -9,17 +9,17 @@ import (
 // and signals serving last-known-good; the acceptance region is the UNION of a ratio band and a MAD band, so volatile moves pass. Exact *big.Rat (ADR-0003).
 
 const (
-	// guardMinSamples is the usable trailing buckets at or above which the FULL band applies; below it the wider [guardThinRatioBound] applies, and only a truly empty baseline fails open.
-	guardMinSamples = 5
+	// GuardMinSamples is the usable trailing buckets at or above which the FULL band applies; below it the wider [GuardThinRatioBound] applies, and only a truly empty baseline fails open.
+	GuardMinSamples = 5
 )
 
 var (
-	// guardRatioBound R=3: on a tight history a candidate is accepted only within [centre/R, centre*R] (inclusive). 10x would admit the 3x-9x manipulation
+	// GuardRatioBound R=3: on a tight history a candidate is accepted only within [centre/R, centre*R] (inclusive). 10x would admit the 3x-9x manipulation
 	// band; a genuine >3x move serves the last clean bucket. A business-value knob; the MAD band widens acceptance for volatile pairs.
-	guardRatioBound = big.NewRat(3, 1)
+	GuardRatioBound = big.NewRat(3, 1)
 
-	// guardThinRatioBound is the WIDER but FINITE band [centre/10, centre*10] for a thin baseline (1..guardMinSamples-1 buckets): failing open would admit any manipulation.
-	guardThinRatioBound = big.NewRat(10, 1)
+	// GuardThinRatioBound is the WIDER but FINITE band [centre/10, centre*10] for a thin baseline (1..GuardMinSamples-1 buckets): failing open would admit any manipulation.
+	GuardThinRatioBound = big.NewRat(10, 1)
 
 	// guardMADFactor K=10 (~6.7 sigma) widens acceptance for volatile pairs: the ratio-symmetric band [centre^2/(centre+K*s), centre+K*s], s = 1.4826*MAD,
 	// is UNIONED with the ratio band ([symmetricDev]), so a pair's own spread earns it latitude.
@@ -53,8 +53,22 @@ func ServedBaselineValidated(trailing []*big.Rat) bool {
 	return ok
 }
 
+// WithinPublishedBand reports whether price lies in [published/GuardThinRatioBound, published*GuardThinRatioBound]: the
+// served guard's band around a one-value centre. A nil or non-positive published value cannot be judged and reports true.
+func WithinPublishedBand(price, published *big.Rat) bool {
+	if published == nil || published.Sign() <= 0 {
+		return true
+	}
+	if price == nil || price.Sign() <= 0 {
+		return false
+	}
+	lo := new(big.Rat).Quo(published, GuardThinRatioBound)
+	hi := new(big.Rat).Mul(published, GuardThinRatioBound)
+	return withinBand(price, lo, hi)
+}
+
 // robustBand returns the acceptance interval [lo, hi] around the median of positive trailing values; ok is false only for an empty baseline (guard fails open).
-// With >= guardMinSamples values it is the union of the tight ratio band and the ratio-symmetric MAD band; with fewer, the finite [guardThinRatioBound] band.
+// With >= GuardMinSamples values it is the union of the tight ratio band and the ratio-symmetric MAD band; with fewer, the finite [GuardThinRatioBound] band.
 func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	vals := make([]*big.Rat, 0, len(trailing))
 	for _, v := range trailing {
@@ -74,15 +88,15 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 
 	// Thin history: wider, finite ratio-only band — still catches
 	// order-of-magnitude manipulation, never fails fully open.
-	if len(vals) < guardMinSamples {
-		lo = new(big.Rat).Quo(centre, guardThinRatioBound)
-		hi = new(big.Rat).Mul(centre, guardThinRatioBound)
+	if len(vals) < GuardMinSamples {
+		lo = new(big.Rat).Quo(centre, GuardThinRatioBound)
+		hi = new(big.Rat).Mul(centre, GuardThinRatioBound)
 		return lo, hi, true
 	}
 
 	// Ratio band: [centre/R, centre*R].
-	lo = new(big.Rat).Quo(centre, guardRatioBound)
-	hi = new(big.Rat).Mul(centre, guardRatioBound)
+	lo = new(big.Rat).Quo(centre, GuardRatioBound)
+	hi = new(big.Rat).Mul(centre, GuardRatioBound)
 
 	// MAD band: up to centre + K*scale, down to its ratio-symmetric mirror centre^2/(centre + K*scale) ([symmetricDev]), unioned with the ratio band.
 	// An additive lower edge goes non-positive at relative MAD 1/(K*1.4826) = 6.75%, leaving no downside guard: a crafted bucket down to 0 would be served.

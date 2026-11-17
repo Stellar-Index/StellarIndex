@@ -273,15 +273,21 @@ func dropArchivedBlendReserves(
 
 // contractDataValue returns the ContractData value ScVal of a base64 LedgerEntry.
 func contractDataValue(b64 string) (xdr.ScVal, bool) {
+	v, _, ok := contractDataEntry(b64)
+	return v, ok
+}
+
+// contractDataEntry decodes a contract_data LedgerEntry into its value and LastModifiedLedgerSeq.
+func contractDataEntry(b64 string) (xdr.ScVal, uint32, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
-		return xdr.ScVal{}, false
+		return xdr.ScVal{}, 0, false
 	}
 	cd, ok := entry.Data.GetContractData()
 	if !ok {
-		return xdr.ScVal{}, false
+		return xdr.ScVal{}, 0, false
 	}
-	return cd.Val, true
+	return cd.Val, uint32(entry.LastModifiedLedgerSeq), true
 }
 
 // poolInstanceFromStorage decodes the instance storage's "Config" PoolConfig and "Admin" address. ok=false on a missing or

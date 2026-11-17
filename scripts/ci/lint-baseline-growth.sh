@@ -4,7 +4,9 @@
 #   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml exclusions,
 #   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, the waiver maps in
 #   lint-pk-discriminators and lint-derive-generation-guard, and (mutations only,
-#   since new migrations append freely) scripts/ci/migration-immutability.sha256.
+#   since new migrations append freely) scripts/ci/migration-immutability.sha256, and the
+#   inline escape markers `i128:ok`, `lint-money:ok` and `migration-compat:ok` in .go/.sql
+#   (the trailer names the file the marker was added to).
 #
 # Linters fail on stale entries, but nothing stopped one commit from growing an allowlist while
 # introducing the violation it hides. Any range that ADDS entries fails unless a commit message
@@ -168,6 +170,12 @@ detect_growth() {
       [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
     done <<<"$added"
   done
+
+  # 11) Inline escape markers on the money and migration lints: each added marker exempts one line.
+  git diff -U0 "${base}...${head}" -- '*.go' '*.sql' 2>/dev/null | awk '
+    /^\+\+\+ / { f = substr($0, 7); next }
+    /^\+/ && $0 ~ /(i128|lint-money|migration-compat):ok/ { print f "\t" substr($0, 2) }
+  '
 }
 
 # has_scoped_trailer <watched-file> <log-body>: true iff a Baseline-Growth trailer names the file.

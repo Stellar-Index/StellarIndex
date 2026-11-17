@@ -204,3 +204,43 @@ func intervalLiteralWidth(t *testing.T, lit string) time.Duration {
 	}
 	return time.Duration(n) * unit
 }
+
+// TestOHLCReBucketed_SnapsWindowToFoldGrid pins that a folded route reads its source rows over [from, to) snapped up to the fold
+// grid, so an off-grid from/to serves only whole out-buckets starting in [from, to), never a partial edge bar.
+func TestOHLCReBucketed_SnapsWindowToFoldGrid(t *testing.T) {
+	t.Parallel()
+	q := strings.Join(strings.Fields(ohlcReBucketedQuery("prices_1d", "3 days")), " ")
+	for _, want := range []string{
+		"AND bucket >= (time_bucket(INTERVAL '3 days', $3::timestamptz - INTERVAL '1 microsecond') + INTERVAL '3 days')",
+		"AND bucket < (time_bucket(INTERVAL '3 days', $4::timestamptz - INTERVAL '1 microsecond') + INTERVAL '3 days')",
+	} {
+		if got := strings.Count(q, want); got != 2 {
+			t.Errorf("%d of 2 direction arms carry %q", got, want)
+		}
+	}
+	if strings.Contains(q, "bucket >= $3") || strings.Contains(q, "bucket < $4") {
+		t.Error("a direction arm still reads the raw, off-grid window")
+	}
+}
+
+// TestOHLCDirectionKeep_PerTradeFloorOnPrices1m pins that on prices_1m the direction that may set a bar's prices is chosen by
+// notional_trade_count (a trade that itself cleared $0.01), not by summed volume_usd, which crumbs can sum past the floor.
+func TestOHLCDirectionKeep_PerTradeFloorOnPrices1m(t *testing.T) {
+	t.Parallel()
+	for name, q := range map[string]string{
+		"fold":   ohlcReBucketedQuery("prices_1m", "5 minutes"),
+		"coarse": ohlcReBucketedQuery("prices_1h", "2 hours"),
+	} {
+		q = strings.Join(strings.Fields(q), " ")
+		want := "volume_usd >= 0.01 AS floored"
+		if name == "fold" {
+			want = "notional_trade_count > 0 AS floored"
+		}
+		if got := strings.Count(q, want); got != 2 {
+			t.Errorf("%s: %d of 2 direction arms select %q", name, got, want)
+		}
+		if !strings.Contains(q, "(floored OR NOT bool_or(floored) OVER (PARTITION BY bucket)) AS keep") {
+			t.Errorf("%s: keep is not derived from the per-table floor signal", name)
+		}
+	}
+}

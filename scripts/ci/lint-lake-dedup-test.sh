@@ -612,9 +612,37 @@ catches "a count() over contract_events is caught" \
   "$(shape events 'SELECT contract_id, count() FROM stellar.contract_events WHERE ledger_seq > 5 GROUP BY contract_id')" \
   stellar.contract_events
 
+catches "an aggregate in a WITH expression before the SELECT is caught" \
+  "$(shape withagg 'WITH sum(fee_charged) AS total SELECT total FROM stellar.transactions WHERE ledger_seq > 1')" \
+  stellar.transactions
+
+check "a WITH expression without an aggregate is not flagged" 0 \
+  "$(shape withplain 'WITH 5 AS lo SELECT ledger_seq FROM stellar.transactions WHERE ledger_seq > lo')"
+
+check "an aggregate in a WITH CTE body is that body's own read" 0 \
+  "$(shape withcte 'WITH x AS (SELECT max(ledger_seq) AS m FROM stellar.transactions) SELECT m FROM x')"
+
 interp="$(mk interp)"
 printf 'package clickhouse\n\nconst q = "SELECT sum(fee_charged) FROM stellar.transactions"\n' > "$interp/$GODIR/interp.go"
 check "a lake read in a double-quoted Go string fails: the gate cannot examine it" 1 "$interp"
+
+interpwide="$(mk interpwide)"
+printf 'package clickhouse\n\nconst q = "SELECT sum(amount) FROM  stellar.supply_flows"\n' > "$interpwide/$GODIR/interpwide.go"
+check "a double-quoted read with two spaces after FROM fails" 1 "$interpwide"
+
+interpsplit="$(mk interpsplit)"
+printf 'package clickhouse\n\nconst q = "SELECT sum(amount) FROM " +\n\t"stellar.supply_flows WHERE x > 1"\n' > "$interpsplit/$GODIR/interpsplit.go"
+check "a double-quoted read split after FROM fails" 1 "$interpsplit"
+
+sprintf="$(mk sprintf)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst flows = "stellar.supply_flows"\n\nvar q = fmt.Sprintf(`SELECT contract_id, sum(amount) FROM %%s GROUP BY contract_id`, flows)\n' > "$sprintf/$GODIR/sprintf.go"
+check "a raw read of a Sprintf-supplied table fails" 1 "$sprintf"
+
+glued="$(mk glued)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst flows = "stellar.supply_flows"\n\nvar q = `SELECT contract_id, sum(amount) FROM ` + flows + ` GROUP BY contract_id`\n' > "$glued/$GODIR/glued.go"
+check "a raw read spliced to a table identifier fails" 1 "$glued"
 
 interptest="$(mk interptest)"
 printf 'package clickhouse\n\nconst want = "FROM stellar.transactions FINAL"\n' > "$interptest/$GODIR/interp_test.go"

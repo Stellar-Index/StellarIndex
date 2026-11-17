@@ -50,15 +50,18 @@ BADF="$STATE.bad"
 # Chunks that ended their backend when decoded. A backend death restarts the whole cluster, so such a chunk is never
 # decoded again; it stays counted unreadable while it exists. Delete its line to have it tried once more.
 CRASHF="$STATE.crash"
+# Chunks whose decode lost the connection and the server then stayed down past the wait: one strike each, kept
+# across runs so a killer that outlasts crash recovery is still recorded on its next loss.
+SUSPECTF="$STATE.suspect"
 OUT="$DIR/pg_chunk_scan.prom"
 mkdir -p "$DIR" "$(dirname "$STATE")"
 [ -s "$STATE" ] || FULL=1
-touch "$STATE" "$BADF" "$CRASHF"
+touch "$STATE" "$BADF" "$CRASHF" "$SUSPECTF"
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/pg-chunk-scan.XXXXXX")
 TMP=$(mktemp "$DIR/.pg_chunk_scan.prom.XXXXXX")
 trap 'rm -rf "$W" "$TMP"' EXIT
-: >"$W/skip"; : >"$W/bad"; : >"$W/rescanned"; : >"$W/err"; : >"$W/crash"
+: >"$W/skip"; : >"$W/bad"; : >"$W/rescanned"; : >"$W/err"; : >"$W/crash"; : >"$W/suspect"
 [ "$FULL" = 1 ] || cp "$STATE" "$W/skip"
 
 # Keeps the previous verdicts and publishes only the failure, so the stale
@@ -67,6 +70,8 @@ fail_run() {
   echo "pg-chunk-scan: $1" >&2
   tail -n 20 "$W/err" >&2
   cut -d'|' -f1 "$W/bad" >>"$BADF"
+  cat "$W/crash" >>"$CRASHF"
+  cat "$W/suspect" >>"$SUSPECTF"
   {
     echo "# HELP stellarindex_pg_chunk_scan_success 1 if the last pg-chunk-scan run completed."
     echo "# TYPE stellarindex_pg_chunk_scan_success gauge"
@@ -151,7 +156,10 @@ SQL
   case "$v" in
     ok | skip | bad) echo "$v" ;;
     # 3 is a script error on a live connection (a cancel, say): undecided.
-    *) if [ "$rc" -eq 3 ]; then echo skip; else echo lost; fi ;;
+    *)
+      # Another backend's crash or an admin terminate also drops this connection; that says nothing about the chunk.
+      if [ "$rc" -eq 3 ] || grep -qE 'crash of another server process|due to administrator command' "$W/err"; then echo skip; else echo lost; fi
+      ;;
   esac
 }
 
@@ -175,12 +183,13 @@ while IFS='|' read -r key ht chunk cc writes; do
   if [ "$v" = lost ]; then
     # The connection died: the server went away, or this chunk killed its
     # backend. A second death on a server that is back up is the chunk's.
-    server_back || fail_run "server unreachable while decoding $ht/$chunk"
-    v=$(decode "$cc")
+    grep -qxF "$key" "$SUSPECTF" && echo "$key" >>"$W/crash"
+    server_back || { echo "$key" >>"$W/suspect"; fail_run "server unreachable while decoding $ht/$chunk"; }
+    if grep -qxF "$key" "$W/crash"; then v=lost; else v=$(decode "$cc"); fi
     if [ "$v" = lost ]; then
+      echo "$key" >>"$W/crash"
       server_back || fail_run "server unreachable while decoding $ht/$chunk"
       echo "pg-chunk-scan: $ht/$chunk ends its backend when decoded; counted unreadable and not decoded again" >&2
-      echo "$key" >>"$W/crash"
       v=bad
     fi
   fi
@@ -205,6 +214,8 @@ sort -u "$W/bad" -o "$W/bad"
 cut -d'|' -f1 "$W/bad" >"$BADF.new" && mv "$BADF.new" "$BADF"
 # Crashers that still exist carry over; one that was dropped or rewritten falls out with its key.
 { cut -d'|' -f1 "$W/crashers"; cat "$W/crash"; } | sort -u >"$CRASHF.new" && mv "$CRASHF.new" "$CRASHF"
+# A chunk decoded to a verdict this run is no longer a suspect.
+awk -v donef="$W/rescanned" 'BEGIN { while ((getline l < donef) > 0) d[l] } !($0 in d)' "$SUSPECTF" | sort -u >"$SUSPECTF.new" && mv "$SUSPECTF.new" "$SUSPECTF"
 bad=$(cut -d'|' -f2,3 "$W/bad")
 nbad=$(wc -l <"$W/bad" | tr -d ' ')
 bloat=$(sed -n 's/^B|//p' "$W/list")
@@ -234,7 +245,7 @@ now=$(date +%s)
   echo "# HELP stellarindex_pg_compressed_chunk_index_bytes Index bytes of each fully compressed chunk over 1 GiB."
   echo "# TYPE stellarindex_pg_compressed_chunk_index_bytes gauge"
   if [ -n "$bloat" ]; then
-    printf '%s\n' "$bloat" | while IFS='|' read -r ht chunk idx; do
+    printf '%s\n' "$bloat" | while IFS='|' read -r ht chunk idx _; do
       echo "stellarindex_pg_compressed_chunk_index_bytes{hypertable=\"$ht\",chunk=\"$chunk\"} $idx"
     done
   fi

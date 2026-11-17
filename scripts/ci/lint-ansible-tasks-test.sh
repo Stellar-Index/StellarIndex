@@ -121,6 +121,19 @@ cat > "$T/secrets.yml" <<'YML'
     redis-cli -h {{ ansible_host }}
     -a "{{ redis_password }}" --no-auth-warning PING
   no_log: true
+
+- name: bad — cipher passphrase on argv
+  ansible.builtin.command:
+    argv:
+      - pgbackrest
+      - --repo1-cipher-pass={{ pgbackrest_repo1_cipher_pass }}
+      - check
+  no_log: true
+
+- name: bad — database password in a shell command
+  ansible.builtin.shell:
+    cmd: psql -c "ALTER ROLE core PASSWORD '{{ postgres_pass_core }}'"
+  no_log: true
 YML
 
 cat > "$F/follow.yml" <<'YML'
@@ -247,6 +260,10 @@ if /usr/local/bin/mc alias set live "$AWS_ENDPOINT_URL" \
   echo ok
 fi
 SH
+cat > "$F/mcbin.sh" <<'SH'
+#!/bin/bash
+"$MC_BIN" alias set live "$AWS_ENDPOINT_URL" "$AWS_ACCESS_KEY_ID" "$MINIO_ROOT_PASS"
+SH
 cat > "$F/good.sh" <<'SH'
 #!/bin/bash
 if printf '%s\n%s\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" \
@@ -259,7 +276,7 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 14 "exit code = 14 findings"
+expect_rc 17 "exit code = 17 findings"
 expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
 expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
 expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
@@ -277,6 +294,9 @@ expect_hit 'secrets.yml:10: secret-on-argv' "secret on argv flagged"
 expect_miss 'secrets.yml:21:' "stdin secret not flagged"
 expect_hit 'secrets.yml:31: secret-on-argv' "environment secret flagged"
 expect_hit 'secrets.yml:37: secret-on-argv' "folded command body secret flagged"
+expect_hit 'secrets.yml:44: secret-on-argv' "_pass cipher secret on argv flagged"
+expect_hit 'secrets.yml:50: secret-on-argv' "postgres_pass_ secret in a shell body flagged"
+expect_hit 'mcbin.sh:2: secret-on-argv' "mc reached through \$MC_BIN with a _PASS secret flagged"
 expect_hit 'bad.sh:3: secret-on-argv' "mc positional secret (continuation) flagged"
 expect_miss 'bad.sh:2:' "commented mc line not flagged"
 expect_miss 'good.sh' "stdin-piped mc not flagged"
@@ -290,13 +310,13 @@ expect_hit 'pg.yml:31: superuser-db-unpinned' "login_user postgres is not an exe
 expect_miss 'pg.yml:35:' "cluster-database task not flagged"
 expect_hit 'override.sh:4: superuser-db-unpinned' "a PGOPTIONS assignment that drops the pin is flagged"
 expect_miss 'pinned.sh' "script that exports the pin not flagged"
-expect_hit 'scanned 5 task files + 4 shell scripts' "self-accounting line"
+expect_hit 'scanned 5 task files + 5 shell scripts' "self-accounting line"
 
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 14 live findings − 3 baselined (all secrets.yml) + 1 stale = 12
-expect_rc 12 "exit code = 12"
+# 17 live findings − 5 baselined (all secrets.yml) + 1 stale = 13
+expect_rc 13 "exit code = 13"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 

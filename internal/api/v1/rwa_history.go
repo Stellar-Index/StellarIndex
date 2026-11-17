@@ -158,8 +158,8 @@ const (
 	// binding table is keyed on (code, issuer), an identity a bare
 	// contract does not have.
 	RWAHistoryExcludedContract = "contract_not_bound"
-	// RWAHistoryExcludedIssuerFlagged — the issuer acquired a scam-class
-	// directory tag. The point-in-time surface withholds its valuation;
+	// RWAHistoryExcludedIssuerFlagged — the issuer is on the curated scam
+	// list or acquired a scam-class directory tag. The point-in-time surface withholds its valuation;
 	// a history that kept publishing one would route around that.
 	RWAHistoryExcludedIssuerFlagged = "issuer_flagged"
 	// RWAHistoryExcludedNoSupplyHistory — the lake holds no flows for
@@ -173,12 +173,16 @@ const (
 	// RWAHistoryExcludedNoReferenceHistory — the member is bound to a
 	// feed the oracles have never published a USD day bucket for.
 	RWAHistoryExcludedNoReferenceHistory = "no_reference_history"
+	// RWAHistoryExcludedISINMismatch — the member's declared ISIN contradicts a curated binding, the refusal
+	// `premium.status` reports as `reference_isin_mismatch`.
+	RWAHistoryExcludedISINMismatch = RWAPremiumReferenceISINMismatch
 )
 
 var rwaHistoryExcludedDetail = map[string]string{
 	RWAHistoryExcludedNotBound:           "No curated binding ties this exact (code, issuer) to an oracle feed, so nothing may value its instrument. A binding is a reviewed code change, not a runtime match on the asset code — see definition.bound_instruments on /v1/rwa/assets.",
 	RWAHistoryExcludedContract:           "A contract-issued member. The curated binding table is keyed on (code, issuer), and a bare contract address has no such identity.",
-	RWAHistoryExcludedIssuerFlagged:      "Withheld — the issuer carries a scam-class directory flag, so no valuation is published for it anywhere on this site, past or present.",
+	RWAHistoryExcludedIssuerFlagged:      "Withheld — the issuer is on the curated scam list or carries a scam-class directory flag, so no valuation is published for it anywhere on this site, past or present.",
+	RWAHistoryExcludedISINMismatch:       "The ISIN this asset declares contradicts a curated binding: either this pair is bound to another instrument, or that ISIN is bound to another pair. No instrument's value is published for it until the binding is re-verified.",
 	RWAHistoryExcludedNoSupplyHistory:    "The lake holds no mint/burn record for this asset's Stellar Asset Contract, so no supply level can be reconstructed for any day. An operator can move this by seeding the contract's flows.",
 	RWAHistoryExcludedSupplyIncomplete:   "The running total of this asset's recorded flows goes negative, which no real token can do. Its flow log is incompletely seeded in the lake, and a series built on it would understate the supply by an unknown amount. An operator can move this by re-seeding the contract.",
 	RWAHistoryExcludedNoReferenceHistory: "The oracles have published no dollar-denominated day bucket for this asset's bound instrument, so there is no value to multiply the supply by.",
@@ -701,15 +705,9 @@ type rwaHistoryCandidate struct {
 func rwaHistoryCandidates(m rwaMembership, excluded map[string]int) []rwaHistoryCandidate {
 	out := make([]rwaHistoryCandidate, 0, len(m.members))
 	for _, mem := range m.members {
-		// First: the same suppression /v1/assets applies. A flagged issuer given a real
-		// instrument's NAV history would publish a larger claim than the price we withhold.
-		if pricingguard.IsDirectoryScamFlagged(mem.dirTags) {
-			excluded[RWAHistoryExcludedIssuerFlagged]++
-			continue
-		}
-		feed, bound := rwa.InstrumentFeed(mem.code, mem.issuer)
-		if !bound {
-			excluded[RWAHistoryExcludedNotBound]++
+		feed, refusal := rwaClassicMemberFeed(mem)
+		if refusal != "" {
+			excluded[refusal]++
 			continue
 		}
 		asset := canonical.Asset{Type: canonical.AssetClassic, Code: mem.code, Issuer: mem.issuer}
@@ -732,6 +730,22 @@ func rwaHistoryCandidates(m rwaMembership, excluded map[string]int) []rwaHistory
 		})
 	}
 	return out
+}
+
+// rwaClassicMemberFeed is the oracle feed a classic member may be valued on, or the reason it may not, in
+// [rwaApplyReference]'s order: a suppressed issuer first, so a later binding never turns a suppression into a claim.
+func rwaClassicMemberFeed(mem rwaMember) (feed, refusal string) {
+	if pricingguard.IsDirectoryScamFlagged(mem.dirTags) || scamReason(mem.issuer) != "" {
+		return "", RWAHistoryExcludedIssuerFlagged
+	}
+	if rwaISINConflict(mem.code, mem.issuer, mem.anchorAsset) {
+		return "", RWAHistoryExcludedISINMismatch
+	}
+	feed, bound := rwa.InstrumentFeed(mem.code, mem.issuer)
+	if !bound {
+		return "", RWAHistoryExcludedNotBound
+	}
+	return feed, ""
 }
 
 func rwaHistoryLabel(preferred, fallback string) string {

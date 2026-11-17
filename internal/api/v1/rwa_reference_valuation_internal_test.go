@@ -112,7 +112,7 @@ func TestRWAReferenceValuation_RefusesANonPositiveOracleValue(t *testing.T) {
 		supply := "12336218000000"
 		a.CirculatingSupply = &supply
 		a.Decimals = intPtr(7)
-		rwaApplyReference(&a, snap, nil, nil, now)
+		rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 		if a.ReferenceValuation.Status != RWAPremiumReferenceNotPositive {
 			t.Errorf("raw %q: reference_valuation.status = %q, want %q",
@@ -135,7 +135,7 @@ func TestRWAReferenceValuation_NoSupplyIsNotZero(t *testing.T) {
 	})
 	a := admittedRow("USTRY", "")
 	a.Decimals = intPtr(7)
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference == nil {
 		t.Fatal("the reference itself must still be published — the missing input is the supply, not the feed")
@@ -160,7 +160,7 @@ func TestRWAReferenceValuation_UnboundPairGetsNothing(t *testing.T) {
 	supply := "12336218000000"
 	a.CirculatingSupply = &supply
 	a.Decimals = intPtr(7)
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.ReferenceValuation.Status != RWAPremiumNotBound {
 		t.Errorf("status = %q, want %q", a.ReferenceValuation.Status, RWAPremiumNotBound)
@@ -191,7 +191,7 @@ func TestRWAReferenceValuation_StatusIsNeverEmpty(t *testing.T) {
 	}
 	for name, snap := range snaps {
 		a := admittedRow("USTRY", "1.0400")
-		rwaApplyReference(&a, snap, nil, nil, now)
+		rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 		if a.ReferenceValuation.Status == "" {
 			t.Errorf("%s: reference_valuation.status is empty", name)
 		}
@@ -199,7 +199,7 @@ func TestRWAReferenceValuation_StatusIsNeverEmpty(t *testing.T) {
 	// And the flagged-issuer branch, which returns before any of the
 	// above is consulted.
 	flagged := RWAAsset{Code: "USTRY", Issuer: boundIssuer, Valuation: RWAValuation{Status: RWAValuationIssuerFlagged}}
-	rwaApplyReference(&flagged, rwaReferenceSnapshotFrom(nil), nil, nil, now)
+	rwaApplyReference(&flagged, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(nil), now)
 	if flagged.ReferenceValuation.Status != RWAPremiumIssuerFlagged {
 		t.Errorf("flagged issuer: status = %q, want %q",
 			flagged.ReferenceValuation.Status, RWAPremiumIssuerFlagged)
@@ -231,7 +231,7 @@ func TestRWAReferenceValuation_ContractMemberIsRefusedByName(t *testing.T) {
 	}
 	supply := "8500000000000"
 	a.CirculatingSupply = &supply
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.ReferenceValuation.Status != RWAPremiumContractNotBound {
 		t.Errorf("reference_valuation.status = %q, want %q",
@@ -300,7 +300,7 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 	// an actor to a comparison failure would put it in a funnel arm that
 	// does not account for comparisons.
 	for _, premiumOnly := range []string{
-		RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished,
+		RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished, RWAPremiumMarketOutsideBand,
 		// The non-oracle refusals are premium-only BY DESIGN: each
 		// refuses a premium while the reference valuation beside it is
 		// published — so none may appear as a valuation drop.
@@ -372,5 +372,18 @@ func TestRWAValuationStages_DropOrderIsStable(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Fatalf("drop order = %v, want the rule order %v", got, want)
 		}
+	}
+}
+
+// TestRWAValuationOf_CuratedScamIssuerIsFlagged: the curated scam list withholds dollar figures as the directory flag does,
+// so the row reads flagged and no reference arm values it.
+func TestRWAValuationOf_CuratedScamIssuerIsFlagged(t *testing.T) {
+	d := AssetDetail{IssuerScamReason: "Deprecated issuer", IssuerDirectoryTags: []string{"issuer"}}
+	a := RWAAsset{Valuation: rwaValuationOf(d)}
+	if a.Valuation.Status != RWAValuationIssuerFlagged {
+		t.Fatalf("status = %q, want %q", a.Valuation.Status, RWAValuationIssuerFlagged)
+	}
+	if !rwaRefuseWithheldIssuer(&a) || a.ReferenceValuation.Status != RWAPremiumIssuerFlagged {
+		t.Errorf("reference_valuation = %+v, want refused as issuer flagged", a.ReferenceValuation)
 	}
 }

@@ -338,6 +338,7 @@ const EXCLUDED_LABEL: Record<string, string> = {
   no_supply_history: 'with no supply history in the lake',
   supply_incomplete: 'whose recorded supply flows are incomplete',
   no_reference_history: 'whose instrument has no published value history',
+  reference_isin_mismatch: 'whose declared ISIN contradicts a curated binding',
 };
 
 function excludedLabel(reason: string): string {

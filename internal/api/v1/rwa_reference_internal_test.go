@@ -74,7 +74,7 @@ func TestRWAReference_RefusesANonDollarDenominatedFeed(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "crypto:BTC", "100295305", 8, now),
 	})
 	a := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference != nil {
 		t.Fatalf("reference published from a %s-denominated feed: %+v — its value is a ratio, not dollars",
@@ -96,7 +96,7 @@ func TestRWAReference_RefusesAnOffChainQuantity(t *testing.T) {
 		refUpdate(t, "reflector-fx", "rwa:XAU", "fiat:USD", "440086022830869146", 14, now),
 	})
 	a := admittedRow("XAU", "0.5000")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference != nil {
 		t.Fatalf("spot gold per troy ounce published as a token reference: %+v", a.Reference)
@@ -118,7 +118,7 @@ func TestRWAReference_RefusesANonOracleSource(t *testing.T) {
 		refUpdate(t, "coingecko", "rwa:USTRY", "fiat:USD", "104000000", 8, now),
 	})
 	a := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference != nil {
 		t.Fatalf("an aggregator row was served as an independent oracle reference: %+v", a.Reference)
@@ -137,7 +137,7 @@ func TestRWAReference_RefusesADeclaredPegPrice(t *testing.T) {
 	})
 	a := admittedRow("USTRY", "1.0000")
 	a.Valuation.PriceBasis = priceBasisDeclaredPeg
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	// The reference itself is real and is still published — it is the
 	// COMPARISON that is refused.
@@ -173,7 +173,7 @@ func TestRWAReference_PublishesTheGapExactly(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := admittedRow("USTRY", tc.market)
-			rwaApplyReference(&a, snap, nil, nil, now)
+			rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 			if a.Premium.Status != RWAPremiumPublished {
 				t.Fatalf("premium status = %q, want published", a.Premium.Status)
 			}
@@ -205,7 +205,7 @@ func TestRWAReference_UnpricedAssetKeepsTheReference(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:TESOURO", "fiat:USD", "24538100", 8, now),
 	})
 	a := admittedRow("TESOURO", "") // unpriced
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference == nil || a.Reference.PriceUSD != "0.24538100" {
 		t.Fatalf("reference = %+v, want the oracle figure served even with no market price", a.Reference)
@@ -226,7 +226,7 @@ func TestRWAReference_FlaggedIssuerGetsNoIndependentValuationEither(t *testing.T
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now),
 	})
 	a := RWAAsset{Code: "USTRY", Valuation: RWAValuation{Status: RWAValuationIssuerFlagged}}
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference != nil {
 		t.Fatalf("a flagged issuer's token was given an oracle valuation: %+v", a.Reference)
@@ -246,7 +246,7 @@ func TestRWAReference_StaleReferenceIsLabelledNotHidden(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, old),
 	})
 	a := admittedRow("USTRY", "1.07403800")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference == nil {
 		t.Fatal("a five-day-old reference must be served, labelled")
@@ -262,7 +262,7 @@ func TestRWAReference_StaleReferenceIsLabelledNotHidden(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now.Add(-time.Hour)),
 	})
 	b := admittedRow("USTRY", "1.07403800")
-	rwaApplyReference(&b, fresh, nil, nil, now)
+	rwaApplyReference(&b, fresh, nil, listingAnswered(nil), now)
 	if b.Reference == nil || b.Reference.Stale {
 		t.Errorf("an hour-old reference must not be marked stale: %+v", b.Reference)
 	}
@@ -289,7 +289,7 @@ func TestRWAReference_PicksTheMostRecentDeterministically(t *testing.T) {
 // publishes a valuation"; the distinct status keeps an outage distinguishable from absence on the wire.
 func TestRWAReference_UnavailableSnapshotPublishesNothing(t *testing.T) {
 	a := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&a, rwaReferences{}, nil, nil, time.Now())
+	rwaApplyReference(&a, rwaReferences{}, nil, listingAnswered(nil), time.Now())
 	if a.Reference != nil {
 		t.Fatalf("reference served from an unavailable snapshot: %+v", a.Reference)
 	}
@@ -307,7 +307,7 @@ func TestRWAReference_UnavailableSnapshotPublishesNothing(t *testing.T) {
 	// And the genuine absence keeps its own, different status: a bound
 	// pair whose feed the oracles simply are not publishing.
 	b := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&b, rwaReferenceSnapshotFrom(nil), nil, nil, time.Now())
+	rwaApplyReference(&b, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(nil), time.Now())
 	if b.Premium.Status != RWAPremiumNoReference {
 		t.Errorf("an empty but SUCCESSFUL read gave status %q, want %q — the two must be distinguishable",
 			b.Premium.Status, RWAPremiumNoReference)
@@ -322,7 +322,7 @@ func TestRWAReference_CarriedForwardRowsStillExpire(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now.Add(-8*24*time.Hour)),
 	})
 	a := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference != nil {
 		t.Fatalf("an eight-day-old observation was served: %+v", a.Reference)
@@ -339,7 +339,7 @@ func TestRWAReference_CarriedForwardRowsStillExpire(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now.Add(-6*24*time.Hour)),
 	})
 	b := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&b, fresh, nil, nil, now)
+	rwaApplyReference(&b, fresh, nil, listingAnswered(nil), now)
 	if b.Reference == nil || !b.Reference.Stale {
 		t.Errorf("a six-day-old observation must be served and labelled stale: %+v", b.Reference)
 	}
@@ -353,7 +353,7 @@ func TestRWAReference_RefusesAnUnboundIssuer(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now),
 	})
 	a := admittedRowFor("USTRY", unboundIssuer, "0.20000000")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference != nil {
 		t.Fatalf("an unbound issuer's token was given the instrument's valuation: %+v", a.Reference)
@@ -367,7 +367,7 @@ func TestRWAReference_RefusesAnUnboundIssuer(t *testing.T) {
 
 	// The bound issuer's token, same code, same snapshot, is answered.
 	b := admittedRowFor("USTRY", boundIssuer, "1.07403800")
-	rwaApplyReference(&b, snap, nil, nil, now)
+	rwaApplyReference(&b, snap, nil, listingAnswered(nil), now)
 	if b.Premium.Status != RWAPremiumPublished {
 		t.Errorf("the bound pair must still be compared; status = %q", b.Premium.Status)
 	}
@@ -382,7 +382,7 @@ func TestRWAReference_DoesNotFoldCase(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8, now),
 	})
 	a := admittedRowFor("ustry", boundIssuer, "0.20000000")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 	if a.Reference != nil {
 		t.Fatalf("a case variant was answered with the bound instrument's valuation: %+v", a.Reference)
 	}
@@ -400,7 +400,7 @@ func TestRWAReference_ZeroReferenceIsNotDividedBy(t *testing.T) {
 		refUpdate(t, "redstone", "rwa:USTRY", "fiat:USD", "0", 8, now),
 	})
 	a := admittedRow("USTRY", "1.0400")
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 	if a.Premium.Status != RWAPremiumReferenceNotPositive {
 		t.Errorf("premium status = %q, want %q", a.Premium.Status, RWAPremiumReferenceNotPositive)
 	}
@@ -481,7 +481,7 @@ func TestRWAReference_OneRefusalIsReportedIdentically(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			a := c.row()
-			rwaApplyReference(&a, c.snap, nil, nil, now)
+			rwaApplyReference(&a, c.snap, nil, listingAnswered(nil), now)
 			if a.Premium.Status != c.want {
 				t.Fatalf("premium.status = %q, want %q — this path no longer reaches the refusal under test",
 					a.Premium.Status, c.want)
@@ -619,12 +619,12 @@ func TestRWASummaryProvenance_NamesProspectusCNAV(t *testing.T) {
 		Issuer: "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", CirculatingSupply: &supply, Decimals: intPtr(7),
 	}
 	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
-	rwaApplyReference(&a, snap, nil, map[string]timescale.ListingEntry{}, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(map[string]timescale.ListingEntry{}), now)
 	if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.ReferenceValuation.ValueUSD == nil {
 		t.Fatalf("fixture did not produce a valued CNAV row: ref=%+v val=%+v", a.Reference, a.ReferenceValuation)
 	}
 
-	s := rwaSummariseReference([]RWAAsset{a})
+	s := rwaSummariseReference([]RWAAsset{a}, rwaTruncation{})
 	if strings.Join(s.Provenances, ",") != RWAReferenceProspectusCNAV {
 		t.Fatalf("provenances = %v, want [%s]", s.Provenances, RWAReferenceProspectusCNAV)
 	}
@@ -818,5 +818,36 @@ func TestRWASummarise_EveryCapMakesALowerBound(t *testing.T) {
 	}
 	if !strings.Contains(sum.Basis, "Every asset in the set publishes a valuation") {
 		t.Errorf("untruncated basis = %q", sum.Basis)
+	}
+}
+
+// TestRWASummary_ATruncatedSetIsNotCalledCompleteByEitherBasis: when a cap or an unanswered read left members out, both
+// lower-bounded totals name the exclusion, and neither claims the whole set or an empty definition.
+func TestRWASummary_ATruncatedSetIsNotCalledCompleteByEitherBasis(t *testing.T) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	supply := "566742721191613"
+	a := RWAAsset{
+		AssetID: "gBENJI-GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", Code: "gBENJI",
+		Issuer: "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP", CirculatingSupply: &supply, Decimals: intPtr(7),
+	}
+	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
+	rwaApplyReference(&a, snap, nil, listingAnswered(map[string]timescale.ListingEntry{}), now)
+	if a.ReferenceValuation.ValueUSD == nil {
+		t.Fatalf("fixture did not produce a valued row: %+v", a.ReferenceValuation)
+	}
+	trunc := rwaTruncation{unread: 3}
+	for name, assets := range map[string][]RWAAsset{"every served row valued": {a}, "nothing served": nil} {
+		s := rwaSummarise(assets, trunc)
+		for basis, text := range map[string]string{"summary": s.Basis, "reference_valuation": s.ReferenceValuation.Basis} {
+			if strings.Contains(text, "Every asset in the set") || strings.Contains(text, "No asset currently meets the definition") {
+				t.Errorf("%s, %s basis claims completeness:\n%s", name, basis, text)
+			}
+			if !strings.Contains(text, "3 contract candidate(s) went unevaluated") {
+				t.Errorf("%s, %s basis does not name the exclusion:\n%s", name, basis, text)
+			}
+		}
+		if !s.ReferenceValuation.LowerBound {
+			t.Errorf("%s: reference_valuation.lower_bound = false", name)
+		}
 	}
 }

@@ -36,6 +36,10 @@ appendfsync {{ redis_aof_appendfsync }}
 save {{ rule }}
 {% endfor %}
 
+# Bound acknowledged-write loss on failover (0 disables).
+min-replicas-to-write {{ redis_min_replicas_to_write }}
+min-replicas-max-lag {{ redis_min_replicas_max_lag }}
+
 # Memory + eviction
 maxmemory {{ redis_maxmemory }}
 maxmemory-policy {{ redis_maxmemory_policy }}

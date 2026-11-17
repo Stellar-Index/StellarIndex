@@ -56,12 +56,22 @@ func (rd ReserveData) rateScalar() *big.Int {
 
 // SuppliedUnderlying returns the reserve's total supplied amount in the underlying token's smallest unit (reserve.rs::total_supply: b_supply.fixed_mul_floor(b_rate, SCALAR_12), SCALAR_9 on V1).
 func (rd ReserveData) SuppliedUnderlying() *big.Int {
-	return fixedMulFloor(rd.BSupply, rd.BRate, rd.rateScalar())
+	return rd.BTokensToUnderlying(rd.BSupply)
+}
+
+// BTokensToUnderlying converts b-tokens to the underlying amount they redeem for (reserve.rs::to_asset_from_b_token, rounded down).
+func (rd ReserveData) BTokensToUnderlying(bTokens *big.Int) *big.Int {
+	return fixedMulFloor(bTokens, rd.BRate, rd.rateScalar())
+}
+
+// DTokensToUnderlying converts d-tokens to the underlying debt they represent (reserve.rs::to_asset_from_d_token, rounded up).
+func (rd ReserveData) DTokensToUnderlying(dTokens *big.Int) *big.Int {
+	return fixedMulCeil(dTokens, rd.DRate, rd.rateScalar())
 }
 
 // BorrowedUnderlying returns the reserve's total borrowed amount in the underlying token's smallest unit (reserve.rs::total_liabilities: d_supply.fixed_mul_ceil(d_rate, SCALAR_12), SCALAR_9 on V1).
 func (rd ReserveData) BorrowedUnderlying() *big.Int {
-	return fixedMulCeil(rd.DSupply, rd.DRate, rd.rateScalar())
+	return rd.DTokensToUnderlying(rd.DSupply)
 }
 
 // Utilization returns the reserve utilization in 7 decimals per reserve.rs::utilization: liabilities/supply, 0 with no debt, capped at SCALAR_7 (100%).

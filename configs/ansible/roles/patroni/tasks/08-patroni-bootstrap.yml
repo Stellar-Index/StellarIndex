@@ -9,10 +9,31 @@
 #     pre-restore the data dir from pgBackRest, then start
 #     Patroni and it adopts the existing primary.
 
-- name: detect existing data dir
+# PG_VERSION says nothing about Patroni: the distro package auto-creates an
+# empty cluster at this very path. patroni.dynamic.json is written only once
+# Patroni has bootstrapped or joined the data dir.
+- name: detect a data dir Patroni already owns
+  stat:
+    path: "{{ patroni_data_dir }}/patroni.dynamic.json"
+  register: _patroni_initialized
+
+- name: detect an existing postgres cluster in the data dir
   stat:
     path: "{{ patroni_data_dir }}/PG_VERSION"
   register: _pg_data_present
+
+- name: refuse to bootstrap over a cluster Patroni did not create
+  fail:
+    msg: >-
+      {{ patroni_data_dir }} already holds a postgres cluster that Patroni has
+      not initialised (typically the distro's auto-created main cluster).
+      Bootstrapping would silently skip the {{ patroni_bootstrap_method }} path.
+      Empty or move the directory, or set patroni_adopt_existing_data_dir=true
+      to restore over it (pgbackrest) or adopt it as is (initdb).
+  when:
+    - not _patroni_initialized.stat.exists
+    - _pg_data_present.stat.exists
+    - not (patroni_adopt_existing_data_dir | bool)
 
 - block:
     # Honor `patroni_pgbackrest_restore_target` per the defaults /
@@ -40,7 +61,7 @@
           Got "{{ patroni_pgbackrest_restore_target }}".
       when:
         - patroni_bootstrap_method == "pgbackrest"
-        - not _pg_data_present.stat.exists
+        - not _patroni_initialized.stat.exists
 
     - name: bootstrap via pgBackRest restore
       command: >
@@ -59,7 +80,7 @@
       become_user: postgres
       when:
         - patroni_bootstrap_method == "pgbackrest"
-        - not _pg_data_present.stat.exists
+        - not _patroni_initialized.stat.exists
 
     - name: ensure restored data dir ownership
       file:
@@ -71,31 +92,14 @@
         follow: false
       when:
         - patroni_bootstrap_method == "pgbackrest"
-        - not _pg_data_present.stat.exists
+        - not _patroni_initialized.stat.exists
   when:
     - patroni_bootstrap_method == "pgbackrest"
 
-- name: start Patroni (fresh — initdb path)
+- name: start Patroni
   systemd:
     name: patroni
     state: started
-  when:
-    - patroni_bootstrap_method == "initdb"
-    - not _pg_data_present.stat.exists
-
-- name: start Patroni (restore path — adopts the restored primary)
-  systemd:
-    name: patroni
-    state: started
-  when:
-    - patroni_bootstrap_method == "pgbackrest"
-
-- name: start Patroni (idempotent — already-bootstrapped host)
-  systemd:
-    name: patroni
-    state: started
-  when:
-    - _pg_data_present.stat.exists
 
 - name: wait for Patroni REST API
   uri:
@@ -111,3 +115,6 @@
     patronictl -c /etc/patroni/patroni.yml list
   register: _primary_check
   changed_when: false
+  retries: 15
+  delay: 4
+  until: _primary_check.stdout.count('Leader') == 1
