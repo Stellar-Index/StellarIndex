@@ -17,6 +17,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 )
 
@@ -341,25 +342,34 @@ func extremes(g *guarded, current TimedValue) (athValue string, athAt time.Time,
 	if !currentIn {
 		return "", time.Time{}, "", time.Time{}, false
 	}
-	// Stable on the oldest-first series, so a tied extreme keeps its earliest time.
-	sort.SliceStable(inBand, func(i, j int) bool { return inBand[i].v.Cmp(inBand[j].v) < 0 })
-	atl, atlFound := firstAccepted(g, inBand)
-	sort.SliceStable(inBand, func(i, j int) bool { return inBand[i].v.Cmp(inBand[j].v) > 0 })
-	ath, athFound := firstAccepted(g, inBand)
+	atl, atlFound := extremeAccepted(g, inBand, -1)
+	ath, athFound := extremeAccepted(g, inBand, 1)
 	if !atlFound || !athFound {
 		return "", time.Time{}, "", time.Time{}, false
 	}
 	return ath.p.Value, ath.p.At, atl.p.Value, atl.p.At, true
 }
 
-// firstAccepted returns the first sorted point the guard accepts against a baseline.
-func firstAccepted(g *guarded, sorted []ratPoint) (ratPoint, bool) {
-	for _, q := range sorted {
-		if g.accepted(q.i) {
-			return q, true
+// extremeAccepted returns the guard-accepted point of the oldest-first pts with the highest (sign 1) or lowest (sign -1)
+// value, the earliest on a tie. Each refusal is cached in g.verdict, so the rescan skips it; refusals are rare.
+func extremeAccepted(g *guarded, pts []ratPoint, sign int) (ratPoint, bool) {
+	for {
+		best := -1
+		for j, q := range pts {
+			if g.verdict[q.i] < 0 {
+				continue
+			}
+			if best < 0 || q.v.Cmp(pts[best].v)*sign > 0 {
+				best = j
+			}
+		}
+		if best < 0 {
+			return ratPoint{}, false
+		}
+		if g.accepted(pts[best].i) {
+			return pts[best], true
 		}
 	}
-	return ratPoint{}, false
 }
 
 type ratPoint struct {
@@ -399,13 +409,6 @@ func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 	return series[idx].Value, true
 }
 
-// The served-price guard's baseline: pricingguard.SampleFetch buckets within pricingguard.BaselineMaxAge. Restated
-// here because that package reads storage and this worker does not.
-const (
-	guardSample = 40
-	guardMaxAge = 24 * time.Hour
-)
-
 // guardedIdx returns the point that stands for series[idx]: itself, or the newest in-band point before it when the
 // served-price guard refuses it. /v1/price holds such a bucket back, so a change measured from it would contradict the price.
 func guardedIdx(series []TimedValue, idx int) int {
@@ -420,8 +423,8 @@ func guardVerdict(series []TimedValue, idx int) (served int, validated bool) {
 		return idx, false
 	}
 	var trailing []*big.Rat
-	for j := idx - 1; j >= 0 && len(trailing) < guardSample; j-- {
-		if series[idx].At.Sub(series[j].At) > guardMaxAge {
+	for j := idx - 1; j >= 0 && len(trailing) < pricingguard.SampleFetch; j-- {
+		if series[idx].At.Sub(series[j].At) > pricingguard.BaselineMaxAge {
 			break
 		}
 		v, _ := new(big.Rat).SetString(series[j].Value)

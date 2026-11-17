@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/big"
+	"math/rand/v2"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -483,6 +486,41 @@ func TestExtremes_BandEdgesInclusive(t *testing.T) {
 	ath, _, atl, _, ok := extremes(g, cur)
 	if !ok || ath != "1000" || atl != "0.001" {
 		t.Errorf("ath=%q atl=%q ok=%v, want 1000/0.001/true", ath, atl, ok)
+	}
+}
+
+// The linear scan must pick exactly what a stable sort followed by the first accepted point picks, ties included.
+func TestExtremeAccepted_MatchesStableSort(t *testing.T) {
+	sortedFirst := func(g *guarded, pts []ratPoint, sign int) (ratPoint, bool) {
+		s := slices.Clone(pts)
+		sort.SliceStable(s, func(i, j int) bool { return s[i].v.Cmp(s[j].v)*sign > 0 })
+		for _, q := range s {
+			if g.verdict[q.i] > 0 {
+				return q, true
+			}
+		}
+		return ratPoint{}, false
+	}
+	rng := rand.New(rand.NewPCG(1, 2))
+	t0 := time.Date(2026, 5, 4, 0, 0, 0, 0, time.UTC)
+	for iter := range 2000 {
+		n := rng.IntN(30)
+		series := make([]TimedValue, n)
+		for i := range series {
+			series[i] = TimedValue{At: t0.Add(time.Duration(i) * time.Minute), Value: big.NewRat(rng.Int64N(12)+1, rng.Int64N(3)+1).RatString()}
+		}
+		pts := positivePoints(series)
+		for _, sign := range []int{1, -1} {
+			g := newGuarded(series)
+			for i := range g.verdict {
+				g.verdict[i] = int8(1 - 2*rng.IntN(2))
+			}
+			want, wantOK := sortedFirst(g, pts, sign)
+			got, gotOK := extremeAccepted(g, pts, sign)
+			if gotOK != wantOK || got.i != want.i {
+				t.Fatalf("iter %d sign %d: got (%d, %v), want (%d, %v)", iter, sign, got.i, gotOK, want.i, wantOK)
+			}
+		}
 	}
 }
 
