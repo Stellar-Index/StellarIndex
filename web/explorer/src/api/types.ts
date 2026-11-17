@@ -23079,6 +23079,20 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+            /**
+             * @description No assets view is published: the last one is past its maximum
+             *     age (one hour) and its rebuild has not answered. Type
+             *     `errors/rwa-assets-unavailable`; served `no-store` with
+             *     `Retry-After`.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     listStablecoins: {

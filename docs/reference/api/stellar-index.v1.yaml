@@ -9078,6 +9078,15 @@ paths:
                     properties:
                       data: { $ref: "#/components/schemas/RWAAssetsView" }
         "500": { $ref: "#/components/responses/InternalError" }
+        "503":
+          description: |
+            No assets view is published: the last one is past its maximum
+            age (one hour) and its rebuild has not answered. Type
+            `errors/rwa-assets-unavailable`; served `no-store` with
+            `Retry-After`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /stablecoins:
     get:
