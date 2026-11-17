@@ -197,11 +197,42 @@ func cmdUp(dir, dsn string) error {
 
 // dirtyGuidance names the step that clears a dirty version: golang-migrate marks a migration dirty before running it and
 // leaves the mark on failure, so every later `up` stops until an operator forces the version back.
+// The DSN is never echoed, so the command names the flag to repeat: a pasted force without it would target whatever
+// $STELLARINDEX_POSTGRES_DSN names.
 func dirtyGuidance(dir string, dirtyVersion int) string {
-	return fmt.Sprintf("migration %d failed and is marked dirty; no later `up` runs until the mark is cleared. "+
+	target := "-dsn <the same DSN as this run> "
+	if dsnSource != "-dsn" {
+		target = ""
+	}
+	return fmt.Sprintf("migration %d failed and is marked dirty in the database %s names; no later `up` runs until the mark is cleared. "+
 		"Check which of its statements took effect and undo them (a lock or statement timeout normally rolls the whole file back), "+
-		"then run `stellarindex-migrate -migrations %s force %s` and run `up` again.",
-		dirtyVersion, dir, previousMigration(dir, dirtyVersion))
+		"then run `stellarindex-migrate %s-migrations %s force %s` against that same database and run `up` again.",
+		dirtyVersion, dsnSource, target, dir, previousMigration(dir, dirtyVersion))
+}
+
+// checkForceTarget refuses a force the target database's state does not call for: force only clears a dirty mark, to the
+// version below the dirty one (its effects undone) or to the dirty one itself (finished by hand). A clean database means the
+// command reached the wrong one, or nothing needs forcing.
+func checkForceTarget(dir string, v int, cur uint, dirty bool, verErr error) error {
+	if verErr != nil {
+		if errors.Is(verErr, migrate.ErrNilVersion) {
+			return fmt.Errorf("the database %s names has no migration applied and nothing is dirty; refusing to force it", dsnSource)
+		}
+		return fmt.Errorf("read the current version: %w", verErr)
+	}
+	if !dirty {
+		return fmt.Errorf("the database %s names is at version %d and not dirty; force only clears a dirty mark, "+
+			"so refusing (check that this is the database whose `up` failed)", dsnSource, cur)
+	}
+	prev := database.NilVersion
+	if p, err := strconv.Atoi(previousMigration(dir, int(cur))); err == nil {
+		prev = p
+	}
+	if v != int(cur) && v != prev { //nolint:gosec // cur is a migration number read back from schema_migrations
+		return fmt.Errorf("the database %s names is dirty at %d; force it to %s (its effects undone) or %d (finished by hand), not %d",
+			dsnSource, cur, previousMigration(dir, int(cur)), cur, v)
+	}
+	return nil
 }
 
 // previousMigration is the force argument that puts the version just below v: the highest migration number under v, or "none".
@@ -359,6 +390,10 @@ func cmdForce(dir, dsn string, v int) error {
 	}
 	defer closeSilent(m)
 
+	cur, dirty, verErr := m.Version()
+	if err := checkForceTarget(dir, v, cur, dirty, verErr); err != nil {
+		return err
+	}
 	if err := m.Force(v); err != nil {
 		return err
 	}
