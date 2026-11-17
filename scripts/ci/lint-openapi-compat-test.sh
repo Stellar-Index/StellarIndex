@@ -97,6 +97,16 @@ check "a new required field in a nested request schema is rejected" red 'now req
 check "a request body made required is rejected" red "now requires a request body" \
   "d['paths']['/keys']['post']['requestBody']['required'] = True"
 
+check "a response re-pointed to a schema without a field is rejected" red 'lost `price`' \
+  "S['Price2'] = {'type': 'object', 'properties': {'basis': {'type': 'string'}}}; d['paths']['/price']['get']['responses']['200']['content']['application/json']['schema'] = {'\$ref': '#/components/schemas/Price2'}"
+check "an inline schema swapped for a \$ref keeps its fields checked" red 'lost `basis`' \
+  "S['Small'] = {'type': 'object', 'properties': {'price': {'type': 'string'}}}; S['Price'] = {'\$ref': '#/components/schemas/Small'}"
+check "a decimal-string field changed to a number is rejected" red 'changed-type: components/schemas/Price/properties/price' \
+  "S['Price']['properties']['price']['type'] = 'number'"
+check "a field made nullable passes" ok "" "S['Price']['properties']['price']['type'] = ['string', 'null']"
+check "a removed optional parameter is rejected" red "removed-parameter: GET /price no longer takes parameter mode (in query)" \
+  "del d['paths']['/price']['get']['parameters'][1]"
+
 check "a break declared by a trailer passes" ok "" "del d['paths']['/price']" \
   "$(printf 'api: drop /price\n\nOpenAPI-Break: replaced by /v2/price\n')"
 check "a trailer with no reason declares nothing" red "removed-operation: GET /price" "del d['paths']['/price']" \
