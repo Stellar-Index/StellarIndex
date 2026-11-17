@@ -80,7 +80,7 @@ if mv -T "$T" "$T.r" 2>/dev/null; then
   T="$T.r"
   echo victim > "$T/victim"
   ln -s "$T/victim" "$T/apt.prom"
-  echo 'm 1' | TEXTFILE_DIR="$T" sh "$ROLE/files/textfile-publish.sh" apt
+  TEXTFILE_DIR="$T" sh "$ROLE/files/textfile-publish.sh" apt -- echo 'm 1'
   if [ "$(cat "$T/victim")" = victim ] && [ ! -L "$T/apt.prom" ] && [ "$(cat "$T/apt.prom")" = 'm 1' ]; then
     ok "textfile-publish replaces a planted link and leaves its target alone"
   else
@@ -89,6 +89,27 @@ if mv -T "$T" "$T.r" 2>/dev/null; then
 else
   echo "  skip — mv has no -T here; the publisher arm runs on Linux"
 fi
+rm -rf "$T"
+
+# A pipe into the publisher reports the publisher's status, not the producer's.
+if grep -rnE '\| */usr/local/bin/textfile-publish' configs/ansible/roles deploy/systemd; then
+  bad "a collector pipes into textfile-publish, which hides its exit status — use textfile-publish <name> -- <cmd>"
+else
+  ok "no collector pipes into textfile-publish"
+fi
+
+# A failed or silent producer must fail the unit and leave the published file alone.
+T="$(mktemp -d)"
+echo 'm 0' > "$T/nvme.prom"
+for producer in false true; do
+  if TEXTFILE_DIR="$T" sh "$ROLE/files/textfile-publish.sh" nvme -- "$producer" </dev/null 2>/dev/null; then
+    bad "textfile-publish exited 0 for producer '$producer'"
+  elif [ "$(cat "$T/nvme.prom")" = 'm 0' ] && [ "$(ls "$T")" = nvme.prom ]; then
+    ok "textfile-publish fails and keeps the previous file for producer '$producer'"
+  else
+    bad "textfile-publish replaced the published file for producer '$producer'"
+  fi
+done
 rm -rf "$T"
 
 # Every unit that joins group stellarindex is a group writer the 0775 mode
