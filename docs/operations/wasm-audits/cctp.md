@@ -158,39 +158,26 @@ the WASM-bytes audit is the load-bearing check (README.md §4).
 **APPROVED 2026-05-26.** `Registry["cctp"].BackfillSafe` flipped to `true` in
 `internal/sources/external/registry.go` in the same commit as this doc update.
 The decoder covers every WASM hash that has ever existed for the 3 contracts
-(one each, no upgrades). Historical replay via the `soroban_events` landing zone
-(ADR-0029) is unblocked:
+(one each, no upgrades). `cctp` is a projected source, so historical replay goes
+through the projector, which runs the per-WASM gate (`wasmaudit.GateReplay`)
+first and refuses a range in which any of the 3 contracts ran an unattested hash:
 
-```sql
-INSERT INTO cctp_events
-SELECT … FROM soroban_events
-WHERE contract_id IN (
-  'CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL',
-  'CACMENFFJPJMSDAJQLX4R7K3SFZIW2LJSE3R2UMLGSWHFHS353FVXAZV',
-  'CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T'
-) AND topic_0_sym IN (
-  -- Transfer-flow (original 2026-05-26 approval scope):
-  'deposit_for_burn', 'mint_and_withdraw', 'message_sent',
-  'message_received', 'mint_and_forward',
-  -- Governance/admin — added to the decoder by the ROADMAP #89b/89c
-  -- topic-match audits (2026-07-08/09); covered by this same
-  -- single-WASM, no-upgrade finding, so no separate re-walk is
-  -- needed, but a replay run BEFORE 2026-07-09 must re-run with
-  -- this full list to pick these up:
-  'ownership_transfer', 'ownership_transfer_completed',
-  'admin_changed', 'admin_change_started',
-  'remote_token_messenger_added', 'token_pair_linked',
-  'attester_enabled', 'attester_manager_updated',
-  'signature_threshold_updated', 'max_message_body_size_updated',
-  'pauser_changed', 'rescuer_changed', 'denylisted',
-  'un_denylisted', 'denylister_changed', 'fee_recipient_set',
-  'min_fee_controller_set', 'set_token_controller',
-  'set_burn_limit_per_message', 'swap_minter_config_set',
-  'token_decimal_config_added'
-);
+```sh
+/usr/local/sbin/run-heavy-job.sh cctp-replay \
+  stellarindex-ops projector-replay -source cctp -from <first ledger to replay>
 ```
 
-Re-audit triggers: Prometheus alerts on `unknown_topic` per source, or a manual
+Never write `cctp_events` with ad-hoc SQL: it bypasses the WASM gate and the
+audited decoder, and races the live projector
+([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+Decoder coverage: the transfer-flow topics (`deposit_for_burn`,
+`mint_and_withdraw`, `message_sent`, `message_received`, `mint_and_forward`)
+and the governance/admin topics (`ownership_transfer`, `admin_changed`,
+`attester_enabled`, `denylisted`, `set_burn_limit_per_message` and the rest
+`internal/sources/cctp` matches) all come from the same single WASM per contract.
+
+Re-audit triggers: a `stellarindex_wasm_drift` alert for `cctp` (the daily
+`wasm-drift` run, [runbook](../runbooks/wasm-drift.md)), or a manual
 `wasm-history` re-walk if Circle announces a v3.
 
 ## Live-traffic verification notes

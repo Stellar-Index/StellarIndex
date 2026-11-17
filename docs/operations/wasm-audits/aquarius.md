@@ -212,10 +212,14 @@ JSONL output (`/tmp/walk-checkpoint/` on r1).
 **Decoder verdict per hash.** All five Cohort B WASMs are
 built from the same `liquidity_pool_events` crate as Cohort A
 (`strings` + topology grep against the upstream
-Cargo workspace). Binary-string scan confirms `trade`,
-`update_reserves`, `deposit_liquidity`, `withdraw_liquidity`
-in every WASM's data section. Any pool WASM compiled from the
-aquarius-amm tree emits the audited topic + body shape.
+Cargo workspace). A byte search of the committed WASMs finds `trade`,
+`deposit_liquidity` and `withdraw_liquidity` in all five, but
+`update_reserves` only in `a1629dcd…`: `b54ba37b…`, `2d770946…`,
+`7cecf23b…` and `4f080d24…` cannot emit it. A replay over pools while they
+ran those four hashes writes trade and liquidity rows but no
+`aquarius_reserves` rows; that gap is a property of the builds, not a decoder
+or projector fault. Their trade and liquidity body shapes have not been
+lake-checked (no fixture under `test/fixtures/aquarius/<hash>/`).
 
 **`CAVLP5DH…` is not the Aquarius router.** The walk's input list
 mislabelled it; it is a Reflector testnet oracle, absent on mainnet
@@ -231,11 +235,11 @@ nothing is outstanding.
 | `ae0da5a84b15805c` | A | volatile pool (dominant never-upgraded) | 149 | maintainer@2026-04-29 | matches current decoder |
 | `f1077e0b77da5e62` | A | stableswap pool | 13 | maintainer@2026-04-29 | matches current decoder |
 | `8875f0c770fb26d3` | A | rewards-enhanced variant | 6 | maintainer@2026-04-29 | matches current decoder |
-| `b54ba37b…` | B | upgrade chain step 1 (oldest) | superseded by step 4 | maintainer@2026-04-30 | matches current decoder |
-| `2d770946…` | B | upgrade chain step 2 | superseded by step 4 | maintainer@2026-04-30 | matches current decoder |
-| `7cecf23b…` | B | upgrade chain step 3 | superseded by step 4 | maintainer@2026-04-30 | matches current decoder |
+| `b54ba37b…` | B | upgrade chain step 1 (oldest) | superseded by step 4 | maintainer@2026-04-30 | trade/liquidity topics present; no `update_reserves` (no reserve rows) |
+| `2d770946…` | B | upgrade chain step 2 | superseded by step 4 | maintainer@2026-04-30 | trade/liquidity topics present; no `update_reserves` (no reserve rows) |
+| `7cecf23b…` | B | upgrade chain step 3 | superseded by step 4 | maintainer@2026-04-30 | trade/liquidity topics present; no `update_reserves` (no reserve rows) |
 | `a1629dcd…` | B | upgrade chain step 4 (most-current) | 118 | maintainer@2026-04-30 | matches current decoder |
-| `4f080d24…` | B | upgrade chain step 5 (rolling out) | 18 | maintainer@2026-04-30 | matches current decoder |
+| `4f080d24…` | B | upgrade chain step 5 (rolling out; ordering after step 4 unverified, and it lacks `update_reserves` that step 4 has) | 18 | maintainer@2026-04-30 | trade/liquidity topics present; no `update_reserves` (no reserve rows) |
 
 ### Source-of-truth: shared event emitter
 
