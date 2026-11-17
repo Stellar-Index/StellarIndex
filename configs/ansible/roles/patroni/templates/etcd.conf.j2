@@ -13,7 +13,7 @@ ETCD_ADVERTISE_CLIENT_URLS="{{ _scheme }}://{{ ansible_host }}:{{ etcd_client_po
 
 ETCD_INITIAL_CLUSTER_TOKEN="{{ etcd_cluster_token }}"
 ETCD_INITIAL_CLUSTER="{% for host in groups['postgres_cluster'] %}{{ host }}={{ _scheme }}://{{ hostvars[host].ansible_host }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
-ETCD_INITIAL_CLUSTER_STATE="new"
+ETCD_INITIAL_CLUSTER_STATE="{{ etcd_initial_cluster_state }}"
 
 ETCD_HEARTBEAT_INTERVAL="{{ etcd_heartbeat_interval }}"
 ETCD_ELECTION_TIMEOUT="{{ etcd_election_timeout }}"

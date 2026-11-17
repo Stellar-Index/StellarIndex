@@ -39,6 +39,8 @@ patroni_synchronous_node_count: 1   # ANY 1 of 2 replicas
 
 # ── DCS (etcd) ─────────────────────────────────────────────────
 etcd_data_dir: /var/lib/etcd
+# "existing" only for a member added with `etcdctl member add` (README, Replacing an etcd member).
+etcd_initial_cluster_state: new
 etcd_client_port: 2379
 etcd_peer_port: 2380
 # Heartbeat / election timeouts in ms.

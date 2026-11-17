@@ -119,6 +119,23 @@ patroni_pgbackrest_restore_target: latest   # or "time:2026-04-30 14:00:00"
 On a host with the distro's empty main cluster still at `patroni_data_dir`,
 also set `patroni_adopt_existing_data_dir: true` so the restore overwrites it.
 
+## Replacing an etcd member
+
+A host that comes back with an empty `/var/lib/etcd` must join the
+existing quorum, not bootstrap a new one; the role refuses to start it
+with `ETCD_INITIAL_CLUSTER_STATE=new` when another member answers with
+quorum or when not every `postgres_cluster` host is in the play. Per the
+etcd runtime-reconfiguration guide:
+
+```sh
+# on a surviving member (with the etcd client TLS flags)
+etcdctl member list
+etcdctl member remove <old-member-id>
+etcdctl member add db-02 --peer-urls=https://10.0.0.12:2380
+# then, against the replaced host only
+ansible-playbook ... --limit db-02 -e etcd_initial_cluster_state=existing
+```
+
 ## Smoke test
 
 After the playbook finishes:

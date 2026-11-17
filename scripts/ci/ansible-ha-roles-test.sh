@@ -217,6 +217,22 @@ confirm = next(t for t in tasks("patroni/tasks/09-patroni-join.yml") if t["name"
 check(confirm.get("uri", {}).get("url", "").endswith("/replica") and "_replica_check" in str(confirm.get("until")),
       "replica join asserts /replica answers 200")
 
+# patroni/etcd: "new" on an empty data dir is refused beside a live quorum or on a partial play.
+check('ETCD_INITIAL_CLUSTER_STATE="{{ etcd_initial_cluster_state }}"' in text("patroni/templates/etcd.conf.j2")
+      and yaml.safe_load(text("patroni/defaults/main.yml"))["etcd_initial_cluster_state"] == "new",
+      "etcd initial cluster state is a variable defaulting to new")
+etcd_refuse = next(t for t in tasks("patroni/tasks/03-etcd-configure.yml")
+                   if t.get("name") == "refuse to bootstrap a new etcd cluster beside a live one")["when"]
+group = ["db-01", "db-02", "db-03"]
+for member, state, quorum, play, want in ((False, "new", 1, group, False), (False, "new", 0, group, True),
+                                          (False, "new", 1, ["db-02"], True), (True, "new", 0, ["db-02"], False),
+                                          (False, "existing", 0, ["db-02"], False)):
+    v = dict(_etcd_member_dir={"stat": {"exists": member}}, etcd_initial_cluster_state=state,
+             _etcd_peer_quorum={"rc": quorum}, groups={"postgres_cluster": group}, ansible_play_hosts_all=play)
+    ansible_env.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+    check(fires(etcd_refuse, **v) == want,
+          f"etcd refuse (member dir={member} state={state} peer quorum rc={quorum} play={play}) -> {want}")
+
 # redis: the live maxmemory-policy enforce runs only on a managed host whose Sentinel answered;
 # a fresh host (distro redis on loopback, AUTH failing with rc 0 and no output) is left to the template.
 enforce = next(t for t in tasks("redis-sentinel/tasks/03-redis-configure.yml")
