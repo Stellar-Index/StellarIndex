@@ -799,6 +799,41 @@ func TestDEXTVLCache_AquariusRegistryReadFailureRefusesFigure(t *testing.T) {
 	}
 }
 
+// TestDEXTVLCache_SoroswapRegistryPairMissingFromReadIsUnavailable: a registry pair the reserve read omits (archived,
+// uncaptured or off-layout) adds 0, is counted unpriced and named, so the figure is a lower bound, not a silent shrink.
+func TestDEXTVLCache_SoroswapRegistryPairMissingFromReadIsUnavailable(t *testing.T) {
+	const archivedPair = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
+	src := tvlTestSources()
+	src.SoroswapPairs = stubTVLPairsReader{pairs: []timescale.SoroswapPair{
+		{PairStrkey: tvlTestPairA}, {PairStrkey: tvlTestPairB}, {PairStrkey: archivedPair},
+	}}
+	c := NewDEXTVLCache(src)
+	_ = c.Refresh(context.Background())
+	snap, ok := c.Protocol("soroswap")
+	if !ok {
+		t.Fatal("soroswap missing from snapshot")
+	}
+	if v := snap.TVL; v.TVLUSD != "25.50" || v.PoolsTotal != 3 || v.PoolsPriced != 1 || v.UnpricedPools != 2 {
+		t.Fatalf("soroswap tvl = %+v, want 25.50 over 3 pools, 1 priced, 2 unpriced", v)
+	}
+	named := false
+	for _, p := range snap.Pools {
+		if p.Pool == archivedPair {
+			named = p.Excluded == DEXTVLPoolUnavailable && p.TVLUSD == "0.00"
+		}
+	}
+	if !named {
+		t.Errorf("archived pair not named unavailable_state: %+v", snap.Pools)
+	}
+	at, err := time.Parse(time.RFC3339, snap.TVL.AsOf)
+	if err != nil {
+		t.Fatalf("as_of: %v", err)
+	}
+	if total := reconcileDEXTVLTotal(map[string]ProtocolTVLView{"soroswap": snap.TVL}, at, nil, nil); total == nil || !total.LowerBound {
+		t.Errorf("tvl_total over soroswap alone = %+v, want lower_bound", total)
+	}
+}
+
 // TestDEXTVLCache_AquariusRegisteredPoolMissedByWindowReadIsUnavailable: a pool silent past the window that is updated
 // after the window read is in no snapshot read at all; the registry still names it, so the figure is a lower bound.
 func TestDEXTVLCache_AquariusRegisteredPoolMissedByWindowReadIsUnavailable(t *testing.T) {

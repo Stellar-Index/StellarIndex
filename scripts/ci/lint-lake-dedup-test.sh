@@ -801,6 +801,10 @@ knownrmt="$(mk knownrmt)"
 printf 'CREATE TABLE IF NOT EXISTS stellar.supply_flows (a UInt32)\nENGINE = ReplacingMergeTree(ingested_at)\nORDER BY a;\n' > "$knownrmt/$SQLDIR/known.sql"
 check "a ReplacingMergeTree already in LAKE_TABLES passes" 0 "$knownrmt"
 
+newreplicated="$(mk newreplicated)"
+printf "CREATE TABLE IF NOT EXISTS stellar.brand_new_replicated (a UInt32)\nENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/t', '{replica}', ingested_at)\nORDER BY a;\n" > "$newreplicated/$SQLDIR/brand_new_replicated.sql"
+check "a ReplicatedReplacingMergeTree missing from LAKE_TABLES fails" 1 "$newreplicated"
+
 noddl="$(mk noddl)"
 printf -- '-- no tables here\n' > "$noddl/$SQLDIR/tier1_schema.sql"
 check "a real-shaped tree deriving no ReplacingMergeTree fails" 1 "$noddl"

@@ -227,13 +227,39 @@ published the spike; its value carries no weight here (Layer 2).
 | Gap | Status | Ref |
 |---|---|---|
 | Liquidity floor per source per bucket (Layer 3) | not built | — |
-| Auto-exclude the offending source on an outlier storm | not built; trimming is per print, not per source, so exclusion is a manual runbook step | — |
+| Auto-exclude the offending source on an outlier storm | not built; trimming is per print, not per source | — |
+| Per-source kill switch on the served price | not built; see [Excluding a bad source](#excluding-a-bad-source) | — |
 | Stablecoin-depeg auto-gating (a depegged stablecoin used as collateral) | not built; manual policy through the class system | INV-1122 |
 | Adversarial-testing exercises (below) | recommended, not scheduled | INV-1123 |
 | Production-quality divergence coverage for the Phase 3 factor | wired; coverage tuning post-launch | — |
 | SEP-50 (NFT) decoder | none exists; out of current scope | INV-1095 |
 
-Adversarial exercises (INV-1123), each with its pass condition: a thin-pool spike (outlier storm fires within one bucket, VWAP barely moves); a single-source compromise (the sigma filter excludes it, the runbook disables it); a coordinated multi-source attack (divergence fires, response flagged not silent); an external-oracle compromise (our VWAP unchanged, confidence may drop via the cross-oracle factor).
+Adversarial exercises (INV-1123), each with its pass condition: a thin-pool spike (outlier storm fires within one bucket, VWAP barely moves); a single-source compromise (the sigma filter excludes it, the runbook stops its ingest; stored prints stay in `prices_1m`, below); a coordinated multi-source attack (divergence fires, response flagged not silent); an external-oracle compromise (our VWAP unchanged, confidence may drop via the cross-oracle factor).
+
+### Excluding a bad source
+
+No control removes one source from the price `/v1/price` serves. That price
+is the latest closed bucket of the `prices_1m` continuous aggregate
+(`StorePriceReader.LatestPrice`, `cmd/stellarindex-api/internal/wiring/prices.go`),
+which pools every source in `trades` with no source predicate; the Redis
+aggregator VWAP is the fallback only for a pair with no `prices_1m` rows.
+What an operator can do:
+
+1. External venue: set `[external.<venue>] enabled = false` and restart the
+   aggregator. New `prices_1m` buckets no longer contain the venue. An
+   on-chain source has no per-source switch.
+2. Add the source to `aggregate.excluded_sources` and restart the
+   aggregator. This drops its stored trades from the aggregator's VWAP
+   windows only; the API binary does not read the setting.
+3. Rows already stored stay in `prices_1m`. `/v1/price` serves the bad
+   bucket until a newer closed bucket exists for the pair, and history
+   (`/v1/price/at`, SEP-40 `prices`, the 24h change anchor) keeps it.
+   `GuardServedVWAP1mConfidence` substitutes last-known-good only for a
+   bucket grossly off its trailing buckets, so a sustained mis-scale passes.
+
+Missing: a read-side source exclusion on the `prices_1m` path, and a
+command to quarantine a source's stored trades (a second writer to
+`trades` under invariant 7).
 
 ## SEP-40: what we serve and why there is no generic reader
 

@@ -118,18 +118,12 @@ working.
 > keys. Enabling SEP-10 is a deliberate swap of the deployment's
 > credential type, not an addition alongside keys.
 
-For a key cryptographically scoped to a single Stellar account
-(G-strkey), a deployment configured for SEP-10 lets a client
-authenticate via SEP-10 Web Auth and mint through `/v1/account/keys`.
-The account's signature authorises the key:
-
-```sh
-# Requires a deployment with auth_mode = "sep10" and a signing seed.
-curl -fsSL -X POST https://your-sep10-deployment.example/v1/account/keys \
-     -H "Authorization: Bearer $YOUR_SEP10_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"label":"my laptop"}'
-```
+Under `auth_mode = "sep10"` the credential is the SEP-10 JWT itself,
+scoped to a single Stellar account (G-strkey) whose signature
+authorises it. A client obtains it through SEP-10 Web Auth and sends it
+as `Authorization: Bearer <jwt>`. No API key is minted:
+`POST /v1/account/keys` answers `403` (`key-mint-not-available`) for a
+SEP-10 subject. A new credential is a fresh challenge.
 
 Operators enabling it set `STELLARINDEX_SEP10_SEED` (server signing
 S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes) — names
@@ -138,16 +132,16 @@ deployment that already has Redis, which the replay guard requires, and
 a ClickHouse lake (`storage.clickhouse_addr`), from which the account's
 signers and medium threshold are read.
 
-Rotation is `POST /v1/account/keys`; revocation is
-`DELETE /v1/account/keys/{keyID}` — self-service, scoped to the
-caller's own keys.
+For API-key accounts, rotation is `POST /v1/account/keys` and
+revocation is `DELETE /v1/account/keys/{keyID}` — self-service, scoped
+to the caller's own keys.
 
 ## Rate limits
 
 | Tier | Hosted `api.stellarindex.io` | Self-hosted default |
 |---|---|---|
 | Anonymous (per IP) | 1 000 / min | 60 / min (`[api].anon_rate_limit_per_min`) |
-| Free key (per key) | 6 000 / min (stamped at mint) | 6 000 / min (stamped at mint) |
+| Free key (per account, shared by its keys) | 6 000 / min (stamped at mint) | 6 000 / min (stamped at mint) |
 | Partner (per key) | staff-set, up to 100 000 / min | — |
 
 On the hosted deployment a free key has six times an anonymous IP's
@@ -167,9 +161,10 @@ X-RateLimit-Remaining: 5958
 ```
 
 Exceeded limits return `429 Too Many Requests` with `Retry-After`.
-Operators on a Postgres outage may see the rate-limit middleware
-fail open; the `stellarindex_ratelimit_fail_open_total` counter
-ticks during such windows (operators alert on a sustained spike).
+On a Redis outage the rate limiter fails open for
+`[api].rate_limit_dwell` (default 30 s), counting
+`stellarindex_ratelimit_fail_open_total`, then fails closed with
+`503` + `Retry-After` until Redis has been healthy for the dwell.
 
 ## Endpoint families
 
