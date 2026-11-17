@@ -76,3 +76,40 @@ func TestAccountErasureStripsReasonAndActorEmail(t *testing.T) {
 		}
 	}
 }
+
+// A user who joins between PlanErasure and EraseAccount is deleted by the erase, so the address on their staff rows
+// must go with them.
+func TestAccountErasureScrubsMemberWhoJoinedAfterPlan(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var acct, late, row uuid.UUID
+	mustScan(t, ctx, db, &acct, `INSERT INTO accounts (name, slug, billing_email) VALUES ('l', 'late', 'b@l.example') RETURNING id`)
+	mustExec(t, ctx, db, `INSERT INTO users (account_id, email, role) VALUES ($1, 'owner@l.example', 'owner')`, acct)
+	store := postgresstore.NewAccountStore(postgresstore.New(db))
+	plan, err := store.PlanErasure(ctx, acct)
+	if err != nil {
+		t.Fatalf("PlanErasure: %v", err)
+	}
+	mustScan(t, ctx, db, &late, `INSERT INTO users (account_id, email, role) VALUES ($1, 'late@l.example', 'member') RETURNING id`, acct)
+	mustScan(t, ctx, db, &row, `INSERT INTO audit_log (actor_kind, actor_user_id, action, metadata, ip, user_agent)
+		VALUES ('staff', $1, 'staff.customer.lookup', '{"result_count":1}', '192.0.2.30', 'late-laptop/1') RETURNING id`, late)
+
+	if _, err := store.EraseAccount(ctx, postgresstore.ErasureRequest{
+		Plan: plan, ErasedSubject: "erased:late", Actor: platform.ActorUser,
+	}); err != nil {
+		t.Fatalf("EraseAccount: %v", err)
+	}
+	var got string
+	mustScan(t, ctx, db, &got, `SELECT coalesce(host(ip), '') || ' ' || coalesce(user_agent, '') FROM audit_log WHERE id = $1`, row)
+	if got != " " {
+		t.Errorf("late member's staff row ip and user agent = %q after erasure, want both NULL", got)
+	}
+}
