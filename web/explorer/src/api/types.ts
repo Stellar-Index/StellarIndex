@@ -10335,6 +10335,13 @@ export interface components {
             /** @description Trailing-24h USD trade volume, as /assets serves it. */
             volume_24h_usd?: string;
             /**
+             * @description True when `volume_24h_usd` is a LOWER BOUND, exactly as
+             *     /assets flags it: it leaves out trades not valued at trade
+             *     time, or SAC volume that could not be read. Absent when the
+             *     figure is complete.
+             */
+            volume_lower_bound?: boolean;
+            /**
              * Format: int64
              * @description Ledger this asset was first observed at, from an index complete since genesis.
              */
@@ -11009,10 +11016,13 @@ export interface components {
             /** @description The curator's public queries the figures were read from, e.g. `dune query 6961845 / 6961847`. */
             source: string;
             /**
-             * @description `total_usd` minus `summary.reference_valuation.value_usd`,
-             *     signed, at 2dp: what the curator counts that this index does
-             *     not verify (negative when this index verifies more). Absent
-             *     when the verified set publishes no reference total.
+             * @description `total_usd` minus this index's verified total on the same day
+             *     (`as_of`, the /v1/rwa/history total for that day), signed, at
+             *     2dp: what the curator counts that this index does not verify
+             *     (negative when this index verifies more). Never measured
+             *     against today's total, which would count the set's growth since
+             *     the month-end as coverage. Absent when the history holds no
+             *     total for `as_of` or that day's total is a lower bound.
              */
             gap_vs_verified_usd?: string;
         };
