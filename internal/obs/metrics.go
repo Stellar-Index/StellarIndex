@@ -148,6 +148,7 @@ func registerPricingMetrics() {
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 		AggregatorBaselineAgeSeconds,
+		AggregatorBaselineRefreshLastSuccessUnix,
 		AggregatorBootstrapCapped,
 		AggregatorBaselineDensityDays,
 
@@ -2649,6 +2650,14 @@ var AggregatorConfidenceComputeTotal = prometheus.NewCounterVec(
 		Help: "Confidence-score compute outcomes per (pair, window) × tick. See package docs for the full label vocabulary.",
 	},
 	[]string{"outcome"},
+)
+
+// AggregatorBaselineRefreshLastSuccessUnix is the time of the last baseline refresh pass that finished in time with a store answer; powers stellarindex_aggregator_baseline_refresh_stale.
+var AggregatorBaselineRefreshLastSuccessUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_baseline_refresh_last_success_unix",
+		Help: "Unix seconds of the last volatility-baseline refresh pass that finished within its timeout and read at least one pair; seeded at worker start, 0 when the worker is not running.",
+	},
 )
 
 // AggregatorBaselineAgeSeconds is the per-pair age of the volatility baseline row the confidence step read; shows a single pair whose refresh keeps failing.
