@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Envelope is the shape of every 2xx JSON response (docs/reference/api-design.md section 4).
@@ -191,6 +192,7 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	if env.Flags.Degraded {
 		w.Header().Set("Cache-Control", "no-store")
 	}
+	obs.MarkResponseFlags(w, env.Flags.Degraded, env.Flags.Stale)
 	w.WriteHeader(status)
 	_, _ = w.Write(append(body, '\n'))
 }

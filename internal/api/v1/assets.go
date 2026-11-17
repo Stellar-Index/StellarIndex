@@ -814,11 +814,11 @@ func (s *Server) handleAssetListFromAssets(
 		return
 	}
 	key := assetListCacheKey(r)
-	if body, refresh, ok := s.assetListCache.lookup(key); ok {
+	if body, stale, refresh, ok := s.assetListCache.lookup(key); ok {
 		if refresh {
 			s.refreshAssetListPage(r, key, filters, cursor, limit, order) //nolint:contextcheck // the refresh outlives this request on purpose; see its doc.
 		}
-		writeCachedAssetList(w, body)
+		writeCachedAssetList(w, body, stale)
 		return
 	}
 	env, rows, err := s.buildAssetListPage(r, filters, cursor, limit, order)
@@ -2549,9 +2549,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// the body holds only the reads that landed before cancellation; replaying either for the whole
 	// TTL would outlive the outage. Skip the cache write, not the response.
 	if !transientlyDegraded(&detail, ctxDead) {
-		s.assetDetailCache.put(cacheKey, body, flags.Degraded)
+		s.assetDetailCache.put(cacheKey, body, flags)
 	}
-	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: flags.Degraded})
+	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: flags.Degraded, stale: flags.Stale})
 }
 
 // assetDetailStale reports whether detail rests on a failed, cut-short or

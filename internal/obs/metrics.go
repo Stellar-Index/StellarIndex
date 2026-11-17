@@ -31,6 +31,7 @@ func registerAppMetrics() {
 		HTTPRequestsTotal,
 		HTTPRequestDuration,
 		HTTPRequestSuccessDuration,
+		APIFlaggedResponsesTotal,
 		IngestGapLedgers,
 		IngestGapCount,
 		IngestGapMaxSize,
@@ -721,6 +722,15 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.5, 1, 2.5, 5, 10},
 	},
 	[]string{"method", "route"},
+)
+
+// APIFlaggedResponsesTotal counts API responses written with flags.degraded or flags.stale, by route pattern and flag; synthetic probes are excluded as in [HTTPRequestsTotal].
+var APIFlaggedResponsesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_flagged_responses_total",
+		Help: "API responses served with flags.degraded (carried-forward or partial body) or flags.stale, labelled by route pattern and flag (degraded|stale).",
+	},
+	[]string{"route", "flag"},
 )
 
 // DependencyUp reports each /v1/readyz check as a gauge (1 answered, 0 not); alert on `== 0`, never on `absent()` alone.
