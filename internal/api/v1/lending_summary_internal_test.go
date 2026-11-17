@@ -2,9 +2,15 @@ package v1
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
 func f64p(f float64) *float64 { return &f }
@@ -107,6 +113,34 @@ func TestSWRCache_PeekStaleRefreshesOnce(t *testing.T) {
 	}
 	if n := fills.Load(); n != 1 {
 		t.Errorf("refreshes = %d, want 1", n)
+	}
+}
+
+type failingPoolVersion struct{ LendingReader }
+
+func (failingPoolVersion) BlendPoolVersion(context.Context, string) (blend.PoolVersion, error) {
+	return 0, errors.New("lake down")
+}
+
+// Every failed reserves build is memoised under a client-supplied pool id, so expired entries must not accumulate.
+func TestLendingSummaryFailure_ExpiredEntriesArePruned(t *testing.T) {
+	s := New(Options{Explorer: struct{ ExplorerReader }{}, Lending: failingPoolVersion{}})
+	s.lendingSummaryFailed = map[string]time.Time{}
+	for i := range 2 * lendingReservesMaxEntries {
+		s.lendingSummaryFailed["junk"+strconv.Itoa(i)] = time.Now().Add(-lendingSummaryRetry - time.Second)
+	}
+	pool := "CAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABDQF"
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+pool+"/reserves", nil))
+	if rec.Code < 500 {
+		t.Fatalf("status = %d, want a failed build: %s", rec.Code, rec.Body)
+	}
+	s.lendingSummaryMu.Lock()
+	n := len(s.lendingSummaryFailed)
+	_, held := s.lendingSummaryFailed[pool]
+	s.lendingSummaryMu.Unlock()
+	if n != 1 || !held {
+		t.Fatalf("failure memo holds %d entries (pool held %v), want only the fresh failure", n, held)
 	}
 }
 
