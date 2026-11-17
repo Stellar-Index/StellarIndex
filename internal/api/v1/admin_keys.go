@@ -117,12 +117,18 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		Tier:            auth.Tier(req.Tier),
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
-		// Operator-minted keys stay unmetered (0) by design; the admin
-		// request carries no monthly cap to persist.
+		// The admin body carries no monthly cap or expiry: the store resolves the target's
+		// inherited quota and bounds both by the minting operator key's own.
 		MonthlyQuota: 0,
 	})
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if errors.Is(err, auth.ErrMintExceedsCaller) {
+			s.logger.Warn("admin key mint refused: request exceeds the minting credential", "err", err,
+				"actor_key_id", subject.KeyID, "target_identifier", req.Identifier)
+			writeMintExceedsCaller(w, r, err)
 			return
 		}
 		s.logger.Error("admin key create failed", "err", err,
@@ -144,7 +150,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		"minted_key_id", rec.KeyID,
 		"tier", req.Tier,
 		"scopes", req.Scopes,
-		"monthly_quota", rec.MonthlyQuota, "reason", reason)
+		"monthly_quota", rec.MonthlyQuota, "expires_at", rec.ExpiresAt, "reason", reason)
 	s.recordAdminKeyMintAudit(r, subject, req, rec, reason)
 
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
@@ -154,6 +160,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 			KeyPrefix: rec.KeyPrefix,
 			Label:     rec.Label,
 			Scopes:    rec.Scopes,
+			ExpiresAt: wireTimeOrNil(rec.ExpiresAt),
 		},
 		AsOf:  WireTime(rec.CreatedAt),
 		Flags: Flags{},
@@ -173,11 +180,19 @@ func (s *Server) clampMintToCaller(
 		"err", err, "actor_key_id", caller.KeyID, "actor_identifier", caller.Identifier,
 		"path", r.URL.Path, "request_id", middleware.RequestIDFrom(r))
 	obs.MintScopeClampRefusedTotal.WithLabelValues(r.URL.Path).Inc()
+	writeMintExceedsCaller(w, r, err)
+	return nil, false
+}
+
+// writeMintExceedsCaller answers a mint refused with [auth.ErrMintExceedsCaller] with 403 and the refusal's detail.
+func writeMintExceedsCaller(w http.ResponseWriter, r *http.Request, err error) {
+	detail := err.Error()
+	if _, after, ok := strings.Cut(detail, auth.ErrMintExceedsCaller.Error()+": "); ok {
+		detail = after
+	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/scope-exceeds-caller",
-		"Scope exceeds caller", http.StatusForbidden,
-		strings.TrimPrefix(err.Error(), auth.ErrMintExceedsCaller.Error()+": "))
-	return nil, false
+		"Scope exceeds caller", http.StatusForbidden, detail)
 }
 
 // revokeKeyEverywhere revokes in every store that may hold the key (Redis and the Postgres api_keys row, else revoked_at stays
@@ -500,8 +515,8 @@ func (s *Server) recordAdminKeyMintAudit(
 		return
 	}
 	mintedKeyID := minted.KeyID
-	// monthly_quota is the ceiling the store resolved, not a request
-	// field: the admin body carries none, so record what was issued.
+	// monthly_quota and expires_at are what the store resolved, not request
+	// fields: the admin body carries neither, so record what was issued.
 	meta, err := json.Marshal(map[string]any{
 		"actor_key_id":       actor.KeyID,
 		"actor_identifier":   actor.Identifier,
@@ -512,6 +527,7 @@ func (s *Server) recordAdminKeyMintAudit(
 		"scopes":             req.Scopes,
 		"rate_limit_per_min": req.RateLimitPerMin,
 		"monthly_quota":      minted.MonthlyQuota,
+		"expires_at":         wireTimeOrNil(minted.ExpiresAt),
 		"reason":             reason,
 	})
 	if err != nil {
