@@ -65,3 +65,19 @@ func TestRedisAPIKeyStore_CreateBoundsMonthlyQuotaToMinter(t *testing.T) {
 		t.Fatalf("lower quota: MonthlyQuota = %d, err = %v; want 10, nil", rec.MonthlyQuota, err)
 	}
 }
+
+// The admin mint shape: an operator key mints for a customer whose plan quota (inherited from its live keys) is above the
+// operator's own. The key is issued at the operator's quota, not refused, since the request asked for no quota.
+func TestRedisAPIKeyStore_CreateLowersInheritedCustomerQuotaToMinter(t *testing.T) {
+	s, _, _ := newTestStore(t)
+	ctx := context.Background()
+	if _, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "acct:metered-co", MonthlyQuota: 200_000}); err != nil {
+		t.Fatalf("seed customer key: %v", err)
+	}
+	minter := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", MonthlyQuota: 50_000}
+
+	rec, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "acct:metered-co", Tier: TierAPIKey, MintedBy: &minter})
+	if err != nil || rec.MonthlyQuota != 50_000 {
+		t.Fatalf("MonthlyQuota = %d, err = %v; want the minter's 50000, nil", rec.MonthlyQuota, err)
+	}
+}
