@@ -247,33 +247,37 @@ func SetLendingStateWatermark(ctx context.Context, addr string, from, thru uint3
 	})
 }
 
-// LendingProof is the completeness check's result: prefixed keys, those whose latest history row is missing or
-// differs from the lake's state at the watermark, and those not compared because that row is past the watermark.
+// LendingProof is the completeness check's result: prefixed keys, those whose latest history row at or below the
+// watermark is missing or differs from the lake's state there, and those not compared because a row past the
+// watermark has replaced that row.
 type LendingProof struct {
 	Keys, Mismatched, Ahead uint64
 }
 
-// lendingProofQuery compares, per prefixed key, the state at the watermark with its latest history row. A key the
-// current table shows at or below the watermark is taken from there; one changed since is re-folded from the
-// entry changes up to the watermark. FINAL collapses duplicate history rows and superseded entry changes.
-// A key whose latest row lies past the watermark (a window written but not accepted) is counted Ahead, not
-// compared: under FINAL its row at the watermark may already be merged away.
+// lendingProofQuery compares, per prefixed key, the state at the watermark with its latest history row at or below
+// it. A key the current table shows at or below the watermark is taken from there; one changed since is re-folded
+// from the entry changes up to the watermark. FINAL collapses duplicate history rows and superseded entry changes.
+// A key is counted Ahead, not compared, only when the hour of its last change at or below the watermark holds a row
+// past it (a window written but not accepted): under FINAL that row has replaced the one at the watermark.
 const lendingProofQuery = `WITH cur AS (
-		SELECT key_xdr, entry_xdr, ledger_seq FROM stellar.ledger_entries_current FINAL
+		SELECT key_xdr, entry_xdr, ledger_seq, close_time FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND has(?, substring(key_xdr, 1, 52)) AND arrayExists(p -> startsWith(key_xdr, p), ?)
 	)
-	SELECT count(), countIf(h.l <= ? AND (h.present = 0 OR h.e != x.e)), countIf(h.l > ?)
+	SELECT count(), countIf(NOT has(h.ahead, x.hr) AND (h.present = 0 OR h.e != x.e)), countIf(has(h.ahead, x.hr))
 	FROM (
-		SELECT key_xdr AS k, entry_xdr AS e FROM cur WHERE ledger_seq <= ?
+		SELECT key_xdr AS k, entry_xdr AS e, toStartOfHour(close_time) AS hr FROM cur WHERE ledger_seq <= ?
 		UNION ALL
-		SELECT key_xdr AS k, argMax(entry_xdr, (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS e
-		FROM stellar.ledger_entry_changes FINAL
-		WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'
-		  AND key_xdr IN (SELECT key_xdr FROM cur WHERE ledger_seq > ?)
-		GROUP BY key_xdr
+		SELECT key_xdr AS k, last.1 AS e, toStartOfHour(last.2) AS hr FROM (
+			SELECT key_xdr, argMax((entry_xdr, close_time), (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS last
+			FROM stellar.ledger_entry_changes FINAL
+			WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'
+			  AND key_xdr IN (SELECT key_xdr FROM cur WHERE ledger_seq > ?)
+			GROUP BY key_xdr
+		)
 	) AS x
 	LEFT JOIN (
-		SELECT key_xdr AS k, argMax(entry_xdr, hour) AS e, argMax(ledger_seq, hour) AS l, 1 AS present
+		SELECT key_xdr AS k, argMaxIf(entry_xdr, hour, ledger_seq <= ?) AS e, countIf(ledger_seq <= ?) > 0 AS present,
+		       groupArrayIf(hour, ledger_seq > ?) AS ahead
 		FROM stellar.lending_state_hourly FINAL GROUP BY key_xdr
 	) AS h ON x.k = h.k`
 
@@ -286,7 +290,7 @@ func ProveLendingState(ctx context.Context, addr string, ps []LendingPrefix, wm 
 	defer func() { _ = conn.Close() }()
 	prefixes, _, _, heads := lendingPrefixArgs(ps)
 	var p LendingProof
-	if err := conn.QueryRow(ctx, lendingProofQuery, heads, prefixes, wm, wm, wm, wm, wm).Scan(&p.Keys, &p.Mismatched, &p.Ahead); err != nil {
+	if err := conn.QueryRow(ctx, lendingProofQuery, heads, prefixes, wm, wm, wm, wm, wm, wm).Scan(&p.Keys, &p.Mismatched, &p.Ahead); err != nil {
 		return LendingProof{}, fmt.Errorf("clickhouse: lending proof at %d: %w", wm, err)
 	}
 	return p, nil

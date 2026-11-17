@@ -248,6 +248,27 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE entry_xdr = 'TAMPER' SETTINGS mutations_sync = 2`); err != nil {
 		t.Fatal(err)
 	}
+	// A wrong row at or below the watermark is still compared when a later hour holds a row past it.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_state_hourly
+		(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2027-02-10 11:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 11:30:00', 'UTC'), 'TAMPER'),
+		       (?, 'blnt', ?, toDateTime('2027-02-10 12:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 12:10:00', 'UTC'), 'A5')`,
+		pool, key, base+3, pool, key, base+4); err != nil {
+		t.Fatal(err)
+	}
+	if err := chops.Run(prove); err == nil || !strings.Contains(err.Error(), "disagree with the lake") {
+		t.Fatalf("proof with a tampered row below a row past the watermark: err = %v, want a state mismatch", err)
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE entry_xdr = 'TAMPER' OR ledger_seq > ?
+		SETTINGS mutations_sync = 2`, base+3); err != nil {
+		t.Fatal(err)
+	}
+	if err := runLendingWrite(t, addr, base, base+3); err != nil {
+		t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
+	}
+	if err := chops.Run(prove); err != nil {
+		t.Fatalf("proof after re-deriving the tampered hour: %v", err)
+	}
 	// Rows written past the watermark by a window it refused, one replacing the watermark's own hour: not a mismatch.
 	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_state_hourly
 		(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
