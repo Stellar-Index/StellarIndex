@@ -1402,8 +1402,8 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) (
 		return false
 	}
 	precise, supplyUnread := s.latestPreciseSupply(ctx)
-	broad := s.cachedClassicSupply(ctx)
-	lake := s.classicLakeSupply(ctx, rows)
+	broad, broadUnread := s.classicSupplyMap(ctx)
+	lake, lakeMissing := s.classicLakeSupplyRead(ctx, rows)
 	for i := range rows {
 		if rows[i].CirculatingSupply != nil {
 			continue
@@ -1411,6 +1411,8 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) (
 		// Same preference chain as the market-cap fill, naming the arm it took.
 		circ, basis := classicSupplyReading(rows[i].AssetID, precise, lake, broad)
 		if circ == "" {
+			// No figure because a reader did not answer is an outage, not "this asset has no supply".
+			supplyUnread = supplyUnread || broadUnread || slices.Contains(lakeMissing, rows[i].AssetID)
 			continue
 		}
 		stampCirculatingSupply(&rows[i], circ, basis)
