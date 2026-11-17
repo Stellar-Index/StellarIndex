@@ -60,3 +60,25 @@ func TestFlaggedResponses_countedByRoutePattern(t *testing.T) {
 		t.Errorf("raw path leaked into the route label: %v", got)
 	}
 }
+
+// A degraded response behind the idempotency recorder must still reach the counter.
+func TestFlaggedResponses_countedThroughIdempotency(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/flagtest/idem/{id}", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{}, Flags{Degraded: true})
+	})
+	idem := middleware.Idempotency(middleware.NewIdempotencyStore(time.Minute), func(*http.Request) string { return "acct-1" })
+	h := obs.HTTPMetrics(idem(obs.CaptureRoute(mux)))
+	const route = "/v1/flagtest/idem/{id}"
+	before := testutil.ToFloat64(obs.APIFlaggedResponsesTotal.WithLabelValues(route, "degraded"))
+	req := httptest.NewRequest(http.MethodPost, "/v1/flagtest/idem/a", nil)
+	req.Header.Set(middleware.IdempotencyKeyHeader, "k1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if got := testutil.ToFloat64(obs.APIFlaggedResponsesTotal.WithLabelValues(route, "degraded")) - before; got != 1 {
+		t.Errorf("degraded delta = %v, want 1", got)
+	}
+}
