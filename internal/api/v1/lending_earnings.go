@@ -67,7 +67,8 @@ const lendingEarningsNote = "accrued is current_value - net_flow, served only wh
 	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. A BLNT clawback counts as a withdrawal, so " +
 	"accrued does not include the clawed-back amount as a loss. Emission claims are sums of the " +
 	"claim events projected so far and are a lower bound. USD values use the price /v1/lending/pools/{pool}/reserves serves for " +
-	"the reserve; a withheld or unpriced leg is left out of the USD totals, which are then a lower bound naming it. No health " +
+	"the reserve; a backstop leg is unpriced. A leg without a USD value is left out of supplied_usd and borrowed_usd, which " +
+	"are then a lower bound naming it in excluded, and net_usd and net_apr are null. No health " +
 	"factor is served: the account read sums collateral and non-collateral supply."
 
 // LendingEarningsView is the GET /v1/lending/accounts/{account}/earnings body.

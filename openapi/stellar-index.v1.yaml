@@ -3971,30 +3971,8 @@ paths:
                             backstop_lower_bound: { type: boolean, description: "True when a `backstop` exclusion leaves a pool's deposits out of the `backstop` sums, which are then floors." }
                             excluded:
                               type: array
-                              items:
-                                type: object
-                                properties:
-                                  kind:   { type: string, enum: [pool_list, pool, reserve, backstop, token] }
-                                  pool:   { type: [string, "null"] }
-                                  asset:  { type: [string, "null"], description: "Reserve token C-strkey for a `reserve` exclusion; the ticker for a `token` exclusion." }
-                                  reason:
-                                    type: string
-                                    enum:
-                                      - pool_list_read_failed
-                                      - pool_read_failed
-                                      - reserves_read_failed
-                                      - reserves_read_failed_recently
-                                      - reserves_read_timed_out
-                                      - pool_lineage_unknown
-                                      - no_decoded_reserve_state
-                                      - no_usd_value
-                                      - backstop_reader_unavailable
-                                      - backstop_read_failed
-                                      - blend_v1_unsupported
-                                      - pool_instance_unavailable
-                                      - backstop_balance_unavailable
-                                      - token_not_in_catalogue
-                                      - token_read_failed
+                              description: "Kinds `pool_list`, `pool`, `reserve`, `backstop` and `token`; `supply` and `borrow` are an account's earnings legs."
+                              items: { $ref: "#/components/schemas/LendingStatsExclusion" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /lending/pools/{pool}/reserves:
@@ -4608,22 +4586,26 @@ paths:
         USD: each supply and borrow leg's `value_usd` and `accrued_usd`
         are `current_value` and `accrued` at the price
         `/v1/lending/pools/{pool}/reserves` serves for that reserve
-        (`price_usd`, same cache), exact and rendered at 2 dp.
-        `value_usd` is null with `usd_reason`: `withheld` (the leg's
-        `reason` is set, other than a `history_*` reason, which concerns
-        `net_flow` only) or `unpriced` (the reserve has no USD price;
-        always so for a backstop leg, whose token is not a reserve).
-        `pools[]` and `totals` sum the valued legs into `supplied_usd`,
-        `borrowed_usd` and `net_usd`; a leg left out is named in
-        `unpriced` as `pool:side:asset` and sets `lower_bound`. Backstop
-        legs are not part of these totals. `net_apr` is
-        (Σ supply value × reserve `supply_apr` − Σ borrow value ×
-        reserve `borrow_apr`) / `net_usd`, with the APRs
-        `/v1/lending/rates` serves; it is an APR, not an APY, and
-        excludes emissions. It is null with `net_apr_reason`:
-        `inputs_partial` (a leg is unpriced or withheld),
-        `apr_unavailable` (a valued reserve has no APR) or
-        `net_value_not_positive`. No health factor is served: the
+        (`price_usd`, same cache), exact and rounded half away from
+        zero to 2 dp. A leg is valued whenever `current_value` is
+        served, whatever its `reason`. `usd_reason` names why
+        `value_usd`, or a non-null `accrued`'s `accrued_usd`, is null:
+        `withheld` (the amount is null) or `unpriced` (the reserve has
+        no USD price; always so for a backstop leg, whose token is not
+        a reserve). `pools[]` and `totals` sum the valued legs into
+        `supplied_usd` and `borrowed_usd`; a leg left out, backstop
+        legs included, is named in `excluded` (kind `supply`,
+        `borrow` or `backstop`) and sets `lower_bound`. `net_usd` is
+        `supplied_usd` − `borrowed_usd`, null with `net_usd_reason`
+        `inputs_partial` whenever a leg is left out: an omitted borrow
+        would make it too high, so it is never served as a lower
+        bound. `net_apr` is (Σ supply value × reserve `supply_apr` − Σ
+        borrow value × reserve `borrow_apr`) / `net_usd`, with the
+        APRs `/v1/lending/rates` serves, at 4 dp; it is an APR, not an
+        APY, and excludes emissions. It is null with `net_apr_reason`:
+        `inputs_partial` (`net_usd` is null), `apr_unavailable` (a
+        valued reserve has no APR) or `net_value_not_positive`. No
+        health factor is served: the
         account's on-chain `Positions` read sums collateral and
         non-collateral supply, and the repo does not establish either
         protocol's health formula.
@@ -4640,8 +4622,8 @@ paths:
                   legs:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, side: supply, tier: null, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, decimals: 7, net_flow: '1000000000', folded_tokens: '950000000', onchain_tokens: '950000000', current_value: '1045000000', rate_as_of: '2026-07-03T22:31:05Z', accrued: '45000000', reconciled: true, reason: null, value_usd: '104.50', accrued_usd: '4.50', usd_reason: null }
                   pools:
-                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', lower_bound: false, unpriced: [], net_apr: '0.041300', net_apr_reason: null }
-                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', lower_bound: false, unpriced: [], net_apr: '0.041300', net_apr_reason: null }
+                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null }
+                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null }
                   emissions:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, claimed: '120000000', lower_bound: true }
                   note: accrued is current_value - net_flow, served only when the token balance folded from this account's events equals its current on-chain balance.
@@ -4685,9 +4667,9 @@ paths:
                                 accrued: { type: [string, "null"] }
                                 reconciled: { type: boolean }
                                 reason: { type: [string, "null"], enum: [auction_moved, projection_behind, balance_mismatch, onchain_unread, fold_inconsistent, rate_unread, rate_behind, history_unverified, history_verdict_stale, history_verdict_unread, blend_v1_unsupported, pool_lineage_unknown, null] }
-                                value_usd: { type: [string, "null"], description: "current_value in USD at the reserve's /reserves price_usd." }
-                                accrued_usd: { type: [string, "null"], description: "accrued in USD at the same price; null when accrued or value_usd is." }
-                                usd_reason: { type: [string, "null"], enum: [withheld, unpriced, null] }
+                                value_usd: { type: [string, "null"], description: "current_value in USD at the reserve's /reserves price_usd, rounded half away from zero to 2 dp; null with usd_reason." }
+                                accrued_usd: { type: [string, "null"], description: "accrued in USD at the same price and rounding; null when accrued or value_usd is, and otherwise only with usd_reason." }
+                                usd_reason: { type: [string, "null"], enum: [withheld, unpriced, null], description: "Why value_usd, or accrued_usd for a non-null accrued, is null." }
                               required: [protocol, pool, side, tier, asset, decimals, net_flow, folded_tokens, onchain_tokens, current_value, rate_as_of, accrued, reconciled, reason, value_usd, accrued_usd, usd_reason]
                           pools:
                             type: array
@@ -16221,16 +16203,45 @@ components:
   schemas:
     LendingUSDTotals:
       type: object
-      description: USD sums of a lending account's valued supply and borrow legs, decimal strings at 2 dp.
+      description: USD sums of a lending account's valued supply and borrow legs, decimal strings, exact sums rounded half away from zero to 2 dp. A backstop leg is never valued, so it is always in `excluded`.
       properties:
-        supplied_usd: { type: string }
-        borrowed_usd: { type: string }
-        net_usd: { type: string, description: "supplied_usd - borrowed_usd; may be negative." }
-        lower_bound: { type: boolean, description: "True when a leg is left out of the sums; `unpriced` names each." }
-        unpriced: { type: array, items: { type: string }, description: "Legs left out, as `pool:side:asset`." }
-        net_apr: { type: [string, "null"], description: "(Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; 6 dp." }
+        supplied_usd: { type: string, description: "A floor when `lower_bound` is true." }
+        borrowed_usd: { type: string, description: "A floor when `lower_bound` is true." }
+        net_usd: { type: [string, "null"], description: "supplied_usd - borrowed_usd; may be negative. Null whenever a leg is left out, since an omitted borrow would make it too high." }
+        net_usd_reason: { type: [string, "null"], enum: [inputs_partial, null] }
+        lower_bound: { type: boolean, description: "True when a leg is left out of supplied_usd or borrowed_usd; `excluded` names each." }
+        excluded: { type: array, items: { $ref: "#/components/schemas/LendingStatsExclusion" }, description: "Legs left out, as kind `supply`, `borrow` or `backstop` with reason `withheld` or `unpriced`." }
+        net_apr: { type: [string, "null"], description: "(Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; rounded half away from zero to 4 dp." }
         net_apr_reason: { type: [string, "null"], enum: [inputs_partial, apr_unavailable, net_value_not_positive, null] }
-      required: [supplied_usd, borrowed_usd, net_usd, lower_bound, unpriced, net_apr, net_apr_reason]
+      required: [supplied_usd, borrowed_usd, net_usd, net_usd_reason, lower_bound, excluded, net_apr, net_apr_reason]
+    LendingStatsExclusion:
+      type: object
+      description: What a lending figure leaves out and why.
+      properties:
+        kind:   { type: string, enum: [pool_list, pool, reserve, backstop, token, supply, borrow] }
+        pool:   { type: [string, "null"] }
+        asset:  { type: [string, "null"], description: "Reserve token C-strkey for a `reserve`, `supply` or `borrow` exclusion; the backstop token for an account's `backstop` leg; the ticker for a `token` exclusion." }
+        reason:
+          type: string
+          enum:
+            - pool_list_read_failed
+            - pool_read_failed
+            - reserves_read_failed
+            - reserves_read_failed_recently
+            - reserves_read_timed_out
+            - pool_lineage_unknown
+            - no_decoded_reserve_state
+            - no_usd_value
+            - backstop_reader_unavailable
+            - backstop_read_failed
+            - blend_v1_unsupported
+            - pool_instance_unavailable
+            - backstop_balance_unavailable
+            - token_not_in_catalogue
+            - token_read_failed
+            - withheld
+            - unpriced
+      required: [kind, pool, asset, reason]
     LendingReserveConfig:
       type: object
       description: |

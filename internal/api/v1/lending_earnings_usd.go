@@ -7,29 +7,33 @@ import (
 	"strings"
 )
 
-// Why a leg's value_usd is null, and why a net_apr is absent.
+// Why a leg's value_usd or accrued_usd is null, and why a net_usd or net_apr is absent.
 const (
-	earningsUSDWithheld = "withheld" // the leg's current value is withheld (reason) or unread
+	earningsUSDWithheld = "withheld" // the amount is null (withheld or unread)
 	earningsUSDUnpriced = "unpriced" // its reserve has no USD price on /reserves; a backstop token is never a reserve
 
-	netAPRInputsPartial  = "inputs_partial"
+	netInputsPartial     = "inputs_partial"
 	netAPRUnavailable    = "apr_unavailable"
 	netAPRNetNotPositive = "net_value_not_positive"
 )
 
-// netAPRDecimals is the precision net_apr is rendered at; the reserve APRs it weights are served at 4.
-const netAPRDecimals = 6
+// netAPRDecimals matches the 4 dp of the reserve APRs net_apr weights; more digits would be noise.
+const netAPRDecimals = 4
 
-// LendingUSDTotals values supply and borrow legs in USD; decimal strings, exact sums rendered at 2 dp.
+// LendingUSDTotals values supply, borrow and backstop legs in USD; decimal strings, exact sums rounded half away from zero to
+// 2 dp.
 type LendingUSDTotals struct {
 	SuppliedUSD string `json:"supplied_usd"`
 	BorrowedUSD string `json:"borrowed_usd"`
-	NetUSD      string `json:"net_usd"` // supplied_usd - borrowed_usd
-	// LowerBound is set when a leg is left out of the sums; Unpriced names each as "pool:side:asset".
-	LowerBound bool     `json:"lower_bound"`
-	Unpriced   []string `json:"unpriced"`
+	// NetUSD is supplied_usd - borrowed_usd, null with NetUSDReason when any leg is left out: an omitted borrow would make
+	// it too high, so it cannot be a lower bound.
+	NetUSD       *string `json:"net_usd"`
+	NetUSDReason *string `json:"net_usd_reason"`
+	// LowerBound marks supplied_usd and borrowed_usd as floors; Excluded names each leg left out of them.
+	LowerBound bool                    `json:"lower_bound"`
+	Excluded   []LendingStatsExclusion `json:"excluded"`
 	// NetAPR is (supplied value x supply APR - borrowed value x borrow APR) / net_usd at the reserves' current APRs, emissions
-	// excluded; null with NetAPRReason when any leg is unpriced or withheld, an APR is unread, or net_usd is not positive.
+	// excluded; null with NetAPRReason when net_usd is null, an APR is unread, or net_usd is not positive.
 	NetAPR       *string `json:"net_apr"`
 	NetAPRReason *string `json:"net_apr_reason"`
 }
@@ -44,7 +48,7 @@ type LendingEarningsPool struct {
 // usdTally accumulates exact USD sums and APR-weighted values over priced legs.
 type usdTally struct {
 	supplied, borrowed, supplyYield, borrowYield big.Rat
-	unpriced                                     []string
+	excluded                                     []LendingStatsExclusion
 	aprMissing                                   bool
 }
 
@@ -66,23 +70,35 @@ func (t *usdTally) add(side string, value *big.Rat, apr *float64) {
 }
 
 func (t *usdTally) totals() LendingUSDTotals {
-	net := new(big.Rat).Sub(&t.supplied, &t.borrowed)
 	out := LendingUSDTotals{
-		SuppliedUSD: t.supplied.FloatString(2), BorrowedUSD: t.borrowed.FloatString(2), NetUSD: net.FloatString(2),
-		LowerBound: len(t.unpriced) > 0, Unpriced: append([]string{}, t.unpriced...),
+		SuppliedUSD: ratString(&t.supplied, 2), BorrowedUSD: ratString(&t.borrowed, 2),
+		LowerBound: len(t.excluded) > 0, Excluded: append([]LendingStatsExclusion{}, t.excluded...),
 	}
+	if out.LowerBound {
+		out.NetUSDReason, out.NetAPRReason = strRef(netInputsPartial), strRef(netInputsPartial)
+		return out
+	}
+	net := new(big.Rat).Sub(&t.supplied, &t.borrowed)
+	out.NetUSD = strRef(ratString(net, 2))
 	switch {
-	case out.LowerBound:
-		out.NetAPRReason = strRef(netAPRInputsPartial)
 	case t.aprMissing:
 		out.NetAPRReason = strRef(netAPRUnavailable)
 	case net.Sign() <= 0:
 		out.NetAPRReason = strRef(netAPRNetNotPositive)
 	default:
 		apr := new(big.Rat).Sub(&t.supplyYield, &t.borrowYield)
-		out.NetAPR = strRef(apr.Quo(apr, net).FloatString(netAPRDecimals))
+		out.NetAPR = strRef(ratString(apr.Quo(apr, net), netAPRDecimals))
 	}
 	return out
+}
+
+// ratString is r rounded half away from zero to prec digits, with a value that rounds to zero rendered unsigned.
+func ratString(r *big.Rat, prec int) string {
+	s := r.FloatString(prec)
+	if strings.HasPrefix(s, "-") && strings.Trim(s, "-0.") == "" {
+		return s[1:]
+	}
+	return s
 }
 
 // aprRat is a served APR as the exact decimal it is rendered as, not its binary float expansion.
@@ -93,18 +109,14 @@ func aprRat(apr *float64) (*big.Rat, bool) {
 	return new(big.Rat).SetString(strconv.FormatFloat(*apr, 'f', -1, 64))
 }
 
-// valueEarningsLegs prices each supply and borrow leg at its pool's /reserves view and totals them per pool and overall. A leg
-// whose current value is withheld is not valued, except under a history reason, which concerns net_flow only.
+// valueEarningsLegs prices each leg at its pool's /reserves view and totals them per pool and overall; a leg it cannot value
+// is named in its pool's and the overall exclusions.
 func valueEarningsLegs(legs []LendingEarningsLeg, reserves map[string]map[string]ReserveView) ([]LendingEarningsPool, LendingUSDTotals) {
 	var all usdTally
 	var order []*LendingEarningsPool
 	tallies := map[string]*usdTally{}
 	for i := range legs {
 		leg := &legs[i]
-		if leg.Side == earningsSideBackstop {
-			leg.UsdReason = strRef(earningsUSDUnpriced)
-			continue
-		}
 		t := tallies[leg.Pool]
 		if t == nil {
 			t = &usdTally{}
@@ -116,16 +128,12 @@ func valueEarningsLegs(legs []LendingEarningsLeg, reserves map[string]map[string
 			asset = *leg.Asset
 		}
 		rv := reserves[leg.Pool][asset]
-		value, reason := legUSD(leg.CurrentValue, rv, leg.Reason)
+		value, reason := valueLeg(leg, rv)
 		if reason != "" {
-			leg.UsdReason = strRef(reason)
-			name := leg.Pool + ":" + leg.Side + ":" + asset
-			t.unpriced, all.unpriced = append(t.unpriced, name), append(all.unpriced, name)
+			pool := leg.Pool
+			ex := LendingStatsExclusion{Kind: leg.Side, Pool: &pool, Asset: leg.Asset, Reason: reason}
+			t.excluded, all.excluded = append(t.excluded, ex), append(all.excluded, ex)
 			continue
-		}
-		leg.ValueUSD = strRef(value.FloatString(2))
-		if accrued, r := legUSD(leg.Accrued, rv, nil); leg.Accrued != nil && r == "" {
-			leg.AccruedUSD = strRef(accrued.FloatString(2))
 		}
 		apr := rv.SupplyAPR
 		if leg.Side == earningsSideBorrow {
@@ -142,10 +150,38 @@ func valueEarningsLegs(legs []LendingEarningsLeg, reserves map[string]map[string
 	return pools, all.totals()
 }
 
+// valueLeg sets a leg's value_usd, accrued_usd and usd_reason and returns its USD value, or the reason it has none.
+func valueLeg(leg *LendingEarningsLeg, rv ReserveView) (*big.Rat, string) {
+	if leg.Side == earningsSideBackstop {
+		leg.UsdReason = strRef(earningsUSDUnpriced)
+		return nil, earningsUSDUnpriced
+	}
+	if leg.Decimals == nil && rv.Decimals != nil {
+		d := int(*rv.Decimals)
+		leg.Decimals = &d
+	}
+	value, reason := legUSD(leg.CurrentValue, rv)
+	if reason != "" {
+		leg.UsdReason = strRef(reason)
+		return nil, reason
+	}
+	leg.ValueUSD = strRef(ratString(value, 2))
+	if leg.Accrued == nil {
+		return value, ""
+	}
+	// A zero current_value is worth zero unpriced, so a non-zero accrued can still fail to price here.
+	if accrued, r := legUSD(leg.Accrued, rv); r != "" {
+		leg.UsdReason = strRef(r)
+	} else {
+		leg.AccruedUSD = strRef(ratString(accrued, 2))
+	}
+	return value, ""
+}
+
 // legUSD values a base-unit amount at the reserve view's own price and decimals, the pair its supplied_usd uses; a zero
 // amount is worth zero whatever its price.
-func legUSD(amount *string, rv ReserveView, withheld *string) (*big.Rat, string) {
-	if amount == nil || (withheld != nil && !strings.HasPrefix(*withheld, "history_")) {
+func legUSD(amount *string, rv ReserveView) (*big.Rat, string) {
+	if amount == nil {
 		return nil, earningsUSDWithheld
 	}
 	n, ok := parseBig(*amount)
