@@ -3,13 +3,14 @@
 --
 -- Invariant: the materialization hypertable of every trades-derived
 -- continuous aggregate (prices_*, twap_*, pools_per_source_1h,
--- trade_sums_1m) creates chunks 7 days wide, the width trades itself has
--- used since 0062.
+-- trade_sums_1m, dex_volume_by_pair_1d, source_volume_1h: thirteen views)
+-- creates chunks 7 days wide, the width trades itself has used since 0062.
 --
 -- A CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) sizes its
 -- materialization chunks at 10x the source hypertable's interval: 70 days
 -- over trades, wider again for twap_* over prices_1m. 0187 recreated ten of
--- these views and 0217 created trade_sums_1m, so each refresh rewrites one
+-- these views, 0217 created trade_sums_1m, and 0064 and 0068 created
+-- dex_volume_by_pair_1d and source_volume_1h, so each refresh rewrites one
 -- multi-month chunk holding tens of millions of rows, which is the /v1/price
 -- p95 tail that a hand-run set_chunk_time_interval fixed on r1 before 0187
 -- silently undid it. The setting lives on the hypertable, so storing it
@@ -39,5 +40,7 @@ SELECT set_chunk_time_interval('twap_1h', INTERVAL '7 days');
 SELECT set_chunk_time_interval('twap_1d', INTERVAL '7 days');
 SELECT set_chunk_time_interval('pools_per_source_1h', INTERVAL '7 days');
 SELECT set_chunk_time_interval('trade_sums_1m', INTERVAL '7 days');
+SELECT set_chunk_time_interval('dex_volume_by_pair_1d', INTERVAL '7 days');
+SELECT set_chunk_time_interval('source_volume_1h', INTERVAL '7 days');
 
 COMMIT;

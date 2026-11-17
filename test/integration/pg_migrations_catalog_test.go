@@ -30,24 +30,62 @@ func openMigrated(t *testing.T) (context.Context, *sql.DB) {
 // A recreate sizes materialization chunks at 10x the source interval; every trades-derived view must stay at 7 days.
 func TestCAGGMaterializationChunkInterval(t *testing.T) {
 	ctx, db := openMigrated(t)
+	// Discovered, not listed, so a trades-derived cagg added later without the interval fails here.
+	// Direct: raw hypertable is trades. Hierarchical: raw hypertable is a derived cagg's
+	// materialization hypertable. Joined: the definition names trades.
 	const q = `
-		SELECT d.time_interval::text
-		  FROM timescaledb_information.continuous_aggregates ca
-		  JOIN timescaledb_information.dimensions d
-		    ON d.hypertable_schema = ca.materialization_hypertable_schema
-		   AND d.hypertable_name = ca.materialization_hypertable_name
-		 WHERE ca.view_schema = 'public' AND ca.view_name = $1 AND d.dimension_type = 'Time'`
-	for _, v := range []string{
-		"prices_1m", "prices_15m", "prices_1h", "prices_4h", "prices_1d", "prices_1w", "prices_1mo",
-		"twap_1h", "twap_1d", "pools_per_source_1h", "trade_sums_1m",
-	} {
-		var w string
-		if err := db.QueryRowContext(ctx, q, v).Scan(&w); err != nil {
-			t.Fatalf("read %s materialization interval: %v", v, err)
+		WITH RECURSIVE derived AS (
+		    SELECT ca.mat_hypertable_id
+		      FROM _timescaledb_catalog.continuous_agg ca
+		      JOIN _timescaledb_catalog.hypertable h ON h.id = ca.raw_hypertable_id
+		     WHERE h.schema_name = 'public' AND h.table_name = 'trades'
+		    UNION
+		    SELECT ca.mat_hypertable_id
+		      FROM _timescaledb_catalog.continuous_agg ca
+		     WHERE ca.user_view_schema = 'public'
+		       AND pg_get_viewdef(format('%I.%I', ca.user_view_schema, ca.user_view_name)::regclass) ~ '\mtrades\M'
+		    UNION
+		    SELECT ca.mat_hypertable_id
+		      FROM _timescaledb_catalog.continuous_agg ca
+		      JOIN derived d ON ca.raw_hypertable_id = d.mat_hypertable_id
+		)
+		SELECT ca.user_view_name, dim.time_interval::text
+		  FROM derived
+		  JOIN _timescaledb_catalog.continuous_agg ca ON ca.mat_hypertable_id = derived.mat_hypertable_id
+		  JOIN _timescaledb_catalog.hypertable mh ON mh.id = ca.mat_hypertable_id
+		  JOIN timescaledb_information.dimensions dim
+		    ON dim.hypertable_schema = mh.schema_name AND dim.hypertable_name = mh.table_name
+		 WHERE dim.dimension_type = 'Time'
+		 ORDER BY 1`
+	rows, err := db.QueryContext(ctx, q)
+	if err != nil {
+		t.Fatalf("discover trades-derived continuous aggregates: %v", err)
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var names, wrong []string
+	for rows.Next() {
+		var v, w string
+		if err := rows.Scan(&v, &w); err != nil {
+			t.Fatalf("scan: %v", err)
 		}
+		seen[v] = true
+		names = append(names, v)
 		if w != "7 days" {
-			t.Errorf("%s materialization chunk interval = %q, want \"7 days\"", v, w)
+			wrong = append(wrong, v+" ("+w+")")
 		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	t.Logf("trades-derived continuous aggregates (%d): %s", len(names), strings.Join(names, ", "))
+	for _, v := range []string{"prices_1m", "twap_1d", "trade_sums_1m", "dex_volume_by_pair_1d", "source_volume_1h"} {
+		if !seen[v] {
+			t.Errorf("discovery missed %s, a known trades-derived continuous aggregate; the query no longer matches the catalog", v)
+		}
+	}
+	for _, v := range wrong {
+		t.Errorf("materialization chunk interval of %s, want \"7 days\": set it in a migration", v)
 	}
 }
 

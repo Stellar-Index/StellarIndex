@@ -530,7 +530,7 @@ rejects a row that is not.
 | 0225 | Adds a partial `(user_address, ledger_close_time DESC)` index on `blnt_events` for the per-account position fold. |
 | 0226 | Adds nullable `blnt_events.tx_index`, the transaction's 0-based apply position in its ledger (as `stellar.transactions.tx_index`), so readers order same-ledger events without guessing. |
 | 0227 | Re-issues the `COMMENT ON` for `nonstandard_decimals_assets`: rows drive the read-time `AdjustPrice` correction, so deleting one serves a skewed price. Catalog-only. |
-| 0228 | Sets 7-day chunks on the materialization hypertables of the eleven trades-derived continuous aggregates (`prices_*`, `twap_*`, `pools_per_source_1h`, `trade_sums_1m`), which a recreate resets to 10x the source interval. New chunks only; catalog-only. |
+| 0228 | Sets 7-day chunks on the materialization hypertables of the thirteen trades-derived continuous aggregates (`prices_*`, `twap_*`, `pools_per_source_1h`, `trade_sums_1m`, `dex_volume_by_pair_1d`, `source_volume_1h`), which a recreate resets to 10x the source interval. New chunks only; catalog-only. |
 | 0229 | Adds nullable `issuers.sep1_payload_previous`: the payload a `home_domain` change clears is held there until the new domain's first fetch diffs against it into `issuer_identity_history`, so a domain move no longer erases an identity change. Never served. Nullable, no default: catalog-only, old-binary-safe (rule 9). |
 ## References
 
