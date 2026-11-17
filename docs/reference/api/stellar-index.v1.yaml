@@ -3855,7 +3855,7 @@ paths:
                                 pool:     { type: string }
                                 reason:   { type: string }
                           partial:         { type: boolean, description: "True when a listed pool, or the BLNT pool list, is missing from `rates`." }
-                          truncated:       { type: boolean, description: True when `rates` was cut at 2,000 rows. }
+                          truncated:       { type: boolean, description: "True when `rates` was cut at 2,000 rows." }
                           config_decimals: { type: integer, description: "Fixed-point scale of `collateral_factor` and `liability_factor`. Always 7." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }

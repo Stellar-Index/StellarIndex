@@ -18082,7 +18082,7 @@ export interface operations {
                             }[];
                             /** @description True when a listed pool, or the BLNT pool list, is missing from `rates`. */
                             partial?: boolean;
-                            /** @description True when `rates` was cut at 2 */
+                            /** @description True when `rates` was cut at 2,000 rows. */
                             truncated?: boolean;
                             /** @description Fixed-point scale of `collateral_factor` and `liability_factor`. Always 7. */
                             config_decimals?: number;
