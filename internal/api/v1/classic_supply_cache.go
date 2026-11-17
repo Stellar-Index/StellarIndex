@@ -36,26 +36,35 @@ type classicSupplyReader interface {
 // single-flight since the ClickHouse GROUP BY is too heavy per request. Nil without a capable explorer reader (callers fall
 // back to precise supply); serves the last good map on refresh errors until classicSupplyMaxAge.
 func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
-	m, _ := s.classicSupplyMap(ctx)
+	er, ok := s.Explorer.(classicSupplyReader)
+	if !ok {
+		return nil
+	}
+	m, _ := s.readCachedClassicSupply(ctx, er)
 	return m
 }
 
-// classicSupplyMap is [Server.cachedClassicSupply] also reporting whether a capable reader's read answered.
+// classicSupplyMap is [Server.cachedClassicSupply] also reporting whether a capable reader's read answered, and
+// recording a stale read on ctx's report when the map served is past classicSupplyTTL.
 func (s *Server) classicSupplyMap(ctx context.Context) (m map[string]string, unread bool) {
 	er, ok := s.Explorer.(classicSupplyReader)
 	if !ok {
 		return nil, false
 	}
-	m = s.readCachedClassicSupply(ctx, er)
+	m, stale := s.readCachedClassicSupply(ctx, er)
+	if stale {
+		reportStaleRead(ctx)
+	}
 	return m, m == nil
 }
 
-func (s *Server) readCachedClassicSupply(ctx context.Context, er classicSupplyReader) map[string]string {
+// readCachedClassicSupply returns the map to serve and whether it is past classicSupplyTTL.
+func (s *Server) readCachedClassicSupply(ctx context.Context, er classicSupplyReader) (map[string]string, bool) {
 	s.classicSupplyMu.Lock()
 	if s.classicSupplyCache != nil && time.Since(s.classicSupplyAt) < classicSupplyTTL {
 		m := s.classicSupplyCache
 		s.classicSupplyMu.Unlock()
-		return m
+		return m, false
 	}
 	// Stale or never filled: start a detached refresh (one in flight, one attempt per
 	// classicSupplyRetryGap) and serve the last-good map without blocking.
@@ -75,13 +84,13 @@ func (s *Server) readCachedClassicSupply(ctx context.Context, er classicSupplyRe
 	// Serving stale beats blocking: this map only feeds market-cap enrichment,
 	// and a 10-minute-old supply figure is far better than a 15s stall.
 	if last != nil {
-		return last
+		return last, true
 	}
 	// Nothing servable: wait briefly so a fast query still fills this response, never for the whole
 	// request budget, since the query can outrun the 15s timeout. The detached refresh keeps
 	// running so the next request hits cache; PrewarmClassicSupply normally fills it first.
 	if flight == nil {
-		return nil // retry gap still open and nothing cached
+		return nil, false // retry gap still open and nothing cached
 	}
 	timer := time.NewTimer(classicSupplyColdWait)
 	defer timer.Stop()
@@ -89,12 +98,13 @@ func (s *Server) readCachedClassicSupply(ctx context.Context, er classicSupplyRe
 	case <-flight:
 		s.classicSupplyMu.Lock()
 		m := s.servableClassicSupplyLocked()
+		stale := m != nil && time.Since(s.classicSupplyAt) >= classicSupplyTTL
 		s.classicSupplyMu.Unlock()
-		return m
+		return m, stale
 	case <-timer.C:
-		return nil // degrade now; the detached refresh fills the cache for the next request
+		return nil, false // degrade now; the detached refresh fills the cache for the next request
 	case <-ctx.Done():
-		return nil
+		return nil, false
 	}
 }
 
