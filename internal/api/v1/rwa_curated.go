@@ -250,9 +250,11 @@ type rwaCuratedMember struct {
 // rwaCuratedMembership selects the curator's rows and marks which the verified set already carries. A classic member is matched
 // by the SAC its (code, issuer) derives, a pure function of pair and network, so an impersonator's SAC never collides with the
 // genuine one.
-func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) []rwaCuratedMember {
+// classicSkipped counts the curator's classic rows the verified set does not carry: no contract path serves them, so the
+// additional and combined figures exclude them.
+func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) (members []rwaCuratedMember, classicSkipped int) {
 	if !snap.available {
-		return nil
+		return nil, 0
 	}
 	seen := make(map[string]struct{}, len(verified))
 	for _, a := range verified {
@@ -271,13 +273,31 @@ func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) []rwaCuratedMemb
 		// A classic `CODE-GISSUER` row has no contract path to serve it
 		// through; it is counted in census.classic instead.
 		if !rwaCuratedAddressIsContract(addr) {
+			if !rwaCuratedClassicVerified(addr, seen) {
+				classicSkipped++
+			}
 			continue
 		}
 		_, also := seen[addr]
 		out = append(out, rwaCuratedMember{contractID: addr, entry: e, alsoVerified: also})
 	}
 	sortCuratedMembers(out)
-	return out
+	return out, classicSkipped
+}
+
+// rwaCuratedClassicVerified reports whether the verified set carries this classic curator row, matched by its derived SAC; an
+// address that does not parse is not carried.
+func rwaCuratedClassicVerified(addr string, seen map[string]struct{}) bool {
+	asset, err := canonical.ParseAsset(addr)
+	if err != nil || asset.Type != canonical.AssetClassic {
+		return false
+	}
+	sac, err := asset.SacContractID()
+	if err != nil {
+		return false
+	}
+	_, ok := seen[sac]
+	return ok
 }
 
 func rwaCuratedAddressIsContract(addr string) bool {
@@ -361,8 +381,13 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 
 // ─── summary ────────────────────────────────────────────────────────
 
+// rwaCuratedExcluded counts the curator rows no served row carries: classic rows with no contract path, and contract rows the
+// catalogue join could not place.
+type rwaCuratedExcluded struct{ classic, notObserved int }
+
 func rwaCuratedSummarise(
-	snap rwaCurated, rows []RWAAsset, degraded bool, verifiedRef *string, verifiedLowerBound bool, now time.Time,
+	snap rwaCurated, rows []RWAAsset, excluded rwaCuratedExcluded, degraded bool, verifiedRef *string, verifiedLowerBound bool,
+	now time.Time,
 ) *RWACuratedSummary {
 	out := &RWACuratedSummary{
 		Curator:       rwaCuratorDune,
@@ -400,6 +425,12 @@ func rwaCuratedSummarise(
 	out.Status = "served"
 	out.Assets = len(rows)
 	additional, anyAdditional, partial := rwaCuratedTally(rows, out)
+	if excluded.classic > 0 || excluded.notObserved > 0 {
+		partial = true
+		out.Basis += " The additional and combined figures exclude " + strconv.Itoa(excluded.classic) +
+			" classic curator row(s) the verified set does not carry and " + strconv.Itoa(excluded.notObserved) +
+			" contract row(s) with no catalogue row, so each is a LOWER BOUND."
+	}
 	if anyAdditional {
 		s := additional.FloatString(2)
 		out.AdditionalValueUSD, out.AdditionalValueLowerBound = &s, partial
@@ -508,10 +539,11 @@ func (s *Server) attachRWACurated(
 	valuationCtx context.Context, view *RWAAssetsView, now time.Time,
 ) (degraded bool) {
 	snap := s.rwaCuratedSnapshot(valuationCtx)
-	members := rwaCuratedMembership(snap, view.Assets)
-	rows, _, degraded, unanswered := s.rwaCuratedRows(valuationCtx, members, now)
+	members, classicSkipped := rwaCuratedMembership(snap, view.Assets)
+	rows, notObserved, degraded, unanswered := s.rwaCuratedRows(valuationCtx, members, now)
 	view.CuratedAssets = rows
 	ref := view.Summary.ReferenceValuation
-	view.Curated = rwaCuratedSummarise(snap, rows, degraded, ref.ValueUSD, ref.LowerBound, now)
+	view.Curated = rwaCuratedSummarise(snap, rows, rwaCuratedExcluded{classic: classicSkipped, notObserved: notObserved},
+		degraded, ref.ValueUSD, ref.LowerBound, now)
 	return degraded || unanswered
 }

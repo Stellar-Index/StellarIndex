@@ -396,13 +396,21 @@ type rwaTruncation struct {
 	// unread counts contract candidates refused because the listing, curated-tag or symbol read
 	// did not answer: an outage, not a finding about the candidate.
 	unread int
+	// notServed counts admitted classic members with no catalogue row, so absent from every total; notServedIssuers splits it by issuer.
+	notServed        int
+	notServedIssuers map[string]int
 }
 
 func (t rwaTruncation) capped() bool {
 	return t.overIssuerCap > 0 || t.overContractCap > 0 || t.issuerPagesFull > 0
 }
 
-func (t rwaTruncation) any() bool { return t.capped() || t.unread > 0 }
+func (t rwaTruncation) any() bool { return t.capped() || t.unread > 0 || t.notServed > 0 }
+
+// issuerPartial is true when a member of this issuer may be missing from its group.
+func (t rwaTruncation) issuerPartial(issuer string) bool {
+	return t.fullPageIssuers[issuer] || t.notServedIssuers[issuer] > 0
+}
 
 // rwaTruncationOf gathers the caps from the membership and the catalogue join.
 func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
@@ -413,6 +421,8 @@ func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
 		fullPageIssuers: join.fullPageIssuers,
 		unread: m.listingCensus.listingUnavailable + m.listingCensus.tagsUnavailable +
 			m.listingCensus.symbolsUnread + m.contractCensus.symbolsUnread,
+		notServed:        join.notObserved,
+		notServedIssuers: join.notObservedIssuers,
 	}
 }
 
@@ -1166,7 +1176,10 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	}
 
 	classicAssets, unobserved := s.rwaAssetRows(m, rows, now)
-	join.notObserved = unobserved
+	join.notObservedIssuers = unobserved
+	for _, n := range unobserved {
+		join.notObserved += n
+	}
 
 	// The contract arm fails the build as the classic arm does: degrading to zero rows would
 	// drop admitted members from the totals without a lower_bound. Both contract arms share one
@@ -1295,6 +1308,8 @@ type rwaCatalogueJoin struct {
 	fullPageIssuers map[string]bool
 	// notObserved counts admitted members with no catalogue row: attested but never seen on chain.
 	notObserved int
+	// notObservedIssuers splits notObserved by member issuer.
+	notObservedIssuers map[string]int
 	// unanswered is true when a gate or directory read behind a row's figures failed: the rows are
 	// served with those figures withheld, and the response must say it is degraded.
 	unanswered bool
@@ -1455,15 +1470,15 @@ func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.
 	return keep, memberCodes
 }
 
-// rwaAssetRows joins the membership evidence to the valued listing rows and returns how many members the join could not place; a
-// member with no listing row is dropped but counted, because "admitted then never served" is otherwise invisible.
-func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now time.Time) ([]RWAAsset, int) {
+// rwaAssetRows joins the membership evidence to the valued listing rows and returns, per issuer, how many members the join could not
+// place; a member with no listing row is dropped but counted, because "admitted then never served" is otherwise invisible.
+func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now time.Time) ([]RWAAsset, map[string]int) {
 	out := make([]RWAAsset, 0, len(m.members))
-	notObserved := 0
+	notObserved := map[string]int{}
 	for _, mem := range m.members {
 		d, ok := rows[rwaKey(mem.code, mem.issuer)]
 		if !ok {
-			notObserved++
+			notObserved[mem.issuer]++
 			continue
 		}
 		a := RWAAsset{
@@ -1929,6 +1944,9 @@ func rwaWriteTruncation(b *strings.Builder, t rwaTruncation, totalPublished bool
 	}
 	if t.unread > 0 {
 		b.WriteString(" " + strconv.Itoa(t.unread) + " contract candidate(s) went unevaluated because a read the definition depends on did not answer (the funnel names which)" + consequence)
+	}
+	if t.notServed > 0 {
+		b.WriteString(" " + strconv.Itoa(t.notServed) + " admitted classic member(s) have no asset catalogue row yet and are not in this set" + consequence)
 	}
 }
 

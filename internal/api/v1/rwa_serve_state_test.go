@@ -52,6 +52,59 @@ func TestRWAAssets_AFailedMembershipReadIsDegraded(t *testing.T) {
 	}
 }
 
+// TestRWAAssets_AMemberWithNoCatalogueRowMakesTheTotalsALowerBound: an admitted member the catalogue has not caught up with is
+// absent from every total, so the summary, the reference total and its issuer's group must say lower bound and name the gap.
+func TestRWAAssets_AMemberWithNoCatalogueRowMakesTheTotalsALowerBound(t *testing.T) {
+	rows := map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}}
+	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+			rwaBound("TESOURO2", rwaGoodIssuer, "etherfuse.com", "bond"),
+		}},
+		Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")}},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{}, byIssuer: rows, supply: rwaSupplyFor(rows),
+		},
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+	var env struct {
+		Data struct {
+			Assets  []struct{ Code string } `json:"assets"`
+			Summary struct {
+				MarketCapUSD *string `json:"market_cap_usd"`
+				LowerBound   bool    `json:"lower_bound"`
+				Basis        string  `json:"basis"`
+				Reference    struct {
+					LowerBound bool `json:"lower_bound"`
+				} `json:"reference_valuation"`
+			} `json:"summary"`
+			ByIssuer []struct {
+				Issuer              string `json:"issuer"`
+				MarketCapLowerBound bool   `json:"market_cap_lower_bound"`
+			} `json:"by_issuer"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d := env.Data
+	if len(d.Assets) != 1 || d.Summary.MarketCapUSD == nil {
+		t.Fatalf("assets = %+v, market_cap_usd = %v; want USTRY served and valued", d.Assets, d.Summary.MarketCapUSD)
+	}
+	if !d.Summary.LowerBound || !d.Summary.Reference.LowerBound {
+		t.Errorf("summary.lower_bound = %v, reference_valuation.lower_bound = %v; want both true with TESOURO2 excluded",
+			d.Summary.LowerBound, d.Summary.Reference.LowerBound)
+	}
+	if !strings.Contains(d.Summary.Basis, "1 admitted classic member(s) have no asset catalogue row") {
+		t.Errorf("summary.basis does not name the excluded member: %q", d.Summary.Basis)
+	}
+	if len(d.ByIssuer) != 1 || !d.ByIssuer[0].MarketCapLowerBound {
+		t.Errorf("by_issuer = %+v, want the issuer's market cap marked a lower bound", d.ByIssuer)
+	}
+}
+
 // rwaDatedListStub serves listing pages as a cache would after its upstream refresh kept failing: old and stale.
 type rwaDatedListStub struct {
 	*rwaListStub

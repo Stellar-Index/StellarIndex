@@ -87,9 +87,9 @@ func rwaByIssuer(assets []RWAAsset, trunc rwaTruncation) []RWAIssuerTotal {
 		group := byIssuer[issuer]
 		total, valued := rwaSumMarketCaps(group)
 		refTotal, refValued := rwaSumReferenceValues(group)
-		// Only its own full page can hide a member of an issuer that is present: contract rows carry no issuer,
+		// Only its own full page or unserved member can make an issuer's group partial: contract rows carry no issuer,
 		// and an issuer over the cap has no group at all.
-		capFloor, refFloor := rwaGroupLowerBounds(group, valued, refValued, trunc.fullPageIssuers[issuer])
+		capFloor, refFloor := rwaGroupLowerBounds(group, valued, refValued, trunc.issuerPartial(issuer))
 		out = append(out, RWAIssuerTotal{
 			Issuer:                   issuer,
 			Name:                     group[0].IssuerDirectoryName,
