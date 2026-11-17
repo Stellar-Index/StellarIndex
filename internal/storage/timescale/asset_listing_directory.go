@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
 	"strings"
 	"time"
 )
@@ -121,24 +123,27 @@ const listingPriceFreshSQL = `price_usd IS NOT NULL
 const listingUpsertChunk = 500
 
 // ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows the upstream no longer carries.
+// ambiguous counts addresses more than one listing id claimed; they are kept unpriced and logged.
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
-) (upserted, pruned int64, err error) {
+) (upserted, pruned int64, ambiguous int, err error) {
 	if source == "" {
-		return 0, 0, errors.New("listing directory: source must be non-empty")
+		return 0, 0, 0, errors.New("listing directory: source must be non-empty")
 	}
 	// An empty set means the fetch or parse broke, not a mass delisting; proceeding would prune the
 	// whole source and report success. Same refusal as [ReplaceDirectory].
 	if len(entries) == 0 {
-		return 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
+		return 0, 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
-	// Two coin ids can name one address, and equal addresses in one upsert chunk make Postgres
-	// reject the WHOLE statement ("cannot affect row a second time"), so collapse last-wins first.
-	entries = dedupListingEntriesByAddress(entries)
+	entries, contested := dedupListingEntriesByAddress(entries)
+	if ambiguous = len(contested); ambiguous > 0 {
+		slog.Warn("listing directory: addresses claimed by more than one listing id are kept unpriced",
+			"source", source, "count", ambiguous, "addresses", contested)
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, fmt.Errorf("listing directory: begin: %w", err)
+		return 0, 0, 0, fmt.Errorf("listing directory: begin: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -153,7 +158,7 @@ func (s *Store) ReplaceListingDirectory(
 		res, execErr := tx.ExecContext(ctx, q, args...)
 		if execErr != nil {
 			err = fmt.Errorf("listing directory: upsert chunk [%d:%d): %w", start, end, execErr)
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		n, _ := res.RowsAffected()
 		upserted += n
@@ -164,30 +169,41 @@ func (s *Store) ReplaceListingDirectory(
 		 WHERE source = $1 AND synced_at < now()`, source)
 	if execErr != nil {
 		err = fmt.Errorf("listing directory: prune: %w", execErr)
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	pruned, _ = res.RowsAffected()
 
 	if err = tx.Commit(); err != nil {
-		return 0, 0, fmt.Errorf("listing directory: commit: %w", err)
+		return 0, 0, 0, fmt.Errorf("listing directory: commit: %w", err)
 	}
-	return upserted, pruned, nil
+	return upserted, pruned, ambiguous, nil
 }
 
-// dedupListingEntriesByAddress collapses entries sharing an Address, last wins, keeping survivor
-// order. An upsert chunk may hold each conflict key once, or the transaction aborts.
-func dedupListingEntriesByAddress(entries []ListingEntry) []ListingEntry {
+// dedupListingEntriesByAddress collapses repeats of one claim, keeping first-appearance order; an upsert chunk may hold each conflict
+// key once. An address two listing ids claim is kept (dropping it would prune the row and read as not listed) with no price, time or
+// ticker, since picking one would publish an arbitrary claimant's; it keeps the lowest id so the row is stable across syncs.
+func dedupListingEntriesByAddress(entries []ListingEntry) (out []ListingEntry, contested []string) {
 	idx := make(map[string]int, len(entries))
-	out := make([]ListingEntry, 0, len(entries))
+	out = make([]ListingEntry, 0, len(entries))
 	for _, e := range entries {
-		if i, seen := idx[e.Address]; seen {
-			out[i] = e // last-wins: overwrite the earlier row in place
+		i, seen := idx[e.Address]
+		if !seen {
+			idx[e.Address] = len(out)
+			out = append(out, e)
 			continue
 		}
-		idx[e.Address] = len(out)
-		out = append(out, e)
+		prev := out[i]
+		if prev.ListingID == e.ListingID && !slices.Contains(contested, e.Address) {
+			out[i] = e
+			continue
+		}
+		if !slices.Contains(contested, e.Address) {
+			contested = append(contested, e.Address)
+		}
+		out[i] = ListingEntry{Address: e.Address, ListingID: min(prev.ListingID, e.ListingID), Source: e.Source}
 	}
-	return out
+	slices.Sort(contested)
+	return out, contested
 }
 
 // buildListingUpsert renders a multi-row upsert: 5 params per row plus a shared source at len(chunk)*5+1; synced_at is the tx-stable now().

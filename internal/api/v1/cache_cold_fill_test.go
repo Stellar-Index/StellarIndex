@@ -133,7 +133,7 @@ func TestColdFill_MarketsPairs_LeaderCancelSparesWaiter(t *testing.T) {
 		return []Market{{Base: "native", Quote: "USDC"}}, "next", nil
 	}
 	get := func(ctx context.Context) ([]Market, error) {
-		rows, cursor, _, _, err := c.fetchPairs(ctx, "distinct_pairs", "k", upstream)
+		rows, cursor, _, _, err := c.fetchPairs(ctx, "distinct_pairs", "k", false, upstream)
 		if err == nil && cursor != "next" {
 			return nil, errors.New("cursor lost")
 		}
@@ -153,7 +153,7 @@ func TestColdFill_MarketsPools_LeaderCancelSparesWaiter(t *testing.T) {
 		return []Pool{{Source: "soroswap"}}, "", nil
 	}
 	get := func(ctx context.Context) ([]Pool, error) {
-		rows, _, _, _, err := c.fetchPools(ctx, "all_pools", "k", upstream)
+		rows, _, _, _, err := c.fetchPools(ctx, "all_pools", "k", false, upstream)
 		return rows, err
 	}
 	assertLeaderCancelSparesWaiter(t, g, get,

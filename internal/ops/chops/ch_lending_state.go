@@ -22,8 +22,9 @@ const lendingJob = "ch-entry-history-lending"
 // lendingLockPath is -lending-only's own lock: its catch-up runs for hours beside the sponsorship windows.
 const lendingLockPath = "/var/lib/stellarindex/ch-entry-history-lending.lock"
 
-// lendingPartition is the lake's partition width; catch-up windows end on its boundaries.
-const lendingPartition = 1_000_000
+// lendingWindow divides the lake's 1M-ledger partition, so a window never spans two; a whole partition in one
+// derive exceeds the lake's per-query memory limit.
+const lendingWindow = 100_000
 
 // lendingRun is one `ch-entry-history -lending-only` invocation.
 type lendingRun struct {
@@ -121,9 +122,9 @@ func (r lendingRun) exec(ctx context.Context, hb *opsutil.JobHeartbeat) error {
 	}
 }
 
-// lendingWindowEnd is the last ledger of the window starting at lo: the end of lo's lake partition, or last.
+// lendingWindowEnd is the last ledger of the window starting at lo: the next lendingWindow boundary, or last.
 func lendingWindowEnd(lo, last uint32) uint32 {
-	end := uint64(lo)/lendingPartition*lendingPartition + lendingPartition - 1
+	end := uint64(lo)/lendingWindow*lendingWindow + lendingWindow - 1
 	return uint32(min(end, uint64(last))) //nolint:gosec // bounded by last
 }
 

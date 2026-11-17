@@ -205,3 +205,35 @@ func TestPoolsRawPrefilterSQL_SpellsOnlySetFilters(t *testing.T) {
 		}
 	}
 }
+
+// TestListingLastPrice_TrailingDayOnly pins the documented last_price contracts: /v1/markets serves a price traded in the
+// trailing 24h, else null (no prices_1d fallback; the per-venue bound keyed on the trade timestamp, not the hourly bucket start),
+// while /v1/pools serves the venue's most recent price however old.
+func TestListingLastPrice_TrailingDayOnly(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	fold := func(q string) string { return strings.Join(strings.Fields(q), " ") }
+
+	pairs, _ := buildDistinctPairsQuery(since, "", "", "", 100, MarketsOrderPair)
+	if strings.Contains(fold(pairs), "d.last_price") {
+		t.Error("/v1/markets last_price still falls back to a prices_1d close up to 14 days old")
+	}
+	const marketsBound = "CASE WHEN last_trade_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price"
+	const bucketBound = "FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours') AS last_price"
+	for _, order := range []MarketsOrder{MarketsOrderPair, MarketsOrderVolume24hDesc} {
+		src, _ := buildSourceMarketsQuery(since, "sdex", "", 100, order)
+		if !strings.Contains(fold(src), marketsBound) {
+			t.Errorf("order %v: /v1/markets?source= last_price is not bounded to a trade in the trailing 24h", order)
+		}
+		if strings.Contains(fold(src), bucketBound) {
+			t.Errorf("order %v: /v1/markets?source= bounds last_price on the hourly bucket start", order)
+		}
+		pools, _ := buildPoolsQuery(since, PoolsFilter{}, "", 100, order)
+		if strings.Contains(fold(pools), marketsBound) || strings.Contains(fold(pools), bucketBound) {
+			t.Errorf("order %v: /v1/pools last_price is bounded to 24h; its contract is the venue's most recent price", order)
+		}
+		if !strings.Contains(fold(pools), "last(r.bucket_last_price, r.bucket_last_ts) AS last_price") {
+			t.Errorf("order %v: /v1/pools no longer reads the venue's newest price", order)
+		}
+	}
+}
