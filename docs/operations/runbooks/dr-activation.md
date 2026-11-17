@@ -56,7 +56,7 @@ DR storage > 30 min behind and primary still partially serving: let WAL ship the
 
 ```sh
 # On the DR-region archival host. Read the last report …
-curl -sS http://127.0.0.1:3000/v1/diagnostics/archive | jq '{scanned_at, range, cross_anchor: {expected, found, missing_count}}'
+curl -sS http://127.0.0.1:3000/v1/diagnostics/archive | jq '.data | {scanned_at, range, cross_anchor: {expected, found, missing_count}}'
 # → scanned_at recent + cross_anchor.missing_count == 0
 
 # … or force a fresh run (archive-completeness.service runs
@@ -111,7 +111,7 @@ curl -sS -H 'X-Request-Id: dr-flip-verify' https://api.stellarindex.io/v1/health
 # → {"status":"ok","uptime":"…","status_root":"/v1/status"}
 
 # Origin identity — the region label lives on /v1/status
-curl -sS https://api.stellarindex.io/v1/status | jq '.region'
+curl -sS https://api.stellarindex.io/v1/status | jq '.data.region'
 # → {"name": "<dr region_name>", "deployment": "…"}
 
 # Spot-check a real query
@@ -119,7 +119,7 @@ curl -sS 'https://api.stellarindex.io/v1/price?asset=native' | jq '.data.price, 
 # → non-empty price + recent timestamp
 ```
 
-`.region.name` (`[region] name` in `stellarindex.toml`; r1 is `Hetzner-r1`) confirms the origin. A primary region name means a CDN edge still caches DNS: wait for TTL expiry.
+`.data.region.name` (`[region] name` in `stellarindex.toml`; r1 is `Hetzner-r1`) confirms the origin. A primary region name means a CDN edge still caches DNS: wait for TTL expiry.
 
 ### 3.4 Status page
 
@@ -186,4 +186,4 @@ Fresh region bring-up ([`archival-node-bringup.md`](../archival-node-bringup.md)
 
 ## 9. Drift signals
 
-Quarterly: DR `/v1/status` `.region.name` is right; Cloudflare LB pools have current host IPs; pgBackRest stanza is fresh in BOTH regions; this runbook still matches [`ha-plan.md`](../../architecture/ha-plan.md) / ADR-0050. A failed signal is a launch-readiness regression: file an issue with the `dr-readiness` label.
+Quarterly: DR `/v1/status` `.data.region.name` is right; Cloudflare LB pools have current host IPs; pgBackRest stanza is fresh in BOTH regions; this runbook still matches [`ha-plan.md`](../../architecture/ha-plan.md) / ADR-0050. A failed signal is a launch-readiness regression: file an issue with the `dr-readiness` label.

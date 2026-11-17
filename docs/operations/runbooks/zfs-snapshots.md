@@ -134,6 +134,8 @@ Roll back BOTH `data/postgres` and `data/postgres/wal` to the SAME snapshot name
 2. The timeline must move. A cluster that simply restarts re-generates WAL names pgBackRest already archived from the discarded future; `archive-push` refuses them and `pg_wal` fills. Starting once in archive recovery ends on a new timeline.
 3. Take a new full backup once archiving is healthy.
 
+Erasures: a rollback brings back erased accounts and members. Before step 0, while Postgres still runs, save the erased account ids (`account-erasure.md`, ["After a point-in-time restore"](account-erasure.md#after-a-point-in-time-restore)) and collect the member erasures recorded in request tickets ([`privacy-rights-requests.md`](privacy-rights-requests.md) section 5): the rollback destroys the only copy. Before step 4 re-apply them: `account-erase -write` per saved account id, and the member transaction per recorded member whose `users` row exists again.
+
 ```sh
 # 0. Stop every Postgres writer, then Postgres.
 systemctl stop stellarindex-api stellarindex-aggregator stellarindex-indexer
@@ -180,7 +182,7 @@ Rehearse steps 1-2 on a clone (Option C) first: timeline and archive behaviour f
 
 ### Option C - Postgres: clone + throwaway instance
 
-Start a disposable Postgres sharing nothing with the live cluster (config, pid file, log dir, port, WAL archive), then `pg_dump -t <table>` into the live cluster. The snapshot carries the live `postmaster.pid` and a `pg_wal` symlink to the LIVE WAL: repoint and verify the symlink BEFORE removing the pid file.
+Start a disposable Postgres sharing nothing with the live cluster (config, pid file, log dir, port, WAL archive), then `pg_dump -t <table>` into the live cluster. A platform table (`accounts`, `users`, `sessions`, `webauthn_credentials`, `api_keys`) restored this way re-inserts erased rows: save the erased ids first and re-apply them after the load, as in Option B. The snapshot carries the live `postmaster.pid` and a `pg_wal` symlink to the LIVE WAL: repoint and verify the symlink BEFORE removing the pid file.
 
 ```sh
 S=auto-20260829-0145                   # any recursive snapshot of data/postgres
