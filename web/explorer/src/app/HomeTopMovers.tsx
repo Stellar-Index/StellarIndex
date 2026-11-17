@@ -6,7 +6,14 @@ import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { ScamBadge } from '@/components/ScamBadge';
 import { InlineBar } from '@/components/ContractCharts';
 
-import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
+import {
+  useCoins,
+  useVerifiedIndex,
+  isVerifiedCoin,
+  coinSlug,
+  type Coin,
+  type VerifiedIndex,
+} from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
 import { assetLabel } from '@/lib/asset-label';
 import { useLedgerFollow } from '@/lib/live/hooks';
@@ -24,7 +31,7 @@ import { FreshnessMarker } from '@/components/primitives/FreshnessMarker';
  */
 export function HomeTopMovers() {
   const { data, isLoading, isError } = useCoins(50);
-  const { data: verifiedSlugs } = useVerifiedSlugs();
+  const { data: verifiedIndex } = useVerifiedIndex();
   useLedgerFollow(['/v1/assets']);
 
   const { gainers, losers } = pickMovers(data?.coins ?? []);
@@ -55,7 +62,7 @@ export function HomeTopMovers() {
           tone="up"
           coins={gainers}
           isLoading={isLoading && !data}
-          verifiedSlugs={verifiedSlugs}
+          verifiedIndex={verifiedIndex}
           maxAbs={maxAbs}
         />
         <MoverColumn
@@ -63,7 +70,7 @@ export function HomeTopMovers() {
           tone="down"
           coins={losers}
           isLoading={isLoading && !data}
-          verifiedSlugs={verifiedSlugs}
+          verifiedIndex={verifiedIndex}
           maxAbs={maxAbs}
         />
       </div>
@@ -76,14 +83,14 @@ function MoverColumn({
   tone,
   coins,
   isLoading,
-  verifiedSlugs,
+  verifiedIndex,
   maxAbs,
 }: {
   title: string;
   tone: 'up' | 'down';
   coins: Coin[];
   isLoading: boolean;
-  verifiedSlugs?: Set<string>;
+  verifiedIndex?: VerifiedIndex;
   maxAbs: number;
 }) {
   return (
@@ -110,28 +117,27 @@ function MoverColumn({
                 className="flex items-baseline gap-2 text-sm"
               >
                 <span className="text-ink font-medium">{assetLabel(c)}</span>
-                {verifiedSlugs?.has(coinSlug(c).toLowerCase()) &&
-                  !c.unverified_ticker_collision && (
-                    <span
-                      title="Verified currency"
-                      aria-label="Verified currency"
-                      className="inline-flex items-center"
+                {isVerifiedCoin(c, verifiedIndex) && (
+                  <span
+                    title="Verified currency"
+                    aria-label="Verified currency"
+                    className="inline-flex items-center"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="text-up h-3 w-3"
+                      aria-hidden="true"
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className="text-up h-3 w-3"
-                        aria-hidden="true"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </span>
-                  )}
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </span>
+                )}
                 {c.price_usd &&
                   compareDecimalStrings(c.price_usd, '0') != null && (
                     <span className="text-ink-muted font-mono text-xs tabular-nums">
