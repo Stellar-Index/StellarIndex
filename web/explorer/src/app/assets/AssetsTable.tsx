@@ -48,9 +48,11 @@ import {
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { cn } from '@/lib/cn';
 import {
-  SUPPLY_FLOOR_HINT,
   VOLUME_FLOOR_HINT,
+  supplyHint,
+  supplyIsDerived,
   supplyIsFloor,
+  supplyMark,
 } from '@/lib/supplyFloor';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -636,6 +638,9 @@ function AssetRow({
   const volume = coin.volume_24h_usd;
   // The server flags a floor; a floor is never shown as a total.
   const supplyFloor = supplyIsFloor(coin);
+  const supplyDerived = !supplyFloor && supplyIsDerived(coin);
+  const supplyTitle = supplyHint(supplyFloor, supplyDerived);
+  const supplyPrefix = supplyMark(supplyFloor, supplyDerived);
   const volumeFloor = coin.volume_lower_bound === true;
   // circulating_supply is a RAW smallest-unit integer string; render it
   // in whole asset units by scaling down 10^decimals (7 for classic /
@@ -768,10 +773,9 @@ function AssetRow({
           {marketCap != null ? (
             <span
               className="text-ink-body font-mono tabular-nums"
-              title={supplyFloor ? SUPPLY_FLOOR_HINT : undefined}
+              title={supplyTitle}
             >
-              {supplyFloor ? '≥ ' : ''}$
-              {formatCompactUnits(coin.market_cap_usd)}
+              {supplyPrefix}${formatCompactUnits(coin.market_cap_usd)}
             </span>
           ) : coin.market_cap_decimals_mismatch ? (
             <Dash title="Refused: the on-chain decimals() and the price projection disagree (self-clearing)" />
@@ -800,9 +804,9 @@ function AssetRow({
         {supply !== '—' ? (
           <span
             className="text-ink-body font-mono tabular-nums"
-            title={supplyFloor ? SUPPLY_FLOOR_HINT : undefined}
+            title={supplyTitle}
           >
-            {supplyFloor ? '≥ ' : ''}
+            {supplyPrefix}
             {supply}
           </span>
         ) : (

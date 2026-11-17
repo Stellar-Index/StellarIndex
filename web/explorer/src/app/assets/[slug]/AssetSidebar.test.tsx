@@ -115,6 +115,35 @@ describe('AssetSidebar floor marks', () => {
     expect(getAllByText('—').length).toBeGreaterThan(0);
   });
 
+  it('marks total supply and honours the server market-cap flag', () => {
+    const { getAllByText, getByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{
+          ...figures,
+          total_supply: '60000000000000',
+          market_cap_lower_bound: true,
+          supply_basis: 'issuer_exclusion',
+        }}
+        priceUSD="0.9998"
+      />,
+    );
+    expect(getByText('≥ $5M')).toBeTruthy();
+    expect(getAllByText('≥ 6M USDC').length).toBe(1);
+  });
+
+  it('marks a derived lake-flows supply as an upper reading', () => {
+    const { getByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{ ...figures, supply_basis: 'classic_lake_flows' }}
+        priceUSD="0.9998"
+      />,
+    );
+    expect(getByText('≤ $5M')).toBeTruthy();
+    expect(getByText('≤ 5M USDC')).toBeTruthy();
+  });
+
   it('leaves exact figures unmarked', () => {
     const { getByText, queryByText } = renderWithQuery(
       <AssetSidebar

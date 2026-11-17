@@ -222,3 +222,30 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.getByText(/issuer_exclusion/)).toBeInTheDocument();
   });
 });
+
+describe('SupplyTabPanel marks floor and derived figures', () => {
+  beforeEach(() => {
+    vi.mocked(apiGet).mockResolvedValue({ data: { points: [] } });
+    supplyQuery.data = undefined;
+  });
+
+  it('prefixes a floor circulating supply and market cap with ≥', () => {
+    assetExtra.fields = {
+      supply_basis: 'classic_trustline_sum',
+      market_cap_usd: '5000000',
+    };
+    renderPanel();
+    expect(screen.getByText('≥ $5M')).toBeInTheDocument();
+    expect(screen.getByText('≥ 100')).toBeInTheDocument();
+  });
+
+  it('leaves an exact supply unmarked', () => {
+    assetExtra.fields = {
+      supply_basis: 'issuer_exclusion',
+      market_cap_usd: '5000000',
+    };
+    renderPanel();
+    expect(screen.getByText('$5M')).toBeInTheDocument();
+    expect(screen.queryByText(/≥/)).toBeNull();
+  });
+});
