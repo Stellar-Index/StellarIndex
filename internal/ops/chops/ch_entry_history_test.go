@@ -485,16 +485,21 @@ func TestTotalsRange_FirstRunStartsAtTheLakeFloor(t *testing.T) {
 	}
 }
 
-func TestLendingWindowEnd_StopsAtPartitionsAndLast(t *testing.T) {
+func TestLendingWindowEnd_StopsAtWindowsAndLast(t *testing.T) {
 	for _, tc := range []struct{ lo, last, want uint32 }{
-		{51_499_546, 70_000_000, 51_999_999},
-		{52_000_000, 70_000_000, 52_999_999},
+		{51_499_546, 70_000_000, 51_499_999},
+		{52_000_000, 70_000_000, 52_099_999},
+		{52_900_000, 70_000_000, 52_999_999},
 		{69_999_999, 70_000_000, 69_999_999},
 		{70_000_000, 70_000_123, 70_000_123},
-		{4_294_000_000, 4_294_967_295, 4_294_967_295},
+		{4_294_900_000, 4_294_967_295, 4_294_967_295},
 	} {
-		if got := lendingWindowEnd(tc.lo, tc.last); got != tc.want {
+		got := lendingWindowEnd(tc.lo, tc.last)
+		if got != tc.want {
 			t.Errorf("lendingWindowEnd(%d, %d) = %d, want %d", tc.lo, tc.last, got, tc.want)
+		}
+		if got/1_000_000 != tc.lo/1_000_000 {
+			t.Errorf("window [%d,%d] spans two lake partitions", tc.lo, got)
 		}
 	}
 }
