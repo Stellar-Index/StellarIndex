@@ -5,7 +5,7 @@
 // subscribe to ledger closes and tip-price ticks and re-render as
 // frames arrive, sharing one connection per endpoint across the tab.
 
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
@@ -423,6 +423,89 @@ export function useObservationsFollow(
   }, [receivedAt, queryClient, minIntervalMs, keyStr]);
 }
 
+interface PricePollResult {
+  price: string | null;
+  observedAt: string | null;
+  stale: boolean;
+  triangulated: boolean;
+  withheld: boolean;
+  withheldTitle: string | null;
+  withheldDetail: string | null;
+  thin: boolean;
+  substance: SubstanceEvidence | null;
+  caveats: string[];
+}
+
+/** Thrown for a poll that must leave the last resolution in place. */
+class PricePollSkipped extends Error {}
+
+async function fetchPricePoll(
+  asset: string,
+  quote: string,
+  includeThin: boolean,
+  signal: AbortSignal,
+): Promise<PricePollResult> {
+  // A background tab has no reason to hold the poll open; the
+  // visibilitychange refetch picks it back up.
+  if (typeof document !== 'undefined' && document.hidden) {
+    throw new PricePollSkipped('hidden');
+  }
+  const r = await fetch(
+    `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}${includeThin ? '&include_thin=true' : ''}`,
+    { signal: timeoutSignal(undefined, signal) },
+  );
+  if (r.status === 404) {
+    const body = (await r.json().catch(() => null)) as {
+      type?: string;
+      title?: string;
+      detail?: string;
+    } | null;
+    if (body?.type?.endsWith('/price-withheld')) {
+      return {
+        price: null,
+        observedAt: null,
+        stale: false,
+        triangulated: false,
+        withheld: true,
+        withheldTitle: body.title ?? null,
+        withheldDetail: body.detail ?? null,
+        thin: false,
+        substance: null,
+        caveats: [],
+      };
+    }
+    // Plain not-found: keep the baked value + caption.
+    throw new PricePollSkipped('not found');
+  }
+  if (!r.ok) throw new PricePollSkipped(`HTTP ${r.status}`);
+  const body = (await r.json()) as {
+    data?: {
+      price?: string;
+      observed_at?: string;
+      substance?: SubstanceEvidence;
+    };
+    flags?: PriceIntegrityFlags & {
+      stale?: boolean;
+      triangulated?: boolean;
+      thin_market?: boolean;
+    };
+  };
+  const price = positiveDecimal(body.data?.price);
+  if (price == null) throw new PricePollSkipped('no price');
+  return {
+    price,
+    observedAt: body.data?.observed_at ?? null,
+    stale: Boolean(body.flags?.stale),
+    triangulated: Boolean(body.flags?.triangulated),
+    withheld: false,
+    withheldTitle: null,
+    withheldDetail: null,
+    thin: Boolean(body.flags?.thin_market),
+    substance: body.data?.substance ?? null,
+    caveats: priceIntegrityCaveats(body.flags),
+  };
+}
+
 /**
  * usePricePoll — the 60s /v1/price polling fallback that runs under the
  * tip stream (shared by LiveAssetPrice and LivePairPrice; the embed
@@ -475,31 +558,39 @@ export function usePricePoll({
    * last one fetched, not a current one. */
   unrefreshed: boolean;
 } {
-  const [state, setState] = useState({
-    price: positiveDecimal(initialPrice),
-    observedAt: initialObservedAt,
-    stale: false,
-    triangulated: false,
-    withheld: false,
-    withheldTitle: null as string | null,
-    withheldDetail: null as string | null,
-    thin: false,
-    substance: null as SubstanceEvidence | null,
-    caveats: [] as string[],
-    polled: false,
-    refreshedAt: 0,
+  // One query per (asset, quote, thin) so every widget on a page reads the
+  // same resolution: two independent polls could disagree about "withheld".
+  const query = useQuery({
+    queryKey: [
+      '/v1/price',
+      asset,
+      quote,
+      includeThin ? 'thin' : 'firm',
+      'poll',
+    ],
+    queryFn: ({ signal }) => fetchPricePoll(asset, quote, includeThin, signal),
+    // Test nets run no aggregator, so /v1/price always 404s (any quote);
+    // the hook keeps its initial/baked state there.
+    enabled: CURRENT_NETWORK.pricing,
+    refetchInterval: intervalMs,
+    // Catch up the instant the tab regains focus rather than waiting out
+    // whatever's left of the current interval.
+    refetchOnWindowFocus: 'always',
+    staleTime: intervalMs,
+    // A failed poll keeps whatever we have; the next interval is the retry.
+    retry: false,
   });
-  // Reset during render when the asset/quote pair changes (mirrors
-  // useStreamJSON's prevUrl pattern above) — a stale price from the OLD
-  // pair must never be served against the new one while the next poll
-  // (fired from the effect below) is still in flight.
+  // A key change must never serve the baked seed of the asset the hook
+  // mounted with against a different one while its first poll is in flight.
   const pollKey = `${asset}|${quote}`;
-  const [prevPollKey, setPrevPollKey] = useState(pollKey);
-  if (pollKey !== prevPollKey) {
-    setPrevPollKey(pollKey);
-    setState({
-      price: null as string | null,
-      observedAt: null as string | null,
+  const [mountKey] = useState(pollKey);
+  const seeded = pollKey === mountKey;
+  const clock = useLiveClock();
+  const data = query.data;
+  if (data == null) {
+    return {
+      price: seeded ? positiveDecimal(initialPrice) : null,
+      observedAt: seeded ? initialObservedAt : null,
       stale: false,
       triangulated: false,
       withheld: false,
@@ -509,112 +600,12 @@ export function usePricePoll({
       substance: null,
       caveats: [],
       polled: false,
-      refreshedAt: 0,
-    });
+      unrefreshed: false,
+    };
   }
-
-  useEffect(() => {
-    // Test nets run no aggregator, so /v1/price always 404s (any quote) — the
-    // poll would retry-storm and each failure logs a browser console error.
-    // Skip it there; the hook keeps its initial/baked state (a native pair's
-    // last price comes from /v1/pools, not this aggregator VWAP path).
-    if (!CURRENT_NETWORK.pricing) return;
-    let cancelled = false;
-    let inFlight = false;
-    const controller = new AbortController();
-    const tick = async () => {
-      // A background tab has no reason to hold the poll open — skip the
-      // fetch and pick back up (immediately) on the next visibilitychange.
-      if (typeof document !== 'undefined' && document.hidden) return;
-      // The interval, the initial call and visibilitychange can all fire
-      // while a previous fetch is still pending — skip re-entrant ticks
-      // rather than letting responses race and clobber state out of order.
-      if (inFlight) return;
-      inFlight = true;
-      try {
-        const r = await fetch(
-          `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}${includeThin ? '&include_thin=true' : ''}`,
-          { signal: timeoutSignal(undefined, controller.signal) },
-        );
-        if (cancelled) return;
-        if (r.status === 404) {
-          const body = (await r.json().catch(() => null)) as {
-            type?: string;
-            title?: string;
-            detail?: string;
-          } | null;
-          if (!cancelled && body?.type?.endsWith('/price-withheld')) {
-            setState((s) => ({
-              ...s,
-              price: null,
-              withheld: true,
-              withheldTitle: body.title ?? null,
-              withheldDetail: body.detail ?? null,
-              thin: false,
-              substance: null,
-              caveats: [],
-              polled: true,
-              refreshedAt: Date.now(),
-            }));
-          }
-          return; // plain not-found: keep the baked value + caption
-        }
-        if (!r.ok) return;
-        const body = (await r.json()) as {
-          data?: {
-            price?: string;
-            observed_at?: string;
-            substance?: SubstanceEvidence;
-          };
-          flags?: PriceIntegrityFlags & {
-            stale?: boolean;
-            triangulated?: boolean;
-            thin_market?: boolean;
-          };
-        };
-        const price = positiveDecimal(body.data?.price);
-        if (price == null || cancelled) return;
-        setState({
-          price,
-          observedAt: body.data?.observed_at ?? null,
-          stale: Boolean(body.flags?.stale),
-          triangulated: Boolean(body.flags?.triangulated),
-          withheld: false,
-          withheldTitle: null,
-          withheldDetail: null,
-          thin: Boolean(body.flags?.thin_market),
-          substance: body.data?.substance ?? null,
-          caveats: priceIntegrityCaveats(body.flags),
-          polled: true,
-          refreshedAt: Date.now(),
-        });
-      } catch {
-        // Network blip, timeout, or unmount/dep-change abort — keep whatever we have.
-      } finally {
-        inFlight = false;
-      }
-    };
-    void tick();
-    const id = setInterval(() => void tick(), intervalMs);
-    // Catch up the instant the tab regains focus rather than waiting out
-    // whatever's left of the current interval.
-    const onVisible = () => {
-      if (!document.hidden) void tick();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      cancelled = true;
-      controller.abort();
-      clearInterval(id);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [asset, quote, intervalMs, includeThin]);
-
-  const clock = useLiveClock();
-  const { refreshedAt, ...poll } = state;
   return {
-    ...poll,
-    unrefreshed:
-      poll.polled && isFrameStale(clock, refreshedAt, 3 * intervalMs),
+    ...data,
+    polled: true,
+    unrefreshed: isFrameStale(clock, query.dataUpdatedAt, 3 * intervalMs),
   };
 }

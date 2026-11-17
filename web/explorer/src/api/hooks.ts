@@ -65,7 +65,12 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
 export type StatusResponse = Schemas['StatusResponse'];
 
 /** Lowercase slugs and Stellar asset ids of every verified catalogue entry. */
-export type VerifiedIndex = { slugs: Set<string>; assetIds: Set<string> };
+export type VerifiedIndex = {
+  slugs: Set<string>;
+  assetIds: Set<string>;
+  /** Lower-cased catalogue slug → this network's issuance asset_id. */
+  issuanceBySlug?: Map<string, string>;
+};
 
 export function useVerifiedIndex() {
   return useQuery<VerifiedIndex>({
@@ -79,6 +84,11 @@ export function useVerifiedIndex() {
         slugs: new Set(rows.map((e) => e.slug.toLowerCase())),
         assetIds: new Set(
           rows.flatMap((e) => (e.asset_id ? [e.asset_id] : [])),
+        ),
+        issuanceBySlug: new Map(
+          rows.flatMap((e) =>
+            e.asset_id ? [[e.slug.toLowerCase(), e.asset_id] as const] : [],
+          ),
         ),
       };
     },
@@ -610,6 +620,11 @@ export function coinSlug(c: Coin): string {
 
 const STELLAR_ASSET_ID =
   /^(native|[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}|C[A-Z2-7]{55})$/;
+
+/** False for a catalogue row's slug-valued asset_id ("usdc"), which no price endpoint accepts. */
+export function isStellarAssetId(id: string): boolean {
+  return STELLAR_ASSET_ID.test(id);
+}
 
 /**
  * True only for the verified row itself. A Stellar asset must be one the

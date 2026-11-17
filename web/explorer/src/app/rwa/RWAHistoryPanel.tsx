@@ -205,7 +205,7 @@ function HistoryBody({
   const multi = view === 'asset' && lines.length > 0;
   return (
     <>
-      <WindowChange points={data.points} />
+      <WindowChange points={data.points} members={data.members} />
       {multi ? (
         <LineChart
           data={[]}
@@ -245,10 +245,32 @@ function HistoryBody({
  * The number is withheld and the reason is named, exactly as a withheld
  * market cap is.
  */
-function WindowChange({ points }: { points: RWAHistoryPoint[] }) {
+function WindowChange({
+  points,
+  members,
+}: {
+  points: RWAHistoryPoint[];
+  members: number;
+}) {
   if (points.length < 2) return null;
   const first = points[0];
   const last = points[points.length - 1];
+  // Points carry counts, not identities: equal counts below the member
+  // total can be two different sets, so only a full-membership window
+  // at both ends is provably like-for-like.
+  if (
+    first.assets_valued === last.assets_valued &&
+    first.assets_valued !== members
+  ) {
+    return (
+      <p className="text-ink-muted text-xs leading-relaxed">
+        <strong className="text-ink-body">No change figure.</strong> Not every
+        member of the series was valued at both ends of the window (
+        {first.assets_valued} of {members}), and the points do not say which
+        ones, so the two ends may be sums over different sets.
+      </p>
+    );
+  }
   if (first.assets_valued !== last.assets_valued) {
     return (
       <p className="text-ink-muted text-xs leading-relaxed">
