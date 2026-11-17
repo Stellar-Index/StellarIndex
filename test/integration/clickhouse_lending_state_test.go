@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -302,5 +303,59 @@ func TestChEntryHistoryLending_SameLedgerOrder(t *testing.T) {
 	}
 	if got := lendingHistory(t, ctx, conn, pool, key); len(got) != 1 {
 		t.Fatalf("history after the refused window = %q, want only the ordered hour", got)
+	}
+}
+
+// A re-derived ledger keeps its superseded rows until a merge: rows with no intra-ledger order must not refuse the
+// window, and a superseded row numbered by an older walk must not outrank the current last change.
+func TestChEntryHistoryLending_SupersededRowsAreIgnored(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	for _, q := range []string{`TRUNCATE TABLE stellar.entry_history_watermark`, `TRUNCATE TABLE stellar.lending_state_hourly`} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	const base = uint32(171_350_000)
+	pool := seedLendingDeploy(t, ctx, addr, base)
+	var poolID, asset xdr.ContractId
+	copy(poolID[:], strkey.MustDecode(strkey.VersionByteContract, pool))
+	asset[0] = 0x5c
+	key := resDataKeyB64(t, poolID, asset)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1}, 1, false)
+	closeAt := func(h int) time.Time { return time.Date(2027, 2, 11, h, 10, 0, 0, time.UTC) }
+	stale := func(seq uint32, h int, tx, e string, intra uint32) {
+		t.Helper()
+		if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
+			(ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, intra_ledger_seq)
+			VALUES (?, ?, ?, 0, 0, 'updated', 'contract_data', ?, ?, '2026-01-01 00:00:00', ?)`,
+			seq, closeAt(h), tx, key, e, intra); err != nil {
+			t.Fatalf("insert superseded row: %v", err)
+		}
+	}
+	fresh := func(seq uint32, h int, tx, e string, intra uint32) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: seq, CloseTime: closeAt(h), TxHash: tx,
+			ChangeType: "updated", EntryType: "contract_data", KeyXDR: key, EntryXDR: e, IntraLedgerSeq: intra,
+		}
+	}
+	stale(base, 13, "aa", "A-UNORDERED", 0)
+	stale(base, 13, "bb", "B-UNORDERED", 0)
+	stale(base+1, 14, "aa", "A-OLD-WALK", 9)
+	insertEntryChanges(t, ctx,
+		fresh(base, 13, "aa", "A", 1), fresh(base, 13, "bb", "B", 2),
+		fresh(base+1, 14, "aa", "A2", 1), fresh(base+1, 14, "bb", "B2", 2),
+	)
+	if err := runLendingWrite(t, addr, base, base+1); err != nil {
+		t.Fatalf("window holding superseded rows: %v", err)
+	}
+	want := []string{
+		"2027-02-11 13:00:00 " + strconv.FormatUint(uint64(base), 10) + " B",
+		"2027-02-11 14:00:00 " + strconv.FormatUint(uint64(base+1), 10) + " B2",
+	}
+	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, want) {
+		t.Fatalf("history = %q, want %q", got, want)
 	}
 }

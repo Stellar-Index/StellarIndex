@@ -765,6 +765,35 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
+      # A recovered sink panic (ErrSinkPanic, classified permanent, never retried) or an
+      # unhandled event type (counted, returned nil) drops the row for good, whatever its
+      # kind: a panicking trade counts as kind="panic", so persist_drop never sees it, and
+      # insert_errors needs 0.1/s for 5m.
+      - alert: stellarindex_ingestion_sink_fault_drop
+        expr: |
+          increase(stellarindex_source_insert_errors_total{kind=~"panic|unhandled"}[15m]) > 0
+          or (
+            stellarindex_source_insert_errors_total{kind=~"panic|unhandled"} > 0
+            unless stellarindex_source_insert_errors_total{kind=~"panic|unhandled"} offset 15m
+          )
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
+          summary: "Sink {{ $labels.kind }} drops on {{ $labels.source }} (any rate)"
+          description: |
+            The event sink dropped a {{ $labels.source }} row in the last
+            15 minutes: kind="panic" is a recovered panic in a persist
+            handler, kind="unhandled" an event type with no sink case. The
+            row is not retried and is NOT in the served tier. The ERROR log
+            "panic in event sink" (or WARN "unhandled event kind") names the
+            event kind.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
+
       # Cursor-replay: trade_inserts_total can tick while the trades max(ts) is hours
       # old, every attempt an ON CONFLICT DO NOTHING no-op; neither insert_errors nor
       # source_stopped fires. Fires on a duplicate rate with zero new rate for 10m.

@@ -78,10 +78,13 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	hexHash := hashAPIKey(key)
 
 	// 1. Cache.
+	var canonicalUnread error
 	if v.cache != nil {
-		if sub, ok, err := v.cacheLookup(ctx, hexHash); ok {
+		sub, ok, err := v.cacheLookup(ctx, hexHash)
+		if ok {
 			return sub, err
 		}
+		canonicalUnread = err
 	}
 
 	// 2. Postgres canonical lookup. Hash is the key column.
@@ -93,6 +96,10 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	pgKey, err := v.keys.GetByHash(ctx, rawHash)
 	if err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
+			// A Redis-only credential has no row, so an unread canonical record leaves the key unjudged.
+			if canonicalUnread != nil {
+				return Subject{}, canonicalUnread
+			}
 			return Subject{}, ErrUnauthorized
 		}
 		return Subject{}, fmt.Errorf("auth: postgres lookup: %w: %w", ErrKeyStoreUnavailable, err)
@@ -107,10 +114,12 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	}
 
 	acct, err := v.accounts.Get(ctx, pgKey.AccountID)
-	if err != nil {
-		// Orphaned key (FK should prevent this, but defensive). Treat
-		// as unauthorised — the operator log captures the why.
+	if errors.Is(err, platform.ErrNotFound) {
+		// Orphaned key (FK should prevent this, but defensive).
 		return Subject{}, ErrUnauthorized
+	}
+	if err != nil {
+		return Subject{}, fmt.Errorf("auth: postgres account %s: %w: %w", pgKey.AccountID, ErrAccountStatusUnavailable, err)
 	}
 	if acct.Status != platform.AccountActive {
 		return Subject{}, ErrUnauthorized
@@ -152,13 +161,17 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	return sub, nil
 }
 
-// cacheLookup returns (Subject, hit, sentinelErr): hit=false means miss or transient failure (fall through to Postgres); on hit the error is the sentinel to propagate or nil.
+// cacheLookup returns (Subject, hit, err): on hit err is the sentinel to propagate or nil; on a miss (fall through to Postgres) a non-nil err wraps ErrKeyStoreUnavailable and means the canonical record could not be read.
 // The canonical `apikey:` record is read before the `apikey-cache:` row because it can carry revoked_at, so a derived cache row never shadows it.
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
-	rec, canonical := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
+	rec, canonical, canonicalErr := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
+	if canonicalErr != nil {
+		// The unread record may be the revoked one, and a revoke's delete of the derived row is best-effort.
+		return Subject{}, false, fmt.Errorf("auth: apikey redis get: %w: %w", ErrKeyStoreUnavailable, canonicalErr)
+	}
 	ok := canonical
 	if !ok {
-		rec, ok = v.readRecord(ctx, cachekeys.APIKeyCache(hexHash).String())
+		rec, ok, _ = v.readRecord(ctx, cachekeys.APIKeyCache(hexHash).String())
 	}
 	if !ok {
 		return Subject{}, false, nil
@@ -193,19 +206,22 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 	return sub, true, nil
 }
 
-// readRecord GETs and decodes one record. Absent, unreadable and corrupt
-// all report false — degrade-not-fail: a Redis blip or a bad row falls
-// through to Postgres, which rebuilds the cache row.
-func (v *PostgresAPIKeyValidator) readRecord(ctx context.Context, key string) (APIKeyRecord, bool) {
+// readRecord GETs and decodes one record. Absent, unreadable and corrupt all report false so the caller
+// falls through to Postgres; err is the GET failure (not redis.Nil), for callers that must tell an unread record from an absent one.
+func (v *PostgresAPIKeyValidator) readRecord(ctx context.Context, key string) (APIKeyRecord, bool, error) {
 	raw, err := v.cache.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return APIKeyRecord{}, false, nil
+	}
 	if err != nil {
-		return APIKeyRecord{}, false
+		return APIKeyRecord{}, false, err
 	}
 	var rec APIKeyRecord
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		return APIKeyRecord{}, false
+	ok := json.Unmarshal(raw, &rec) == nil
+	if !ok {
+		rec = APIKeyRecord{}
 	}
-	return rec, true
+	return rec, ok, nil
 }
 
 // decodeIPAllowlist parses the wire CIDR-text slice back into netip.Prefix values (empty yields nil); the first bad entry is an

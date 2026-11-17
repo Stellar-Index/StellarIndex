@@ -28,12 +28,19 @@
 #   add-foreign-key       ADD FOREIGN KEY
 #   revoke                REVOKE
 #   before-trigger        CREATE TRIGGER … BEFORE …
-#   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
+#   drop-other            any other DROP (TRIGGER, SCHEMA, SEQUENCE, OWNED …),
+#                         DISABLE/ENABLE TRIGGER
+#   owner                 OWNER TO
+#   dml                   DELETE FROM / TRUNCATE / UPDATE … SET /
+#                         the chunk-dropping SELECT, unguarded
 #                         (a bare DELETE with a `SELECT 1` down re-deletes
 #                         replay-repaired rows on a down/up)
 # Nullable ADD COLUMN and CREATE TABLE/INDEX/VIEW are additive-safe and not
-# flagged. Matching is per line: a statement split so that its keywords sit
-# on different lines is not seen.
+# flagged. Matching is per line after each ALTER is split into one clause per
+# line; other statements split across lines are not seen. Not flagged:
+# AFTER/CONSTRAINT triggers and CREATE OR REPLACE FUNCTION, which can change
+# what the previous binary's writes do (0215/0220/0222, 0188/0205/0223 ship
+# that shape unbaselined).
 #
 # Escape hatches:
 #   1. Inline, per statement (the rule-9 two-release dance):
@@ -106,6 +113,8 @@ CLASSES=(
   'add-foreign-key'
   'revoke'
   'before-trigger'
+  'drop-other'
+  'owner'
   'dml'
 )
 MATCH=(
@@ -130,10 +139,14 @@ MATCH=(
   '^[[:space:]]*REVOKE[[:space:]]'
   # A BEFORE trigger can refuse or rewrite a write the previous binary makes.
   'CREATE[[:space:]].*TRIGGER[[:space:]].*[[:space:]]BEFORE[[:space:]]'
+  # Every DROP the classes above do not name (TRIGGER, SCHEMA, SEQUENCE, OWNED,
+  # POLICY, EXTENSION …), and switching a trigger off.
+  '^[[:space:]]*DROP[[:space:]]+[A-Za-z]|(DISABLE|ENABLE)[[:space:]]+(REPLICA[[:space:]]+|ALWAYS[[:space:]]+)?(TRIGGER|RULE)'
+  'OWNER[[:space:]]+TO'
   # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
   # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
   # string, a `BEFORE TRUNCATE ON t` trigger).
-  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET)'
+  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET|SELECT[[:space:]]+[a-zA-Z0-9_.]*drop_chunks[[:space:]]*\()'
 )
 EXCLUDE=(
   ''
@@ -154,9 +167,13 @@ EXCLUDE=(
   ''
   ''
   ''
+  '^[0-9]+:[[:space:]]*DROP[[:space:]]+(TABLE|MATERIALIZED|VIEW|CONSTRAINT|INDEX|FUNCTION|PROCEDURE|TYPE|COLUMN|DEFAULT)([[:space:]]|$)'
+  ''
   ''
 )
 GUARD=(
+  ''
+  ''
   ''
   ''
   ''
@@ -233,25 +250,64 @@ fn_body_lines() {
     }' "$1"
 }
 
-# flatten <file>: the file with each multi-line ALTER or CREATE TRIGGER statement joined onto its
-# first line, so a class regex sees `ALTER TABLE t` and a `DROP COLUMN c` two
-# lines down as one statement. Continuation lines become empty, so line numbers
-# hold; an inline marker anywhere in the statement is kept.
+# flatten <file>: the file with each ALTER statement split into one clause per
+# line (`ALTER TABLE t ADD …, DROP …` becomes two lines) and each multi-line
+# CREATE TRIGGER joined onto its first line, so a class regex sees a statement
+# or clause whole and an EXCLUDE or inline marker applies to its own clause only.
+# A clause lands on the output line where it starts; later lines fill with empty
+# ones so line numbers hold (a statement with more clauses than lines drifts).
 flatten() {
   awk '
     function strip(l,    c) { c = index(l, "--"); return c > 0 ? substr(l, 1, c - 1) : l }
-    function flush(    i) { print buf (marker != "" ? " " marker : ""); for (i = 0; i < held; i++) print ""; open = 0 }
+    function feed(t,    i, ch) {
+      for (i = 1; i <= length(t); i++) {
+        ch = substr(t, i, 1)
+        if (ch == "\047") q = !q
+        if (!q && ch == "(") depth++
+        if (!q && ch == ")") depth--
+        if (split_clauses && !q && depth <= 0 && ch == ",") { n++; cl[n] = cur; cur = ""; continue }
+        cur = cur ch
+      }
+      cur = cur " "
+    }
+    function mark(lo, m,    k, hi) {
+      if (m == "") return
+      hi = (cur ~ /^[ \t]*$/) ? n : n + 1
+      for (k = lo; k <= hi; k++) mk[k] = m
+    }
+    function flush(    i, out, c) {
+      n++; cl[n] = cur
+      out = 0
+      for (i = 1; i <= n; i++) {
+        c = cl[i]; sub(/^[ \t]+/, "", c); sub(/[ \t]+$/, "", c)
+        if (c == "" || c == ";") continue
+        print (i > 1 ? "ALTER TABLE " : "") c (mk[i] != "" ? " " mk[i] : ""); out++
+      }
+      for (; out < held + 1; out++) print ""
+      open = 0
+    }
+    function begin(raw, t, m) {
+      open = 1; held = 0; n = 0; cur = ""; q = 0; depth = 0
+      delete cl; delete mk
+      split_clauses = (raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/)
+      feed(t); mark(1, m)
+    }
     {
       raw = $0
       if (match(raw, /--[ \t]*migration-compat:ok[ \t]+[^ \t].*$/)) m = substr(raw, RSTART); else m = ""
       t = strip(raw); sub(/[ \t]+$/, "", t)
       if (open) {
-        buf = buf " " t; held++
-        if (m != "") marker = m
+        held++
+        lo = n + 1
+        feed(t); mark(lo, m)
         if (t ~ /;$/ || held > 80) flush()
         next
       }
-      if ((raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ || tolower(raw) ~ /^[ \t]*create[ \t]+(or[ \t]+replace[ \t]+)?(constraint[ \t]+)?trigger[ \t]/) && t !~ /;$/) { open = 1; held = 0; buf = t; marker = m; next }
+      if (raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ || tolower(raw) ~ /^[ \t]*create[ \t]+(or[ \t]+replace[ \t]+)?(constraint[ \t]+)?trigger[ \t]/) {
+        begin(raw, t, m)
+        if (t ~ /;$/) flush()
+        next
+      }
       print raw
     }
     END { if (open) flush() }' "$1"

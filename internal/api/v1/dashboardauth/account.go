@@ -20,7 +20,7 @@ import (
 
 // AccountEraser erases an account; *accounterasure.Eraser satisfies it.
 type AccountEraser interface {
-	Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (accounterasure.Report, error)
+	EraseForRequest(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (accounterasure.Report, error)
 }
 
 // AccountExporter builds an account's data export; *accounterasure.Exporter satisfies it.
@@ -64,7 +64,7 @@ func (h *Handlers) HandleAccountDelete(w http.ResponseWriter, r *http.Request) {
 			`confirm must be the account slug exactly: {"confirm":"<slug>"}`, accountRoute)
 		return
 	}
-	rep, err := h.cfg.AccountEraser.Erase(r.Context(), sc.Account.ID, platform.ActorUser)
+	rep, err := h.cfg.AccountEraser.EraseForRequest(r.Context(), sc.Account.ID, platform.ActorUser)
 	switch {
 	case errors.Is(err, accounterasure.ErrBlocked):
 		httpx.WriteProblem(w, "https://api.stellarindex.io/errors/account-erasure-blocked",

@@ -9987,6 +9987,8 @@ paths:
             Caller is not an account tier (`apikey` or `operator`):
             a SEP-10 wallet token gets `key-mint-not-available`, any
             other non-account credential `account-tier-required`.
+            A key that would exceed the caller's own scopes, rate
+            limit, expiry or monthly quota gets `scope-exceeds-caller`.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -10198,7 +10200,10 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: Caller is not operator-tier.
+          description: |
+            Caller is not operator-tier, or the key would exceed the
+            caller's own scopes, rate limit, expiry or monthly quota
+            (`scope-exceeds-caller`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -24162,6 +24167,13 @@ components:
             Capability scopes the key was minted with.
             Absent/empty = full access (the pre-scopes
             posture).
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            When the key stops authenticating. A key minted by an
+            expiring credential inherits that credential's expiry.
+            Absent = the key does not expire.
       required: [key_id, plaintext, label]
 
     KeyCreatedEnvelope:

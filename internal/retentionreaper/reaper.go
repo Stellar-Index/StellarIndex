@@ -110,14 +110,16 @@ func (r *Reaper) Run(ctx context.Context) error {
 // Sweep runs one retention pass and refreshes the row gauge; errors are counted and swallowed (retried next tick), and the gauge refreshes even after a failed DELETE, when the row count matters most.
 func (r *Reaper) Sweep(ctx context.Context) {
 	deleted, err := r.sweep(ctx, r.now().Add(-r.retention))
+	if deleted > 0 {
+		obs.RetentionReaperRowsDeletedTotal.WithLabelValues(r.name).Add(float64(deleted))
+	}
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return
 	case err != nil:
 		obs.RetentionReaperErrorsTotal.WithLabelValues(r.name).Inc()
-		r.logger.Warn("retention reaper: sweep failed", "reaper", r.name, "err", err)
+		r.logger.Warn("retention reaper: sweep failed", "reaper", r.name, "deleted", deleted, "err", err)
 	case deleted > 0:
-		obs.RetentionReaperRowsDeletedTotal.WithLabelValues(r.name).Add(float64(deleted))
 		r.logger.Info("retention reaper: deleted rows", "reaper", r.name, "deleted", deleted)
 	}
 	r.refreshRows(ctx)
