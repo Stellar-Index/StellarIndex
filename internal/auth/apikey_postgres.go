@@ -217,10 +217,11 @@ func (v *PostgresAPIKeyValidator) readRecord(ctx context.Context, key string) (A
 		return APIKeyRecord{}, false, err
 	}
 	var rec APIKeyRecord
-	if json.Unmarshal(raw, &rec) != nil {
-		return APIKeyRecord{}, false, nil
+	ok := json.Unmarshal(raw, &rec) == nil
+	if !ok {
+		rec = APIKeyRecord{}
 	}
-	return rec, true, nil
+	return rec, ok, nil
 }
 
 // decodeIPAllowlist parses the wire CIDR-text slice back into netip.Prefix values (empty yields nil); the first bad entry is an
