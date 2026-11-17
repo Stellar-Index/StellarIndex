@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -7,6 +7,11 @@ vi.mock('@/api/client', async () => {
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
+// jsdom has no EventSource; the headline's tip stream stays closed.
+vi.mock('@/lib/live/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/live/hooks')>()),
+  useTipStream: () => null,
+}));
 
 import { apiGet } from '@/api/client';
 import {
@@ -15,6 +20,7 @@ import {
   rankSwapTokens,
   type SwapToken,
 } from './AssetSwap';
+import { LiveAssetPrice } from './LiveAssetPrice';
 
 // The converter's fiat legs come from /v1/price/batch, which
 // this widget typed as `{data: Array<{asset_id, price}>}` — so
@@ -191,6 +197,71 @@ describe('AssetSwap page-asset leg', () => {
       screen.getByText(/thin market · low confidence · in no total/),
     ).toBeInTheDocument();
     expect(screen.getByText(/^Low confidence:/)).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+});
+
+// Two independent polls could disagree: the headline withheld while the
+// converter's own request failed and kept the withdrawn price.
+describe('AssetSwap and the headline share one price resolution', () => {
+  const receiveValue = () =>
+    (screen.getAllByRole('textbox')[1] as HTMLInputElement).value;
+
+  it('serves both from one request and empties the converter with the headline', async () => {
+    stubApi();
+    let withheld = false;
+    const fetchMock = vi.fn().mockImplementation(async (input: string) => {
+      if (!String(input).includes('/v1/price?'))
+        return { status: 500, ok: false, json: async () => ({}) };
+      return withheld
+        ? {
+            status: 404,
+            ok: false,
+            json: async () => ({
+              type: 'https://stellarindex.io/problems/price-withheld',
+              detail: 'issuer flagged',
+            }),
+          }
+        : {
+            status: 200,
+            ok: true,
+            json: async () => ({ data: { price: '0.26' } }),
+          };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const priceCalls = () =>
+      fetchMock.mock.calls.filter(([u]) => String(u).includes('/v1/price?'))
+        .length;
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <LiveAssetPrice
+          assetID="native"
+          initialPrice="0.195"
+          initialProvenance="vwap1m"
+        />
+        <AssetSwap
+          symbol="XLM"
+          assetId="native"
+          priceUSD="0.195"
+          priceProvenance="vwap1m"
+        />
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    expect(screen.getByText(/^\$0\.26/)).toBeInTheDocument();
+    expect(priceCalls()).toBe(1);
+
+    withheld = true;
+    await act(() => client.refetchQueries({ queryKey: ['/v1/price'] }));
+    expect(priceCalls()).toBe(2);
+    // Checked in the render that first shows the verdict, not eventually.
+    await vi.waitFor(() =>
+      expect(screen.getByText('issuer flagged')).toBeInTheDocument(),
+    );
+    expect(receiveValue()).toBe('');
     vi.unstubAllGlobals();
   });
 });
