@@ -18,8 +18,8 @@
 #   INTEGRATION_SHARD_DRY_RUN=1  print the shard's test names (stdout) and
 #                                the -run regex (stderr); do not run go test.
 #   INTEGRATION_SHARD_TIMEOUT    go test -timeout for the slice (default 15m:
-#                                a quarter of the serial suite is ~5 min on a
-#                                CI runner, so 3x headroom).
+#                                an eighth of the serial suite is ~10 min on
+#                                a CI runner).
 #   INTEGRATION_SHARD_MAKEFILE   makefile to read INT_TEST_PKGS from (default
 #                                `Makefile`); the self-test points it at
 #                                fixtures to prove the derivation tracks.
