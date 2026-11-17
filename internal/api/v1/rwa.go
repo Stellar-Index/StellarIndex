@@ -1381,19 +1381,7 @@ func (s *Server) rwaListingRows(
 		if err != nil {
 			return nil, join, err
 		}
-		join.unanswered = join.unanswered || stale
-		if !at.IsZero() && (join.observedAt.IsZero() || at.Before(join.observedAt)) {
-			join.observedAt = at
-		}
-		// A full page means a member in the unread tail would vanish silently; count the
-		// truncation so it is reported.
-		if len(rows) >= rwaAssetsPerIssuer {
-			join.pagesTruncated++
-			if join.fullPageIssuers == nil {
-				join.fullPageIssuers = map[string]bool{}
-			}
-			join.fullPageIssuers[issuer] = true
-		}
+		join.notePage(issuer, at, stale, len(rows))
 		keep, memberCodes := rwaMatchMemberRows(codesByIssuer[issuer], rows)
 		if len(keep) == 0 {
 			continue
@@ -1420,6 +1408,23 @@ func (s *Server) rwaListingRows(
 		}
 	}
 	return out, join, nil
+}
+
+// notePage folds one issuer page's freshness and truncation into the join.
+func (j *rwaCatalogueJoin) notePage(issuer string, at time.Time, stale bool, n int) {
+	j.unanswered = j.unanswered || stale
+	if !at.IsZero() && (j.observedAt.IsZero() || at.Before(j.observedAt)) {
+		j.observedAt = at
+	}
+	// A full page means a member in the unread tail would vanish silently; count the
+	// truncation so it is reported.
+	if n >= rwaAssetsPerIssuer {
+		j.pagesTruncated++
+		if j.fullPageIssuers == nil {
+			j.fullPageIssuers = map[string]bool{}
+		}
+		j.fullPageIssuers[issuer] = true
+	}
 }
 
 // rwaFillMissingSupply attaches circulating supply to rows the market-cap fill left without one. Only rows with no reading at all
