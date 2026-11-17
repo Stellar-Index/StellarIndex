@@ -446,6 +446,20 @@ mkrepo 0
 runGate
 expect "a pk-discriminators waiver fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-pk-discriminators/main.go"
 
+# --- 14c. an entry added to an inline baseline in lint-migrations.sh is caught ---
+mkrepo 0
+(
+  cd "$TMP/repo" || exit 1
+  mkdir -p scripts/ci
+  printf "followup_baseline='0002_a.up.sql\n0003_b.up.sql'\necho ok\n" > scripts/ci/lint-migrations.sh
+  git add -A && git commit -qm "chore: add the lint"
+  git rev-parse HEAD > "$TMP/base"
+  printf "followup_baseline='0002_a.up.sql\n0003_b.up.sql\n0004_c.up.sql:c_idx'\necho ok, still\n" > scripts/ci/lint-migrations.sh
+  git add -A && git commit -qm "chore: grandfather a migration"
+)
+runGate
+expect "a lint-migrations.sh inline baseline entry fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-migrations.sh"
+
 # --- 15. configs/ansible/.ansible-lint skip_list growth is caught
 mkrepo 0
 grow_ansible_lint "chore: grandfather another ansible-lint rule"

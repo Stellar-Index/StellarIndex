@@ -43,8 +43,8 @@ all:
   children:
     haproxy_lb:
       hosts:
-        lb-01: { ansible_host: 10.0.0.31, keepalived_priority: 100, keepalived_initial_state: MASTER }
-        lb-02: { ansible_host: 10.0.0.32, keepalived_priority: 99,  keepalived_initial_state: BACKUP }
+        lb-01: { ansible_host: 10.0.0.31, keepalived_priority: 100 }
+        lb-02: { ansible_host: 10.0.0.32, keepalived_priority: 99 }
       vars:
         haproxy_vip: 10.0.0.30
         keepalived_iface: eth0
@@ -59,9 +59,12 @@ all:
         stellarindex_api_port: 3000
 ```
 
-Per-host `keepalived_priority` + `keepalived_initial_state` only
-affect the **initial** election. Once running, keepalived
-re-elects on health-check failure regardless of original priority.
+Both LBs start as `BACKUP`; the distinct per-host `keepalived_priority`
+elects the MASTER. A failed `api_pool` probe lowers that LB's priority
+and moves the VIP to the peer. When the higher-priority LB recovers it
+waits `keepalived_preempt_delay` seconds (default 60) before taking the
+VIP back, so a flapping pool does not bounce it. Preflight refuses a
+leftover `keepalived_initial_state`.
 
 ## Running
 
