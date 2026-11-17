@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,16 +31,40 @@ func (e *stubBackstopExplorer) LendingBackstop(_ context.Context, _ string, tier
 
 type stubAuctionLendingReader struct {
 	stubLendingReader
-	auctions []timescale.LendingAuction
-	cur      timescale.LendingConfigCursor
+	auctions  []timescale.LendingAuction
+	cur       timescale.LendingConfigCursor
+	truncated bool
 }
 
 func (r *stubAuctionLendingReader) LendingAuctions(_ context.Context, _ string, limit int, cur timescale.LendingConfigCursor) ([]timescale.LendingAuction, bool, error) {
 	r.cur = cur
 	if len(r.auctions) > limit {
-		return r.auctions[:limit], false, nil
+		return r.auctions[:limit], r.truncated, nil
 	}
-	return r.auctions, false, nil
+	return r.auctions, r.truncated, nil
+}
+
+// TestLendingPoolAuctions_LifecycleTruncatedInBody: a capped fill/delete read is disclosed in the body, not only through the
+// header-only degraded flag, since a cut-off delete reads as deleted=false.
+func TestLendingPoolAuctions_LifecycleTruncatedInBody(t *testing.T) {
+	for _, truncated := range []bool{false, true} {
+		lr := &stubAuctionLendingReader{truncated: truncated, auctions: []timescale.LendingAuction{{
+			LendingEventPos: timescale.LendingEventPos{Ts: time.Unix(1_700_000_000, 0).UTC(), Ledger: 10, TxHash: "aa"}, User: mkCStrkey(t, 6),
+		}}}
+		srv := v1.New(v1.Options{Lending: lr})
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+mkCStrkey(t, 5)+"/auctions", nil))
+		var body struct{ Data v1.LendingAuctionsView }
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil || len(body.Data.Auctions) != 1 {
+			t.Fatalf("status %d body %s", rec.Code, rec.Body)
+		}
+		if body.Data.LifecycleTruncated != truncated || !strings.Contains(rec.Body.String(), `"lifecycle_truncated":`) {
+			t.Fatalf("truncated=%v: body %s", truncated, rec.Body)
+		}
+		if noStore := strings.Contains(rec.Header().Get("Cache-Control"), "no-store"); noStore != truncated {
+			t.Fatalf("truncated=%v: no-store = %v", truncated, noStore)
+		}
+	}
 }
 
 func getBackstop(t *testing.T, srv *v1.Server, pool string) v1.LendingBackstopView {

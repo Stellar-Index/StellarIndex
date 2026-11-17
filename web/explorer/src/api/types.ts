@@ -2207,8 +2207,10 @@ export interface paths {
          *     earlier one, unless that one is already closed (deleted or filled
          *     to 100%): transaction order within a ledger is not stored, so
          *     such a delete belongs to the auction started in that ledger.
-         *     `flags.degraded` means the fill read hit its cap and the newest
-         *     auctions may miss fills. 503 when the deployment has no auction
+         *     `lifecycle_truncated: true` means the fill and delete read hit
+         *     its cap: the newest auctions may miss fills, and their
+         *     `deleted: false` may hide a delete that was cut off; the response
+         *     is then not cacheable. 503 when the deployment has no auction
          *     history reader.
          *
          *     Pagination: pass `pagination.next` back as `cursor`;
@@ -18932,7 +18934,8 @@ export interface operations {
                      *             ],
                      *             "deleted": false
                      *           }
-                     *         ]
+                     *         ],
+                     *         "lifecycle_truncated": false
                      *       },
                      *       "as_of": "2026-07-03T22:58:00.032774886Z",
                      *       "flags": {
@@ -18947,6 +18950,8 @@ export interface operations {
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: {
                             pool: string;
+                            /** @description The fill and delete read hit its cap; the newest auctions' fills and deleted may be incomplete. */
+                            lifecycle_truncated?: boolean;
                             auctions: {
                                 auction_type: number;
                                 /** @description user_liquidation, bad_debt, interest, protocol_fee; unknown_<n> otherwise. */
