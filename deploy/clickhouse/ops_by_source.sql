@@ -107,7 +107,8 @@ WHERE fee_account != '';
 --   done
 --
 -- Fee payers, over the range where fee_account is populated (one statement;
--- the filter leaves a few rows per ledger):
+-- the filter leaves a few rows per ledger). Nothing here checks it ran: the
+-- Step-3 proof counts each payer's row as its own key and fails without it.
 --
 --   /usr/local/sbin/run-heavy-job.sh obs-backfill-feepayer clickhouse-client --port 9300 -q "
 --     INSERT INTO stellar.ops_by_source
@@ -123,7 +124,7 @@ WHERE fee_account != '';
 --
 --   SELECT countIf(a != b) FROM (
 --     SELECT
---       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE source_account = t.sa) AS a,  -- countDistinct, NOT count(): raw counts include un-merged RMT duplicate parts (a first verify run flagged 20/20 'mismatches' that were exactly this)
+--       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE source_account = t.sa OR fee_account = t.sa) AS a,  -- countDistinct, NOT count(): raw counts include un-merged RMT duplicate parts (a first verify run flagged 20/20 'mismatches' that were exactly this)
 --       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.ops_by_source
 --         WHERE source_account = t.sa AND op_index = 4294967295) AS b,
 --       sa
