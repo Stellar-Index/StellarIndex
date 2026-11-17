@@ -234,8 +234,10 @@ func TestWriter_NoLadderStoreKeepsPre0119Behaviour(t *testing.T) {
 	}
 }
 
-// TestWriter_LadderStoreErrorDegradesToRedisOnly: a failed durable read must not invent a freeze; degrade to the Redis-only answer.
-func TestWriter_LadderStoreErrorDegradesToRedisOnly(t *testing.T) {
+// TestWriter_LadderStoreErrorIsNotNeverFrozen: a failed durable read on a marker miss must not invent a
+// freeze, and must not read as "never frozen" either: the orchestrator caches that answer for the process
+// lifetime, dropping an escalated freeze. It surfaces the error so the cold key caches nothing.
+func TestWriter_LadderStoreErrorIsNotNeverFrozen(t *testing.T) {
 	_, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
 	ladder.err = errors.New("simulated postgres blip")
@@ -245,8 +247,19 @@ func TestWriter_LadderStoreErrorDegradesToRedisOnly(t *testing.T) {
 	}
 	asset, quote := nativeUSD(t)
 
-	if _, present, err := w.LoadState(context.Background(), asset, quote); err != nil || present {
-		t.Fatalf("LoadState with a failing ladder store = (present=%v, err=%v), want (false, nil)", present, err)
+	if st, present, err := w.LoadState(context.Background(), asset, quote); !errors.Is(err, ladder.err) || present || st.Active() {
+		t.Fatalf("LoadState with a failing ladder store = (%+v, present=%v, err=%v), want (zero, false, the store error)", st, present, err)
+	}
+
+	windowed := newWindowedFakeLadderStore()
+	windowed.err = ladder.err
+	ww, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(windowed, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	st, present, err := ww.LoadStateForWindow(context.Background(), asset, quote, time.Hour)
+	if !errors.Is(err, ladder.err) || present || st.Active() {
+		t.Fatalf("LoadStateForWindow with a failing ladder store = (%+v, present=%v, err=%v), want (zero, false, the store error)", st, present, err)
 	}
 }
 

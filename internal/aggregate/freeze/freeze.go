@@ -543,10 +543,21 @@ func (w *Writer) liveDurableLadder(ctx context.Context, asset, quote canonical.A
 		return State{}
 	}
 	st, ok, err := w.ladder.LoadLadder(ctx, asset, quote)
-	if err != nil || !ok {
+	if err != nil {
+		w.logDurableReadFailure(asset, quote, err)
+		return State{}
+	}
+	if !ok {
 		return State{}
 	}
 	return st
+}
+
+// logDurableReadFailure reports a marker rebuild that went ahead without the durable ladder: an
+// escalated freeze rewritten this way restarts its ladder, so the failure must not be silent.
+func (w *Writer) logDurableReadFailure(asset, quote canonical.Asset, err error) {
+	w.log().Error("freeze: durable ladder unreadable on marker rebuild; ladder not restored",
+		"asset", asset.String(), "quote", quote.String(), "err", err)
 }
 
 // liveDurableLadders is [Writer.liveDurableLadder] per window, plus the unowned ladder; a non-window
@@ -557,7 +568,11 @@ func (w *Writer) liveDurableLadders(ctx context.Context, asset, quote canonical.
 		return ladders, w.liveDurableLadder(ctx, asset, quote)
 	}
 	stored, unowned, ok, err := w.windowLadder.LoadWindowLadders(ctx, asset, quote)
-	if err != nil || !ok {
+	if err != nil {
+		w.logDurableReadFailure(asset, quote, err)
+		return ladders, State{}
+	}
+	if !ok {
 		return ladders, State{}
 	}
 	now := w.now()
@@ -655,15 +670,18 @@ func (w *Writer) unownedAdoptable(marker Marker, now time.Time) bool {
 }
 
 // loadDurableLadder disambiguates a marker miss: (State{}, false, nil) with no store, no open ladder,
-// a lapsed hold, or a store ERROR. Inventing a freeze from a Postgres blip would pin an unrelated price;
-// the caller still re-freezes on the pair's own signal.
+// or a lapsed hold. A store error is returned, not read as "never frozen": a caller that cached that
+// answer would drop an escalated freeze for the life of the process. It never invents a freeze.
 func (w *Writer) loadDurableLadder(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
 	if w.ladder == nil {
 		return State{}, false, nil
 	}
 	st, ok, err := w.ladder.LoadLadder(ctx, asset, quote)
-	if err != nil || !ok {
-		return State{}, false, nil //nolint:nilerr // documented above: degrade to the pre-0119 answer, never invent a freeze
+	if err != nil {
+		return State{}, false, fmt.Errorf("freeze: load durable ladder: %w", err)
+	}
+	if !ok {
+		return State{}, false, nil
 	}
 	if !LadderStillLive(st, w.ladderGrace, w.now()) {
 		// Inactive, or lapsed while the aggregator was down: do not resurrect.
@@ -682,8 +700,11 @@ func (w *Writer) loadDurableWindowLadder(
 	window time.Duration,
 ) (State, bool, error) {
 	stored, unowned, ok, err := w.windowLadder.LoadWindowLadders(ctx, asset, quote)
-	if err != nil || !ok {
-		return State{}, false, nil //nolint:nilerr // as loadDurableLadder: degrade to the pre-0119 answer, never invent a freeze
+	if err != nil {
+		return State{}, false, fmt.Errorf("freeze: load durable window ladders: %w", err)
+	}
+	if !ok {
+		return State{}, false, nil
 	}
 	now := w.now()
 	if own, held := stored[window]; held && LadderStillLive(own, w.ladderGrace, now) {
