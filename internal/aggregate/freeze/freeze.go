@@ -556,6 +556,7 @@ func (w *Writer) liveDurableLadder(ctx context.Context, asset, quote canonical.A
 // logDurableReadFailure reports a marker rebuild that went ahead without the durable ladder: an
 // escalated freeze rewritten this way restarts its ladder, so the failure must not be silent.
 func (w *Writer) logDurableReadFailure(asset, quote canonical.Asset, err error) {
+	obs.AnomalyFreezeLadderReadFailuresTotal.Inc()
 	w.log().Error("freeze: durable ladder unreadable on marker rebuild; ladder not restored",
 		"asset", asset.String(), "quote", quote.String(), "err", err)
 }

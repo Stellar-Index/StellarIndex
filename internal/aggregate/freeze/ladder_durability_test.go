@@ -263,6 +263,23 @@ func TestWriter_LadderStoreErrorIsNotNeverFrozen(t *testing.T) {
 	}
 }
 
+// A marker rebuild that cannot read the durable ladder restores none, so it must be counted, not only logged.
+func TestWriter_MarkerRebuildCountsLadderReadFailure(t *testing.T) {
+	_, rdb := newRedis(t)
+	ladder := newFakeLadderStore()
+	ladder.err = errors.New("simulated postgres blip")
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(ladder, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	before := testutil.ToFloat64(obs.AnomalyFreezeLadderReadFailuresTotal)
+	_ = w.MarkHold(context.Background(), asset, quote, "0.87", freezeDecision(), escalatedState(time.Now().UTC()), 30*time.Minute)
+	if got := testutil.ToFloat64(obs.AnomalyFreezeLadderReadFailuresTotal) - before; got != 1 {
+		t.Fatalf("ladder read failures counted = %v, want 1", got)
+	}
+}
+
 // TestWriter_MarkDoesNotStampAnEmptyLadder: Mark owns no ladder, and stamping its zero State would reset a real pair's durable escalation clock.
 func TestWriter_MarkDoesNotStampAnEmptyLadder(t *testing.T) {
 	_, rdb := newRedis(t)

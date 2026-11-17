@@ -7,9 +7,6 @@
 # The listings ignore asset_price_snapshot rows older than 15 min, so the
 # alert must fire about 15 min after the last successful sweep, whether
 # the sweeps then fail (case 2) or hang and emit nothing (case 3).
-#
-# PROVEN-RED: under the old rate(refresh_error) > 0 for 30m rule, case 2
-# fires only after 30 min (missing at 40m) and case 3 never fires.
 
 rule_files:
   - ../rules/aggregator.yml
@@ -76,3 +73,12 @@ tests:
               team: stellarindex
               component: aggregator
             exp_annotations: *annotations
+
+  # ── Case 4: no series at all stays silent ──
+  # A missing series means the aggregator scrape target is down; stellarindex_prometheus_scrape_failing (meta.yml) covers that.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_asset_volume_rollup_failing
+        exp_alerts: []

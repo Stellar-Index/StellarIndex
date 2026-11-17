@@ -1560,6 +1560,12 @@ Counter, no labels.
 
 Freezes restored from the durable ladder (`freeze_events.hold_until` / `extensions_used` / `escalated` / `corroborated`) because the Redis marker was missing. Not alerted: non-zero means the safety net worked. A burst after a Redis restart is expected; a slow trickle means markers are evicted (`maxmemory-policy`) or expiring early.
 
+### `stellarindex_anomaly_freeze_ladder_read_failures_total`
+
+Counter, no labels.
+
+Freeze-marker rebuilds (marker missing) that could not read the durable `freeze_events` ladder, so no ladder was restored and a live freeze may restart from its first rung. Each is also logged at Error. Not alerted.
+
 ### `stellarindex_api_freeze_lookup_failures_total`
 
 Counter, no labels.
