@@ -260,7 +260,7 @@ func TestLatestAquariusReserves(t *testing.T) {
 		t.Fatalf("InsertAquariusLiquidity: %v", err)
 	}
 
-	// A pool last touched before the window: left out of the snapshot read, listed by the quiet-pool read.
+	// A pool last touched before the window: left out of the snapshot read (the pools == 1 check below).
 	const quietPool = "CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV"
 	if err := store.InsertAquariusReserves(ctx, timescale.AquariusReservesEvent{
 		ContractID:      quietPool,
@@ -273,14 +273,6 @@ func TestLatestAquariusReserves(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertAquariusReserves (quiet): %v", err)
 	}
-	quiet, err := store.QuietAquariusPools(ctx, 90)
-	if err != nil {
-		t.Fatalf("QuietAquariusPools: %v", err)
-	}
-	if len(quiet) != 1 || quiet[0] != quietPool {
-		t.Errorf("QuietAquariusPools = %v, want [%s] (the in-window pool must not be listed)", quiet, quietPool)
-	}
-
 	pools, err := store.LatestAquariusReserves(ctx, 90)
 	if err != nil {
 		t.Fatalf("LatestAquariusReserves: %v", err)

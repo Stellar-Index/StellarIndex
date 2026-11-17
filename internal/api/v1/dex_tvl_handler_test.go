@@ -34,7 +34,7 @@ func (s *countingAquariusReader) LatestAquariusReserves(context.Context, int) ([
 	return s.pools, s.err
 }
 
-func (s *countingAquariusReader) QuietAquariusPools(context.Context, int) ([]string, error) {
+func (s *countingAquariusReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
 	return nil, nil
 }
 
@@ -413,7 +413,7 @@ type togglingAquariusReader struct {
 	n atomic.Int64
 }
 
-func (*togglingAquariusReader) QuietAquariusPools(context.Context, int) ([]string, error) {
+func (*togglingAquariusReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
 	return nil, nil
 }
 

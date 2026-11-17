@@ -238,37 +238,6 @@ func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]A
 	return pools, nil
 }
 
-// QuietAquariusPools returns, sorted, every pool with a reserve snapshot whose latest one is at or before the trailing
-// windowDays: exactly the pools LatestAquariusReserves(ctx, windowDays) leaves out.
-func (s *Store) QuietAquariusPools(ctx context.Context, windowDays int) ([]string, error) {
-	if windowDays <= 0 {
-		windowDays = 90
-	}
-	const q = `
-		SELECT contract_id
-		  FROM aquarius_reserves
-		 GROUP BY contract_id
-		HAVING max(ledger_close_time) <= now() - $1::interval
-		 ORDER BY contract_id`
-	rows, err := s.db.QueryContext(ctx, q, fmt.Sprintf("%d days", windowDays))
-	if err != nil {
-		return nil, fmt.Errorf("timescale: QuietAquariusPools: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var pools []string
-	for rows.Next() {
-		var pool string
-		if err := rows.Scan(&pool); err != nil {
-			return nil, fmt.Errorf("timescale: QuietAquariusPools scan: %w", err)
-		}
-		pools = append(pools, pool)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: QuietAquariusPools rows: %w", err)
-	}
-	return pools, nil
-}
-
 // aquariusLatestReserveLegs reads each pool's latest update_reserves legs, grouped per pool and recency-first.
 // The hash aggregate on max(ledger) narrows DISTINCT ON to one ledger's rows; sorting the whole window took ~5.7 s on r1.
 // The result set is closed before returning so LatestAquariusReserves never holds two open cursors.

@@ -12,6 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -60,8 +61,8 @@ type SoroswapTVLReserveReader interface {
 // AquariusTVLReserveReader reads the latest post-state reserves per Aquarius pool (timescale.Store).
 type AquariusTVLReserveReader interface {
 	LatestAquariusReserves(ctx context.Context, windowDays int) ([]timescale.AquariusPoolReserve, error)
-	// QuietAquariusPools lists the pools whose latest snapshot falls outside the window, so they are counted, not dropped.
-	QuietAquariusPools(ctx context.Context, windowDays int) ([]string, error)
+	// ListProtocolContracts is the pool registry, so a registered pool the window read misses is counted, not dropped.
+	ListProtocolContracts(ctx context.Context, source string) ([]timescale.ProtocolContract, error)
 }
 
 // PhoenixTVLReserveReader reads current Phoenix pool reserves from lake storage; undecodable pools are counted, never guessed, and absent pools are "unavailable", NEVER zero TVL.
@@ -102,6 +103,9 @@ type DEXTVLSources struct {
 	SoroswapReserves SoroswapTVLReserveReader
 	// AquariusReserves is the served-tier latest-reserve-snapshot reader.
 	AquariusReserves AquariusTVLReserveReader
+	// AquariusPools is the in-code gated pool set (aquarius.MainnetGatedSet); with the live-registered
+	// protocol_contracts rows it is the pool registry, since the gate admits these without a row.
+	AquariusPools []string
 	// PhoenixPools is the curated pool set (ADR-0035) the lake lookup is scoped to. Stake
 	// contracts are excluded: they hold LP shares and would double-count the underlying.
 	PhoenixPools []string
@@ -449,7 +453,7 @@ func finishTVLProtocol(acc *tvlProtocolAccumulator) (*tvlProtocolResult, error) 
 }
 
 // refreshAquarius computes TVL from the latest per-pool POST-STATE reserves in the trailing window. A leg whose token address
-// never resolved is unpriceable and counts in UnpricedPools; a pool quiet for the whole window is counted unavailable_state.
+// never resolved is unpriceable and counts in UnpricedPools; a registered pool that read did not return is counted unavailable_state.
 // (nil, nil) when unwired.
 func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.AquariusReserves == nil {
@@ -462,7 +466,7 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 
 	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
 		fmt.Sprintf("sum of each pool's latest post-state reserve snapshot (aquarius_reserves, trailing %dd; "+
-			"a pool with no snapshot in that window is counted unpriced as unavailable_state; "+
+			"a registered pool with no snapshot in that window is counted unpriced as unavailable_state; "+
 			"token identities recovered by position from the pool's deposit/withdraw events, and a pool "+
 			"touched by more than one transaction in its latest ledger reads one of their post-states, "+
 			"not always the last), valued through the served USD price tiers%s",
@@ -475,12 +479,17 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 		}
 		acc.addPool(ctx, p.ContractID, p.Ledger, legs)
 	}
-	// Read after the window so a pool ageing out between the two reads lands in both (deduplicated), never in neither.
-	quiet, err := c.src.AquariusReserves.QuietAquariusPools(ctx, aquariusTVLWindowDays)
+	// Registry minus the pools read above, so a pool the window read missed for any reason is named, never dropped.
+	// AquariusPools is mainnet's, hence addUnavailable's no-observed-pool guard: a host without Aquarius data publishes no figure.
+	registered, err := c.src.AquariusReserves.ListProtocolContracts(ctx, aquarius.SourceName)
 	if err != nil {
-		return nil, fmt.Errorf("quiet pools: %w", err)
+		return nil, fmt.Errorf("pool registry: %w", err)
 	}
-	acc.addUnavailable(quiet)
+	ids := append([]string(nil), c.src.AquariusPools...)
+	for _, r := range registered {
+		ids = append(ids, r.ContractID)
+	}
+	acc.addUnavailable(ids)
 	return finishTVLProtocol(acc)
 }
 

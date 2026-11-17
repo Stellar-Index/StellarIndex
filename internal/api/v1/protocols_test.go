@@ -712,16 +712,20 @@ func TestHandleProtocolDetail_CacheKeyIncludesWindow(t *testing.T) {
 // ─── DEX TVL join ────────────────────────────────────────────────────
 
 type stubTVLAquariusReader struct {
-	pools []timescale.AquariusPoolReserve
-	quiet []string
+	pools      []timescale.AquariusPoolReserve
+	registered []string
 }
 
 func (s stubTVLAquariusReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	return s.pools, nil
 }
 
-func (s stubTVLAquariusReader) QuietAquariusPools(context.Context, int) ([]string, error) {
-	return s.quiet, nil
+func (s stubTVLAquariusReader) ListProtocolContracts(_ context.Context, source string) ([]timescale.ProtocolContract, error) {
+	out := make([]timescale.ProtocolContract, 0, len(s.registered))
+	for _, id := range s.registered {
+		out = append(out, timescale.ProtocolContract{Source: source, ContractID: id})
+	}
+	return out, nil
 }
 
 type stubTVLPricerT struct{}
@@ -801,17 +805,17 @@ func TestHandleProtocols_AquariusQuietPoolIsLowerBound(t *testing.T) {
 		},
 	}
 	for _, tc := range []struct {
-		name                      string
-		quiet                     []string
-		wantTotal, wantUnpriced   int
-		wantLowerBound, wantNamed bool
+		name                    string
+		registered              []string
+		wantTotal, wantUnpriced int
+		wantNamed               bool
 	}{
-		{name: "all pools read", wantTotal: 1, wantUnpriced: 0},
-		{name: "one pool quiet", quiet: []string{quietPool}, wantTotal: 2, wantUnpriced: 1, wantLowerBound: true, wantNamed: true},
+		{name: "all pools read", registered: []string{readPool.ContractID}, wantTotal: 1, wantUnpriced: 0},
+		{name: "one pool quiet", registered: []string{readPool.ContractID, quietPool}, wantTotal: 2, wantUnpriced: 1, wantNamed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
-				AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{readPool}, quiet: tc.quiet},
+				AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{readPool}, registered: tc.registered},
 				Pricer:           stubTVLPricerT{},
 			})
 			if err := cache.Refresh(context.Background()); err != nil {
@@ -831,12 +835,11 @@ func TestHandleProtocols_AquariusQuietPoolIsLowerBound(t *testing.T) {
 				t.Fatalf("aquarius tvl = %+v, want 10.00 with %d pools, 1 priced, %d unpriced",
 					aq.TVL, tc.wantTotal, tc.wantUnpriced)
 			}
-			// Unwired venues already make lower_bound true here, so unpriced_pools is the term this change moves.
+			// Unwired venues set lower_bound here regardless, so the aquarius-owned term is unpriced_pools; lower_bound from
+			// aquarius alone is pinned by TestDEXTVLCache_AquariusRegisteredPoolMissedByWindowReadIsUnavailable.
 			total := env.Data.TVLTotal
-			if total == nil || total.TVLUSD != "10.00" || total.UnpricedPools != tc.wantUnpriced ||
-				(tc.wantLowerBound && !total.LowerBound) {
-				t.Fatalf("tvl_total = %+v, want 10.00 with %d unpriced pools, lower_bound=%v",
-					total, tc.wantUnpriced, tc.wantLowerBound)
+			if total == nil || total.TVLUSD != "10.00" || total.UnpricedPools != tc.wantUnpriced {
+				t.Fatalf("tvl_total = %+v, want 10.00 with %d unpriced pools", total, tc.wantUnpriced)
 			}
 
 			var denv struct {

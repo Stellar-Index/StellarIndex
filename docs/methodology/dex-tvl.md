@@ -138,12 +138,13 @@ makes the served number smaller, never larger.
    Phoenix or Comet pool the lake holds no current state for is counted
    in `pools_total` and `unpriced_pools` with `excluded:
    unavailable_state`, so the figure is a lower bound. Aquarius is read
-   from reserve snapshots in the trailing 90 days: a pool whose latest
-   snapshot is older than that is not valued but is counted the same
-   way, in `pools_total` and `unpriced_pools` with `excluded:
-   unavailable_state`, so a long-quiet pool makes the figure and
-   `tvl_total` a lower bound. A failed read of the quiet-pool list fails
-   the Aquarius refresh exactly as a failed reserve read does.
+   from reserve snapshots in the trailing 90 days: a registered pool
+   (the in-code pool set plus every router-announced pool in
+   `protocol_contracts`) that read did not return is not valued but is
+   counted the same way, in `pools_total` and `unpriced_pools` with
+   `excluded: unavailable_state`, so a long-quiet pool makes the figure
+   and `tvl_total` a lower bound. A failed read of the pool registry
+   fails the Aquarius refresh exactly as a failed reserve read does.
 6. **Aquarius legs whose token address never resolved** are unpriceable
    (`update_reserves` carries positions, not addresses) and count their
    pool unpriced.
