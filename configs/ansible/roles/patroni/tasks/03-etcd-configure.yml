@@ -54,6 +54,91 @@
   no_log: true
   notify: "etcd config changed"
 
+# etcd reads ETCD_INITIAL_CLUSTER_STATE only on an empty data dir. "new" there
+# while a peer quorum exists bootstraps a fresh raft log under the member id the
+# survivors track, and the member panics; a replacement needs member add + existing.
+- name: assert etcd_initial_cluster_state is new or existing
+  assert:
+    that: etcd_initial_cluster_state in ['new', 'existing']
+    fail_msg: "etcd_initial_cluster_state must be new or existing; got {{ etcd_initial_cluster_state }}"
+
+- name: detect this host's etcd member data
+  stat:
+    path: "{{ etcd_data_dir }}/member"
+  register: _etcd_member_dir
+
+# rc 0: a peer has quorum. rc 1: every peer answered (or refused the connection,
+# i.e. runs no etcd yet) without quorum. rc 2: a peer could not be asked (TLS,
+# firewall, timeout), which must not be read as "no cluster".
+- name: ask the other members whether an etcd cluster already has quorum
+  shell:
+    cmd: |
+      unasked=""
+      ask() {
+        etcdctl --endpoints="$ep" --dial-timeout=3s --command-timeout=5s \
+          {% if etcd_tls_enabled %}--cacert={{ etcd_tls_dir }}/ca.pem --cert={{ etcd_tls_dir }}/server.pem --key={{ etcd_tls_dir }}/server-key.pem{% endif %} \
+          "$@" 2>&1 >/dev/null
+      }
+      for ep in {% for h in groups['postgres_cluster'] | difference([inventory_hostname]) %}{{ 'https' if etcd_tls_enabled else 'http' }}://{{ hostvars[h].ansible_host }}:{{ etcd_client_port }} {% endfor %}; do
+        # endpoint status is answered by the member alone, so it separates
+        # "reachable" from "has quorum" (endpoint health).
+        if err=$(ask endpoint status); then
+          if ask endpoint health >/dev/null; then
+            exit 0
+          fi
+        elif ! grep -qi 'connection refused' <<<"$err"; then
+          unasked="$unasked $ep: $(head -1 <<<"$err")"
+        fi
+      done
+      if [ -n "$unasked" ]; then
+        echo "could not ask:$unasked" >&2
+        exit 2
+      fi
+      exit 1
+    executable: /bin/bash
+  register: _etcd_peer_quorum
+  failed_when: false
+  changed_when: false
+  when:
+    - not _etcd_member_dir.stat.exists
+    - etcd_initial_cluster_state == 'new'
+
+- name: refuse to bootstrap a new etcd cluster without knowing whether one is live
+  fail:
+    msg: >-
+      {{ inventory_hostname }} has no etcd data and would start with
+      ETCD_INITIAL_CLUSTER_STATE=new, but a peer could not be asked whether it
+      already has quorum ({{ _etcd_peer_quorum.stderr | default('') }}). Fix the
+      TLS material or firewall and re-run, or, if you know no cluster is live or
+      this is a half-done first bootstrap, re-run with -e etcd_allow_new_bootstrap=true.
+  when:
+    - not _etcd_member_dir.stat.exists
+    - etcd_initial_cluster_state == 'new'
+    - (_etcd_peer_quorum.rc | default(1)) == 2
+    - not (etcd_allow_new_bootstrap | bool)
+
+- name: refuse to bootstrap a new etcd cluster beside a live one
+  fail:
+    msg: >-
+      {{ inventory_hostname }} has no etcd data and would start with
+      ETCD_INITIAL_CLUSTER_STATE=new, but
+      {{ 'another member already answers with quorum' if (_etcd_peer_quorum.rc | default(1)) == 0
+         else 'not every postgres_cluster host is in this play, so this is not a first bootstrap' }}.
+      If this host was replaced: on a surviving member run `etcdctl member remove <old-id>`
+      and `etcdctl member add {{ inventory_hostname }}
+      --peer-urls={{ 'https' if etcd_tls_enabled else 'http' }}://{{ ansible_host }}:{{ etcd_peer_port }}`,
+      then re-run with --limit {{ inventory_hostname }} -e etcd_initial_cluster_state=existing.
+      If instead this is a half-done first bootstrap (the others started from this
+      same initial cluster and token, and this listed member has never run etcd
+      and was never removed), it joins with state new: re-run with
+      -e etcd_allow_new_bootstrap=true.
+  when:
+    - not _etcd_member_dir.stat.exists
+    - etcd_initial_cluster_state == 'new'
+    - (_etcd_peer_quorum.rc | default(1)) == 0
+      or (groups['postgres_cluster'] | difference(ansible_play_hosts_all) | length) > 0
+    - not (etcd_allow_new_bootstrap | bool)
+
 - name: render /etc/default/etcd
   template:
     src: etcd.conf.j2

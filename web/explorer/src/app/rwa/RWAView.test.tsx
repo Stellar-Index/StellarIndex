@@ -1056,6 +1056,25 @@ describe('RWAView — the wider sector', () => {
     );
   });
 
+  it('says so on both tiles when the stablecoin listing flags a stale read', async () => {
+    apiGet.mockResolvedValue({
+      ...stablecoinPage([USDC]),
+      flags: { stale: true },
+    });
+    show(sectorView());
+
+    await screen.findByText('Combined');
+    expect(await screen.findAllByText(/May be out of date\./)).toHaveLength(2);
+  });
+
+  it('shows no stale note when the stablecoin listing is fresh', async () => {
+    apiGet.mockResolvedValue(stablecoinPage([USDC]));
+    show(sectorView());
+
+    await screen.findByText('Combined');
+    absent(/May be out of date\./);
+  });
+
   it('withholds the combined figure when the stablecoin arm fails', async () => {
     apiGet.mockRejectedValue(new Error('stablecoin catalogue unreachable'));
     show(sectorView());
@@ -1256,6 +1275,27 @@ describe('RWAView — curated arm', () => {
     // An empty "counted by the curator" cell would read as "counts nothing".
     absent('Counted by the curator, not verified here', 'No — curator only');
     expect(screen.queryByText('$4B', headline)).not.toBeInTheDocument();
+  });
+
+  it('marks the verified figure a floor and the gap a ceiling when the reference total is a floor', async () => {
+    const v = view({
+      curated: curated({
+        status: 'published_totals',
+        verified_value_usd: '345599978.73',
+        published: { ...PUBLISHED, gap_vs_verified_usd: '3659195881.27' },
+      }),
+    });
+    v.summary.reference_valuation = {
+      ...v.summary.reference_valuation!,
+      value_usd: '345599978.73',
+      lower_bound: true,
+    };
+    show(v);
+
+    await screen.findByText(/As a third-party curator counts it/);
+    expect(screen.getByText('≤ +$3.66B')).toBeInTheDocument();
+    expect(screen.getAllByText('≥ $345.6M').length).toBeGreaterThan(0);
+    present(/including members this index holds but could not value/);
   });
 
   it('renders no curated panel when the deployment has no curated reader', async () => {

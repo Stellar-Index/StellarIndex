@@ -253,6 +253,10 @@ ls -la /var/lib/node_exporter/textfile_collector/                         # 0-by
 
 Fix: partial write: remove the file, the next run regenerates it; bad syntax: fix the writer and check with `scripts/ci/lint_textfile_exposition.py`. Owning unit: `scripts/ci/textfile-producers.manifest`. Verify the gauge returns to 0. 
 
+## stellarindex_census_rollup_timer_stale
+
+Ticket. `time() - node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"} > 7200`, `for: 15m`. The 30-minute contracts-census rollup stopped being triggered, so `/v1/contracts/stats` serves `active_90d` as a stale lower bound. A failing run is caught by `stellarindex_systemd_unit_failed`, not this alert. Check `systemctl status census-rollup.timer census-rollup.service` and `systemctl list-timers census-rollup.timer`; re-enable with `systemctl enable --now census-rollup.timer` if it is inactive.
+
 ## stellarindex_keepalived_textfile_stale
 
 Ticket. `time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/keepalived.prom"} > 600`, `for: 5m`. A dead scraper freezes `stellarindex_keepalived_active` / `stellarindex_haproxy_vip_owner`. Producer: `keepalived-textfile-scraper.timer` (30 s) running `/usr/local/bin/keepalived-textfile-scraper` (`configs/ansible/roles/haproxy/tasks/07-monitoring.yml`).

@@ -7,12 +7,29 @@
     daemon_reload: yes
   listen: "prometheus config changed"
 
+# SIGHUP re-reads prometheus.yml and rules only. Command-line flags
+# (retention, --web.config.file) live in the unit and need a restart.
+- name: restart prometheus
+  systemd:
+    name: prometheus
+    state: restarted
+    daemon_reload: yes
+  listen: "prometheus unit changed"
+
 - name: reload alertmanager
   systemd:
     name: alertmanager
     state: reloaded
     daemon_reload: yes
   listen: "alertmanager config changed"
+
+# Flags (--web.config.file, cluster peers) live in the unit; SIGHUP skips them.
+- name: restart alertmanager
+  systemd:
+    name: alertmanager
+    state: restarted
+    daemon_reload: yes
+  listen: "alertmanager unit changed"
 
 - name: reload firewall
   systemd:

@@ -8829,7 +8829,7 @@ export interface components {
             /** @default false */
             single_source: boolean;
             /**
-             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap or /v1/twap (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap, /v1/twap or /v1/ohlc (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
              * @default false
              */
             thin_market: boolean;
@@ -12157,7 +12157,7 @@ export interface components {
             market_cap_usd?: string | null;
             /** @description max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
             fdv_usd?: string | null;
-            /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Two independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present. */
+            /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Three independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). SUBSTANCE (catalogue rows of the unified and class-scoped listings): the row's Stellar twin's on-chain price was withheld by the thin-market substance gate, so no on-chain price backs a cap, while price_usd is the global-tier price. Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present. */
             market_cap_low_liquidity?: boolean;
             /** @description Listing rows only. True when market_cap_usd was built on a circulating supply that is a provable floor (`supply_basis` is a trustline or held-balance sum, which leaves out liquidity-pool reserves and claimable balances), so the cap is a lower bound, not a total. Absent when the supply is a full reading. The detail route builds no cap on a held-balance floor. */
             market_cap_lower_bound?: boolean;
@@ -13276,6 +13276,8 @@ export interface components {
             data: components["schemas"]["AggregatorRow"][];
         };
         OHLCBar: {
+            /** @description The substance measurement behind a `flags.thin_market` bar. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /**
              * Format: date-time
              * @description Inclusive lower bound of the bar window. Like VWAPResult.from,
@@ -13343,6 +13345,14 @@ export interface components {
              *     than the one requested.
              */
             clamped: boolean;
+            /**
+             * @description True when no trade in the window cleared the $0.01 notional
+             *     floor, or its USD value is not yet known: the prices then
+             *     come from dust trades. When false, open/high/low/close come
+             *     only from trades that cleared the floor; volumes and
+             *     `trade_count` always cover every trade.
+             */
+            below_floor: boolean;
         };
         OHLCEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["OHLCBar"];
@@ -13420,9 +13430,19 @@ export interface components {
              *     the first served bar's `t`.
              */
             truncated?: boolean;
+            /**
+             * @description Present and `true` when no trade in the bar cleared the
+             *     $0.01 notional floor: its o/h/l/c then come from dust
+             *     trades. Omitted otherwise, and then the prices come only
+             *     from trades that cleared the floor (a fiat-quoted bar
+             *     combining several markets prices from those that did).
+             */
+            below_floor?: boolean;
         };
         /** @description Multi-bar OHLC series response. */
         OHLCSeriesResponse: {
+            /** @description The substance measurement behind a `flags.thin_market` series. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /** @description Canonical base asset id. */
             base: string;
             /** @description Canonical quote asset id. */

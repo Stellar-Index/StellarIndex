@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -117,11 +118,15 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 		count, err := s.rosterCountErr(rctx, meta)
 
 		s.protocolRosterCache.mu.Lock()
+		_, stale := s.protocolRosterCache.entries[key]
 		if err == nil {
 			s.protocolRosterCache.entries[key] = rosterEntry{count: count, at: time.Now()}
 		}
 		s.protocolRosterCache.mu.Unlock()
 
+		if err != nil && stale {
+			obs.APICacheOpsTotal.WithLabelValues("protocol_roster", "count", "refresh_error").Inc()
+		}
 		if err != nil && s.logger != nil {
 			s.logger.Warn("protocol roster refresh failed", "source", meta.Name, "err", err)
 		}

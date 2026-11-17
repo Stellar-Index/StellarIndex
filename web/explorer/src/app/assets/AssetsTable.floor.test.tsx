@@ -33,7 +33,7 @@ const assets: Coin[] = [
     circulating_supply: '50000000000000',
     supply_basis: 'classic_trustline_sum',
   }),
-  // Catalogue rows carry the flag but no supply_basis.
+  // A row with the cap flag and no supply_basis: the flag alone marks it.
   coin('FLAGGED', {
     price_usd: '1.00',
     market_cap_usd: '3000000.00',

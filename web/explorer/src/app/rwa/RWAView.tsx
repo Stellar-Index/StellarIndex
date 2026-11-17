@@ -397,6 +397,7 @@ export function RWAView() {
     // the same and settles within a request — what must not happen is a
     // total published from an arm that has not answered.
     available: !stablecoins.isError && stablecoins.data != null,
+    stale: stablecoins.data?.flags?.stale === true,
     ...stableSum,
   };
 
@@ -546,6 +547,7 @@ export function RWAView() {
           <CuratedPanel
             curated={data.curated}
             rows={data.curated_assets ?? []}
+            verifiedFloor={summary.reference_valuation?.lower_bound === true}
           />
         </div>
       )}
@@ -585,12 +587,17 @@ export function RWAView() {
 function CuratedPanel({
   curated,
   rows,
+  verifiedFloor,
 }: {
   curated?: Schemas['RWACuratedSummary'];
   rows: RWAAsset[];
+  /** The verified figure repeats the reference total, which may be a floor. */
+  verifiedFloor: boolean;
 }) {
   if (!curated || curated.status === 'unwired') return null;
-  const verified = usd(curated.verified_value_usd);
+  const verifiedUsd = usd(curated.verified_value_usd);
+  const verified =
+    verifiedUsd != null && verifiedFloor ? `≥ ${verifiedUsd}` : verifiedUsd;
   const additional = usd(curated.additional_value_usd);
   const combined = usd(curated.combined_value_usd);
   const published = curated.published;
@@ -609,7 +616,11 @@ function CuratedPanel({
       ) : (
         <>
           {published && (
-            <PublishedTotals published={published} verified={verified} />
+            <PublishedTotals
+              published={published}
+              verified={verified}
+              verifiedFloor={verifiedFloor}
+            />
           )}
           {curated.status === 'served' && (
             <div
@@ -732,12 +743,16 @@ function CuratedPanel({
 function PublishedTotals({
   published,
   verified,
+  verifiedFloor,
 }: {
   published: Schemas['RWACuratedPublished'];
   verified: string | null;
+  verifiedFloor: boolean;
 }) {
   const total = usd(published.total_usd);
-  const gap = signedUsd(published.gap_vs_verified_usd);
+  const gapUsd = signedUsd(published.gap_vs_verified_usd);
+  // A floor under "verified" makes the gap a ceiling.
+  const gap = gapUsd != null && verifiedFloor ? `≤ ${gapUsd}` : gapUsd;
   return (
     <>
       <div className="grid gap-4 sm:grid-cols-3">
@@ -773,6 +788,8 @@ function PublishedTotals({
           </div>
           <div className="text-ink-muted mt-0.5 text-xs">
             what the curator counts that this index cannot verify
+            {verifiedFloor &&
+              ', including members this index holds but could not value'}
           </div>
         </StatCell>
       </div>
@@ -1374,7 +1391,18 @@ export type StablecoinTotals = {
    * combined tile was built to avoid.
    */
   listingPriced: number;
+  /** The listing envelope flagged a read past its freshness limit. */
+  stale?: boolean;
 };
+
+function StaleNote() {
+  return (
+    <p className="text-ink-muted mt-2 text-xs">
+      <strong className="text-ink">May be out of date.</strong> The stablecoin
+      catalogue reports a read past its freshness limit behind this figure.
+    </p>
+  );
+}
 
 /**
  * The sector strip: stablecoins, and the two arms added.
@@ -1465,6 +1493,7 @@ function SectorTotals({
             the asset pages serve them, over the issuer-bound identities in the
             served catalogue — never over a token code, which anyone can mint.
           </details>
+          {stableTotal != null && stable.stale && <StaleNote />}
           {stable.listingPriced > 0 && (
             <details className="text-ink-muted mt-2 text-xs">
               <summary className="cursor-pointer">
@@ -1502,6 +1531,7 @@ function SectorTotals({
                 : 'Real-world assets plus stablecoins'
             }
           />
+          {combined != null && stable.stale && <StaleNote />}
           <details className="text-ink-muted mt-2 text-xs">
             <summary className="cursor-pointer">How Combined is built</summary>
             {stable.listingPriced > 0 ? (

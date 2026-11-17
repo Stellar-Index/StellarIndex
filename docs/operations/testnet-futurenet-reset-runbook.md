@@ -45,6 +45,9 @@ A partial wipe strands watermarks/CAGGs and re-stalls.
 - MinIO: empty `galexie-live` and `galexie-archive`.
 - Watermarks to genesis: `stellar.cap67_movements_watermark`, the SEP-41 supply
   watermark, the ingestion cursor.
+- The ledger-hash baseline: `rm -f /var/lib/stellarindex/hashdb.bin` (the indexer's
+  `hashdb.path`). Its records are keyed by sequence alone, so the old cycle's file
+  reads every new-cycle ledger as drift and refuses to record it.
 
 Cleanest: re-provision the VM (`configs/libvirt/provision-vms.sh` for that
 domain, or `virsh snapshot-revert` to a bare post-install snapshot). That wipes

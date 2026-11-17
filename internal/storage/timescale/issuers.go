@@ -438,9 +438,12 @@ func (s *Store) writeIssuerHomeDomain(ctx context.Context, op, gStrkey, homeDoma
 
 // sep1ResetOnHomeDomainChange is the SET list every writer of issuers.home_domain appends (newHD is the assigned expression; SET reads the
 // PRE-update row). sep1_payload records no source domain, so it must be cleared, with resolved_at and the retry ladder, or the new domain
-// inherits the old one's claim.
+// inherits the old one's claim. The cleared payload moves to sep1_payload_previous (an earlier one survives further moves) so the
+// new domain's first fetch is still diffed into issuer_identity_history.
 func sep1ResetOnHomeDomainChange(newHD string) string {
 	return strings.ReplaceAll(`
+               sep1_payload_previous     = CASE WHEN @changed THEN COALESCE(sep1_payload, sep1_payload_previous)
+                                                ELSE sep1_payload_previous END,
                sep1_payload              = CASE WHEN @changed THEN NULL ELSE sep1_payload END,
                sep1_resolved_at          = CASE WHEN @changed THEN NULL ELSE sep1_resolved_at END,
                sep1_payload_fetched_at   = CASE WHEN @changed THEN NULL ELSE sep1_payload_fetched_at END,
@@ -466,17 +469,21 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom s
 		}
 	}()
 
-	// Locks the row so the diff and the overwrite see the same held payload.
-	var held []byte
+	// Locks the row so the diff and the overwrite see the same held payload. With none held, a home_domain change parked the
+	// payload last served in sep1_payload_previous; diffing against it keeps a domain move from erasing the identity change.
+	var held, previous []byte
 	err = tx.QueryRowContext(ctx, `
-        SELECT sep1_payload FROM issuers
+        SELECT sep1_payload, sep1_payload_previous FROM issuers
          WHERE g_strkey = $1 AND home_domain = $2
-           FOR UPDATE`, gStrkey, fetchedFrom).Scan(&held)
+           FOR UPDATE`, gStrkey, fetchedFrom).Scan(&held, &previous)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("timescale: SetIssuerSep1Payload read held: %w", err)
+	}
+	if len(held) == 0 {
+		held = previous
 	}
 	changes, err := sep1IdentityChanges(held, payload)
 	if err != nil {
@@ -486,6 +493,7 @@ func (s *Store) SetIssuerSep1Payload(ctx context.Context, gStrkey, fetchedFrom s
 	const q = `
         UPDATE issuers
            SET sep1_payload              = $2::jsonb,
+               sep1_payload_previous     = NULL,
                sep1_resolved_at          = NOW(),
                sep1_payload_fetched_at   = NOW(),
                sep1_consecutive_failures = 0,

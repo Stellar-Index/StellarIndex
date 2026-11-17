@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowDownUp, BadgeCheck, ChevronDown, Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
+import { thinMarketNote } from '@/components/ThinMarketBadge';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
@@ -12,17 +13,25 @@ import {
   useVerifiedIndex,
   coinSlug,
   isVerifiedCoin,
+  isStellarAssetId,
 } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
   formatRelative,
   formatSubunitPrice,
+  positiveDecimal,
   truncateMiddle,
 } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
 import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
+
+import {
+  THIN_MARKET_CAPTION,
+  useResolvedAssetPrice,
+  type PriceProvenance,
+} from './LiveAssetPrice';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -34,7 +43,7 @@ import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
  *
  * Conversion is pure client-side maths through each token's USD price:
  * amount(out) = amount(in) × usdPrice(in) / usdPrice(out). The page asset's
- * price is the LIVE prop (refreshes with the parent); every other token
+ * price is the headline's live resolution (useResolvedAssetPrice); every other token
  * carries its snapshot USD price from the catalogue / forex batch, which is
  * exactly the freshness the old converter used. A forex-batch leg says so:
  * the batch's `price_type` and `observed_at` ride with the rate and are
@@ -74,6 +83,8 @@ export interface SwapToken {
   collision?: boolean;
   /** Issuer or contract address, the only thing that tells same-code rows apart. */
   issuer?: string | null;
+  /** The price comes from a market below the substance floor. */
+  thin?: boolean;
 }
 
 /** assetIssuer — the G…/C… address in a canonical asset id, if it has one. */
@@ -278,6 +289,7 @@ function swapBasisNote(tokens: SwapToken[]): string | null {
   for (const t of tokens) {
     if (t.usdPrice == null) continue;
     const bits: string[] = [];
+    if (t.thin) bits.push(THIN_MARKET_CAPTION);
     if (t.basis === 'peg') {
       bits.push('declared 1:1 peg, not an observed market rate');
     }
@@ -300,15 +312,28 @@ export function AssetSwap({
   symbol,
   assetId,
   image,
-  priceUSD,
+  priceUSD: bakedPriceUSD,
+  priceProvenance = null,
+  priceStale,
 }: {
   symbol: string;
   assetId: string;
   image?: string | null;
-  priceUSD: number | null;
+  /** Build-time seed (wire decimal string); the live price replaces it. */
+  priceUSD: string | null;
+  priceProvenance?: PriceProvenance;
+  priceStale?: boolean;
 }) {
-  // The page asset is the default "pay" leg; USD is the default "receive"
-  // leg. The page asset's price is kept live off the prop.
+  // The headline's own resolution: polled live, blanked when withheld.
+  const resolved = useResolvedAssetPrice(
+    assetId,
+    bakedPriceUSD,
+    priceProvenance,
+    priceStale,
+  );
+  const livePrice = resolved.withheld ? null : positiveDecimal(resolved.price);
+  const priceUSD = livePrice != null ? Number(livePrice) : null;
+  // The page asset is the default "pay" leg; USD is the default "receive" leg.
   const pageToken = useMemo<SwapToken>(
     () => ({
       key: assetId,
@@ -354,18 +379,23 @@ export function AssetSwap({
   const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
   // What the legs' USD prices actually are, for the legs whose price
   // came with a declared basis and an observation time.
+  const fromThin = resolved.thin && fromToken.key === pageToken.key;
+  const toThin = resolved.thin && toToken.key === pageToken.key;
+  const thinShown = (fromThin && pFrom != null) || (toThin && pTo != null);
   const basisNote = swapBasisNote([
     {
       ...fromToken,
       usdPrice: pFrom,
       basis: fromRate.basis,
       observedAt: fromRate.observedAt,
+      thin: fromThin,
     },
     {
       ...toToken,
       usdPrice: pTo,
       basis: toRate.basis,
       observedAt: toRate.observedAt,
+      thin: toThin,
     },
   ]);
 
@@ -466,6 +496,11 @@ export function AssetSwap({
       </div>
       {basisNote != null && (
         <p className="text-ink-muted mt-3 text-xs">{basisNote}</p>
+      )}
+      {thinShown && (
+        <p className="text-warn-700 mt-1 text-xs">
+          {thinMarketNote(resolved.poll.substance)}
+        </p>
       )}
     </Panel>
   );
@@ -638,24 +673,40 @@ function TokenPicker({
     const rows = coins.data?.coins ?? [];
     return (
       rows
-        .map((c): SwapToken => {
+        .flatMap((c): SwapToken[] => {
+          // A catalogue row's asset_id is its slug, which /v1/price/batch
+          // rejects; price it as this network's verified issuance instead.
+          // A crypto ticker with no issuance on this network (BTC, ETH) is
+          // priced by its ADR-0014 cross-venue id; never an issued asset's code.
+          const key =
+            c.asset_id && isStellarAssetId(c.asset_id)
+              ? c.asset_id
+              : (verified?.issuanceBySlug?.get((c.slug ?? '').toLowerCase()) ??
+                (verified != null && c.class === 'crypto' && c.code
+                  ? `crypto:${c.code}`
+                  : undefined));
+          // The page asset is offered only at its live price (pageMatch): its
+          // listing snapshot must not stand in once the headline withdraws it.
+          if (!key || key === pageToken.key) return [];
           const price = c.price_usd != null ? Number(c.price_usd) : null;
-          return {
-            key: c.asset_id ?? c.slug,
-            symbol: c.code ?? coinSlug(c),
-            name: c.name,
-            image: c.image,
-            usdPrice: price != null && price > 0 ? price : null,
-            kind: 'crypto',
-            collision: c.unverified_ticker_collision ?? false,
-            verified: isVerifiedCoin(c, verified),
-            issuer: assetIssuer(c.asset_id ?? ''),
-          };
+          return [
+            {
+              key,
+              symbol: c.code ?? coinSlug(c),
+              name: c.name,
+              image: c.image,
+              usdPrice: price != null && price > 0 ? price : null,
+              kind: 'crypto',
+              collision: c.unverified_ticker_collision ?? false,
+              verified: isVerifiedCoin(c, verified),
+              issuer: assetIssuer(key),
+            },
+          ];
         })
         // Only offer legs we can actually price.
         .filter((t) => t.usdPrice != null)
     );
-  }, [coins.data, verified]);
+  }, [coins.data, verified, pageToken.key]);
 
   const q = debounced.toLowerCase();
   const fiatMatches = useMemo(
@@ -798,8 +849,7 @@ function TokenPicker({
 
 /**
  * useLegRate — the live USD price for one converter leg. The page-asset
- * leg is priced off the live `priceUSD` prop (already refreshing with the
- * page); every other leg would otherwise freeze at its pick-time snapshot from
+ * leg is priced off the page's live resolved price; every other leg would otherwise freeze at its pick-time snapshot from
  * the picker's `topCoins`/`searchedCoins` read, with no
  * refetch and no way to tell the number on screen had gone stale.
  * Re-fetches that leg's own price on the same 60s cadence as

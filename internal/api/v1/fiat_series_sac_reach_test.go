@@ -556,8 +556,11 @@ func TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed(t *testing.T) {
 		t.Fatalf("NewPair pool: %v", err)
 	}
 	t0 := fiatParityBucketStart()
+	bookTrade := fiatParityTrade(bookPair, 1, t0.Add(90*time.Second), 1000_0000000, 200_0000000)
+	bookTrade.ClearsNotionalFloor = true
 	reader := &fiatConstituentReader{tradesByPair: map[string][]canonical.Trade{
-		fiatParityPairKey(bookPair): {fiatParityTrade(bookPair, 1, t0.Add(90*time.Second), 1000, 200)},
+		// 200 USDC: the book print clears the notional floor, so it answers its minute
+		fiatParityPairKey(bookPair): {bookTrade},
 		// same minute as the book's print, 4x the price
 		fiatParityPairKey(poolPair): {fiatParityTrade(poolPair, 2, t0.Add(100*time.Second), 500, 400)},
 	}}
@@ -582,7 +585,7 @@ func TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed(t *testing.T) {
 		t.Errorf("high = %q, want 0.2000000000 — a pool print set the high of a bucket the book answered",
 			env.Data.High)
 	}
-	if env.Data.BaseVolume != "1000" {
-		t.Errorf("base_volume = %q, want 1000", env.Data.BaseVolume)
+	if env.Data.BaseVolume != "10000000000" {
+		t.Errorf("base_volume = %q, want 10000000000", env.Data.BaseVolume)
 	}
 }

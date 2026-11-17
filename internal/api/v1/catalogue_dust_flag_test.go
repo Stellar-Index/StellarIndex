@@ -69,3 +69,32 @@ func TestCatalogueTwinDustFlagPropagates(t *testing.T) {
 		t.Errorf("suppressed cap must stay null on the listing row, got %q", *page[0].MarketCapUSD)
 	}
 }
+
+// TestCatalogueTwinSubstanceWithheldKeepsSupplyAndFlagsCap: when the twin's on-chain price fails the substance gate on
+// measured evidence, the catalogue row still serves its global-tier price, so it must keep the twin's supply and say the
+// null cap was suppressed, not unknown.
+func TestCatalogueTwinSubstanceWithheldKeepsSupplyAndFlagsCap(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Options: Options{
+		AssetsReader:       &dustTwinAssets{},
+		VerifiedCurrencies: cat,
+		Substance:          &stubListingGate{allow: map[string]bool{}}, // every pair measured below the floor
+	}}
+	globalPrice := "1.00"
+	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc", PriceUSD: &globalPrice}}
+
+	s.fillCatalogueStatsForPage(context.Background(), page, assetListFilters{})
+
+	if page[0].CirculatingSupply == nil || *page[0].CirculatingSupply != "100000000000000000" {
+		t.Errorf("circulating_supply = %v, want the twin's observed 100000000000000000", page[0].CirculatingSupply)
+	}
+	if page[0].MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %q, want null: no on-chain price backs it", *page[0].MarketCapUSD)
+	}
+	if !page[0].MarketCapLowLiquidity {
+		t.Error("market_cap_low_liquidity = false, want true: a null cap beside a price and a supply must carry its reason")
+	}
+}

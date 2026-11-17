@@ -20,10 +20,18 @@ const CONTRACT = /^C[A-Z2-7]{55}$/;
  */
 export function sacRedirectHref(
   slug: string,
-  resolvedSlug: string | null | undefined,
+  resolved:
+    | { slug?: string | null; code?: string | null; asset_id?: string | null }
+    | null
+    | undefined,
 ): string | null {
-  if (!CONTRACT.test(slug) || !resolvedSlug || resolvedSlug === slug) {
-    return null;
-  }
-  return `/assets/${encodeURIComponent(resolvedSlug)}/`;
+  if (!CONTRACT.test(slug) || !resolved) return null;
+  // The server fills a missing slug with the bare code, which routes to whichever asset owns that
+  // ticker; a look-alike's SAC must land on its own (code, issuer) page.
+  const target =
+    resolved.slug && resolved.slug !== resolved.code
+      ? resolved.slug
+      : resolved.asset_id;
+  if (!target || target === slug) return null;
+  return `/assets/${encodeURIComponent(target)}/`;
 }

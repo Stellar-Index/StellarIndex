@@ -37,6 +37,10 @@ type OHLCSeriesBar struct {
 	// reads as a fill-derived VWAP) and lets a caller combining bars across markets lift them to a
 	// common scale first ([Server.ohlcSeriesFiatCombined], [annotateOHLCSeriesBarScale]).
 	Sources []string `json:"sources,omitempty"`
+
+	// BelowFloor marks a bar no trade of which cleared the $0.01 notional floor (its prices are the CAGG's unfloored fallback);
+	// [ohlcBucketAcc] lets it set no price and answer no bucket beside a floored bar.
+	BelowFloor bool `json:"below_floor,omitempty"`
 }
 
 // OHLCSeriesResponse is the CG-parity series envelope for /v1/ohlc?interval=..., distinct from the single-bar [OHLCBar] response.
@@ -47,6 +51,8 @@ type OHLCSeriesResponse struct {
 	From      WireTime        `json:"from"`
 	To        WireTime        `json:"to"`
 	Intervals []OHLCSeriesBar `json:"intervals"`
+	// Substance: see [VWAPResult.Substance].
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // ohlcSeriesDefaultLimit / ohlcSeriesMaxLimit bound the bar count of one /v1/ohlc?interval=
@@ -229,6 +235,10 @@ func (s *Server) handleOHLCSeries(
 	// classic/SAC form or a stablecoin backer); a fiat series served by a directly-quoted market is
 	// not triangulated just because the quote is fiat.
 	flags := Flags{Triangulated: proxied}
+	if len(bars) > 0 {
+		resp.Substance = s.thinMarketEvidence(r.Context(), pair.Base, pair.Quote, "ohlc")
+		flags.ThinMarket = resp.Substance != nil
+	}
 	// An empty series is ambiguous ("quiet market" and "before anything held" are the same bytes),
 	// and `to` is exclusive, so a window ending at or before the floor is provably the second
 	// reading. The floor covers what ohlcSeriesWithAliases read: the pair, or a fiat quote's whole

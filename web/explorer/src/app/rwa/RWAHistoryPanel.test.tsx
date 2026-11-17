@@ -171,6 +171,17 @@ describe('RWAHistoryPanel', () => {
       /across the window/,
     ],
     [
+      'withholds the change when equal counts at both ends may be different assets',
+      view({
+        points: [
+          point({ value_usd: '900000000.00', assets_valued: 3 }),
+          point({ t: DAY2, value_usd: '445000000.00', assets_valued: 3 }),
+        ],
+      }),
+      [/No change figure/, /may be sums over different sets/],
+      /across the window/,
+    ],
+    [
       'says so plainly when the whole set was valued',
       view({
         assets: 6,

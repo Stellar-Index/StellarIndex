@@ -34,6 +34,8 @@ export type PriceProvenance =
   | 'transitive'
   | null;
 
+export const THIN_MARKET_CAPTION = 'thin market · low confidence · in no total';
+
 /** A tip tick is "live" while fresher than this (producer window is
  * 5s; 30s of silence = wedged stream or backgrounded tab). */
 const TIP_LIVE_STALE_MS = 30_000;
@@ -89,12 +91,24 @@ export function LiveAssetPrice({
    */
   initialChangePct?: number | null;
 }) {
-  // The 60s poll loop is usePricePoll; this component only maps provenance/captions.
-  const poll = usePricePoll({
-    asset: assetID,
+  const {
+    poll,
+    derived,
+    withheld,
+    thin,
+    seed,
+    price,
+    live,
+    stale,
+    provenance,
+    bakedDerived,
+    fromAssets,
+  } = useResolvedAssetPrice(
+    assetID,
     initialPrice,
-    includeThin: true,
-  });
+    initialProvenance,
+    initialStale,
+  );
   // Same live feed ChangeSummaryStrip renders below (identical query key,
   // so TanStack Query serves both from one in-flight request) — never a
   // second, independently-computed 24h figure beside it. Falls back to
@@ -105,60 +119,6 @@ export function LiveAssetPrice({
   const liveChangePct =
     unwrapChangeSummary(changeSummary.data)?.h24_delta_pct ?? null;
   const changePct = liveChangePct ?? initialChangePct ?? null;
-  // Declared-peg exception to the withheld-replaces-baked rule: for a
-  // peg-basis row the /v1/price withheld verdict is EXPECTED — the
-  // server refuses the (dust-authored) MARKET price while the assets
-  // surface serves the operator-declared peg basis, which is not a
-  // market claim and therefore not the "lower-trust snapshot" the rule
-  // exists to purge. Keep the peg price + its honest caption instead
-  // of blanking it on every poll.
-  //
-  // 'transitive' joins the exception for the same reason, one step
-  // further out: /v1/price answers for DIRECT markets only, so for a
-  // two-hop asset it returns no price at all (measured on CAUP7:
-  // /v1/price → price:null while /v1/assets → 7768.93, basis
-  // "transitive"). A withheld verdict there is a statement about the
-  // direct market the server refused to aggregate — it says nothing
-  // about the two-hop route, whose own legs were substance-gated
-  // before /v1/assets would serve it. Blanking the route price on
-  // that verdict would delete a gated price because a DIFFERENT,
-  // ungated one was correctly refused.
-  // 'global_market' is filled exactly when the Stellar market was refused,
-  // so the withheld verdict is expected there too.
-  const derived =
-    initialProvenance === 'global_market' ||
-    initialProvenance === 'declared_peg' ||
-    initialProvenance === 'transitive';
-  // A thin market price must not displace a derived one either: the derived
-  // price exists because that market was refused.
-  const refused = poll.withheld || (poll.thin && derived);
-  const withheld = poll.withheld && !derived;
-  const thin = poll.thin && !derived;
-  const seed = positiveDecimal(initialPrice);
-  // /v1/price has nothing to say about a derived price, so the baked one is
-  // re-read from /v1/assets/{id}; until that answers it is captioned as baked.
-  const detail = useAsset(derived ? assetID : undefined);
-  const detailRow = detail.data?.data;
-  const fromAssets = derived && (!poll.polled || refused);
-  const reread = fromAssets && detailRow != null;
-  const bakedDerived = fromAssets && detailRow == null;
-  const detailPrice = positiveDecimal(detailRow?.price_usd);
-  const price = reread ? detailPrice : fromAssets ? seed : poll.price;
-  const live = poll.polled;
-  const stale = reread
-    ? Boolean(detail.data?.flags?.stale)
-    : poll.polled
-      ? poll.stale || poll.unrefreshed
-      : Boolean(initialStale);
-  const provenance: PriceProvenance = reread
-    ? detailPrice != null
-      ? provenanceFromBasis(detailRow.price_basis, 'listing')
-      : null
-    : poll.polled && !refused
-      ? poll.triangulated
-        ? 'triangulated'
-        : 'vwap1m'
-      : initialProvenance;
 
   // Tip stream. Disabled once the server says withheld (its own pre-flight
   // would keep 404ing anyway). We ALSO hold it closed at mount for assets whose
@@ -225,7 +185,7 @@ export function LiveAssetPrice({
           (poll.withheldDetail ?? poll.withheldTitle ?? 'price withheld')}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
         {!withheld && tipActive && caveat && ` · ${caveat}`}
-        {thin && shown != null && 'thin market · low confidence · in no total'}
+        {thin && shown != null && THIN_MARKET_CAPTION}
         {!withheld &&
           !thin &&
           !tipActive &&
@@ -285,4 +245,89 @@ export function LiveAssetPrice({
       )}
     </>
   );
+}
+
+/**
+ * The page asset's current USD price: the baked seed, replaced by the 60s
+ * poll, blanked by a withheld verdict. Every widget on the page that needs
+ * "the price now" reads this, so none can keep showing a baked or refused one.
+ */
+export function useResolvedAssetPrice(
+  assetID: string,
+  initialPrice: string | null,
+  initialProvenance: PriceProvenance,
+  initialStale?: boolean,
+) {
+  const poll = usePricePoll({
+    asset: assetID,
+    initialPrice,
+    includeThin: true,
+  });
+  // Declared-peg exception to the withheld-replaces-baked rule: for a
+  // peg-basis row the /v1/price withheld verdict is EXPECTED — the
+  // server refuses the (dust-authored) MARKET price while the assets
+  // surface serves the operator-declared peg basis, which is not a
+  // market claim and therefore not the "lower-trust snapshot" the rule
+  // exists to purge. Keep the peg price + its honest caption instead
+  // of blanking it on every poll.
+  //
+  // 'transitive' joins the exception for the same reason, one step
+  // further out: /v1/price answers for DIRECT markets only, so for a
+  // two-hop asset it returns no price at all (measured on CAUP7:
+  // /v1/price → price:null while /v1/assets → 7768.93, basis
+  // "transitive"). A withheld verdict there is a statement about the
+  // direct market the server refused to aggregate — it says nothing
+  // about the two-hop route, whose own legs were substance-gated
+  // before /v1/assets would serve it. Blanking the route price on
+  // that verdict would delete a gated price because a DIFFERENT,
+  // ungated one was correctly refused.
+  // 'global_market' is filled exactly when the Stellar market was refused,
+  // so the withheld verdict is expected there too.
+  const derived =
+    initialProvenance === 'global_market' ||
+    initialProvenance === 'declared_peg' ||
+    initialProvenance === 'transitive';
+  // A thin market price must not displace a derived one either: the derived
+  // price exists because that market was refused.
+  const refused = poll.withheld || (poll.thin && derived);
+  const withheld = poll.withheld && !derived;
+  const thin = poll.thin && !derived;
+  const seed = positiveDecimal(initialPrice);
+  // /v1/price has nothing to say about a derived price, so the baked one is
+  // re-read from /v1/assets/{id}; until that answers it is captioned as baked.
+  const detail = useAsset(derived ? assetID : undefined);
+  const detailRow = detail.data?.data;
+  const fromAssets = derived && (!poll.polled || refused);
+  const reread = fromAssets && detailRow != null;
+  const bakedDerived = fromAssets && detailRow == null;
+  const detailPrice = positiveDecimal(detailRow?.price_usd);
+  const price = reread ? detailPrice : fromAssets ? seed : poll.price;
+  const live = poll.polled;
+  const stale = reread
+    ? Boolean(detail.data?.flags?.stale)
+    : poll.polled
+      ? poll.stale || poll.unrefreshed
+      : Boolean(initialStale);
+  const provenance: PriceProvenance = reread
+    ? detailPrice != null
+      ? provenanceFromBasis(detailRow.price_basis, 'listing')
+      : null
+    : poll.polled && !refused
+      ? poll.triangulated
+        ? 'triangulated'
+        : 'vwap1m'
+      : initialProvenance;
+  return {
+    poll,
+    derived,
+    withheld,
+    thin,
+    seed,
+    price,
+    live,
+    stale,
+    provenance,
+    bakedDerived,
+    fromAssets,
+  };
 }

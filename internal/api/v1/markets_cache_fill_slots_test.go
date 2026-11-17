@@ -114,6 +114,58 @@ func TestCachedMarketsReader_ColdKeysCannotStarveRefresh(t *testing.T) {
 	}
 }
 
+// The DEX-wide head page with no entry (every key after a restart) must still fill while client keys hold every shared slot, and a
+// flood of client keys must not evict it back into that state. A per-source head is client-chosen and must not take a reserved slot.
+func TestCachedMarketsReader_ColdHeadPageFillsWhenSharedSlotsAreHeld(t *testing.T) {
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}}
+	c := NewCachedMarketsReader(up, time.Minute)
+	f := timescale.PoolsFilter{}
+	order := timescale.MarketsOrderVolume24hDesc
+	for range marketsFillSlots {
+		c.fills <- struct{}{}
+	}
+
+	perSource := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+	if _, _, err := c.AllPools(context.Background(), perSource, "", 50, order); !errors.Is(err, errMarketsFillBusy) {
+		t.Fatalf("cold per-source head read with the shared pool full: err = %v, want errMarketsFillBusy", err)
+	}
+	if _, _, _, _, err := c.SourceMarketsAt(context.Background(), "aquarius", "", marketsHeadLimit, order); !errors.Is(err, errMarketsFillBusy) {
+		t.Fatalf("cold ?source= markets head with the shared pool full: err = %v, want errMarketsFillBusy", err)
+	}
+	if got := len(c.refreshes); got != 0 {
+		t.Fatalf("per-source heads took %d reserved slots, want 0", got)
+	}
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("cold DEX-wide head read with the shared pool full: %v", err)
+	}
+	if _, _, _, _, err := c.DistinctPairsExtAt(context.Background(), "", 50, order); err != nil {
+		t.Fatalf("cold DEX-wide pairs head read with the shared pool full: %v", err)
+	}
+	if _, _, err := c.AllPools(context.Background(), f, "cursor-x", 50, order); !errors.Is(err, errMarketsFillBusy) {
+		t.Fatalf("cold client-key read with the shared pool full: err = %v, want errMarketsFillBusy", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return len(c.refreshes) == 0 }) {
+		t.Fatal("head cold fill did not return its reserved slot")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range marketsCacheMaxEntries {
+		evictOldestMarketsEntry(c.entries)
+		c.entries[fmt.Sprintf("client-%d", i)] = &marketsCacheEntry{at: time.Now().Add(time.Hour)}
+	}
+	heads := 0
+	for _, e := range c.entries {
+		if e.head {
+			heads++
+		}
+	}
+	if heads != 2 {
+		t.Fatalf("head entries left after %d newer client fills: %d, want the 2 DEX-wide heads", marketsCacheMaxEntries, heads)
+	}
+}
+
 // TestCachedMarketsReader_StaleClientKeysCannotHoldTheRefreshSlots: a caller can mint any number of cursor keys, let them
 // expire and re-read them. Their refreshes must queue on the cold-fill pool, leaving every head refresh slot free.
 func TestCachedMarketsReader_StaleClientKeysCannotHoldTheRefreshSlots(t *testing.T) {

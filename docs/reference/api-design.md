@@ -152,7 +152,7 @@ The dashboard surface (`/v1/dashboard/keys*`, `/v1/dashboard/account`,
   session-scoped read is always "now"; sources is always empty;
   there are no triangulation / freeze flags to carry.
 - **Distinct authentication path.** Dashboard endpoints require
-  the session cookie (`re_dash_session`); public API endpoints
+  the session cookie (`__Host-stellarindex_session`); public API endpoints
   use API keys or anonymous. Clients of the two surfaces are
   different products (the dashboard React app vs SDKs / curl).
 
@@ -370,7 +370,6 @@ the table in the API spec. Invalid combinations → 400 with
 | Method | Path | Purpose | Req |
 | ------ | ---- | ------- | --- |
 | GET | `/v1/price/stream` | SSE channel per asset. | S5.3 |
-| GET | `/v1/trades/stream` | Raw trade firehose (authenticated only). | — |
 
 Event shape on `/v1/price/stream`:
 
@@ -437,8 +436,14 @@ API keys are:
 - Stored in Redis under a SHA-256-derived key; the plaintext itself is
   not recoverable from the stored record.
 - Prefixed `sip_` (Stellar Index Pricing key) for reverse-grep.
-- Scopes are reserved in the record model, but scope enforcement is not
-  wired on runtime endpoints in this snapshot.
+- Per-key policy is enforced by `middleware.KeyPolicy`
+  (`internal/api/v1/middleware/keypolicy.go`) after authentication and
+  before rate limiting. Scopes bind route families (`auth.RequiredScope`),
+  permissions bind endpoints within them, and an empty list is
+  unrestricted. A key may also carry an IP allowlist and a Referer
+  allowlist; the Referer allowlist is advisory, since the client sets the
+  header. Denials are 403 with slug `scope-denied`, `permission-denied`,
+  `ip-not-allowed` or `referer-not-allowed`.
 
 SEP-10 (Stellar keypair auth) is implemented — challenge, signature
 verification, replay guard and JWT issuance all ship in the binary —
@@ -588,9 +593,10 @@ Cursor-based, opaque to the client.
 
 - Request: `?cursor=<opaque>&limit=<1..500>`.
 - Response envelope: `pagination.next` (null if no more results).
-- Cursor encodes `(primary_sort_field, primary_key)` signed by an
-  HMAC over a server-only secret; prevents clients from mutating
-  the cursor to skip ahead.
+- A cursor is an unsigned keyset position (its encoding differs per
+  endpoint). The server validates its shape but not its origin, so a
+  hand-built cursor is equivalent to passing the matching filter
+  parameters; never treat one as proof of a server-issued position.
 
 Default `limit=100`; hard max `limit=500`.
 

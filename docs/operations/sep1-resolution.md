@@ -149,7 +149,10 @@ domain among many live ones does not trip it.
 Every successful write diffs the held payload against the new one and appends
 a row to `issuer_identity_history` (migration 0190) for each changed
 `OrgName`, `ORG_URL`, `ORG_LOGO` or currency `Image` on an issuer that already
-had a payload. Nothing alerts on those rows yet.
+had a payload. A `home_domain` change clears the payload but parks it in
+`sep1_payload_previous` (migration 0229), so the new domain's first fetch is
+diffed against the payload last served, however many moves came between.
+Nothing alerts on those rows yet.
 
 ## References
 

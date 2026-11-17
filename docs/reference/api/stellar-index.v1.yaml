@@ -18283,8 +18283,8 @@ components:
           description: >-
             True when the request opted in with `include_thin=true` and a
             served price comes from a market below the substance floor, or
-            when /v1/vwap or /v1/twap (which serve such a market by default)
-            computed from one. Key any low-confidence marker on this flag,
+            when /v1/vwap, /v1/twap or /v1/ohlc (which serve such a market by
+            default) computed from one. Key any low-confidence marker on this flag,
             never on `confidence`.
         diverged:
           type: boolean
@@ -22266,7 +22266,7 @@ components:
         change_24h_pct:     { type: [string, "null"], description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no comparison bucket ~24h ago." }
         market_cap_usd:     { type: [string, "null"], description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
         fdv_usd:            { type: [string, "null"], description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
-        market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Two independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present." }
+        market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Three independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). SUBSTANCE (catalogue rows of the unified and class-scoped listings): the row's Stellar twin's on-chain price was withheld by the thin-market substance gate, so no on-chain price backs a cap, while price_usd is the global-tier price. Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present." }
         market_cap_lower_bound: { type: boolean, description: "Listing rows only. True when market_cap_usd was built on a circulating supply that is a provable floor (`supply_basis` is a trustline or held-balance sum, which leaves out liquidity-pool reserves and claimable balances), so the cap is a lower bound, not a total. Absent when the supply is a full reading. The detail route builds no cap on a held-balance floor." }
         market_cap_decimals_mismatch: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex.md#dex-nonstandard-decimals). Omitted when the resolvers agree." }
         global_market:      { $ref: "#/components/schemas/AssetGlobalMarket" }
@@ -23522,6 +23522,10 @@ components:
     OHLCBar:
       type: object
       properties:
+        substance:
+          description: "The substance measurement behind a `flags.thin_market` bar."
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
         from:
           type: string
           format: date-time
@@ -23587,7 +23591,15 @@ components:
             bucket (or in the future) and was pulled back to the last
             closed boundary per ADR-0015 — the served `to` is earlier
             than the one requested.
-      required: [from, to, open, high, low, close, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, truncated, clamped]
+        below_floor:
+          type: boolean
+          description: |
+            True when no trade in the window cleared the $0.01 notional
+            floor, or its USD value is not yet known: the prices then
+            come from dust trades. When false, open/high/low/close come
+            only from trades that cleared the floor; volumes and
+            `trade_count` always cover every trade.
+      required: [from, to, open, high, low, close, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, truncated, clamped, below_floor]
 
     OHLCEnvelope:
       allOf:
@@ -23662,12 +23674,24 @@ components:
             was dropped, including when the window held exactly `limit`
             buckets. To read the dropped part, re-ask with `to` set to
             the first served bar's `t`.
+        below_floor:
+          type: boolean
+          description: |
+            Present and `true` when no trade in the bar cleared the
+            $0.01 notional floor: its o/h/l/c then come from dust
+            trades. Omitted otherwise, and then the prices come only
+            from trades that cleared the floor (a fiat-quoted bar
+            combining several markets prices from those that did).
       required: [t, o, h, l, c, v_base, v_quote, v_base_decimals, v_quote_decimals, n]
 
     OHLCSeriesResponse:
       type: object
       description: Multi-bar OHLC series response.
       properties:
+        substance:
+          description: "The substance measurement behind a `flags.thin_market` series."
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
         base:     { type: string, description: "Canonical base asset id." }
         quote:    { type: string, description: "Canonical quote asset id." }
         interval: { type: string, enum: [1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d, 3d, 1w, 2w, 1mo] }

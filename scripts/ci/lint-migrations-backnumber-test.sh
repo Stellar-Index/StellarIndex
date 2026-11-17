@@ -220,5 +220,29 @@ git -C "$TMP" rm -q migrations/0006_late.up.sql migrations/0006_late.down.sql
 commit "deleted"
 expect_fail "a deleted migration is fatal" "0006_late.down.sql: a migration present at the comparison base is deleted"
 
+# The register row goes too, as it would in a real cleanup, so only the
+# loaded-version check can catch cases 8 and 9.
+drop_register_row() {
+  grep -v "^| $1 |" "$TMP/migrations/README.md" >"$TMP/README.tmp"
+  mv "$TMP/README.tmp" "$TMP/migrations/README.md"
+}
+
+# ─── case 8: moved into a subdirectory, byte-identical — FATAL ───
+git -C "$TMP" reset -q --hard "$base2_sha"
+mkdir -p "$TMP/migrations/archive"
+git -C "$TMP" mv migrations/0006_late.up.sql migrations/archive/0006_late.up.sql
+git -C "$TMP" mv migrations/0006_late.down.sql migrations/archive/0006_late.down.sql
+drop_register_row 0006
+commit "archived"
+expect_fail "a shipped migration moved into a subdirectory is fatal" "migration 6 (up) loads at the comparison base but not here"
+
+# ─── case 9: renamed off the .up suffix, byte-identical — FATAL ───
+git -C "$TMP" reset -q --hard "$base2_sha"
+git -C "$TMP" mv migrations/0006_late.up.sql migrations/0006_late.sql
+git -C "$TMP" mv migrations/0006_late.down.sql migrations/0006_late_down.sql
+drop_register_row 0006
+commit "suffix dropped"
+expect_fail "a shipped migration renamed off its .up suffix is fatal" "migration 6 (up) loads at the comparison base but not here"
+
 echo "lint-migrations-backnumber-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

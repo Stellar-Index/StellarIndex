@@ -4,17 +4,46 @@
     src: loki.service.j2
     dest: /etc/systemd/system/loki.service
     mode: "0644"
+  register: _loki_unit
   notify: "loki config changed"
 
 - name: daemon-reload systemd
   systemd:
     daemon_reload: yes
 
+# Without both keys Loki starts and answers /ready, then every chunk
+# flush to MinIO fails. Only the key names are checked, never the values.
+- name: assert /etc/default/loki carries the S3 credentials
+  shell: >-
+    grep -Eq '^AWS_ACCESS_KEY_ID=.+' /etc/default/loki &&
+    grep -Eq '^AWS_SECRET_ACCESS_KEY=.+' /etc/default/loki
+  register: _loki_creds_probe
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: refuse to start loki without S3 credentials
+  assert:
+    that:
+      - _loki_creds_probe.rc == 0
+    fail_msg: >-
+      /etc/default/loki must define AWS_ACCESS_KEY_ID and
+      AWS_SECRET_ACCESS_KEY (MinIO credentials) before loki starts;
+      otherwise chunk flushes fail while /ready still answers 200.
+
 - name: enable + start loki
   systemd:
     name: loki
     enabled: yes
     state: started
+
+# Restart here, not via flush_handlers (which would also fire other roles'
+# pending handlers), so the /ready wait below checks the new process.
+- name: restart loki now when its config or unit changed
+  systemd:
+    name: loki
+    state: restarted
+  when: _loki_config is changed or _loki_unit is changed
 
 - name: wait for loki to answer /ready
   uri:

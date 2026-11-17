@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 304 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 306 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -388,6 +388,7 @@ Per [ADR-0027](../adr/0027-lcm-cache-tiering.md). R1 reads each LCM from the loc
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_ledgerstream_tier_both_missing` | `increase(ledgerstream_tier_read_total{outcome="both_missing"}[5m])` | > 0, `for: 0m` | page | [ledgerstream-tier-both-missing](runbooks/ingestion.md#stellarindex_ledgerstream_tier_both_missing) |
+| `stellarindex_ledgerstream_cold_degraded` | `ledgerstream_stream_path_total{path="cold_degraded"}` (indexer only; clears on a restart with fixed config) | > 0, `for: 0m` | ticket | [ledgerstream-cold-degraded](runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded) |
 
 `both_missing` is the cold-tier failure ADR-0027 plans for; the runbook walks rehydrate-from-peer and disable-trim-timer.
 
@@ -474,7 +475,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_explorer_exact_fallback_sustained` | `rate(explorer_exact_fallback_total[30m])` per read | > 0.05/s for 1h: page reads re-run as the exact O(history) query | ticket | [explorer-exact-fallback](runbooks/api.md#stellarindex_explorer_exact_fallback_sustained) |
 | `stellarindex_derived_index_watermark_missing` | `min(derived_index_watermark_ledger)` per index | == 0 for 30 min: no completeness watermark, gated reads serve their fallback | ticket | [derived-index-watermark-missing](runbooks/api.md#stellarindex_derived_index_watermark_missing) |
 | `stellarindex_protocol_events_rollup_failing` | `rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | ticket | [protocol-events-rollup-failing](runbooks/aggregator.md#stellarindex_protocol_events_rollup_failing) |
-| `stellarindex_asset_volume_rollup_failing` | `rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | ticket | [asset-volume-rollup-failing](runbooks/aggregator.md#stellarindex_asset_volume_rollup_failing) |
+| `stellarindex_asset_volume_rollup_failing` | `increase(stellarindex_asset_volume_rollup_sweeps_total{outcome="ok"}[10m])` | < 1 for ≥ 5 min | ticket | [asset-volume-rollup-failing](runbooks/aggregator.md#stellarindex_asset_volume_rollup_failing) |
 | `stellarindex_asset_character_rollup_failing` | `asset_character_rollup_sweeps_total{outcome="refresh_error"}` over 13 h with no `ok` sweep | 5 min | ticket | [asset-character-rollup-failing](runbooks/aggregator.md#stellarindex_asset_character_rollup_failing) |
 | `stellarindex_nonstandard_decimals_correction_failing` | `increase()[15m]` of `nonstandard_decimals_cache_refresh_failures_total`, `price_serve_declined_nonstandard_decimals_total`, `nonstandard_decimals_lockstep_mismatch_total` | > 0 for 5 min. Lockstep per `{site, asset}`: `guard_reconcile` = row repaired against the lake; `asset_detail` = market cap refused, resolvers disagree | ticket | [dex-nonstandard-decimals](runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing) |
 | `stellarindex_nonstandard_decimals_partial_alias_family` | `increase()[15m]` of `nonstandard_decimals_partial_alias_family_total` | > 0 for 5 min. One spelling of an asset is flagged non-7-decimal and another is not | ticket | [aggregator](runbooks/aggregator.md#stellarindex_nonstandard_decimals_partial_alias_family) |
@@ -516,7 +517,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_login_code_guessing` | `increase(login_code_failures_total{outcome}[1h])` | any `lockout_engaged`, or > 50 `wrong_code`, for 5 min (email-code guessing, which `failed_auth_total` never sees) | ticket | [login-code-guessing](runbooks/api.md#stellarindex_login_code_guessing) |
 | `stellarindex_registration_table_growing` | `accounts_rows` now minus its lowest non-zero value in 6 h | > 500 for 30 min (open registration leaves permanent rows and live keys) | ticket | [registration-table-growing](runbooks/api.md#stellarindex_registration_table_growing) |
 | `stellarindex_registration_budget_exhausted` | `increase(registrations_total{outcome="budget_exhausted"}[15m])` | > 0, `for: 0m` (the hourly all-caller cap on `/v1/register` is spent) | ticket | [registration-budget-exhausted](runbooks/api.md#stellarindex_registration_budget_exhausted) |
-| `stellarindex_retention_reaper_failing` | `increase(retention_reaper_errors_total[3h])` by reaper | > 0 for 2 h (a failed sweep still counts as a run for the liveness alert) | ticket | [retention-reaper-failing](runbooks/api.md#stellarindex_retention_reaper_failing) |
+| `stellarindex_retention_reaper_failing` | `increase(retention_reaper_errors_total[3h])` by reaper, plus the `magic_link` / `login_code` sweep error counters | > 0 for 2 h (a failed sweep still counts as a run for the liveness alert) | ticket | [retention-reaper-failing](runbooks/api.md#stellarindex_retention_reaper_failing) |
 | `stellarindex_pricingguard_failing_open` | `increase(pricingguard_trailing_fetch_failed_total[30m])` by path | > 0 for 15 min (prices served without the manipulation band) | ticket | [pricingguard-failing-open](runbooks/api.md#stellarindex_pricingguard_failing_open) |
 | `stellarindex_auth_reaper_stalled` | `time() - auth_reaper_last_sweep_unix` per reaper | > 3x `auth_reaper_interval_seconds`, 15 min (rows gauge frozen) | ticket | [auth-reaper-stalled](runbooks/api.md#stellarindex_auth_reaper_stalled) |
 | `stellarindex_tls_cert_expiring_soon` | `stellarindex_tls_cert_not_after_unix - time()` per host | < 14 days for ≥ 1 h | ticket | [tls-cert-expiring-soon](runbooks/api.md#stellarindex_tls_cert_expiring_soon) |
@@ -550,6 +551,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_host_down` | `up` for any host | == 0 for > 2 min | ticket | [infra](runbooks/infra.md#stellarindex_host_down) |
 | `stellarindex_keepalived_textfile_stale` | `node_textfile_mtime_seconds{file="keepalived.prom"}` age | > 10 min, 5 min | ticket | [infra](runbooks/infra.md#stellarindex_keepalived_textfile_stale) |
+| `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age | > 2 h, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
 | `stellarindex_host_cpu_high` | 100 - avg idle CPU `[5m]` | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_cpu_high) |
 | `stellarindex_host_memory_high` | used / total memory | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_memory_high) |
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_degraded) |
