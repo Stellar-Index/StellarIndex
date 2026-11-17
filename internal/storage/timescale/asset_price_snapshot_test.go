@@ -100,7 +100,7 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 		}
 		for _, want := range []string{
 			fold(c.joins),
-			"AND (ax.vwap IS NULL OR direct.bucket >= vs_xlm.bucket)",
+			fold(priceArmPickExpr),
 		} {
 			if !strings.Contains(sql, want) {
 				t.Errorf("%s: missing the shared arm pick %.80q", name, want)

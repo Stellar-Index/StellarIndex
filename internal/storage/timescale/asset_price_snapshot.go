@@ -28,13 +28,14 @@ import (
 const assetPriceSnapshotMaxAge = "15 minutes"
 
 // priceArmPickExpr names the pricing arm: 'native' (xlm_usd anchor), 'direct' (USD-proxy market) or 'xlm' (XLM market via anchor `ax`
-// at its own minute). The newer observation wins (fixed order would serve a days-old USD print as current); ties go direct. No anchor
-// within [xlmUSDAnchorMaxAge] means the xlm arm cannot price.
+// at its own minute). An arm whose minute cleared the $0.01 notional floor beats one that did not, whatever their age (a sub-cent
+// print costs nothing to place); between arms of equal floor status the newer observation wins and ties go direct. No anchor within
+// [xlmUSDAnchorMaxAge] means the xlm arm cannot price.
 const priceArmPickExpr = `CASE
 		      WHEN ca.asset_id = 'native'
 		        THEN CASE WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL THEN 'native' END
 		      WHEN direct.vwap IS NOT NULL
-		           AND (ax.vwap IS NULL OR direct.bucket >= vs_xlm.bucket)
+		           AND (ax.vwap IS NULL OR (direct.floored, direct.bucket) >= (vs_xlm.floored, vs_xlm.bucket))
 		        THEN 'direct'
 		      WHEN ax.vwap IS NOT NULL
 		        THEN 'xlm'
@@ -81,15 +82,18 @@ const snapshotPriceUSDExpr = `CASE pick.arm
 
 // priceChangePctExpr is the unrounded change over lookback ("1h", "24h", "7d"), both legs through the arm that priced the asset
 // (mixing arms would compare against a possibly stale "now"); NULL when that arm has no lookback row. Also NULL unless the lookback
-// minute is strictly older than the headline minute: the headline may fall back days to a floored trade, the lookback does not.
+// minute is strictly older than the headline minute: the headline may fall back days to a floored trade, the lookback does not. NULL
+// too when the headline cleared the notional floor and the lookback did not: a sub-cent minute is no baseline for a real price.
 func priceChangePctExpr(lookback string) string {
 	return fmt.Sprintf(`CASE pick.arm
 		      WHEN 'native' THEN CASE WHEN (SELECT vwap FROM xlm_usd_%[1]s) > 0
 		          AND (SELECT bucket FROM xlm_usd_%[1]s) < (SELECT bucket FROM xlm_usd)
 		        THEN ((SELECT vwap FROM xlm_usd) / (SELECT vwap FROM xlm_usd_%[1]s) - 1) * 100 END
 		      WHEN 'direct' THEN CASE WHEN direct_%[1]s.vwap > 0 AND direct_%[1]s.bucket < direct.bucket
+		          AND (direct_%[1]s.floored OR NOT direct.floored)
 		        THEN (direct.vwap / direct_%[1]s.vwap - 1) * 100 END
 		      WHEN 'xlm' THEN CASE WHEN vs_xlm_%[1]s.vwap > 0 AND ax_%[1]s.vwap > 0 AND vs_xlm_%[1]s.bucket < vs_xlm.bucket
+		          AND (vs_xlm_%[1]s.floored OR NOT vs_xlm.floored)
 		        THEN ((vs_xlm.vwap * ax.vwap)
 		            / (vs_xlm_%[1]s.vwap * ax_%[1]s.vwap) - 1) * 100 END
 		    END`, lookback)
@@ -133,7 +137,7 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 	}
 	return fmt.Sprintf(`
 		%[1]s_rows AS (
-		  SELECT asset_id, bucket, asset_leg, quote_leg, sources
+		  SELECT asset_id, bucket, asset_leg, quote_leg, sources, floored
 		    FROM (
 		      -- vwap carries no notional floor, so prefer the newest minute holding a trade over $0.01 and fall back to the newest
 		      -- minute only when the window has none; within the chosen minute a sub-cent direction is dropped too.
@@ -159,9 +163,10 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		   WHERE bucket = newest AND (floored OR NOT any_floored)
 		),
 		%[1]s AS (
-		  SELECT v.asset_id, v.bucket, v.vwap, s.source_count
+		  SELECT v.asset_id, v.bucket, v.vwap, v.floored, s.source_count
 		    FROM (SELECT asset_id, max(bucket) AS bucket,
-		                 sum(quote_leg) / sum(asset_leg) AS vwap
+		                 sum(quote_leg) / sum(asset_leg) AS vwap,
+		                 bool_or(floored) AS floored
 		            FROM %[1]s_rows
 		           GROUP BY asset_id) v
 		    LEFT JOIN (SELECT asset_id, count(DISTINCT src)::int AS source_count
