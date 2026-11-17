@@ -1902,6 +1902,11 @@ jobs:
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
       - name: validate rules
         run: make monitoring-check
+      - name: prometheus HA render test
+        # Lives in this job because it needs promtool. Renders prometheus.yml.j2
+        # for an HA pair: replica label dropped from alerts, client basic_auth
+        # present when hashes are set, Loki target.
+        run: ./scripts/ci/prometheus-ha-render-test.sh
       - name: install amtool
         run: |
           # SHA-verified install, same shape as promtool above.
@@ -2229,11 +2234,6 @@ jobs:
         # not listen on. Jinja only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/loki-push-target-test.sh
-      - name: prometheus HA render test
-        # Renders prometheus.yml.j2 for an HA pair: replica label dropped from
-        # alerts, client basic_auth present when hashes are set, Loki target.
-        if: needs.preflight.outputs.ansible == 'true'
-        run: ./scripts/ci/prometheus-ha-render-test.sh
       - name: HA roles self-test (patroni, redis-sentinel, loki defaults and templates)
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-ha-roles-test.sh
