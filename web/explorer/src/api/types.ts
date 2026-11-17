@@ -3819,10 +3819,11 @@ export interface paths {
          *     silently dropped.
          *
          *     The floor measures substance, not price, so the price is held
-         *     to the served-price band as well. A day whose price falls
-         *     outside the band around the market's own days of the preceding
-         *     30 (around the published value when there is none) is counted
-         *     in `market_withheld_days` too.
+         *     to a band as well. A day whose price is more than three times,
+         *     or less than a third of, the published value (that day's, or
+         *     the newest of the preceding 30 days) is counted in
+         *     `market_withheld_days` too. The published value is the only
+         *     centre: no run of earlier market days can move it.
          *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a
@@ -9448,7 +9449,7 @@ export interface components {
             /**
              * @description Days inside the window that carried observed trades which did
              *     NOT clear the thin-market floor, or whose price fell
-             *     outside the served-price band. Served because "we saw
+             *     outside the band around the published value. Served because "we saw
              *     trades and refused to price them" and "there were no trades"
              *     are opposite findings that an absent point renders
              *     identically.
@@ -10692,8 +10693,8 @@ export interface components {
              *     report the issuer's own claim as a market finding.
              *     `reference_not_positive` — the oracle published a
              *     non-positive value; nothing is divided by it.
-             *     `market_outside_band` — the market price is more than ten
-             *     times, or less than a tenth of, the oracle's value: the band
+             *     `market_outside_band` — the market price is more than three
+             *     times, or less than a third of, the oracle's value: the band
              *     `/v1/rwa/premium` refuses a day by, so the two surfaces never
              *     disagree on one print. The row and its reference are still
              *     published.

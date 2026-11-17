@@ -12,7 +12,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
-	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -132,7 +131,7 @@ type RWAPremiumSeries struct {
 	// observed on is ABSENT.
 	Points []RWAPremiumHistoryPoint `json:"points"`
 	// MarketWithheldDays is how many days carried observed trades that did NOT clear the day
-	// floor or were priced outside the served-price band of the market's own recent days; "saw trades, refused to price them" and "no trades" are opposite findings that an
+	// floor or were priced outside the band around the published value ([rwaPremiumWithinReference]); "saw trades, refused to price them" and "no trades" are opposite findings that an
 	// absent point renders identically.
 	MarketWithheldDays int `json:"market_withheld_days,omitempty"`
 	// ReferenceOnlyDays is how many days carried a published NAV and no market at all, the ordinary
@@ -183,7 +182,7 @@ const (
 	// thin-market floor, so no day may carry an aggregated price claim.
 	RWAPremiumExcludedMarketBelowFloor = "market_below_floor"
 	// RWAPremiumExcludedMarketOutsideBand — at least one day cleared the floor, and every such day was priced outside
-	// the served-price band, so no day may carry a premium.
+	// the band around the published value, so no day may carry a premium.
 	RWAPremiumExcludedMarketOutsideBand = "market_outside_band"
 	// RWAPremiumExcludedNoOverlap — both legs exist and never on the same day. A ratio needs one
 	// clock; interpolating either side onto the other's days is the fabrication this surface refuses.
@@ -725,16 +724,15 @@ func rwaPremiumJoin(
 		// per the reference-only bound below.
 		return out
 	}
-	var baseline rwaPremiumBaseline
 	refDays := rwaPremiumRefDays(ref)
 	for _, d := range market {
 		if !rwaPremiumDayClears(d, floor) {
 			out.withheld = append(out.withheld, d.Day)
 			continue
 		}
-		baseline.expire(d.Day)
 		price, priced := new(big.Rat).SetString(d.VWAP)
-		if priced && baseline.offMarket(d.Day, price, rwaPremiumAnchor(ref, refDays, d.Day)) {
+		anchor := rwaPremiumAnchor(ref, refDays, d.Day)
+		if priced && anchor != nil && anchor.Sign() > 0 && !rwaPremiumWithinReference(price, anchor) {
 			out.withheld = append(out.withheld, d.Day)
 			out.offBand++
 			continue
@@ -758,112 +756,8 @@ func rwaPremiumJoin(
 	return out
 }
 
-// rwaPremiumTrailingDays is how many earlier accepted days a day's price is judged against.
-const rwaPremiumTrailingDays = 14
-
-// rwaPremiumTrailingMaxAge is how old an earlier day may be and still count toward that baseline.
+// rwaPremiumTrailingMaxAge is how old an earlier published value may be and still anchor a day with none of its own.
 const rwaPremiumTrailingMaxAge = 30 * 24 * time.Hour
-
-// rwaPremiumRecentreDays is the least number of refused days, agreeing with each other, that make a repricing the new centre.
-const rwaPremiumRecentreDays = 5
-
-// rwaPremiumBaseline is what a day's market price is judged against ([rwaPremiumBaseline.offMarket]). Both lists are
-// newest first.
-type rwaPremiumBaseline struct {
-	accepted, refused         []*big.Rat
-	acceptedDays, refusedDays []time.Time
-}
-
-// expire drops days past the age bound: a market that last traded long ago says little about today's price.
-func (b *rwaPremiumBaseline) expire(day time.Time) {
-	fresh := func(days []time.Time) int {
-		n := len(days)
-		for n > 0 && day.Sub(days[n-1]) > rwaPremiumTrailingMaxAge {
-			n--
-		}
-		return n
-	}
-	n := fresh(b.acceptedDays)
-	b.accepted, b.acceptedDays = b.accepted[:n], b.acceptedDays[:n]
-	n = fresh(b.refusedDays)
-	b.refused, b.refusedDays = b.refused[:n], b.refusedDays[:n]
-}
-
-// offMarket judges a day's price with the served-price band ([robuststat.GuardServedVWAP]), so a day the floor let through
-// cannot publish a premium the live price path would refuse, and records the day. The published-value check is
-// [robuststat.WithinPublishedBand], the one /v1/rwa/assets applies, so the two surfaces refuse the same prints.
-//
-// The centre is the days ACCEPTED before it. A refused day never joins it: otherwise a refused print is the next day's
-// only baseline and the same print publishes a day later. At any history depth the price must sit inside the band around
-// the published value (`anchor`) alone; a day outside it is refused and joins neither list, so neither accepted days nor
-// a repricing can carry the centre away from it. While fewer than [robuststat.GuardMinSamples] days are accepted the anchor
-// also joins the centre. A market that moves and stays is refused until [rwaPremiumBaseline.repriced], then those days
-// become the centre. A day with nothing to be judged against is accepted and joins neither list.
-func (b *rwaPremiumBaseline) offMarket(day time.Time, price, anchor *big.Rat) bool {
-	centre := b.accepted
-	if anchor != nil && anchor.Sign() > 0 {
-		if !robuststat.WithinPublishedBand(price, anchor) {
-			return true
-		}
-		if len(centre) < robuststat.GuardMinSamples {
-			centre = append(append(make([]*big.Rat, 0, len(centre)+1), centre...), anchor)
-		}
-	}
-	accept, _ := robuststat.GuardServedVWAP(price, centre)
-	if !accept && b.repriced(price) {
-		n := b.recentreRun()
-		b.accepted, b.acceptedDays = b.refused[:n], b.refusedDays[:n]
-		b.refused, b.refusedDays = nil, nil
-		accept = true
-	}
-	switch {
-	case price.Sign() <= 0:
-	case !accept:
-		b.refused, b.refusedDays = rwaPremiumPush(b.refused, b.refusedDays, price, day)
-	case len(centre) > 0:
-		b.accepted, b.acceptedDays = rwaPremiumPush(b.accepted, b.acceptedDays, price, day)
-	}
-	return !accept
-}
-
-// recentreRun is how many refused days a repricing needs: at least as many as the accepted days they replace.
-func (b *rwaPremiumBaseline) recentreRun() int {
-	return max(rwaPremiumRecentreDays, len(b.accepted))
-}
-
-// repriced reports whether the newest [rwaPremiumBaseline.recentreRun] refused days and `price` together span no more
-// than the served guard's tight [robuststat.GuardRatioBound], without the dispersion band that widens with the very
-// spread being measured. An older stray refused day is not in the run. An accepted day in between does not reset
-// it: a market that reprices with the odd print at the old level is still a repricing.
-func (b *rwaPremiumBaseline) repriced(price *big.Rat) bool {
-	n := b.recentreRun()
-	if len(b.refused) < n || price.Sign() <= 0 {
-		return false
-	}
-	lo, hi := price, price
-	for _, v := range b.refused[:n] {
-		if v.Sign() <= 0 {
-			return false
-		}
-		if v.Cmp(lo) < 0 {
-			lo = v
-		}
-		if v.Cmp(hi) > 0 {
-			hi = v
-		}
-	}
-	return new(big.Rat).Quo(hi, lo).Cmp(robuststat.GuardRatioBound) <= 0
-}
-
-// rwaPremiumPush prepends a day to a newest-first list, capped at [rwaPremiumTrailingDays].
-func rwaPremiumPush(vals []*big.Rat, days []time.Time, price *big.Rat, day time.Time) ([]*big.Rat, []time.Time) {
-	vals = append([]*big.Rat{price}, vals...)
-	days = append([]time.Time{day}, days...)
-	if len(vals) > rwaPremiumTrailingDays {
-		vals, days = vals[:rwaPremiumTrailingDays], days[:rwaPremiumTrailingDays]
-	}
-	return vals, days
-}
 
 // rwaPremiumRefDays returns the days the reference published a value on, oldest first.
 func rwaPremiumRefDays(ref *rwaFeedSeries) []time.Time {
