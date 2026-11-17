@@ -92,10 +92,53 @@ func (f *lineageFixture) mint(t *testing.T, req CreateAPIKeyRequest) (APIKeyReco
 	return rec, plain, sub
 }
 
-// legacyChild mints a key that records only ParentKeyID, as records written before the ancestor chain do.
+// legacyChild mints a key and strips its chain, leaving only ParentKeyID as records written before the chain do.
 func (f *lineageFixture) legacyChild(t *testing.T, parent Subject) (APIKeyRecord, string, Subject) {
 	t.Helper()
-	return f.mint(t, CreateAPIKeyRequest{Identifier: parent.Identifier, ParentKeyID: parent.KeyID})
+	rec, plain, _ := f.mint(t, CreateAPIKeyRequest{Identifier: parent.Identifier, ParentKeyID: parent.KeyID})
+	rec.AncestorKeyIDs = nil
+	body, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.writeRecord(context.Background(), hashAPIKey(plain), rec, body, 0); err != nil {
+		t.Fatalf("strip chain: %v", err)
+	}
+	sub, err := f.validator.Lookup(context.Background(), plain)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	return rec, plain, sub
+}
+
+// TestCreate_LegacyMinterGivesItsChildTheFullChain: a key minted by a pre-chain key carries the chain walked through
+// stored records, so revoking the root still reaches it after the key between them is gone.
+func TestCreate_LegacyMinterGivesItsChildTheFullChain(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	root, _, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	mid, midPlain, midSub := f.legacyChild(t, rootSub)
+	leaf, leafPlain, _ := f.mint(t, ChildKeyRequest(midSub, "leaf", nil))
+	if want := []string{root.KeyID, mid.KeyID}; !slices.Equal(leaf.AncestorKeyIDs, want) {
+		t.Fatalf("leaf chain = %v, want %v", leaf.AncestorKeyIDs, want)
+	}
+	f.mr.Del(cachekeys.APIKey(hashAPIKey(midPlain)).String())
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err != nil {
+		t.Fatalf("RevokeKeyByID: %v", err)
+	}
+	f.assertDead(t, map[string]string{"leaf": leafPlain})
+}
+
+// TestCreate_LegacyMinterWithAMissingAncestorIsRefused: when the walk cannot reach the root, no partial chain is stored.
+func TestCreate_LegacyMinterWithAMissingAncestorIsRefused(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	_, rootPlain, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	_, _, midSub := f.legacyChild(t, rootSub)
+	f.mr.Del(cachekeys.APIKey(hashAPIKey(rootPlain)).String())
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(midSub, "leaf", nil)); !errors.Is(err, ErrMintExceedsCaller) {
+		t.Fatalf("Create under a legacy key whose root is gone = %v, want ErrMintExceedsCaller", err)
+	}
 }
 
 // seedMinter writes a live record for sub, as one the validator read it from, so sub may delegate.

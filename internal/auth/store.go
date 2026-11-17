@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -267,6 +268,7 @@ func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) 
 		Label:           req.Label,
 		KeyPrefix:       KeyPrefix(plaintext),
 		ParentKeyID:     req.ParentKeyID,
+		AncestorKeyIDs:  parent.lineage(),
 		Tier:            tier,
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
@@ -279,7 +281,6 @@ func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) 
 	}
 	req.Restrictions.applyTo(&rec)
 	if req.MintedBy != nil {
-		rec.AncestorKeyIDs = lineageOf(*req.MintedBy, req.ParentKeyID)
 		if err := checkWithinMinter(*req.MintedBy, rec); err != nil {
 			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
 		}
@@ -375,6 +376,11 @@ func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyR
 	if !live {
 		return req, ownedRecord{}, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
 	}
+	ancestors, err := s.storedAncestors(ctx, parent)
+	if err != nil {
+		return req, ownedRecord{}, err
+	}
+	parent.AncestorKeyIDs = ancestors
 	stored := ownedRecord{hash: hash, rec: parent}
 	if req.MintedBy == nil {
 		return req, stored, nil
@@ -386,8 +392,36 @@ func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyR
 	}
 	minter := *req.MintedBy
 	minter.RateLimitPerMin = parent.RateLimitPerMin
+	minter.AncestorKeyIDs = ancestors
 	req.MintedBy = &minter
 	return req, stored, nil
+}
+
+// maxLegacyDelegationWalk bounds the ParentKeyID walk over records minted before chains were stored.
+const maxLegacyDelegationWalk = 64
+
+// storedAncestors returns rec's ancestors, root first: its stored chain or, for a record minted before chains were
+// stored, the one found by walking ParentKeyID through stored records. A missing link refuses: a partial chain
+// would put the new key outside a revoke of the missing key's ancestors.
+func (s *RedisAPIKeyStore) storedAncestors(ctx context.Context, rec APIKeyRecord) ([]string, error) {
+	var walked []string // nearest first
+	cur := rec
+	for range maxLegacyDelegationWalk {
+		if len(cur.AncestorKeyIDs) > 0 || cur.ParentKeyID == "" {
+			slices.Reverse(walked)
+			return append(slices.Clone(cur.AncestorKeyIDs), walked...), nil
+		}
+		_, next, found, err := s.findRecordByKeyID(ctx, cur.ParentKeyID)
+		if err != nil {
+			return nil, fmt.Errorf("read ancestor %s: %w", cur.ParentKeyID, err)
+		}
+		if !found || next.Identifier != rec.Identifier {
+			return nil, fmt.Errorf("%w: ancestor %s of the minting key has no record, so its chain is unknown", ErrMintExceedsCaller, cur.ParentKeyID)
+		}
+		walked = append(walked, cur.ParentKeyID)
+		cur = next
+	}
+	return nil, fmt.Errorf("%w: the minting key's delegation chain is deeper than %d", ErrMintExceedsCaller, maxLegacyDelegationWalk)
 }
 
 // mintableTier reports whether a minted record may carry t. Anonymous is
