@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -420,6 +421,39 @@ func TestAccountActivityRunbook_Step3IsBounded(t *testing.T) {
 		if !strings.Contains(section, w) {
 			t.Errorf("Step-3 verify lacks %q", w)
 		}
+	}
+}
+
+// TestContractEventShapesRunbook_BackfillIncludesT0: T0 is read after the MV is created, so ledger T0's rows may
+// predate the MV; the backfill's last window must still admit T0 or those events are in neither.
+func TestContractEventShapesRunbook_BackfillIncludesT0(t *testing.T) {
+	const t0 = 51000000
+	section := extractRunbookSection(t, filepath.Join(filepath.Dir(accountActivitySQLPath(t)), "contract_event_shapes.sql"),
+		"Step 2: windowed historical backfill", "Step 3: verify")
+	res := runRunbook(t, section, false, "AA_UID=1000", fmt.Sprintf("T0=%d", t0))
+	if !res.ok {
+		t.Fatalf("backfill did not complete:\n%s", res.out)
+	}
+	boundRE := regexp.MustCompile(`ledger_seq\s*(<=|<)\s*(\d+)`)
+	lastWindow := fmt.Sprintf("ledger_seq >= %d", t0/1000000*1000000)
+	found := false
+	for _, q := range res.queries {
+		if !strings.Contains(q, "INSERT INTO stellar.contract_event_shapes") || !strings.Contains(q, lastWindow) {
+			continue
+		}
+		found = true
+		for _, m := range boundRE.FindAllStringSubmatch(q, -1) {
+			b, err := strconv.Atoi(m[2])
+			if err != nil {
+				t.Fatalf("bound %q: %v", m[2], err)
+			}
+			if (m[1] == "<" && b <= t0) || (m[1] == "<=" && b < t0) {
+				t.Errorf("last backfill window bounds ledger_seq %s %d, excluding T0=%d:\n%s", m[1], b, t0, q)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no backfill INSERT for the window containing T0=%d reached clickhouse-client:\n%s", t0, res.out)
 	}
 }
 

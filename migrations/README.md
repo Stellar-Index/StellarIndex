@@ -154,19 +154,24 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
     enforces the two SQL halves; the nine shipped index builds that
     predate it (0025, 0037, 0083, 0091, 0101, 0106, 0107, 0123, 0150)
     are listed there.
-11. **A migration, up OR down, that drops and recreates a continuous
-    aggregate `WITH NO DATA` names the refresh for every view it
-    recreates**, in order, in its header and register row. The
+11. **A migration, up OR down, that creates a continuous aggregate
+    `WITH NO DATA`, new or recreated, names the refresh for every view
+    it creates or drops**, in order, in its header and register row. The
     migration cannot run it: `refresh_continuous_aggregate` refuses a
     transaction block, and golang-migrate runs each file as one (see
     Conventions). A hierarchical view (`twap_1h` / `twap_1d`, built on
-    `prices_1m`) comes after its parent is whole. Pass 6 of
-    `lint-migrations.sh` enforces that every recreated view is named;
+    `prices_1m`) comes after its parent is whole. A refresh policy does
+    not replace this: it never fills history older than its
+    `start_offset`. One line per view, such as
+    `-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('vol_1d', '<source start>', now());`,
+    satisfies both this rule and rule 12. Pass 7 of
+    `lint-migrations.sh` enforces that every such view is named;
     the data-freshness gauge `stellarindex_cagg_history_missing{view}`
     is what shows the refresh was skipped.
 12. **An up-migration that blanks data a deployment must rebuild —
-    an unqualified `DELETE` or a `TRUNCATE`, or a continuous aggregate
-    recreated `WITH NO DATA` — declares each rebuild command on its own
+    an unqualified `DELETE` or a `TRUNCATE`, a table dropped and
+    recreated empty, or a continuous aggregate created `WITH NO DATA`,
+    new or recreated — declares each rebuild command on its own
     header line:**
 
     ```sql
@@ -180,7 +185,7 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
     operator passes `followups_acknowledged=true`. Use the marker on
     any other up-migration whose data needs a follow-up too (a
     targeted `DELETE … WHERE`). Pass 10 of `lint-migrations.sh`
-    enforces it; the seven shipped files that predate it are listed
+    enforces it; the fifteen shipped files that predate it are listed
     there. A follow-up that rebuilds a projected source
     (`projector-replay` or `projected-rebuild -source X`) also needs
     `DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild'
@@ -393,7 +398,7 @@ rejects a row that is not.
 | 0090 | Adds `credit_positions`, `credit_statements`, `credit_settlements` and `credit_events`, the served-tier tables for the sorocredit USDC credit protocol, filled by the projector. |
 | 0091 | Adds a partial covering index on `aquarius_liquidity (contract_id, token_index, ledger_close_time DESC) WHERE token IS NOT NULL`, so the `PoolTokens` resolver stops sorting the whole hypertable. |
 | 0092 | Extends `cctp_events_event_type_check` 5 → 10 values for the governance/admin topics (ownership_transfer, ownership_transfer_completed, admin_changed, remote_token_messenger_added, token_pair_linked) — #89b admin-topic audit. Follows migration 0070's precedent; additive + old-binary-safe (rule 9). |
-| 0093 | Adds `nonstandard_decimals_assets` (PK `asset`, `CHECK (decimals <> 7)`), the control table behind the read-time guard that declines price endpoints for pairs with a non-7-decimals leg. |
+| 0093 | Adds `nonstandard_decimals_assets` (PK `asset`, `CHECK (decimals <> 7)`), the control table the read-time price correction (`aggregate.AdjustPrice`) reads for a non-7-decimals leg; deleting a row serves that token's pairs skewed. 0227 corrects its stored comment. |
 | 0094 | Extends `cctp_events_event_type_check` from 10 to 26 values, completing the CCTP topic census (admin, attester, denylist, fee, limit and config events). |
 | 0095 | Admits `rw_zone` (the V1 backstop's reward-zone-update topic) and `rw_zone_remove` (V2, not yet observed) into the `blend_backstop_events.event_kind` CHECK. Additive + old-binary-safe (rule 9). |
 | 0096 | Adds the `blend_emitter_events` hypertable for Blend Emitter events (`distribute`, `drop`, `q_swap`, `swap`); `drop` fans out one row per recipient via `recipient_index`. Gated on contract identity; never VWAP. |
@@ -529,6 +534,9 @@ rejects a row that is not.
 | 0224 | Adds `blnt_events`, the decoded role-aware event history for the separately gated BLNT V3 source: promoted pool, user, asset, tier and `NUMERIC` amount columns plus an `attributes` jsonb. |
 | 0225 | Adds a partial `(user_address, ledger_close_time DESC)` index on `blnt_events` for the per-account position fold. |
 | 0226 | Adds nullable `blnt_events.tx_index`, the transaction's 0-based apply position in its ledger (as `stellar.transactions.tx_index`), so readers order same-ledger events without guessing. |
+| 0227 | Re-issues the `COMMENT ON` for `nonstandard_decimals_assets`: rows drive the read-time `AdjustPrice` correction, so deleting one serves a skewed price. Catalog-only. |
+| 0228 | Sets 7-day chunks on the materialization hypertables of the thirteen trades-derived continuous aggregates (`prices_*`, `twap_*`, `pools_per_source_1h`, `trade_sums_1m`, `dex_volume_by_pair_1d`, `source_volume_1h`), which a recreate resets to 10x the source interval. New chunks only; catalog-only. |
+| 0229 | Adds nullable `issuers.sep1_payload_previous`: the payload a `home_domain` change clears is held there until the new domain's first fetch diffs against it into `issuer_identity_history`, so a domain move no longer erases an identity change. Never served. Nullable, no default: catalog-only, old-binary-safe (rule 9). |
 | 0230 | Replaces `audit_log_erase_metadata(jsonb)` so an account erasure also strips `reason` (staff free-text justification) and `actor_email` (a staff actor's address) from kept audit rows. No back-fill. |
 
 ## References

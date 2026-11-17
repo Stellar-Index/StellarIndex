@@ -3,7 +3,8 @@
 #   scripts/ci/*.baseline, the KNOWN_INERT array in lint-metric-refs.sh, .gitleaksignore,
 #   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml exclusions,
 #   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, the waiver maps in
-#   lint-pk-discriminators and lint-derive-generation-guard, and (mutations only,
+#   lint-pk-discriminators and lint-derive-generation-guard, the inline migration baselines in
+#   lint-migrations.sh, and (mutations only,
 #   since new migrations append freely) scripts/ci/migration-immutability.sha256, and the
 #   inline escape markers `i128:ok`, `lint-money:ok` and `migration-compat:ok` in .go/.sql
 #   (the trailer names the file the marker was added to).
@@ -170,6 +171,14 @@ detect_growth() {
       [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
     done <<<"$added"
   done
+
+  # 12) The inline baselines in lint-migrations.sh: each line naming a shipped migration
+  #     (`NNNN_x.up.sql[:name]`, opening `list='` or closing `'` included) exempts it from a pass.
+  added="$(added_entries "$base" "$head" scripts/ci/lint-migrations.sh \
+    "^[[:space:]]*([a-z_]+=[\"'])?[0-9]{4}_[a-z0-9_]+\.(up|down)\.sql(:[a-z0-9_]+)?[\"']?[[:space:]]*\$")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-migrations.sh "$line"
+  done <<<"$added"
 
   # 11) Inline escape markers on the money and migration lints: each added marker exempts one line.
   git diff -U0 "${base}...${head}" -- '*.go' '*.sql' 2>/dev/null | awk '

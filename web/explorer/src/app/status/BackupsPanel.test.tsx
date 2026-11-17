@@ -289,6 +289,40 @@ describe('BackupsPanel', () => {
     ).toBeInTheDocument();
     absent('within SLO');
   });
+
+  it('drops the green roll-up and says so when a refresh fails after a success', async () => {
+    const ok = payload({
+      freshness: {
+        ...okFreshness,
+        offsite: verdict('ok', 20 * 3_600, SLO.offsite_seconds),
+        overall: 'ok',
+      },
+    });
+    mockBackups({ data: ok, as_of: '2026-08-29T12:00:00Z' });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <BackupsPanel />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText('all within SLO')).toBeInTheDocument(),
+    );
+
+    mockBackups({ title: 'Bad gateway', status: 502 }, 502);
+    await client.refetchQueries();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Backup freshness could not be refreshed/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/2026-08-29 12:00 UTC/)).toBeInTheDocument();
+    absent('all within SLO');
+    expect(screen.getByText(/last known · not current/)).toBeInTheDocument();
+  });
 });
 
 describe('sloShare', () => {

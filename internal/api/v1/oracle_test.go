@@ -5,6 +5,8 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -856,6 +858,31 @@ func getStreams(t *testing.T, url string) []v1.OracleReading {
 	}
 	mustDecode(t, resp, &env)
 	return env.Data
+}
+
+// Sources the licensing register bars from re-serving never reach /v1/oracle/latest; the rest are served as before.
+func TestOracleLatest_DropsRedistributionBarredSources(t *testing.T) {
+	var updates []canonical.OracleUpdate
+	for _, src := range []string{"coinmarketcap", "cryptocompare", "tiingo", "coingecko", "ecb", "reflector-dex"} {
+		updates = append(updates, mkReflectorUpdate(src, "12000000000000", 14))
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{Oracle: &stubOracleReader{updates: updates}}))
+	resp := mustGet(t, ts.URL+"/v1/oracle/latest?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var page struct {
+		Data []v1.OracleReading `json:"data"`
+	}
+	mustDecode(t, resp, &page)
+	var got []string
+	for _, r := range page.Data {
+		got = append(got, r.Source)
+	}
+	sort.Strings(got)
+	if want := []string{"coingecko", "ecb", "reflector-dex"}; !slices.Equal(got, want) {
+		t.Errorf("served sources = %v, want %v", got, want)
+	}
 }
 
 // TestOracleLatest_CreditsLicensedVendor: a per-source row from a licensed aggregator names its vendor; an on-chain oracle

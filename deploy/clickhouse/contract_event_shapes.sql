@@ -109,7 +109,7 @@ ORDER BY (covered_from, covered_to);
 --                count(), min(ledger_seq), max(ledger_seq)
 --         FROM stellar.contract_events
 --         WHERE ledger_seq >= $((P * 1000000)) AND ledger_seq < $(((P + 1) * 1000000))
---           AND ledger_seq < $T0
+--           AND ledger_seq <= $T0
 --         GROUP BY part, contract_id, topic_0_sym, t0, t1, tn
 --         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
 --     done
@@ -119,11 +119,14 @@ ORDER BY (covered_from, covered_to);
 --     rm -rf "$CES_MARKS"
 --   ) && echo "contract_event_shapes backfill: COMPLETE - every partition 50..$((T0 / 1000000)) covered"
 --
--- The ledger_seq < T0 bound keeps the backfill off rows the MV already holds.
+-- The bound includes T0: its rows may have been inserted before the MV existed, so
+-- they can be in the MV, the backfill or both. Overlap only raises cnt; a gap would
+-- hide a contract from the recognition audit.
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
 -- For three partitions (the first, a dense one, the last whole one), the shape
--- set and min/max ledger must equal the raw scan's:
+-- set and min/max ledger must equal the raw scan's. Once T0's own partition is
+-- whole, run the same check on it:
 --   SELECT contract_id, topic_0_sym, t0, t1, tn, min(lo), max(hi)
 --   FROM stellar.contract_event_shapes WHERE part = <P>
 --   GROUP BY contract_id, topic_0_sym, t0, t1, tn

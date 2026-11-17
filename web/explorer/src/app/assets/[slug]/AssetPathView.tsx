@@ -125,7 +125,7 @@ export function AssetPathView() {
     );
   }
 
-  const sacHref = slug ? sacRedirectHref(slug, d?.slug) : null;
+  const sacHref = slug ? sacRedirectHref(slug, d) : null;
   if (sacHref) return <SacRedirect href={sacHref} />;
   if (detail.isError || !d?.asset_id) {
     return (

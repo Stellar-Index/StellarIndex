@@ -178,6 +178,44 @@ func TestChangesOnlyExtract_KeepsCommitMarkerAndChangesOnly(t *testing.T) {
 	}
 }
 
+// Every int counter on LedgerExtract is an undercount the ledger is written despite; a run that hit any must not exit 0,
+// so a counter added later fails here until extractLoss.record names it.
+func TestExtractLoss_EveryUndercountFailsTheRun(t *testing.T) {
+	typ := reflect.TypeOf(clickhouse.LedgerExtract{})
+	counters := 0
+	for i := 0; i < typ.NumField(); i++ {
+		if typ.Field(i).Type.Kind() != reflect.Int {
+			continue
+		}
+		counters++
+		var ext clickhouse.LedgerExtract
+		reflect.ValueOf(&ext).Elem().Field(i).SetInt(2)
+		var loss extractLoss
+		if !loss.record(ext, false) {
+			t.Errorf("%s=2 not recorded as a read undercount", typ.Field(i).Name)
+		}
+		err := loss.err()
+		if err == nil || !strings.Contains(err.Error(), "=2") || !strings.Contains(err.Error(), "1 ledger(s)") {
+			t.Errorf("%s=2: err = %v, want a run failure naming the count", typ.Field(i).Name, err)
+		}
+	}
+	if counters < 6 {
+		t.Fatalf("found %d int counters on LedgerExtract, want >= 6 — the reflection no longer sees them", counters)
+	}
+
+	var clean extractLoss
+	if clean.record(clickhouse.LedgerExtract{}, false) || clean.err() != nil {
+		t.Error("a clean extract failed the run")
+	}
+	var changes extractLoss
+	if changes.record(clickhouse.LedgerExtract{TxReadErrors: 1, TxEventReadErrors: 1, SorobanFeeMetaUnsupported: 1}, true) || changes.err() != nil {
+		t.Error("-changes-only failed on tx/event undercounts it never writes")
+	}
+	if !changes.record(clickhouse.LedgerExtract{EntryMetaUnsupported: 1}, true) || changes.err() == nil {
+		t.Error("-changes-only passed a ledger whose entry changes were skipped")
+	}
+}
+
 // TestWindowedCHBackfills_RefuseImplicitFullRun: every windowed ClickHouse backfill refuses a bare invocation (no
 // -from/-to/-full) rather than starting the whole ledger-2..tip history outside run-heavy-job.sh. The refusal fires
 // before any connection, so no live lake is needed.

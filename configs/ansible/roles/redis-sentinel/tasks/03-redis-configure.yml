@@ -125,7 +125,9 @@
 # template. Apply it live on every node and persist it with CONFIG
 # REWRITE: an allkeys-* policy left running evicts the TTL-less
 # credential records. Under ACL lockdown only the sentinel
-# user holds CONFIG SET/REWRITE.
+# user holds CONFIG SET/REWRITE. A run that renders leaves the policy to the
+# template and restart; before that, the distro redis does not listen on
+# ansible_host, and redis-cli exits 0 on a failed AUTH.
 - name: enforce maxmemory-policy on the running instance
   shell:
     cmd: |
@@ -149,5 +151,7 @@
     executable: /bin/bash
   register: redis_policy_enforce
   changed_when: redis_policy_enforce.stdout == 'changed'
-  when: redis_sentinel_state.rc == 0
+  when:
+    - not (redis_render_configs | bool)
+    - redis_sentinel_answered | bool
   no_log: true

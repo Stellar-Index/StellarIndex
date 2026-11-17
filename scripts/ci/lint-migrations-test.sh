@@ -259,6 +259,47 @@ SQL
 )"
 clean_mig "IF NOT EXISTS under SET LOCAL lock_timeout passes, split across lines" "$d"
 
+d="$(mig add-pk 0002_pk.up.sql <<'SQL'
+ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_pkey;
+ALTER TABLE trades ADD CONSTRAINT trades_pkey PRIMARY KEY (ts, signer);
+SQL
+)"
+mcatches "ADD CONSTRAINT … PRIMARY KEY on a hypertable without lock_timeout is caught" "$d" \
+  "ADD CONSTRAINT trades_pkey (PRIMARY KEY/UNIQUE) ON trades lacks SET LOCAL lock_timeout"
+
+d="$(mig add-unique 0002_uq.up.sql <<'SQL'
+ALTER TABLE ONLY trades ADD UNIQUE (ts, signer);
+SQL
+)"
+mcatches "an unnamed ADD UNIQUE on a hypertable without lock_timeout is caught" "$d" \
+  "ON trades lacks SET LOCAL lock_timeout"
+
+d="$(mig add-pk-timeout 0002_pk.up.sql <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE trades ADD CONSTRAINT trades_pkey PRIMARY KEY (ts, signer);
+COMMIT;
+SQL
+)"
+clean_mig "ADD PRIMARY KEY on a hypertable under SET LOCAL lock_timeout passes" "$d"
+
+d="$(mig add-unique-split 0002_unique.up.sql <<'SQL'
+ALTER TABLE trades
+  ADD
+  CONSTRAINT trades_ts_uniq UNIQUE (ts);
+SQL
+)"
+mcatches "an ADD CONSTRAINT … UNIQUE split across lines is caught" "$d" \
+  "ADD CONSTRAINT trades_ts_uniq (PRIMARY KEY/UNIQUE) ON trades lacks SET LOCAL lock_timeout"
+
+d="$(mig index-timeout-zero 0002_idx.up.sql <<'SQL'
+SET LOCAL lock_timeout = 0;
+CREATE INDEX IF NOT EXISTS trades_signer_x_idx ON trades (signer);
+SQL
+)"
+mcatches "SET LOCAL lock_timeout = 0 is no timeout and is caught" "$d" \
+  "CREATE INDEX trades_signer_x_idx ON trades lacks SET LOCAL lock_timeout"
+
 d="$(mig fresh-table 0002_events.up.sql <<'SQL'
 CREATE TABLE soroban_things (ts timestamptz NOT NULL, id text);
 SELECT create_hypertable('soroban_things', 'ts');
@@ -322,7 +363,8 @@ SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1
 WITH NO DATA;
 SQL
 )"
-clean_mig "an initial CAGG creation (nothing dropped, nothing emptied) passes" "$d"
+mcatches "an initial CAGG creation WITH NO DATA serves empty until refreshed, so it must name the refresh" "$d" \
+  "names no refresh for: prices_1m"
 
 echo "lint-migrations-test: atomicity pass"
 
@@ -495,6 +537,7 @@ mcatches "a baseline file with no unguarded division left is a stale entry" "$d"
 
 d="$(mig pr-baselined 0002_create_price_aggregates.up.sql <<'SQL'
 SELECT sum(quote_amount) / sum(base_amount) FROM trades;
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1 WITH NO DATA;
 SQL
 )"
 clean_mig "a baselined file's unguarded division passes" "$d"
@@ -564,6 +607,104 @@ DO $$ BEGIN TRUNCATE rozo_events; END $$;
 SQL
 )"
 mcatches "a TRUNCATE inside a DO block with no marker is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-do-declare 0002_reset.up.sql <<'SQL'
+DO $$ DECLARE n bigint; BEGIN DELETE FROM sep41_transfers; END $$;
+SQL
+)"
+mcatches "a DELETE opening a DO block after DECLARE is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-do-then 0002_reset.up.sql <<'SQL'
+DO $$ BEGIN IF EXISTS (SELECT 1 FROM cctp_events WHERE ledger > 0) THEN TRUNCATE cctp_events; END IF; END $$;
+SQL
+)"
+mcatches "a TRUNCATE after IF … THEN is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-truncate-list 0002_reset.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source cctp -write
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'cctp:%';
+TRUNCATE cctp_events, ONLY public.rozo_events RESTART IDENTITY;
+SQL
+)"
+mcatches "the second relation of a TRUNCATE list must be named by a marker" "$d" \
+  "rozo_events"
+
+d="$(mig fu-view-list 0002_recreate.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('ohlc_1h', NULL, now());
+--   CALL refresh_continuous_aggregate('ohlc_1d', NULL, now());
+DROP MATERIALIZED VIEW ohlc_1h, ohlc_1d CASCADE;
+CREATE MATERIALIZED VIEW ohlc_1h WITH (timescaledb.continuous) AS SELECT time_bucket('1 hour', ts) AS bucket FROM trades GROUP BY 1 WITH NO DATA;
+CREATE MATERIALIZED VIEW ohlc_1d WITH (timescaledb.continuous) AS SELECT time_bucket('1 day', ts) AS bucket FROM trades GROUP BY 1 WITH NO DATA;
+SQL
+)"
+mcatches "the second view of a DROP MATERIALIZED VIEW list must be named by a marker" "$d" \
+  "ohlc_1d"
+
+d="$(mig fu-new-cagg 0002_volume.up.sql <<'SQL'
+CREATE MATERIALIZED VIEW vol_1d WITH (timescaledb.continuous) AS SELECT time_bucket('1 day', ts) AS bucket FROM trades GROUP BY 1 WITH NO DATA;
+SQL
+)"
+mcatches "a new CAGG created WITH NO DATA must name its refresh" "$d" \
+  "names no refresh for: vol_1d"
+mcatches "a new CAGG created WITH NO DATA needs a follow-up marker" "$d" \
+  "0002_volume.up.sql: blanks data and declares no"
+
+d="$(mig fu-new-cagg-split 0002_volume.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: rebuild vol_1d
+CREATE MATERIALIZED VIEW vol_1d WITH (timescaledb.continuous) AS SELECT time_bucket('1 day', ts) AS bucket FROM trades GROUP BY 1 WITH NO
+DATA;
+SQL
+)"
+mcatches "WITH NO / DATA split across lines still must name its refresh" "$d" \
+  "names no refresh for: vol_1d"
+
+d="$(mig fu-recreate-table 0002_reshape.up.sql <<'SQL'
+DROP TABLE IF EXISTS marks;
+CREATE TABLE marks (k text PRIMARY KEY);
+SQL
+)"
+mcatches "a table dropped and recreated empty is caught" "$d" \
+  "0002_reshape.up.sql: blanks data and declares no"
+
+d="$(mig fu-recreate-refill 0002_reshape.up.sql <<'SQL'
+CREATE TABLE marks_old AS SELECT * FROM marks;
+DROP TABLE marks;
+CREATE TABLE marks (k text PRIMARY KEY);
+INSERT INTO marks SELECT k FROM marks_old;
+SQL
+)"
+clean_mig "a table dropped, recreated and refilled in the same file passes" "$d"
+
+d="$(mig fu-recreate-ctas 0002_reshape.up.sql <<'SQL'
+DROP TABLE IF EXISTS marks;
+CREATE TABLE marks AS SELECT 1 AS k;
+SQL
+)"
+clean_mig "a table dropped and recreated by CREATE TABLE … AS is filled and passes" "$d"
+
+d="$(mig fu-recreate-ctas-nodata 0002_reshape.up.sql <<'SQL'
+DROP TABLE IF EXISTS marks;
+CREATE TABLE marks AS SELECT 1 AS k WITH NO DATA;
+SQL
+)"
+mcatches "a table recreated by CREATE TABLE … AS … WITH NO DATA is empty and caught" "$d" \
+  "0002_reshape.up.sql: blanks data and declares no"
+
+d="$(mig fu-block-comment 0002_reset.up.sql <<'SQL'
+/* reset; all of it */ TRUNCATE sep41_transfers;
+SQL
+)"
+mcatches "a TRUNCATE after a block comment is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-delete-where-true 0002_reset.up.sql <<'SQL'
+DELETE FROM sep41_transfers WHERE true;
+SQL
+)"
+mcatches "a DELETE … WHERE true blanks the table and is caught" "$d" \
   "0002_reset.up.sql: blanks data and declares no"
 
 d="$(mig fu-fn-truncate 0002_track.up.sql <<'SQL'

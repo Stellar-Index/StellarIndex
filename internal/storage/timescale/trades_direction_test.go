@@ -40,6 +40,17 @@ var latestTradeCols = []string{
 	"maker", "taker", "routed_via",
 }
 
+// tradesInRangeCols is [latestTradeCols] plus TradesInRange's per-trade floor bit.
+var tradesInRangeCols = append(append([]string{}, latestTradeCols...), "clears_floor")
+
+// withFloorBit appends a false clears_floor to each row, matching [tradesInRangeCols].
+func withFloorBit(rows [][]driver.Value) [][]driver.Value {
+	for i := range rows {
+		rows[i] = append(rows[i], false)
+	}
+	return rows
+}
+
 // dirAQUAUSDCPair is the market as a caller asks for it: AQUA priced in
 // USDC.
 func dirAQUAUSDCPair(t *testing.T) canonical.Pair {
@@ -723,8 +734,8 @@ func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
 	store, _ := newScriptedStore(t, scriptedResult{
-		cols: latestTradeCols,
-		rows: aggScriptedRows(),
+		cols: tradesInRangeCols,
+		rows: withFloorBit(aggScriptedRows()),
 	})
 
 	got, err := store.TradesInRange(context.Background(), pair, aggWindow.from, aggWindow.to, 1000)
@@ -818,8 +829,8 @@ func TestTradesInRange_FoldedMeanIsReciprocalConsistent(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	flipped := pair.Flip()
 
-	forward, _ := newScriptedStore(t, scriptedResult{cols: latestTradeCols, rows: aggScriptedRows()})
-	reverse, _ := newScriptedStore(t, scriptedResult{cols: latestTradeCols, rows: aggScriptedRows()})
+	forward, _ := newScriptedStore(t, scriptedResult{cols: tradesInRangeCols, rows: withFloorBit(aggScriptedRows())})
+	reverse, _ := newScriptedStore(t, scriptedResult{cols: tradesInRangeCols, rows: withFloorBit(aggScriptedRows())})
 
 	fwd, err := forward.TradesInRange(context.Background(), pair, aggWindow.from, aggWindow.to, 1000)
 	if err != nil {
@@ -870,8 +881,8 @@ func TestTradesInRange_LeavesTheRequestedOrientationUntouched(t *testing.T) {
 	ts := aggWindow.from
 
 	store, _ := newScriptedStore(t, scriptedResult{
-		cols: latestTradeCols,
-		rows: [][]driver.Value{requestedStoredRow("sdex", 58_000_001, dirTxA, ts)},
+		cols: tradesInRangeCols,
+		rows: withFloorBit([][]driver.Value{requestedStoredRow("sdex", 58_000_001, dirTxA, ts)}),
 	})
 
 	got, err := store.TradesInRange(context.Background(), pair, aggWindow.from, aggWindow.to, 1000)

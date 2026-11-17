@@ -650,17 +650,20 @@ type OHLCBar struct {
 	Truncated           bool `json:"truncated"`
 	// Clamped is true when the requested `to` fell in the still-filling
 	// bucket (or the future) and was pulled back to the last closed one.
-	Clamped bool `json:"clamped"`
+	Clamped    bool               `json:"clamped"`
+	BelowFloor bool               `json:"below_floor"`         // no trade in the window cleared the $0.01 notional floor: prices come from dust
+	Substance  *SubstanceEvidence `json:"substance,omitempty"` // the measurement behind a thin-market bar
 }
 
 // OHLCSeriesResponse is the data shape of [Client.OHLCSeries]: up to `limit` closed bars of width Interval over [From, To).
 type OHLCSeriesResponse struct {
-	Base      string          `json:"base"`
-	Quote     string          `json:"quote"`
-	Interval  string          `json:"interval"`
-	From      time.Time       `json:"from"`
-	To        time.Time       `json:"to"`
-	Intervals []OHLCSeriesBar `json:"intervals"`
+	Base      string             `json:"base"`
+	Quote     string             `json:"quote"`
+	Interval  string             `json:"interval"`
+	From      time.Time          `json:"from"`
+	To        time.Time          `json:"to"`
+	Intervals []OHLCSeriesBar    `json:"intervals"`
+	Substance *SubstanceEvidence `json:"substance,omitempty"` // the measurement behind a thin-market series
 }
 
 // OHLCSeriesBar is one bar of an [OHLCSeriesResponse]; prices are decimal strings, volumes integer smallest-unit strings, and VBaseDecimals / VQuoteDecimals are the volume scales (nil when a contributing source is unrecognised).
@@ -676,6 +679,7 @@ type OHLCSeriesBar struct {
 	VQuoteDecimals *int      `json:"v_quote_decimals"`
 	N              int64     `json:"n"`
 	Truncated      bool      `json:"truncated,omitempty"`
+	BelowFloor     bool      `json:"below_floor,omitempty"` // no trade in the bar cleared the $0.01 notional floor
 	// Sources are the venues behind this bar; a derived or vendor series
 	// is not a fill-derived VWAP.
 	Sources []string `json:"sources,omitempty"`

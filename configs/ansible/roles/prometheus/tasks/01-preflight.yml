@@ -104,6 +104,21 @@
     - prometheus_basic_auth_password_hash | default('') | length == 0
       or alertmanager_basic_auth_password_hash | default('') | length == 0
 
+- name: assert a basic-auth hash comes with the plaintext Prometheus uses as client
+  assert:
+    that:
+      - >-
+        prometheus_basic_auth_password_hash | default('') | length == 0
+        or prometheus_basic_auth_password | default('') | length > 0
+      - >-
+        alertmanager_basic_auth_password_hash | default('') | length == 0
+        or alertmanager_basic_auth_password | default('') | length > 0
+    fail_msg: >-
+      A basic-auth hash is set without its plaintext password
+      (prometheus_basic_auth_password / alertmanager_basic_auth_password).
+      Prometheus would get 401 from its peers and from Alertmanager, so
+      every alert delivery and self-scrape would fail silently.
+
 - name: warn when no Discord chat-fanout webhook is set
   debug:
     msg: >-

@@ -90,8 +90,8 @@ func addGlobalMarketRow(into map[string]rwaReference, u canonical.OracleUpdate) 
 	if u.Asset.Type != canonical.AssetCrypto {
 		return false
 	}
-	if external.Lookup(u.Source).Class != external.ClassAggregator || !isUSDQuote(u.Quote) ||
-		u.Timestamp.After(time.Now().Add(globalMarketMaxSkew)) {
+	if external.Lookup(u.Source).Class != external.ClassAggregator || external.RedistributionBarred(u.Source) ||
+		!isUSDQuote(u.Quote) || u.Timestamp.After(time.Now().Add(globalMarketMaxSkew)) {
 		return true
 	}
 	key := u.Asset.String()

@@ -24,7 +24,7 @@ import {
 // the shared alias in src/api/hooks.ts).
 import type { Pool as PoolRow } from '@/api/hooks';
 import { isCIStub } from '@/lib/buildFetch';
-import { shortAssetText } from '@/lib/asset-label';
+import { assetIdentityLabel } from '@/lib/asset-label';
 import { LiquidityVenueBars } from './LiquidityVenueBars';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
@@ -169,8 +169,10 @@ export async function LiquidityTabPanel({
                       <Link
                         href={`/markets/${slug}`}
                         className="text-ink hover:text-brand-600 font-mono text-xs"
+                        title={`${p.base} / ${p.quote}`}
                       >
-                        {shortAssetText(p.base)} / {shortAssetText(p.quote)}
+                        {assetIdentityLabel(p.base)} /{' '}
+                        {assetIdentityLabel(p.quote)}
                       </Link>
                     </Td>
                     <Td align="right">

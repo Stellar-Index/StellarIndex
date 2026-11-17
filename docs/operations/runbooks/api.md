@@ -664,7 +664,7 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_retention_reaper_failing
 
-**Trigger.** `sum by (reaper) (increase(stellarindex_retention_reaper_errors_total[3h])) > 0` for 2h, P3. The `registration` reaper erases abandoned sign-ups' personal data; `session` and `webhook_delivery` bound their tables. [auth_reaper_stalled](#stellarindex_auth_reaper_stalled) cannot see this: a failed sweep still stamps the last-sweep gauge.
+**Trigger.** `sum by (reaper) (increase(stellarindex_retention_reaper_errors_total[3h])) > 0` for 2h, P3; the `magic_link` and `login_code` reapers are read from `stellarindex_magic_link_token_errors_total{op="sweep"}` and `stellarindex_login_code_lockout_errors_total{op="sweep"}` instead. The `registration` reaper erases abandoned sign-ups' personal data; `magic_link` and `login_code` bound tables holding email addresses; `session` and `webhook_delivery` bound their tables. [auth_reaper_stalled](#stellarindex_auth_reaper_stalled) cannot see this: a failed sweep still stamps the last-sweep gauge.
 
 **Check.** `journalctl -u stellarindex-api --since '-6h' | grep -i 'retention reaper'` carries the error. **Likely causes.** A permission or schema regression on the reaper's table after a migration; a lock or statement timeout. **Fix.** Per the error; the next sweep catches up by itself. **Escalate:** the `registration` reaper failing for more than a day (personal data is kept past its retention).
 

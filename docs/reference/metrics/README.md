@@ -150,7 +150,7 @@ Responses served with `flags.degraded` (a carried-forward or partial body, sent 
 
 Gauge, no labels.
 
-Newest day in `stellar.contracts_census_daily` (UTC midnight, Unix seconds), set by the API each time the `/v1/contracts/stats` snapshot refreshes (hourly, while the page is read). `time() - value > 2*86400` means the census rollup has stalled; `/v1/contracts/stats` then serves `active_90d` as a lower bound. 0 until the first read. Not alerted.
+Newest day in `stellar.contracts_census_daily` (UTC midnight, Unix seconds), set by the API each time the `/v1/contracts/stats` snapshot refreshes (hourly, while the page is read). `time() - value > 2*86400` means the census rollup has stalled; `/v1/contracts/stats` then serves `active_90d` as a lower bound. 0 until the first read. The gauge only moves when the page is read, so it is not alerted; a stalled rollup pages via `stellarindex_census_rollup_timer_stale`, which watches the timer.
 
 ### `stellarindex_api_cache_ops_total`
 
@@ -951,7 +951,7 @@ Wall-clock of one sweep. Rising `ok` p95/p99 means the census is growing heavier
 
 Counter, label `outcome` (`ok` / `refresh_error`).
 
-Per-sweep outcome of the asset-volume rollup, which feeds `volume_24h_usd` on `/v1/assets`. Sustained `refresh_error` leaves the column stale, not blank. Informational. Alert: `stellarindex_asset_volume_rollup_failing`.
+Per-sweep outcome of the asset-volume rollup, which feeds `volume_24h_usd` and the listing price snapshot (`asset_price_snapshot`). With no `ok` sweep for 15 min the listings' price, change and market cap go blank. Alert: `stellarindex_asset_volume_rollup_failing` (no `ok` sweep).
 
 ### `stellarindex_asset_volume_rollup_sweep_duration_seconds`
 
@@ -1062,7 +1062,7 @@ Rows in `accounts`. `POST /v1/register` is unauthenticated and mints a permanent
 
 Gauge, unlabelled. Refreshed alongside `stellarindex_accounts_rows`.
 
-Rows in `api_keys`. One key per account, so it tracks the accounts gauge.
+Rows in `api_keys`. An account can hold several active keys, so this does not track the accounts gauge.
 
 ### `stellarindex_login_code_lockout_rows`
 
@@ -1129,7 +1129,7 @@ Alert: folded into
 
 Gauge, unlabelled. Refreshed by every retention sweep (hourly).
 
-Rows in `magic_link_tokens`. Like the lockout gauge this is a security and privacy signal: the table holds plaintext email and `requested_ip`, and `POST /v1/auth/login` is unauthenticated and inserts a permanent row for any address. Healthy is low.
+Rows in `magic_link_tokens`. Like the lockout gauge this is a security and privacy signal: the table holds plaintext email and `requested_ip`, and `POST /v1/auth/login` is unauthenticated and inserts a row for any address; expired rows are swept hourly. Healthy is low.
 
 ### `stellarindex_magic_link_token_rows_deleted_total`
 
@@ -1559,6 +1559,12 @@ Freeze rows the recovery worker closed (`MarkRecovered`). Trails `stellarindex_a
 Counter, no labels.
 
 Freezes restored from the durable ladder (`freeze_events.hold_until` / `extensions_used` / `escalated` / `corroborated`) because the Redis marker was missing. Not alerted: non-zero means the safety net worked. A burst after a Redis restart is expected; a slow trickle means markers are evicted (`maxmemory-policy`) or expiring early.
+
+### `stellarindex_anomaly_freeze_ladder_read_failures_total`
+
+Counter, no labels.
+
+Freeze-marker rebuilds (marker missing) that could not read the durable `freeze_events` ladder, so no ladder was restored and a live freeze may restart from its first rung. Each is also logged at Error. Not alerted.
 
 ### `stellarindex_api_freeze_lookup_failures_total`
 

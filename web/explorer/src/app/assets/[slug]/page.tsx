@@ -869,7 +869,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       </Container>
     );
   }
-  const sacHref = sacRedirectHref(slug, coin.slug);
+  const sacHref = sacRedirectHref(slug, coin);
   if (sacHref) {
     return (
       <Container className="space-y-6 py-8">
@@ -1150,6 +1150,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             coin={coin}
             detail={detail}
             priceUSD={headlinePrice}
+            priceProvenance={headlinePriceProvenance(price, coin)}
+            priceStale={Boolean(price?.flags?.stale)}
             homeDomain={detail?.home_domain}
           />
         </aside>

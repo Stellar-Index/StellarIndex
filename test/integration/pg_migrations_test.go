@@ -368,7 +368,7 @@ const migration0191File = "0191_trades_drop_amount_checks.down.sql"
 
 // Runs 0191 on two populated compressed trades chunks. Up is catalog-only (chunks stay compressed), drops both inline
 // CHECKs and admits a one-side-zero fill while prices_1m's 0187 filter keeps it out of every price. Down refuses LOUDLY
-// over zero-leg rows or compressed chunks, and restores both CHECKs by their 0001 names once neither obstacle remains.
+// over zero-leg rows, and once they are gone restores both CHECKs by their 0001 names over the still-compressed chunks.
 func TestMigration0191_DropsTradesAmountChecksOverCompressedChunks(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -465,25 +465,47 @@ func TestMigration0191_DropsTradesAmountChecksOverCompressedChunks(t *testing.T)
 		t.Fatalf("zero-leg trades after refused down = %d, want 2 (the down deleted data)", n)
 	}
 
-	// Rows gone, chunks still compressed: refused on the compression guard.
+	// The down's ADD CONSTRAINT itself validates rows held in compressed
+	// batches, so a zero leg that lands after the guard still fails it.
+	compressTradesChunks(t, ctx, db, 2)
+	requireCompressedZeroLegTrades(t, ctx, db, 2)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	_, err = tx.ExecContext(ctx, `ALTER TABLE trades ADD CONSTRAINT trades_quote_amount_check CHECK (quote_amount > 0)`)
+	_ = tx.Rollback()
+	if err == nil || !strings.Contains(err.Error(), "violated by some row") {
+		t.Fatalf("ADD CHECK over compressed zero-leg rows: err = %v, want a violation", err)
+	}
+
+	// Rows gone, chunks still compressed: down restores both CHECKs under
+	// their 0001 names without decompressing.
 	if _, err := db.ExecContext(ctx, `DELETE FROM trades WHERE base_amount = 0 OR quote_amount = 0`); err != nil {
 		t.Fatalf("delete zero-leg rows: %v", err)
 	}
-	refuse0191Down(t, ctx, db, dsn, "compressed chunks")
-	requireCompressedTradesChunks(t, ctx, db, 2, "after refused downs")
-
-	// Neither obstacle: down restores both CHECKs under their 0001 names.
-	if _, err := db.ExecContext(ctx, `
-		SELECT count(*) FROM (
-			SELECT decompress_chunk(c, if_compressed => true) FROM show_chunks('trades') c
-		) s`); err != nil {
-		t.Fatalf("decompress trades chunks: %v", err)
-	}
-	requireCompressedTradesChunks(t, ctx, db, 0, "before the clean down")
+	requireCompressedTradesChunks(t, ctx, db, 2, "before the clean down")
 	applyMigrationsUpTo(t, dsn, 190)
 	requireSchemaVersion(t, ctx, db, 190)
 	requireTradesAmountChecks(t, ctx, db, true, "after 0191 down")
+	requireCompressedTradesChunks(t, ctx, db, 2, "after 0191 down")
 	assertInsertRejected(t, db, ctx, "zero base_amount after 0191 down", zeroLegInsert(pair, t0, "ae", "0", "1"))
+}
+
+// requireCompressedZeroLegTrades: want zero-leg rows exist and no trades chunk is partial (status bit 8, rows
+// outside compressed batches), so the validation check above is not satisfied by uncompressed rows.
+func requireCompressedZeroLegTrades(t *testing.T, ctx context.Context, db *sql.DB, want int) {
+	t.Helper()
+	var partial int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM _timescaledb_catalog.chunk ch
+		  JOIN _timescaledb_catalog.hypertable h ON h.id = ch.hypertable_id
+		 WHERE h.table_name = 'trades' AND ch.status & 8 <> 0`).Scan(&partial); err != nil {
+		t.Fatalf("read trades chunk status: %v", err)
+	}
+	if total := countZeroLegTrades(t, ctx, db); total != want || partial != 0 {
+		t.Fatalf("zero-leg trades = %d with %d partial chunk(s), want %d, all in compressed batches", total, partial, want)
+	}
 }
 
 // zeroLegInsert is a literal INSERT (assertInsertRejected takes no bind

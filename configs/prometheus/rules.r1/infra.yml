@@ -321,6 +321,27 @@ groups:
             reading a frozen file, not live VRRP state. `systemctl
             status keepalived-textfile-scraper.timer`.
 
+      # census-rollup.timer fires every 30m and writes the table behind
+      # /v1/contracts/stats; a timer that stopped firing leaves no failed unit,
+      # so stellarindex_systemd_unit_failed stays silent while the page serves
+      # a frozen figure. Reads the TIMER's last trigger, not the service's exit
+      # status (that is the catch-all's job). 2h tolerates three missed runs.
+      - alert: stellarindex_census_rollup_timer_stale
+        expr: time() - node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"} > 7200
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_census_rollup_timer_stale
+          summary: "census-rollup.timer has not fired for 2h on {{ $labels.instance }}"
+          description: |
+            The contracts-census rollup is scheduled every 30 minutes and
+            has not been triggered for 2+ hours, so /v1/contracts/stats
+            serves a stale active_90d lower bound. `systemctl status
+            census-rollup.timer census-rollup.service`.
+
       # r1's boot/root disks are mdadm RAID1 (md0 swap, md1 /). A component
       # dropping out is the same redundancy loss
       # stellarindex_zfs_pool_degraded pages for, on the OS disks. Uses

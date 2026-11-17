@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -7,6 +7,11 @@ vi.mock('@/api/client', async () => {
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return { ...actual, apiGet: vi.fn() };
 });
+// jsdom has no EventSource; the headline's tip stream stays closed.
+vi.mock('@/lib/live/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/live/hooks')>()),
+  useTipStream: () => null,
+}));
 
 import { apiGet } from '@/api/client';
 import {
@@ -15,6 +20,13 @@ import {
   rankSwapTokens,
   type SwapToken,
 } from './AssetSwap';
+import { LiveAssetPrice } from './LiveAssetPrice';
+
+// The /v1/price poll uses raw fetch; unstubbed it reached the live API and
+// a real price replaced the baked one mid-test.
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+});
 
 // The converter's fiat legs come from /v1/price/batch, which
 // this widget typed as `{data: Array<{asset_id, price}>}` — so
@@ -58,7 +70,7 @@ function renderSwap() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <AssetSwap symbol="XLM" assetId="native" priceUSD={0.195} />
+      <AssetSwap symbol="XLM" assetId="native" priceUSD="0.195" />
     </QueryClientProvider>,
   );
 }
@@ -144,6 +156,272 @@ describe('AssetSwap fiat leg basis', () => {
     }
 
     await vi.waitFor(() => expect(legCallCount()).toBeGreaterThan(before));
+  });
+});
+
+// The page asset's leg must follow the live /v1/price poll the headline
+// reads, not the build-time baked price, and blank when the server withholds.
+describe('AssetSwap page-asset leg', () => {
+  function stubPrice(status: number, body: unknown) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (input: string | URL) => {
+        const hit = String(input).includes('/v1/price?');
+        const code = hit ? status : 500;
+        return { status: code, ok: code === 200, json: async () => body };
+      }),
+    );
+  }
+  const receiveValue = () =>
+    (screen.getAllByRole('textbox')[1] as HTMLInputElement).value;
+
+  it('converts at the live price, not the baked one', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.26' } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    vi.unstubAllGlobals();
+  });
+
+  it('stops converting once the server withholds the price', async () => {
+    stubApi();
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+      title: 'withheld',
+    });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe(''));
+    vi.unstubAllGlobals();
+  });
+
+  it('carries the thin-market warning when the live price is thin', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.26' }, flags: { thin_market: true } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    expect(
+      screen.getByText(/thin market · low confidence · in no total/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Low confidence:/)).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  // A declared peg is not the market /v1/price refuses: the converter keeps
+  // the hook's derived price, re-read from /v1/assets/{id}.
+  function renderPegged() {
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/assets/native')
+        return { data: { price_usd: '1.08', price_basis: 'declared_peg' } };
+      return base(path);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <AssetSwap
+          symbol="XLM"
+          assetId="native"
+          priceUSD="1.07"
+          priceProvenance="declared_peg"
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('keeps converting at a declared peg the market poll withholds', async () => {
+    stubApi();
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+    });
+    renderPegged();
+    await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
+    vi.unstubAllGlobals();
+  });
+
+  it('never lets a thin market price displace a declared peg', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.5' }, flags: { thin_market: true } });
+    renderPegged();
+    await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
+    expect(screen.queryByText(/^Low confidence:/)).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+});
+
+// Two independent polls could disagree: the headline withheld while the
+// converter's own request failed and kept the withdrawn price.
+describe('AssetSwap and the headline share one price resolution', () => {
+  const receiveValue = () =>
+    (screen.getAllByRole('textbox')[1] as HTMLInputElement).value;
+
+  it('serves both from one request and empties the converter with the headline', async () => {
+    stubApi();
+    let withheld = false;
+    const fetchMock = vi.fn().mockImplementation(async (input: string) => {
+      if (!String(input).includes('/v1/price?'))
+        return { status: 500, ok: false, json: async () => ({}) };
+      return withheld
+        ? {
+            status: 404,
+            ok: false,
+            json: async () => ({
+              type: 'https://stellarindex.io/problems/price-withheld',
+              detail: 'issuer flagged',
+            }),
+          }
+        : {
+            status: 200,
+            ok: true,
+            json: async () => ({ data: { price: '0.26' } }),
+          };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const priceCalls = () =>
+      fetchMock.mock.calls.filter(([u]) => String(u).includes('/v1/price?'))
+        .length;
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <LiveAssetPrice
+          assetID="native"
+          initialPrice="0.195"
+          initialProvenance="vwap1m"
+        />
+        <AssetSwap
+          symbol="XLM"
+          assetId="native"
+          priceUSD="0.195"
+          priceProvenance="vwap1m"
+        />
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    expect(screen.getByText(/^\$0\.26/)).toBeInTheDocument();
+    expect(priceCalls()).toBe(1);
+
+    withheld = true;
+    await act(() => client.refetchQueries({ queryKey: ['/v1/price'] }));
+    expect(priceCalls()).toBe(2);
+    // Checked in the render that first shows the verdict, not eventually.
+    await vi.waitFor(() =>
+      expect(screen.getByText('issuer flagged')).toBeInTheDocument(),
+    );
+    expect(receiveValue()).toBe('');
+    vi.unstubAllGlobals();
+  });
+});
+
+// Production serves a catalogue row with asset_id = its slug, which
+// /v1/price/batch rejects with a 400; the leg must price the issuance.
+describe('AssetSwap catalogue leg', () => {
+  const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+  it('prices a picked catalogue row through its verified issuance id', async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/assets/verified')
+        return { data: [{ slug: 'usdc', asset_id: USDC }] };
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: 'usdc',
+              slug: 'usdc',
+              code: 'USDC',
+              type: 'global',
+              price_usd: '1.0001',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /USDC/ }));
+
+    const legIds = () =>
+      vi
+        .mocked(apiGet)
+        .mock.calls.filter(([p]) => p === '/v1/price/batch')
+        .map(([, params]) => (params as { asset_ids?: string }).asset_ids);
+    await vi.waitFor(() => expect(legIds()).toContain(USDC));
+    expect(legIds()).not.toContain('usdc');
+  });
+
+  it('keeps a crypto row with no issuance here and prices it as crypto:<TICKER>', async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/assets/verified') return { data: [{ slug: 'btc' }] };
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: 'btc',
+              slug: 'btc',
+              code: 'BTC',
+              class: 'crypto',
+              type: 'global',
+              price_usd: '97000',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /BTC/ }));
+
+    const legIds = () =>
+      vi
+        .mocked(apiGet)
+        .mock.calls.filter(([p]) => p === '/v1/price/batch')
+        .map(([, params]) => (params as { asset_ids?: string }).asset_ids);
+    await vi.waitFor(() => expect(legIds()).toContain('crypto:BTC'));
+    expect(legIds()).not.toContain('btc');
+  });
+
+  it("never lists the page asset's catalogue row once its price is withheld", async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [{ asset_id: 'native', code: 'XLM', price_usd: '0.19' }],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => ({
+        status: 404,
+        ok: false,
+        json: async () => ({
+          type: 'https://stellarindex.io/problems/price-withheld',
+        }),
+      })),
+    );
+    renderSwap();
+    await vi.waitFor(() =>
+      expect(
+        (screen.getAllByRole('textbox')[1] as HTMLInputElement).value,
+      ).toBe(''),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('button', { name: /EUR/ });
+    expect(
+      within(dialog).queryByRole('button', { name: /XLM/ }),
+    ).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });
 

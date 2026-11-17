@@ -1463,15 +1463,16 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
 }
 
 // scanTradeOriented scans one latest-trade row, rebuilds its Pair via the canonical parse path and re-expresses it in `want`'s orientation.
-func scanTradeOriented(rows *sql.Rows, want canonical.Pair, who string) (canonical.Trade, error) {
+func scanTradeOriented(rows *sql.Rows, want canonical.Pair, who string, extra ...any) (canonical.Trade, error) {
 	var t canonical.Trade
 	var baseAsset, quoteAsset string
-	if err := rows.Scan(
+	dest := append([]any{
 		&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
 		&baseAsset, &quoteAsset,
 		&t.BaseAmount, &t.QuoteAmount,
 		&t.Maker, &t.Taker, &t.RoutedVia,
-	); err != nil {
+	}, extra...)
+	if err := rows.Scan(dest...); err != nil {
 		return canonical.Trade{}, fmt.Errorf("timescale: %s scan: %w", who, err)
 	}
 	base, err := canonical.ParseAsset(baseAsset)
@@ -1540,7 +1541,8 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
                 base_amount, quote_amount,
                 COALESCE(maker, '')      AS maker,
                 COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via
+                COALESCE(routed_via, '') AS routed_via,
+                COALESCE(usd_volume >= $7::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
            FROM trades
           WHERE base_asset  = $1
             AND quote_asset = $2
@@ -1555,7 +1557,8 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
                 base_amount, quote_amount,
                 COALESCE(maker, '')      AS maker,
                 COALESCE(taker, '')      AS taker,
-                COALESCE(routed_via, '') AS routed_via
+                COALESCE(routed_via, '') AS routed_via,
+                COALESCE(usd_volume >= $7::numeric AND base_amount > 0 AND quote_amount > 0, false) AS clears_floor
            FROM trades
           WHERE base_asset  = $2
             AND quote_asset = $1
@@ -1570,6 +1573,9 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(),
 		from.UTC(), to.UTC(), limit, nonVWAPSourcesArg(),
+		// prices_1m's per-trade notional_trade_count predicate, so a point read floors as the stored bars do; a NULL
+		// usd_volume is unknown and does not clear it.
+		bridgeLegMinUSDVolume,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TradesInRange: %w", err)
@@ -1578,10 +1584,12 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 
 	var out []canonical.Trade
 	for rows.Next() {
-		t, err := scanTradeOriented(rows, p, "TradesInRange")
+		var clearsFloor bool
+		t, err := scanTradeOriented(rows, p, "TradesInRange", &clearsFloor)
 		if err != nil {
 			return nil, err
 		}
+		t.ClearsNotionalFloor = clearsFloor
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {

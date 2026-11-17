@@ -242,6 +242,14 @@ func (r *rwaReferences) addSideFeed(u canonical.OracleUpdate) bool {
 	return rwaAddFundNAV(r.fundNAV, u) || addGlobalMarketRow(r.globalUSD, u)
 }
 
+// rwaInstrumentOracleRow admits only instrument feeds (whether a Stellar asset may be answered with one is R-0's question, asked per
+// row against the curated binding) from a redistributable oracle (R-C), not an aggregator writing into the same table for divergence.
+func rwaInstrumentOracleRow(u canonical.OracleUpdate) bool {
+	return u.Asset.Type == canonical.AssetRWA &&
+		external.Lookup(u.Source).Class == external.ClassOracle &&
+		!external.RedistributionBarred(u.Source)
+}
+
 // rwaReferenceSnapshotFrom reduces one oracle-stream read to publishable references, using the same trailing-7d rows /v1/oracle/streams
 // serves; a feed absent from that window is not an active stream.
 func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
@@ -253,16 +261,7 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 		available: true,
 	}
 	for _, u := range updates {
-		if out.addSideFeed(u) {
-			continue
-		}
-		// Only instrument feeds; whether a Stellar asset may be answered with one is R-0's
-		// question, asked per row against the curated binding.
-		if u.Asset.Type != canonical.AssetRWA {
-			continue
-		}
-		// R-C: an oracle, not an aggregator writing into the same table for divergence.
-		if external.Lookup(u.Source).Class != external.ClassOracle {
+		if out.addSideFeed(u) || !rwaInstrumentOracleRow(u) {
 			continue
 		}
 		// The stored feed code verbatim: ParseAsset only admits the exact spelling, so no folding.

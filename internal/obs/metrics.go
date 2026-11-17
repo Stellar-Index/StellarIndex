@@ -218,6 +218,7 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeActive,
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeLadderRehydratedTotal,
+		AnomalyFreezeLadderReadFailuresTotal,
 		AnomalyFreezeLadderWriteFailuresTotal,
 		APIFreezeLookupFailuresTotal,
 		AnomalyFreezeRecoverySweepsTotal,
@@ -1578,7 +1579,8 @@ var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// AssetVolumeRollupSweepsTotal counts assetvolrollup sweeps feeding asset_volume_24h; refresh_error keeps the previous rows (stale, not blank).
+// AssetVolumeRollupSweepsTotal counts assetvolrollup sweeps feeding asset_volume_24h; refresh_error keeps the previous rows, which readers
+// serve as nil once older than 15 minutes.
 var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_asset_volume_rollup_sweeps_total",
@@ -2488,6 +2490,14 @@ var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_ladder_rehydrated_total",
 		Help: "Freeze lifecycles restored from the durable freeze_events ladder after the Redis marker went missing.",
+	},
+)
+
+// AnomalyFreezeLadderReadFailuresTotal counts marker rebuilds that went ahead without the durable ladder because reading it failed.
+var AnomalyFreezeLadderReadFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_ladder_read_failures_total",
+		Help: "Freeze-marker rebuilds that could not read the durable freeze_events ladder and restored no ladder. Non-zero = a live freeze may have restarted from its first rung.",
 	},
 )
 
