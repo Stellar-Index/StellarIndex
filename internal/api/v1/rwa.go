@@ -1197,6 +1197,9 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	contractAssets := rwaContractAssetRows(m.contracts, contractRows)
 
 	view.Assets = append(classicAssets, contractAssets...)
+	for i := range view.Assets {
+		rwaWithholdFlaggedIdentity(&view.Assets[i])
+	}
 
 	// Ordering runs ONCE over the combined set so both kinds rank by the same rule.
 	rwaSortAssets(view.Assets)
@@ -1516,6 +1519,17 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now 
 		out = append(out, a)
 	}
 	return out, notObserved
+}
+
+// rwaWithholdFlaggedIdentity is [suppressFlaggedIssuerIdentity] for an RWA row: membership is cached past a later scam tag, so a
+// row whose issuer is now flagged or unchecked must not keep serving the brand name and instrument it claims. The bound SEP-1
+// home domain stays, as on /v1/assets, because that toml lists the asset back.
+func rwaWithholdFlaggedIdentity(a *RWAAsset) {
+	if a.Valuation.Status != RWAValuationIssuerFlagged && a.Valuation.Status != RWAValuationIssuerUnchecked {
+		return
+	}
+	a.Name, a.Symbol, a.AnchorAsset = "", "", ""
+	a.ISINCollision, a.VettedISIN = nil, nil
 }
 
 // rwaSupplyProvenance carries the listing row's supply basis onto the RWA row, with whether that figure is a floor
