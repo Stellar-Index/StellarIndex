@@ -90,33 +90,58 @@ WHERE fee_account != '';
 -- ttl backfill). Capture TIP at MV-creation time; overlapping the MV era is
 -- idempotent under the RMT. Re-running any window is SAFE.
 --
---   TIP=$(clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers")
---   for W in $(seq 2 2000000 "$TIP"); do
---     /usr/local/sbin/run-heavy-job.sh "obs-backfill-ops-$W" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.ops_by_source
---       SELECT source_account, ledger_seq, tx_index, op_index
---       FROM stellar.operations
---       WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---     /usr/local/sbin/run-heavy-job.sh "obs-backfill-tx-$W" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.ops_by_source
---       SELECT source_account, ledger_seq, tx_index, 4294967295
---       FROM stellar.transactions
---       WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---   done
+-- Fail-closed as account_activity.sql Step 2 is: a bad TIP, a failed job, a
+-- wrapper exit 75 (a lock was held and the job did not run) or a missing
+-- success marker aborts the subshell; COMPLETE prints only when every job
+-- ran. The fee-payer arm reads rows with fee_account set, so windows before
+-- fee_account was populated insert nothing. Paste the block WHOLE.
 --
--- Fee payers, over the range where fee_account is populated (one statement;
--- the filter leaves a few rows per ledger). Nothing here checks it ran: the
--- Step-3 proof counts each payer's row as its own key and fails without it.
+--   TIP=$(clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers") || TIP=""
+--   (
+--     case "$TIP" in ''|*[^0-9]*|0*)
+--       echo "ops_by_source backfill: TIP='$TIP' is not a ledger number (probe failed) - aborting, NOTHING was backfilled" >&2; exit 1 ;;
+--     esac
+--     OBS_MARKS=$(mktemp -d) || exit 1
+--     OBS_DONE=0; OBS_WANT=0
+--     obs_job() {
+--       OBS_MARK="$OBS_MARKS/$1-$2.ok"
+--       OBS_WANT=$((OBS_WANT + 1))
+--       /usr/local/sbin/run-heavy-job.sh "obs-backfill-$1-$2" bash -c 'clickhouse-client --port 9300 -q "$1" && : > "$2"' obs-job "$3" "$OBS_MARK" </dev/null \
+--         || { if [ $? -eq 75 ]; then echo "ops_by_source backfill: $1 window $2 DID NOT RUN (the wrapper exited 75 - a lock was held and it did not run) - aborting"; else echo "ops_by_source backfill: $1 window $2 FAILED - aborting"; fi >&2; exit 1; }
+--       [ -e "$OBS_MARK" ] \
+--         || { echo "ops_by_source backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker) - aborting" >&2; exit 1; }
+--       OBS_DONE=$((OBS_DONE + 1))
+--     }
+--     W=2
+--     while [ "$W" -le "$TIP" ]; do
+--       obs_job ops "$W" "
+--         INSERT INTO stellar.ops_by_source
+--         SELECT source_account, ledger_seq, tx_index, op_index
+--         FROM stellar.operations
+--         WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       obs_job tx "$W" "
+--         INSERT INTO stellar.ops_by_source
+--         SELECT source_account, ledger_seq, tx_index, 4294967295
+--         FROM stellar.transactions
+--         WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       obs_job feepayer "$W" "
+--         INSERT INTO stellar.ops_by_source
+--         SELECT fee_account, ledger_seq, tx_index, 4294967295
+--         FROM stellar.transactions
+--         WHERE fee_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       W=$((W + 2000000))
+--     done
+--     echo "ops_by_source backfill: $OBS_DONE of $OBS_WANT jobs ran to success"
+--     [ "$OBS_WANT" -gt 0 ] && [ "$OBS_DONE" -eq "$OBS_WANT" ] \
+--       || { echo "ops_by_source backfill: NOT every job ran (or TIP=$TIP yields no window) - aborting" >&2; exit 1; }
+--     rm -rf "$OBS_MARKS"
+--   ) && echo "ops_by_source backfill: COMPLETE - every window 2..$TIP covered"
 --
---   /usr/local/sbin/run-heavy-job.sh obs-backfill-feepayer clickhouse-client --port 9300 -q "
---     INSERT INTO stellar.ops_by_source
---     SELECT fee_account, ledger_seq, tx_index, 4294967295
---     FROM stellar.transactions
---     WHERE fee_account != ''
---       AND ledger_seq >= (SELECT min(ledger_seq) FROM stellar.transactions WHERE fee_account != '')
---     SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+-- A host that already ran the ops and tx arms needs only the fee-payer arm:
+-- run the block with the ops and tx obs_job calls removed.
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
 -- Spot-check N accounts: the projection's per-account key set must equal the
