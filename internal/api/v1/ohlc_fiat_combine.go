@@ -31,10 +31,12 @@ func (s *Server) ohlcSeriesFiatCombined(
 		return nil, false, err
 	}
 	// Snapshot the answered buckets BEFORE the held-back pass so two held-back constituents
-	// sharing an unanswered bucket still merge with each other.
+	// sharing an unanswered bucket still merge with each other. A dust-only bar answers nothing.
 	answered := make(map[time.Time]struct{}, len(c.acc))
-	for t := range c.acc {
-		answered[t] = struct{}{}
+	for t, a := range c.acc {
+		if a.hasFloored() {
+			answered[t] = struct{}{}
+		}
 	}
 	unanswered := func(t time.Time) bool {
 		_, taken := answered[t]
@@ -219,16 +221,33 @@ func (s *Server) mergeConstituentTrades(
 // finest interval `/v1/ohlc` accepts, which makes "point == series" exact for a real request.
 const fiatPointGateInterval = ohlcInterval1m
 
-// tradeGateBuckets is the set of gate buckets the given trades occupy.
+// tradeGateBuckets is the set of gate buckets the given trades answer: those holding a trade that clears the notional floor,
+// as prices_1m's floored rows do, so the point gate agrees with the series one.
 func tradeGateBuckets(trades []canonical.Trade) map[time.Time]struct{} {
 	if len(trades) == 0 {
 		return nil
 	}
 	out := make(map[time.Time]struct{}, len(trades))
 	for i := range trades {
-		out[fiatPointGateBucket(trades[i].Timestamp)] = struct{}{}
+		if clearsNotionalFloor(&trades[i]) {
+			out[fiatPointGateBucket(trades[i].Timestamp)] = struct{}{}
+		}
 	}
 	return out
+}
+
+// clearsNotionalFloor mirrors the CAGG floor (both legs > 0, notional >= $0.01) for a fiat-combine constituent trade: its quote
+// leg is a fiat peg, so the quote amount at the venue's scale stands in for the notional.
+func clearsNotionalFloor(t *canonical.Trade) bool {
+	if t.BaseAmount.Sign() <= 0 || t.QuoteAmount.Sign() <= 0 {
+		return false
+	}
+	scale := amountScaleDecimalsFor(t.Source)
+	if scale < 2 {
+		return true
+	}
+	floor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale-2)), nil)
+	return t.QuoteAmount.BigInt().Cmp(floor) >= 0
 }
 
 // dropTradesInAnsweredBuckets removes trades whose gate bucket an established spelling already answered; with nothing answered (a
@@ -389,8 +408,13 @@ type ohlcBucketAcc struct {
 	byScale map[int]*ohlcScaleAcc // keyed by the contributing bars' scale
 	highs   []*big.Rat            // per-constituent highs (bucket high = max)
 	lows    []*big.Rat            // per-constituent lows  (bucket low  = min)
-	n       int64
-	sources map[string]struct{} // venues behind the bucket; served as `sources`
+	// The same price inputs from floored bars only. When any exists they alone set the prices, the cross-constituent twin of
+	// storage's direction keep rule: a dust-only bar would set the wick the floor exists to remove. Volumes still sum every bar.
+	flooredByScale map[int]*ohlcScaleAcc
+	flooredHighs   []*big.Rat
+	flooredLows    []*big.Rat
+	n              int64
+	sources        map[string]struct{} // venues behind the bucket; served as `sources`
 	// commonScale is the finest scale any bar admitted to this bucket declares: the lift target, so
 	// every lift is an exact multiply by 10^(common−scale) ≥ 1 (ADR-0003). It is bucket-scoped so
 	// the bar depends on no window. See [fiatCombine].
@@ -406,7 +430,35 @@ type ohlcScaleAcc struct {
 }
 
 func newOHLCBucketAcc() *ohlcBucketAcc {
-	return &ohlcBucketAcc{byScale: make(map[int]*ohlcScaleAcc, 2), sources: map[string]struct{}{}, commonScale: ohlcBarScaleUnknown}
+	return &ohlcBucketAcc{
+		byScale:        make(map[int]*ohlcScaleAcc, 2),
+		flooredByScale: make(map[int]*ohlcScaleAcc, 2),
+		sources:        map[string]struct{}{},
+		commonScale:    ohlcBarScaleUnknown,
+	}
+}
+
+// hasFloored reports whether any bar in the bucket cleared the notional floor.
+func (a *ohlcBucketAcc) hasFloored() bool { return len(a.flooredHighs) > 0 }
+
+// addScaled folds one bar's weighted open/close and volumes into the totals for its scale.
+func addScaled(m map[int]*ohlcScaleAcc, scale int, open, closeP, bv, qv *big.Rat) {
+	sa := m[scale]
+	if sa == nil {
+		sa = &ohlcScaleAcc{
+			openNum:  new(big.Rat),
+			closeNum: new(big.Rat),
+			baseVol:  new(big.Rat),
+			quoteVol: new(big.Rat),
+		}
+		m[scale] = sa
+	}
+	sa.openNum.Add(sa.openNum, new(big.Rat).Mul(open, bv))
+	sa.closeNum.Add(sa.closeNum, new(big.Rat).Mul(closeP, bv))
+	sa.baseVol.Add(sa.baseVol, bv)
+	if qv != nil {
+		sa.quoteVol.Add(sa.quoteVol, qv)
+	}
 }
 
 func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
@@ -423,22 +475,7 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 	if scale > a.commonScale {
 		a.commonScale = scale
 	}
-	sa := a.byScale[scale]
-	if sa == nil {
-		sa = &ohlcScaleAcc{
-			openNum:  new(big.Rat),
-			closeNum: new(big.Rat),
-			baseVol:  new(big.Rat),
-			quoteVol: new(big.Rat),
-		}
-		a.byScale[scale] = sa
-	}
-	sa.openNum.Add(sa.openNum, new(big.Rat).Mul(open, bv))
-	sa.closeNum.Add(sa.closeNum, new(big.Rat).Mul(closeP, bv))
-	sa.baseVol.Add(sa.baseVol, bv)
-	if qv != nil {
-		sa.quoteVol.Add(sa.quoteVol, qv)
-	}
+	addScaled(a.byScale, scale, open, closeP, bv, qv)
 	a.n += b.N
 	for _, src := range b.Sources {
 		a.sources[src] = struct{}{}
@@ -446,29 +483,42 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 	// The bucket extreme is the max/min across per-constituent extremes (see selectExtreme).
 	a.highs = append(a.highs, high)
 	a.lows = append(a.lows, low)
+	if !b.BelowFloor {
+		addScaled(a.flooredByScale, scale, open, closeP, bv, qv)
+		a.flooredHighs = append(a.flooredHighs, high)
+		a.flooredLows = append(a.flooredLows, low)
+	}
 }
 
 // finalize renders the bucket, lifting each scale's totals to the bucket's common scale (stated as v_base_decimals/v_quote_decimals).
 // Map-order summing is safe only because exact big.Rat addition is order-independent; the point path's open/close needs
 // [sortTradesChronological] (ADR-0015).
 func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
-	openNum, closeNum := new(big.Rat), new(big.Rat)
 	baseVol, quoteVol := new(big.Rat), new(big.Rat)
 	for scale, sa := range a.byScale {
 		f := ohlcScaleFactor(scale, a.commonScale)
-		openNum.Add(openNum, new(big.Rat).Mul(sa.openNum, f))
-		closeNum.Add(closeNum, new(big.Rat).Mul(sa.closeNum, f))
 		baseVol.Add(baseVol, new(big.Rat).Mul(sa.baseVol, f))
 		quoteVol.Add(quoteVol, new(big.Rat).Mul(sa.quoteVol, f))
 	}
+	priced, highs, lows := a.byScale, a.highs, a.lows
+	if a.hasFloored() {
+		priced, highs, lows = a.flooredByScale, a.flooredHighs, a.flooredLows
+	}
+	openNum, closeNum, weight := new(big.Rat), new(big.Rat), new(big.Rat)
+	for scale, sa := range priced {
+		f := ohlcScaleFactor(scale, a.commonScale)
+		openNum.Add(openNum, new(big.Rat).Mul(sa.openNum, f))
+		closeNum.Add(closeNum, new(big.Rat).Mul(sa.closeNum, f))
+		weight.Add(weight, new(big.Rat).Mul(sa.baseVol, f))
+	}
 
 	open, closeP := new(big.Rat), new(big.Rat)
-	if baseVol.Sign() > 0 {
-		open.Quo(openNum, baseVol)
-		closeP.Quo(closeNum, baseVol)
+	if weight.Sign() > 0 {
+		open.Quo(openNum, weight)
+		closeP.Quo(closeNum, weight)
 	}
-	high := selectExtreme(a.highs, true)
-	low := selectExtreme(a.lows, false)
+	high := selectExtreme(highs, true)
+	low := selectExtreme(lows, false)
 	// A bucket holding an unknown-scale bar sums integers at no single scale, so it states none.
 	stated := a.commonScale
 	if _, unknown := a.byScale[ohlcBarScaleUnknown]; unknown {
@@ -488,6 +538,7 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		VQuoteDecimals: wireScaleDecimals(stated),
 		N:              a.n,
 		Sources:        sortedSources(a.sources),
+		BelowFloor:     !a.hasFloored(),
 	}
 }
 

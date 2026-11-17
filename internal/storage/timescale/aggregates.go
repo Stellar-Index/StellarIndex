@@ -1333,6 +1333,10 @@ type OHLCBar struct {
 	// common scale first or it adds incommensurable integers. Empty when the bucket could not be
 	// attributed; never default a scale, since guessing one is the defect this column removes.
 	Sources []string
+
+	// BelowFloor is set when no stored row of the bucket is [ohlcFlooredSQL]: its prices are the unfloored fallback, so a caller
+	// merging this bar with other markets must not let it set a price beside a floored bar.
+	BelowFloor bool
 }
 
 // OHLCSeries returns oldest-first OHLC bars for [from, to) from the CAGG matching `granularity` (closed buckets only; `limit` 0 = unbounded); other intervals route through [Store.OHLCSeriesReBucketed].
@@ -1374,6 +1378,7 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		        trade_count AS tc,
 		        sources     AS srcs,
+		        floored,
 		        `+ohlcDirectionKeepSQL+`
 		      FROM (
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
@@ -1405,7 +1410,8 @@ func (s *Store) OHLCSeries(
 		    (SELECT COALESCE(array_agg(DISTINCT s ORDER BY s), ARRAY[]::text[])
 		       FROM unnest(COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
 		                || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[])) AS s)
-		                                                                            AS sources
+		                                                                            AS sources,
+		    NOT bool_or(floored)                                                    AS below_floor
 		  FROM norm
 		 GROUP BY bucket
 	`, table, interval, ohlcFlooredSQL(table))
@@ -1431,7 +1437,7 @@ func (s *Store) OHLCSeries(
 			&bar.Bucket,
 			&bar.Open, &bar.High, &bar.Low, &bar.Close,
 			&bar.BaseVolume, &bar.QuoteVolume, &bar.TradeCount,
-			&srcs,
+			&srcs, &bar.BelowFloor,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: OHLCSeries[%s] scan: %w", granularity, err)
 		}
@@ -1482,7 +1488,8 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		           sum(quote_vol) AS quote_vol,
 		           sum(tc)        AS tc,
 		           COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
-		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs
+		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs,
+		           bool_or(floored) AS floored
 		      FROM (
 		        SELECT bucket, (base_asset = $1) AS req,
 		               CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
@@ -1493,6 +1500,7 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		               trade_count AS tc,
 		               sources     AS srcs,
+		               floored,
 		               `+ohlcDirectionKeepSQL+`
 		          FROM (
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
@@ -1527,7 +1535,8 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		    sum(n.base_vol)::text                                       AS base_volume,
 		    sum(n.quote_vol)::text                                      AS quote_volume,
 		    sum(n.tc)::bigint                                           AS trade_count,
-		    COALESCE(sc.sources, ARRAY[]::text[])                       AS sources
+		    COALESCE(sc.sources, ARRAY[]::text[])                       AS sources,
+		    NOT bool_or(n.floored)                                      AS below_floor
 		  FROM norm n
 		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
@@ -1598,7 +1607,7 @@ func (s *Store) OHLCSeriesReBucketed(
 			&bar.Bucket,
 			&bar.Open, &bar.High, &bar.Low, &bar.Close,
 			&bar.BaseVolume, &bar.QuoteVolume, &bar.TradeCount,
-			&srcs,
+			&srcs, &bar.BelowFloor,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed[%s→%s] scan: %w", sourceGranularity, outInterval, err)
 		}
