@@ -7,4 +7,5 @@
     group: loki
     mode: "0640"
     validate: "/usr/local/bin/loki -config.file=%s -verify-config"
+  register: _loki_config
   notify: "loki config changed"

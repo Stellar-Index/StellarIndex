@@ -4,6 +4,7 @@
     src: loki.service.j2
     dest: /etc/systemd/system/loki.service
     mode: "0644"
+  register: _loki_unit
   notify: "loki config changed"
 
 - name: daemon-reload systemd
@@ -17,6 +18,7 @@
     grep -Eq '^AWS_ACCESS_KEY_ID=.+' /etc/default/loki &&
     grep -Eq '^AWS_SECRET_ACCESS_KEY=.+' /etc/default/loki
   register: _loki_creds_probe
+  check_mode: false
   changed_when: false
   failed_when: false
 
@@ -35,10 +37,13 @@
     enabled: yes
     state: started
 
-# A changed config or unit restarts loki in a handler; run it now so the
-# /ready wait below checks the new process, not the old one.
-- name: apply pending loki restarts before the readiness check
-  meta: flush_handlers
+# Restart here, not via flush_handlers (which would also fire other roles'
+# pending handlers), so the /ready wait below checks the new process.
+- name: restart loki now when its config or unit changed
+  systemd:
+    name: loki
+    state: restarted
+  when: _loki_config is changed or _loki_unit is changed
 
 - name: wait for loki to answer /ready
   uri:
