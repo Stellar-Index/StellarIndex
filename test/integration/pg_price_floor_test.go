@@ -245,6 +245,64 @@ func TestAssetPriceHistory_UnstampedMinuteIsNotFloored(t *testing.T) {
 	}
 }
 
+// An unstamped minute ranks as floored only while its anchor is also missing at read time; with the anchor resolving (XLM arm) or on
+// the direct USD arm, it is a crumb, so the older floored minute stays the headline.
+func TestAssetPriceSnapshot_UnstampedMinuteWithAnchorIsCrumb(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	usdcID := "USDC-" + zeroLegIssuer
+	viaXLM := "TUNX-" + zeroLegIssuer
+	direct := "TUND-" + zeroLegIssuer
+	now := time.Now().UTC().Truncate(time.Minute)
+
+	// XLM at 0.30 USD fifty minutes ago, so the anchor resolves at both -40 and -5 minutes.
+	seed(t, db, ctx, ohlcDustPair{base: "native", quote: usdcID}, []seedTrade{
+		{off: 0, base: "1000000000", quote: "300000000", usd: "30"},
+	}, now.Add(-50*time.Minute))
+	// Both tokens at 0.10 USD forty minutes ago, stamped; then unstamped crumbs at 100 XLM (30 USD) and 1 USD.
+	seed(t, db, ctx, ohlcDustPair{base: viaXLM, quote: "native"}, []seedTrade{
+		{off: 0, base: "300000000", quote: "100000000", usd: "3"},
+	}, now.Add(-40*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: viaXLM, quote: "native"}, []seedTrade{
+		{off: 0, base: "1", quote: "100", usd: ""},
+	}, now.Add(-5*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: direct, quote: usdcID}, []seedTrade{
+		{off: 0, base: "100000000", quote: "10000000", usd: "1"},
+	}, now.Add(-40*time.Minute))
+	seed(t, db, ctx, ohlcDustPair{base: direct, quote: usdcID}, []seedTrade{
+		{off: 0, base: "1", quote: "1", usd: ""},
+	}, now.Add(-5*time.Minute))
+
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+	if err := store.RefreshAssetListingRollups(ctx); err != nil {
+		t.Fatalf("RefreshAssetListingRollups: %v", err)
+	}
+	for _, asset := range []string{viaXLM, direct} {
+		var price string
+		var tenth bool
+		if err := db.QueryRowContext(ctx,
+			`SELECT price_usd::text, round(price_usd, 9) = 0.1 FROM asset_price_snapshot WHERE asset_id = $1`, asset,
+		).Scan(&price, &tenth); err != nil {
+			t.Fatalf("read asset_price_snapshot %s: %v", asset, err)
+		}
+		if !tenth {
+			t.Errorf("%s: price_usd = %s, want 0.1 from the floored minute, not the unstamped crumb", asset[:4], price)
+		}
+	}
+}
+
 // A sub-cent print must not set the listing's headline price or change pills while a minute over the $0.01 notional floor exists:
 // the arm pick ranks a floored arm over a newer crumb-only one, and a crumb lookback is no baseline for a floored headline.
 func TestAssetPriceSnapshot_NotionalFloorAcrossArms(t *testing.T) {

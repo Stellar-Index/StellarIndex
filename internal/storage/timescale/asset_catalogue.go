@@ -1313,7 +1313,7 @@ var getAssetBySlugSQL = `
 		         AND volume_usd IS NOT NULL
 		    ) t
 		),
-		` + assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2)) + `,
+		` + assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2), xlmUSDLateralMissing("$2::text")) + `,
 		` + xlmUSDNativeCTEs("$2::text") + `
 		SELECT
 		    -- asset_id is the LAST resort here, and it is load-bearing.

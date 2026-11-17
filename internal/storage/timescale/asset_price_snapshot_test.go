@@ -73,22 +73,30 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	t.Parallel()
 	usdList := strings.Join(strings.Fields(usdProxyQuotes), " ")
 	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
-	for name, c := range map[string]struct{ q, arms, joins string }{
-		"rollup": {refreshAssetPriceSnapshotUpsert, assetPriceArmCTEs("", xlmQuotesBound1), priceArmJoins(xlmUSDGridJoin)},
+	for name, c := range map[string]struct {
+		q, arms, joins string
+		missing        func(string) string
+	}{
+		"rollup": {
+			refreshAssetPriceSnapshotUpsert, assetPriceArmCTEs("", xlmQuotesBound1, xlmUSDGridMissing),
+			priceArmJoins(xlmUSDGridJoin), xlmUSDGridMissing,
+		},
 		"detail": {
-			getAssetBySlugSQL, assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2)),
-			priceArmJoins(xlmUSDLateralJoin("$2::text")),
+			getAssetBySlugSQL, assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2), xlmUSDLateralMissing("$2::text")),
+			priceArmJoins(xlmUSDLateralJoin("$2::text")), xlmUSDLateralMissing("$2::text"),
 		},
 	} {
 		sql, arms := fold(c.q), fold(c.arms)
 		if !strings.Contains(sql, arms) {
 			t.Fatalf("%s: does not splice its eight price arms", name)
 		}
+		// The XLM arms' anchor probe reads the USD books too; only the arms' own market reads count here.
+		armReads := strings.ReplaceAll(arms, fold(c.missing("p.bucket")), "")
 		for _, want := range []string{
 			"quote_asset IN (" + usdList + ")",
 			"base_asset IN (" + usdList + ")",
 		} {
-			if got := strings.Count(arms, want); got != 4 {
+			if got := strings.Count(armReads, want); got != 4 {
 				t.Errorf("%s: %d direct_usd* arms read %q, want 4 (now, 1h, 24h, 7d)", name, got, want)
 			}
 		}
@@ -114,15 +122,28 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 func TestPriceArms_PreferNewestNotionalMinute(t *testing.T) {
 	t.Parallel()
 	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
-	arms := fold(assetPriceArmCTEs("", xlmQuotesBound1))
-	for _, want := range []string{
-		"(notional_trade_count > 0 OR volume_usd = 0) AS floored",
-		"COALESCE(max(u.bucket) FILTER (WHERE u.floored) OVER w, max(u.bucket) OVER w) AS newest",
-		"WHERE bucket = newest AND (floored OR NOT any_floored)",
+	for name, missing := range map[string]func(string) string{
+		"rollup": xlmUSDGridMissing, "detail": xlmUSDLateralMissing("$2::text"),
 	} {
-		if got := strings.Count(arms, want); got < 8 {
-			t.Errorf("%d price arms carry %q, want every one of 8", got, want)
+		arms := fold(assetPriceArmCTEs("", xlmQuotesBound1, missing))
+		for _, c := range []struct {
+			want string
+			n    int
+		}{
+			{"COALESCE(max(u.bucket) FILTER (WHERE u.floored) OVER w, max(u.bucket) OVER w) AS newest", 8},
+			{"WHERE bucket = newest AND (floored OR NOT any_floored)", 8},
+			// Two union sides per arm: a direct USD minute is floored on notional alone, an XLM one also when its anchor is missing.
+			{"sources, " + notionalMinuteSQL + " AS floored", 8},
+			{"sources, " + fold(xlmArmFlooredSQL(missing)) + " AS floored", 8},
+			{"WHEN p.volume_usd = 0 THEN " + fold(missing("p.bucket")), 8},
+		} {
+			if got := strings.Count(arms, c.want); got != c.n {
+				t.Errorf("%s: %d price arm sides carry %q, want %d", name, got, c.want, c.n)
+			}
 		}
+	}
+	if !strings.Contains(priceArmPickExpr, "(direct.floored, direct.bucket) >= (vs_xlm.floored, vs_xlm.bucket)") {
+		t.Error("the arm pick no longer ranks floor status before recency")
 	}
 }
 
