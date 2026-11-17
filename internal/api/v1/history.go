@@ -207,6 +207,23 @@ func historySourceParam(w http.ResponseWriter, r *http.Request, reader HistoryRe
 	return source, true
 }
 
+// historyLimitParam parses ?limit (default 1000, range [1, 10000]); on a bad value it writes the 400 and returns false.
+func historyLimitParam(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return 1000, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 || parsed > 10000 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-limit",
+			"Invalid limit", http.StatusBadRequest,
+			"limit must be an integer in [1, 10000]")
+		return 0, false
+	}
+	return parsed, true
+}
+
 // handleHistory serves GET /v1/history; defaults: from = to - 1h, to = now, limit 1000 (clamped to 10000).
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + range/limit defaults are linear; splitting fragments the request lifecycle
 	reader := s.History
@@ -245,17 +262,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	limit := 1000
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 10000 {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/invalid-limit",
-				"Invalid limit", http.StatusBadRequest,
-				"limit must be an integer in [1, 10000]")
-			return
-		}
-		limit = parsed
+	limit, ok := historyLimitParam(w, r)
+	if !ok {
+		return
 	}
 
 	// The opaque cursor shadows `from`; otherwise paginating callers would re-request

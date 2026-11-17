@@ -445,7 +445,7 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 	t0 := time.Now()
 	return insertRefreshingCAGGs(store, os.Stderr, func(w tradeInserter) error {
 		return walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
-			insCtx, insCancel := context.WithTimeout(context.Background(), externalInsertBudget)
+			insCtx, insCancel := context.WithTimeout(context.WithoutCancel(ctx), externalInsertBudget)
 			defer insCancel()
 			return insertBackfilledTrades(insCtx, w, trades, progressEvery, os.Stderr, t0)
 		}, os.Stderr)
