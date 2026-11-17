@@ -222,9 +222,10 @@ No PagerDuty rotation (§3); oncall coverage is tracked manually. Nightly covera
 If all oncall are unreachable for > 30 min during a SEV-1:
 
 1. Declare the incident in the public Discord anyway.
-2. There is **no sealed break-glass credential**. Production secrets live only in the ansible-vault encrypted
-   inventory ([credential-rotation.md](credential-rotation.md)); acting on them needs an operator's local copy
-   plus the vault password. Until a break-glass mechanism exists, step 1 is the whole fallback.
+2. There is **no sealed break-glass credential**. Production secrets live in the ansible-vault encrypted
+   inventory ([credential-rotation.md](credential-rotation.md)). The vault file, its password and the r1 root
+   deploy key are also GitHub Actions secrets that the deploy and drift workflows read; that is CI access, not a
+   break-glass path. Until a break-glass mechanism exists, step 1 is the whole fallback.
 
 ---
 

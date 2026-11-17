@@ -576,6 +576,40 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
   rm -f "$gated"
 fi
 
+# ─── 11c. A documented rollback dispatch must be one deploy.yml accepts ────
+#
+# A dispatch to a previous tag (version=<prev…>) must pass migrations_skip=true (else `migrate up` fails on a
+# DB ahead of the tag) and must not narrow `binaries` (the skew check refuses a set whose omitted binaries are
+# not already on the target tag, which after a release is all of them). And no file may carry a release
+# signer identity that accepts release.yml from any ref; deploy.yml pins the tag.
+
+echo "Checking documented rollback dispatches and release signer identities..."
+rollbacks=$(mktemp)
+git ls-files -z -- 'docs/*.md' | xargs -0 awk 'BEGIN {
+  for (i = 1; i < ARGC; i++) {
+    f = ARGV[i]
+    while ((getline line < f) > 0) {
+      while (sub(/\\$/, "", line)) { if ((getline nxt < f) > 0) line = line " " nxt; else break }
+      p = index(line, "gh workflow run deploy.yml")
+      if (!p) continue
+      cmd = substr(line, p); q = index(cmd, "`"); if (q) cmd = substr(cmd, 1, q - 1)
+      if (cmd ~ /version=[^[:space:]]*prev/) print f "\t" cmd
+    }
+    close(f)
+  }
+}' > "$rollbacks"
+while IFS=$'\t' read -r doc cmd; do
+  [ -z "$doc" ] && continue
+  case "$cmd" in *binaries=*) err "$doc: rollback dispatch narrows -f binaries; deploy.yml refuses a partial set to an older tag (docs/operations/rollback.md#rolling-back-the-binaries): $cmd" ;; esac
+  case "$cmd" in *migrations_skip=true*) ;; *) err "$doc: rollback dispatch lacks -f migrations_skip=true; migrate up fails on a schema ahead of the tag: $cmd" ;; esac
+done < "$rollbacks"
+rm -f "$rollbacks"
+# `|| true`: no match exits 1 under set -e + pipefail. The pattern is built so this line does not match itself.
+loose='release\\\.yml@\.\*'
+(git grep -nE "$loose" -- . ':!scripts/ci/lint-docs.sh' ':!scripts/ci/lint-docs-test.sh' || true) | while IFS= read -r hit; do
+  err "release signer identity accepts release.yml from any ref; pin it to refs/(tags/<ver>|heads/main) as deploy.yml does: $hit"
+done
+
 # ─── 12. Every runbook referenced from alerts-catalog must exist ────────────
 #
 # Counterpart to section 9: a stale `runbooks/X.md` link in the catalog sends oncall to a 404.

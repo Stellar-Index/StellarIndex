@@ -96,7 +96,7 @@ One dominant route = handler bug; every route = shared dependency. `postgres.ok 
      -f migrations_skip=true
    ```
 
-   The default `binaries` is the whole region set. Naming fewer is refused by the version-skew gate unless the omitted binaries are already on the target tag. `migrations_skip=true` is required on a rollback (the deployed schema is newer than the tag's migration files; the previous binary runs against the forward schema), and is wrong on a forward deploy. Do not use `backup_freshness_skip` as a workaround.
+   Whole set, no `-f binaries`: a partial rollback is refused ([rollback.md](../rollback.md#rolling-back-the-binaries); watch the run there).
 
    Manual fallback ([release-process.md](../release-process.md) -> Rollback): swap back to `/usr/local/bin/stellarindex-api.prev-<previous-tag>` and restart. Verify `/v1/readyz` `status=ok` and `/v1/version`.
 2. Handler bug, no deploy: gate the endpoint at Caddy (above the catch-all `reverse_proxy` in `/etc/caddy/Caddyfile`; codify in `configs/caddy/Caddyfile.api` in the fix PR and remove after the fixed deploy). A middleware panic cannot be gated; roll back.
@@ -175,7 +175,7 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 2. Release is the cause: roll back ([release-process.md](../release-process.md) -> Rollback).
 
    ```sh
-   gh workflow run deploy.yml -f region=r1 -f version=<prev-tag> -f migrations_skip=true
+   gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f migrations_skip=true
    ```
 
    Same flags and skew-gate rules as the rollback above; see [rollback.md](../rollback.md).
