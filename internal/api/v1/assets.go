@@ -148,7 +148,8 @@ type AssetDetail struct {
 	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed:
 	// either the dust floor (single venue and 24h USD volume below
 	// aggregate.min_market_cap_volume_usd) or the turnover ceiling (capExceedsObservedTurnover;
-	// FDV, over max_supply, can breach it alone). It separates "suppressed on purpose" from "no
+	// FDV, over max_supply, can breach it alone), or, on a catalogue row, the Stellar twin's on-chain
+	// price failing the substance gate (flagTwinSubstanceWithheldCap). It separates "suppressed on purpose" from "no
 	// data"; price_usd still serves, only the valuation is guarded.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
@@ -1034,7 +1035,9 @@ func (s *Server) fillRowMarketCap(
 	lake, broad map[string]string,
 	sourceCounts map[string]int,
 ) {
-	if row.MarketCapUSD != nil || row.PriceUSD == nil || row.ThinMarket {
+	// The substance gate rules on the market behind the price, not on the supply, so a gated row keeps its supply fact.
+	gated := row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
+	if row.MarketCapUSD != nil || (row.PriceUSD == nil && !gated) || row.ThinMarket {
 		return
 	}
 	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
@@ -1044,6 +1047,10 @@ func (s *Server) fillRowMarketCap(
 	// Must precede every branch below: each stamps a smallest-unit supply figure that `decimals`
 	// has to be able to scale, whether or not a cap goes out beside it.
 	s.applyConfirmedListingDecimals(ctx, row)
+	if row.PriceUSD == nil {
+		stampCirculatingSupply(row, circ, basis)
+		return
+	}
 	if row.MarketCapDecimalsMismatch || row.DecimalsUnresolved {
 		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised
 		// through the nonstandard_decimals_assets projection while row.Decimals now holds a
@@ -3663,8 +3670,19 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// from, the price the gates ruled on and the dust flag. mergeTwinStats carries them over.
 		s.applyListingValuations(statsCtx, twin)
 		mergeTwinStats(&page[i], twin[0])
+		flagTwinSubstanceWithheldCap(&page[i], twin[0])
 	})
 	return anyUnmeasured.Load()
+}
+
+// flagTwinSubstanceWithheldCap marks a catalogue row's missing cap as suppressed when its twin's on-chain price failed the
+// substance gate on measured evidence. The row's own price comes from the global tier, so without the flag a null cap beside
+// a price and a supply would read as missing data.
+func flagTwinSubstanceWithheldCap(dst *AssetDetail, twin AssetDetail) {
+	if twin.PriceWithheldReason == PriceWithheldSubstance &&
+		dst.MarketCapUSD == nil && dst.PriceUSD != nil && dst.CirculatingSupply != nil {
+		dst.MarketCapLowLiquidity = true
+	}
 }
 
 // mergeContractArmVolume adds a catalogue entry's SAC wrapper 24h volume and trade count onto its classic twin row, which
