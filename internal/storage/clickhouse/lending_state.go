@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -23,6 +25,7 @@ type LendingContract struct {
 	ID       string // C-strkey
 	Protocol string
 	Backstop bool
+	Deployed uint32 // the deploy event's ledger, before which the contract has no storage; 0 = unknown
 }
 
 // LendingPrefix is one base64 key_xdr prefix the derive matches, and the contract it belongs to.
@@ -247,53 +250,117 @@ func SetLendingStateWatermark(ctx context.Context, addr string, from, thru uint3
 	})
 }
 
-// LendingProof is the completeness check's result: prefixed keys, those whose latest history row at or below the
-// watermark is missing or differs from the lake's state there, and those not compared because a row past the
-// watermark has replaced that row.
-type LendingProof struct {
-	Keys, Mismatched, Ahead uint64
+// LendingProofKey is one prefixed key of ledger_entries_current set against its latest history row at or below the
+// watermark (under FINAL; zero fields when the table has none).
+type LendingProofKey struct {
+	Key     string
+	Changed bool   // the current table's change is past the watermark, so its entry is not the state there
+	Present bool   // a history row at or below the watermark exists
+	Ledger  uint32 // that row's ledger
+	Entry   string // that row's entry; returned for a Changed key only
+	// For a key not Changed: the current entry equals the row's, and the current entry's hour holds a row past the
+	// watermark.
+	Same, AheadHit bool
+	Ahead          []time.Time // hours holding a history row past the watermark; returned for a Changed key only
 }
 
-// lendingProofQuery compares, per prefixed key, the state at the watermark with its latest history row at or below
-// it. A key the current table shows at or below the watermark is taken from there; one changed since is re-folded
-// from the entry changes up to the watermark. FINAL collapses duplicate history rows and superseded entry changes.
-// A key is counted Ahead, not compared, only when the hour of its last change at or below the watermark holds a row
-// past it (a window written but not accepted): under FINAL that row has replaced the one at the watermark.
-const lendingProofQuery = `WITH cur AS (
-		SELECT key_xdr, entry_xdr, ledger_seq, close_time FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'contract_data' AND has(?, substring(key_xdr, 1, 52)) AND arrayExists(p -> startsWith(key_xdr, p), ?)
-	)
-	SELECT count(), countIf(NOT has(h.ahead, x.hr) AND (h.present = 0 OR h.e != x.e)), countIf(has(h.ahead, x.hr))
+// lendingProofKeysHead/Tail wrap an OR of startsWith(key_xdr, ?), one per prefix: constant prefixes the
+// (entry_type, key_xdr) primary key turns into ranges, where an array lookup would read every contract_data row.
+const lendingProofKeysHead = `SELECT x.k, x.seq > ?, h.present, h.l, if(x.seq > ?, h.e, ''), x.e = h.e, has(h.ahead, x.hr),
+		if(x.seq > ?, h.ahead, [])
 	FROM (
-		SELECT key_xdr AS k, entry_xdr AS e, toStartOfHour(close_time) AS hr FROM cur WHERE ledger_seq <= ?
-		UNION ALL
-		SELECT key_xdr AS k, last.1 AS e, toStartOfHour(last.2) AS hr FROM (
-			SELECT key_xdr, argMax((entry_xdr, close_time), (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS last
-			FROM stellar.ledger_entry_changes FINAL
-			WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'
-			  AND key_xdr IN (SELECT key_xdr FROM cur WHERE ledger_seq > ?)
-			GROUP BY key_xdr
-		)
+		SELECT key_xdr AS k, entry_xdr AS e, ledger_seq AS seq, toStartOfHour(close_time) AS hr
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'contract_data' AND (`
+
+const lendingProofKeysTail = `)
 	) AS x
 	LEFT JOIN (
-		SELECT key_xdr AS k, argMaxIf(entry_xdr, hour, ledger_seq <= ?) AS e, countIf(ledger_seq <= ?) > 0 AS present,
-		       groupArrayIf(hour, ledger_seq > ?) AS ahead
+		SELECT key_xdr AS k, argMaxIf(entry_xdr, hour, ledger_seq <= ?) AS e, argMaxIf(ledger_seq, hour, ledger_seq <= ?) AS l,
+		       countIf(ledger_seq <= ?) > 0 AS present, groupArrayIf(hour, ledger_seq > ?) AS ahead
 		FROM stellar.lending_state_hourly FINAL GROUP BY key_xdr
 	) AS h ON x.k = h.k`
 
-// ProveLendingState runs the completeness check at watermark wm.
-func ProveLendingState(ctx context.Context, addr string, ps []LendingPrefix, wm uint32) (LendingProof, error) {
+// lendingProofKeysQuery reads the current table once, through the primary key, for the keys under ps.
+func lendingProofKeysQuery(ps []LendingPrefix) string {
+	return lendingProofKeysHead + strings.Repeat("startsWith(key_xdr, ?) OR ", len(ps)-1) + "startsWith(key_xdr, ?)" + lendingProofKeysTail
+}
+
+// LendingProofKeys lists every key under ps in ledger_entries_current with its latest history row at or below wm.
+func LendingProofKeys(ctx context.Context, addr string, ps []LendingPrefix, wm uint32) ([]LendingProofKey, error) {
+	if len(ps) == 0 {
+		return nil, fmt.Errorf("clickhouse: lending proof at %d: no key prefixes", wm)
+	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
-		return LendingProof{}, err
+		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	prefixes, _, _, heads := lendingPrefixArgs(ps)
-	var p LendingProof
-	if err := conn.QueryRow(ctx, lendingProofQuery, heads, prefixes, wm, wm, wm, wm, wm, wm).Scan(&p.Keys, &p.Mismatched, &p.Ahead); err != nil {
-		return LendingProof{}, fmt.Errorf("clickhouse: lending proof at %d: %w", wm, err)
+	args := []any{wm, wm, wm}
+	for _, p := range ps {
+		args = append(args, p.Prefix)
 	}
-	return p, nil
+	args = append(args, wm, wm, wm, wm)
+	rows, err := conn.Query(ctx, lendingProofKeysQuery(ps), args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending proof keys at %d: %w", wm, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []LendingProofKey
+	for rows.Next() {
+		var k LendingProofKey
+		var changed, present, same, ahead uint8
+		if err := rows.Scan(&k.Key, &changed, &present, &k.Ledger, &k.Entry, &same, &ahead, &k.Ahead); err != nil {
+			return nil, fmt.Errorf("clickhouse: lending proof keys at %d: %w", wm, err)
+		}
+		k.Changed, k.Present, k.Same, k.AheadHit = changed == 1, present == 1, same == 1, ahead == 1
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// LendingChange is a key's last post-change image in a ledger range.
+type LendingChange struct {
+	Key    string
+	Ledger uint32
+	Entry  string
+	Hour   time.Time
+}
+
+// lendingLastChangesQuery folds each listed key's changes in one window to its last, in the derive's order and
+// under its FINAL (see lendingMatchedChanges).
+const lendingLastChangesQuery = `SELECT key_xdr, last.1, last.2, toStartOfHour(last.3) FROM (
+		SELECT key_xdr, argMax((ledger_seq, entry_xdr, close_time), (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS last
+		FROM stellar.ledger_entry_changes FINAL
+		WHERE ledger_seq BETWEEN ? AND ? AND entry_type = 'contract_data' AND change_type != 'state' AND has(?, key_xdr)
+		GROUP BY key_xdr
+	)`
+
+// LendingLastChanges returns each of keys' last change in [lo, hi]; a key with none there is absent. Keep [lo, hi]
+// inside one lake partition: FINAL is then a merge of that range only.
+func LendingLastChanges(ctx context.Context, addr string, keys []string, lo, hi uint32) ([]LendingChange, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": 3600, "do_not_merge_across_partitions_select_final": 1,
+	}))
+	rows, err := conn.Query(ctx, lendingLastChangesQuery, lo, hi, keys)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending last changes [%d,%d]: %w", lo, hi, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []LendingChange
+	for rows.Next() {
+		var c LendingChange
+		if err := rows.Scan(&c.Key, &c.Ledger, &c.Entry, &c.Hour); err != nil {
+			return nil, fmt.Errorf("clickhouse: lending last changes [%d,%d]: %w", lo, hi, err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // lendingHourSpan bounds the ledgers one hour can span (closes are at least 5 s apart, so at most 720): the count

@@ -9,8 +9,8 @@ status: current
 Recover a few SEP-41 supply rows (mint / burn / clawback) that a **decoder
 bug dropped**, without a full-history `ch-rebuild -sep41` re-derive (~370M
 events, hours, risks a latency incident). The SEP-41 analogue of SDEX's
-`-sdex-gaps` / `-sdex-reconcile`: a **scoped, additive** lake read of only
-the affected contracts.
+`-sdex-gaps` / `-sdex-reconcile`: a **scoped** lake re-derive of only the
+affected contracts.
 
 `sep41_*` is a **projected** domain (AGENTS.md invariant [7]). Its normal
 catch-up is `stellarindex-ops projector-replay -config PATH -source sep41_supply -from <ledger>`.
@@ -33,11 +33,17 @@ Otherwise (whole history, or purging pre-0057 collapsed rows) use the full
 [adr-0033-data-recovery.md](adr-0033-data-recovery.md)); it TRUNCATEs
 `sep41_transfers` + `sep41_supply_events` first.
 
-## Why it is safe (idempotent + additive)
+## What the write does (idempotent, not additive)
 
 The write is `store.CopyMergeSEP41SupplyEvents` → `INSERT … ON CONFLICT
-(contract_id, ledger, tx_hash, op_index, observed_at) DO NOTHING`: existing
-rows are no-ops, only dropped rows insert, and a second run changes nothing.
+(contract_id, ledger, tx_hash, op_index, observed_at, event_kind,
+event_index) DO UPDATE SET amount, counterparty, derive_generation … WHERE
+derive_generation <= EXCLUDED.derive_generation`. `ch-rebuild` stamps the
+current Unix time as the generation, so every existing row in the scoped
+contracts and range is rewritten with what this binary decodes, not only
+the dropped ones. A second run with the same binary rewrites the same
+values. Run it only with a binary whose decoder is right for every event in
+the range, and dry-run first.
 `-contracts` narrows only the *read* (the CH `contract_id` prefilter), never
 decode logic, so i128 discipline (ADR-0003) holds.
 
@@ -211,8 +217,9 @@ watched contract reports `burn_total > mint_total`. The aggregator logs
 
 ## Safety notes
 
-- Nothing here is destructive: the `sep41_supply_events` write is additive
-  (ON CONFLICT DO NOTHING) and the rollup reset preserves the genesis baseline.
+- The `sep41_supply_events` write overwrites existing rows in scope at a
+  newer generation (see above); a later gen-0 projector write cannot undo
+  it. The rollup reset preserves the genesis baseline.
 - An unwatched contract gets a WARNING and recovers nothing: fix the list and
   re-run (idempotent).
 - One heavy job at a time; every invocation ≤ 2M ledgers under `run-heavy-job.sh`.

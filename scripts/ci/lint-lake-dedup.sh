@@ -131,7 +131,7 @@ if [ -d deploy/clickhouse ] || [ -d internal/storage/clickhouse ]; then
     rmt_tables="$(LC_ALL=C awk '
       { l = tolower($0) }
       l ~ /create[ ]+table/ { cur = ""; if (match(l, /stellar\.[a-z0-9_]+/)) cur = substr(l, RSTART + 8, RLENGTH - 8) }
-      l ~ /engine[ ]*=[ ]*replacingmergetree/ { if (cur != "") print cur; cur = "" }
+      l ~ /engine[ ]*=[ ]*(replicated|shared)?replacingmergetree/ { if (cur != "") print cur; cur = "" }
     ' "${ddl_files[@]}" | sort -u)"
   fi
   if [ -z "$rmt_tables" ] && [ -f deploy/clickhouse/tier1_schema.sql ]; then

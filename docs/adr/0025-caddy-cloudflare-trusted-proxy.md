@@ -28,6 +28,7 @@ A listener that is reachable without Cloudflare in front must not carry the `tru
 - Per-IP rate limits and logs use the real client IP; the same Caddyfile shape serves r2 and r3.
 - A stale CIDR list degrades rate-limit accuracy for the affected edge only. It breaks nothing else.
 - Quarterly operator task: fetch `https://www.cloudflare.com/ips-v4` and `ips-v6`, diff, update, deploy.
+- Status note: the invariant holds only where the origin lock is on. `http_origin_lock_enabled` (archival-node role) firewalls the HTTP ports to Cloudflare's ranges plus internal CIDRs and defaults to `false` (it is safe only once certificates no longer need non-Cloudflare ACME validators); a host left at the default serves the `trusted_proxies` listener to direct connections, bypassing Cloudflare's WAF, edge rate rules and DDoS absorption. Client-IP spoofing does not follow: a peer outside the trusted ranges is logged by its TCP address.
 
 ## Evidence
 

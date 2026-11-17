@@ -77,8 +77,9 @@ match has. SDEX still owns the trade-extraction path.
 
 Class `Exchange` / `IncludeInVWAP=true` (`external.Registry`). SDEX
 produces real executed trades and is a **primary VWAP contributor**.
-Amounts arrive at native Stellar precision (XLM at 7 decimals, classic
-assets at issuer-declared decimals); the decoder stamps
+Amounts arrive at native Stellar precision: XLM and every classic asset
+at Stellar's uniform 7 decimals (stroops; a classic asset has no on-chain
+decimals field, and SEP-1 `display_decimals` is display-only); the decoder stamps
 `Trade.BaseAmount` / `QuoteAmount` at those precisions and the aggregator
 contributes them at full precision (no scale rewrite).
 

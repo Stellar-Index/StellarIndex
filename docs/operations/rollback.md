@@ -46,14 +46,34 @@ gh run watch --exit-status \
   the pgBackRest freshness gate, which only guards migrations.
 - **Watch the run.** `gh workflow run` returns as soon as it dispatches; the
   next step of any procedure below waits on `gh run watch --exit-status`.
-- The deploy does backup → swap → restart → health probe per binary and
-  restores `.prev-<tag>` itself if a probe fails.
-- If the release being rolled back changed a config surface (ansible
-  `stellarindex.toml`, Prometheus rules, systemd units, schema), the run
-  ends red at **Config-apply gate**, after the swap. The binaries are live:
-  check **Run deploy playbook** passed and `/v1/version` reports the
-  previous tag. Do not pass `config_acknowledged=true`: the host keeps the
-  newer config, and the gate's marker should keep saying so.
+- The deploy does backup → swap → restart → health probe per binary. On a
+  failed probe it restores `.prev-<tag>` and **restarts** it, and then
+  restores and restarts every binary it already swapped in the run. In a
+  rollback, `.prev-<tag>` is the release you are rolling back from: a
+  failed rollback run leaves the host running the bad release, with every
+  swapped unit started, including units you had stopped.
+- **The deploy does not touch `/etc/stellarindex.toml`.** The older binaries
+  start on the host's current config, and every binary refuses to boot on a
+  key it does not know (`config: unknown keys in …`). Check before
+  dispatching:
+
+  ```sh
+  git diff <previous-tag> <bad-tag> -- \
+    configs/ansible/roles/archival-node/templates/stellarindex.toml.j2
+  ```
+
+  If the diff adds a key and the host's config carries it, the older
+  daemons fail their probe and the run restores the bad release. There is
+  no supported way to render the previous tag's config: copy
+  `/etc/stellarindex.toml` aside, delete the added keys by hand, then
+  dispatch. The running bad binaries keep the config they loaded until
+  restarted.
+- If the release changed another config surface (Prometheus rules, systemd
+  units, schema), the run ends red at **Config-apply gate**, after the
+  swap. The binaries are live: check **Run deploy playbook** passed and
+  `/v1/version` reports the previous tag. Do not pass
+  `config_acknowledged=true`: the gate's marker should keep reporting the
+  newer config.
 
 The previous tag is in `git tag` history or the "Running version" line in
 [`r1-deployment-state.md`](r1-deployment-state.md). Backups are kept as
@@ -66,8 +86,10 @@ ssh root@<host> 'ls -lh /usr/local/bin/stellarindex-*.prev-* 2>/dev/null'
 
 ### Manual fallback
 
-Only if the deploy workflow itself is broken. Per binary, for every binary
-the region runs:
+Only if the deploy workflow itself is broken. Remove any config key the
+older release does not know first (see above): a unit that refuses its
+config crash-loops here, with no probe to catch it. Per binary, for every
+binary the region runs:
 
 ```sh
 PREVIOUS=<previous-tag>
@@ -159,11 +181,21 @@ stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
   -duration 30s -concurrency 1
 ```
 
-If step 2 fails, do **not** start the aggregator: it would run the bad
-release again. Read the failed step's `::error::` line, correct the dispatch
-and re-run it, or use the [manual fallback](#manual-fallback) for every
-binary. A stopped aggregator is a freshness alert; a running bad one is
-wrong prices.
+If step 2 fails, the deploy's rescue has already restarted every unit the
+run reached, the indexer and aggregator included, **on the bad release**.
+Stop the aggregator again at once and confirm:
+
+```sh
+ssh root@<host> "systemctl stop stellarindex-aggregator; \
+  systemctl is-active stellarindex-aggregator stellarindex-indexer; \
+  cat /var/lib/stellarindex/deployed-versions/stellarindex-aggregator"
+```
+
+Stop `stellarindex-indexer` too if step 1 stopped it. Then read the failed
+step's `::error::` line (an unknown config key is the usual cause: see
+[the binaries rollback](#rolling-back-the-binaries)), correct it and re-run
+step 2, or use the [manual fallback](#manual-fallback) for every binary. A
+stopped aggregator is a freshness alert; a running bad one is wrong prices.
 
 #### Correcting what the broken release wrote
 
@@ -174,9 +206,16 @@ stored. Decide once the rollback has taken:
   command depends on who writes the domain:
   [the replay decision rule](../architecture/ingest-pipeline.md#the-replay-decision-rule).
 - **Wrong rows**: `trades` upserts on `(source, ledger, tx_hash, op_index,
-  ts)` (`ON CONFLICT … DO UPDATE`), so a replay over the range overwrites
-  rows with the same key. A row whose key itself was wrong (for example a
-  shifted `ts`) is not displaced: delete the range first, then replay.
+  ts)`, but a write at the stored row's `derive_generation` keeps the
+  stored `usd_volume` and `usd_basis` when the new value is NULL, and skips
+  a row whose only change is that. `projector-replay` and the live indexer
+  both write at generation 0, the generation the broken release wrote, so
+  never correct wrong rows with `projector-replay`. Use the commands that
+  stamp a newer generation: `projected-rebuild -write` for a projected
+  source, `ch-rebuild -write` otherwise
+  ([the replay decision rule](../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+  A row whose key itself was wrong (for example a shifted `ts`) is not
+  displaced: delete the range first, then replay.
 - **Aggregates**: a `ch-rebuild` replay refreshes the trade and oracle
   aggregates over its range; after any other replay, refresh the CAGGs over
   the affected window ([`cagg-broad-recompute.md`](cagg-broad-recompute.md)
@@ -197,6 +236,21 @@ only connectors the indexer runs. Ansible renders that file from
 (`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2`), so
 change the variable, not the file; a hand edit is overwritten by the next
 playbook run and the broken source silently comes back.
+
+The role renders the template from your checkout, not from the deployed
+release, and its handlers restart the indexer, aggregator and API. If the
+checkout's template carries a key the deployed binaries do not know, all
+three refuse to boot. Check first:
+
+```sh
+DEPLOYED=$(ssh root@<host> cat /var/lib/stellarindex/deployed-versions/stellarindex-indexer)
+git diff "$DEPLOYED" -- configs/ansible/roles/archival-node/templates/stellarindex.toml.j2
+```
+
+If that diff adds a key, do not run the role. Copy `/etc/stellarindex.toml`
+aside, remove the source from `enabled_sources` by hand, `systemctl restart
+stellarindex-indexer`, and land the variable change in a PR so the next role
+run keeps it dropped. Otherwise:
 
 ```sh
 # from configs/ansible/: drop the source from stellarindex_enabled_sources

@@ -403,8 +403,8 @@ func (c *DEXTVLCache) prevPools(name string) []DEXTVLPoolView {
 	return c.pools[name]
 }
 
-// refreshSoroswap computes TVL from CURRENT pair reserves, scoped to soroswap_pairs. Pairs absent from the lake read are
-// excluded (absence is not zero); (nil, nil) when unwired.
+// refreshSoroswap computes TVL from CURRENT pair reserves, scoped to soroswap_pairs. A registry pair absent from the lake
+// read (archived, uncaptured or off-layout) is counted unpriced, never valued as zero; (nil, nil) when unwired.
 func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.SoroswapPairs == nil || c.src.SoroswapReserves == nil {
 		return nil, nil
@@ -423,7 +423,7 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 	}
 
 	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
-		"sum of current pair reserves (lake instance storage; archived pairs excluded), "+
+		"sum of current pair reserves (lake instance storage; archived or unreadable pairs counted unpriced), "+
 			"valued through the served USD price tiers"+c.basisTail())
 	for _, st := range states {
 		acc.addPool(ctx, st.Pair, st.Ledger, []tvlLegInput{
@@ -431,6 +431,7 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 			{token: st.Token1, raw: st.Reserve1},
 		})
 	}
+	acc.addUnavailable(ids)
 	return finishTVLProtocol(acc)
 }
 

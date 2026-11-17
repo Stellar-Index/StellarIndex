@@ -196,7 +196,7 @@ psql -d stellarindex -c \
 ### Fix
 
 1. Real market event: leave the filter alone.
-2. Connector regression: find the source via `stellarindex_source_events_total` x `stellarindex_source_decode_errors_total` and the deploy diff. Set `[external.<venue>] enabled = false` and add it to `aggregate.excluded_sources` (drops stored trades from VWAP at read time); restart the aggregator.
+2. Connector regression: find the source via `stellarindex_source_events_total` x `stellarindex_source_decode_errors_total` and the deploy diff. Set `[external.<venue>] enabled = false` and add it to `aggregate.excluded_sources` (drops stored trades from the aggregator's VWAP windows at read time); restart the aggregator. `/v1/price` still serves the venue's stored `prices_1m` buckets until newer ones close, and history keeps them: [Excluding a bad source](../../architecture/oracle-manipulation-defense.md#excluding-a-bad-source).
 3. Mis-calibration (`trim_fraction` sustained over 1 h, neither case above): raise `aggregate.outlier_sigma_threshold` 4.0 to 5.0 or 6.0 while RCA continues. An agreed move being trimmed is a filter bug: capture pair and window and file it.
 4. Verify venue spread (`max/min - 1`) is under 1%.
 

@@ -35,8 +35,8 @@ const (
 	// tvl_usd "0.00", never guessed.
 	DEXTVLPoolUndecodable = "undecodable_storage"
 	// DEXTVLPoolUnavailable is the POOL-level exclusion for a pool with no current state: a curated Phoenix/Comet pool the
-	// lake returned nothing for (absent or TTL-archived), or an Aquarius pool with no reserve snapshot in the trailing
-	// window. Its reserves are unknown, not zero.
+	// lake returned nothing for (absent or TTL-archived), a registered Soroswap pair the lake read did not return, or an
+	// Aquarius pool with no reserve snapshot in the trailing window. Its reserves are unknown, not zero.
 	DEXTVLPoolUnavailable = "unavailable_state"
 )
 

@@ -57,6 +57,11 @@ candles. Costs: possible stale reads during failover (bounded by 60 s TTLs), a s
 rate counters reset on a wipe, and Redis 7+. In-process LRU, Memcached, Postgres UNLOGGED tables,
 DragonflyDB/KeyDB and no cache at all were rejected.
 
+Status note: the rate-limit row of the key table is not the shipped schema. Keys are
+`rl:anon:<ip-prefix>:<bucket>` and `rl:auth:<account usage key>:<bucket>`: one bucket per account,
+shared by every key it holds, and no raw API key appears in a key name (`RateLimitKey`,
+`internal/cachekeys/keys.go`; `RateLimitCallerKey`, `internal/api/v1/middleware/ratelimit.go`).
+
 ## Evidence
 
 HA topology: [ha-plan.md](../architecture/ha-plan.md); the redis-sentinel role applies the eviction policy.
