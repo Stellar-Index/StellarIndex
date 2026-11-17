@@ -189,7 +189,8 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			ScamReason:            reason,
 		}
 	}
-	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
+	// No cursor continues the list, so a full page is a lower bound.
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale, Truncated: len(rows) >= limit}})
 }
 
 // handleIssuer serves GET /v1/issuers/{g_strkey}: 404 (problem+json) when the issuer was never observed; always includes the

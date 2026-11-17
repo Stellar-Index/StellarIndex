@@ -1839,6 +1839,9 @@ export interface paths {
          *     just failed has `summary_error: true`; the list retries it
          *     after a minute, and a cached copy of the list can hold the flag
          *     for a minute more.
+         *
+         *     A failed BLNT read serves the Blend rows alone with
+         *     `flags.truncated: true`: the list is then a lower bound.
          */
         get: operations["listLendingPools"];
         put?: never;
@@ -2567,9 +2570,11 @@ export interface paths {
         };
         /**
          * Issuer directory ranked by total observation count.
-         * @description Lists every issuer (G-account that has minted at least one
-         *     classic asset) ordered by total observation count across
-         *     their issued assets. The home_domain column is empty until
+         * @description Lists the top `limit` issuers (G-accounts that have minted at
+         *     least one classic asset, at most 500) ordered by total
+         *     observation count across their issued assets. There is no
+         *     cursor: a page holding exactly `limit` rows carries
+         *     `flags.truncated: true`, as more issuers may exist. The home_domain column is empty until
          *     the SEP-1 fetcher worker resolves it (Phase 4).
          *
          *     Powers the showcase `/issuers` directory page.
@@ -8702,20 +8707,25 @@ export interface components {
              */
             pivot_unverified: boolean;
             /**
-             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false, including when no observation was available.
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false, including when no observation was available. Meaningful only when `proxy_deviation_unchecked` is absent.
              * @default false
              */
             proxy_deviation: boolean;
+            /**
+             * @description Set beside a TRIANGULATED price when a declared USD peg's price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. Sent with `Cache-Control: no-store`. Omitted when false.
+             * @default false
+             */
+            proxy_deviation_unchecked: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
             /**
-             * @description The list was capped with no cursor to continue it, or part of it could not be read, so its length is a lower bound. Set by `/v1/markets?asset=<slug>`. Omitted when false.
+             * @description The list was capped with no cursor to continue it, or part of it could not be read, so its length is a lower bound. Set by `/v1/markets?asset=<slug>`, by `/v1/lending/pools` when the BLNT pool read failed and only Blend pools are listed, and by `/v1/issuers` when the page is full at the requested limit. Omitted when false.
              * @default false
              */
             truncated: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
             filters_ignored?: string[];
-            /** @description Names of the `include` sections this response was asked for and could not read (a failed or timed-out read). The fields of a named section are absent from every row, which is otherwise the same body as rows with nothing to report: on `/v1/sources`, a source whose stats were not read and a source with no trades in 24h. Absent when every requested section was read. A response carrying it is sent `Cache-Control: no-store`; the next request retries. */
+            /** @description Names of the `include` sections this response was asked for and could not read (a failed or timed-out read). The fields of a named section are absent from every row, which is otherwise the same body as rows with nothing to report: on `/v1/sources`, a source whose stats were not read and a source with no trades in 24h; on `/v1/markets`, `sparkline` or `inception` rows whose enrichment batch failed. Absent when every requested section was read. A response carrying it is sent `Cache-Control: no-store`; the next request retries. */
             includes_unread?: string[];
             /**
              * @description Set on an EMPTY response from /v1/ohlc, /v1/history, /v1/chart or /v1/price/at when the requested range ends at or before the envelope's `coverage_from` — the window predates the history this deployment holds for the pair, so nothing was there to return. Never set on a range that straddles the floor, and never set when the floor could not be established. Omitted when false.

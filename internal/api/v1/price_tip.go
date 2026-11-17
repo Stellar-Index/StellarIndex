@@ -111,7 +111,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // Stale stays false (PriceReader's bit is ignored); divergence flags come from the requested (base, quote) spelling only, never ORed
 // across other quotes or aliases.
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
-	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation, Degraded: snap.PegUnchecked}
+	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation, ProxyDeviationUnchecked: snap.PegUnchecked, Degraded: snap.PegUnchecked}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
 	return flags
 }

@@ -602,12 +602,13 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil)
 }
 
-// IssuersOptions paginates the issuer directory; Limit defaults to 100 and a value outside [1, 500] is REJECTED with a 400.
+// IssuersOptions sizes the issuer directory page; Limit defaults to 100 and a value outside [1, 500] is REJECTED with a 400.
 type IssuersOptions struct {
 	Limit int
 }
 
-// Issuers lists every G-account that has minted at least one classic asset, ranked by total observation count; `home_domain` populates as SEP-1 resolves.
+// Issuers lists the top Limit G-accounts that have minted a classic asset, ranked by total observation count, with no cursor:
+// Flags.Truncated is set when the page is full and more issuers may exist. `home_domain` populates as SEP-1 resolves.
 func (c *Client) Issuers(ctx context.Context, opts IssuersOptions) (*Envelope[[]IssuerListEntry], error) {
 	v := url.Values{}
 	if opts.Limit > 0 {
@@ -853,7 +854,8 @@ func (c *Client) SACWrappers(ctx context.Context) (*Envelope[map[string]string],
 	return &env, nil
 }
 
-// LendingPools fetches every Blend pool observed in the trailing 7d auction stream (GET /v1/lending/pools), sorted by auction count descending; the SDK ignores unknown fields, so new server fields are non-breaking.
+// LendingPools fetches every Blend and BLNT pool (GET /v1/lending/pools), sorted by auction count descending. Flags.Truncated
+// means the BLNT read failed and only Blend pools are listed; the SDK ignores unknown fields, so new server fields are non-breaking.
 func (c *Client) LendingPools(ctx context.Context) (*Envelope[[]LendingPool], error) {
 	var env Envelope[[]LendingPool]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/lending/pools", nil, nil, &env); err != nil {
