@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -70,13 +72,44 @@ end
 
 // writeIndexedRecordScript writes a record AND its index entries atomically so no reader sees a record the index lacks. KEYS: index, record. ARGV: body, ttl-ms (0 = none), hash, key_id, identifier.
 // The index is touched FIRST: Redis does not roll back a script, so an ACL denial must kill it before the record exists, letting the caller fall back to the plain write.
-var writeIndexedRecordScript = redis.NewScript(keyIndexAddLua + `
+var writeIndexedRecordScript = redis.NewScript(keyIndexAddLua + recordSetLua + `
 index_add(KEYS[1], ARGV[3], ARGV[4], ARGV[5])
-if ARGV[2] == '0' then
-	redis.call('SET', KEYS[2], ARGV[1])
-else
-	redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[2])
+set_record(KEYS[2], ARGV[1], ARGV[2])
+return 1
+`)
+
+const recordSetLua = `
+local function set_record(key, body, ttl)
+	if ttl == '0' then
+		redis.call('SET', key, body)
+	else
+		redis.call('SET', key, body, 'PX', ttl)
+	end
 end
+`
+
+// writeDelegatedRecordScript is writeIndexedRecordScript for a delegated key: it writes nothing (returns 0) unless the
+// minter's record still exists and no ancestor is being revoked. KEYS: index, record, minter record, revoke markers…
+var writeDelegatedRecordScript = redis.NewScript(keyIndexAddLua + recordSetLua + `
+if redis.call('EXISTS', KEYS[3]) == 0 then
+	return 0
+end
+for i = 4, #KEYS do
+	if redis.call('EXISTS', KEYS[i]) == 1 then
+		return 0
+	end
+end
+index_add(KEYS[1], ARGV[3], ARGV[4], ARGV[5])
+set_record(KEYS[2], ARGV[1], ARGV[2])
+return 1
+`)
+
+// writeDelegatedUnindexedScript is the fallback when the ACL denies `apikey-index:*`. KEYS: record, minter record. ARGV: body, ttl-ms.
+var writeDelegatedUnindexedScript = redis.NewScript(recordSetLua + `
+if redis.call('EXISTS', KEYS[2]) == 0 then
+	return 0
+end
+set_record(KEYS[1], ARGV[1], ARGV[2])
 return 1
 `)
 
@@ -134,6 +167,28 @@ func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec API
 		return err
 	}
 	return s.rdb.Set(ctx, recordKey, body, ttl).Err()
+}
+
+// writeDelegatedRecord is writeRecord for a key minted under the record at parentHash. The minter check runs inside
+// the atomic write, so a revoke that removed the minter or marked an ancestor first always wins.
+func (s *RedisAPIKeyStore) writeDelegatedRecord(ctx context.Context, hash, parentHash string, rec APIKeyRecord, body []byte, ttl time.Duration) error {
+	recordKey := cachekeys.APIKey(hash).String()
+	parentKey := cachekeys.APIKey(parentHash).String()
+	keys := []string{cachekeys.APIKeyIndex().String(), recordKey, parentKey}
+	for _, id := range append(slices.Clone(rec.AncestorKeyIDs), rec.ParentKeyID) {
+		keys = append(keys, cachekeys.APIKeyRevoking(rec.Identifier, id).String())
+	}
+	wrote, err := writeDelegatedRecordScript.Run(ctx, s.rdb, keys, body, ttl.Milliseconds(), hash, rec.KeyID, rec.Identifier).Int()
+	if isRedisNoPerm(err) {
+		wrote, err = writeDelegatedUnindexedScript.Run(ctx, s.rdb, []string{recordKey, parentKey}, body, ttl.Milliseconds()).Int()
+	}
+	if err != nil {
+		return err
+	}
+	if wrote == 0 {
+		return fmt.Errorf("%w: the minting key %s was revoked before the new key was written", ErrMinterNotLive, rec.ParentKeyID)
+	}
+	return nil
 }
 
 // walkAPIKeyRecords visits every decodable `apikey:*` record until visit returns stop: the ONE sanctioned keyspace walk (scripts/ci/lint-apikey-scan.sh bans others), used by the index build and by lookups while the index is unusable.
@@ -337,6 +392,14 @@ type ownedRecord struct {
 	rec  APIKeyRecord
 }
 
+// lineage is the chain a key minted under o carries: o's ancestors then o; nil for the zero value.
+func (o ownedRecord) lineage() []string {
+	if o.hash == "" {
+		return nil
+	}
+	return append(slices.Clone(o.rec.AncestorKeyIDs), o.rec.KeyID)
+}
+
 // recordsForIdentifier resolves identifier's records through the index when
 // it is usable and by walking otherwise; see [RedisAPIKeyStore.ListKeysForIdentifier].
 func (s *RedisAPIKeyStore) recordsForIdentifier(ctx context.Context, identifier string) ([]ownedRecord, error) {
@@ -394,21 +457,143 @@ func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifi
 
 // RevokeKeyByID deletes the key keyID constrained to identifier (ownership checked against the RECORD); ErrKeyNotFound covers missing and foreign keys alike (no existence oracle) and is never nil on a miss.
 func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID string) error {
+	_, err := s.RevokeKeyTree(ctx, identifier, keyID)
+	return err
+}
+
+// RevokeKeyTree is [RedisAPIKeyStore.RevokeKeyByID] that also returns the KeyIDs of the delegated
+// keys the cascade removed (keyID excluded), including those removed before a failure.
+func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID string) ([]string, error) {
 	if identifier == "" {
-		return errors.New("auth: RevokeKeyByID: identifier is required")
+		return nil, errors.New("auth: RevokeKeyByID: identifier is required")
 	}
 	if keyID == "" {
-		return errors.New("auth: RevokeKeyByID: keyID is required")
+		return nil, errors.New("auth: RevokeKeyByID: keyID is required")
+	}
+	// Marked before anything is listed, so every delegated mint that writes after the listing is refused.
+	if err := s.markRevoking(ctx, identifier, keyID); err != nil {
+		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
 	if err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	if !found || rec.Identifier != identifier {
-		return ErrKeyNotFound
+	owned := found && rec.Identifier == identifier
+	if owned {
+		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
+			return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		}
 	}
+	// The sweep runs even without the root's own record (a Postgres-backed key with no mirror here,
+	// or a retry after a failure below), so its delegated keys still die with it.
+	removed, err := s.revokeDescendants(ctx, identifier, keyID)
+	if err != nil {
+		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	if !owned && len(removed) == 0 {
+		return nil, ErrKeyNotFound
+	}
+	return removed, nil
+}
+
+// keyRevokeMarkerTTL outlasts any revoke sweep; once it lapses every key it guarded is gone, and a
+// mint under a gone key is refused by the minter-record check.
+const keyRevokeMarkerTTL = time.Hour
+
+// markRevoking records that keyID's tree on identifier is being revoked. An ACL that denies the
+// marker also denies the delegated write script, whose fallback still checks the minter's record.
+func (s *RedisAPIKeyStore) markRevoking(ctx context.Context, identifier, keyID string) error {
+	err := s.rdb.Set(ctx, cachekeys.APIKeyRevoking(identifier, keyID).String(), "1", keyRevokeMarkerTTL).Err()
+	if err != nil && !isRedisNoPerm(err) {
+		return fmt.Errorf("mark %s revoking: %w", keyID, err)
+	}
+	return nil
+}
+
+// KeyRevoker removes one credential record by key id, scoped to its owner.
+type KeyRevoker interface {
+	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
+}
+
+// RevokeKeyTree revokes keyID through r and returns the delegated KeyIDs its cascade removed, for
+// the revoke's audit row; nil when r does not report them.
+func RevokeKeyTree(ctx context.Context, r KeyRevoker, identifier, keyID string) ([]string, error) {
+	if t, ok := r.(interface {
+		RevokeKeyTree(ctx context.Context, identifier, keyID string) ([]string, error)
+	}); ok {
+		return t.RevokeKeyTree(ctx, identifier, keyID)
+	}
+	return nil, r.RevokeKeyByID(ctx, identifier, keyID)
+}
+
+// revokeDescendants deletes every key on identifier delegated from keyID at any depth, deepest
+// first, and returns their KeyIDs. A failure leaves every not-yet-deleted descendant findable by
+// its stored chain, so a retry finishes the job.
+func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, keyID string) ([]string, error) {
+	owned, err := s.recordsForIdentifier(ctx, identifier)
+	if err != nil {
+		return nil, fmt.Errorf("list keys delegated from %s: %w", keyID, err)
+	}
+	doomed := descendantsOf(owned, keyID)
+	removed := make([]string, 0, len(doomed))
+	for _, o := range doomed {
+		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
+			return removed, err
+		}
+		removed = append(removed, o.rec.KeyID)
+	}
+	return removed, nil
+}
+
+// descendantsOf returns the records in owned delegated from keyID (by AncestorKeyIDs, or the
+// ParentKeyID chain for records minted before the chain was stored), deepest first, keyID excluded.
+func descendantsOf(owned []ownedRecord, keyID string) []ownedRecord {
+	doomed := map[string]bool{keyID: true}
+	inDoomed := func(id string) bool { return doomed[id] }
+	for grew := true; grew; {
+		grew = false
+		for _, o := range owned {
+			if !doomed[o.rec.KeyID] && (doomed[o.rec.ParentKeyID] || slices.ContainsFunc(o.rec.AncestorKeyIDs, inDoomed)) {
+				doomed[o.rec.KeyID] = true
+				grew = true
+			}
+		}
+	}
+	var out []ownedRecord
+	for _, o := range owned {
+		if o.rec.KeyID != keyID && doomed[o.rec.KeyID] {
+			out = append(out, o)
+		}
+	}
+	depth := delegationDepths(owned)
+	slices.SortStableFunc(out, func(a, b ownedRecord) int { return cmp.Compare(depth[b.rec.KeyID], depth[a.rec.KeyID]) })
+	return out
+}
+
+// delegationDepths maps each KeyID to its depth below its root. A legacy record's depth comes from
+// its ParentKeyID chain, so a child is always deleted before the parent that links it to the root.
+func delegationDepths(owned []ownedRecord) map[string]int {
+	parent := make(map[string]string, len(owned))
+	depth := make(map[string]int, len(owned))
+	for _, o := range owned {
+		parent[o.rec.KeyID] = o.rec.ParentKeyID
+		depth[o.rec.KeyID] = len(o.rec.AncestorKeyIDs)
+	}
+	// Relaxation bounded by the record count, so a corrupt parent cycle cannot loop forever.
+	for range owned {
+		for id, p := range parent {
+			if d, ok := depth[p]; ok && d+1 > depth[id] {
+				depth[id] = d + 1
+			}
+		}
+	}
+	return depth
+}
+
+// removeRecord deletes one record and its index entries.
+func (s *RedisAPIKeyStore) removeRecord(ctx context.Context, hash, keyID, identifier string) error {
 	recordKey := cachekeys.APIKey(hash).String()
-	err = removeIndexedRecordScript.Run(ctx, s.rdb,
+	err := removeIndexedRecordScript.Run(ctx, s.rdb,
 		[]string{cachekeys.APIKeyIndex().String(), recordKey},
 		hash, keyID, identifier, "1").Err()
 	if isRedisNoPerm(err) {
@@ -417,7 +602,7 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 		err = s.rdb.Del(ctx, recordKey).Err()
 	}
 	if err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: redis del %s: %w", recordKey, err)
+		return fmt.Errorf("redis del %s: %w", recordKey, err)
 	}
 	return nil
 }

@@ -353,7 +353,7 @@ func TestClampToMinter_RateLimit(t *testing.T) {
 func TestRedisAPIKeyStore_CreateEnforcesTheMinter(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	ctx := context.Background()
-	narrowed := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", Scopes: []string{"admin"}}
+	narrowed := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", Scopes: []string{"admin"}, AllowAllPermissions: true}
 
 	_, _, err := s.Create(ctx, CreateAPIKeyRequest{
 		Identifier: "acct:target", Tier: TierOperator, RateLimitPerMin: MaxKeyRateLimitPerMin, MintedBy: &narrowed,

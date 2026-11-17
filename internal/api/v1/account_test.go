@@ -657,7 +657,7 @@ func mintChildKeySubject(t *testing.T, parent auth.Subject) auth.Subject {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	ts := newAccountTestServer(t, parent, auth.NewRedisAPIKeyStore(rdb))
+	ts := newAccountTestServer(t, parent, seededParentStore(t, rdb, parent))
 	resp := postJSONNoReason(t, ts.URL+"/v1/account/keys", `{"label":"rotated"}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /v1/account/keys status = %d, want 201", resp.StatusCode)
@@ -679,6 +679,19 @@ func mintChildKeySubject(t *testing.T, parent auth.Subject) auth.Subject {
 		t.Fatalf("lookup minted child: %v", err)
 	}
 	return sub
+}
+
+// seededParentStore is a store holding parent's own live record, which a delegated mint requires.
+func seededParentStore(t *testing.T, rdb redis.Cmdable, parent auth.Subject) *auth.RedisAPIKeyStore {
+	t.Helper()
+	store := auth.NewRedisAPIKeyStore(rdb)
+	if err := store.CreateWithSecret(context.Background(), auth.MirroredKey{
+		Plaintext: "sip_fixture-parent-" + parent.KeyID,
+		Record:    auth.APIKeyRecord{KeyID: parent.KeyID, Identifier: parent.Identifier, Tier: parent.Tier, ExpiresAt: parent.ExpiresAt},
+	}); err != nil {
+		t.Fatalf("seed parent record: %v", err)
+	}
+	return store
 }
 
 func postJSONNoReason(t *testing.T, url, body string) *http.Response {

@@ -16,7 +16,7 @@ func TestRedisAPIKeyStore_CreateBoundsExpiryToMinter(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	ctx := context.Background()
 	minterExpiry := time.Now().Add(30 * 24 * time.Hour).UTC().Truncate(time.Second)
-	minter := Subject{Identifier: "operator:staff-rotation", Tier: TierOperator, KeyID: "kid_ops", ExpiresAt: minterExpiry}
+	minter := Subject{Identifier: "operator:staff-rotation", Tier: TierOperator, KeyID: "kid_ops", ExpiresAt: minterExpiry, AllowAllPermissions: true}
 
 	rec, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "ops-misc", Tier: TierOperator, MintedBy: &minter})
 	if err != nil {
@@ -46,7 +46,7 @@ func TestRedisAPIKeyStore_CreateBoundsExpiryToMinter(t *testing.T) {
 func TestRedisAPIKeyStore_CreateBoundsMonthlyQuotaToMinter(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	ctx := context.Background()
-	minter := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", MonthlyQuota: 50_000}
+	minter := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", MonthlyQuota: 50_000, AllowAllPermissions: true}
 
 	rec, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "ops-misc", Tier: TierOperator, MintedBy: &minter})
 	if err != nil || rec.MonthlyQuota != 50_000 {
@@ -74,7 +74,7 @@ func TestRedisAPIKeyStore_CreateLowersInheritedCustomerQuotaToMinter(t *testing.
 	if _, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "acct:metered-co", MonthlyQuota: 200_000}); err != nil {
 		t.Fatalf("seed customer key: %v", err)
 	}
-	minter := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", MonthlyQuota: 50_000}
+	minter := Subject{Identifier: "operator:staff", Tier: TierOperator, KeyID: "kid_ops", MonthlyQuota: 50_000, AllowAllPermissions: true}
 
 	rec, _, err := s.Create(ctx, CreateAPIKeyRequest{Identifier: "acct:metered-co", Tier: TierAPIKey, MintedBy: &minter})
 	if err != nil || rec.MonthlyQuota != 50_000 {

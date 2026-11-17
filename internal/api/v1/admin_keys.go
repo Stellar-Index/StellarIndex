@@ -125,10 +125,10 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, auth.ErrMintExceedsCaller) {
-			s.logger.Warn("admin key mint refused: request exceeds the minting credential", "err", err,
+		if errors.Is(err, auth.ErrMintExceedsCaller) || errors.Is(err, auth.ErrMinterNotLive) {
+			s.logger.Warn("admin key mint refused by the minting credential", "err", err,
 				"actor_key_id", subject.KeyID, "target_identifier", req.Identifier)
-			writeMintExceedsCaller(w, r, err)
+			writeMintRefused(w, r, err)
 			return
 		}
 		s.logger.Error("admin key create failed", "err", err,
@@ -195,13 +195,31 @@ func writeMintExceedsCaller(w http.ResponseWriter, r *http.Request, err error) {
 		"Scope exceeds caller", http.StatusForbidden, detail)
 }
 
+// writeMintRefused answers a mint the store refused for its minting credential with 403: [auth.ErrMinterNotLive] under its
+// own problem, anything else as [auth.ErrMintExceedsCaller].
+func writeMintRefused(w http.ResponseWriter, r *http.Request, err error) {
+	if !errors.Is(err, auth.ErrMinterNotLive) {
+		writeMintExceedsCaller(w, r, err)
+		return
+	}
+	detail := err.Error()
+	if _, after, ok := strings.Cut(detail, auth.ErrMinterNotLive.Error()+": "); ok {
+		detail = after
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/minting-key-not-live",
+		"Minting key is not live", http.StatusForbidden, detail)
+}
+
 // revokeKeyEverywhere revokes in every store that may hold the key (Redis and the Postgres api_keys row, else revoked_at stays
 // NULL and the row keeps counting toward the cap). Both legs are scoped to identifier and treat "no such key" and "another
 // owner's key" alike. Returns [auth.ErrKeyNotFound] only when NEITHER leg revoked anything.
-func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
+// It also returns the delegated KeyIDs the Redis cascade removed, for the audit row.
+func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) ([]string, error) {
 	err := auth.ErrKeyNotFound
+	var descendants []string
 	if redisKeys := s.redisKeyRevoker(); redisKeys != nil {
-		err = redisKeys.RevokeKeyByID(ctx, identifier, keyID)
+		descendants, err = auth.RevokeKeyTree(ctx, redisKeys, identifier, keyID)
 	}
 	revoked := err == nil
 	if errors.Is(err, auth.ErrKeyNotFound) {
@@ -219,9 +237,22 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 			"err", pgErr, "identifier", identifier, "key_id", keyID)
 	}
 	if err == nil && !revoked {
-		return auth.ErrKeyNotFound
+		return nil, auth.ErrKeyNotFound
 	}
-	return err
+	return descendants, err
+}
+
+// withRevokedDescendants lists the delegated keys a revoke's cascade removed on its key.revoke
+// row, which is their only audit trail; KeyIDs only, never key material. failed marks a revoke
+// that errored after its cascade had already removed them.
+func withRevokedDescendants(meta map[string]any, descendants []string, failed bool) map[string]any {
+	if len(descendants) > 0 {
+		meta["revoked_descendant_key_ids"] = descendants
+	}
+	if failed {
+		meta["outcome"] = "failed"
+	}
+	return meta
 }
 
 // keyRevoker removes one Redis credential record by key id, scoped to its owner.
@@ -320,7 +351,11 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason); err != nil {
+	descendants, err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason)
+	if err != nil {
+		if len(descendants) > 0 {
+			s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants, true)
+		}
 		if clientAborted(r, err) {
 			return
 		}
@@ -348,7 +383,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 		"target_identifier", identifier,
 		"key_id", keyID,
 		"reason", reason)
-	s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason)
+	s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants, false)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -356,17 +391,17 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 // recordAdminKeyRevokeAudit persists the key.revoke row; best-effort, since failing to kill a leaked credential because the
 // audit log is down is the worse outcome.
 func (s *Server) recordAdminKeyRevokeAudit(
-	r *http.Request, actor auth.Subject, identifier, keyID, reason string,
+	r *http.Request, actor auth.Subject, identifier, keyID, reason string, descendants []string, failed bool,
 ) {
 	if s.Audit == nil {
 		return
 	}
-	meta, err := json.Marshal(map[string]any{
+	meta, err := json.Marshal(withRevokedDescendants(map[string]any{
 		"actor_key_id":      actor.KeyID,
 		"actor_identifier":  actor.Identifier,
 		"target_identifier": identifier,
 		"reason":            reason,
-	})
+	}, descendants, failed))
 	if err != nil {
 		s.logger.Warn("admin key revoke: audit metadata marshal failed (skipping audit row)",
 			"err", err, "key_id", keyID)

@@ -296,6 +296,7 @@ func fullSubject(t *testing.T) Subject {
 		MonthlyQuota:        9_000_000,
 		EmailVerifiedAt:     at(2),
 		ExpiresAt:           at(28),
+		AncestorKeyIDs:      []string{"kid_root", "kid_mid"},
 	}
 	rv := reflect.ValueOf(sub)
 	for i := range rv.NumField() {

@@ -913,6 +913,40 @@ func TestHandleRevoke_WritesKeyRevokeAuditRow(t *testing.T) {
 	}
 }
 
+// The key.revoke row lists the delegated keys the cascade removed: it is their only audit trail.
+func TestHandleRevoke_AuditRowListsCascadedKeyIDs(t *testing.T) {
+	rdb := newMiniRedis(t)
+	store := newFakeKeyStore()
+	_, _, sc := newTestRig(t)
+	h := newMirroredHandlers(t, store, rdb)
+	resp, w := mintViaDashboard(t, h, sc, createRequest{Name: "parent"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("mint status = %d, body = %s", w.Code, w.Body.String())
+	}
+	ctx := context.Background()
+	parent, err := auth.NewRedisAPIKeyValidator(rdb).Lookup(ctx, resp.Plaintext)
+	if err != nil {
+		t.Fatalf("Lookup parent: %v", err)
+	}
+	child, childPlain, err := auth.NewRedisAPIKeyStore(rdb).Create(ctx, auth.ChildKeyRequest(parent, "child", nil))
+	if err != nil {
+		t.Fatalf("mint child: %v", err)
+	}
+	sink := &recordingAuditSink{}
+	h.cfg.Audit = sink
+
+	if w := doRevoke(t, h, sc, resp.Key.ID); w.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d, body = %s", w.Code, w.Body.String())
+	}
+	meta := fmt.Sprintf("%s", sink.only(t).Metadata)
+	if !strings.Contains(meta, `"revoked_descendant_key_ids":["`+child.KeyID+`"]`) {
+		t.Errorf("key.revoke metadata = %s, want revoked_descendant_key_ids naming %s", meta, child.KeyID)
+	}
+	if strings.Contains(meta, childPlain) || strings.Contains(meta, resp.Plaintext) {
+		t.Error("key.revoke metadata carries key material")
+	}
+}
+
 // TestParseCreateRequest_LengthLimitsCountCodePoints: the spec's
 // maxLength and Postgres length() both count characters, so a CJK name
 // at the documented limit is valid even though it is 3× that in bytes.
@@ -1107,6 +1141,41 @@ func TestDashboardRevoke_ThroughPostgresWiredHandler_KillsRedisRecord(t *testing
 	}
 }
 
+type failingInvalidator struct{}
+
+func (failingInvalidator) InvalidateCachedKey(context.Context, string) error {
+	return errors.New("injected redis failure")
+}
+
+// A revoke whose auth-cache eviction fails must not answer 204 with the cached row still
+// authenticating: the management row stays active so the caller retries.
+func TestDashboardRevoke_CacheEvictionFailureFailsClosed(t *testing.T) {
+	rdb := newMiniRedis(t)
+	store := newFakeKeyStore()
+	_, _, sc := newTestRig(t)
+	h := newMirroredHandlers(t, store, rdb)
+	resp, w := mintViaDashboard(t, h, sc, createRequest{Name: "cached"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("mint status = %d, body = %s", w.Code, w.Body.String())
+	}
+	h.cfg.CacheInvalidator = failingInvalidator{}
+
+	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/"+resp.Key.ID, nil, sc)
+	req.SetPathValue("id", resp.Key.ID)
+	rw := httptest.NewRecorder()
+	h.HandleRevoke(rw, req)
+	if rw.Code == http.StatusNoContent {
+		t.Fatal("revoke answered 204 although the auth-cache row could not be evicted")
+	}
+	row, err := store.Get(context.Background(), resp.Key.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !row.RevokedAt.IsZero() {
+		t.Error("management row revoked although the cached credential survived; a retry would now 204 without evicting it")
+	}
+}
+
 type failingCreateStore struct {
 	*fakeKeyStore
 	err error
@@ -1166,16 +1235,54 @@ type revokeFailingMirror struct {
 
 func (m revokeFailingMirror) RevokeKeyByID(context.Context, string, string) error { return m.err }
 
-// A key the mirror never held revokes cleanly; a mirror that cannot drop
-// a live credential fails the revoke so the caller retries, rather than
-// 204ing over a key that still works.
+// partialRevokeMirror is a cascade that removed some descendants and then failed.
+type partialRevokeMirror struct {
+	revokeFailingMirror
+	removed []string
+}
+
+func (m partialRevokeMirror) RevokeKeyTree(context.Context, string, string) ([]string, error) {
+	return m.removed, m.err
+}
+
+// Descendants a failed revoke already removed still get a key.revoke row, marked failed: a retry
+// cannot list them again.
+func TestDashboardRevoke_FailedCascadeStillAuditsRemovedDescendants(t *testing.T) {
+	for _, delegated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delegated=%v", delegated), func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sink := &recordingAuditSink{}
+			h.cfg.Audit = sink
+			h.cfg.Mirror = partialRevokeMirror{
+				revokeFailingMirror: revokeFailingMirror{err: errors.New("connection reset")},
+				removed:             []string{"kid_child"},
+			}
+			if !delegated {
+				store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, Name: "mine"}
+			}
+			if w := doRevoke(t, h, sc, "k-mine"); w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+			}
+			e := sink.only(t)
+			meta := string(e.Metadata)
+			if e.Action != "key.revoke" || e.TargetID != "k-mine" ||
+				!strings.Contains(meta, `"revoked_descendant_key_ids":["kid_child"]`) || !strings.Contains(meta, `"outcome":"failed"`) {
+				t.Fatalf("audit row = %+v, metadata %s; want key.revoke on k-mine naming kid_child, outcome failed", e, meta)
+			}
+		})
+	}
+}
+
+// A key the mirror never held revokes cleanly; a mirror that cannot drop a live credential fails
+// the revoke with the management row still active, so the dashboard never shows a working key as revoked.
 func TestDashboardRevoke_MirrorRemovalOutcome(t *testing.T) {
 	for name, tc := range map[string]struct {
-		err  error
-		want int
+		err         error
+		want        int
+		wantRevoked bool
 	}{
-		"never mirrored": {auth.ErrKeyNotFound, http.StatusNoContent},
-		"redis down":     {errors.New("connection refused"), http.StatusInternalServerError},
+		"never mirrored": {auth.ErrKeyNotFound, http.StatusNoContent, true},
+		"redis down":     {errors.New("connection refused"), http.StatusInternalServerError, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, store, sc := newTestRig(t)
@@ -1188,8 +1295,8 @@ func TestDashboardRevoke_MirrorRemovalOutcome(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d; body = %s", w.Code, tc.want, w.Body.String())
 			}
-			if store.byID["k-mine"].RevokedAt.IsZero() {
-				t.Error("management row not revoked")
+			if revoked := !store.byID["k-mine"].RevokedAt.IsZero(); revoked != tc.wantRevoked {
+				t.Errorf("management row revoked = %v, want %v (it must not read revoked while the live credential survives)", revoked, tc.wantRevoked)
 			}
 		})
 	}

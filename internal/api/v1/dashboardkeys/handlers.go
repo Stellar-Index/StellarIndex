@@ -373,7 +373,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, status, problem, r.URL.Path)
 		return
 	}
-	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyMint, out)
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyMint, out, nil, false)
 
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{
 		Plaintext: plaintext,
@@ -430,7 +430,7 @@ func (h *Handlers) mirrorKey(ctx context.Context, acct platform.Account, rec pla
 func (h *Handlers) rollbackMirror(ctx context.Context, acct platform.Account, keyID string) {
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := h.revokeMirror(rbCtx, acct, keyID); err != nil {
+	if _, err := h.revokeMirror(rbCtx, acct, keyID); err != nil {
 		h.cfg.Logger.Error("mirror rollback after postgres create failed",
 			"err", err, "account_id", acct.ID, "key_id", keyID)
 	}
@@ -438,15 +438,16 @@ func (h *Handlers) rollbackMirror(ctx context.Context, acct platform.Account, ke
 
 // revokeMirror removes keyID from the validator mirror. Not-found is a
 // key minted before the mirror was wired, or one already removed.
-func (h *Handlers) revokeMirror(ctx context.Context, acct platform.Account, keyID string) error {
+// It returns the delegated KeyIDs the cascade removed.
+func (h *Handlers) revokeMirror(ctx context.Context, acct platform.Account, keyID string) ([]string, error) {
 	if h.cfg.Mirror == nil {
-		return nil
+		return nil, nil
 	}
-	err := h.cfg.Mirror.RevokeKeyByID(ctx, auth.AccountIdentifier(acct.Slug), keyID)
+	descendants, err := auth.RevokeKeyTree(ctx, h.cfg.Mirror, auth.AccountIdentifier(acct.Slug), keyID)
 	if errors.Is(err, auth.ErrKeyNotFound) {
-		return nil
+		return nil, nil
 	}
-	return err
+	return descendants, err
 }
 
 // HandleRevoke soft-deletes a key; idempotent, revoking an already-revoked key returns 204.
@@ -493,33 +494,35 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The mirror is the working credential under auth_backend=redis, so it dies first: a failure
+	// leaves the row active (a 500 the caller retries), never a revoked row over a live key.
+	descendants, err := h.revokeMirror(r.Context(), sc.Account, id)
+	if err != nil {
+		h.cfg.Logger.Error("revoke mirrored key", "err", err, "key_id", id)
+		h.recordFailedRevoke(r, sc, existing, descendants)
+		writeProblem(w, http.StatusInternalServerError,
+			"the key's live credential could not be removed; it is still active, retry", r.URL.Path)
+		return
+	}
+	// The postgres validator serves the derived `apikey-cache:` row until its TTL, so it is evicted
+	// before the row is revoked: a failed eviction leaves the row active for a retry, never a 204
+	// over a key that still authenticates.
+	if h.cfg.CacheInvalidator != nil && len(existing.KeyHash) > 0 {
+		if err := h.cfg.CacheInvalidator.InvalidateCachedKey(r.Context(), hex.EncodeToString(existing.KeyHash)); err != nil {
+			h.cfg.Logger.Error("evict auth cache before revoke", "err", err, "key_id", id)
+			h.recordFailedRevoke(r, sc, existing, descendants)
+			writeProblem(w, http.StatusInternalServerError,
+				"the key's cached credential could not be removed; it is still active, retry", r.URL.Path)
+			return
+		}
+	}
 	if err := h.cfg.Keys.Revoke(r.Context(), sc.Account.ID, id, sc.User.ID, "revoked from dashboard"); err != nil {
 		h.cfg.Logger.Error("revoke key in postgres", "err", err, "key_id", id)
+		h.recordFailedRevoke(r, sc, existing, descendants)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing)
-	// The mirror is the working credential under auth_backend=redis and
-	// slides its TTL on use, so failing to remove it is a 500 the caller
-	// retries (the Postgres revoke is idempotent), never a 204.
-	mirrorErr := h.revokeMirror(r.Context(), sc.Account, id)
-	// Best-effort cache invalidation. A failure here means the
-	// runtime auth cache keeps authenticating the revoked key
-	// until the TTL rolls it off; we log + 204 anyway so the
-	// dashboard UI updates and the operator notices via the log.
-	if h.cfg.CacheInvalidator != nil && len(existing.KeyHash) > 0 {
-		hexHash := hex.EncodeToString(existing.KeyHash)
-		if err := h.cfg.CacheInvalidator.InvalidateCachedKey(r.Context(), hexHash); err != nil {
-			h.cfg.Logger.Warn("invalidate auth cache after revoke",
-				"err", err, "key_id", id)
-		}
-	}
-	if mirrorErr != nil {
-		h.cfg.Logger.Error("revoke mirrored key after postgres revoke", "err", mirrorErr, "key_id", id)
-		writeProblem(w, http.StatusInternalServerError,
-			"key revoked, but its live credential could not be removed; retry", r.URL.Path)
-		return
-	}
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -544,23 +547,33 @@ func (h *Handlers) revokeDelegated(w http.ResponseWriter, r *http.Request, sc da
 		writeProblem(w, status, detail, r.URL.Path)
 		return
 	}
-	err := h.cfg.Mirror.RevokeKeyByID(r.Context(), identifier, id)
+	descendants, err := auth.RevokeKeyTree(r.Context(), h.cfg.Mirror, identifier, id)
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
 		return
 	}
 	if err != nil {
 		h.cfg.Logger.Error("revoke delegated key", "err", err, "key_id", id)
+		h.recordFailedRevoke(r, sc, platform.APIKey{ID: id}, descendants)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, platform.APIKey{ID: id})
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, platform.APIKey{ID: id}, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordFailedRevoke writes the key.revoke row for a revoke that errored after its cascade had
+// removed descendants; the retry cannot list them again, so this row is their only trail.
+func (h *Handlers) recordFailedRevoke(r *http.Request, sc dashboardauth.SessionContext, key platform.APIKey, descendants []string) {
+	if len(descendants) > 0 {
+		h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, key, descendants, true)
+	}
 }
 
 // recordKeyAudit appends the key.mint / key.revoke row for a dashboard session's key change. key is the stored row:
 // the created key for a mint, the pre-revoke row for a revoke.
-func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey) {
+// descendants are the delegated KeyIDs a revoke's cascade removed; this row is their only audit trail.
+func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey, descendants []string, failed bool) {
 	meta := map[string]any{
 		"route":  "/v1/dashboard/keys",
 		"tier":   string(key.Tier),
@@ -574,6 +587,12 @@ func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionConte
 		}
 	} else {
 		meta["already_revoked"] = !key.RevokedAt.IsZero()
+		if len(descendants) > 0 {
+			meta["revoked_descendant_key_ids"] = descendants
+		}
+		if failed {
+			meta["outcome"] = "failed"
+		}
 	}
 	dashboardauth.RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, dashboardauth.CredentialEvent{
 		Action:     action,

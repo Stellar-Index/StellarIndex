@@ -451,6 +451,11 @@ func APIKeyMintLock(identifier string) APIKeyIndexKey {
 	return APIKeyIndexKey("apikey-index:mint-lock:" + identifier)
 }
 
+// APIKeyRevoking marks keyID on identifier as being revoked; a delegated key whose chain names it is not written while it lives.
+func APIKeyRevoking(identifier, keyID string) APIKeyIndexKey {
+	return APIKeyIndexKey("apikey-index:revoking:" + identifier + ":" + keyID)
+}
+
 // ─── Per-source freshness gauge ───────────────────────────────────
 //
 // Wire shape: `health:<source>`
