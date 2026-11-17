@@ -93,8 +93,10 @@ One dominant route = handler bug; every route = shared dependency. `postgres.ok 
 
    ```sh
    gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> \
-     -f binaries=stellarindex-api
+     -f migrations_skip=true
    ```
+
+   Whole set, no `-f binaries`: a partial rollback is refused ([rollback.md](../rollback.md#rolling-back-the-binaries); watch the run there).
 
    Manual fallback ([release-process.md](../release-process.md) -> Rollback): swap back to `/usr/local/bin/stellarindex-api.prev-<previous-tag>` and restart. Verify `/v1/readyz` `status=ok` and `/v1/version`.
 2. Handler bug, no deploy: gate the endpoint at Caddy (above the catch-all `reverse_proxy` in `/etc/caddy/Caddyfile`; codify in `configs/caddy/Caddyfile.api` in the fix PR and remove after the fixed deploy). A middleware panic cannot be gated; roll back.
@@ -173,7 +175,7 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 2. Release is the cause: roll back ([release-process.md](../release-process.md) -> Rollback).
 
    ```sh
-   gh workflow run deploy.yml -f region=r1 -f version=<prev-tag> -f binaries=stellarindex-api
+   gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f migrations_skip=true
    ```
 
    Manual fallback (a brief full outage; single instance):

@@ -1,6 +1,6 @@
 ---
 title: Credential rotation runbook
-last_verified: 2026-10-08
+last_verified: 2026-11-17
 status: current
 ---
 
@@ -146,11 +146,15 @@ tracked in the private inventory.
    `vault_webhook_seal_key` orphans sealed webhook secrets: re-seal them first.
 8. **GitHub Actions secrets.** `DEPLOY_SSH_PRIVATE_KEY` with the matching `authorized_keys`
    entry on every host, `CLOUDFLARE_API_TOKEN`, `DEPLOY_PROTECTION_TOKEN`,
-   `STELLARINDEX_LOAD_API_KEY`.
+   `STELLARINDEX_LOAD_API_KEY`. Write each credential-bearing one as an **environment**
+   secret on every Environment that reads it and delete any repository-level copy
+   ([deploy-workflow.md §Per-region setup](deploy-workflow.md#per-region-setup)): a
+   repository secret is readable from any branch's workflow.
 9. **GCP service-account key.** Create, swap in, delete the old.
 10. **The vault itself, last.** Rekey, then update the `ANSIBLE_VAULT_PASSWORD` and
     `ANSIBLE_VAULT_FILE_B64` Actions secrets (test nets: `TESTNETS_ANSIBLE_VAULT_PASSWORD`,
-    `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`). Check: ansible-drift decrypts.
+    `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`), at environment scope as in
+    step 8. Check: ansible-drift decrypts.
 
 ## Related
 

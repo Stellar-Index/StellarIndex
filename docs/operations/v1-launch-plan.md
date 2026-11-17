@@ -30,7 +30,7 @@ Rows index live inventory items (snapshot `323689bf`); the item is the authority
 | Security review | INV-0871 (blocked, Ash), INV-0696 (blocked) | External review deferred to after launch; the private report's child findings are open |
 | Credential rotation | INV-0744, INV-0919 (Ash), INV-1178 (Ash), INV-1479, INV-1516, INV-2091 (all blocked) | One batch after inventory closure; INV-1479 also waits on the verified B2 backup |
 | r1 security defects | INV-0802 (in-progress), INV-1184 (blocked) | ClickHouse `default` user unauthenticated (ops users in #2380, operator steps remain); pgBackRest repo1 is `cipher-type=none`, live re-encrypt pending |
-| Deploy approval gate | INV-0695 (blocked) | `DEPLOY_APPROVAL_RELAXED` is still set; deleting it is an r1 step |
+| Deploy approval gate | INV-0695 (blocked) | `DEPLOY_APPROVAL_RELAXED` is still set; deleting it is an r1 step. The gate covers only environment secrets: credential-bearing repository secrets must move to environment scope and be rotated ([deploy-workflow.md](deploy-workflow.md#per-region-setup)) |
 | Paging + SEV drill | INV-0841 (blocked), INV-2615 (open) | Drill waits on inventory closure and 0 r1 alerts; Healthchecks check `stellarindex-futurenet-indexer` is down |
 | r1 alerts firing | INV-2548 (open), INV-2675 (open) | `stellarindex_zfs_pool_fill_90pct_within_7d`; `stellarindex_verify_archive_run_stale` |
 | Capacity + backup | INV-2178 (blocked), INV-2524 (open), INV-0986 (blocked) | r1 pool reaches 85% around 2026-11-07 (0.61 TiB/month); first full CH lake backup to B2 failed after 16 h on a 14 GiB limit; off-site secrets backup waits on Ash's age/gpg choice |

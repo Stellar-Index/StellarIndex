@@ -1,6 +1,6 @@
 ---
 title: Release process — cutting a Stellar Index binary release
-last_verified: 2026-08-31
+last_verified: 2026-11-17
 status: living doc
 ---
 
@@ -79,12 +79,17 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    creates the release with the CHANGELOG section as notes. It **refuses an
    existing release** for the tag: never re-run it or `gh release create`
    by hand; if different bytes are needed, bump the version.
-5. **Verify the release.**
+5. **Verify the release**, every check before running anything you
+   downloaded. The signer identity is pinned to `release.yml` at this tag
+   (or a `main` dispatch), the same regex deploy.yml enforces in
+   **Verify release signature, then checksums**; `release.yml@` on any other ref is a
+   build from an unreviewed branch:
    ```sh
    gh release view vX.Y.Z
-   gh release download vX.Y.Z -p stellarindex-indexer-linux-amd64 -O /tmp/v.bin
-   /tmp/v.bin --version 2>&1 | head -3   # version line should show vX.Y.Z
-   sha256sum /tmp/v.bin                  # cross-check against SHA256SUMS
+   VER=vX.Y.Z
+   IDENTITY="^https://github\.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@refs/(tags/${VER//./\\.}|heads/main)$"
+   gh release download "$VER" -p SHA256SUMS -p SHA256SUMS.sigstore.json \
+     -p stellarindex-indexer-linux-amd64
    ```
 
    **Cosign signature.** `SHA256SUMS` covers every binary, so its one
@@ -92,34 +97,39 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    bundle `SHA256SUMS.sigstore.json` (signature + Fulcio cert + Rekor
    proof); needs **cosign v3** (`brew install cosign`; v2 has no `--bundle`):
    ```sh
-   gh release download vX.Y.Z -p SHA256SUMS -p SHA256SUMS.sigstore.json
    cosign verify-blob \
      --bundle SHA256SUMS.sigstore.json \
-     --certificate-identity-regexp \
-       '^https://github.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@.*$' \
+     --certificate-identity-regexp "$IDENTITY" \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
+   grep ' stellarindex-indexer-linux-amd64$' SHA256SUMS | sha256sum -c -   # macOS: shasum -a 256 -c -
    ```
    `release.yml` also publishes the retiring `SHA256SUMS.sig` /
    `SHA256SUMS.pem` (extracted from the bundle; do not rely on them
    staying). Releases cut before the bundle contract have only those and
    need **cosign v2** (v3 removed `--signature`/`--certificate`):
    ```sh
-   gh release download vX.Y.Z -p SHA256SUMS -p SHA256SUMS.sig -p SHA256SUMS.pem
+   gh release download "$VER" -p SHA256SUMS.sig -p SHA256SUMS.pem
    cosign verify-blob \
      --signature SHA256SUMS.sig \
      --certificate SHA256SUMS.pem \
-     --certificate-identity-regexp \
-       '^https://github.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@.*$' \
+     --certificate-identity-regexp "$IDENTITY" \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
    ```
 
    **Build provenance.** Each binary and `migrations.tar.gz` carries a
    SLSA attestation tying it to the tagged commit and `release.yml` run
-   (older releases carry none):
+   (older releases carry none). Pin the signer the same way:
    ```sh
-   gh attestation verify /tmp/v.bin --repo Stellar-Index/StellarIndex
+   gh attestation verify stellarindex-indexer-linux-amd64 \
+     --repo Stellar-Index/StellarIndex --cert-identity-regex "$IDENTITY"
+   ```
+
+   Only after all three pass, on a linux/amd64 host:
+   ```sh
+   chmod +x stellarindex-indexer-linux-amd64
+   ./stellarindex-indexer-linux-amd64 --version 2>&1 | head -3   # shows vX.Y.Z
    ```
 6. **Add "Tested against protocol XX" to the Release page by hand**:
    `release.yml` has no protocol inference. `.github/RELEASE_NOTES_TEMPLATE.md`
@@ -157,28 +167,30 @@ a rollback is a binary swap per affected host.
    ```
    If pruned (>5 releases back), rebuild from the tag
    (`git checkout <tag> && make build`) on a build host.
-3. **Scope**: roll back only the affected binary (a bad indexer release
-   does not need an API rollback) unless the failure is shared, e.g. a
-   config schema break.
+3. **Scope**: the whole region set. The deploy refuses a partial set whose
+   omitted binaries are not already on the target tag, which after a release
+   is all of them.
 
-### Procedure (per host, per binary)
+### Procedure
 
-Preferred: re-dispatch the deploy workflow with the previous tag. It runs
-backup → swap → restart → health probe, with automatic rollback on probe
-failure:
+Re-dispatch the deploy workflow with the previous tag, the whole set and
+`migrations_skip=true`, then watch the run. The command, and why each part
+is required, is in
+[`rollback.md` §Rolling back the binaries](rollback.md#rolling-back-the-binaries):
 
 ```sh
 gh workflow run deploy.yml \
   -f region=r1 \
-  -f version=v0.2.0 \
-  -f binaries=stellarindex-api,stellarindex-indexer
+  -f version=<previous-tag> \
+  -f migrations_skip=true
 ```
 
-Fallback, only if the deploy workflow itself is broken:
+Fallback, only if the deploy workflow itself is broken, per binary for every
+binary the region runs (CLI binaries have no unit: `cp` and sidecar only):
 
 ```sh
-PREVIOUS=v0.2.0                               # the known-good tag
-BINARY=stellarindex-api                        # or -indexer, -aggregator
+PREVIOUS=<previous-tag>
+BINARY=stellarindex-api
 
 ssh root@<host> "
   systemctl stop ${BINARY} && \

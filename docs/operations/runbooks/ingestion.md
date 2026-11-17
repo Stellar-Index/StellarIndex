@@ -73,7 +73,7 @@ Fix:
    ```
 
    The unit has `Restart=on-failure` / `RestartSec=10s` and self-restarts; if `systemctl is-active stellarindex-indexer` says otherwise: `systemctl restart stellarindex-indexer`. Recovery: `stellarindex_source_events_total` rate > 0 within 60 s, alert clears within 3 min.
-3. Recent deploy broke it (last 4 h): find the previous binary and swap it. Preferred: `gh workflow run deploy.yml -f region=r1 -f version=<previous> -f binaries=stellarindex-indexer` (omit `binaries` to roll the whole set back). Manual fallback ([release-process.md](../release-process.md) "Rollback"; `.prev-<tag>` keeps the last 5):
+3. Recent deploy broke it (last 4 h): find the previous binary and swap it. Preferred: `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f migrations_skip=true` (whole set; a partial rollback is refused, [rollback.md](../rollback.md#rolling-back-the-binaries)). Manual fallback ([release-process.md](../release-process.md) "Rollback"; `.prev-<tag>` keeps the last 5):
 
    ```sh
    git tag --sort=-creatordate | head -10
