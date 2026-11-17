@@ -23,7 +23,7 @@ func TestOHLCSeriesReBucketedServesEveryDeclaredFold(t *testing.T) {
 	row := []driver.Value{
 		bucket, "0.179", "0.1805", "0.1785", "0.1801",
 		"181018642392870", "32465341612945", int64(2100),
-		"{sdex}",
+		"{sdex}", false,
 	}
 	folded := 0
 	for _, route := range OHLCRoutes {

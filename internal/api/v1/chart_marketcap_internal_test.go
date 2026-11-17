@@ -162,6 +162,9 @@ func TestFormatCrossRate(t *testing.T) {
 		{new(big.Rat).SetFrac64(1, 1_000_000_000_000_000_000), "0.000000000000000001"},
 		// First significant digit at the 15th place keeps the fixed scale.
 		{new(big.Rat).SetFrac64(1, 1_000_000_000_000_000), "0.000000000000001"},
+		{new(big.Rat).SetFrac64(5, 100_000), "0.00005"},
+		// Truncated at 15 places: keeps its digits rather than serving 1.2e-14.
+		{new(big.Rat).SetFrac64(1234, 100_000_000_000_000_000), "0.00000000000001234"},
 	}
 	for _, c := range cases {
 		if got := formatCrossRate(c.r); got != c.want {

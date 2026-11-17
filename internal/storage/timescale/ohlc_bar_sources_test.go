@@ -36,7 +36,7 @@ func ohlcSourcesPair(t *testing.T) canonical.Pair {
 
 var ohlcSourcesCols = []string{
 	"bucket", "open", "high", "low", "close",
-	"base_volume", "quote_volume", "trade_count", "sources",
+	"base_volume", "quote_volume", "trade_count", "sources", "below_floor",
 }
 
 // TestOHLCBarCarriesContributingSources is the behaviour half: a bucket the
@@ -46,7 +46,7 @@ func TestOHLCBarCarriesContributingSources(t *testing.T) {
 	row := []driver.Value{
 		bucket, "0.179", "0.1805", "0.1785", "0.1801",
 		"181018642392870", "32465341612945", int64(2100),
-		"{bitstamp,coinbase,kraken}",
+		"{bitstamp,coinbase,kraken}", true,
 	}
 
 	for _, tc := range []struct {
@@ -71,7 +71,7 @@ func TestOHLCBarCarriesContributingSources(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store, _ := newScriptedStore(t, foldBoundScript(tc.name, scriptedResult{
+			store, conn := newScriptedStore(t, foldBoundScript(tc.name, scriptedResult{
 				cols: ohlcSourcesCols,
 				rows: [][]driver.Value{row},
 			})...)
@@ -81,6 +81,14 @@ func TestOHLCBarCarriesContributingSources(t *testing.T) {
 			}
 			if len(bars) != 1 {
 				t.Fatalf("%s returned %d bars, want 1", tc.name, len(bars))
+			}
+			// A fiat combine merging this bar across markets needs the floor bit, or a crumb-only market sets the wick.
+			if !bars[0].BelowFloor {
+				t.Errorf("%s BelowFloor = false, want the scanned below_floor", tc.name)
+			}
+			if q := strings.Join(strings.Fields(barStatement(t, conn, tc.name)), " "); !strings.Contains(q, "NOT bool_or(") ||
+				!strings.Contains(q, "floored) AS below_floor") {
+				t.Errorf("%s does not derive below_floor from the per-row floor", tc.name)
 			}
 			got := bars[0].Sources
 			want := []string{"bitstamp", "coinbase", "kraken"}

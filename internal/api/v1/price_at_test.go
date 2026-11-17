@@ -285,7 +285,7 @@ func TestCrossFiatChartPoints_tinyCrossRateSurvives(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d points, want 1", len(got))
 	}
-	if want := "0.0000000000005000000000000"; got[0].P != want {
+	if want := "0.0000000000005"; got[0].P != want {
 		t.Fatalf("cross P = %q, want %q", got[0].P, want)
 	}
 }

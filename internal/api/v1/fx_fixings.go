@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -115,6 +116,9 @@ func (c *fxFixingCache) refreshLocked() {
 		defer c.mu.Unlock()
 		c.flight = nil
 		if err != nil {
+			if !c.loadedAt.IsZero() {
+				obs.APICacheOpsTotal.WithLabelValues("fx_fixings", "load", "refresh_error").Inc()
+			}
 			c.logger.Warn("fx fixings cache load failed", "err", err)
 			return
 		}

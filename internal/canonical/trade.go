@@ -48,6 +48,10 @@ type Trade struct {
 	// from trades.routed_via. Decoders and ingest writers MUST leave it empty, because the
 	// routed-via tagger applies it after insert (first-wins). Not part of trade identity.
 	RoutedVia string `json:"routed_via,omitempty"`
+
+	// ClearsNotionalFloor is READ-SIDE: set by a storage reader when the stored usd_volume cleared the price CAGGs' $0.01 notional
+	// floor. False when it did not or is unknown (usd_volume not yet resolved). Not part of trade identity.
+	ClearsNotionalFloor bool `json:"-"`
 }
 
 // FanoutOpIndex packs an operation index (high 16 bits) and an event index (low 16) into OpIndex so several trades from one operation keep distinct identities; it panics if either is negative or over 0xFFFF.

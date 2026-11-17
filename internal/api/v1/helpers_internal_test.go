@@ -396,10 +396,16 @@ func TestRatToDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
 		want string
 	}{
 		{"normal magnitude unchanged", big.NewRat(1, 3), "0.3333333333"},
-		{"last rendered place unchanged", tinyRat(1, 10), "0.0000000001"},
+		{"exact at the fixed scale unchanged", tinyRat(1, 10), "0.0000000001"},
+		{"exact at the fixed scale keeps its padding", big.NewRat(1, 1_000_000_000), "0.0000000010"},
+		{"1.99e-10 is not rounded to 1e-10", big.NewRat(199, 1_000_000_000_000), "0.000000000199"},
+		{"1.2999e-9 keeps its digits", big.NewRat(12999, 10_000_000_000_000), "0.0000000012999"},
+		{"3.4567e-8 keeps its digits", big.NewRat(34567, 1_000_000_000_000), "0.000000034567"},
+		{"1.5e-6 keeps the fixed scale", big.NewRat(15, 10_000_000), "0.0000015000"},
+		{"non-terminating tiny keeps 12 significant digits", big.NewRat(1, 30_000_000_000), "0.00000000003333333333333"},
 		{"zero unchanged", new(big.Rat), "0.0000000000"},
-		{"3e-12 keeps its digits", tinyRat(3, 12), "0.000000000003000000000000"},
-		{"negative tiny keeps sign and digits", tinyRat(-3, 12), "-0.000000000003000000000000"},
+		{"3e-12 keeps its digits", tinyRat(3, 12), "0.000000000003"},
+		{"negative tiny keeps sign and digits", tinyRat(-3, 12), "-0.000000000003"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -421,8 +427,28 @@ func TestPriceRatioDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
 		BaseAmount:  canonical.NewAmount(new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(3)), // 3e-15 quote per base
 	}
-	const want = "0.000000000000003000000000000"
+	const want = "0.000000000000003"
 	if got, _ := priceRatioDecimal(tr, ohlcPriceDigits); got != want {
 		t.Fatalf("priceRatioDecimal = %q, want %q", got, want)
+	}
+}
+
+// LastTradeToSnapshot renders at 7 places via priceRatioDecimal: an exact value keeps its fixed-scale string, a truncated one its digits.
+func TestPriceRatioDecimal_sevenDigitCaller(t *testing.T) {
+	for _, tc := range []struct {
+		base, quote int64
+		want        string
+	}{
+		{100_000, 5, "0.0000500"},
+		{100_000_000, 123, "0.00000123"},
+		{3, 1, "0.3333333"},
+	} {
+		tr := canonical.Trade{
+			BaseAmount:  canonical.NewAmount(big.NewInt(tc.base)),
+			QuoteAmount: canonical.NewAmount(big.NewInt(tc.quote)),
+		}
+		if got, _ := priceRatioDecimal(tr, 7); got != tc.want {
+			t.Errorf("priceRatioDecimal(%d/%d, 7) = %q, want %q", tc.quote, tc.base, got, tc.want)
+		}
 	}
 }

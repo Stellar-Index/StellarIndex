@@ -572,7 +572,7 @@ func TestChart_TruncatedFlagOnRetentionShortfall(t *testing.T) {
 func TestChart_TimeframeAllRowCapTruncated(t *testing.T) {
 	const historyMaxPoints = 50_000 // internal/api/v1/history.go
 	t0 := time.Now().UTC().Add(-historyMaxPoints * time.Minute).Truncate(time.Minute)
-	full := make([]v1.HistoryPoint, historyMaxPoints)
+	full := make([]v1.HistoryPoint, historyMaxPoints+1)
 	for i := range full {
 		full[i] = v1.HistoryPoint{Bucket: t0.Add(time.Duration(i) * time.Minute), VWAP: "1.0"}
 	}
@@ -582,9 +582,10 @@ func TestChart_TimeframeAllRowCapTruncated(t *testing.T) {
 		points []v1.HistoryPoint
 		want   bool
 	}{
-		{"all at cap", "timeframe=all&granularity=1m", full, true},
+		{"all over cap", "timeframe=all&granularity=1m", full, true},
+		{"all exactly at cap is complete", "timeframe=all&granularity=1m", full[:historyMaxPoints], false},
 		{"all under cap", "timeframe=all&granularity=1m", full[:10], false},
-		{"bounded at cap", "timeframe=24h&granularity=1m", full, false},
+		{"bounded at cap", "timeframe=24h&granularity=1m", full[:historyMaxPoints], false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -602,8 +603,8 @@ func TestChart_TimeframeAllRowCapTruncated(t *testing.T) {
 				t.Fatalf("row_cap_truncated = %v, want %v", env.Data.RowCapTruncated, tc.want)
 			}
 			if tc.want {
-				if env.Data.DataEndsAt == nil || !time.Time(*env.Data.DataEndsAt).Equal(full[len(full)-1].Bucket) {
-					t.Errorf("data_ends_at = %v, want %v", env.Data.DataEndsAt, full[len(full)-1].Bucket)
+				if env.Data.DataEndsAt == nil || !time.Time(*env.Data.DataEndsAt).Equal(full[historyMaxPoints-1].Bucket) {
+					t.Errorf("data_ends_at = %v, want %v", env.Data.DataEndsAt, full[historyMaxPoints-1].Bucket)
 				}
 			} else if env.Data.DataEndsAt != nil {
 				t.Errorf("data_ends_at = %v, want nil", env.Data.DataEndsAt)
@@ -640,8 +641,8 @@ func getChartSeries(t *testing.T, reader v1.HistoryReader, query string) v1.Char
 func TestChart_RowCapTruncated_PerSourceRead(t *testing.T) {
 	const capN = 50_000 // historyMaxPoints
 	t0 := time.Now().UTC().Add(-2 * capN * time.Minute).Truncate(time.Minute)
-	capped := chartRowCapSeries(t0, capN, time.Minute)
-	later := chartRowCapSeries(t0.Add(capN*time.Minute), 1000, time.Minute)
+	capped := chartRowCapSeries(t0, capN+1, time.Minute)
+	later := chartRowCapSeries(t0.Add((capN+1)*time.Minute), 1000, time.Minute)
 
 	s := getChartSeries(t, &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
 		"native/fiat:USD":     capped,
@@ -652,6 +653,9 @@ func TestChart_RowCapTruncated_PerSourceRead(t *testing.T) {
 	}
 	if s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(capped[capN-1].Bucket) {
 		t.Errorf("data_ends_at = %v, want the capped source's end %v", s.DataEndsAt, capped[capN-1].Bucket)
+	}
+	if last := time.Time(s.Points[len(s.Points)-1].T); len(s.Points) != capN || !last.Equal(capped[capN-1].Bucket) {
+		t.Errorf("served %d points ending %v; the later source must not extend past data_ends_at", len(s.Points), last)
 	}
 
 	half := chartRowCapSeries(t0, capN/2, time.Minute)
@@ -668,13 +672,83 @@ func TestChart_RowCapTruncated_PerSourceRead(t *testing.T) {
 	}
 }
 
+// rangeHonouringHistoryReader applies from/to/limit the way the store does, so a capped read returns the oldest slice.
+type rangeHonouringHistoryReader struct{ *pairKeyedHistoryReader }
+
+func (r rangeHonouringHistoryReader) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	all, _ := r.pairKeyedHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, limit)
+	var out []v1.HistoryPoint
+	for _, pt := range all {
+		if pt.Bucket.Before(from) || (!to.IsZero() && !pt.Bucket.Before(to)) {
+			continue
+		}
+		if limit > 0 && len(out) == limit {
+			break
+		}
+		out = append(out, pt)
+	}
+	return out, nil
+}
+
+// On timeframe=all no lower-ranked source may own a bucket after the earliest capped read, and the series never exceeds the cap.
+func TestChart_RowCapTruncated_LaterSourcesStopAtTheCap(t *testing.T) {
+	const capN = 50_000 // historyMaxPoints
+	t0 := time.Now().UTC().Add(-4 * capN * time.Minute).Truncate(time.Minute)
+	mark := func(pts []v1.HistoryPoint, vwap string) []v1.HistoryPoint {
+		for i := range pts {
+			pts[i].VWAP = vwap
+		}
+		return pts
+	}
+	direct := mark(chartRowCapSeries(t0, 2*capN, time.Minute), "1.0")
+	cases := map[string]struct {
+		alias   []v1.HistoryPoint
+		wantEnd time.Time
+	}{
+		"later alias overlapping and past the cap": {
+			alias:   mark(chartRowCapSeries(t0.Add(capN/2*time.Minute), 2*capN, time.Minute), "2.0"),
+			wantEnd: direct[capN-1].Bucket,
+		},
+		"older alias pushes the union over the cap": {
+			alias:   mark(chartRowCapSeries(t0.Add(-1000*time.Minute), 1000, time.Minute), "2.0"),
+			wantEnd: direct[capN-1-1000].Bucket,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := getChartSeries(t, rangeHonouringHistoryReader{&pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+				"native/fiat:USD":     direct,
+				"crypto:XLM/fiat:USD": tc.alias,
+			}}}, "timeframe=all&granularity=1m")
+			if len(s.Points) > capN {
+				t.Fatalf("served %d points, over the %d cap", len(s.Points), capN)
+			}
+			if !s.RowCapTruncated || s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(tc.wantEnd) {
+				t.Fatalf("truncated=%v data_ends_at=%v, want true %v", s.RowCapTruncated, s.DataEndsAt, tc.wantEnd)
+			}
+			if last := time.Time(s.Points[len(s.Points)-1].T); !last.Equal(tc.wantEnd) {
+				t.Errorf("last point %v, want data_ends_at %v", last, tc.wantEnd)
+			}
+			for _, p := range s.Points {
+				if b := time.Time(p.T); !b.Before(t0) && !strings.HasPrefix(p.P, "1") {
+					t.Fatalf("bucket %v served from the lower-ranked source (p %s) though the direct market holds it", b, p.P)
+				}
+			}
+		})
+	}
+}
+
 func TestChart_TWAP_RowCapTruncated(t *testing.T) {
 	const capN = 50_000 // historyMaxPoints
 	t0 := time.Now().UTC().Add(-capN * time.Hour).Truncate(time.Hour)
-	full := chartRowCapSeries(t0, capN, time.Hour)
+	full := chartRowCapSeries(t0, capN+1, time.Hour)
 	s := getChartSeries(t, &stubHistoryReader{twapPoints: full}, "price_type=twap&timeframe=all&granularity=1h")
 	if !s.RowCapTruncated || s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(full[capN-1].Bucket) {
-		t.Fatalf("twap at cap: truncated=%v ends=%v", s.RowCapTruncated, s.DataEndsAt)
+		t.Fatalf("twap over cap: truncated=%v ends=%v", s.RowCapTruncated, s.DataEndsAt)
+	}
+	s = getChartSeries(t, &stubHistoryReader{twapPoints: full[:capN]}, "price_type=twap&timeframe=all&granularity=1h")
+	if s.RowCapTruncated || s.DataEndsAt != nil || len(s.Points) != capN {
+		t.Fatalf("twap exactly at cap is complete: truncated=%v ends=%v points=%d", s.RowCapTruncated, s.DataEndsAt, len(s.Points))
 	}
 	s = getChartSeries(t, &stubHistoryReader{twapPoints: full[:10]}, "price_type=twap&timeframe=all&granularity=1h")
 	if s.RowCapTruncated {
@@ -921,7 +995,7 @@ func TestChart_Fiat_DirectLeg_TinyRateSurvives(t *testing.T) {
 	if got := len(env.Data.Points); got != 2 {
 		t.Fatalf("got %d points, want 2", got)
 	}
-	if got, want := env.Data.Points[0].P, "0.0000000000004000000000000"; got != want {
+	if got, want := env.Data.Points[0].P, "0.0000000000004"; got != want {
 		t.Errorf("tiny inverse rate P = %q, want %q", got, want)
 	}
 	if back, ok := new(big.Rat).SetString(env.Data.Points[0].P); !ok || back.Sign() <= 0 {
