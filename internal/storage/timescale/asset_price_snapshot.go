@@ -78,11 +78,9 @@ func xlmUSDGridMissing(ts string) string {
 	return "(" + ts + " NOT IN (SELECT minute FROM xlm_usd_grid WHERE vwap IS NOT NULL))"
 }
 
-// xlmUSDLateralMissing is true when [xlmUSDLateralJoin] would leave the anchor at ts NULL.
-func xlmUSDLateralMissing(sac string) func(ts string) string {
-	return func(ts string) string {
-		return "NOT EXISTS (SELECT 1 FROM (" + xlmUSDAnchorAt(ts, sac) + ") fa WHERE fa.vwap IS NOT NULL)"
-	}
+// xlmUSDLateralMissing is true when [xlmUSDLateralJoin] would leave the anchor at ts NULL; the SAC is the detail query's $2.
+func xlmUSDLateralMissing(ts string) string {
+	return "NOT EXISTS (SELECT 1 FROM (" + xlmUSDAnchorAt(ts, "$2::text") + ") fa WHERE fa.vwap IS NOT NULL)"
 }
 
 // snapshotPriceUSDExpr is the headline USD price through the arm [priceArmPickExpr] chose (read back as `aps.price_usd`).

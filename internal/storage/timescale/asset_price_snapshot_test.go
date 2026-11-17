@@ -82,8 +82,8 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 			priceArmJoins(xlmUSDGridJoin), xlmUSDGridMissing,
 		},
 		"detail": {
-			getAssetBySlugSQL, assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2), xlmUSDLateralMissing("$2::text")),
-			priceArmJoins(xlmUSDLateralJoin("$2::text")), xlmUSDLateralMissing("$2::text"),
+			getAssetBySlugSQL, assetPriceArmCTEs("(SELECT asset_id FROM chosen)", xlmQuotesBound(2), xlmUSDLateralMissing),
+			priceArmJoins(xlmUSDLateralJoin("$2::text")), xlmUSDLateralMissing,
 		},
 	} {
 		sql, arms := fold(c.q), fold(c.arms)
@@ -123,7 +123,7 @@ func TestPriceArms_PreferNewestNotionalMinute(t *testing.T) {
 	t.Parallel()
 	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
 	for name, missing := range map[string]func(string) string{
-		"rollup": xlmUSDGridMissing, "detail": xlmUSDLateralMissing("$2::text"),
+		"rollup": xlmUSDGridMissing, "detail": xlmUSDLateralMissing,
 	} {
 		arms := fold(assetPriceArmCTEs("", xlmQuotesBound1, missing))
 		for _, c := range []struct {
