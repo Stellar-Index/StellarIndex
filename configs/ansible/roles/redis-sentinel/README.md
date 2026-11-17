@@ -114,7 +114,9 @@ The role consults Sentinel before re-rendering configs. If
 Sentinel responds (cluster is up), the role respects whatever
 primary Sentinel currently believes is correct — even if that
 differs from `redis_role: primary` in inventory (because
-Sentinel failed over since the last deploy).
+Sentinel failed over since the last deploy). A fresh or replaced host with no
+Sentinel of its own asks the other cluster Sentinels the same
+question before falling back to the inventory role.
 
 A host that already has a rendered `sentinel.conf` is never
 re-rendered on a normal run, whether or not its Sentinel answers: a

@@ -31,7 +31,7 @@ common:
   replication_factor: {{ loki_replication_factor }}
   path_prefix: {{ loki_data_dir }}
 
-# MinIO chunks via S3 backend; BoltDB index lives locally.
+# MinIO chunks via S3 backend; TSDB index lives locally.
 storage_config:
   aws:
     endpoint: {{ loki_s3_endpoint | regex_replace('^https?://', '') }}
@@ -42,17 +42,16 @@ storage_config:
     # Credentials supplied via env on the systemd unit:
     #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (set from the
     #   {{ loki_s3_access_key_env }} / {{ loki_s3_secret_key_env }} env vars).
-  boltdb_shipper:
+  tsdb_shipper:
     active_index_directory: {{ loki_data_dir }}/index
     cache_location: {{ loki_data_dir }}/index_cache
-    shared_store: s3
 
 schema_config:
   configs:
     - from: 2025-01-01
-      store: boltdb-shipper
+      store: tsdb
       object_store: s3
-      schema: v12
+      schema: v13
       index:
         prefix: loki_index_
         period: 24h
@@ -66,7 +65,7 @@ limits_config:
 
 compactor:
   working_directory: {{ loki_data_dir }}/compactor
-  shared_store: s3
+  delete_request_store: s3
   compaction_interval: 10m
   retention_enabled: true
   retention_delete_delay: 2h

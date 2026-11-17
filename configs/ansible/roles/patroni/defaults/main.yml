@@ -66,6 +66,9 @@ patroni_etcd_tls_dir: /etc/patroni/etcd-tls   # parent /etc/patroni exists (05)
 # initdb (default) or pgbackrest (restore-from-backup; for DR
 # rebuilds).
 patroni_bootstrap_method: initdb
+# Bootstrap refuses a data dir that holds a postgres cluster Patroni has not
+# initialised. true restores over it (pgbackrest) or adopts it as is (initdb).
+patroni_adopt_existing_data_dir: false
 # Used when method=pgbackrest:
 patroni_pgbackrest_stanza: stellarindex
 patroni_pgbackrest_restore_target: latest   # "latest" | "time:..."
