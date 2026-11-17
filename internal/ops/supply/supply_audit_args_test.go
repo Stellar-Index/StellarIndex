@@ -2,6 +2,7 @@ package supply
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 	"math/big"
 	"os"
@@ -68,6 +69,10 @@ func TestDocumentedSupplyAuditInvocationsParse(t *testing.T) {
 			return err
 		}
 		body, err := os.ReadFile(path) //nolint:gosec // repo-relative, test-only
+		if errors.Is(err, fs.ErrNotExist) {
+			// A lint self-test running beside this one creates and removes fixtures under docs/.
+			return nil
+		}
 		if err != nil {
 			return err
 		}
