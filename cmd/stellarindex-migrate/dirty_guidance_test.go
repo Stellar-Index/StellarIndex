@@ -1,13 +1,12 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 )
 
 // TestDirtyGuidanceNamesTheForceTarget: the guidance must name the version just below the failed one, which is the
@@ -45,32 +44,43 @@ func TestDirtyGuidanceNamesTheTargetDatabase(t *testing.T) {
 	}
 }
 
-// force refuses a database whose state does not call for it, rather than overwriting its version.
+// force allows every recovery a dirty row calls for, refuses the rest, and names -force-unsafe when it refuses.
+// cur is the driver's raw row, so a dirty none row (a failed down of the first migration) is seen as dirty.
 func TestCheckForceTargetRefusesWhatTheStateDoesNotCallFor(t *testing.T) {
 	dir := t.TempDir()
-	for _, f := range []string{"0001_a.up.sql", "0002_b.up.sql", "0005_c.up.sql"} {
+	for _, f := range []string{"0001_a.up.sql", "0002_b.up.sql", "0005_c.up.sql", "0007_d.up.sql"} {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte("SELECT 1;"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	none := database.NilVersion
 	for _, tc := range []struct {
-		name   string
-		v      int
-		cur    uint
-		dirty  bool
-		verErr error
-		ok     bool
+		name          string
+		v, cur        int
+		dirty, unsafe bool
+		ok            bool
+		msg           string
 	}{
-		{"dirty, force to the version below", 2, 5, true, nil, true},
-		{"dirty, force to the dirty version", 5, 5, true, nil, true},
-		{"dirty at the first, force none", -1, 1, true, nil, true},
-		{"clean database", 2, 5, false, nil, false},
-		{"dirty, force skips a migration", 1, 5, true, nil, false},
-		{"nothing applied", 2, 0, false, migrate.ErrNilVersion, false},
-		{"version unreadable", 2, 0, false, errors.New("boom"), false},
+		{"(a) failed up of 5, undone: force below", 2, 5, true, false, true, ""},
+		{"(b) failed up of 5, finished by hand", 5, 5, true, false, true, ""},
+		{"(a) failed up of the first, undone: force none", none, 1, true, false, true, ""},
+		{"(c) failed down from 7 leaves 5 dirty: force 7", 7, 5, true, false, true, ""},
+		{"(e) failed down of the first leaves none dirty: force 1", 1, none, true, false, true, ""},
+		{"(e) failed down of the first, finished: force none", none, none, true, false, true, ""},
+		{"dirty, force skips a migration", 1, 5, true, false, false, "force it to 2 (a failed up undone), 5 (finished by hand) or 7"},
+		{"dirty, force skips a migration upward", 7, 2, true, false, false, "-force-unsafe"},
+		{"(d) clean row refused", 2, 5, false, false, false, "-force-unsafe"},
+		{"(d) clean row with -force-unsafe", 2, 5, false, true, true, ""},
+		{"(d) clean none row refused", 7, none, false, false, false, "at version none and not dirty"},
+		{"-force-unsafe skips a dirty row's check", 1, 7, true, true, true, ""},
 	} {
-		if err := checkForceTarget(dir, tc.v, tc.cur, tc.dirty, tc.verErr); (err == nil) != tc.ok {
+		err := checkForceTarget(dir, tc.v, tc.cur, tc.dirty, tc.unsafe)
+		if (err == nil) != tc.ok {
 			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.ok)
+			continue
+		}
+		if err != nil && !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("%s: err = %q, want it to contain %q", tc.name, err, tc.msg)
 		}
 	}
 }

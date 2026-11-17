@@ -760,6 +760,8 @@ func TestMigrate_FlagsReachTheToolInEitherPosition(t *testing.T) {
 		{"up", "-dsn", flagDSN},
 		{"status", "-dsn", flagDSN},
 		{"force", "153", "-dsn", flagDSN},
+		{"force", "153", "-dsn", flagDSN, "-force-unsafe"},
+		{"force", "153", "-force-unsafe", "-dsn", flagDSN},
 	} {
 		out, _ := run(tail...)
 		if strings.Contains(out, envHost) {
@@ -778,6 +780,7 @@ func TestMigrate_FlagsReachTheToolInEitherPosition(t *testing.T) {
 		{"-dsn", flagDSN, "-yes", "-i-know", "down", "1"},
 		{"-dsn", flagDSN, "up"},
 		{"-dsn", flagDSN, "status"},
+		{"-dsn", flagDSN, "-force-unsafe", "force", "153"},
 	} {
 		out, _ := run(tail...)
 		if !strings.Contains(out, flagHost) {

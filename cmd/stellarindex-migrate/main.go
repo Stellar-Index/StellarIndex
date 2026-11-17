@@ -47,7 +47,7 @@ const (
 
 // newFlagSet declares the tool's whole flag surface; runbook invocations
 // are tested against it.
-func newFlagSet() (fs *flag.FlagSet, dsn *dsnFlag, dir *string, yes, iKnow *bool) {
+func newFlagSet() (fs *flag.FlagSet, dsn *dsnFlag, dir *string, yes, iKnow, forceUnsafe *bool) {
 	fs = flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
 	// The flag package prints its own parse errors — the rejected argument included, verbatim — to the FlagSet's output before
 	// it returns them. Nothing this tool is given may be echoed, so it is discarded and [parseArgv] composes the diagnostic
@@ -59,12 +59,14 @@ func newFlagSet() (fs *flag.FlagSet, dsn *dsnFlag, dir *string, yes, iKnow *bool
 	dir = fs.String("migrations", "migrations", "Path to the migrations directory")
 	yes = fs.Bool("yes", false, "skip the interactive confirmation for 'down' (required when stdin is not a TTY)")
 	iKnow = fs.Bool("i-know", false, "acknowledge that 'down' runs down.sql against the target database and may be irreversible (required for every 'down')")
+	forceUnsafe = fs.Bool("force-unsafe", false, "let 'force' set any migration version, dirty or not, after printing the "+
+		"current row; for a database whose version row is wrong (e.g. restored mid-deploy)")
 	fs.Usage = func() { printUsage(fs) }
-	return fs, dsn, dir, yes, iKnow
+	return fs, dsn, dir, yes, iKnow, forceUnsafe
 }
 
 func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
-	fs, dsn, dir, yes, iKnow := newFlagSet()
+	fs, dsn, dir, yes, iKnow, forceUnsafe := newFlagSet()
 
 	args := parseArgv(fs, os.Args[1:])
 
@@ -114,7 +116,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 		if resolvedDSN == "" {
 			die("no DSN: set STELLARINDEX_POSTGRES_DSN or pass -dsn")
 		}
-		if err := cmdForce(*dir, resolvedDSN, v); err != nil {
+		if err := cmdForce(*dir, resolvedDSN, v, *forceUnsafe); err != nil {
 			die("force: %v", err)
 		}
 	case "version", "--version", "-v":
@@ -210,29 +212,49 @@ func dirtyGuidance(dir string, dirtyVersion int) string {
 		dirtyVersion, dsnSource, target, dir, previousMigration(dir, dirtyVersion))
 }
 
-// checkForceTarget refuses a force the target database's state does not call for: force only clears a dirty mark, to the
-// version below the dirty one (its effects undone) or to the dirty one itself (finished by hand). A clean database means the
-// command reached the wrong one, or nothing needs forcing.
-func checkForceTarget(dir string, v int, cur uint, dirty bool, verErr error) error {
-	if verErr != nil {
-		if errors.Is(verErr, migrate.ErrNilVersion) {
-			return fmt.Errorf("the database %s names has no migration applied and nothing is dirty; refusing to force it", dsnSource)
-		}
-		return fmt.Errorf("read the current version: %w", verErr)
+// checkForceTarget refuses a force the database's raw version row (cur, database.NilVersion for none) does not call for.
+// A dirty row is cleared to the dirty version, the one below it (a failed up undone), or the one above it (a failed down
+// undone: golang-migrate marks the down's target dirty while the schema is still at the version above). Anything else,
+// a clean row included, needs -force-unsafe.
+func checkForceTarget(dir string, v, cur int, dirty, unsafe bool) error {
+	if unsafe {
+		return nil
 	}
 	if !dirty {
-		return fmt.Errorf("the database %s names is at version %d and not dirty; force only clears a dirty mark, "+
-			"so refusing (check that this is the database whose `up` failed)", dsnSource, cur)
+		return fmt.Errorf("the database %s names is at version %s and not dirty; force only clears a dirty mark, so refusing "+
+			"(check that this is the database whose migration failed). If its version row is wrong, rerun with -force-unsafe",
+			dsnSource, versionName(cur))
 	}
-	prev := database.NilVersion
-	if p, err := strconv.Atoi(previousMigration(dir, int(cur))); err == nil {
-		prev = p
+	prev, next := previousMigration(dir, cur), nextMigration(dir, cur)
+	for _, ok := range []string{versionName(cur), prev, next} {
+		if ok == versionName(v) {
+			return nil
+		}
 	}
-	if v != int(cur) && v != prev { //nolint:gosec // cur is a migration number read back from schema_migrations
-		return fmt.Errorf("the database %s names is dirty at %d; force it to %s (its effects undone) or %d (finished by hand), not %d",
-			dsnSource, cur, previousMigration(dir, int(cur)), cur, v)
+	return fmt.Errorf("the database %s names is dirty at %s; force it to %s (a failed up undone), %s (finished by hand) or %s "+
+		"(a failed down undone), not %s; -force-unsafe skips this check", dsnSource, versionName(cur), prev, versionName(cur),
+		next, versionName(v))
+}
+
+// versionName renders a migration number as force's argument: database.NilVersion is "none".
+func versionName(v int) string {
+	if v == database.NilVersion {
+		return "none"
 	}
-	return nil
+	return strconv.Itoa(v)
+}
+
+// nextMigration is the lowest migration number above v, or "none" when there is none.
+func nextMigration(dir string, v int) string {
+	ups, _ := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+	next := -1
+	for _, f := range ups {
+		num, _, _ := strings.Cut(filepath.Base(f), "_")
+		if n, err := strconv.Atoi(num); err == nil && n > v && (next < 0 || n < next) {
+			next = n
+		}
+	}
+	return versionName(next)
 }
 
 // previousMigration is the force argument that puts the version just below v: the highest migration number under v, or "none".
@@ -383,17 +405,31 @@ func forceTarget(dir, arg string) (int, error) {
 
 // cmdForce sets the schema_migrations.version row to `v` and clears the dirty flag. Dangerous: only after confirming the DB's actual
 // schema matches v (typically after fixing a partially-applied migration).
-func cmdForce(dir, dsn string, v int) error {
-	m, err := newMigrator(dir, dsn)
-	if err != nil {
+func cmdForce(dir, dsn string, v int, unsafe bool) error {
+	if err := checkDSN(dsn); err != nil {
 		return err
+	}
+	drv, err := database.Open(dsn)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	m, err := migrate.NewWithDatabaseInstance("file://"+dir, "postgres", drv)
+	if err != nil {
+		_ = drv.Close()
+		return fmt.Errorf("open migrator: %w", err)
 	}
 	defer closeSilent(m)
 
-	cur, dirty, verErr := m.Version()
-	if err := checkForceTarget(dir, v, cur, dirty, verErr); err != nil {
+	// The driver's row, not m.Version(): that reports (none, clean) for a dirty none row, left by a failed down of the
+	// first migration.
+	cur, dirty, err := drv.Version()
+	if err != nil {
+		return fmt.Errorf("read the current version: %w", err)
+	}
+	if err := checkForceTarget(dir, v, cur, dirty, unsafe); err != nil {
 		return err
 	}
+	fmt.Printf("current row: version %s (dirty=%v); forcing to %s\n", versionName(cur), dirty, versionName(v))
 	if err := m.Force(v); err != nil {
 		return err
 	}
@@ -488,7 +524,10 @@ Subcommands:
                   manually verify the DB's actual schema matches V
                   first; only use after partial-apply recovery). V
                   must be a migration in -dir; "none" is the
-                  nothing-applied state.
+                  nothing-applied state. A dirty row may be forced
+                  to its own version or the one just below or above
+                  it; any other target, or a clean row, needs
+                  -force-unsafe.
   version         Build version.
   help            This help.
 
