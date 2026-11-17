@@ -292,7 +292,11 @@ describe('BackupsPanel', () => {
 
   it('drops the green roll-up and says so when a refresh fails after a success', async () => {
     const ok = payload({
-      freshness: { ...okFreshness, overall: 'ok' },
+      freshness: {
+        ...okFreshness,
+        offsite: verdict('ok', 20 * 3_600, SLO.offsite_seconds),
+        overall: 'ok',
+      },
     });
     mockBackups({ data: ok, as_of: '2026-08-29T12:00:00Z' });
     const client = new QueryClient({
