@@ -990,7 +990,7 @@ func TestChart_Fiat_DirectLeg_TinyRateSurvives(t *testing.T) {
 	if got := len(env.Data.Points); got != 2 {
 		t.Fatalf("got %d points, want 2", got)
 	}
-	if got, want := env.Data.Points[0].P, "0.0000000000004000000000000"; got != want {
+	if got, want := env.Data.Points[0].P, "0.0000000000004"; got != want {
 		t.Errorf("tiny inverse rate P = %q, want %q", got, want)
 	}
 	if back, ok := new(big.Rat).SetString(env.Data.Points[0].P); !ok || back.Sign() <= 0 {

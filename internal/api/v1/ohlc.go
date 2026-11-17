@@ -53,15 +53,16 @@ type OHLCBar struct {
 const ohlcPriceDigits = 10
 
 // priceRenderSigDigits is how many significant digits [ratToDecimal] keeps when a price is too small
-// for its scale; priceRenderMaxScale bounds the extension. Both mirror the aggregator's
-// formatRatFixed so the served and stored strings agree digit for digit.
+// for its scale; priceRenderMaxScale bounds the extension. Both follow the aggregator's formatRatFixed
+// rule, though the strings differ in places (wire prices start from 10 digits, the aggregator's from 12).
 const (
 	priceRenderSigDigits = 12
 	priceRenderMaxScale  = 60
 )
 
-// priceRenderScale returns the fractional places a wire price needs: extended when a fixed `digits` render would keep fewer than
-// half its significant digits (the aggregator's renderScale rule), so a 1.99e-10 price is not served as 1e-10.
+// priceRenderScale returns the fractional places a wire price needs: `digits` unless that render would drop non-zero digits of
+// a price keeping fewer than half its significant digits (1.99e-10 served as 1e-10); then only as many places as the exact value
+// has, up to priceRenderSigDigits significant, so no trailing zero is added past `digits`.
 func priceRenderScale(r *big.Rat, digits int) int {
 	if r == nil || r.Sign() == 0 {
 		return digits
@@ -77,10 +78,16 @@ func priceRenderScale(r *big.Rat, digits int) int {
 	if digits-firstSigPlace+1 >= (digits+1)/2 {
 		return digits
 	}
-	if need := firstSigPlace + priceRenderSigDigits; need < priceRenderMaxScale {
-		return need
+	need := min(firstSigPlace+priceRenderSigDigits, priceRenderMaxScale)
+	// The smallest scale rendering r exactly, if one within need exists.
+	scaled := new(big.Int).Set(r.Denom())
+	for places := 0; places <= need; places++ {
+		if scaled.IsInt64() && scaled.Int64() == 1 {
+			return max(digits, places)
+		}
+		scaled.Quo(scaled, new(big.Int).GCD(nil, nil, scaled, big.NewInt(10)))
 	}
-	return priceRenderMaxScale
+	return need
 }
 
 // handleOHLC serves GET /v1/ohlc in two modes: single-bar (no `interval`: one [OHLCBar] for [from, to) via

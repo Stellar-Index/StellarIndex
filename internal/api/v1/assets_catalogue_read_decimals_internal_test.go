@@ -154,7 +154,7 @@ func TestNormalizeCatalogueUSD_PrecisionFloor(t *testing.T) {
 		{"18dp: 1000 quanta — corrected exactly", 18, "0.0000001000", true, "10000.0000000000", true},
 		{"18dp: un-rounded ATH is exact, never floored", 18, "0.00000000001432", false, "1.4320000000", true},
 		{"9dp: ordinary value", 9, "41.3200000000", true, "4132.0000000000", true},
-		{"6dp: scaling DOWN needs no floor", 6, "0.0000000010", true, "0.0000000001000000000000", true},
+		{"6dp: scaling DOWN needs no floor", 6, "0.0000000010", true, "0.0000000001", true},
 		{"flagged: unparseable cannot be corrected, so it is withheld", 9, "NaN", true, "", false},
 		{"flagged: a negative price is not a price", 9, "-1.5", false, "", false},
 	}
