@@ -127,18 +127,24 @@ func TestPriceArms_PreferNewestNotionalMinute(t *testing.T) {
 }
 
 // TestPriceSeries_RankFlooredMinuteFirst pins the floor on every sparkline read: its direct arm and both XLM-arm directions
-// carry [flooredMinuteSQL] (behaviour: TestAssetPriceHistory_NotionalFloor).
+// carry [notionalMinuteSQL] and rank on it first (behaviour: TestAssetPriceHistory_NotionalFloor,
+// TestAssetPriceHistory_UnstampedMinuteIsNotFloored).
 func TestPriceSeries_RankFlooredMinuteFirst(t *testing.T) {
 	t.Parallel()
+	first := regexp.MustCompile(`ORDER BY (asset_id, [hd], )?(floored|` + regexp.QuoteMeta(notionalMinuteSQL) + `) DESC`)
 	for name, q := range map[string]string{
 		"24h": getAssetPriceHistory24hSQL, "7d": getAssetPriceHistory7dSQL,
 		"24h batch": getAssetsPriceHistory24hBatchSQL, "7d batch": getAssetsPriceHistory7dBatchSQL,
 	} {
-		if got := strings.Count(q, flooredMinuteSQL); got != 3 {
+		if got := strings.Count(q, notionalMinuteSQL); got != 3 {
 			t.Errorf("%s: %d picks carry the notional floor, want 3", name, got)
 		}
-		if got := strings.Count(q, "floored DESC"); got < 1 {
-			t.Errorf("%s: no pick ranks floored minutes first", name)
+		if strings.Contains(q, "volume_usd = 0") {
+			t.Errorf("%s: a series pick ranks an unstamped minute as floored", name)
+		}
+		folded := strings.Join(strings.Fields(sqlWithoutComments(q)), " ")
+		if got := len(first.FindAllString(folded, -1)); got != 2 {
+			t.Errorf("%s: %d of 2 picks (direct, XLM) rank the notional minute first", name, got)
 		}
 	}
 }

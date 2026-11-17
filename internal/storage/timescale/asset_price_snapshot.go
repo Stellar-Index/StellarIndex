@@ -207,6 +207,10 @@ var assetPriceCTEs = assetPriceArmCTEs("", xlmQuotesBound1) + "," +
 // nothing was USD-stamped (unpriced, not sub-cent). vwap itself has no floor, so every reader that picks a minute ranks this first.
 const flooredMinuteSQL = `(notional_trade_count > 0 OR volume_usd = 0)`
 
+// notionalMinuteSQL is true for a prices_1m row holding a trade over the $0.01 notional floor. Series picks rank on it alone: they price
+// XLM per period, not at the minute, so an unstamped minute (volume_usd = 0) is indistinguishable from a crumb there.
+const notionalMinuteSQL = `(notional_trade_count > 0)`
+
 // usdQuotePref ranks the USD quote forms (true USD, classic USDC, its SAC) when two tie on a
 // bucket; without it the newest-bucket pick falls to scan order.
 const usdQuotePref = `array_position(ARRAY['fiat:USD',

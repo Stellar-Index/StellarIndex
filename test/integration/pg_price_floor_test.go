@@ -170,6 +170,81 @@ func TestAssetPriceHistory_NotionalFloor(t *testing.T) {
 	}
 }
 
+// A sparkline prices XLM per period, not at the minute, so a later unstamped crumb (volume_usd = 0) must not displace the day's
+// stamped trade over the notional floor.
+func TestAssetPriceHistory_UnstampedMinuteIsNotFloored(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	usdcID := "USDC-" + zeroLegIssuer
+	direct := "TSUD-" + zeroLegIssuer
+	viaXLM := "TSUX-" + zeroLegIssuer
+	day := time.Now().UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
+	nine, half1 := day.Add(9*time.Hour), day.Add(13*time.Hour+30*time.Minute)
+
+	// 09:00: XLM at 0.30 USD, both tokens at 0.10 USD, all stamped. 13:30: unstamped crumbs at 1 USD and 100 XLM.
+	seed(t, db, ctx, ohlcDustPair{base: "native", quote: usdcID}, []seedTrade{
+		{off: 0, base: "1000000000", quote: "300000000", usd: "30"},
+	}, nine)
+	seed(t, db, ctx, ohlcDustPair{base: direct, quote: usdcID}, []seedTrade{
+		{off: 0, base: "100000000", quote: "10000000", usd: "1"},
+	}, nine)
+	seed(t, db, ctx, ohlcDustPair{base: direct, quote: usdcID}, []seedTrade{
+		{off: 0, base: "1", quote: "1", usd: ""},
+	}, half1)
+	seed(t, db, ctx, ohlcDustPair{base: viaXLM, quote: "native"}, []seedTrade{
+		{off: 0, base: "300000000", quote: "100000000", usd: "3"},
+	}, nine)
+	seed(t, db, ctx, ohlcDustPair{base: viaXLM, quote: "native"}, []seedTrade{
+		{off: 0, base: "1", quote: "100", usd: ""},
+	}, half1)
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	tenth := new(big.Rat).SetFrac64(1, 10)
+	want := day.Format("2006-01-02T15:04:05Z")
+	check := func(t *testing.T, pts []timescale.AssetPricePoint) {
+		t.Helper()
+		for _, pt := range pts {
+			if pt.T != want {
+				continue
+			}
+			if pt.P == nil {
+				t.Fatalf("point %s has no price, want 0.1", want)
+			}
+			if got, ok := new(big.Rat).SetString(*pt.P); !ok || got.Cmp(tenth) != 0 {
+				t.Errorf("point %s = %s, want 0.1 from the 09:00 trade", want, *pt.P)
+			}
+			return
+		}
+		t.Fatalf("no point at %s in %d points", want, len(pts))
+	}
+	for _, asset := range []string{direct, viaXLM} {
+		t.Run(asset[:4], func(t *testing.T) {
+			pts, err := store.GetAssetPriceHistory7d(ctx, asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, pts)
+			batch, err := store.GetAssetsPriceHistory7dBatch(ctx, []string{asset})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, batch[asset])
+		})
+	}
+}
+
 // A sub-cent print must not set the listing's headline price or change pills while a minute over the $0.01 notional floor exists:
 // the arm pick ranks a floored arm over a newer crumb-only one, and a crumb lookback is no baseline for a floored headline.
 func TestAssetPriceSnapshot_NotionalFloorAcrossArms(t *testing.T) {
