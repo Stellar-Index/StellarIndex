@@ -118,9 +118,11 @@ func TestFiatPoint_DustBookTradeDoesNotSuppressPool(t *testing.T) {
 	bookPair, _ := canonical.NewPair(aqua, usdcClassic)
 	poolPair, _ := canonical.NewPair(aqua, usdcSAC)
 	t0 := fiatParityBucketStart()
+	poolTrade := fiatParityTrade(poolPair, 2, t0.Add(100*time.Second), 1000_0000000, 20_0000000)
+	poolTrade.ClearsNotionalFloor = true
 	reader := &fiatConstituentReader{tradesByPair: map[string][]canonical.Trade{
 		fiatParityPairKey(bookPair): {fiatParityTrade(bookPair, 1, t0.Add(90*time.Second), 1000, 200)},
-		fiatParityPairKey(poolPair): {fiatParityTrade(poolPair, 2, t0.Add(100*time.Second), 1000_0000000, 20_0000000)},
+		fiatParityPairKey(poolPair): {poolTrade},
 	}}
 	ts := httpTestServer(t, v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdcClassic}}))
 	win := "&from=" + t0.Format(time.RFC3339) + "&to=" + t0.Add(time.Hour).Format(time.RFC3339)

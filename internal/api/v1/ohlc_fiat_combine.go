@@ -221,33 +221,19 @@ func (s *Server) mergeConstituentTrades(
 // finest interval `/v1/ohlc` accepts, which makes "point == series" exact for a real request.
 const fiatPointGateInterval = ohlcInterval1m
 
-// tradeGateBuckets is the set of gate buckets the given trades answer: those holding a trade that clears the notional floor,
-// as prices_1m's floored rows do, so the point gate agrees with the series one.
+// tradeGateBuckets is the set of gate buckets the given trades answer: those holding a trade that clears the notional floor
+// ([canonical.Trade.ClearsNotionalFloor], prices_1m's own predicate), so the point gate agrees with the series one.
 func tradeGateBuckets(trades []canonical.Trade) map[time.Time]struct{} {
 	if len(trades) == 0 {
 		return nil
 	}
 	out := make(map[time.Time]struct{}, len(trades))
 	for i := range trades {
-		if clearsNotionalFloor(&trades[i]) {
+		if trades[i].ClearsNotionalFloor {
 			out[fiatPointGateBucket(trades[i].Timestamp)] = struct{}{}
 		}
 	}
 	return out
-}
-
-// clearsNotionalFloor mirrors the CAGG floor (both legs > 0, notional >= $0.01) for a fiat-combine constituent trade: its quote
-// leg is a fiat peg, so the quote amount at the venue's scale stands in for the notional.
-func clearsNotionalFloor(t *canonical.Trade) bool {
-	if t.BaseAmount.Sign() <= 0 || t.QuoteAmount.Sign() <= 0 {
-		return false
-	}
-	scale := amountScaleDecimalsFor(t.Source)
-	if scale < 2 {
-		return true
-	}
-	floor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale-2)), nil)
-	return t.QuoteAmount.BigInt().Cmp(floor) >= 0
 }
 
 // dropTradesInAnsweredBuckets removes trades whose gate bucket an established spelling already answered; with nothing answered (a
