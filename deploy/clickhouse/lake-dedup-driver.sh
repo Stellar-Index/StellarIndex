@@ -51,6 +51,14 @@ case "$T" in
 esac
 MAXP="${2:-9999}"
 DRY_RUN="${DRY_RUN:-0}"
+# Both bound real OPTIMIZE work, so a value `[ -gt ]` or `= "1"` cannot read must refuse, not run unbounded.
+case "$MAXP" in
+  ''|*[!0-9]*) echo "lake-dedup-driver: refusing max_partitions '$MAXP' — not a non-negative integer" >&2; exit 2 ;;
+esac
+case "$DRY_RUN" in
+  0|1) ;;
+  *) echo "lake-dedup-driver: refusing DRY_RUN='$DRY_RUN' — must be 0 or 1" >&2; exit 2 ;;
+esac
 CH="${CH:-clickhouse-client --port 9300}"
 OUT="${OUT:-/var/log/lake-dedup-${T}.log}"
 STOP="${STOP:-/tmp/lake-dedup.stop}"

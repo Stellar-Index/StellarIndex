@@ -18,6 +18,8 @@
 #   5. the ordinary success path processes every candidate and counts correctly.
 #   6. the <table> argument is spliced into SQL and the log path, so names
 #      outside the lake tables are refused before any statement is issued.
+#   6b. a non-integer max_partitions or a DRY_RUN other than 0/1 is refused the
+#      same way, instead of silently running uncapped or for real.
 #   7. progress reaches monitoring as textfile-collector gauges
 #      (stellarindex_lake_dedup_*), and the terminal state is written.
 #   8. an ABORT before the candidate count is known still overwrites the previous
@@ -305,6 +307,21 @@ for bad_table in 'transactions GROUP BY 1; DROP TABLE stellar.ledgers --' '../..
     ok "table '$bad_table' ⇒ refused before any statement reached ClickHouse"
   else
     bad "table '$bad_table' ⇒ exit $RC, statements issued:"
+    sed 's/^/       /' "$LOG_STMT"
+  fi
+done
+
+# ── 6b. a malformed max_partitions or DRY_RUN must refuse, not run unbounded ──
+for bad_arg in 'MAXP:5x' 'MAXP:-1' 'DRY:true' 'DRY:yes'; do
+  if [ "${bad_arg%%:*}" = MAXP ]; then
+    run bad_arg ENUM_PARTS=$'0000000001\n0000000002\n' -- operations "${bad_arg#*:}"
+  else
+    run bad_arg ENUM_PARTS=$'0000000001\n0000000002\n' DRY_RUN="${bad_arg#*:}" -- operations
+  fi
+  if [ "$RC" -eq 2 ] && [ ! -s "$LOG_STMT" ]; then
+    ok "$bad_arg ⇒ exit 2 before any statement reached ClickHouse"
+  else
+    bad "$bad_arg ⇒ exit $RC, statements issued:"
     sed 's/^/       /' "$LOG_STMT"
   fi
 done
