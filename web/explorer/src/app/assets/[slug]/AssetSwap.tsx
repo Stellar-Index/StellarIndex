@@ -12,6 +12,7 @@ import {
   useVerifiedIndex,
   coinSlug,
   isVerifiedCoin,
+  isStellarAssetId,
 } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
@@ -654,19 +655,28 @@ function TokenPicker({
     const rows = coins.data?.coins ?? [];
     return (
       rows
-        .map((c): SwapToken => {
+        .flatMap((c): SwapToken[] => {
+          // A catalogue row's asset_id is its slug, which /v1/price/batch
+          // rejects; price it as this network's verified issuance instead.
+          const key =
+            c.asset_id && isStellarAssetId(c.asset_id)
+              ? c.asset_id
+              : verified?.issuanceBySlug?.get((c.slug ?? '').toLowerCase());
+          if (!key) return [];
           const price = c.price_usd != null ? Number(c.price_usd) : null;
-          return {
-            key: c.asset_id ?? c.slug,
-            symbol: c.code ?? coinSlug(c),
-            name: c.name,
-            image: c.image,
-            usdPrice: price != null && price > 0 ? price : null,
-            kind: 'crypto',
-            collision: c.unverified_ticker_collision ?? false,
-            verified: isVerifiedCoin(c, verified),
-            issuer: assetIssuer(c.asset_id ?? ''),
-          };
+          return [
+            {
+              key,
+              symbol: c.code ?? coinSlug(c),
+              name: c.name,
+              image: c.image,
+              usdPrice: price != null && price > 0 ? price : null,
+              kind: 'crypto',
+              collision: c.unverified_ticker_collision ?? false,
+              verified: isVerifiedCoin(c, verified),
+              issuer: assetIssuer(key),
+            },
+          ];
         })
         // Only offer legs we can actually price.
         .filter((t) => t.usdPrice != null)

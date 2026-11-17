@@ -183,6 +183,46 @@ describe('AssetSwap page-asset leg', () => {
   });
 });
 
+// Production serves a catalogue row with asset_id = its slug, which
+// /v1/price/batch rejects with a 400; the leg must price the issuance.
+describe('AssetSwap catalogue leg', () => {
+  const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+  it('prices a picked catalogue row through its verified issuance id', async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/assets/verified')
+        return { data: [{ slug: 'usdc', asset_id: USDC }] };
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: 'usdc',
+              slug: 'usdc',
+              code: 'USDC',
+              type: 'global',
+              price_usd: '1.0001',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /USDC/ }));
+
+    const legIds = () =>
+      vi
+        .mocked(apiGet)
+        .mock.calls.filter(([p]) => p === '/v1/price/batch')
+        .map(([, params]) => (params as { asset_ids?: string }).asset_ids);
+    await vi.waitFor(() => expect(legIds()).toContain(USDC));
+    expect(legIds()).not.toContain('usdc');
+  });
+});
+
 // TokenPicker hand-rolled an Escape listener instead of the shared
 // useDialog contract: no dialog role, no focus trap, and focus fell to
 // <body> on close instead of returning to the leg the user opened it from.
