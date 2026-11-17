@@ -82,7 +82,8 @@ check(any("uri" in t and "/ready" in t["uri"]["url"] for t in tasks("loki/tasks/
 
 # textfile scrapers: node_exporter is not root, mktemp files are 0600.
 for path, name in (("patroni/tasks/11-monitoring.yml", "install patroni-textfile scraper"),
-                   ("redis-sentinel/tasks/07-monitoring.yml", "install sentinel-state textfile scraper")):
+                   ("redis-sentinel/tasks/07-monitoring.yml", "install sentinel-state textfile scraper"),
+                   ("haproxy/tasks/07-monitoring.yml", "install keepalived-state textfile scraper")):
     body = script_body(path, name)
     check(body.find('chmod 0644 "$TMP"') != -1 and body.find('chmod 0644 "$TMP"') < body.find('mv -f "$TMP"'),
           f"{path.split('/')[0]} scraper publishes a 0644 file")
@@ -148,6 +149,24 @@ check("min-replicas-to-write 1" in conf, "redis.conf renders min-replicas-to-wri
 # redis: a fresh or replaced host must hear the surviving Sentinels.
 peer = next(t for t in tasks("redis-sentinel/tasks/03-redis-configure.yml") if t.get("name", "").startswith("ask the other Sentinels"))
 check("redis_sentinel_managed" not in str(peer["when"]), "peer-Sentinel query is not skipped on a host without a rendered sentinel.conf")
+
+# firewalls: nft rejects `elements = { }`, which the defaults' IPv4-only CIDR lists used to render.
+for role, prefix in (("haproxy", "haproxy"), ("redis-sentinel", "redis")):
+    fw_task = next(t for t in tasks(f"{role}/tasks/06-firewall.yml") if "content" in t.get("copy", {}))
+    fw = jinja2.Environment(undefined=jinja2.ChainableUndefined).from_string(fw_task["copy"]["content"])
+    dflt = yaml.safe_load(text(f"{role}/defaults/main.yml"))
+    for label, cidrs in (("defaults", None), ("IPv6 only", ["fd00::/8"]), ("mixed", ["10.0.0.0/8", "fd00::/8", "fe80::/10"])):
+        v = dict(dflt)
+        if cidrs:
+            v[f"{prefix}_internal_cidrs"] = v[f"{prefix}_allowed_ssh_cidrs"] = cidrs
+        out = fw.render(**v)
+        sets = {m[1]: m[2] for m in re.findall(r"^( *)set (\w+_v[46]) \{\n(.*?)^\1\}$", out, re.S | re.M)}
+        check(len(sets) >= 4 and not re.search(r"elements = \{\s*\}", out),
+              f"{role} firewall ({label}) renders no empty nft element set")
+        for n in ("internal_v4", "internal_v6"):
+            want = [c for c in v[f"{prefix}_internal_cidrs"] if (":" in c) == n.endswith("v6")]
+            got = re.findall(r"[0-9a-f.:]+/\d+", sets.get(n, ""))
+            check(got == want, f"{role} firewall ({label}) {n} holds {want}")
 
 # patroni: bootstrap is keyed on Patroni's own marker, never the distro's PG_VERSION.
 boot = tasks("patroni/tasks/08-patroni-bootstrap.yml")

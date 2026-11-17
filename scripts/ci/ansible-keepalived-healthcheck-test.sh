@@ -26,18 +26,36 @@ for f in "$KEEPALIVED_TPL" "$KEEPALIVED_TASKS"; do
   fi
 done
 
-vrrp_block="$(awk '/vrrp_script chk_haproxy/{f=1} f{print} f&&/^}/{exit}' "$KEEPALIVED_TPL")"
+vrrp_block() { awk -v n="vrrp_script $1 {" 'index($0, n) == 1 {f=1} f{print} f&&/^}/{exit}' "$KEEPALIVED_TPL"; }
+alive_block="$(vrrp_block chk_haproxy_alive)"
+pool_block="$(vrrp_block chk_api_pool)"
 
-if grep -qE '^\s*script\s+"/usr/bin/pgrep\s+haproxy"' <<<"$vrrp_block"; then
+if grep -qE 'pgrep' <<<"$alive_block$pool_block"; then
   bad "chk_haproxy still runs a bare pgrep — process-existence only, no reachability probe"
 else
   ok "chk_haproxy no longer runs a bare pgrep"
 fi
 
-if grep -qE '^\s*script\s+"/usr/local/bin/chk_haproxy\.sh"' <<<"$vrrp_block"; then
-  ok "chk_haproxy invokes the reachability-probe script"
+if grep -qE '^\s*script\s+"/usr/local/bin/chk_haproxy\.sh alive"' <<<"$alive_block" &&
+   grep -qE '^\s*script\s+"/usr/local/bin/chk_haproxy\.sh pool"' <<<"$pool_block"; then
+  ok "the alive and pool vrrp_scripts invoke the reachability-probe script"
 else
-  bad "chk_haproxy does not invoke /usr/local/bin/chk_haproxy.sh"
+  bad "chk_haproxy_alive / chk_api_pool do not invoke /usr/local/bin/chk_haproxy.sh alive|pool"
+fi
+
+# Both LBs probe the same pool: an empty pool must lower priority, not FAULT
+# both instances and drop the VIP. Only the alive probe may fault.
+if grep -qE '^\s*weight\s+-[1-9]' <<<"$pool_block" && ! grep -qE '^\s*weight' <<<"$alive_block"; then
+  ok "pool probe lowers priority (negative weight); alive probe faults"
+else
+  bad "chk_api_pool needs a negative weight and chk_haproxy_alive none"
+fi
+
+track="$(awk '/track_script/{f=1} f{print} f&&/}/{exit}' "$KEEPALIVED_TPL")"
+if grep -qw chk_haproxy_alive <<<"$track" && grep -qw chk_api_pool <<<"$track"; then
+  ok "VI_API tracks both probes"
+else
+  bad "VI_API does not track chk_haproxy_alive and chk_api_pool"
 fi
 
 # The deployed probe script must actually query the stats endpoint and gate
@@ -50,10 +68,35 @@ else
   bad "probe script does not curl the stats CSV endpoint"
 fi
 
-if grep -q 'api_pool' <<<"$task_body" && grep -q '"UP"' <<<"$task_body"; then
-  ok "probe script gates on an UP server in api_pool"
+# Run the real probe against stats CSV fixtures ($18 is the server status).
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  python3 - "$KEEPALIVED_TASKS" "$tmp" <<'PYEOF'
+import sys, yaml
+t = next(t for t in yaml.safe_load(open(sys.argv[1])) if t.get("copy", {}).get("dest") == "/usr/local/bin/chk_haproxy.sh")
+body = t["copy"]["content"].replace("/usr/bin/curl", sys.argv[2] + "/curl").replace("{{ haproxy_stats_listen }}", "127.0.0.1:8404")
+open(sys.argv[2] + "/chk.sh", "w").write(body)
+PYEOF
+  row() { printf 'api_pool,%s' "$1"; for _ in $(seq 3 17); do printf ',0'; done; printf ',%s\n' "$2"; }
+  probe() { # $1 = mode, $2 = curl stub body; prints the exit code
+    printf '#!/bin/sh\n%s\n' "$2" >"$tmp/curl"; chmod +x "$tmp/curl"
+    sh "$tmp/chk.sh" "$1" </dev/null >/dev/null 2>&1; echo $?
+  }
+  csv() { printf 'cat <<EOF\n%s\nEOF' "$(row BACKEND UP; for s in "$@"; do row "api-$s" "$s"; done)"; }
+  expect() { # $1 = wanted exit code, $2 = got, $3 = label
+    if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (exit $2, want $1)"; fi
+  }
+  expect 0 "$(probe pool "$(csv 'UP')")" "pool: an UP server passes"
+  expect 0 "$(probe pool "$(csv 'UP 1/3' 'UP 2/3')")" "pool: 'UP 1/3' (still in rotation) passes"
+  expect 1 "$(probe pool "$(csv 'DOWN' 'DOWN 1/2' 'MAINT')")" "pool: no server in rotation fails"
+  expect 0 "$(probe alive "$(csv 'DOWN')")" "alive: answers with an empty pool"
+  expect 1 "$(probe alive 'exit 7')" "alive: unreachable stats fails"
+  expect 1 "$(probe bogus "$(csv 'UP')")" "unknown mode fails closed"
+elif [ "${CI:-}" = "true" ]; then
+  bad "python3 with yaml is required in CI to run the probe"
 else
-  bad "probe script does not check for an UP server in the backend pool"
+  echo "  skip — probe run (no python3 with yaml locally)"
 fi
 
 echo "ansible-keepalived-healthcheck-test: $pass passed, $fail failed"
