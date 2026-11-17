@@ -11160,7 +11160,10 @@ export interface components {
              *     is the pair, so it is the same asset.
              *     `over_issuer_cap` — the rebuild's issuer cap bound the set.
              *     `admitted_but_never_observed_on_chain` — the asset met every
-             *     requirement but the index holds no row for it.
+             *     requirement but the index holds no row for it. Emitted by the
+             *     classic arm only: an admitted contract with no catalogue row
+             *     is still valued, so the contract and listing-corroborated arms
+             *     never report it.
              *     `issuer_asset_page_truncated` — counts ISSUERS whose classic
              *     asset list filled one read, so a member in the unread tail
              *     could not be found. It counts issuers, not assets, so it is

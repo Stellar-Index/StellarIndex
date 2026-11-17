@@ -702,13 +702,6 @@ type rwaMembership struct {
 	// Their union is already in refusals, which `refused[]` publishes.
 	contractRefusals map[string]int
 	listingRefusals  map[string]int
-	// listingNotObserved is the listing arm's equivalent of contractsNotObserved, kept apart so
-	// each arm closes its own arithmetic.
-	listingNotObserved int
-	// contractsNotObserved counts admitted contracts with no catalogue row. It lives on the
-	// membership because the funnel is built from this value and a separately-travelling count
-	// could be dropped on a path that forgot it.
-	contractsNotObserved int
 	// unreached names the recognised issuing entities this index holds no token for. It admits
 	// nothing; see RWAUnreachedEntity.
 	unreached []rwaUnreachedEntity
@@ -1166,7 +1159,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// valuation budget; a cut (not failed) valuation is served under flags.stale.
 	vctx, cancel := context.WithTimeout(ctx, rwaContractValuationBudget)
 	defer cancel()
-	contractRows, _, degraded, err := s.rwaContractListingRows(vctx, m.contracts)
+	contractRows, degraded, err := s.rwaContractListingRows(vctx, m.contracts)
 	if err != nil {
 		return rwaAssetsBuild{}, err
 	}
@@ -1174,8 +1167,6 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// Attributed per C2 arm: the arms narrow separate populations and each must close its own
 	// arithmetic, which one combined count would prevent.
 	dirCounts, listingCounts := rwaContractArmSplit(m.contracts, contractRows)
-	m.contractsNotObserved = dirCounts.notObserved
-	m.listingNotObserved = listingCounts.notObserved
 	contractAssets := rwaContractAssetRows(m.contracts, contractRows)
 
 	view.Assets = append(classicAssets, contractAssets...)

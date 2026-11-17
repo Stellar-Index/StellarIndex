@@ -215,33 +215,39 @@ func TestFillContractDecimals_AReadingOverridesTheProvisionalVerdict(t *testing.
 }
 
 // TestRWAContractListingRows_ValuesAnAdmittedContractDiscoveryNeverSighted: a token emitting no SEP-41 events has no
-// catalogue row, and membership already proved its address, so the catalogue may not gate its valuation: the storage
-// supply fallback built for exactly these tokens must reach it.
+// catalogue row, and membership already proved its address, so the catalogue may not gate its valuation, whether it
+// holds no row or is not wired: the storage supply fallback built for exactly these tokens must reach it.
 func TestRWAContractListingRows_ValuesAnAdmittedContractDiscoveryNeverSighted(t *testing.T) {
 	const contractID = "CAOCXWNXCG63U43DCJSS52FDAFT2ZXY2T2UZF3ZYVZ4LLLFVFRF2GM6Z"
 	held, _ := new(big.Int).SetString("344995973100000", 10)
-	s := &Server{
-		Options: Options{
-			ContractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{}},
-			TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
-				contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
-			}},
-			ContractStorageSupply: &storageSupplyStub{byContract: map[string]clickhouse.ContractStorageSupply{
-				contractID: {ContractID: contractID, Total: held, BalanceEntries: 6},
-			}},
-			TokenDecimals: fixedTokenDecimals(7),
-		},
-		logger: discardLogger(),
-	}
-	out, notObserved, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: contractID}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	row, ok := out[contractID]
-	if !ok {
-		t.Fatalf("no row for the admitted contract (not observed = %d): its whole value is in no total", notObserved)
-	}
-	if row.CirculatingSupply == nil || *row.CirculatingSupply != held.String() {
-		t.Errorf("circulating_supply = %v, want the storage sum %s", row.CirculatingSupply, held)
+	for name, catalogue := range map[string]ContractCatalogueReader{
+		"no catalogue row":  capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{}},
+		"catalogue unwired": nil,
+	} {
+		s := &Server{
+			Options: Options{
+				ContractCatalogue: catalogue,
+				TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+					contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
+				}},
+				ContractStorageSupply: &storageSupplyStub{byContract: map[string]clickhouse.ContractStorageSupply{
+					contractID: {ContractID: contractID, Total: held, BalanceEntries: 6},
+				}},
+				TokenDecimals: fixedTokenDecimals(7),
+			},
+			logger: discardLogger(),
+		}
+		out, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: contractID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, ok := out[contractID]
+		if !ok {
+			t.Errorf("%s: no row for the admitted contract: its whole value is in no total", name)
+			continue
+		}
+		if row.CirculatingSupply == nil || *row.CirculatingSupply != held.String() {
+			t.Errorf("%s: circulating_supply = %v, want the storage sum %s", name, row.CirculatingSupply, held)
+		}
 	}
 }
