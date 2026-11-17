@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -94,6 +95,30 @@ func TestValueStrategyFlows_PricesExactlyAndNamesExclusions(t *testing.T) {
 	}
 	if v.total("withdraw").Sign() != 0 {
 		t.Error("an unmapped strategy's flows must not be valued")
+	}
+}
+
+// A day is judged only against at least three other priced days; with fewer, no day is dropped.
+func TestGuardDailyUSDPrices_NeedsThreeOtherDays(t *testing.T) {
+	for name, tc := range map[string]struct {
+		vwaps   []string
+		dropped []int
+	}{
+		"two days":                 {[]string{"1", "11"}, nil},
+		"three days, one high":     {[]string{"1", "1", "100"}, nil},
+		"four days, only one high": {[]string{"1", "1", "1", "100"}, []int{3}},
+	} {
+		prices := map[assetDay]*big.Rat{}
+		for i, v := range tc.vwaps {
+			prices[assetDay{testCETES, "2026-11-1" + strconv.Itoa(i)}] = rat(v)
+		}
+		kept, outliers := guardDailyUSDPrices(prices)
+		for i := range tc.vwaps {
+			k := assetDay{testCETES, "2026-11-1" + strconv.Itoa(i)}
+			if want := slices.Contains(tc.dropped, i); outliers[k] != want || (kept[k] == nil) != want {
+				t.Errorf("%s: day %d dropped = %v (kept %v), want dropped %v", name, i, outliers[k], kept[k] != nil, want)
+			}
+		}
 	}
 }
 

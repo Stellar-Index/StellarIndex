@@ -190,9 +190,13 @@ func foldDailyUSDPrices(rows []usdPriceRow, spellings map[string]string) map[ass
 	return out
 }
 
+// minYieldPriceBaseline is how many other priced days a day's price is judged against.
+const minYieldPriceBaseline = 3
+
 // guardDailyUSDPrices drops each (asset, day) price outside the served-price band around the asset's other days in the window and
 // returns the dropped keys. The daily VWAP has no wash or outlier filter, so one cross at a multiple of fair would otherwise value a
-// whole day's flows. A day with no other day to compare is kept: the band needs a baseline.
+// whole day's flows. A day with fewer than minYieldPriceBaseline other days is kept: one or two days give no median that tells the
+// outlier from the clean day.
 func guardDailyUSDPrices(prices map[assetDay]*big.Rat) (map[assetDay]*big.Rat, map[assetDay]bool) {
 	byAsset := map[string][]assetDay{}
 	for k := range prices {
@@ -202,6 +206,10 @@ func guardDailyUSDPrices(prices map[assetDay]*big.Rat) (map[assetDay]*big.Rat, m
 	for _, days := range byAsset {
 		sort.Slice(days, func(i, j int) bool { return days[i].day > days[j].day }) // newest first, as the guard expects
 		for _, k := range days {
+			if len(days)-1 < minYieldPriceBaseline {
+				kept[k] = prices[k]
+				continue
+			}
 			others := make([]*big.Rat, 0, len(days)-1)
 			for _, o := range days {
 				if o != k {
