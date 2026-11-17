@@ -80,6 +80,21 @@ export function shortAssetText(canonical: string | undefined | null): string {
   return canonical.slice(0, i);
 }
 
+/**
+ * shortAssetText plus the shortened issuer for a classic asset ("USDC (GA5ZSE…KZVN)"), for list
+ * rows with no other issuer column: a look-alike's row must not read the same as the real one.
+ */
+export function assetIdentityLabel(
+  canonical: string | undefined | null,
+): string {
+  const text = shortAssetText(canonical);
+  if (!canonical) return text;
+  const m = /^[A-Za-z0-9]{1,12}-(G[A-Z2-7]{55})$/.exec(
+    normalizeColonForm(canonical),
+  );
+  return m ? `${text} (${m[1]!.slice(0, 6)}…${m[1]!.slice(-4)})` : text;
+}
+
 /** The code a listing row shows; a code-less Soroban asset shows its shortened contract id. */
 export function assetLabel(coin: {
   code?: string | null;

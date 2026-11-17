@@ -79,7 +79,7 @@ describe('page-level sections do not skip a heading level', () => {
   it.each([
     [
       '/assets/[slug] — converter (sidebar)',
-      <AssetSwap key="swap" symbol="USDC" assetId="USDC-G…" priceUSD={1} />,
+      <AssetSwap key="swap" symbol="USDC" assetId="USDC-G…" priceUSD="1" />,
     ],
     ['/assets/[slug] — issuer panel', <IssuerPanel key="issuer" gStrkey={G} />],
     [

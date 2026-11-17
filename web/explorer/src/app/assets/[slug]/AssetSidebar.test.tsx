@@ -144,6 +144,24 @@ describe('AssetSidebar floor marks', () => {
     expect(getByText('≤ 5M USDC')).toBeTruthy();
   });
 
+  // The real shape: the detail has no supply fields, the listing row carries
+  // the lake-flows supply and its basis. The mark must follow the figure.
+  it('marks a lake-flows supply taken from the listing row when the detail has none', () => {
+    const { getByText } = renderWithQuery(
+      <AssetSidebar
+        coin={{
+          ...coin,
+          circulating_supply: '50000000000000',
+          decimals: 7,
+          supply_basis: 'classic_lake_flows',
+        }}
+        detail={{ decimals: 7 }}
+        priceUSD="0.9998"
+      />,
+    );
+    expect(getByText('≤ 5M USDC')).toBeTruthy();
+  });
+
   it('leaves exact figures unmarked', () => {
     const { getByText, queryByText } = renderWithQuery(
       <AssetSidebar

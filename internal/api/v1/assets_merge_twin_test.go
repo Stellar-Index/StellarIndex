@@ -33,6 +33,22 @@ func TestMergeTwinStats_CarriesDecimalsWithSupply(t *testing.T) {
 	}
 }
 
+// The supply's basis travels with it: a lake-flows or trustline-sum reading without its basis renders as exact.
+func TestMergeTwinStats_CarriesSupplyBasisWithSupply(t *testing.T) {
+	t.Parallel()
+
+	for _, basis := range []string{"classic_lake_flows", "classic_trustline_sum"} {
+		supply := "342797138733487851"
+		twin := AssetDetail{CirculatingSupply: &supply, Decimals: 7, SupplyBasis: &basis}
+		dst := AssetDetail{Type: "global"}
+		mergeTwinStats(&dst, twin)
+
+		if dst.SupplyBasis == nil || *dst.SupplyBasis != basis {
+			t.Errorf("supply_basis = %v, want %q", dst.SupplyBasis, basis)
+		}
+	}
+}
+
 // A row that already has its own supply keeps its own scale — the merge
 // must not overwrite a self-consistent pair.
 func TestMergeTwinStats_LeavesOwnSupplyAndDecimalsAlone(t *testing.T) {
