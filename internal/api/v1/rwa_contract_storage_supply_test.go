@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
@@ -180,5 +181,73 @@ func TestContractArmCountsAStorageDeadlineAsACut(t *testing.T) {
 	}
 	if rows[0].CirculatingSupply != nil {
 		t.Errorf("supply = %v, want none", rows[0].CirculatingSupply)
+	}
+}
+
+type failingTokenDecimals struct{}
+
+func (failingTokenDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
+	return 0, false, errors.New("lake read failed")
+}
+
+// TestFillContractDecimals_AReadingOverridesTheProvisionalVerdict: the generic listing fill marks the scale unresolved
+// when its own read fails; the contract arm's successful reading owns the scale and clears that verdict, so a row never
+// publishes a cap beside `decimals: null`. A read that errors is unread, not a quiet refusal.
+func TestFillContractDecimals_AReadingOverridesTheProvisionalVerdict(t *testing.T) {
+	const id = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	src := map[string]timescale.AssetRow{id: {}}
+
+	s := &Server{TokenDecimals: fixedTokenDecimals(7)}
+	rows := []AssetDetail{{AssetID: id, DecimalsUnresolved: true}}
+	resolved, cut := s.fillContractDecimals(context.Background(), rows, src)
+	if _, ok := resolved[id]; !ok || cut {
+		t.Fatalf("resolved = %v, cut = %v, want the reading resolved", resolved, cut)
+	}
+	if rows[0].DecimalsUnresolved || rwaDecimalsOf(rows[0]) == nil {
+		t.Errorf("DecimalsUnresolved = %v after a successful reading, decimals = %v", rows[0].DecimalsUnresolved, rwaDecimalsOf(rows[0]))
+	}
+
+	s = &Server{TokenDecimals: failingTokenDecimals{}}
+	rows = []AssetDetail{{AssetID: id}}
+	if _, cut := s.fillContractDecimals(context.Background(), rows, src); !cut {
+		t.Error("a failed decimals read was not reported as unread")
+	}
+}
+
+// TestRWAContractListingRows_ValuesAnAdmittedContractDiscoveryNeverSighted: a token emitting no SEP-41 events has no
+// catalogue row, and membership already proved its address, so the catalogue may not gate its valuation, whether it
+// holds no row or is not wired: the storage supply fallback built for exactly these tokens must reach it.
+func TestRWAContractListingRows_ValuesAnAdmittedContractDiscoveryNeverSighted(t *testing.T) {
+	const contractID = "CAOCXWNXCG63U43DCJSS52FDAFT2ZXY2T2UZF3ZYVZ4LLLFVFRF2GM6Z"
+	held, _ := new(big.Int).SetString("344995973100000", 10)
+	for name, catalogue := range map[string]ContractCatalogueReader{
+		"no catalogue row":  capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{}},
+		"catalogue unwired": nil,
+	} {
+		s := &Server{
+			Options: Options{
+				ContractCatalogue: catalogue,
+				TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+					contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
+				}},
+				ContractStorageSupply: &storageSupplyStub{byContract: map[string]clickhouse.ContractStorageSupply{
+					contractID: {ContractID: contractID, Total: held, BalanceEntries: 6},
+				}},
+				TokenDecimals: fixedTokenDecimals(7),
+			},
+			logger: discardLogger(),
+		}
+		out, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: contractID}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, ok := out[contractID]
+		if !ok {
+			t.Errorf("%s: no row for the admitted contract: its whole value is in no total", name)
+			continue
+		}
+		if row.CirculatingSupply == nil || *row.CirculatingSupply != held.String() {
+			t.Errorf("%s: circulating_supply = %v, want the storage sum %s", name, row.CirculatingSupply, held)
+		}
 	}
 }

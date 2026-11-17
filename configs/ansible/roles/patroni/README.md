@@ -35,8 +35,9 @@ Design rationale lives in
 - Vault contents:
   - `patroni_replicator_password` — Postgres replication user.
   - `patroni_postgres_password` — Postgres superuser.
-  - (optional) `patroni_rest_basic_auth` — Patroni REST API
-    Basic Auth, defaults disabled if vault entry absent.
+  - `patroni_rest_basic_auth_user` + `patroni_rest_basic_auth_password` —
+    Patroni REST API Basic Auth. Required: the role fails at
+    06-patroni-configure if either is empty.
 
 - **etcd TLS is on by default** (`etcd_tls_enabled: true`): client and
   peer ports use HTTPS with mutual client-cert auth, and Patroni
@@ -115,6 +116,9 @@ patroni_pgbackrest_stanza: stellarindex
 patroni_pgbackrest_restore_target: latest   # or "time:2026-04-30 14:00:00"
 ```
 
+On a host with the distro's empty main cluster still at `patroni_data_dir`,
+also set `patroni_adopt_existing_data_dir: true` so the restore overwrites it.
+
 ## Smoke test
 
 After the playbook finishes:
@@ -129,12 +133,17 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
 
 ## What this role does, at a glance
 
-1. **Preflight** — verify OS, RAM ≥ 32 GB, the prerequisite role
-   (postgres install) ran.
+1. **Preflight** — verify OS, RAM ≥ 32 GB, a 3-host `postgres_cluster`
+   group, and the vault passwords. It does not check that the postgres
+   package is installed.
 2. **etcd** — install + configure + start the 3-node quorum.
 3. **Patroni** — install + render config + start.
-4. **Bootstrap** — on `db-01`, initialise the cluster (or
-   restore from pgBackRest); on `db-02` / `03`, join as replicas.
+4. **Bootstrap** — the distro's `postgresql@<ver>-main` unit is masked
+   on every host. On `db-01`, initialise the cluster (or restore from
+   pgBackRest); on `db-02` / `03`, join as replicas. Bootstrap fails if
+   the data dir already holds a cluster Patroni did not create (the
+   distro auto-creates one at the default path) unless
+   `patroni_adopt_existing_data_dir: true`.
 5. **Firewall** — open 5432 / 8008 / 2379 / 2380 to the internal
    network only.
 6. **Monitoring** — wire `node_exporter` textfile collectors so

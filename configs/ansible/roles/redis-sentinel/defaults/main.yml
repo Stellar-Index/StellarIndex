@@ -45,16 +45,20 @@ redis_password: ""
 redis_acl_lockdown: false
 
 # Memory + eviction. NOT cache-only: this instance is also the store
-# of record for the TTL-less `apikey:` credentials (plaintext is
-# unrecoverable), their `apikey-index:` hash and the `signup:email:`
-# map. volatile-lru evicts only keys that carry a TTL — every cache
-# family does — so those records are never evicted; an allkeys-*
-# policy deletes live credentials under memory pressure.
-# Memory full of TTL-less keys fails writes with OOM, which pages via
-# stellarindex_redis_write_rejected_oom. 03-redis-configure.yml also
-# applies this to already-running instances.
+# of record for the `apikey:` credentials (plaintext is unrecoverable),
+# their `apikey-index:` hash and the `signup:email:` map. Self-service
+# `apikey:` records carry a sliding TTL, so volatile-lru can evict a live
+# credential under memory pressure; only noeviction cannot. Memory full
+# fails writes with OOM, which pages via stellarindex_redis_write_rejected_oom.
+# 03-redis-configure.yml also applies this to already-running instances.
 redis_maxmemory: "4gb"
-redis_maxmemory_policy: volatile-lru
+redis_maxmemory_policy: noeviction
+
+# Acknowledged-write loss bound on failover: the primary refuses writes
+# unless this many replicas acked within redis_min_replicas_max_lag seconds.
+# 0 disables it, trading that bound for write availability while replicas are down.
+redis_min_replicas_to_write: 1
+redis_min_replicas_max_lag: 10
 
 # Persistence: AOF every-second + RDB snapshots per redis_save_rules.
 # Both stay local to redis_data_dir; nothing copies them off-host.

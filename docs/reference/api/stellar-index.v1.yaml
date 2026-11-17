@@ -18776,11 +18776,11 @@ components:
       type: object
       description: |
         One reason a set member is absent from a series. Shared by
-        `/rwa/history` and `/rwa/premium`: the first four reasons are the
+        `/rwa/history` and `/rwa/premium`: the first five reasons are the
         same refusal by the same rule on both, and two spellings of one
-        reason is how a funnel starts lying. The last five are specific
+        reason is how a funnel starts lying. The last six are specific
         to one series — the supply pair to the value series, the market
-        trio to the premium series.
+        four to the premium series.
       required: [reason, assets, detail]
       properties:
         reason:
@@ -18790,10 +18790,12 @@ components:
             - contract_not_bound
             - issuer_flagged
             - no_reference_history
+            - reference_isin_mismatch
             - no_supply_history
             - supply_incomplete
             - no_market_history
             - market_below_floor
+            - market_outside_band
             - no_same_day_observation
         assets:
           type: integer
@@ -20234,6 +20236,7 @@ components:
             - no_market_price
             - market_price_not_observed
             - reference_not_positive
+            - market_outside_band
             - reference_is_a_listing_price
             - reference_is_a_prospectus_nav
             - reference_is_a_curator_price
@@ -20289,9 +20292,12 @@ components:
             `anchor_asset` names no security and contradicts nothing.
             `no_reference_feed` — the pair IS bound, but the oracle stream
             carries no row for its feed.
-            `reference_unavailable` — the oracle read did not answer, so
-            nothing is known either way. NOT an absence: a failed read has
-            not learned what the oracles carry, and must not report it.
+            `reference_unavailable` — a read the row depends on did not
+            answer, so nothing is known either way: the oracle read, or,
+            for a row no oracle feed binds, the listing-directory read
+            (failed, or returned no fresh rows). NOT an absence: a failed
+            read has not learned what the sources carry, and must not
+            report it.
             `reference_expired` — the bound feed's most recent observation
             is older than the seven-day window an active stream is defined
             by. Reached only when a snapshot is carried across a sustained
@@ -20311,6 +20317,11 @@ components:
             report the issuer's own claim as a market finding.
             `reference_not_positive` — the oracle published a
             non-positive value; nothing is divided by it.
+            `market_outside_band` — the market price is more than ten
+            times, or less than a tenth of, the oracle's value: the band
+            `/v1/rwa/premium` refuses a day by, so the two surfaces never
+            disagree on one print. The row and its reference are still
+            published.
             `reference_is_a_prospectus_nav` — the row carries a
             reference, and it is a prospectus's constant NAV rather than
             an oracle's valuation of the instrument, so no premium may
@@ -20975,7 +20986,10 @@ components:
             is the pair, so it is the same asset.
             `over_issuer_cap` — the rebuild's issuer cap bound the set.
             `admitted_but_never_observed_on_chain` — the asset met every
-            requirement but the index holds no row for it.
+            requirement but the index holds no row for it. Emitted by the
+            classic arm only: an admitted contract with no catalogue row
+            is still valued, so the contract and listing-corroborated arms
+            never report it.
             `issuer_asset_page_truncated` — counts ISSUERS whose classic
             asset list filled one read, so a member in the unread tail
             could not be found. It counts issuers, not assets, so it is

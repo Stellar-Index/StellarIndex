@@ -108,7 +108,7 @@ const PREMIUM_REASON: Record<string, string> = {
   no_reference_feed:
     'This token is bound to an oracle feed, but no oracle is currently publishing that instrument.',
   reference_unavailable:
-    'The oracle reading could not be fetched, so nothing is known either way. This is an outage, not a statement that no valuation exists.',
+    'The oracle reading, or for a token no oracle feed covers the listing directory, could not be fetched or had nothing fresh, so nothing is known either way. This is an outage, not a statement that no valuation exists.',
   reference_expired:
     'The bound feed’s most recent reading is older than a week, so it is no longer treated as current.',
   reference_not_instrument_scoped:
@@ -121,6 +121,8 @@ const PREMIUM_REASON: Record<string, string> = {
     'The price on this row is a declared peg or a derived rate rather than a market observation. Measuring a premium against it would report the issuer’s own claim as a market finding.',
   reference_not_positive:
     'The oracle published a non-positive value, which cannot be a denominator.',
+  market_outside_band:
+    'The market price is more than ten times, or under a tenth of, the oracle’s value — far enough off that it is treated as a bad print rather than a premium. The premium history refuses the same days.',
 };
 
 /**
@@ -222,7 +224,7 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
   // spell out in full.
   withheld_issuer_flagged: 'Issuer flagged, so no valuation of any kind',
   withheld_issuer_unchecked: 'Issuer check did not answer, so no valuation',
-  reference_unavailable: 'The oracle read did not answer',
+  reference_unavailable: 'The oracle or listing-directory read did not answer',
   reference_contract_not_bound: 'No oracle feed bound to this contract',
   reference_not_instrument_scoped: 'The feed prices an ounce, not a token',
   reference_not_bound: 'No oracle feed bound to this (code, issuer)',

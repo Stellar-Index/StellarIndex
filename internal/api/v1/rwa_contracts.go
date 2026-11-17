@@ -333,9 +333,9 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 // refused.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
-) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {
-	if len(members) == 0 || s.ContractCatalogue == nil {
-		return map[string]AssetDetail{}, 0, false, nil
+) (byID map[string]AssetDetail, valuationCut bool, err error) {
+	if len(members) == 0 {
+		return map[string]AssetDetail{}, false, nil
 	}
 	ids := make([]string, 0, len(members))
 	for _, m := range members {
@@ -343,22 +343,27 @@ func (s *Server) rwaContractListingRows(
 	}
 	sort.Strings(ids)
 
-	rows, err := s.ContractCatalogue.ContractCatalogueRows(ctx, ids)
-	if err != nil {
-		return nil, 0, false, err
+	var rows map[string]timescale.AssetRow
+	if s.ContractCatalogue != nil {
+		var err error
+		if rows, err = s.ContractCatalogue.ContractCatalogueRows(ctx, ids); err != nil {
+			return nil, false, err
+		}
 	}
 
-	details := make([]AssetDetail, 0, len(rows))
+	// Membership already proved each address, so a contract discovery never sighted (one emitting no
+	// SEP-41 event) is still valued, and every member has a row; the catalogue only enriches it.
+	if rows == nil {
+		rows = make(map[string]timescale.AssetRow, len(ids))
+	}
+	details := make([]AssetDetail, 0, len(ids))
 	for _, id := range ids {
 		row, ok := rows[id]
 		if !ok {
-			continue
+			row = timescale.AssetRow{Slug: id, AssetID: id}
+			rows[id] = row
 		}
 		details = append(details, assetDetailFromAssetRow(row))
-	}
-	notObserved = len(ids) - len(details)
-	if len(details) == 0 {
-		return map[string]AssetDetail{}, notObserved, false, nil
 	}
 
 	// The /v1/assets post-query pipeline, in its order (see rwaListingRows). Its market-cap fill can
@@ -378,10 +383,10 @@ func (s *Server) rwaContractListingRows(
 	s.fillContractDirectoryTags(ctx, details)
 
 	out := make(map[string]AssetDetail, len(details))
-	for _, d := range details {
-		out[d.AssetID] = d
+	for i, d := range details {
+		out[ids[i]] = d
 	}
-	return out, notObserved, decimalsCut || capsCut || supplyUnread, nil
+	return out, decimalsCut || capsCut || supplyUnread, nil
 }
 
 // rwaRowsUnanswered reports a row whose price gate or issuer-directory read did not answer: its figures are withheld, not refused.
@@ -398,7 +403,7 @@ func rwaRowsUnanswered(rows map[string]AssetDetail) bool {
 // divides supply by 10^decimals, so a 5-decimal fund read at 7 publishes one hundredth of its capitalisation. A token with no
 // readable metadata keeps 7 but may not be multiplied by it: the returned set holds addresses whose scale was READ, and a row
 // absent from it carries no valuation (unwired reader, instance not in the lake, missing or conflicting scale all mean unknown).
-// ctx ending mid-walk is not a refusal: cut reports it.
+// A failed read or ctx ending mid-walk is not a refusal: cut reports it.
 func (s *Server) fillContractDecimals(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 ) (resolved map[string]struct{}, cut bool) {
@@ -414,13 +419,19 @@ func (s *Server) fillContractDecimals(
 		if err != nil && ctx.Err() != nil {
 			return resolved, true
 		}
-		if err != nil || !ok {
+		if err != nil {
+			cut = true
 			continue
 		}
+		if !ok {
+			continue
+		}
+		// This reading owns the scale; the generic fill's failed read must not outlive it.
 		rows[i].Decimals = int(d)
+		rows[i].DecimalsUnresolved = false
 		resolved[rows[i].AssetID] = struct{}{}
 	}
-	return resolved, false
+	return resolved, cut
 }
 
 // fillContractMarketCaps fills circulating supply and market cap for contract rows from the certified lake: mints less burns and
@@ -667,13 +678,11 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 
 // rwaContractArmCounts is one C2 arm's share of the catalogue join.
 type rwaContractArmCounts struct {
-	served      int
-	notObserved int
+	served int
 }
 
 // rwaContractArmSplit attributes each admitted contract's catalogue-join outcome to its arm, from the SAME member list and valued-row map
 // the projection uses so per-arm stages cannot disagree with the rows served.
-// A member absent from the map was admitted and never observed on chain: the drop both arms report under rwaDropNotInCatalogue.
 func rwaContractArmSplit(
 	members []rwaContractMember, rows map[string]AssetDetail,
 ) (directory, listing rwaContractArmCounts) {
@@ -684,9 +693,7 @@ func rwaContractArmSplit(
 		}
 		if _, ok := rows[m.contractID]; ok {
 			arm.served++
-			continue
 		}
-		arm.notObserved++
 	}
 	return directory, listing
 }

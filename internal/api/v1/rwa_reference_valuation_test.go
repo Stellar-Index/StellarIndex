@@ -140,6 +140,7 @@ func rwaProductionShapedServer(t *testing.T, withOracle bool) *v1.Server {
 		"USDY-" + rwaOndoIssuer:    rwaUSDYSupply,
 	}
 	opts := v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: bound},
 		Directory: &stubDirectoryReader{entries: dir},
 		AssetsReader: &rwaListStub{
@@ -557,6 +558,7 @@ func TestRWAAssets_ReferenceBasisNamesItselfAsAClaim(t *testing.T) {
 // larger supply-multiplied one: a real NAV times an impersonator's float from an oracle that never named it.
 func TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither(t *testing.T) {
 	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
 			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
 		}},
@@ -592,6 +594,7 @@ func TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither(t *testing.T) {
 func TestRWAAssets_UncheckedIssuerGetsNoValuationAndDegradesTheResponse(t *testing.T) {
 	entry := timescale.DirectoryEntry{Address: rwaGoodIssuer, Name: "Etherfuse", Tags: []string{"issuer"}, Source: "stellar-expert"}
 	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
 			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
 		}},
@@ -797,6 +800,7 @@ func rwaContractServerWithOracle(
 		rwaContractGood: recognisedContract(rwaContractGood, "Example Treasury Fund"),
 	}
 	return v1.New(v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{},
 		Directory: &stubDirectoryReader{entries: dir},
 		AssetsReader: &rwaListStub{
@@ -882,6 +886,7 @@ func TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal(t *testing.T) {
 		rwaRow("XAU", rwaGoodIssuer, nil, 1436),
 	}}
 	srv := v1.New(v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: bound},
 		Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{
 			rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
@@ -1272,6 +1277,7 @@ func TestRWAAssets_IssuerAssetPageTruncationIsReported(t *testing.T) {
 // funnel of zeros would read as a measured empty network, the same lie as a market cap of "0.00".
 func TestRWAAssets_FunnelIsNotServedAsZerosWhenUnmeasured(t *testing.T) {
 	srv := v1.New(v1.Options{
+		Listings:     rwaNothingListed,
 		Sep1Cache:    &stubSep1BoundReader{err: errRWAScan},
 		Directory:    &stubDirectoryReader{},
 		AssetsReader: &rwaListStub{stubAssetsReaderExt: &stubAssetsReaderExt{}},
@@ -1463,6 +1469,7 @@ func TestRWAAssets_ServesTheDiscountToTheInstrumentValuation(t *testing.T) {
 // valuation of any kind, including a third party's NAV, which would be a bigger claim than the suppressed one.
 func TestRWAAssets_ImpersonatorGetsNoInstrumentValuation(t *testing.T) {
 	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
 			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
 		}},
@@ -1973,6 +1980,7 @@ func TestRWAAssets_NoPublishedValuationOmitsTheTotal(t *testing.T) {
 // status says why). The stub answers the batch overlay lookup flagged and the membership lookup clean to reproduce the window.
 func TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld(t *testing.T) {
 	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
 			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
 		}},
@@ -2014,6 +2022,7 @@ func TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld(t *testing.T) {
 // no directory the surface publishes an empty set and says why, not every self-declared candidate.
 func TestRWAAssets_UnavailableWhenTheDirectoryCannotAnswer(t *testing.T) {
 	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
 			rwaBound("USTRY", rwaScamIssuer, "stellar.us.org", "bond"),
 			rwaBound("BENJI", rwaUnknownIssuer, "franklintempleton.reallumens.com", "bond"),
@@ -2046,6 +2055,7 @@ func TestRWAAssets_MembershipIsCachedNotRebuiltPerRequest(t *testing.T) {
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
 	}}
 	srv := v1.New(v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: sep1,
 		Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{
 			rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
@@ -2257,6 +2267,7 @@ func rwaServer(
 ) *v1.Server {
 	t.Helper()
 	return v1.New(v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: bound},
 		Directory: &stubDirectoryReader{entries: dir},
 		AssetsReader: &rwaListStub{
@@ -2442,6 +2453,7 @@ func rwaServerWithUpstream(
 ) *v1.Server {
 	t.Helper()
 	return v1.New(v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: bound, upstream: upstream},
 		Directory: &stubDirectoryReader{entries: dir},
 		AssetsReader: &rwaListStub{
@@ -2520,6 +2532,7 @@ func rwaServerWithOracle(
 ) *v1.Server {
 	t.Helper()
 	return v1.New(v1.Options{
+		Listings:  rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: bound},
 		Directory: &stubDirectoryReader{entries: dir},
 		Oracle:    oracle,
@@ -2568,6 +2581,7 @@ func newRWALimitedServer(t *testing.T, anonLimit int) (*testServerImpl, *rwaCoun
 		supply:              rwaSupplyFor(rows),
 	}}
 	srv := v1.New(v1.Options{
+		Listings: rwaNothingListed,
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
 			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
 			rwaBound("USDY", rwaOndoIssuer, "etherfuse.com", "bond"),
@@ -2595,4 +2609,67 @@ func rwaRemaining(t *testing.T, ts *testServerImpl, resp *http.Response) int {
 		return n
 	}
 	return remainingBeforeProbe(t, resp, ts.URL+assetsProbe)
+}
+
+// rwaNothingListed is an answered listing directory naming none of these fixtures: absence is then a finding, not an outage.
+var rwaNothingListed = answeredListingDirectory{"CUNRELATEDLISTINGCONTRACT": {PriceUSD: "1.00", PricedAt: time.Now()}}
+
+// answeredListingDirectory is a listing directory read that answers with fixed rows.
+type answeredListingDirectory map[string]timescale.ListingEntry
+
+func (d answeredListingDirectory) ListingDirectoryByAddress(
+	context.Context,
+) (map[string]timescale.ListingEntry, timescale.ListingDirectoryCensus, error) {
+	return d, timescale.ListingDirectoryCensus{Entries: len(d)}, nil
+}
+
+// An unanswered listing directory read leaves an unbound row's reference unknown, so /v1/rwa/assets must be served stale and
+// uncacheable; the same server with the directory answering is not.
+func TestRWAAssets_UnansweredListingReadDegradesTheResponse(t *testing.T) {
+	build := func(listings v1.AssetListingDirectoryReader) *v1.Server {
+		return v1.New(v1.Options{
+			Listings: listings,
+			Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+				rwaBound("AUMTL", rwaGoodIssuer, "etherfuse.com", "commodity"),
+			}},
+			Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{
+				rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse"),
+			}},
+			Oracle: rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "1074182", 6)),
+			AssetsReader: &rwaListStub{
+				stubAssetsReaderExt: &stubAssetsReaderExt{},
+				byIssuer: map[string][]timescale.AssetRow{
+					rwaGoodIssuer: {rwaRow("AUMTL", rwaGoodIssuer, nil, 902)},
+				},
+				supply: map[string]string{"AUMTL-" + rwaGoodIssuer: rwaAUMTLSupply},
+			},
+		})
+	}
+	for _, tc := range []struct {
+		name      string
+		listings  v1.AssetListingDirectoryReader
+		wantStale bool
+		wantRef   string
+	}{
+		{"listing reader unwired", nil, true, v1.RWAPremiumReferenceUnavailable},
+		{"listing directory answered", rwaNothingListed, false, v1.RWAPremiumNotBound},
+	} {
+		resp := mustGet(t, httpTestServer(t, build(tc.listings)).URL+"/v1/rwa/assets")
+		var body struct {
+			Data  v1.RWAAssetsView `json:"data"`
+			Flags v1.Flags         `json:"flags"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("%s: decode: %v", tc.name, err)
+		}
+		if len(body.Data.Assets) != 1 || body.Data.Assets[0].ReferenceValuation.Status != tc.wantRef {
+			t.Fatalf("%s: assets = %+v, want one row refused as %q", tc.name, body.Data.Assets, tc.wantRef)
+		}
+		// Degraded is not on the wire; it shows as a response no cache may keep.
+		noStore := resp.Header.Get("Cache-Control") == "no-store"
+		if body.Flags.Stale != tc.wantStale || noStore != tc.wantStale {
+			t.Errorf("%s: stale = %v, Cache-Control = %q; want stale and degraded = %v",
+				tc.name, body.Flags.Stale, resp.Header.Get("Cache-Control"), tc.wantStale)
+		}
+	}
 }

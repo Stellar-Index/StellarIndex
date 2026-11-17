@@ -63,7 +63,7 @@ func TestRWAFundNAV_ArmOrder(t *testing.T) {
 	}
 
 	a := fundNAVAsset("WTTS", wttsIssuer)
-	rwaApplyReference(a, snap, nil, listed(a), fundNAVNow)
+	rwaApplyReference(a, snap, nil, listingAnswered(listed(a)), fundNAVNow)
 	r := a.Reference
 	if r == nil || r.Provenance != RWAReferenceFundNAV {
 		t.Fatalf("WTTS with a NAV and a listing price: %+v, want the fund_nav arm", r)
@@ -84,21 +84,21 @@ func TestRWAFundNAV_ArmOrder(t *testing.T) {
 
 	// SPXU is an off-chain reference code; its binding still prices it.
 	s := fundNAVAsset("SPXU", spxuIssuer)
-	rwaApplyReference(s, fundNAVSnap(t, tiingoRow(t, "SPXUX", 25_120_000, fundNAVNow.Add(-22*time.Hour))), nil, nil, fundNAVNow)
+	rwaApplyReference(s, fundNAVSnap(t, tiingoRow(t, "SPXUX", 25_120_000, fundNAVNow.Add(-22*time.Hour))), nil, listingAnswered(nil), fundNAVNow)
 	if s.Reference == nil || s.Reference.Provenance != RWAReferenceFundNAV || s.Reference.PriceUSD != "25.12" {
 		t.Errorf("SPXU = %+v premium %q, want fund_nav 25.12", s.Reference, s.Premium.Status)
 	}
 
 	// No NAV for the pair: the listing arm answers exactly as before.
 	b := fundNAVAsset("WTTS", wttsIssuer)
-	rwaApplyReference(b, fundNAVSnap(t), nil, listed(b), fundNAVNow)
+	rwaApplyReference(b, fundNAVSnap(t), nil, listingAnswered(listed(b)), fundNAVNow)
 	if b.Reference == nil || b.Reference.Provenance != RWAReferenceListingPrice {
 		t.Errorf("WTTS without a NAV: %+v, want the listing arm", b.Reference)
 	}
 
 	// Same code, other issuer: never the fund's NAV.
 	c := fundNAVAsset("WTTS", benjiFTIss)
-	rwaApplyReference(c, snap, nil, nil, fundNAVNow)
+	rwaApplyReference(c, snap, nil, listingAnswered(nil), fundNAVNow)
 	if c.Reference != nil {
 		t.Errorf("WTTS under a foreign issuer got %+v", c.Reference)
 	}
@@ -108,7 +108,7 @@ func TestRWAFundNAV_ArmOrder(t *testing.T) {
 	o := fundNAVAsset("BENJI", benjiFTIss)
 	oracleSnap := fundNAVSnap(t, tiingoRow(t, "FTXXX", 1_500_000, fundNAVNow.Add(-22*time.Hour)))
 	oracleSnap.byFeed["BENJI"] = rwaReference{priceUSD: big.NewRat(1, 1), wire: "1.000000", source: "redstone", feed: "rwa:BENJI", asOf: fundNAVNow.Add(-time.Hour)}
-	rwaApplyReference(o, oracleSnap, nil, nil, fundNAVNow)
+	rwaApplyReference(o, oracleSnap, nil, listingAnswered(nil), fundNAVNow)
 	if o.Reference == nil || o.Reference.Provenance != RWAReferenceOracleNAV || o.Reference.PriceUSD != "1.000000" {
 		t.Errorf("oracle- and fund-bound BENJI = %+v, want the oracle figure", o.Reference)
 	}
@@ -150,7 +150,7 @@ func TestRWAFundNAV_NAVDisagreementBoundary(t *testing.T) {
 		snap := fundNAVSnap(t, tiingoRow(t, "FTXXX", 1_000_000, fundNAVNow.Add(-22*time.Hour)))
 		snap.byFeed["BENJI"] = rwaReference{priceUSD: oracle, wire: tc.oracle, source: "redstone", feed: "rwa:BENJI", asOf: fundNAVNow.Add(-time.Hour)}
 		a := fundNAVAsset("BENJI", benjiFTIss)
-		rwaApplyReference(a, snap, nil, nil, fundNAVNow)
+		rwaApplyReference(a, snap, nil, listingAnswered(nil), fundNAVNow)
 		if a.Reference == nil || a.Reference.Provenance != RWAReferenceOracleNAV || a.Reference.PriceUSD != tc.oracle {
 			t.Fatalf("oracle %s: reference = %+v, want the oracle figure served", tc.oracle, a.Reference)
 		}
@@ -164,7 +164,7 @@ func TestRWAFundNAV_NAVDisagreementBoundary(t *testing.T) {
 func TestRWAFundNAV_StaleRefusal(t *testing.T) {
 	at5d := fundNAVSnap(t, tiingoRow(t, "WTTSX", 9_440_000, fundNAVNow.Add(-5*24*time.Hour)))
 	a := fundNAVAsset("WTTS", wttsIssuer)
-	rwaApplyReference(a, at5d, nil, nil, fundNAVNow)
+	rwaApplyReference(a, at5d, nil, listingAnswered(nil), fundNAVNow)
 	if a.Reference == nil || a.Reference.Provenance != RWAReferenceFundNAV || !a.Reference.Stale {
 		t.Errorf("NAV exactly 5d old: %+v, want served and labelled stale", a.Reference)
 	}
@@ -172,7 +172,7 @@ func TestRWAFundNAV_StaleRefusal(t *testing.T) {
 	past := fundNAVSnap(t, tiingoRow(t, "WTTSX", 9_440_000, fundNAVNow.Add(-5*24*time.Hour-time.Second)))
 	listed := map[string]timescale.ListingEntry{"WTTS-" + wttsIssuer: {PriceUSD: "9.61", PricedAt: fundNAVNow.Add(-time.Hour), Source: "listing", ListingID: "x"}}
 	b := fundNAVAsset("WTTS", wttsIssuer)
-	rwaApplyReference(b, past, nil, listed, fundNAVNow)
+	rwaApplyReference(b, past, nil, listingAnswered(listed), fundNAVNow)
 	if b.Reference != nil || b.Premium.Status != RWAPremiumReferenceExpired {
 		t.Errorf("NAV 5d+1s old: reference=%+v premium=%q, want refused %s", b.Reference, b.Premium.Status, RWAPremiumReferenceExpired)
 	}
@@ -182,7 +182,7 @@ func TestRWAFundNAV_StaleRefusal(t *testing.T) {
 	snap := fundNAVSnap(t, tiingoRow(t, "FTXXX", 2_000_000, fundNAVNow.Add(-5*24*time.Hour-time.Second)))
 	snap.byFeed["BENJI"] = rwaReference{priceUSD: big.NewRat(1, 1), wire: "1.000000", source: "redstone", feed: "rwa:BENJI", asOf: fundNAVNow.Add(-time.Hour)}
 	o := fundNAVAsset("BENJI", benjiFTIss)
-	rwaApplyReference(o, snap, nil, nil, fundNAVNow)
+	rwaApplyReference(o, snap, nil, listingAnswered(nil), fundNAVNow)
 	if o.Reference == nil || o.Reference.NAVDisagreement {
 		t.Errorf("oracle row beside an expired NAV: %+v, want no disagreement flag", o.Reference)
 	}
@@ -240,7 +240,7 @@ func TestRWAFundNAV_AllTwelveBindingsResolve(t *testing.T) {
 	snap := rwaReferenceSnapshotFrom(rows)
 	for code, issuer := range pairs {
 		a := fundNAVAsset(code, issuer)
-		rwaApplyReference(a, snap, nil, nil, fundNAVNow)
+		rwaApplyReference(a, snap, nil, listingAnswered(nil), fundNAVNow)
 		if a.Reference == nil || a.Reference.Provenance != RWAReferenceFundNAV || a.Reference.PriceUSD != "10.00" {
 			t.Errorf("%s-%s: reference=%+v premium=%q, want fund_nav 10.00", code, issuer, a.Reference, a.Premium.Status)
 		}
