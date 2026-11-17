@@ -171,16 +171,21 @@ func TestLendingSQL_Shape(t *testing.T) {
 			"countIf(intra_ledger_seq = 0) > 0 AND uniqExact(tx_hash) > 1",
 			"GROUP BY key_xdr, hour, ledger_seq",
 		}},
-		"count proof": {lendingProofCountQuery, 10, []string{
+		"count proof": {lendingProofCountQuery, 12, []string{
 			"change_type != 'state'",
 			"stellar.lending_state_hourly FINAL WHERE ledger_seq BETWEEN ? AND ?",
+			"(key_xdr, hour) NOT IN (SELECT key_xdr, hour FROM stellar.lending_state_hourly FINAL WHERE ledger_seq > ?",
+			"AND hour = (SELECT toStartOfHour(max(close_time)) FROM stellar.ledgers WHERE ledger_seq = ?))",
 			"HAVING sum(lake) != sum(tbl)",
 		}},
 		"key counts": {lendingKeyCountQuery, 5, []string{
 			"stellar.lending_state_hourly FINAL",
 			"stellar.ledger_entries_current FINAL",
 		}},
-		"proof": {lendingProofQuery, 5, []string{
+		"proof": {lendingProofQuery, 8, []string{
+			"countIf(NOT has(h.ahead, x.hr) AND (h.present = 0 OR h.e != x.e)), countIf(has(h.ahead, x.hr))",
+			"argMaxIf(entry_xdr, hour, ledger_seq <= ?)",
+			"groupArrayIf(hour, ledger_seq > ?)",
 			"stellar.ledger_entries_current FINAL",
 			"stellar.lending_state_hourly FINAL",
 			"WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'",

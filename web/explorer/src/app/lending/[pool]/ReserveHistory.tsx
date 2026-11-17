@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Button, Segmented } from '@/components/ui';
 import { apiGet } from '@/api/client';
+import { FreshnessMarker } from '@/components/primitives';
 import type { paths } from '@/api/types';
 import { formatCompact, formatRelative } from '@/lib/format';
 import {
@@ -37,7 +38,7 @@ function useReserveHistory(pool: string, asset: string, range: RangeOption) {
         `/v1/lending/pools/${encodeURIComponent(pool)}/reserves/${encodeURIComponent(asset)}/history`,
         { interval: range.interval, window: range.window },
       );
-      return env.data;
+      return env.data ? { ...env.data, flags: env.flags } : env.data;
     },
   });
 }
@@ -120,6 +121,16 @@ export function ReserveHistory({
       )}
       {d && (
         <>
+          <FreshnessMarker flags={d.flags} className="block" />
+          {d.dropped_points > 0 && (
+            <p className="text-ink-muted text-xs">
+              {d.dropped_points.toLocaleString('en-US')} point
+              {d.dropped_points === 1 ? '' : 's'} could not be decoded and{' '}
+              {d.dropped_points === 1 ? 'is' : 'are'} missing; the chart holds
+              the previous value across {d.dropped_points === 1 ? 'it' : 'them'}
+              .
+            </p>
+          )}
           {d.before_first_state && (
             <p className="text-ink-muted text-xs">
               This reserve has no recorded state before the first point shown;

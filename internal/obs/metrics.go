@@ -2850,7 +2850,7 @@ const (
 	FailedAuthThrottled = "throttled"
 )
 
-// AdminKeyBudgetClampsTotal counts credentials whose per-minute budget clampKeyBudgetsToTier lowered to the tier ceiling (`lowered`) or failed to (`failed`, key keeps its higher budget); not alerted.
+// AdminKeyBudgetClampsTotal counts credentials whose per-minute budget clampKeyBudgetsToTier lowered to the tier ceiling (`lowered`) or failed to (`failed`, key keeps its higher budget); `failed` is alerted by stellarindex_admin_key_budget_clamp_failed.
 var AdminKeyBudgetClampsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_admin_key_budget_clamps_total",

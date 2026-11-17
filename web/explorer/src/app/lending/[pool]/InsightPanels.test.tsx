@@ -136,6 +136,21 @@ describe('AuctionsPanel', () => {
     expect(screen.getByText(/filled/)).toBeTruthy();
   });
 
+  it('says when the fill and delete read was truncated', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        pool: POOL,
+        auctions: [],
+        lifecycle_truncated: true,
+        reserves: [],
+      },
+      pagination: {},
+    });
+    wrap(<AuctionsPanel pool={POOL} />);
+    fireEvent.click(screen.getByText('Show auctions'));
+    expect(await screen.findByText(/hit its cap/)).toBeTruthy();
+  });
+
   it('shows the empty state', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: { pool: POOL, auctions: [], reserves: [] },
@@ -154,6 +169,23 @@ describe('ReserveHistory', () => {
     });
     wrap(<ReserveHistory pool={POOL} asset={ASSET} />);
     expect(await screen.findByText(/still being built/)).toBeTruthy();
+  });
+
+  it('shows the stale flag and dropped points', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        decimals: 7,
+        config_decimals: 7,
+        from: '2026-01-01T00:00:00Z',
+        to: '2026-01-10T00:00:00Z',
+        dropped_points: 2,
+        points: [],
+      },
+      flags: { stale: true },
+    });
+    wrap(<ReserveHistory pool={POOL} asset={ASSET} />);
+    expect(await screen.findByText('Stale')).toBeTruthy();
+    expect(screen.getByText(/2 points could not be decoded/)).toBeTruthy();
   });
 
   it('draws the chart, data-through note and config changes', async () => {

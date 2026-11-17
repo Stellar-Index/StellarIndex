@@ -2221,7 +2221,34 @@ export interface paths {
          *     decimal strings; `decimals` is the reserve's, null when unread or
          *     for a backstop. Emission claims are sums of the claim events
          *     projected so far, in the pool's emission token, and always a
-         *     lower bound. No USD values.
+         *     lower bound.
+         *
+         *     USD: each supply and borrow leg's `value_usd` and `accrued_usd`
+         *     are `current_value` and `accrued` at the price
+         *     `/v1/lending/pools/{pool}/reserves` serves for that reserve
+         *     (`price_usd`, same cache), exact and rounded half away from
+         *     zero to 2 dp. A leg is valued whenever `current_value` is
+         *     served, whatever its `reason`. `usd_reason` names why
+         *     `value_usd`, or a non-null `accrued`'s `accrued_usd`, is null:
+         *     `withheld` (the amount is null) or `unpriced` (the reserve has
+         *     no USD price; always so for a backstop leg, whose token is not
+         *     a reserve). `pools[]` and `totals` sum the valued legs into
+         *     `supplied_usd` and `borrowed_usd`; a leg left out, backstop
+         *     legs included, is named in `excluded` (kind `supply`,
+         *     `borrow` or `backstop`) and sets `lower_bound`. `net_usd` is
+         *     `supplied_usd` − `borrowed_usd`, null with `net_usd_reason`
+         *     `inputs_partial` whenever a leg is left out: an omitted borrow
+         *     would make it too high, so it is never served as a lower
+         *     bound. `net_apr` is (Σ supply value × reserve `supply_apr` − Σ
+         *     borrow value × reserve `borrow_apr`) / `net_usd`, with the
+         *     APRs `/v1/lending/rates` serves, at 4 dp; it is an APR, not an
+         *     APY, and excludes emissions. It is null with `net_apr_reason`:
+         *     `inputs_partial` (`net_usd` is null), `apr_unavailable` (a
+         *     valued reserve has no APR) or `net_value_not_positive`. No
+         *     health factor is served: the
+         *     account's on-chain `Positions` read sums collateral and
+         *     non-collateral supply, and the repo does not establish either
+         *     protocol's health formula.
          */
         get: operations["getLendingAccountEarnings"];
         put?: never;
@@ -3881,10 +3908,11 @@ export interface paths {
          *     silently dropped.
          *
          *     The floor measures substance, not price, so the price is held
-         *     to the served-price band as well. A day whose price falls
-         *     outside the band around the market's own days of the preceding
-         *     30 (around the published value when there is none) is counted
-         *     in `market_withheld_days` too.
+         *     to a band as well. A day whose price is more than three times,
+         *     or less than a third of, the published value (that day's, or
+         *     the newest of the preceding 30 days) is counted in
+         *     `market_withheld_days` too. The published value is the only
+         *     centre: no run of earlier market days can move it.
          *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a
@@ -6684,6 +6712,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description USD sums of a lending account's valued supply and borrow legs, decimal strings, exact sums rounded half away from zero to 2 dp. A backstop leg is never valued, so it is always in `excluded`. */
+        LendingUSDTotals: {
+            /** @description A floor when `lower_bound` is true. */
+            supplied_usd: string;
+            /** @description A floor when `lower_bound` is true. */
+            borrowed_usd: string;
+            /** @description supplied_usd - borrowed_usd; may be negative. Null whenever a leg is left out, since an omitted borrow would make it too high. */
+            net_usd: string | null;
+            /** @enum {string|null} */
+            net_usd_reason: "inputs_partial" | null;
+            /** @description True when a leg is left out of supplied_usd or borrowed_usd; `excluded` names each. */
+            lower_bound: boolean;
+            /** @description Legs left out, as kind `supply`, `borrow` or `backstop` with reason `withheld` or `unpriced`. */
+            excluded: components["schemas"]["LendingStatsExclusion"][];
+            /** @description (Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; rounded half away from zero to 4 dp. */
+            net_apr: string | null;
+            /** @enum {string|null} */
+            net_apr_reason: "inputs_partial" | "apr_unavailable" | "net_value_not_positive" | null;
+        };
+        /** @description What a lending figure leaves out and why. */
+        LendingStatsExclusion: {
+            /** @enum {string} */
+            kind: "pool_list" | "pool" | "reserve" | "backstop" | "token" | "supply" | "borrow";
+            pool: string | null;
+            /** @description Reserve token C-strkey for a `reserve`, `supply` or `borrow` exclusion; the backstop token for an account's `backstop` leg; the ticker for a `token` exclusion. */
+            asset: string | null;
+            /** @enum {string} */
+            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
+        };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's
          *     raw fixed-point integers as decimal strings at `config_decimals`
@@ -9510,7 +9567,7 @@ export interface components {
             /**
              * @description Days inside the window that carried observed trades which did
              *     NOT clear the thin-market floor, or whose price fell
-             *     outside the served-price band. Served because "we saw
+             *     outside the band around the published value. Served because "we saw
              *     trades and refused to price them" and "there were no trades"
              *     are opposite findings that an absent point renders
              *     identically.
@@ -10754,8 +10811,8 @@ export interface components {
              *     report the issuer's own claim as a market finding.
              *     `reference_not_positive` — the oracle published a
              *     non-positive value; nothing is divided by it.
-             *     `market_outside_band` — the market price is more than ten
-             *     times, or less than a tenth of, the oracle's value: the band
+             *     `market_outside_band` — the market price is more than three
+             *     times, or less than a third of, the oracle's value: the band
              *     `/v1/rwa/premium` refuses a day by, so the two surfaces never
              *     disagree on one print. The row and its reference are still
              *     published.
@@ -18338,15 +18395,8 @@ export interface operations {
                             lower_bound?: boolean;
                             /** @description True when a `backstop` exclusion leaves a pool's deposits out of the `backstop` sums, which are then floors. */
                             backstop_lower_bound?: boolean;
-                            excluded?: {
-                                /** @enum {string} */
-                                kind?: "pool_list" | "pool" | "reserve" | "backstop" | "token";
-                                pool?: string | null;
-                                /** @description Reserve token C-strkey for a `reserve` exclusion; the ticker for a `token` exclusion. */
-                                asset?: string | null;
-                                /** @enum {string} */
-                                reason?: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed";
-                            }[];
+                            /** @description Kinds `pool_list`, `pool`, `reserve`, `backstop` and `token`; `supply` and `borrow` are an account's earnings legs. */
+                            excluded?: components["schemas"]["LendingStatsExclusion"][];
                         }[];
                     };
                 };
@@ -18976,9 +19026,36 @@ export interface operations {
                      *             "rate_as_of": "2026-07-03T22:31:05Z",
                      *             "accrued": "45000000",
                      *             "reconciled": true,
-                     *             "reason": null
+                     *             "reason": null,
+                     *             "value_usd": "104.50",
+                     *             "accrued_usd": "4.50",
+                     *             "usd_reason": null
                      *           }
                      *         ],
+                     *         "pools": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "supplied_usd": "104.50",
+                     *             "borrowed_usd": "0.00",
+                     *             "net_usd": "104.50",
+                     *             "net_usd_reason": null,
+                     *             "lower_bound": false,
+                     *             "excluded": [],
+                     *             "net_apr": "0.0413",
+                     *             "net_apr_reason": null
+                     *           }
+                     *         ],
+                     *         "totals": {
+                     *           "supplied_usd": "104.50",
+                     *           "borrowed_usd": "0.00",
+                     *           "net_usd": "104.50",
+                     *           "net_usd_reason": null,
+                     *           "lower_bound": false,
+                     *           "excluded": [],
+                     *           "net_apr": "0.0413",
+                     *           "net_apr_reason": null
+                     *         },
                      *         "emissions": [
                      *           {
                      *             "protocol": "blend",
@@ -19037,7 +19114,23 @@ export interface operations {
                                 reconciled: boolean;
                                 /** @enum {string|null} */
                                 reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "rate_behind" | "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                                /** @description current_value in USD at the reserve's /reserves price_usd, rounded half away from zero to 2 dp; null with usd_reason. */
+                                value_usd: string | null;
+                                /** @description accrued in USD at the same price and rounding; null when accrued or value_usd is, and otherwise only with usd_reason. */
+                                accrued_usd: string | null;
+                                /**
+                                 * @description Why value_usd, or accrued_usd for a non-null accrued, is null.
+                                 * @enum {string|null}
+                                 */
+                                usd_reason: "withheld" | "unpriced" | null;
                             }[];
+                            /** @description USD totals of the supply and borrow legs, one per pool. */
+                            pools: ({
+                                /** @enum {string} */
+                                protocol: "blend" | "blnt";
+                                pool: string;
+                            } & components["schemas"]["LendingUSDTotals"])[];
+                            totals: components["schemas"]["LendingUSDTotals"];
                             emissions: {
                                 /** @enum {string} */
                                 protocol: "blend" | "blnt";
@@ -23266,6 +23359,20 @@ export interface operations {
                 };
             };
             500: components["responses"]["InternalError"];
+            /**
+             * @description No assets view is published: the last one is past its maximum
+             *     age (one hour) and its rebuild has not answered. Type
+             *     `errors/rwa-assets-unavailable`; served `no-store` with
+             *     `Retry-After`.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     listStablecoins: {

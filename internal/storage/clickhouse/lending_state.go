@@ -247,31 +247,37 @@ func SetLendingStateWatermark(ctx context.Context, addr string, from, thru uint3
 	})
 }
 
-// LendingProof is the completeness check's result: prefixed keys compared, and those whose latest history row is
-// missing or differs from the lake's state at the watermark.
+// LendingProof is the completeness check's result: prefixed keys, those whose latest history row at or below the
+// watermark is missing or differs from the lake's state there, and those not compared because a row past the
+// watermark has replaced that row.
 type LendingProof struct {
-	Keys, Mismatched uint64
+	Keys, Mismatched, Ahead uint64
 }
 
-// lendingProofQuery compares, per prefixed key, the state at the watermark with its latest history row. A key the
-// current table shows at or below the watermark is taken from there; one changed since is re-folded from the
-// entry changes up to the watermark. FINAL collapses duplicate history rows and superseded entry changes.
+// lendingProofQuery compares, per prefixed key, the state at the watermark with its latest history row at or below
+// it. A key the current table shows at or below the watermark is taken from there; one changed since is re-folded
+// from the entry changes up to the watermark. FINAL collapses duplicate history rows and superseded entry changes.
+// A key is counted Ahead, not compared, only when the hour of its last change at or below the watermark holds a row
+// past it (a window written but not accepted): under FINAL that row has replaced the one at the watermark.
 const lendingProofQuery = `WITH cur AS (
-		SELECT key_xdr, entry_xdr, ledger_seq FROM stellar.ledger_entries_current FINAL
+		SELECT key_xdr, entry_xdr, ledger_seq, close_time FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND has(?, substring(key_xdr, 1, 52)) AND arrayExists(p -> startsWith(key_xdr, p), ?)
 	)
-	SELECT count(), countIf(h.present = 0 OR h.e != x.e)
+	SELECT count(), countIf(NOT has(h.ahead, x.hr) AND (h.present = 0 OR h.e != x.e)), countIf(has(h.ahead, x.hr))
 	FROM (
-		SELECT key_xdr AS k, entry_xdr AS e FROM cur WHERE ledger_seq <= ?
+		SELECT key_xdr AS k, entry_xdr AS e, toStartOfHour(close_time) AS hr FROM cur WHERE ledger_seq <= ?
 		UNION ALL
-		SELECT key_xdr AS k, argMax(entry_xdr, (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS e
-		FROM stellar.ledger_entry_changes FINAL
-		WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'
-		  AND key_xdr IN (SELECT key_xdr FROM cur WHERE ledger_seq > ?)
-		GROUP BY key_xdr
+		SELECT key_xdr AS k, last.1 AS e, toStartOfHour(last.2) AS hr FROM (
+			SELECT key_xdr, argMax((entry_xdr, close_time), (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS last
+			FROM stellar.ledger_entry_changes FINAL
+			WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'
+			  AND key_xdr IN (SELECT key_xdr FROM cur WHERE ledger_seq > ?)
+			GROUP BY key_xdr
+		)
 	) AS x
 	LEFT JOIN (
-		SELECT key_xdr AS k, argMax(entry_xdr, hour) AS e, 1 AS present
+		SELECT key_xdr AS k, argMaxIf(entry_xdr, hour, ledger_seq <= ?) AS e, countIf(ledger_seq <= ?) > 0 AS present,
+		       groupArrayIf(hour, ledger_seq > ?) AS ahead
 		FROM stellar.lending_state_hourly FINAL GROUP BY key_xdr
 	) AS h ON x.k = h.k`
 
@@ -284,7 +290,7 @@ func ProveLendingState(ctx context.Context, addr string, ps []LendingPrefix, wm 
 	defer func() { _ = conn.Close() }()
 	prefixes, _, _, heads := lendingPrefixArgs(ps)
 	var p LendingProof
-	if err := conn.QueryRow(ctx, lendingProofQuery, heads, prefixes, wm, wm, wm).Scan(&p.Keys, &p.Mismatched); err != nil {
+	if err := conn.QueryRow(ctx, lendingProofQuery, heads, prefixes, wm, wm, wm, wm, wm, wm).Scan(&p.Keys, &p.Mismatched, &p.Ahead); err != nil {
 		return LendingProof{}, fmt.Errorf("clickhouse: lending proof at %d: %w", wm, err)
 	}
 	return p, nil
@@ -301,14 +307,18 @@ type LendingCountMismatch struct {
 }
 
 // lendingProofCountQuery compares, per contract, the matched (key, hour) pairs whose last change falls in [lo, hi]
-// with the history rows (under FINAL) whose ledger falls there.
+// with the history rows (under FINAL) whose ledger falls there. A pair in the watermark's hour whose row is past the
+// watermark is left out of both sides: FINAL has replaced its row at the watermark, so the table cannot show it.
 const lendingProofCountQuery = `SELECT c, sum(lake), sum(tbl) FROM (
 		SELECT arrayElement(?, i) AS c, count() AS lake, toUInt64(0) AS tbl FROM (
 			SELECT key_xdr, arrayFirstIndex(p -> startsWith(key_xdr, p), ?) AS i, toStartOfHour(close_time) AS hour,
 			       max(ledger_seq) AS last
 			` + lendingMatchedChanges + `
 			GROUP BY key_xdr, i, hour
-		) WHERE last BETWEEN ? AND ? GROUP BY c
+		) WHERE last BETWEEN ? AND ?
+		  AND (key_xdr, hour) NOT IN (SELECT key_xdr, hour FROM stellar.lending_state_hourly FINAL WHERE ledger_seq > ?
+		      AND hour = (SELECT toStartOfHour(max(close_time)) FROM stellar.ledgers WHERE ledger_seq = ?))
+		GROUP BY c
 		UNION ALL
 		SELECT contract_id AS c, toUInt64(0) AS lake, count() AS tbl
 		FROM stellar.lending_state_hourly FINAL WHERE ledger_seq BETWEEN ? AND ? GROUP BY c
@@ -324,7 +334,7 @@ func ProveLendingCounts(ctx context.Context, addr string, ps []LendingPrefix, lo
 	defer func() { _ = conn.Close() }()
 	prefixes, contracts, _, heads := lendingPrefixArgs(ps)
 	readHi := min(uint64(hi)+lendingHourSpan, uint64(wm))
-	rows, err := conn.Query(ctx, lendingProofCountQuery, contracts, prefixes, lo, readHi, heads, prefixes, lo, hi, lo, hi)
+	rows, err := conn.Query(ctx, lendingProofCountQuery, contracts, prefixes, lo, readHi, heads, prefixes, lo, hi, wm, wm, lo, hi)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: lending count proof [%d,%d]: %w", lo, hi, err)
 	}

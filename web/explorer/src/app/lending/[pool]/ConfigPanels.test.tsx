@@ -82,6 +82,17 @@ const reserves = {
 beforeEach(() => vi.mocked(apiGet).mockReset());
 
 describe('PoolDetails', () => {
+  it('labels a raw min collateral as base units', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        ...reserves.data,
+        pool_config: { ...reserves.data.pool_config, min_collateral: '12345' },
+      },
+    });
+    wrap(<PoolDetails pool={POOL} />);
+    expect(await screen.findByText('12345 base units')).toBeInTheDocument();
+  });
+
   it('shows the raw status code when there is no label, and a null min collateral as a dash', async () => {
     vi.mocked(apiGet).mockResolvedValue(reserves);
     wrap(<PoolDetails pool={POOL} />);

@@ -335,7 +335,7 @@ sudo -u postgres psql stellarindex -c \
 
 ## stellarindex_aggregator_baseline_refresh_stale
 
-P3, `for: 15m`. Expr: `(time() - stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"}) > 10800 and stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"} > 0`. No hourly volatility-baseline pass has finished within its 45-minute timeout without a read or write error for 3 h; `baseline_refresh_total{outcome=~"read_error|write_error"}` names which. Past 24 h every pair's confidence step returns `baseline_stale` and the ADR-0019 Phase-2 freeze is unscored.
+P3, `for: 15m`. Expr: `(time() - stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"}) > 10800 and stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"} > 0`. No hourly volatility-baseline pass has finished within its 45-minute timeout without a read or write error for 3 h; `baseline_refresh_total{outcome=~"read_error|write_error"}` names which. Past 24 h every pair's confidence step returns `baseline_stale` and the ADR-0019 Phase-2 freeze is unscored. A second arm fires when more than half of the pairs report `stellarindex_aggregator_baseline_age_seconds` above 86400: the stamp restarts with the process, the stored row age does not, so a refresher that dies on every pass in a restart loop still tickets.
 
 ### Check
 
