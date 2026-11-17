@@ -51,8 +51,9 @@ Wants=network-online.target
 # placed under [Service]. When more than StartLimitBurst restarts occur
 # within StartLimitIntervalSec the unit enters `failed`, which the
 # node_systemd_unit_state{state="failed"} alert pages on.
-# Sized as a dependency-outage budget: 5 min x 10 restarts parked the unit
-# ~50-100 s into a Postgres outage; this holds ~8-10 min of restarts first.
+# RestartSteps/RestartMaxDelaySec below back restarts off to 2 min, which keeps
+# even an hours-long Postgres outage under this burst, so the unit recovers on
+# its own instead of parking; stellarindex_api_down covers it while it is down.
 StartLimitIntervalSec=15min
 StartLimitBurst=100
 
@@ -102,6 +103,8 @@ LimitNPROC=1048576
 # [Unit] (StartLimit*).
 Restart=on-failure
 RestartSec=5s
+RestartSteps=10
+RestartMaxDelaySec=2min
 
 NoNewPrivileges=true
 PrivateTmp=true

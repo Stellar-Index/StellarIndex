@@ -47,7 +47,9 @@ Thresholds (from `data-freshness.sh`):
 | `supply` | `asset_supply_history.time` | 30 h | whole-table max; blind to a partial freeze, see [supply_assets_stale](#stellarindex_supply_assets_stale) |
 | `verdict` | `completeness_snapshots.computed_at` | 36 h | ADR-0033 verdict liveness |
 | `sep1` | `issuers.sep1_payload_fetched_at` | 48 h | issuer-metadata refresh |
-| `sep41_supply` (`supply_flows`) | ClickHouse `stellar.supply_flows.ingested_at` | 1 h | only non-Postgres probe; its freshness IS the served SEP-41 supply's |
+| `sep41_supply` (`supply_flows`) | ClickHouse `stellar.supply_flows.ingested_at` | 1 h | its freshness IS the served SEP-41 supply's |
+| `rollup` (`cohort-rollup`) | ClickHouse `stellar.account_cohort_roots.computed_at` | 50 h | daily timer; one missed cycle tolerated |
+| `rollup` (`trades-by-account`) | ClickHouse `stellar.trades_by_account_windows.updated_at` | 72 h | pubnet only; writes a window only when the compression horizon moves |
 
 FX `frankfurter-historical` is not watched (one-off backfill label). `coingecko` reads stale until the CoinGecko Pro key lands.
 
@@ -64,6 +66,7 @@ Fix, by domain:
 
 1. External API (`coingecko`, FX `massive`): `429`/`401` in the poller logs = key exhausted or expired; restore the key in `/etc/default/stellarindex`, restart the owning binary.
 2. `verdict`: `systemctl status compute-completeness.service`.
+   `rollup`: `journalctl -u <source>.service --since -72h | grep 'exit 75'`. Repeated deferrals mean another heavy job held the host lock (`fuser -v /run/lock/stellarindex-heavy*`); otherwise check `systemctl list-timers <source>.timer`.
 3. `sep1`: probe reads `max(sep1_payload_fetched_at)` (success only), so it fires if `sep1-refresh.timer` is not running OR every fetch fails (our DNS/egress). `systemctl status sep1-refresh.service`; `journalctl -u sep1-refresh --since -24h | grep -E 'SYSTEMIC|FAIL'` (the job exits non-zero at a 90% failure rate over 50+ domains, tripping `stellarindex_systemd_unit_failed`).
 4. `trades`: connector/dispatcher stopped, check the indexer. For `phoenix`/`comet` first confirm it is not a quiet market (query the lake for swap events on a known pool).
 5. `sep41_supply`: live `supply_flows` write into ClickHouse stalled. `curl -s http://localhost:8123/ --data-binary "SELECT 1"`, then the `ch-supply` gap-fill timer. If the whole `data_freshness.prom` looks frozen, go to [probe_frozen](#stellarindex_data_freshness_probe_frozen).

@@ -374,6 +374,34 @@ if [ -n "$SF_AGE" ]; then
     "$([ "$SF_AGE" -gt 3600 ] && echo 1 || echo 0)" >> "$TMP"
 fi
 
+# Scheduled ClickHouse rollups. A run deferred behind the heavy lock exits 75, which systemd
+# counts as success, so only the age of the rollup's own output shows the job stopped producing.
+# A missing or empty table emits nothing: trades-by-account runs on pubnet only.
+ch-rollup-age() { # <source> <table> <time column> <threshold seconds>
+  local exists="" age=""
+  if ! exists=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ \
+      --data-binary "EXISTS TABLE $2" | tr -d '[:space:]') \
+    || { [ "$exists" = 1 ] && ! age=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ \
+      --data-binary "SELECT if(count() = 0, '', toString(dateDiff('second', max($3), now()))) FROM $2" | tr -d '[:space:]'); }; then
+    echo "data-freshness: ClickHouse $2 probe failed — rollup/$1 gauges skipped this tick" >&2
+    PROBE_FAILED=$((PROBE_FAILED + 1))
+    return 0
+  fi
+  case "$age" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  printf 'stellarindex_data_freshness_age_seconds{domain="rollup",source="%s"} %s\n' "$1" "$age" >> "$TMP"
+  printf 'stellarindex_data_freshness_stale{domain="rollup",source="%s"} %s\n' \
+    "$1" "$([ "$age" -gt "$4" ] && echo 1 || echo 0)" >> "$TMP"
+}
+# Daily timers: the thresholds allow one missed cycle. trades-by-account writes a window only
+# when the Postgres compression horizon has moved, hence its extra day.
+for spec in cohort-rollup:stellar.account_cohort_roots:computed_at:180000 \
+  trades-by-account:stellar.trades_by_account_windows:updated_at:259200; do
+  IFS=: read -r src table col thr <<<"$spec"
+  ch-rollup-age "$src" "$table" "$col" "$thr"
+done
+
 # ── Validate the rendered bytes before publishing ──
 #
 # Everything above reached $TMP unexamined: the psql invocations write Postgres-chosen bytes
