@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -38,13 +39,16 @@ const (
 // was asked for and what reached the wire.
 type filterCapturingAssets struct {
 	AssetsReader
+	mu    sync.Mutex // the catalogue stats fill calls ListAssetsExt from parallel goroutines
 	calls []timescale.ListAssetsOptions
 }
 
 func (a *filterCapturingAssets) ListAssetsExt(
 	_ context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, error) {
+	a.mu.Lock()
 	a.calls = append(a.calls, opts)
+	a.mu.Unlock()
 	return nil, nil
 }
 
