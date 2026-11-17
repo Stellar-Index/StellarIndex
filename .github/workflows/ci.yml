@@ -2229,6 +2229,11 @@ jobs:
         # not listen on. Jinja only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/loki-push-target-test.sh
+      - name: prometheus HA render test
+        # Renders prometheus.yml.j2 for an HA pair: replica label dropped from
+        # alerts, client basic_auth present when hashes are set, Loki target.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/prometheus-ha-render-test.sh
       - name: HA roles self-test (patroni, redis-sentinel, loki defaults and templates)
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-ha-roles-test.sh
