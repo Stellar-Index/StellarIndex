@@ -1,0 +1,29 @@
+# Rendered by Ansible. Publishes when pgBackRest last dropped queued WAL
+# (pgbackrest_wal_drop.prom); alert stellarindex_pgbackrest_wal_dropped.
+# Runs as postgres: it owns /var/log/pgbackrest. The stellarindex group grants
+# the textfile directory, as for pgbackrest-backup.service.
+
+[Unit]
+Description=Stellar Index — pgBackRest dropped-WAL probe (textfile metric)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pgbackrest_wal_dropped
+StartLimitIntervalSec=1h
+StartLimitBurst=20
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pgbackrest-wal-drop-probe
+User=postgres
+SupplementaryGroups=stellarindex
+TimeoutStartSec=2min
+Nice=15
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target

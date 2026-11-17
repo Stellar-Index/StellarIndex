@@ -377,7 +377,7 @@ fi
 # Scheduled ClickHouse rollups. A run deferred behind the heavy lock exits 75, which systemd
 # counts as success, so only the age of the rollup's own output shows the job stopped producing.
 # A missing or empty table emits nothing: trades-by-account runs on pubnet only.
-ch_rollup_age() { # <source> <table> <time column> <threshold seconds>
+ch-rollup-age() { # <source> <table> <time column> <threshold seconds>
   local exists="" age=""
   if ! exists=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ \
       --data-binary "EXISTS TABLE $2" | tr -d '[:space:]') \
@@ -396,8 +396,11 @@ ch_rollup_age() { # <source> <table> <time column> <threshold seconds>
 }
 # Daily timers: the thresholds allow one missed cycle. trades-by-account writes a window only
 # when the Postgres compression horizon has moved, hence its extra day.
-ch_rollup_age cohort-rollup stellar.account_cohort_roots computed_at 180000
-ch_rollup_age trades-by-account stellar.trades_by_account_windows updated_at 259200
+for spec in cohort-rollup:stellar.account_cohort_roots:computed_at:180000 \
+  trades-by-account:stellar.trades_by_account_windows:updated_at:259200; do
+  IFS=: read -r src table col thr <<<"$spec"
+  ch-rollup-age "$src" "$table" "$col" "$thr"
+done
 
 # ── Validate the rendered bytes before publishing ──
 #

@@ -1,0 +1,12 @@
+# Rendered by Ansible. Every 5 minutes, off the :00 mark.
+
+[Unit]
+Description=Run the pgBackRest dropped-WAL probe every 5 minutes
+
+[Timer]
+OnCalendar=*-*-* *:02,07,12,17,22,27,32,37,42,47,52,57:00 UTC
+Persistent=true
+Unit=pgbackrest-wal-drop-probe.service
+
+[Install]
+WantedBy=timers.target

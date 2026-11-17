@@ -98,6 +98,20 @@ ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags pgbackre
 
 When it is back: set the flag true, remove `pgbackrest_offsite_ack`, deploy, take a full backup of that repo, and record the gap in its WAL.
 
+## stellarindex_pgbackrest_wal_dropped
+
+P1 (page). pgBackRest reached `archive-push-queue-max` and discarded queued WAL; `pgbackrest-wal-drop-probe.timer` found the `dropped WAL file` warning in `/var/log/pgbackrest/*archive-push*.log` (`stellarindex_pgbackrest_wal_last_drop_unix`). Postgres saw every push succeed, so `stellarindex_wal_archive_stale` stays quiet, and `stellarindex_pg_wal_large` resolves once pg_wal empties. PITR cannot reach any point between the last segment archived before the drop and the next backup. Resolves 36 h after the drop.
+
+Check and fix:
+
+```sh
+grep 'dropped WAL file' /var/log/pgbackrest/*archive-push*.log | tail -5
+sudo -u postgres pgbackrest --stanza=stellarindex info
+sudo systemctl start pgbackrest-backup.service   # a fresh backup restores a usable recovery point
+```
+
+Then find why archiving stalled first (see [stellarindex_pg_wal_large](#stellarindex_pg_wal_large)).
+
 ## stellarindex_postgres_ping_failing
 
 P1 (page, `for: 2m`). `rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0`. The indexer (`watchPostgresPing`) probes its pool every 60 s and emits `stellarindex_postgres_ping_total{outcome}` and `stellarindex_postgres_ping_failure_streak`; the pool also retires connections (`SetConnMaxLifetime` 30 min, idle 5 min). One failed probe in the window is enough; `for: 2m` rides through a clean restart. Rules: `configs/prometheus/rules.r1/storage.yml` (template `deploy/monitoring/rules/storage.yml`). Indexer ingest is stalled or about to stall. MTTR ~5 min.

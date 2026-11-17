@@ -45,6 +45,25 @@ groups:
             the archive-push queue limit pgBackRest drops the queued WAL
             and point-in-time recovery breaks until the next backup.
 
+      # Once the queue is dropped pg_wal empties and stellarindex_pg_wal_large
+      # resolves, so the drop itself is the signal. 36h spans the next nightly backup.
+      - alert: stellarindex_pgbackrest_wal_dropped
+        expr: |
+          stellarindex_pgbackrest_wal_last_drop_unix > 0
+          and time() - stellarindex_pgbackrest_wal_last_drop_unix < 36 * 3600
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pgbackrest_wal_dropped
+          summary: "pgBackRest dropped queued WAL on {{ $labels.instance }}; point-in-time recovery has a gap"
+          description: |
+            pgBackRest hit archive-push-queue-max and discarded the queued
+            WAL. Postgres saw success, so archiving looks healthy, but no
+            restore can reach a point between the last archived segment
+            before the drop and the next backup. Take a backup now.
+
       # A *sql.DB pool can hold dead conns for hours after a postgres crash; the
       # 30 min PoolConnMaxLifetime is only the slow safety net, this is the live
       # signal.
