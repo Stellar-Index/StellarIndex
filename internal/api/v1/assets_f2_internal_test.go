@@ -51,14 +51,19 @@ func TestUsdMarketValue(t *testing.T) {
 }
 
 func TestUsdMarketValue_BadInputs(t *testing.T) {
-	if _, err := usdMarketValue(nil, "1", 7); err == nil {
-		t.Error("expected error for nil amountStroops")
-	}
-	if _, err := usdMarketValue(mustBigIntInternal("100"), "not-a-price", 7); err == nil {
-		t.Error("expected error for unparseable price")
-	}
-	if _, err := usdMarketValue(mustBigIntInternal("100"), "1", -1); err == nil {
-		t.Error("expected error for negative decimals")
+	for _, tc := range []struct {
+		amount   *big.Int
+		price    string
+		decimals int
+		want     string
+	}{
+		{nil, "1", 7, "usdMarketValue: amountStroops is nil"},
+		{mustBigIntInternal("100"), "not-a-price", 7, `usdMarketValue: parse price "not-a-price"`},
+		{mustBigIntInternal("100"), "1", -1, "usdMarketValue: negative decimals (-1)"},
+	} {
+		if _, err := usdMarketValue(tc.amount, tc.price, tc.decimals); err == nil || err.Error() != tc.want {
+			t.Errorf("usdMarketValue(%v, %q, %d) err = %v, want %q", tc.amount, tc.price, tc.decimals, err, tc.want)
+		}
 	}
 }
 

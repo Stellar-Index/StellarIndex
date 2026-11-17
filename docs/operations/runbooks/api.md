@@ -37,6 +37,31 @@ journalctl -u stellarindex-api --since '-2h' | grep 'audit append failed'
 
 Do not roll back the mutation or make the append blocking. **Escalate:** none (P3); related [monthly_quota_fail_open](api.md#stellarindex_monthly_quota_fail_open).
 
+## stellarindex_admin_key_budget_clamp_failed
+
+**Trigger.** `sum(increase(stellarindex_admin_key_budget_clamps_total{outcome="failed"}[1h])) > 0`, `for: 5m`, P3. An admin tier downgrade returned 200 but at least one key kept its old, higher per-minute budget. Re-sending the same PATCH does not retry: the tier no longer drops, so nothing is clamped.
+
+**Check.**
+
+```sh
+journalctl -u stellarindex-api --since '-2h' | grep -i 'clamp'
+```
+
+The audit row for the tier change carries `clampFailed` with the count.
+
+**Likely causes.**
+
+- Redis blip or eviction failure while lowering a Redis-backed key.
+- Postgres error updating a dashboard key.
+
+**Fix.**
+
+1. Find the account from the audit row or the log line and list its keys.
+2. Lower each key above the new tier's ceiling, or revoke it, through the admin key endpoints.
+3. Alert clears an hour after the last counted failure.
+
+**Escalate:** none (P3); related [admin_audit_write_failing](api.md#stellarindex_admin_audit_write_failing).
+
 ## stellarindex_after_response_tasks_dropping
 
 **Trigger.** `sum(rate(stellarindex_after_response_tasks_dropped_total[5m])) > 0`, `for: 10m`, P3. The bounded worker pool in `internal/api/v1/middleware/after_response.go` (usage counters, `TouchUsage`) is full and dropping tasks; responses are unaffected but usage counts leak.

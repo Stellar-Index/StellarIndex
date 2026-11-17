@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"sort"
 	"strings"
+
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 )
 
 // defindexStrategyAmountDecimals is every strategy's amount scale: each wraps a classic asset's SAC (see defindexStrategyAsset).
@@ -188,9 +190,47 @@ func foldDailyUSDPrices(rows []usdPriceRow, spellings map[string]string) map[ass
 	return out
 }
 
-// valueStrategyFlows values each flow sum at its day's USD price of the strategy's asset. A sum whose strategy is unmapped or whose
-// asset has no price that day is excluded and counted, never guessed.
-func valueStrategyFlows(flows []strategyFlowSum, assets map[string]defindexStrategyAsset, prices map[assetDay]*big.Rat) yieldUSD {
+// minYieldPriceBaseline is how many other priced days a day's price is judged against.
+const minYieldPriceBaseline = 3
+
+// guardDailyUSDPrices drops each (asset, day) price outside the served-price band around the asset's other days in the window and
+// returns the dropped keys. The daily VWAP has no wash or outlier filter, so one cross at a multiple of fair would otherwise value a
+// whole day's flows. A day with fewer than minYieldPriceBaseline other days is kept: one or two days give no median that tells the
+// outlier from the clean day.
+func guardDailyUSDPrices(prices map[assetDay]*big.Rat) (map[assetDay]*big.Rat, map[assetDay]bool) {
+	byAsset := map[string][]assetDay{}
+	for k := range prices {
+		byAsset[k.asset] = append(byAsset[k.asset], k)
+	}
+	kept, outliers := map[assetDay]*big.Rat{}, map[assetDay]bool{}
+	for _, days := range byAsset {
+		sort.Slice(days, func(i, j int) bool { return days[i].day > days[j].day }) // newest first, as the guard expects
+		for _, k := range days {
+			if len(days)-1 < minYieldPriceBaseline {
+				kept[k] = prices[k]
+				continue
+			}
+			others := make([]*big.Rat, 0, len(days)-1)
+			for _, o := range days {
+				if o != k {
+					others = append(others, prices[o])
+				}
+			}
+			if accept, _ := robuststat.GuardServedVWAP(prices[k], others); accept {
+				kept[k] = prices[k]
+			} else {
+				outliers[k] = true
+			}
+		}
+	}
+	return kept, outliers
+}
+
+// valueStrategyFlows values each flow sum at its day's USD price of the strategy's asset. A sum whose strategy is unmapped, or whose
+// asset has no price that day or only an outlier one, is excluded and counted, never guessed.
+func valueStrategyFlows(flows []strategyFlowSum, assets map[string]defindexStrategyAsset, prices map[assetDay]*big.Rat,
+	outliers map[assetDay]bool,
+) yieldUSD {
 	out := yieldUSD{byDirBucket: map[string]map[string]*big.Rat{}, unpriced: map[string]*unpricedTally{}}
 	scale := tenToMinus(defindexStrategyAmountDecimals)
 	for _, f := range flows {
@@ -202,6 +242,8 @@ func valueStrategyFlows(flows []strategyFlowSum, assets map[string]defindexStrat
 			missing = "strategy " + f.strategy + " (no asset mapping)"
 		case isUSDProxyAsset(a.Classic):
 			price = big.NewRat(1, 1)
+		case outliers[assetDay{a.Classic, f.day}]:
+			missing = assetCode(a.Classic) + " (USD price that day outside its window's band)"
 		default:
 			if price = prices[assetDay{a.Classic, f.day}]; price == nil {
 				missing = assetCode(a.Classic) + " (no USD price that day)"
@@ -278,7 +320,13 @@ func (s *Store) strategyVolumeUSD(ctx context.Context, query, since string) (yie
 	if err != nil {
 		return yieldUSD{}, err
 	}
-	return valueStrategyFlows(flows, defindexStrategyAssets, foldDailyUSDPrices(prices, spellings)), nil
+	return valueFlowsAtDailyUSD(flows, prices, spellings), nil
+}
+
+// valueFlowsAtDailyUSD folds the price rows to one USD price per (asset, day), drops outlier days, and values the flows.
+func valueFlowsAtDailyUSD(flows []strategyFlowSum, prices []usdPriceRow, spellings map[string]string) yieldUSD {
+	kept, outliers := guardDailyUSDPrices(foldDailyUSDPrices(prices, spellings))
+	return valueStrategyFlows(flows, defindexStrategyAssets, kept, outliers)
 }
 
 func (s *Store) scanStrategyFlowSums(ctx context.Context, query, since string) ([]strategyFlowSum, error) {
