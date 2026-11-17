@@ -110,7 +110,7 @@ func ReadGateCounts(ctx context.Context, addr string, from, to uint32) (GateCoun
 
 	rowCount := func(table string) (uint64, error) {
 		var n uint64
-		q := fmt.Sprintf("SELECT count() FROM stellar.%s FINAL WHERE ledger_seq BETWEEN ? AND ?", table)
+		q := fmt.Sprintf(`SELECT count() FROM stellar.%s FINAL WHERE ledger_seq BETWEEN ? AND ?`, table)
 		if err := conn.QueryRow(ctx, q, from, to).Scan(&n); err != nil {
 			return 0, fmt.Errorf("clickhouse: count %s: %w", table, err)
 		}
@@ -125,7 +125,7 @@ func ReadGateCounts(ctx context.Context, addr string, from, to uint32) (GateCoun
 	if c.RowEvents, err = rowCount("contract_events"); err != nil {
 		return GateCounts{}, err
 	}
-	if err := conn.QueryRow(ctx, "SELECT count() FROM stellar.ledgers FINAL").Scan(&c.TotalLedgers); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.ledgers FINAL`).Scan(&c.TotalLedgers); err != nil {
 		return GateCounts{}, fmt.Errorf("clickhouse: count total ledgers: %w", err)
 	}
 	return c, nil
