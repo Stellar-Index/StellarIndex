@@ -272,26 +272,9 @@ const fiatRateStaleAfter = 6 * 24 * time.Hour
 // load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
 // InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
-	// Path 1: fx_quotes. A wired feed that read cleanly, quoted this ticker before, yet holds no usable point in the window has
-	// gone quiet: if path 2 cannot answer either, the missing rate is a stale feed, not a fiat with no price.
-	fxSilent := false
-	if s.FXHistory != nil {
-		now := time.Now().UTC()
-		points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
-		if err != nil {
-			s.logger.Warn("fiat USD price: fx history read failed", "ticker", ticker, "err", err)
-			reportUnreadRead(ctx)
-		}
-		// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
-		for i := len(points) - 1; i >= 0; i-- {
-			if _, usable := points[i].inverseUSDRat(); usable {
-				if now.Sub(points[i].Bucket) > fiatRateStaleAfter {
-					reportStaleRead(ctx)
-				}
-				return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
-			}
-		}
-		fxSilent = err == nil && s.fxTickerQuotedBefore(ctx, ticker, now.AddDate(0, 0, -7))
+	price, asOf, sources, ok, fxSilent := s.fiatUSDPriceFromFX(ctx, ticker)
+	if ok {
+		return price, asOf, sources, true
 	}
 	// Path 2: PriceReader fallback.
 	if s.Prices == nil {
@@ -318,6 +301,30 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 		return "", time.Time{}, nil, false
 	}
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
+}
+
+// fiatUSDPriceFromFX is path 1, fx_quotes. fxSilent reports a wired feed that read cleanly, quoted this ticker before, yet
+// holds no usable point in the window: if path 2 cannot answer either, the missing rate is a stale feed, not an unpriced fiat.
+func (s *Server) fiatUSDPriceFromFX(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok, fxSilent bool) {
+	if s.FXHistory == nil {
+		return "", time.Time{}, nil, false, false
+	}
+	now := time.Now().UTC()
+	points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
+	if err != nil {
+		s.logger.Warn("fiat USD price: fx history read failed", "ticker", ticker, "err", err)
+		reportUnreadRead(ctx)
+	}
+	// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
+	for i := len(points) - 1; i >= 0; i-- {
+		if _, usable := points[i].inverseUSDRat(); usable {
+			if now.Sub(points[i].Bucket) > fiatRateStaleAfter {
+				reportStaleRead(ctx)
+			}
+			return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true, false
+		}
+	}
+	return "", time.Time{}, nil, false, err == nil && s.fxTickerQuotedBefore(ctx, ticker, now.AddDate(0, 0, -7))
 }
 
 // fxCoverageLookback bounds how far back [Server.fxTickerQuotedBefore] looks; a daily feed leaves at most ~one row per day.
