@@ -2487,7 +2487,8 @@ func TestOHLCFoldIntervals_ExecuteAgainstTheirSourceView(t *testing.T) {
 		executed++
 		t.Run(route.Interval, func(t *testing.T) {
 			width := foldWidth(t, route.Fold)
-			bars, err := store.OHLCSeriesReBucketed(ctx, pair, route.Source, route.Fold, t0, t0.Add(window), 0)
+			// A folded route serves the buckets that START in the window, so the window opens on t0's own bucket.
+			bars, err := store.OHLCSeriesReBucketed(ctx, pair, route.Source, route.Fold, timeBucket(width, t0), t0.Add(window), 0)
 			if err != nil {
 				t.Fatalf("OHLCSeriesReBucketed(%s, %q): %v", route.Source, route.Fold, err)
 			}

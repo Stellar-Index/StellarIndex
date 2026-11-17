@@ -111,9 +111,22 @@ const countRecentEventsQuery = `
 	 GROUP BY source
 `
 
+// protocolEventsMaxAge is how old the rollup may be and still be served as the trailing-24h count: 7 missed 2-minute passes. A failed
+// refresh keeps the last-good rows and a stopped worker writes none, so age is the only signal that the counts froze.
+const protocolEventsMaxAge = "15 minutes"
+
 // readProtocolEventsRollup reads the pre-aggregated per-source 24h counts: a plain scan of a
-// small PK-keyed table, so no per-request census.
-const readProtocolEventsRollup = `SELECT source, events_24h FROM protocol_events_24h`
+// small PK-keyed table, so no per-request census. Age is judged on the DB clock.
+const readProtocolEventsRollup = `SELECT source, events_24h, computed_at > now() - INTERVAL '` + protocolEventsMaxAge + `' AS fresh
+	  FROM protocol_events_24h`
+
+// protocolEventsRollupFresh fails a read whose rows were all computed before [protocolEventsMaxAge]; an empty rollup is no counts.
+func protocolEventsRollupFresh(rows int, anyFresh bool) error {
+	if rows > 0 && !anyFresh {
+		return fmt.Errorf("timescale: CountRecentEventsBySource: protocol_events_24h not refreshed within %s", protocolEventsMaxAge)
+	}
+	return nil
+}
 
 // CountRecentEventsBySource returns the trailing-24h decoded-event count per logical source from the protocol_events_24h rollup, with multi-table sources pre-summed and off-chain trade sources as extra keys.
 func (s *Store) CountRecentEventsBySource(ctx context.Context) (map[string]int64, error) {
@@ -124,18 +137,25 @@ func (s *Store) CountRecentEventsBySource(ctx context.Context) (map[string]int64
 	defer func() { _ = rows.Close() }()
 
 	out := make(map[string]int64, 32)
+	n, anyFresh := 0, false
 	for rows.Next() {
 		var (
 			source string
-			n      int64
+			count  int64
+			fresh  bool
 		)
-		if err := rows.Scan(&source, &n); err != nil {
+		if err := rows.Scan(&source, &count, &fresh); err != nil {
 			return nil, fmt.Errorf("timescale: CountRecentEventsBySource scan: %w", err)
 		}
-		out[source] += n
+		out[source] += count
+		n++
+		anyFresh = anyFresh || fresh
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: CountRecentEventsBySource rows: %w", err)
+	}
+	if err := protocolEventsRollupFresh(n, anyFresh); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
