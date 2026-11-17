@@ -8,6 +8,7 @@ import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { asExample } from '@/api/client';
+import { FreshnessMarker } from '@/components/primitives';
 import {
   decimalOrNull,
   compareDecimalStrings,
@@ -86,6 +87,7 @@ export function PoolReserves({ pool }: { pool: string }) {
       source={asExample(`/v1/lending/pools/${pool}/reserves`, {})}
       bodyClassName="space-y-3"
     >
+      <FreshnessMarker flags={q.data?.flags} className="block" />
       {q.data?.tvl_usd && (
         <div className="text-ink-body text-sm">
           Pool TVL:{' '}

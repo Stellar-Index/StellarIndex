@@ -174,6 +174,24 @@ describe('auctionStatus', () => {
       auctionStatus({
         deleted: false,
         fills: [{ fill_percent: '40' }, { fill_percent: '60' }],
+      }),
+    ).toMatchObject({ kind: 'partial', label: 'Filled 76%' });
+    expect(
+      auctionStatus({
+        deleted: false,
+        fills: [{ fill_percent: '50' }, { fill_percent: '50' }],
+      }),
+    ).toMatchObject({ kind: 'partial', label: 'Filled 75%' });
+    expect(
+      auctionStatus({
+        deleted: true,
+        fills: [{ fill_percent: '50' }, { fill_percent: '50' }],
+      }),
+    ).toMatchObject({ kind: 'deleted', percent: 75 });
+    expect(
+      auctionStatus({
+        deleted: false,
+        fills: [{ fill_percent: '50' }, { fill_percent: '100' }],
       }).kind,
     ).toBe('filled');
     expect(auctionStatus({ deleted: true, fills: [] }).kind).toBe('deleted');

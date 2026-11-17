@@ -103,6 +103,7 @@ type ratePoolRead struct {
 	at         time.Time
 	cacheStale bool
 	omitted    string
+	reason     string // omitted as a snake_case code
 }
 
 // handleLendingRates serves GET /v1/lending/rates: the reserves of every listed pool from the same per-pool cache as
@@ -185,7 +186,8 @@ func parseLendingRatesQuery(w http.ResponseWriter, r *http.Request) (lendingRate
 	return q, true
 }
 
-// lendingRatePools lists the pools /v1/lending/pools lists; a failed BLNT list leaves those pools out as degraded.
+// lendingRatePools lists the pools /v1/lending/pools lists; a failed BLNT list leaves those pools out as degraded. A pool on both
+// lists is kept once, as Blend, so no total counts it twice.
 func (s *Server) lendingRatePools(ctx context.Context, protocol string, vintage *dataVintage) ([]ratePool, Flags, error) {
 	listCtx, cancel := context.WithTimeout(ctx, lendingPoolListBudget)
 	defer cancel()
@@ -205,7 +207,9 @@ func (s *Server) lendingRatePools(ctx context.Context, protocol string, vintage 
 		rows, stale, failed := s.listBLNTPools(listCtx, s.Lending, vintage)
 		flags.Stale, flags.Degraded = flags.Stale || stale, failed
 		for _, p := range rows {
-			out = append(out, ratePool{protocol: blnt.SourceName, pool: p.Pool})
+			if !slices.ContainsFunc(out, func(rp ratePool) bool { return rp.pool == p.Pool }) {
+				out = append(out, ratePool{protocol: blnt.SourceName, pool: p.Pool})
+			}
 		}
 	}
 	return out, flags, nil
@@ -215,7 +219,7 @@ func (s *Server) lendingRatePools(ctx context.Context, protocol string, vintage 
 func (s *Server) readRatePool(ctx context.Context, p ratePool) ratePoolRead {
 	out := ratePoolRead{ratePool: p}
 	if s.lendingSummaryFailedRecently(p.pool) && !s.lendingReserves.filled(p.pool) {
-		out.omitted = "reserves read failed recently; retried after " + lendingSummaryRetry.String()
+		out.omitted, out.reason = "reserves read failed recently; retried after "+lendingSummaryRetry.String(), "reserves_read_failed_recently"
 		return out
 	}
 	var err error
@@ -223,12 +227,12 @@ func (s *Server) readRatePool(ctx context.Context, p ratePool) ratePoolRead {
 	switch {
 	case err == nil:
 	case errors.Is(err, errPoolLineageUnknown):
-		out.omitted = "pool lineage unknown"
+		out.omitted, out.reason = "pool lineage unknown", backstopReasonUnknown
 	case handlerTimedOut(ctx, err):
-		out.omitted = "reserves read timed out"
+		out.omitted, out.reason = "reserves read timed out", "reserves_read_timed_out"
 	default:
-		s.logger.Warn("lending rates: pool reserves read failed", "err", err, "pool", p.pool)
-		out.omitted = "reserves read failed"
+		s.logger.Warn("lending: pool reserves read failed", "err", err, "pool", p.pool)
+		out.omitted, out.reason = "reserves read failed", "reserves_read_failed"
 	}
 	return out
 }

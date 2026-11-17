@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -13,14 +14,23 @@ const rwaAssetsViewTTL = 10 * time.Minute
 // rwaAssetsDegradedTTL keeps a cut or partial build for a minute only, so the next reader retries for the full answer.
 const rwaAssetsDegradedTTL = time.Minute
 
+// rwaAssetsViewMaxStale bounds how long a view whose rebuilds keep failing is served: its reference expiry, staleness and
+// review-due verdicts were judged at build time, so past this they are no longer true.
+const rwaAssetsViewMaxStale = time.Hour
+
+// errRWAViewTooOld is returned when the only view is past rwaAssetsViewMaxStale and its rebuild did not answer.
+var errRWAViewTooOld = errors.New("rwa assets view is past its maximum age and the rebuild did not replace it")
+
 // rwaAssetsBuild is one assembled /v1/rwa/assets response.
 type rwaAssetsBuild struct {
 	view  RWAAssetsView
 	flags Flags
+	// builtAt is when the build ran; observedAt, the envelope as_of, is the oldest store read behind it.
+	builtAt, observedAt time.Time
 }
 
-// cachedRWAAssetsView serves the assembled view, stale-while-revalidate: past expiry it is served under flags.stale while a detached
-// rebuild runs. Only a server with no build yet waits, and only up to ctx.
+// cachedRWAAssetsView serves the assembled view, stale-while-revalidate: past expiry it is served under flags.stale and
+// flags.degraded while a detached rebuild runs. A server with no build, or one past rwaAssetsViewMaxStale, waits up to ctx.
 func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error) {
 	s.rwaViewMu.Lock()
 	cached, expired := s.rwaViewCache, time.Now().After(s.rwaViewExpires)
@@ -29,10 +39,11 @@ func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error
 		ch = s.startRWAAssetsBuildLocked() //nolint:contextcheck // the build outlives the request that found the view stale.
 	}
 	s.rwaViewMu.Unlock()
-	if cached != nil {
+	if cached != nil && time.Since(cached.builtAt) <= rwaAssetsViewMaxStale {
 		b := *cached
 		if expired {
 			b.flags.Stale = true
+			b.flags.Degraded = true
 		}
 		return b, nil
 	}
@@ -45,6 +56,9 @@ func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error
 	defer s.rwaViewMu.Unlock()
 	if s.rwaViewCache == nil {
 		return rwaAssetsBuild{}, s.rwaViewErr
+	}
+	if time.Since(s.rwaViewCache.builtAt) > rwaAssetsViewMaxStale {
+		return rwaAssetsBuild{}, errors.Join(errRWAViewTooOld, s.rwaViewErr)
 	}
 	return *s.rwaViewCache, nil
 }

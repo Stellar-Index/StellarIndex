@@ -62,6 +62,8 @@ type ratesFixture struct {
 	srv                                        *v1.Server
 	activePool, frozenPool, failPool, blntPool string
 	xlmSAC, otherToken, usdc                   string
+	explorer                                   *ratesExplorer
+	lending                                    *ratesLendingReader
 }
 
 func newRatesFixture(t *testing.T) ratesFixture {
@@ -105,6 +107,7 @@ func newRatesFixture(t *testing.T) ratesFixture {
 		blntPool: f.blntPool,
 	}
 	lending.assets = []string{xlmSAC, f.otherToken}
+	f.explorer, f.lending = explorer, lending
 	f.srv = v1.New(v1.Options{Explorer: explorer, Lending: lending, Prices: &assetKeyedPriceReader{usd: map[string]string{"native": "0.3"}}})
 	return f
 }

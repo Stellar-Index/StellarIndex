@@ -122,7 +122,7 @@ const PREMIUM_REASON: Record<string, string> = {
   reference_not_positive:
     'The oracle published a non-positive value, which cannot be a denominator.',
   market_outside_band:
-    'The market price is more than ten times, or under a tenth of, the oracle’s value — far enough off that it is treated as a bad print rather than a premium. The premium history refuses the same days.',
+    'The market price is more than three times, or under a third of, the oracle’s value — far enough off that it is treated as a bad print rather than a premium. The premium history refuses the same days.',
 };
 
 /**
