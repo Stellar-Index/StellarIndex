@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -182,7 +183,7 @@ func TestComputeStreak_Up(t *testing.T) {
 			Value: strconv.Itoa(100 + i*10),
 		}
 	}
-	dir, days := computeStreak(series)
+	dir, days := computeStreak(newGuarded(series))
 	if dir != "up" || days == nil || *days != 4 {
 		t.Errorf("got dir=%q days=%v, want up/4", dir, days)
 	}
@@ -190,18 +191,19 @@ func TestComputeStreak_Up(t *testing.T) {
 
 // TestComputeSummary_ATLSkipsZero — a zero (or unparseable) point
 // mid-series must NOT corrupt ATL. A
-// `|| atlValue == 0` reset turns [100,5,0,90] into ATL=90.
+// `|| atlValue == 0` reset turns [100,50,0,90] into ATL=90. (A 20x drop on a
+// one-point history would be refused by the served-price guard instead.)
 func TestComputeSummary_ATLSkipsZero(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	series := []TimedValue{
 		{At: now.Add(-3 * time.Hour), Value: "100"},
-		{At: now.Add(-2 * time.Hour), Value: "5"},
+		{At: now.Add(-2 * time.Hour), Value: "50"},
 		{At: now.Add(-1 * time.Hour), Value: "0"}, // bad/zero point
 		{At: now, Value: "90"},
 	}
 	row := computeSummary(Entity{Type: "coin", ID: "x"}, series, now)
-	if row.ATLValue == nil || *row.ATLValue != "5" {
-		t.Errorf("ATL = %v, want 5 (zero point must be skipped, not adopted)", row.ATLValue)
+	if row.ATLValue == nil || *row.ATLValue != "50" {
+		t.Errorf("ATL = %v, want 50 (zero point must be skipped, not adopted)", row.ATLValue)
 	}
 	if row.ATHValue == nil || *row.ATHValue != "100" {
 		t.Errorf("ATH = %v, want 100", row.ATHValue)
@@ -212,7 +214,12 @@ func TestComputeSummary_ATLSkipsZero(t *testing.T) {
 // ratchets them for good.
 func TestComputeSummary_ExtremesIgnoreOutlierBuckets(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	// Five calm points give the served-price guard a full baseline, so 9000 does not taint 0.12's.
 	series := []TimedValue{
+		{At: now.Add(-9 * time.Hour), Value: "0.10"},
+		{At: now.Add(-8 * time.Hour), Value: "0.10"},
+		{At: now.Add(-7 * time.Hour), Value: "0.10"},
+		{At: now.Add(-6 * time.Hour), Value: "0.10"},
 		{At: now.Add(-4 * time.Hour), Value: "0.10"},
 		{At: now.Add(-3 * time.Hour), Value: "9000.00"}, // bad bucket
 		{At: now.Add(-2 * time.Hour), Value: "0.12"},
@@ -266,13 +273,50 @@ func TestComputeSummary_RefusedBucketIsNotAChange(t *testing.T) {
 		}
 		return s
 	}
-	for name, spikeAt := range map[string]time.Time{"newest": now, "h1 anchor": now.Add(-time.Hour)} {
+	for name, spikeAt := range map[string]time.Time{
+		"newest": now, "h1 anchor": now.Add(-time.Hour), "mid-series": now.Add(-90 * time.Minute),
+	} {
 		row := computeSummary(Entity{Type: "coin", ID: "x"}, flat(spikeAt), now)
 		if row.CurrentValue != "0.11" {
 			t.Errorf("%s: CurrentValue = %q, want 0.11", name, row.CurrentValue)
 		}
 		if row.H1DeltaPct == nil || *row.H1DeltaPct != 0 {
 			t.Errorf("%s: H1DeltaPct = %v, want 0", name, row.H1DeltaPct)
+		}
+		// The sink ratchets ATH/ATL, so a refused print reaching them would outlive the window.
+		if row.ATHValue == nil || *row.ATHValue != "0.11" || row.ATLValue == nil || *row.ATLValue != "0.11" {
+			t.Errorf("%s: ATH/ATL = %v/%v, want 0.11/0.11", name, row.ATHValue, row.ATLValue)
+		}
+	}
+}
+
+// A refused print as the newest point or a day's close moves neither the streak nor the acceleration.
+func TestComputeSummary_RefusedBucketMovesNoTrendFigure(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	var calm []TimedValue
+	for i := 5 * 144; i >= 0; i-- {
+		calm = append(calm, TimedValue{
+			At:    now.Add(-time.Duration(i) * 10 * time.Minute),
+			Value: strconv.FormatFloat(1-float64(5*144-i)*0.0001, 'f', 6, 64),
+		})
+	}
+	want := computeSummary(Entity{Type: "coin", ID: "x"}, calm, now)
+	if want.StreakDirection != "down" || want.Acceleration != "flat" {
+		t.Fatalf("calm series: streak %q acceleration %q, want down/flat", want.StreakDirection, want.Acceleration)
+	}
+	dayClose := now.Truncate(24 * time.Hour).Add(-2*24*time.Hour - 10*time.Minute)
+	for name, at := range map[string]time.Time{"newest": now, "day close": dayClose} {
+		series := slices.Clone(calm)
+		i := slices.IndexFunc(series, func(p TimedValue) bool { return p.At.Equal(at) })
+		if i < 0 {
+			t.Fatalf("%s: no point at %v", name, at)
+		}
+		series[i].Value = "100"
+		got := computeSummary(Entity{Type: "coin", ID: "x"}, series, now)
+		if got.StreakDirection != want.StreakDirection || *got.StreakDays != *want.StreakDays || got.Acceleration != want.Acceleration {
+			t.Errorf("%s: streak %s/%d acceleration %q, want %s/%d %q", name,
+				got.StreakDirection, *got.StreakDays, got.Acceleration,
+				want.StreakDirection, *want.StreakDays, want.Acceleration)
 		}
 	}
 }
@@ -288,13 +332,14 @@ func TestComputeSummary_ExtremesKeepRealMovesAndShortSeries(t *testing.T) {
 	if *row.ATHValue != "50" || *row.ATLValue != "1" {
 		t.Errorf("ATH/ATL = %s/%s, want 50/1", *row.ATHValue, *row.ATLValue)
 	}
-	// Two points cannot say which side is the outlier: both are kept.
+	// Too short for the median band, but /v1/price refuses a 100000x jump on a one-point
+	// history and serves 1, so 100000 must not reach the ratchet either.
 	row = computeSummary(Entity{Type: "coin", ID: "x"}, []TimedValue{
 		{At: now.Add(-1 * time.Hour), Value: "1"},
 		{At: now, Value: "100000"},
 	}, now)
-	if *row.ATHValue != "100000" || *row.ATLValue != "1" {
-		t.Errorf("ATH/ATL = %s/%s, want 100000/1", *row.ATHValue, *row.ATLValue)
+	if *row.ATHValue != "1" || *row.ATLValue != "1" {
+		t.Errorf("ATH/ATL = %s/%s, want 1/1", *row.ATHValue, *row.ATLValue)
 	}
 }
 
@@ -375,7 +420,7 @@ func TestComputeAcceleration(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := computeAcceleration(tc.series); got != tc.want {
+			if got := computeAcceleration(newGuarded(tc.series)); got != tc.want {
 				t.Errorf("computeAcceleration = %q, want %q", got, tc.want)
 			}
 		})
@@ -389,7 +434,7 @@ func TestExtremes_BeyondFloat64NotDropped(t *testing.T) {
 		{At: now.Add(-1 * time.Hour), Value: "3e400"},
 		{At: now, Value: "2e400"},
 	}
-	ath, _, atl, _, ok := extremes(series, series[2])
+	ath, _, atl, _, ok := extremes(newGuarded(series), series[2])
 	if !ok || ath != "3e400" || atl != "1e400" {
 		t.Errorf("ath=%q atl=%q ok=%v, want 3e400/1e400/true", ath, atl, ok)
 	}
@@ -404,7 +449,12 @@ func TestExtremes_BandEdgesInclusive(t *testing.T) {
 	}
 	cur := TimedValue{At: now, Value: "1"}
 	series = append(series, cur)
-	ath, _, atl, _, ok := extremes(series, cur)
+	// The served-price guard would refuse 1000 after a run of 1s; accept every point to test the band alone.
+	g := newGuarded(series)
+	for i := range g.verdict {
+		g.verdict[i] = 1
+	}
+	ath, _, atl, _, ok := extremes(g, cur)
 	if !ok || ath != "1000" || atl != "0.001" {
 		t.Errorf("ath=%q atl=%q ok=%v, want 1000/0.001/true", ath, atl, ok)
 	}

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -260,19 +261,44 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 		}
 	}
 
+	// Every figure below reads only points the served-price guard accepts, as current and the anchors do.
+	g := newGuarded(series)
+
 	// ATH / ATL across the full series, compared with big.Rat so prices with more digits than float64 are never truncated into the ratcheted columns.
 	// This is a 30d ATH/ATL, not all-time: the worker only fetches 30d.
-	if athValue, athAt, atlValue, atlAt, ok := extremes(series, current); ok {
+	if athValue, athAt, atlValue, atlAt, ok := extremes(g, current); ok {
 		row.ATHValue = ptrStr(athValue)
 		row.ATHAt = ptrTime(athAt)
 		row.ATLValue = ptrStr(atlValue)
 		row.ATLAt = ptrTime(atlAt)
 	}
 
-	row.StreakDirection, row.StreakDays = computeStreak(series)
-	row.Acceleration = computeAcceleration(series)
+	row.StreakDirection, row.StreakDays = computeStreak(g)
+	row.Acceleration = computeAcceleration(g)
 
 	return row
+}
+
+// guarded is a series with the served-price guard's verdict on each point, evaluated lazily: a liquid
+// pair has ~43k points and only a few dozen (daily closes, extreme candidates, quarter ends) are read.
+type guarded struct {
+	series  []TimedValue
+	verdict []int8 // 0 unknown, 1 accepted, -1 refused
+}
+
+func newGuarded(series []TimedValue) *guarded {
+	return &guarded{series: series, verdict: make([]int8, len(series))}
+}
+
+// accepted reports whether /v1/price would serve series[i] rather than hold it back.
+func (g *guarded) accepted(i int) bool {
+	if g.verdict[i] == 0 {
+		g.verdict[i] = -1
+		if guardedIdx(g.series, i) == i {
+			g.verdict[i] = 1
+		}
+	}
+	return g.verdict[i] > 0
 }
 
 // extremeBand bounds how far a point may sit from the series median and still count toward ATH/ATL. The sink ratchets those with
@@ -284,10 +310,11 @@ const extremeBand = 1000
 const minPointsForBand = 3
 
 // extremes returns the ATH and ATL over series, ignoring unparseable/zero points and (once long enough) points further than extremeBand from the median.
+// A point the served-price guard refuses never qualifies: the sink ratchets, so it would outlive the window.
 // ok is false when current is out of band or nothing qualifies: ATH/ATL stay NULL so the sink's GREATEST/LEAST keep stored extremes.
 // A zero mid-series must not become the ATL ([100,5,0,90] has ATL 5).
-func extremes(series []TimedValue, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
-	pts := positivePoints(series)
+func extremes(g *guarded, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
+	pts := positivePoints(g.series)
 	var lo, hi *big.Rat
 	if len(pts) >= minPointsForBand {
 		vals := make([]*big.Rat, len(pts))
@@ -299,7 +326,7 @@ func extremes(series []TimedValue, current TimedValue) (athValue string, athAt t
 		band := new(big.Rat).SetInt64(extremeBand)
 		lo, hi = new(big.Rat).Quo(med, band), new(big.Rat).Mul(med, band)
 	}
-	var athRat, atlRat *big.Rat
+	inBand := make([]ratPoint, 0, len(pts))
 	currentIn := false
 	for _, q := range pts {
 		if hi != nil && (q.v.Cmp(lo) < 0 || q.v.Cmp(hi) > 0) {
@@ -308,31 +335,46 @@ func extremes(series []TimedValue, current TimedValue) (athValue string, athAt t
 		if q.p.At.Equal(current.At) && q.p.Value == current.Value {
 			currentIn = true
 		}
-		if athRat == nil || q.v.Cmp(athRat) > 0 {
-			athRat, athValue, athAt = q.v, q.p.Value, q.p.At
-		}
-		if atlRat == nil || q.v.Cmp(atlRat) < 0 {
-			atlRat, atlValue, atlAt = q.v, q.p.Value, q.p.At
+		inBand = append(inBand, q)
+	}
+	// Stable on the oldest-first series, so a tied extreme keeps its earliest time.
+	sort.SliceStable(inBand, func(i, j int) bool { return inBand[i].v.Cmp(inBand[j].v) < 0 })
+	atl, atlFound := firstServed(g, inBand, current)
+	sort.SliceStable(inBand, func(i, j int) bool { return inBand[i].v.Cmp(inBand[j].v) > 0 })
+	ath, athFound := firstServed(g, inBand, current)
+	if !atlFound || !athFound {
+		return "", time.Time{}, "", time.Time{}, false
+	}
+	return ath.p.Value, ath.p.At, atl.p.Value, atl.p.At, currentIn
+}
+
+// firstServed returns the first sorted point /v1/price serves: one the guard accepts, or current,
+// which may be a stand-in the guard refused in its own minute but is the price served now.
+func firstServed(g *guarded, sorted []ratPoint, current TimedValue) (ratPoint, bool) {
+	for _, q := range sorted {
+		if (q.p.At.Equal(current.At) && q.p.Value == current.Value) || g.accepted(q.i) {
+			return q, true
 		}
 	}
-	return athValue, athAt, atlValue, atlAt, currentIn
+	return ratPoint{}, false
 }
 
 type ratPoint struct {
 	v *big.Rat
 	p TimedValue
+	i int // index in the series
 }
 
 // positivePoints keeps the parseable, strictly positive points with their
 // exact value.
 func positivePoints(series []TimedValue) []ratPoint {
 	pts := make([]ratPoint, 0, len(series))
-	for _, p := range series {
+	for i, p := range series {
 		v, ok := new(big.Rat).SetString(p.Value)
 		if !ok || v.Sign() <= 0 {
 			continue
 		}
-		pts = append(pts, ratPoint{v, p})
+		pts = append(pts, ratPoint{v, p, i})
 	}
 	return pts
 }
@@ -401,33 +443,23 @@ type dailyPoint struct {
 	Value float64
 }
 
-// dailyize buckets a minute-level series into daily-last-value
-// observations. Returns nil if every value parses as invalid.
-func dailyize(series []TimedValue) []dailyPoint {
-	days := make([]dailyPoint, 0, 32)
-	var current dailyPoint
-	started := false
-	for _, p := range series {
-		v, err := strconv.ParseFloat(p.Value, 64)
-		if err != nil {
-			continue
-		}
+// dailyize buckets a minute-level series into each day's last parseable, guard-accepted value,
+// oldest day first. Walking newest-first judges only each day's close, not every minute.
+func dailyize(g *guarded) []dailyPoint {
+	var days []dailyPoint
+	for i := len(g.series) - 1; i >= 0; i-- {
+		p := g.series[i]
 		dayStart := p.At.Truncate(24 * time.Hour)
-		if !started {
-			current = dailyPoint{Day: dayStart, Value: v}
-			started = true
+		if len(days) > 0 && days[len(days)-1].Day.Equal(dayStart) {
 			continue
 		}
-		if !dayStart.Equal(current.Day) {
-			days = append(days, current)
-			current = dailyPoint{Day: dayStart, Value: v}
-		} else {
-			current.Value = v
+		v, err := strconv.ParseFloat(p.Value, 64)
+		if err != nil || !g.accepted(i) {
+			continue
 		}
+		days = append(days, dailyPoint{Day: dayStart, Value: v})
 	}
-	if started {
-		days = append(days, current)
-	}
+	slices.Reverse(days)
 	return days
 }
 
@@ -445,8 +477,8 @@ func directionOf(diff float64) string {
 
 // computeStreak walks the daily-summarised series back-to-front for the longest run of same-direction moves ending at the latest
 // day. Per-day granularity avoids intraday noise that yields ~0 streaks at minute level.
-func computeStreak(series []TimedValue) (string, *int) {
-	days := dailyize(series)
+func computeStreak(g *guarded) (string, *int) {
+	days := dailyize(g)
 	if len(days) < 2 {
 		return "", nil
 	}
@@ -470,18 +502,19 @@ func computeStreak(series []TimedValue) (string, *int) {
 // computeAcceleration returns increasing / flat / decreasing for whether the MAGNITUDE of recent per-step moves exceeds older ones (direction-agnostic: a steepening downtrend is increasing).
 // It compares the absolute mean per-step delta of the last quarter against the previous with a ±5% deadband; signed deltas mislabelled negative trends.
 // Returns empty (NULL) if the series is too short.
-func computeAcceleration(series []TimedValue) string {
-	if len(series) < 4 {
+func computeAcceleration(g *guarded) string {
+	n := len(g.series)
+	if n < 4 {
 		return ""
 	}
 	// Compare the last quarter of the series against the previous
 	// quarter. Cheap proxy for "is the move accelerating?"
-	q := len(series) / 4
+	q := n / 4
 	if q < 1 {
 		return ""
 	}
-	last := math.Abs(avgDelta(series[len(series)-q:]))
-	prev := math.Abs(avgDelta(series[len(series)-2*q : len(series)-q]))
+	last := math.Abs(avgDelta(g, n-q, n))
+	prev := math.Abs(avgDelta(g, n-2*q, n-q))
 	switch {
 	case last > prev*1.05:
 		return "increasing"
@@ -492,27 +525,29 @@ func computeAcceleration(series []TimedValue) string {
 	}
 }
 
-// avgDelta returns the mean per-step change across a slice. Used by
-// computeAcceleration; returns 0 on input < 2.
-func avgDelta(slice []TimedValue) float64 {
-	if len(slice) < 2 {
-		return 0
+// avgDelta returns the mean per-step change across series[from:to], 0 with fewer than two usable points.
+// The step sum telescopes to last-first, so only the end points need to be parseable and guard-accepted.
+func avgDelta(g *guarded, from, to int) float64 {
+	usable := func(i int) (float64, bool) {
+		v, err := strconv.ParseFloat(g.series[i].Value, 64)
+		return v, err == nil && g.accepted(i)
 	}
-	var sum float64
-	count := 0
-	for i := 1; i < len(slice); i++ {
-		a, errA := strconv.ParseFloat(slice[i-1].Value, 64)
-		b, errB := strconv.ParseFloat(slice[i].Value, 64)
-		if errA != nil || errB != nil {
-			continue
+	first, firstOK := 0.0, false
+	for ; from < to; from++ {
+		if first, firstOK = usable(from); firstOK {
+			break
 		}
-		sum += b - a
-		count++
 	}
-	if count == 0 {
+	last, lastOK := 0.0, false
+	for to--; to > from; to-- {
+		if last, lastOK = usable(to); lastOK {
+			break
+		}
+	}
+	if !firstOK || !lastOK {
 		return 0
 	}
-	return sum / float64(count)
+	return (last - first) / float64(to-from)
 }
 
 func ptr(f float64) *float64         { return &f }
