@@ -60,7 +60,7 @@ curl -X POST https://api.stellarindex.io/v1/register \
 | Tier | Who | Rate limit | Monthly quota |
 |---|---|---|---|
 | `anon` | no key at all | 1,000 req/min per IP on the hosted API (60/min is the self-hosted default) | — |
-| `free` | anyone who registers (this page) | 6,000 req/min per key, stamped at mint | 1M req/month |
+| `free` | anyone who registers (this page) | 6,000 req/min per account (shared by all its keys), stamped at mint | 1M req/month |
 | `partner` | staff-set per-account limits — [contact us](mailto:hello@stellarindex.io) | up to 100,000 req/min | negotiated |
 
 Everything is free; `partner` is not a paid plan, it's an operator
@@ -71,11 +71,12 @@ one unit except `/v1/price/batch`, which costs one unit per distinct
 asset id — a 250-id batch spends 250 of the monthly quota and 250 of
 the per-minute limit.
 
-Yes, the hosted anonymous per-IP limit is currently *higher* than a
-free key's per-key limit. That is deliberate: a key buys per-subject
-attribution, usage reporting and the private `/v1/account/*` surfaces,
-not headroom. Read `X-RateLimit-Limit` on any response rather than
-hard-coding either number.
+On the hosted API a free key has six times an anonymous IP's
+throughput, plus per-subject attribution, usage reporting and the
+private `/v1/account/*` surfaces. Every key an account holds draws on
+one per-account bucket, so minting more keys does not add headroom.
+Read `X-RateLimit-Limit` on any response rather than hard-coding either
+number.
 
 ## Rules of the road
 

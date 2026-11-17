@@ -45,8 +45,11 @@ never promote, the API works identically.
 
 ### Phase B — promote to validator, still one node
 
-- Key ceremony (§5); `NODE_IS_VALIDATOR=true`; `NODE_SEED` resolved through
-  the HSM signer daemon, never on disk (ADR-0004).
+- Key ceremony (§5); `NODE_IS_VALIDATOR=true`; `NODE_SEED` never on disk
+  unencrypted (ADR-0004). **Blocked:** the HSM signer daemon is not built.
+  stellar-core reads `NODE_SEED` from its config, and the validator branch
+  of `stellar-core.cfg.j2` sets no seed, so this phase cannot run until a
+  seed-provisioning mechanism exists and is proven against stellar-core.
 - Publish the public key in `stellarindex.io`'s `stellar.toml` and announce
   on SDF's `#validators` channel. One validator is not a T1 org.
 
