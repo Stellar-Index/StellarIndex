@@ -380,6 +380,23 @@ Fix:
 
 See ADR-0027, ADR-0016 and `docs/operations/lcm-cache-tiering.md`.
 
+## stellarindex_ledgerstream_cold_degraded
+
+Ticket, rule in `ledgerstream-tier.yml`. Nothing is stalled yet: a ledgerstream walk could not open the configured cold datastore (`openColdDataStore` in `internal/ledgerstream/ledgerstream.go`) and fell back to hot-only. Every read of a range the hot tier still holds succeeds; a read of a trimmed range has no cold fallback and will end in a stall.
+
+The alert covers the indexer only: the ops tools that call `ledgerstream.Stream` (`ch-backfill`, `backfill`, `ch-gate`, the `wasm_*`/`verify_*` tools) serve no metrics, so a degraded open there is visible only in that tool's log. The counter moves once per stream open and the indexer opens one at start-up, so the alert stays firing until a restart with fixed config resets the series.
+
+Symptoms: `stellarindex_ledgerstream_stream_path_total{path="cold_degraded"}` is above 0; the indexer log has `cold datastore init failed; falling back to hot-only`.
+
+Check:
+
+```sh
+# The Warn carries the open error (region, credentials, bucket name).
+ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since="2 hours ago" | grep -i "cold datastore init failed" | tail -3'
+```
+
+Fix the cold-tier config the error names (`storage.s3_cold_bucket_archive` and its region, us-east-2 for the AWS public bucket), restart the indexer, and confirm `path="tiered"` increases and the alert clears. Until it does, do not run the galexie trim: a trimmed range would have no tier to read from.
+
 ## stellarindex_ingestion_discovery_drops
 
 P3: `increase(stellarindex_discovery_dropped_hits_total[10m]) > 0` for 10 min (`deploy/monitoring/rules/ingestion.yml`). The discovery sink (SEP-41 sightings plus oracle-suggestive hits, `docs/architecture/oracle-manipulation-defense.md`) is non-blocking: when its buffer fills, hits are dropped rather than stalling the hot path, so discovery is best-effort and `discovered_assets` may lag. Logs show `discovery: hits dropped`.
