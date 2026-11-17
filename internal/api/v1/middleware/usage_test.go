@@ -836,6 +836,11 @@ func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
 		time.Sleep(interval)
 	}
 	wait()
+	// The open-time bill and the close-time record are queued on the shared after-response pool;
+	// without draining it, one can land after the baseline read and look like a post-close tick.
+	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
+		t.Fatal("after-response pool did not drain")
+	}
 
 	closedTotal, err := counter.MonthToDate(context.Background(), id)
 	if err != nil {
