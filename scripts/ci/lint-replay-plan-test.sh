@@ -228,6 +228,15 @@ touch_commit internal/sources/demo/consumer.go "fix(demo): change swap/sync corr
 runGate
 expect "consumer.go change without a plan fails" 1 "~ internal/sources/demo/consumer.go"
 
+# --- 2e. the dispatcher adapter, the abi field map and the blend auction
+# payload decoder decide recorded rows as much as decode*.go does -------
+for f in dispatcher_adapter.go abi.go; do
+  mkrepo 0
+  touch_commit "internal/sources/demo/$f" "fix(demo): change what $f records"
+  runGate
+  expect "$f change without a plan fails" 1 "~ internal/sources/demo/$f"
+done
+
 # --- 3. declared plan passes ------------------------------------------
 mkrepo 0
 touch_commit internal/canonical/asset_fiat.go "$(printf 'canonical: widen fiat allow-list\n\nReplay-Plan: stellarindex-ops projector-replay -source reflector-fx -from 61602787 on r1 after deploy')"

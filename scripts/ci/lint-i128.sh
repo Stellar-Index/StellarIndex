@@ -64,14 +64,15 @@ fi
 
 # Widen-then-narrow in one expression (`new(big.Float).SetInt(x).Float64()`)
 # leaves no parts word for the patterns above; the deep guard judges it by
-# receiver type. `//i128:ok <reason>` on the line or the one above exempts it.
+# receiver type. `//i128:ok <reason>` on the line, or alone on the line above,
+# exempts it; a marker trailing another code line covers only that line.
 bhits=$(awk '
     FNR == 1 { prev = "" }
     /^[[:space:]]*\/\// { prev = $0; next }
     {
       ok = ($0 ~ /\/\/[[:space:]]*i128:ok[[:space:]]+[^[:space:]]/) || (prev ~ /\/\/[[:space:]]*i128:ok[[:space:]]+[^[:space:]]/)
       if (!ok && $0 ~ /new\(big\.(Int|Rat|Float)\).*\.(Int64|Uint64|Float64)\(\)/) print FILENAME ":" FNR ":" $0
-      prev = $0
+      prev = ""
     }' "${go_files[@]}" || true)
 if [ -n "$bhits" ]; then
   echo "lint-i128 ❌ math/big value narrowed to a machine number (ADR-0003):" >&2
