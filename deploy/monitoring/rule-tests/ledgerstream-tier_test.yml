@@ -123,6 +123,31 @@ tests:
                 succeed while the hot tier holds the range; a trimmed range
                 will fail with no cold fallback.
 
+  # The counter only moves when a stream opens; the indexer opens one at start-up, so the alert
+  # must hold until a restart resets the series, not resolve an hour later.
+  - interval: 1m
+    name: cold_degraded ticket keeps firing two hours after the only failed open
+    input_series:
+      - series: 'stellarindex_ledgerstream_stream_path_total{path="cold_degraded"}'
+        values: '0 0 0 1+0x130'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_ledgerstream_cold_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ledgerstream
+              path: cold_degraded
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded
+              summary: "Configured cold LCM tier failed to open — reads are hot-only"
+              description: |
+                A ledgerstream walk could not open the configured cold
+                datastore and fell back to the hot tier alone. Reads still
+                succeed while the hot tier holds the range; a trimmed range
+                will fail with no cold fallback.
+
   - interval: 1m
     name: cold_degraded ticket stays silent while only the tiered path moves
     input_series:

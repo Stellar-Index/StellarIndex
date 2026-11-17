@@ -26,7 +26,11 @@
 #
 # USAGE (on r1):
 #   ./lake-dedup-driver.sh <table> [max_partitions]
-#   DRY_RUN=1 ./lake-dedup-driver.sh transactions      # plan only
+#   DRY_RUN=1 ./lake-dedup-driver.sh transactions 1    # plan only
+#   A re-run after a partial dedup still FINAL-counts each already-clean
+#   partition before reaching max_partitions candidates, and DRY_RUN=1 runs
+#   those counts too: run it through /usr/local/sbin/run-heavy-job.sh like the
+#   real run, and plan with "<table> 1" first.
 #   touch /tmp/lake-dedup.stop                          # graceful stop
 #
 # Table order (biggest reclaim first): transactions, operations,

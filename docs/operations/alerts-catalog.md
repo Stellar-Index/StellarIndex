@@ -388,7 +388,7 @@ Per [ADR-0027](../adr/0027-lcm-cache-tiering.md). R1 reads each LCM from the loc
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_ledgerstream_tier_both_missing` | `increase(ledgerstream_tier_read_total{outcome="both_missing"}[5m])` | > 0, `for: 0m` | page | [ledgerstream-tier-both-missing](runbooks/ingestion.md#stellarindex_ledgerstream_tier_both_missing) |
-| `stellarindex_ledgerstream_cold_degraded` | `increase(ledgerstream_stream_path_total{path="cold_degraded"}[1h])` | > 0, `for: 0m` | ticket | [ledgerstream-cold-degraded](runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded) |
+| `stellarindex_ledgerstream_cold_degraded` | `ledgerstream_stream_path_total{path="cold_degraded"}` (indexer only; clears on a restart with fixed config) | > 0, `for: 0m` | ticket | [ledgerstream-cold-degraded](runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded) |
 
 `both_missing` is the cold-tier failure ADR-0027 plans for; the runbook walks rehydrate-from-peer and disable-trim-timer.
 

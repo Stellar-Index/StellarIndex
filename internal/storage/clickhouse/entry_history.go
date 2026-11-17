@@ -88,8 +88,8 @@ const sponsorshipOps = `('OperationTypeSetOptions', 'OperationTypeRevokeSponsors
 // sponsorshipCandidateQuery streams, in the source's sort-key order (each 'state' pre-image directly before its change),
 // every classic entry change of an operation that can hold a sponsorship transition: a group with a sponsored image, one
 // of sponsorshipOps, or a tx-level group (op_index -1) where an account's image changes size. The last is how core's
-// consumed pre-auth signer removal shows up; the fee and sequence bumps that fill every -1 group keep the size. That is
-// a few percent of the window's rows. No FINAL: an unmerged duplicate re-derives a byte-identical event row, and the
+// consumed pre-auth signer removal shows up. A fee bump keeps the size, but from protocol 19 an account's first sequence
+// bump adds the v3 extension, so that group is a candidate too and emits nothing (the signer-sponsor lists are equal). No FINAL: an unmerged duplicate re-derives a byte-identical event row, and the
 // target is a ReplacingMergeTree on the same identity.
 const sponsorshipCandidateQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
