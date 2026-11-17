@@ -402,6 +402,11 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 	if keyID == "" {
 		return errors.New("auth: RevokeKeyByID: keyID is required")
 	}
+	release, err := s.lockRevoke(ctx, identifier)
+	if err != nil {
+		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	defer release()
 	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
 	if err != nil {
 		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
@@ -422,6 +427,17 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	return nil
+}
+
+// lockRevoke takes the mint lock so this sweep is ordered against delegated mints, which re-check
+// their minter under it. An ACL that denies the lock key also stops every delegated mint, so
+// revocation proceeds unlocked rather than leaving a credential live.
+func (s *RedisAPIKeyStore) lockRevoke(ctx context.Context, identifier string) (func(), error) {
+	release, err := s.lockMint(ctx, identifier)
+	if isRedisNoPerm(err) {
+		return func() {}, nil
+	}
+	return release, err
 }
 
 // revokeDescendants deletes every key on identifier delegated from keyID at any depth, deepest

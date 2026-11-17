@@ -108,6 +108,7 @@ func TestCreateCapped_ChildKeySlidingIdleTTL(t *testing.T) {
 	ctx := context.Background()
 
 	parent := Subject{Identifier: AccountIdentifier("child-ttl"), Tier: TierAPIKey, KeyID: "kid_parent"}
+	seedMinter(t, NewRedisAPIKeyStore(rdb), parent)
 	_, plaintext, err := NewRedisAPIKeyStore(rdb).CreateCapped(ctx, ChildKeyRequest(parent, "rotated", nil), 25)
 	if err != nil {
 		t.Fatalf("CreateCapped: %v", err)

@@ -476,7 +476,7 @@ func TestAccountKeysCreate_ChildRecordHasIdleTTL(t *testing.T) {
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	subject := auth.Subject{Identifier: "acct:customer-ttl", Tier: auth.TierAPIKey, KeyID: "kid_parent"}
-	ts := newAccountTestServer(t, subject, auth.NewRedisAPIKeyStore(rdb))
+	ts := newAccountTestServer(t, subject, seededParentStore(t, rdb, subject))
 	resp := postJSONNoReason(t, ts.URL+"/v1/account/keys", `{"label":"rotated"}`)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201", resp.StatusCode)

@@ -217,7 +217,21 @@ func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKey
 }
 
 // Create implements APIKeyStore: requires an Identifier, generates KeyID and plaintext, and SETs apikey:<sha256(plaintext)> (with MirroredKeyIdleTTL when req.SelfService); on Redis failure the plaintext is not surfaced.
+// A delegated mint (ParentKeyID set) runs under the identifier's mint lock, which RevokeKeyByID also takes.
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
+	if req.ParentKeyID == "" || req.Identifier == "" {
+		return s.create(ctx, req)
+	}
+	release, err := s.lockMint(ctx, req.Identifier)
+	if err != nil {
+		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
+	}
+	defer release()
+	return s.create(ctx, req)
+}
+
+// create is Create for a caller already holding the identifier's mint lock, or minting no delegated key.
+func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: Create: Identifier is required")
 	}
@@ -292,6 +306,9 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 
 // boundRequest clamps scopes, expiry and monthly quota to the minter (when there is one) and resolves an unset quota from the identifier's plan.
 func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, int64, error) {
+	if err := s.requireLiveParent(ctx, req); err != nil {
+		return req, 0, err
+	}
 	if req.MintedBy != nil {
 		scopes, err := ClampToMinter(*req.MintedBy, req.Scopes, req.RateLimitPerMin)
 		if err != nil {
@@ -323,6 +340,25 @@ func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyReq
 		monthlyQuota = q
 	}
 	return req, monthlyQuota, nil
+}
+
+// requireLiveParent refuses a delegated mint whose minting key no longer has a live record on the
+// identifier. Checked under the mint lock, so a revoke that already swept cannot be followed by a
+// child of the key it removed; a key with no record here (Postgres-only) cannot delegate.
+func (s *RedisAPIKeyStore) requireLiveParent(ctx context.Context, req CreateAPIKeyRequest) error {
+	if req.ParentKeyID == "" {
+		return nil
+	}
+	_, parent, found, err := s.findRecordByKeyID(ctx, req.ParentKeyID)
+	if err != nil {
+		return fmt.Errorf("read minting key: %w", err)
+	}
+	live := found && parent.Identifier == req.Identifier && parent.RevokedAt.IsZero() &&
+		(parent.ExpiresAt.IsZero() || s.now().Before(parent.ExpiresAt))
+	if !live {
+		return fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
+	}
+	return nil
 }
 
 // mintableTier reports whether a minted record may carry t. Anonymous is
@@ -395,7 +431,7 @@ func (s *RedisAPIKeyStore) CreateCapped(ctx context.Context, req CreateAPIKeyReq
 	if active >= maxActive {
 		return APIKeyRecord{}, "", &KeyQuotaExceededError{Active: active, Max: maxActive}
 	}
-	return s.Create(ctx, req)
+	return s.create(ctx, req)
 }
 
 // lockMint takes the identifier's mint lock, polling up to

@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -94,6 +95,21 @@ func (f *lineageFixture) legacyChild(t *testing.T, parent Subject) (APIKeyRecord
 	return f.mint(t, CreateAPIKeyRequest{Identifier: parent.Identifier, ParentKeyID: parent.KeyID})
 }
 
+// seedMinter writes a live record for sub, as one the validator read it from, so sub may delegate.
+func seedMinter(t *testing.T, s *RedisAPIKeyStore, sub Subject) string {
+	t.Helper()
+	rec := recordFromSubject(sub)
+	body, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := hashAPIKey("sip_fixture-minter-" + sub.KeyID)
+	if err := s.writeRecord(context.Background(), hash, rec, body, 0); err != nil {
+		t.Fatalf("seed minter: %v", err)
+	}
+	return hash
+}
+
 func (f *lineageFixture) assertDead(t *testing.T, what map[string]string) {
 	t.Helper()
 	for name, plain := range what {
@@ -171,14 +187,16 @@ func TestRevoke_RetryAfterMidwayFailureRemovesEveryDescendant(t *testing.T) {
 	}
 }
 
-// TestRevoke_SweepsWhenTheRootHasNoRecord: a key that authenticates without a record in this store
-// (a Postgres-backed key) still takes its delegated keys with it.
+// TestRevoke_SweepsWhenTheRootHasNoRecord: a key whose record here is gone (a Postgres-backed key
+// whose mirror lapsed) still takes its delegated keys with it.
 func TestRevoke_SweepsWhenTheRootHasNoRecord(t *testing.T) {
 	f := newLineageFixture(t)
 	ctx := context.Background()
 	pgKey := Subject{KeyID: "pg-row-1", Identifier: "acct-x", Tier: TierAPIKey, AllowAllPermissions: true}
+	mirror := seedMinter(t, f.store, pgKey)
 	_, childPlain, childSub := f.mint(t, ChildKeyRequest(pgKey, "child", nil))
 	_, grandPlain, _ := f.mint(t, ChildKeyRequest(childSub, "grand", nil))
+	f.mr.Del(cachekeys.APIKey(mirror).String())
 
 	if err := f.store.RevokeKeyByID(ctx, "acct-x", pgKey.KeyID); err != nil {
 		t.Fatalf("RevokeKeyByID of a record-less root with descendants: %v, want nil", err)
@@ -186,6 +204,46 @@ func TestRevoke_SweepsWhenTheRootHasNoRecord(t *testing.T) {
 	f.assertDead(t, map[string]string{"child": childPlain, "grandchild": grandPlain})
 	if err := f.store.RevokeKeyByID(ctx, "acct-x", pgKey.KeyID); !errors.Is(err, ErrKeyNotFound) {
 		t.Errorf("second revoke = %v, want ErrKeyNotFound (no root and nothing left)", err)
+	}
+}
+
+// TestCreate_DelegatedMintAfterItsMinterIsRevokedIsRefused: a mint authenticated before its minter
+// was revoked, but writing after, must not leave a live child of the revoked key.
+func TestCreate_DelegatedMintAfterItsMinterIsRevokedIsRefused(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	root, _, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err != nil {
+		t.Fatalf("RevokeKeyByID: %v", err)
+	}
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)); !errors.Is(err, ErrMintExceedsCaller) {
+		t.Fatalf("Create from a revoked minter = %v, want ErrMintExceedsCaller", err)
+	}
+	if _, _, err := f.store.CreateCapped(ctx, ChildKeyRequest(rootSub, "late", nil), 25); !errors.Is(err, ErrMintExceedsCaller) {
+		t.Fatalf("CreateCapped from a revoked minter = %v, want ErrMintExceedsCaller", err)
+	}
+	if recs, err := f.store.ListKeysForIdentifier(ctx, "acct-x"); err != nil || len(recs) != 0 {
+		t.Fatalf("keys after refused mints = %d (err %v), want none", len(recs), err)
+	}
+}
+
+// TestRevoke_WaitsForTheMintLock: the revoke sweep and a delegated mint's minter check are
+// serialised by the identifier's mint lock, so neither can interleave with the other.
+func TestRevoke_WaitsForTheMintLock(t *testing.T) {
+	f := newLineageFixture(t)
+	root, rootPlain, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	release, err := f.store.lockMint(context.Background(), "acct-x")
+	if err != nil {
+		t.Fatalf("lockMint: %v", err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RevokeKeyByID while a mint holds the lock = %v, want it to wait (deadline exceeded)", err)
+	}
+	if _, err := f.validator.Lookup(context.Background(), rootPlain); err != nil {
+		t.Fatalf("root after the blocked revoke: %v, want still live (nothing ran unlocked)", err)
 	}
 }
 

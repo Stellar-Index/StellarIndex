@@ -51,6 +51,7 @@ func restrictedParent() Subject {
 func TestDelegatedKeyNeverExceedsMinter_InEveryDimension(t *testing.T) {
 	store, validator := newBoundTestStore(t)
 	parent := restrictedParent()
+	seedMinter(t, store, parent)
 
 	_, plain, err := store.Create(context.Background(), ChildKeyRequest(parent, "child", nil))
 	if err != nil {
@@ -123,6 +124,7 @@ func TestMintedKeyNeverExceedsMinter_RefusesBroaderRequest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store, _ := newBoundTestStore(t)
 			minter := restrictedParent()
+			seedMinter(t, store, minter)
 			req := ChildKeyRequest(minter, "child", nil)
 			tc.edit(&minter, &req)
 			req.MintedBy = &minter
