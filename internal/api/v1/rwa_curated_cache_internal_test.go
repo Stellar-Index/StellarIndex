@@ -195,12 +195,12 @@ func TestRWACuratedSummarise_DegradedContractReadIsUnavailableNotServedZero(t *t
 	snap := rwaCurated{available: true, wired: true}
 	now := time.Now().UTC()
 
-	degraded := rwaCuratedSummarise(snap, nil, rwaCuratedExcluded{}, true, nil, false, now)
+	degraded := rwaCuratedSummarise(snap, nil, 0, true, nil, false, now)
 	if degraded.Status != "unavailable" {
 		t.Errorf("degraded read: Status = %q, want %q", degraded.Status, "unavailable")
 	}
 
-	notDegraded := rwaCuratedSummarise(snap, nil, rwaCuratedExcluded{}, false, nil, false, now)
+	notDegraded := rwaCuratedSummarise(snap, nil, 0, false, nil, false, now)
 	if notDegraded.Status != "served" {
 		t.Errorf("genuinely empty set: Status = %q, want %q (must stay served)", notDegraded.Status, "served")
 	}

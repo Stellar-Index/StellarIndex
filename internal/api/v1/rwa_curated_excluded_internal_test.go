@@ -27,7 +27,7 @@ func TestRWACuratedClassicRowsMakeTheAdditionalFiguresALowerBound(t *testing.T) 
 
 	value, verified := "100.00", "50.00"
 	rows := []RWAAsset{{ContractID: contract, ReferenceValuation: RWAReferenceValuation{ValueUSD: &value}}}
-	out := rwaCuratedSummarise(snap, rows, rwaCuratedExcluded{classic: classicSkipped}, false, &verified, false, time.Now())
+	out := rwaCuratedSummarise(snap, rows, classicSkipped, false, &verified, false, time.Now())
 
 	if out.AdditionalValueUSD == nil || out.CombinedValueUSD == nil {
 		t.Fatalf("additional = %v, combined = %v; want both served", out.AdditionalValueUSD, out.CombinedValueUSD)
@@ -38,5 +38,33 @@ func TestRWACuratedClassicRowsMakeTheAdditionalFiguresALowerBound(t *testing.T) 
 	}
 	if !strings.Contains(out.Basis, "exclude 1 classic curator row(s)") {
 		t.Errorf("basis does not name the excluded classic row: %q", out.Basis)
+	}
+	if strings.Contains(out.Basis, "catalogue row") {
+		t.Errorf("basis names a contract-row exclusion no served path produces: %q", out.Basis)
+	}
+
+	// No additional figure is published, so no lower-bound sentence describes one.
+	none := rwaCuratedSummarise(snap, nil, classicSkipped, false, &verified, false, time.Now())
+	if none.AdditionalValueUSD != nil || strings.Contains(none.Basis, "LOWER BOUND") {
+		t.Errorf("additional = %v, basis = %q; want no figure and no lower-bound sentence", none.AdditionalValueUSD, none.Basis)
+	}
+}
+
+// TestRWACuratedClassicRowWhoseSACTheCuratorAlsoListsIsCarried: a curator listing CODE-ISSUER and its SAC serves the SAC row,
+// so the classic entry is not excluded and does not make the figures a lower bound.
+func TestRWACuratedClassicRowWhoseSACTheCuratorAlsoListsIsCarried(t *testing.T) {
+	sac, err := mustSACFor(cetesAsset)
+	if err != nil {
+		t.Fatalf("derive CETES SAC: %v", err)
+	}
+	snap := rwaCurated{available: true, wired: true, byAddress: map[string]timescale.CuratedRWAEntry{cetesAsset: {}, sac: {}}}
+	members, classicSkipped := rwaCuratedMembership(snap, nil)
+	if len(members) != 1 || members[0].contractID != sac || classicSkipped != 0 {
+		t.Fatalf("members = %+v, classicSkipped = %d; want the SAC served and the classic row carried by it", members, classicSkipped)
+	}
+	const other = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	snap.byAddress = map[string]timescale.CuratedRWAEntry{cetesAsset: {}, other: {}}
+	if _, skipped := rwaCuratedMembership(snap, nil); skipped != 1 {
+		t.Errorf("classicSkipped = %d with only an unrelated contract listed, want 1", skipped)
 	}
 }

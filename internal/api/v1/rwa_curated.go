@@ -273,7 +273,8 @@ func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) (members []rwaCu
 		// A classic `CODE-GISSUER` row has no contract path to serve it
 		// through; it is counted in census.classic instead.
 		if !rwaCuratedAddressIsContract(addr) {
-			if !rwaCuratedClassicVerified(addr, seen) {
+			// Carried when the verified set holds its SAC, or the curator also lists that SAC as a contract row served here.
+			if !rwaCuratedClassicVerified(addr, seen) && !rwaCuratedClassicVerified(addr, snap.byAddress) {
 				classicSkipped++
 			}
 			continue
@@ -285,9 +286,9 @@ func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) (members []rwaCu
 	return out, classicSkipped
 }
 
-// rwaCuratedClassicVerified reports whether the verified set carries this classic curator row, matched by its derived SAC; an
-// address that does not parse is not carried.
-func rwaCuratedClassicVerified(addr string, seen map[string]struct{}) bool {
+// rwaCuratedClassicVerified reports whether seen holds the SAC this classic curator row derives; an address that does not parse
+// is not carried.
+func rwaCuratedClassicVerified[V any](addr string, seen map[string]V) bool {
 	asset, err := canonical.ParseAsset(addr)
 	if err != nil || asset.Type != canonical.AssetClassic {
 		return false
@@ -320,9 +321,9 @@ func sortCuratedMembers(m []rwaCuratedMember) {
 // which withholds that row's figures without making the catalogue unreadable.
 func (s *Server) rwaCuratedRows(
 	ctx context.Context, members []rwaCuratedMember, now time.Time,
-) (rows []RWAAsset, notObserved int, degraded, unanswered bool) {
+) (rows []RWAAsset, degraded, unanswered bool) {
 	if len(members) == 0 {
-		return nil, 0, false, false
+		return nil, false, false
 	}
 	cm := make([]rwaContractMember, 0, len(members))
 	for _, m := range members {
@@ -338,7 +339,7 @@ func (s *Server) rwaCuratedRows(
 	details, cut, err := s.rwaContractListingRows(ctx, cm)
 	if err != nil {
 		s.logger.Error("rwa curated listing read failed", "err", err)
-		return nil, len(members), true, false
+		return nil, true, false
 	}
 	rows = rwaContractAssetRows(cm, details)
 	byID := make(map[string]rwaCuratedMember, len(members))
@@ -356,7 +357,7 @@ func (s *Server) rwaCuratedRows(
 		rwaApplyCuratorReference(&rows[i], m.entry, now)
 	}
 	rwaSortAssets(rows)
-	return rows, 0, cut, rwaRowsUnanswered(details)
+	return rows, cut, rwaRowsUnanswered(details)
 }
 
 // rwaApplyCuratorReference attaches the curator's price as the row's reference. No premium is published against it, for a stronger
@@ -381,12 +382,9 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 
 // ─── summary ────────────────────────────────────────────────────────
 
-// rwaCuratedExcluded counts the curator rows no served row carries: classic rows with no contract path, and contract rows the
-// catalogue join could not place.
-type rwaCuratedExcluded struct{ classic, notObserved int }
-
+// rwaCuratedSummarise builds the curated block; excludedClassic counts the classic curator rows no served row carries.
 func rwaCuratedSummarise(
-	snap rwaCurated, rows []RWAAsset, excluded rwaCuratedExcluded, degraded bool, verifiedRef *string, verifiedLowerBound bool,
+	snap rwaCurated, rows []RWAAsset, excludedClassic int, degraded bool, verifiedRef *string, verifiedLowerBound bool,
 	now time.Time,
 ) *RWACuratedSummary {
 	out := &RWACuratedSummary{
@@ -425,13 +423,12 @@ func rwaCuratedSummarise(
 	out.Status = "served"
 	out.Assets = len(rows)
 	additional, anyAdditional, partial := rwaCuratedTally(rows, out)
-	if excluded.classic > 0 || excluded.notObserved > 0 {
-		partial = true
-		out.Basis += " The additional and combined figures exclude " + strconv.Itoa(excluded.classic) +
-			" classic curator row(s) the verified set does not carry and " + strconv.Itoa(excluded.notObserved) +
-			" contract row(s) with no catalogue row, so each is a LOWER BOUND."
-	}
 	if anyAdditional {
+		if excludedClassic > 0 {
+			partial = true
+			out.Basis += " The additional and combined figures exclude " + strconv.Itoa(excludedClassic) +
+				" classic curator row(s) the verified set does not carry, so each is a LOWER BOUND."
+		}
 		s := additional.FloatString(2)
 		out.AdditionalValueUSD, out.AdditionalValueLowerBound = &s, partial
 		if vr := ratFromOptionalString(verifiedRef); vr != nil {
@@ -540,10 +537,9 @@ func (s *Server) attachRWACurated(
 ) (degraded bool) {
 	snap := s.rwaCuratedSnapshot(valuationCtx)
 	members, classicSkipped := rwaCuratedMembership(snap, view.Assets)
-	rows, notObserved, degraded, unanswered := s.rwaCuratedRows(valuationCtx, members, now)
+	rows, degraded, unanswered := s.rwaCuratedRows(valuationCtx, members, now)
 	view.CuratedAssets = rows
 	ref := view.Summary.ReferenceValuation
-	view.Curated = rwaCuratedSummarise(snap, rows, rwaCuratedExcluded{classic: classicSkipped, notObserved: notObserved},
-		degraded, ref.ValueUSD, ref.LowerBound, now)
+	view.Curated = rwaCuratedSummarise(snap, rows, classicSkipped, degraded, ref.ValueUSD, ref.LowerBound, now)
 	return degraded || unanswered
 }

@@ -756,9 +756,6 @@ func rwaPremiumJoin(
 	return out
 }
 
-// rwaPremiumTrailingMaxAge is how old an earlier published value may be and still anchor a day with none of its own.
-const rwaPremiumTrailingMaxAge = 30 * 24 * time.Hour
-
 // rwaPremiumRefDays returns the days the reference published a value on, oldest first.
 func rwaPremiumRefDays(ref *rwaFeedSeries) []time.Time {
 	days := make([]time.Time, 0, len(ref.days))
@@ -769,11 +766,11 @@ func rwaPremiumRefDays(ref *rwaFeedSeries) []time.Time {
 	return days
 }
 
-// rwaPremiumAnchor returns the published value on `day`, or the newest earlier one inside the age bound: a weekend with
-// no publication is still judged against Friday's value. nil when there is none.
+// rwaPremiumAnchor returns the published value on `day`, or the newest earlier one no older than rwaReferenceMaxAge, the bound
+// the live surface refuses a value past: a weekend is still judged against Friday's value. nil when there is none.
 func rwaPremiumAnchor(ref *rwaFeedSeries, refDays []time.Time, day time.Time) *big.Rat {
 	i := sort.Search(len(refDays), func(i int) bool { return refDays[i].After(day) })
-	if i == 0 || day.Sub(refDays[i-1]) > rwaPremiumTrailingMaxAge {
+	if i == 0 || day.Sub(refDays[i-1]) > rwaReferenceMaxAge {
 		return nil
 	}
 	return ref.days[refDays[i-1]]
