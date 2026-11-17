@@ -152,6 +152,9 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
   }
 
   const positions = data.positions ?? [];
+  // A partial read (failed or capped protocol folds) makes the count a
+  // floor and an empty list "not looked", never "holds nothing".
+  const partial = Boolean(data.coverage_note);
   const byProtocol = new Map<string, AccountPosition[]>();
   for (const p of positions) {
     const list = byProtocol.get(p.protocol) ?? [];
@@ -161,7 +164,7 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
 
   return (
     <Panel
-      title={`DeFi positions (${positions.length})`}
+      title={`DeFi positions (${partial ? '≥ ' : ''}${positions.length})`}
       hint={panelHint}
       source={source}
       bodyClassName="space-y-4"
@@ -172,6 +175,7 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
           conditional — every position on this endpoint is a raw
           quantity, never a valuation. */}
       {data.note && <NoteBadge label="raw quantities">{data.note}</NoteBadge>}
+      {data.coverage_note && <NoteBadge>{data.coverage_note}</NoteBadge>}
 
       <AccountDefiProtocolMix
         counts={Array.from(byProtocol.entries()).map(([protocol, rows]) => ({
@@ -183,7 +187,9 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
 
       {positions.length === 0 ? (
         <p className="text-ink-muted text-sm">
-          No DeFi positions observed for this account yet.
+          {partial
+            ? 'No DeFi positions in the protocols that could be read; the others were not checked.'
+            : 'No DeFi positions observed for this account yet.'}
         </p>
       ) : (
         Array.from(byProtocol.entries()).map(([protocol, rows]) => (
