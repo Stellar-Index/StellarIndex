@@ -162,7 +162,7 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 
 **Likely causes.**
 
-- Bad release: the binary fails `config.Validate()` and exits; systemd parks the unit `failed` after `StartLimitBurst=10` in 5 min.
+- Bad release: the binary fails `config.Validate()` and exits; systemd parks the unit `failed` after `StartLimitBurst=100` in 15 min (about 8-10 min of restarts).
 - Credential or config rotation without a restart (`/etc/stellarindex.toml`, `/etc/default/stellarindex`).
 - Stale `/etc/caddy/MAINTENANCE_MODE`, Caddy, Cloudflare or DNS: customers are down while `up==1` and this does NOT fire.
 - Whole host down: expect `stellarindex_deadmansswitch` instead.
