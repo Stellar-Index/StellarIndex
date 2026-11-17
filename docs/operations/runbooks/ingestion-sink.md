@@ -20,6 +20,7 @@ Infrastructure faults on a write are NOT lost: the sink retries with backpressur
 | [`stellarindex_ingestion_duplicate_flood`](#stellarindex_ingestion_duplicate_flood) | P2 ticket, `for: 10m` | trades stop landing new rows though cursor and decoder look healthy |
 | [`stellarindex_ingestion_sink_undrained_rows`](#stellarindex_ingestion_sink_undrained_rows) | ticket, `for: 0m` | shutdown drain abandoned buffered rows the cursor had already passed |
 | [`stellarindex_gate_admission_unpersisted`](#stellarindex_gate_admission_unpersisted) | ticket, `for: 5m` | a factory child is gated in memory only; a restart would lose it |
+| [`stellarindex_gate_admission_persist_failed`](#stellarindex_gate_admission_persist_failed) | ticket, `for: 0m` | a gate admission write failed in the last 2h; survives an indexer restart |
 
 ## stellarindex_ingestion_insert_errors
 
@@ -242,6 +243,14 @@ Resolution B: take the window from the `ledger` on each `served-tier event aband
 Resolution C: external trades have no ledger and no lake copy; record venue and window in the incident record. The next poll refills the feed.
 
 Resolution D: find out why Postgres could not absorb a few hundred rows in 20 s (autovacuum on `trades`, a [lock convoy](postgres.md#stellarindex_pg_lock_convoy), or the deploy stopping Postgres before the indexer). If it was genuinely down, the loss was the designed outcome and the re-derive is the whole remedy.
+
+## stellarindex_gate_admission_persist_failed
+
+Symptom: `stellarindex_gate_admission_persist_failures_total{source=...}` rose in the last 2 hours. Unlike the unpersisted gauge, this survives an indexer restart, so it is the signal for an admission lost at shutdown.
+
+Check: `journalctl -u stellarindex-indexer --since "-2 h" | grep "gate admission"`. `gate admission persisted on retry` means nothing was lost; `gate admission LOST at shutdown` means it was.
+
+Fix: if lost, `stellarindex-ops seed-protocol-contracts -source <source>`, restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
 
 ## stellarindex_gate_admission_unpersisted
 

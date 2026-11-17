@@ -657,7 +657,7 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_registration_table_growing
 
-**Trigger.** `max(stellarindex_accounts_rows) - min(min_over_time((stellarindex_accounts_rows > 0)[6h:5m])) > 500` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
+**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
 
 **Check.** `stellarindex_api_keys_rows` moves in step; request rate and distinct client addresses on `/v1/register` in the API log. **Likely causes.** Rotating addresses (IPv6 /48s, proxy pools) each staying under the per-IP sign-up cap; or a real traffic spike. **Fix.** Limit the source ranges at the edge. Deleting the rows is a judgement call per account: they are real accounts with live keys. **Escalate:** growth continues past an edge block.
 
@@ -745,6 +745,18 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 5. Do NOT shorten the dwell time or silence while Redis is down.
 
 **Escalate:** none; related [admin_audit_write_failing](api.md#stellarindex_admin_audit_write_failing), [metrics-registry-absent](meta.md#stellarindex_metrics_registry_absent).
+
+## stellarindex_passkey_credential_added_burst
+
+**Trigger.** `sum(increase(stellarindex_passkey_credential_changes_total{change="added"}[1h])) > 10` for 5m, P3. Passkeys were added to many dashboard accounts at once, the signature of stolen sessions made durable.
+
+**Check.** `SELECT ts, account_id, ip, user_agent FROM audit_log WHERE action = 'passkey.register' AND ts > now() - interval '2 hours' ORDER BY ts DESC;` and look for shared addresses or user agents. **Fix.** Delete the unrecognised credentials, revoke the sessions of the affected accounts, and tell the owners. **Escalate:** the same source keeps adding passkeys after a revoke.
+
+## stellarindex_passkey_ceremony_replay
+
+**Trigger.** `sum(increase(stellarindex_passkey_login_refusals_total{reason="ceremony_replay"}[1h])) > 0` for 5m, P3. `POST /v1/auth/passkey/finish-login` refused a request that reused an already-consumed ceremony. A captured request was resent; clients do not do this.
+
+**Check.** The `passkey.login_replay` rows in `audit_log` and the API log name the client address. **Fix.** Block the address at the edge if it repeats. **Escalate:** the replayed assertions are for accounts whose sessions were also reported stolen.
 
 ## stellarindex_passkey_clone_warning
 

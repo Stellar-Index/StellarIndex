@@ -337,6 +337,25 @@ groups:
             (`/etc/prometheus/minio.token` returning 401) and MinIO
             itself being stopped. Follow the runbook.
 
+      # A silence leaves no trace in Prometheus and can mute every page
+      # while the deadman heartbeat stays green. Routine maintenance
+      # silences expire within hours, so one held for a day is forgotten
+      # or hostile; Alertmanager's API on r1 is unauthenticated.
+      - alert: stellarindex_alertmanager_silence_active
+        expr: max(alertmanager_silences{state="active"}) > 0
+        for: 24h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: meta
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_silence_active
+          summary: "An Alertmanager silence has been active for 24h"
+          description: |
+            At least one silence has been continuously active for a day.
+            List them with `amtool silence query` and expire any that no
+            operator can account for.
+
       # Deadmansswitch is inverse-logic: it fires constantly; AlertManager
       # routes it to an external receiver that watches for its heartbeat.
       # When the heartbeat stops, that receiver pages — which catches
