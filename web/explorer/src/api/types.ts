@@ -2077,6 +2077,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/accounts/{account}/earnings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending account — earnings and interest paid.
+         * @description What one account has earned and paid in Blend (V1/V2) and BLNT V3
+         *     lending, per (pool, reserve, side) and per backstop (pool, tier).
+         *     Unknown or never-active accounts return 200 with empty lists.
+         *
+         *     Each leg serves `net_flow` (supply: underlying deposited minus
+         *     withdrawn, collateral included; borrow: borrowed minus repaid;
+         *     backstop: backstop tokens deposited minus withdrawn), folded from
+         *     the account's events; `folded_tokens`, the b-token, d-token or
+         *     backstop-share balance those events imply; `onchain_tokens`, the
+         *     same balance read from the pool's `Positions` or the backstop's
+         *     `UserBalance` storage in the lake (queued shares included);
+         *     `current_value`, `onchain_tokens` in the asset valued at the
+         *     reserve's last on-chain rate update (b_rate/d_rate move only when
+         *     the reserve is touched; `rate_as_of` is that update's time) or at
+         *     the backstop's share price; and
+         *     `accrued = current_value - net_flow` (interest earned, interest
+         *     paid, or backstop earnings including emissions claimed into it),
+         *     true as of `rate_as_of`. A BLNT clawback counts as a withdrawal,
+         *     so `accrued` does not include the clawed-back amount as a loss.
+         *
+         *     `accrued` is served only when `folded_tokens` equals
+         *     `onchain_tokens` and no auction moved the leg (`reconciled:
+         *     true`). Otherwise it is null and `reason` names why:
+         *     `auction_moved` (a liquidation, bad-debt fill or write-off moved
+         *     the position without an underlying flow), `projection_behind`
+         *     (the on-chain entry changed after the newest projected event),
+         *     `balance_mismatch` (an event the fold does not cover, or history
+         *     not yet projected), `onchain_unread` (also when one pool's lake
+         *     read failed; the response is then marked degraded),
+         *     `fold_inconsistent`, `rate_unread`, `history_unverified` (the
+         *     protocol's event history is not verified back to its first
+         *     ledger, so earlier flows could be missing), or for a
+         *     Blend V1 backstop `blend_v1_unsupported`. Amounts are base-unit
+         *     decimal strings; `decimals` is the reserve's, null when unread or
+         *     for a backstop. Emission claims are sums of the claim events
+         *     projected so far, in the pool's emission token, and always a
+         *     lower bound. No USD values.
+         */
+        get: operations["getLendingAccountEarnings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools/{pool}/auctions": {
         parameters: {
             query?: never;
@@ -18429,6 +18485,116 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingAccountEarnings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Account G-strkey or contract C-strkey (an M-strkey resolves to its base account). */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Earnings per leg. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+                     *         "legs": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "side": "supply",
+                     *             "tier": null,
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "decimals": 7,
+                     *             "net_flow": "1000000000",
+                     *             "folded_tokens": "950000000",
+                     *             "onchain_tokens": "950000000",
+                     *             "current_value": "1045000000",
+                     *             "rate_as_of": "2026-07-03T22:31:05Z",
+                     *             "accrued": "45000000",
+                     *             "reconciled": true,
+                     *             "reason": null
+                     *           }
+                     *         ],
+                     *         "emissions": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "claimed": "120000000",
+                     *             "lower_bound": true
+                     *           }
+                     *         ],
+                     *         "note": "accrued is current_value - net_flow, served only when the token balance folded from this account's events equals its current on-chain balance.",
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            account: string;
+                            note: string;
+                            /**
+                             * Format: int64
+                             * @description Highest ledger the lake had captured at serve time.
+                             */
+                            as_of_ledger?: number;
+                            legs: {
+                                /** @enum {string} */
+                                protocol: "blend" | "blnt";
+                                pool: string;
+                                /** @enum {string} */
+                                side: "supply" | "borrow" | "backstop";
+                                /** @enum {string|null} */
+                                tier: "FirstLoss" | "SecondLoss" | "ThirdLoss" | null;
+                                /** @description Reserve underlying or backstop token contract; null when unread. */
+                                asset: string | null;
+                                decimals: number | null;
+                                net_flow: string;
+                                folded_tokens: string | null;
+                                onchain_tokens: string | null;
+                                current_value: string | null;
+                                /**
+                                 * Format: date-time
+                                 * @description When the reserve's stored rate was last updated on chain; current_value and accrued are valued at the reserve's last on-chain rate update. Null for a backstop leg or an unread rate.
+                                 */
+                                rate_as_of: string | null;
+                                accrued: string | null;
+                                reconciled: boolean;
+                                /** @enum {string|null} */
+                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "history_unverified" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                            }[];
+                            emissions: {
+                                /** @enum {string} */
+                                protocol: "blend" | "blnt";
+                                pool: string;
+                                claimed: string;
+                                lower_bound: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

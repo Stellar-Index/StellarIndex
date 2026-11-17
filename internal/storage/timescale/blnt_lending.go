@@ -26,6 +26,12 @@ const (
 	                          WHEN event_kind = 'repay' THEN -amount END`
 	blntBorrowTokenExpr = `CASE WHEN event_kind IN ('borrow','flash_loan') THEN amount2
 	                            WHEN event_kind = 'repay' THEN -amount2 END`
+	// A NULL in either summed column drops the row from one sum while the other still counts it; such a side's token fold is
+	// served as "" (unread), never as a number.
+	blntSupplyNullExpr = `amount IS NULL OR CASE WHEN event_kind = 'clawback'
+	                                            THEN attributes->>'supply_burned' IS NULL OR attributes->>'collateral_burned' IS NULL
+	                                            ELSE amount2 IS NULL END`
+	blntBorrowNullExpr = `amount IS NULL OR amount2 IS NULL`
 )
 
 // ListBLNTPools is ListBlendPools over blnt_events: one row per BLNT pool with position or auction events.
@@ -146,7 +152,9 @@ const blntPositionsByUserSQL = `
 		         COALESCE(SUM(` + blntSupplyTokenExpr + `),0) AS s_tok,
 		         MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + blntSupplySideKinds + `)) AS s_ts,
 		         MAX(ledger) FILTER (WHERE event_kind IN (` + blntSupplySideKinds + `)) AS s_ledger,
+		         COUNT(*) FILTER (WHERE event_kind IN (` + blntSupplySideKinds + `) AND (` + blntSupplyNullExpr + `)) AS s_null,
 		         COUNT(*) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)) AS b_n,
+		         COUNT(*) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `) AND (` + blntBorrowNullExpr + `)) AS b_null,
 		         COALESCE(SUM(` + blntBorrowNetExpr + `),0) AS b_net,
 		         COALESCE(SUM(` + blntBorrowTokenExpr + `),0) AS b_tok,
 		         MAX(ledger_close_time) FILTER (WHERE event_kind IN (` + lendingBorrowSideKinds + `)) AS b_ts,
@@ -173,12 +181,12 @@ const blntPositionsByUserSQL = `
 		       COALESCE(e.s_n,0) + COALESCE(m.s_n,0) > 0,
 		       COALESCE(e.s_net,0)::text,
 		       COALESCE(m.s_n,0) > 0,
-		       (COALESCE(e.s_tok,0) + COALESCE(m.s_tok,0))::text,
+		       CASE WHEN COALESCE(e.s_null,0) > 0 THEN '' ELSE (COALESCE(e.s_tok,0) + COALESCE(m.s_tok,0))::text END,
 		       GREATEST(e.s_ts, m.s_ts), GREATEST(e.s_ledger, m.s_ledger),
 		       COALESCE(e.b_n,0) + COALESCE(m.b_n,0) > 0,
 		       COALESCE(e.b_net,0)::text,
 		       COALESCE(m.b_n,0) > 0,
-		       (COALESCE(e.b_tok,0) + COALESCE(m.b_tok,0))::text,
+		       CASE WHEN COALESCE(e.b_null,0) > 0 THEN '' ELSE (COALESCE(e.b_tok,0) + COALESCE(m.b_tok,0))::text END,
 		       GREATEST(e.b_ts, m.b_ts), GREATEST(e.b_ledger, m.b_ledger)
 		  FROM ev e
 		  FULL JOIN mv m ON m.pool = e.pool AND m.asset = e.asset

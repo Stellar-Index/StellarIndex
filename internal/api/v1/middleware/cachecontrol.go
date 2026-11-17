@@ -108,6 +108,8 @@ var (
 	contractDetailPath = regexp.MustCompile(`^/v1/contracts/[^/]+(/interactions|/code-history|/transfers)?$`)
 	// lendingReservesPath is /v1/lending/pools/{pool}/reserves and its /config-history, /backstop, /auctions, /emissions and history siblings.
 	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/(reserves|reserves/[^/]+/history|config-history|backstop|backstop/history|auctions|emissions)$`)
+	// lendingAccountEarningsPath is /v1/lending/accounts/{account}/earnings.
+	lendingAccountEarningsPath = regexp.MustCompile(`^/v1/lending/accounts/[^/]+/earnings$`)
 )
 
 // ledgerPolicy classifies the operator probes and the explorer's ledger/tx surface; ok=false means fall through to the main switch.
@@ -186,6 +188,8 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		protocolTVLPath.MatchString(path),
 		// Lending-pool reserves: current contract state, like /v1/pools/reserves.
 		lendingReservesPath.MatchString(path),
+		// Per-account earnings value current positions at current reserve rates.
+		lendingAccountEarningsPath.MatchString(path),
 		// The pool list carries each pool's summary from that same reserves view.
 		path == "/v1/lending/pools",
 		// The non-Stellar half of /v1/assets: same live valuations, so the same band.

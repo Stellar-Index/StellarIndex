@@ -421,8 +421,9 @@ const lendingReservesMaxEntries = 256
 
 // poolReserves is one built GET /v1/lending/pools/{pool}/reserves body and its flags, cached per pool.
 type poolReserves struct {
-	view  LendingPoolReservesView
-	flags Flags
+	view   LendingPoolReservesView
+	flags  Flags
+	states []clickhouse.BlendReserveState // the raw reserve state behind view, for account earnings
 }
 
 // lendingStageErr names the read that failed, so the handler maps it as it did before the cache.
@@ -481,7 +482,7 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	out.AsOfLedger = wmLedger
 	// A USD figure valued at a stale price is stale whatever the lake's own freshness.
 	stale = stale || slices.Contains(stalePrice, true)
-	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed}}, nil
+	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed}, states: states}, nil
 }
 
 // poolRead is one pool's reserve assets and lake state; configsFailed means APRs are withheld.
