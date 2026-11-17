@@ -1849,6 +1849,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending markets — compare supply and borrow rates across every pool.
+         * @description One row per (pool, reserve) across every lending pool that
+         *     `/v1/lending/pools` lists (Blend V1/V2 and BLNT V3), to compare
+         *     where an asset earns the most or borrows cheapest. Every figure
+         *     is copied from the same per-pool view
+         *     `/v1/lending/pools/{pool}/reserves` serves, so the two never
+         *     disagree; see that endpoint for how amounts, APRs, USD values
+         *     and `price_stale` are derived.
+         *
+         *     Rows are INCLUDED but marked `obtainable: false` when their APR
+         *     is not a yield a new position can earn or pay: the pool is not
+         *     active (`pool_not_active`, e.g. on ice or frozen), its status is
+         *     not known (`pool_status_unknown`, every Blend V1 pool, whose
+         *     status codes are not verified), the reserve is disabled
+         *     (`reserve_disabled`), its config is not known
+         *     (`reserve_config_unknown`), or its APRs are withheld
+         *     (`rate_unavailable`). Exclude them for a "best rate" answer.
+         *
+         *     A pool whose reserves cannot be read is named in
+         *     `omitted_pools` with a reason and its rows are absent; `partial`
+         *     is then true and the response is sent `Cache-Control: no-store`.
+         *     `partial` is also true when the BLNT pool list could not be
+         *     read. Asset identity is the reserve token contract plus, for a
+         *     SAC, the classic or native asset it wraps (`asset_id`), never
+         *     the code alone. At most 2,000 rows are served; `truncated` is
+         *     true when that cap cut the list.
+         */
+        get: operations["getLendingRates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools/{pool}/reserves": {
         parameters: {
             query?: never;
@@ -17900,6 +17944,153 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingRates: {
+        parameters: {
+            query?: {
+                /** @description Only this asset's reserves: a token contract C-strkey or a canonical asset id. Every alias matches, so `native`, `crypto:XLM` and the XLM SAC select the same rows. */
+                asset?: string;
+                protocol?: "blend" | "blnt";
+                /** @description `supply_apr` (default, highest first), `borrow_apr` (lowest first) or `supplied_usd` (largest first). Rows without the key sort last; ties by pool then asset. */
+                sort?: "supply_apr" | "borrow_apr" | "supplied_usd";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rate rows. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "rates": [
+                     *           {
+                     *             "protocol": "blend",
+                     *             "pool_version": "v2",
+                     *             "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *             "pool_status": "active",
+                     *             "pool_status_code": 1,
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "asset_code": "USDC",
+                     *             "asset_issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "supply_apr": 0.0819,
+                     *             "borrow_apr": 0.1091,
+                     *             "utilization_pct": 75.07,
+                     *             "decimals": 7,
+                     *             "supplied": "589262319356640",
+                     *             "borrowed": "442359640330233",
+                     *             "supplied_usd": "58926231.94",
+                     *             "borrowed_usd": "44235964.03",
+                     *             "price_usd": "1",
+                     *             "price_stale": false,
+                     *             "collateral_factor": "9500000",
+                     *             "liability_factor": "9500000",
+                     *             "supply_cap": "10000000000000000",
+                     *             "enabled": true,
+                     *             "last_update": "2026-07-03T22:37:51Z",
+                     *             "obtainable": true,
+                     *             "exclusions": []
+                     *           }
+                     *         ],
+                     *         "omitted_pools": [],
+                     *         "partial": false,
+                     *         "truncated": false,
+                     *         "config_decimals": 7
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            rates?: {
+                                /** @enum {string} */
+                                protocol?: "blend" | "blnt";
+                                /**
+                                 * @description Blend V1 or V2, or v3 for BLNT. Null when the Blend lineage is not known.
+                                 * @enum {string|null}
+                                 */
+                                pool_version?: "v1" | "v2" | "v3" | null;
+                                /** @description Pool contract C-strkey. */
+                                pool?: string;
+                                /** @description Pool status label (`admin_active`, `active`, `admin_on_ice`, `on_ice`, `admin_frozen`, `frozen`, `setup`). Null for a Blend V1 pool or when the pool config is not known. */
+                                pool_status?: string | null;
+                                /** @description Raw PoolConfig status code. Null when the pool config is not known. */
+                                pool_status_code?: number | null;
+                                /** @description Reserve token contract C-strkey. */
+                                asset?: string;
+                                /** @description Canonical id of the classic or native asset a SAC reserve wraps. Null when the token is not a known SAC. */
+                                asset_id?: string | null;
+                                /** @description Classic asset code; null for native and non-SAC tokens. */
+                                asset_code?: string | null;
+                                /** @description Classic asset issuer; null for native and non-SAC tokens. */
+                                asset_issuer?: string | null;
+                                /** @description Supply APR as a fraction (0.05 = 5%). Null when the rate-model config is not known. */
+                                supply_apr?: number | null;
+                                /** @description Borrow APR as a fraction. Null when the rate-model config is not known. */
+                                borrow_apr?: number | null;
+                                /** @description Borrowed/supplied, 0..100. */
+                                utilization_pct?: number;
+                                /** @description The token's decimal exponent; null when not established. */
+                                decimals?: number | null;
+                                /** @description Total supplied, underlying token base units. */
+                                supplied?: string;
+                                /** @description Total borrowed, underlying token base units. */
+                                borrowed?: string;
+                                supplied_usd?: string | null;
+                                borrowed_usd?: string | null;
+                                /** @description USD price per whole token the USD values use; null whenever they are. */
+                                price_usd?: string | null;
+                                price_stale?: boolean;
+                                /** @description Raw integer at `config_decimals`; null when the reserve config is not known. */
+                                collateral_factor?: string | null;
+                                /** @description Raw integer at `config_decimals`; null when the reserve config is not known. */
+                                liability_factor?: string | null;
+                                /** @description Base units; null on a V1 pool, which has no cap, or when the config is not known. */
+                                supply_cap?: string | null;
+                                /** @description Null when the reserve config is not known. */
+                                enabled?: boolean | null;
+                                /**
+                                 * Format: date-time
+                                 * @description Ledger close time of the reserve's last interest accrual.
+                                 */
+                                last_update?: string | null;
+                                /** @description False when `exclusions` is non-empty. */
+                                obtainable?: boolean;
+                                exclusions?: ("pool_not_active" | "pool_status_unknown" | "reserve_disabled" | "reserve_config_unknown" | "rate_unavailable")[];
+                            }[];
+                            omitted_pools?: {
+                                /** @enum {string} */
+                                protocol?: "blend" | "blnt";
+                                pool?: string;
+                                reason?: string;
+                            }[];
+                            /** @description True when a listed pool, or the BLNT pool list, is missing from `rates`. */
+                            partial?: boolean;
+                            /** @description True when `rates` was cut at 2,000 rows. */
+                            truncated?: boolean;
+                            /** @description Fixed-point scale of `collateral_factor` and `liability_factor`. Always 7. */
+                            config_decimals?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
