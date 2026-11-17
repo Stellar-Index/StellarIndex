@@ -915,7 +915,7 @@ func rwaAdmissibleFeedRow(row timescale.OracleDayPoint) bool {
 	switch {
 	case row.Asset.Type != canonical.AssetRWA:
 		return false
-	case external.Lookup(row.Source).Class != external.ClassOracle:
+	case external.Lookup(row.Source).Class != external.ClassOracle, external.RedistributionBarred(row.Source):
 		return false
 	case row.Price == nil || row.Price.Sign() <= 0:
 		return false

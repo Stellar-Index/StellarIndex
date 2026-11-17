@@ -126,6 +126,11 @@ func Registered(source string) bool {
 	return ok
 }
 
+// RedistributionBarred reports whether no public route may serve the source's values (Metadata.RedistributionBarred).
+func RedistributionBarred(source string) bool {
+	return Registry[source].RedistributionBarred
+}
+
 // IncludeInVWAP is true only when the source is registered AND its IncludeInVWAP flag is true.
 func IncludeInVWAP(source string) bool {
 	return Lookup(source).IncludeInVWAP

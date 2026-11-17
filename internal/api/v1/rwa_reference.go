@@ -262,7 +262,7 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 			continue
 		}
 		// R-C: an oracle, not an aggregator writing into the same table for divergence.
-		if external.Lookup(u.Source).Class != external.ClassOracle {
+		if external.Lookup(u.Source).Class != external.ClassOracle || external.RedistributionBarred(u.Source) {
 			continue
 		}
 		// The stored feed code verbatim: ParseAsset only admits the exact spelling, so no folding.

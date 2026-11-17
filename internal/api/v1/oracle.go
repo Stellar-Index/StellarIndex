@@ -275,7 +275,7 @@ func latestOracleReadings(updates []canonical.OracleUpdate, filterQuote bool, qu
 		if filterQuote && !u.Quote.Equal(quote) {
 			continue
 		}
-		if m := external.Registry[u.Source]; m.Retired || m.RedistributionBarred {
+		if external.Registry[u.Source].Retired || external.RedistributionBarred(u.Source) {
 			continue
 		}
 		rows = append(rows, oracleReadingFrom(u))
@@ -337,7 +337,7 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	includeUnmapped := r.URL.Query().Get("include_unmapped") == "true"
 	rows := make([]OracleReading, 0, len(updates))
 	for _, u := range updates {
-		if external.Lookup(u.Source).Class != external.ClassOracle {
+		if external.Lookup(u.Source).Class != external.ClassOracle || external.RedistributionBarred(u.Source) {
 			continue
 		}
 		if !includeUnmapped && !u.Asset.IsMapped() {
