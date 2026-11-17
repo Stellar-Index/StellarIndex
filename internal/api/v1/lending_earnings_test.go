@@ -14,6 +14,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -22,12 +23,13 @@ const earningsAccount = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN
 
 type stubEarningsPositions struct {
 	*stubPositionsReader
-	flows    timescale.LendingAccountFlows
-	flowsErr error
+	blntFolds []timescale.BlendPositionFold
+	flows     timescale.LendingAccountFlows
+	flowsErr  error
 }
 
-func (*stubEarningsPositions) BLNTPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
-	return nil, nil
+func (s *stubEarningsPositions) BLNTPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
+	return s.blntFolds, nil
 }
 
 func (*stubEarningsPositions) BLNTBackstopByUser(context.Context, string) ([]timescale.BLNTBackstopFold, error) {
@@ -343,6 +345,35 @@ func TestLendingAccountEarnings_RateBehindFold(t *testing.T) {
 	srv = v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
 	if leg := getEarnings(t, srv, earningsAccount, http.StatusOK).Legs[0]; !leg.Reconciled || strOrNull(leg.Accrued) != "10" {
 		t.Fatalf("rate stored at the newest event: leg = %+v", leg)
+	}
+
+	// A fully exited leg holds no tokens for a stale rate to misvalue, so accrued is exact: 0 - (-5).
+	exited := fold
+	exited.SupplyNet, exited.SupplyTokens = "-5", "0"
+	exPos := ex.positions
+	ex.positions = clickhouse.LendingAccountPositions{Readable: true, Supply: map[string]*big.Int{}, Ledger: 500}
+	pr.blend[0] = exited
+	srv = v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
+	if leg := getEarnings(t, srv, earningsAccount, http.StatusOK).Legs[0]; !leg.Reconciled || strOrNull(leg.Accrued) != "5" {
+		t.Fatalf("zero on-chain balance with the rate behind: leg = %+v", leg)
+	}
+
+	// A BLNT leg is gated the same way.
+	ex.positions = exPos
+	blntFold := fold
+	blntFold.Pool = blnt.MainnetFixedPool
+	ex.reserves[0].Pool = blnt.MainnetFixedPool
+	pr = &stubEarningsPositions{stubPositionsReader: &stubPositionsReader{}, blntFolds: []timescale.BlendPositionFold{blntFold}}
+	verdicts := verifiedLendingHistory()
+	now := time.Now().UTC()
+	verdicts.snaps = append(verdicts.snaps, timescale.CompletenessSnapshot{
+		Source: blnt.SourceName, Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100, ComputedAt: now, ProjectionEvidencedAt: now,
+	})
+	srv = v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verdicts})
+	got = getEarnings(t, srv, earningsAccount, http.StatusOK)
+	if len(got.Legs) != 1 || got.Legs[0].Protocol != blnt.SourceName || got.Legs[0].Reconciled ||
+		strOrNull(got.Legs[0].Reason) != "rate_behind" {
+		t.Fatalf("blnt legs = %+v", got.Legs)
 	}
 }
 

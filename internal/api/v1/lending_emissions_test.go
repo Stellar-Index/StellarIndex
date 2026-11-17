@@ -150,6 +150,32 @@ func TestLendingPoolEmissions_ClaimsLowerBoundUnlessVerifiedFromGenesis(t *testi
 	}
 }
 
+// TestLendingPoolEmissions_ClaimsStaleWhenIngestStalled: a frozen cursor keeps the verdict's ledger gap at 0, yet claims made
+// since the stall are missing from totals served as of now, so a verified-from-genesis verdict must not clear the lower bound.
+func TestLendingPoolEmissions_ClaimsStaleWhenIngestStalled(t *testing.T) {
+	ex := &stubEmissionsExplorer{stubExplorerReader: &stubExplorerReader{}, state: emissionStreams(t, 1)}
+	lr := &stubEmissionClaimReader{claims: timescale.LendingEmissionClaims{Pool: timescale.LendingClaimTotals{
+		Claims: 1, Amount: mustAmount(t, "1200000000"), Amount30d: mustAmount(t, "0"),
+	}}}
+	now := time.Now().UTC()
+	verdicts := &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
+		Source: "blend", Genesis: 100, Tip: 63_000_000, ProjectionOK: true, ProjectionVerifiedFrom: 100,
+		ComputedAt: now, ProjectionEvidencedAt: now,
+	}}}
+	for _, tc := range []struct {
+		age    time.Duration
+		reason string
+	}{{age: 30 * time.Minute, reason: "history_verdict_stale"}, {age: 5 * time.Second, reason: "null"}} {
+		srv := v1.New(v1.Options{
+			Explorer: ex, Lending: lr, CompletenessReader: verdicts,
+			Cursors: &stubCursorsReader{rows: []timescale.Cursor{mkCursor("ledgerstream", "", 63_000_000, tc.age)}},
+		})
+		if c := getEmissions(t, srv, mkCStrkey(t, 1), http.StatusOK).Claims; strOrNull(c.LowerBoundReason) != tc.reason {
+			t.Errorf("cursor age %s: lower_bound=%v reason %s, want %s", tc.age, c.LowerBound, strOrNull(c.LowerBoundReason), tc.reason)
+		}
+	}
+}
+
 // TestLendingPoolEmissions_BLNT reads the tiered layout and serves per-tier backstop claims as shares.
 func TestLendingPoolEmissions_BLNT(t *testing.T) {
 	unknown := blend.PoolVersionUnknown

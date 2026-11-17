@@ -348,7 +348,8 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	return false
 }
 
-// coverageVerdictStale is one verdict's share of [Server.coverageVerdictsStale], for a consumer that relies on named sources only.
+// coverageVerdictStale is one verdict's share of [Server.coverageVerdictsStale], for a consumer that relies on named sources only;
+// the ingest-stall signal is not per verdict, so callers apply it themselves.
 func coverageVerdictStale(sn timescale.CompletenessSnapshot, now time.Time, netTip uint32, haveTip bool) bool {
 	if haveTip && netTip > sn.Tip && netTip-sn.Tip > coverageVerdictStaleLedgers {
 		return true
@@ -388,12 +389,15 @@ func (s *Server) projectionHistoryVerdicts(ctx context.Context, sources ...strin
 	live, haveTip := s.liveTip(ctx)
 	now := time.Now()
 	netTip := completeness.NetworkTipLowerBound(live.LatestLedger, time.Time(live.IngestedAt), now)
+	// A stalled ingest keeps a verdict's gap at 0 for up to a day while claims made since go unprojected, so totals served as of
+	// now would be short, not just late.
+	stalled := haveTip && now.Sub(time.Time(live.IngestedAt)) > coverageIngestStallAge
 	for _, sn := range snaps {
 		if !slices.Contains(sources, sn.Source) {
 			continue
 		}
 		switch {
-		case coverageVerdictStale(sn, now, netTip, haveTip):
+		case stalled || coverageVerdictStale(sn, now, netTip, haveTip):
 			out[sn.Source] = historyVerdictStale
 		case sn.ProjectionOK && sn.ProjectionVerifiedFrom != 0 && sn.ProjectionVerifiedFrom <= sn.Genesis:
 			out[sn.Source] = historyVerified

@@ -420,6 +420,7 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 			leg.RateAsOf = reserveLastUpdate(st.Data.LastTime)
 		}
 		// Every pool action accrues and stores its reserve, so a rate stored before the leg's newest event is a stale read.
+		// A BLNT clawback is assumed to do so too (no contract evidence in the repo); if not, its leg is withheld, not misvalued.
 		rateBehind := haveRate && !sd.last.IsZero() && st.Data.LastTime < uint64(max(sd.last.Unix(), 0))
 		in := legInputs{moved: sd.moved, behind: behind, rateBehind: rateBehind, value: func(n *big.Int) (*big.Int, bool) {
 			if !haveRate {
