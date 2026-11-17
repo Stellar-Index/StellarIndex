@@ -19,8 +19,10 @@
 #   * UNBASELINED  migration with no baseline entry -> FAIL. New migrations are
 #                append-only, but their checksum is added in the SAME PR (`--write`)
 #                so the next edit of that file is caught.
-# Squashing or removing a not-yet-shipped migration stays possible; it becomes
-# an explicit `--write` in the diff rather than a silent drop.
+# The manifest is keyed on file name, so a rename or delete only moves a line;
+# lint-migrations.sh refuses a delete, a renumber, or a rename that edits the
+# body of any migration present at the PR base. A migration added in the same
+# PR can still be squashed or removed with an explicit `--write`.
 #
 # WHAT MAY BE EDITED (migrations/README.md "Amending a shipped migration" has
 # the long form): a shipped migration's UP body is immutable; its DOWN body and

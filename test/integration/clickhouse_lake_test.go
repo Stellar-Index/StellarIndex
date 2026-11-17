@@ -1433,6 +1433,21 @@ func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = er2.Close() })
 	assertResolves("backfill", er2)
+
+	// The index proof counts the payer's row as its own key: it shares (ledger_seq, tx_index) with the inner
+	// source's row, so a missing payer row must fail the window, not hide behind the source's.
+	proof, err := chstore.ProveOpsBySourceWindow(ctx, addr, ledger, ledger)
+	if err != nil || !proof.Complete() || proof.Txs != 2 {
+		t.Fatalf("ProveOpsBySourceWindow = %+v (err %v), want complete with 2 tx keys (inner source + payer)", proof, err)
+	}
+	if err := conn.Exec(ctx, `DELETE FROM stellar.ops_by_source WHERE source_account = ? AND ledger_seq = ? SETTINGS mutations_sync = 2`,
+		payerAccount, ledger); err != nil {
+		t.Fatalf("delete payer row: %v", err)
+	}
+	proof, err = chstore.ProveOpsBySourceWindow(ctx, addr, ledger, ledger)
+	if err != nil || proof.Complete() || proof.Txs != 2 || proof.ProjTxs != 1 {
+		t.Fatalf("ProveOpsBySourceWindow without the payer row = %+v (err %v), want incomplete: 2 tx keys, 1 projected", proof, err)
+	}
 }
 
 // A DROP PARTITION on contract_events leaves stellar.ledgers contiguous and hash-chained, so SubstrateProblem still
