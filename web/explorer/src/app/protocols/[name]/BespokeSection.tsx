@@ -669,15 +669,16 @@ export function entityHref(
   return `/contracts/${encodeURIComponent(id)}/`;
 }
 
-// entityName — the server's resolved name, else a curated lending pool name.
+// entityName — a curated lending pool name first (a pool's reserve list is
+// not what people call it), else the server's resolved name.
 export function entityName(
   kind: BespokeCellKind | undefined,
   id: string | undefined,
   display: string | undefined,
 ): string | null {
-  if (display) return display;
-  if (kind === 'pool' && id) return LENDING_POOL_META[id]?.name ?? null;
-  return null;
+  const curated =
+    kind === 'pool' && id ? LENDING_POOL_META[id]?.name : undefined;
+  return curated ?? (display || null);
 }
 
 // NamedEntity — a resolved name linked to its page, the full id on hover and
