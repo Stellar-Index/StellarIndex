@@ -275,7 +275,7 @@ func latestOracleReadings(updates []canonical.OracleUpdate, filterQuote bool, qu
 		if filterQuote && !u.Quote.Equal(quote) {
 			continue
 		}
-		if external.Registry[u.Source].Retired {
+		if m := external.Registry[u.Source]; m.Retired || m.RedistributionBarred {
 			continue
 		}
 		rows = append(rows, oracleReadingFrom(u))

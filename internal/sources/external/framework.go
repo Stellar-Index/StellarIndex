@@ -72,6 +72,9 @@ type Metadata struct {
 	Retired bool
 	// Paid indicates the source needs a commercial license or API key (shown in /v1/sources).
 	Paid bool
+	// RedistributionBarred: docs/operations/data-licensing-register.md bars re-serving this source's raw values through our
+	// API on the licence we hold. Unset means allowed or not yet classified there; it is not a licence grant.
+	RedistributionBarred bool
 	// Credit names the vendor to credit wherever this source's value is served on its own (a
 	// composite with provenance is allowed, a raw vendor proxy is not). Empty for on-chain sources.
 	Credit string

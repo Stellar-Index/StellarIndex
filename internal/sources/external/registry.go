@@ -84,9 +84,10 @@ var Registry = map[string]Metadata{
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, Credit: "exchangeratesapi.io", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Aggregators (divergence signal; excluded from VWAP) ─────
+	// CoinGecko's redistribution is an open owner decision in the licensing register, so it is not marked barred here.
 	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, Credit: "CoinGecko", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 5 * time.Minute},
-	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, Credit: "CoinMarketCap", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
-	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, Credit: "CCData (CryptoCompare)", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
+	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, RedistributionBarred: true, Credit: "CoinMarketCap", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
+	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, RedistributionBarred: true, Credit: "CCData (CryptoCompare)", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
 	// Vendor daily closes replayed from an owner-exported file for the span before any USD venue
 	// listed XLM: history only, credited, weightless, never a fill and never VWAP.
 	"coingecko_daily": {Class: ClassAggregator, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, Credit: "CoinGecko", BackfillAvailable: true, Backfill: BackfillNoWASM},
@@ -103,7 +104,7 @@ var Registry = map[string]Metadata{
 
 	// Tiingo publishes funds' daily NAV as `raw:<TICKER>` rows, read only by the RWA reference
 	// surface; never a VWAP input or a pair leg, hence weight 0. One NAV per business day.
-	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, Credit: "Tiingo", BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, RedistributionBarred: true, Credit: "Tiingo", BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
 // Lookup returns metadata for a source; unknown names fall back to class=exchange with included_in_vwap=false, so a typo cannot inject unvetted data into aggregation.
