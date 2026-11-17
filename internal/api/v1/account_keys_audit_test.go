@@ -23,6 +23,8 @@ func operatorSelfSubject() auth.Subject {
 		Identifier: "operator:staff-1",
 		Tier:       auth.TierOperator,
 		KeyID:      "kid_operator1",
+		// As the validators surface a full-access key; a closed-posture minter may mint nothing.
+		AllowAllPermissions: true,
 	}
 }
 
@@ -76,8 +78,8 @@ func TestAccountKeysRevoke_OperatorRequiresReasonAndAudits(t *testing.T) {
 	}
 }
 
-// TestAccountKeysRevoke_CustomerNeedsNoReason — customer revoke path
-// unchanged (no header, 204, no staff row).
+// TestAccountKeysRevoke_CustomerNeedsNoReason — a customer revoke needs no header and lands one
+// user-actor key.revoke row.
 func TestAccountKeysRevoke_CustomerNeedsNoReason(t *testing.T) {
 	sink := &recordingAuditSink{}
 	ts := newAdminTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, &fakeAccountStore{}, sink)
@@ -85,8 +87,11 @@ func TestAccountKeysRevoke_CustomerNeedsNoReason(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
-	if len(sink.entries) != 0 {
-		t.Errorf("audit entries = %d, want 0", len(sink.entries))
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1 key.revoke row", len(sink.entries))
+	}
+	if e := sink.entries[0]; e.Action != "key.revoke" || e.ActorKind != platform.ActorUser || e.TargetID != "kid_other" {
+		t.Errorf("audit entry = %+v, want a user-actor key.revoke row for kid_other", e)
 	}
 }
 

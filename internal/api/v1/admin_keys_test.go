@@ -83,6 +83,8 @@ func operatorSubject() auth.Subject {
 		Identifier: "operator:staff-1",
 		Tier:       auth.TierOperator,
 		KeyID:      "kid_operator1",
+		// As the validators surface a full-access key; a closed-posture minter may mint nothing.
+		AllowAllPermissions: true,
 	}
 }
 
@@ -848,6 +850,27 @@ func TestAdminKeysCreate_MintExceedsCallerIs403(t *testing.T) {
 	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:ok","account":"ok","label":"x"}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// A mint refused because the minting key is not live stays a 403, titled for what happened rather than as a scope excess.
+func TestKeysCreate_MinterNotLiveIs403WithItsOwnTitle(t *testing.T) {
+	refusal := fmt.Errorf("auth: Create: %w: the minting key kid_gone has no live record on this identifier", auth.ErrMinterNotLive)
+	admin := newAdminTestServer(t, operatorSubject(), &fakeAccountStore{err: refusal}, &recordingAuditSink{})
+	account := newAccountTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey}, &fakeAccountStore{err: refusal})
+	for name, resp := range map[string]*http.Response{
+		"admin":   postJSON(t, admin.URL+"/v1/admin/keys", `{"identifier":"acct:ok","account":"ok","label":"x"}`),
+		"account": accountDo(t, account, http.MethodPost, "/v1/account/keys", `{"label":"x"}`),
+	} {
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403; body = %s", name, resp.StatusCode, raw)
+		}
+		if !strings.Contains(string(raw), `"title":"Minting key is not live"`) ||
+			!strings.Contains(string(raw), "errors/minting-key-not-live") ||
+			!strings.Contains(string(raw), "kid_gone has no live record") {
+			t.Errorf("%s: body = %s, want the minting-key-not-live problem naming the refusal", name, raw)
+		}
 	}
 }
 

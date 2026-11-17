@@ -4,8 +4,10 @@
 package v1_test
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,6 +179,49 @@ func TestAdminKeyBudgetClampCounter(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(obs.AdminKeyBudgetClampsTotal.WithLabelValues("failed")); got != failedBefore {
 		t.Errorf("a clean clamp moved the failed counter: %v → %v", failedBefore, got)
+	}
+}
+
+// partialRevokeStore is a revoke cascade that removed some descendants and then failed.
+type partialRevokeStore struct {
+	recordingRevokeStore
+	removed []string
+}
+
+func (s *partialRevokeStore) RevokeKeyTree(_ context.Context, _, _ string) ([]string, error) {
+	s.calls++
+	return s.removed, s.err
+}
+
+// Descendants a failed revoke already removed still get a key.revoke row, marked failed, on both
+// the admin and the self-service surface: a retry cannot list them again.
+func TestKeyRevoke_FailedCascadeStillAuditsRemovedDescendants(t *testing.T) {
+	for name, path := range map[string]string{
+		"admin":   "/v1/admin/keys/kid_parent?identifier=signup-victim",
+		"account": "/v1/account/keys/kid_parent",
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &partialRevokeStore{
+				recordingRevokeStore: recordingRevokeStore{err: errors.New("connection reset")},
+				removed:              []string{"kid_child"},
+			}
+			sink := &recordingAuditSink{}
+			ts := newAdminKeyServer(t, auth.Subject{
+				Identifier: "signup-victim", Tier: auth.TierOperator, KeyID: "kid_ops",
+			}, store, sink)
+			resp := adminDelete(t, ts.URL+path, "key posted to a public gist")
+			if resp.StatusCode != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500", resp.StatusCode)
+			}
+			if len(sink.entries) != 1 {
+				t.Fatalf("audit rows = %d, want 1", len(sink.entries))
+			}
+			e, meta := sink.entries[0], string(sink.entries[0].Metadata)
+			if e.Action != "key.revoke" || e.TargetID != "kid_parent" ||
+				!strings.Contains(meta, `"revoked_descendant_key_ids":["kid_child"]`) || !strings.Contains(meta, `"outcome":"failed"`) {
+				t.Fatalf("audit row = %+v, metadata %s; want key.revoke on kid_parent naming kid_child, outcome failed", e, meta)
+			}
+		})
 	}
 }
 

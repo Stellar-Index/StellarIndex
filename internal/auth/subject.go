@@ -92,6 +92,9 @@ type Subject struct {
 	// anonymous and SEP-10 subjects). [ChildKeyRequest] copies it so a time-boxed key cannot mint
 	// itself a permanent successor.
 	ExpiresAt time.Time
+
+	// AncestorKeyIDs is the presented key's delegation chain, root first ([APIKeyRecord.AncestorKeyIDs]).
+	AncestorKeyIDs []string
 }
 
 // SubjectPermissionEntry mirrors platform.KeyPermissionEntry (Endpoint or EndpointPrefix, never both); the JSON tags are required because the Redis cache round-trips it and dropping them would bypass KeyPolicy on cache hits.

@@ -417,9 +417,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if subject.Tier == auth.TierOperator {
-		s.recordAccountKeyMintAudit(r, subject, req.Label, scopes, rec.KeyID, reason)
-	}
+	s.recordAccountKeyMintAudit(r, subject, req.Label, scopes, rec.KeyID, reason)
 
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data: KeyCreated{
@@ -507,12 +505,20 @@ func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subjec
 	return reason, true
 }
 
-// recordAccountKeyMintAudit persists the key.mint row for an operator self-service mint, shaped like the admin mint (the route
+// keyAuditActorKind is the audit actor for a self-service key call: staff for an operator key, the customer otherwise.
+func keyAuditActorKind(actor auth.Subject) platform.ActorKind {
+	if actor.Tier == auth.TierOperator {
+		return platform.ActorStaff
+	}
+	return platform.ActorUser
+}
+
+// recordAccountKeyMintAudit persists the key.mint row for every self-service mint, shaped like the admin mint (the route
 // field tells them apart). Best-effort: a sink failure logs at WARN and never blocks the mint.
 func (s *Server) recordAccountKeyMintAudit(
 	r *http.Request, actor auth.Subject, label string, scopes []string, mintedKeyID, reason string,
 ) {
-	s.logger.Info("account key mint (operator)",
+	s.logger.Info("account key mint",
 		"actor_key_id", actor.KeyID,
 		"actor_identifier", actor.Identifier,
 		"minted_key_id", mintedKeyID,
@@ -539,7 +545,7 @@ func (s *Server) recordAccountKeyMintAudit(
 		return
 	}
 	s.appendKeyAudit(r, platform.AuditEntry{
-		ActorKind:  platform.ActorStaff,
+		ActorKind:  keyAuditActorKind(actor),
 		Action:     "key.mint",
 		TargetKind: "api_key",
 		TargetID:   mintedKeyID,
@@ -547,12 +553,12 @@ func (s *Server) recordAccountKeyMintAudit(
 	}, "key_mint", "account key mint")
 }
 
-// recordAccountKeyRevokeAudit persists the key.revoke row for an operator self-service revoke; best-effort, the revoke must not
+// recordAccountKeyRevokeAudit persists the key.revoke row for every self-service revoke; best-effort, the revoke must not
 // be undone by a sink outage.
 func (s *Server) recordAccountKeyRevokeAudit(
-	r *http.Request, actor auth.Subject, keyID, reason string,
+	r *http.Request, actor auth.Subject, keyID, reason string, descendants []string, failed bool,
 ) {
-	s.logger.Info("account key revoke (operator)",
+	s.logger.Info("account key revoke",
 		"actor_key_id", actor.KeyID,
 		"actor_identifier", actor.Identifier,
 		"key_id", keyID,
@@ -560,20 +566,20 @@ func (s *Server) recordAccountKeyRevokeAudit(
 	if s.Audit == nil {
 		return
 	}
-	meta, err := json.Marshal(map[string]any{
+	meta, err := json.Marshal(withRevokedDescendants(map[string]any{
 		"route":             "/v1/account/keys",
 		"actor_key_id":      actor.KeyID,
 		"actor_identifier":  actor.Identifier,
 		"target_identifier": actor.Identifier,
 		"reason":            reason,
-	})
+	}, descendants, failed))
 	if err != nil {
 		s.logger.Warn("account key revoke: audit metadata marshal failed (skipping audit row)",
 			"err", err, "key_id", keyID)
 		return
 	}
 	s.appendKeyAudit(r, platform.AuditEntry{
-		ActorKind:  platform.ActorStaff,
+		ActorKind:  keyAuditActorKind(actor),
 		Action:     "key.revoke",
 		TargetKind: "api_key",
 		TargetID:   keyID,
@@ -632,9 +638,9 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 			"API key quota reached", http.StatusConflict,
 			fmt.Sprintf("this account already holds %d active API keys (max %d) — revoke one via DELETE /v1/account/keys/{keyID} first",
 				over.Active, over.Max))
-	case errors.Is(err, auth.ErrMintExceedsCaller):
-		s.logger.Warn("account key mint refused: request exceeds the minting credential", "err", err, "identifier", req.Identifier)
-		writeMintExceedsCaller(w, r, err)
+	case errors.Is(err, auth.ErrMintExceedsCaller), errors.Is(err, auth.ErrMinterNotLive):
+		s.logger.Warn("account key mint refused by the minting credential", "err", err, "identifier", req.Identifier)
+		writeMintRefused(w, r, err)
 	case errors.Is(err, auth.ErrKeyQuotaUnavailable):
 		s.logger.Error("account key quota check failed", "err", err, "identifier", req.Identifier)
 		writeProblem(w, r,
@@ -761,7 +767,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	// Postgres management row for a key that has one — a self-service
 	// caller can hold a /v1/register-minted key, which mirrors to both
 	// stores, alongside Redis-only keys minted via this same endpoint.
-	err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
+	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -769,14 +775,15 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		s.logger.Error("account keys revoke failed", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
+		if len(descendants) > 0 {
+			s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, true)
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-revoke-failed",
 			"Could not revoke key", http.StatusInternalServerError,
 			"see X-Request-ID in server logs")
 		return
 	}
-	if subject.Tier == auth.TierOperator {
-		s.recordAccountKeyRevokeAudit(r, subject, keyID, reason)
-	}
+	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
 }

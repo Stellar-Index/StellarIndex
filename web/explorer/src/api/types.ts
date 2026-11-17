@@ -24211,7 +24211,9 @@ export interface operations {
              *     a SEP-10 wallet token gets `key-mint-not-available`, any
              *     other non-account credential `account-tier-required`.
              *     A key that would exceed the caller's own scopes, rate
-             *     limit, expiry or monthly quota gets `scope-exceeds-caller`.
+             *     limit, expiry or monthly quota gets `scope-exceeds-caller`;
+             *     one whose minting key (or an ancestor of it) has no live
+             *     record or is being revoked gets `minting-key-not-live`.
              */
             403: {
                 headers: {
@@ -24404,7 +24406,9 @@ export interface operations {
             /**
              * @description Caller is not operator-tier, or the key would exceed the
              *     caller's own scopes, rate limit, expiry or monthly quota
-             *     (`scope-exceeds-caller`).
+             *     (`scope-exceeds-caller`), or the minting key (or an
+             *     ancestor of it) has no live record or is being revoked
+             *     (`minting-key-not-live`).
              */
             403: {
                 headers: {

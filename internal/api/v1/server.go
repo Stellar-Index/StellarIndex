@@ -2064,8 +2064,7 @@ func humaniseErrorSlug(slug string) string {
 	return strings.Join(words, " ")
 }
 
-// errorSlugRE constrains an error-type slug to the closed kebab-case
-// charset every real problem type uses.
+// errorSlugRE constrains an error-type slug to the closed kebab-case charset every real problem type uses.
 var errorSlugRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // knownErrorSlugs is the closed set of problem `type` slugs this API emits; a retired or mistyped slug must not be reflected as a live
@@ -2240,6 +2239,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"missing-body":                    {},
 	"missing-email":                   {},
 	"missing-identifier":              {},
+	"minting-key-not-live":            {},
 	"missing-key-id":                  {},
 	"missing-label":                   {},
 	"missing-params":                  {},
