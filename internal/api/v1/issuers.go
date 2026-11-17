@@ -130,10 +130,10 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if at, ok := s.Issuers.(issuersAtReader); ok {
 		var filled time.Time
-		rows, filled, stale, err = at.ListIssuersAt(listCtx, limit)
+		rows, filled, stale, err = at.ListIssuersAt(listCtx, limit+1)
 		vintage.note(filled)
 	} else {
-		rows, err = s.Issuers.ListIssuers(listCtx, limit)
+		rows, err = s.Issuers.ListIssuers(listCtx, limit+1)
 		vintage.note(time.Time{})
 	}
 	if err != nil {
@@ -169,6 +169,11 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			"Storage layer returned an error.")
 		return
 	}
+	// One row past limit is read so a directory of exactly limit issuers is not flagged truncated.
+	truncated := len(rows) > limit
+	if truncated {
+		rows = rows[:limit]
+	}
 	out := make([]IssuerListEntry, len(rows))
 	for i, r := range rows {
 		homeDomain, orgName := enrichIssuer(r.GStrkey, r.HomeDomain, r.OrgName)
@@ -189,8 +194,8 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			ScamReason:            reason,
 		}
 	}
-	// No cursor continues the list, so a full page is a lower bound.
-	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale, Truncated: len(rows) >= limit}})
+	// No cursor continues the list, so a capped page is a lower bound.
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale, Truncated: truncated}})
 }
 
 // handleIssuer serves GET /v1/issuers/{g_strkey}: 404 (problem+json) when the issuer was never observed; always includes the

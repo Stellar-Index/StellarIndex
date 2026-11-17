@@ -67,14 +67,15 @@ func TestMarkets_FailedEnrichmentNamesTheUnreadInclude(t *testing.T) {
 	}
 }
 
-// TestIssuersList_FullPageIsTruncated: with no cursor, a page holding `limit` rows cannot claim to be every issuer.
+// TestIssuersList_FullPageIsTruncated: with no cursor, a page capped at `limit` cannot claim to be every issuer, and a
+// directory of exactly `limit` issuers is complete.
 func TestIssuersList_FullPageIsTruncated(t *testing.T) {
-	reader := &stubIssuersReader{list: []timescale.IssuerSummary{{GStrkey: testUSDCIssuer}, {GStrkey: testUSDCIssuer}}}
+	reader := &stubIssuersReader{list: []timescale.IssuerSummary{{GStrkey: testUSDCIssuer}, {GStrkey: testUSDCIssuer}, {GStrkey: testUSDCIssuer}}}
 	srv := v1.New(v1.Options{Issuers: reader})
 	if got := getPartialFlags(t, srv, "/v1/issuers?limit=2"); !got.Flags.Truncated {
-		t.Errorf("limit=2 with 2 rows: flags.truncated = false")
+		t.Errorf("limit=2 with 3 rows: flags.truncated = false")
 	}
 	if got := getPartialFlags(t, srv, "/v1/issuers?limit=3"); got.Flags.Truncated {
-		t.Errorf("limit=3 with 2 rows: flags.truncated = true")
+		t.Errorf("limit=3 with exactly 3 rows: flags.truncated = true")
 	}
 }
