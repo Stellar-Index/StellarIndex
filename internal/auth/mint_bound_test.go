@@ -101,7 +101,9 @@ func TestMintedKeyNeverExceedsMinter_RefusesBroaderRequest(t *testing.T) {
 		edit  func(*Subject, *CreateAPIKeyRequest)
 		field string
 	}{
-		{"identifier: non-operator mints for another identifier", func(_ *Subject, r *CreateAPIKeyRequest) { r.Identifier = "acct-other" }, "Identifier"},
+		{"identifier: non-operator mints for another identifier", func(_ *Subject, r *CreateAPIKeyRequest) {
+			r.Identifier, r.ParentKeyID = "acct-other", ""
+		}, "Identifier"},
 		{"tier: apikey minter asks for operator", func(_ *Subject, r *CreateAPIKeyRequest) { r.Tier = TierOperator }, "Tier"},
 		{"parent: ParentKeyID names another key", func(_ *Subject, r *CreateAPIKeyRequest) { r.ParentKeyID = "kid_other" }, "ParentKeyID"},
 		{"scopes: outside the minter's", func(_ *Subject, r *CreateAPIKeyRequest) { r.Scopes = []string{"admin"} }, "Scopes"},
@@ -125,6 +127,10 @@ func TestMintedKeyNeverExceedsMinter_RefusesBroaderRequest(t *testing.T) {
 			store, _ := newBoundTestStore(t)
 			minter := restrictedParent()
 			seedMinter(t, store, minter)
+			if tc.field == "ParentKeyID" {
+				// A live record, so the refusal must come from the bound and not from the minter-record check.
+				seedMinter(t, store, Subject{KeyID: "kid_other", Identifier: minter.Identifier, Tier: minter.Tier, AllowAllPermissions: true})
+			}
 			req := ChildKeyRequest(minter, "child", nil)
 			tc.edit(&minter, &req)
 			req.MintedBy = &minter
@@ -136,7 +142,48 @@ func TestMintedKeyNeverExceedsMinter_RefusesBroaderRequest(t *testing.T) {
 	}
 }
 
-// TestMintedKeyWithinMinter_AdminIssuanceStillWorks: an unrestricted operator still issues a
+// TestBoundIdentifier: only an operator key mints for another identifier; this is the only guard on a non-delegated mint.
+func TestBoundIdentifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		tier   Tier
+		ident  string
+		wantOK bool
+	}{
+		{"own identifier", TierAPIKey, "acct-x", true},
+		{"another identifier", TierAPIKey, "acct-other", false},
+		{"operator, another identifier", TierOperator, "acct-other", true},
+	}
+	for _, tc := range cases {
+		err := boundIdentifier(Subject{KeyID: "kid_m", Identifier: "acct-x", Tier: tc.tier}, APIKeyRecord{Identifier: tc.ident})
+		if (err == nil) != tc.wantOK {
+			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.wantOK)
+		}
+	}
+}
+
+// TestBoundParentKeyID: a delegated key names its minting key on the minter's own identifier, nothing else.
+func TestBoundParentKeyID(t *testing.T) {
+	m := Subject{KeyID: "kid_m", Identifier: "acct-x", Tier: TierOperator}
+	cases := []struct {
+		name   string
+		rec    APIKeyRecord
+		wantOK bool
+	}{
+		{"not delegated", APIKeyRecord{Identifier: "acct-x"}, true},
+		{"the minter", APIKeyRecord{Identifier: "acct-x", ParentKeyID: "kid_m"}, true},
+		{"another key", APIKeyRecord{Identifier: "acct-x", ParentKeyID: "kid_other"}, false},
+		{"the minter, on another identifier", APIKeyRecord{Identifier: "acct-other", ParentKeyID: "kid_m"}, false},
+	}
+	for _, tc := range cases {
+		err := boundParentKeyID(m, tc.rec)
+		if (err == nil) != tc.wantOK {
+			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.wantOK)
+		}
+	}
+}
+
+// TestMintedKeyWithinMinter_AdminIssuanceStillWorks:an unrestricted operator still issues a
 // customer key on another identifier, which comes out full-access with no allowlist.
 func TestMintedKeyWithinMinter_AdminIssuanceStillWorks(t *testing.T) {
 	store, validator := newBoundTestStore(t)
