@@ -276,6 +276,8 @@ func (w *Writer) markHold(
 		return fmt.Errorf("freeze: marshal marker: %w", err)
 	}
 	if err := w.cache.Set(ctx, key.String(), body, ttl).Err(); err != nil {
+		// A decided freeze the API cannot see; the caller only logs, so this counter is what pages.
+		obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("marker_set").Inc()
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
 

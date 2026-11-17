@@ -6,6 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -216,4 +220,22 @@ func seedShortLadderBeside(t *testing.T, long freeze.State) (*miniredis.Miniredi
 		t.Fatalf("seed marker: %v", err)
 	}
 	return mr, w, key
+}
+
+// TestWriter_MarkerSetFailureIsCounted: a freeze decided while Redis rejects writes is never published, so the failure must be
+// counted where the ladder-write-failures alert reads it, not only returned to a caller that logs and moves on.
+func TestWriter_MarkerSetFailureIsCounted(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 0)
+	asset, quote := nativeUSD(t)
+	c := obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("marker_set")
+	before := testutil.ToFloat64(c)
+
+	mr.SetError("READONLY You can't write against a read only replica.")
+	if err := w.Mark(context.Background(), asset, quote, "", anomaly.Decision{Action: anomaly.ActionFreeze}); err == nil {
+		t.Fatal("Mark succeeded against a read-only Redis")
+	}
+	if got := testutil.ToFloat64(c) - before; got != 1 {
+		t.Fatalf("marker_set failures delta = %v, want 1", got)
+	}
 }

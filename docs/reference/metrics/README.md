@@ -1207,6 +1207,7 @@ The `surface` values are shared by all four price-serve gate counters (this one,
 | `history_series` | scam | `/v1/history` series |
 | `listing` | substance | `/v1/assets` listing rows, catalogue listing price, asset-detail overlay |
 | `markets` | scam | `/v1/markets` last price |
+| `ohlc` | scam | `/v1/ohlc` single bar and series |
 | `oracle` | both | SEP-40 oracle passthrough |
 | `pairs` | scam | `/v1/pairs` last price |
 | `pools` | scam | `/v1/pools` last price |
@@ -1555,7 +1556,9 @@ API-side freeze-marker reads that errored (Redis outage or timeout); client abor
 
 ### `stellarindex_anomaly_freeze_ladder_write_failures_total`
 
-Counter, label `op` (`record_freeze` / `mark_hold` / `clear`).
+Counter, label `op` (`record_freeze` / `mark_hold` / `clear` / `marker_set`).
+
+`marker_set` is a Redis freeze-marker write that failed: the freeze was decided but the API serves `flags.frozen=false`, and no durable row or ladder follows.
 
 Durable freeze writes that did not land: the `freeze_events` row (`record_freeze`) or its ladder (`mark_hold` / `clear`). `record_freeze` is worse: Redis still freezes but SQL readers treat the minute as unfrozen. An unapplied migration makes every ladder write match zero rows (`ErrNotFound`, counted here). Sustained non-zero means Redis-flush protection is inert; `mark_hold` is the dangerous direction. Labels are pre-seeded.
 
