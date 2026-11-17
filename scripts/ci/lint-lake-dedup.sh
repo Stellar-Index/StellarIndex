@@ -59,9 +59,15 @@
 # Also not flagged, each a decision:
 #
 #   * SQL in a double-quoted Go string is not analysed; production Go that
-#     writes a lake read that way FAILS (use a raw literal), as does a raw
-#     read whose table is a `%s` verb or a spliced identifier. Test files are
-#     exempt: they quote fragments in assertions.
+#     writes a lake read that way FAILS (use a raw literal), `stellar.%s`
+#     included, as does a raw read whose table is a bare `%s` verb or a
+#     spliced identifier. Test files are exempt: they quote fragments in
+#     assertions. A raw `stellar.%s` read IS analysed, as table `stellar.%s`:
+#     the table is unknown here, so an aggregating one needs FINAL or a
+#     baseline entry. A file is a subject when it names a watched table,
+#     `stellar.%s`, or a `FROM %s` verb (outside internal/storage/timescale,
+#     the Postgres tier), so a constant defined in another file cannot hide
+#     its readers.
 #   * Go `//` comments: prose ABOUT the query beside them, constantly quoting
 #     fragments. Operator recipes live in `.sql` headers, which ARE read (see
 #     deploy/clickhouse/ops_by_source.sql Step 3, whose
@@ -89,10 +95,23 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
 
 BASELINE="scripts/ci/lint-lake-dedup.baseline"
-# Not every ReplacingMergeTree in the lake: the two the rule was written for,
-# the three that carry amounts, and contract_events, which every protocol
-# count is taken from.
-LAKE_TABLES="transactions|operations|supply_flows|account_movements|movements_by_asset|contract_events"
+# Every ReplacingMergeTree in the `stellar` database (deploy/clickhouse/*.sql,
+# tier1_schema.sql, the Go DDL in supply_flows.go / account_movements.go):
+# each holds superseded versions of a key until a merge that may never run,
+# so none is exempt by table. Rollups and state tables are listed as well as
+# the archives; their sanctioned aggregating reads sit in the baseline with
+# the reason each is safe.
+LAKE_TABLES="ledgers|transactions|operations|operation_results|operation_participants"
+LAKE_TABLES="$LAKE_TABLES|contract_events|ledger_entry_changes|supply_flows|tx_hash_index"
+LAKE_TABLES="$LAKE_TABLES|ledger_entries_current|ledger_entries_current_v2|ttl_live_until"
+LAKE_TABLES="$LAKE_TABLES|account_movements|movements_by_asset|ops_by_source|account_op_types"
+LAKE_TABLES="$LAKE_TABLES|account_activity|contract_active_ledgers|contract_instance_changes"
+LAKE_TABLES="$LAKE_TABLES|contract_instance_changes_v2|sponsorship_events|sponsorship_totals_buckets"
+LAKE_TABLES="$LAKE_TABLES|lending_state_hourly|account_entry_ledgers|account_claimables"
+LAKE_TABLES="$LAKE_TABLES|claimable_removals|asset_entry_ledgers|trades_by_account"
+LAKE_TABLES="$LAKE_TABLES|trades_by_account_windows|cap67_movements_watermark|entry_history_watermark"
+# A Sprintf verb in the table position: the table is unknown, so it is watched.
+READ_TABLES="${LAKE_TABLES}|%[sv]"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
@@ -104,8 +123,12 @@ die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 # lint-imports.sh's SKIP_DIRS plus .claude, where agent worktrees put whole
 # repo copies in the walk.
 subjects=()
+verb_only="|"
 while IFS= read -r f; do
   [ -n "$f" ] || continue
+  case "$f" in
+    '>'*) f="${f#>}"; verb_only="${verb_only}${f}|" ;;
+  esac
   subjects+=("$f")
 done < <(
   find . \( -name .git -o -name vendor -o -name node_modules \
@@ -114,8 +137,12 @@ done < <(
     | sed 's#^\./##' \
     | sort \
     | while IFS= read -r f; do
-        if grep -qiE "stellar\\.(${LAKE_TABLES})" "$f"; then
+        if grep -qiE "stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" "$f"; then
           echo "$f"
+        elif [[ "$f" == *.go && "$f" != *_test.go && "$f" != internal/storage/timescale/* ]] &&
+             grep -qE '(FROM|JOIN)[ ]+%[sv]|(FROM|JOIN)[ ]*["`][ ]*\+|(from|join)[ ]+%[sv][ ]*$' "$f"; then
+          # names no watched table: its table comes from elsewhere
+          echo ">$f"
         fi
       done
 )
@@ -146,8 +173,8 @@ SQL
 # violating read plus a final `#counts <reads> <aggregating>` self-accounting
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
-  LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" \
-               -v INTERP_RE="\"[^\"]*(from|join)[ ]+stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
+  LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" \
+               -v VERB_FILES="$verb_only" -v INTERP_RE="\"[^\"]*(from|join)[ ]+stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" '
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
@@ -255,7 +282,7 @@ violations="$(
         len = RLENGTH
         tbl = substr(L, pos, len)
         sub(/^.*stellar\./, "stellar.", tbl)
-        sub(/[^a-z0-9_.].*$/, "", tbl)
+        sub(/[^a-z0-9_.%].*$/, "", tbl)
         from = pos + len - 1
         examined++
 
@@ -324,7 +351,11 @@ violations="$(
       # production Go would never be examined, so it is reported instead.
       if (!in_raw && index(l, "`") == 0 && FILENAME !~ /_test\.go$/) {
         part = l; cut = index(part, "//"); if (cut > 0) part = substr(part, 1, cut - 1)
-        if (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/) printf "#interp\t%s:%d\n", FILENAME, FNR
+        # A file naming no watched table is judged on upper-case SQL only:
+        # its lower-case "from" strings are log and error prose.
+        if (verb_file) {
+          if (part ~ /(FROM|JOIN)[ ]+%[sv]|(FROM|JOIN)[ ]*"[ ]*\+/) printf "#interp\t%s:%d\n", FILENAME, FNR
+        } else if (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/) printf "#interp\t%s:%d\n", FILENAME, FNR
       }
       if (index(l, "`") > 0) {
         l = go_mask(l, in_raw)
@@ -414,7 +445,8 @@ violations="$(
     }
 
     FNR == 1 { flush(); in_raw = 0; in_comment = 0; glue = ""
-               is_sql = (FILENAME ~ /\.sql$/) }
+               is_sql = (FILENAME ~ /\.sql$/)
+               verb_file = index(VERB_FILES, "|" FILENAME "|") > 0 }
     { if (is_sql) sql_line($0); else go_line($0) }
     END { flush(); printf "#counts %d %d\n", examined + 0, aggregating + 0 }
   ' "$canary_file" "${subjects[@]}"
@@ -507,7 +539,7 @@ for b in ${base_keys+"${base_keys[@]}"}; do
   # An entry for a table this copy does not watch is not stale: CI judges a PR
   # with the base branch's copy, which must accept the entries of the PR that
   # adds the table.
-  [[ "${b##*:stellar.}" =~ ^(${LAKE_TABLES})$ ]] || continue
+  [[ "${b##*:stellar.}" =~ ^(${READ_TABLES})$ ]] || continue
   case "$observed" in
     *"|$b|"*) : ;;
     *) echo "lint-lake-dedup: baseline stale: $b no longer violates — remove it from $BASELINE." >&2

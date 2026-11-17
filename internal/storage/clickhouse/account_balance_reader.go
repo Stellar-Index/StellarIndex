@@ -17,7 +17,7 @@ type AccountBalanceSnapshot struct {
 	Stroops int64
 	// AtLedger is the ledger_seq that snapshot was recorded at.
 	AtLedger uint32
-	// Snapshots is the total count of account-entry change rows we
+	// Snapshots is the count of distinct account-entry changes we
 	// hold for this account in the queried range — zero means the
 	// account is outside our coverage entirely (never observed).
 	Snapshots uint64
@@ -31,10 +31,16 @@ func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap Acco
 	}
 	defer func() { _ = conn.Close() }()
 
+	// The inner select keeps one version per change (the table is a ReplacingMergeTree(ingested_at)): a superseded
+	// version still in its own part would otherwise be counted, and its intra_ledger_seq could win the argMax.
 	const query = `
-		SELECT argMax(balance, (ledger_seq, intra_ledger_seq)) AS bal, max(ledger_seq) AS at_ledger, count() AS snapshots
-		FROM stellar.ledger_entry_changes
-		WHERE entry_type = 'account' AND account_id = ?
+		SELECT argMax(change_bal, (ledger_seq, intra)) AS bal, max(ledger_seq) AS at_ledger, count() AS snapshots
+		FROM (
+			SELECT ledger_seq, argMax(balance, ingested_at) AS change_bal, argMax(intra_ledger_seq, ingested_at) AS intra
+			FROM stellar.ledger_entry_changes
+			WHERE entry_type = 'account' AND account_id = ?
+			GROUP BY ledger_seq, tx_hash, op_index, change_index
+		)
 	`
 	var (
 		bal       int64

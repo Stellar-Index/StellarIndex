@@ -139,8 +139,8 @@ const lendingHistorySeedQuery = `SELECT key_xdr, protocol, ledger_seq, intra_led
 	LIMIT 1 BY key_xdr
 	SETTINGS optimize_move_to_prewhere_if_final = 0`
 
-// lendingHistoryKeyRowsQuery counts a key's rows of any version in the served hours.
-const lendingHistoryKeyRowsQuery = `SELECT count() FROM stellar.lending_state_hourly
+// lendingHistoryKeyRowsQuery counts a key's distinct served hours; only zero is read, and versions of one hour count once.
+const lendingHistoryKeyRowsQuery = `SELECT uniqExact(hour) FROM stellar.lending_state_hourly
 	WHERE contract_id = ? AND key_xdr = ? AND hour < toDateTime(?, 'UTC')`
 
 // lendingHistoryCoverage reads the derive watermark; ErrLendingHistoryNotReady when it never ran or the lake has no close time

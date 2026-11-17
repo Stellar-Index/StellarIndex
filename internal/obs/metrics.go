@@ -3202,7 +3202,7 @@ var CHSchemaProbePresent = prometheus.NewGaugeVec(
 var DerivedIndexWatermarkLedger = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_derived_index_watermark_ledger",
-		Help: "Ledger each derived ClickHouse index is proven complete through, as last read from stellar.entry_history_watermark (0 = no watermark row or no table; the fast paths gated on it serve their fallback).",
+		Help: "Ledger each derived ClickHouse index is proven complete through, as last read from the stellar.entry_history_watermark table (0 = no watermark row or no table; the fast paths gated on it serve their fallback).",
 	},
 	[]string{"index"},
 )

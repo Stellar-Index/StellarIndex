@@ -182,7 +182,7 @@ func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, s
 		}
 	}
 	if err := conn.Exec(ctx, fmt.Sprintf(
-		"ALTER TABLE stellar.contracts_census_daily REPLACE PARTITION '%s' FROM stellar.%s", partition, staging)); err != nil {
+		`ALTER TABLE stellar.contracts_census_daily REPLACE PARTITION '%s' FROM stellar.%s`, partition, staging)); err != nil {
 		return fmt.Errorf("clickhouse: census day %s replace: %w", partition, err)
 	}
 	logf("census day %s done in %s", partition, time.Since(start).Round(time.Second))
