@@ -156,6 +156,25 @@ func TestCountRecentEventsBySource_readsRollup(t *testing.T) {
 	}
 }
 
+// TestCountRecentEventsBySource_failsClosedOnFrozenRollup pins that a rollup nobody has refreshed within protocolEventsMaxAge is a
+// read failure, so /v1/protocols withholds events_24h and flags degraded instead of serving a frozen count as the trailing 24h.
+func TestCountRecentEventsBySource_failsClosedOnFrozenRollup(t *testing.T) {
+	t.Parallel()
+	want := "computed_at > now() - INTERVAL '" + protocolEventsMaxAge + "' AS fresh"
+	if !strings.Contains(readProtocolEventsRollup, want) {
+		t.Errorf("reader does not judge rollup age on the DB clock: %q", readProtocolEventsRollup)
+	}
+	if err := protocolEventsRollupFresh(3, false); err == nil {
+		t.Error("rows present but none fresh: want an error, got nil")
+	}
+	if err := protocolEventsRollupFresh(3, true); err != nil {
+		t.Errorf("fresh rollup: unexpected error %v", err)
+	}
+	if err := protocolEventsRollupFresh(0, false); err != nil {
+		t.Errorf("empty rollup: unexpected error %v (no rows is no counts, not stale)", err)
+	}
+}
+
 // TestRefreshProtocolEventsUpsert_shape asserts the writer folds the
 // census into one row per source and upserts idempotently.
 func TestRefreshProtocolEventsUpsert_shape(t *testing.T) {
