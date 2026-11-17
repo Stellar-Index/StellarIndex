@@ -217,6 +217,17 @@ confirm = next(t for t in tasks("patroni/tasks/09-patroni-join.yml") if t["name"
 check(confirm.get("uri", {}).get("url", "").endswith("/replica") and "_replica_check" in str(confirm.get("until")),
       "replica join asserts /replica answers 200")
 
+# redis: the live maxmemory-policy enforce runs only on a managed host whose Sentinel answered;
+# a fresh host (distro redis on loopback, AUTH failing with rc 0 and no output) is left to the template.
+enforce = next(t for t in tasks("redis-sentinel/tasks/03-redis-configure.yml")
+               if t.get("name") == "enforce maxmemory-policy on the running instance")
+for managed, answered, render, want in ((False, False, True, False), (True, True, False, True),
+                                        (True, False, False, False), (True, True, True, False)):
+    v = dict(redis_sentinel_managed={"rc": 0 if managed else 1}, redis_sentinel_state={"rc": 0, "stdout_lines": []},
+             redis_sentinel_answered=answered, redis_render_configs=render)
+    check(fires(enforce["when"], **v) == want,
+          f"redis policy enforce (managed={managed} answered={answered} render={render}) runs={want}")
+
 if failed:
     sys.exit(1)
 print("ansible-ha-roles-test: PASS")
