@@ -1191,8 +1191,8 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	listingRefs := rwaListingReferencesOf(m.contracts)
 	// Classic listing rows use the same cached read and rule ([listingEntryIn]) as /v1/assets:
 	// the `CODE-GISSUER` id first, then the derived SAC address, since the directory publishes an
-	// asset under either form. An unavailable snapshot yields a nil map: adds a reference, never removes.
-	classicListingRefs := s.assetListingSnapshot(ctx).byAddress
+	// asset under either form.
+	classicListingRefs := s.assetListingSnapshot(ctx)
 	for i := range view.Assets {
 		rwaApplyReference(&view.Assets[i], refs, listingRefs, classicListingRefs, now)
 	}
@@ -1204,7 +1204,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// The curated arm runs LAST, over the finished verified view, so it can say which of its rows
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
-	stale := degraded || curatedDegraded || join.unanswered
+	stale := degraded || curatedDegraded || join.unanswered || rwaReferencesUnanswered(view.Assets)
 	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed || trunc.unread > 0}}, nil
 }
 

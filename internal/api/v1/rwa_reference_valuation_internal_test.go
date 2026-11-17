@@ -112,7 +112,7 @@ func TestRWAReferenceValuation_RefusesANonPositiveOracleValue(t *testing.T) {
 		supply := "12336218000000"
 		a.CirculatingSupply = &supply
 		a.Decimals = intPtr(7)
-		rwaApplyReference(&a, snap, nil, nil, now)
+		rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 		if a.ReferenceValuation.Status != RWAPremiumReferenceNotPositive {
 			t.Errorf("raw %q: reference_valuation.status = %q, want %q",
@@ -135,7 +135,7 @@ func TestRWAReferenceValuation_NoSupplyIsNotZero(t *testing.T) {
 	})
 	a := admittedRow("USTRY", "")
 	a.Decimals = intPtr(7)
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.Reference == nil {
 		t.Fatal("the reference itself must still be published — the missing input is the supply, not the feed")
@@ -160,7 +160,7 @@ func TestRWAReferenceValuation_UnboundPairGetsNothing(t *testing.T) {
 	supply := "12336218000000"
 	a.CirculatingSupply = &supply
 	a.Decimals = intPtr(7)
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.ReferenceValuation.Status != RWAPremiumNotBound {
 		t.Errorf("status = %q, want %q", a.ReferenceValuation.Status, RWAPremiumNotBound)
@@ -191,7 +191,7 @@ func TestRWAReferenceValuation_StatusIsNeverEmpty(t *testing.T) {
 	}
 	for name, snap := range snaps {
 		a := admittedRow("USTRY", "1.0400")
-		rwaApplyReference(&a, snap, nil, nil, now)
+		rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 		if a.ReferenceValuation.Status == "" {
 			t.Errorf("%s: reference_valuation.status is empty", name)
 		}
@@ -199,7 +199,7 @@ func TestRWAReferenceValuation_StatusIsNeverEmpty(t *testing.T) {
 	// And the flagged-issuer branch, which returns before any of the
 	// above is consulted.
 	flagged := RWAAsset{Code: "USTRY", Issuer: boundIssuer, Valuation: RWAValuation{Status: RWAValuationIssuerFlagged}}
-	rwaApplyReference(&flagged, rwaReferenceSnapshotFrom(nil), nil, nil, now)
+	rwaApplyReference(&flagged, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(nil), now)
 	if flagged.ReferenceValuation.Status != RWAPremiumIssuerFlagged {
 		t.Errorf("flagged issuer: status = %q, want %q",
 			flagged.ReferenceValuation.Status, RWAPremiumIssuerFlagged)
@@ -231,7 +231,7 @@ func TestRWAReferenceValuation_ContractMemberIsRefusedByName(t *testing.T) {
 	}
 	supply := "8500000000000"
 	a.CirculatingSupply = &supply
-	rwaApplyReference(&a, snap, nil, nil, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(nil), now)
 
 	if a.ReferenceValuation.Status != RWAPremiumContractNotBound {
 		t.Errorf("reference_valuation.status = %q, want %q",

@@ -425,7 +425,7 @@ func rwaApplyReference(
 	a *RWAAsset,
 	snap rwaReferences,
 	listings map[string]timescale.ListingEntry,
-	classicListings map[string]timescale.ListingEntry,
+	classicListings assetListing,
 	now time.Time,
 ) {
 	// The scam-flag suppression comes first and covers the reference too: /v1/assets withholds this
@@ -511,7 +511,7 @@ func rwaApplyReference(
 
 // rwaApplyUnboundReference values a row no oracle feed binds: a fund share's own NAV, else the prospectus NAV of a CNAV class
 // whose listing row is unusable, else the address-exact listing directory; each refusal names why the oracle arm did not answer.
-func rwaApplyUnboundReference(a *RWAAsset, snap rwaReferences, classicListings map[string]timescale.ListingEntry, now time.Time) {
+func rwaApplyUnboundReference(a *RWAAsset, snap rwaReferences, classicListings assetListing, now time.Time) {
 	// A token coded XAU is not unbound by oversight: the oracle of that name prices a troy
 	// ounce, so report the specific refusal. A fund share's own NAV outranks the listing and
 	// prospectus arms.
@@ -522,10 +522,14 @@ func rwaApplyUnboundReference(a *RWAAsset, snap rwaReferences, classicListings m
 	if rwa.OffChainReferenceCode(a.Code) {
 		notFound = RWAPremiumNotInstrumentScoped
 	}
+	// "Nothing prices this row" is a finding only when every read that could have priced it answered.
+	if _, fundBound := rwaFundNAVTicker(a.Code, a.Issuer); !classicListings.available || (fundBound && !snap.available) {
+		notFound = RWAPremiumReferenceUnavailable
+	}
 	// The listing row for this exact asset, by the rule /v1/assets uses ([listingEntryIn]): the
 	// `CODE-GISSUER` id, then the derived SAC address, since the directory lists each asset under
 	// one form only. Never the code alone.
-	listing, _, _ := listingEntryIn(classicListings, a.AssetID)
+	listing, _, _ := listingEntryIn(classicListings.byAddress, a.AssetID)
 	// A CNAV class is valued at its prospectus NAV unless the listing price is a valuation the
 	// listing arm would serve; a zero, garbage or expired row must not erase the prospectus figure.
 	if _, refusal := rwaListingPrice(listing, notFound, now); refusal != "" {
@@ -696,6 +700,17 @@ func rwaRefuseReference(a *RWAAsset, status string) {
 // on a bound instrument refuses on it.
 func rwaISINConflict(code, issuer, anchorAsset string) bool {
 	return rwa.ConstantNAVISINConflict(code, issuer, anchorAsset) || rwa.VettedISINConflict(code, issuer, anchorAsset)
+}
+
+// rwaReferencesUnanswered reports a row whose reference was refused because a read did not answer: the view is degraded,
+// not a finding that the row has no reference.
+func rwaReferencesUnanswered(assets []RWAAsset) bool {
+	for _, a := range assets {
+		if a.ReferenceValuation.Status == RWAPremiumReferenceUnavailable {
+			return true
+		}
+	}
+	return false
 }
 
 // rwaRefuseWithheldIssuer refuses every reference figure for a row whose issuer is scam-flagged or could not be checked,
