@@ -165,14 +165,15 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 // The canonical `apikey:` record is read before the `apikey-cache:` row because it can carry revoked_at, so a derived cache row never shadows it.
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
 	rec, canonical, canonicalErr := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
+	if canonicalErr != nil {
+		// The unread record may be the revoked one, and a revoke's delete of the derived row is best-effort.
+		return Subject{}, false, fmt.Errorf("auth: apikey redis get: %w: %w", ErrKeyStoreUnavailable, canonicalErr)
+	}
 	ok := canonical
 	if !ok {
 		rec, ok, _ = v.readRecord(ctx, cachekeys.APIKeyCache(hexHash).String())
 	}
 	if !ok {
-		if canonicalErr != nil {
-			return Subject{}, false, fmt.Errorf("auth: apikey redis get: %w: %w", ErrKeyStoreUnavailable, canonicalErr)
-		}
 		return Subject{}, false, nil
 	}
 	if !rec.RevokedAt.IsZero() {
