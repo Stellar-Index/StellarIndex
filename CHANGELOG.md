@@ -20,6 +20,46 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.125.0] - 2026-11-17
+
+Tested against Stellar protocol 27. Migrations 0227-0230: 0227 corrects the stored comment on `nonstandard_decimals_assets` (its rows drive a price correction and must not be deleted), 0228 sets 7-day chunks on the thirteen trades-derived continuous aggregates (new chunks only), 0229 adds `issuers.sep1_payload_previous` so a home-domain change leaves an identity-history row, and 0230 makes account erasure also strip the audit `reason`, a staff `actor_email`, and the erased account's own ip and user agent; the 0191 down migration is also made safer over compressed chunks. No `pkg/*` break; `pkg/client` gains `below_floor`, `substance` and `volume_lower_bound` fields. The OpenAPI contract gains `/v1/lending/protocols` and additive flags and fields; nothing is removed and no commit carries an `OpenAPI-Break:` trailer. Host payload changed: ClickHouse `lending_state.sql`, `contract_event_shapes.sql` and `tier1_schema.sql`, the lake dedup driver, the indexer, `verify-archive-tier-b` and `pg-logrotate` units, alert rules in both rule trees and `apply-rules.sh`, and the archival-node, haproxy, loki, patroni, prometheus and redis-sentinel roles. Not run by the deploy: apply `deploy/clickhouse/lending_state.sql`; run the host role from the tag before deploying; re-derive sponsorship history with `ch-entry-history -write -from 32747293`; backfill the ancestor chain of every legacy API key once.
+
+### Added
+
+- **api:** `/v1/lending/protocols` lists each lending protocol with its token, pool and reserve counts, and total supplied, borrowed and available in USD; a total that leaves out a pool or reserve is a lower bound and names what was excluded.
+- **api:** lending account earnings carry USD values and net APR.
+- **api:** OHLC bars and series flag `below_floor` when no trade cleared the $0.01 notional floor, and carry the measurement behind a thin-market bar; RWA rows carry `volume_lower_bound`.
+- **explorer:** lending pages show floors, stale reads and the true auction fill; the asset page shows the supply basis it has.
+- **monitoring:** alerts for failed key clamps, failed token sweeps, a stalled census rollup, and a degraded cold tier.
+- **ci:** the integration suite runs in eight shards.
+
+### Changed
+
+- **api:** asset search finds catalogue assets by issuer or full asset id, and a thin-market twin keeps its supply when its market cap is withheld.
+- **api:** the 24h change on the asset detail and batch price routes is absent when the price it compares against is more than 30 minutes off 24 hours ago.
+- **api:** an Aquarius pool the reserve read did not value is counted and named, and makes DEX TVL a lower bound; a source's volume floor is flagged as a lower bound.
+- **explorer:** the verified badge is decided by asset id on every surface; a look-alike SAC address redirects to its own asset; the converter uses the headline price and empties when that price is withheld; RWA figures show their bounds and staleness; a failed backups refresh reads "last known, not current".
+- **pricing:** one notional floor decides which OHLC bars and which minutes may set a served price, and a rollup past its age bound is not served.
+- **auth:** a key minted by another key never exceeds its minter in any field, stores its full ancestor chain, and revoking a key revokes every key minted from it.
+- **lake:** the dedup driver rejects bad arguments and counts duplicates per partition before optimising; sponsorship ends when a consumed pre-auth signer is removed.
+- **migrations:** `migrate force` refuses a version the dirty row does not justify unless `-force-unsafe` is passed.
+- **ops:** a unit copied to a host is hardened and compared directive by directive; collectors that return nothing fail instead of passing; `ch-backfill` exits non-zero when any ledger was read short.
+- **ansible:** the prometheus and loki roles wire basic auth, replica labels and restarts; the patroni, haproxy and redis-sentinel roles fail safe.
+- **monitoring:** rule apply is safe to run twice at once.
+- **ci:** the migration gates no longer have bypasses, the deploy numbering gate uses what the host ran, and eight lints are tightened.
+
+### Fixed
+
+- **api:** account positions are exact only when every event that moves them is counted, and a Blend or BLNT leg closes on a zero token balance; the curated gap compares totals of the same day.
+- **lending:** earnings, claims and auctions that may be incomplete are withheld or flagged; hourly state survives a replay that renumbers a ledger; memory-limited fill windows are split.
+- **rwa:** premiums are judged against the published value, and partial and stale views are flagged.
+- **pricing:** change summaries use only guard-validated prices, and a failed freeze-ladder read is no longer reported as never frozen.
+- **auth:** account erasure leaves no free-text reason, staff email, or own ip and user agent in the audit log; a request line is never logged with a key in it, at any escape depth.
+- **api:** `/v1/stablecoins` folds an expired classic-supply map into its stale flag.
+- **lake:** the `contract_event_shapes` backfill includes the first ledger.
+- **ops:** `ch-census-rollup` exits non-zero when a lake hole stops it short of yesterday.
+- **docs:** the API design doc matches the code.
+
 ## [v0.124.0] - 2026-11-17
 
 Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains response flags and fields. The OpenAPI contract gains `/v1/lending/rates` and additive flags and fields; nothing is removed. Host payload changed: ClickHouse view definitions (`ops_by_source`, `account_activity`, `ttl_live_until`, `contract_instance_changes`), the API and aggregator unit restart limits, the firewall and Caddy templates (rendered output unchanged unless `http_origin_lock_enabled` is set), and the patroni, redis-sentinel and loki roles. Run the role before deploying. After deploying, `stellar.lending_state_hourly` must be emptied and refilled from lending genesis, then proved (`ch-entry-history -lending-only`, `-prove`).
@@ -112,29 +152,3 @@ Tested against Stellar protocol 27. No migrations, no config keys, no host paylo
 ### Fixed
 
 - **api:** `/v1/status` answered 200 with an empty body on a host whose price routes had no successful request in five minutes (seen on testnet and futurenet at v0.121.0). A latency quantile with no observations is now treated as no measurement. A response body that cannot be encoded is a 500 problem document, never an empty 200.
-
-## [v0.121.0] - 2026-11-16
-
-Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains `includes_unread` on the envelope flags. New config keys, both with safe defaults: `api.register_max_per_hour` (60) and `api.register_disabled` (false). Host payload changed: the archival-node role (Caddy access-log redaction, the `wasm-drift` service and timer), alert rules in both rule trees, and scripts under `scripts/ops`; these reach a host with the role converge, not with the binary. After the converge on r1, start `wasm-drift.service` once. The explorer deploy's shadow-Worker delete step has not run yet; it first runs on the next manual explorer deploy.
-
-### Changed
-
-- **api:** `/v1/price/stream` accepts only a `window_seconds` that something publishes (the aggregator's windows, plus 60 where streaming pairs are configured); any other value is a 400 `invalid-window` that lists them. It used to open a silent stream.
-- **api:** `/v1/register` has an hourly cap across all callers, an off switch and an audit row.
-- **api:** `/v1/status` measures latency over the price routes its targets are set for, so the reported p95 and p99 drop where slow explorer reads used to count. The SLA probe times the whole response body, so its latency figures rise slightly.
-- **api:** `/v1/sources` names an `include` section it could not read under `includes_unread`; a sparkline ends at its read hour. The 24h change anchor is read behind the price withholding gates.
-- **auth:** an account with no email keeps its last passkey (409). A plaintext API key in the revoke path is refused and redacted. A delegated key lists the monthly quota that auth enforces.
-- **streaming:** a `stream_gap` is sent when events were lost before the stream (the aggregator link reconnected or dropped a message, or polls failed across closed buckets) and on a resume from before the last restart. An auth or quota outage no longer ends an open stream as revoked.
-- **positions:** DeFindex vault shares are served as net flows, not a share count.
-- **explorer:** partial data is labelled: an incomplete MEV detection window, a ledger's capped transaction list, a stale embed price, a price whose poll stopped succeeding, an unfinished ledger, and a stalled lake behind a cached read. The integrity warnings the server sets on a composed price are shown.
-- **ci:** a PR that removes a published path, schema, property or enum value, or adds a required input, fails unless a commit carries an `OpenAPI-Break:` trailer.
-
-### Fixed
-
-- **ingest:** a factory child's gate admission is retried until its row is written. A contract removed from a curated set stops being trusted. Venue streamers get their own sink lane. An event the sink abandons at shutdown names its ledger. A polled price update with an implausible timestamp is dropped. A live tail waiting on a hole ends with an error that names it.
-- **projector:** a replay rewind voids give-ups, a given-up row's retryable fault is held, and a carried poison output holds the cursor below its own ledger.
-- **ops:** the archive trim deletes a hot file only when the cold tier holds the same bytes, and refuses a cold tier that is the hot tier. An archive check that verified nothing fails. The lake backup survives a dropped poll and bad retention. The D3 cutover pauses lake writers below the tip. The phaseD backfill drivers record the end a window ran to. `ch-entry-history` re-derives remove rows earlier runs wrote. `wasm-drift` runs daily.
-- **monitoring:** new alerts for an external poller that never succeeded, a source's decode-failure share, stalled or dropped customer webhook deliveries, a failing FX fixings ticker, and (r1) a lake backup that never wrote its textfile. Projector loss alerts count evicted groups and gate drops. A silent oracle asset keeps its alert series across an indexer restart.
-- **explorer:** the og image rate limit keys IPv6 on the /64 and no longer resets itself. The icon proxy caches by icon. A cold contract WASM fill takes a refresh-gate slot. Shell crashes and errors thrown outside render are reported. The shadow Worker is removed and test nets resolve their own API.
-- **edge:** the access log redacts an API key in the request path.
-- **deploy:** the config-apply baseline ranks a pre-release below its release.
