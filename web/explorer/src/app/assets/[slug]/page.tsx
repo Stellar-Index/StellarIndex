@@ -869,7 +869,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       </Container>
     );
   }
-  const sacHref = sacRedirectHref(slug, coin.slug);
+  const sacHref = sacRedirectHref(slug, coin);
   if (sacHref) {
     return (
       <Container className="space-y-6 py-8">
