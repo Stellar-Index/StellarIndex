@@ -1280,6 +1280,8 @@ jobs:
         run: |
           git checkout -q HEAD -- scripts/ci/lint-lake-dedup.sh
           ./scripts/ci/lint-lake-dedup-test.sh
+          git checkout -q HEAD -- scripts/ci/lint-i128.sh
+          ./scripts/ci/lint-i128-test.sh
       - name: lint-chunk-functions
         # merge_chunks on compressed chunks left 4 chunks unreadable on r1,
         # and count(*) could not see it. No tracked code may call it or
@@ -2314,7 +2316,9 @@ jobs:
         # ansible-drift job log via `--check --diff`. Pure-Python (PyYAML);
         # also in verify.sh.
         if: needs.preflight.outputs.ansible == 'true'
-        run: python3 ./scripts/ci/lint-ansible-secret-diff.py
+        run: |
+          python3 ./scripts/ci/lint-ansible-secret-diff.py
+          bash ./scripts/ci/lint-ansible-secret-diff_test.sh
       - name: installed scripts reach ClickHouse with a credential file (report-only)
         # Lists every clickhouse-client / :8123 call that would still
         # authenticate as CH `default`. Becomes fatal with the lock.

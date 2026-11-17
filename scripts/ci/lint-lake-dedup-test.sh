@@ -662,6 +662,21 @@ check "a scalar subquery aggregate in the select list is not this read" 0 \
 check "a count() above a collapsing subquery still passes" 0 \
   "$(shape above 'SELECT count() FROM (SELECT ledger_seq, tx_index, op_index FROM stellar.operations GROUP BY ledger_seq, tx_index, op_index)')"
 
+# A subquery or CTE that does not collapse hands every duplicate to the
+# aggregate above it.
+catches "a sum() above a non-collapsing subquery is caught" \
+  "$(shape uncsub 'SELECT toUInt64(sum(fee_charged)) FROM (SELECT fee_charged FROM stellar.transactions WHERE ledger_seq BETWEEN ? AND ?)')" \
+  stellar.transactions
+catches "a sum() above a non-collapsing CTE is caught" \
+  "$(shape unccte 'WITH t AS (SELECT amount FROM stellar.supply_flows WHERE ledger_seq > ?) SELECT sum(amount) FROM t')" \
+  stellar.supply_flows
+check "a sum() above a subquery that reads FINAL passes" 0 \
+  "$(shape finalsub 'SELECT sum(fee_charged) FROM (SELECT fee_charged FROM stellar.transactions FINAL WHERE ledger_seq > ?)')"
+check "a sum() above a DISTINCT subquery passes" 0 \
+  "$(shape distsub 'SELECT sum(fee_charged) FROM (SELECT DISTINCT ledger_seq, tx_index, fee_charged FROM stellar.transactions)')"
+check "an aggregate over an IN-list subquery is not this read" 0 \
+  "$(shape insub 'SELECT count() FROM stellar.ledgers FINAL WHERE ledger_seq IN (SELECT ledger_seq FROM stellar.transactions)')"
+
 # ── every ReplacingMergeTree, and Go-built SQL ──────────────────────
 # The lending-history derivation read ledger_entry_changes without FINAL;
 # the gate did not watch that table, nor reads built by Sprintf.
@@ -739,6 +754,56 @@ check "a double-quoted FROM spliced to a constant in another file fails" 1 "$xsp
 xprose="$(mk xprose)"
 printf 'package clickhouse\n\nfunc e(b string) error {\n\treturn fmt.Errorf("read 0 ledgers from %%s; absent from "+\n\t\t"the bucket", b)\n}\n' > "$xprose/$GODIR/prose.go"
 check "lower-case log prose with from %s in a file naming no lake table passes" 0 "$xprose"
+
+xidx="$(mk xidx)"
+printf 'package clickhouse\n\nconst flowsTable = "stellar.supply_flows"\n' > "$xidx/$GODIR/tables.go"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = fmt.Sprintf(`SELECT sum(amount) FROM %%[1]s WHERE a = ?`, flowsTable)\n' > "$xidx/$GODIR/reader.go"
+check "an indexed FROM %[1]s verb in a file naming no lake table fails" 1 "$xidx"
+
+xlow="$(mk xlow)"
+printf 'package clickhouse\n\nconst flowsTable = "stellar.supply_flows"\n' > "$xlow/$GODIR/tables.go"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = fmt.Sprintf(`select sum(amount) from %%s where a = ?`, flowsTable)\n' > "$xlow/$GODIR/reader.go"
+check "a lower-case mid-line from %s in a raw literal fails" 1 "$xlow"
+
+xnamed="$(mk xnamed)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q0 = `SELECT 1 FROM stellar.transactions FINAL`\n\nvar q = fmt.Sprintf("SELECT sum(amount) FROM %%s", t)\n' > "$xnamed/$GODIR/reader.go"
+check "a double-quoted FROM %s in a file that names a lake table fails" 1 "$xnamed"
+
+xnamedcat="$(mk xnamedcat)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q0 = `SELECT 1 FROM stellar.transactions FINAL`\n\nvar q = "SELECT sum(amount) FROM " + tbl + " WHERE a = 1"\n' > "$xnamedcat/$GODIR/reader.go"
+check "a double-quoted FROM spliced to an ident in a file that names a lake table fails" 1 "$xnamedcat"
+
+xdq="$(mk xdq)"
+printf 'package clickhouse\n\nvar q = "SELECT count() FROM stellar." + t + " WHERE a = 1"\n' > "$xdq/$GODIR/reader.go"
+check "a double-quoted FROM stellar. + ident splice fails" 1 "$xdq"
+
+xrawsplice="$(mk xrawsplice)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = `SELECT count() FROM stellar.` + t + ` WHERE a = 1`\n' > "$xrawsplice/$GODIR/reader.go"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+check 'a raw FROM stellar.` + ident + ` splice fails' 1 "$xrawsplice"
+
+xbase="$(mk xbase)"
+printf 'package clickhouse\n\nvar q = "SELECT count() FROM stellar." + t + " WHERE a = 1"\n' > "$xbase/$GODIR/reader.go"
+mkdir -p "$xbase/scripts/ci"
+printf '%s  census constant, compared against system.parts\n' "$GODIR/reader.go:#interp" > "$xbase/scripts/ci/lint-lake-dedup.baseline"
+check "a baselined #interp file is not reported" 0 "$xbase"
+
+newrmt="$(mk newrmt)"
+printf 'CREATE TABLE IF NOT EXISTS stellar.brand_new_rollup (a UInt32)\nENGINE = ReplacingMergeTree(ingested_at)\nORDER BY a;\n' > "$newrmt/$SQLDIR/brand_new.sql"
+check "a ReplacingMergeTree in the DDL missing from LAKE_TABLES fails" 1 "$newrmt"
+
+knownrmt="$(mk knownrmt)"
+printf 'CREATE TABLE IF NOT EXISTS stellar.supply_flows (a UInt32)\nENGINE = ReplacingMergeTree(ingested_at)\nORDER BY a;\n' > "$knownrmt/$SQLDIR/known.sql"
+check "a ReplacingMergeTree already in LAKE_TABLES passes" 0 "$knownrmt"
+
+noddl="$(mk noddl)"
+printf -- '-- no tables here\n' > "$noddl/$SQLDIR/tier1_schema.sql"
+check "a real-shaped tree deriving no ReplacingMergeTree fails" 1 "$noddl"
 
 empty="$TMP/empty"
 mkdir -p "$empty/$GODIR"

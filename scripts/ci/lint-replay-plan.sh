@@ -68,6 +68,12 @@ WATCHED=(
   'internal/sources/*/reconstruct.go'
   'internal/sources/*/decimals.go'
   'internal/sources/*/scale.go'
+  # dispatcher adapters hold every Decode entry point and contract-identity
+  # gate; abi.go maps event fields to columns; blend/auction_data.go decodes
+  # auction payloads.
+  'internal/sources/*/dispatcher_adapter.go'
+  'internal/sources/*/abi.go'
+  'internal/sources/blend/auction_data.go'
   ':(exclude)*_test.go'
 )
 
@@ -302,6 +308,8 @@ a bare `none` does not count:
     Replay-Plan: none — refactor only; decoded output byte-identical (golden test unchanged)
 
 Watched: internal/canonical/asset_{fiat,crypto,rwa}.go and
-internal/sources/*/{decode*,events,feeds,pairs}.go (not *_test.go).
+internal/sources/*/{decode*,events,feeds,pairs,dispatcher_adapter,abi}.go,
+internal/sources/blend/auction_data.go and the other recorded-value files
+listed in WATCHED (not *_test.go).
 EOF2
 exit 1
