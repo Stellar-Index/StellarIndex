@@ -13869,6 +13869,13 @@ export interface components {
              *     posture).
              */
             scopes?: string[];
+            /**
+             * Format: date-time
+             * @description When the key stops authenticating. A key minted by an
+             *     expiring credential inherits that credential's expiry.
+             *     Absent = the key does not expire.
+             */
+            expires_at?: string;
         };
         KeyCreatedEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["KeyCreated"];
@@ -23807,6 +23814,8 @@ export interface operations {
              * @description Caller is not an account tier (`apikey` or `operator`):
              *     a SEP-10 wallet token gets `key-mint-not-available`, any
              *     other non-account credential `account-tier-required`.
+             *     A key that would exceed the caller's own scopes, rate
+             *     limit, expiry or monthly quota gets `scope-exceeds-caller`.
              */
             403: {
                 headers: {
@@ -23996,7 +24005,11 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description Caller is not operator-tier. */
+            /**
+             * @description Caller is not operator-tier, or the key would exceed the
+             *     caller's own scopes, rate limit, expiry or monthly quota
+             *     (`scope-exceeds-caller`).
+             */
             403: {
                 headers: {
                     [name: string]: unknown;
