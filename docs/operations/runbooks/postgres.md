@@ -64,7 +64,7 @@ Fix:
    ```
 
 3. Verify: `pg_up 1`, `/v1/readyz` 200 with the postgres check `ok:true`, indexer logs inserting (`ssh root@r1 'journalctl -u stellarindex-indexer.service -f'`), `stellarindex_ingestion_cursor_stuck` clears (~10 min).
-4. Data dir unrecoverable (corrupt WAL, lost dataset): the only copy is the pgBackRest repo. Declare the incident ([`sev-status-page-update.md`](sev-status-page-update.md)), then restore per [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h) and [`../drills/restore-drills.md`](../drills/restore-drills.md). RPO is the age of the last successful backup. After return, idempotent upserts re-fill from the archive; check `stellarindex_ingestion_cursor_stuck` and `stellarindex_ingest_gap_detected`.
+4. Data dir unrecoverable (corrupt WAL, lost dataset): the only copy is the pgBackRest repo. Declare the incident ([`sev-status-page-update.md`](sev-status-page-update.md)). There is no production restore procedure: [`infra.md#stellarindex_timescale_backup_none_24h`](infra.md#stellarindex_timescale_backup_none_24h) covers taking backups and [`../drills/restore-drills.md`](../drills/restore-drills.md) restores into a scratch target, not over production. Stop and escalate to the maintainer; do not improvise a `pgbackrest restore` over the live data dir. A restore must stop every writer first, and brings back accounts erased after the backup (re-apply them per [`account-erasure.md`](account-erasure.md)). RPO is the age of the last successful backup. After return, idempotent upserts re-fill from the archive; check `stellarindex_ingestion_cursor_stuck` and `stellarindex_ingest_gap_detected`.
 
    ```sh
    ssh root@r1 'sudo -u postgres pgbackrest --stanza=stellarindex info'

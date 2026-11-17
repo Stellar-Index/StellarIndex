@@ -29,7 +29,19 @@ Manual trigger (no metric exists) whenever a redaction-class fix ships: a change
      COMMIT;
      ```
 
-     Then tell the user. They can also sign out everywhere themselves with `POST /v1/auth/logout?all=true`.
+     Revoking sessions does not remove what a session created: API keys, webhooks and passkeys outlive it, and a passkey can mint a fresh session at will. List everything each user did in the window:
+
+     ```sql
+     SELECT ts, action, target_kind, target_id, ip
+       FROM audit_log
+      WHERE actor_user_id = '<user_id>'
+        AND action IN ('key.mint', 'webhook.create', 'webhook.update',
+                       'webhook.rotate_secret', 'passkey.register')
+        AND ts >= '<window start>'::timestamptz
+      ORDER BY ts;
+     ```
+
+     The audit write is best-effort, so also list the user's `webauthn_credentials` and the account's `customer_webhooks` and keys created since the window start. Tell the user, with that list. Every row they do not recognise must be removed by them, signed in fresh: `DELETE /v1/dashboard/keys/{id}`, `DELETE /v1/dashboard/webhooks/{id}`, `DELETE /v1/auth/passkey/credentials/{id}` (or the dashboard). There is no operator command that revokes another user's keys, webhooks or passkeys; if the user cannot act promptly and the list is not empty, escalate rather than editing those tables by hand. Do not close the record while an unrecognised row remains.
    - DSN password or other internal secret: rotate it in this cycle, before the record is closed, following [credential-rotation.md](../credential-rotation.md) (e.g. `postgres_pass_stellarindex` and `postgres_pass_stellarindex_api` under step 4 of the full batch). There is no notice-and-offer path: the credential is internal and valid until rotated.
    - PII: notify affected customers via the incident-comms path (sev-playbook §5.3): what was written to an internal log store, which staff can read it, for how long. Regulator notification is decided by [`sev-playbook.md` §6.6](../sev-playbook.md#66-personal-data-breach-notification-assessment); its 72-hour clock started when the exposure was found.
 5. Update the record's timeline with the completion time and who/what was notified (aggregate count only, never identities in the customer-facing post).
