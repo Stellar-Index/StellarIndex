@@ -55,8 +55,8 @@ const (
 	priceRenderMaxScale  = 60
 )
 
-// priceRenderScale returns the fractional places a wire price needs: extended only when a fixed `digits` render would reparse a positive
-// price as 0.
+// priceRenderScale returns the fractional places a wire price needs: extended when a fixed `digits` render would keep fewer than
+// half its significant digits (the aggregator's renderScale rule), so a 1.99e-10 price is not served as 1e-10.
 func priceRenderScale(r *big.Rat, digits int) int {
 	if r == nil || r.Sign() == 0 {
 		return digits
@@ -69,7 +69,7 @@ func priceRenderScale(r *big.Rat, digits int) int {
 		x.Mul(x, ten)
 		firstSigPlace++
 	}
-	if firstSigPlace <= digits {
+	if digits-firstSigPlace+1 >= (digits+1)/2 {
 		return digits
 	}
 	if need := firstSigPlace + priceRenderSigDigits; need < priceRenderMaxScale {

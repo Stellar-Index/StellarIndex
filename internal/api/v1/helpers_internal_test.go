@@ -263,8 +263,9 @@ func TestPriceRatioDecimal_paddingNeeded(t *testing.T) {
 	}
 	got, _ := priceRatioDecimal(tr, 10)
 	// 1 * 10^10 / 1e9 = 10 → "10" → padded to "0000000010" → "0.0000000010"
-	if got != "0.0000000010" {
-		t.Errorf("got %q, want \"0.0000000010\"", got)
+	// One significant digit at 10dp is too few, so the scale extends as the aggregator's does.
+	if got != "0.000000001000000000000" {
+		t.Errorf("got %q, want \"0.000000001000000000000\"", got)
 	}
 }
 
@@ -396,7 +397,11 @@ func TestRatToDecimal_extendsScaleForSubDigitPrices(t *testing.T) {
 		want string
 	}{
 		{"normal magnitude unchanged", big.NewRat(1, 3), "0.3333333333"},
-		{"last rendered place unchanged", tinyRat(1, 10), "0.0000000001"},
+		{"last rendered place extends as the aggregator does", tinyRat(1, 10), "0.0000000001000000000000"},
+		{"1.99e-10 is not rounded to 1e-10", big.NewRat(199, 1_000_000_000_000), "0.0000000001990000000000"},
+		{"1.2999e-9 keeps its digits", big.NewRat(12999, 10_000_000_000_000), "0.000000001299900000000"},
+		{"3.4567e-8 keeps its digits", big.NewRat(34567, 1_000_000_000_000), "0.00000003456700000000"},
+		{"1.5e-6 keeps the fixed scale", big.NewRat(15, 10_000_000), "0.0000015000"},
 		{"zero unchanged", new(big.Rat), "0.0000000000"},
 		{"3e-12 keeps its digits", tinyRat(3, 12), "0.000000000003000000000000"},
 		{"negative tiny keeps sign and digits", tinyRat(-3, 12), "-0.000000000003000000000000"},
