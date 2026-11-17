@@ -71,7 +71,7 @@ type AssetRow struct {
 	CirculatingSupply *string
 	// Trailing 1h / 24h / 7d price change as a signed percentage with two decimals ("+1.27").
 	// Nil without a current price, or when no past prices_1m bucket exists within the window's
-	// tolerance (5min for 1h, 30min for 24h, 2h for 7d).
+	// tolerance (5min for 1h, 30min for 24h, 2h for 7d) older than the current price's minute.
 	Change1hPct  *string
 	Change24hPct *string
 	Change7dPct  *string
