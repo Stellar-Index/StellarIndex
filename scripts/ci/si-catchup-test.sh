@@ -8,7 +8,9 @@
 #   1. a private directory and queue run their step;
 #   2. a group-writable directory is refused before anything runs;
 #   3. a queue that is a symlink is refused;
-#   4. a world-writable queue is refused.
+#   4. a world-writable queue is refused;
+#   5. a step deferred with 75 is retried without touching the lane log, so the
+#      stall alert still sees how long the lane has made no progress.
 # Ownership by a different user needs two uids and is not covered here.
 set -uo pipefail
 
@@ -43,6 +45,15 @@ check "refused, nothing ran" '[[ $rc == 1 && ! -e "$D/ran" ]]'
 echo "si-catchup-test: world-writable queue"
 setup openq; chmod 0666 "$D/a.queue"; run
 check "refused, nothing ran" '[[ $rc == 1 && ! -e "$D/ran" ]]'
+
+echo "si-catchup-test: deferred step"
+setup defer
+printf 'step\tif [ -e %s/seen ]; then touch %s/STOP; exit 0; fi; touch %s/seen; exit 75\n' "$D" "$D" "$D" > "$D/a.queue"
+mkdir "$WORK/bin"; printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/sleep"; chmod +x "$WORK/bin/sleep"
+PATH="$WORK/bin:$PATH" run
+check "the step ran after the deferral" 'grep -qx step "$D/a.done"'
+check "one START, no DEFER in the lane log" '[[ $(grep -c " START step" "$D/a.log") == 1 ]] && ! grep -q DEFER "$D/a.log"'
+check "last lane log line is the START or DONE" '[[ $(tail -n 1 "$D/a.log") == *" DONE step "* ]]'
 
 echo
 echo "si-catchup-test: $pass passed, $fail failed"

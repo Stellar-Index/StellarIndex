@@ -244,3 +244,63 @@ func TestRWAPremiumJoin_AStaleBaselineGivesWayToThePublishedValue(t *testing.T) 
 		t.Error("day 61 published 11x off the only fresh day before it")
 	}
 }
+
+// TestRWAPremiumJoin_ALastingPrintFarFromThePublishedValueNeverPublishes: agreeing with itself for any number of days does
+// not let a market outside the band around the published value re-centre and publish.
+func TestRWAPremiumJoin_ALastingPrintFarFromThePublishedValueNeverPublishes(t *testing.T) {
+	for _, vwap := range []string{"12.00", "107.00", "0.09"} {
+		market := []timescale.MarketDay{}
+		for d := 1; d <= 3*rwaPremiumRecentreDays; d++ {
+			market = append(market, premGoodDay(d, vwap))
+		}
+		got := rwaPremiumJoin(premCand(), premRefDays(3*rwaPremiumRecentreDays), market, premDefaultFloor())
+		if len(got.published) != 0 {
+			t.Errorf("%s every day against 1.07: published %v, want none", vwap, got.published)
+		}
+	}
+}
+
+// TestRWAPremiumJoin_ADeepHistoryCannotRatchetAwayFromThePublishedValue: once five days are accepted the published value
+// still binds, so 3x steps that each sit inside the band around the moving median never publish beyond the anchor's band.
+func TestRWAPremiumJoin_ADeepHistoryCannotRatchetAwayFromThePublishedValue(t *testing.T) {
+	market := []timescale.MarketDay{}
+	day := 1
+	for _, step := range []struct {
+		vwap string
+		n    int
+	}{{"1.07", 5}, {"3.15", 8}, {"9.30", 8}, {"27.40", 8}, {"80.80", 8}} {
+		for i := 0; i < step.n; i++ {
+			market = append(market, premGoodDay(day, step.vwap))
+			day++
+		}
+	}
+	got := rwaPremiumJoin(premCand(), premRefDays(day), market, premDefaultFloor())
+	limit := premRat("107/10")
+	for _, p := range got.days {
+		if premRat(p.market).Cmp(limit) > 0 {
+			t.Errorf("day %s published market %s, more than 10x the published value", p.day.Format("01-02"), p.market)
+		}
+	}
+}
+
+// TestRWAPremiumJoin_AScatteredRefusedRunIsNotARepricing: a run whose spread is itself wider than the tight ratio band
+// does not agree with itself, however wide the dispersion band it would earn.
+func TestRWAPremiumJoin_AScatteredRefusedRunIsNotARepricing(t *testing.T) {
+	market := []timescale.MarketDay{}
+	for d := 1; d <= 5; d++ {
+		market = append(market, premGoodDay(d, "1.08"))
+	}
+	for i, v := range []string{"3.50", "4.50", "6.00", "8.00", "10.00", "10.60"} {
+		market = append(market, premGoodDay(6+i, v))
+	}
+	market = append(market, premGoodDay(12, "1.08"))
+	got := rwaPremiumJoin(premCand(), premRefDays(12), market, premDefaultFloor())
+	for d := 6; d <= 11; d++ {
+		if premPublished(got, d) {
+			t.Errorf("day %d published from a run spread %s", d, "3.50..10.60")
+		}
+	}
+	if !premPublished(got, 12) {
+		t.Errorf("the honest day after the run was withheld: withheld = %v", got.withheld)
+	}
+}

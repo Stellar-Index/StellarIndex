@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 301 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 302 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -83,6 +83,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_ingestion_trade_insert_backpressure` | `sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m]))` | > 0 sustained 10 min | ticket | [trade-insert-backpressure](runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure) |
 | `stellarindex_ingestion_insert_errors` | `rate(source_insert_errors_total[5m])` | > 0.1/s for 5 min | ticket | [insert-errors](runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors) |
 | `stellarindex_ingestion_persist_drop` | `increase(source_insert_errors_total{kind=~"trade\|soroswap_router_swap\|defindex_flow_strategy\|defindex_flow_vault"}[15m])` | > 0, `for: 0m` (`trade_abandoned` excluded: re-derivable) | ticket | [insert-errors](runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors) |
+| `stellarindex_ingestion_sink_fault_drop` | `increase(source_insert_errors_total{kind=~"panic\|unhandled"}[15m])` | > 0, `for: 0m` (recovered sink panic or unhandled event type: never retried) | ticket | [insert-errors](runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors) |
 | `stellarindex_ingestion_trustline_observation_drop` | `increase(source_insert_errors_total{kind="trustline_observation"}[15m])` | > 0, `for: 0m` (under `insert_errors`' 0.1/s gate) | ticket | [insert-errors](runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors) |
 | `stellarindex_ingestion_discovery_record_failures` | `increase(stellarindex_discovery_record_failures_total[10m])` | > 0 sustained 10 min | ticket | [discovery-drops](runbooks/ingestion.md#stellarindex_ingestion_discovery_drops) |
 | `stellarindex_ingestion_duplicate_flood` | `rate(trade_insert_outcome_total{outcome="duplicate"}[10m])` with no `new` | > 0.5/s for 10 min | ticket | [ingestion-duplicate-flood](runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood) |

@@ -59,7 +59,8 @@
 # Also not flagged, each a decision:
 #
 #   * SQL in a double-quoted Go string is not analysed; production Go that
-#     writes a lake read that way FAILS (use a raw literal). Test files are
+#     writes a lake read that way FAILS (use a raw literal), as does a raw
+#     read whose table is a `%s` verb or a spliced identifier. Test files are
 #     exempt: they quote fragments in assertions.
 #   * Go `//` comments: prose ABOUT the query beside them, constantly quoting
 #     fragments. Operator recipes live in `.sql` headers, which ARE read (see
@@ -146,7 +147,7 @@ SQL
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
   LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" \
-               -v INTERP_RE="\"[^\"]*(from|join) stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
+               -v INTERP_RE="\"[^\"]*(from|join)[ ]+stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
@@ -205,6 +206,22 @@ violations="$(
       return out
     }
 
+    # with_prefix - the WITH-expression clause directly before the owning
+    # SELECT: an aggregate defined there consumes the same rows.
+    function with_prefix(s, owner,    i, depth, ch, w) {
+      depth = 0; w = 0
+      for (i = owner - 1; i >= 1; i--) {
+        ch = substr(s, i, 1)
+        if (ch == ")") depth++
+        else if (ch == "(") { if (depth == 0) break; depth-- }
+        else if (ch == ";") break
+        else if (depth == 0 && is_select(s, i)) break
+        else if (depth == 0 && substr(s, i, 4) == "with" && (i == 1 || substr(s, i - 1, 1) !~ /[a-z0-9_]/) &&
+                 substr(s, i + 4, 1) !~ /[a-z0-9_]/) { w = i; break }
+      }
+      return w ? substr(s, w, owner - w) : ""
+    }
+
     # ── unit accumulation ────────────────────────────────────────────
     # A unit is flushed when the NEXT file starts, so it carries the file
     # it began in: FILENAME at flush time is the wrong one.
@@ -255,7 +272,7 @@ violations="$(
 
         # Its whole block, minus nested selects: an aggregate in HAVING or
         # ORDER BY consumes the same rows as one in the select list.
-        clause = own_text(block_of(L, owner))
+        clause = own_text(with_prefix(L, owner) block_of(L, owner))
         if (!mult_agg(clause)) continue                       # not an aggregating read
         aggregating++
 
@@ -307,7 +324,7 @@ violations="$(
       # production Go would never be examined, so it is reported instead.
       if (!in_raw && index(l, "`") == 0 && FILENAME !~ /_test\.go$/) {
         part = l; cut = index(part, "//"); if (cut > 0) part = substr(part, 1, cut - 1)
-        if (tolower(part) ~ INTERP_RE) printf "#interp\t%s:%d\n", FILENAME, FNR
+        if (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/) printf "#interp\t%s:%d\n", FILENAME, FNR
       }
       if (index(l, "`") > 0) {
         l = go_mask(l, in_raw)
@@ -331,9 +348,12 @@ violations="$(
           # that makes the read a violation.
           if (match(part, /--([ \t]|$)/) > 0) part = substr(part, 1, RSTART - 1)
           add(part)
+          lastraw = tolower(part)
+          if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]+%[sv]/) printf "#interp\t%s:%d\n", FILENAME, FNR
         } else {
           glue = glue part
           if (i < n) {
+            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*$/ && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*$/) printf "#interp\t%s:%d\n", FILENAME, FNR
             # Glue between two literals: `+ ident +` splices them,
             # anything else ends the statement.
             if (U != "" && glue !~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/) flush()
@@ -405,7 +425,7 @@ aggregating="$(printf '%s\n' "$violations" | awk '/^#counts /{print $3}')"
 interpreted="$(printf '%s\n' "$violations" | sed -n 's/^#interp\t/  /p')"
 violations="$(printf '%s\n' "$violations" | grep -v '^#counts \|^#interp' || true)"
 if [ -n "$interpreted" ]; then
-  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted Go string is not examined by this gate; write the SQL as a raw (backtick) literal:" >&2
+  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
   printf '%s\n' "$interpreted" >&2
   exit 1
 fi

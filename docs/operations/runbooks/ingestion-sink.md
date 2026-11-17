@@ -15,7 +15,7 @@ Infrastructure faults on a write are NOT lost: the sink retries with backpressur
 
 | Alert | Severity | Meaning |
 | ----- | -------- | ------- |
-| [`stellarindex_ingestion_insert_errors`](#stellarindex_ingestion_insert_errors) (+ `stellarindex_ingestion_persist_drop`, `stellarindex_ingestion_trustline_observation_drop`) | P2 ticket; `for: 5m` (insert_errors), `for: 0m` (the two drop tripwires) | events failing to persist: genuine loss |
+| [`stellarindex_ingestion_insert_errors`](#stellarindex_ingestion_insert_errors) (+ `stellarindex_ingestion_persist_drop`, `stellarindex_ingestion_trustline_observation_drop`, `stellarindex_ingestion_sink_fault_drop`) | P2 ticket; `for: 5m` (insert_errors), `for: 0m` (the three drop tripwires) | events failing to persist: genuine loss |
 | [`stellarindex_ingestion_trade_insert_backpressure`](#stellarindex_ingestion_trade_insert_backpressure) | P3 ticket, 10 min | trade sink retrying: Postgres unreachable, ingest intentionally stalled |
 | [`stellarindex_ingestion_duplicate_flood`](#stellarindex_ingestion_duplicate_flood) | P2 ticket, `for: 10m` | trades stop landing new rows though cursor and decoder look healthy |
 | [`stellarindex_ingestion_sink_undrained_rows`](#stellarindex_ingestion_sink_undrained_rows) | ticket, `for: 0m` | shutdown drain abandoned buffered rows the cursor had already passed |
@@ -24,7 +24,7 @@ Infrastructure faults on a write are NOT lost: the sink retries with backpressur
 
 ## stellarindex_ingestion_insert_errors
 
-Also covers `stellarindex_ingestion_persist_drop` (any-nonzero tripwire on the money-flow kinds `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault`) and `stellarindex_ingestion_trustline_observation_drop` (`kind="trustline_observation"`, no retry path).
+Also covers `stellarindex_ingestion_persist_drop` (any-nonzero tripwire on the money-flow kinds `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault`) `stellarindex_ingestion_trustline_observation_drop` (`kind="trustline_observation"`, no retry path) and `stellarindex_ingestion_sink_fault_drop` (`kind="panic"` or `"unhandled"`: a recovered handler panic or an event type with no sink case; never retried, whatever the event's own kind — the ERROR log `panic in event sink` names it).
 
 Symptom: `stellarindex_source_insert_errors_total{source=...,kind=...}` above 6/min sustained. `kind` is `trade` (permanently dropped), `trade_abandoned` (retry abandoned on shutdown; cursor held, re-derivable, not a loss), `panic`, `dropped` (external retry-buffer overflow), or a per-domain persist kind.
 

@@ -33,6 +33,8 @@
     redis_render_configs: "{{ (not redis_first_run_only) or redis_sentinel_managed.rc != 0 }}"
     redis_sentinel_answered: "{{ redis_sentinel_state.rc == 0 and redis_sentinel_state.stdout_lines | length >= 1 }}"
 
+# Also asked on a fresh or replaced host: surviving Sentinels know the live
+# primary, which the inventory role no longer does after a failover.
 - name: ask the other Sentinels when the local one does not answer
   shell:
     cmd: |
@@ -52,7 +54,6 @@
   no_log: true
   when:
     - redis_render_configs | bool
-    - redis_sentinel_managed.rc == 0
     - not (redis_sentinel_answered | bool)
 
 - name: refuse to re-render a configured host when no Sentinel names the primary

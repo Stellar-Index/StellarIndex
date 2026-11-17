@@ -35,6 +35,8 @@ case "$(cat "$FAKE_DIR/v/$cc" 2>/dev/null || echo ok)" in
   bad) echo 'psql:<stdin>:20: NOTICE:  CHUNK|bad|XX001 invalid compressed data' >&2 ;;
   skip) echo 'psql:<stdin>:20: NOTICE:  CHUNK|skip|42P01 relation does not exist' >&2 ;;
   lost) echo 'psql:<stdin>:20: server closed the connection unexpectedly' >&2; exit 2 ;;
+  lostdown) echo 'psql:<stdin>:20: server closed the connection unexpectedly' >&2; touch "$FAKE_DIR/down"; exit 2 ;;
+  collateral) echo 'psql:<stdin>:20: WARNING:  terminating connection because of crash of another server process' >&2; exit 2 ;;
 esac
 FAKE
 chmod +x "$t/psql"
@@ -45,7 +47,7 @@ run() { : >"$t/decoded"; "$probe" >/dev/null 2>"$t/err" </dev/null; }
 printf '%s\n' \
   'C|101:5001|trades|_hyper_1_1_chunk|i.c101|7' \
   'C|102:5002|claimable_observations|_hyper_7_9_chunk|i.c102|7' \
-  'B|trades|_hyper_1_24874_chunk|25769803776' >"$t/list"
+  'B|trades|_hyper_1_24874_chunk|25769803776||' >"$t/list"
 echo bad >"$t/v/i.c102"
 run
 check "first run decodes everything" "[ \"\$(wc -l <'$t/decoded' | tr -d ' ')\" = 2 ]"
@@ -55,7 +57,7 @@ check "readable chunk verified"      "grep -qx '101:5001@7' '$t/state'"
 check "bad chunk not verified"       "! grep -q '102:5002' '$t/state'"
 check "success 1"                    "grep -qx 'stellarindex_pg_chunk_scan_success 1' '$prom'"
 check "index bloat counted"          "grep -qx 'stellarindex_pg_compressed_chunks_index_bloated 1' '$prom'"
-check "index bloat labelled"         "grep -q 'chunk_index_bytes{hypertable=\"trades\",chunk=\"_hyper_1_24874_chunk\"} 25769803776' '$prom'"
+check "index bloat labelled"         "grep -q 'chunk_index_bytes{hypertable=\"trades\",chunk=\"_hyper_1_24874_chunk\"} 25769803776\$' '$prom'"
 
 printf '%s\n' \
   'C|101:5001|trades|_hyper_1_1_chunk|i.c101|7' \
@@ -143,6 +145,30 @@ run
 check "header-only key decoded again" "grep -qx 'i.c103' '$t/decoded' && grep -qx '103:5004@9+v' '$t/state' && ! grep -qx '103:5004@9' '$t/state'"
 # The fake psql cannot see the SQL: pin the two statements the claim rests on.
 check "scan reads values and marks it" "grep -qF 'OFFSET 0) s WHERE s.t IS NOT NULL' '$probe' && grep -qF \"|| '+v' AS f5\" '$probe'"
+
+# A killer that outlasts crash recovery: the server is still down when the wait ends, so the verdict has to
+# survive the failed run. The first loss is a suspicion, the next loss is the chunk's.
+export PG_CHUNK_SCAN_STATE="$t/state2"
+printf '%s\n' 'C|201:6001|trades|_hyper_1_50_chunk|i.c201|7' >"$t/list"
+echo lostdown >"$t/v/i.c201"
+rc=0; run || rc=$?
+check "slow recovery fails the run"   "[ $rc -ne 0 ]"
+check "one slow loss is no verdict"   "! grep -qx '201:6001' '$t/state2.crash'"
+rm "$t/down"; rc=0; run || rc=$?
+check "second slow loss recorded"     "[ $rc -ne 0 ] && grep -qx '201:6001' '$t/state2.crash'"
+rm "$t/down"; echo ok >"$t/v/i.c201"; run
+check "slow killer not decoded again" "[ ! -s '$t/decoded' ]"
+check "slow killer named"             "grep -q 'chunk_unreadable{hypertable=\"trades\",chunk=\"_hyper_1_50_chunk\"} 1' '$prom'"
+
+# A connection lost to another backend's crash is nobody's verdict.
+export PG_CHUNK_SCAN_STATE="$t/state3"
+printf '%s\n' 'C|301:7001|trades|_hyper_1_60_chunk|i.c301|7' >"$t/list"
+echo collateral >"$t/v/i.c301"
+run
+check "collateral loss not named"     "! grep -q '_hyper_1_60_chunk' '$prom' && ! grep -qx '301:7001' '$t/state3.crash'"
+check "collateral loss not verified"  "! grep -q '301:7001' '$t/state3'"
+check "collateral run completes"      "grep -qx 'stellarindex_pg_chunk_scan_success 1' '$prom'"
+export PG_CHUNK_SCAN_STATE="$t/state"
 
 check "no stray series when clean"   "! grep -q '^stellarindex_pg_compressed_chunk_unreadable{' '$prom' && grep -qx 'stellarindex_pg_compressed_chunks_unreadable 0' '$prom'"
 check "no bloat series when clean"   "! grep -q '^stellarindex_pg_compressed_chunk_index_bytes{' '$prom' && grep -qx 'stellarindex_pg_compressed_chunks_index_bloated 0' '$prom'"

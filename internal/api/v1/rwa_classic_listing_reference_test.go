@@ -35,7 +35,7 @@ func TestClassicRowTakesItsListingPrice(t *testing.T) {
 		CirculatingSupply: supplyOf("22987932026782"),
 		Decimals:          intPtr(7),
 	}
-	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
+	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(listings), now)
 
 	if a.Reference == nil {
 		t.Fatalf("no reference attached; premium status = %q", a.Premium.Status)
@@ -75,7 +75,7 @@ func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 		CirculatingSupply: supplyOf("10000000000"),
 		Decimals:          intPtr(7),
 	}
-	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
+	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(listings), now)
 
 	if a.Reference != nil {
 		t.Fatalf("an impersonator was handed the real instrument's listing price: %+v", a.Reference)
@@ -112,7 +112,7 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 		CirculatingSupply: supplyOf("22987932026782"),
 		Decimals:          intPtr(7),
 	}
-	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listings, now)
+	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(listings), now)
 
 	if a.Reference == nil {
 		t.Fatalf("SAC-listed classic member got no reference; premium status = %q", a.Premium.Status)
@@ -138,9 +138,9 @@ func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 		CirculatingSupply: supplyOf("10000000000"),
 		Decimals:          intPtr(7),
 	}
-	rwaApplyReference(&cnav, rwaReferenceSnapshotFrom(nil), nil, map[string]timescale.ListingEntry{
+	rwaApplyReference(&cnav, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(map[string]timescale.ListingEntry{
 		gSAC: {Address: gSAC, ListingID: "franklin-onchain-us-government-money-fund", PriceUSD: "1.0", PricedAt: now, Source: "coingecko"},
-	}, now)
+	}), now)
 	if cnav.Reference == nil || cnav.Reference.Provenance != RWAReferenceListingPrice {
 		t.Errorf("CNAV pair with a SAC-listed price: reference = %+v, want the listing observation over the prospectus rule", cnav.Reference)
 	}
@@ -166,7 +166,7 @@ func TestListingDoesNotOverturnAnOracleFinding(t *testing.T) {
 	}
 	rwaApplyReference(&a, rwaReferenceSnapshotFrom([]canonical.OracleUpdate{
 		refUpdate(t, "redstone", "rwa:USDY", "fiat:USD", "0", 8, now),
-	}), nil, listings, now)
+	}), nil, listingAnswered(listings), now)
 
 	if a.Reference != nil && a.Reference.Provenance == RWAReferenceListingPrice {
 		t.Fatalf("a listing price overturned an oracle finding; premium = %q", a.Premium.Status)
@@ -176,3 +176,38 @@ func TestListingDoesNotOverturnAnOracleFinding(t *testing.T) {
 // supplyOf is local to this file: `strPtr` is already taken in this
 // package by a helper that goes the other way (*string -> string).
 func supplyOf(s string) *string { return &s }
+
+// listingAnswered is a listing snapshot whose read answered.
+func listingAnswered(byAddress map[string]timescale.ListingEntry) assetListing {
+	return assetListing{byAddress: byAddress, available: true}
+}
+
+// TestClassicListingReferenceUnavailableIsNotNotBound: when the listing read did not answer, an unbound classic row is
+// refused as unavailable (an operator condition), never as not_bound (the definition working), and the view degrades.
+func TestClassicListingReferenceUnavailableIsNotNotBound(t *testing.T) {
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	a := RWAAsset{
+		AssetID:           "WTGX-GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6",
+		Code:              "WTGX",
+		Issuer:            "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6",
+		CirculatingSupply: supplyOf("22987932026782"),
+		Decimals:          intPtr(7),
+	}
+	rwaApplyReference(&a, rwaReferenceSnapshotFrom(nil), nil, assetListing{}, now)
+	if a.ReferenceValuation.Status != RWAPremiumReferenceUnavailable {
+		t.Errorf("reference_valuation.status = %q, want %q", a.ReferenceValuation.Status, RWAPremiumReferenceUnavailable)
+	}
+	if rwaReferenceDropActors[a.ReferenceValuation.Status] != rwaActorOperator {
+		t.Errorf("actor = %q, want operator", rwaReferenceDropActors[a.ReferenceValuation.Status])
+	}
+	if !rwaReferencesUnanswered([]RWAAsset{a}) {
+		t.Error("an unanswered listing read did not degrade the view")
+	}
+
+	b := a
+	b.ReferenceValuation, b.Premium = RWAReferenceValuation{}, RWAPremium{}
+	rwaApplyReference(&b, rwaReferenceSnapshotFrom(nil), nil, listingAnswered(nil), now)
+	if b.ReferenceValuation.Status != RWAPremiumNotBound {
+		t.Errorf("answered and unlisted: status = %q, want %q", b.ReferenceValuation.Status, RWAPremiumNotBound)
+	}
+}
