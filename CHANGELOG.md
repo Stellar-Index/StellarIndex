@@ -20,6 +20,29 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.123.0] - 2026-11-17
+
+Tested against Stellar protocol 27. Two migrations, both additive on `blnt_events` (0225, an index on the user column; 0226, a nullable `tx_index` column). No `pkg/*` change. The OpenAPI contract gains seven lending paths and breaks none. Host payload: a new ClickHouse table `stellar.lending_state_hourly`, a `lending-state` unit and timer (not enabled by default) and one alert rule. After the deploy an operator rebuilds BLNT so existing rows gain their `tx_index`: `stellarindex-ops projected-rebuild -source blnt -from 65134154 -to <blnt projector cursor> -write`.
+
+### Added
+
+- **api:** BLNT V3 pools, reserves and positions are served as their own protocol on `/v1/lending/pools`, `/v1/lending/pools/{pool}/reserves` and the account positions endpoint.
+- **api:** `/v1/lending/pools/{pool}/reserves` carries each reserve's configuration, the pool configuration, the rate modifier and a USD price; `/v1/lending/pools/{pool}/config-history` lists every configuration change.
+- **api:** `/v1/lending/pools/{pool}/backstop` (size, shares, queued withdrawals, per-tier balances for BLNT) and `/v1/lending/pools/{pool}/auctions` (liquidation, bad-debt and interest auctions with their fills).
+- **api:** `/v1/lending/pools/{pool}/reserves/{asset}/history` and `/v1/lending/pools/{pool}/backstop/history` serve hourly state decoded from the lake. Only hours the lake has fully covered are served, so a served point never changes.
+- **api:** `/v1/lending/pools/{pool}/emissions` serves emission rates and expiry per reserve side and for the backstop, with claim totals. Blend V1 emission storage and Blend V2 per-pool backstop claims are named as unavailable, not estimated.
+- **api:** `/v1/lending/accounts/{account}/earnings` serves interest earned and paid, backstop gain and emissions claimed per account. A figure is exact only when the balance folded from events equals the on-chain balance, no auction moved it, the projection is not behind the chain and the source's history is verified from genesis; otherwise it is withheld with a reason and the raw components are still returned.
+- **lake:** `stellar.lending_state_hourly` keeps the verbatim storage entry of every Blend and BLNT pool and backstop key per hour changed; `ch-entry-history -lending-only` fills it and `-prove` checks it against current state.
+- **explorer:** lending pages are protocol-aware and show pool configuration, the rate model, configuration history, the backstop, auctions and reserve history charts.
+
+### Changed
+
+- **sources:** each BLNT event row stores its transaction's apply position in the ledger, so same-ledger configuration changes are ordered as they were applied.
+
+### Fixed
+
+- **tests:** two ClickHouse test helpers declared twice in one package broke the build of that package's tests on main.
+
 ## [v0.122.0] - 2026-11-16
 
 Tested against Stellar protocol 27. One migration (0224, a new table; nothing existing is altered). No `pkg/*` change, no OpenAPI change. Host payload: the default source list gains `blnt`, and the supply observers and asset map gain the BLNT asset and its SAC, so apply the role after the binary. After deploying, replay two sources: `projector-replay -source comet -from 65134000` (two newly gated Comet V1.1 pools) and `projector-replay -source blnt -from 65134154`.
@@ -97,14 +120,3 @@ Tested against Stellar protocol 27. Migration 0223 (replaces the audit-erasure f
 - **clickhouse:** two side-by-side rebuild runbooks cover the MV-creation ledger, catch up with a margin after cutover, and close the gap on a post-cutover rollback.
 - **docs:** the config reference says what the failed-auth limit does: past the cap a rejection answers 429 instead of 401; it does not stop a lookup or a correct guess.
 - **ci:** a lake read in a double-quoted Go string fails `lint-lake-dedup`.
-
-## [v0.119.0] - 2026-11-15
-
-Tested against Stellar protocol 27. No migrations. No `pkg/*` break. No config change on r1. Host payload changed: the archival-node role's API config template (a test-net inventory sets `stellarindex_api_trusted_proxy_cidrs`; r1 renders the same file as before).
-
-### Fixed
-
-- **api:** a folded OHLC bar (5m, 30m, 2h, 4h, 12h, 3d, 2w) is served only once its last source bucket is materialised, so a closed bar no longer changes after it is first served. The bound is the same for every pair in a request; a quiet pair's finished bar can wait for the next view refresh (about 20 minutes on hour-based bars, up to 12 hours on day-based, up to 2 days on week-based).
-- **ansible:** a test-net API trusts the host proxy's address, so clients behind it no longer share one rate-limit bucket.
-- **ci:** the migration-compat gate knows `REVOKE` and a `BEFORE` trigger; the lake-dedup gate watches `stellar.contract_events`; the baseline-growth tripwire watches the waiver maps of the two Go lints.
-
