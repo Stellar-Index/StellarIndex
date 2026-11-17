@@ -85,6 +85,16 @@ expect 'self-review allowed is reported, not fatal' 0 'allows self-review'
 run '{"name":"r1","protection_rules":[{"id":1,"type":"required_reviewers","reviewers":[{"type":"Team","reviewer":{"slug":"ops"}}],"prevent_self_review":true}],'"$CUSTOM"'}' r1 "$MAIN_ONLY"
 expect 'team reviewer + prevent_self_review → pass' 0 'prevent_self_review=true'
 
+run '{"name":"r1",'"$REVIEWED"','"$CUSTOM"',"can_admins_bypass":true}' r1 "$MAIN_ONLY"
+expect 'admin bypass allowed is warned about, not fatal' 0 'administrators bypass'
+
+run '{"name":"r1",'"$REVIEWED"','"$CUSTOM"',"can_admins_bypass":false}' r1 "$MAIN_ONLY"
+expect 'admin bypass disabled → pass' 0 'approval gate present'
+if grep -q 'administrators bypass' <<<"$OUT"; then
+  echo "FAIL: admin bypass disabled still warns" >&2
+  fail=$((fail + 1))
+fi
+
 # --- deployment branch policy -------------------------------------------
 # The live shape of every environment when the gap was found: even with
 # reviewers armed, a null deployment_branch_policy lets a dispatch from
