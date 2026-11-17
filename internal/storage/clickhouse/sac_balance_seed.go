@@ -269,6 +269,9 @@ func isMemoryLimitExceeded(err error) bool {
 	return errors.As(err, &chErr) && chErr.Code == chMemoryLimitExceeded
 }
 
+// IsMemoryLimitExceeded reports ClickHouse code 241 (MEMORY_LIMIT_EXCEEDED) anywhere in err's chain.
+func IsMemoryLimitExceeded(err error) bool { return isMemoryLimitExceeded(err) }
+
 // lakeEntryChangeOrder is the within-ledger identity tuple of one entry change (ledger_seq, intra_ledger_seq, tx_hash, op_index,
 // change_index). Every windowed latest-write-wins reduction over ledger_entry_changes must share it (this seed and
 // StreamClaimableBalanceSeeds), or a same-ledger removal can resurrect a deleted entry.
