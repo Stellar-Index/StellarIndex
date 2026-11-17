@@ -2417,9 +2417,10 @@ func TestListingDirectory_RefusesMassPrune(t *testing.T) {
 
 	at := time.Now().UTC().Add(-time.Hour)
 	full := make([]timescale.ListingEntry, 0, 50)
+	const b32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" // the address check admits base32 only
 	for i := range 50 {
 		full = append(full, timescale.ListingEntry{
-			Address: fmt.Sprintf("C%055d", i), ListingID: fmt.Sprintf("coin-%d", i), Symbol: "c", PriceUSD: "1.00", PricedAt: at,
+			Address: "C" + strings.Repeat("A", 53) + string(b32[i/32]) + string(b32[i%32]), ListingID: fmt.Sprintf("coin-%d", i), Symbol: "c", PriceUSD: "1.00", PricedAt: at,
 		})
 	}
 	if _, _, _, err := store.ReplaceListingDirectory(ctx, full, "coingecko"); err != nil {
