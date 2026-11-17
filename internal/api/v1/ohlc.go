@@ -81,8 +81,9 @@ func priceRenderScale(r *big.Rat, digits int) int {
 	need := min(firstSigPlace+priceRenderSigDigits, priceRenderMaxScale)
 	// The smallest scale rendering r exactly, if one within need exists.
 	scaled := new(big.Int).Set(r.Denom())
+	bigOne := big.NewInt(1)
 	for places := 0; places <= need; places++ {
-		if scaled.IsInt64() && scaled.Int64() == 1 {
+		if scaled.Cmp(bigOne) == 0 {
 			return max(digits, places)
 		}
 		scaled.Quo(scaled, new(big.Int).GCD(nil, nil, scaled, big.NewInt(10)))

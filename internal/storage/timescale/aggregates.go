@@ -1355,9 +1355,8 @@ func (s *Store) OHLCSeries(
 	}
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
-	// Combine both stored directions into the requested ($1, $2) orientation as a UNION ALL of two
-	// index-drivable branches, not an OR (see [Store.HistoryPoints]); /v1/ohlc's window is
-	// caller-chosen and can span all history, so a window bound does not rescue the OR.
+	// Combine both stored directions into the requested ($1, $2) orientation as a UNION ALL of two index-drivable branches, not an OR
+	// (see [Store.HistoryPoints]); /v1/ohlc's window is caller-chosen and can span all history, so a window bound does not rescue the OR.
 	//
 	// The `norm` CTE re-expresses flipped rows: prices invert (high<->low swap), base/quote volumes
 	// swap. Per bucket high = max, low = min; open/close prefer the requested-direction row and
@@ -1409,8 +1408,7 @@ func (s *Store) OHLCSeries(
 		    sum(tc)::bigint                                                         AS trade_count,
 		    (SELECT COALESCE(array_agg(DISTINCT s ORDER BY s), ARRAY[]::text[])
 		       FROM unnest(COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
-		                || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[])) AS s)
-		                                                                            AS sources,
+		                || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[])) AS s) AS sources,
 		    NOT bool_or(floored)                                                    AS below_floor
 		  FROM norm
 		 GROUP BY bucket
@@ -1500,7 +1498,6 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		               trade_count AS tc,
 		               sources     AS srcs,
-		               floored,
 		               `+ohlcDirectionKeepSQL+`
 		          FROM (
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
