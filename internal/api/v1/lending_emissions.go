@@ -82,8 +82,8 @@ type LendingEmissionClaimsView struct {
 	Pool                      *LendingClaimTotalsView        `json:"pool"`
 	Backstop                  []LendingBackstopClaimTierView `json:"backstop"`
 	BackstopUnavailableReason *string                        `json:"backstop_unavailable_reason,omitempty"`
-	// LowerBound: the totals sum the projected claim events, and the protocol's projection is not verified back to its first
-	// ledger, so earlier claims may be missing; LowerBoundReason is history_unverified, history_verdict_stale or _unread.
+	// LowerBound: the totals may miss claims, because the protocol's projection is not verified back to its first ledger
+	// (history_unverified, history_verdict_stale or _unread) or a claim's amount was not decoded (amount_unread).
 	LowerBound       bool    `json:"lower_bound"`
 	LowerBoundReason *string `json:"lower_bound_reason,omitempty"`
 }
@@ -114,6 +114,8 @@ const (
 	emissionsReasonNoReader   = "emission_storage_reader_unavailable"
 	emissionsReasonNoClaims   = "claim_reader_unavailable"
 	emissionsReasonBlendBstop = "blend_backstop_claim_names_no_pool"
+	// emissionsReasonAmountUnread: a claim row with a NULL amount is counted but not summed.
+	emissionsReasonAmountUnread = "amount_unread"
 )
 
 // errNoEmissionClaimReader is a lending reader wired without claim totals; zeros would read as "nothing claimed".
@@ -251,6 +253,9 @@ func (s *Server) fillEmissionClaims(ctx context.Context, view *LendingEmissionsV
 	case historyUnverified:
 		view.Claims.LowerBound, view.Claims.LowerBoundReason = true, strRef(earningsReasonHistoryUnverified)
 	}
+	if !view.Claims.LowerBound && claimAmountsUnread(c) {
+		view.Claims.LowerBound, view.Claims.LowerBoundReason = true, strRef(emissionsReasonAmountUnread)
+	}
 	if !isBLNT {
 		view.Claims.BackstopUnavailableReason = strRef(emissionsReasonBlendBstop)
 		return nil
@@ -263,6 +268,18 @@ func (s *Server) fillEmissionClaims(ctx context.Context, view *LendingEmissionsV
 		})
 	}
 	return nil
+}
+
+func claimAmountsUnread(c timescale.LendingEmissionClaims) bool {
+	if c.Pool.AmountUnread > 0 {
+		return true
+	}
+	for _, b := range c.Backstop {
+		if b.AmountUnread > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func claimTotalsView(t timescale.LendingClaimTotals) LendingClaimTotalsView {

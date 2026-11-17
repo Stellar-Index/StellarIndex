@@ -2267,7 +2267,10 @@ export interface paths {
          *     protocol's projection is verified back to its first ledger,
          *     `claims.lower_bound` is true and `claims.lower_bound_reason` says
          *     why (`history_unverified`; `history_verdict_stale`, with
-         *     `flags.stale`; `history_verdict_unread`, not cacheable).
+         *     `flags.stale`; `history_verdict_unread`, not cacheable). When the
+         *     history is verified but a claim's amount was not decoded, that
+         *     claim is counted but not summed: `lower_bound` is true with
+         *     `lower_bound_reason: amount_unread`.
          *     A BLNT backstop claim is per pool and tier: `amount` is the BLNT
          *     claimed, `lp_tokens` the backstop tokens it bought and
          *     `shares_minted` the tier shares minted to the claimer; it is not a
@@ -18956,7 +18959,7 @@ export interface operations {
                         data: {
                             pool: string;
                             /** @description The fill and delete read hit its cap; the newest auctions' fills and deleted may be incomplete. */
-                            lifecycle_truncated?: boolean;
+                            lifecycle_truncated: boolean;
                             auctions: {
                                 auction_type: number;
                                 /** @description user_liquidation, bad_debt, interest, protocol_fee; unknown_<n> otherwise. */
@@ -19130,10 +19133,10 @@ export interface operations {
                                 })[] | null;
                                 /** @enum {string} */
                                 backstop_unavailable_reason?: "blend_backstop_claim_names_no_pool";
-                                /** @description The totals may miss claims made before the protocol's verified projection range. */
-                                lower_bound?: boolean;
+                                /** @description The totals may miss claims made before the protocol's verified projection range, or a claim whose amount was not decoded. */
+                                lower_bound: boolean;
                                 /** @enum {string} */
-                                lower_bound_reason?: "history_unverified" | "history_verdict_stale" | "history_verdict_unread";
+                                lower_bound_reason?: "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "amount_unread";
                             };
                             /**
                              * Format: int64

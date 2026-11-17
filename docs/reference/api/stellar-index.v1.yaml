@@ -4647,7 +4647,7 @@ paths:
                                 deleted_ledger: { type: integer, format: int64 }
                                 deleted_time: { type: string, format: date-time }
                               required: [auction_type, auction_type_label, user, start_ledger, start_time, tx_hash, percent, block, bid, lot, fills, deleted]
-                        required: [pool, auctions]
+                        required: [pool, lifecycle_truncated, auctions]
                       pagination: { $ref: "#/components/schemas/Pagination" }
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -4692,7 +4692,10 @@ paths:
         protocol's projection is verified back to its first ledger,
         `claims.lower_bound` is true and `claims.lower_bound_reason` says
         why (`history_unverified`; `history_verdict_stale`, with
-        `flags.stale`; `history_verdict_unread`, not cacheable).
+        `flags.stale`; `history_verdict_unread`, not cacheable). When the
+        history is verified but a claim's amount was not decoded, that
+        claim is counted but not summed: `lower_bound` is true with
+        `lower_bound_reason: amount_unread`.
         A BLNT backstop claim is per pool and tier: `amount` is the BLNT
         claimed, `lp_tokens` the backstop tokens it bought and
         `shares_minted` the tier shares minted to the claimer; it is not a
@@ -4797,9 +4800,9 @@ paths:
                                         shares_minted_30d: { type: string }
                                       required: [tier, lp_tokens, lp_tokens_30d, shares_minted, shares_minted_30d]
                               backstop_unavailable_reason: { type: string, enum: [blend_backstop_claim_names_no_pool] }
-                              lower_bound: { type: boolean, description: "The totals may miss claims made before the protocol's verified projection range." }
-                              lower_bound_reason: { type: string, enum: [history_unverified, history_verdict_stale, history_verdict_unread] }
-                            required: [available, pool, backstop]
+                              lower_bound: { type: boolean, description: "The totals may miss claims made before the protocol's verified projection range, or a claim whose amount was not decoded." }
+                              lower_bound_reason: { type: string, enum: [history_unverified, history_verdict_stale, history_verdict_unread, amount_unread] }
+                            required: [available, pool, backstop, lower_bound]
                           as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured at serve time." }
                           as_of_time: { type: string, format: date-time }
                         required: [pool, protocol, emission_token, emission_token_decimals, eps_decimals, storage_available, reserves, backstop, claims, as_of_time]
