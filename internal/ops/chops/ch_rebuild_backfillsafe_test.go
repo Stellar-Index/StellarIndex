@@ -362,11 +362,14 @@ func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T)
 	overlap := strings.Index(body, "checkCHRebuildLiveOverlap(")
 	rangeGuard := strings.Index(body, "> maxBufferedRange")
 	lake := strings.Index(body, "clickhouse.Stream")
-	if exit < 0 || leg2 < 0 || overlap < 0 || rangeGuard < 0 || lake < 0 {
-		t.Fatalf("anchors not found (exit %d, leg2 %d, overlap %d, range %d, lake %d) — this test is asserting nothing",
-			exit, leg2, overlap, rangeGuard, lake)
+	wasmGate := strings.Index(body, "gateCHRebuildLake(")
+	if exit < 0 || leg2 < 0 || overlap < 0 || rangeGuard < 0 || lake < 0 || wasmGate < 0 {
+		t.Fatalf("anchors not found (exit %d, leg2 %d, overlap %d, range %d, lake %d, wasm gate %d) — this test is asserting nothing",
+			exit, leg2, overlap, rangeGuard, lake, wasmGate)
 	}
-	for name, pos := range map[string]int{"BackfillSafe leg 2": leg2, "live-cursor guard": overlap, "buffered-range guard": rangeGuard} {
+	for name, pos := range map[string]int{
+		"BackfillSafe leg 2": leg2, "live-cursor guard": overlap, "buffered-range guard": rangeGuard, "per-WASM replay gate": wasmGate,
+	} {
 		if exit < pos {
 			t.Errorf("-preflight returns BEFORE the %s — it would answer ok to a run the guard refuses", name)
 		}
