@@ -19,7 +19,8 @@ const (
 )
 
 // TestCombinedBarServesTrueExtremes: combined bucket high/low are plain max/min of constituents, with NO price-distance filter.
-// Dust is excluded per TRADE by the CAGG notional floor; a genuine large off-VWAP trade is real and must not be suppressed.
+// A genuine large off-VWAP trade is real and must not be suppressed; a dust-only constituent is held off the extremes by
+// BelowFloor (fiat_combine_floor_test.go), never by price distance.
 // finalizeCombined cross-checks the lift target; `scales` lists each bar's scale in acc.add order.
 func finalizeCombined(t *testing.T, acc *ohlcBucketAcc, ts time.Time, scales ...int) OHLCSeriesBar {
 	t.Helper()

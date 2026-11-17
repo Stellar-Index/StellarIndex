@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -1070,6 +1071,9 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 		// rwaAttemptAt (already advanced) stops a retry storm. The failure is recorded, not only
 		// logged, because a set about to be replaced and one nothing replaces look identical.
 		s.rwaFailedAt = at
+		if s.rwaCache != nil {
+			obs.APICacheOpsTotal.WithLabelValues("rwa", "membership", "refresh_error").Inc()
+		}
 		// The log names which arm went down, which the wire deliberately does not carry.
 		s.logger.Warn("rwa membership rebuild failed (serving the last good set)",
 			"classic_answered", built.available,

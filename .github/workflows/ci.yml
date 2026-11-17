@@ -1902,6 +1902,11 @@ jobs:
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
       - name: validate rules
         run: make monitoring-check
+      - name: prometheus HA render test
+        # Lives in this job because it needs promtool. Renders prometheus.yml.j2
+        # for an HA pair: replica label dropped from alerts, client basic_auth
+        # present when hashes are set, Loki target.
+        run: ./scripts/ci/prometheus-ha-render-test.sh
       - name: install amtool
         run: |
           # SHA-verified install, same shape as promtool above.

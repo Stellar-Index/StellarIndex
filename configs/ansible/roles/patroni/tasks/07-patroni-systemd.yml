@@ -12,9 +12,23 @@
   notify: "patroni config changed"
 
 # Patroni runs postgres itself; the distro unit would fight it for the data dir.
+# The data-dir gate's check is repeated here because --start-at-task skips
+# always-tagged tasks.
 - name: mask the distro postgresql cluster unit
-  command: systemctl mask --now postgresql@{{ patroni_postgres_version }}-main.service
+  shell: |
+    set -eu
+    d={{ patroni_data_dir | quote }}
+    if [ -e "$d/PG_VERSION" ] && [ ! -e "$d/patroni.dynamic.json" ] \
+      && [ {{ 'yes' if (inventory_hostname == groups['postgres_cluster'][0]
+                      and patroni_bootstrap_method == 'pgbackrest'
+                      and (patroni_adopt_existing_data_dir | bool)) else 'no' }} != yes ] \
+      && ! systemctl is-active --quiet patroni; then
+      echo "refusing to stop or mask anything: $d holds a postgres cluster Patroni did not create (see the data-dir gate)" >&2
+      exit 1
+    fi
+    systemctl mask --now postgresql@{{ patroni_postgres_version }}-main.service
   args:
+    executable: /bin/bash
     creates: /etc/systemd/system/postgresql@{{ patroni_postgres_version }}-main.service
 
 - name: enable Patroni

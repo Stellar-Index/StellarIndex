@@ -1,0 +1,78 @@
+---
+# Patroni must never start on a data dir it did not create. The distro
+# package auto-creates a cluster at this path; a replica with a foreign system
+# id crash-loops, and an adopted initdb-less dir has no pg_hba or roles.
+# Runs on every host after 05 installs packages and before 07 stops or masks
+# anything; 08/09 repeat it before starting Patroni.
+
+- name: refuse adopting a foreign data dir outside a pgBackRest restore
+  assert:
+    that:
+      - not (patroni_adopt_existing_data_dir | bool) or patroni_bootstrap_method == 'pgbackrest'
+    fail_msg: >-
+      patroni_adopt_existing_data_dir=true only lets a pgBackRest restore
+      overwrite the data dir. With initdb, Patroni would take over the foreign
+      cluster without running bootstrap, so pg_hba and the replicator/admin
+      roles would never be created.
+
+# PG_VERSION says nothing about Patroni. patroni.dynamic.json is written only
+# once Patroni has bootstrapped or joined the data dir.
+- name: detect a data dir Patroni already owns
+  stat:
+    path: "{{ patroni_data_dir }}/patroni.dynamic.json"
+  register: _patroni_initialized
+
+- name: detect an existing postgres cluster in the data dir
+  stat:
+    path: "{{ patroni_data_dir }}/PG_VERSION"
+  register: _pg_data_present
+
+# The marker appears only after a replica's first base backup completes; a
+# re-run during it must not read the half-copied dir as foreign.
+- name: detect a Patroni already running on this host
+  command: systemctl is-active patroni
+  register: _patroni_unit_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - not _patroni_initialized.stat.exists
+    - _pg_data_present.stat.exists
+
+- name: ask this host's Patroni whether it is creating a replica
+  uri:
+    url: "http://{{ patroni_rest_connect_address }}/patroni"
+    status_code: [200, 503]
+    timeout: 5
+  register: _patroni_member_state
+  failed_when: false
+  when:
+    - not _patroni_initialized.stat.exists
+    - _pg_data_present.stat.exists
+
+- name: refuse to start Patroni on a cluster it did not create
+  fail:
+    msg: >-
+      {{ patroni_data_dir }} holds a postgres cluster Patroni did not create
+      (typically the distro's auto-created main cluster), and no Patroni is
+      running on this host. Nothing was stopped or masked.
+      {% if inventory_hostname == groups['postgres_cluster'][0] %}
+      If it holds nothing, drop it (pg_dropcluster --stop
+      {{ patroni_postgres_version }} main) and re-run; to restore over it, set
+      patroni_bootstrap_method=pgbackrest and patroni_adopt_existing_data_dir=true.
+      {% else %}
+      If this is the distro's cluster, drop it (pg_dropcluster --stop
+      {{ patroni_postgres_version }} main) and re-run; the replica is rebuilt
+      from the primary by pg_basebackup. A re-run while Patroni's base backup is
+      still running passes this check; if that backup was interrupted (Patroni
+      stopped before it finished), the copy is incomplete: empty the directory
+      and re-run. Raise patroni_join_retries if the backup outlasts the join wait.
+      {% endif %}
+  when:
+    - not _patroni_initialized.stat.exists
+    - _pg_data_present.stat.exists
+    - (_patroni_unit_active.rc | default(1)) != 0
+    - (_patroni_member_state.json.state | default('')) != 'creating replica'
+    - not (inventory_hostname == groups['postgres_cluster'][0]
+      and patroni_bootstrap_method == 'pgbackrest'
+      and (patroni_adopt_existing_data_dir | bool))

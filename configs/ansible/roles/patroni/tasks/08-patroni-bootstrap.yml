@@ -8,32 +8,9 @@
 #   - patroni_bootstrap_method=pgbackrest → DR rebuild; we
 #     pre-restore the data dir from pgBackRest, then start
 #     Patroni and it adopts the existing primary.
-
-# PG_VERSION says nothing about Patroni: the distro package auto-creates an
-# empty cluster at this very path. patroni.dynamic.json is written only once
-# Patroni has bootstrapped or joined the data dir.
-- name: detect a data dir Patroni already owns
-  stat:
-    path: "{{ patroni_data_dir }}/patroni.dynamic.json"
-  register: _patroni_initialized
-
-- name: detect an existing postgres cluster in the data dir
-  stat:
-    path: "{{ patroni_data_dir }}/PG_VERSION"
-  register: _pg_data_present
-
-- name: refuse to bootstrap over a cluster Patroni did not create
-  fail:
-    msg: >-
-      {{ patroni_data_dir }} already holds a postgres cluster that Patroni has
-      not initialised (typically the distro's auto-created main cluster).
-      Bootstrapping would silently skip the {{ patroni_bootstrap_method }} path.
-      Empty or move the directory, or set patroni_adopt_existing_data_dir=true
-      to restore over it (pgbackrest) or adopt it as is (initdb).
-  when:
-    - not _patroni_initialized.stat.exists
-    - _pg_data_present.stat.exists
-    - not (patroni_adopt_existing_data_dir | bool)
+#
+# data-dir-gate.yml has already refused a data dir Patroni did not create
+# and registered _patroni_initialized.
 
 - block:
     # Honor `patroni_pgbackrest_restore_target` per the defaults /
@@ -48,8 +25,9 @@
     #   - `time:<ts>`  → pgbackrest --type=time --target=<ts>
     #                    (point-in-time recovery)
     #   - `immediate`  → pgbackrest --type=immediate
-    #                    (restore to first consistent point;
-    #                    the default)
+    #                    (restore to first consistent point)
+    # pgBackRest rejects --target-action without a recovery target (error 031),
+    # so it is emitted only for `time:` and `immediate`.
     - name: assert patroni_pgbackrest_restore_target shape
       assert:
         that:
@@ -69,11 +47,10 @@
         {%- if patroni_pgbackrest_restore_target == 'latest' %}
         --type=default
         {%- elif patroni_pgbackrest_restore_target == 'immediate' %}
-        --type=immediate
+        --type=immediate --target-action=promote
         {%- else %}
-        --type=time --target={{ patroni_pgbackrest_restore_target[5:] | quote }}
+        --type=time --target={{ patroni_pgbackrest_restore_target[5:] | quote }} --target-action=promote
         {%- endif %}
-        --target-action=promote
         --delta
         restore
       become: yes

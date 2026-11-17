@@ -877,9 +877,10 @@ groups:
       #                  this counter is the only evidence. Typically migration 0122
       #                  lagging a node.
       #
-      # `register` and `sweep` failures are deliberately NOT alerted: a lost
-      # guess-count is bounded harm, and sweep failure shows here as rows
-      # climbing.
+      # `register` failures are deliberately NOT alerted: a lost guess-count is
+      # bounded harm. `sweep` failures are covered by
+      # stellarindex_retention_reaper_failing (reaper="login_code"), since
+      # rows only climb past the threshold above after months.
       - alert: stellarindex_login_code_lockout_table_growing
         expr: |
           stellarindex_login_code_lockout_rows > 10000
@@ -981,7 +982,14 @@ groups:
       # Two counters whose Help says "fails open" or "not being bounded"
       # and that no rule read. Both are pre-seeded.
       - alert: stellarindex_retention_reaper_failing
-        expr: sum by (reaper) (increase(stellarindex_retention_reaper_errors_total[3h])) > 0
+        expr: |
+          (
+            sum by (reaper) (increase(stellarindex_retention_reaper_errors_total[3h]))
+            or
+            label_replace(sum(increase(stellarindex_magic_link_token_errors_total{op="sweep"}[3h])), "reaper", "magic_link", "", "")
+            or
+            label_replace(sum(increase(stellarindex_login_code_lockout_errors_total{op="sweep"}[3h])), "reaper", "login_code", "", "")
+          ) > 0
         for: 2h
         labels:
           severity: ticket
@@ -993,7 +1001,8 @@ groups:
           description: |
             A retention reaper's sweep has been failing for hours. The
             `registration` reaper erases abandoned sign-ups' personal data;
-            `session` and `webhook_delivery` bound their tables. The
+            `magic_link` and `login_code` bound tables holding email
+            addresses; `session` and `webhook_delivery` bound theirs. The
             liveness alert stays green because a failed sweep still counts
             as a run.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
