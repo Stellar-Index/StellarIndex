@@ -61,23 +61,23 @@ A token whose event log starts partway through its life has both a storage level
 and an event accumulation. **They are never added.** The same tokens are in
 both; adding them double-counts every holder.
 
-Where a token has both, the storage reading **wins outright**. The reason is
-structural rather than a preference:
+The two differ in what can make them wrong:
 
 - A **level** measures what exists now. It carries no history, so it cannot be
   made wrong by missing history.
 - An **accumulation** is only ever as complete as its log.
 
-This also means the reading needs **no handover date**. The published
-`events_start_from` per contract is useful context, but the reader does not
-consult it and does not need to: a level is always current. The date matters
-only when *interpreting a disagreement* — if a contract's event log begins later
-than its first balance, the event-derived figure is known-incomplete, and the
-storage figure is the one to trust.
-
-In the serving path the rule is enforced by construction: the storage reader is
-consulted **only when the event reading found zero flows**. The two can never
-both contribute to one figure.
+The serving path picks one reading per token, by flow count alone: the storage
+reader is consulted **only when the event reading found zero flows**
+(`handleAssetSupply`, `internal/api/v1/asset_supply.go`), so the two never both
+contribute to one figure. A token with **any** recorded flow is served from
+events (`source: mint_burn_flows`), even when its log starts partway through
+its life. That figure then omits everything minted before the log starts, and
+the response does **not** flag it as a lower bound: neither
+`events_start_from` nor the storage level is consulted to detect the gap. If a
+contract's event log begins later than its first balance, read its
+`mint_burn_flows` total as incomplete; the storage level is the better figure,
+but it is not served for that token.
 
 Events remain valuable against this basis as a **cross-check**, never as an
 addend.

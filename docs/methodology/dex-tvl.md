@@ -83,9 +83,10 @@ Exactly one of `basis`/`usd` or `excluded` is present on a leg: a leg
 that contributed nothing says why on the wire and is never a silent
 zero. A pool whose captured storage did not decode (rule 4) is
 published with `excluded: undecodable_storage`, no legs and
-`tvl_usd: "0.00"`. A curated Phoenix or Comet pool the lake holds no
-current state for (absent or archived) is published the same way with
-`excluded: unavailable_state`; both count in `unpriced_pools`.
+`tvl_usd: "0.00"`. A curated Phoenix or Comet pool or a registered
+Soroswap pair the lake holds no current state for (absent or archived)
+is published the same way with `excluded: unavailable_state`; both
+count in `unpriced_pools`.
 
 **Money is rounded once, at the leaf.** Each valued leg's `usd` is
 published to the cent; a pool's `tvl_usd` is the exact sum of its legs'
@@ -134,8 +135,12 @@ makes the served number smaller, never larger.
    and is counted in both `pools_total` and `unpriced_pools`. It is
    never partially decoded or guessed — a contract upgrade that changes
    a storage layout shows up as a counted gap, not a silent shrink.
+   Phoenix and Comet name it `undecodable_storage`; the Soroswap reader
+   does not report which pairs failed to decode, so such a pair is
+   counted under rule 5 as `unavailable_state`.
 5. **A pool with no reserve state is never valued as zero.** A curated
-   Phoenix or Comet pool the lake holds no current state for is counted
+   Phoenix or Comet pool, or a `soroswap_pairs` pair, the lake holds no
+   current state for (absent, archived or off-layout) is counted
    in `pools_total` and `unpriced_pools` with `excluded:
    unavailable_state`, so the figure is a lower bound. Aquarius is read
    from reserve snapshots in the trailing 90 days: a registered pool

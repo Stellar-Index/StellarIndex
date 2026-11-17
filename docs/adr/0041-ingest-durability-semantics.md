@@ -32,6 +32,7 @@ The lake sink drops whole ledger extracts under buffer pressure by design, heale
 
 - Fresh deployments capture the lake by default. A crash's loss window remains, but it is bounded, detected, healable from the lake, and visible within minutes through the drop alert.
 - This covers lake-backed on-chain ingest only. The CEX/FX sinks do not flow through the lake and need their own backpressure treatment.
+- Status note: Decision 1's "every lost row is recoverable and the verdict detects any residue" does not hold for the five LedgerEntry observer sinks (`accounts`, `trustlines`, `claimable_balances`, `liquidity_pools`, `sac_balances`). They are never a reconciliation source (`entryDecoderSourceNames`, `internal/ops/chops/reconciliation_catalogue.go`), so a row lost in a crash leaves current balance state wrong with no verdict, alert or flag. After an unclean indexer exit, re-seed them with `stellarindex-ops supply seed-observations` and `supply seed-sac-balances`.
 
 ## Evidence
 

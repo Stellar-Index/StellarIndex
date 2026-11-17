@@ -102,9 +102,15 @@ Every later one names itself in `listing_valuation.status`.
    product would be a number nobody claimed.
 
 7. **The supply comes from the lake, not from a trustline sum** — else
-   `no_supply`. The figure multiplies the larger of the row's own reading
-   and Σmint − Σburn − Σclawback over the asset's SAC, and `supply_basis`
-   says which was used. USDT0 is why: its trustline-visible supply is
+   `no_supply`. An observed supply on the row (any basis that is not a
+   provable floor) is used as-is. Only when the row has no reading, or its
+   reading is a provable floor (a trustline or storage-balance sum) or is
+   itself the lake total, does the figure multiply the larger of that
+   reading and Σmint − Σburn − Σclawback over the asset's SAC
+   (`listingSupplyReading`, `internal/api/v1/asset_listing_valuation.go`).
+   `supply_basis` says which was used; when it is a provable floor,
+   `value_lower_bound: true` marks `value_usd` as at least this much.
+   USDT0 is why: its trustline-visible supply is
    **6,469 tokens against 2,581,052 by mint−burn**, because almost all of
    its float sits in balances a trustline query is blind to by
    construction. Valuing the wrong one publishes a figure 400× too small
