@@ -94,7 +94,7 @@ func TestAdmitClassicCandidates_ISINCollisionAcrossIssuers(t *testing.T) {
 	a := byCode["gBENJI"]
 	a.Issuer, a.CirculatingSupply, a.Decimals = franklinIB, &supply, intPtr(7)
 	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
-	rwaApplyReference(&a, snap, nil, map[string]timescale.ListingEntry{}, now)
+	rwaApplyReference(&a, snap, nil, listingAnswered(map[string]timescale.ListingEntry{}), now)
 	if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV {
 		t.Errorf("gBENJI reference = %+v, want the prospectus CNAV unchanged by the collision", a.Reference)
 	}

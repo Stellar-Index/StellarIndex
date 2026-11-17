@@ -4,6 +4,8 @@
     name: etcd
     state: restarted
     daemon_reload: yes
+  # One member at a time, or etcd loses quorum while every member restarts.
+  throttle: 1
   listen: "etcd config changed"
 
 - name: restart patroni
@@ -11,6 +13,8 @@
     name: patroni
     state: restarted
     daemon_reload: yes
+  # One member at a time, or the cluster has no leader until every node is back.
+  throttle: 1
   listen: "patroni config changed"
 
 - name: reload firewall

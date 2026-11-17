@@ -11,6 +11,12 @@
     mode: '0644'
   notify: "patroni config changed"
 
+# Patroni runs postgres itself; the distro unit would fight it for the data dir.
+- name: mask the distro postgresql cluster unit
+  command: systemctl mask --now postgresql@{{ patroni_postgres_version }}-main.service
+  args:
+    creates: /etc/systemd/system/postgresql@{{ patroni_postgres_version }}-main.service
+
 - name: enable Patroni
   systemd:
     name: patroni

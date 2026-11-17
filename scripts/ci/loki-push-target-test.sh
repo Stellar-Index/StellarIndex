@@ -78,6 +78,10 @@ check(ctx("mon-01", "0.0.0.0")["promtail_target_url"] == "http://10.0.0.9:3100" 
       "a wildcard bind falls back to the aggregator's ansible_host")
 check(ctx("app-01", "10.0.0.9")["promtail_target_url"] == "http://10.0.0.9:3100" + push,
       "a remote agent ships to the aggregator's ansible_host")
+check(ctx("app-01", "10.0.1.9")["promtail_target_url"] == "http://10.0.1.9:3100" + push,
+      "a remote agent ships to the concrete address Loki binds, not ansible_host")
+check(ctx("app-01", "fd00::9")["promtail_target_url"] == "http://[fd00::9]:3100" + push,
+      "a remote agent brackets an IPv6 bind address")
 check(not allowed(ctx("app-01", "127.0.0.1")), "a remote agent is refused while Loki listens on loopback only")
 check(allowed(ctx("app-01", "10.0.0.9")), "a remote agent is allowed once Loki listens on the internal address")
 check(allowed(ctx("app-01", "127.0.0.1", "http://lb.internal:3100" + push)), "an overridden front is not refused")

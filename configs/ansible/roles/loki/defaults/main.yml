@@ -12,7 +12,7 @@ loki_data_dir: /var/lib/loki
 loki_retention_days: 30
 # Preflight asserts at least
 # this many GB free at /var. The role caches chunks locally
-# before flushing to MinIO and keeps the boltdb index on local
+# before flushing to MinIO and keeps the tsdb index on local
 # disk; both share /var by default.
 loki_var_min_free_gb: 50
 # HTTP API listen address — loopback-only by default (matches the
@@ -59,12 +59,16 @@ promtail_journal_max_age: "12h"
 
 # Where the agent ships logs. On the aggregator itself this is the
 # address Loki binds (loopback by default); elsewhere it is the first
-# `log_aggregator` host's ansible_host. Operators can override to
+# `log_aggregator` host's concrete loki_listen_address, else its
+# ansible_host. Operators can override to
 # point at a load-balanced front (HAProxy etc.).
 promtail_target_url: >-
   http://{%- set agg = groups['log_aggregator'][0] -%}
+  {%- set l = hostvars[agg].loki_listen_address | default(loki_listen_address) -%}
   {%- if inventory_hostname == agg and loki_listen_address not in ['0.0.0.0', '::'] -%}
   {{ ('[' ~ loki_listen_address ~ ']') if ':' in loki_listen_address else loki_listen_address }}
+  {%- elif l not in ['0.0.0.0', '::', 'localhost', '::1'] and not l.startswith('127.') -%}
+  {{ ('[' ~ l ~ ']') if ':' in l else l }}
   {%- else -%}
   {{ hostvars[agg].ansible_host }}
   {%- endif -%}

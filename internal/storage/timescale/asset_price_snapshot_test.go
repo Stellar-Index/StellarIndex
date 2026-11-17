@@ -109,6 +109,23 @@ func TestPriceArms_UnionBothDirectionsAndPickByRecency(t *testing.T) {
 	}
 }
 
+// TestPriceArms_PreferNewestNotionalMinute pins that every newest-minute arm prefers a minute holding a trade over the
+// $0.01 notional floor, so a newer sub-cent print cannot set the served price, change pills or market cap.
+func TestPriceArms_PreferNewestNotionalMinute(t *testing.T) {
+	t.Parallel()
+	fold := func(q string) string { return strings.Join(strings.Fields(sqlWithoutComments(q)), " ") }
+	arms := fold(assetPriceArmCTEs("", xlmQuotesBound1))
+	for _, want := range []string{
+		"notional_trade_count > 0 AS floored",
+		"COALESCE(max(u.bucket) FILTER (WHERE u.floored) OVER w, max(u.bucket) OVER w) AS newest",
+		"WHERE bucket = newest AND (floored OR NOT any_floored)",
+	} {
+		if got := strings.Count(arms, want); got < 8 {
+			t.Errorf("%d price arms carry %q, want every one of 8", got, want)
+		}
+	}
+}
+
 // TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL pins fail-closed staleness: the join floors
 // computed_at, so a wedged aggregator makes the row render with no price rather than serve stale prices as
 // current. It asserts the rendered predicate, since a constant nothing splices in bounds nothing.

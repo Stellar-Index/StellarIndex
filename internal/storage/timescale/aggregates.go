@@ -1377,7 +1377,7 @@ func (s *Store) OHLCSeries(
 		        `+ohlcDirectionKeepSQL+`
 		      FROM (
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                volume, volume_quote, trade_count, sources, volume_usd
+		                volume, volume_quote, trade_count, sources, %[3]s
 		           FROM %[1]s
 		          WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
 		            AND bucket >= $3
@@ -1385,7 +1385,7 @@ func (s *Store) OHLCSeries(
 		            AND bucket <= now() - INTERVAL '%[2]s')
 		        UNION ALL
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                volume, volume_quote, trade_count, sources, volume_usd
+		                volume, volume_quote, trade_count, sources, %[3]s
 		           FROM %[1]s
 		          WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
 		            AND bucket >= $3
@@ -1408,7 +1408,7 @@ func (s *Store) OHLCSeries(
 		                                                                            AS sources
 		  FROM norm
 		 GROUP BY bucket
-	`, table, interval)
+	`, table, interval, ohlcFlooredSQL(table))
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
 	if limit > 0 {
 		// DESC + LIMIT keeps the NEWEST `limit` buckets; reversed to ascending below.
@@ -1451,11 +1451,20 @@ func (s *Store) OHLCSeries(
 	return out, nil
 }
 
-// ohlcDirectionKeepSQL marks which stored direction of a pair may set a bar's prices. A CAGG row whose trades are
-// all under the $0.01 notional floor carries the unfloored fallback as its open/high/low/close, so a lone crumb
-// stored the other way round would set the wick the floor exists to remove. A direction under the floor is dropped
-// whenever the other direction of the same bucket cleared it; volumes and counts still sum both.
-const ohlcDirectionKeepSQL = `(volume_usd >= 0.01 OR NOT bool_or(volume_usd >= 0.01) OVER (PARTITION BY bucket)) AS keep`
+// ohlcDirectionKeepSQL marks which stored direction of a pair may set a bar's prices. A CAGG row with no trade over the $0.01
+// notional floor carries the unfloored fallback as its open/high/low/close, so a crumb stored the other way round would set the
+// wick the floor exists to remove. A direction whose row is not [ohlcFlooredSQL] is dropped whenever the other direction of the
+// same bucket is; volumes and counts still sum both.
+const ohlcDirectionKeepSQL = `(floored OR NOT bool_or(floored) OVER (PARTITION BY bucket)) AS keep`
+
+// ohlcFlooredSQL selects whether a CAGG row's prices came from a trade that cleared the floor. Only prices_1m carries the per-trade
+// notional_trade_count; the coarser views fall back to summed volume_usd, which several sub-cent crumbs can push past $0.01.
+func ohlcFlooredSQL(table string) string {
+	if table == "prices_1m" {
+		return "notional_trade_count > 0 AS floored"
+	}
+	return "volume_usd >= 0.01 AS floored"
+}
 
 // ohlcReBucketedQuery builds [Store.OHLCSeriesReBucketed]'s statement; `table` comes from the
 // validated granularity enum and `outInterval` from the allow-list, so neither is user input.
@@ -1487,18 +1496,18 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               `+ohlcDirectionKeepSQL+`
 		          FROM (
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                    volume, volume_quote, trade_count, sources, volume_usd
+		                    volume, volume_quote, trade_count, sources, %[5]s
 		               FROM %[1]s
 		              WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
-		                AND bucket >= $3
-		                AND bucket <  $4)
+		                AND bucket >= %[3]s
+		                AND bucket <  %[4]s)
 		            UNION ALL
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                    volume, volume_quote, trade_count, sources, volume_usd
+		                    volume, volume_quote, trade_count, sources, %[5]s
 		               FROM %[1]s
 		              WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
-		                AND bucket >= $3
-		                AND bucket <  $4)
+		                AND bucket >= %[3]s
+		                AND bucket <  %[4]s)
 		          ) AS both_directions
 		      ) raw
 		     GROUP BY bucket
@@ -1524,7 +1533,13 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
 		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'
 		    AND ($5::timestamptz IS NULL OR time_bucket(INTERVAL '%[2]s', n.bucket) <= $5::timestamptz - INTERVAL '%[2]s')
-	`, table, outInterval)
+	`, table, outInterval, foldGridCeil(outInterval, "$3"), foldGridCeil(outInterval, "$4"), ohlcFlooredSQL(table))
+}
+
+// foldGridCeil renders the first fold-grid boundary at or after param. Reading source buckets in [ceil(from), ceil(to)) serves exactly
+// the out-buckets that start in [from, to), each read whole, as a native route does; a raw window would serve partial edge bars.
+func foldGridCeil(outInterval, param string) string {
+	return fmt.Sprintf("(time_bucket(INTERVAL '%[1]s', %[2]s::timestamptz - INTERVAL '1 microsecond') + INTERVAL '%[1]s')", outInterval, param)
 }
 
 // OHLCSeriesReBucketed re-buckets [Store.OHLCSeries] into a coarser `outInterval` via `time_bucket` (open/close first/last, high/low max/min, volumes sum); `outInterval` must be an integer multiple of the source bucket.

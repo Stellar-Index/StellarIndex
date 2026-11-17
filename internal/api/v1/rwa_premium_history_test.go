@@ -686,3 +686,27 @@ func TestRWAPremium_NoMarketHistoryIsBoundedByTheServedFloor(t *testing.T) {
 		t.Errorf("unread floor: market_observed_from = %v excluded = %+v, want the field absent and the account kept", v.MarketObservedFrom, v.Excluded)
 	}
 }
+
+// TestRWAPremium_EveryDayOffBandIsNotReportedAsThin: deep days refused for their price are a dislocation, not a thin
+// market, and the exclusion says so.
+func TestRWAPremium_EveryDayOffBandIsNotReportedAsThin(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	id := premAssetID("USTRY", rwaGoodIssuer)
+	srv := rwaPremiumServer(t, bound, dir, rows,
+		&stubOracleHistory{rows: []timescale.OracleDayPoint{
+			histOracle("redstone", "USTRY", 1, 107000000),
+			histOracle("redstone", "USTRY", 2, 107000000),
+		}},
+		&stubMarketHistory{rows: []timescale.MarketDay{
+			premMarket(id, 1, "12.00"),
+			premMarket(id, 2, "12.00"),
+		}},
+	)
+	v := getRWAPremium(t, srv, "?timeframe=all")
+	if len(v.Series) != 0 {
+		t.Fatalf("series = %+v, want none", v.Series)
+	}
+	if premiumExcluded(v, "market_below_floor") != 0 || premiumExcluded(v, "market_outside_band") != 1 {
+		t.Errorf("excluded = %+v, want one market_outside_band and no market_below_floor", v.Excluded)
+	}
+}
