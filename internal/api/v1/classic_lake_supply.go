@@ -134,16 +134,23 @@ func stampCirculatingSupply(row *AssetDetail, circ string, basis supply.Basis) {
 // error or a cold cache gives a smaller map and the caller falls back to the trustline sum. The refresh is detached: a sum outgrowing the
 // request timeout must not die on a caller's context before recording the attempt, or the cache latches into failure.
 func (s *Server) classicLakeSupply(ctx context.Context, rows []AssetDetail) map[string]string {
+	out, _ := s.classicLakeSupplyRead(ctx, rows)
+	return out
+}
+
+// classicLakeSupplyRead is [Server.classicLakeSupply] plus the asset ids the lake did not answer for (cold, refresh failed or
+// still in flight), as distinct from ids it answered with no reading. No reader configured answers nothing and reports nothing.
+func (s *Server) classicLakeSupplyRead(ctx context.Context, rows []AssetDetail) (map[string]string, []string) {
 	if s.TokenSupply == nil {
-		return nil
+		return nil, nil
 	}
 	rd, ok := s.TokenSupply.(classicLakeSupplyReader)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	wanted := classicLakeSupplyCandidates(rows)
 	if len(wanted) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// readClassicLakeSupply takes no ctx: it may launch the detached refresh, which must outlive
@@ -151,18 +158,18 @@ func (s *Server) classicLakeSupply(ctx context.Context, rows []AssetDetail) map[
 	out, missing, flight := s.readClassicLakeSupply(rd, wanted) //nolint:contextcheck // the detachment is the point; see this function's doc.
 	// Wait only on a fully cold answer; a partially warm one already beats the fallback.
 	if len(out) > 0 || len(missing) == 0 || flight == nil {
-		return out
+		return out, missing
 	}
 	timer := time.NewTimer(classicLakeSupplyColdWait)
 	defer timer.Stop()
 	select {
 	case <-flight:
-		warmed, _, _ := s.readClassicLakeSupply(rd, wanted) //nolint:contextcheck // same detachment as above; the flight it could start is deliberate.
-		return warmed
+		warmed, stillMissing, _ := s.readClassicLakeSupply(rd, wanted) //nolint:contextcheck // same detachment as above; the flight it could start is deliberate.
+		return warmed, stillMissing
 	case <-timer.C:
-		return out
+		return out, missing
 	case <-ctx.Done():
-		return out
+		return out, missing
 	}
 }
 

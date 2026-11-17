@@ -24,6 +24,24 @@ describe('mergeDetailOverListing', () => {
     });
   });
 
+  it('drops listing pricing provenance the detail withheld', () => {
+    const listing = {
+      code: 'ABC',
+      market_cap_lower_bound: true,
+      price_authority: 'aggregator_avg',
+      price_sources: ['coingecko'],
+      price_as_of: '2026-11-01T00:00:00Z',
+      price_credit: 'CoinGecko',
+      listing_reference: { price_usd: '1' },
+      listing_valuation: { status: 'published' },
+      global_market: { price_usd: '1' },
+    };
+    expect(mergeDetailOverListing(listing, { markets_count: 1 })).toEqual({
+      code: 'ABC',
+      markets_count: 1,
+    });
+  });
+
   it('keeps the detail figure when the detail serves one', () => {
     const merged = mergeDetailOverListing(
       { code: 'ABC', price_usd: '1.25' },

@@ -15,6 +15,14 @@ const DETAIL_OWNED: (keyof Asset)[] = [
   'price_history_24h',
   'price_history_7d',
   'ath',
+  'market_cap_lower_bound',
+  'price_authority',
+  'price_sources',
+  'price_as_of',
+  'price_credit',
+  'listing_reference',
+  'listing_valuation',
+  'global_market',
 ];
 
 export function mergeDetailOverListing<

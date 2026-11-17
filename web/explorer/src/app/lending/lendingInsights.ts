@@ -169,12 +169,18 @@ export function auctionStatus(a: {
   deleted: boolean;
   fills?: { fill_percent: string }[] | null;
 }): AuctionStatus {
-  const total = (a.fills ?? []).reduce((s, f) => {
+  // Each fill_percent is a share of what was still open, so shares compound;
+  // only a single 100 closes the auction (as the API's lifecycle walk does).
+  let remaining = 1;
+  let closed = false;
+  for (const f of a.fills ?? []) {
     const n = Number(f.fill_percent);
-    return Number.isFinite(n) ? s + n : s;
-  }, 0);
-  const percent = Math.min(100, Math.round(total * 100) / 100);
-  if (percent >= 100) return { kind: 'filled', label: 'Filled', percent };
+    if (!Number.isFinite(n)) continue;
+    if (n >= 100) closed = true;
+    remaining *= 1 - Math.min(100, Math.max(0, n)) / 100;
+  }
+  const percent = closed ? 100 : Math.round((1 - remaining) * 10000) / 100;
+  if (closed) return { kind: 'filled', label: 'Filled', percent };
   if (a.deleted) return { kind: 'deleted', label: 'Deleted', percent };
   if (percent > 0)
     return { kind: 'partial', label: `Filled ${percent}%`, percent };

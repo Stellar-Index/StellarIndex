@@ -272,6 +272,13 @@ func TestRWACurated_ClassicRowsAreCountedNotSilentlyDropped(t *testing.T) {
 	if c.Contracts+c.Classic != c.Entries {
 		t.Errorf("census does not close: %d + %d != %d", c.Contracts, c.Classic, c.Entries)
 	}
+	if got.Curated.AdditionalValueUSD == nil || !got.Curated.AdditionalValueLowerBound {
+		t.Errorf("additional_value_usd = %v, lower_bound = %v; want a figure marked a lower bound without the classic row",
+			got.Curated.AdditionalValueUSD, got.Curated.AdditionalValueLowerBound)
+	}
+	if !strings.Contains(got.Curated.Basis, "exclude 1 classic curator row(s)") || !strings.Contains(got.Curated.Basis, "LOWER BOUND") {
+		t.Errorf("basis does not name the excluded classic row as a lower bound: %q", got.Curated.Basis)
+	}
 }
 
 func TestCuratedRWACensus_Check(t *testing.T) {

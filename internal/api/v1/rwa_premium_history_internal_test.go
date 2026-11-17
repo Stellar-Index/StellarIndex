@@ -409,3 +409,17 @@ func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *
 		t.Fatal("second call did not return — the single-flight gate is wedged")
 	}
 }
+
+// TestRWAPremiumAnchor_RefusesAValueOlderThanTheLiveSurfaceDoes: a day with no publication of its own is judged against an
+// earlier value only as old as /v1/rwa/assets would still serve, so the two surfaces never judge a day against different NAVs.
+func TestRWAPremiumAnchor_RefusesAValueOlderThanTheLiveSurfaceDoes(t *testing.T) {
+	published := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	ref := &rwaFeedSeries{days: map[time.Time]*big.Rat{published: big.NewRat(107, 100)}}
+	days := rwaPremiumRefDays(ref)
+	if got := rwaPremiumAnchor(ref, days, published.Add(rwaReferenceMaxAge)); got == nil || got.Cmp(big.NewRat(107, 100)) != 0 {
+		t.Errorf("anchor at exactly the max age = %v, want 1.07", got)
+	}
+	if got := rwaPremiumAnchor(ref, days, published.Add(rwaReferenceMaxAge+24*time.Hour)); got != nil {
+		t.Errorf("anchor one day past the max age = %s, want none", got.FloatString(2))
+	}
+}
