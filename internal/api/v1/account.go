@@ -417,9 +417,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if subject.Tier == auth.TierOperator {
-		s.recordAccountKeyMintAudit(r, subject, req.Label, scopes, rec.KeyID, reason)
-	}
+	s.recordAccountKeyMintAudit(r, subject, req.Label, scopes, rec.KeyID, reason)
 
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data: KeyCreated{
@@ -507,12 +505,20 @@ func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subjec
 	return reason, true
 }
 
-// recordAccountKeyMintAudit persists the key.mint row for an operator self-service mint, shaped like the admin mint (the route
+// keyAuditActorKind is the audit actor for a self-service key call: staff for an operator key, the customer otherwise.
+func keyAuditActorKind(actor auth.Subject) platform.ActorKind {
+	if actor.Tier == auth.TierOperator {
+		return platform.ActorStaff
+	}
+	return platform.ActorUser
+}
+
+// recordAccountKeyMintAudit persists the key.mint row for every self-service mint, shaped like the admin mint (the route
 // field tells them apart). Best-effort: a sink failure logs at WARN and never blocks the mint.
 func (s *Server) recordAccountKeyMintAudit(
 	r *http.Request, actor auth.Subject, label string, scopes []string, mintedKeyID, reason string,
 ) {
-	s.logger.Info("account key mint (operator)",
+	s.logger.Info("account key mint",
 		"actor_key_id", actor.KeyID,
 		"actor_identifier", actor.Identifier,
 		"minted_key_id", mintedKeyID,
@@ -539,7 +545,7 @@ func (s *Server) recordAccountKeyMintAudit(
 		return
 	}
 	s.appendKeyAudit(r, platform.AuditEntry{
-		ActorKind:  platform.ActorStaff,
+		ActorKind:  keyAuditActorKind(actor),
 		Action:     "key.mint",
 		TargetKind: "api_key",
 		TargetID:   mintedKeyID,
@@ -547,12 +553,12 @@ func (s *Server) recordAccountKeyMintAudit(
 	}, "key_mint", "account key mint")
 }
 
-// recordAccountKeyRevokeAudit persists the key.revoke row for an operator self-service revoke; best-effort, the revoke must not
+// recordAccountKeyRevokeAudit persists the key.revoke row for every self-service revoke; best-effort, the revoke must not
 // be undone by a sink outage.
 func (s *Server) recordAccountKeyRevokeAudit(
 	r *http.Request, actor auth.Subject, keyID, reason string,
 ) {
-	s.logger.Info("account key revoke (operator)",
+	s.logger.Info("account key revoke",
 		"actor_key_id", actor.KeyID,
 		"actor_identifier", actor.Identifier,
 		"key_id", keyID,
@@ -573,7 +579,7 @@ func (s *Server) recordAccountKeyRevokeAudit(
 		return
 	}
 	s.appendKeyAudit(r, platform.AuditEntry{
-		ActorKind:  platform.ActorStaff,
+		ActorKind:  keyAuditActorKind(actor),
 		Action:     "key.revoke",
 		TargetKind: "api_key",
 		TargetID:   keyID,
@@ -775,8 +781,6 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 			"see X-Request-ID in server logs")
 		return
 	}
-	if subject.Tier == auth.TierOperator {
-		s.recordAccountKeyRevokeAudit(r, subject, keyID, reason)
-	}
+	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason)
 	w.WriteHeader(http.StatusNoContent)
 }

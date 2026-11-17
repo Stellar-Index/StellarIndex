@@ -305,9 +305,8 @@ func TestAccountKeysCreate_OperatorSelfMintIsAudited(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_CustomerNeedsNoReason pins the blast radius: a
-// customer-tier caller is NOT an admin write — no X-Reason required, no
-// staff audit row.
+// TestAccountKeysCreate_CustomerNeedsNoReason: a customer-tier caller needs no X-Reason, but the
+// credential it mints still lands one user-actor key.mint row.
 func TestAccountKeysCreate_CustomerNeedsNoReason(t *testing.T) {
 	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_c"}, plain: "sip_c"}
 	sink := &recordingAuditSink{}
@@ -317,8 +316,11 @@ func TestAccountKeysCreate_CustomerNeedsNoReason(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (customer mint unchanged)", resp.StatusCode)
 	}
-	if len(sink.entries) != 0 {
-		t.Errorf("audit entries = %d, want 0 for a customer self-mint", len(sink.entries))
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1 key.mint row for a customer self-mint", len(sink.entries))
+	}
+	if e := sink.entries[0]; e.Action != "key.mint" || e.ActorKind != platform.ActorUser || e.TargetID != "kid_c" {
+		t.Errorf("audit entry = %+v, want a user-actor key.mint row for kid_c", e)
 	}
 }
 
