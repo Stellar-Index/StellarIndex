@@ -40,7 +40,7 @@ type OHLCSeriesBar struct {
 
 	// BelowFloor marks a bar no trade of which cleared the $0.01 notional floor (its prices are the CAGG's unfloored fallback);
 	// [ohlcBucketAcc] lets it set no price and answer no bucket beside a floored bar.
-	BelowFloor bool `json:"-"`
+	BelowFloor bool `json:"below_floor,omitempty"`
 }
 
 // OHLCSeriesResponse is the CG-parity series envelope for /v1/ohlc?interval=..., distinct from the single-bar [OHLCBar] response.

@@ -42,6 +42,9 @@ type OHLCBar struct {
 	// still-filling bucket (or in the future) and was pulled back to
 	// the last closed boundary per ADR-0015.
 	Clamped bool `json:"clamped"`
+	// BelowFloor is true when no trade in the window cleared the $0.01 notional floor, so the prices come from dust; otherwise they
+	// come from the trades that cleared it alone.
+	BelowFloor bool `json:"below_floor"`
 	// Substance: see [VWAPResult.Substance].
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
@@ -175,7 +178,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bar, ok := s.computeOHLCSingleBar(w, r, pair, from, to, window.Trades())
+	bar, belowFloor, ok := s.computeOHLCSingleBar(w, r, pair, from, to, window.Trades())
 	if !ok {
 		return
 	}
@@ -195,6 +198,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 		Clamped:             clamped,
+		BelowFloor:          belowFloor,
 		Substance:           substance,
 	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
 }
@@ -220,27 +224,31 @@ func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, window aggregate
 }
 
 // computeOHLCSingleBar derives the bar and applies dex-nonstandard-decimals normalization; O/H/L/C share one raw ratio, so one
-// per-pair scalar is exact ([aggregate.AdjustPrice]). ok=false means the failure response is already written.
+// per-pair scalar is exact ([aggregate.AdjustPrice]). Prices come from the trades that cleared the notional floor, as the series
+// CAGGs' do; volumes and count from all. ok=false means the failure response is already written.
 func (s *Server) computeOHLCSingleBar(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time,
 	trades []canonical.Trade,
-) (*aggregate.OHLC, bool) {
+) (bar *aggregate.OHLC, belowFloor bool, ok bool) {
 	bar, err := aggregate.ComputeOHLC(trades)
+	if err == nil {
+		belowFloor, err = applyFlooredPrices(bar, trades)
+	}
 	if errors.Is(err, aggregate.ErrNoTrades) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/no-trades",
 			"No trades in window", http.StatusNotFound,
 			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
 				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
-		return nil, false
+		return nil, false, false
 	}
 	if err != nil {
 		s.logger.Error("ComputeOHLC failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
-		return nil, false
+		return nil, false, false
 	}
 
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
@@ -249,7 +257,30 @@ func (s *Server) computeOHLCSingleBar(
 	bar.High = aggregate.AdjustPrice(bar.High, baseDec, quoteDec)
 	bar.Low = aggregate.AdjustPrice(bar.Low, baseDec, quoteDec)
 	bar.Close = aggregate.AdjustPrice(bar.Close, baseDec, quoteDec)
-	return bar, true
+	return bar, belowFloor, true
+}
+
+// applyFlooredPrices replaces bar's prices with those of the trades that cleared the notional floor; belowFloor reports that none
+// did, leaving the all-trade prices as the only ones there are.
+func applyFlooredPrices(bar *aggregate.OHLC, trades []canonical.Trade) (belowFloor bool, err error) {
+	floored := make([]canonical.Trade, 0, len(trades))
+	for i := range trades {
+		if trades[i].ClearsNotionalFloor {
+			floored = append(floored, trades[i])
+		}
+	}
+	if len(floored) == 0 {
+		return true, nil
+	}
+	if len(floored) == len(trades) {
+		return false, nil
+	}
+	fb, err := aggregate.ComputeOHLC(floored)
+	if err != nil {
+		return false, err
+	}
+	bar.Open, bar.High, bar.Low, bar.Close = fb.Open, fb.High, fb.Low, fb.Close
+	return false, nil
 }
 
 // commonAmountScaleDecimals is the scale of a window's volume sums: the MAXIMUM per-source scale ([aggregate.NormalizeAmountScale]), so

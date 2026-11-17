@@ -13226,6 +13226,14 @@ export interface components {
              *     than the one requested.
              */
             clamped: boolean;
+            /**
+             * @description True when no trade in the window cleared the $0.01 notional
+             *     floor, or its USD value is not yet known: the prices then
+             *     come from dust trades. When false, open/high/low/close come
+             *     only from trades that cleared the floor; volumes and
+             *     `trade_count` always cover every trade.
+             */
+            below_floor: boolean;
         };
         OHLCEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["OHLCBar"];
@@ -13303,6 +13311,14 @@ export interface components {
              *     the first served bar's `t`.
              */
             truncated?: boolean;
+            /**
+             * @description Present and `true` when no trade in the bar cleared the
+             *     $0.01 notional floor: its o/h/l/c then come from dust
+             *     trades. Omitted otherwise, and then the prices come only
+             *     from trades that cleared the floor (a fiat-quoted bar
+             *     combining several markets prices from those that did).
+             */
+            below_floor?: boolean;
         };
         /** @description Multi-bar OHLC series response. */
         OHLCSeriesResponse: {

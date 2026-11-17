@@ -23360,7 +23360,15 @@ components:
             bucket (or in the future) and was pulled back to the last
             closed boundary per ADR-0015 — the served `to` is earlier
             than the one requested.
-      required: [from, to, open, high, low, close, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, truncated, clamped]
+        below_floor:
+          type: boolean
+          description: |
+            True when no trade in the window cleared the $0.01 notional
+            floor, or its USD value is not yet known: the prices then
+            come from dust trades. When false, open/high/low/close come
+            only from trades that cleared the floor; volumes and
+            `trade_count` always cover every trade.
+      required: [from, to, open, high, low, close, base_volume, quote_volume, base_volume_decimals, quote_volume_decimals, trade_count, truncated, clamped, below_floor]
 
     OHLCEnvelope:
       allOf:
@@ -23435,6 +23443,14 @@ components:
             was dropped, including when the window held exactly `limit`
             buckets. To read the dropped part, re-ask with `to` set to
             the first served bar's `t`.
+        below_floor:
+          type: boolean
+          description: |
+            Present and `true` when no trade in the bar cleared the
+            $0.01 notional floor: its o/h/l/c then come from dust
+            trades. Omitted otherwise, and then the prices come only
+            from trades that cleared the floor (a fiat-quoted bar
+            combining several markets prices from those that did).
       required: [t, o, h, l, c, v_base, v_quote, v_base_decimals, v_quote_decimals, n]
 
     OHLCSeriesResponse:
