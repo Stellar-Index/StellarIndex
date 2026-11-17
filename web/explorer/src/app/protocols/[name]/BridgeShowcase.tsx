@@ -23,6 +23,8 @@ import {
   seriesTotal,
   toChartNumber,
   toDecimalString,
+  entityHref,
+  entityName,
   BespokeTablePanel,
   WindowFailed,
   windowLabelFor,
@@ -176,12 +178,21 @@ export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
     .flatMap((r) => {
       const value = toChartNumber(r.value);
       const decimal = toDecimalString(r.value);
-      return value == null || value <= 0
-        ? []
-        : [{ label: shortAssetLabel(r.label), value, decimal }];
+      if (value == null || value <= 0) return [];
+      const name = entityName(r.kind, r.id, r.display);
+      const href = entityHref(r.kind, r.id) ?? undefined;
+      return [
+        {
+          label: name ?? shortAssetLabel(r.label),
+          id: r.id || undefined,
+          href,
+          value,
+          decimal,
+        },
+      ];
     })
     .sort((a, x) => x.value - a.value);
-  const top = rows
+  const top: DonutSlice[] = rows
     .slice(0, 6)
     .map((r) => ({ ...r, color: chainColor(r.label) }));
   const rest = rows.slice(6);
