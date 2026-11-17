@@ -3,6 +3,7 @@ package freeze_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -237,5 +238,24 @@ func TestWriter_MarkerSetFailureIsCounted(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(c) - before; got != 1 {
 		t.Fatalf("marker_set failures delta = %v, want 1", got)
+	}
+}
+
+// TestWriter_MarkerSetCancelledIsNotCounted: a marker write cut off by shutdown is not a Redis failure, and the zero-for alert must
+// not page on it.
+func TestWriter_MarkerSetCancelledIsNotCounted(t *testing.T) {
+	_, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 0)
+	asset, quote := nativeUSD(t)
+	c := obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("marker_set")
+	before := testutil.ToFloat64(c)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := w.Mark(ctx, asset, quote, "", anomaly.Decision{Action: anomaly.ActionFreeze}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Mark on a cancelled context: err = %v, want context.Canceled", err)
+	}
+	if got := testutil.ToFloat64(c) - before; got != 0 {
+		t.Fatalf("marker_set failures delta = %v, want 0", got)
 	}
 }
