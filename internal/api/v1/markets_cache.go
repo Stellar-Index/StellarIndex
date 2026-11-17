@@ -31,7 +31,7 @@ type CachedMarketsReader struct {
 
 	// fills holds one token per cold fill or non-head refresh in flight; see marketsFillSlots.
 	fills chan struct{}
-	// refreshes holds one token per head-page refresh in flight; see marketsHeadRefreshSlots.
+	// refreshes holds one token per head-page refresh, or head-page cold fill finding fills full, in flight.
 	refreshes chan struct{}
 
 	// sparks caches the per-listing sparkline batch, which adds ~200 ms to a /v1/markets page on r1.
@@ -53,8 +53,8 @@ func evictOldestMarketsEntry(m map[string]*marketsCacheEntry) {
 		oldestAt  time.Time
 	)
 	for k, e := range m {
-		if e.at.IsZero() {
-			continue
+		if e.at.IsZero() || e.head {
+			continue // head keys are a bounded set; evicting one would send it back to a cold fill
 		}
 		if oldestKey == "" || e.at.Before(oldestAt) {
 			oldestKey, oldestAt = k, e.at
@@ -68,6 +68,7 @@ func evictOldestMarketsEntry(m map[string]*marketsCacheEntry) {
 type marketsCacheEntry struct {
 	at     time.Time
 	flight chan struct{}
+	head   bool // a [marketsHeadKey] page
 
 	pairs  []Market
 	pools  []Pool
@@ -103,8 +104,17 @@ const marketsHeadRefreshSlots = 2
 // errMarketsFillBusy is a cold miss that found every fill slot taken: nothing was read, so the caller answers a retryable 503.
 var errMarketsFillBusy = errors.New("markets cache: all fill slots busy")
 
-// tryFillSlot takes a cold-fill slot without waiting.
-func (c *CachedMarketsReader) tryFillSlot() bool { return trySlot(c.fills) }
+// takeColdSlot takes a cold-fill slot without waiting and returns its pool, nil when none is free. A head page falls back to the
+// reserved pool, so client keys holding every shared slot cannot 503 it after a restart.
+func (c *CachedMarketsReader) takeColdSlot(head bool) chan struct{} {
+	if trySlot(c.fills) {
+		return c.fills
+	}
+	if head && trySlot(c.refreshes) {
+		return c.refreshes
+	}
+	return nil
+}
 
 // refreshSlots is the pool a stale entry's refresh draws from: the reserved one for a head page, the shared one otherwise.
 func (c *CachedMarketsReader) refreshSlots(head bool) chan struct{} {
@@ -336,7 +346,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	// caller's ctx. The fill runs detached (runDetachedFill), so one caller's abort cannot fail
 	// the others or leave the key unfilled. The entry pointer is captured so result/err is read
 	// off the SAME struct we joined, surviving the fill's delete-on-error.
-	entry, leader := c.joinOrStartColdLocked(e, ok, key)
+	entry, leader, slots := c.joinOrStartColdLocked(e, ok, key, head)
 	if entry == nil {
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "busy").Inc()
@@ -344,7 +354,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	}
 	if leader {
 		//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
-		go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, entry.flight, holdingSlot(c.fills, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
+		go runDetachedFill(c.logger, "api-markets-pairs-refresh", marketsRefreshBudget, entry.flight, holdingSlot(slots, marketsPageFill(upstream)), c.settlePairs(op, key, entry))
 	}
 	ch := entry.flight
 	c.mu.Unlock()
@@ -372,18 +382,19 @@ func (c *CachedMarketsReader) fetchPairs(
 }
 
 // joinOrStartColdLocked returns key's in-flight cold entry or installs a fresh one (leader=true) the caller must fill; nil when a
-// fresh fill is needed and no slot is free. Caller holds c.mu.
-func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok bool, key string) (*marketsCacheEntry, bool) {
+// fresh fill is needed and no slot is free. A leader gets the pool its slot came from. Caller holds c.mu.
+func (c *CachedMarketsReader) joinOrStartColdLocked(e *marketsCacheEntry, ok bool, key string, head bool) (*marketsCacheEntry, bool, chan struct{}) {
 	if ok && e.flight != nil {
-		return e, false
+		return e, false, nil
 	}
-	if !c.tryFillSlot() {
-		return nil, false
+	slots := c.takeColdSlot(head)
+	if slots == nil {
+		return nil, false, nil
 	}
-	entry := &marketsCacheEntry{flight: make(chan struct{})}
+	entry := &marketsCacheEntry{flight: make(chan struct{}), head: head}
 	evictOldestMarketsEntry(c.entries)
 	c.entries[key] = entry
-	return entry, true
+	return entry, true, slots
 }
 
 // settleFailedFillLocked keeps serving a prior value on failure (retry next request); cold, it hands err to waiters and drops the entry.
@@ -469,7 +480,7 @@ func (c *CachedMarketsReader) fetchPools(
 	}
 
 	// (B)/(C) Cold: join or start a detached fill — see fetchPairs.
-	entry, leader := c.joinOrStartColdLocked(e, ok, key)
+	entry, leader, slots := c.joinOrStartColdLocked(e, ok, key, head)
 	if entry == nil {
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "busy").Inc()
@@ -477,7 +488,7 @@ func (c *CachedMarketsReader) fetchPools(
 	}
 	if leader {
 		//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; see runDetachedFill.
-		go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, entry.flight, holdingSlot(c.fills, marketsPageFill(upstream)), c.settlePools(op, key, entry))
+		go runDetachedFill(c.logger, "api-markets-pools-refresh", marketsRefreshBudget, entry.flight, holdingSlot(slots, marketsPageFill(upstream)), c.settlePools(op, key, entry))
 	}
 	ch := entry.flight
 	c.mu.Unlock()
