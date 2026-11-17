@@ -307,8 +307,8 @@ type LendingCountMismatch struct {
 }
 
 // lendingProofCountQuery compares, per contract, the matched (key, hour) pairs whose last change falls in [lo, hi]
-// with the history rows (under FINAL) whose ledger falls there. A pair whose row is past the watermark is left out of
-// both sides: FINAL has replaced its row at the watermark, so the table cannot show it.
+// with the history rows (under FINAL) whose ledger falls there. A pair in the watermark's hour whose row is past the
+// watermark is left out of both sides: FINAL has replaced its row at the watermark, so the table cannot show it.
 const lendingProofCountQuery = `SELECT c, sum(lake), sum(tbl) FROM (
 		SELECT arrayElement(?, i) AS c, count() AS lake, toUInt64(0) AS tbl FROM (
 			SELECT key_xdr, arrayFirstIndex(p -> startsWith(key_xdr, p), ?) AS i, toStartOfHour(close_time) AS hour,
@@ -316,7 +316,8 @@ const lendingProofCountQuery = `SELECT c, sum(lake), sum(tbl) FROM (
 			` + lendingMatchedChanges + `
 			GROUP BY key_xdr, i, hour
 		) WHERE last BETWEEN ? AND ?
-		  AND (key_xdr, hour) NOT IN (SELECT key_xdr, hour FROM stellar.lending_state_hourly FINAL WHERE ledger_seq > ?)
+		  AND (key_xdr, hour) NOT IN (SELECT key_xdr, hour FROM stellar.lending_state_hourly FINAL WHERE ledger_seq > ?
+		      AND hour = (SELECT toStartOfHour(max(close_time)) FROM stellar.ledgers WHERE ledger_seq = ?))
 		GROUP BY c
 		UNION ALL
 		SELECT contract_id AS c, toUInt64(0) AS lake, count() AS tbl
@@ -333,7 +334,7 @@ func ProveLendingCounts(ctx context.Context, addr string, ps []LendingPrefix, lo
 	defer func() { _ = conn.Close() }()
 	prefixes, contracts, _, heads := lendingPrefixArgs(ps)
 	readHi := min(uint64(hi)+lendingHourSpan, uint64(wm))
-	rows, err := conn.Query(ctx, lendingProofCountQuery, contracts, prefixes, lo, readHi, heads, prefixes, lo, hi, wm, lo, hi)
+	rows, err := conn.Query(ctx, lendingProofCountQuery, contracts, prefixes, lo, readHi, heads, prefixes, lo, hi, wm, wm, lo, hi)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: lending count proof [%d,%d]: %w", lo, hi, err)
 	}
