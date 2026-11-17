@@ -5,11 +5,85 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"math/big"
 	"testing"
 	"time"
 
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// A folded OHLC bar takes its prices only from source buckets over the $0.01 notional floor whenever one exists, as the
+// native views do over their whole bucket; volumes and counts still sum every source bucket.
+func TestOHLCSeriesReBucketed_NotionalFloorAcrossFold(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	usdcID := "USDC-" + zeroLegIssuer
+	p := ohlcDustPair{base: "TFLD-" + zeroLegIssuer, quote: usdcID}
+	day := time.Now().UTC().Add(-48 * time.Hour).Truncate(24 * time.Hour)
+	// Floored minutes at 0.30, 0.31, 0.29; crumb-only minutes (0.0001 TFLD each) at 50 first, 60 inside and 40 last.
+	for _, tr := range []struct {
+		minute     time.Duration
+		quote, usd string
+		base       string
+	}{
+		{0, "50000", "0.005", "1000"},
+		{3, "300000000", "30", "1000000000"},
+		{7, "60000", "0.006", "1000"},
+		{15, "310000000", "31", "1000000000"},
+		{20, "290000000", "29", "1000000000"},
+		{29, "40000", "0.004", "1000"},
+	} {
+		seed(t, db, ctx, p, []seedTrade{{off: 10 * time.Second, base: tr.base, quote: tr.quote, usd: tr.usd}},
+			day.Add(tr.minute*time.Minute))
+	}
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
+	usdc, err := c.NewClassicAsset("USDC", zeroLegIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tfld, err := c.NewClassicAsset("TFLD", zeroLegIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := c.NewPair(tfld, usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bars, err := store.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1m, "30 minutes", day, day.Add(30*time.Minute), 10)
+	if err != nil {
+		t.Fatalf("OHLCSeriesReBucketed: %v", err)
+	}
+	if len(bars) != 1 {
+		t.Fatalf("bars = %d, want 1", len(bars))
+	}
+	b := bars[0]
+	for _, f := range []struct{ name, got, want string }{
+		{"open", b.Open, "0.30"}, {"high", b.High, "0.31"}, {"low", b.Low, "0.29"}, {"close", b.Close, "0.29"},
+	} {
+		got, ok1 := new(big.Rat).SetString(f.got)
+		want, _ := new(big.Rat).SetString(f.want)
+		if !ok1 || got.Cmp(want) != 0 {
+			t.Errorf("%s = %q, want %s", f.name, f.got, f.want)
+		}
+	}
+	if b.TradeCount != 6 || b.BaseVolume != "3000003000" {
+		t.Errorf("trade_count/base_volume = %d/%s, want 6/3000003000 (crumbs still counted)", b.TradeCount, b.BaseVolume)
+	}
+}
 
 // A sub-cent print must not set the listing's headline price or change pills while a minute over the $0.01 notional floor exists:
 // the arm pick ranks a floored arm over a newer crumb-only one, and a crumb lookback is no baseline for a floored headline.
