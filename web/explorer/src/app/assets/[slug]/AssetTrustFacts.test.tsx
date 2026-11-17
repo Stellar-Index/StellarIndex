@@ -49,6 +49,11 @@ describe('AssetTrustFacts', () => {
           },
         } as never;
       }
+      if (path === `/v1/assets/USDC-${G}`) {
+        return {
+          data: { asset_id: `USDC-${G}`, issuer_scam_reason: 'impersonation' },
+        } as never;
+      }
       return {
         data: {
           g_strkey: G,
@@ -136,6 +141,36 @@ describe('AssetTrustFacts', () => {
     renderFacts({});
     await waitFor(() =>
       expect(screen.getByText(/holder count \(not reported\)/)).toBeTruthy(),
+    );
+  });
+
+  it('follows the live asset read over the baked flags', async () => {
+    const respond = (asset: Record<string, unknown>) =>
+      vi.mocked(apiGet).mockImplementation(async (path: string) => {
+        if (path.includes('/holders')) {
+          return {
+            data: { holder_count: 1, as_of_ledger: 5, holders: [] },
+          } as never;
+        }
+        if (path === `/v1/assets/USDC-${G}`) return { data: asset } as never;
+        return { data: { g_strkey: G } } as never;
+      });
+    respond({
+      asset_id: `USDC-${G}`,
+      issuer_directory_tags: ['malicious'],
+      issuer_scam_reason: 'raised after the build',
+    });
+    const flagged = renderFacts({});
+    await waitFor(() =>
+      expect(screen.getByText(/flagged: raised after the build/)).toBeTruthy(),
+    );
+    expect(screen.queryByText('no scam flag recorded')).toBeNull();
+    flagged.unmount();
+
+    respond({ asset_id: `USDC-${G}`, issuer_directory_tags: [] });
+    renderFacts({ scamReason: 'cleared since the build' });
+    await waitFor(() =>
+      expect(screen.getByText('no scam flag recorded')).toBeTruthy(),
     );
   });
 });
