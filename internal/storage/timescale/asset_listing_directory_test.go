@@ -467,7 +467,7 @@ func boundValue(t *testing.T, arg any) any {
 	return got
 }
 
-// TestCheckListingPrune: a listing sync may prune at most the account-directory ceiling of the rows it held.
+// TestCheckListingPrune: a listing sync may prune at most the listing ceiling of the rows it held, sized for a ~50-row table.
 func TestCheckListingPrune(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -475,11 +475,14 @@ func TestCheckListingPrune(t *testing.T) {
 		held, pruned int64
 		wantExceeded bool
 	}{
-		{"first sync holds nothing", DefaultDirectoryChurnLimit, 0, 0, false},
-		{"under the floor", DefaultDirectoryChurnLimit, 400, 100, false},
-		{"shrunken catalogue", DefaultDirectoryChurnLimit, 4000, 3000, true},
-		{"just over 5%", DefaultDirectoryChurnLimit, 4000, 201, true},
-		{"operator opt-in", DirectoryChurnUnbounded, 4000, 3000, false},
+		{"first sync holds nothing", DefaultListingChurnLimit, 0, 0, false},
+		{"routine delisting", DefaultListingChurnLimit, 50, 3, false},
+		{"at the 20% ceiling", DefaultListingChurnLimit, 50, 10, false},
+		{"just over the ceiling", DefaultListingChurnLimit, 50, 11, true},
+		{"shrunken catalogue", DefaultListingChurnLimit, 50, 49, true},
+		{"floor on a tiny table", DefaultListingChurnLimit, 10, 5, false},
+		{"over the floor on a tiny table", DefaultListingChurnLimit, 10, 6, true},
+		{"operator opt-in", DirectoryChurnUnbounded, 50, 49, false},
 	}
 	for _, tc := range cases {
 		err := checkListingPrune(tc.limit, tc.held, tc.pruned)

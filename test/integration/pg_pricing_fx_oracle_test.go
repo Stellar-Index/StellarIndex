@@ -2416,8 +2416,8 @@ func TestListingDirectory_RefusesMassPrune(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	at := time.Now().UTC().Add(-time.Hour)
-	full := make([]timescale.ListingEntry, 0, 400)
-	for i := range 400 {
+	full := make([]timescale.ListingEntry, 0, 50)
+	for i := range 50 {
 		full = append(full, timescale.ListingEntry{
 			Address: fmt.Sprintf("C%055d", i), ListingID: fmt.Sprintf("coin-%d", i), Symbol: "c", PriceUSD: "1.00", PricedAt: at,
 		})
@@ -2425,7 +2425,7 @@ func TestListingDirectory_RefusesMassPrune(t *testing.T) {
 	if _, _, _, err := store.ReplaceListingDirectory(ctx, full, "coingecko"); err != nil {
 		t.Fatalf("full sync: %v", err)
 	}
-	if _, _, _, err := store.ReplaceListingDirectory(ctx, full[:10], "coingecko"); !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, full[:1], "coingecko"); !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
 		t.Fatalf("shrunken sync: err = %v, want ErrDirectoryChurnExceeded", err)
 	}
 	byAddr, _, err := store.ListingDirectoryByAddress(ctx)
@@ -2435,9 +2435,9 @@ func TestListingDirectory_RefusesMassPrune(t *testing.T) {
 	if len(byAddr) != len(full) {
 		t.Fatalf("rows after refused sync = %d, want %d", len(byAddr), len(full))
 	}
-	_, pruned, _, err := store.ReplaceListingDirectoryWithin(ctx, full[:10], "coingecko", timescale.DirectoryChurnUnbounded)
-	if err != nil || pruned != int64(len(full)-10) {
-		t.Fatalf("opt-in sync: pruned=%d err=%v, want %d", pruned, err, len(full)-10)
+	_, pruned, _, err := store.ReplaceListingDirectoryWithin(ctx, full[:1], "coingecko", timescale.DirectoryChurnUnbounded)
+	if err != nil || pruned != int64(len(full)-1) {
+		t.Fatalf("opt-in sync: pruned=%d err=%v, want %d", pruned, err, len(full)-1)
 	}
 }
 

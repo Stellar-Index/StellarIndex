@@ -173,7 +173,7 @@ func listingSync(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	limit := timescale.DefaultDirectoryChurnLimit
+	limit := timescale.DefaultListingChurnLimit
 	if *acceptChurn {
 		limit = timescale.DirectoryChurnUnbounded
 	}

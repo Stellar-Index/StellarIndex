@@ -122,11 +122,15 @@ const listingPriceFreshSQL = `price_usd IS NOT NULL
 // under Postgres's 65535 bind-param cap. Chunking exists because a third party sets the row count.
 const listingUpsertChunk = 500
 
-// ReplaceListingDirectory is [Store.ReplaceListingDirectoryWithin] under [DefaultDirectoryChurnLimit].
+// DefaultListingChurnLimit is the listing prune ceiling: 20% of held rows, floor 5. The table holds ~50 rows, so the
+// account-directory floor of 100 would let one sync delete all of them.
+var DefaultListingChurnLimit = DirectoryChurnLimit{Fraction: 0.2, Floor: 5}
+
+// ReplaceListingDirectory is [Store.ReplaceListingDirectoryWithin] under [DefaultListingChurnLimit].
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
 ) (upserted, pruned int64, ambiguous int, err error) {
-	return s.ReplaceListingDirectoryWithin(ctx, entries, source, DefaultDirectoryChurnLimit)
+	return s.ReplaceListingDirectoryWithin(ctx, entries, source, DefaultListingChurnLimit)
 }
 
 // ReplaceListingDirectoryWithin upserts the full entry set for one source and prunes that source's rows the upstream no longer carries,
@@ -198,7 +202,7 @@ func (s *Store) ReplaceListingDirectoryWithin(
 	return upserted, pruned, ambiguous, nil
 }
 
-// checkListingPrune applies the account-directory prune ceiling to a listing sync that held `held` rows.
+// checkListingPrune applies `limit` to a listing sync that held `held` rows.
 func checkListingPrune(limit DirectoryChurnLimit, held, pruned int64) error {
 	c := directoryChurn{rows: held}
 	return c.check(limit, DirectorySyncResult{Pruned: pruned})
