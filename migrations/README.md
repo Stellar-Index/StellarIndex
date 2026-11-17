@@ -154,19 +154,24 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
     enforces the two SQL halves; the nine shipped index builds that
     predate it (0025, 0037, 0083, 0091, 0101, 0106, 0107, 0123, 0150)
     are listed there.
-11. **A migration, up OR down, that drops and recreates a continuous
-    aggregate `WITH NO DATA` names the refresh for every view it
-    recreates**, in order, in its header and register row. The
+11. **A migration, up OR down, that creates a continuous aggregate
+    `WITH NO DATA`, new or recreated, names the refresh for every view
+    it creates or drops**, in order, in its header and register row. The
     migration cannot run it: `refresh_continuous_aggregate` refuses a
     transaction block, and golang-migrate runs each file as one (see
     Conventions). A hierarchical view (`twap_1h` / `twap_1d`, built on
-    `prices_1m`) comes after its parent is whole. Pass 6 of
-    `lint-migrations.sh` enforces that every recreated view is named;
+    `prices_1m`) comes after its parent is whole. A refresh policy does
+    not replace this: it never fills history older than its
+    `start_offset`. One line per view, such as
+    `-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('vol_1d', '<source start>', now());`,
+    satisfies both this rule and rule 12. Pass 7 of
+    `lint-migrations.sh` enforces that every such view is named;
     the data-freshness gauge `stellarindex_cagg_history_missing{view}`
     is what shows the refresh was skipped.
 12. **An up-migration that blanks data a deployment must rebuild —
-    an unqualified `DELETE` or a `TRUNCATE`, or a continuous aggregate
-    recreated `WITH NO DATA` — declares each rebuild command on its own
+    an unqualified `DELETE` or a `TRUNCATE`, a table dropped and
+    recreated empty, or a continuous aggregate created `WITH NO DATA`,
+    new or recreated — declares each rebuild command on its own
     header line:**
 
     ```sql
@@ -180,7 +185,7 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
     operator passes `followups_acknowledged=true`. Use the marker on
     any other up-migration whose data needs a follow-up too (a
     targeted `DELETE … WHERE`). Pass 10 of `lint-migrations.sh`
-    enforces it; the seven shipped files that predate it are listed
+    enforces it; the fifteen shipped files that predate it are listed
     there. A follow-up that rebuilds a projected source
     (`projector-replay` or `projected-rebuild -source X`) also needs
     `DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild'
