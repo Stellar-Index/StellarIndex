@@ -65,18 +65,19 @@ describe('SearchModal Cmd-K ownership', () => {
   });
 });
 
-// The ⌘K result builder is the fourth copy of the verified-badge rule
-// (AssetsTable / HomeTopAssets / HomeTopMovers are the other three) and
-// was the only one that did not consult unverified_ticker_collision. The
-// listing serves COALESCE(slug, code) AS slug, so an impersonator emits
-// the verified asset's CODE as its slug and matches the verified set —
-// meaning an asset the backend had explicitly flagged rendered with the
-// "Verified currency" check in search.
+// The ⌘K badge follows the catalogue by asset id: the listing serves
+// COALESCE(slug, code) AS slug, so a look-alike issuer's slug equals the
+// verified asset's code and must not earn the badge.
 describe('SearchModal verified badge', () => {
-  const verifiedSlugs = new Set(['aqua']);
+  const REAL = `AQUA-G${'A'.repeat(55)}`;
+  const FAKE = `AQUA-G${'B'.repeat(55)}`;
+  const verifiedIndex = {
+    slugs: new Set(['aqua']),
+    assetIds: new Set([REAL]),
+  };
   const coin = (over: Record<string, unknown>) =>
     ({
-      asset_id: 'AQUA-GTEST',
+      asset_id: REAL,
       slug: 'AQUA',
       name: 'Aquarius',
       symbol: 'AQUA',
@@ -85,7 +86,7 @@ describe('SearchModal verified badge', () => {
     }) as never;
 
   it('badges the real verified asset', () => {
-    const [r] = search('aqua', [coin({})], [], false, verifiedSlugs);
+    const [r] = search('aqua', [coin({})], [], false, verifiedIndex);
     expect(r.verified).toBe(true);
   });
 
@@ -95,7 +96,18 @@ describe('SearchModal verified badge', () => {
       [coin({ unverified_ticker_collision: true })],
       [],
       false,
-      verifiedSlugs,
+      verifiedIndex,
+    );
+    expect(r.verified).toBe(false);
+  });
+
+  it('does NOT badge an unflagged look-alike with the same code and another issuer', () => {
+    const [r] = search(
+      'aqua',
+      [coin({ asset_id: FAKE })],
+      [],
+      false,
+      verifiedIndex,
     );
     expect(r.verified).toBe(false);
   });

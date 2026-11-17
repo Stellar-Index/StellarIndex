@@ -6,7 +6,8 @@ import Link from 'next/link';
 import {
   useCoins,
   useNativeCoin,
-  useVerifiedSlugs,
+  useVerifiedIndex,
+  isVerifiedCoin,
   coinSlug,
   type Coin,
 } from '@/api/hooks';
@@ -76,7 +77,7 @@ export function HomeTopAssets() {
     order_by: pricing ? 'volume_24h_usd_desc' : 'observation_count_desc',
     ...(pricing ? { include_thin: 'true' } : {}),
   });
-  const { data: verifiedSlugs } = useVerifiedSlugs();
+  const { data: verifiedIndex } = useVerifiedIndex();
   useLedgerFollow(['/v1/assets']);
 
   const coins = rankTopAssets(nativeCoin, data?.coins, pricing);
@@ -149,14 +150,7 @@ export function HomeTopAssets() {
                   rank={idx + 1}
                   pricing={pricing}
                   maxVolume={maxVolume}
-                  // Withhold the badge from ticker-collision look-alikes:
-                  // COALESCE(slug, code) makes an impersonator's slug the
-                  // verified code, so gate on the per-row API flag too.
-                  verified={
-                    (verifiedSlugs?.has(coinSlug(coin).toLowerCase()) ??
-                      false) &&
-                    !coin.unverified_ticker_collision
-                  }
+                  verified={isVerifiedCoin(coin, verifiedIndex)}
                 />
               ))}
             </TBody>

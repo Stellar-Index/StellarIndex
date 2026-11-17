@@ -20,9 +20,12 @@ export const metadata: Metadata = {
  * client reads `?cursor=` / `?limit=` / `?issuer=` from the URL.
  */
 export default async function AssetsPage() {
-  // The table marks each row whose slug is in the verified catalogue.
+  // The table badges each Stellar row whose asset id is in the verified catalogue.
   const verified = await fetchVerifiedCurrencies();
   const verifiedSlugs = verified.map((v) => v.slug);
+  const verifiedAssetIds = verified.flatMap((v) =>
+    v.asset_id ? [v.asset_id] : [],
+  );
 
   return (
     <Container className="space-y-6 py-8">
@@ -37,7 +40,10 @@ export default async function AssetsPage() {
         }
       />
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-        <AssetsTable verifiedSlugs={verifiedSlugs} />
+        <AssetsTable
+          verifiedSlugs={verifiedSlugs}
+          verifiedAssetIds={verifiedAssetIds}
+        />
       </Suspense>
     </Container>
   );
