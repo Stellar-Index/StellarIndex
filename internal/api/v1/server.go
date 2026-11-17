@@ -826,7 +826,8 @@ type Options struct {
 	Triangulated TriangulatedPriceLooker
 
 	// CDNEnabled controls whether cacheable routes emit `s-maxage` beside `max-age`. Default true;
-	// false avoids a CDN caching anything later made auth-tied. See [middleware.CacheControlWithCDN].
+	// false drops `s-maxage` only: `public, max-age` is still emitted, so it does not keep a shared cache from storing
+	// authenticated responses. See [middleware.CacheControlWithCDN].
 	CDNEnabled bool
 
 	// StatusBackend, when non-nil, backs /v1/status with Prometheus-derived heartbeats, latency

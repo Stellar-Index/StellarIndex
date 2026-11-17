@@ -726,7 +726,8 @@ func signHMACSHA256(secret []byte, ts int64, payload []byte) string {
 // signDeliveryHMACSHA256 is the X-StellarIndex-Signature-V2 MAC over
 // `"<unix_ts>.<delivery_id>.<event_type>." + body`. V1 leaves the Delivery-Id and Event headers
 // outside the MAC, so a captured delivery could be re-sent under any id (defeating receiver
-// dedupe) or event type. The encoding is unambiguous: the fields before the body are dot-free.
+// dedupe) or event type. The dots are not a boundary a receiver can rely on (event types contain one), so receivers must validate
+// Delivery-Id as a UUID and Event against the closed event set before trusting the MAC.
 func signDeliveryHMACSHA256(secret []byte, ts int64, deliveryID, eventType string, payload []byte) string {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(strconv.FormatInt(ts, 10)))

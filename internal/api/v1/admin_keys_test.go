@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -837,4 +839,36 @@ func narrowedOperatorSubject() auth.Subject {
 	s := operatorSubject()
 	s.Scopes = []string{platform.KeyScopeAdmin}
 	return s
+}
+
+// A store refusal for exceeding the minting credential is the caller's fault, not a server error.
+func TestAdminKeysCreate_MintExceedsCallerIs403(t *testing.T) {
+	store := &fakeAccountStore{err: fmt.Errorf("auth: Create: %w: monthly_quota", auth.ErrMintExceedsCaller)}
+	ts := newAdminTestServer(t, operatorSubject(), store, &recordingAuditSink{})
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:ok","account":"ok","label":"x"}`)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// A key inherits its minter's expiry silently in the store, so the response and the audit row must say what was issued.
+func TestAdminKeysCreate_ReportsInheritedExpiry(t *testing.T) {
+	expires := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := &fakeAccountStore{
+		rec:   auth.APIKeyRecord{KeyID: "kid_exp", Label: "x", CreatedAt: time.Unix(1751000000, 0).UTC(), ExpiresAt: expires},
+		plain: "sip_exp",
+	}
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, operatorSubject(), store, sink)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:ok","account":"ok","label":"x"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), `"expires_at":"2027-01-02T03:04:05Z"`) {
+		t.Errorf("response = %s, want expires_at", raw)
+	}
+	if len(sink.entries) != 1 || !strings.Contains(string(sink.entries[0].Metadata), `"expires_at":"2027-01-02T03:04:05Z"`) {
+		t.Errorf("audit entries = %+v, want expires_at in the metadata", sink.entries)
+	}
 }

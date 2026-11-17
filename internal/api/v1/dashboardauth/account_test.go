@@ -25,7 +25,7 @@ type fakeEraser struct {
 	err   error
 }
 
-func (f *fakeEraser) Erase(_ context.Context, id uuid.UUID, actor platform.ActorKind) (accounterasure.Report, error) {
+func (f *fakeEraser) EraseForRequest(_ context.Context, id uuid.UUID, actor platform.ActorKind) (accounterasure.Report, error) {
 	f.calls, f.actor = append(f.calls, id), actor
 	rep := accounterasure.Report{Plan: postgresstore.ErasurePlan{
 		AccountID: id, Slug: "acme", OwnerEmails: []string{"owner@acme.example"},

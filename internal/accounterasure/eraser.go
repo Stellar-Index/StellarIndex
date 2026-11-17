@@ -9,6 +9,7 @@
 //     account.erase audit row. A failure rolls all of it back.
 //  4. After commit, delete Redis key records, cache rows and usage counters twice and re-run the
 //     usage rename with the same uuid, catching a key mint or rollup in flight across the commit.
+//     A failed cleanup is retried until afterCommitTimeout.
 //
 // A record that slips past both passes can still authenticate until the validator's cached account
 // status expires (auth.DefaultAccountStatusCacheTTL, 30 s); the tombstone keeps new accounts off
@@ -33,8 +34,18 @@ import (
 )
 
 // afterCommitTimeout bounds the post-commit cleanup, which runs detached
-// from the caller's context.
+// from the caller's context and is retried within it.
 const afterCommitTimeout = 30 * time.Second
+
+// requestCleanupTimeout is EraseForRequest's cleanup budget: the response to a committed erasure has to be
+// written inside the API's 15 s request timeout, which also covers the plan and the commit.
+const requestCleanupTimeout = 5 * time.Second
+
+// cleanupRetryBackoff is the first wait between post-commit cleanup attempts; it doubles up to cleanupRetryMaxBackoff.
+const (
+	cleanupRetryBackoff    = 100 * time.Millisecond
+	cleanupRetryMaxBackoff = 2 * time.Second
+)
 
 // ErrBlocked wraps [postgresstore.ErrErasureBlocked].
 var ErrBlocked = postgresstore.ErrErasureBlocked
@@ -59,6 +70,8 @@ type Eraser struct {
 	// betweenPasses, when set, runs between the two post-commit Redis
 	// passes. Test seam for the in-flight-mint race.
 	betweenPasses func()
+	// cleanupTimeout overrides afterCommitTimeout, not requestCleanupTimeout. Test seam.
+	cleanupTimeout time.Duration
 }
 
 // Report is what one erasure did.
@@ -80,7 +93,20 @@ type Report struct {
 
 // Erase erases the account; a repeat reports AlreadyErased. An error before the commit leaves the account untouched; one after it wraps ErrCleanupIncomplete, carries the full Report, and leaves Redis state for FinishBySlug.
 func (e *Eraser) Erase(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
-	return e.erase(ctx, id, actor, nil)
+	return e.erase(ctx, id, actor, nil, e.defaultCleanupTimeout())
+}
+
+// EraseForRequest is Erase with a post-commit cleanup budget short enough for an HTTP handler to answer
+// a committed erasure; a cleanup still failing at the budget is left to FinishBySlug.
+func (e *Eraser) EraseForRequest(ctx context.Context, id uuid.UUID, actor platform.ActorKind) (Report, error) {
+	return e.erase(ctx, id, actor, nil, requestCleanupTimeout)
+}
+
+func (e *Eraser) defaultCleanupTimeout() time.Duration {
+	if e.cleanupTimeout > 0 {
+		return e.cleanupTimeout
+	}
+	return afterCommitTimeout
 }
 
 // errNotAdmitted is erase's answer when admit refused the plan.
@@ -90,7 +116,7 @@ var errNotAdmitted = errors.New("account erasure: plan not admitted")
 // it executes, so a caller's precondition cannot go stale between plans.
 func (e *Eraser) erase(
 	ctx context.Context, id uuid.UUID, actor platform.ActorKind,
-	admit func(postgresstore.ErasurePlan) (bool, error),
+	admit func(postgresstore.ErasurePlan) (bool, error), cleanupTimeout time.Duration,
 ) (Report, error) {
 	plan, err := e.Store.PlanErasure(ctx, id)
 	if errors.Is(err, platform.ErrNotFound) {
@@ -140,9 +166,9 @@ func (e *Eraser) erase(
 	keyIDs := append(append([]string{}, plan.KeyIDs...), extra...)
 	// The commit is durable; a caller that hangs up now must not strand
 	// the Redis cleanup.
-	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterCommitTimeout)
+	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
-	if err := e.afterCommit(postCtx, plan.Slug, keyIDs, plan.KeyHashes, erased, &rep); err != nil {
+	if err := e.afterCommitRetrying(postCtx, plan.Slug, keyIDs, plan.KeyHashes, erased, &rep); err != nil {
 		return rep, fmt.Errorf("%w (finish with: stellarindex-ops account-erase -finish-slug %s): %w",
 			ErrCleanupIncomplete, plan.Slug, err)
 	}
@@ -174,6 +200,29 @@ func (e *Eraser) FinishBySlug(ctx context.Context, slug string) (Report, error) 
 		}
 	}
 	return rep, e.afterCommit(ctx, slug, keyIDs, nil, rep.ErasedSubject, &rep)
+}
+
+// afterCommitRetrying retries afterCommit, which is idempotent, until it succeeds or ctx ends: once the
+// account is gone a later Erase reports AlreadyErased, so a Redis blip left unretried strands live key records.
+func (e *Eraser) afterCommitRetrying(
+	ctx context.Context, slug string, keyIDs, keyHashes []string, erased string, rep *Report,
+) error {
+	backoff := cleanupRetryBackoff
+	for {
+		err := e.afterCommit(ctx, slug, keyIDs, keyHashes, erased, rep)
+		if err == nil {
+			return nil
+		}
+		e.logger().Warn("account erasure: post-commit cleanup failed; retrying", "erased_subject", erased, "err", err)
+		t := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return err
+		case <-t.C:
+		}
+		backoff = min(2*backoff, cleanupRetryMaxBackoff)
+	}
 }
 
 func (e *Eraser) afterCommit(
@@ -245,7 +294,7 @@ type AbandonedLister interface {
 	ListAbandonedRegistrations(ctx context.Context, createdBefore time.Time, limit int) ([]uuid.UUID, error)
 }
 
-// SweepAbandonedRegistrations erases accounts l lists as unused registrations created before createdBefore, skipping any that gained a member or still have a Redis validator record (an unexpired record may belong to a key in use whose last_used_at touch was dropped). It needs Redis to prove that; returns the count erased.
+// SweepAbandonedRegistrations erases accounts l lists as unused registrations created before createdBefore, skipping any that gained a member or still have a Redis validator record (an unexpired record may belong to a key in use whose last_used_at touch was dropped). It needs Redis to prove that; returns the count erased, and an error wrapping ErrCleanupIncomplete if any erasure's cleanup did not finish.
 func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLister, createdBefore time.Time) (int64, error) {
 	if e.Redis == nil {
 		return 0, errors.New("account erasure: abandoned-registration sweep needs Redis")
@@ -262,21 +311,26 @@ func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLis
 		return !live, err
 	}
 	var erased int64
+	var incomplete []error
 	for _, id := range ids {
-		rep, err := e.erase(ctx, id, platform.ActorSystem, abandoned)
+		rep, err := e.erase(ctx, id, platform.ActorSystem, abandoned, e.defaultCleanupTimeout())
 		if errors.Is(err, errNotAdmitted) || errors.Is(err, ErrBlocked) {
 			continue
 		}
 		if errors.Is(err, ErrCleanupIncomplete) {
-			e.logger().Warn("abandoned registration erased; cleanup incomplete", "account_id", id, "err", err)
+			e.logger().Error("abandoned registration erased but cleanup incomplete; run stellarindex-ops account-erase -finish-slug",
+				"account_id", id, "finish_slug", rep.Plan.Slug, "err", err)
+			// Keep sweeping, but fail the sweep so the reaper's failure alert surfaces it. The cause is
+			// flattened: a wrapped context.DeadlineExceeded would make the reaper discard the error as a shutdown.
+			incomplete = append(incomplete, fmt.Errorf("account %s: %w: %s", id, ErrCleanupIncomplete, err.Error()))
 		} else if err != nil {
-			return erased, err
+			return erased, errors.Join(append(incomplete, err)...)
 		}
 		if !rep.AlreadyErased {
 			erased++
 		}
 	}
-	return erased, nil
+	return erased, errors.Join(incomplete...)
 }
 
 // hasLiveCredential reports whether any of plan's keys, or any key held

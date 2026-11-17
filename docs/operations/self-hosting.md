@@ -227,6 +227,14 @@ AWS_REGION=us-east-1
 EOT
 sudo chmod 640 /etc/default/stellarindex-ops
 
+# Optional but recommended: the internet-facing API should not hold the owner
+# DSN. The API unit reads this file after the ops file, so this DSN wins
+# (migration 0213 creates the least-privilege stellarindex_api role).
+sudo tee /etc/default/stellarindex-api >/dev/null <<'EOT'
+STELLARINDEX_POSTGRES_DSN=postgres://stellarindex_api:<password>@127.0.0.1:5432/stellarindex?sslmode=disable
+EOT
+sudo chmod 640 /etc/default/stellarindex-api
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now stellarindex-indexer.service
 # wait for the archive/live handoff:

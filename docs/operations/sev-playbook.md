@@ -56,13 +56,12 @@ Detect = monitoring catches it. Respond = responder acknowledges. Triage = root 
 | Channel | What it catches | Fires |
 | ------- | --------------- | ----- |
 | Prometheus / AlertManager | Every alert in [alerts-catalog.md](alerts-catalog.md) | Instantly |
-| Synthetic probes (curl every 30 s from 3 regions) | Public outages that bypass internal metrics | <= 30 s |
-| Cloudflare load-balancer health | Region-level failures | <= 45 s |
+| SLA probe on r1 ([sla-probe.md](sla-probe.md)) | API latency and errors as r1 sees them; blind to proxy, certificate, DNS and network failures | Every 15 min |
 | User report (email, Discord) | Whatever we missed | Variable |
 | On-call rotation dashboard | Passive; reviewed every 15 min during oncall | - |
 
-Every SEV-1 needs at least two independent detection channels. If only one fires, assume false positive after a
-30 s re-probe.
+There is no off-host synthetic probe or Cloudflare load-balancer check, so a public outage that r1 cannot see (proxy, certificate, DNS, network) pages nobody: it surfaces as a user report. Every SEV-1 needs at least two independent detection channels. If only one fires, assume false positive after a
+30 s re-probe, except a user report of a public outage: probe from outside r1 before dismissing it.
 
 ---
 
