@@ -18052,8 +18052,8 @@ components:
           description: >-
             True when the request opted in with `include_thin=true` and a
             served price comes from a market below the substance floor, or
-            when /v1/vwap or /v1/twap (which serve such a market by default)
-            computed from one. Key any low-confidence marker on this flag,
+            when /v1/vwap, /v1/twap or /v1/ohlc (which serve such a market by
+            default) computed from one. Key any low-confidence marker on this flag,
             never on `confidence`.
         diverged:
           type: boolean
@@ -23291,6 +23291,10 @@ components:
     OHLCBar:
       type: object
       properties:
+        substance:
+          description: "The substance measurement behind a `flags.thin_market` bar."
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
         from:
           type: string
           format: date-time
@@ -23437,6 +23441,10 @@ components:
       type: object
       description: Multi-bar OHLC series response.
       properties:
+        substance:
+          description: "The substance measurement behind a `flags.thin_market` series."
+          allOf:
+            - { $ref: "#/components/schemas/SubstanceEvidence" }
         base:     { type: string, description: "Canonical base asset id." }
         quote:    { type: string, description: "Canonical quote asset id." }
         interval: { type: string, enum: [1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, 1d, 3d, 1w, 2w, 1mo] }

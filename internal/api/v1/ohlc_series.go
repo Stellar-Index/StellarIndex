@@ -51,6 +51,8 @@ type OHLCSeriesResponse struct {
 	From      WireTime        `json:"from"`
 	To        WireTime        `json:"to"`
 	Intervals []OHLCSeriesBar `json:"intervals"`
+	// Substance: see [VWAPResult.Substance].
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // ohlcSeriesDefaultLimit / ohlcSeriesMaxLimit bound the bar count of one /v1/ohlc?interval=
@@ -233,6 +235,10 @@ func (s *Server) handleOHLCSeries(
 	// classic/SAC form or a stablecoin backer); a fiat series served by a directly-quoted market is
 	// not triangulated just because the quote is fiat.
 	flags := Flags{Triangulated: proxied}
+	if len(bars) > 0 {
+		resp.Substance = s.thinMarketEvidence(r.Context(), pair.Base, pair.Quote, "ohlc")
+		flags.ThinMarket = resp.Substance != nil
+	}
 	// An empty series is ambiguous ("quiet market" and "before anything held" are the same bytes),
 	// and `to` is exclusive, so a window ending at or before the floor is provably the second
 	// reading. The floor covers what ohlcSeriesWithAliases read: the pair, or a fiat quote's whole

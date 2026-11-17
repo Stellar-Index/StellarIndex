@@ -8710,7 +8710,7 @@ export interface components {
             /** @default false */
             single_source: boolean;
             /**
-             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap or /v1/twap (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap, /v1/twap or /v1/ohlc (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
              * @default false
              */
             thin_market: boolean;
@@ -13157,6 +13157,8 @@ export interface components {
             data: components["schemas"]["AggregatorRow"][];
         };
         OHLCBar: {
+            /** @description The substance measurement behind a `flags.thin_market` bar. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /**
              * Format: date-time
              * @description Inclusive lower bound of the bar window. Like VWAPResult.from,
@@ -13304,6 +13306,8 @@ export interface components {
         };
         /** @description Multi-bar OHLC series response. */
         OHLCSeriesResponse: {
+            /** @description The substance measurement behind a `flags.thin_market` series. */
+            substance?: components["schemas"]["SubstanceEvidence"];
             /** @description Canonical base asset id. */
             base: string;
             /** @description Canonical quote asset id. */

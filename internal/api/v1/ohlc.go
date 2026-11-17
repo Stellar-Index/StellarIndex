@@ -42,6 +42,8 @@ type OHLCBar struct {
 	// still-filling bucket (or in the future) and was pulled back to
 	// the last closed boundary per ADR-0015.
 	Clamped bool `json:"clamped"`
+	// Substance: see [VWAPResult.Substance].
+	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // ohlcPriceDigits is the fractional digits on wire OHLC prices, matching /v1/history; a floor, not a cap (see [priceRenderScale]).
@@ -177,6 +179,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	substance := s.thinMarketEvidence(ctx, pair.Base, pair.Quote, "ohlc")
 
 	writeJSON(w, OHLCBar{
 		From:                WireTime(from),
@@ -192,7 +195,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 		Clamped:             clamped,
-	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated}, to))
+		Substance:           substance,
+	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
 }
 
 // filterOHLCOutliers applies the single-bar outlier filter; a window with trades but none kept is a 422 (the filter withheld them), not
