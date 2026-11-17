@@ -73,6 +73,63 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # ══ stellarindex_ingestion_sink_fault_drop ═══════════════════════
+  - interval: 1m
+    name: sink_fault_drop — one isolated recovered panic tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",kind="panic"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_sink_fault_drop
+        exp_alerts: &sink_fault_drop_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: soroswap
+              kind: panic
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors"
+              summary: "Sink panic drops on soroswap (any rate)"
+              description: |
+                The event sink dropped a soroswap row in the last
+                15 minutes: kind="panic" is a recovered panic in a persist
+                handler, kind="unhandled" an event type with no sink case. The
+                row is not retried and is NOT in the served tier. The ERROR log
+                "panic in event sink" (or WARN "unhandled event kind") names the
+                event kind.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_sink_fault_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: sink_fault_drop — a child BORN at 1 (first panic of the process life) tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",kind="panic"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_sink_fault_drop
+        exp_alerts: *sink_fault_drop_alert
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_sink_fault_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: sink_fault_drop — an old flat count does not re-fire the born-arm
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",kind="unhandled"}'
+        values: '7x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingestion_sink_fault_drop
+        exp_alerts: []
+
   # ══ stellarindex_ingestion_persist_drop ═══════════════════════════
   - interval: 1m
     name: persist_drop — one isolated drop on an existing series tickets
