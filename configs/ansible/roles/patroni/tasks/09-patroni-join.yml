@@ -28,8 +28,13 @@
   delay: 5
   until: _replica_state.status == 200
 
+# /replica answers 200 only once this member is a running replica, so it
+# also covers the pg_basebackup, which /cluster answers through.
 - name: confirm we joined as a replica
-  command: >
-    patronictl -c /etc/patroni/patroni.yml list
+  uri:
+    url: "http://{{ patroni_rest_connect_address }}/replica"
+    status_code: 200
   register: _replica_check
-  changed_when: false
+  retries: "{{ patroni_join_retries | int }}"
+  delay: 10
+  until: _replica_check.status == 200

@@ -26,6 +26,17 @@
       haproxy role assumes a 2-LB-host topology (per ha-plan §3.1);
       detected {{ groups['haproxy_lb'] | length }} hosts
 
+- name: assert keepalived priorities elect the MASTER
+  assert:
+    that:
+      - keepalived_initial_state is not defined
+      - groups['haproxy_lb'] | map('extract', hostvars)
+        | map(attribute='keepalived_priority', default=keepalived_priority) | unique | length == 2
+    fail_msg: >-
+      Both LBs start as BACKUP so preempt_delay applies; drop
+      keepalived_initial_state from the inventory and give the LBs distinct
+      keepalived_priority values (the higher one holds the VIP).
+
 - name: assert stellarindex_api inventory group is populated
   assert:
     that:

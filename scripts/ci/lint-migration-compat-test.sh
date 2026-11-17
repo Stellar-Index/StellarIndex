@@ -315,6 +315,13 @@ run 'ALTER TABLE trades OWNER TO someone_else;' ''
 expect 'OWNER TO fires' 1 'owner'
 run "SELECT drop_""chunks('trades', older_than => now() - INTERVAL '30 days');" ''
 expect 'drop_chunks fires as dml' 1 'dml'
+dc="drop_""chunks"
+run "DO \$\$ BEGIN
+    PERFORM ${dc}('trades', older_than => now());
+END \$\$;" ''
+expect 'PERFORM drop_chunks in a DO block fires as dml' 1 'dml'
+run "SELECT count(*) FROM public.${dc}('trades', older_than => now());" ''
+expect 'SELECT … FROM drop_chunks fires as dml' 1 'dml'
 run 'DROP TABLE classic_movements;' ''
 expect 'DROP TABLE is one class, not also drop-other' 1 'drop-table'
 case "$OUT" in *drop-other*) echo "FAIL: DROP TABLE double-flagged"; fail=$((fail+1)) ;; esac

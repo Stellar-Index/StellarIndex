@@ -81,6 +81,7 @@ run_baseline() {
   local rc=$?
   gh="$(grep '^live=' "$TMP/gh_output")"
   cfg="$(grep '^config=' "$TMP/gh_output")"
+  newest="$(grep '^newest=' "$TMP/gh_output")"
   return $rc
 }
 
@@ -129,14 +130,20 @@ else
   bad "no manifest set: output='$gh' log='$out'"
 fi
 
-# The fake ssh cannot honour the remote loop's migrate filter, so the
-# exclusion is asserted structurally above; here we pin that a sidecar
-# list WITHOUT migrate still yields the true minimum.
-fake_ssh 0 $'stellarindex-api\tv0.57.0\nstellarindex-indexer\tv0.57.0'
-if run_baseline && [ "$gh" = "live=v0.57.0" ]; then
-  ok "a fleet current except migrate reports current (migrate excluded remotely)"
+fake_ssh 0 $'stellarindex-api\tv0.57.0\nstellarindex-indexer\tv0.57.0\nstellarindex-migrate\tv0.11.0'
+if run_baseline && [ "$gh" = "live=v0.57.0" ] && [ "$newest" = "newest=v0.57.0" ]; then
+  ok "a fleet current except migrate reports current (migrate excluded from the minimum)"
 else
-  bad "migrate-excluded fleet: output='$gh' log='$out'"
+  bad "migrate-excluded fleet: output='$gh' '$newest' log='$out'"
+fi
+
+# The numbering base: the database is migrated as far as the newest release that ran, migrate included.
+fake_ssh 0 $'stellarindex-api\tv0.55.0\nstellarindex-indexer\tv0.57.0\nstellarindex-migrate\tv0.60.0'
+if REGION_SET="stellarindex-api stellarindex-indexer" run_baseline \
+   && [ "$gh" = "live=v0.55.0" ] && [ "$newest" = "newest=v0.60.0" ]; then
+  ok "newest is the highest sidecar, migrate included, while live stays the lowest"
+else
+  bad "newest/live split: output='$gh' '$newest' log='$out'"
 fi
 
 echo "deploy-baseline-test: no sidecar (first deploy)"
@@ -183,8 +190,9 @@ printf 'v0.57.0' > "$TMP/sidecars/stellarindex-api"
 printf 'v0.57.0' > "$TMP/sidecars/stellarindex-indexer"
 printf 'v0.11.0' > "$TMP/sidecars/stellarindex-migrate"
 
-if run_remote "$TMP/sidecars" && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] && ! grep -q 'v0.11.0' <<<"$rout"; then
-  ok "remote snippet reads the sidecars and excludes migrate"
+if run_remote "$TMP/sidecars" && [ "$(printf '%s' "$rout" | grep -c 'v0.57.0')" -eq 2 ] \
+   && grep -q "^stellarindex-migrate"$'\t'"v0.11.0\$" <<<"$rout"; then
+  ok "remote snippet reads every sidecar, migrate included, by name"
 else
   bad "remote snippet output wrong: '$rout'"
 fi
