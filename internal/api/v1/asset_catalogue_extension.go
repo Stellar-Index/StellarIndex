@@ -118,7 +118,7 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	}
 	// The row's price_usd is computed outside /v1/price's gated read path and would bypass the
 	// thin-market substance gate, giving a dust-authored market a headline. Apply the SAME per-pair
-	// verdict as the listing (listingPriceAllowed, cached ~60s). The change pills derive from that
+	// verdict as the listing (listingSubstanceVerdict, cached ~60s). The change pills derive from that
 	// price so a gated-out row loses them too; the declared-peg fill downstream (nil PriceUSD only)
 	// can still supply the operator-declared basis.
 	priceAllowed := true
@@ -365,13 +365,8 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *
 	return nil, false
 }
 
-// listingPriceAllowed is [Server.listingSubstanceVerdict] reduced to yes/no; it fails CLOSED (unmeasured is not allowed).
-func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset) bool {
-	return s.assetPriceAllowed(ctx, asset, "listing")
-}
-
-// assetPriceAllowed is [Server.listingPriceAllowed] for a caller that is
-// not the listing, counted under its own `surface`.
+// assetPriceAllowed is the allow half of [Server.listingSubstanceVerdict] for a
+// caller that is not the listing, counted under its own `surface`.
 func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, surface string) bool {
 	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.Substance, asset, s.USDPeggedClassics, surface)
 	return allowed

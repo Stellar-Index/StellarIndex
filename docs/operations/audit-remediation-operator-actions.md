@@ -1,6 +1,6 @@
 ---
 title: Audit remediation — items requiring operator (human) action
-last_verified: 2026-10-05
+last_verified: 2026-11-17
 status: living — populated as remediation proceeds
 ---
 
@@ -104,8 +104,8 @@ drift guard is RED until the secret exists.
 
   ```bash
   base64 -w0 configs/ansible/inventory/r1.yml    # macOS: base64 -i configs/ansible/inventory/r1.yml
-  # repo Settings → Secrets and variables → Actions → New repository secret
-  #   Name: R1_INVENTORY_B64
+  # repo Settings → Environments → r1 → Add environment secret, and the same on r1-observe
+  #   Name: R1_INVENTORY_B64   (never a repository secret: any branch's workflow can read those)
   ```
 
   Re-run `ansible-drift` (`workflow_dispatch`) and confirm it passes the "Inventory" step.

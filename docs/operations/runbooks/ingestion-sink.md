@@ -15,15 +15,16 @@ Infrastructure faults on a write are NOT lost: the sink retries with backpressur
 
 | Alert | Severity | Meaning |
 | ----- | -------- | ------- |
-| [`stellarindex_ingestion_insert_errors`](#stellarindex_ingestion_insert_errors) (+ `stellarindex_ingestion_persist_drop`, `stellarindex_ingestion_trustline_observation_drop`) | P2 ticket; `for: 5m` (insert_errors), `for: 0m` (the two drop tripwires) | events failing to persist: genuine loss |
+| [`stellarindex_ingestion_insert_errors`](#stellarindex_ingestion_insert_errors) (+ `stellarindex_ingestion_persist_drop`, `stellarindex_ingestion_trustline_observation_drop`, `stellarindex_ingestion_sink_fault_drop`) | P2 ticket; `for: 5m` (insert_errors), `for: 0m` (the three drop tripwires) | events failing to persist: genuine loss |
 | [`stellarindex_ingestion_trade_insert_backpressure`](#stellarindex_ingestion_trade_insert_backpressure) | P3 ticket, 10 min | trade sink retrying: Postgres unreachable, ingest intentionally stalled |
 | [`stellarindex_ingestion_duplicate_flood`](#stellarindex_ingestion_duplicate_flood) | P2 ticket, `for: 10m` | trades stop landing new rows though cursor and decoder look healthy |
 | [`stellarindex_ingestion_sink_undrained_rows`](#stellarindex_ingestion_sink_undrained_rows) | ticket, `for: 0m` | shutdown drain abandoned buffered rows the cursor had already passed |
 | [`stellarindex_gate_admission_unpersisted`](#stellarindex_gate_admission_unpersisted) | ticket, `for: 5m` | a factory child is gated in memory only; a restart would lose it |
+| [`stellarindex_gate_admission_persist_failed`](#stellarindex_gate_admission_persist_failed) | ticket, `for: 0m` | a gate admission write failed in the last 2h; survives an indexer restart |
 
 ## stellarindex_ingestion_insert_errors
 
-Also covers `stellarindex_ingestion_persist_drop` (any-nonzero tripwire on the money-flow kinds `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault`) and `stellarindex_ingestion_trustline_observation_drop` (`kind="trustline_observation"`, no retry path).
+Also covers `stellarindex_ingestion_persist_drop` (any-nonzero tripwire on the money-flow kinds `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault`) `stellarindex_ingestion_trustline_observation_drop` (`kind="trustline_observation"`, no retry path) and `stellarindex_ingestion_sink_fault_drop` (`kind="panic"` or `"unhandled"`: a recovered handler panic or an event type with no sink case; never retried, whatever the event's own kind — the ERROR log `panic in event sink` names it).
 
 Symptom: `stellarindex_source_insert_errors_total{source=...,kind=...}` above 6/min sustained. `kind` is `trade` (permanently dropped), `trade_abandoned` (retry abandoned on shutdown; cursor held, re-derivable, not a loss), `panic`, `dropped` (external retry-buffer overflow), or a per-domain persist kind.
 
@@ -243,6 +244,14 @@ Resolution C: external trades have no ledger and no lake copy; record venue and 
 
 Resolution D: find out why Postgres could not absorb a few hundred rows in 20 s (autovacuum on `trades`, a [lock convoy](postgres.md#stellarindex_pg_lock_convoy), or the deploy stopping Postgres before the indexer). If it was genuinely down, the loss was the designed outcome and the re-derive is the whole remedy.
 
+## stellarindex_gate_admission_persist_failed
+
+Symptom: `stellarindex_gate_admission_persist_failures_total{source=...}` rose in the last 2 hours. Unlike the unpersisted gauge, this survives an indexer restart, so it is the signal for an admission lost at shutdown.
+
+Check: `journalctl -u stellarindex-indexer --since "-2 h" | grep "gate admission"`. `gate admission persisted on retry` means nothing was lost; `gate admission LOST at shutdown` means it was.
+
+Fix: if lost, `stellarindex-ops seed-protocol-contracts -source <source>`, restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+
 ## stellarindex_gate_admission_unpersisted
 
 Symptom: `stellarindex_gate_admissions_unpersisted{source=...}` above 0 for 5 minutes. A factory created a child (a Blend pool, a Soroswap pair, a SushiSwap pool) and the row that records it (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`) was not written. The indexer holds the child in memory and retries the write every 5 s.
@@ -259,7 +268,10 @@ ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-30 min" | g
 Fix:
 
 1. The journal line names the contract and the error. It is almost always Postgres: see [postgres.md](postgres.md). The gauge returns to 0 by itself once a retry lands (`gate admission persisted on retry`).
-2. If the indexer was restarted while the gauge was above 0 (journal: `gate admission LOST at shutdown`), re-walk the factory: `stellarindex-ops seed-protocol-contracts -source <source>`, then restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+2. If the indexer was restarted while the gauge was above 0 (journal: `gate admission LOST at shutdown`, its `source=` is the gauge label), restore the lost row per label, then restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)). Every command is a dry run until `-write` is added, and needs `-config`:
+   - `soroswap` (`soroswap_pairs`): `stellarindex-ops seed-soroswap-pairs -config /etc/stellarindex.toml -write` (reads the factory over stellar-rpc, insert-only).
+   - A gated factory source (`blend`, `blnt`, `aquarius`, `comet`, `phoenix`, `spectra`, ...; `protocol_contracts`): `stellarindex-ops seed-protocol-contracts -config /etc/stellarindex.toml -source <label> -write`. The tool rejects any name outside the gated-source registry (`gatedSources` in `internal/pipeline/gated_registry.go`).
+   - `sushiswap_v3_pools` (`sushiswap_v3_pools`): no command rewrites this table. `seed-protocol-contracts -source sushiswap_v3 -write` restores only the `protocol_contracts` row, not the pool's token attributes the decoder seeds from. Escalate; do not close the incident on that command.
 
 ## Related
 

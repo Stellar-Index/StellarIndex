@@ -14,6 +14,9 @@
 # asserts: no port-22 accept carries a bare `limit`, and the per-source
 # `update @ssh_ratelimit_v*` drop precedes the accept, against a bounded,
 # expiring dynamic set.
+#
+# Also pins archival-node's HTTP origin lock: 80/443 open by default, and
+# source-restricted to cloudflare_ip_ranges + internal_cidrs when enabled.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
@@ -138,6 +141,55 @@ for path, src in sources.items():
             and re.search(r"\bsize \d+", body),
             f"{path}: ssh_ratelimit_{fam} is a bounded, expiring dynamic set",
         )
+
+# archival-node HTTP origin lock: Caddy's 80/443 must stay open by default
+# (an inventory that sets nothing keeps today's API path), and with
+# http_origin_lock_enabled every 80/443 accept must carry a source match
+# drawn from the same cloudflare_ip_ranges Caddy's trusted_proxies reads.
+AN = ROLES + "/archival-node"
+defaults_src = open(AN + "/defaults/main.yml").read()
+cf_block = re.search(r"^cloudflare_ip_ranges:\n((?:  - .*\n)+)", defaults_src, re.M)
+check(cf_block is not None, "archival-node defaults declare cloudflare_ip_ranges")
+cf = re.findall(r'"([^"]+)"', cf_block.group(1)) if cf_block else []
+nft_src = open(AN + "/templates/nftables.conf.j2").read()
+
+
+def http_rules(out):
+    return [l.strip() for l in out.splitlines() if re.search(r"\bdport (80|443)\b", l)]
+
+
+out = env.from_string(nft_src).render(**VARS)
+check(
+    any(r.startswith("tcp dport 443 accept") for r in http_rules(out)),
+    "archival-node: 443 stays open when the origin lock is not configured",
+)
+locked = dict(VARS, cloudflare_ip_ranges=cf, http_origin_lock_enabled=True,
+              http_origin_lock_ports=[80, 443], http_origin_lock_extra_cidrs=["198.51.100.7/32"],
+              public_allow_ports=VARS["public_allow_ports"] + [
+                  {"proto": "tcp", "port": 80, "comment": "caddy-http"},
+                  {"proto": "tcp", "port": 11625, "comment": "scp"}])
+out = env.from_string(nft_src).render(**locked)
+rules = http_rules(out)
+check(len(rules) >= 4, f"archival-node locked: renders 80 and 443 rules ({len(rules)})")
+for r in rules:
+    check(
+        re.search(r"\bip6? saddr @(http_origin_v4|http_origin_v6|internal_v4) accept\b", r) is not None,
+        f"archival-node locked: HTTP accept is source-restricted: {r}",
+    )
+origin_set = re.search(r"set http_origin_v4 \{([^}]*)\}", out, re.S)
+check(
+    origin_set is not None and "173.245.48.0/20" in origin_set.group(1) and "198.51.100.7/32" in origin_set.group(1),
+    "archival-node locked: http_origin_v4 holds the Cloudflare ranges + extra CIDRs",
+)
+check(re.search(r"tcp dport 22 ip saddr @ssh_allowed_v4 ct state new accept", out) is not None,
+      "archival-node locked: SSH accept unchanged")
+check(re.search(r"^\s*tcp dport 11625 accept", out, re.M) is not None,
+      "archival-node locked: SCP peer port not locked")
+caddy_src = open(AN + "/templates/Caddyfile.j2").read()
+check(
+    "cloudflare_ip_ranges" in caddy_src and "173.245.48.0/20" not in caddy_src,
+    "archival-node Caddyfile trusted_proxies reads cloudflare_ip_ranges, no second literal copy",
+)
 
 if failed:
     sys.exit(1)

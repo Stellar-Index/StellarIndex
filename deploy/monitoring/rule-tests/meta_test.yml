@@ -443,3 +443,30 @@ tests:
                 For delivery-failure that means a refused chat delivery has no
                 out-of-band alarm. Set its URL in
                 /etc/default/alertmanager-secrets and re-run apply.sh.
+
+  # ── stellarindex_alertmanager_silence_active ─────────────────────
+  - interval: 1m
+    name: a silence held for a day tickets; a short maintenance silence does not
+    input_series:
+      - series: 'alertmanager_silences{job="alertmanager",state="active"}'
+        values: '1x2000'
+      - series: 'alertmanager_silences{job="alertmanager_pair",state="active"}'
+        values: '1x300 0x2000'
+    alert_rule_test:
+      - eval_time: 23h
+        alertname: stellarindex_alertmanager_silence_active
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: stellarindex_alertmanager_silence_active
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_silence_active
+              summary: "An Alertmanager silence has been active for 24h"
+              description: |
+                At least one silence has been continuously active for a day.
+                List them with `amtool silence query` and expire any that no
+                operator can account for.

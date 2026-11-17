@@ -85,12 +85,7 @@ gh workflow run status-page.yml --ref main
 
 The explorer's Cloudflare Pages git integration rebuilds on the merge into `main` and shows the incident within a minute or two; verify it lands on the index. If the integration is paused: `gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production`.
 
-**Known risk.** A real API outage can fail the explorer build that would publish the update: `src/lib/buildFetch.ts` aborts the whole `next build` when any real entity page's build-time fetch fails persistently, even though the incident corpus (`web/explorer/src/lib/incidents.ts`) is read from disk. `status.stellarindex.io` is the isolated build that avoids this. If the explorer build fails with `BuildFetchError`, force every OTHER page onto networkless fallback content for this one build (break-glass; never for a routine deploy; those pages stay degraded until the next good build):
-
-```sh
-gh workflow run explorer-deploy.yml --ref main -f network=mainnet \
-    -f environment=production -f api_base_url=https://ci-stub.invalid
-```
+**Known risk.** A real API outage can fail the explorer build that would publish the update: `src/lib/buildFetch.ts` aborts the whole `next build` when any real entity page's build-time fetch fails persistently, even though the incident corpus (`web/explorer/src/lib/incidents.ts`) is read from disk. `status.stellarindex.io` is the isolated build that avoids this: `status-page.yml` builds with `EXPLORER_BUILD_OFFLINE=1`, so it publishes during an API outage and still bakes the real API URL. Use it. Never override `api_base_url` on `explorer-deploy.yml` with a placeholder host: the value is baked into the shipped client bundle, so every browser fetch goes to it until the next good deploy. If the explorer build fails with `BuildFetchError`, leave the main explorer as is until the API recovers, then re-run `explorer-deploy.yml` with the default API URL.
 
 ### 5. Customer webhook fan-out (optional but expected)
 

@@ -323,6 +323,8 @@ type AssetDetail struct {
 	extensionUnread bool
 	// extensionStale: the catalogue row or an extension read answered from a cache entry its refresh has not kept up with.
 	extensionStale bool
+	// sep1Unread: the SEP-1 cache or fetch-state read errored, so sep1_status=not_fetched and the absent SEP-1 fields are ours.
+	sep1Unread bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
 	priceUnread bool
 	// priceStale: the price reader served price_usd with its own stale verdict (e.g. a held prior bucket).
@@ -883,7 +885,10 @@ func (s *Server) buildAssetListPage(
 	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
 	// After the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	s.fillDeclaredPegPricesInListing(r.Context(), out)
+	pegCtx, pegReads := withReadReport(r.Context())
+	s.fillDeclaredPegPricesInListing(pegCtx, out)
+	unmeasured = unmeasured || pegReads.unread.Load()
+	stale = stale || pegReads.stale.Load()
 	// One batch query (no N+1) for the page's issuer labels. Must run before the listing-valuation
 	// arm: that arm refuses scam-tagged issuers using a field only this call populates, so run
 	// first it would publish a dollar figure under a nulled price_usd. Every price producer runs
@@ -924,7 +929,16 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	// Precise supply: the ADR-0011 observer's latest reading, bounded by [preciseSupplyMaxAge].
 	// Authoritative (includes claimable and LP-locked holdings), so preferred.
 	precise, supplyUnread := s.latestPreciseSupply(ctx)
-	s.fillMarketCapsWith(ctx, rows, sourceCounts, precise)
+	armCtx, arms := withReadReport(ctx)
+	s.fillMarketCapsWith(armCtx, rows, sourceCounts, precise)
+	// The arms report on armCtx; hand their verdict back to the caller's report too, if it keeps one.
+	if arms.unread.Load() {
+		reportUnreadRead(ctx)
+		supplyUnread = true
+	}
+	if arms.stale.Load() {
+		reportStaleRead(ctx)
+	}
 	return supplyUnread
 }
 
@@ -934,7 +948,13 @@ func (s *Server) fillMarketCapsWith(
 ) {
 	// Broad fallback: cached trustline-balance sums from the lake for every classic asset. It
 	// undercounts (omits claimable and LP), so it only fills rows the precise pipeline misses.
-	broad := s.cachedClassicSupply(ctx)
+	broad, broadUnread := s.classicSupplyMap(ctx)
+	// A failed broad read leaves a priced row without the supply its cap needs; that hole is ours, not the token's.
+	defer func() {
+		if broadUnread && anyPricedRowWithoutSupply(rows) {
+			reportUnreadRead(ctx)
+		}
+	}()
 	// Lake-flows supply (mint - burn - clawback over the SAC) is the only reading not keyed on where
 	// tokens are held, so it alone sees claimable balances, LP reserves and SAC balances. It
 	// outranks the trustline sum but never falls below it; see classic_lake_supply.go.
@@ -957,6 +977,16 @@ func (s *Server) fillMarketCapsWith(
 	for i := range rows {
 		s.fillRowMarketCap(dctx, &rows[i], precise, lake, broad, sourceCounts)
 	}
+}
+
+// anyPricedRowWithoutSupply reports a priced classic row left without supply: only classic rows are keyed in the broad map.
+func anyPricedRowWithoutSupply(rows []AssetDetail) bool {
+	for i := range rows {
+		if rows[i].PriceUSD != nil && rows[i].CirculatingSupply == nil && rows[i].Type == string(canonical.AssetClassic) {
+			return true
+		}
+	}
+	return false
 }
 
 // listingDecimalsLockstepBudget bounds the total time [fillMarketCapsFromSupply]
@@ -1234,134 +1264,6 @@ func assetRowSourceCounts(rows []timescale.AssetRow) map[string]int {
 		}
 	}
 	return m
-}
-
-// classicSupplyTTL is how long the broad trustline-derived supply map is reused; the GROUP BY is ~0.5s and totals move slowly.
-const classicSupplyTTL = 10 * time.Minute
-
-// classicSupplyMaxAge bounds the broad map's age while refresh keeps failing; it matches classicLakeSupplyTTL because
-// higherClassicSupply max()es the two, and a floor only holds against a reading of comparable vintage.
-const classicSupplyMaxAge = classicLakeSupplyTTL
-
-// classicSupplyRetryGap rate-limits refresh attempts after a failure: the backing query is a
-// full-table GROUP BY, and retrying it per request turned one slow query into a sustained outage.
-const classicSupplyRetryGap = 60 * time.Second
-
-// classicSupplyRefreshBudget is the detached refresh's own deadline. It blocks no request, so it
-// can exceed the API request timeout, which a request-scoped refresh never could.
-const classicSupplyRefreshBudget = 3 * time.Minute
-
-// classicSupplyColdWait bounds a request's wait when nothing is cached; short because the backing query outlives the request
-// timeout.
-const classicSupplyColdWait = 2 * time.Second
-
-// classicSupplyReader is the narrow capability cachedClassicSupply needs from the explorer reader, shared by the request path
-// and the detached refresh.
-type classicSupplyReader interface {
-	ClassicCirculatingSupply(context.Context) (map[string]string, error)
-}
-
-// cachedClassicSupply returns the classic circulating-supply map (CODE-ISSUER to raw 7dp total), cached with a TTL and
-// single-flight since the ClickHouse GROUP BY is too heavy per request. Nil without a capable explorer reader (callers fall
-// back to precise supply); serves the last good map on refresh errors until classicSupplyMaxAge.
-func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
-	er, ok := s.Explorer.(classicSupplyReader)
-	if !ok {
-		return nil
-	}
-	s.classicSupplyMu.Lock()
-	if s.classicSupplyCache != nil && time.Since(s.classicSupplyAt) < classicSupplyTTL {
-		m := s.classicSupplyCache
-		s.classicSupplyMu.Unlock()
-		return m
-	}
-	// Stale or never filled: start a detached refresh (one in flight, one attempt per
-	// classicSupplyRetryGap) and serve the last-good map without blocking.
-	last := s.servableClassicSupplyLocked()
-	flight := s.classicSupplyFlight
-	if flight == nil && time.Since(s.classicSupplyAttemptAt) >= classicSupplyRetryGap {
-		s.classicSupplyAttemptAt = time.Now() // advances on failure too
-		flight = make(chan struct{})
-		s.classicSupplyFlight = flight
-		// Detaching from the request context is intentional (G118): a refresh on the caller's ctx
-		// dies at the request timeout without advancing classicSupplyAt, so every later request
-		// would retry the doomed query. The goroutine has its own budget in refreshClassicSupply.
-		go s.refreshClassicSupply(er, flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is intentional; see refreshClassicSupply's doc comment.
-	}
-	s.classicSupplyMu.Unlock()
-
-	// Serving stale beats blocking: this map only feeds market-cap enrichment,
-	// and a 10-minute-old supply figure is far better than a 15s stall.
-	if last != nil {
-		return last
-	}
-	// Nothing servable: wait briefly so a fast query still fills this response, never for the whole
-	// request budget, since the query can outrun the 15s timeout. The detached refresh keeps
-	// running so the next request hits cache; PrewarmClassicSupply normally fills it first.
-	if flight == nil {
-		return nil // retry gap still open and nothing cached
-	}
-	timer := time.NewTimer(classicSupplyColdWait)
-	defer timer.Stop()
-	select {
-	case <-flight:
-		s.classicSupplyMu.Lock()
-		m := s.servableClassicSupplyLocked()
-		s.classicSupplyMu.Unlock()
-		return m
-	case <-timer.C:
-		return nil // degrade now; the detached refresh fills the cache for the next request
-	case <-ctx.Done():
-		return nil
-	}
-}
-
-// servableClassicSupplyLocked returns the cached broad map, or nil once it is
-// classicSupplyMaxAge old. Caller holds classicSupplyMu.
-func (s *Server) servableClassicSupplyLocked() map[string]string {
-	if s.classicSupplyCache == nil || time.Since(s.classicSupplyAt) >= classicSupplyMaxAge {
-		return nil
-	}
-	return s.classicSupplyCache
-}
-
-// PrewarmClassicSupply fills the classic supply cache out of band; concurrency-safe via the request path's single-flight, and a warm cache is a no-op.
-func (s *Server) PrewarmClassicSupply(ctx context.Context) {
-	s.cachedClassicSupply(ctx)
-}
-
-// refreshClassicSupply recomputes the map on a detached context. Load-bearing: a GROUP BY outgrowing the 15s request timeout
-// never completes on the request context, and classicSupplyAt advances only on success, so every request would re-run the
-// doomed query. classicSupplyAttemptAt rate-limits retries.
-func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}) {
-	// Deferred so a panic in the GROUP BY cannot skip clearing the flight: a flight left set is
-	// never replaced (refreshes start only when it is nil), which would freeze the map for the
-	// life of the API and silently drop market_cap from every asset.
-	defer s.endClassicSupplyFlight(done)
-	defer worker.Recover(s.logger, "api-classic-supply-refresh")
-	ctx, cancel := context.WithTimeout(context.Background(), classicSupplyRefreshBudget)
-	defer cancel()
-
-	m, err := er.ClassicCirculatingSupply(ctx)
-
-	s.classicSupplyMu.Lock()
-	if err == nil && len(m) > 0 {
-		s.classicSupplyCache = m
-		s.classicSupplyAt = time.Now()
-	}
-	s.classicSupplyMu.Unlock()
-	if err != nil {
-		s.logger.Warn("classic supply refresh failed (serving last good)", "err", err)
-	}
-}
-
-// endClassicSupplyFlight releases the single-flight marker and wakes cold-start waiters; deferred so it runs on EVERY exit,
-// panics included.
-func (s *Server) endClassicSupplyFlight(done chan struct{}) {
-	s.classicSupplyMu.Lock()
-	s.classicSupplyFlight = nil
-	s.classicSupplyMu.Unlock()
-	close(done)
 }
 
 // dustLiquiditySuppressed reports whether a cap or FDV backed by sourceCount venues and volume24hUSD is dust liquidity: a
@@ -2008,7 +1910,13 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 	}
 	if s.Substance != nil {
 		asset, err := canonical.ParseAsset(assetID)
-		if err != nil || !s.listingPriceAllowed(ctx, asset) {
+		if err != nil {
+			return nil
+		}
+		if allowed, measured, _ := s.listingSubstanceVerdict(ctx, asset, false); !allowed {
+			if !measured {
+				reportUnreadRead(ctx)
+			}
 			return nil
 		}
 	}
@@ -2185,7 +2093,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 		env.Data = append(page, classic.rows...)
 		// A fill that added no row does not date or stale the catalogue rows above it.
 		if len(classic.rows) > 0 {
-			env.Flags.Stale = unmeasured || classic.stale()
+			env.Flags.Stale = env.Flags.Stale || classic.stale()
 			env.Flags.Degraded = env.Flags.Degraded || classic.stale() || anyDirectoryUnchecked(classic.rows)
 			env.AsOf = classic.asOf()
 		}
@@ -2328,7 +2236,10 @@ func (s *Server) fetchClassicUnifiedRows(
 	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	s.fillDeclaredPegPricesInListing(r.Context(), out)
+	pegCtx, pegReads := withReadReport(r.Context())
+	s.fillDeclaredPegPricesInListing(pegCtx, out)
+	unmeasured = unmeasured || pegReads.unread.Load()
+	cacheStale = cacheStale || pegReads.stale.Load()
 	// Curated issuer label (account_directory), one batch query per page. Scam-class tags withhold
 	// the row's price and market cap (suppressScamIssuerPricing).
 	//
@@ -2499,6 +2410,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	pegCtx, pegReads := withReadReport(ctx)
 	s.fillDeclaredPegPrice(pegCtx, &detail, nil)
 	detail.f2ReadFailed = detail.f2ReadFailed || pegReads.unread.Load()
+	detail.priceStale = detail.priceStale || pegReads.stale.Load()
 
 	// Scam-issuer price suppression, the payload-side twin of the reader-seam ScamGate. Runs AFTER
 	// every price producer (including the peg fill) so nothing can resurrect the value: a flagged
@@ -2557,13 +2469,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || detail.sep1Unread || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or
 // was cut short, so the body must not outlive the request in the detail cache.
 func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
-	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread || detail.sep1Unread
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed from the reader, else a canonical echo.
@@ -2984,27 +2896,30 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 
 		Sep1CurrencyAuthority: detail.Sep1CurrencyAuthority,
 	}
-	writeJSON(w, out, Flags{Stale: homeDomainDegraded || detail.issuerDirectoryUnchecked, Degraded: detail.issuerDirectoryUnchecked})
+	writeJSON(w, out, Flags{
+		Stale:    homeDomainDegraded || detail.issuerDirectoryUnchecked || detail.sep1Unread,
+		Degraded: detail.issuerDirectoryUnchecked || detail.sep1Unread,
+	})
 }
 
 // sep1StatusForNoPayload separates two opposite findings for an issuer with no SEP-1 payload: `not_fetched` is ours (nothing has run, or
 // only runs a systemic outage voided), `unreachable` is theirs (domain reached, nothing storable). Falls back to `not_fetched` without a
 // fetch-state reader. applySep1Overlay never fetches live: a live HTTPS fetch per uncached request dominated p95.
-func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) string {
+func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) (status string, unread bool) {
 	rd, ok := s.Sep1Cache.(Sep1FetchStateReader)
 	if !ok {
-		return "not_fetched"
+		return "not_fetched", false
 	}
 	unreachable, err := rd.IssuerSep1Unreachable(ctx, issuer)
 	if err != nil {
 		s.logger.Warn("sep1 overlay: fetch-state read failed",
 			"issuer", issuer, "err", err)
-		return "not_fetched"
+		return "not_fetched", true
 	}
 	if unreachable {
-		return "unreachable"
+		return "unreachable", false
 	}
-	return "not_fetched"
+	return "not_fetched", false
 }
 
 func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
@@ -3015,15 +2930,21 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 		return
 	}
 	sep, err := s.Sep1Cache.GetIssuerSep1Cached(ctx, asset.Issuer)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No issuers row: the read answered, and nothing has been fetched for this issuer.
+		detail.Sep1Status = "not_fetched"
+		return
+	}
 	if err != nil {
 		s.logger.Debug("sep1 cached lookup failed", "asset_id", asset.String(),
 			"issuer", asset.Issuer, "err", err)
 		// OUR read failed, which says nothing about the issuer.
 		detail.Sep1Status = "not_fetched"
+		detail.sep1Unread = true
 		return
 	}
 	if sep == nil {
-		detail.Sep1Status = s.sep1StatusForNoPayload(ctx, asset.Issuer)
+		detail.Sep1Status, detail.sep1Unread = s.sep1StatusForNoPayload(ctx, asset.Issuer)
 		return
 	}
 	if sep.OutlivedDomain {

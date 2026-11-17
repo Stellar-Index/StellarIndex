@@ -1,6 +1,6 @@
 ---
 title: Rollback procedures
-last_verified: 2026-06-12
+last_verified: 2026-11-17
 status: operator runbook
 ---
 
@@ -15,8 +15,78 @@ rollback is recoverable; a slow one lets a broken release accumulate state.
 **Migrations do not roll back** (CS-099). A binary rollback runs the previous
 binary on the forward schema, which is safe only because every migration is
 old-binary-safe ([migrations/README.md](../../migrations/README.md) rule 9).
-`down.sql` is not a production lever. `make preflight-deploy` flags a dispatch
-to an older tag as a rollback and points here.
+`down.sql` is not a production lever. `make preflight-deploy REGION=r1
+VERSION=<previous-tag>` flags a dispatch to an older tag as a rollback and
+points here.
+
+## Rolling back the binaries
+
+This is the one rollback command; the other runbooks link here.
+
+```sh
+gh workflow run deploy.yml \
+  -f region=r1 \
+  -f version=<previous-tag> \
+  -f migrations_skip=true
+sleep 10   # the dispatched run takes a few seconds to appear
+gh run watch --exit-status \
+  "$(gh run list --workflow=deploy.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+- **No `-f binaries`.** The default is the region's whole set from
+  `scripts/dev/region-binaries.tsv` (r1: indexer, aggregator, api,
+  sla-probe, ops, migrate). The deploy's **Reconcile the binary set against
+  the host** step refuses a partial set unless every omitted binary is
+  already on the target tag, and after a release none of them is. A partial
+  rollback is refused before anything on the host changes.
+- **`migrations_skip=true` is required.** Without it the playbook syncs the
+  old tag's `migrations/` (pruning the newer files) and runs `migrate up`,
+  which fails with "no migration found for version N" whenever a migration
+  landed after that tag, before any binary is swapped. The flag also skips
+  the pgBackRest freshness gate, which only guards migrations.
+- **Watch the run.** `gh workflow run` returns as soon as it dispatches; the
+  next step of any procedure below waits on `gh run watch --exit-status`.
+- The deploy does backup → swap → restart → health probe per binary and
+  restores `.prev-<tag>` itself if a probe fails.
+- If the release being rolled back changed a config surface (ansible
+  `stellarindex.toml`, Prometheus rules, systemd units, schema), the run
+  ends red at **Config-apply gate**, after the swap. The binaries are live:
+  check **Run deploy playbook** passed and `/v1/version` reports the
+  previous tag. Do not pass `config_acknowledged=true`: the host keeps the
+  newer config, and the gate's marker should keep saying so.
+
+The previous tag is in `git tag` history or the "Running version" line in
+[`r1-deployment-state.md`](r1-deployment-state.md). Backups are kept as
+`/usr/local/bin/<binary>.prev-<tag>`, the last 5
+([`deploy-workflow.md`](deploy-workflow.md#backup-naming--rollback)):
+
+```sh
+ssh root@<host> 'ls -lh /usr/local/bin/stellarindex-*.prev-* 2>/dev/null'
+```
+
+### Manual fallback
+
+Only if the deploy workflow itself is broken. Per binary, for every binary
+the region runs:
+
+```sh
+PREVIOUS=<previous-tag>
+BINARY=stellarindex-api
+ssh root@<host> "
+  systemctl stop ${BINARY} && \
+  cp /usr/local/bin/${BINARY}.prev-${PREVIOUS} /usr/local/bin/${BINARY} && \
+  echo ${PREVIOUS} > /var/lib/stellarindex/deployed-versions/${BINARY} && \
+  systemctl start ${BINARY} && \
+  systemctl status ${BINARY} --no-pager | head -20
+"
+```
+
+The CLI binaries (`stellarindex-sla-probe`, `stellarindex-ops`,
+`stellarindex-migrate`) have no unit: run only the `cp` and the sidecar
+`echo`. The sidecar must be a single word (the tag): the next deploy's
+backup step errors on anything else. Swapping only some binaries leaves the
+host split across releases and fires `stellarindex_binary_version_skew`
+until every binary is on one tag.
 
 ## Decision tree — should we roll back?
 
@@ -52,51 +122,8 @@ letting bad data accumulate costs corrupted history to backfill or truncate.
 Symptoms: API binary won't start, indexer panics on boot, aggregator won't
 connect to Redis. Diagnose with `systemctl status stellarindex-{api,indexer,
 aggregator}` on r1. A release that crashes at startup never served traffic;
-rollback is re-deploying the previous tag.
-
-The deploy workflow keeps previous binaries as
-`/usr/local/bin/<binary>.prev-<previous-tag>`
-([`deploy-workflow.md`](deploy-workflow.md#backup-naming--rollback)).
-Preferred path: re-trigger it with the previous known-good tag (host-side
-backup→swap→restart→health-probe, automatic rollback on probe failure). It
-works only with `-f migrations_skip=true` (`deploy.yml:105`): the schema stays
-forward (CS-099), so without it `migrate up` (`deploy-binary.yml:282`) fails
-with "no migration found for version N" whenever a migration landed after that
-tag.
-
-```sh
-gh workflow run deploy.yml \
-  -f region=r1 \
-  -f version=vX.Y.Z \
-  -f binaries=stellarindex-api \
-  -f migrations_skip=true
-```
-
-The previous tag is in `git tag` history or the "Running version" line in
-[`r1-deployment-state.md`](r1-deployment-state.md). Confirm the
-`.prev-<tag>` is still on disk first:
-
-```sh
-ssh root@<host> 'ls -lh /usr/local/bin/stellarindex-*.prev-* 2>/dev/null'
-```
-
-Manual fallback, only if the deploy workflow itself is broken
-([`release-process.md` §Rollback](release-process.md#rollback)):
-
-```sh
-PREVIOUS=vX.Y.Z                               # the known-good tag
-BINARY=stellarindex-api
-ssh root@<host> "
-  systemctl stop ${BINARY} && \
-  cp /usr/local/bin/${BINARY}.prev-${PREVIOUS} /usr/local/bin/${BINARY} && \
-  echo ${PREVIOUS} > /var/lib/stellarindex/deployed-versions/${BINARY} && \
-  systemctl start ${BINARY} && \
-  systemctl status ${BINARY} --no-pager | head -20
-"
-```
-
-The sidecar must be a single word (the tag): the next deploy's backup step
-errors on anything else. Then go to **§Post-rollback**.
+roll back with [the rollback command](#rolling-back-the-binaries), then go to
+**§Post-rollback**.
 
 ### B. The release runs but breaks `/v1/price` correctness
 
@@ -108,33 +135,54 @@ r1 is the only production host ([ADR-0008](../adr/0008-ha-topology.md);
 R2/R3 deferred):
 
 ```sh
-# 1. Stop the aggregator on r1 — preserves the cache in its
-#    last-good state while we swap binaries.
+# 1. Stop the aggregator so it stops computing prices with the bad binary.
+#    If the wrong numbers come from ingest (the trade rows themselves are
+#    wrong), stop stellarindex-indexer too; it resumes from its cursor.
 ssh root@<host> "systemctl stop stellarindex-aggregator"
 
-# 2. Re-deploy all three binaries at the previous-known-good tag.
-#    The deploy workflow does the per-host backup→swap→restart→
-#    health-probe with automatic rollback on probe failure.
+# 2. Roll back the whole set and wait for the result.
 gh workflow run deploy.yml \
   -f region=r1 \
-  -f version=vX.Y.Z \
-  -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
+  -f version=<previous-tag> \
+  -f migrations_skip=true
+sleep 10
+gh run watch --exit-status \
+  "$(gh run list --workflow=deploy.yml --event=workflow_dispatch --limit 1 --json databaseId -q '.[0].databaseId')"
 
-# 3. (The aggregator was restarted by the workflow in step 2; if it
-#    was left stopped because the workflow only re-deployed a subset,
-#    start it explicitly.)
-ssh root@<host> "systemctl start stellarindex-aggregator"
+# 3. Only if step 2 succeeded: the deploy restarted every unit on the
+#    previous tag. Confirm.
+ssh root@<host> "systemctl is-active stellarindex-aggregator stellarindex-indexer stellarindex-api; \
+  cat /var/lib/stellarindex/deployed-versions/stellarindex-aggregator"
 
 # 4. Smoke-check.
 stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
   -duration 30s -concurrency 1
 ```
 
-Rows the broken release wrote to trades: decide after the rollback whether
-to truncate or leave. A broken decoder usually produced *missing* rather than
-*wrong* data, so leave-and-backfill is the cheap recovery; the
-`(source, ledger, tx_hash, op_index)` primary key prevents duplicates on
-re-ingest.
+If step 2 fails, do **not** start the aggregator: it would run the bad
+release again. Read the failed step's `::error::` line, correct the dispatch
+and re-run it, or use the [manual fallback](#manual-fallback) for every
+binary. A stopped aggregator is a freshness alert; a running bad one is
+wrong prices.
+
+#### Correcting what the broken release wrote
+
+The rollback stops new bad rows; it does not touch the ones already
+stored. Decide once the rollback has taken:
+
+- **Missing rows** (a decoder that dropped events): replay the range. The
+  command depends on who writes the domain:
+  [the replay decision rule](../architecture/ingest-pipeline.md#the-replay-decision-rule).
+- **Wrong rows**: `trades` upserts on `(source, ledger, tx_hash, op_index,
+  ts)` (`ON CONFLICT … DO UPDATE`), so a replay over the range overwrites
+  rows with the same key. A row whose key itself was wrong (for example a
+  shifted `ts`) is not displaced: delete the range first, then replay.
+- **Aggregates**: a `ch-rebuild` replay refreshes the trade and oracle
+  aggregates over its range; after any other replay, refresh the CAGGs over
+  the affected window ([`cagg-broad-recompute.md`](cagg-broad-recompute.md)
+  for a wide one).
+- Record the window and what was corrected in the SEV and the postmortem,
+  and add an incident to the corpus (§E) if customers saw wrong numbers.
 
 ### C. The release runs but a single source is broken
 
@@ -142,25 +190,29 @@ Symptoms: `stellarindex_source_decode_errors_total{source="X"}` spiking,
 `stellarindex_source_events_total{source="X"}` dropping to zero, the
 `decode-errors` runbook firing.
 
-DON'T roll back the release. Remove the source from the `[ingestion]`
-allow-list; the indexer runs only the connectors named in `enabled_sources`:
-
-```toml
-# /etc/stellarindex.toml
-[ingestion]
-# Drop the broken source from this list (it's an allow-list, not a
-# per-source enabled=false flag). Valid names: see config.KnownSources.
-enabled_sources = ["soroswap", "aquarius", "phoenix", "..."]
-```
+DON'T roll back the release. Remove the source from the indexer's
+allow-list: `/etc/stellarindex.toml` `[ingestion] enabled_sources` names the
+only connectors the indexer runs. Ansible renders that file from
+`stellarindex_enabled_sources`
+(`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2`), so
+change the variable, not the file; a hand edit is overwritten by the next
+playbook run and the broken source silently comes back.
 
 ```sh
-# Apply on r1, then restart the indexer to pick up the new config.
-scp stellarindex.toml root@<host>:/etc/stellarindex.toml
-ssh root@<host> "systemctl restart stellarindex-indexer"
+# from configs/ansible/: drop the source from stellarindex_enabled_sources
+# in the host's inventory (default: roles/archival-node/defaults/main.yml)
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+  --tags stellarindex --check --diff            # always --check --diff first
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+  --tags stellarindex
+ssh root@<host> "grep -n '^enabled_sources' /etc/stellarindex.toml"
 ```
 
-File a SEV-2 against the source's package; the source runs degraded until
-the fix lands, then re-enable it.
+The template task hides its diff (`diff: false`: the file carries DSNs), so
+the `grep` is the check. A changed file restarts the indexer, aggregator
+and API through their handlers. Codify the change in a PR the same day. File a SEV-2 against the source's
+package; the source runs degraded until the fix lands, then re-enable it the
+same way.
 
 ### D. Public-repo content went wrong
 

@@ -1,13 +1,15 @@
 ---
 title: Credential rotation runbook
-last_verified: 2026-10-08
+last_verified: 2026-11-17
 status: current
 ---
 
 # Credential rotation runbook
 
 Rotating the load-bearing credentials on an archival node (r1; R2/R3 the same). [The full rotation batch](#the-full-rotation-batch)
-lists every credential in rotation order.
+lists the credentials in rotation order. Nothing checks it against the roles: after a
+compromise, also read each role's `defaults/main.yml` and templates for secret-bearing
+variables not named here.
 
 Secrets live **ansible-vault encrypted** in `configs/ansible/inventory/<region>.secrets.yml`,
 **not tracked** (an encrypted vault in a public repo is still bruteforce-able): CI
@@ -125,32 +127,54 @@ tracked in the private inventory.
 1. **Vendor API keys.** `vault_resend_api_key`, `vault_coingecko_api_key`,
    `vault_coingecko_demo_api_key`, `vault_dune_api_key`, `vault_massive_api_key`,
    `vault_tiingo_api_key`, `vault_exchangeratesapi_key`, `vault_openexchangerates_app_id`,
-   `vault_chainlink_rpc_url`, `alertmanager_pagerduty_key`, the Healthchecks write key.
-   Issue new, deploy, revoke old.
+   `alertmanager_pagerduty_key`, `alertmanager_discord_webhook_url_pages`,
+   `alertmanager_discord_webhook_url_alerts`, `alertmanager_discord_webhook_url_informational`
+   (a leaked webhook URL lets anyone post into the paging channels),
+   `alertmanager_healthchecks_deadmansswitch_url`, `alertmanager_healthchecks_alert_delivery_url`,
+   the Healthchecks write key. Issue new, deploy, revoke old.
 2. **MinIO.** `minio_root_password`, `galexie_s3_*`, `galexie_archive_s3_*`,
    `stellarindex_reader_*`, `stellarindex_archive_trimmer_*`, per [MinIO](#minio).
    Check: no `SignatureDoesNotMatch`.
 3. **ClickHouse.** `clickhouse_live_daemon_password`, `clickhouse_ops_admin_password`,
    `clickhouse_ops_batch_password`, `clickhouse_ops_monitor_password`,
    `vault_clickhouse_serving_password`.
-4. **Postgres, Redis, HA.** `patroni_*` passwords, `redis_password`,
-   `keepalived_vrrp_password`, `etcd_cluster_token`. Check: `patronictl list`.
+4. **Postgres, Redis, HA.** `postgres_pass_stellarindex` (the owner DSN every consumer
+   renders into `/etc/default/stellarindex*`), `postgres_pass_stellarindex_api`,
+   `postgres_pass_core`, `patroni_*` passwords, `redis_password`,
+   `keepalived_vrrp_password`, `etcd_cluster_token`, `etcd_tls_key_pem` (with its cert).
+   Check: `patronictl list`, and the API and indexer reconnect with the new DSN.
 5. **Backup keys.** `ch_lake_backup_s3_key*`, `galexie_archive_mirror_s3_key*`,
-   `pgbackrest_repo2_s3_key*`, the B2 application keys. Check: a backup of each kind completes
-   before the old key is deleted.
+   `pgbackrest_repo2_s3_key*`, `pgbackrest_repo1_sftp_private_key_file` (new keypair, then
+   update `authorized_keys` on the repo host), the B2 application keys. Check: a backup of
+   each kind completes before the old key is deleted.
+   `pgbackrest_repo1_cipher_pass` and `pgbackrest_repo2_cipher_pass` are not rotated in
+   place: changing one makes every existing backup in that repo unreadable. Rotating one
+   means a new repo (or stanza) under the new passphrase and a fresh full backup, keeping
+   the old passphrase until the old backups expire.
 6. **Monitoring basic auth.** `prometheus_basic_auth_password_hash`,
-   `alertmanager_basic_auth_password_hash`, `patroni_rest_basic_auth_password`. Check:
-   
+   `alertmanager_basic_auth_password_hash`, `patroni_rest_basic_auth_password`. Check: `/-/healthy` on `:9090` and `:9093` answers 401
+   without credentials and 200 with `curl -u`, Prometheus still scrapes (Targets page), and
+   `patronictl list` still works.
 7. **Application secrets.** `vault_dashboard_code_secret` invalidates every live sign-in
    code, login-device proof and passkey ceremony: rotate when no one is mid-sign-in.
-   `vault_webhook_seal_key` orphans sealed webhook secrets: re-seal them first.
+   `vault_webhook_seal_key` has no re-seal path (the sealer holds one key and no ops
+   command re-seals): rotating it makes every sealed webhook signing key unreadable, and
+   deliveries to those webhooks fail terminally with no retry and no notice to the
+   customer. Rotate it only when it is known exposed. Afterwards each customer must call
+   rotate-secret on their webhook (the dashboard edit and delete still work), and
+   deliveries failed in the meantime are lost. Restoring the old value makes the keys
+   readable again for new deliveries.
 8. **GitHub Actions secrets.** `DEPLOY_SSH_PRIVATE_KEY` with the matching `authorized_keys`
    entry on every host, `CLOUDFLARE_API_TOKEN`, `DEPLOY_PROTECTION_TOKEN`,
-   `STELLARINDEX_LOAD_API_KEY`.
+   `STELLARINDEX_LOAD_API_KEY`. Write each credential-bearing one as an **environment**
+   secret on every Environment that reads it and delete any repository-level copy
+   ([deploy-workflow.md §Per-region setup](deploy-workflow.md#per-region-setup)): a
+   repository secret is readable from any branch's workflow.
 9. **GCP service-account key.** Create, swap in, delete the old.
 10. **The vault itself, last.** Rekey, then update the `ANSIBLE_VAULT_PASSWORD` and
     `ANSIBLE_VAULT_FILE_B64` Actions secrets (test nets: `TESTNETS_ANSIBLE_VAULT_PASSWORD`,
-    `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`). Check: ansible-drift decrypts.
+    `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`), at environment scope as in
+    step 8. Check: ansible-drift decrypts.
 
 ## Related
 

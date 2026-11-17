@@ -243,7 +243,7 @@ func (s *Store) collectLendingPoolSeries(ctx context.Context, query, since strin
 			return nil, fmt.Errorf("timescale: bespokeLending per-pool series scan: %w", err)
 		}
 		if len(out) == 0 || key != lastKey {
-			out = append(out, BespokeSeries{Name: "Pool · " + truncLendingID(key), Unit: "events"})
+			out = append(out, BespokeSeries{Name: "Pool · " + truncLendingID(key), Unit: "events", ID: key, Kind: BespokeKindPool})
 			lastKey = key
 		}
 		out[len(out)-1].Points = append(out[len(out)-1].Points, pt)
@@ -259,7 +259,7 @@ func (s *Store) lendingActivityBreakdowns(ctx context.Context, blk *BespokeBlock
 		`SELECT pool, count(*)::text, count(*)
 		   FROM blend_positions
 		  WHERE ledger_close_time > now() - $1::interval
-		  GROUP BY pool ORDER BY count(*) DESC LIMIT 10`, since, truncLendingID)
+		  GROUP BY pool ORDER BY count(*) DESC LIMIT 10`, since, truncLendingID, BespokeKindPool)
 	if err != nil {
 		return err
 	}
@@ -272,7 +272,7 @@ func (s *Store) lendingActivityBreakdowns(ctx context.Context, blk *BespokeBlock
 		`SELECT event_kind, count(*)::text, count(*)
 		   FROM blend_positions
 		  WHERE ledger_close_time > now() - $1::interval
-		  GROUP BY event_kind ORDER BY count(*) DESC`, since, func(k string) string { return k })
+		  GROUP BY event_kind ORDER BY count(*) DESC`, since, func(k string) string { return k }, "")
 	if err != nil {
 		return err
 	}
@@ -287,7 +287,8 @@ func (s *Store) lendingActivityBreakdowns(ctx context.Context, blk *BespokeBlock
 }
 
 // collectLendingBreakdown runs one (key, value_text, count) composition query; query is a hard-coded constant, never request-derived.
-func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdown, query, since string, label func(string) string) (BespokeBreakdown, error) {
+// A non-empty kind tags each row with its key as ID so the API can name it.
+func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdown, query, since string, label func(string) string, kind string) (BespokeBreakdown, error) {
 	rows, err := s.db.QueryContext(ctx, query, since)
 	if err != nil {
 		return base, fmt.Errorf("timescale: bespokeLending breakdown %q: %w", base.Title, err)
@@ -300,6 +301,9 @@ func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdo
 			return base, fmt.Errorf("timescale: bespokeLending breakdown %q scan: %w", base.Title, err)
 		}
 		row.Label = label(key)
+		if kind != "" {
+			row.ID, row.Kind = key, kind
+		}
 		base.Rows = append(base.Rows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -312,7 +316,7 @@ func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdo
 // Omitted when no flash loan landed in the window.
 func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, since string) error {
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Recent flash loans", Columns: []string{"When", "Pool", "Asset", "Amount (raw token units)", "Borrower", "Tx"}},
+		lendingFlashLoansHeader,
 		`SELECT to_char(ledger_close_time, 'YYYY-MM-DD HH24:MI'),
 		        pool,
 		        asset,
@@ -420,7 +424,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 	// Recent scheduled settlements. Ordered newest-first; settled_amount is
 	// rendered as text so the i128 NUMERIC never round-trips through int64.
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Recent scheduled settlements", Columns: []string{"When", "Position", "Debt asset", "Settled amount", "Settler"}},
+		creditSettlementsHeader,
 		`SELECT to_char(ledger_close_time, 'YYYY-MM-DD HH24:MI'),
 		        position_uuid,
 		        COALESCE(debt_asset, '—'),
@@ -510,3 +514,22 @@ func (s *Store) creditPositionExtras(ctx context.Context, blk *BespokeBlock, win
 // deposit/withdraw volume, per-vault net flow (an AUM proxy) and unique actors. The series and
 // per-vault net scope to the vault layer to avoid double-counting a deposit that fans out into
 // strategies.
+
+// Typed table headers (title, columns, kinds): each builder copies one; bespoke_headers_test.go checks them all.
+var lendingFlashLoansHeader = BespokeTable{
+	Title:   "Recent flash loans",
+	Columns: []string{"When", "Pool", "Asset", "Amount", "Borrower", "Tx"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindTime), BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset),
+		BespokeAmountOf(2), BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindTx),
+	},
+}
+
+var creditSettlementsHeader = BespokeTable{
+	Title:   "Recent scheduled settlements",
+	Columns: []string{"When", "Position", "Debt asset", "Settled amount", "Settler"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindAsset),
+		BespokeAmountOf(2), BespokeCol(BespokeKindAccount),
+	},
+}

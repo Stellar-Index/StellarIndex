@@ -306,7 +306,7 @@ func TestBlendFoldsCountFlashLoanAsDebt(t *testing.T) {
 	if err := store.lendingPositionBlocks(ctx, &BespokeBlock{}, "30 days", 30); err != nil {
 		t.Fatalf("lendingPositionBlocks: %v", err)
 	}
-	assertBlendFold(t, "Net position by asset", conn.stmts[1].sql, blendBothLegSigns)
+	assertBlendFold(t, "Net flow by asset", conn.stmts[1].sql, blendBothLegSigns)
 
 	store, conn = newScriptedStore(t, empty)
 	if _, err := store.ListBlendPools(ctx); err != nil {

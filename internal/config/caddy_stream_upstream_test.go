@@ -143,7 +143,7 @@ func caddyRunLocal(t *testing.T, caddyBin, path, upstream string) string {
 	_ = ln.Close()
 
 	dir := t.TempDir()
-	src := readCaddyfile(t, path)
+	src := readCaddyTemplate(t, path)
 	for from, to := range map[string]string{
 		"\n{\n":                            "\n{\n\tadmin off\n",
 		"\napi.stellarindex.io {\n":        "\nhttp://" + addr + " {\n",

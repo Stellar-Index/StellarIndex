@@ -3,27 +3,37 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // OpsBySourceProofName is ops_by_source's row in stellar.entry_history_watermark: the ledger through which
-// ch-index-proof showed the projection holds every sourced tx and op key of its two source tables.
+// ch-index-proof showed the projection holds every (account, tx) key of its tx-sentinel views and every sourced op key.
 const OpsBySourceProofName = "ops_by_source"
 
-// op_index 4294967295 marks the tx-source stream (deploy/clickhouse/ops_by_source.sql). Per-ledger roaring bitmaps count distinct keys exactly and ignore ReplacingMergeTree duplicates, at a fraction of
+// op_index 4294967295 marks the tx-sentinel streams (deploy/clickhouse/ops_by_source.sql). Per-ledger roaring bitmaps count distinct keys exactly and ignore ReplacingMergeTree duplicates, at a fraction of
 // uniqExact's memory over a million-ledger window (uniqExact of the tx pairs overran 7.45 GiB on r1).
+// A tx key carries its account: a fee bump's payer row shares (ledger_seq, tx_index) with the inner source's row, so
+// a key without the account could not see a missing payer row.
 const (
 	opsProofSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8000000000, max_bytes_before_external_group_by = 4000000000`
-	opsProofTxQuery  = `SELECT sum(c) FROM (SELECT groupBitmap(tx_index) AS c FROM stellar.transactions
-		WHERE ledger_seq >= ? AND ledger_seq <= ? AND source_account != '' GROUP BY ledger_seq)` + opsProofSettings
+	opsProofTxQuery  = `SELECT sum(c) FROM (SELECT groupBitmap(sipHash64(acct, tx_index)) AS c FROM stellar.transactions
+		ARRAY JOIN arrayFilter(a -> a != '', [` + opsProofTxAccounts + `]) AS acct
+		WHERE ledger_seq >= ? AND ledger_seq <= ? GROUP BY ledger_seq)` + opsProofSettings
 	opsProofOpQuery = `SELECT sum(c) FROM (SELECT groupBitmap(toUInt64(tx_index) * 65536 + op_index) AS c FROM stellar.operations
 		WHERE ledger_seq >= ? AND ledger_seq <= ? AND source_account != '' GROUP BY ledger_seq)` + opsProofSettings
 	opsProofProjQuery = `SELECT sum(t), sum(o) FROM (SELECT
-		groupBitmapIf(tx_index, op_index = 4294967295) AS t,
+		groupBitmapIf(sipHash64(source_account, tx_index), op_index = 4294967295) AS t,
 		groupBitmapIf(toUInt64(tx_index) * 65536 + op_index, op_index != 4294967295) AS o
 		FROM stellar.ops_by_source WHERE ledger_seq >= ? AND ledger_seq <= ? GROUP BY ledger_seq)` + opsProofSettings
 )
+
+// opsProofTxAccounts are the stellar.transactions columns the tx-sentinel views write as source_account.
+const opsProofTxAccounts = `source_account, fee_account`
+
+// opsBySourceViews are the views feeding stellar.ops_by_source.
+var opsBySourceViews = []string{"ops_by_source_ops_mv", "ops_by_source_tx_mv", "ops_by_source_feepayer_mv"}
 
 // OpsBySourceWindow is one window's key counts: source tables against the projection.
 type OpsBySourceWindow struct {
@@ -35,7 +45,7 @@ type OpsBySourceWindow struct {
 // Complete reports whether the projection holds exactly the source tables' key counts.
 func (w OpsBySourceWindow) Complete() bool { return w.Txs == w.ProjTxs && w.Ops == w.ProjOps }
 
-// ProveOpsBySourceWindow counts [from, to]'s distinct sourced tx and op keys on both sides. The projection is fed only
+// ProveOpsBySourceWindow counts [from, to]'s distinct (account, tx) and sourced op keys on both sides. The projection is fed only
 // from those tables, so equal counts mean it holds every key.
 func ProveOpsBySourceWindow(ctx context.Context, addr string, from, to uint32) (OpsBySourceWindow, error) {
 	conn, err := openRead(ctx, addr)
@@ -69,12 +79,11 @@ func OpsBySourceMVsExist(ctx context.Context, addr string) (bool, error) {
 	}
 	defer func() { _ = conn.Close() }()
 	var n uint64
-	const q = `SELECT count() FROM system.tables WHERE database = 'stellar'
-		AND name IN ('ops_by_source_ops_mv', 'ops_by_source_tx_mv', 'ops_by_source_feepayer_mv')`
+	q := `SELECT count() FROM system.tables WHERE database = 'stellar' AND name IN ('` + strings.Join(opsBySourceViews, `', '`) + `')`
 	if err := conn.QueryRow(ctx, q).Scan(&n); err != nil {
 		return false, fmt.Errorf("clickhouse: ops_by_source views: %w", err)
 	}
-	return n == 3, nil
+	return n == uint64(len(opsBySourceViews)), nil
 }
 
 // SetOpsBySourceProofWatermark records a genesis-to-thru proof; a value at or below the stored one is a no-op.

@@ -374,6 +374,77 @@ case "$out" in
   *) echo "  FAIL real tree did not report its atomicity file count"; indent "$out"; fail=$((fail + 1)) ;;
 esac
 
+echo "lint-migrations-test: atomicity terminators and money precision"
+
+# Each shape ends the file's transaction and lets the next statement run in another.
+for shape in 'END;' 'COMMIT AND CHAIN;' 'COMMIT; ALTER TABLE t ADD COLUMN b int;'; do
+  TXN="$(mk "txn-$RANDOM" 0903_shape.up.sql <<SQL
+BEGIN;
+ALTER TABLE t ADD COLUMN a int;
+$shape
+ALTER TABLE t ADD COLUMN c int;
+SQL
+)"
+  catches "'$shape' then more SQL is caught" deploy/clickhouse "0903_shape.up.sql:"
+done
+TXN="$(mk txn-do 0904_do.up.sql <<'SQL'
+BEGIN;
+DO $$
+BEGIN
+    IF true THEN PERFORM 1; END IF;
+END;
+$$;
+ROLLBACK TO SAVEPOINT s;
+COMMIT;
+SQL
+)"
+clean "END inside a DO body and ROLLBACK TO SAVEPOINT are not terminators" deploy/clickhouse
+unset TXN
+
+d="$(mig money-bounded 0002_money.up.sql <<'SQL'
+CREATE TABLE t (id int, total_amount NUMERIC(20,8));
+SQL
+)"
+mcatches "a scale-bounded NUMERIC money column is caught" "$d" "monetary column is not NUMERIC"
+d="$(mig money-unbounded 0002_money.up.sql <<'SQL'
+CREATE TABLE t (id int, total_amount NUMERIC NOT NULL, ratio_pct numeric(5,2));
+SQL
+)"
+clean_mig "an unbounded NUMERIC money column passes" "$d"
+
+d="$(mig fu-two-views 0002_views.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('prices_1m', NULL, now());
+DROP MATERIALIZED VIEW prices_15m;
+DROP MATERIALIZED VIEW prices_1m;
+CREATE MATERIALIZED VIEW prices_15m WITH (timescaledb.continuous) AS SELECT 1 WITH NO DATA;
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS SELECT 1 WITH NO DATA;
+-- CALL refresh_continuous_aggregate('prices_15m', NULL, now());
+SQL
+)"
+mcatches "a recreated view with no marker of its own is caught" "$d" "no \`-- REQUIRED-FOLLOWUP:\` line names"
+d="$(mig fu-two-tables 0002_two.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source cctp -from 1 -write
+BEGIN;
+DELETE FROM cctp_events;
+DELETE FROM rozo_events;
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'cctp:%';
+COMMIT;
+SQL
+)"
+mcatches "a second blanked table with no marker of its own is caught" "$d" "rozo_events"
+d="$(mig fu-both-named 0002_two.up.sql <<'SQL'
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source cctp -from 1 -write
+-- REQUIRED-FOLLOWUP: stellarindex-ops projector-replay -source rozo -from 1 -write
+BEGIN;
+DELETE FROM cctp_events;
+DELETE FROM rozo_events;
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'cctp:%';
+DELETE FROM ingestion_cursors WHERE source = 'projected-rebuild' AND sub_source LIKE 'rozo:%';
+COMMIT;
+SQL
+)"
+clean_mig "every blanked table named by a marker passes" "$d"
+
 echo "lint-migrations-test: priceable-division pass"
 
 d="$(mig pr-unguarded 0002_vwap.up.sql <<'SQL'
@@ -589,8 +660,7 @@ reg_with() { # reg_with <name> <number> <cell> -> echoes the fixture path
   local out="$TMP/$1.md"
   NUM="$2" CELL="$3" awk '
     index($0, "| " ENVIRON["NUM"] " | ") == 1 {
-      p = index(substr($0, 10), " | ") + 11
-      print substr($0, 1, p) ENVIRON["CELL"] " |"; next
+      print "| " ENVIRON["NUM"] " | " ENVIRON["CELL"] " |"; next
     }
     { print }' migrations/README.md > "$out"
   echo "$out"

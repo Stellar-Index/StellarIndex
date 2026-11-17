@@ -439,9 +439,22 @@ operator fixes it. Today r1 is a single point of failure for everything.
   etcd uses TLS + client certs (on by default); the Patroni REST API is
   firewalled with Basic Auth; Redis authenticates but has no TLS (open,
   §3.4); Promtail → Loki is HTTP on the internal network.
-- **Loopback-only admin surfaces:** HAProxy stats `:8404`, Prometheus
-  `:9090`, Alertmanager `:9093`, Loki `:3100`. Operators SSH-tunnel.
-- **Firewall:** each role opens its ports to the internal range only.
+- **Admin surfaces:** HAProxy stats `:8404` and Loki `:3100` are
+  loopback-only; operators SSH-tunnel. In the multi-host `prometheus`
+  role, Prometheus `:9090` and Alertmanager `:9093` bind `0.0.0.0`
+  (peers scrape across hosts) and are restricted by the nftables allowlist
+  to `prometheus_internal_cidrs` (RFC 1918 by default). Basic auth is
+  optional: an empty `*_basic_auth_password_hash` only logs a preflight
+  warning, and Alertmanager (including `POST /api/v2/silences`) is then
+  unauthenticated for anything inside those ranges. Set both hashes from
+  the vault. The single-host Prometheus the archival-node role deploys on
+  the test networks binds `127.0.0.1:9090`. On r1, Prometheus and
+  Alertmanager are managed out of band and protected by the host
+  firewall only.
+- **Firewall:** the admin and internal ports are opened to the internal
+  range only. The archival-node role also opens 22, 80 and 443 publicly
+  (Caddy serves the API; SSH needs an explicit inventory
+  acknowledgement), and 11625 when core runs.
 
 ---
 

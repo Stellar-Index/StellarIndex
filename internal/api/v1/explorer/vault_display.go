@@ -32,13 +32,13 @@ func (h *Handler) vaultDisplays(ctx context.Context, vaults []string) map[string
 			continue
 		}
 		d := int(m.Decimals)
-		out[v] = vaultDisplay{Label: vaultLabel(m.Name, m.Symbol), Decimals: &d}
+		out[v] = vaultDisplay{Label: VaultLabel(m.Name, m.Symbol), Decimals: &d}
 	}
 	return out
 }
 
-// vaultLabel renders "Greep Vault (GRPVLT)" from the factory's "DeFindex-Vault-Greep Vault" name; an implausible name or symbol is dropped.
-func vaultLabel(name, symbol string) string {
+// VaultLabel renders "Greep Vault (GRPVLT)" from the factory's "DeFindex-Vault-Greep Vault" name; an implausible name or symbol is dropped.
+func VaultLabel(name, symbol string) string {
 	name = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(name), "DeFindex-Vault-"))
 	if !plausibleDisplayText(name, vaultNameMaxRunes) {
 		name = ""

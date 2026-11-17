@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The public edge is the OTHER place this project logs a request, and nothing in the Go build
@@ -43,6 +45,36 @@ func readCaddyfile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(src)
+}
+
+var caddyCIDRLoop = regexp.MustCompile(`(?s)\{% for \w+ in cloudflare_ip_ranges %\}\n([ \t]*)\{\{ \w+ \}\}.*?\{% endfor %\}\n`)
+
+// readCaddyTemplate reads a Caddyfile for `caddy` to compile, expanding the trusted_proxies loop over
+// cloudflare_ip_ranges from the role defaults as ansible's trim_blocks rendering would.
+func readCaddyTemplate(t *testing.T, path string) string {
+	t.Helper()
+	defaultsPath := filepath.Join("..", "..", "configs", "ansible", "roles", "archival-node", "defaults", "main.yml")
+	raw, err := os.ReadFile(defaultsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", defaultsPath, err)
+	}
+	var defaults struct {
+		CloudflareIPRanges []string `yaml:"cloudflare_ip_ranges"`
+	}
+	if err := yaml.Unmarshal(raw, &defaults); err != nil {
+		t.Fatalf("parse %s: %v", defaultsPath, err)
+	}
+	if len(defaults.CloudflareIPRanges) == 0 {
+		t.Fatalf("%s: cloudflare_ip_ranges is empty", defaultsPath)
+	}
+	src := caddyCIDRLoop.ReplaceAllStringFunc(readCaddyfile(t, path), func(loop string) string {
+		indent := caddyCIDRLoop.FindStringSubmatch(loop)[1]
+		return indent + strings.Join(defaults.CloudflareIPRanges, " \\\n"+indent) + "\n"
+	})
+	if strings.Contains(src, "{%") {
+		t.Fatalf("%s: a jinja block this renderer does not expand reached caddy", path)
+	}
+	return src
 }
 
 // caddyURIFilter returns the access-log filter a Caddyfile applies to `request>uri`.

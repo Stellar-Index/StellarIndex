@@ -1,6 +1,6 @@
 ---
 title: Deploy workflow — pushing a tagged release to a region
-last_verified: 2026-10-05
+last_verified: 2026-11-17
 status: living doc
 ---
 
@@ -95,6 +95,19 @@ branch policy; **Assert the production approval gate is configured** refuses
 to deploy otherwise (reviewer half is waivable pre-production; see the step's
 comment).
 
+That policy gates the deploy **job** and the Environment's own secrets, not
+repository secrets. A repository-level secret is readable by any workflow
+job, on any pushed branch, that omits `environment:`. `lint-deploy-credentials.py`
+runs in PR CI and cannot stop a workflow that a pushed branch adds, which
+runs before any review. Hold the credential-bearing secrets
+(`DEPLOY_SSH_PRIVATE_KEY`, `ANSIBLE_VAULT_PASSWORD`, `ANSIBLE_VAULT_FILE_B64`,
+`R1_INVENTORY_B64`, the `TESTNET*`/`FUTURENET*` vault secrets, the region
+secrets above) as **environment secrets** on every Environment whose jobs
+read them (`r1`, and `r1-observe` for the drift and SLA jobs), with no
+repository-level copy. Any credential that was ever a repository secret has
+been readable from every branch: rotate it
+([credential-rotation.md](credential-rotation.md)).
+
 Adding `r2` / `r3`:
 1. Add the `R2_*` / `R3_*` secrets.
 2. Add the region to the `region` choice list in `.github/workflows/deploy.yml`.
@@ -136,8 +149,10 @@ per binary:
 Backups are `/usr/local/bin/<binary>.prev-<tag>`, `<tag>` from the sidecar
 (e.g. `stellarindex-api.prev-v0.2.0`, `.prev-v0.1.3`, …).
 
-Preferred rollback: re-dispatch the previous tag (release-process.md
-§Rollback). Manual:
+Preferred rollback: re-dispatch the previous tag with the whole set and
+`migrations_skip=true`
+([rollback.md §Rolling back the binaries](rollback.md#rolling-back-the-binaries)).
+Manual, per binary:
 
 ```sh
 ssh root@<host> "
@@ -149,9 +164,9 @@ ssh root@<host> "
 "
 ```
 
-Then `gh workflow run deploy.yml -f version=v0.1.3 …` to resync the
-workflow's state (a no-op if the sidecar says v0.1.3 and the binary is
-healthy).
+Then re-dispatch `v0.1.3` with the rollback command above to bring every
+other binary to the same tag; a binary whose sidecar already says `v0.1.3`
+is a no-op.
 
 ## Migrations run before binaries, and are not rolled back
 
@@ -159,7 +174,9 @@ healthy).
 starts on an older one; it is idempotent.
 
 Rollback restores only the **binary** and never runs `migrate down`, so after
-a rollback the old binary runs on the new schema. This is intentional:
+a rollback the old binary runs on the new schema. A rollback dispatch must
+set `migrations_skip=true`: otherwise the sync prunes the newer migration
+files and `migrate up` fails with "no migration found for version N". This is intentional:
 down-migrations can destroy data, and
 [`migrations/README.md`](../../migrations/README.md) rule 9 requires every
 up-migration to be **additive and old-binary-safe**. `down.sql` is for

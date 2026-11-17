@@ -272,26 +272,15 @@ const fiatRateStaleAfter = 6 * 24 * time.Hour
 // load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
 // InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
-	// Path 1: fx_quotes.
-	if s.FXHistory != nil {
-		now := time.Now().UTC()
-		points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
-		if err != nil {
-			s.logger.Warn("fiat USD price: fx history read failed", "ticker", ticker, "err", err)
-			reportUnreadRead(ctx)
-		}
-		// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
-		for i := len(points) - 1; i >= 0; i-- {
-			if _, usable := points[i].inverseUSDRat(); usable {
-				if now.Sub(points[i].Bucket) > fiatRateStaleAfter {
-					reportStaleRead(ctx)
-				}
-				return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
-			}
-		}
+	price, asOf, sources, ok, fxSilent := s.fiatUSDPriceFromFX(ctx, ticker)
+	if ok {
+		return price, asOf, sources, true
 	}
 	// Path 2: PriceReader fallback.
 	if s.Prices == nil {
+		if fxSilent {
+			reportStaleRead(ctx)
+		}
 		return "", time.Time{}, nil, false
 	}
 	base, err := canonical.NewFiatAsset(ticker)
@@ -306,10 +295,51 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	if err != nil {
 		if isPriceReadFailure(err) {
 			reportUnreadRead(ctx)
+		} else if fxSilent {
+			reportStaleRead(ctx)
 		}
 		return "", time.Time{}, nil, false
 	}
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
+}
+
+// fiatUSDPriceFromFX is path 1, fx_quotes. fxSilent reports a wired feed that read cleanly, quoted this ticker before, yet
+// holds no usable point in the window: if path 2 cannot answer either, the missing rate is a stale feed, not an unpriced fiat.
+func (s *Server) fiatUSDPriceFromFX(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok, fxSilent bool) {
+	if s.FXHistory == nil {
+		return "", time.Time{}, nil, false, false
+	}
+	now := time.Now().UTC()
+	points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
+	if err != nil {
+		s.logger.Warn("fiat USD price: fx history read failed", "ticker", ticker, "err", err)
+		reportUnreadRead(ctx)
+	}
+	// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
+	for i := len(points) - 1; i >= 0; i-- {
+		if _, usable := points[i].inverseUSDRat(); usable {
+			if now.Sub(points[i].Bucket) > fiatRateStaleAfter {
+				reportStaleRead(ctx)
+			}
+			return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true, false
+		}
+	}
+	return "", time.Time{}, nil, false, err == nil && s.fxTickerQuotedBefore(ctx, ticker, now.AddDate(0, 0, -7))
+}
+
+// fxCoverageLookback bounds how far back [Server.fxTickerQuotedBefore] looks; a daily feed leaves at most ~one row per day.
+const fxCoverageLookback = 365 * 24 * time.Hour
+
+// fxTickerQuotedBefore reports whether the feed holds any point for ticker in the lookback before `before`, so a ticker it has
+// never covered (a test net runs without the aggregator) reads as a clean miss rather than a stale feed.
+func (s *Server) fxTickerQuotedBefore(ctx context.Context, ticker string, before time.Time) bool {
+	points, err := s.FXHistory.ListFXHistory(ctx, ticker, before.Add(-fxCoverageLookback), before)
+	if err != nil {
+		s.logger.Warn("fiat USD price: fx coverage read failed", "ticker", ticker, "err", err)
+		reportUnreadRead(ctx)
+		return false
+	}
+	return len(points) > 0
 }
 
 // fxQuoteSourceLabel names the fx_quotes row's vendor so a served FX rate carries its source; a row stored before
@@ -413,9 +443,11 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	}
 	entries := s.VerifiedCurrencies.Browseable()
 	out := projectVerifiedCurrencyList(entries)
-	s.attachFiatMarketCaps(r.Context(), entries, out)
-	s.attachVerifiedImages(r.Context(), entries, out)
-	writeJSON(w, out, Flags{})
+	ctx, rep := withReadReport(r.Context())
+	s.attachFiatMarketCaps(ctx, entries, out)
+	s.attachVerifiedImages(ctx, entries, out)
+	unread := rep.unread.Load()
+	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
 }
 
 // attachVerifiedImages fills each row's Image from the issuer's cached SEP-1 entry (sep1_payload cache only, no live HTTPS),

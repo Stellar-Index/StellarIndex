@@ -40,6 +40,8 @@ PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
 OUT="${TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/data_freshness.prom}"
 TMP="$(mktemp "${OUT}.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
+# ON_ERROR_STOP makes a SQL error fail the probe; the tally turns a skipped gauge into a failed unit.
+PROBE_FAILED=0
 
 {
   echo '# HELP stellarindex_data_freshness_age_seconds Seconds since the newest row for a data domain/source.'
@@ -85,7 +87,7 @@ trap 'rm -f "$TMP"' EXIT
 # means deleting its rows or excluding it here in the same change.
 #
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
@@ -183,6 +185,7 @@ SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||
 SQL
 then
   echo "data-freshness: per-domain oracle/fx/supply/cursor freshness query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # The `supply` domain above is max(time) over the whole table, so it only proves SOME asset
@@ -196,7 +199,7 @@ fi
 # frozen set stays in view and keeps aging, while a truly retired asset still ages out.
 # go on climbing, while an asset genuinely retired 30 days before the last
 # publication still ages out of the watched set as intended.
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH newest AS (SELECT max(time) AS t FROM asset_supply_history),
      per_asset AS (
   SELECT asset_key, extract(epoch FROM now()-max(time)) AS age
@@ -212,6 +215,7 @@ SELECT 'stellarindex_supply_asset_max_age_seconds '||COALESCE(round(max(age)),0)
 SQL
 then
   echo "data-freshness: supply asset staleness query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # Per-source completeness verdict (latest snapshot per source): 1 = incomplete.
@@ -220,7 +224,7 @@ fi
 # state, not a served<>lake gap; including it would keep the ticket alert firing. Real
 # silent drops show in each source's OWN recognition axis, which flips that source's row
 # here. The system row is exported below as a COUNT so a registry regression shows as a step.
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
@@ -228,6 +232,7 @@ SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT comp
 SQL
 then
   echo "data-freshness: completeness_incomplete verdict query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # Per-source recognition verdict, the OWNED bucket. attributeRecognitionGaps puts gaps on
@@ -238,7 +243,7 @@ fi
 # false by construction.
 # and its recognition_ok is false permanently by construction (it can only be
 # true if no un-indexed Soroban contract exists anywhere on the network).
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_ok{source="'||source||'"} '||recognition_ok::int::text
   FROM (SELECT DISTINCT ON (source) source, recognition_ok
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
@@ -246,6 +251,7 @@ SELECT 'stellarindex_recognition_ok{source="'||source||'"} '||recognition_ok::in
 SQL
 then
   echo "data-freshness: recognition_ok verdict query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # System recognition census count, parsed from the snapshot detail text ("<N> unrecognized
@@ -253,7 +259,7 @@ fi
 # contract is OWNED by completeness.FormatRecognitionDetail (internal/completeness/audit_axis.go)
 # and pinned by TestFormatRecognitionDetail_leadsWithTheShapeCount: a reword dropping the
 # numeric prefix would make this report 0 silently. COALESCE is a fallback for older rows.
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_unattributed_shapes '||
        COALESCE(substring(detail FROM '^[0-9]+'), '0')
   FROM (SELECT detail FROM completeness_snapshots
@@ -262,6 +268,7 @@ SELECT 'stellarindex_recognition_unattributed_shapes '||
 SQL
 then
   echo "data-freshness: recognition unattributed-shape census query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # Emptied continuous aggregates. A cagg recreated WITH NO DATA (migrations 0115/0147 drop
@@ -281,7 +288,7 @@ fi
 # Cheap: min(bucket)/min(ts) ride the time indexes. The 1-day slack absorbs time_bucket
 # rounding down; the 2-day gate keeps a fresh deploy's initial materialization quiet.
 # window from false-firing.
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH base AS (SELECT min(ts) AS tmin FROM trades),
      ret AS (
        SELECT hypertable_name AS view_name,
@@ -323,12 +330,13 @@ SELECT 'stellarindex_twap_history_missing{view="'||view_name||'"} '||missing::te
 SQL
 then
   echo "data-freshness: emptied-continuous-aggregate detector query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # A verdict can read complete=true while its watermark lags the network head (mid-walk stall,
 # small manual -to). Emit per-source lag (ingest cursor tip - verdict watermark) so that is
 # alertable rather than a green "N/N complete" badge.
-if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -v ON_ERROR_STOP=1 -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH tip AS (SELECT last_ledger AS t FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = '')
 SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"} '
        ||greatest(0, (SELECT t FROM tip) - s.watermark_ledger)::text
@@ -337,6 +345,7 @@ SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"}
 SQL
 then
   echo "data-freshness: completeness watermark lag query failed — its gauges skipped this tick, others unaffected" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
 fi
 
 # supply_flows (ClickHouse) backs /v1/assets SEP-41 supply (TokenSupply() sums it FINAL), so
@@ -352,6 +361,7 @@ SF_AGE=""
 if ! SF_AGE=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary \
   "SELECT toUInt64(dateDiff('second', max(ingested_at), now())) FROM stellar.supply_flows" | tr -d '[:space:]'); then
   echo "data-freshness: ClickHouse supply_flows probe failed — sep41_supply gauges skipped this tick" >&2
+  PROBE_FAILED=$((PROBE_FAILED + 1))
   SF_AGE=""
 fi
 # Digits only: ONE unparseable sample makes node_exporter reject the WHOLE file.
@@ -435,6 +445,10 @@ trap - EXIT
 # answered. The good samples are already on disk, so exiting non-zero only fails the oneshot,
 # which the stellarindex_systemd_unit_failed ticket already watches.
 # stellarindex_systemd_unit_failed ticket already watches.
+if [ "$PROBE_FAILED" -gt 0 ]; then
+  echo "data-freshness: published data_freshness.prom with $PROBE_FAILED probe(s) skipped — their gauges are absent this tick" >&2
+  exit 1
+fi
 if [ "$DROPPED" -gt 0 ]; then
   echo "data-freshness: published data_freshness.prom with $DROPPED unparseable line(s) withheld — stellarindex_data_freshness_unparseable_lines carries the count" >&2
   exit 1

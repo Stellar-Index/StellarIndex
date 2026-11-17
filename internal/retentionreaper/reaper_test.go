@@ -68,6 +68,19 @@ func TestSweepFailureIsCountedAndStillMarksLiveness(t *testing.T) {
 	}
 }
 
+// A sweep that deleted rows and then failed (the abandoned-registration sweep's incomplete cleanup) still counts them.
+func TestSweepFailureStillCountsDeletedRows(t *testing.T) {
+	r := newReaper(obs.AuthReaperWebhookDelivery, retentionreaper.WebhookDeliveryRetention,
+		func(context.Context, time.Time) (int64, error) { return 3, errors.New("cleanup incomplete") })
+	deletedBefore := testutil.ToFloat64(obs.RetentionReaperRowsDeletedTotal.WithLabelValues(obs.AuthReaperWebhookDelivery))
+
+	r.Sweep(context.Background())
+
+	if d := testutil.ToFloat64(obs.RetentionReaperRowsDeletedTotal.WithLabelValues(obs.AuthReaperWebhookDelivery)) - deletedBefore; d != 3 {
+		t.Errorf("rows_deleted delta = %v, want 3", d)
+	}
+}
+
 func TestSweepCancelledIsNotAFailure(t *testing.T) {
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperWebhookDelivery).Set(0)
 	r := newReaper(obs.AuthReaperWebhookDelivery, retentionreaper.WebhookDeliveryRetention,

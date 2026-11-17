@@ -128,7 +128,10 @@ func TestBucket_ColonInKeyDoesNotCollide(t *testing.T) {
 	// Take() builds the Redis key as `rl:<key>:<minute>`; url.QueryEscape stops two IPv6 clients
 	// with a shared address prefix from landing on the same slot.
 	rdb, _ := newRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	// Frozen clock: the three Takes must share one window, or a minute rollover mid-test
+	// resets the counter and the "denied" assertion fails.
+	at := time.Unix(1_700_000_010, 0)
+	b := ratelimit.New(rdb, 1, time.Minute, ratelimit.WithClock(func() time.Time { return at }))
 	ctx := context.Background()
 
 	// Without escaping, the key for "2001:db8::1" in minute M ends with ":<M>", as does the key

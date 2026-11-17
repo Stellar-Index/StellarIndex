@@ -134,6 +134,8 @@ type KeyCreated struct {
 	KeyPrefix string   `json:"key_prefix,omitempty"`
 	Label     string   `json:"label"`
 	Scopes    []string `json:"scopes,omitempty"`
+	// ExpiresAt is set when the key expires, including an expiry inherited from the minting credential.
+	ExpiresAt *WireTime `json:"expires_at,omitempty"`
 }
 
 // createKeyRequest is the POST body. Identifier and Tier come from the caller, never the body; a SCOPED caller can only NARROW
@@ -426,6 +428,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			KeyPrefix: rec.KeyPrefix,
 			Label:     rec.Label,
 			Scopes:    rec.Scopes,
+			ExpiresAt: wireTimeOrNil(rec.ExpiresAt),
 		},
 		AsOf:  WireTime(rec.CreatedAt),
 		Flags: Flags{},
@@ -629,6 +632,9 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 			"API key quota reached", http.StatusConflict,
 			fmt.Sprintf("this account already holds %d active API keys (max %d) — revoke one via DELETE /v1/account/keys/{keyID} first",
 				over.Active, over.Max))
+	case errors.Is(err, auth.ErrMintExceedsCaller):
+		s.logger.Warn("account key mint refused: request exceeds the minting credential", "err", err, "identifier", req.Identifier)
+		writeMintExceedsCaller(w, r, err)
 	case errors.Is(err, auth.ErrKeyQuotaUnavailable):
 		s.logger.Error("account key quota check failed", "err", err, "identifier", req.Identifier)
 		writeProblem(w, r,

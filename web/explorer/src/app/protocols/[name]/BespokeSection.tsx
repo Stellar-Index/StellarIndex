@@ -15,8 +15,9 @@ import {
 } from '@/lib/format';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
-import { CopyHash } from '../../explorer-shared';
-import { AssetText } from '@/components/AssetLink';
+import { CopyHash, CopyValue } from '../../explorer-shared';
+import { AssetLink, AssetText } from '@/components/AssetLink';
+import { LENDING_POOL_META } from '@/app/lending/poolMeta';
 import { TimeSeriesChart } from './TimeSeriesChart';
 import {
   Button,
@@ -38,6 +39,7 @@ import {
   BridgeShowcase,
   BreakdownDonuts,
   LineLegend,
+  disambiguateLabels,
   type LegendLine,
 } from './BridgeShowcase';
 
@@ -66,19 +68,49 @@ export interface BespokeSeriesPt {
   value: string; // numeric string — Number() for geometry only.
 }
 
-export interface BespokeSeries {
+// What a typed bespoke cell or entry holds; the wire's BespokeCellKind.
+export type BespokeCellKind =
+  | 'text'
+  | 'asset'
+  | 'pool'
+  | 'vault'
+  | 'account'
+  | 'contract'
+  | 'tx'
+  | 'amount'
+  | 'count'
+  | 'time';
+
+// The entity a series or breakdown slice is about; display is the server's
+// resolved name, absent when the id did not resolve.
+export interface BespokeEntity {
+  id?: string;
+  kind?: BespokeCellKind;
+  display?: string;
+}
+
+export interface BespokeSeries extends BespokeEntity {
   name: string;
   unit?: string;
   points: BespokeSeriesPt[];
+}
+
+export interface BespokeColumnKind {
+  kind: BespokeCellKind;
+  asset_column?: number;
+  decimals?: number;
 }
 
 export interface BespokeTable {
   title: string;
   columns: string[];
   rows: string[][];
+  column_kinds?: BespokeColumnKind[];
+  // Parallel to rows: resolved name or human-unit amount, '' when unresolved.
+  display?: string[][];
 }
 
-export interface BespokeBreakdownRow {
+export interface BespokeBreakdownRow extends BespokeEntity {
   label: string;
   value: string; // numeric string — Number() for geometry only.
   count: number;
@@ -192,20 +224,26 @@ function GroupedSeriesPanel({
   source: RequestExample;
   days: WindowDays;
 }) {
-  const lines: LegendLine[] = group.series.map((s, i) => ({
-    label: s.name.slice(group.title.length + ' · '.length),
-    tone: 'brand',
-    color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
-    total: seriesTotal(s.points),
-    // Today's accumulating daily bucket is dropped (phantom-cliff honesty);
-    // points with a non-parsable date or non-numeric value are dropped, not
-    // plotted as 1970/zero fabrications.
-    data: dropPartialTrailingDay(s.points).flatMap((p) => {
-      const time = seriesPointTime(p.date);
-      const value = toChartNumber(p.value);
-      return time == null || value == null ? [] : [{ time, value }];
-    }),
-  }));
+  const lines: LegendLine[] = disambiguateLabels(
+    group.series.map((s, i) => ({
+      // The resolved name sits beside `name`, so it cannot change the grouping.
+      label:
+        entityName(s.kind, s.id, s.display) ??
+        s.name.slice(group.title.length + ' · '.length),
+      id: s.id || undefined,
+      tone: 'brand',
+      color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
+      total: seriesTotal(s.points),
+      // Today's accumulating daily bucket is dropped (phantom-cliff honesty);
+      // points with a non-parsable date or non-numeric value are dropped, not
+      // plotted as 1970/zero fabrications.
+      data: dropPartialTrailingDay(s.points).flatMap((p) => {
+        const time = seriesPointTime(p.date);
+        const value = toChartNumber(p.value);
+        return time == null || value == null ? [] : [{ time, value }];
+      }),
+    })),
+  );
   const unit = group.series[0]?.unit;
   const grainLabel = days === 1 ? 'hourly' : 'daily';
   return (
@@ -508,12 +546,15 @@ export function BespokeTablePanel({
 }) {
   // Decide alignment per column: right-align a column if every non-empty cell
   // in it looks numeric (so $-formatted / count columns sit flush-right).
-  const numericCols = table.columns.map((_, ci) =>
-    table.rows.every((r) => {
+  const kinds = table.column_kinds;
+  const numericCols = table.columns.map((_, ci) => {
+    const kind = kinds?.[ci]?.kind;
+    if (kind) return kind === 'amount' || kind === 'count';
+    return table.rows.every((r) => {
       const cell = r[ci];
       return cell == null || cell === '' || looksNumeric(cell);
-    }),
-  );
+    });
+  });
 
   return (
     <Panel title={table.title} source={source} bodyClassName="-mx-4 -mb-4">
@@ -544,10 +585,19 @@ export function BespokeTablePanel({
                       align={numericCols[ci] ? 'right' : undefined}
                       className={numericCols[ci] ? 'font-mono' : undefined}
                     >
-                      <Cell
-                        value={row[ci] ?? ''}
-                        column={table.columns[ci] ?? ''}
-                      />
+                      {kinds?.[ci] ? (
+                        <TypedCell
+                          kind={kinds[ci].kind}
+                          column={table.columns[ci] ?? ''}
+                          value={row[ci] ?? ''}
+                          display={table.display?.[ri]?.[ci] ?? ''}
+                        />
+                      ) : (
+                        <Cell
+                          value={row[ci] ?? ''}
+                          column={table.columns[ci] ?? ''}
+                        />
+                      )}
                     </Td>
                   ))}
                 </TR>
@@ -609,6 +659,110 @@ function Cell({ value, column }: { value: string; column: string }) {
     return <CopyHash value={value} head={10} tail={6} />;
   }
   return <span>{value}</span>;
+}
+
+// entityHref — where a typed id links: a curated lending pool to its pool
+// page, any other contract id to its contract page; null for a non-id label.
+export function entityHref(
+  kind: BespokeCellKind | undefined,
+  id: string | undefined,
+): string | null {
+  if (!id || !isContractId(id)) return null;
+  if (kind === 'pool' && LENDING_POOL_META[id]) {
+    return `/lending/${encodeURIComponent(id)}`;
+  }
+  return `/contracts/${encodeURIComponent(id)}/`;
+}
+
+// entityName — a curated lending pool name first (a pool's reserve list is
+// not what people call it), else the server's resolved name.
+export function entityName(
+  kind: BespokeCellKind | undefined,
+  id: string | undefined,
+  display: string | undefined,
+): string | null {
+  const curated =
+    kind === 'pool' && id ? LENDING_POOL_META[id]?.name : undefined;
+  return curated ?? (display || null);
+}
+
+// NamedEntity — a resolved name linked to its page, the full id on hover and
+// behind a copy button; an unresolved id renders as a shortened copyable link.
+function NamedEntity({
+  kind,
+  value,
+  display,
+}: {
+  kind: BespokeCellKind;
+  value: string;
+  display: string;
+}) {
+  const name = entityName(kind, value, display);
+  const href = entityHref(kind, value);
+  if (!href) return <span>{name ?? value}</span>;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Link
+        href={href}
+        title={value}
+        className="text-brand-600 hover:underline"
+      >
+        {name ?? <CopyHash value={value} head={8} tail={6} />}
+      </Link>
+      {name && <CopyValue value={value} />}
+    </span>
+  );
+}
+
+// TypedCell — renders a cell by its server-declared kind. A free-text cell
+// can still hold an id (a governance target), so it keeps Cell's sniffing.
+function TypedCell({
+  kind,
+  column,
+  value,
+  display,
+}: {
+  kind: BespokeCellKind;
+  column: string;
+  value: string;
+  display: string;
+}) {
+  if (value === '' || value === '—') {
+    return <span className="text-ink-faint">—</span>;
+  }
+  switch (kind) {
+    case 'asset':
+      if (display && isContractId(value)) {
+        return <NamedEntity kind={kind} value={value} display={display} />;
+      }
+      return <AssetLink canonical={value} />;
+    case 'pool':
+    case 'vault':
+    case 'contract':
+      return <NamedEntity kind={kind} value={value} display={display} />;
+    case 'amount':
+      if (display) {
+        return (
+          <span title={`${display} (${value} base units)`}>
+            {formatReadable(display) ?? display}
+          </span>
+        );
+      }
+      return (
+        <span title="Base units: the token's decimals are unknown">
+          {value} <span className="text-ink-faint text-xs">raw</span>
+        </span>
+      );
+    case 'count':
+      return <span title={value}>{formatReadable(value) ?? value}</span>;
+    case 'account':
+    case 'tx':
+      return <Cell value={value} column="" />;
+    case 'text':
+      return <Cell value={value} column={column} />;
+    case 'time':
+      return <span>{value}</span>;
+  }
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────

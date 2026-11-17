@@ -177,3 +177,45 @@ tests:
       - eval_time: 7h
         alertname: stellarindex_aggregator_composite_corroboration_unavailable
         exp_alerts: []
+
+  # Phase-2 freezes are rare, so the engaged series is usually absent. A
+  # composite reference that corroborates every fire leaves it absent;
+  # that is the strongest case for this alert, not an exemption.
+  - interval: 1m
+    name: suppression with no engaged series at all still fires
+    input_series:
+      - series: 'stellarindex_aggregator_composite_freeze_suppressed_total'
+        values: '0+1x400'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_aggregator_composite_freeze_suppression_dominant
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
+              summary: "Composite-reference corroboration is suppressing more phase-2 freezes than engage (P3)"
+              description: |
+                Over the last hour, phase-2 freeze fires suppressed by
+                current-bucket composite-reference corroboration
+                (`stellarindex_aggregator_composite_freeze_suppressed_total`)
+                ran at more than 2x the rate of freezes that actually
+                engaged (`stellarindex_anomaly_freeze_engaged_total`),
+                sustained for 30 minutes.
+
+                This is not itself a customer-facing fault — a suppressed
+                fire serves the fresh, composite-corroborated price
+                exactly as intended. It is a signal that the balance
+                between the two has shifted: check
+                `stellarindex_aggregator_composite_corroboration{verdict="corroborated"}`
+                per pair (allow-listed via `[aggregate.composite_reference]
+                targets`) against `..._leg_sources` / `..._leg_dispersion_bps`
+                to see whether `tolerance_bps` needs tightening or a
+                leg's `min_leg_sources`/`leg_dispersion_bps` is letting a
+                weak reference corroborate too easily. The suppression
+                log line (`phase2 freeze suppressed: composite reference
+                corroborates the move`) carries the pair and the reason
+                string that would have fired.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged
