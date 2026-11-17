@@ -150,7 +150,7 @@ type AccountPositionsView struct {
 	Positions     []PositionEntry `json:"positions"`
 	IncludeClosed bool            `json:"include_closed"`
 	Note          string          `json:"note"`
-	// CoverageNote is non-empty when one or more of the six per-protocol folds could NOT be read.
+	// CoverageNote is non-empty when one or more of the per-protocol folds could NOT be read or hit the venue cap.
 	// Each builder returns an empty slice on a read error, so without this a response with failed
 	// reads would be byte-identical to "this account holds no positions". The static
 	// [positionsHonestNote] says nothing about coverage and cannot carry this.

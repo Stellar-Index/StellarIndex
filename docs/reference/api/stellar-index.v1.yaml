@@ -16707,8 +16707,12 @@ components:
             which ones. Positions from a named protocol are MISSING
             from the response, not proven absent on-chain: an empty
             `positions` array with a `coverage_note` means "we could
-            not look", never "this address holds nothing". Mirrors the
-            same field on GET /accounts/{g_strkey}/movements.
+            not look", never "this address holds nothing". Also present
+            when a protocol's fold exceeded the 500-venue cap: it then
+            starts `TRUNCATED:` after any read failures, names the
+            protocol, and that protocol's rows are the first 500 by
+            contract id, a lower bound. Mirrors the same field on
+            GET /accounts/{g_strkey}/movements.
       required: [account, positions, include_closed, note]
     AccountTrade:
       type: object
