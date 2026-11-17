@@ -7,6 +7,8 @@ import { buildFetchData } from '@/lib/buildFetch';
 export interface VerifiedItem {
   ticker: string;
   slug: string;
+  // Stellar asset id of the catalogue row; absent for non-Stellar rows.
+  asset_id?: string;
   name: string;
   class?: 'crypto' | 'stablecoin' | 'fiat';
   verified_issuer?: string;

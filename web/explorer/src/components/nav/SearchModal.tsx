@@ -7,7 +7,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { apiGet } from '@/api/client';
-import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
+import {
+  useCoins,
+  useVerifiedIndex,
+  isVerifiedCoin,
+  coinSlug,
+  type Coin,
+  type VerifiedIndex,
+} from '@/api/hooks';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
 import { availableRoutes } from '@/lib/network-routes';
 import { muxedBaseAccount } from '@/lib/strkey';
@@ -370,7 +377,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
     }
   }
 
-  const { data: verifiedSlugs } = useVerifiedSlugs();
+  const { data: verifiedIndex } = useVerifiedIndex();
 
   // Explorer classification — hits GET /v1/search?q= only when the
   // debounced input has the shape of an explorer entity (tx hash /
@@ -444,7 +451,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
       sourceCoins,
       currencies.data ?? [],
       isServerSearched,
-      verifiedSlugs,
+      verifiedIndex,
     );
     // Prepend the explorer classification (if any), de-duping on href
     // so we don't show the same /assets/ link twice when /v1/search
@@ -462,7 +469,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
     searchedCoins.data,
     topCoins.data,
     currencies.data,
-    verifiedSlugs,
+    verifiedIndex,
     explorerResult,
   ]);
 
@@ -692,22 +699,16 @@ export function search(
   coins: Coin[],
   currencies: CurrencyEntry[],
   isServerSearched: boolean,
-  verifiedSlugs?: Set<string>,
+  verifiedIndex?: VerifiedIndex,
 ): Result[] {
   const norm = q.trim().toLowerCase();
   const coinResults = coins.map((c) =>
     coinResult(
       c,
       // Badge "verified" ONLY for the real verified row, same rule as
-      // AssetsTable / HomeTopAssets / HomeTopMovers. The listing serves
-      // COALESCE(slug, code) AS slug, so a NULL-slug impersonator emits
-      // the verified asset's CODE as its slug and matches the verified
-      // set; the API's per-row unverified_ticker_collision flag is what
-      // distinguishes it. Dropping that flag would let an
-      // impersonator the backend correctly identified render with
-      // the badge in ⌘K search.
-      (verifiedSlugs?.has(coinSlug(c).toLowerCase()) ?? false) &&
-        !c.unverified_ticker_collision,
+      // AssetsTable / HomeTopAssets / HomeTopMovers: Stellar assets match
+      // the catalogue by asset id, never by the code-derived slug.
+      isVerifiedCoin(c, verifiedIndex),
     ),
   );
   if (!norm) {

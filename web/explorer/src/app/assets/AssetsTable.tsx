@@ -10,6 +10,8 @@ import { asExample } from '@/api/client';
 import {
   useAssets,
   coinSlug,
+  isVerifiedCoin,
+  type VerifiedIndex,
   type AssetClassFilter,
   type Coin,
 } from '@/api/hooks';
@@ -131,6 +133,7 @@ function demoteUnpricedLast(rows: Coin[]): Coin[] {
 
 export function AssetsTable({
   verifiedSlugs = [],
+  verifiedAssetIds = [],
   endpoint = '/v1/assets',
   basePath = '/assets',
   classOptions,
@@ -141,6 +144,11 @@ export function AssetsTable({
    * verified badge. Empty array is the safe default.
    */
   verifiedSlugs?: string[];
+  /**
+   * Stellar asset ids from `/v1/assets/verified`. A Stellar row is badged
+   * only when its asset id is listed here; slugs alone never badge it.
+   */
+  verifiedAssetIds?: string[];
   /**
    * Listing endpoint. `/v1/assets` (Stellar-only, default) or
    * `/v1/external/assets` (fiat + reference coins). Passed through
@@ -163,7 +171,13 @@ export function AssetsTable({
 } = {}) {
   const router = useRouter();
   const params = useSearchParams();
-  const verifiedSlugSet = new Set(verifiedSlugs.map((s) => s.toLowerCase()));
+  const verifiedIndex = useMemo<VerifiedIndex>(
+    () => ({
+      slugs: new Set(verifiedSlugs.map((s) => s.toLowerCase())),
+      assetIds: new Set(verifiedAssetIds),
+    }),
+    [verifiedSlugs, verifiedAssetIds],
+  );
   const cursor = params.get('cursor') ?? '';
   const limitParam = params.get('limit');
   const queryParam = params.get('q') ?? '';
@@ -465,16 +479,7 @@ export function AssetsTable({
                     // is not, so only label rows in the untouched default
                     // order.
                     rank={cursor || !defaultOrder ? null : idx + 1}
-                    // Badge "verified" ONLY for the real verified row.
-                    // The listing serves COALESCE(slug, code) AS slug, so
-                    // a NULL-slug impersonator emits the verified asset's
-                    // CODE as its slug and would otherwise match the
-                    // verified set — the API's per-row
-                    // unverified_ticker_collision flag distinguishes it.
-                    verified={
-                      verifiedSlugSet.has(coinSlug(coin).toLowerCase()) &&
-                      !coin.unverified_ticker_collision
-                    }
+                    verified={isVerifiedCoin(coin, verifiedIndex)}
                     basePath={basePath}
                     pricing={pricing}
                   />
