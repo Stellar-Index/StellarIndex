@@ -54,7 +54,10 @@ func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 			stub := &sep1StateStub{attempted: tt.attempted}
 			s := &Server{Options: Options{Sep1Cache: stub}, logger: discardLogger()}
 
-			got := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer)
+			got, unread := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer)
+			if unread {
+				t.Error("unread=true on a fetch-state read that answered")
+			}
 
 			if got != tt.want {
 				t.Errorf("sep1_status = %q, want %q — a nil payload is two different "+
@@ -73,7 +76,7 @@ func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 func TestSep1StatusClaimsNothingWithoutAFetchStateReader(t *testing.T) {
 	s := &Server{Options: Options{Sep1Cache: payloadOnlyStub{}}, logger: discardLogger()}
 
-	if got := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer); got != "not_fetched" {
+	if got, _ := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer); got != "not_fetched" {
 		t.Errorf("sep1_status = %q with no fetch-state reader wired, want \"not_fetched\" — "+
 			"an unwired seam must not start attributing failures to issuers", got)
 	}
@@ -88,8 +91,12 @@ func TestSep1StatusDoesNotBlameTheIssuerForOurReadFailure(t *testing.T) {
 		logger:  discardLogger(),
 	}
 
-	if got := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer); got != "not_fetched" {
+	got, unread := s.sep1StatusForNoPayload(context.Background(), sep1TestIssuer)
+	if got != "not_fetched" {
 		t.Errorf("sep1_status = %q when our own state read failed, want \"not_fetched\"", got)
+	}
+	if !unread {
+		t.Error("unread=false when our own state read failed; the response would read as a clean answer")
 	}
 }
 

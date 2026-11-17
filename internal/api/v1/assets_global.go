@@ -272,7 +272,9 @@ const fiatRateStaleAfter = 6 * 24 * time.Hour
 // load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
 // InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
-	// Path 1: fx_quotes.
+	// Path 1: fx_quotes. A wired feed that read cleanly yet holds no usable point in the window has gone quiet: if path 2
+	// cannot answer either, the missing rate is a stale feed, not a fiat with no price.
+	fxSilent := false
 	if s.FXHistory != nil {
 		now := time.Now().UTC()
 		points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
@@ -289,9 +291,13 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 				return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
 			}
 		}
+		fxSilent = err == nil
 	}
 	// Path 2: PriceReader fallback.
 	if s.Prices == nil {
+		if fxSilent {
+			reportStaleRead(ctx)
+		}
 		return "", time.Time{}, nil, false
 	}
 	base, err := canonical.NewFiatAsset(ticker)
@@ -306,6 +312,8 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	if err != nil {
 		if isPriceReadFailure(err) {
 			reportUnreadRead(ctx)
+		} else if fxSilent {
+			reportStaleRead(ctx)
 		}
 		return "", time.Time{}, nil, false
 	}
@@ -413,9 +421,11 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	}
 	entries := s.VerifiedCurrencies.Browseable()
 	out := projectVerifiedCurrencyList(entries)
-	s.attachFiatMarketCaps(r.Context(), entries, out)
-	s.attachVerifiedImages(r.Context(), entries, out)
-	writeJSON(w, out, Flags{})
+	ctx, rep := withReadReport(r.Context())
+	s.attachFiatMarketCaps(ctx, entries, out)
+	s.attachVerifiedImages(ctx, entries, out)
+	unread := rep.unread.Load()
+	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
 }
 
 // attachVerifiedImages fills each row's Image from the issuer's cached SEP-1 entry (sep1_payload cache only, no live HTTPS),
