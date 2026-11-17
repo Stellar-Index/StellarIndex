@@ -1,3 +1,6 @@
+'use client';
+
+import { useAsset } from '@/api/hooks';
 import { Callout } from '@/components/ui';
 import { scamFlagTags } from '@/lib/directory-tags';
 
@@ -21,15 +24,40 @@ import { scamFlagTags } from '@/lib/directory-tags';
  * Renders nothing when the asset carries no scam-class flag, so callers
  * can mount it unconditionally.
  */
+type ScamFlags = {
+  directoryTags?: readonly string[] | null;
+  scamReason?: string | null;
+  directoryDomain?: string | null;
+};
+
+/**
+ * The banner on a pre-rendered page: the baked flags are only a seed, and
+ * the live read supersedes them, so an issuer flagged after the build
+ * still gets the warning.
+ */
+export function LiveAssetScamCallout({
+  assetID,
+  ...baked
+}: ScamFlags & { assetID: string }) {
+  const live = useAsset(assetID).data?.data;
+  return (
+    <AssetScamCallout
+      {...(live
+        ? {
+            directoryTags: live.issuer_directory_tags,
+            scamReason: live.issuer_scam_reason,
+            directoryDomain: live.issuer_directory_domain,
+          }
+        : baked)}
+    />
+  );
+}
+
 export function AssetScamCallout({
   directoryTags,
   scamReason,
   directoryDomain,
-}: {
-  directoryTags?: readonly string[] | null;
-  scamReason?: string | null;
-  directoryDomain?: string | null;
-}) {
+}: ScamFlags) {
   const flaggedDirTags = scamFlagTags(directoryTags);
   const reason = scamReason?.trim() || null;
   if (!reason && flaggedDirTags.length === 0) return null;
