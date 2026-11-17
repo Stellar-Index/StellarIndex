@@ -34,17 +34,13 @@ type classicSupplyReader interface {
 
 // cachedClassicSupply returns the classic circulating-supply map (CODE-ISSUER to raw 7dp total), cached with a TTL and
 // single-flight since the ClickHouse GROUP BY is too heavy per request. Nil without a capable explorer reader (callers fall
-// back to precise supply); serves the last good map on refresh errors until classicSupplyMaxAge. Any other nil is a read
-// that did not answer and is reported unread on ctx's read report.
+// back to precise supply); serves the last good map on refresh errors until classicSupplyMaxAge.
 func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
-	m, unread := s.classicSupplyMap(ctx)
-	if unread {
-		reportUnreadRead(ctx)
-	}
+	m, _ := s.classicSupplyMap(ctx)
 	return m
 }
 
-// classicSupplyMap is [Server.cachedClassicSupply] returning, not reporting, whether the read answered.
+// classicSupplyMap is [Server.cachedClassicSupply] also reporting whether a capable reader's read answered.
 func (s *Server) classicSupplyMap(ctx context.Context) (m map[string]string, unread bool) {
 	er, ok := s.Explorer.(classicSupplyReader)
 	if !ok {

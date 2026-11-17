@@ -365,8 +365,8 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *
 	return nil, false
 }
 
-// assetPriceAllowed is [Server.listingPriceAllowed] for a caller that is
-// not the listing, counted under its own `surface`.
+// assetPriceAllowed is the allow half of [Server.listingSubstanceVerdict] for a
+// caller that is not the listing, counted under its own `surface`.
 func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, surface string) bool {
 	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.Substance, asset, s.USDPeggedClassics, surface)
 	return allowed

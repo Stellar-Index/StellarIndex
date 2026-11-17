@@ -979,9 +979,10 @@ func (s *Server) fillMarketCapsWith(
 	}
 }
 
+// anyPricedRowWithoutSupply reports a priced classic row left without supply: only classic rows are keyed in the broad map.
 func anyPricedRowWithoutSupply(rows []AssetDetail) bool {
 	for i := range rows {
-		if rows[i].PriceUSD != nil && rows[i].CirculatingSupply == nil {
+		if rows[i].PriceUSD != nil && rows[i].CirculatingSupply == nil && rows[i].Type == string(canonical.AssetClassic) {
 			return true
 		}
 	}
@@ -2929,6 +2930,11 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 		return
 	}
 	sep, err := s.Sep1Cache.GetIssuerSep1Cached(ctx, asset.Issuer)
+	if errors.Is(err, sql.ErrNoRows) {
+		// No issuers row: the read answered, and nothing has been fetched for this issuer.
+		detail.Sep1Status = "not_fetched"
+		return
+	}
 	if err != nil {
 		s.logger.Debug("sep1 cached lookup failed", "asset_id", asset.String(),
 			"issuer", asset.Issuer, "err", err)

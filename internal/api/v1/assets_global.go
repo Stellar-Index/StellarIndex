@@ -272,8 +272,8 @@ const fiatRateStaleAfter = 6 * 24 * time.Hour
 // load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
 // InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
-	// Path 1: fx_quotes. A wired feed that read cleanly yet holds no usable point in the window has gone quiet: if path 2
-	// cannot answer either, the missing rate is a stale feed, not a fiat with no price.
+	// Path 1: fx_quotes. A wired feed that read cleanly, quoted this ticker before, yet holds no usable point in the window has
+	// gone quiet: if path 2 cannot answer either, the missing rate is a stale feed, not a fiat with no price.
 	fxSilent := false
 	if s.FXHistory != nil {
 		now := time.Now().UTC()
@@ -291,7 +291,7 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 				return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
 			}
 		}
-		fxSilent = err == nil
+		fxSilent = err == nil && s.fxTickerQuotedBefore(ctx, ticker, now.AddDate(0, 0, -7))
 	}
 	// Path 2: PriceReader fallback.
 	if s.Prices == nil {
@@ -318,6 +318,21 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 		return "", time.Time{}, nil, false
 	}
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
+}
+
+// fxCoverageLookback bounds how far back [Server.fxTickerQuotedBefore] looks; a daily feed leaves at most ~one row per day.
+const fxCoverageLookback = 365 * 24 * time.Hour
+
+// fxTickerQuotedBefore reports whether the feed holds any point for ticker in the lookback before `before`, so a ticker it has
+// never covered (a test net runs without the aggregator) reads as a clean miss rather than a stale feed.
+func (s *Server) fxTickerQuotedBefore(ctx context.Context, ticker string, before time.Time) bool {
+	points, err := s.FXHistory.ListFXHistory(ctx, ticker, before.Add(-fxCoverageLookback), before)
+	if err != nil {
+		s.logger.Warn("fiat USD price: fx coverage read failed", "ticker", ticker, "err", err)
+		reportUnreadRead(ctx)
+		return false
+	}
+	return len(points) > 0
 }
 
 // fxQuoteSourceLabel names the fx_quotes row's vendor so a served FX rate carries its source; a row stored before
