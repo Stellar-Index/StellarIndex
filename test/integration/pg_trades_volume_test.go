@@ -2671,10 +2671,11 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 			t.Fatalf("InsertTrade %s/%d: %v", tr.Source, tr.Ledger, err)
 		}
 	}
-	// The aquarius legs have no USD-pegged quote, so insert-time usd_volume is NULL; stamp $100 per trade directly since this
-	// test covers the READ paths and the tripwire/rollup only need the volume to exist.
+	// Only the USDC legs are valued at insert: this store has no FX resolver, which production uses to value every XLM leg
+	// (either side) off the XLM/USD anchor. Stamp $100 on the rest so every minute clears the notional floor as it would live;
+	// an unstamped ZDIR base-side row would lose its bucket to the floored inverted row.
 	if _, err := store.DB().ExecContext(ctx,
-		`UPDATE trades SET usd_volume = 100 WHERE source = 'aquarius'`); err != nil {
+		`UPDATE trades SET usd_volume = 100 WHERE usd_volume IS NULL`); err != nil {
 		t.Fatalf("stamp usd_volume: %v", err)
 	}
 	if _, err := store.DB().ExecContext(ctx,
