@@ -110,7 +110,9 @@ def walk(tasks, task_file, role):
     for task in tasks:
         if not isinstance(task, dict):
             continue
-        for key in ("block", "rescue", "always"):
+        # block/rescue/always nest tasks; a play nests them under the rest.
+        for key in ("block", "rescue", "always",
+                    "pre_tasks", "tasks", "post_tasks", "handlers"):
             if isinstance(task.get(key), list):
                 walk(task[key], task_file, role)
         mod = task.get("ansible.builtin.template", task.get("template"))

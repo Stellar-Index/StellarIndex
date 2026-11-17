@@ -46,3 +46,42 @@ if [[ "$OUTPUT" != *"fakerole/handlers/main.yml::Render leaked secret config"* ]
 fi
 
 echo "PASS: lint-ansible-secret-diff catches a secret-rendering template task in a role's handlers/ file"
+
+# A playbook's top-level items are plays; their template tasks sit under
+# pre_tasks / tasks / post_tasks / handlers.
+mkdir -p "$TMPDIR/configs/ansible/playbooks/templates"
+cat > "$TMPDIR/configs/ansible/playbooks/templates/pb.conf.j2" <<'EOF'
+password = {{ fake_play_password }}
+EOF
+cat > "$TMPDIR/configs/ansible/playbooks/site.yml" <<'EOF'
+---
+- hosts: all
+  pre_tasks:
+    - name: Render pre secret
+      ansible.builtin.template:
+        src: pb.conf.j2
+        dest: /etc/pre.conf
+  tasks:
+    - name: Render play secret
+      ansible.builtin.template:
+        src: pb.conf.j2
+        dest: /etc/play.conf
+  handlers:
+    - name: Render handler secret
+      ansible.builtin.template:
+        src: pb.conf.j2
+        dest: /etc/handler.conf
+EOF
+
+set +e
+OUTPUT="$(cd "$TMPDIR" && python3 "$LINT" 2>&1)"
+set -e
+
+for name in "Render pre secret" "Render play secret" "Render handler secret"; do
+  if [[ "$OUTPUT" != *"playbooks/site.yml::$name"* ]]; then
+    echo "FAIL: lint did not flag '$name' in a playbook play" >&2
+    exit 1
+  fi
+done
+
+echo "PASS: lint-ansible-secret-diff catches secret-rendering template tasks inside a playbook's plays"

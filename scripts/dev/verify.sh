@@ -387,7 +387,7 @@ echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotati
 # Secret-rendering ansible template tasks must set `diff: false` (or
 # no_log) so `--check --diff` never prints vault material into scrollback
 # or the weekly drift job's CI log.
-echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
+echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py && bash ./scripts/ci/lint-ansible-secret-diff_test.sh
 # Installed scripts reaching ClickHouse without a credential file
 # (report-only until `default` is locked) + its self-test.
 echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-auth.py && ./scripts/ci/lint-ch-client-auth-test.sh
