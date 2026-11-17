@@ -259,7 +259,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	// The opaque cursor shadows `from`; otherwise paginating callers would re-request
-	// duplicate rows on each page.
+	// duplicate rows on each page. A defaulted `from` (now-1h, or now-window) moves between
+	// pages, so it must not cut above the cursor: rows between would match neither page.
 	var (
 		afterTs      time.Time
 		afterLedger  uint32
@@ -276,6 +277,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 			return
 		}
 		afterTs = c.ts
+		if r.URL.Query().Get("from") == "" && c.ts.Before(from) {
+			from = c.ts
+		}
 		afterLedger = c.ledger
 		afterSource = c.source
 		afterTxHash = c.txHash
