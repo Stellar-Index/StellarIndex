@@ -20746,6 +20746,8 @@ export interface operations {
                                 /** @description Whether the source is switched on for this deployment. false with entries_24h 0 means "off", not "failing". */
                                 enabled: boolean;
                                 volume_24h_usd?: string;
+                                /** @description true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources). */
+                                volume_lower_bound?: boolean;
                                 /** Format: int64 */
                                 markets_count_24h: number;
                             }[];
@@ -22391,6 +22393,8 @@ export interface operations {
                             /** @description Whether the source is switched on for this deployment. false with entries_24h 0 means "off", not "failing". */
                             enabled: boolean;
                             volume_24h_usd?: string;
+                            /** @description true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources). */
+                            volume_lower_bound?: boolean;
                             /** Format: int64 */
                             markets_count_24h: number;
                         };

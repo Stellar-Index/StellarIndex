@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { SourceHealthPanel } from './SourceHealthPanel';
+import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
 // On an explorer-ahead-of-API deploy the /v1/sources/{name}/health
 // response can omit `entries_24h` (the field predates the older API). The
@@ -69,5 +70,36 @@ describe('SourceHealthPanel — deploy-skew resilience', () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText('$499.99')).toBeInTheDocument();
+  });
+
+  it('renders a lower-bound volume as a floor and an exact one without', async () => {
+    const row = {
+      name: 'soroswap',
+      class: 'exchange',
+      trade_count_24h: 10,
+      markets_count_24h: 3,
+      entries_24h: 10,
+      volume_24h_usd: '120.5',
+    };
+    for (const [flag, text] of [
+      [true, '≥ $120.5'],
+      [false, '$120.5'],
+    ] as const) {
+      vi.mocked(apiGet).mockResolvedValue({
+        data: flag ? { ...row, volume_lower_bound: true } : row,
+      });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const { unmount } = render(
+        <QueryClientProvider client={client}>
+          <SourceHealthPanel source="soroswap" />
+        </QueryClientProvider>,
+      );
+      const value = await screen.findByText(text);
+      if (flag) expect(value).toHaveAttribute('title', VOLUME_FLOOR_HINT);
+      else expect(value).not.toHaveAttribute('title');
+      unmount();
+    }
   });
 });
