@@ -19,6 +19,7 @@ type Auction = NonNullable<Resp['data']>['auctions'][number];
 
 interface Page {
   auctions: Auction[];
+  truncated: boolean;
   next: string | undefined;
 }
 
@@ -88,6 +89,7 @@ function AuctionsList({ pool }: { pool: string }) {
           { limit: LIMIT, cursor: pageParam || undefined },
         );
         return {
+          truncated: env.data?.lifecycle_truncated === true,
           auctions: env.data?.auctions ?? [],
           next: env.pagination?.next ?? undefined,
         };
@@ -119,6 +121,12 @@ function AuctionsList({ pool }: { pool: string }) {
       {q.data && rows.length === 0 && (
         <p className="text-ink-muted text-sm">
           No auctions recorded for this pool.
+        </p>
+      )}
+      {(q.data?.pages ?? []).some((p) => p.truncated) && (
+        <p className="text-ink-muted text-xs">
+          The fill and delete history read hit its cap, so the newest auctions
+          may show fewer fills, or no deletion, than really happened.
         </p>
       )}
       {rows.length > 0 && (

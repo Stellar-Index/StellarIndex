@@ -119,6 +119,37 @@ patroni_pgbackrest_restore_target: latest   # or "time:2026-04-30 14:00:00"
 On a host with the distro's empty main cluster still at `patroni_data_dir`,
 also set `patroni_adopt_existing_data_dir: true` so the restore overwrites it.
 
+## Replacing an etcd member
+
+A host that comes back with an empty `/var/lib/etcd` must join the
+existing quorum, not bootstrap a new one; the role refuses to start it
+with `ETCD_INITIAL_CLUSTER_STATE=new` when another member answers with
+quorum or when not every `postgres_cluster` host is in the play. Per the
+etcd runtime-reconfiguration guide:
+
+```sh
+# on a surviving member (with the etcd client TLS flags)
+etcdctl member list
+etcdctl member remove <old-member-id>
+etcdctl member add db-02 --peer-urls=https://10.0.0.12:2380
+# then, against the replaced host only
+ansible-playbook ... --limit db-02 -e etcd_initial_cluster_state=existing
+```
+
+Once a host's etcd data dir holds a member, `/etc/default/etcd` renders
+`existing` regardless of the variable, so later full runs do not need the
+`-e` and do not restart etcd over it.
+
+The role also refuses `new` when a peer cannot be asked at all (TLS,
+firewall, timeout), because that is not evidence that no cluster exists.
+
+Finishing a half-done first bootstrap is the one case where `new` beside a
+live quorum is correct: the other members started from the same
+`initial-cluster` and token, and this listed member has never run etcd and
+was never removed. Re-run against it with
+`-e etcd_allow_new_bootstrap=true` (default `false`). Never set it for a
+replaced host: that one needs `member add` and `existing` as above.
+
 ## Smoke test
 
 After the playbook finishes:
@@ -138,12 +169,16 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
    package is installed.
 2. **etcd** — install + configure + start the 3-node quorum.
 3. **Patroni** — install + render config + start.
-4. **Bootstrap** — the distro's `postgresql@<ver>-main` unit is masked
-   on every host. On `db-01`, initialise the cluster (or restore from
-   pgBackRest); on `db-02` / `03`, join as replicas. Bootstrap fails if
-   the data dir already holds a cluster Patroni did not create (the
-   distro auto-creates one at the default path) unless
-   `patroni_adopt_existing_data_dir: true`.
+4. **Bootstrap** — before anything is stopped, every host refuses a
+   data dir that holds a cluster Patroni did not create (the distro
+   auto-creates one at the default path; drop it with
+   `pg_dropcluster --stop <ver> main`). The only exception is `db-01`
+   restoring over it from pgBackRest with
+   `patroni_adopt_existing_data_dir: true`. Then the distro's
+   `postgresql@<ver>-main` unit is masked on every host. On `db-01`,
+   initialise the cluster (or restore from pgBackRest); on `db-02` /
+   `03`, join as replicas and wait until each answers Patroni's
+   `/replica` check.
 5. **Firewall** — open 5432 / 8008 / 2379 / 2380 to the internal
    network only.
 6. **Monitoring** — wire `node_exporter` textfile collectors so

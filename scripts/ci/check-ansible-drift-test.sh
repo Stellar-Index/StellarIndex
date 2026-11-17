@@ -313,6 +313,23 @@ run "$(
 )" "$BASELINE_3"
 expect 'two lines that swap order (no comment) is still drift' 1 'Template disable-thp.service'
 
+# ansible renders --diff with difflib, which shows a swap of two adjacent
+# lines as ONE moved line beside a context line. Build the hunk from difflib
+# itself so the fixture cannot drift from the shape ansible emits.
+run "$(
+  printf 'TASK [archival-node : Template nftables.conf] ***********\n'
+  python3 -I -c '
+import difflib, sys
+a = ["tcp dport 5432 ip saddr @internal accept\n", "tcp dport 5432 drop\n"]
+b = ["tcp dport 5432 drop\n", "tcp dport 5432 ip saddr @internal accept\n"]
+sys.stdout.write("--- before: /etc/nftables.conf\n+++ after: /tmp/nftables.conf.j2\n")
+sys.stdout.writelines(list(difflib.unified_diff(a, b, n=3))[2:])
+print()'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'a difflib-shaped swap of two adjacent lines is still drift' 1 'Template nftables.conf'
+
 # YAML indentation is semantic: a list item promoted out from under its
 # parent key by losing two leading spaces is a real change even though
 # the tokens are byte-identical once leading whitespace is stripped.

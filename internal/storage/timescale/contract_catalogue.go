@@ -32,6 +32,7 @@ func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string)
 		       COALESCE(vol.unpriced_trades, 0) > 0
 		  FROM discovered_assets d
 		  LEFT JOIN asset_volume_24h       vol ON vol.asset_id = d.contract_id
+		                                      AND vol.` + assetVolume24hFresh + `
 		  LEFT JOIN asset_price_snapshot   aps ON aps.asset_id = d.contract_id
 		                                      AND aps.computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'
 		  LEFT JOIN asset_volume_character avc ON avc.asset_id = d.contract_id

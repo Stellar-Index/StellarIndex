@@ -1,0 +1,55 @@
+# promtool unit test for stellarindex_admin_key_budget_clamp_failed. Both rule
+# trees load, so the one alert is expected twice.
+#
+#   promtool test rules deploy/monitoring/rule-tests/api-key-budget-clamp_test.yml
+
+rule_files:
+  - ../rules/api.yml
+  - ../../../configs/prometheus/rules.r1/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The first failure after a pre-seeded 0 tickets; lowered clamps never do.
+  - interval: 1m
+    name: a failed clamp tickets, a lowered clamp does not
+    input_series:
+      - series: 'stellarindex_admin_key_budget_clamps_total{job="stellarindex_api",outcome="failed"}'
+        values: '0x10 1x60'
+      - series: 'stellarindex_admin_key_budget_clamps_total{job="stellarindex_api",outcome="lowered"}'
+        values: '0x10 5+5x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_admin_key_budget_clamp_failed
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: stellarindex_admin_key_budget_clamp_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_key_budget_clamp_failed
+              summary: "1 API key budget clamp(s) failed after a tier downgrade"
+              description: |
+                An admin tier downgrade left at least one API key above its
+                new tier's per-minute budget: the clamp hit a store error
+                (Redis or Postgres). The PATCH still returned 200 and the
+                account shows the lower tier. Find the account in the audit
+                row's `clampFailed` field, then lower or revoke its keys by
+                hand. Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_key_budget_clamp_failed
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_key_budget_clamp_failed
+              summary: "1 API key budget clamp(s) failed after a tier downgrade"
+              description: |
+                An admin tier downgrade left at least one API key above its
+                new tier's per-minute budget: the clamp hit a store error
+                (Redis or Postgres). The PATCH still returned 200 and the
+                account shows the lower tier. Find the account in the audit
+                row's `clampFailed` field, then lower or revoke its keys by
+                hand. Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_admin_key_budget_clamp_failed

@@ -81,6 +81,12 @@ tests:
         values: '0+0x12 0+1x60'
       - series: 'stellarindex_retention_reaper_errors_total{reaper="session"}'
         values: '0+0x12 1+0x60'
+      - series: 'stellarindex_magic_link_token_errors_total{op="sweep"}'
+        values: '0+0x12 0+1x60'
+      - series: 'stellarindex_login_code_lockout_errors_total{op="sweep"}'
+        values: '0+0x12 1+0x60'
+      - series: 'stellarindex_login_code_lockout_errors_total{op="register"}'
+        values: '0+0x12 0+1x60'
     alert_rule_test:
       - eval_time: 2h
         alertname: stellarindex_retention_reaper_failing
@@ -89,6 +95,22 @@ tests:
         alertname: stellarindex_retention_reaper_failing
         exp_alerts:
           - exp_labels:
+              reaper: magic_link
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+              summary: "Retention reaper magic_link sweeps are failing; its table is not being bounded"
+              description: &reaper_description |
+                A retention reaper's sweep has been failing for hours. The
+                `registration` reaper erases abandoned sign-ups' personal data;
+                `magic_link` and `login_code` bound tables holding email
+                addresses; `session` and `webhook_delivery` bound theirs. The
+                liveness alert stays green because a failed sweep still counts
+                as a run.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+          - exp_labels:
               reaper: registration
               severity: ticket
               team: stellarindex
@@ -96,13 +118,7 @@ tests:
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
               summary: "Retention reaper registration sweeps are failing; its table is not being bounded"
-              description: |
-                A retention reaper's sweep has been failing for hours. The
-                `registration` reaper erases abandoned sign-ups' personal data;
-                `session` and `webhook_delivery` bound their tables. The
-                liveness alert stays green because a failed sweep still counts
-                as a run.
-                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+              description: *reaper_description
 
   - interval: 1m
     name: a guard that keeps failing open tickets

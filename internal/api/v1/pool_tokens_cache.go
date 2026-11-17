@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -97,6 +98,9 @@ func (c *poolTokensCache) fill(source string) (val any, err error) {
 	defer cancel()
 	m, err := c.upstream.PoolTokens(fillCtx, source)
 	if err != nil {
+		if have {
+			obs.APICacheOpsTotal.WithLabelValues("pool_tokens", "fill", "refresh_error").Inc()
+		}
 		return nil, err
 	}
 	c.mu.Lock()

@@ -117,8 +117,10 @@ Operator access today (the only path that works):
 
 When R2 lands:
 1. Stop the system-package services on r1: `systemctl stop loki promtail`.
-2. Apply the ansible role with `loki_hosts = [r1, r2]` —
-   the role installs upstream Loki binaries to a different
-   path, so no conflict.
+2. Apply the ansible role to a dedicated `log_aggregator` host (not
+   r1: the role owns the whole host firewall, and its preflight
+   refuses `archival_nodes`). r1 keeps shipping via promtail. The
+   role installs upstream Loki binaries to a different path, so no
+   conflict.
 3. Delete `/etc/loki/` and `/etc/promtail/` system-package files.
 4. Re-route Caddy / DNS to the new endpoints.

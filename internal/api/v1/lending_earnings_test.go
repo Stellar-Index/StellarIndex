@@ -14,6 +14,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -22,12 +23,13 @@ const earningsAccount = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN
 
 type stubEarningsPositions struct {
 	*stubPositionsReader
-	flows    timescale.LendingAccountFlows
-	flowsErr error
+	blntFolds []timescale.BlendPositionFold
+	flows     timescale.LendingAccountFlows
+	flowsErr  error
 }
 
-func (*stubEarningsPositions) BLNTPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
-	return nil, nil
+func (s *stubEarningsPositions) BLNTPositionsByUser(context.Context, string) ([]timescale.BlendPositionFold, error) {
+	return s.blntFolds, nil
 }
 
 func (*stubEarningsPositions) BLNTBackstopByUser(context.Context, string) ([]timescale.BLNTBackstopFold, error) {
@@ -207,19 +209,23 @@ func TestLendingAccountEarnings_HistoryUnverified(t *testing.T) {
 		}}}
 	}
 	now := time.Now().UTC()
+	unrelatedStale := snap(true, 100, now)
+	unrelatedStale.snaps = append(unrelatedStale.snaps, timescale.CompletenessSnapshot{Source: "aquarius", ProjectionOK: true, ProjectionVerifiedFrom: 1})
 	cases := []struct {
-		name        string
-		reader      *stubCompletenessReader
-		exact, fail bool
+		name               string
+		reader             *stubCompletenessReader
+		exact, fail, stale bool
+		reason             string
 	}{
 		{name: "verified from genesis", reader: snap(true, 100, now), exact: true},
-		{name: "verdict past its freshness gate", reader: snap(true, 100, time.Time{})},
+		{name: "an unrelated source's verdict is stale", reader: unrelatedStale, exact: true},
+		{name: "verdict past its freshness gate", reader: snap(true, 100, time.Time{}), reason: "history_verdict_stale", stale: true},
 		{name: "no reader"},
 		{name: "no verdict for the source", reader: &stubCompletenessReader{}},
 		{name: "floor after genesis", reader: snap(true, 101, now)},
 		{name: "floor unknown", reader: snap(true, 0, now)},
 		{name: "projection not ok", reader: snap(false, 100, now)},
-		{name: "verdict read fails", reader: &stubCompletenessReader{err: errors.New("pg down")}, fail: true},
+		{name: "verdict read fails", reader: &stubCompletenessReader{err: errors.New("pg down")}, fail: true, reason: "history_verdict_unread"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,18 +235,28 @@ func TestLendingAccountEarnings_HistoryUnverified(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			v1.New(opts).Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/accounts/"+earningsAccount+"/earnings", nil))
-			var body struct{ Data v1.LendingEarningsView }
+			var body struct {
+				Data  v1.LendingEarningsView
+				Flags struct{ Stale bool }
+			}
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK || len(body.Data.Legs) != 1 {
 				t.Fatalf("status %d err %v body %s", rec.Code, err, rec.Body)
 			}
 			leg := body.Data.Legs[0]
+			if body.Flags.Stale != tc.stale {
+				t.Fatalf("flags.stale = %v, want %v", body.Flags.Stale, tc.stale)
+			}
 			if tc.exact {
 				if !leg.Reconciled || strOrNull(leg.Accrued) != "10" {
 					t.Fatalf("leg = %+v", leg)
 				}
 				return
 			}
-			if leg.Reconciled || leg.Accrued != nil || strOrNull(leg.Reason) != "history_unverified" || strOrNull(leg.CurrentValue) != "100" || leg.NetFlow != "90" {
+			want := tc.reason
+			if want == "" {
+				want = "history_unverified"
+			}
+			if leg.Reconciled || leg.Accrued != nil || strOrNull(leg.Reason) != want || strOrNull(leg.CurrentValue) != "100" || leg.NetFlow != "90" {
 				t.Fatalf("leg = %+v", leg)
 			}
 			if noStore := strings.Contains(rec.Header().Get("Cache-Control"), "no-store"); noStore != tc.fail {
@@ -294,6 +310,70 @@ func TestLendingAccountEarnings_ProjectionBehind(t *testing.T) {
 		if !leg.Reconciled {
 			t.Fatalf("caught-up leg = %+v", leg)
 		}
+	}
+}
+
+// TestLendingAccountEarnings_RateBehindFold: a reserve rate stored before the leg's newest folded event cannot value the
+// tokens that event minted, so accrued is withheld as rate_behind even though the balances agree.
+func TestLendingAccountEarnings_RateBehindFold(t *testing.T) {
+	pool, asset := mkCStrkey(t, 1), mkCStrkey(t, 2)
+	ex := &stubEarningsExplorer{
+		stubExplorerReader: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{{
+			Pool: pool, Asset: asset,
+			Data: blend.ReserveData{
+				BRate: big.NewInt(1_000_000_000_000), DRate: big.NewInt(1_000_000_000_000),
+				IRMod: new(big.Int), BSupply: new(big.Int), DSupply: new(big.Int), BackstopCredit: new(big.Int), Version: blend.PoolV2,
+				LastTime: 1_700_000_000,
+			},
+		}}},
+		positions: clickhouse.LendingAccountPositions{Readable: true, Supply: map[string]*big.Int{asset: big.NewInt(100)}, Ledger: 500},
+	}
+	fold := timescale.BlendPositionFold{
+		Pool: pool, Asset: asset, HasSupplyLeg: true, SupplyNet: "90", SupplyTokens: "100", SupplyLastLedger: 500,
+		SupplyLastActivity: time.Unix(1_700_000_005, 0).UTC(),
+	}
+	pr := &stubEarningsPositions{stubPositionsReader: &stubPositionsReader{blend: []timescale.BlendPositionFold{fold}}}
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
+	got := getEarnings(t, srv, earningsAccount, http.StatusOK)
+	if len(got.Legs) != 1 {
+		t.Fatalf("legs = %+v", got.Legs)
+	}
+	if leg := got.Legs[0]; leg.Reconciled || leg.Accrued != nil || strOrNull(leg.Reason) != "rate_behind" || strOrNull(leg.CurrentValue) != "100" {
+		t.Fatalf("leg = %+v", leg)
+	}
+	pr.blend[0].SupplyLastActivity = time.Unix(1_700_000_000, 0).UTC()
+	srv = v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
+	if leg := getEarnings(t, srv, earningsAccount, http.StatusOK).Legs[0]; !leg.Reconciled || strOrNull(leg.Accrued) != "10" {
+		t.Fatalf("rate stored at the newest event: leg = %+v", leg)
+	}
+
+	// A fully exited leg holds no tokens for a stale rate to misvalue, so accrued is exact: 0 - (-5).
+	exited := fold
+	exited.SupplyNet, exited.SupplyTokens = "-5", "0"
+	exPos := ex.positions
+	ex.positions = clickhouse.LendingAccountPositions{Readable: true, Supply: map[string]*big.Int{}, Ledger: 500}
+	pr.blend[0] = exited
+	srv = v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
+	if leg := getEarnings(t, srv, earningsAccount, http.StatusOK).Legs[0]; !leg.Reconciled || strOrNull(leg.Accrued) != "5" {
+		t.Fatalf("zero on-chain balance with the rate behind: leg = %+v", leg)
+	}
+
+	// A BLNT leg is gated the same way.
+	ex.positions = exPos
+	blntFold := fold
+	blntFold.Pool = blnt.MainnetFixedPool
+	ex.reserves[0].Pool = blnt.MainnetFixedPool
+	pr = &stubEarningsPositions{stubPositionsReader: &stubPositionsReader{}, blntFolds: []timescale.BlendPositionFold{blntFold}}
+	verdicts := verifiedLendingHistory()
+	now := time.Now().UTC()
+	verdicts.snaps = append(verdicts.snaps, timescale.CompletenessSnapshot{
+		Source: blnt.SourceName, Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100, ComputedAt: now, ProjectionEvidencedAt: now,
+	})
+	srv = v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verdicts})
+	got = getEarnings(t, srv, earningsAccount, http.StatusOK)
+	if len(got.Legs) != 1 || got.Legs[0].Protocol != blnt.SourceName || got.Legs[0].Reconciled ||
+		strOrNull(got.Legs[0].Reason) != "rate_behind" {
+		t.Fatalf("blnt legs = %+v", got.Legs)
 	}
 }
 

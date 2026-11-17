@@ -78,7 +78,10 @@
 #   * a statement whose aggregate sits ABOVE a subquery that already collapses.
 #     The read belongs to the innermost select, so `count() FROM (SELECT … FROM
 #     stellar.operations GROUP BY ledger_seq, tx_index, op_index)` is out of scope.
-#     The gate does not check that the inner GROUP BY is the full key.
+#     The gate does not check that the inner GROUP BY is the full key. A
+#     subquery or CTE with no GROUP BY, DISTINCT, LIMIT 1 BY or idempotent
+#     aggregate collapses nothing: its read is in scope when the block
+#     consuming it aggregates, and needs FINAL like any other.
 #
 # ── ESCAPE HATCH ─────────────────────────────────────────────────────
 #
@@ -115,6 +118,35 @@ READ_TABLES="${LAKE_TABLES}|%[sv]"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
+# LAKE_TABLES must cover every ReplacingMergeTree the DDL creates, or the next
+# one is unwatched by default. Fixture trees carry no DDL and are skipped; the
+# real tree (tier1_schema.sql present) must derive at least one table.
+if [ -d deploy/clickhouse ] || [ -d internal/storage/clickhouse ]; then
+  ddl_files=()
+  while IFS= read -r f; do ddl_files+=("$f"); done < <(
+    find deploy/clickhouse internal/storage/clickhouse -maxdepth 1 \
+      \( -name '*.sql' -o -name '*.go' \) ! -name '*_test.go' 2>/dev/null | sort)
+  rmt_tables=""
+  if [ "${#ddl_files[@]}" -gt 0 ]; then
+    rmt_tables="$(LC_ALL=C awk '
+      { l = tolower($0) }
+      l ~ /create[ ]+table/ { cur = ""; if (match(l, /stellar\.[a-z0-9_]+/)) cur = substr(l, RSTART + 8, RLENGTH - 8) }
+      l ~ /engine[ ]*=[ ]*replacingmergetree/ { if (cur != "") print cur; cur = "" }
+    ' "${ddl_files[@]}" | sort -u)"
+  fi
+  if [ -z "$rmt_tables" ] && [ -f deploy/clickhouse/tier1_schema.sql ]; then
+    die "derived no ReplacingMergeTree table from deploy/clickhouse or internal/storage/clickhouse.
+  A drift check that derives nothing passes forever. Fix the derivation, do not delete the check."
+  fi
+  for t in $rmt_tables; do
+    case "|${LAKE_TABLES}|" in
+      *"|${t}|"*) : ;;
+      *) die "stellar.${t} is a ReplacingMergeTree in the DDL but is not in LAKE_TABLES.
+  Add it to LAKE_TABLES in scripts/ci/lint-lake-dedup.sh so its aggregating reads are watched." ;;
+    esac
+  done
+fi
+
 # Subject files: every tracked-or-untracked .go/.sql that NAMES a
 # duplicate-bearing table (others cannot violate; the pre-filter keeps this to
 # one awk pass over ~60 files).
@@ -124,6 +156,7 @@ die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 # repo copies in the walk.
 subjects=()
 verb_only="|"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
@@ -140,7 +173,7 @@ done < <(
         if grep -qiE "stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" "$f"; then
           echo "$f"
         elif [[ "$f" == *.go && "$f" != *_test.go && "$f" != internal/storage/timescale/* ]] &&
-             grep -qE '(FROM|JOIN)[ ]+%[sv]|(FROM|JOIN)[ ]*["`][ ]*\+|(from|join)[ ]+%[sv][ ]*$' "$f"; then
+             grep -qiE '(from|join)[ ]+%(\[[0-9]+\])?[sqv]|(from|join)[ ]*["`][ ]*\+|stellar\.["`][ ]*\+' "$f"; then
           # names no watched table: its table comes from elsewhere
           echo ">$f"
         fi
@@ -249,6 +282,61 @@ violations="$(
       return w ? substr(s, w, owner - w) : ""
     }
 
+    # collapses - a block whose own rows are one per key (or one row): a
+    # GROUP BY, DISTINCT, LIMIT 1 BY or an idempotent aggregate. Takes the
+    # lowercased own_text of the block.
+    function collapses(c) {
+      return c ~ /(^|[^a-z0-9_])(group by|distinct|limit 1 by)([^a-z0-9_]|$)/ ||
+             c ~ /(^|[^a-z0-9_])(min|max|any|argmax|argmin|uniq|uniqexact|uniqcombined|groupuniqarray)[a-z0-9]*[ ]*\(/
+    }
+    # consumed - a read whose own block does not aggregate still feeds an
+    # aggregate when it sits in a FROM/JOIN subquery (or a CTE) that does not
+    # collapse its rows and an enclosing block aggregates over them.
+    function consumed(s, owner,    blk, i, depth, ch, open, outer, pre, j, rest) {
+      while (1) {
+        blk = own_text(block_of(s, owner))
+        if (collapses(blk)) return 0
+        open = 0; depth = 0
+        for (i = owner - 1; i >= 1; i--) {
+          ch = substr(s, i, 1)
+          if (ch == ")") depth++
+          else if (ch == "(") { if (depth == 0) { open = i; break } depth-- }
+          else if (ch == ";") break
+        }
+        if (open == 0) return 0
+        pre = substr(s, 1, open - 1)
+        if (pre ~ /(^|[^a-z0-9_])(from|join)[ ]*$/) {
+          outer = 0; depth = 0
+          for (i = open - 1; i >= 1; i--) {
+            ch = substr(s, i, 1)
+            if (ch == ")") depth++
+            else if (ch == "(") { if (depth == 0) break; depth-- }
+            else if (depth == 0 && is_select(s, i)) { outer = i; break }
+          }
+          if (outer == 0) return 0
+          if (mult_agg(own_text(with_prefix(s, outer) block_of(s, outer)))) return 1
+          owner = outer
+        } else if (pre ~ /(^|[^a-z0-9_])as[ ]*$/) {
+          depth = 1
+          for (j = open + 1; j <= length(s) && depth > 0; j++) {
+            ch = substr(s, j, 1)
+            if (ch == "(") depth++; else if (ch == ")") depth--
+          }
+          rest = substr(s, j); depth = 0
+          for (i = 1; i <= length(rest); i++) {
+            ch = substr(rest, i, 1)
+            if (ch == "(") depth++
+            else if (ch == ")") { if (depth == 0) break; depth-- }
+            else if (ch == ";") break
+            else if (depth == 0 && is_select(rest, i)) {
+              return mult_agg(own_text(block_of(rest, i))) ? 1 : 0
+            }
+          }
+          return 0
+        } else return 0
+      }
+    }
+
     # ── unit accumulation ────────────────────────────────────────────
     # A unit is flushed when the NEXT file starts, so it carries the file
     # it began in: FILENAME at flush time is the wrong one.
@@ -300,7 +388,7 @@ violations="$(
         # Its whole block, minus nested selects: an aggregate in HAVING or
         # ORDER BY consumes the same rows as one in the select list.
         clause = own_text(with_prefix(L, owner) block_of(L, owner))
-        if (!mult_agg(clause)) continue                       # not an aggregating read
+        if (!mult_agg(clause) && !consumed(L, owner)) continue  # not an aggregating read
         aggregating++
 
         # FINAL attached to this read (optionally through an alias).
@@ -353,9 +441,8 @@ violations="$(
         part = l; cut = index(part, "//"); if (cut > 0) part = substr(part, 1, cut - 1)
         # A file naming no watched table is judged on upper-case SQL only:
         # its lower-case "from" strings are log and error prose.
-        if (verb_file) {
-          if (part ~ /(FROM|JOIN)[ ]+%[sv]|(FROM|JOIN)[ ]*"[ ]*\+/) printf "#interp\t%s:%d\n", FILENAME, FNR
-        } else if (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/) printf "#interp\t%s:%d\n", FILENAME, FNR
+        if (part ~ /(FROM|JOIN)[ ]+%(\[[0-9]+\])?[sqv]|(FROM|JOIN)[ ]*"[ ]*\+/ || tolower(part) ~ /(from|join)[ ]+stellar\.[ ]*"[ ]*\+/) printf "#interp\t%s:%d\n", FILENAME, FNR
+        else if (!verb_file && (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/)) printf "#interp\t%s:%d\n", FILENAME, FNR
       }
       if (index(l, "`") > 0) {
         l = go_mask(l, in_raw)
@@ -380,11 +467,11 @@ violations="$(
           if (match(part, /--([ \t]|$)/) > 0) part = substr(part, 1, RSTART - 1)
           add(part)
           lastraw = tolower(part)
-          if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]+%[sv]/) printf "#interp\t%s:%d\n", FILENAME, FNR
+          if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]+%(\[[0-9]+\])?[sqv]/) printf "#interp\t%s:%d\n", FILENAME, FNR
         } else {
           glue = glue part
           if (i < n) {
-            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*$/ && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*$/) printf "#interp\t%s:%d\n", FILENAME, FNR
+            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*(stellar\.)?[ ]*$/ && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*$/) printf "#interp\t%s:%d\n", FILENAME, FNR
             # Glue between two literals: `+ ident +` splices them,
             # anything else ends the statement.
             if (U != "" && glue !~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/) flush()
@@ -456,11 +543,6 @@ examined="$(printf '%s\n' "$violations" | awk '/^#counts /{print $2}')"
 aggregating="$(printf '%s\n' "$violations" | awk '/^#counts /{print $3}')"
 interpreted="$(printf '%s\n' "$violations" | sed -n 's/^#interp\t/  /p')"
 violations="$(printf '%s\n' "$violations" | grep -v '^#counts \|^#interp' || true)"
-if [ -n "$interpreted" ]; then
-  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
-  printf '%s\n' "$interpreted" >&2
-  exit 1
-fi
 
 if [ -z "${examined:-}" ] || [ -z "${aggregating:-}" ]; then
   die "the analyser produced no #counts line — a gate reporting clean over
@@ -518,6 +600,21 @@ in_baseline() {
   done
   return 1
 }
+
+# An unexaminable read (double-quoted or spliced string) is grandfathered per
+# file as `<file>:#interp`.
+unbaselined_interp=""
+while IFS= read -r il; do
+  [ -n "$il" ] || continue
+  ifile="${il#"${il%%[![:space:]]*}"}"
+  ifile="${ifile%:*}"
+  in_baseline "${ifile}:#interp" || unbaselined_interp="${unbaselined_interp}${il}"$'\n'
+done <<<"$interpreted"
+if [ -n "$unbaselined_interp" ]; then
+  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
+  printf '%s' "$unbaselined_interp" >&2
+  exit 1
+fi
 
 fail=0
 observed=""

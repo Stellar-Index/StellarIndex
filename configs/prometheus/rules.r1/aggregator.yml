@@ -677,6 +677,15 @@ groups:
         expr: |
           (time() - stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"}) > 10800
             and stellarindex_aggregator_baseline_refresh_last_success_unix{job="stellarindex-aggregator"} > 0
+          or
+          # The stamp above restarts with the process, so a refresher that
+          # never succeeds in a restart loop never trips it; the stored
+          # row age cannot be reset. A majority, not any pair, so a few
+          # dormant pairs do not ticket forever.
+          (
+            count by (job) (stellarindex_aggregator_baseline_age_seconds{job="stellarindex-aggregator"} > 86400)
+              / count by (job) (stellarindex_aggregator_baseline_age_seconds{job="stellarindex-aggregator"})
+          ) > 0.5
         for: 15m
         labels:
           severity: ticket
@@ -688,7 +697,9 @@ groups:
           description: |
             No baseline refresh pass has finished within its 45-minute
             timeout with a store answer for over 3 hours (three hourly
-            passes) plus a 15-minute for-duration. Baselines older than
+            passes) plus a 15-minute for-duration, or most pairs'
+            stored baseline rows are already older than 24 h (the
+            restart-proof arm). Baselines older than
             24 h make every pair's confidence step return baseline_stale,
             so the ADR-0019 Phase-2 freeze can neither fire nor unfreeze.
             Look at the aggregator's `baseline refresh complete` log for

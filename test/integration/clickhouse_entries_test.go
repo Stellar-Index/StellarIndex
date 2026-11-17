@@ -239,6 +239,96 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 	}
 }
 
+// TestChEntryHistory_ConsumedPreAuthSignerEndsItsSponsorship: core drops a used pre-auth signer at tx level (op_index
+// -1, under a plain Payment), on an account with no entry-level sponsor; the derive must still see it end.
+func TestChEntryHistory_ConsumedPreAuthSignerEndsItsSponsorship(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	const base = uint32(160_920_000)
+	account := func(fill byte) string {
+		return strkey.MustEncode(strkey.VersionByteAccountID, []byte(strings.Repeat(string(fill), 32)))
+	}
+	holder, sponsor := account(0x6a), account(0x6b)
+	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.entry_history_watermark`); err != nil {
+		t.Fatalf("truncate watermark: %v", err)
+	}
+	// quiet is the negative case: a first sequence bump grows the entry (v3 extension) but leaves the sponsored signer.
+	const quiet = base + 1
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, quiet}, 1, true)
+
+	var preAuth xdr.Uint256
+	copy(preAuth[:], strings.Repeat("\x7c", 32))
+	acct := func(withSigner, seqBumped bool) xdr.LedgerEntry {
+		a := &xdr.AccountEntry{AccountId: xdr.MustAddress(holder), Balance: 100_000_000, SeqNum: 7}
+		v2 := &xdr.AccountEntryExtensionV2{}
+		if seqBumped {
+			a.SeqNum = 8
+			v2.Ext = xdr.AccountEntryExtensionV2Ext{V: 3, V3: &xdr.AccountEntryExtensionV3{SeqLedger: xdr.Uint32(quiet)}}
+		}
+		if withSigner {
+			a.NumSubEntries = 1
+			a.Signers = []xdr.Signer{{Key: xdr.SignerKey{Type: xdr.SignerKeyTypeSignerKeyTypePreAuthTx, PreAuthTx: &preAuth}, Weight: 1}}
+			v2.NumSponsored = 1
+			v2.SignerSponsoringIDs = []xdr.SponsorshipDescriptor{xdr.MustAddressPtr(sponsor)}
+		}
+		a.Ext = xdr.AccountEntryExt{V: 1, V1: &xdr.AccountEntryExtensionV1{
+			Ext: xdr.AccountEntryExtensionV1Ext{V: 2, V2: v2},
+		}}
+		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: a}}
+	}
+	row := func(ledger, change uint32, changeType string, e xdr.LedgerEntry) chstore.LedgerEntryChangeRow {
+		t.Helper()
+		k, err := e.LedgerKey()
+		if err != nil {
+			t.Fatalf("ledger key: %v", err)
+		}
+		r := chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), TxHash: "ab" + strconv.FormatUint(uint64(ledger), 10),
+			OpIndex: -1, ChangeIndex: change, ChangeType: changeType, EntryType: "account", AccountID: holder,
+		}
+		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
+			t.Fatalf("marshal key: %v", err)
+		}
+		if r.EntryXDR, err = xdr.MarshalBase64(e); err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		return r
+	}
+	src := []chstore.LedgerEntryChangeRow{
+		row(base, 0, "state", acct(true, false)), row(base, 1, "updated", acct(false, false)),
+		row(quiet, 0, "state", acct(true, false)), row(quiet, 1, "updated", acct(true, true)),
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
+		t.Fatalf("seed ledger_entry_changes: %v", err)
+	}
+	runEntryIndexWrite(t, addr, base, quiet)
+	if err := runEntryHistoryWrite(addr, base, quiet); err != nil {
+		t.Fatalf("ch-entry-history: %v", err)
+	}
+
+	var quietEvents uint64
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.sponsorship_events FINAL WHERE ledger = ?`, quiet).Scan(&quietEvents); err != nil {
+		t.Fatalf("query sponsorship_events: %v", err)
+	}
+	if quietEvents != 0 {
+		t.Fatalf("%d sponsorship events for a sequence bump that keeps the sponsored signer, want 0", quietEvents)
+	}
+
+	var n uint64
+	if err := conn.QueryRow(ctx, `
+		SELECT count() FROM stellar.sponsorship_events FINAL
+		WHERE ledger = ? AND sponsor = ? AND sponsored = ? AND kind = 'signer' AND event = 'ended'`,
+		base, sponsor, holder).Scan(&n); err != nil {
+		t.Fatalf("query sponsorship_events: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("%d 'ended' signer events for the consumed pre-auth signer, want 1", n)
+	}
+}
+
 // entryHistorySeedLedgers writes stellar.ledgers rows declaring txCount transactions each, so the watermark's
 // entry-change coverage gate applies, and (withOps) one stellar.operations row per tx-bearing ledger under the
 // "ab<ledger>" transaction the entry-change seeds use, so the sponsorship derive's operations-coverage gate passes.

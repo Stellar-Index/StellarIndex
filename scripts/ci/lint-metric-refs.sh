@@ -147,18 +147,20 @@ strip_comments() {
 }
 
 is_emitted() {
-  # True if the token is a literal on a non-comment line of an emitter file. Excludes this script
-  # (its KNOWN_INERT array would self-match); narrow with grep -rlF first, then strip comments.
-  local tok="$1" f
+  # True if the token is a whole word on a non-comment line of an emitter file (a prefix such as
+  # `x_requests` must not resolve through `x_requests_total`). Excludes this script (its
+  # KNOWN_INERT array would self-match); narrow with grep -rlF first, then strip comments.
+  local tok="$1" f re
+  re="(^|[^A-Za-z0-9_])${tok}([^A-Za-z0-9_]|\$)"
   while IFS= read -r f; do
     [[ "$f" == "$self_rel" ]] && continue
-    grep -qF -e "$tok" <(strip_comments "$f") && return 0
+    grep -qE -e "$re" <(strip_comments "$f") && return 0
   done < <(grep -rlF --include="*.go" --include="*.sh" --include="*.prom" -e "$tok" "${EMITTER_PATHS[@]}" 2>/dev/null)
 
   # Inline ansible probes: `#` is the comment marker in the embedded shell bodies too.
   while IFS= read -r f; do
     [[ "$f" == "$self_rel" ]] && continue
-    grep -qF -e "$tok" <(sed -E 's:#.*$::' "$f") && return 0
+    grep -qE -e "$re" <(sed -E 's:#.*$::' "$f") && return 0
   done < <(grep -rlF --include="*.yml" --include="*.yaml" -e "$tok" "${ANSIBLE_TASK_PATHS[@]}" 2>/dev/null)
   return 1
 }

@@ -145,8 +145,9 @@ MATCH=(
   'OWNER[[:space:]]+TO'
   # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
   # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
-  # string, a `BEFORE TRUNCATE ON t` trigger).
-  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET|SELECT[[:space:]]+[a-zA-Z0-9_.]*drop_chunks[[:space:]]*\()'
+  # string, a `BEFORE TRUNCATE ON t` trigger). drop_chunks is a call, so it is
+  # matched wherever it is called: SELECT, PERFORM (a DO block) or FROM.
+  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET)|(^|[^a-zA-Z0-9_])drop_chunks[[:space:]]*\('
 )
 EXCLUDE=(
   ''

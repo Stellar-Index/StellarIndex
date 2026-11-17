@@ -527,3 +527,34 @@ tests:
       - eval_time: 8d
         alertname: stellarindex_node_reboot_required
         exp_alerts: []
+
+  - interval: 1m
+    name: a census-rollup timer that stopped firing tickets, a recent one does not
+    input_series:
+      - series: 'node_systemd_timer_last_trigger_seconds{name="census-rollup.timer",instance="stale"}'
+        values: '0x240'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="census-rollup.timer",instance="fresh"}'
+        values: '9000x240'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="other.timer",instance="stale"}'
+        values: '0x240'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_census_rollup_timer_stale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_census_rollup_timer_stale
+        exp_alerts:
+          - exp_labels:
+              name: census-rollup.timer
+              instance: stale
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_census_rollup_timer_stale
+              summary: "census-rollup.timer has not fired for 2h on stale"
+              description: |
+                The contracts-census rollup is scheduled every 30 minutes and
+                has not been triggered for 2+ hours, so /v1/contracts/stats
+                serves a stale active_90d lower bound. `systemctl status
+                census-rollup.timer census-rollup.service`.

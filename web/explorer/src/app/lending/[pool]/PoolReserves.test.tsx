@@ -80,6 +80,19 @@ describe('PoolReserves', () => {
     expect(line.textContent).toMatch(/excludes USDX \(no decoded state\)\)$/);
   });
 
+  it('shows the envelope stale flag', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        pool: POOL,
+        tvl_usd: '1000',
+        reserves: [reserve('native', '1000')],
+      },
+      flags: { stale: true },
+    });
+    renderIt();
+    expect(await screen.findByText('Stale')).toBeInTheDocument();
+  });
+
   it('renders a fully priced tvl_usd as a plain total', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {

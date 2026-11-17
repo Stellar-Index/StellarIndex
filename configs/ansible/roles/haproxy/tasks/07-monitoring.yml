@@ -48,6 +48,8 @@
       # TYPE stellarindex_haproxy_vip_owner gauge
       stellarindex_haproxy_vip_owner $MASTER
       EOF
+      # mktemp creates 0600; node_exporter is not root.
+      chmod 0644 "$TMP"
       mv -f "$TMP" "$OUT"
 
 - name: install keepalived-textfile-scraper systemd unit

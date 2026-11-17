@@ -185,7 +185,7 @@ func TestGlobalMarket_RefusesFutureDatedRows(t *testing.T) {
 	}
 
 	s = globalMarketServer(t, future,
-		refUpdate(t, "coinmarketcap", "crypto:USDC", "fiat:USD", "99000000", 8, time.Now().Add(-time.Minute)))
+		refUpdate(t, "coingecko", "crypto:USDC", "fiat:USD", "99000000", 8, time.Now().Add(-time.Minute)))
 	rows = []AssetDetail{{AssetID: globalTestUSDC}}
 	s.fillDeclaredPegPricesInListing(context.Background(), rows)
 	if gm := rows[0].GlobalMarket; gm == nil || gm.PriceUSD != "0.99000000" {

@@ -1333,6 +1333,10 @@ type OHLCBar struct {
 	// common scale first or it adds incommensurable integers. Empty when the bucket could not be
 	// attributed; never default a scale, since guessing one is the defect this column removes.
 	Sources []string
+
+	// BelowFloor is set when no stored row of the bucket is [ohlcFlooredSQL]: its prices are the unfloored fallback, so a caller
+	// merging this bar with other markets must not let it set a price beside a floored bar.
+	BelowFloor bool
 }
 
 // OHLCSeries returns oldest-first OHLC bars for [from, to) from the CAGG matching `granularity` (closed buckets only; `limit` 0 = unbounded); other intervals route through [Store.OHLCSeriesReBucketed].
@@ -1351,9 +1355,8 @@ func (s *Store) OHLCSeries(
 	}
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
-	// Combine both stored directions into the requested ($1, $2) orientation as a UNION ALL of two
-	// index-drivable branches, not an OR (see [Store.HistoryPoints]); /v1/ohlc's window is
-	// caller-chosen and can span all history, so a window bound does not rescue the OR.
+	// Combine both stored directions into the requested ($1, $2) orientation as a UNION ALL of two index-drivable branches, not an OR
+	// (see [Store.HistoryPoints]); /v1/ohlc's window is caller-chosen and can span all history, so a window bound does not rescue the OR.
 	//
 	// The `norm` CTE re-expresses flipped rows: prices invert (high<->low swap), base/quote volumes
 	// swap. Per bucket high = max, low = min; open/close prefer the requested-direction row and
@@ -1374,6 +1377,7 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		        trade_count AS tc,
 		        sources     AS srcs,
+		        floored,
 		        `+ohlcDirectionKeepSQL+`
 		      FROM (
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
@@ -1404,8 +1408,8 @@ func (s *Store) OHLCSeries(
 		    sum(tc)::bigint                                                         AS trade_count,
 		    (SELECT COALESCE(array_agg(DISTINCT s ORDER BY s), ARRAY[]::text[])
 		       FROM unnest(COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
-		                || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[])) AS s)
-		                                                                            AS sources
+		                || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[])) AS s) AS sources,
+		    NOT bool_or(floored)                                                    AS below_floor
 		  FROM norm
 		 GROUP BY bucket
 	`, table, interval, ohlcFlooredSQL(table))
@@ -1431,7 +1435,7 @@ func (s *Store) OHLCSeries(
 			&bar.Bucket,
 			&bar.Open, &bar.High, &bar.Low, &bar.Close,
 			&bar.BaseVolume, &bar.QuoteVolume, &bar.TradeCount,
-			&srcs,
+			&srcs, &bar.BelowFloor,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: OHLCSeries[%s] scan: %w", granularity, err)
 		}
@@ -1463,7 +1467,7 @@ func ohlcFlooredSQL(table string) string {
 	if table == "prices_1m" {
 		return "notional_trade_count > 0 AS floored"
 	}
-	return "volume_usd >= 0.01 AS floored"
+	return "volume_usd >= " + bridgeLegMinUSDVolume + " AS floored"
 }
 
 // ohlcReBucketedQuery builds [Store.OHLCSeriesReBucketed]'s statement; `table` comes from the
@@ -1482,9 +1486,10 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		           sum(quote_vol) AS quote_vol,
 		           sum(tc)        AS tc,
 		           COALESCE(max(srcs) FILTER (WHERE req),     ARRAY[]::text[])
-		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs
+		        || COALESCE(max(srcs) FILTER (WHERE NOT req), ARRAY[]::text[]) AS srcs,
+		           bool_or(floored) AS floored
 		      FROM (
-		        SELECT bucket, (base_asset = $1) AS req,
+		        SELECT bucket, (base_asset = $1) AS req, floored,
 		               CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
 		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
 		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
@@ -1517,18 +1522,26 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		           array_agg(DISTINCT s ORDER BY s)      AS sources
 		      FROM norm, unnest(norm.srcs) AS s
 		     GROUP BY 1
+		),
+		-- The floor again across the fold: a crumb-only source bucket must not set the bar's prices beside a floored one,
+		-- as the native views (floored over the whole bucket) already guarantee.
+		fold AS (
+		    SELECT n.*,
+		           (n.floored OR NOT bool_or(n.floored) OVER (PARTITION BY time_bucket(INTERVAL '%[2]s', n.bucket))) AS keep
+		      FROM norm n
 		)
 		SELECT
-		    time_bucket(INTERVAL '%[2]s', n.bucket)                     AS out_bucket,
-		    (array_agg(n.open  ORDER BY n.bucket ASC))[1]::text         AS open,
-		    max(n.high)::text                                           AS high,
-		    min(n.low)::text                                            AS low,
-		    (array_agg(n.close ORDER BY n.bucket DESC))[1]::text        AS close,
-		    sum(n.base_vol)::text                                       AS base_volume,
-		    sum(n.quote_vol)::text                                      AS quote_volume,
-		    sum(n.tc)::bigint                                           AS trade_count,
-		    COALESCE(sc.sources, ARRAY[]::text[])                       AS sources
-		  FROM norm n
+		    time_bucket(INTERVAL '%[2]s', n.bucket)                                    AS out_bucket,
+		    (array_agg(n.open  ORDER BY n.bucket ASC)  FILTER (WHERE n.keep))[1]::text AS open,
+		    (max(n.high) FILTER (WHERE n.keep))::text                                  AS high,
+		    (min(n.low)  FILTER (WHERE n.keep))::text                                  AS low,
+		    (array_agg(n.close ORDER BY n.bucket DESC) FILTER (WHERE n.keep))[1]::text AS close,
+		    sum(n.base_vol)::text                                                      AS base_volume,
+		    sum(n.quote_vol)::text                                                     AS quote_volume,
+		    sum(n.tc)::bigint                                                          AS trade_count,
+		    COALESCE(sc.sources, ARRAY[]::text[])                                      AS sources,
+		    NOT bool_or(n.floored)                                                     AS below_floor
+		  FROM fold n
 		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
 		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'
@@ -1598,7 +1611,7 @@ func (s *Store) OHLCSeriesReBucketed(
 			&bar.Bucket,
 			&bar.Open, &bar.High, &bar.Low, &bar.Close,
 			&bar.BaseVolume, &bar.QuoteVolume, &bar.TradeCount,
-			&srcs,
+			&srcs, &bar.BelowFloor,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed[%s→%s] scan: %w", sourceGranularity, outInterval, err)
 		}

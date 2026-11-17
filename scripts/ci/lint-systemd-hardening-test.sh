@@ -17,13 +17,14 @@ trap 'rm -rf "$TMP"' EXIT
 
 ROLE_DIR="$TMP/role"
 UNITS="$ROLE_DIR/templates/systemd"
+DEPLOY="$TMP/deploy_systemd"
 mkdir -p "$UNITS"
 
 pass=0
 fail=0
 
 run() {
-  OUT="$(SYSTEMD_HARDENING_ROLE="$ROLE_DIR" bash "$GATE" 2>&1)"
+  OUT="$(SYSTEMD_HARDENING_ROLE="$ROLE_DIR" SYSTEMD_HARDENING_DEPLOY_DIR="$DEPLOY" bash "$GATE" 2>&1)"
   RC=$?
 }
 
@@ -132,6 +133,24 @@ rm "$UNITS/backup.timer.j2"
 run
 expect 'a long-running unit with no timer is not judged' 0 'OK'
 rm "$UNITS/backup.service.j2"
+
+# ── 9. A unit installed verbatim from deploy/systemd is judged too ──
+mkdir -p "$ROLE_DIR/tasks" "$DEPLOY"
+cat > "$ROLE_DIR/tasks/10-install.yml" <<'EOF'
+- name: install a unit straight from deploy/systemd
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+  loop:
+    - verbatim.service
+EOF
+hardened | grep -v '^NoNewPrivileges=' > "$DEPLOY/verbatim.service"
+run
+expect 'a verbatim-installed unit without NoNewPrivileges fails' 1 'verbatim.service does not set NoNewPrivileges'
+hardened > "$DEPLOY/verbatim.service"
+run
+expect 'a hardened verbatim-installed unit passes' 0 'OK'
+rm -rf "$ROLE_DIR/tasks" "$DEPLOY"
 
 # ── 8. An empty scan is a broken scan, not a pass ───────────────────
 rm -f "$UNITS"/*.j2

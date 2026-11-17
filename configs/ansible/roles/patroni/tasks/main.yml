@@ -25,6 +25,12 @@
   tags: [patroni, config]
   notify: "patroni config changed"
 
+# After 05: installing patroni can pull in a postgres server whose postinst
+# creates a cluster in the data dir.
+- name: data dir ownership gate (every host, after install, before 07 masks anything)
+  import_tasks: data-dir-gate.yml
+  tags: [always]
+
 - name: 07 — patroni systemd
   import_tasks: 07-patroni-systemd.yml
   tags: [patroni, systemd]

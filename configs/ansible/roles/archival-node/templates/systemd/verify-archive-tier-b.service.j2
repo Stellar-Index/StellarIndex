@@ -28,10 +28,8 @@ Type=notify
 NotifyAccess=main
 WatchdogSec=1h
 
-# Defaults. Environment= is evaluated in file order, so these must
-# come BEFORE EnvironmentFile= below — a preceding EnvironmentFile=
-# would let these defaults clobber the operator's overrides for the
-# same key (mirrored from Tier A).
+# Defaults. Values from EnvironmentFile= override Environment= wherever
+# either sits (systemd.exec(5)), so the operator's file below wins.
 # MAX_RUNTIME=0 = uncapped: systemd's WatchdogSec is the only bound, so a
 # first-ever full anchor pass runs to completion and seeds the
 # -from-last-verified checkpoint high-water (a binary-side cap that fired

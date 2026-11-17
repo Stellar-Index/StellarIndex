@@ -20,28 +20,14 @@ phone-call/SMS PagerDuty escalation would.
 
 ```
 deploy/monitoring/
-├── README.md                   (this file)
-├── rules/
-│   ├── aggregator.yml          aggregator-silent / outlier-storm / class-drop-spike
-│   ├── anomaly.yml             freeze-engaged / freeze-sustained
-│   ├── api-smoke.yml           API-smoke shape assertions failing / not running
-│   ├── api.yml                 HTTP serving-plane alerts
-│   ├── archive-completeness.yml archive-files-missing / completeness-stale
-│   ├── cache.yml               Redis alerts
-│   ├── divergence.yml          price-quality / oracle-stale alerts
-│   ├── infra.yml               host / disk / ZFS / NVMe alerts
-│   ├── ingestion.yml           Source / cursor / decode / orphan / insert alerts
-│   ├── meta.yml                Prometheus self-health + deadmansswitch
-│   ├── sla-probe.yml           SLA-probe p95 / freshness / unit-failed (Freighter SLA)
-│   ├── slo.yml                 Multi-window SLO burn-rate alerts (ADR-0009)
-│   ├── stellar.yml             stellar-core / stellar-rpc / archive alerts (inert on r1 — see runbooks' deployment-posture callouts)
-│   ├── storage.yml             Postgres + TimescaleDB + backup alerts
-│   ├── supply.yml              SAC cross-check divergence
-│   ├── supply-refresh.yml      Aggregator-resident supply-refresh stalled / error-dominant
-│   ├── supply-snapshot.yml     systemd-timer-path supply-snapshot stale / circulating-zero / unit-failed
-│   ├── supply-verify-rollup.yml  SEP-41 supply-rollup reconciliation unit-failed / stale / never-initialized
-│   └── verify-archive.yml      verify-archive run-stale / unit-failed
+├── README.md       (this file)
+├── rules/          one file per alert family (api.yml, api-security.yml, infra.yml, ...)
+└── rule-tests/     promtool unit tests, one file per rule family
 ```
+
+The set of rule files changes often; list the directory for the current
+files and see [alerts-catalog.md](../../docs/operations/alerts-catalog.md)
+for every alert, its trigger and its runbook.
 
 ## Severity labels
 
@@ -74,7 +60,7 @@ make monitoring-check
 # which runs:
 promtool check rules deploy/monitoring/rules/*.yml
 
-# Rule-firing unit tests (promtool test rules) — 22 test files:
+# Rule-firing unit tests (promtool test rules):
 promtool test rules deploy/monitoring/rule-tests/*.yml
 ```
 
@@ -89,13 +75,6 @@ parallel via `scripts/ci/lint-docs.sh`.
 over `deploy/monitoring/rule-tests/*.yml`, and CI runs the same
 target. New behavioural cases go in that directory — **not** in a
 `test/monitoring/` tree, which does not exist.
-
-This paragraph previously said the opposite ("planned but not wired…
-no checked-in `test/monitoring/` tree… place future tests under
-`test/monitoring/`"). All four claims were false while 22 test files
-ran in CI from a different path, so a contributor following this
-README would have written a rule test into a directory nothing
-executes (wave-D ALERT-08).
 
 Note what those tests do and do not cover: they load
 `deploy/monitoring/rules/`, so the R1 overlay at
