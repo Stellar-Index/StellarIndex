@@ -76,7 +76,7 @@ const (
 // LendingAccountFlows reads one account's emission claims and backstop token flows; every query is bound to the account.
 func (s *Store) LendingAccountFlows(ctx context.Context, address string) (LendingAccountFlows, error) {
 	var out LendingAccountFlows
-	args := []any{address, positionsVenueLimit}
+	args := []any{address, PositionsVenueLimit}
 	var err error
 	if out.BlendClaims, err = queryFold(ctx, s.db, "LendingAccountFlows blend claims", blendClaimsByUserSQL, args, scanClaimFold); err != nil {
 		return out, err

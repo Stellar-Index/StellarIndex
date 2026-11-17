@@ -196,5 +196,5 @@ const blntPositionsByUserSQL = `
 // BLNTPositionsByUser folds a user's BLNT pool events into one row per (pool, asset), with the same leg
 // semantics as BlendPositionsByUser; sargable on blnt_events_user_ts_idx.
 func (s *Store) BLNTPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
-	return queryFold(ctx, s.db, "BLNTPositionsByUser", blntPositionsByUserSQL, []any{address, positionsVenueLimit}, scanLendingPositionFold)
+	return queryVenueFold(ctx, s.db, "BLNTPositionsByUser", blntPositionsByUserSQL, address, scanLendingPositionFold)
 }

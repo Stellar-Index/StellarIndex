@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -160,7 +161,9 @@ type AccountPositionsView struct {
 // their absence off as an empty position set.
 type positionsCoverage struct {
 	degraded []string
-	folds    int // folds run, the coverage_note denominator
+	// truncated: protocols whose fold hit timescale's venue cap; their rows are a partial list.
+	truncated []string
+	folds     int // folds run, the coverage_note denominator
 	// labelsUnresolved: a pool-token read failed, so some rows lack their
 	// venue/asset labels — the positions are complete, the display is not.
 	labelsUnresolved bool
@@ -175,15 +178,41 @@ func (c *positionsCoverage) fail(protocol string) {
 	c.degraded = append(c.degraded, protocol)
 }
 
-// note renders the wire coverage_note, or "" when every fold ran.
+// note renders the wire coverage_note, or "" when every fold ran in full.
 func (c *positionsCoverage) note() string {
-	if c == nil || len(c.degraded) == 0 {
+	if c == nil {
 		return ""
 	}
-	return "INCOMPLETE: " + strconv.Itoa(len(c.degraded)) + " of " +
-		strconv.Itoa(c.folds) + " protocol reads failed (" +
-		strings.Join(c.degraded, ", ") + "); positions from those protocols are MISSING " +
-		"from this response, not proven absent on-chain — retry before treating this list as complete."
+	var parts []string
+	if len(c.degraded) > 0 {
+		parts = append(parts, "INCOMPLETE: "+strconv.Itoa(len(c.degraded))+" of "+
+			strconv.Itoa(c.folds)+" protocol reads failed ("+
+			strings.Join(c.degraded, ", ")+"); positions from those protocols are MISSING "+
+			"from this response, not proven absent on-chain — retry before treating this list as complete.")
+	}
+	if len(c.truncated) > 0 {
+		parts = append(parts, "TRUNCATED: "+strings.Join(c.truncated, ", ")+
+			" positions exceed the per-protocol venue cap; only the first "+strconv.Itoa(timescale.PositionsVenueLimit)+
+			" venues by contract id are shown, so this list is a lower bound for those protocols.")
+	}
+	return strings.Join(parts, " ")
+}
+
+// foldUnusable records a fold read's outcome on cov and reports whether its rows must be dropped. A fold over the venue cap
+// keeps its rows and is disclosed as truncated; any other error drops them as a failed read.
+func (h *Handler) foldUnusable(cov *positionsCoverage, protocol, address string, err error) bool {
+	if errors.Is(err, timescale.ErrPositionsTruncated) {
+		if cov != nil {
+			cov.truncated = append(cov.truncated, protocol)
+		}
+		return false
+	}
+	if err != nil {
+		h.Logger.Error("positions: "+protocol+" read failed", "err", err, "account", address)
+		cov.fail(protocol)
+		return true
+	}
+	return false
 }
 
 // positionsUnavailable writes this endpoint's 503, worded apart from unavailable() (which names the ClickHouse reader): the hard dependency
@@ -196,7 +225,7 @@ func (h *Handler) positionsUnavailable(w http.ResponseWriter, r *http.Request) {
 }
 
 // collectPositions folds the six ADR-0035-gated protocols' event tables into one per-(venue, kind) net-position list; not paginated,
-// each fold is capped by timescale's positionsVenueLimit. "Net-zero" (closed) differs per protocol: see each buildXPositions helper.
+// each fold is capped by timescale's PositionsVenueLimit. "Net-zero" (closed) differs per protocol: see each buildXPositions helper.
 func (h *Handler) collectPositions(ctx context.Context, g string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	// The folds are INDEPENDENT Postgres reads, run concurrently so latency is their MAX, not
 	// their SUM. Each writes its own slot (positions + coverage), merged afterwards in fixed fold
@@ -429,9 +458,7 @@ func fmtActivity(ledger uint32, t time.Time) PositionLastActivity {
 // legs; see timescale.BlendPositionFold).
 func (h *Handler) buildBlendPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendPositionsByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: blend read failed", "err", err, "account", address)
-		cov.fail("blend")
+	if h.foldUnusable(cov, "blend", address, err) {
 		return nil
 	}
 	return h.lendingLegEntries(ctx, "blend", rows, h.poolTokensFor(ctx, "blend", cov), resolve)
@@ -441,9 +468,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 // source exists for BLNT yet, so venue_label is absent.
 func (h *Handler) buildBLNTPositions(ctx context.Context, r BLNTPositionsReader, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := r.BLNTPositionsByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: blnt read failed", "err", err, "account", address)
-		cov.fail("blnt")
+	if h.foldUnusable(cov, "blnt", address, err) {
 		return nil
 	}
 	return h.lendingLegEntries(ctx, "blnt", rows, nil, resolve)
@@ -516,9 +541,7 @@ func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) 
 // blend_backstop_events carries no LP-token contract id, and the label is the documented backstop token (BLND:USDC LP).
 func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendBackstopSharesByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: blend_backstop read failed", "err", err, "account", address)
-		cov.fail("blend_backstop")
+	if h.foldUnusable(cov, "blend_backstop", address, err) {
 		return nil
 	}
 	poolTokens := h.poolTokensFor(ctx, "blend", cov)
@@ -550,9 +573,7 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 // on the events, so assets is absent; amount is "" when the event history could not be replayed consistently.
 func (h *Handler) buildBLNTBackstopPositions(ctx context.Context, r BLNTBackstopReader, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := r.BLNTBackstopByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: blnt_backstop read failed", "err", err, "account", address)
-		cov.fail("blnt_backstop")
+	if h.foldUnusable(cov, "blnt_backstop", address, err) {
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
@@ -584,9 +605,7 @@ func (h *Handler) buildBLNTBackstopPositions(ctx context.Context, r BLNTBackstop
 // so VenueLabel is left absent (a known best-effort gap).
 func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.PhoenixStakeByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: phoenix_stake read failed", "err", err, "account", address)
-		cov.fail("phoenix_stake")
+	if h.foldUnusable(cov, "phoenix_stake", address, err) {
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
@@ -614,9 +633,7 @@ func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string
 // defindex_flows has only a positional amounts_vec with no asset identity, so Assets is left absent rather than guessed.
 func (h *Handler) buildDefindexPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.DefindexVaultSharesByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: defindex read failed", "err", err, "account", address)
-		cov.fail("defindex")
+	if h.foldUnusable(cov, "defindex", address, err) {
 		return nil
 	}
 	vaults := make([]string, 0, len(rows))
@@ -645,7 +662,7 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string, co
 			AmountSemantics: AmountSemanticsNetShareFlows,
 			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),
 			Basis:           BasisEventDerived,
-			closed:          row.SharesNet == "0",
+			// No closed verdict: a zero net of own deposits and withdrawals still holds any shares received by transfer.
 		})
 	}
 	return out
@@ -655,9 +672,7 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string, co
 // book). "Closed" is Withdrawn, NOT a zero amount: a fresh position with no statement is "" / not_yet_published.
 func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.CreditPositionsByOwner(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: sorocredit read failed", "err", err, "account", address)
-		cov.fail("sorocredit")
+	if h.foldUnusable(cov, "sorocredit", address, err) {
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
@@ -691,9 +706,7 @@ func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov 
 // contract id, the same key aquariusPoolTokens uses, so PoolTokens("aquarius") resolves directly.
 func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.AquariusGaugeByUser(ctx, address)
-	if err != nil {
-		h.Logger.Error("positions: aquarius_rewards read failed", "err", err, "account", address)
-		cov.fail("aquarius_rewards")
+	if h.foldUnusable(cov, "aquarius_rewards", address, err) {
 		return nil
 	}
 	poolTokens := h.poolTokensFor(ctx, "aquarius", cov)
