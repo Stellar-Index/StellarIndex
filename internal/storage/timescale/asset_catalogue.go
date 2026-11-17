@@ -21,6 +21,11 @@ func assetAliasArray(assetKey string) []string {
 	return canonical.AssetAliasStrings(a)
 }
 
+// assetVolume24hFresh bounds a served asset_volume_24h figure by the price snapshot's age: one sweep writes both, so a stalled
+// sweep blanks volume with price instead of serving a frozen "trailing 24h" figure. The lower-bound EXISTS probes beside a live
+// volume ([aliasVolumeLowerBoundSQL], network stats) stay unbounded: an unknown flag must not read as a complete total.
+const assetVolume24hFresh = `computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`
+
 // aliasVolumeLowerBoundSQL is true when any alias form in $1 (an
 // [assetAliasArray]) has trades its served volume excludes as unpriced.
 const aliasVolumeLowerBoundSQL = `EXISTS (SELECT 1 FROM asset_volume_24h u
@@ -442,6 +447,7 @@ const listAssetsBaseSelect = `
 		  -- cheap regardless of the caller's asset filter.
 		  SELECT asset_id, vol_usd, unpriced_trades
 		    FROM asset_volume_24h
+		   WHERE ` + assetVolume24hFresh + `
 		),
 		-- WHERE, ORDER BY and LIMIT run here with only the joins the sort key reads, so the value joins below
 		-- touch LIMIT rows instead of the whole spine.

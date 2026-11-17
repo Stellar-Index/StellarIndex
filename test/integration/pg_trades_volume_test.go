@@ -443,6 +443,56 @@ func TestAssetVolumeCharacterRollup_DemoteSort(t *testing.T) {
 	}
 }
 
+// A stalled listing sweep must not leave a frozen "trailing 24h" volume on /v1/assets: a rollup row older than the price
+// snapshot's ceiling renders as no volume, exactly as the price beside it does.
+func TestAssetListing_StaleVolumeRollupNotServed(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	c.InstallAliasRegistry(nil)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	freshID := mustClassicID(t, "FRSH", realIssuer)
+	staleID := mustClassicID(t, "STAL", realIssuer)
+	seedDirectoryAsset(t, ctx, db, freshID, "FRSH", realIssuer, "frsh-token")
+	seedDirectoryAsset(t, ctx, db, staleID, "STAL", realIssuer, "stal-token")
+	seedRawVolume(t, ctx, db, freshID, "100")
+	seedRawVolume(t, ctx, db, staleID, "999")
+	if _, err := db.ExecContext(ctx,
+		`UPDATE asset_volume_24h SET computed_at = now() - INTERVAL '1 hour', unpriced_trades = 3 WHERE asset_id = $1`, staleID); err != nil {
+		t.Fatalf("age stale row: %v", err)
+	}
+
+	for _, order := range []timescale.AssetsOrder{timescale.AssetsOrderVolume24hUSDDesc, timescale.AssetsOrderObservationCountDesc} {
+		rows, err := store.ListAssetsExt(ctx, timescale.ListAssetsOptions{Order: order, Limit: 100})
+		if err != nil {
+			t.Fatalf("ListAssetsExt(%d): %v", order, err)
+		}
+		got := map[string]timescale.AssetRow{}
+		for _, r := range rows {
+			got[r.AssetID] = r
+		}
+		fresh, okF := got[freshID]
+		stale, okS := got[staleID]
+		if !okF || !okS {
+			t.Fatalf("order %d: both assets must stay listed (fresh=%v stale=%v)", order, okF, okS)
+		}
+		if fresh.Volume24hUSD == nil || *fresh.Volume24hUSD != "100" {
+			t.Errorf("order %d: fresh volume_24h_usd = %v, want 100", order, fresh.Volume24hUSD)
+		}
+		if stale.Volume24hUSD != nil {
+			t.Errorf("order %d: stale volume_24h_usd = %s, want absent (rollup older than its ceiling)", order, *stale.Volume24hUSD)
+		}
+	}
+}
+
 func seedDirectoryAsset(t *testing.T, ctx context.Context, db *sql.DB, assetID, code, issuer, slug string) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx,
