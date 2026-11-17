@@ -9177,7 +9177,8 @@ export interface components {
              * @description Pool-level exclusion. `undecodable_storage`: the captured
              *     storage did not decode to the recognised shape.
              *     `unavailable_state`: a curated Phoenix/Comet pool with no
-             *     current state in the lake (absent or archived), or a registered
+             *     current state in the lake (absent or archived), a registered
+             *     Soroswap pair the lake read did not return, or a registered
              *     Aquarius pool with no reserve snapshot in the trailing 90 days. Either way the legs are
              *     unknown: `legs` is empty and `tvl_usd` is "0.00" — counted,
              *     never guessed.
@@ -22062,7 +22063,7 @@ export interface operations {
                      *           "unpriced_pools": 1,
                      *           "as_of_ledger": 63410221,
                      *           "as_of": "2026-09-04T10:20:00Z",
-                     *           "basis": "sum of current pair reserves (lake instance storage; archived pairs excluded), valued through the served USD price tiers; unpriced legs contribute 0, and a leg whose asset the serving trust gates withhold (directory-flagged issuer, or a market below the substance floor) is counted unpriced rather than valued"
+                     *           "basis": "sum of current pair reserves (lake instance storage; archived or unreadable pairs counted unpriced), valued through the served USD price tiers; unpriced legs contribute 0, and a leg whose asset the serving trust gates withhold (directory-flagged issuer, or a market below the substance floor) is counted unpriced rather than valued"
                      *         },
                      *         "carried_forward": false,
                      *         "pools": [
