@@ -68,8 +68,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// republish a withheld market's price as its reciprocal.
 	//
 	// Scam only, not the substance gate, which would 404 every thin pair on a "compute it yourself"
-	// surface. Kept in the handler because tradesInRangeWithStablecoinFallback also backs /v1/ohlc,
-	// which must stay visible.
+	// surface.
 	if s.writeIfScamWithheld(w, r, base, quote, "vwap") {
 		return
 	}
