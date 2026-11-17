@@ -8710,6 +8710,11 @@ export interface components {
             name: string;
             unit?: string;
             points: components["schemas"]["BespokeSeriesPoint"][];
+            /** @description Entity id (contract C-strkey, asset id or account) the entry is about. */
+            id?: string;
+            kind?: components["schemas"]["BespokeCellKind"];
+            /** @description Resolved display name for id; absent when it did not resolve, so the client shows the id. */
+            display?: string;
         };
         BespokeSeriesPoint: {
             date: string;
@@ -8731,12 +8736,33 @@ export interface components {
              * @description Contributing transfers/events.
              */
             count: number;
+            /** @description Entity id (contract C-strkey, asset id or account) the entry is about. */
+            id?: string;
+            kind?: components["schemas"]["BespokeCellKind"];
+            /** @description Resolved display name for id; absent when it did not resolve, so the client shows the id. */
+            display?: string;
         };
         /** @description A named top-N table; the server formats every cell. */
         BespokeTable: {
             title: string;
             columns: string[];
             rows: string[][];
+            /** @description Optional, parallel to columns. Types each column so the client renders cells without guessing; absent for an untyped table. */
+            column_kinds?: components["schemas"]["BespokeColumnKind"][];
+            /** @description Optional, parallel to rows. Per cell the resolved display text: an asset ticker, a pool's token pair, a vault name, or an amount scaled to human units as an exact decimal string. An empty string means nothing resolved: the client shows the raw cell, and an unscaled amount stays in base units. */
+            display?: string[][];
+        };
+        /**
+         * @description What a bespoke cell or entry holds.
+         * @enum {string}
+         */
+        BespokeCellKind: "text" | "asset" | "pool" | "vault" | "account" | "contract" | "tx" | "amount" | "count" | "time";
+        BespokeColumnKind: {
+            kind: components["schemas"]["BespokeCellKind"];
+            /** @description For an amount column, the index of the same row's asset column whose decimals scale it. */
+            asset_column?: number;
+            /** @description For an amount column with a fixed unit, the decimals that scale it. */
+            decimals?: number;
         };
         ProtocolRow: {
             /** @example blend */

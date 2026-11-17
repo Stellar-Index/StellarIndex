@@ -34,6 +34,9 @@ type BespokeSeries struct {
 	Name   string
 	Unit   string
 	Points []BespokeSeriesPt
+	// ID and Kind name the entity the series is about (Kind is a BespokeKind* value), so the API can resolve a display name.
+	ID   string
+	Kind string
 }
 
 // BespokeSeriesPt is one (date, value) point; Value is a numeric string.
@@ -55,6 +58,9 @@ type BespokeBreakdownRow struct {
 	Label string
 	Value string
 	Count int64
+	// ID and Kind name the entity the slice is about (Kind is a BespokeKind* value), so the API can resolve a display name.
+	ID   string
+	Kind string
 }
 
 // BespokeTable is a named top-N table — column headers + string rows.
@@ -62,6 +68,38 @@ type BespokeTable struct {
 	Title   string
 	Columns []string
 	Rows    [][]string
+	// ColumnKinds is optional and parallel to Columns; nil leaves every cell untyped.
+	ColumnKinds []BespokeColumnKind
+}
+
+// Cell kinds for BespokeColumnKind.Kind and the series/breakdown Kind fields.
+const (
+	BespokeKindText     = "text"
+	BespokeKindAsset    = "asset"
+	BespokeKindPool     = "pool"
+	BespokeKindVault    = "vault"
+	BespokeKindAccount  = "account"
+	BespokeKindContract = "contract"
+	BespokeKindTx       = "tx"
+	BespokeKindAmount   = "amount"
+	BespokeKindCount    = "count"
+	BespokeKindTime     = "time"
+)
+
+// BespokeColumnKind types one table column. An amount column names the same row's asset column (AssetColumn) or a fixed scale
+// (Decimals); with neither, its cells stay base units.
+type BespokeColumnKind struct {
+	Kind        string
+	AssetColumn *int
+	Decimals    *int
+}
+
+// BespokeCol is a BespokeColumnKind of kind with no amount scale.
+func BespokeCol(kind string) BespokeColumnKind { return BespokeColumnKind{Kind: kind} }
+
+// BespokeAmountOf is an amount column scaled by the asset in column assetCol of the same row.
+func BespokeAmountOf(assetCol int) BespokeColumnKind {
+	return BespokeColumnKind{Kind: BespokeKindAmount, AssetColumn: &assetCol}
 }
 
 // BuildProtocolBespoke assembles the bespoke block for source over a trailing windowDays; nil (not an error) for a category with no
@@ -684,7 +722,11 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 	)
 
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Net position by asset", Columns: []string{"Asset", "Net supplied", "Net borrowed", "Events"}},
+		BespokeTable{
+			Title:       fmt.Sprintf("Net flow by asset (%dd)", windowDays),
+			Columns:     []string{"Asset", "Net supplied (supplied − withdrawn)", "Net borrowed (borrowed − repaid)", "Events"},
+			ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindAsset), BespokeAmountOf(0), BespokeAmountOf(0), BespokeCol(BespokeKindCount)},
+		},
 		`SELECT asset,
 		   COALESCE(sum(`+blendSupplyNetExpr+`),0)::text,
 		   COALESCE(sum(`+blendBorrowNetExpr+`),0)::text,
@@ -698,13 +740,21 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 	}
 	if len(tbl.Rows) > 0 {
 		blk.Tables = append(blk.Tables, tbl)
+		blk.Notes = append(blk.Notes, fmt.Sprintf("Net flow by asset is the change over the %dd window, not a position: a negative net supplied means more was withdrawn than supplied in the window, a negative net borrowed means more was repaid than borrowed (flash loans count as borrowed).", windowDays))
 	}
 
 	// Per-pool table is COUNT-only: a pool holds several assets, so a per-pool amount sum (or a
 	// Util% ratio of two) mixes decimals across tokens. Side counts use the kind partition of
 	// lendingSupplySideKinds / lendingBorrowSideKinds in bespoke_lending.go.
 	poolTbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Activity by pool", Columns: []string{"Pool", "Supply-side events", "Borrow-side events", "Users", "Events"}},
+		BespokeTable{
+			Title:   "Activity by pool",
+			Columns: []string{"Pool", "Supply-side events", "Borrow-side events", "Users", "Events"},
+			ColumnKinds: []BespokeColumnKind{
+				BespokeCol(BespokeKindPool), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
+				BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
+			},
+		},
 		`SELECT pool,
 		   count(*) FILTER (WHERE event_kind IN (`+lendingSupplySideKinds+`))::text,
 		   count(*) FILTER (WHERE event_kind IN (`+lendingBorrowSideKinds+`))::text,
@@ -754,7 +804,14 @@ func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, sin
 	)
 
 	atbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Recent auctions", Columns: []string{"When", "Type", "Kind", "User", "Fill %"}},
+		BespokeTable{
+			Title:   "Recent auctions",
+			Columns: []string{"When", "Type", "Kind", "User", "Fill %"},
+			ColumnKinds: []BespokeColumnKind{
+				BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindText),
+				BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindText),
+			},
+		},
 		`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI'), kind_label, event_kind, user_address, fill
 		   FROM (SELECT ts,
 		                CASE auction_type WHEN 0 THEN 'user-liquidation' WHEN 1 THEN 'bad-debt' WHEN 2 THEN 'interest' ELSE auction_type::text END AS kind_label,

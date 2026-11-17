@@ -89,8 +89,8 @@ func TestVaultLabel_RefusesImplausibleText(t *testing.T) {
 		{"", "TWO WORDS", ""},
 		{string(make([]rune, vaultNameMaxRunes+1)), "", ""},
 	} {
-		if got := vaultLabel(c.name, c.symbol); got != c.want {
-			t.Errorf("vaultLabel(%q, %q) = %q, want %q", c.name, c.symbol, got, c.want)
+		if got := VaultLabel(c.name, c.symbol); got != c.want {
+			t.Errorf("VaultLabel(%q, %q) = %q, want %q", c.name, c.symbol, got, c.want)
 		}
 	}
 }

@@ -17979,6 +17979,9 @@ components:
         points:
           type: array
           items: { $ref: "#/components/schemas/BespokeSeriesPoint" }
+        id:      { type: string, description: "Entity id (contract C-strkey, asset id or account) the entry is about." }
+        kind:    { $ref: "#/components/schemas/BespokeCellKind" }
+        display: { type: string, description: "Resolved display name for id; absent when it did not resolve, so the client shows the id." }
       required: [name, points]
 
     BespokeSeriesPoint:
@@ -18005,6 +18008,9 @@ components:
         label: { type: string }
         value: { type: string, description: "Decimal string (ADR-0003)." }
         count: { type: integer, format: int64, description: "Contributing transfers/events." }
+        id:      { type: string, description: "Entity id (contract C-strkey, asset id or account) the entry is about." }
+        kind:    { $ref: "#/components/schemas/BespokeCellKind" }
+        display: { type: string, description: "Resolved display name for id; absent when it did not resolve, so the client shows the id." }
       required: [label, value, count]
 
     BespokeTable:
@@ -18020,7 +18026,37 @@ components:
           items:
             type: array
             items: { type: string }
+        column_kinds:
+          type: array
+          description: Optional, parallel to columns. Types each column so the client renders cells without guessing; absent for an untyped table.
+          items: { $ref: "#/components/schemas/BespokeColumnKind" }
+        display:
+          type: array
+          description: >-
+            Optional, parallel to rows. Per cell the resolved display text: an asset ticker, a pool's token pair, a vault name,
+            or an amount scaled to human units as an exact decimal string. An empty string means nothing resolved: the client
+            shows the raw cell, and an unscaled amount stays in base units.
+          items:
+            type: array
+            items: { type: string }
       required: [title, columns, rows]
+
+    BespokeCellKind:
+      type: string
+      description: What a bespoke cell or entry holds.
+      enum: [text, asset, pool, vault, account, contract, tx, amount, count, time]
+
+    BespokeColumnKind:
+      type: object
+      properties:
+        kind: { $ref: "#/components/schemas/BespokeCellKind" }
+        asset_column:
+          type: integer
+          description: For an amount column, the index of the same row's asset column whose decimals scale it.
+        decimals:
+          type: integer
+          description: For an amount column with a fixed unit, the decimals that scale it.
+      required: [kind]
 
     ProtocolRow:
       type: object
