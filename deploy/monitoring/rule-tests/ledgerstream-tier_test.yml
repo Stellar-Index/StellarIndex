@@ -98,3 +98,39 @@ tests:
       - eval_time: 15m
         alertname: stellarindex_ledgerstream_tier_both_missing
         exp_alerts: []
+
+  # ── cold_degraded: one failed cold-tier open is enough ───────────
+  - interval: 1m
+    name: cold_degraded ticket fires on one failed cold-tier open
+    input_series:
+      - series: 'stellarindex_ledgerstream_stream_path_total{path="cold_degraded"}'
+        values: '0 0 0 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: stellarindex_ledgerstream_cold_degraded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ledgerstream
+              path: cold_degraded
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded
+              summary: "Configured cold LCM tier failed to open — reads are hot-only"
+              description: |
+                A ledgerstream walk could not open the configured cold
+                datastore and fell back to the hot tier alone. Reads still
+                succeed while the hot tier holds the range; a trimmed range
+                will fail with no cold fallback.
+
+  - interval: 1m
+    name: cold_degraded ticket stays silent while only the tiered path moves
+    input_series:
+      - series: 'stellarindex_ledgerstream_stream_path_total{path="cold_degraded"}'
+        values: '0+0x20'
+      - series: 'stellarindex_ledgerstream_stream_path_total{path="tiered"}'
+        values: '0+5x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_ledgerstream_cold_degraded
+        exp_alerts: []

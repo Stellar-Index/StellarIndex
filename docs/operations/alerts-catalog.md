@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 304 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 305 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -388,6 +388,7 @@ Per [ADR-0027](../adr/0027-lcm-cache-tiering.md). R1 reads each LCM from the loc
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_ledgerstream_tier_both_missing` | `increase(ledgerstream_tier_read_total{outcome="both_missing"}[5m])` | > 0, `for: 0m` | page | [ledgerstream-tier-both-missing](runbooks/ingestion.md#stellarindex_ledgerstream_tier_both_missing) |
+| `stellarindex_ledgerstream_cold_degraded` | `increase(ledgerstream_stream_path_total{path="cold_degraded"}[1h])` | > 0, `for: 0m` | ticket | [ledgerstream-cold-degraded](runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded) |
 
 `both_missing` is the cold-tier failure ADR-0027 plans for; the runbook walks rehydrate-from-peer and disable-trim-timer.
 

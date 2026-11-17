@@ -61,3 +61,21 @@ groups:
                  cursor moved backwards onto a trimmed range).
               3. The MinIO endpoint, the AWS endpoint, or both,
                  are mis-configured for this binary.
+
+      # A configured cold tier that fails to open degrades the walk to hot-only with a Warn and no
+      # tier_read_total traffic, so both_missing cannot see it; this is the only signal it emits.
+      - alert: stellarindex_ledgerstream_cold_degraded
+        expr: increase(stellarindex_ledgerstream_stream_path_total{path="cold_degraded"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ledgerstream
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ledgerstream_cold_degraded
+          summary: "Configured cold LCM tier failed to open — reads are hot-only"
+          description: |
+            A ledgerstream walk could not open the configured cold
+            datastore and fell back to the hot tier alone. Reads still
+            succeed while the hot tier holds the range; a trimmed range
+            will fail with no cold fallback.
