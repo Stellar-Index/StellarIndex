@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
@@ -180,5 +181,35 @@ func TestContractArmCountsAStorageDeadlineAsACut(t *testing.T) {
 	}
 	if rows[0].CirculatingSupply != nil {
 		t.Errorf("supply = %v, want none", rows[0].CirculatingSupply)
+	}
+}
+
+type failingTokenDecimals struct{}
+
+func (failingTokenDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
+	return 0, false, errors.New("lake read failed")
+}
+
+// TestFillContractDecimals_AReadingOverridesTheProvisionalVerdict: the generic listing fill marks the scale unresolved
+// when its own read fails; the contract arm's successful reading owns the scale and clears that verdict, so a row never
+// publishes a cap beside `decimals: null`. A read that errors is unread, not a quiet refusal.
+func TestFillContractDecimals_AReadingOverridesTheProvisionalVerdict(t *testing.T) {
+	const id = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	src := map[string]timescale.AssetRow{id: {}}
+
+	s := &Server{TokenDecimals: fixedTokenDecimals(7)}
+	rows := []AssetDetail{{AssetID: id, DecimalsUnresolved: true}}
+	resolved, cut := s.fillContractDecimals(context.Background(), rows, src)
+	if _, ok := resolved[id]; !ok || cut {
+		t.Fatalf("resolved = %v, cut = %v, want the reading resolved", resolved, cut)
+	}
+	if rows[0].DecimalsUnresolved || rwaDecimalsOf(rows[0]) == nil {
+		t.Errorf("DecimalsUnresolved = %v after a successful reading, decimals = %v", rows[0].DecimalsUnresolved, rwaDecimalsOf(rows[0]))
+	}
+
+	s = &Server{TokenDecimals: failingTokenDecimals{}}
+	rows = []AssetDetail{{AssetID: id}}
+	if _, cut := s.fillContractDecimals(context.Background(), rows, src); !cut {
+		t.Error("a failed decimals read was not reported as unread")
 	}
 }
