@@ -51,6 +51,18 @@
       the port genuinely has to stay world-open, say so explicitly with
       ssh_world_open_ack: true.
 
+# An origin lock with no IPv4 edge ranges would leave 80/443 reachable from
+# internal_cidrs only, firewalling off the public API.
+- name: Verify the HTTP origin lock has edge ranges to admit
+  ansible.builtin.assert:
+    that:
+      - not (http_origin_lock_enabled | default(false) | bool)
+        or (cloudflare_ip_ranges | default([]) | reject('search', ':') | list | length > 0)
+      - 22 not in (http_origin_lock_ports | default([]))
+    fail_msg: >-
+      http_origin_lock_enabled needs IPv4 entries in cloudflare_ip_ranges,
+      and http_origin_lock_ports must not include SSH (22).
+
 - name: Verify a world-open SSH port is explicitly acknowledged
   ansible.builtin.assert:
     that:
