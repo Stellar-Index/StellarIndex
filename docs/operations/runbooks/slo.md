@@ -60,7 +60,7 @@ systemctl status stellarindex-aggregator stellarindex-indexer postgresql@15-main
 
 **Fix.**
 
-1. Deploy correlates with onset: `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f binaries=stellarindex-api` (auto-rollback should already have run; see `deploy-workflow.md`).
+1. Deploy correlates with onset: `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f migrations_skip=true` (auto-rollback should already have run; see `deploy-workflow.md`). Omit `-f binaries`: a partial set is refused by the version-skew gate unless the omitted binaries are already on that tag; `migrations_skip=true` is for rollbacks only.
 2. Upstream saturated: go to that runbook.
 3. Process wedged: `systemctl restart stellarindex-api`.
 4. Verify the 5m ratio holds under 1.44 %; the alert resolves only after the 1h window drains.
@@ -159,7 +159,7 @@ HOME=/root clickhouse-client --port 9300 -q "SELECT count() n, round(avg(query_d
 
 **Fix.**
 
-1. Deploy correlates: roll back with `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f binaries=stellarindex-api`.
+1. Deploy correlates: roll back with `gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> -f migrations_skip=true` (whole region set; a partial set is refused by the version-skew gate).
 2. One route dominant: attribute with the quantile above plus a `pg_stat_statements` snapshot (no pprof; `go_goroutines`, `go_memstats_*` on `:3000/metrics`).
 3. Postgres connections saturated: `postgres.md#stellarindex_timescale_connections_saturated`.
 4. Redis slow (BGSAVE blocked, memory): the `cache.md` family.

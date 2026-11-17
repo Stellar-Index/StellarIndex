@@ -259,7 +259,10 @@ ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-30 min" | g
 Fix:
 
 1. The journal line names the contract and the error. It is almost always Postgres: see [postgres.md](postgres.md). The gauge returns to 0 by itself once a retry lands (`gate admission persisted on retry`).
-2. If the indexer was restarted while the gauge was above 0 (journal: `gate admission LOST at shutdown`), re-walk the factory: `stellarindex-ops seed-protocol-contracts -source <source>`, then restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+2. If the indexer was restarted while the gauge was above 0 (journal: `gate admission LOST at shutdown`, its `source=` is the gauge label), restore the lost row per label, then restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)). Every command is a dry run until `-write` is added, and needs `-config`:
+   - `soroswap` (`soroswap_pairs`): `stellarindex-ops seed-soroswap-pairs -config /etc/stellarindex.toml -write` (reads the factory over stellar-rpc, insert-only).
+   - A gated factory source (`blend`, `blnt`, `aquarius`, `comet`, `phoenix`, `spectra`, ...; `protocol_contracts`): `stellarindex-ops seed-protocol-contracts -config /etc/stellarindex.toml -source <label> -write`. The tool rejects any name outside the gated-source registry (`gatedSources` in `internal/pipeline/gated_registry.go`).
+   - `sushiswap_v3_pools` (`sushiswap_v3_pools`): no command rewrites this table. `seed-protocol-contracts -source sushiswap_v3 -write` restores only the `protocol_contracts` row, not the pool's token attributes the decoder seeds from. Escalate; do not close the incident on that command.
 
 ## Related
 
