@@ -14,7 +14,11 @@ Reference + full rules: `migrations/README.md`.
 - [ ] Amounts → **`NUMERIC`** (never `bigint` / `double precision`, ADR-0003). Asset IDs →
       canonical text (`<code>-<issuer>` / `C…` / `native`). Timestamps → `timestamptz` UTC.
 - [ ] Hypertable/CAGG changes go through the Timescale API. **A CAGG without a refresh policy is
-      a silent bug** — add the refresh policy in the same file. **Do not add `drop_after` to
+      a silent bug** — add the refresh policy in the same file. A CAGG created `WITH NO DATA` also
+      needs one `-- REQUIRED-FOLLOWUP: CALL refresh_continuous_aggregate('<view>', '<source start>', now());`
+      header line per view (passes 7 and 10, [rules 11–12](../../migrations/README.md)), because a
+      policy never fills history older than its `start_offset`. Give it an explicit start: a NULL
+      start deletes history a retention drop removed. **Do not add `drop_after` to
       `trades`, `oracle_updates`, `prices_15m` or any coarser price rung** — ADR-0034 keeps the raw
       lake and the long-window served rungs forever, and migrations 0031/0040 removed the policies
       0001/0002/0003 had placed on them. `trades` staying permanent is load-bearing, not a
