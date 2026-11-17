@@ -1056,6 +1056,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	})
 
 	if cfg.API.HoldsFile != "" {
+		if err := holds.Check(cfg.API.HoldsFile); err != nil {
+			return fmt.Errorf("api.holds_file: %w", err)
+		}
 		bgWG.Add(1)
 		go func() {
 			defer bgWG.Done()

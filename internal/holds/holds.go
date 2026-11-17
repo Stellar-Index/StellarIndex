@@ -152,6 +152,22 @@ func Match(holds []Hold, sub Subject) (Hold, bool) {
 	return Hold{}, false
 }
 
+// Check reads and parses path once, for boot: Watch keeps the previous list on a bad file, and at startup there is none,
+// so an invalid file would otherwise start the API with every hold silently lifted. A missing file is no holds.
+func Check(path string) error {
+	doc, err := os.ReadFile(path) //nolint:gosec // operator-supplied path
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("holds: read %s: %w", path, err)
+	}
+	if _, err := Parse(doc); err != nil {
+		return fmt.Errorf("holds: %s: %w", path, err)
+	}
+	return nil
+}
+
 // DefaultReloadInterval replaces a non-positive Watch interval, which would panic time.NewTicker.
 const DefaultReloadInterval = 15 * time.Second
 
