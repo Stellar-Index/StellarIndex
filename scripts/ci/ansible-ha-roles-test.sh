@@ -190,7 +190,7 @@ check("min-replicas-to-write 1" in conf, "redis.conf renders min-replicas-to-wri
 peer = next(t for t in tasks("redis-sentinel/tasks/03-redis-configure.yml") if t.get("name", "").startswith("ask the other Sentinels"))
 check("redis_sentinel_managed" not in str(peer["when"]), "peer-Sentinel query is not skipped on a host without a rendered sentinel.conf")
 
-# firewalls: nft rejects `elements = { }`, which the defaults' IPv4-only CIDR lists used to render.
+# firewalls: nft rejects `elements = { }`, so an address family with no CIDRs must render no element set.
 for role, prefix in (("haproxy", "haproxy"), ("redis-sentinel", "redis")):
     fw_task = next(t for t in tasks(f"{role}/tasks/06-firewall.yml") if "content" in t.get("copy", {}))
     fw = jinja2.Environment(undefined=jinja2.ChainableUndefined).from_string(fw_task["copy"]["content"])

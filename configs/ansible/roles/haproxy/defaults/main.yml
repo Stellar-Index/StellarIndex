@@ -12,8 +12,9 @@ keepalived_vip_prefix_length: 24
 # segment. 51 is the operator default; pick something else if
 # another VRRP service is already running on the LAN.
 keepalived_vrid: 51
-keepalived_initial_state: BACKUP   # MASTER on lb-01, BACKUP on lb-02 (per-host override)
 keepalived_priority: 99            # 100 on lb-01, 99 on lb-02 (per-host override)
+# Seconds a recovered higher-priority LB waits before taking the VIP back.
+keepalived_preempt_delay: 60
 # Vault-supplied. Note: keepalived truncates auth_pass beyond 8
 # bytes silently — keep this <=8 chars to avoid surprises.
 keepalived_vrrp_password: ""

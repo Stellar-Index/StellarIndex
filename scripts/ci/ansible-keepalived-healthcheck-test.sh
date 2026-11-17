@@ -58,6 +58,18 @@ else
   bad "VI_API does not track chk_haproxy_alive and chk_api_pool"
 fi
 
+# A flapping pool probe must not bounce the VIP: preemption is delayed, and
+# keepalived honours preempt_delay only on an instance whose state is BACKUP.
+instance="$(awk '/^vrrp_instance VI_API/{f=1} f{print} f&&/^}/{exit}' "$KEEPALIVED_TPL")"
+defaults="$(dirname "$KEEPALIVED_TPL")/../defaults/main.yml"
+delay="$(sed -n 's/^keepalived_preempt_delay:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$defaults" 2>/dev/null)"
+if grep -qE '^\s*state\s+BACKUP\s*$' <<<"$instance" && grep -qE '^\s*preempt_delay\s+\{\{ keepalived_preempt_delay' <<<"$instance" &&
+   ! grep -qE '^\s*nopreempt' <<<"$instance" && [ "${delay:-0}" -gt 0 ]; then
+  ok "VI_API starts BACKUP with a non-zero preempt_delay (default ${delay}s)"
+else
+  bad "VI_API needs state BACKUP, preempt_delay {{ keepalived_preempt_delay }} and a positive default"
+fi
+
 # The deployed probe script must actually query the stats endpoint and gate
 # on a real backend server being UP, not just curl succeeding.
 task_body="$(sed -n '/dest: \/usr\/local\/bin\/chk_haproxy\.sh/,/^- name:/p' "$KEEPALIVED_TASKS")"

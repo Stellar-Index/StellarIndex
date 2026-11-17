@@ -20,7 +20,11 @@ vrrp_script chk_api_pool {
 }
 
 vrrp_instance VI_API {
-    state {{ keepalived_initial_state }}
+    # Both LBs start BACKUP and priority elects the MASTER: keepalived applies
+    # preempt_delay only to a BACKUP-state instance, and the delay stops a
+    # flapping pool probe from bouncing the VIP back on every recovery.
+    state BACKUP
+    preempt_delay {{ keepalived_preempt_delay | int }}
     interface {{ keepalived_iface }}
     virtual_router_id {{ keepalived_vrid }}
     priority {{ keepalived_priority }}
