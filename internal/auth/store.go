@@ -231,35 +231,9 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	if !mintableTier(tier) {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: tier %q cannot hold a key (want %s, %s or %s)", tier, TierAPIKey, TierSEP10, TierOperator)
 	}
-	if req.MintedBy != nil {
-		scopes, err := ClampToMinter(*req.MintedBy, req.Scopes, req.RateLimitPerMin)
-		if err != nil {
-			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
-		}
-		req.Scopes = scopes
-		expiresAt, err := clampExpiryToMinter(*req.MintedBy, req.ExpiresAt)
-		if err != nil {
-			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
-		}
-		req.ExpiresAt = expiresAt
-	}
-	monthlyQuota := req.MonthlyQuota
-	if monthlyQuota <= 0 {
-		// Resolved here, not in each handler, so no mint path (admin
-		// mint, ops CLI, signup) can issue an unmetered credential to an
-		// identifier whose plan is metered. Fail closed on a read error.
-		inherited, err := s.inheritedMonthlyQuota(ctx, req.Identifier)
-		if err != nil {
-			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: inherit monthly quota: %w", err)
-		}
-		monthlyQuota = inherited
-	}
-	if req.MintedBy != nil {
-		q, err := clampMonthlyQuotaToMinter(*req.MintedBy, req.MonthlyQuota, monthlyQuota)
-		if err != nil {
-			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
-		}
-		monthlyQuota = q
+	req, monthlyQuota, err := s.boundRequest(ctx, req)
+	if err != nil {
+		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
 	}
 
 	keyID, err := generateID(s.randRead, "kid_", 8)
@@ -313,6 +287,41 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: redis set: %w", err)
 	}
 	return rec, plaintext, nil
+}
+
+// boundRequest clamps scopes, expiry and monthly quota to the minter (when there is one) and resolves an unset quota from the identifier's plan.
+func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, int64, error) {
+	if req.MintedBy != nil {
+		scopes, err := ClampToMinter(*req.MintedBy, req.Scopes, req.RateLimitPerMin)
+		if err != nil {
+			return req, 0, err
+		}
+		req.Scopes = scopes
+		expiresAt, err := clampExpiryToMinter(*req.MintedBy, req.ExpiresAt)
+		if err != nil {
+			return req, 0, err
+		}
+		req.ExpiresAt = expiresAt
+	}
+	monthlyQuota := req.MonthlyQuota
+	if monthlyQuota <= 0 {
+		// Resolved here, not in each handler, so no mint path (admin
+		// mint, ops CLI, signup) can issue an unmetered credential to an
+		// identifier whose plan is metered. Fail closed on a read error.
+		inherited, err := s.inheritedMonthlyQuota(ctx, req.Identifier)
+		if err != nil {
+			return req, 0, fmt.Errorf("inherit monthly quota: %w", err)
+		}
+		monthlyQuota = inherited
+	}
+	if req.MintedBy != nil {
+		q, err := clampMonthlyQuotaToMinter(*req.MintedBy, req.MonthlyQuota, monthlyQuota)
+		if err != nil {
+			return req, 0, err
+		}
+		monthlyQuota = q
+	}
+	return req, monthlyQuota, nil
 }
 
 // mintableTier reports whether a minted record may carry t. Anonymous is
