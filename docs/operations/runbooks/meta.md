@@ -240,6 +240,12 @@ As [redis_exporter_down](#stellarindex_redis_exporter_down). The absent arm coun
 
 As [redis_exporter_down](#stellarindex_redis_exporter_down) with `up{job="minio"}`; the scrape target is MinIO itself, unit `minio`, port 9000. Bearer token `/etc/prometheus/minio.token`: a missing file or 401 is the common cause (Prometheus must reload after rotation); regenerate per [credential-rotation.md](../credential-rotation.md#prometheus-bearer-token-regen-inv-0981inv-1144--now-codified). Blinds the galexie-archive, archive-completeness, archive-publish and object-storage families.
 
+## stellarindex_alertmanager_silence_active
+
+**Trigger.** `max(alertmanager_silences{state="active"}) > 0` for 24h, P3. A silence leaves no trace in Prometheus and can mute every page while the deadman heartbeat stays green. Alertmanager's API on r1 has no authentication.
+
+**Check.** `amtool --alertmanager.url=http://localhost:9093 silence query` for matchers, creator and expiry. **Fix.** Expire any silence nobody can account for (`amtool silence expire <id>`); if the creator is not an operator, treat the host as compromised. A planned long silence needs an expiry inside 24h or an explicit ticket.
+
 ## stellarindex_deadmansswitch
 
 **Symptom.** Inverted: it fires constantly by design (`expr: vector(1)`, severity `informational`); the Healthchecks.io check `https://hc-ping.com/<uuid>` pages you on a secondary channel when it STOPS. P1: every other alert is then invisible.

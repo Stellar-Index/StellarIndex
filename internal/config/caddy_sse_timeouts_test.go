@@ -176,10 +176,10 @@ func TestCaddySSETimeoutsCompiled(t *testing.T) {
 }
 
 // caddyAdaptJSON returns the adapted JSON of a Caddyfile as a generic
-// tree, the ansible placeholder rendered first.
+// tree, the ansible jinja rendered first.
 func caddyAdaptJSON(t *testing.T, caddyBin, path string) any {
 	t.Helper()
-	src := strings.ReplaceAll(readCaddyfile(t, path), "{{ caddy_site_addresses }}", "api.stellarindex.io")
+	src := strings.ReplaceAll(readCaddyTemplate(t, path), "{{ caddy_site_addresses }}", "api.stellarindex.io")
 	rendered := filepath.Join(t.TempDir(), "Caddyfile")
 	if err := os.WriteFile(rendered, []byte(src), 0o600); err != nil {
 		t.Fatalf("write rendered caddyfile: %v", err)

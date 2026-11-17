@@ -899,16 +899,11 @@ type KeyCreated struct {
 	// KeyPrefix is the first 12 chars of the plaintext
 	// (`sip_<8hex>`) — safe to display; identifies the key later.
 	KeyPrefix string `json:"key_prefix,omitempty"`
-	// Scopes are the capability scopes the key was minted with
-	// (read / account / dashboard / admin). Absent/empty = full
-	// access — the posture every key minted before scopes shipped
-	// keeps.
+	// Scopes are the capability scopes the key was minted with (read / account / dashboard / admin); absent/empty = full access.
 	Scopes []string `json:"scopes,omitempty"`
+	// ExpiresAt is when the key stops authenticating; nil = never. A key minted by an expiring credential inherits its expiry.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
-
-// Coin + CoinsPage types removed — `/v1/coins` HTTP surface
-// retired (no production consumers). Use the AssetDetail surface
-// from `/v1/assets` instead.
 
 // IssuerListEntry is one issuer-directory row from [Client.Issuers], ranked by total observation count; HomeDomain is empty until SEP-1 resolves `stellar.toml`.
 type IssuerListEntry struct {

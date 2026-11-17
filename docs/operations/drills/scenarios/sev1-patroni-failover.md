@@ -44,7 +44,7 @@ fronts the API only); API and indexer dial the leader address directly. 10:15 UT
 ## Expected response
 
 - **5 min:** acknowledge, open channel, post "API errors elevated after a database node failure; investigating; updates every 15 min", status page *Investigating* on API.
-- **15 min, diagnose:** `curl -sS https://api.stellarindex.io/v1/readyz | jq '.checks[] | select(.name=="postgres")'`.
+- **15 min, diagnose:** `curl -sS https://api.stellarindex.io/v1/readyz | jq '.data.checks[] | select(.name=="postgres")'`.
   Read cluster state from a survivor: `ssh db-02 patronictl -c /etc/patroni/patroni.yml list` and `... history`; confirm one Leader and
   that it was the sync standby (no loss under `synchronous_commit=remote_apply`). Read `postgres_exporter_down` for `db-01` as host loss.
   The ongoing outage is client routing, not Patroni.

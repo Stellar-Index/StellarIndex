@@ -77,11 +77,20 @@ adds WAF, edge rate limiting and bot blocking.
    client_ip_headers CF-Connecting-IP X-Forwarded-For }` block resolves the real
    client IP and forwards it as `X-Forwarded-For: {client_ip}`; the API trusts only
    `127.0.0.1/32`.
-3. Refresh CF's CIDR list in the Caddyfile quarterly or on a CF notice; see
+3. Refresh CF's CIDR list quarterly or on a CF notice: `cloudflare_ip_ranges` in
+   the archival-node role defaults (Caddy's `trusted_proxies` and the nftables
+   origin lock both render from it); see
    [`configs/caddy/README.md` §"Real client IP under
    Cloudflare"](../../configs/caddy/README.md).
-4. (Optional) Cloudflare Origin Cert instead of Let's Encrypt, so CF edge → origin
-   is authenticated.
+4. (Optional) Cloudflare Origin Cert instead of Let's Encrypt. It changes the
+   certificate the origin presents; it does not prove a caller is Cloudflare.
+5. Origin lock: until it is on, anyone who knows the origin IP can reach Caddy on
+   :80/:443 directly and skip the edge WAF and rate limits. Set
+   `http_origin_lock_enabled: true` in the inventory to admit those ports only from
+   `cloudflare_ip_ranges`, `internal_cidrs` and `http_origin_lock_extra_cidrs`.
+   Turn it on only after the `api.` record is proxied (orange cloud) and
+   certificates no longer depend on Let's Encrypt HTTP-01/TLS-ALPN-01 (step 4, or
+   DNS-01); otherwise it takes the API offline or stalls renewal.
 
 ## 5. Healthchecks.io URLs
 

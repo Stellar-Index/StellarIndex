@@ -157,12 +157,13 @@ func lendingPrefixArgs(ps []LendingPrefix) (prefixes, contracts, protocols, head
 }
 
 // lendingMatchedChanges selects the window's post-change images ('state' rows are pre-images) of prefixed keys.
-const lendingMatchedChanges = `FROM stellar.ledger_entry_changes
+// FINAL: a re-derived range keeps its superseded rows until a merge, and those carry another walk's intra_ledger_seq.
+const lendingMatchedChanges = `FROM stellar.ledger_entry_changes FINAL
 	WHERE ledger_seq BETWEEN ? AND ? AND entry_type = 'contract_data' AND change_type != 'state'
 	  AND has(?, substring(key_xdr, 1, 52)) AND arrayExists(p -> startsWith(key_xdr, p), ?)`
 
-// lendingStateInsert writes each matched key's last change per hour, server-side. Duplicate lake rows are
-// byte-identical, so argMax needs no FINAL; a window that splits an hour leaves two rows the table's version collapses.
+// lendingStateInsert writes each matched key's last change per hour, server-side. A window that splits an hour
+// leaves two rows the table's version collapses.
 const lendingStateInsert = `INSERT INTO stellar.lending_state_hourly
 	(contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
 	SELECT arrayElement(?, i), arrayElement(?, i), key_xdr, hour, last.1, last.2, last.3, last.4
@@ -200,7 +201,10 @@ func DeriveLendingWindow(ctx context.Context, addr string, lo, hi uint32, ps []L
 		return 0, err
 	}
 	defer func() { _ = conn.Close() }()
-	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"max_execution_time": 3600}))
+	// A row's identity starts with ledger_seq, the partition key, so FINAL never has to merge across partitions.
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": 3600, "do_not_merge_across_partitions_select_final": 1,
+	}))
 	// Counted before the read: rows only arrive, so the insert sees at least this coverage.
 	var txLedgers uint64
 	if err := conn.QueryRow(ctx, `SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes
@@ -251,7 +255,7 @@ type LendingProof struct {
 
 // lendingProofQuery compares, per prefixed key, the state at the watermark with its latest history row. A key the
 // current table shows at or below the watermark is taken from there; one changed since is re-folded from the
-// entry changes up to the watermark. Duplicate history rows are collapsed by FINAL, duplicate changes are identical.
+// entry changes up to the watermark. FINAL collapses duplicate history rows and superseded entry changes.
 const lendingProofQuery = `WITH cur AS (
 		SELECT key_xdr, entry_xdr, ledger_seq FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND has(?, substring(key_xdr, 1, 52)) AND arrayExists(p -> startsWith(key_xdr, p), ?)
@@ -261,7 +265,7 @@ const lendingProofQuery = `WITH cur AS (
 		SELECT key_xdr AS k, entry_xdr AS e FROM cur WHERE ledger_seq <= ?
 		UNION ALL
 		SELECT key_xdr AS k, argMax(entry_xdr, (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS e
-		FROM stellar.ledger_entry_changes
+		FROM stellar.ledger_entry_changes FINAL
 		WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'
 		  AND key_xdr IN (SELECT key_xdr FROM cur WHERE ledger_seq > ?)
 		GROUP BY key_xdr

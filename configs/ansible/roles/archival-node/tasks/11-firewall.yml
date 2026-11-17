@@ -1,7 +1,8 @@
 ---
-# nftables firewall. Public interface: only SSH + stellar-core SCP
-# peer port. Everything else: rejected. Internal services exposed
-# only to internal_cidrs.
+# nftables firewall. Public interface: SSH (allowed_ssh_cidrs), Caddy
+# 80/443 (Cloudflare edge only when http_origin_lock_enabled) and the
+# stellar-core SCP peer port. Everything else: rejected. Internal
+# services exposed only to internal_cidrs.
 #
 # Uses the nftables package + a templated ruleset.
 

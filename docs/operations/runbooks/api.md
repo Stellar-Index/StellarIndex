@@ -93,8 +93,10 @@ One dominant route = handler bug; every route = shared dependency. `postgres.ok 
 
    ```sh
    gh workflow run deploy.yml -f region=r1 -f version=<previous-tag> \
-     -f binaries=stellarindex-api
+     -f migrations_skip=true
    ```
+
+   The default `binaries` is the whole region set. Naming fewer is refused by the version-skew gate unless the omitted binaries are already on the target tag. `migrations_skip=true` is required on a rollback (the deployed schema is newer than the tag's migration files; the previous binary runs against the forward schema), and is wrong on a forward deploy. Do not use `backup_freshness_skip` as a workaround.
 
    Manual fallback ([release-process.md](../release-process.md) -> Rollback): swap back to `/usr/local/bin/stellarindex-api.prev-<previous-tag>` and restart. Verify `/v1/readyz` `status=ok` and `/v1/version`.
 2. Handler bug, no deploy: gate the endpoint at Caddy (above the catch-all `reverse_proxy` in `/etc/caddy/Caddyfile`; codify in `configs/caddy/Caddyfile.api` in the fix PR and remove after the fixed deploy). A middleware panic cannot be gated; roll back.
@@ -162,7 +164,7 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 
 **Likely causes.**
 
-- Bad release: the binary fails `config.Validate()` and exits; systemd parks the unit `failed` after `StartLimitBurst=10` in 5 min.
+- Bad release: the binary fails `config.Validate()` and exits; systemd parks the unit `failed` after `StartLimitBurst=100` in 15 min (about 8-10 min of restarts).
 - Credential or config rotation without a restart (`/etc/stellarindex.toml`, `/etc/default/stellarindex`).
 - Stale `/etc/caddy/MAINTENANCE_MODE`, Caddy, Cloudflare or DNS: customers are down while `up==1` and this does NOT fire.
 - Whole host down: expect `stellarindex_deadmansswitch` instead.
@@ -173,8 +175,10 @@ curl -sS http://127.0.0.1:3000/v1/readyz | jq '.data.status, .data.checks'
 2. Release is the cause: roll back ([release-process.md](../release-process.md) -> Rollback).
 
    ```sh
-   gh workflow run deploy.yml -f region=r1 -f version=<prev-tag> -f binaries=stellarindex-api
+   gh workflow run deploy.yml -f region=r1 -f version=<prev-tag> -f migrations_skip=true
    ```
+
+   Same flags and skew-gate rules as the rollback above; see [rollback.md](../rollback.md).
 
    Manual fallback (a brief full outage; single instance):
 
@@ -425,7 +429,7 @@ Fix:
 
 **What.** `stellar.entry_history_watermark` has no row for the index (or the table is missing). Reads gated on it (contract activity walk, contract stats, sponsorships, entry and signer history) serve their scan or lower-bound fallback.
 
-**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -genesis -full`; `contract_instance_changes` → `ch-instance-backfill`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`; `lending_state` → lending-state.timer (`ch-entry-history -lending-only`). The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
+**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -full -write`; `contract_instance_changes` → `ch-instance-backfill -full -write`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`; `lending_state` → lending-state.timer (`ch-entry-history -lending-only`). The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
 
 ## stellarindex_customer_webhook_delivery_failing
 
@@ -653,7 +657,7 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_registration_table_growing
 
-**Trigger.** `max(stellarindex_accounts_rows) - min(min_over_time((stellarindex_accounts_rows > 0)[6h:5m])) > 500` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
+**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
 
 **Check.** `stellarindex_api_keys_rows` moves in step; request rate and distinct client addresses on `/v1/register` in the API log. **Likely causes.** Rotating addresses (IPv6 /48s, proxy pools) each staying under the per-IP sign-up cap; or a real traffic spike. **Fix.** Limit the source ranges at the edge. Deleting the rows is a judgement call per account: they are real accounts with live keys. **Escalate:** growth continues past an edge block.
 
@@ -741,6 +745,18 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 5. Do NOT shorten the dwell time or silence while Redis is down.
 
 **Escalate:** none; related [admin_audit_write_failing](api.md#stellarindex_admin_audit_write_failing), [metrics-registry-absent](meta.md#stellarindex_metrics_registry_absent).
+
+## stellarindex_passkey_credential_added_burst
+
+**Trigger.** `sum(increase(stellarindex_passkey_credential_changes_total{change="added"}[1h])) > 10` for 5m, P3. Passkeys were added to many dashboard accounts at once, the signature of stolen sessions made durable.
+
+**Check.** `SELECT ts, account_id, ip, user_agent FROM audit_log WHERE action = 'passkey.register' AND ts > now() - interval '2 hours' ORDER BY ts DESC;` and look for shared addresses or user agents. **Fix.** Delete the unrecognised credentials, revoke the sessions of the affected accounts, and tell the owners. **Escalate:** the same source keeps adding passkeys after a revoke.
+
+## stellarindex_passkey_ceremony_replay
+
+**Trigger.** `sum(increase(stellarindex_passkey_login_refusals_total{reason="ceremony_replay"}[1h])) > 0` for 5m, P3. `POST /v1/auth/passkey/finish-login` refused a request that reused an already-consumed ceremony. A captured request was resent; clients do not do this.
+
+**Check.** The `passkey.login_replay` rows in `audit_log` and the API log name the client address. **Fix.** Block the address at the edge if it repeats. **Escalate:** the replayed assertions are for accounts whose sessions were also reported stolen.
 
 ## stellarindex_passkey_clone_warning
 

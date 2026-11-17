@@ -593,3 +593,32 @@ tests:
           runs. Do NOT restart the indexer until this clears: after a
           restart the creation event is behind the cursor, the contract
           is no longer gated in, and its events are dropped as foreign.
+- interval: 1m
+  name: a gate admission write failure tickets after the process that made it is gone
+  input_series:
+  - series: prometheus_tsdb_lowest_timestamp_seconds
+    values: 0x400
+  - series: stellarindex_gate_admission_persist_failures_total{source="blend"}
+    values: _x200 1x200
+  alert_rule_test:
+  - eval_time: 3h
+    alertname: stellarindex_gate_admission_persist_failed
+    exp_alerts: []
+  - eval_time: 3h40m
+    alertname: stellarindex_gate_admission_persist_failed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: ingestion
+        source: blend
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_gate_admission_persist_failed
+        summary: "Gate admission write for blend failed in the last 2h"
+        description: |
+          A factory child's gate admission failed to write for
+          blend. If the indexer restarted since, the
+          admission may be lost and the contract's events are dropped as
+          foreign. Check the journal for `gate admission LOST at
+          shutdown`, then re-walk the factory with
+          `stellarindex-ops seed-protocol-contracts`.

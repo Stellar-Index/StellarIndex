@@ -141,11 +141,11 @@ type caddyCompiledRoute struct {
 }
 
 // caddyAdapt runs `caddy adapt` over a Caddyfile and returns srv0's
-// routes flattened into evaluation order. The ansible template's one
-// jinja placeholder is rendered first so the adapter can parse it.
+// routes flattened into evaluation order. The ansible template's jinja
+// is rendered first so the adapter can parse it.
 func caddyAdapt(t *testing.T, caddyBin, path string) []caddyCompiledRoute {
 	t.Helper()
-	src := strings.ReplaceAll(readCaddyfile(t, path), "{{ caddy_site_addresses }}", "api.stellarindex.io")
+	src := strings.ReplaceAll(readCaddyTemplate(t, path), "{{ caddy_site_addresses }}", "api.stellarindex.io")
 	rendered := filepath.Join(t.TempDir(), "Caddyfile")
 	if err := os.WriteFile(rendered, []byte(src), 0o600); err != nil {
 		t.Fatalf("write rendered caddyfile: %v", err)

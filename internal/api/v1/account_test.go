@@ -206,6 +206,11 @@ func TestAccountKeys_ErrorStatuses(t *testing.T) {
 			"create when the store fails", &fakeAccountStore{err: errors.New("redis down")},
 			http.MethodPost, `{"label":"x"}`, http.StatusInternalServerError, 1,
 		},
+		{
+			"create when the mint exceeds the caller",
+			&fakeAccountStore{err: fmt.Errorf("auth: Create: %w: expires_at later", auth.ErrMintExceedsCaller)},
+			http.MethodPost, `{"label":"x"}`, http.StatusForbidden, 1,
+		},
 		{"list without a store", nil, http.MethodGet, "", http.StatusServiceUnavailable, 0},
 		{
 			"list when the store fails", &fakeAccountStore{listErr: errors.New("redis blip")},

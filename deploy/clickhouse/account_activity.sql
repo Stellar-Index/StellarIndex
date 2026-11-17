@@ -30,10 +30,11 @@
 -- ║ the account-history queries can return for the account, in ANY role.  ║
 -- ║ Soroban/SAC token movements can postdate a classic account's own      ║
 -- ║ sourced activity — the account then appears ONLY as a non-source      ║
--- ║ participant. That is why THREE MVs feed this table: they fire on      ║
+-- ║ participant. That is why FOUR MVs feed this table: they fire on       ║
 -- ║ inserts to the SAME tables that feed the readers' key sources         ║
 -- ║ (operations → ops_by_source ops arm, operation_participants,          ║
--- ║ transactions → ops_by_source tx-sentinel arm), so any row that can    ║
+-- ║ transactions → ops_by_source tx-sentinel arm for the source AND the   ║
+-- ║ fee-bump payer), so any row that can                                  ║
 -- ║ surface also raised the watermark to at least its own ledger — an     ║
 -- ║ EXACT upper bound by construction, immune to drift in participant     ║
 -- ║ extraction. A too-HIGH watermark only costs scan range; a too-LOW     ║
@@ -58,7 +59,7 @@
 -- The reader degrades gracefully (no row → unbounded scan), but Step 2 must
 -- complete BEFORE the reading binary deploys: see the Step-2 hazard.
 
--- ── Step 1: table + the three MVs ───────────────────────────────────────────
+-- ── Step 1: table + the four MVs ────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS stellar.account_activity
 (
@@ -206,8 +207,8 @@ GROUP BY account_id;
 -- What it checks, per window: for a hash sample of the accounts ACTIVE IN
 -- THAT WINDOW (1 in AA_MOD, default 64; AA_MOD=1 is exhaustive and needs
 -- the memory to group every account), the watermark is >= the account's
--- max ledger in the window, read from the same three tables the MVs and
--- the readers' key sources are fed from. A MISSING watermark row counts
+-- max ledger in the window, read from the same columns the four MVs and
+-- the readers' key sources are fed from (fee_account included). A MISSING watermark row counts
 -- too (wm = 0): after a complete Step 2 every account has one. Too-high is
 -- fine; ANY too-low row is a data-hiding bug.
 --
@@ -251,6 +252,10 @@ GROUP BY account_id;
 --             WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
 --               AND cityHash64(source_account) % $AA_MOD = 0
 --             UNION ALL
+--             SELECT fee_account AS acct, ledger_seq AS l, 0 AS src FROM stellar.transactions
+--             WHERE fee_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--               AND cityHash64(fee_account) % $AA_MOD = 0
+--             UNION ALL
 --             SELECT account AS acct, ledger_seq AS l, 0 AS src FROM stellar.operation_participants
 --             WHERE ledger_seq >= $W AND ledger_seq < $((W + 2000000))
 --               AND cityHash64(account) % $AA_MOD = 0
@@ -283,5 +288,6 @@ GROUP BY account_id;
 -- idle-account pages regress to the tip-walk latency:
 --   DROP TABLE IF EXISTS stellar.account_activity_ops_mv;
 --   DROP TABLE IF EXISTS stellar.account_activity_tx_mv;
+--   DROP TABLE IF EXISTS stellar.account_activity_feepayer_mv;
 --   DROP TABLE IF EXISTS stellar.account_activity_participants_mv;
 --   DROP TABLE IF EXISTS stellar.account_activity SYNC;

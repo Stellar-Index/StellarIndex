@@ -412,9 +412,9 @@ func TestAccountActivityRunbook_Step3IsBounded(t *testing.T) {
 			t.Errorf("Step-3 read of stellar.%s is not scoped to the window's ledger range:\n%s", table, arm)
 		}
 	}
-	if sources != 3 {
-		t.Errorf("Step-3 verify reads %d lake source tables, want 3 (operations, transactions, "+
-			"operation_participants — the MV sources; never narrow the set)", sources)
+	if sources != 4 {
+		t.Errorf("Step-3 verify has %d lake source arms, want 4, one per feeding view (operations, transactions by "+
+			"source, transactions by fee payer, operation_participants); never narrow the set", sources)
 	}
 	for _, w := range []string{"SETTINGS max_threads = 4, max_memory_usage = 8000000000", "cityHash64(account_id) % $AA_MOD = 0"} {
 		if !strings.Contains(section, w) {

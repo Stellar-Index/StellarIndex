@@ -85,11 +85,13 @@ The page has two incident feeds, and only one is editorial:
   (`PrometheusStatusBackend.Incidents` in `internal/api/v1/status.go`)
   queries `ALERTS{alertstate="firing"}` (minus the dead-man's switch)
   and publishes up to 16 alerts verbatim: the raw `alertname`, its
-  severity (normalised to `page|ticket|informational|unknown`) and its
-  `runbook_url`. The page renders them under active incidents with a
-  Runbook link. Any alert that fires reaches customers on the next poll
-  (30 s, behind a 10 s edge cache) — write alert names and runbook
-  URLs as public text.
+  severity (normalised to `page|ticket|informational|unknown`) and a
+  `runbook_url` read from the `ALERTS` series labels. The repo's rules carry
+  `runbook_url` as an annotation, which `ALERTS` does not carry, so the field
+  is empty today. Any alert that fires reaches customers on the next poll
+  (30 s, behind a 10 s edge cache), including alerts whose firing state
+  means a protection is failing open (`*_fail_open`, `*_failing_open`):
+  treat every alert name as public text.
 - **Declared incidents — editorial.** SEV declarations go through the
   SEV playbook to the on-call, who writes the incident file
   (`internal/incidents/data/`) that `/v1/incidents` serves as the

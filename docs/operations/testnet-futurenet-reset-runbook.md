@@ -26,9 +26,14 @@ live tip. Require the prev_hash break or a human-confirmed reset.
 
 ## Halt
 
+Every command below is destructive and the same shell could be on r1 (mainnet, never reset). Run them only on the test-net VM, reached through the jump host (`scripts/dev/region-binaries.tsv`: testnet `192.168.122.10`, futurenet `192.168.122.20`). First confirm where you are: `hostname -I` shows that VM's address, and r1's `136.243.90.96` is NOT in the output. The passphrase is unchanged across a reset, so it cannot tell the networks apart.
+
 ```sh
-systemctl stop stellarindex-indexer galexie cap67-movements.service
+systemctl stop stellarindex-indexer galexie cap67-movements.service stellarindex-api stellarindex-sla-probe
+systemctl list-units 'stellarindex-*' 'cap67-*' --state=active   # nothing may still write or read the DBs
 ```
+
+The aggregator is off on testnet and absent on futurenet; stop it if the listing shows it active.
 
 ## Wipe all three stores and every watermark
 
