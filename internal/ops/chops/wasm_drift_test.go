@@ -17,10 +17,12 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
@@ -121,7 +123,7 @@ func TestRunWasmDrift_flagsUnauditedHashOnFactoryChild(t *testing.T) {
 		hash64('f'): {Sources: []string{blend.SourceName}, Role: "factory"},
 	}
 
-	rep, err := runWasmDrift(context.Background(), lake, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100)
+	rep, err := runWasmDrift(context.Background(), lake, config.OracleConfig{}, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +165,7 @@ func TestRunWasmDrift_hashAuditedForAnotherSourceIsDrift(t *testing.T) {
 		hash64('c'): {Sources: []string{"comet"}, Role: "pool"},
 		hash64('f'): {Sources: []string{blend.SourceName}, Role: "factory"},
 	}
-	rep, err := runWasmDrift(context.Background(), lake, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100)
+	rep, err := runWasmDrift(context.Background(), lake, config.OracleConfig{}, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +179,7 @@ func TestRunWasmDrift_hashAuditedForAnotherSourceIsDrift(t *testing.T) {
 func TestRunWasmDrift_sourceWithoutAuditLogIsUnauditedNotDrift(t *testing.T) {
 	lake := &fakeDriftLake{}
 	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{blend.SourceName}}}
-	rep, err := runWasmDrift(context.Background(), lake, manifest, []string{"sushiswap_v3", "upshift"}, 70_000_000)
+	rep, err := runWasmDrift(context.Background(), lake, config.OracleConfig{}, manifest, []string{"sushiswap_v3", "upshift"}, 70_000_000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +196,7 @@ func TestRunWasmDrift_sourceWithoutAuditLogIsUnauditedNotDrift(t *testing.T) {
 func TestRunWasmDrift_emptyFactoryWalkFailsClosed(t *testing.T) {
 	lake := &fakeDriftLake{}
 	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{blend.SourceName}}}
-	if _, err := runWasmDrift(context.Background(), lake, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100); err == nil {
+	if _, err := runWasmDrift(context.Background(), lake, config.OracleConfig{}, manifest, []string{blend.SourceName}, blend.FactoryGenesisLedger+100); err == nil {
 		t.Fatal("factory walk that found no children returned no error")
 	}
 }
@@ -207,7 +209,7 @@ func TestRunWasmDrift_lakeErrorAborts(t *testing.T) {
 		lake.errs[c] = boom
 	}
 	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{"comet"}}}
-	if _, err := runWasmDrift(context.Background(), lake, manifest, []string{"comet"}, 70_000_000); !errors.Is(err, boom) {
+	if _, err := runWasmDrift(context.Background(), lake, config.OracleConfig{}, manifest, []string{"comet"}, 70_000_000); !errors.Is(err, boom) {
 		t.Fatalf("err=%v, want wrapped %v", err, boom)
 	}
 }
@@ -217,17 +219,63 @@ func TestWasmDriftSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := pipeline.GatedSourceNames()
-	slices.Sort(want)
-	if !slices.Equal(all, want) {
-		t.Errorf("all=%v want %v", all, want)
+	for _, s := range pipeline.GatedSourceNames() {
+		if !slices.Contains(all, s) {
+			t.Errorf("gated source %q not drift-checked", s)
+		}
 	}
-	one, err := wasmDriftSources("phoenix")
-	if err != nil || !slices.Equal(one, []string{"phoenix"}) {
-		t.Errorf("-source phoenix: %v %v", one, err)
+	for s, m := range external.Registry {
+		if m.Backfill == external.BackfillPerWASM && !slices.Contains(all, s) {
+			t.Errorf("BackfillPerWASM source %q not drift-checked: the replay gate admits its contracts on an audit nothing re-checks", s)
+		}
 	}
-	if _, err := wasmDriftSources("soroswap"); err == nil {
-		t.Error("-source soroswap (not gated) accepted")
+	if !slices.IsSorted(all) {
+		t.Errorf("not sorted: %v", all)
+	}
+	one, err := wasmDriftSources("reflector-dex")
+	if err != nil || !slices.Equal(one, []string{"reflector-dex"}) {
+		t.Errorf("-source reflector-dex: %v %v", one, err)
+	}
+	if _, err := wasmDriftSources("binance"); err == nil {
+		t.Error("-source binance (off-chain) accepted")
+	}
+}
+
+// Every drift-checked source must have a contract resolver, or the run aborts on it.
+func TestWasmDriftSources_everySourceResolves(t *testing.T) {
+	all, err := wasmDriftSources("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range all {
+		_, err := wasmaudit.ContractSet(context.Background(), wasmaudit.Deps{Events: &fakeDriftLake{}}, s, 70_000_000)
+		if err != nil && strings.Contains(err.Error(), "no contract resolver") {
+			t.Errorf("%s: %v", s, err)
+		}
+	}
+}
+
+// An oracle contract upgraded in place to an unaudited hash is drift.
+func TestRunWasmDrift_oracleContractDrift(t *testing.T) {
+	c := driftContract(t, 0x55)
+	lake := &fakeDriftLake{hashes: map[string]string{c: hash64('d')}}
+	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{"reflector-dex"}}}
+	oracle := config.OracleConfig{}
+	oracle.Reflector.DEXContract = c
+	rep, err := runWasmDrift(context.Background(), lake, oracle, manifest, []string{"reflector-dex"}, 70_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := verdicts(rep)[c]; v != wasmDriftDrift {
+		t.Fatalf("reflector-dex on an unaudited hash: verdict %q, want %q", v, wasmDriftDrift)
+	}
+}
+
+// An audited oracle source with no configured contract fails the run instead of reporting 0 checked.
+func TestRunWasmDrift_unconfiguredOracleFailsClosed(t *testing.T) {
+	manifest := map[string]wasmaudit.Entry{hash64('a'): {Sources: []string{"reflector-dex"}}}
+	if _, err := runWasmDrift(context.Background(), &fakeDriftLake{}, config.OracleConfig{}, manifest, []string{"reflector-dex"}, 70_000_000); err == nil {
+		t.Fatal("reflector-dex with no configured contract returned no error")
 	}
 }
 

@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
@@ -60,14 +62,14 @@ func (r wasmDriftReport) drifting() int {
 	return n
 }
 
-// wasmDrift is the `wasm-drift` subcommand: every contract of a gated source with an audit log must run a hash that log string-checked, as
+// wasmDrift is the `wasm-drift` subcommand: every contract of a gated or per-WASM source with an audit log must run a hash that log string-checked, as
 // contracts upgrade in place. Usage: wasm-drift [-config PATH] [-ch-addr H:P] [-source NAME] [-textfile PATH]. Read-only; exit code =
 // drifting contracts (capped 255).
 func wasmDrift(args []string) error {
 	fs := flag.NewFlagSet("wasm-drift", flag.ContinueOnError)
-	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr")
+	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — the oracle contracts, and the default -ch-addr")
 	chAddr := fs.String("ch-addr", "", "ClickHouse native address (default: cfg.storage.clickhouse_addr from -config, falling back to "+defaultCHAddr+")")
-	only := fs.String("source", "", "check one gated source only (default: every gated source)")
+	only := fs.String("source", "", "check one source only (default: every gated and per-WASM source)")
 	textfile := fs.String("textfile", "", "node_exporter textfile path, e.g. /var/lib/node_exporter/textfile_collector/wasm_drift.prom; empty = none")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -80,6 +82,10 @@ func wasmDrift(args []string) error {
 	sources, err := wasmDriftSources(*only)
 	if err != nil {
 		return err
+	}
+	cfg, err := config.LoadWithEnv(*cfgPath)
+	if err != nil {
+		return fmt.Errorf("wasm-drift: load %s (oracle contracts are read from it): %w", *cfgPath, err)
 	}
 
 	addr := resolveCHAddr(*chAddr, *cfgPath)
@@ -97,7 +103,7 @@ func wasmDrift(args []string) error {
 	defer func() { _ = reader.Close() }()
 
 	lake := chWasmDriftLake{ReconcileEventStreamer: clickhouse.ReconcileEventStreamer{Addr: addr}, ExplorerReader: reader}
-	rep, err := runWasmDrift(ctx, lake, manifest, sources, tip)
+	rep, err := runWasmDrift(ctx, lake, cfg.Oracle, manifest, sources, tip)
 	if err != nil {
 		return err
 	}
@@ -119,9 +125,22 @@ func wasmDriftExit(drifting int) error {
 	return &opsutil.ExitCodeError{Code: min(drifting, 255)}
 }
 
-// wasmDriftSources resolves -source against the gated registry, sorted.
+// wasmDriftSources resolves -source against every factory-gated source and every BackfillPerWASM source, sorted: each contract a replay
+// gate admits on an audit must be drift-checked against it.
 func wasmDriftSources(only string) ([]string, error) {
-	names := pipeline.GatedSourceNames()
+	set := make(map[string]struct{})
+	for _, n := range pipeline.GatedSourceNames() {
+		set[n] = struct{}{}
+	}
+	for n, m := range external.Registry {
+		if m.Backfill == external.BackfillPerWASM {
+			set[n] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(set))
+	for n := range set {
+		names = append(names, n)
+	}
 	sort.Strings(names)
 	if only == "" {
 		return names, nil
@@ -131,12 +150,12 @@ func wasmDriftSources(only string) ([]string, error) {
 			return []string{only}, nil
 		}
 	}
-	return nil, fmt.Errorf("wasm-drift: -source %q is not a gated source (one of: %s)", only, strings.Join(names, ", "))
+	return nil, fmt.Errorf("wasm-drift: -source %q is not a gated or per-WASM source (one of: %s)", only, strings.Join(names, ", "))
 }
 
 // runWasmDrift checks every contract of every audited source against the manifest; a source with no manifest entry is reported unaudited,
 // not flagged per contract.
-func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]wasmaudit.Entry, sources []string, tip uint32) (wasmDriftReport, error) {
+func runWasmDrift(ctx context.Context, lake wasmDriftLake, oracle config.OracleConfig, manifest map[string]wasmaudit.Entry, sources []string, tip uint32) (wasmDriftReport, error) {
 	audited := make(map[string]bool)
 	for _, e := range manifest {
 		for _, src := range e.Sources {
@@ -149,9 +168,13 @@ func runWasmDrift(ctx context.Context, lake wasmDriftLake, manifest map[string]w
 			rep.unaudited = append(rep.unaudited, source)
 			continue
 		}
-		contracts, err := wasmaudit.ContractSet(ctx, wasmaudit.Deps{Events: lake}, source, tip)
+		contracts, err := wasmaudit.ContractSet(ctx, wasmaudit.Deps{Events: lake, Oracle: oracle}, source, tip)
 		if err != nil {
 			return rep, fmt.Errorf("wasm-drift: %s contract set: %w", source, err)
+		}
+		if len(contracts) == 0 {
+			// An oracle source with no contract in -config would otherwise pass as "0 checked".
+			return rep, fmt.Errorf("wasm-drift: %s resolved no contracts (oracle contract unset in -config?)", source)
 		}
 		for _, c := range contracts {
 			row, err := wasmDriftVerdict(ctx, lake, manifest, source, c)
