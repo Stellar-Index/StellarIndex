@@ -182,13 +182,17 @@ func TestLendingSQL_Shape(t *testing.T) {
 			"stellar.lending_state_hourly FINAL",
 			"stellar.ledger_entries_current FINAL",
 		}},
-		"proof": {lendingProofQuery, 8, []string{
-			"countIf(NOT has(h.ahead, x.hr) AND (h.present = 0 OR h.e != x.e)), countIf(has(h.ahead, x.hr))",
-			"argMaxIf(entry_xdr, hour, ledger_seq <= ?)",
+		"proof keys": {lendingProofKeysQuery(make([]LendingPrefix, 3)), 10, []string{
+			"WHERE entry_type = 'contract_data' AND (startsWith(key_xdr, ?) OR startsWith(key_xdr, ?) OR startsWith(key_xdr, ?))",
+			"argMaxIf(entry_xdr, hour, ledger_seq <= ?) AS e, argMaxIf(ledger_seq, hour, ledger_seq <= ?) AS l",
 			"groupArrayIf(hour, ledger_seq > ?)",
 			"stellar.ledger_entries_current FINAL",
 			"stellar.lending_state_hourly FINAL",
-			"WHERE ledger_seq <= ? AND entry_type = 'contract_data' AND change_type != 'state'",
+		}},
+		"proof last changes": {lendingLastChangesQuery, 3, []string{
+			"stellar.ledger_entry_changes FINAL",
+			"WHERE ledger_seq BETWEEN ? AND ? AND entry_type = 'contract_data' AND change_type != 'state' AND has(?, key_xdr)",
+			"(ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)",
 		}},
 	} {
 		if got := strings.Count(tc.q, "?"); got != tc.binds {

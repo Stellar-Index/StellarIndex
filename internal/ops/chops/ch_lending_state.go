@@ -6,7 +6,9 @@ import (
 	"io"
 	"math"
 	"os"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -219,21 +221,203 @@ func (r lendingRun) proveLendingState(ctx context.Context, out io.Writer) error 
 	if err != nil {
 		return err
 	}
-	p, err := clickhouse.ProveLendingState(ctx, r.chAddr, ps, wm)
+	p, err := r.proveLendingAt(ctx, reg, ps, wm)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "lending_state @%d: %d keys, %d mismatched, %d not compared (history row past the watermark)\n",
-		wm, p.Keys, p.Mismatched, p.Ahead); err != nil {
+	if err := p.report(out, wm); err != nil {
 		return err
 	}
-	if p.Mismatched > 0 {
-		return fmt.Errorf("%s: %d of %d keys disagree with the lake at %d", lendingJob, p.Mismatched, p.Keys, wm)
+	if p.mismatched > 0 {
+		return fmt.Errorf("%s: %d of %d keys disagree with the lake at %d", lendingJob, p.mismatched, p.keys, wm)
 	}
 	if err := proveLendingKeys(ctx, r.chAddr, reg, ps, out); err != nil {
 		return err
 	}
-	return r.proveLendingCounts(ctx, ps, wm, out)
+	if err := r.proveLendingCounts(ctx, ps, wm, out); err != nil {
+		return err
+	}
+	if n := len(p.deep) + len(p.unplaced); n > 0 {
+		return fmt.Errorf("%s: INCOMPLETE: %d keys not compared at %d (listed above); the rest passed", lendingJob, n, wm)
+	}
+	return nil
+}
+
+// lendingProofDepth bounds how far below the watermark the proof reads the lake for a key changed since it: ten
+// fill-sized FINAL windows. A key whose comparison needs a deeper read is counted not compared.
+const lendingProofDepth = 10 * lendingWindow
+
+// lendingProofListMax caps the not-compared keys -prove prints per reason.
+const lendingProofListMax = 50
+
+// lendingProof is the state check at the watermark. keys were compared; ahead keys were not, because a history row
+// past the watermark has replaced (under FINAL) the one to compare. deep keys' latest history row lies more than
+// lendingProofDepth below the watermark; unplaced keys have no history row at or below it and the lake was not read
+// back to their contract's deploy, so new-since-the-watermark and missed cannot be told apart.
+type lendingProof struct {
+	keys, mismatched, ahead uint64
+	deep, unplaced          []string
+}
+
+// lendingPending is a key changed since the watermark: its state there is the lake's last change in [lo, wm].
+// exact: lo is the earliest ledger the key can exist at, so finding no change proves it new since the watermark.
+type lendingPending struct {
+	k     clickhouse.LendingProofKey
+	lo    uint32
+	exact bool
+}
+
+// classifyLendingKeys settles every key the current table shows at or below wm and lists the rest to read from the
+// lake. floor gives a key's earliest possible ledger (0 if unknown).
+func classifyLendingKeys(ks []clickhouse.LendingProofKey, wm uint32, floor func(key string) uint32) (lendingProof, []lendingPending) {
+	var p lendingProof
+	var pend []lendingPending
+	depthLo := wm - min(wm, lendingProofDepth)
+	for _, k := range ks {
+		switch {
+		case !k.Changed:
+			p.keys++
+			if k.AheadHit {
+				p.ahead++
+			} else if !k.Present || !k.Same {
+				p.mismatched++
+			}
+		case k.Present && k.Ledger < depthLo:
+			p.deep = append(p.deep, k.Key)
+		case k.Present:
+			// A change in (Ledger, wm] the history lacks, or none at Ledger, both show in the fold over [Ledger, wm].
+			pend = append(pend, lendingPending{k: k, lo: k.Ledger})
+		default:
+			f := floor(k.Key)
+			pend = append(pend, lendingPending{k: k, lo: max(f, depthLo), exact: f >= depthLo})
+		}
+	}
+	return p, pend
+}
+
+// settle compares each pending key with its last change in [lo, wm] (last, by key).
+func (p *lendingProof) settle(pend []lendingPending, last map[string]clickhouse.LendingChange) {
+	for _, q := range pend {
+		c, ok := last[q.k.Key]
+		switch {
+		case !ok && q.k.Present:
+			p.keys++
+			p.mismatched++ // the history names a change at Ledger the lake does not hold
+		case !ok && q.exact:
+			// created after the watermark: nothing to compare
+		case !ok:
+			p.unplaced = append(p.unplaced, q.k.Key)
+		default:
+			p.keys++
+			if slices.ContainsFunc(q.k.Ahead, c.Hour.Equal) {
+				p.ahead++
+			} else if !q.k.Present || c.Ledger != q.k.Ledger || c.Entry != q.k.Entry {
+				p.mismatched++
+			}
+		}
+	}
+}
+
+// report prints the counters and every not-compared key (up to lendingProofListMax per reason).
+func (p lendingProof) report(out io.Writer, wm uint32) error {
+	if _, err := fmt.Fprintf(out, "lending_state @%d: %d keys compared, %d mismatched; not compared: %d (history row past the watermark), "+
+		"%d (history row more than %d ledgers below the watermark), %d (no history row, lake read only %d ledgers back)\n",
+		wm, p.keys, p.mismatched, p.ahead, len(p.deep), lendingProofDepth, len(p.unplaced), lendingProofDepth); err != nil {
+		return err
+	}
+	for _, l := range []struct {
+		why  string
+		keys []string
+	}{{"history row too deep", p.deep}, {"no history row, lake not read to the contract's deploy", p.unplaced}} {
+		for i, k := range l.keys {
+			if i == lendingProofListMax {
+				if _, err := fmt.Fprintf(out, "lending_state: not compared (%s): %d more\n", l.why, len(l.keys)-i); err != nil {
+					return err
+				}
+				break
+			}
+			if _, err := fmt.Fprintf(out, "lending_state: not compared (%s): %s\n", l.why, k); err != nil {
+				return err
+			}
+		}
+	}
+	if len(p.deep)+len(p.unplaced) > 0 {
+		_, err := fmt.Fprintf(out, "lending_state @%d: INCOMPLETE\n", wm)
+		return err
+	}
+	return nil
+}
+
+// proveLendingAt reads the current table once, then the lake over [min lo, wm] for keys changed since wm, window by
+// window (each inside one partition, halved on the memory limit), keeping each key's last change at or above its lo.
+func (r lendingRun) proveLendingAt(ctx context.Context, reg []clickhouse.LendingContract, ps []clickhouse.LendingPrefix, wm uint32) (lendingProof, error) {
+	ks, err := clickhouse.LendingProofKeys(ctx, r.chAddr, ps, wm)
+	if err != nil {
+		return lendingProof{}, err
+	}
+	deployed := map[string]uint32{}
+	for _, c := range reg {
+		deployed[c.ID] = c.Deployed
+	}
+	p, pend := classifyLendingKeys(ks, wm, func(key string) uint32 {
+		for _, pr := range ps {
+			if strings.HasPrefix(key, pr.Prefix) {
+				return deployed[pr.Contract]
+			}
+		}
+		return 0
+	})
+	if len(pend) == 0 {
+		return p, nil
+	}
+	last, err := r.foldLendingChanges(ctx, pend, wm)
+	if err != nil {
+		return lendingProof{}, err
+	}
+	p.settle(pend, last)
+	return p, nil
+}
+
+// foldLendingChanges returns each pending key's last change in [lo, wm], reading partition-aligned windows in ledger
+// order so a later range's change replaces an earlier one's.
+func (r lendingRun) foldLendingChanges(ctx context.Context, pend []lendingPending, wm uint32) (map[string]clickhouse.LendingChange, error) {
+	from := map[string]uint32{}
+	lo := wm
+	for _, q := range pend {
+		from[q.k.Key] = q.lo
+		lo = min(lo, q.lo)
+	}
+	last := map[string]clickhouse.LendingChange{}
+	read := func(lo, hi uint32) error {
+		var keys []string
+		for _, q := range pend {
+			if q.lo <= hi {
+				keys = append(keys, q.k.Key)
+			}
+		}
+		if len(keys) == 0 {
+			return nil
+		}
+		cs, err := clickhouse.LendingLastChanges(ctx, r.chAddr, keys, lo, hi)
+		if err != nil {
+			return err
+		}
+		for _, c := range cs {
+			if c.Ledger >= from[c.Key] {
+				last[c.Key] = c
+			}
+		}
+		return nil
+	}
+	for ; ; lo = lendingWindowEnd(lo, wm) + 1 {
+		hi := lendingWindowEnd(lo, wm)
+		if err := splitOnMemoryLimit(lo, hi, "proof window", os.Stderr, read); err != nil {
+			return nil, err
+		}
+		if hi >= wm {
+			return last, nil
+		}
+	}
 }
 
 // proveLendingKeys fails a registered pool missing a ResData, ResConfig or instance key in the table, or a backstop
@@ -363,7 +547,7 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 		factories = append(factories, f)
 	}
 	sort.Strings(factories)
-	pools := map[string]string{}
+	pools := map[string]clickhouse.LendingContract{}
 	if thru >= blend.FactoryGenesisLedger {
 		err := clickhouse.StreamContractEventsFiltered(ctx, addr, blend.FactoryGenesisLedger, thru, factories, []string{blend.EventDeploy}, nil, false, false, false, false,
 			func(ev events.Event) error {
@@ -371,7 +555,9 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 				if err != nil {
 					return err
 				}
-				pools[c.ID] = c.Protocol
+				if prev, ok := pools[c.ID]; !ok || c.Deployed < prev.Deployed {
+					pools[c.ID] = c
+				}
 				return nil
 			})
 		if err != nil {
@@ -379,8 +565,8 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 		}
 	}
 	out := make([]clickhouse.LendingContract, 0, len(pools)+len(lendingBackstops))
-	for id, p := range pools {
-		out = append(out, clickhouse.LendingContract{ID: id, Protocol: p})
+	for _, c := range pools {
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	if err := checkLendingRegistry(out, thru); err != nil {
@@ -416,5 +602,5 @@ func lendingPoolFromDeploy(ev events.Event) (clickhouse.LendingContract, error) 
 	if pool == "" {
 		return clickhouse.LendingContract{}, fmt.Errorf("deploy at %d tx %s names no pool", ev.Ledger, ev.TxHash)
 	}
-	return clickhouse.LendingContract{ID: pool, Protocol: protocol}, nil
+	return clickhouse.LendingContract{ID: pool, Protocol: protocol, Deployed: ev.Ledger}, nil
 }
