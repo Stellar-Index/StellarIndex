@@ -662,6 +662,21 @@ check "a scalar subquery aggregate in the select list is not this read" 0 \
 check "a count() above a collapsing subquery still passes" 0 \
   "$(shape above 'SELECT count() FROM (SELECT ledger_seq, tx_index, op_index FROM stellar.operations GROUP BY ledger_seq, tx_index, op_index)')"
 
+# A subquery or CTE that does not collapse hands every duplicate to the
+# aggregate above it.
+catches "a sum() above a non-collapsing subquery is caught" \
+  "$(shape uncsub 'SELECT toUInt64(sum(fee_charged)) FROM (SELECT fee_charged FROM stellar.transactions WHERE ledger_seq BETWEEN ? AND ?)')" \
+  stellar.transactions
+catches "a sum() above a non-collapsing CTE is caught" \
+  "$(shape unccte 'WITH t AS (SELECT amount FROM stellar.supply_flows WHERE ledger_seq > ?) SELECT sum(amount) FROM t')" \
+  stellar.supply_flows
+check "a sum() above a subquery that reads FINAL passes" 0 \
+  "$(shape finalsub 'SELECT sum(fee_charged) FROM (SELECT fee_charged FROM stellar.transactions FINAL WHERE ledger_seq > ?)')"
+check "a sum() above a DISTINCT subquery passes" 0 \
+  "$(shape distsub 'SELECT sum(fee_charged) FROM (SELECT DISTINCT ledger_seq, tx_index, fee_charged FROM stellar.transactions)')"
+check "an aggregate over an IN-list subquery is not this read" 0 \
+  "$(shape insub 'SELECT count() FROM stellar.ledgers FINAL WHERE ledger_seq IN (SELECT ledger_seq FROM stellar.transactions)')"
+
 # ── every ReplacingMergeTree, and Go-built SQL ──────────────────────
 # The lending-history derivation read ledger_entry_changes without FINAL;
 # the gate did not watch that table, nor reads built by Sprintf.

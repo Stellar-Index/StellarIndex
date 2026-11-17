@@ -78,7 +78,10 @@
 #   * a statement whose aggregate sits ABOVE a subquery that already collapses.
 #     The read belongs to the innermost select, so `count() FROM (SELECT … FROM
 #     stellar.operations GROUP BY ledger_seq, tx_index, op_index)` is out of scope.
-#     The gate does not check that the inner GROUP BY is the full key.
+#     The gate does not check that the inner GROUP BY is the full key. A
+#     subquery or CTE with no GROUP BY, DISTINCT, LIMIT 1 BY or idempotent
+#     aggregate collapses nothing: its read is in scope when the block
+#     consuming it aggregates, and needs FINAL like any other.
 #
 # ── ESCAPE HATCH ─────────────────────────────────────────────────────
 #
@@ -279,6 +282,61 @@ violations="$(
       return w ? substr(s, w, owner - w) : ""
     }
 
+    # collapses - a block whose own rows are one per key (or one row): a
+    # GROUP BY, DISTINCT, LIMIT 1 BY or an idempotent aggregate. Takes the
+    # lowercased own_text of the block.
+    function collapses(c) {
+      return c ~ /(^|[^a-z0-9_])(group by|distinct|limit 1 by)([^a-z0-9_]|$)/ ||
+             c ~ /(^|[^a-z0-9_])(min|max|any|argmax|argmin|uniq|uniqexact|uniqcombined|groupuniqarray)[a-z0-9]*[ ]*\(/
+    }
+    # consumed - a read whose own block does not aggregate still feeds an
+    # aggregate when it sits in a FROM/JOIN subquery (or a CTE) that does not
+    # collapse its rows and an enclosing block aggregates over them.
+    function consumed(s, owner,    blk, i, depth, ch, open, outer, pre, j, rest) {
+      while (1) {
+        blk = own_text(block_of(s, owner))
+        if (collapses(blk)) return 0
+        open = 0; depth = 0
+        for (i = owner - 1; i >= 1; i--) {
+          ch = substr(s, i, 1)
+          if (ch == ")") depth++
+          else if (ch == "(") { if (depth == 0) { open = i; break } depth-- }
+          else if (ch == ";") break
+        }
+        if (open == 0) return 0
+        pre = substr(s, 1, open - 1)
+        if (pre ~ /(^|[^a-z0-9_])(from|join)[ ]*$/) {
+          outer = 0; depth = 0
+          for (i = open - 1; i >= 1; i--) {
+            ch = substr(s, i, 1)
+            if (ch == ")") depth++
+            else if (ch == "(") { if (depth == 0) break; depth-- }
+            else if (depth == 0 && is_select(s, i)) { outer = i; break }
+          }
+          if (outer == 0) return 0
+          if (mult_agg(own_text(with_prefix(s, outer) block_of(s, outer)))) return 1
+          owner = outer
+        } else if (pre ~ /(^|[^a-z0-9_])as[ ]*$/) {
+          depth = 1
+          for (j = open + 1; j <= length(s) && depth > 0; j++) {
+            ch = substr(s, j, 1)
+            if (ch == "(") depth++; else if (ch == ")") depth--
+          }
+          rest = substr(s, j); depth = 0
+          for (i = 1; i <= length(rest); i++) {
+            ch = substr(rest, i, 1)
+            if (ch == "(") depth++
+            else if (ch == ")") { if (depth == 0) break; depth-- }
+            else if (ch == ";") break
+            else if (depth == 0 && is_select(rest, i)) {
+              return mult_agg(own_text(block_of(rest, i))) ? 1 : 0
+            }
+          }
+          return 0
+        } else return 0
+      }
+    }
+
     # ── unit accumulation ────────────────────────────────────────────
     # A unit is flushed when the NEXT file starts, so it carries the file
     # it began in: FILENAME at flush time is the wrong one.
@@ -330,7 +388,7 @@ violations="$(
         # Its whole block, minus nested selects: an aggregate in HAVING or
         # ORDER BY consumes the same rows as one in the select list.
         clause = own_text(with_prefix(L, owner) block_of(L, owner))
-        if (!mult_agg(clause)) continue                       # not an aggregating read
+        if (!mult_agg(clause) && !consumed(L, owner)) continue  # not an aggregating read
         aggregating++
 
         # FINAL attached to this read (optionally through an alias).
