@@ -1406,8 +1406,8 @@ func (a supplyAggregatorSEP41Store) SEP41GenesisBaselineSeeded(ctx context.Conte
 }
 
 // refreshBaselinesOnce runs one bounded refresh pass. A hung read would otherwise block the loop forever while every baseline ages past
-// maxBaselineAge and the Phase-2 freeze goes unscored; the last-success gauge advances only when the pass finished in time and the store
-// answered for at least one pair.
+// maxBaselineAge and the Phase-2 freeze goes unscored; the last-success gauge advances only when the pass finished in time, answered at
+// least one pair, and had no read or write error.
 func refreshBaselinesOnce(ctx context.Context, r *baseline.Refresher, pairs []canonical.Pair, timeout time.Duration, logger *slog.Logger) baseline.RefreshSummary {
 	started := time.Now()
 	pctx, cancel := context.WithTimeout(ctx, timeout)
@@ -1420,7 +1420,8 @@ func refreshBaselinesOnce(ctx context.Context, r *baseline.Refresher, pairs []ca
 	obs.AggregatorBaselineRefreshTotal.WithLabelValues("write_error").Add(float64(sum.WriteErrors))
 	obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_per_minute_fallback").Add(float64(sum.OKPerMinuteFallback))
 	obs.AggregatorBaselineRefreshTotal.WithLabelValues("ok_unvalued").Add(float64(sum.OKUnvalued))
-	if !timedOut && sum.OK+sum.OKUnvalued+sum.OKPerMinuteFallback+sum.NotEnoughSamples > 0 {
+	answered := sum.OK + sum.OKUnvalued + sum.OKPerMinuteFallback + sum.NotEnoughSamples
+	if !timedOut && answered > 0 && sum.ReadErrors == 0 && sum.WriteErrors == 0 {
 		obs.AggregatorBaselineRefreshLastSuccessUnix.Set(float64(time.Now().Unix()))
 	}
 	logger.Info("baseline refresh complete",

@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -27,6 +29,16 @@ type emptyVWAPSource struct{}
 
 func (emptyVWAPSource) TimedVWAPsForPair1m(context.Context, canonical.Pair, time.Time, time.Time) ([]baseline.TimedVWAP, error) {
 	return nil, nil
+}
+
+// partialVWAPSource answers only `good` and fails every other pair's read.
+type partialVWAPSource struct{ good canonical.Pair }
+
+func (s partialVWAPSource) TimedVWAPsForPair1m(_ context.Context, p canonical.Pair, _, _ time.Time) ([]baseline.TimedVWAP, error) {
+	if p == s.good {
+		return nil, nil
+	}
+	return nil, errors.New("prices_1m read failed")
 }
 
 type discardBaselineSink struct{}
@@ -83,5 +95,34 @@ func TestRefreshBaselinesOnce_AnsweredPassAdvancesGauge(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(obs.AggregatorBaselineRefreshLastSuccessUnix); got < float64(before) {
 		t.Errorf("last-success gauge = %v, want >= %d", got, before)
+	}
+}
+
+// TestRefreshBaselinesOnce_ReadErrorsHoldGauge: one answered pair must not mask a pass in which every other read failed.
+func TestRefreshBaselinesOnce_ReadErrorsHoldGauge(t *testing.T) {
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	pairs := make([]canonical.Pair, 0, 100)
+	for i := range 100 {
+		base, err := canonical.NewClassicAsset(fmt.Sprintf("T%03d", i), "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+		if err != nil {
+			t.Fatalf("NewClassicAsset: %v", err)
+		}
+		p, err := canonical.NewPair(base, usd)
+		if err != nil {
+			t.Fatalf("NewPair: %v", err)
+		}
+		pairs = append(pairs, p)
+	}
+	r := baseline.NewRefresher(partialVWAPSource{good: pairs[0]}, discardBaselineSink{}, 0, slog.Default())
+	obs.AggregatorBaselineRefreshLastSuccessUnix.Set(1)
+	sum := refreshBaselinesOnce(context.Background(), r, pairs, time.Minute, slog.Default())
+	if sum.ReadErrors != 99 || sum.NotEnoughSamples != 1 {
+		t.Fatalf("ReadErrors=%d NotEnoughSamples=%d, want 99 and 1", sum.ReadErrors, sum.NotEnoughSamples)
+	}
+	if got := testutil.ToFloat64(obs.AggregatorBaselineRefreshLastSuccessUnix); got != 1 {
+		t.Errorf("last-success gauge = %v after a pass with read errors, want unchanged 1", got)
 	}
 }

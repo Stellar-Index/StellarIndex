@@ -1014,7 +1014,7 @@ Per-pass outcome of the explorer delta-strip worker. `partial` = some entities f
 
 Gauge, no labels.
 
-Unix seconds of the last volatility-baseline refresh pass that finished within its 45-minute timeout and read at least one pair. Seeded with start time; 0 on binaries without the worker. Alert: `stellarindex_aggregator_baseline_refresh_stale` (> 3 h), aggregator only.
+Unix seconds of the last volatility-baseline refresh pass that finished within its 45-minute timeout, read at least one pair and hit no read or write error (one failing pair holds it back). Seeded with start time; 0 on binaries without the worker. Alert: `stellarindex_aggregator_baseline_refresh_stale` (> 3 h), aggregator only.
 
 ### `stellarindex_change_summary_last_success_unix`
 
