@@ -6,7 +6,8 @@
 #   - with basic-auth hashes set, the alertmanager and self-scrape jobs carry
 #     a client basic_auth (password_file), and preflight refuses a hash that
 #     has no plaintext;
-#   - a Loki scrape job exists for log_aggregator hosts;
+#   - the Loki scrape job targets loki_listen_address:loki_http_port, and has
+#     no target for a loopback-bound Loki;
 #   - the unit template notifies a restarting handler, not SIGHUP.
 set -euo pipefail
 
@@ -62,9 +63,14 @@ cat >"$TMPD/play.yml" <<EOF
         dest: "{{ out }}"
 EOF
 
-render() { # <prom_hash> <am_hash> <out>
+# python from ansible's own venv: it always has PyYAML and Jinja.
+PY=$(head -1 "$(command -v ansible-playbook)" | sed 's|^#!||' | awk '{print $1}')
+
+render() { # <prom_hash> <am_hash> <out> [extra ansible args...]
+  local ph="$1" ah="$2" o="$3"
+  shift 3
   ansible-playbook -i "$TMPD/inventory.yml" "$TMPD/play.yml" \
-    -e "prom_hash='$1' am_hash='$2' out=$3" >"$TMPD/playbook.log" 2>&1 || {
+    -e "prom_hash='$ph' am_hash='$ah' out=$o" "$@" >"$TMPD/playbook.log" 2>&1 || {
     echo "prometheus-ha-render-test: FAIL — render failed" >&2
     cat "$TMPD/playbook.log" >&2
     exit 1
@@ -81,8 +87,10 @@ HASH='$2y$10$fixturefixturefixturefixture' # gitleaks:allow
 
 render "" "" "$TMPD/off.yml"
 render "$HASH" "$HASH" "$TMPD/on.yml"
+render "" "" "$TMPD/loki-routable.yml" -e loki_listen_address=10.9.9.9 -e loki_http_port=3101
+render "" "" "$TMPD/loki-wildcard.yml" -e loki_listen_address=0.0.0.0
 
-for f in off on; do
+for f in off on loki-routable loki-wildcard; do
   if promtool check config --syntax-only "$TMPD/$f.yml" >"$TMPD/promtool-$f.log" 2>&1; then
     ok "$f render passes promtool check config --syntax-only"
   else
@@ -90,15 +98,18 @@ for f in off on; do
   fi
 done
 
-if grep -qE '^    instance:' "$TMPD/off.yml"; then
-  bad "external label is named instance (clashes with the target label)"
+# yq <file> <python expr over d> -> prints the value; used for structural checks.
+yq() { "$PY" -I -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$1" "$2"; }
+
+ext=$(yq "$TMPD/off.yml" "sorted(d['global']['external_labels'])")
+if [ "$ext" = "['cluster', 'region', 'replica']" ]; then
+  ok "replica is an external label and none is named instance"
 else
-  ok "external label is not named instance"
+  bad "external labels are $ext (want cluster, region, replica)"
 fi
-relabel=$(grep -A3 'alert_relabel_configs' "$TMPD/off.yml" || true)
-if grep -q '^    replica: prom1$' "$TMPD/off.yml" \
-  && [[ "$relabel" == *'action: labeldrop'* && "$relabel" == *'regex: replica'* ]]; then
-  ok "replica external label is dropped from outgoing alerts"
+drop=$(yq "$TMPD/off.yml" "any(r.get('action') == 'labeldrop' and __import__('re').fullmatch(r['regex'], 'replica') is not None and __import__('re').fullmatch(r['regex'], 'region') is None for r in d['alerting']['alert_relabel_configs'])")
+if [ "$drop" = "True" ]; then
+  ok "alerting.alert_relabel_configs drops exactly the replica label"
 else
   bad "the per-replica external label is not dropped by alert_relabel_configs"
 fi
@@ -114,10 +125,21 @@ else
   bad "expected 3 client password_file entries with both hashes set"
 fi
 
-if grep -q 'job_name: "loki"' "$TMPD/on.yml" && grep -q '10.0.2.5:3100' "$TMPD/on.yml"; then
-  ok "loki scrape job targets the log_aggregator host"
+loki_targets() { yq "$1" "[t for j in d['scrape_configs'] if j['job_name'] == 'loki' for s in j['static_configs'] for t in s['targets']]"; }
+if [ "$(loki_targets "$TMPD/loki-routable.yml")" = "['10.9.9.9:3101']" ]; then
+  ok "loki job targets loki_listen_address:loki_http_port"
 else
-  bad "no loki scrape job for log_aggregator"
+  bad "loki job target is $(loki_targets "$TMPD/loki-routable.yml") (want 10.9.9.9:3101)"
+fi
+if [ "$(loki_targets "$TMPD/loki-wildcard.yml")" = "['10.0.2.5:3100']" ]; then
+  ok "a wildcard-bound loki is scraped on ansible_host"
+else
+  bad "wildcard loki target is $(loki_targets "$TMPD/loki-wildcard.yml") (want 10.0.2.5:3100)"
+fi
+if [ "$(loki_targets "$TMPD/off.yml")" = "[]" ]; then
+  ok "no loki job target for a loopback-bound loki"
+else
+  bad "loopback-bound loki rendered a target: $(loki_targets "$TMPD/off.yml")"
 fi
 
 handler=$(grep -A5 'name: restart prometheus' "$ROLE/handlers/main.yml" || true)
@@ -128,11 +150,22 @@ else
   bad "prometheus unit change is applied by SIGHUP only"
 fi
 
-if grep -q 'prometheus_basic_auth_password ' "$ROLE/tasks/01-preflight.yml"; then
-  ok "preflight requires the plaintext whenever a hash is set"
-else
-  bad "preflight does not tie the hash to a plaintext client password"
-fi
+# Run the real preflight assert task, alone, against each hash/plaintext combination.
+"$PY" -I -c '
+import sys, yaml
+t = next(t for t in yaml.safe_load(open(sys.argv[1])) if t.get("name", "").startswith("assert a basic-auth hash comes with"))
+yaml.safe_dump([{"hosts": "localhost", "connection": "local", "gather_facts": False, "tasks": [t]}], open(sys.argv[2], "w"))
+' "$ROLE/tasks/01-preflight.yml" "$TMPD/preflight.yml"
+preflight() { # <expected rc 0|1> <label> <extra vars...>
+  local want="$1" label="$2" rc=0
+  shift 2
+  ansible-playbook -i localhost, "$TMPD/preflight.yml" "$@" >"$TMPD/preflight.log" 2>&1 || rc=1
+  if [ "$rc" = "$want" ]; then ok "preflight $label"; else bad "preflight $label (rc=$rc, want $want)"; fi
+}
+preflight 1 "refuses a hash without its plaintext" -e prometheus_basic_auth_password_hash=h -e alertmanager_basic_auth_password_hash=h -e prometheus_basic_auth_password=p
+preflight 1 "refuses an alertmanager hash without its plaintext" -e alertmanager_basic_auth_password_hash=h
+preflight 0 "accepts a hash with its plaintext" -e prometheus_basic_auth_password_hash=h -e alertmanager_basic_auth_password_hash=h -e prometheus_basic_auth_password=p -e alertmanager_basic_auth_password=p
+preflight 0 "accepts unset hashes" -e prometheus_basic_auth_password_hash=
 
 [ "$failed" -eq 0 ] || exit 1
 echo "prometheus-ha-render-test: PASS"

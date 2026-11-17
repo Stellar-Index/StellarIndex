@@ -129,14 +129,29 @@ scrape_configs:
           service: redis
 {% endif %}
 
-{% if 'log_aggregator' in groups and groups['log_aggregator'] %}
+{# A loopback-bound Loki cannot be scraped from here; a wildcard bind is reached on ansible_host. #}
+{% set loki_targets = [] %}
+{% for h in groups['log_aggregator'] | default([]) %}
+{% set l = hostvars[h].loki_listen_address | default('127.0.0.1') %}
+{% if l in ['0.0.0.0', '::'] %}
+{% set a = hostvars[h].ansible_host %}
+{% elif l == 'localhost' or l == '::1' or l.startswith('127.') %}
+{% set a = '' %}
+{% else %}
+{% set a = l %}
+{% endif %}
+{% if a %}
+{% set _ = loki_targets.append(('[' ~ a ~ ']' if ':' in a else a) ~ ':' ~ (hostvars[h].loki_http_port | default(3100))) %}
+{% endif %}
+{% endfor %}
+{% if loki_targets %}
   # ── Loki (log tier; the targets answer on loki_http_port) ────
   - job_name: "loki"
     scrape_interval: {{ prometheus_default_scrape_interval }}
     static_configs:
       - targets:
-{% for h in groups['log_aggregator'] %}
-          - "{{ hostvars[h].ansible_host }}:{{ loki_http_port | default(3100) }}"
+{% for t in loki_targets %}
+          - "{{ t }}"
 {% endfor %}
         labels:
           service: loki
