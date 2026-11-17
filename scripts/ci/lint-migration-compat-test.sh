@@ -300,6 +300,37 @@ run 'CREATE TRIGGER marks_track
     FOR EACH ROW EXECUTE FUNCTION track();' ''
 expect 'an AFTER trigger is not flagged' 0 'passed'
 
+# DROP forms and row-deleting calls the named classes do not spell.
+run 'DROP TRIGGER IF EXISTS trustline_balance_current_trg ON trustline_balance_observations;' ''
+expect 'DROP TRIGGER fires' 1 'drop-other'
+run 'DROP SCHEMA legacy CASCADE;' ''
+expect 'DROP SCHEMA fires' 1 'drop-other'
+run 'DROP SEQUENCE IF EXISTS trades_id_seq CASCADE;' ''
+expect 'DROP SEQUENCE fires' 1 'drop-other'
+run 'DROP OWNED BY stellarindex_api;' ''
+expect 'DROP OWNED fires' 1 'drop-other'
+run 'ALTER TABLE trades DISABLE TRIGGER ALL;' ''
+expect 'DISABLE TRIGGER fires' 1 'drop-other'
+run 'ALTER TABLE trades OWNER TO someone_else;' ''
+expect 'OWNER TO fires' 1 'owner'
+run "SELECT drop_""chunks('trades', older_than => now() - INTERVAL '30 days');" ''
+expect 'drop_chunks fires as dml' 1 'dml'
+run 'DROP TABLE classic_movements;' ''
+expect 'DROP TABLE is one class, not also drop-other' 1 'drop-table'
+case "$OUT" in *drop-other*) echo "FAIL: DROP TABLE double-flagged"; fail=$((fail+1)) ;; esac
+
+# An EXCLUDE or a marker applies to its own clause, not to the whole ALTER.
+run 'ALTER TABLE trades
+    ADD COLUMN venue_id integer NOT NULL,
+    ADD COLUMN note text DEFAULT '"'x'"';' ''
+expect 'a DEFAULT on another clause does not clear add-not-null-column' 1 'add-not-null-column'
+
+run 'ALTER TABLE trades
+    DROP CONSTRAINT IF EXISTS old_ck, -- migration-compat:ok old_ck was never relied on
+    ALTER COLUMN price TYPE double precision,
+    DROP COLUMN usd_volume;' ''
+expect 'a marker on one clause leaves the others flagged' 1 'alter-type'
+
 echo
 echo "lint-migration-compat-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1
