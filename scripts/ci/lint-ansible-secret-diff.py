@@ -41,12 +41,12 @@ ROLES_DIR = "configs/ansible/roles"
 PLAYBOOKS_DIR = "configs/ansible/playbooks"
 TASKS_DIR = "configs/ansible/tasks"
 
-# Suffix-anchored on purpose: `stellar_passphrase` (the public network
+# Word-bounded on purpose: `stellar_passphrase` (the public network
 # passphrase) and `ssh_permit_password_auth` (a bool) must NOT match, while
-# `*_cipher_pass`, `*_s3_key`, `*_s3_key_secret`, `*_token`, `*_password`,
-# `vault_*_api_key` must.
+# `*_cipher_pass`, `*_s3_key`, `*_s3_key_secret`, `*_secret_key`, `*_token`,
+# `*_password`, `vault_*_api_key` must.
 SECRET_VAR = re.compile(
-    r"\b[A-Za-z0-9_]*(_password|_pass|_secret|_token|_api_key|_s3_key)\b"
+    r"\b[A-Za-z0-9_]*(_password|_pass|_secret|_token|_api_key|_s3_key|_secret_key|_seal_key)\b"
 )
 JINJA_EXPR = re.compile(r"\{\{(.*?)\}\}", re.S)
 

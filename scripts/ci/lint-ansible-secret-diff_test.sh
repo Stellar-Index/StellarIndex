@@ -85,3 +85,20 @@ for name in "Render pre secret" "Render play secret" "Render handler secret"; do
 done
 
 echo "PASS: lint-ansible-secret-diff catches secret-rendering template tasks inside a playbook's plays"
+
+# A secret name that continues past its keyword (`_secret_key`, `_seal_key`)
+# is not covered by a suffix-only match on `_secret`.
+cat > "$TMPDIR/configs/ansible/roles/fakerole/templates/leak.conf.j2" <<'EOF'
+key = {{ fake_service_secret_key }}
+EOF
+set +e
+OUTPUT="$(cd "$TMPDIR" && python3 "$LINT" 2>&1)"
+STATUS=$?
+set -e
+if [[ $STATUS -eq 0 || "$OUTPUT" != *"fake_service_secret_key"* ]]; then
+  echo "FAIL: lint did not flag a template inlining *_secret_key" >&2
+  echo "$OUTPUT" >&2
+  exit 1
+fi
+
+echo "PASS: lint-ansible-secret-diff catches a template inlining *_secret_key"
