@@ -164,7 +164,8 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		path == "/v1/vwap",
 		path == "/v1/twap",
 		path == "/v1/ohlc",
-		path == "/v1/chart":
+		path == "/v1/chart",
+		path == "/v1/history/since-inception":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=5", true
 		}
