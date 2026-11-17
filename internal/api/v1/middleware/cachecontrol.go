@@ -216,7 +216,8 @@ func closedLedgerPolicy(cdnEnabled bool) string {
 }
 
 // policyForPath classifies a path into a Cache-Control directive. The more-specific prefix MUST win (`/v1/price/tip` is private,
-// `/v1/price` public). With cdnEnabled false only `max-age` survives, so a CDN the operator lacks cannot cache anything.
+// `/v1/price` public). With cdnEnabled false only `s-maxage` is dropped; `public, max-age=N` stays, which a shared cache may still store and reuse,
+// whatever the auth mode.
 func policyForPath(path string, cdnEnabled bool) string {
 	// Split into helpers to stay under the gocyclo ceiling; see ledgerPolicy.
 	if p, ok := ledgerPolicy(path, cdnEnabled); ok {
