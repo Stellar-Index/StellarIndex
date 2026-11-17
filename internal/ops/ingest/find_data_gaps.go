@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -43,9 +44,8 @@ func findDataGaps(args []string) error {
 	fs := flag.NewFlagSet("find-data-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Int64("from", 0,
-		"scan from this ledger (default 0 = first ledger in soroban_events). "+
-			"Soroban era starts at L50,457,424 on pubnet; values earlier than "+
-			"that yield no gaps because the table is empty there.")
+		"scan from this ledger (default 0 = each source's genesis ledger; "+
+			"a value below a source's genesis is raised to it)")
 	to := fs.Int64("to", 0,
 		"scan to this ledger (default 0 = current tip from the live cursor)")
 	minGapSize := fs.Int64("min-gap-size", findDataGapsDefaultMinGapSize,
@@ -102,26 +102,9 @@ func findDataGaps(args []string) error {
 		return fmt.Errorf("-to (%d) < -from (%d)", *to, *from)
 	}
 
-	multi := findDataGapsMultiReport{ScannedAt: time.Now().UTC()}
-	for _, target := range targets {
-		gaps, err := store.FindPerSourceLedgerGaps(rootCtx, target, *from, *to, *minGapSize, 0)
-		if err != nil {
-			return fmt.Errorf("find gaps source=%s table=%s: %w", target.Source, target.Table, err)
-		}
-		report := findDataGapsReport{
-			ScannedAt:       multi.ScannedAt,
-			Source:          target.Source,
-			ProjectorSource: target.SourceNetKey(),
-			Table:           target.Table,
-			MinGapSize:      *minGapSize,
-			FromLedger:      *from,
-			ToLedger:        *to,
-			Gaps:            gaps,
-		}
-		for _, g := range gaps {
-			report.TotalMissingLedgers += g.Size
-		}
-		multi.Reports = append(multi.Reports, report)
+	multi, err := scanDataGaps(rootCtx, store, targets, *from, *to, *minGapSize, time.Now().UTC())
+	if err != nil {
+		return err
 	}
 
 	switch *output {
@@ -131,6 +114,43 @@ func findDataGaps(args []string) error {
 		writeFindDataGapsMultiText(os.Stdout, multi)
 		return nil
 	}
+}
+
+// ledgerRangeGapFinder is the store seam find-data-gaps scans through.
+type ledgerRangeGapFinder interface {
+	FindLedgerGapsInRange(ctx context.Context, target timescale.GapDetectorTarget, from, to, minGapSize int64) ([]timescale.LedgerGap, error)
+}
+
+// scanDataGaps scans each target over [max(from, Genesis), to] with both edges bracketed, so a hole running to the tip, one
+// starting at the source's genesis, or a range with no rows at all is reported rather than read as clean.
+func scanDataGaps(ctx context.Context, store ledgerRangeGapFinder, targets []timescale.GapDetectorTarget,
+	from, to, minGapSize int64, scannedAt time.Time,
+) (findDataGapsMultiReport, error) {
+	multi := findDataGapsMultiReport{ScannedAt: scannedAt}
+	for _, target := range targets {
+		lo := max(from, target.Genesis)
+		report := findDataGapsReport{
+			ScannedAt:       scannedAt,
+			Source:          target.Source,
+			ProjectorSource: target.SourceNetKey(),
+			Table:           target.Table,
+			MinGapSize:      minGapSize,
+			FromLedger:      lo,
+			ToLedger:        to,
+		}
+		if lo <= to {
+			gaps, err := store.FindLedgerGapsInRange(ctx, target, lo, to, minGapSize)
+			if err != nil {
+				return multi, fmt.Errorf("find gaps source=%s table=%s: %w", target.Source, target.Table, err)
+			}
+			report.Gaps = gaps
+			for _, g := range gaps {
+				report.TotalMissingLedgers += g.Size
+			}
+		}
+		multi.Reports = append(multi.Reports, report)
+	}
+	return multi, nil
 }
 
 // ResolveFindDataGapsTargets maps --source ("all", a name, or a comma list) to targets; an unmatched name is a hard error.
@@ -179,8 +199,12 @@ func writeFindDataGapsText(w io.Writer, r findDataGapsReport) {
 	_, _ = fmt.Fprintf(w,
 		"\n  source=%s table=%s ledgers=[%d, %d] min_gap_size=%d\n",
 		r.Source, r.Table, r.FromLedger, r.ToLedger, r.MinGapSize)
+	if r.FromLedger > r.ToLedger {
+		_, _ = fmt.Fprintln(w, "    range ends before this source's genesis ledger; nothing scanned")
+		return
+	}
 	if len(r.Gaps) == 0 {
-		_, _ = fmt.Fprintln(w, "    no gaps found — coverage clean above the threshold")
+		_, _ = fmt.Fprintf(w, "    no gap >= %d ledgers in [%d, %d]\n", r.MinGapSize, r.FromLedger, r.ToLedger)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "    %d gap(s), totalling %d missing ledgers:\n", len(r.Gaps), r.TotalMissingLedgers)
