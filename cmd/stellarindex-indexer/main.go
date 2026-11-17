@@ -891,7 +891,7 @@ func awaitExternalSink(ctx context.Context, done <-chan struct{}, loss *pipeline
 	case <-done:
 		if loss.Rows > 0 {
 			logger.Error("external sink abandoned rows on exit — off-chain rows have no cursor, refetch the window from the venues",
-				"rows", loss.Rows)
+				"rows", loss.Rows, "from", loss.OffChainFrom, "to", loss.OffChainTo)
 		}
 		return true
 	case <-ctx.Done():
