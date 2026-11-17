@@ -753,7 +753,7 @@ func TestListingDirectory_FuturePricedAtIsNotFresh(t *testing.T) {
 			PriceUSD: "3.5", PricedAt: now.Add(time.Minute),
 		},
 	}
-	if _, _, err := store.ReplaceListingDirectory(ctx, entries, "coingecko"); err != nil {
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, entries, "coingecko"); err != nil {
 		t.Fatalf("ReplaceListingDirectory: %v", err)
 	}
 

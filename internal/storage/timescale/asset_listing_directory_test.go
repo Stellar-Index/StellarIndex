@@ -166,44 +166,25 @@ func TestBuildListingUpsert_CarriesPriceAsDecimalString(t *testing.T) {
 	}
 }
 
-// TestDedupListingEntriesByAddress pins last-wins collapsing before chunking: two upstream coin
-// ids naming one Stellar address would repeat a conflict key in one multi-row upsert, which
-// Postgres rejects ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+// TestDedupListingEntriesByAddress pins collapsing before chunking: an address may appear once per multi-row upsert, or Postgres
+// rejects the statement. An address two coin ids claim is ambiguous and is left out, so no reader can take either claimant's price.
 func TestDedupListingEntriesByAddress(t *testing.T) {
 	t.Parallel()
 
 	in := []ListingEntry{
-		{Address: "A", ListingID: "first-a"},
+		{Address: "A", ListingID: "acme", PriceUSD: "1.00"},
 		{Address: "B", ListingID: "only-b"},
-		{Address: "A", ListingID: "second-a"}, // dup of A
+		{Address: "A", ListingID: "acme-old", PriceUSD: "0.004"}, // a second instrument claims A
 		{Address: "C", ListingID: "only-c"},
-		{Address: "B", ListingID: "second-b"}, // dup of B
+		{Address: "B", ListingID: "only-b"}, // the same claim repeated is not ambiguous
 	}
-	got := dedupListingEntriesByAddress(in)
+	got, ambiguous := dedupListingEntriesByAddress(in)
 
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3 distinct addresses (%+v)", len(got), got)
+	if ambiguous != 1 {
+		t.Errorf("ambiguous = %d, want 1 (address A)", ambiguous)
 	}
-	seen := map[string]int{}
-	for _, e := range got {
-		seen[e.Address]++
-		if seen[e.Address] > 1 {
-			t.Fatalf("address %s survived twice — the chunk would abort the upsert", e.Address)
-		}
-	}
-	byAddr := map[string]ListingEntry{}
-	for _, e := range got {
-		byAddr[e.Address] = e
-	}
-	if byAddr["A"].ListingID != "second-a" {
-		t.Errorf("A ListingID = %q, want last-wins %q", byAddr["A"].ListingID, "second-a")
-	}
-	if byAddr["B"].ListingID != "second-b" {
-		t.Errorf("B ListingID = %q, want last-wins %q", byAddr["B"].ListingID, "second-b")
-	}
-	if got[0].Address != "A" || got[1].Address != "B" || got[2].Address != "C" {
-		t.Errorf("order = %s,%s,%s, want A,B,C (first-appearance order preserved)",
-			got[0].Address, got[1].Address, got[2].Address)
+	if len(got) != 2 || got[0].Address != "B" || got[1].Address != "C" {
+		t.Fatalf("got %+v, want B then C (A withheld, first-appearance order kept)", got)
 	}
 }
 
@@ -214,13 +195,13 @@ func TestReplaceListingDirectory_RefusesEmptySet(t *testing.T) {
 	t.Parallel()
 
 	s := &Store{}
-	if _, _, err := s.ReplaceListingDirectory(context.Background(), nil, "coingecko"); err == nil {
+	if _, _, _, err := s.ReplaceListingDirectory(context.Background(), nil, "coingecko"); err == nil {
 		t.Fatal("ReplaceListingDirectory(empty) = nil error, want refusal")
 	}
-	if _, _, err := s.ReplaceListingDirectory(context.Background(), []ListingEntry{}, "coingecko"); err == nil {
+	if _, _, _, err := s.ReplaceListingDirectory(context.Background(), []ListingEntry{}, "coingecko"); err == nil {
 		t.Fatal("ReplaceListingDirectory(empty slice) = nil error, want refusal")
 	}
-	if _, _, err := s.ReplaceListingDirectory(context.Background(), listingEntriesN(1), ""); err == nil {
+	if _, _, _, err := s.ReplaceListingDirectory(context.Background(), listingEntriesN(1), ""); err == nil {
 		t.Fatal("ReplaceListingDirectory(no source) = nil error, want refusal")
 	}
 }

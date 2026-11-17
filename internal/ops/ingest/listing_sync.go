@@ -172,11 +172,11 @@ func listingSync(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	upserted, pruned, err := store.ReplaceListingDirectory(ctx, entries, listingSource)
+	upserted, pruned, ambiguous, err := store.ReplaceListingDirectory(ctx, entries, listingSource)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Synced: %d upserted, %d pruned (source=%s).\n", upserted, pruned, listingSource)
+	fmt.Printf("Synced: %d upserted, %d pruned, %d ambiguous address(es) withheld (source=%s).\n", upserted, pruned, ambiguous, listingSource)
 	return nil
 }
 

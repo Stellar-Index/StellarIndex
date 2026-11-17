@@ -121,24 +121,26 @@ const listingPriceFreshSQL = `price_usd IS NOT NULL
 const listingUpsertChunk = 500
 
 // ReplaceListingDirectory upserts the full entry set for one source and prunes that source's rows the upstream no longer carries.
+// ambiguous counts addresses withheld because more than one listing id claimed them.
 func (s *Store) ReplaceListingDirectory(
 	ctx context.Context, entries []ListingEntry, source string,
-) (upserted, pruned int64, err error) {
+) (upserted, pruned int64, ambiguous int, err error) {
 	if source == "" {
-		return 0, 0, errors.New("listing directory: source must be non-empty")
+		return 0, 0, 0, errors.New("listing directory: source must be non-empty")
 	}
 	// An empty set means the fetch or parse broke, not a mass delisting; proceeding would prune the
 	// whole source and report success. Same refusal as [ReplaceDirectory].
 	if len(entries) == 0 {
-		return 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
+		return 0, 0, 0, errors.New("listing directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
-	// Two coin ids can name one address, and equal addresses in one upsert chunk make Postgres
-	// reject the WHOLE statement ("cannot affect row a second time"), so collapse last-wins first.
-	entries = dedupListingEntriesByAddress(entries)
+	entries, ambiguous = dedupListingEntriesByAddress(entries)
+	if len(entries) == 0 {
+		return 0, 0, ambiguous, errors.New("listing directory: every address was ambiguous (would prune the whole source)")
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, fmt.Errorf("listing directory: begin: %w", err)
+		return 0, 0, 0, fmt.Errorf("listing directory: begin: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -153,7 +155,7 @@ func (s *Store) ReplaceListingDirectory(
 		res, execErr := tx.ExecContext(ctx, q, args...)
 		if execErr != nil {
 			err = fmt.Errorf("listing directory: upsert chunk [%d:%d): %w", start, end, execErr)
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		n, _ := res.RowsAffected()
 		upserted += n
@@ -164,30 +166,44 @@ func (s *Store) ReplaceListingDirectory(
 		 WHERE source = $1 AND synced_at < now()`, source)
 	if execErr != nil {
 		err = fmt.Errorf("listing directory: prune: %w", execErr)
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	pruned, _ = res.RowsAffected()
 
 	if err = tx.Commit(); err != nil {
-		return 0, 0, fmt.Errorf("listing directory: commit: %w", err)
+		return 0, 0, 0, fmt.Errorf("listing directory: commit: %w", err)
 	}
-	return upserted, pruned, nil
+	return upserted, pruned, ambiguous, nil
 }
 
-// dedupListingEntriesByAddress collapses entries sharing an Address, last wins, keeping survivor
-// order. An upsert chunk may hold each conflict key once, or the transaction aborts.
-func dedupListingEntriesByAddress(entries []ListingEntry) []ListingEntry {
+// dedupListingEntriesByAddress collapses repeats of one claim and withholds every address that two listing ids claim: the
+// address -> instrument pairing is then ambiguous, and picking one would publish an arbitrary claimant's price. Order is kept; an
+// upsert chunk may hold each conflict key once.
+func dedupListingEntriesByAddress(entries []ListingEntry) (out []ListingEntry, ambiguous int) {
 	idx := make(map[string]int, len(entries))
-	out := make([]ListingEntry, 0, len(entries))
+	contested := make(map[string]bool)
+	out = make([]ListingEntry, 0, len(entries))
 	for _, e := range entries {
 		if i, seen := idx[e.Address]; seen {
-			out[i] = e // last-wins: overwrite the earlier row in place
+			if out[i].ListingID != e.ListingID {
+				contested[e.Address] = true
+			}
+			out[i] = e
 			continue
 		}
 		idx[e.Address] = len(out)
 		out = append(out, e)
 	}
-	return out
+	if len(contested) == 0 {
+		return out, 0
+	}
+	kept := out[:0]
+	for _, e := range out {
+		if !contested[e.Address] {
+			kept = append(kept, e)
+		}
+	}
+	return kept, len(contested)
 }
 
 // buildListingUpsert renders a multi-row upsert: 5 params per row plus a shared source at len(chunk)*5+1; synced_at is the tx-stable now().
