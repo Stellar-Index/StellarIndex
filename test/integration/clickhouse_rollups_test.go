@@ -777,6 +777,12 @@ func TestClickHouseCohortHoldingsSumPastInt64(t *testing.T) {
 	}
 	at := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
 
+	// Its own lake tip: the cycle refuses a tip of 0, and no other test in the shard is guaranteed to have left one.
+	if err := raw.Exec(ctx, `INSERT INTO stellar.ledgers
+		(ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)
+		VALUES (?, ?, ?, '00', 23)`, ledger, at, fmt.Sprintf("%064d", ledger)); err != nil {
+		t.Fatalf("insert ledger: %v", err)
+	}
 	for _, m := range members {
 		if err := raw.Exec(ctx, `INSERT INTO stellar.account_sponsor_edges
 			(sponsor, sponsored, sponsorships_started, first_ledger, last_ledger, first_at, last_at)
