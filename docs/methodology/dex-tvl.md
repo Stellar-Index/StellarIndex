@@ -134,9 +134,16 @@ makes the served number smaller, never larger.
    and is counted in both `pools_total` and `unpriced_pools`. It is
    never partially decoded or guessed — a contract upgrade that changes
    a storage layout shows up as a counted gap, not a silent shrink.
-5. **A pool absent from the reserve read is excluded entirely** — not
-   counted, not zeroed. Archived or uncaptured pools are honestly
-   "unavailable"; absence is not a reserve of zero.
+5. **A pool with no reserve state is never valued as zero.** A curated
+   Phoenix or Comet pool the lake holds no current state for is counted
+   in `pools_total` and `unpriced_pools` with `excluded:
+   unavailable_state`, so the figure is a lower bound. Aquarius is read
+   from reserve snapshots in the trailing 90 days only: a pool with no
+   snapshot in that window is omitted from `pools_total`,
+   `unpriced_pools` and `excluded` and does not trip the lower-bound
+   test, so an Aquarius figure can omit a long-quiet pool's reserves
+   without a `≥`. The window is disclosed only in the protocol's
+   `basis` string.
 6. **Aquarius legs whose token address never resolved** are unpriceable
    (`update_reserves` carries positions, not addresses) and count their
    pool unpriced.

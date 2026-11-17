@@ -60,14 +60,17 @@ raise them in an inventory to get a job through.
    snapshot exists.
 2. **Arm the flag for exactly one statement, then disarm it.**
    ```sh
-   sudo touch /var/lib/clickhouse/flags/force_drop_table
-   clickhouse-client --port 9300 -q "DROP TABLE stellar.some_table SYNC"
-   sudo rm -f /var/lib/clickhouse/flags/force_drop_table
+   sudo sh -c 'trap "rm -f /var/lib/clickhouse/flags/force_drop_table" EXIT
+     touch /var/lib/clickhouse/flags/force_drop_table
+     clickhouse-client --port 9300 -q "DROP TABLE stellar.some_table SYNC"'
+   ls -l /var/lib/clickhouse/flags/   # force_drop_table must be absent
    ```
    The server deletes the flag when an OVERSIZE drop consumes it, but leaves
    it if the statement was under the limit, and an unconsumed flag silently
-   permits the next big drop by anyone. Always `rm -f` after and confirm it
-   is gone.
+   permits the next big drop by anyone. The `trap` removes it even when the
+   statement fails; still confirm it is gone. Nothing alerts on a stale
+   flag: check `ls /var/lib/clickhouse/flags/` at the start and end of any
+   ClickHouse maintenance session.
 3. **Never leave the flag armed across a multi-statement job.**
    `scripts/ops/d3-lecur-v2-rebuild.sh` wraps each guarded statement in
    `guarded_ddl` (touch, run, remove) and refuses to start without an explicit
