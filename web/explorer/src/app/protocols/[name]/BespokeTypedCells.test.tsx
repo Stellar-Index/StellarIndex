@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { BespokeSection, BespokeTablePanel } from './BespokeSection';
 import type { Bespoke, BespokeTable } from './BespokeSection';
-import { donutSlices } from './BridgeShowcase';
+import { disambiguateLabels, donutSlices } from './BridgeShowcase';
 import { asExample } from '@/api/client';
 
 vi.mock('@/api/client', async () => {
@@ -181,5 +181,103 @@ describe('typed bespoke cells', () => {
       'data-series',
       'USDC · XLM|Pool Factory V2',
     );
+  });
+  it('suffixes colliding resolved names with the short id, keyed by id', () => {
+    const OTHER = 'C' + 'B'.repeat(54) + 'Q';
+    const slices = donutSlices({
+      title: 'Activity by pool',
+      rows: [
+        {
+          label: 'a',
+          value: '10',
+          count: 10,
+          id: POOL,
+          kind: 'pool',
+          display: 'USDC / XLM',
+        },
+        {
+          label: 'b',
+          value: '5',
+          count: 5,
+          id: OTHER,
+          kind: 'pool',
+          display: 'USDC / XLM',
+        },
+        { label: 'c', value: '2', count: 2, id: CURATED, kind: 'pool' },
+      ],
+    });
+    expect(slices.map((s) => [s.id, s.label])).toEqual([
+      [POOL, 'USDC / XLM (CAAA…AAAQ)'],
+      [OTHER, 'USDC / XLM (CBBB…BBBQ)'],
+      [CURATED, 'Pool Factory V2'],
+    ]);
+    expect(
+      disambiguateLabels([{ label: 'x' }, { label: 'x' }]).map((l) => l.label),
+    ).toEqual(['x', 'x']);
+  });
+
+  it('renders duplicate legend names as distinct entries', async () => {
+    const OTHER = 'C' + 'B'.repeat(54) + 'Q';
+    const pts = [{ date: '2026-07-27', value: '3' }];
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    renderWithClient(
+      <BespokeSection
+        bespoke={{
+          category: 'dex',
+          series: [
+            {
+              name: 'Pool · a',
+              unit: 'events',
+              points: pts,
+              id: POOL,
+              kind: 'pool',
+              display: 'USDC / XLM',
+            },
+            {
+              name: 'Pool · b',
+              unit: 'events',
+              points: pts,
+              id: OTHER,
+              kind: 'pool',
+              display: 'USDC / XLM',
+            },
+          ],
+        }}
+        name="comet"
+        source={asExample('/v1/protocols/comet')}
+      />,
+    );
+    const charts = await screen.findAllByTestId('line-chart');
+    expect(charts[0]).toHaveAttribute(
+      'data-series',
+      'USDC / XLM (CAAA…AAAQ)|USDC / XLM (CBBB…BBBQ)',
+    );
+    expect(screen.getByText('USDC / XLM (CAAA…AAAQ)')).toBeInTheDocument();
+    expect(screen.getByText('USDC / XLM (CBBB…BBBQ)')).toBeInTheDocument();
+    expect(
+      errors.mock.calls.some((c) => String(c[0]).includes('same key')),
+    ).toBe(false);
+    errors.mockRestore();
+  });
+
+  it('links an address held in a text-kind cell', () => {
+    const table: BespokeTable = {
+      title: 'Recent governance events',
+      columns: ['Kind', 'Target', 'Ledger'],
+      column_kinds: [{ kind: 'text' }, { kind: 'text' }, { kind: 'text' }],
+      rows: [['commit_upgrade', POOL, '51234567']],
+    };
+    renderWithClient(
+      <BespokeTablePanel
+        table={table}
+        source={asExample('/v1/protocols/aquarius')}
+      />,
+    );
+    expect(screen.getByRole('link')).toHaveAttribute(
+      'href',
+      `/contracts/${POOL}/`,
+    );
+    expect(screen.getByText('commit_upgrade')).toBeInTheDocument();
+    expect(screen.getByText('51234567')).toBeInTheDocument();
   });
 });

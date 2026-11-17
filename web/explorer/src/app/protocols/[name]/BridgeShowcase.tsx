@@ -10,6 +10,7 @@ import {
   formatCompact,
   formatCompactUnits,
   sumDecimalStrings,
+  truncateMiddle,
 } from '@/lib/format';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
@@ -68,7 +69,28 @@ const PER_CHAIN_OUT = 'Outbound · ';
 const CUMULATIVE = 'Cumulative net inflow (all-time)';
 
 /** A plotted line plus the exact window total its legend shows. */
-export type LegendLine = NamedLineSeries & { total: string | null };
+export type LegendLine = NamedLineSeries & {
+  total: string | null;
+  /** The entity id behind the line, when it has one: the legend's React key. */
+  id?: string;
+};
+
+// disambiguateLabels — two entities can resolve to one name (two USDC / XLM
+// pools); each colliding label gains its shortened id so a reader can tell
+// them apart. Entries without an id keep their label.
+export function disambiguateLabels<T extends { label: string; id?: string }>(
+  items: T[],
+): T[] {
+  const counts = new Map<string, number>();
+  for (const it of items) {
+    counts.set(it.label, (counts.get(it.label) ?? 0) + 1);
+  }
+  return items.map((it) =>
+    it.id && (counts.get(it.label) ?? 0) > 1
+      ? { ...it, label: `${it.label} (${truncateMiddle(it.id, 4, 4)})` }
+      : it,
+  );
+}
 
 function toLine(s: BespokeSeries, label: string, color?: string): LegendLine {
   return {
@@ -192,9 +214,10 @@ export function donutSlices(b: BespokeBreakdown): DonutSlice[] {
       ];
     })
     .sort((a, x) => x.value - a.value);
-  const top: DonutSlice[] = rows
-    .slice(0, 6)
-    .map((r) => ({ ...r, color: chainColor(r.label) }));
+  const top: DonutSlice[] = disambiguateLabels(rows.slice(0, 6)).map((r) => ({
+    ...r,
+    color: chainColor(r.label),
+  }));
   const rest = rows.slice(6);
   if (rest.length > 0) {
     const restDecimals = rest.map((r) => r.decimal);
@@ -277,8 +300,8 @@ export function LineLegend({ lines }: { lines: LegendLine[] }) {
   if (lines.length === 0) return null;
   return (
     <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
-      {lines.map((l) => (
-        <li key={l.label} className="flex items-center gap-1.5">
+      {lines.map((l, i) => (
+        <li key={l.id ?? i} className="flex items-center gap-1.5">
           <span
             aria-hidden
             className={cn(

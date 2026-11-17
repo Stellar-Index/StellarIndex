@@ -39,6 +39,7 @@ import {
   BridgeShowcase,
   BreakdownDonuts,
   LineLegend,
+  disambiguateLabels,
   type LegendLine,
 } from './BridgeShowcase';
 
@@ -223,23 +224,26 @@ function GroupedSeriesPanel({
   source: RequestExample;
   days: WindowDays;
 }) {
-  const lines: LegendLine[] = group.series.map((s, i) => ({
-    // The resolved name sits beside `name`, so it cannot change the grouping.
-    label:
-      entityName(s.kind, s.id, s.display) ??
-      s.name.slice(group.title.length + ' · '.length),
-    tone: 'brand',
-    color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
-    total: seriesTotal(s.points),
-    // Today's accumulating daily bucket is dropped (phantom-cliff honesty);
-    // points with a non-parsable date or non-numeric value are dropped, not
-    // plotted as 1970/zero fabrications.
-    data: dropPartialTrailingDay(s.points).flatMap((p) => {
-      const time = seriesPointTime(p.date);
-      const value = toChartNumber(p.value);
-      return time == null || value == null ? [] : [{ time, value }];
-    }),
-  }));
+  const lines: LegendLine[] = disambiguateLabels(
+    group.series.map((s, i) => ({
+      // The resolved name sits beside `name`, so it cannot change the grouping.
+      label:
+        entityName(s.kind, s.id, s.display) ??
+        s.name.slice(group.title.length + ' · '.length),
+      id: s.id || undefined,
+      tone: 'brand',
+      color: CATEGORICAL_PALETTE[i % CATEGORICAL_PALETTE.length],
+      total: seriesTotal(s.points),
+      // Today's accumulating daily bucket is dropped (phantom-cliff honesty);
+      // points with a non-parsable date or non-numeric value are dropped, not
+      // plotted as 1970/zero fabrications.
+      data: dropPartialTrailingDay(s.points).flatMap((p) => {
+        const time = seriesPointTime(p.date);
+        const value = toChartNumber(p.value);
+        return time == null || value == null ? [] : [{ time, value }];
+      }),
+    })),
+  );
   const unit = group.series[0]?.unit;
   const grainLabel = days === 1 ? 'hourly' : 'daily';
   return (
@@ -584,6 +588,7 @@ export function BespokeTablePanel({
                       {kinds?.[ci] ? (
                         <TypedCell
                           kind={kinds[ci].kind}
+                          column={table.columns[ci] ?? ''}
                           value={row[ci] ?? ''}
                           display={table.display?.[ri]?.[ci] ?? ''}
                         />
@@ -709,13 +714,16 @@ function NamedEntity({
   );
 }
 
-// TypedCell — renders a cell by its server-declared kind; no sniffing.
+// TypedCell — renders a cell by its server-declared kind. A free-text cell
+// can still hold an id (a governance target), so it keeps Cell's sniffing.
 function TypedCell({
   kind,
+  column,
   value,
   display,
 }: {
   kind: BespokeCellKind;
+  column: string;
   value: string;
   display: string;
 }) {
@@ -750,8 +758,9 @@ function TypedCell({
     case 'account':
     case 'tx':
       return <Cell value={value} column="" />;
-    case 'time':
     case 'text':
+      return <Cell value={value} column={column} />;
+    case 'time':
       return <span>{value}</span>;
   }
 }
