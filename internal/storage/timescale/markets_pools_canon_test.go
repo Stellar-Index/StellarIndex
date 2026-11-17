@@ -205,3 +205,26 @@ func TestPoolsRawPrefilterSQL_SpellsOnlySetFilters(t *testing.T) {
 		}
 	}
 }
+
+// TestListingLastPrice_TrailingDayOnly pins the documented last_price contract (a price observed in the trailing 24h, else null)
+// on every listing reader: the pair-wide query must not fall back to a prices_1d close, and the per-venue last() must be
+// bounded to 24h, though both read a 14-day activity window.
+func TestListingLastPrice_TrailingDayOnly(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	fold := func(q string) string { return strings.Join(strings.Fields(q), " ") }
+
+	pairs, _ := buildDistinctPairsQuery(since, "", "", "", 100, MarketsOrderPair)
+	if strings.Contains(fold(pairs), "d.last_price") {
+		t.Error("/v1/markets last_price still falls back to a prices_1d close up to 14 days old")
+	}
+	const venueLast = "last(r.bucket_last_price, r.bucket_last_ts) FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours') AS last_price"
+	for name, q := range map[string]string{
+		"source": func() string { q, _ := buildSourceMarketsQuery(since, "sdex", "", 100, MarketsOrderPair); return q }(),
+		"pools":  func() string { q, _ := buildPoolsQuery(since, PoolsFilter{}, "", 100, MarketsOrderPair); return q }(),
+	} {
+		if !strings.Contains(fold(q), venueLast) {
+			t.Errorf("%s: per-venue last_price is not bounded to the trailing 24h", name)
+		}
+	}
+}
