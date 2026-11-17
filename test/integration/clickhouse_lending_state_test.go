@@ -307,6 +307,7 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	if err := runLendingWrite(t, addr, base, base+3); err != nil {
 		t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
 	}
+	proveLendingBoundedCases(t, ctx, conn, addr, pool)
 	// The yield pool gains a live reserve the table has never seen: the proof names it.
 	yieldID := xdr.ContractId(strkey.MustDecode(strkey.VersionByteContract, blnt.MainnetYieldBlentPool))
 	var asset xdr.ContractId
@@ -314,6 +315,113 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	create(base+4, at(12, 20), resDataKeyB64(t, yieldID, asset), "Y1")
 	if err := chops.Run(prove); err == nil || !strings.Contains(err.Error(), blnt.MainnetYieldBlentPool+" has no ResData") {
 		t.Fatalf("proof with a live reserve absent from the table: err = %v, want the yield pool named", err)
+	}
+}
+
+// proveLendingBoundedCases covers keys changed since the watermark, whose state there the proof folds from a bounded
+// lake read: a tampered row, a key the history lacks, a later change the history missed, and keys left not compared.
+// It leaves the table consistent again.
+func proveLendingBoundedCases(t *testing.T, ctx context.Context, conn driver.Conn, addr, pool string) {
+	t.Helper()
+	const base = lendingProofBase
+	// Each change its own transaction: a shared (ledger, tx, op, change) identity would collapse under FINAL.
+	var n uint32
+	create := func(seq uint32, ts time.Time, k, e string) {
+		n++
+		insertEntryChanges(t, ctx, chstore.LedgerEntryChangeRow{
+			LedgerSeq: seq, CloseTime: ts, TxHash: "b0" + strconv.FormatUint(uint64(n), 10), ChangeType: "created",
+			EntryType: "contract_data", KeyXDR: k, EntryXDR: e, IntraLedgerSeq: 100 + n,
+		})
+	}
+	at := func(h, m int) time.Time { return time.Date(2027, 2, 10, h, m, 0, 0, time.UTC) }
+	prove := []string{"ch-entry-history", "-lending-only", "-prove", "-ch-addr", addr}
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := conn.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	rederive := func() {
+		t.Helper()
+		exec(`ALTER TABLE stellar.lending_state_hourly DELETE WHERE ledger_seq > ? OR entry_xdr = 'TAMPER' SETTINGS mutations_sync = 2`, base+3)
+		if err := runLendingWrite(t, addr, base, base+3); err != nil {
+			t.Fatalf("re-derive [%d,%d]: %v", base, base+3, err)
+		}
+		if err := chops.Run(prove); err != nil {
+			t.Fatalf("proof after re-deriving: %v", err)
+		}
+	}
+	wantMismatch := func(what string) {
+		t.Helper()
+		if err := chops.Run(prove); err == nil || !strings.Contains(err.Error(), "disagree with the lake") {
+			t.Fatalf("proof with %s: err = %v, want a state mismatch", what, err)
+		}
+	}
+	poolID := xdr.ContractId(strkey.MustDecode(strkey.VersionByteContract, pool))
+	reserve := func(b byte) string {
+		var a xdr.ContractId
+		a[0] = b
+		return resDataKeyB64(t, poolID, a)
+	}
+
+	// A key unchanged since the watermark whose latest row is wrong.
+	k1 := reserve(0x5b)
+	create(base+1, at(10, 50), k1, "K1")
+	rederive()
+	exec(`INSERT INTO stellar.lending_state_hourly (contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2027-02-10 11:00:00', 'UTC'), ?, 1, toDateTime('2027-02-10 11:05:00', 'UTC'), 'TAMPER')`, pool, k1, base+2)
+	wantMismatch("a wrong row for a key unchanged since the watermark")
+	rederive()
+
+	// A key the lake changed at or below the watermark and again after it, absent from the history.
+	k2 := reserve(0x5c)
+	create(base+1, at(10, 50), k2, "K2")
+	create(base+4, at(12, 10), k2, "K2b")
+	wantMismatch("a key changed since the watermark that the history lacks")
+	rederive()
+
+	// A key whose history misses a change at or below the watermark, and that changed again after it.
+	k3 := reserve(0x5d)
+	create(base, at(10, 10), k3, "K3")
+	create(base+2, at(11, 5), k3, "K3b")
+	rederive()
+	create(base+4, at(12, 10), k3, "K3c")
+	exec(`ALTER TABLE stellar.lending_state_hourly DELETE WHERE key_xdr = ? AND hour = toDateTime('2027-02-10 11:00:00', 'UTC')
+		SETTINGS mutations_sync = 2`, k3)
+	wantMismatch("a missed change at or below the watermark")
+	rederive()
+
+	// Not compared: a key whose latest row lies deeper below the watermark than the proof reads, and a backstop key
+	// (deploy ledger unknown) with no row at or below the watermark. The rest still passes; the run is INCOMPLETE.
+	backstopID := xdr.ContractId(strkey.MustDecode(strkey.VersionByteContract, blnt.MainnetBackstop))
+	balance := func(b byte) string {
+		var a xdr.ContractId
+		a[0] = b
+		sym := xdr.ScSymbol("PoolBalance")
+		addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &a}
+		vec := &xdr.ScVec{{Type: xdr.ScValTypeScvSymbol, Sym: &sym}, {Type: xdr.ScValTypeScvAddress, Address: &addr}}
+		return lendingKeyB64(t, backstopID, xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vec})
+	}
+	b1, b2 := balance(0x61), balance(0x62)
+	create(base+1, at(10, 50), b1, "B1")
+	rederive()
+	create(base+4, at(12, 10), b2, "B2")
+	// The row outside -from is left out of the count proof.
+	k4 := reserve(0x5e)
+	exec(`INSERT INTO stellar.lending_state_hourly (contract_id, protocol, key_xdr, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr)
+		VALUES (?, 'blnt', ?, toDateTime('2026-11-01 00:00:00', 'UTC'), ?, 1, toDateTime('2026-11-01 00:00:00', 'UTC'), 'K4')`,
+		pool, k4, base-1_000_000)
+	create(base+4, at(12, 10), k4, "K4b")
+	err := chops.Run(append(prove, "-from", strconv.FormatUint(uint64(base), 10)))
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE: 2 keys not compared") {
+		t.Fatalf("proof with keys beyond its read bound: err = %v, want INCOMPLETE naming 2 keys", err)
+	}
+	exec(`ALTER TABLE stellar.lending_state_hourly DELETE WHERE key_xdr = ? SETTINGS mutations_sync = 2`, k4)
+	for _, tbl := range []string{"ledger_entry_changes", "ledger_entries_current"} {
+		exec(`ALTER TABLE stellar.`+tbl+` DELETE WHERE key_xdr = ? SETTINGS mutations_sync = 2`, b2)
+	}
+	if err := chops.Run(prove); err != nil {
+		t.Fatalf("proof once every key is comparable: %v", err)
 	}
 }
 

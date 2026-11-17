@@ -30,7 +30,7 @@ func chEntryHistory(args []string) error {
 	proof := fs.String("proof", "", "comma-separated accounts: print each one's sponsorship counters against the derived in-force reserves and exit (reads only)")
 	lendingOnly := fs.Bool("lending-only", false, "derive only stellar.lending_state_hourly (Blend and BLNT pool and backstop storage, last change per key per hour) from its lending_state watermark, or the Blend factory genesis on first run, to the contiguous tip in partition-aligned windows; -window does not apply")
 	printPrefixes := fs.Bool("print-prefixes", false, "with -lending-only: print the lending registry and key prefixes and exit (reads only)")
-	prove := fs.Bool("prove", false, "with -lending-only: check the history against the lake at the watermark (latest row per key, every registered contract's keys, one row per changed key and hour over [-from, -to]) and exit (reads only)")
+	prove := fs.Bool("prove", false, "with -lending-only: check the history against the lake at the watermark (latest row per key, every registered contract's keys, one row per changed key and hour over [-from, -to]) and exit (reads only); a key it could not compare within its bounded lake read is listed and the run exits non-zero as INCOMPLETE")
 	lockFile := fs.String("lock-file", lendingLockPath, "with -lending-only: flock serialising concurrent -write runs")
 	heartbeat := fs.String("heartbeat", "", "with -lending-only: ops-job heartbeat textfile path. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_"+lendingJob+".prom when that directory exists")
 	gate := opsutil.RegisterWriteGate(fs)

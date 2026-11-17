@@ -527,7 +527,7 @@ func TestLendingPoolFromDeploy_RealBLNTEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Protocol != clickhouse.LendingBLNT || got.Backstop || !slices.Contains(blnt.MainnetGatedSet(), got.ID) {
+	if got.Protocol != clickhouse.LendingBLNT || got.Backstop || got.Deployed != f.Ledger || !slices.Contains(blnt.MainnetGatedSet(), got.ID) {
 		t.Fatalf("BLNT deploy = %+v, want a known BLNT pool", got)
 	}
 	// The Blend factories emit the same deploy shape; the factory alone fixes the protocol.
