@@ -63,12 +63,22 @@ func (s stubTVLReserveReader) SoroswapPairReserves(_ context.Context, _ []string
 }
 
 type stubAquariusReserveReader struct {
-	pools []timescale.AquariusPoolReserve
-	err   error
+	pools       []timescale.AquariusPoolReserve
+	err         error
+	registered  []string
+	registryErr error
 }
 
 func (s *stubAquariusReserveReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	return s.pools, s.err
+}
+
+func (s *stubAquariusReserveReader) ListProtocolContracts(_ context.Context, source string) ([]timescale.ProtocolContract, error) {
+	out := make([]timescale.ProtocolContract, 0, len(s.registered))
+	for _, id := range s.registered {
+		out = append(out, timescale.ProtocolContract{Source: source, ContractID: id, FactoryID: "router"})
+	}
+	return out, s.registryErr
 }
 
 type stubPhoenixReserveReader struct {
@@ -766,6 +776,74 @@ func TestDEXTVLCache_ProtocolColdAndUnknown(t *testing.T) {
 	c = refreshedBranchCache(t)
 	if _, ok := c.Protocol("sdex"); ok {
 		t.Error("sdex has no derivation and must report no entry")
+	}
+}
+
+// TestDEXTVLCache_AquariusRegistryReadFailureRefusesFigure: when the pool-registry read fails, aquarius publishes no figure
+// rather than one that silently omits the registered pools the window read missed.
+func TestDEXTVLCache_AquariusRegistryReadFailureRefusesFigure(t *testing.T) {
+	src := tvlTestSources()
+	src.AquariusReserves = &stubAquariusReserveReader{
+		pools:       src.AquariusReserves.(*stubAquariusReserveReader).pools,
+		registryErr: errors.New("registry read down"),
+	}
+	c := NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh returned nil for a failed pool-registry read")
+	}
+	if _, ok := c.Protocol("aquarius"); ok {
+		t.Fatal("aquarius published a figure without its registered-pool count")
+	}
+	if ex, ok := tvlExclusionFor(c.Total(), "aquarius"); !ok || !strings.Contains(ex.Reason, "read failed") {
+		t.Errorf("tvl_total.excluded aquarius = %+v (%v), want it named as a failed read", ex, ok)
+	}
+}
+
+// TestDEXTVLCache_AquariusRegisteredPoolMissedByWindowReadIsUnavailable: a pool silent past the window that is updated
+// after the window read is in no snapshot read at all; the registry still names it, so the figure is a lower bound.
+func TestDEXTVLCache_AquariusRegisteredPoolMissedByWindowReadIsUnavailable(t *testing.T) {
+	const (
+		revivedPool = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
+		curatedPool = "CCY2PXGMKNQHO7WNYXEWX76L2C5BH3JUW3RCATGUYKY7QQTRILBZIFWV"
+	)
+	src := tvlTestSources()
+	src.AquariusReserves = &stubAquariusReserveReader{
+		pools: []timescale.AquariusPoolReserve{{
+			ContractID: tvlTestAqPool,
+			ObservedAt: time.Now(),
+			Ledger:     tvlTestLedgerAquarius,
+			Legs: []timescale.AquariusReserveLeg{
+				{TokenIndex: 0, Token: canonical.XLMSacContractID, Reserve: canonical.NewAmount(big.NewInt(10_000_000))},
+			},
+		}},
+		registered: []string{revivedPool, tvlTestAqPool},
+	}
+	src.AquariusPools = []string{tvlTestAqPool, curatedPool}
+	c := NewDEXTVLCache(src)
+	_ = c.Refresh(context.Background())
+	snap, ok := c.Protocol("aquarius")
+	if !ok {
+		t.Fatal("aquarius missing from snapshot")
+	}
+	// The read pool keeps its exact value; each registered pool the read missed adds 0 and is counted once.
+	if v := snap.TVL; v.TVLUSD != "0.50" || v.PoolsTotal != 3 || v.PoolsPriced != 1 || v.UnpricedPools != 2 {
+		t.Fatalf("aquarius tvl = %+v, want 0.50 over 3 pools, 1 priced, 2 unpriced", v)
+	}
+	named := map[string]bool{}
+	for _, p := range snap.Pools {
+		if p.Excluded == DEXTVLPoolUnavailable && p.TVLUSD == "0.00" {
+			named[p.Pool] = true
+		}
+	}
+	if !named[revivedPool] || !named[curatedPool] || named[tvlTestAqPool] {
+		t.Errorf("unavailable pools = %v, want exactly %s and %s", named, revivedPool, curatedPool)
+	}
+	at, err := time.Parse(time.RFC3339, snap.TVL.AsOf)
+	if err != nil {
+		t.Fatalf("as_of: %v", err)
+	}
+	if total := reconcileDEXTVLTotal(map[string]ProtocolTVLView{"aquarius": snap.TVL}, at, nil, nil); total == nil || !total.LowerBound {
+		t.Errorf("tvl_total over aquarius alone = %+v, want lower_bound", total)
 	}
 }
 

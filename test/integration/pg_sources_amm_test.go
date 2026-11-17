@@ -260,6 +260,19 @@ func TestLatestAquariusReserves(t *testing.T) {
 		t.Fatalf("InsertAquariusLiquidity: %v", err)
 	}
 
+	// A pool last touched before the window: left out of the snapshot read (the pools == 1 check below).
+	const quietPool = "CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV"
+	if err := store.InsertAquariusReserves(ctx, timescale.AquariusReservesEvent{
+		ContractID:      quietPool,
+		Ledger:          50_000_000,
+		LedgerCloseTime: time.Now().UTC().Add(-100 * 24 * time.Hour),
+		TxHash:          "4444444444444444444444444444444444444444444444444444444444444444",
+		OpIndex:         0,
+		EventIndex:      0,
+		Reserves:        []canonical.Amount{canonical.NewAmount(big.NewInt(7))},
+	}); err != nil {
+		t.Fatalf("InsertAquariusReserves (quiet): %v", err)
+	}
 	pools, err := store.LatestAquariusReserves(ctx, 90)
 	if err != nil {
 		t.Fatalf("LatestAquariusReserves: %v", err)

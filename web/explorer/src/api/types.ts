@@ -9100,8 +9100,9 @@ export interface components {
             /**
              * @description Pool-level exclusion. `undecodable_storage`: the captured
              *     storage did not decode to the recognised shape.
-             *     `unavailable_state`: a curated pool with no current state in
-             *     the lake (absent or archived). Either way the legs are
+             *     `unavailable_state`: a curated Phoenix/Comet pool with no
+             *     current state in the lake (absent or archived), or a registered
+             *     Aquarius pool with no reserve snapshot in the trailing 90 days. Either way the legs are
              *     unknown: `legs` is empty and `tvl_usd` is "0.00" — counted,
              *     never guessed.
              * @enum {string}
@@ -20906,6 +20907,8 @@ export interface operations {
                                 /** @description Whether the source is switched on for this deployment. false with entries_24h 0 means "off", not "failing". */
                                 enabled: boolean;
                                 volume_24h_usd?: string;
+                                /** @description true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources). */
+                                volume_lower_bound?: boolean;
                                 /** Format: int64 */
                                 markets_count_24h: number;
                             }[];
@@ -22551,6 +22554,8 @@ export interface operations {
                             /** @description Whether the source is switched on for this deployment. false with entries_24h 0 means "off", not "failing". */
                             enabled: boolean;
                             volume_24h_usd?: string;
+                            /** @description true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources). */
+                            volume_lower_bound?: boolean;
                             /** Format: int64 */
                             markets_count_24h: number;
                         };

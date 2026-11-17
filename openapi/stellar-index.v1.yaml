@@ -6705,6 +6705,7 @@ paths:
                                 entries_24h:       { type: integer, format: int64, description: "Trailing-24h per-source event count (trades, oracle updates, …), non-zero for every active source unlike trade_count_24h which is trades-table-only." }
                                 enabled:           { type: boolean, description: "Whether the source is switched on for this deployment. false with entries_24h 0 means \"off\", not \"failing\"." }
                                 volume_24h_usd:    { type: string }
+                                volume_lower_bound: { type: boolean, description: "true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources)." }
                                 markets_count_24h: { type: integer, format: int64 }
                     required: [data]
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -8518,6 +8519,7 @@ paths:
                           entries_24h: { type: integer, format: int64 }
                           enabled: { type: boolean, description: "Whether the source is switched on for this deployment. false with entries_24h 0 means \"off\", not \"failing\"." }
                           volume_24h_usd: { type: string }
+                          volume_lower_bound: { type: boolean, description: "true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources)." }
                           markets_count_24h: { type: integer, format: int64 }
         "404":
           description: No registered source with that name.
@@ -18689,8 +18691,9 @@ components:
           description: |
             Pool-level exclusion. `undecodable_storage`: the captured
             storage did not decode to the recognised shape.
-            `unavailable_state`: a curated pool with no current state in
-            the lake (absent or archived). Either way the legs are
+            `unavailable_state`: a curated Phoenix/Comet pool with no
+            current state in the lake (absent or archived), or a registered
+            Aquarius pool with no reserve snapshot in the trailing 90 days. Either way the legs are
             unknown: `legs` is empty and `tvl_usd` is "0.00" — counted,
             never guessed.
         legs:

@@ -2537,7 +2537,9 @@ function SourceHealthTable({ rows }: { rows: IngestionSnapshot['sources'] }) {
                     )}
                   </td>
                   <td className="tnum text-ink-muted px-3 py-2 text-right">
-                    {r.volume_24h_usd ? formatUSD(r.volume_24h_usd) : '—'}
+                    {r.volume_24h_usd
+                      ? `${r.volume_lower_bound ? '≥ ' : ''}${formatUSD(r.volume_24h_usd)}`
+                      : '—'}
                   </td>
                   <td className="tnum text-ink-muted px-3 py-2 text-right">
                     {r.markets_count_24h.toLocaleString('en-US')}

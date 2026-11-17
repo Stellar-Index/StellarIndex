@@ -3,6 +3,7 @@ package v1_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io"
 	"net/http"
 	"slices"
@@ -252,6 +253,34 @@ func TestSources_VolumeLowerBound(t *testing.T) {
 	}
 	if got["aquarius"] {
 		t.Errorf("fully priced source must not be flagged: %v", got)
+	}
+}
+
+// TestSourceHealth_VolumeLowerBound pins that the health row flags a volume excluding unpriced trades as a floor, under the
+// same rule as /v1/sources, and leaves a fully priced source's volume unflagged.
+func TestSourceHealth_VolumeLowerBound(t *testing.T) {
+	ts := httpTestServer(t, v1.New(v1.Options{SourcesStats: lowerBoundSourcesStats{
+		stats: []timescale.SourceStats{
+			{Source: "soroswap", TradeCount24h: 10, UnpricedTrades24h: 3, VolumeUSD24h: sql.NullString{String: "120.50", Valid: true}},
+			{Source: "aquarius", TradeCount24h: 5, VolumeUSD24h: sql.NullString{String: "40.00", Valid: true}},
+		},
+	}}))
+	for name, want := range map[string]bool{"soroswap": true, "aquarius": false} {
+		resp := mustGet(t, ts.URL+"/v1/sources/"+name+"/health")
+		var env struct {
+			Data map[string]any `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		got, present := env.Data["volume_lower_bound"]
+		if want && got != true {
+			t.Errorf("%s: volume_lower_bound = %v, want true (3 unpriced trades excluded from volume_24h_usd)", name, got)
+		}
+		if !want && present {
+			t.Errorf("%s: volume_lower_bound = %v, want absent for a fully priced source", name, got)
+		}
+		if env.Data["volume_24h_usd"] == nil {
+			t.Errorf("%s: volume_24h_usd missing; the flag qualifies a served figure", name)
+		}
 	}
 }
 

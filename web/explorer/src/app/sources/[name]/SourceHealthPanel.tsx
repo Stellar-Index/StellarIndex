@@ -5,6 +5,7 @@ import { asExample } from '@/api/client';
 import { Panel } from '@/components/reveal';
 import { Skeleton, Stat, StatCell, StatGrid } from '@/components/ui';
 import { formatCompactUnits } from '@/lib/format';
+import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
 /**
  * SourceHealthPanel — the live health pane on /sources/[name], from
@@ -62,9 +63,17 @@ export function SourceHealthPanel({ source }: { source: string }) {
             <Stat
               label="Volume"
               value={
-                data.volume_24h_usd
-                  ? `$${formatCompactUnits(data.volume_24h_usd)}`
-                  : '—'
+                data.volume_24h_usd ? (
+                  <span
+                    title={
+                      data.volume_lower_bound ? VOLUME_FLOOR_HINT : undefined
+                    }
+                  >
+                    {`${data.volume_lower_bound ? '≥ ' : ''}$${formatCompactUnits(data.volume_24h_usd)}`}
+                  </span>
+                ) : (
+                  '—'
+                )
               }
               sub="USD notional"
             />
