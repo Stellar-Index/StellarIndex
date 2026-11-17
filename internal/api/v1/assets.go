@@ -2053,7 +2053,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	// q= over the catalogue phase (the classic phase filters in SQL). It is applied to the rows,
 	// not the entries, because it also matches the projected name.
-	rows = filterCatalogueRowsByQuery(rows, filters.q)
+	rows = filterCatalogueRowsByQuery(rows, entries, filters.q)
 
 	// The same served-slug cursor as writeCataloguePage: the rank below
 	// moves between requests, so an offset into it would duplicate or skip.
@@ -3797,18 +3797,22 @@ func stellarIssuanceMatches(se *currency.IssuanceEntry, f assetListFilters) bool
 	return err == nil && string(asset.Type) == f.typ
 }
 
-// filterCatalogueRowsByQuery applies the case-insensitive q= substring
-// filter over in-process catalogue rows (code / asset id / slug / name).
-func filterCatalogueRowsByQuery(rows []AssetDetail, rawQ string) []AssetDetail {
+// filterCatalogueRowsByQuery applies the case-insensitive q= substring filter over catalogue rows (code / asset id / slug /
+// name), parallel to entries. It also searches the Stellar issuance's code, asset_id and issuer: the classic phase matches
+// those columns in SQL and then suppresses the twin as a catalogue duplicate, so a miss here would drop the asset from both.
+func filterCatalogueRowsByQuery(rows []AssetDetail, entries []*currency.VerifiedCurrency, rawQ string) []AssetDetail {
 	q := strings.ToLower(strings.TrimSpace(rawQ))
 	if q == "" {
 		return rows
 	}
 	filtered := rows[:0]
-	for _, row := range rows {
+	for i, row := range rows {
 		hay := strings.ToLower(row.AssetID + " " + row.Code + " " + row.Slug)
 		if row.Name != nil {
 			hay += " " + strings.ToLower(*row.Name)
+		}
+		if se := entries[i].StellarEntry(); se != nil {
+			hay += " " + strings.ToLower(se.Code+" "+se.AssetID+" "+se.Issuer)
 		}
 		if strings.Contains(hay, q) {
 			filtered = append(filtered, row)
