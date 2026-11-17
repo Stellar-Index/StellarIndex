@@ -14843,8 +14843,8 @@ paths:
         Blend Backstop (backstop_shares), Phoenix stake
         (stake), DeFindex vault shares (vault_shares), sorocredit
         (credit), and Aquarius rewards-gauge (gauge). Not paginated —
-        each protocol's venue fan-out for one address is bounded server-
-        side (500 venues), far past any realistic user.
+        each protocol's fold for one address is bounded server-side
+        (500 rows); a fold past that is disclosed in `coverage_note`.
 
         HONESTY CONTRACT: this is raw on-chain quantities only — no
         USD/asset valuation is applied (see the top-level `note`, always
@@ -16548,7 +16548,9 @@ components:
             supply-side and borrow-side legs of the same (pool, asset).
             backstop_shares: Blend or BLNT Backstop share stake. stake: Phoenix
             per-pool LP-share bond. vault_shares: DeFindex vault df-token
-            share. credit: sorocredit CDP-style credit position. gauge:
+            share; never treated as closed, because the figure is a net
+            of the account's own deposit/withdraw flows, not a balance,
+            so a zero net does not prove the account holds none. credit: sorocredit CDP-style credit position. gauge:
             Aquarius rewards-gauge staked position.
         venue:
           type: string
@@ -16713,10 +16715,10 @@ components:
             from the response, not proven absent on-chain: an empty
             `positions` array with a `coverage_note` means "we could
             not look", never "this address holds nothing". Also present
-            when a protocol's fold exceeded the 500-venue cap: it then
+            when a protocol's fold exceeded the 500-row cap: it then
             starts `TRUNCATED:` after any read failures, names the
-            protocol, and that protocol's rows are the first 500 by
-            contract id, a lower bound. Mirrors the same field on
+            protocol, and that protocol's rows are the first 500 rows in
+            venue order, a lower bound. Mirrors the same field on
             GET /accounts/{g_strkey}/movements.
       required: [account, positions, include_closed, note]
     AccountTrade:
