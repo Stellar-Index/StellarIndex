@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,20 +19,20 @@ func (r *truncatedDefindexReader) DefindexVaultSharesByUser(context.Context, str
 	return r.rows, fmt.Errorf("probe: %w", timescale.ErrPositionsTruncated)
 }
 
-// TestBuildDefindexPositions_CappedFoldIsDisclosed: a fold over the venue cap keeps its rows and names itself in
+// TestCollectPositions_CappedFoldIsDisclosed: a fold over the venue cap keeps its rows and names itself in
 // coverage_note, so the list is not served as every venue the account holds.
-func TestBuildDefindexPositions_CappedFoldIsDisclosed(t *testing.T) {
+func TestCollectPositions_CappedFoldIsDisclosed(t *testing.T) {
 	positions := &truncatedDefindexReader{slowPositionsReader: &slowPositionsReader{}, rows: []timescale.DefindexVaultFold{
 		{ContractID: greepVault, SharesNet: "10"},
 	}}
 	h := newProbeHandler(&vaultMetaReader{capReader: capReader{probe: &deadlineProbe{}}}, positions)
-	cov := &positionsCoverage{folds: 1}
-	got := h.buildDefindexPositions(context.Background(), validTestAccount, cov)
+	cov := &positionsCoverage{}
+	got := h.collectPositions(context.Background(), validTestAccount, func(string) string { return "" }, cov)
 	if len(got) != 1 {
 		t.Fatalf("rows = %d, want the capped fold's rows kept", len(got))
 	}
-	if note := cov.note(); !strings.Contains(note, "TRUNCATED: defindex") || strings.Contains(note, "INCOMPLETE") {
-		t.Errorf("coverage_note = %q, want a truncation note naming defindex and no read failure", note)
+	if note := cov.note(); !strings.Contains(note, "TRUNCATED: defindex") || slices.Contains(cov.degraded, "defindex") {
+		t.Errorf("coverage_note = %q, want a truncation note naming defindex and no defindex read failure", note)
 	}
 }
 

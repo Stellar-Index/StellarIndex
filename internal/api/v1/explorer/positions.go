@@ -192,8 +192,8 @@ func (c *positionsCoverage) note() string {
 	}
 	if len(c.truncated) > 0 {
 		parts = append(parts, "TRUNCATED: "+strings.Join(c.truncated, ", ")+
-			" positions exceed the per-protocol venue cap; only the first "+strconv.Itoa(timescale.PositionsVenueLimit)+
-			" venues by contract id are shown, so this list is a lower bound for those protocols.")
+			" positions exceed the per-protocol cap; only the first "+strconv.Itoa(timescale.PositionsVenueLimit)+
+			" rows in venue order are shown, so this list is a lower bound for those protocols.")
 	}
 	return strings.Join(parts, " ")
 }
@@ -276,6 +276,7 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 	for i := range slots {
 		positions = append(positions, slots[i]...)
 		cov.degraded = append(cov.degraded, covs[i].degraded...)
+		cov.truncated = append(cov.truncated, covs[i].truncated...)
 		cov.labelsUnresolved = cov.labelsUnresolved || covs[i].labelsUnresolved
 	}
 	return positions
