@@ -49,8 +49,9 @@ func findDataGaps(args []string) error {
 	to := fs.Int64("to", 0,
 		"scan to this ledger (default 0 = current tip from the live cursor)")
 	minGapSize := fs.Int64("min-gap-size", findDataGapsDefaultMinGapSize,
-		"only report gaps >= this many contiguous ledgers. 1000 default "+
-			"filters out legitimate no-Soroban-activity stretches; lower "+
+		"only report gaps >= this many contiguous ledgers. Unset, each "+
+			"source uses its own threshold (1000 unless the source overrides "+
+			"it), filtering out legitimate no-activity stretches; lower "+
 			"values surface more noise from quiet periods.")
 	output := fs.String("output", "text",
 		"output format: text (operator-friendly) or json (machine-readable plan)")
@@ -66,6 +67,11 @@ func findDataGaps(args []string) error {
 	}
 	if *minGapSize < 1 {
 		return fmt.Errorf("-min-gap-size (%d) must be >= 1", *minGapSize)
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if !set["min-gap-size"] {
+		*minGapSize = 0
 	}
 	if *output != "text" && *output != "json" {
 		return fmt.Errorf("-output (%q) must be \"text\" or \"json\"", *output)
@@ -123,23 +129,28 @@ type ledgerRangeGapFinder interface {
 
 // scanDataGaps scans each target over [max(from, Genesis), to] with both edges bracketed, so a hole running to the tip, one
 // starting at the source's genesis, or a range with no rows at all is reported rather than read as clean.
+// minGapSize 0 means each target's own threshold, so a naturally quiet source is not reported as a gap.
 func scanDataGaps(ctx context.Context, store ledgerRangeGapFinder, targets []timescale.GapDetectorTarget,
 	from, to, minGapSize int64, scannedAt time.Time,
 ) (findDataGapsMultiReport, error) {
 	multi := findDataGapsMultiReport{ScannedAt: scannedAt}
 	for _, target := range targets {
 		lo := max(from, target.Genesis)
+		size := minGapSize
+		if size == 0 {
+			size = target.EffectiveMinGapSize()
+		}
 		report := findDataGapsReport{
 			ScannedAt:       scannedAt,
 			Source:          target.Source,
 			ProjectorSource: target.SourceNetKey(),
 			Table:           target.Table,
-			MinGapSize:      minGapSize,
+			MinGapSize:      size,
 			FromLedger:      lo,
 			ToLedger:        to,
 		}
 		if lo <= to {
-			gaps, err := store.FindLedgerGapsInRange(ctx, target, lo, to, minGapSize)
+			gaps, err := store.FindLedgerGapsInRange(ctx, target, lo, to, size)
 			if err != nil {
 				return multi, fmt.Errorf("find gaps source=%s table=%s: %w", target.Source, target.Table, err)
 			}

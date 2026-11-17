@@ -227,6 +227,34 @@ func TestScanDataGaps_ReportsEdgeHoles(t *testing.T) {
 	}
 }
 
+// TestScanDataGaps_UnsetMinGapSizeUsesEachTargetsThreshold: without -min-gap-size a quiet source's stretch shorter than its own
+// threshold is not a gap, while an explicit size still applies to every target.
+func TestScanDataGaps_UnsetMinGapSizeUsesEachTargetsThreshold(t *testing.T) {
+	quiet := timescale.GapDetectorTarget{Source: "quiet", Table: "t", LedgerColumn: "ledger", Genesis: 2, MinGapSizeOverride: 10_000}
+	busy := timescale.GapDetectorTarget{Source: "busy", Table: "t", LedgerColumn: "ledger", Genesis: 2}
+	store := bracketedGapStore{ledgers: []int64{2, 5000}}
+	targets := []timescale.GapDetectorTarget{quiet, busy}
+
+	m, err := scanDataGaps(context.Background(), store, targets, 0, 5000, 0, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := m.Reports[0]; len(r.Gaps) != 0 || r.MinGapSize != 10_000 {
+		t.Fatalf("quiet target: gaps=%+v min=%d, want none at its own 10000", r.Gaps, r.MinGapSize)
+	}
+	if r := m.Reports[1]; len(r.Gaps) != 1 || r.MinGapSize != timescale.GapDetectorMinGapSize {
+		t.Fatalf("default target: gaps=%+v min=%d, want the 4997-ledger hole at %d", r.Gaps, r.MinGapSize, timescale.GapDetectorMinGapSize)
+	}
+
+	m, err = scanDataGaps(context.Background(), store, targets, 0, 5000, 1000, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := m.Reports[0]; len(r.Gaps) != 1 || r.MinGapSize != 1000 {
+		t.Fatalf("explicit -min-gap-size: quiet target gaps=%+v min=%d, want the hole at 1000", r.Gaps, r.MinGapSize)
+	}
+}
+
 func TestResolveFindDataGapsTargets(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
