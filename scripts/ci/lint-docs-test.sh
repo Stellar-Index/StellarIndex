@@ -116,15 +116,25 @@ incident "$INC_BOX" '- [ ]'
 sed -e 's/asset:           { type: string, description: Reserve underlying token (C-strkey). }/asset: { type: string, description: Reserve underlying token, C-strkey. }/' \
     -e 's|^  /account/admin/lookup:$|  /account/admin/lookup-zzfixture:|' "$BACKUP/$SPEC" > "$SPEC"
 
-# §11b: a continued heavy-job command without -write, in a runbook that
-# had no wrapper line before.
-# shellcheck disable=SC1003  # a literal trailing backslash, not an escape
-printf '%s\n' 'sudo /usr/local/sbin/run-heavy-job.sh zz -- \' '  stellarindex-ops supply snapshot -asset native' >> "$RUNBOOK"
+{
+  # §11b: a continued heavy-job command without -write, in a runbook that
+  # had no wrapper line before.
+  # shellcheck disable=SC1003  # a literal trailing backslash, not an escape
+  printf '%s\n' 'sudo /usr/local/sbin/run-heavy-job.sh zz -- \' '  stellarindex-ops supply snapshot -asset native'
 
-# Documented make targets: an inline and a fenced target the Makefile lacks
-# are caught; "no `make X`" documents an absence and stays exempt.
-# shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
-printf '%s\n' '' 'Run `make zz-inline-target` first.' 'There is no `make zz-absent-target`.' '```sh' 'make zz-fenced-target' '```' >> "$RUNBOOK"
+  # Documented make targets: an inline and a fenced target the Makefile lacks
+  # are caught; "no `make X`" documents an absence and stays exempt.
+  # shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
+  printf '%s\n' '' 'Run `make zz-inline-target` first.' 'There is no `make zz-absent-target`.' '```sh' 'make zz-fenced-target' '```'
+
+  # §11c: a rollback dispatch narrowing binaries / lacking migrations_skip, and a
+  # signer identity accepting release.yml from any ref, are caught; the canonical
+  # rollback command is not.
+  # shellcheck disable=SC2016,SC1003  # literal Markdown backticks and a literal trailing backslash
+  printf '%s\n' '' 'Roll back: `gh workflow run deploy.yml -f region=r1 -f version=<prev-zz> -f binaries=stellarindex-api`.' \
+    '```sh' 'gh workflow run deploy.yml -f region=r1 \' '  -f version=<previous-zz> -f migrations_skip=true' '```' \
+    "--certificate-identity-regexp '^https://github.com/zz/\\.github/workflows/release\\.yml@.*\$'"
+} >> "$RUNBOOK"
 
 # §6: a living procedure past 180 days is red; past only 90 days it warns.
 printf -- '---\nlast_verified: %s\n---\n\n# fixture\n' "$(days_ago 181)" > "$OPS_STALE"
@@ -179,6 +189,10 @@ present "a continued heavy-job 'supply snapshot' without -write is caught" "$RUN
 present "an inline 'make' target absent from the Makefile is caught" "$RUNBOOK:[0-9]+ documents 'make zz-inline-target'"
 present "a fenced 'make' target absent from the Makefile is caught" "$RUNBOOK:[0-9]+ documents 'make zz-fenced-target'"
 absent  "\"no \`make X\`\" documenting an absence is exempt" "zz-absent-target"
+present "a rollback dispatch narrowing -f binaries is caught" "$RUNBOOK: rollback dispatch narrows -f binaries.*version=<prev-zz>"
+present "a rollback dispatch without migrations_skip=true is caught" "$RUNBOOK: rollback dispatch lacks -f migrations_skip=true.*version=<prev-zz>"
+absent  "the canonical rollback dispatch passes" "version=<previous-zz>"
+present "a release signer identity accepting any ref is caught" "signer identity accepts release\.yml from any ref.*: $RUNBOOK:[0-9]+:"
 present "a docs/operations page verified 181 days ago is caught" "ERROR: Doc '$OPS_STALE' is STALE"
 present "a docs/operations page verified 100 days ago warns" "WARN: doc '$OPS_WARN'"
 absent  "a docs/operations page verified 100 days ago is not an error" "ERROR: .*$OPS_WARN"

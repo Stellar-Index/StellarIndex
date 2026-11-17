@@ -336,10 +336,13 @@ jobs:
       #   cosign verify-blob \
       #     --bundle SHA256SUMS.sigstore.json \
       #     --certificate-identity-regexp \
-      #       '^https://github.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@.*$' \
+      #       '^https://github\.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@refs/(tags/vX\.Y\.Z|heads/main)$' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       #     SHA256SUMS
       #   sha256sum -c SHA256SUMS
+      #
+      # Pin the ref as deploy.yml does: release.yml run from any other ref
+      # signs with this same workflow path. Full procedure: release-process.md.
       #
       # TRANSITION DUAL-PUBLISH (drop after this release ships — see the
       # CHANGELOG [Unreleased] deprecation note and docs/operations/

@@ -118,9 +118,11 @@ Operator-triggered, never automatic on tag.
 ```sh
 gh workflow run deploy.yml \
   -f region=r1 \
-  -f version=vX.Y.Z \
-  -f binaries=stellarindex-indexer,stellarindex-aggregator,stellarindex-api
+  -f version=vX.Y.Z
 ```
+
+Omit `binaries`: the default is the region's whole set, and naming fewer is
+refused unless the omitted ones are already on that version.
 
 If the release touched any config-bearing surface (ansible
 `stellarindex.toml`, Prometheus rules, systemd units, DB schema), add
