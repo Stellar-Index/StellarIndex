@@ -1751,7 +1751,7 @@ func rwaReferenceBasis(total, valued int, provenances []string, trunc rwaTruncat
 		rwaWriteCompleteness(&b, total, valued, trunc, "carries a reference valuation",
 			"Assets with no bound and current oracle feed, or no circulating-supply reading, contribute nothing and are counted separately, so the total is a LOWER BOUND on the reference-priced value of the set.")
 	}
-	rwaWriteTruncation(&b, trunc)
+	rwaWriteTruncation(&b, trunc, valued > 0)
 	return b.String()
 }
 
@@ -1840,15 +1840,19 @@ func rwaBasis(total, valued, compared int, trunc rwaTruncation) string {
 	// Stated here too, to stop a reader of this total assuming it includes the reference-priced
 	// figure.
 	b.WriteString(" Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name.")
-	rwaWriteTruncation(&b, trunc)
+	rwaWriteTruncation(&b, trunc, true)
 	return b.String()
 }
 
 // rwaWriteTruncation names each cap that bound the rebuild and what it
 // left unread, so a reader of a partial total knows what it excludes.
-func rwaWriteTruncation(b *strings.Builder, t rwaTruncation) {
+func rwaWriteTruncation(b *strings.Builder, t rwaTruncation, totalPublished bool) {
 	if !t.any() {
 		return
+	}
+	consequence := ", so members may be missing."
+	if totalPublished {
+		consequence = ", so members may be missing and the total is a LOWER BOUND on the value of the set."
 	}
 	var caps []string
 	if t.overIssuerCap > 0 {
@@ -1863,10 +1867,10 @@ func rwaWriteTruncation(b *strings.Builder, t rwaTruncation) {
 	if t.capped() {
 		b.WriteString(" A rebuild cap bound this set (")
 		b.WriteString(strings.Join(caps, "; "))
-		b.WriteString("), so members may be missing and the total is a LOWER BOUND on the value of the set.")
+		b.WriteString(")" + consequence)
 	}
 	if t.unread > 0 {
-		b.WriteString(" " + strconv.Itoa(t.unread) + " contract candidate(s) went unevaluated because a read the definition depends on did not answer (the funnel names which), so members may be missing and the total is a LOWER BOUND on the value of the set.")
+		b.WriteString(" " + strconv.Itoa(t.unread) + " contract candidate(s) went unevaluated because a read the definition depends on did not answer (the funnel names which)" + consequence)
 	}
 }
 
