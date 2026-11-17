@@ -67,17 +67,26 @@ The two differ in what can make them wrong:
   made wrong by missing history.
 - An **accumulation** is only ever as complete as its log.
 
-The serving path picks one reading per token, by flow count alone: the storage
-reader is consulted **only when the event reading found zero flows**
-(`handleAssetSupply`, `internal/api/v1/asset_supply.go`), so the two never both
-contribute to one figure. A token with **any** recorded flow is served from
-events (`source: mint_burn_flows`), even when its log starts partway through
-its life. That figure then omits everything minted before the log starts, and
-the response does **not** flag it as a lower bound: neither
-`events_start_from` nor the storage level is consulted to detect the gap. If a
-contract's event log begins later than its first balance, read its
-`mint_burn_flows` total as incomplete; the storage level is the better figure,
-but it is not served for that token.
+The serving path picks one reading per Soroban token, in one function
+(`storageReadingSupersedes`, `internal/api/v1/asset_supply.go`) that
+`/v1/assets/{id}/supply`, the asset detail and the RWA contract listing all
+use:
+
+- **No recorded flows:** the storage level is served; if storage offers no
+  reading, nothing is.
+- **Storage level above the event net:** the storage level is a floor, so a
+  level above the net proves the log missed issuance (it starts partway
+  through the token's life). The storage level is served
+  (`source`/`supply_basis: contract_storage_balances`), flagged
+  `circulating_supply_lower_bound`, and any market cap built on it carries
+  `market_cap_lower_bound`. The asset detail builds no cap on it.
+- **Storage level at or below the event net, or no storage reading:** the
+  event net is served (`source: mint_burn_flows`), unflagged.
+
+The figure is always one reading or the other. A log that is partial but still
+nets above the storage level is not detected, because `events_start_from` is
+not consulted. A classic asset's Stellar Asset Contract keeps its balances in
+trustlines, so its storage is asked only when its log is empty.
 
 Events remain valuable against this basis as a **cross-check**, never as an
 addend.

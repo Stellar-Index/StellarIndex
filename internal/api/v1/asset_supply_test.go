@@ -493,9 +493,9 @@ func TestSupplyFallsBackToContractStorageWhenNoFlows(t *testing.T) {
 	}
 }
 
-// TestSupplyDoesNotConsultStorageWhenFlowsExist is the double-count guard: event-derived and storage-derived supply measure
-// the same tokens from opposite ends, so summing them or preferring one after summing both would double the figure.
-func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
+// TestSupplyStorageLevelAboveEventNetIsServedAsAFloor: storage is a floor, so a level above the event net proves the log
+// partial. The response must not present that net as the total; it serves the tighter floor, flagged. Never the sum.
+func TestSupplyStorageLevelAboveEventNetIsServedAsAFloor(t *testing.T) {
 	st := &fakeStorageSupply{out: dealStorageSupply()}
 	flows := clickhouse.TokenSupply{
 		Total: big.NewInt(28327867109034), Mint: big.NewInt(28327867109034),
@@ -503,19 +503,55 @@ func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
 	}
 	rec := serveSupplyWithStorage(t, flows, st, storageDealContractID)
 
-	if st.calls != 0 {
-		t.Errorf("storage reader consulted %d times for a token that HAS flows; the two readings "+
-			"must never both contribute to one figure", st.calls)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
 	}
 	got := decodeSupply(t, rec.Body.Bytes())
-	if got.Source != "mint_burn_flows" {
-		t.Errorf("source = %q, want mint_burn_flows", got.Source)
+	if got.TotalSupply != storageDealTotal {
+		t.Errorf("total_supply = %q, want the storage level %s; the event net 28327867109034 is provably partial",
+			got.TotalSupply, storageDealTotal)
 	}
-	if got.TotalSupply != "28327867109034" {
-		t.Errorf("total_supply = %q, want the unmodified event-derived total", got.TotalSupply)
+	if got.Source != string(supply.BasisContractStorageBalances) || !got.CirculatingSupplyLowerBound {
+		t.Errorf("source = %q, lower_bound = %v; want %q flagged as a floor",
+			got.Source, got.CirculatingSupplyLowerBound, supply.BasisContractStorageBalances)
 	}
-	if got.CirculatingSupplyLowerBound {
-		t.Error("lower-bound flag set on an event-derived total, which is not this kind of floor")
+}
+
+// TestSupplyEventNetAtOrAboveStorageIsUnchanged: when the storage level does not exceed the event net, or there is no storage
+// reading, the event net is served as before, unflagged and never summed with storage.
+func TestSupplyEventNetAtOrAboveStorageIsUnchanged(t *testing.T) {
+	const net = "344995973100000"
+	above, _ := new(big.Int).SetString("344995973100001", 10)
+	equal := dealStorageSupply()
+	lower := dealStorageSupply()
+	lower.Total = big.NewInt(999)
+	cases := []struct {
+		name  string
+		total *big.Int
+		st    ContractStorageSupplyReader
+	}{
+		{"storage equals net", nil, &fakeStorageSupply{out: equal}},
+		{"storage below net", above, &fakeStorageSupply{out: lower}},
+		{"storage declines", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyNoInstance}},
+		{"no storage reader", nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			total, _ := new(big.Int).SetString(net, 10)
+			if tc.total != nil {
+				total = tc.total
+			}
+			flows := clickhouse.TokenSupply{
+				Total: total, Mint: total, Burn: big.NewInt(0), Clawback: big.NewInt(0), FlowCount: 19610,
+			}
+			got := decodeSupply(t, serveSupplyWithStorage(t, flows, tc.st, storageDealContractID).Body.Bytes())
+			if got.Source != "mint_burn_flows" || got.TotalSupply != total.String() {
+				t.Errorf("source = %q total = %q, want mint_burn_flows %s", got.Source, got.TotalSupply, total)
+			}
+			if got.CirculatingSupplyLowerBound {
+				t.Error("lower-bound flag set on an event net no storage reading contradicts")
+			}
+		})
 	}
 }
 

@@ -505,6 +505,7 @@ func (s *Server) applyContractMarketCap(
 		return
 	}
 	row.MarketCapUSD = &mc
+	row.MarketCapLowerBound = basis.LowerBound()
 }
 
 // contractPriceScaleDisagrees reports that a contract row's DEX price (normalised through nonstandard_decimals_assets, else
@@ -563,40 +564,20 @@ func (s *Server) contractSupplyReadingChecked(
 	if sup.Total == nil || sup.Incomplete {
 		return "", "", false, false
 	}
-	// A token emitting no SEP-41 events is ABSENT from the event reader and sums to a confident zero.
-	// With no log at all, read held balances; if storage declines too there is no figure, as on
+	// Held balances win for a flowless log or one whose net they exceed, by the same choice as
 	// GET /v1/assets/{id}/supply.
+	if st, ok := s.storageReadingSupersedes(ctx, assetID, sup); ok {
+		return st.Total.String(), supply.BasisContractStorageBalances, true, false
+	}
+	// A spent deadline is unread, not "no figure" and not "storage agreed": a SAC declines by design.
+	if ctx.Err() != nil {
+		return "", "", false, true
+	}
 	if sup.FlowCount == 0 {
-		st, ok := s.contractStorageCirculating(ctx, assetID)
-		if !ok {
-			// A SAC declines by design, so only a spent deadline is counted as unread here.
-			return "", "", false, ctx.Err() != nil
-		}
-		return st, supply.BasisContractStorageBalances, true, false
+		return "", "", false, false
 	}
 	// The lake's event-flow sum over the contract's own mint/burn/clawback log.
 	return sup.Total.String(), supply.BasisSEP41LakeFlows, true, false
-}
-
-// contractStorageCirculating reads supply from per-holder balance entries in contract storage, for a contract that emits no
-// SEP-41 events. It is a DIFFERENT BASIS, used only where the event reading has no history and never summed with it. ok=false on
-// no reader, a read error, a SAC (balances live in trustlines) or a holder set past the cap; a zero-entry read is the ABSENCE of
-// a reading, not zero supply.
-func (s *Server) contractStorageCirculating(ctx context.Context, contractID string) (string, bool) {
-	if s.ContractStorageSupply == nil {
-		return "", false
-	}
-	st, err := s.ContractStorageSupply.ContractStorageSupply(ctx, contractID)
-	if err != nil {
-		// A SAC is the expected structural refusal here, so this is debug volume, not a warning.
-		s.logger.Debug("rwa: contract storage supply declined",
-			"contract_id", contractID, "err", err)
-		return "", false
-	}
-	if st.BalanceEntries == 0 || st.Total == nil || st.Total.Sign() == 0 {
-		return "", false
-	}
-	return st.Total.String(), true
 }
 
 // fillContractDirectoryTags stamps the curated label from the CONTRACT address and applies scam suppression to it: the classic
