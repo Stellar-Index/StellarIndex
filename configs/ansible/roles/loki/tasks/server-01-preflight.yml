@@ -61,7 +61,7 @@
       (got {{ (_var_df.stdout_lines[1] | int) // (1024*1024*1024) }} GB,
       need ≥ {{ loki_var_min_free_gb | default(50) }} GB). The
       role caches chunks locally before flushing to MinIO and
-      keeps the boltdb index on local disk; both share /var by
+      keeps the tsdb index on local disk; both share /var by
       default. Provision a larger volume or lower
       `loki_var_min_free_gb` if the design changed.
 

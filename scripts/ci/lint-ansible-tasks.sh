@@ -160,7 +160,7 @@ for f in "${yml_files[@]}"; do
         n++
       }
       if ((is_shell || is_cmd) && in_body \
-          && line ~ /\{\{[^}]*(password|secret|_pass\b|token|api_key)[^}]*\}\}/) {
+          && line ~ /\{\{[^}]*(password|secret|_pass([^a-z]|$)|token|api_key)[^}]*\}\}/) {
         printf("%s:%d: secret-on-argv: vault value interpolated into the command body (visible in /proc/<pid>/cmdline; no_log hides it from Ansible output only) — feed it via `stdin:` (task: %s)\n",
                file, NR, task_name)
         n++
@@ -187,7 +187,7 @@ for f in ${sh_files[@]+"${sh_files[@]}"}; do
       # secret var AFTER the mc verb = positional argument; a secret piped
       # in BEFORE it (`printf … "$SECRET" | mc alias set …`) is the fix.
       if (buf !~ /^[ \t]*#/ \
-          && buf ~ /mc[ \t]+(alias[ \t]+set|admin[ \t]+user[ \t]+add)[ \t][^|;&]*\$\{?[A-Za-z_]*(SECRET|PASSWORD|_PASS\b)/) {
+          && buf ~ /(mc|MC_BIN\}?"?)[ \t]+(alias[ \t]+set|admin[ \t]+user[ \t]+add)[ \t][^|;&]*\$\{?[A-Za-z_]*(SECRET|PASSWORD|_PASS([^A-Z]|$))/) {
         printf("%s:%d: secret-on-argv: `mc` given a secret as a positional argument (visible in /proc/<pid>/cmdline) — pipe it on stdin instead\n", file, ln)
         n++
       }

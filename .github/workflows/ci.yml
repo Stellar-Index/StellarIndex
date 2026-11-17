@@ -2227,6 +2227,9 @@ jobs:
         # not listen on. Jinja only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/loki-push-target-test.sh
+      - name: HA roles self-test (patroni, redis-sentinel, loki defaults and templates)
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-ha-roles-test.sh
       - name: haproxy http-request timeout test (SL01)
         # defaults block set connect/client/server timeouts but no
         # timeout http-request, leaving a slow-header client holding a
@@ -2242,6 +2245,12 @@ jobs:
         # Text only, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-readme-parity-test.sh
+      - name: ZFS import guard self-test
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-zfs-import-guard-test.sh
+      - name: archival datadirs ownership self-test
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-archival-datadirs-ownership-test.sh
       - name: ansible env-file secret guard self-test
         # Every secret rendered unquoted into an /etc/default file that a
         # shell may source must be in the preflight metacharacter guard.

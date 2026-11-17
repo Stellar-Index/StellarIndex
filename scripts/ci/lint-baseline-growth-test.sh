@@ -485,6 +485,34 @@ grow_govulncheck "$(printf 'chore: accept a new vuln\n\nBaseline-Growth: scripts
 runGate
 expect "declared govulncheck-allow.txt growth passes" 0 "no undeclared"
 
+# --- 21. an inline escape marker added to Go or SQL needs a trailer naming that file
+inline_marker() {
+  (
+    cd "$TMP/repo" || exit 1
+    mkdir -p internal/x migrations
+    printf 'package x\n\nvar f = 1.0\n' > internal/x/a.go
+    printf 'ALTER TABLE t ADD COLUMN c int;\n' > migrations/0002_a.up.sql
+    git add -A && git commit -qm "chore: add files"
+    git rev-parse HEAD > "$TMP/base"
+    printf 'package x\n\nvar f = 1.0 //i128:ok display only\n' > internal/x/a.go
+    printf 'ALTER TABLE t DROP COLUMN c; -- migration-compat:ok two-release dance\n' > migrations/0002_a.up.sql
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+  BASE="$(cat "$TMP/base")"
+}
+mkrepo 0
+inline_marker "chore: waive inline"
+runGate
+expect "an added //i128:ok fails undeclared" 1 "UNDECLARED GROWTH: internal/x/a.go"
+expect "an added migration-compat:ok fails undeclared" 1 "UNDECLARED GROWTH: migrations/0002_a.up.sql"
+
+mkrepo 0
+inline_marker "$(printf 'chore: waive inline\n\nBaseline-Growth: internal/x/a.go — display only\nBaseline-Growth: migrations/0002_a.up.sql — reviewed')"
+runGate
+expect "declared inline markers pass" 0 "no undeclared"
+
 echo
 echo "lint-baseline-growth-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

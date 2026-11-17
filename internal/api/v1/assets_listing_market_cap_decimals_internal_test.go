@@ -120,7 +120,7 @@ func TestRWAContractListingRows_EarlyCapIsNotOnTheHardcodedSevenScale(t *testing
 		}}, ContractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}, TokenSupply: capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "1000000000000"}}, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9})},
 		// tokenDecimals deliberately unwired: the scale is never READ.,
 	}
-	out, _, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
+	out, _, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestRWAContractListingRows_ReportsAValuationCutShort(t *testing.T) {
 	}
 
 	// Instrument check: a reader that answers values the row, uncut.
-	out, _, cut, err := newServer(fixedTokenDecimals(7)).rwaContractListingRows(t.Context(), members)
+	out, cut, err := newServer(fixedTokenDecimals(7)).rwaContractListingRows(t.Context(), members)
 	if err != nil || cut {
 		t.Fatalf("answering reader: cut=%v err=%v, want an uncut valuation", cut, err)
 	}
@@ -170,7 +170,7 @@ func TestRWAContractListingRows_ReportsAValuationCutShort(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	s := newServer(stalledTokenDecimals{})
-	out, _, cut, err = s.rwaContractListingRows(ctx, members)
+	out, cut, err = s.rwaContractListingRows(ctx, members)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestRWAContractListingRows_DirectoryReadFailureWithholds(t *testing.T) {
 		srv.ContractCatalogue = capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}
 		srv.TokenSupply = capDecimalsTokenSupply{byID: map[string]string{sorobanContract: "10000000000"}}
 		srv.TokenDecimals = fixedTokenDecimals(7)
-		out, _, _, err := srv.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: sorobanContract}})
+		out, _, err := srv.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: sorobanContract}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -255,7 +255,7 @@ func TestRWAContractListingRows_CapDividesByThePriceScale(t *testing.T) {
 				Options: Options{ContractCatalogue: capDecimalsContractCatalogue{rows: map[string]timescale.AssetRow{sorobanContract: row}}, TokenSupply: capDecimalsTokenSupply{byID: map[string]string{sorobanContract: supplyUnits}}, TokenDecimals: fixedTokenDecimals(tc.lake), NonstandardDecimals: decimalsCacheFlagging(t, tc.projection)},
 				logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
-			out, _, cut, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
+			out, cut, err := s.rwaContractListingRows(context.Background(), []rwaContractMember{{contractID: sorobanContract}})
 			if err != nil || cut {
 				t.Fatalf("cut=%v err=%v", cut, err)
 			}
