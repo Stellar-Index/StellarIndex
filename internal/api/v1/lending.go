@@ -261,6 +261,14 @@ func (s *Server) noteLendingSummaryFailure(pool string) {
 	if s.lendingSummaryFailed == nil {
 		s.lendingSummaryFailed = map[string]time.Time{}
 	}
+	// The key is any client-supplied C-strkey; an entry past the retry window holds nothing off, so drop those.
+	if len(s.lendingSummaryFailed) >= lendingReservesMaxEntries {
+		for p, at := range s.lendingSummaryFailed {
+			if time.Since(at) >= lendingSummaryRetry {
+				delete(s.lendingSummaryFailed, p)
+			}
+		}
+	}
 	s.lendingSummaryFailed[pool] = time.Now()
 }
 

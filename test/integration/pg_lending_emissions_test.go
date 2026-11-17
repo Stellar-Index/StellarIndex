@@ -36,7 +36,13 @@ func TestLendingEmissionClaims_WindowAndExactSums(t *testing.T) {
 	)
 	asOf := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	edge := asOf.Add(-30 * 24 * time.Hour)
-	amt := func(s string) *big.Int { n, _ := new(big.Int).SetString(s, 10); return n }
+	amt := func(s string) *big.Int {
+		if s == "" {
+			return nil
+		}
+		n, _ := new(big.Int).SetString(s, 10)
+		return n
+	}
 
 	blendRows := []struct {
 		pool, user string
@@ -46,6 +52,7 @@ func TestLendingEmissionClaims_WindowAndExactSums(t *testing.T) {
 		{blendPool, userA, edge, big9e18},                  // on the boundary: lifetime only
 		{blendPool, userA, edge.Add(time.Second), big9e18}, // first second inside the window
 		{blendPool, userB, asOf, "5"},                      // at asOf: inside
+		{blendPool, userB, asOf.Add(-time.Minute), ""},     // amount not decoded: counted, unsummed, flagged
 		{blendPool, userB, asOf.Add(time.Second), "7"},     // after asOf: excluded
 		{other, userA, asOf.Add(-time.Hour), "11"},         // another pool
 	}
@@ -62,7 +69,7 @@ func TestLendingEmissionClaims_WindowAndExactSums(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := got.Pool
-	if p.Claims != 3 || p.Claims30d != 2 || p.Claimers != 2 || p.Claimers30d != 2 ||
+	if p.Claims != 4 || p.Claims30d != 3 || p.Claimers != 2 || p.Claimers30d != 2 || p.AmountUnread != 1 ||
 		p.Amount.String() != "18000000000000000005" || p.Amount30d.String() != "9000000000000000005" || got.Backstop != nil {
 		t.Fatalf("blend totals = %+v", got)
 	}
@@ -102,7 +109,7 @@ func TestLendingEmissionClaims_WindowAndExactSums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := got.Pool; p.Claims != 2 || p.Claims30d != 1 || p.Claimers != 1 ||
+	if p := got.Pool; p.Claims != 2 || p.Claims30d != 1 || p.Claimers != 1 || p.AmountUnread != 0 ||
 		p.Amount.String() != "18000000000000000000" || p.Amount30d.String() != big9e18 {
 		t.Fatalf("blnt pool totals = %+v", p)
 	}

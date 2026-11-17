@@ -15,6 +15,9 @@ import (
 type LendingAuctionsView struct {
 	Pool     string               `json:"pool"`
 	Auctions []LendingAuctionView `json:"auctions"`
+	// LifecycleTruncated: the page's fill and delete events were read oldest-first up to a cap, so the newest auctions'
+	// fills may be incomplete and deleted=false may hide a cut-off delete.
+	LifecycleTruncated bool `json:"lifecycle_truncated"`
 }
 
 // LendingAuctionView is one auction: its start, bid and lot (asset -> base-unit decimal string), fills and delete.
@@ -83,6 +86,7 @@ func (s *Server) handleLendingPoolAuctions(w http.ResponseWriter, r *http.Reques
 		s.writeLendingLookupError(ctx, w, r, "LendingAuctions", pool, err)
 		return
 	}
+	view.LifecycleTruncated = truncated
 	env := Envelope{Data: &view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Degraded: truncated}}
 	if len(rows) > limit {
 		rows = rows[:limit]

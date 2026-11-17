@@ -2208,10 +2208,16 @@ export interface paths {
          *     `balance_mismatch` (an event the fold does not cover, or history
          *     not yet projected), `onchain_unread` (also when one pool's lake
          *     read failed; the response is then marked degraded),
-         *     `fold_inconsistent`, `rate_unread`, `history_unverified` (the
+         *     `fold_inconsistent`, `rate_unread`, `rate_behind` (the rate read
+         *     was stored before the leg's newest projected event, so it cannot
+         *     value the tokens that event minted), `history_unverified` (the
          *     protocol's event history is not verified back to its first
-         *     ledger, so earlier flows could be missing), or for a
-         *     Blend V1 backstop `blend_v1_unsupported`. Amounts are base-unit
+         *     ledger, so earlier flows could be missing),
+         *     `history_verdict_stale` (that protocol's completeness verdict is
+         *     past its freshness gate; `flags.stale` is set),
+         *     `history_verdict_unread` (the verdict read failed; the response
+         *     is marked degraded), or for a Blend V1 backstop
+         *     `blend_v1_unsupported`. Amounts are base-unit
          *     decimal strings; `decimals` is the reserve's, null when unread or
          *     for a backstop. Emission claims are sums of the claim events
          *     projected so far, in the pool's emission token, and always a
@@ -2247,8 +2253,10 @@ export interface paths {
          *     earlier one, unless that one is already closed (deleted or filled
          *     to 100%): transaction order within a ledger is not stored, so
          *     such a delete belongs to the auction started in that ledger.
-         *     `flags.degraded` means the fill read hit its cap and the newest
-         *     auctions may miss fills. 503 when the deployment has no auction
+         *     `lifecycle_truncated: true` means the fill and delete read hit
+         *     its cap: the newest auctions may miss fills, and their
+         *     `deleted: false` may hide a delete that was cut off; the response
+         *     is then not cacheable. 503 when the deployment has no auction
          *     history reader.
          *
          *     Pagination: pass `pagination.next` back as `cursor`;
@@ -2301,6 +2309,14 @@ export interface paths {
          *     events (`amount_claimed`, in the emission token). Blend's backstop
          *     `claim` event names no pool, so `claims.backstop` is null with
          *     `backstop_unavailable_reason: blend_backstop_claim_names_no_pool`.
+         *     The totals sum the claim events projected so far: unless the
+         *     protocol's projection is verified back to its first ledger,
+         *     `claims.lower_bound` is true and `claims.lower_bound_reason` says
+         *     why (`history_unverified`; `history_verdict_stale`, with
+         *     `flags.stale`; `history_verdict_unread`, not cacheable). When the
+         *     history is verified but a claim's amount was not decoded, that
+         *     claim is counted but not summed: `lower_bound` is true with
+         *     `lower_bound_reason: amount_unread`.
          *     A BLNT backstop claim is per pool and tier: `amount` is the BLNT
          *     claimed, `lp_tokens` the backstop tokens it bought and
          *     `shares_minted` the tier shares minted to the claimer; it is not a
@@ -19020,7 +19036,7 @@ export interface operations {
                                 accrued: string | null;
                                 reconciled: boolean;
                                 /** @enum {string|null} */
-                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "history_unverified" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "rate_behind" | "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
                             }[];
                             emissions: {
                                 /** @enum {string} */
@@ -19091,7 +19107,8 @@ export interface operations {
                      *             ],
                      *             "deleted": false
                      *           }
-                     *         ]
+                     *         ],
+                     *         "lifecycle_truncated": false
                      *       },
                      *       "as_of": "2026-07-03T22:58:00.032774886Z",
                      *       "flags": {
@@ -19106,6 +19123,8 @@ export interface operations {
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: {
                             pool: string;
+                            /** @description The fill and delete read hit its cap; the newest auctions' fills and deleted may be incomplete. */
+                            lifecycle_truncated: boolean;
                             auctions: {
                                 auction_type: number;
                                 /** @description user_liquidation, bad_debt, interest, protocol_fee; unknown_<n> otherwise. */
@@ -19209,7 +19228,8 @@ export interface operations {
                      *             "amount_30d": "9000000000000"
                      *           },
                      *           "backstop": null,
-                     *           "backstop_unavailable_reason": "blend_backstop_claim_names_no_pool"
+                     *           "backstop_unavailable_reason": "blend_backstop_claim_names_no_pool",
+                     *           "lower_bound": false
                      *         },
                      *         "as_of_ledger": 63340102,
                      *         "as_of_time": "2026-11-16T12:00:00Z"
@@ -19278,6 +19298,10 @@ export interface operations {
                                 })[] | null;
                                 /** @enum {string} */
                                 backstop_unavailable_reason?: "blend_backstop_claim_names_no_pool";
+                                /** @description The totals may miss claims made before the protocol's verified projection range, or a claim whose amount was not decoded. */
+                                lower_bound: boolean;
+                                /** @enum {string} */
+                                lower_bound_reason?: "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | "amount_unread";
                             };
                             /**
                              * Format: int64

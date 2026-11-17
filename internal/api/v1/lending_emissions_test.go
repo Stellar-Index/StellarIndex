@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,6 +105,74 @@ func TestLendingPoolEmissions_BlendV2(t *testing.T) {
 	if !c.Available || c.Pool == nil || c.Pool.Amount != "18446744073709551621" || c.Pool.Claims != 3 || c.Backstop != nil ||
 		c.BackstopUnavailableReason == nil {
 		t.Fatalf("claims = %+v", c)
+	}
+}
+
+// TestLendingPoolEmissions_ClaimsLowerBoundUnlessVerifiedFromGenesis: claim totals sum projected events, so they are served as
+// a lower bound naming why unless the protocol's projection is verified back to its first ledger, as account earnings do, and
+// every claim's amount was read.
+func TestLendingPoolEmissions_ClaimsLowerBoundUnlessVerifiedFromGenesis(t *testing.T) {
+	ex := &stubEmissionsExplorer{stubExplorerReader: &stubExplorerReader{}, state: emissionStreams(t, 1)}
+	pool := mkCStrkey(t, 1)
+	now := time.Now().UTC()
+	floorAfterGenesis := &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+		{Source: "blend", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 5000, ComputedAt: now, ProjectionEvidencedAt: now},
+	}}
+	verdictStale := &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+		{Source: "blend", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100, ProjectionEvidencedAt: now},
+	}}
+	cases := []struct {
+		name   string
+		reader *stubCompletenessReader
+		unread int64
+		reason string
+	}{
+		{name: "verified from genesis", reader: verifiedLendingHistory()},
+		{name: "projection floor after genesis", reader: floorAfterGenesis, reason: "history_unverified"},
+		{name: "verdict past its freshness gate", reader: verdictStale, reason: "history_verdict_stale"},
+		{name: "verdict read fails", reader: &stubCompletenessReader{err: errors.New("pg down")}, reason: "history_verdict_unread"},
+		{name: "verified from genesis but a claim amount unread", reader: verifiedLendingHistory(), unread: 1, reason: "amount_unread"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lr := &stubEmissionClaimReader{claims: timescale.LendingEmissionClaims{Pool: timescale.LendingClaimTotals{
+				Claims: 1, Amount: mustAmount(t, "1200000000"), Amount30d: mustAmount(t, "0"), AmountUnread: tc.unread,
+			}}}
+			c := getEmissions(t, v1.New(v1.Options{Explorer: ex, Lending: lr, CompletenessReader: tc.reader}), pool, http.StatusOK).Claims
+			want := tc.reason
+			if want == "" {
+				want = "null"
+			}
+			if c.Pool == nil || c.Pool.Amount != "1200000000" || c.LowerBound != (tc.reason != "") || strOrNull(c.LowerBoundReason) != want {
+				t.Fatalf("claims = %+v reason %s", c, strOrNull(c.LowerBoundReason))
+			}
+		})
+	}
+}
+
+// TestLendingPoolEmissions_ClaimsStaleWhenIngestStalled: a frozen cursor keeps the verdict's ledger gap at 0, yet claims made
+// since the stall are missing from totals served as of now, so a verified-from-genesis verdict must not clear the lower bound.
+func TestLendingPoolEmissions_ClaimsStaleWhenIngestStalled(t *testing.T) {
+	ex := &stubEmissionsExplorer{stubExplorerReader: &stubExplorerReader{}, state: emissionStreams(t, 1)}
+	lr := &stubEmissionClaimReader{claims: timescale.LendingEmissionClaims{Pool: timescale.LendingClaimTotals{
+		Claims: 1, Amount: mustAmount(t, "1200000000"), Amount30d: mustAmount(t, "0"),
+	}}}
+	now := time.Now().UTC()
+	verdicts := &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
+		Source: "blend", Genesis: 100, Tip: 63_000_000, ProjectionOK: true, ProjectionVerifiedFrom: 100,
+		ComputedAt: now, ProjectionEvidencedAt: now,
+	}}}
+	for _, tc := range []struct {
+		age    time.Duration
+		reason string
+	}{{age: 30 * time.Minute, reason: "history_verdict_stale"}, {age: 5 * time.Second, reason: "null"}} {
+		srv := v1.New(v1.Options{
+			Explorer: ex, Lending: lr, CompletenessReader: verdicts,
+			Cursors: &stubCursorsReader{rows: []timescale.Cursor{mkCursor("ledgerstream", "", 63_000_000, tc.age)}},
+		})
+		if c := getEmissions(t, srv, mkCStrkey(t, 1), http.StatusOK).Claims; strOrNull(c.LowerBoundReason) != tc.reason {
+			t.Errorf("cursor age %s: lower_bound=%v reason %s, want %s", tc.age, c.LowerBound, strOrNull(c.LowerBoundReason), tc.reason)
+		}
 	}
 }
 
