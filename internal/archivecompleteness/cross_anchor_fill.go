@@ -116,6 +116,24 @@ func requirePubnetArchive(root string) error {
 	return nil
 }
 
+// fillSources is the explicit source list, or the built-in pubnet set once the archive is known to be pubnet.
+func fillSources(opts FillerOptions) ([]Source, error) {
+	if len(opts.Sources) > 0 {
+		return opts.Sources, nil
+	}
+	if opts.Network != "" && opts.Network != "pubnet" {
+		return nil, fmt.Errorf(
+			"archivecompleteness: refusing to cross-anchor-fill a %q archive from the built-in PUBNET sources — "+
+				"filling from pubnet archives would write pubnet checkpoints into a test-net store (corruption). "+
+				"Test nets self-heal archive gaps from their own galexie/captive-core; pass explicit Sources only if "+
+				"you truly have test-net cross-anchor mirrors", opts.Network)
+	}
+	if err := requirePubnetArchive(opts.ArchiveRoot); err != nil {
+		return nil, err
+	}
+	return DefaultCrossAnchorSources(), nil
+}
+
 // NewCrossAnchorFiller constructs a Filler; it errors when chown is requested but the user/group lookup fails (operator config issue, fail loud at startup).
 func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 	if opts.ArchiveRoot == "" {
@@ -129,19 +147,9 @@ func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 		return nil, fmt.Errorf("archivecompleteness: ArchiveRoot %q is not a directory", opts.ArchiveRoot)
 	}
 
-	sources := opts.Sources
-	if len(sources) == 0 {
-		if opts.Network != "" && opts.Network != "pubnet" {
-			return nil, fmt.Errorf(
-				"archivecompleteness: refusing to cross-anchor-fill a %q archive from the built-in PUBNET sources — "+
-					"filling from pubnet archives would write pubnet checkpoints into a test-net store (corruption). "+
-					"Test nets self-heal archive gaps from their own galexie/captive-core; pass explicit Sources only if "+
-					"you truly have test-net cross-anchor mirrors", opts.Network)
-		}
-		if err := requirePubnetArchive(opts.ArchiveRoot); err != nil {
-			return nil, err
-		}
-		sources = DefaultCrossAnchorSources()
+	sources, err := fillSources(opts)
+	if err != nil {
+		return nil, err
 	}
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
