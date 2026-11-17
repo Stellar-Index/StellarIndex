@@ -860,7 +860,8 @@ func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 
 	// OHLCSeriesReBucketed (5m fold): both source buckets combine and invert first, then fold into the 5m grid. Assert on
 	// totals so the check is independent of which 5m bucket each minute lands in.
-	rb, err := store.OHLCSeriesReBucketed(ctx, xlmUSDC, timescale.HistoryGranularity("1m"), "5 minutes", from, to, 0)
+	// The fold serves buckets that start in the window, so it opens on a 5m boundary.
+	rb, err := store.OHLCSeriesReBucketed(ctx, xlmUSDC, timescale.HistoryGranularity("1m"), "5 minutes", from.Truncate(5*time.Minute), to, 0)
 	if err != nil {
 		t.Fatalf("OHLCSeriesReBucketed: %v", err)
 	}
