@@ -157,7 +157,8 @@ func splitOnMemoryLimit(lo, hi uint32, what string, log io.Writer, run func(lo, 
 		return fmt.Errorf("%s [%d,%d] exceeds the ClickHouse memory limit at the %d-ledger split floor: %w", what, lo, hi, lendingSplitFloor, err)
 	}
 	mid := lo + (hi-lo)/2
-	fmt.Fprintf(log, "%s: %s [%d,%d] exceeded the ClickHouse memory limit; splitting into [%d,%d] and [%d,%d]\n",
+	// A lost progress line must not stop the fill.
+	_, _ = fmt.Fprintf(log, "%s: %s [%d,%d] exceeded the ClickHouse memory limit; splitting into [%d,%d] and [%d,%d]\n",
 		lendingJob, what, lo, hi, lo, mid, mid+1, hi)
 	if err := splitOnMemoryLimit(lo, mid, what, log, run); err != nil {
 		return err
