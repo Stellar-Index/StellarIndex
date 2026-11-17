@@ -11,10 +11,19 @@ type View = Schemas['RWAHistoryView'];
 type Point = Schemas['RWAHistoryPoint'];
 
 const apiGetData = vi.hoisted(() => vi.fn());
+const served = vi.hoisted(() => ({ flags: {} as Record<string, boolean> }));
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
-  return { ...actual, apiGetData };
+  return {
+    ...actual,
+    apiGetData,
+    apiGet: (path: string, params?: unknown) =>
+      apiGetData(path, params).then((data: unknown) => ({
+        data,
+        flags: served.flags,
+      })),
+  };
 });
 
 // Assert on the chart's accessible name: the text a screen reader gets.
@@ -91,6 +100,7 @@ function renderPanel() {
 describe('RWAHistoryPanel', () => {
   beforeEach(() => {
     apiGetData.mockReset();
+    served.flags = {};
   });
 
   it('states the change, the floor, the oracle and the controls for a covered window', async () => {
@@ -282,5 +292,32 @@ describe('assetLines — colour follows the entity, not the rank', () => {
       (l) => l.color,
     );
     expect(new Set(hues).size).toBe(hues.length);
+  });
+
+  it('warns when the envelope flags the series stale', async () => {
+    served.flags = { stale: true };
+    apiGetData.mockResolvedValue(view());
+    renderPanel();
+    expect(
+      await screen.findByText('This series may be out of date'),
+    ).toBeInTheDocument();
+  });
+
+  it('names an incomplete set when the floor has no unvalued assets', async () => {
+    const v = view();
+    apiGetData.mockResolvedValue(
+      view({
+        points: (v.points ?? []).map((p) => ({
+          ...p,
+          lower_bound: true,
+          assets_unvalued: 0,
+        })),
+      }),
+    );
+    renderPanel();
+    expect(
+      await screen.findByText(/the set itself may be missing members/),
+    ).toBeInTheDocument();
+    hides(/the other 0 contribute/);
   });
 });

@@ -12,10 +12,19 @@ type Series = Schemas['RWAPremiumSeries'];
 type Point = Schemas['RWAPremiumHistoryPoint'];
 
 const apiGetData = vi.hoisted(() => vi.fn());
+const served = vi.hoisted(() => ({ flags: {} as Record<string, boolean> }));
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
-  return { ...actual, apiGetData };
+  return {
+    ...actual,
+    apiGetData,
+    apiGet: (path: string, params?: unknown) =>
+      apiGetData(path, params).then((data: unknown) => ({
+        data,
+        flags: served.flags,
+      })),
+  };
 });
 
 // Stub the canvas chart; capture its props (aria-label, and the zero line,
@@ -94,6 +103,7 @@ function renderPanel() {
 describe('RWAPremiumPanel', () => {
   beforeEach(() => {
     apiGetData.mockReset();
+    served.flags = {};
     chartProps.current = null;
   });
 
@@ -220,5 +230,14 @@ describe('premiumLines — the gaps and the hues', () => {
 
   it('drops a series the window left empty rather than drawing a bare axis', () => {
     expect(premiumLines([series({ points: [] })])).toHaveLength(0);
+  });
+
+  it('warns when the envelope flags the series stale', async () => {
+    served.flags = { stale: true };
+    apiGetData.mockResolvedValue(view());
+    renderPanel();
+    expect(
+      await screen.findByText('This series may be out of date'),
+    ).toBeInTheDocument();
   });
 });

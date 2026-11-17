@@ -5,11 +5,13 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { apiGetData, asExample } from '@/api/client';
+import { apiGet, asExample } from '@/api/client';
+import type { Envelope } from '../explorer-shared';
 import type { components } from '@/api/types';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { hueByIdentity, toDailyLine } from '@/components/charts/dailyGaps';
 import { truncateMiddle } from '@/components/ui/Mono';
+import { StaleSeriesNotice } from './RWAHistoryPanel';
 import { Callout, EmptyState, Segmented, Skeleton } from '@/components/ui';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
 
@@ -54,9 +56,10 @@ const TIMEFRAMES = [
 ];
 
 function useRWAPremium(timeframe: string) {
-  return useQuery<RWAPremiumHistoryView>({
+  return useQuery<Envelope<RWAPremiumHistoryView>>({
     queryKey: [ENDPOINT, timeframe],
-    queryFn: () => apiGetData<RWAPremiumHistoryView>(ENDPOINT, { timeframe }),
+    queryFn: () =>
+      apiGet<Envelope<RWAPremiumHistoryView>>(ENDPOINT, { timeframe }),
     staleTime: 300_000,
     placeholderData: (prev) => prev,
   });
@@ -105,7 +108,10 @@ export function premiumLines(series: RWAPremiumSeries[]): NamedLineSeries[] {
  */
 export function RWAPremiumPanel() {
   const [timeframe, setTimeframe] = useState('1y');
-  const { data, isLoading, isError, error } = useRWAPremium(timeframe);
+  const query = useRWAPremium(timeframe);
+  const { isLoading, isError, error } = query;
+  const data = query.data?.data;
+  const stale = query.data?.flags?.stale === true;
 
   const lines = useMemo(() => premiumLines(data?.series ?? []), [data?.series]);
 
@@ -132,7 +138,10 @@ export function RWAPremiumPanel() {
       ) : isLoading && !data ? (
         <Skeleton className="h-[300px] w-full" />
       ) : (
-        <PremiumBody data={data as RWAPremiumHistoryView} lines={lines} />
+        <>
+          {stale && <StaleSeriesNotice />}
+          <PremiumBody data={data as RWAPremiumHistoryView} lines={lines} />
+        </>
       )}
     </Panel>
   );

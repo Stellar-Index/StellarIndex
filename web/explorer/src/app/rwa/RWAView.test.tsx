@@ -27,7 +27,11 @@ vi.mock('@/api/client', async () => {
   // The page reads its own endpoint as an envelope through apiGet; the
   // stablecoin arm keeps the plain mock.
   const routed = (path: string, params?: unknown) =>
-    path === '/v1/rwa/assets' ? rwaGet(path) : apiGet(path, params);
+    path === '/v1/rwa/assets'
+      ? rwaGet(path)
+      : path === '/v1/rwa/history' || path === '/v1/rwa/premium'
+        ? Promise.reject(new Error('unavailable'))
+        : apiGet(path, params);
   return { ...actual, apiGetData, apiGet: routed };
 });
 
