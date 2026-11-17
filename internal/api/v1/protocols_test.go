@@ -713,10 +713,15 @@ func TestHandleProtocolDetail_CacheKeyIncludesWindow(t *testing.T) {
 
 type stubTVLAquariusReader struct {
 	pools []timescale.AquariusPoolReserve
+	quiet []string
 }
 
 func (s stubTVLAquariusReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	return s.pools, nil
+}
+
+func (s stubTVLAquariusReader) QuietAquariusPools(context.Context, int) ([]string, error) {
+	return s.quiet, nil
 }
 
 type stubTVLPricerT struct{}
@@ -781,6 +786,75 @@ func TestHandleProtocols_TVLJoin(t *testing.T) {
 	}
 	if denv.Data.TVL == nil || denv.Data.TVL.TVLUSD != "10.00" {
 		t.Errorf("detail tvl = %+v, want 10.00", denv.Data.TVL)
+	}
+}
+
+// TestHandleProtocols_AquariusQuietPoolIsLowerBound pins that an Aquarius pool with no snapshot in the window is counted
+// unpriced and named unavailable_state, making tvl_total a lower bound, while the read pool's figure is unchanged.
+func TestHandleProtocols_AquariusQuietPoolIsLowerBound(t *testing.T) {
+	const quietPool = "CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE"
+	readPool := timescale.AquariusPoolReserve{
+		ContractID: "CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV",
+		ObservedAt: time.Now(),
+		Legs: []timescale.AquariusReserveLeg{
+			{TokenIndex: 0, Token: canonical.XLMSacContractID, Reserve: canonical.NewAmount(big.NewInt(400_000_000))},
+		},
+	}
+	for _, tc := range []struct {
+		name                      string
+		quiet                     []string
+		wantTotal, wantUnpriced   int
+		wantLowerBound, wantNamed bool
+	}{
+		{name: "all pools read", wantTotal: 1, wantUnpriced: 0},
+		{name: "one pool quiet", quiet: []string{quietPool}, wantTotal: 2, wantUnpriced: 1, wantLowerBound: true, wantNamed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
+				AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{readPool}, quiet: tc.quiet},
+				Pricer:           stubTVLPricerT{},
+			})
+			if err := cache.Refresh(context.Background()); err != nil {
+				t.Fatalf("cache refresh: %v", err)
+			}
+			ts := httpTestServer(t, v1.New(v1.Options{DEXTVL: cache}))
+
+			var env struct {
+				Data v1.ProtocolsView `json:"data"`
+			}
+			if err := json.NewDecoder(mustGet(t, ts.URL+"/v1/protocols").Body).Decode(&env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			aq := protocolRow(t, env.Data.Protocols, "aquarius")
+			if aq.TVL == nil || aq.TVL.TVLUSD != "10.00" || aq.TVL.PoolsPriced != 1 ||
+				aq.TVL.PoolsTotal != tc.wantTotal || aq.TVL.UnpricedPools != tc.wantUnpriced {
+				t.Fatalf("aquarius tvl = %+v, want 10.00 with %d pools, 1 priced, %d unpriced",
+					aq.TVL, tc.wantTotal, tc.wantUnpriced)
+			}
+			// Unwired venues already make lower_bound true here, so unpriced_pools is the term this change moves.
+			total := env.Data.TVLTotal
+			if total == nil || total.TVLUSD != "10.00" || total.UnpricedPools != tc.wantUnpriced ||
+				(tc.wantLowerBound && !total.LowerBound) {
+				t.Fatalf("tvl_total = %+v, want 10.00 with %d unpriced pools, lower_bound=%v",
+					total, tc.wantUnpriced, tc.wantLowerBound)
+			}
+
+			var denv struct {
+				Data v1.ProtocolTVLDetailView `json:"data"`
+			}
+			if err := json.NewDecoder(mustGet(t, ts.URL+"/v1/protocols/aquarius/tvl").Body).Decode(&denv); err != nil {
+				t.Fatalf("decode tvl detail: %v", err)
+			}
+			named := false
+			for _, p := range denv.Data.Pools {
+				if p.Pool == quietPool {
+					named = p.Excluded == v1.DEXTVLPoolUnavailable && p.TVLUSD == "0.00" && !p.Priced
+				}
+			}
+			if named != tc.wantNamed {
+				t.Errorf("quiet pool named unavailable_state = %v, want %v (pools %+v)", named, tc.wantNamed, denv.Data.Pools)
+			}
+		})
 	}
 }
 

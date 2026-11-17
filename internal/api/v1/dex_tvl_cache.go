@@ -60,6 +60,8 @@ type SoroswapTVLReserveReader interface {
 // AquariusTVLReserveReader reads the latest post-state reserves per Aquarius pool (timescale.Store).
 type AquariusTVLReserveReader interface {
 	LatestAquariusReserves(ctx context.Context, windowDays int) ([]timescale.AquariusPoolReserve, error)
+	// QuietAquariusPools lists the pools whose latest snapshot falls outside the window, so they are counted, not dropped.
+	QuietAquariusPools(ctx context.Context, windowDays int) ([]string, error)
 }
 
 // PhoenixTVLReserveReader reads current Phoenix pool reserves from lake storage; undecodable pools are counted, never guessed, and absent pools are "unavailable", NEVER zero TVL.
@@ -447,7 +449,8 @@ func finishTVLProtocol(acc *tvlProtocolAccumulator) (*tvlProtocolResult, error) 
 }
 
 // refreshAquarius computes TVL from the latest per-pool POST-STATE reserves in the trailing window. A leg whose token address
-// never resolved is unpriceable and counts in UnpricedPools; (nil, nil) when unwired.
+// never resolved is unpriceable and counts in UnpricedPools; a pool quiet for the whole window is counted unavailable_state.
+// (nil, nil) when unwired.
 func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.AquariusReserves == nil {
 		return nil, nil
@@ -459,6 +462,7 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 
 	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
 		fmt.Sprintf("sum of each pool's latest post-state reserve snapshot (aquarius_reserves, trailing %dd; "+
+			"a pool with no snapshot in that window is counted unpriced as unavailable_state; "+
 			"token identities recovered by position from the pool's deposit/withdraw events, and a pool "+
 			"touched by more than one transaction in its latest ledger reads one of their post-states, "+
 			"not always the last), valued through the served USD price tiers%s",
@@ -471,6 +475,12 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 		}
 		acc.addPool(ctx, p.ContractID, p.Ledger, legs)
 	}
+	// Read after the window so a pool ageing out between the two reads lands in both (deduplicated), never in neither.
+	quiet, err := c.src.AquariusReserves.QuietAquariusPools(ctx, aquariusTVLWindowDays)
+	if err != nil {
+		return nil, fmt.Errorf("quiet pools: %w", err)
+	}
+	acc.addUnavailable(quiet)
 	return finishTVLProtocol(acc)
 }
 

@@ -9054,8 +9054,9 @@ export interface components {
             /**
              * @description Pool-level exclusion. `undecodable_storage`: the captured
              *     storage did not decode to the recognised shape.
-             *     `unavailable_state`: a curated pool with no current state in
-             *     the lake (absent or archived). Either way the legs are
+             *     `unavailable_state`: a curated Phoenix/Comet pool with no
+             *     current state in the lake (absent or archived), or an Aquarius
+             *     pool with no reserve snapshot in the trailing 90 days. Either way the legs are
              *     unknown: `legs` is empty and `tvl_usd` is "0.00" — counted,
              *     never guessed.
              * @enum {string}

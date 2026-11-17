@@ -34,8 +34,9 @@ const (
 	// its legs are unknown. Counted (pools_total + unpriced_pools), published with no legs and
 	// tvl_usd "0.00", never guessed.
 	DEXTVLPoolUndecodable = "undecodable_storage"
-	// DEXTVLPoolUnavailable is the POOL-level exclusion for a curated pool the lake returned no current state for
-	// (absent or TTL-archived): its reserves are unknown, not zero.
+	// DEXTVLPoolUnavailable is the POOL-level exclusion for a pool with no current state: a curated Phoenix/Comet pool the
+	// lake returned nothing for (absent or TTL-archived), or an Aquarius pool with no reserve snapshot in the trailing
+	// window. Its reserves are unknown, not zero.
 	DEXTVLPoolUnavailable = "unavailable_state"
 )
 

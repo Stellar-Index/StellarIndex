@@ -63,12 +63,18 @@ func (s stubTVLReserveReader) SoroswapPairReserves(_ context.Context, _ []string
 }
 
 type stubAquariusReserveReader struct {
-	pools []timescale.AquariusPoolReserve
-	err   error
+	pools    []timescale.AquariusPoolReserve
+	err      error
+	quiet    []string
+	quietErr error
 }
 
 func (s *stubAquariusReserveReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	return s.pools, s.err
+}
+
+func (s *stubAquariusReserveReader) QuietAquariusPools(context.Context, int) ([]string, error) {
+	return s.quiet, s.quietErr
 }
 
 type stubPhoenixReserveReader struct {
@@ -766,6 +772,26 @@ func TestDEXTVLCache_ProtocolColdAndUnknown(t *testing.T) {
 	c = refreshedBranchCache(t)
 	if _, ok := c.Protocol("sdex"); ok {
 		t.Error("sdex has no derivation and must report no entry")
+	}
+}
+
+// TestDEXTVLCache_AquariusQuietPoolReadFailureRefusesFigure: when the quiet-pool read fails, aquarius publishes no figure
+// rather than one that silently omits the pools that read would have counted.
+func TestDEXTVLCache_AquariusQuietPoolReadFailureRefusesFigure(t *testing.T) {
+	src := tvlTestSources()
+	src.AquariusReserves = &stubAquariusReserveReader{
+		pools:    src.AquariusReserves.(*stubAquariusReserveReader).pools,
+		quietErr: errors.New("quiet read down"),
+	}
+	c := NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh returned nil for a failed quiet-pool read")
+	}
+	if _, ok := c.Protocol("aquarius"); ok {
+		t.Fatal("aquarius published a figure without its quiet-pool count")
+	}
+	if ex, ok := tvlExclusionFor(c.Total(), "aquarius"); !ok || !strings.Contains(ex.Reason, "read failed") {
+		t.Errorf("tvl_total.excluded aquarius = %+v (%v), want it named as a failed read", ex, ok)
 	}
 }
 
