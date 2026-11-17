@@ -348,11 +348,17 @@ func (s *Server) rwaContractListingRows(
 		return nil, 0, false, err
 	}
 
-	details := make([]AssetDetail, 0, len(rows))
+	// Membership already proved each address, so a contract discovery never sighted (one emitting no
+	// SEP-41 event) is still valued; the catalogue row only enriches it with sightings and a price.
+	if rows == nil {
+		rows = make(map[string]timescale.AssetRow, len(ids))
+	}
+	details := make([]AssetDetail, 0, len(ids))
 	for _, id := range ids {
 		row, ok := rows[id]
 		if !ok {
-			continue
+			row = timescale.AssetRow{Slug: id, AssetID: id}
+			rows[id] = row
 		}
 		details = append(details, assetDetailFromAssetRow(row))
 	}
