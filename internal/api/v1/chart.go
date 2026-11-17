@@ -826,6 +826,23 @@ func (r *chartWalkResult) mergeCap(at time.Time) {
 	}
 }
 
+// trimToCap drops merged points past the earliest capped read, which a lower-ranked source would otherwise own although the
+// capped source was never read there, then keeps the oldest historyMaxPoints so data_ends_at is the last point served.
+func (r *chartWalkResult) trimToCap(points []HistoryPoint) []HistoryPoint {
+	if !r.cappedAt.IsZero() {
+		n := sort.Search(len(points), func(i int) bool { return points[i].Bucket.After(r.cappedAt) })
+		points = points[:n]
+	}
+	over := len(points) > historyMaxPoints
+	if over {
+		points = points[:historyMaxPoints]
+	}
+	if len(points) > 0 && (!r.cappedAt.IsZero() || over) {
+		r.cappedAt = points[len(points)-1].Bucket
+	}
+	return points
+}
+
 // markRowCap stamps the row-cap truncation signal onto a series.
 func (s *ChartSeries) markRowCap(res chartWalkResult) {
 	if res.cappedAt.IsZero() {
@@ -957,7 +974,11 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 	}
 	spans := w.win.missingSpans(w.merge, now)
 	if len(spans) == 0 {
+		// Past a capped read's end nothing is served, so a later source need not read there.
 		spans = []chartSpan{{from: w.win.from}}
+		if !w.res.cappedAt.IsZero() {
+			spans[0].to = chartBucketStep(w.res.cappedAt, w.win.gran)
+		}
 	}
 	return w.fill(ctx, sp, spans), nil
 }
@@ -1041,6 +1062,7 @@ func (s *Server) chartSeriesPoints(
 		return nil, chartWalkResult{}, err
 	}
 	if len(points) > 0 {
+		points = res.trimToCap(points)
 		return points, res, nil
 	}
 	derived, crossRes, err := s.fiatSeriesThroughXLM(ctx, pair, win, read)
@@ -1048,6 +1070,7 @@ func (s *Server) chartSeriesPoints(
 		return nil, chartWalkResult{}, err
 	}
 	if len(derived) > 0 {
+		derived = crossRes.trimToCap(derived)
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded

@@ -653,6 +653,9 @@ func TestChart_RowCapTruncated_PerSourceRead(t *testing.T) {
 	if s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(capped[capN-1].Bucket) {
 		t.Errorf("data_ends_at = %v, want the capped source's end %v", s.DataEndsAt, capped[capN-1].Bucket)
 	}
+	if last := time.Time(s.Points[len(s.Points)-1].T); len(s.Points) != capN || !last.Equal(capped[capN-1].Bucket) {
+		t.Errorf("served %d points ending %v; the later source must not extend past data_ends_at", len(s.Points), last)
+	}
 
 	half := chartRowCapSeries(t0, capN/2, time.Minute)
 	rest := chartRowCapSeries(t0.Add(capN/2*time.Minute), capN/2, time.Minute)
@@ -665,6 +668,72 @@ func TestChart_RowCapTruncated_PerSourceRead(t *testing.T) {
 	}
 	if s.RowCapTruncated || s.DataEndsAt != nil {
 		t.Errorf("uncapped sources whose union is %d flagged: %v %v", capN, s.RowCapTruncated, s.DataEndsAt)
+	}
+}
+
+// rangeHonouringHistoryReader applies from/to/limit the way the store does, so a capped read returns the oldest slice.
+type rangeHonouringHistoryReader struct{ *pairKeyedHistoryReader }
+
+func (r rangeHonouringHistoryReader) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	all, _ := r.pairKeyedHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, limit)
+	var out []v1.HistoryPoint
+	for _, pt := range all {
+		if pt.Bucket.Before(from) || (!to.IsZero() && !pt.Bucket.Before(to)) {
+			continue
+		}
+		if limit > 0 && len(out) == limit {
+			break
+		}
+		out = append(out, pt)
+	}
+	return out, nil
+}
+
+// On timeframe=all no lower-ranked source may own a bucket after the earliest capped read, and the series never exceeds the cap.
+func TestChart_RowCapTruncated_LaterSourcesStopAtTheCap(t *testing.T) {
+	const capN = 50_000 // historyMaxPoints
+	t0 := time.Now().UTC().Add(-4 * capN * time.Minute).Truncate(time.Minute)
+	mark := func(pts []v1.HistoryPoint, vwap string) []v1.HistoryPoint {
+		for i := range pts {
+			pts[i].VWAP = vwap
+		}
+		return pts
+	}
+	direct := mark(chartRowCapSeries(t0, 2*capN, time.Minute), "1.0")
+	cases := map[string]struct {
+		alias   []v1.HistoryPoint
+		wantEnd time.Time
+	}{
+		"later alias overlapping and past the cap": {
+			alias:   mark(chartRowCapSeries(t0.Add(capN/2*time.Minute), 2*capN, time.Minute), "2.0"),
+			wantEnd: direct[capN-1].Bucket,
+		},
+		"older alias pushes the union over the cap": {
+			alias:   mark(chartRowCapSeries(t0.Add(-1000*time.Minute), 1000, time.Minute), "2.0"),
+			wantEnd: direct[capN-1-1000].Bucket,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := getChartSeries(t, rangeHonouringHistoryReader{&pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+				"native/fiat:USD":     direct,
+				"crypto:XLM/fiat:USD": tc.alias,
+			}}}, "timeframe=all&granularity=1m")
+			if len(s.Points) > capN {
+				t.Fatalf("served %d points, over the %d cap", len(s.Points), capN)
+			}
+			if !s.RowCapTruncated || s.DataEndsAt == nil || !time.Time(*s.DataEndsAt).Equal(tc.wantEnd) {
+				t.Fatalf("truncated=%v data_ends_at=%v, want true %v", s.RowCapTruncated, s.DataEndsAt, tc.wantEnd)
+			}
+			if last := time.Time(s.Points[len(s.Points)-1].T); !last.Equal(tc.wantEnd) {
+				t.Errorf("last point %v, want data_ends_at %v", last, tc.wantEnd)
+			}
+			for _, p := range s.Points {
+				if b := time.Time(p.T); !b.Before(t0) && !strings.HasPrefix(p.P, "1") {
+					t.Fatalf("bucket %v served from the lower-ranked source (p %s) though the direct market holds it", b, p.P)
+				}
+			}
+		})
 	}
 }
 
