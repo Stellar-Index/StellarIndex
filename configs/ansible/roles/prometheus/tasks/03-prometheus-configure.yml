@@ -23,6 +23,36 @@
   when: prometheus_basic_auth_password_hash | length == 0
   notify: "prometheus config changed"
 
+# The client side of the basic auth above: prometheus.yml reads these
+# via password_file, so the plaintext never lands in the config.
+- name: write the basic-auth client password files
+  copy:
+    content: "{{ item.password }}"
+    dest: "/etc/prometheus/{{ item.name }}"
+    owner: root
+    group: "{{ prometheus_user }}"
+    mode: "0640"
+  loop:
+    - { name: prometheus-client-password, hash: "{{ prometheus_basic_auth_password_hash }}", password: "{{ prometheus_basic_auth_password }}" }
+    - { name: alertmanager-client-password, hash: "{{ alertmanager_basic_auth_password_hash }}", password: "{{ alertmanager_basic_auth_password }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.hash | length > 0
+  no_log: true
+  notify: "prometheus config changed"
+
+- name: remove the client password files when basic auth is unset
+  file:
+    path: "/etc/prometheus/{{ item.name }}"
+    state: absent
+  loop:
+    - { name: prometheus-client-password, hash: "{{ prometheus_basic_auth_password_hash }}" }
+    - { name: alertmanager-client-password, hash: "{{ alertmanager_basic_auth_password_hash }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.hash | length == 0
+  notify: "prometheus config changed"
+
 - name: render /etc/prometheus/prometheus.yml
   template:
     src: prometheus.yml.j2

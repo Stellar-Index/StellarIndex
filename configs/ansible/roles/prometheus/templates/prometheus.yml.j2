@@ -8,14 +8,26 @@ global:
 {% for k, v in prometheus_external_labels.items() %}
     {{ k }}: {{ v }}
 {% endfor %}
-    instance: {{ inventory_hostname }}
+    replica: {{ inventory_hostname }}
 
 rule_files:
   - /etc/prometheus/rules.d/*.yml
 
 alerting:
+  # `replica` differs per HA member; left on, Alertmanager sees two
+  # distinct alerts instead of one it can deduplicate.
+  alert_relabel_configs:
+    - action: labeldrop
+      regex: replica
   alertmanagers:
+{% if alertmanager_basic_auth_password_hash | length > 0 %}
+    - basic_auth:
+        username: {{ alertmanager_basic_auth_username }}
+        password_file: /etc/prometheus/alertmanager-client-password
+      static_configs:
+{% else %}
     - static_configs:
+{% endif %}
         - targets:
 {% for h in groups['prometheus_pair'] %}
             - "{{ hostvars[h].ansible_host }}:{{ alertmanager_port }}"
@@ -24,6 +36,11 @@ alerting:
 scrape_configs:
   # ── Self-scrape: Prometheus + AlertManager ──────────────────
   - job_name: "prometheus_pair"
+{% if prometheus_basic_auth_password_hash | length > 0 %}
+    basic_auth:
+      username: {{ prometheus_basic_auth_username }}
+      password_file: /etc/prometheus/prometheus-client-password
+{% endif %}
     static_configs:
       - targets:
 {% for h in groups['prometheus_pair'] %}
@@ -33,6 +50,11 @@ scrape_configs:
           service: prometheus
 
   - job_name: "alertmanager_pair"
+{% if alertmanager_basic_auth_password_hash | length > 0 %}
+    basic_auth:
+      username: {{ alertmanager_basic_auth_username }}
+      password_file: /etc/prometheus/alertmanager-client-password
+{% endif %}
     static_configs:
       - targets:
 {% for h in groups['prometheus_pair'] %}
@@ -105,6 +127,34 @@ scrape_configs:
 {% endfor %}
         labels:
           service: redis
+{% endif %}
+
+{# A loopback-bound Loki cannot be scraped from here; a wildcard bind is reached on ansible_host. #}
+{% set loki_targets = [] %}
+{% for h in groups['log_aggregator'] | default([]) %}
+{% set l = hostvars[h].loki_listen_address | default('127.0.0.1') %}
+{% if l in ['0.0.0.0', '::'] %}
+{% set a = hostvars[h].ansible_host %}
+{% elif l == 'localhost' or l == '::1' or l.startswith('127.') %}
+{% set a = '' %}
+{% else %}
+{% set a = l %}
+{% endif %}
+{% if a %}
+{% set _ = loki_targets.append(('[' ~ a ~ ']' if ':' in a else a) ~ ':' ~ (hostvars[h].loki_http_port | default(3100))) %}
+{% endif %}
+{% endfor %}
+{% if loki_targets %}
+  # ── Loki (log tier; the targets answer on loki_http_port) ────
+  - job_name: "loki"
+    scrape_interval: {{ prometheus_default_scrape_interval }}
+    static_configs:
+      - targets:
+{% for t in loki_targets %}
+          - "{{ t }}"
+{% endfor %}
+        labels:
+          service: loki
 {% endif %}
 
   # ── Data-tier exporters ──────────────────────────────────────

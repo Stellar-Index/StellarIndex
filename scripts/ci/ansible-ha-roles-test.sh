@@ -80,6 +80,59 @@ check("delete_request_store: s3" in cfg, "loki compactor names a delete_request_
 check(any("uri" in t and "/ready" in t["uri"]["url"] for t in tasks("loki/tasks/server-04-systemd.yml")),
       "loki start is followed by a /ready wait")
 
+# loki: a bad config or missing credentials must fail the play, not leave
+# a green run over a crash-looping or non-flushing Loki.
+check(any("loki-config.yaml" in str(t.get("template", {}).get("dest", "")) and
+          "-verify-config" in str(t["template"].get("validate", ""))
+          for t in tasks("loki/tasks/server-03-configure.yml")),
+      "loki config is validated with -verify-config before it lands")
+srv = tasks("loki/tasks/server-04-systemd.yml")
+names = [t.get("name", "") for t in srv]
+start = next(i for i, t in enumerate(srv) if t.get("name") == "enable + start loki")
+ready = next(i for i, t in enumerate(srv) if "uri" in t and "/ready" in t["uri"]["url"])
+check(not any(t.get("meta") == "flush_handlers" for t in srv),
+      "loki does not flush every pending handler (other roles' included)")
+check(any("systemd" in t and t["systemd"].get("state") == "restarted" and t["systemd"].get("name") == "loki"
+          and "_loki_config" in str(t.get("when")) and "_loki_unit" in str(t.get("when"))
+          for t in srv[start + 1:ready]),
+      "loki restarts itself on a config or unit change before the /ready wait")
+check(any("loki config changed" in str(t.get("notify", "")) for t in srv)
+      and any(h.get("listen") == "loki config changed" for h in yaml.safe_load(text("loki/handlers/main.yml"))),
+      "loki keeps its restart handler for other paths")
+probe = next((t for t in srv[:start] if "/etc/default/loki" in str(t.get("shell", ""))
+              and "AWS_SECRET_ACCESS_KEY" in str(t.get("shell", ""))), None)
+check(probe is not None, "loki refuses to start without S3 credentials in /etc/default/loki")
+check(probe is not None and probe.get("check_mode") is False and probe.get("changed_when") is False,
+      "loki credentials probe runs under --check (check_mode: false) and never reports changed")
+
+# alertmanager: the unit carries the flags, so a unit change restarts it (SIGHUP does not re-read flags).
+am_unit = next(t for t in tasks("prometheus/tasks/05-systemd.yml") if t.get("name") == "render alertmanager systemd unit")
+am_handler = next((h for h in yaml.safe_load(text("prometheus/handlers/main.yml"))
+                   if h.get("listen") == am_unit.get("notify")), None)
+check(am_handler is not None and am_handler["systemd"].get("state") == "restarted",
+      "alertmanager unit change notifies a restarting handler")
+
+# firewalls: nft rejects an empty `elements = { }`.
+env_fw = jinja2.Environment(trim_blocks=True)
+for path, name, pfx, port_vars in (
+        ("loki/tasks/server-05-firewall.yml", "render full /etc/nftables.conf (default-drop + loki ingest + ssh)",
+         "loki", {"loki_http_port": 3100}),
+        ("prometheus/tasks/06-firewall.yml", "render full /etc/nftables.conf (default-drop + prom stack + ssh)",
+         "prometheus", {"prometheus_port": 9090, "alertmanager_port": 9093, "alertmanager_cluster_listen_port": 9094})):
+    body = next(t for t in tasks(path) if t.get("name") == name)["copy"]["content"]
+    for label, internal, ssh, want in (
+            ("default", ["10.0.0.0/8"], ["10.0.0.0/8"], 2),
+            ("empty", [], [], 0),
+            ("ipv6-only", ["fd00::/8"], ["fd00::/8"], 2),
+            ("mixed", ["10.0.0.0/8", "fd00::/8"], ["192.0.2.1", "2001:db8::/32"], 4)):
+        out = env_fw.from_string(body).render(**{f"{pfx}_internal_cidrs": internal, f"{pfx}_allowed_ssh_cidrs": ssh},
+                                              **port_vars)
+        check(not re.search(r"elements\s*=\s*\{\s*\}", out) and out.count("elements = {") == want
+              and out.count("{") == out.count("}"),
+              f"{pfx} firewall ({label} CIDRs) renders only non-empty elements lines")
+check(any("archival_nodes" in str(t.get("assert", {})) for t in tasks("loki/tasks/server-01-preflight.yml")),
+      "loki server preflight refuses archival nodes (the role replaces the whole firewall)")
+
 # textfile scrapers: node_exporter is not root, mktemp files are 0600.
 for path, name in (("patroni/tasks/11-monitoring.yml", "install patroni-textfile scraper"),
                    ("redis-sentinel/tasks/07-monitoring.yml", "install sentinel-state textfile scraper"),

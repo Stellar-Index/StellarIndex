@@ -8,6 +8,19 @@
       loki role supports Ubuntu 22.04 / 24.04 only;
       detected {{ ansible_distribution }} {{ ansible_distribution_version }}
 
+# server-05-firewall.yml renders the WHOLE /etc/nftables.conf (`flush
+# ruleset`, default drop): on an archival node that drops Caddy 80/443, the
+# stellar-core peer port and the SSH allow-list.
+- name: assert host is not an archival node (this role owns the host firewall)
+  assert:
+    that:
+      - inventory_hostname not in groups['archival_nodes'] | default([])
+    fail_msg: >-
+      {{ inventory_hostname }} is in archival_nodes. The loki server tasks
+      replace the host's entire nftables ruleset and would drop the
+      archival-node public ports and its SSH allow-list. Run the server
+      tasks on a dedicated log_aggregator host only.
+
 - name: assert log_aggregator inventory group has at least 1 host
   assert:
     that:
