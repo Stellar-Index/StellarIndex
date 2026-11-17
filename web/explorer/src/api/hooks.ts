@@ -64,18 +64,6 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
 
 export type StatusResponse = Schemas['StatusResponse'];
 
-/**
- * useIssuerLookup — fetches /v1/issuers once, builds a
- * g_strkey → { home_domain, org_name } map cached for the
- * session. Used by AssetLabel to render classic-asset rows with
- * the issuer's known display name (e.g. "USDC · Circle" instead
- * of "USDC · GA5Z…KZVN") whenever the API knows the issuer.
- *
- * Cache-friendly because /v1/issuers is small (a few hundred
- * rows max) and changes only when the curated `known_issuers`
- * fallback gets a new entry or the operator's eventual
- * issuer-upsert path lands.
- */
 /** Lowercase slugs and Stellar asset ids of every verified catalogue entry. */
 export type VerifiedIndex = { slugs: Set<string>; assetIds: Set<string> };
 
@@ -104,6 +92,18 @@ export function useVerifiedIndex() {
   });
 }
 
+/**
+ * useIssuerLookup — fetches /v1/issuers once, builds a
+ * g_strkey → { home_domain, org_name } map cached for the
+ * session. Used by AssetLabel to render classic-asset rows with
+ * the issuer's known display name (e.g. "USDC · Circle" instead
+ * of "USDC · GA5Z…KZVN") whenever the API knows the issuer.
+ *
+ * Cache-friendly because /v1/issuers is small (a few hundred
+ * rows max) and changes only when the curated `known_issuers`
+ * fallback gets a new entry or the operator's eventual
+ * issuer-upsert path lands.
+ */
 export function useIssuerLookup() {
   return useQuery<
     IssuerListEntry[],
