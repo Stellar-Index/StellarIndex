@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -319,33 +320,30 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 	}, nil
 }
 
+// CandleTxHash is the tx_hash Backfill gives symbol's candle of granularity stamped at stamp.
+func CandleTxHash(symbol string, stamp time.Time, granularity time.Duration) (string, error) {
+	return candleTxHash(symbol, stamp.Unix(), granularity)
+}
+
 // candleTxHash is the identity of an OHLC-synthesised row, which has no
 // venue trade id; see scale.CandleTxHash.
 func candleTxHash(symbol string, closeTs int64, granularity time.Duration) (string, error) {
 	return scale.CandleTxHash(strings.ReplaceAll(strings.ToUpper(symbol), "/", ""), closeTs, granularity)
 }
 
-// granularityToMinutes maps a Duration to Kraken's interval in minutes: 1, 5, 15, 30, 60, 240, 1440, 10080, 21600.
+var ohlcIntervals = []time.Duration{
+	time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute, time.Hour, 4 * time.Hour,
+	24 * time.Hour, 7 * 24 * time.Hour, 15 * 24 * time.Hour,
+}
+
+// OHLCIntervals is Kraken's /OHLC interval set, ascending. Each candle opens on a multiple of its interval since the Unix epoch
+// and is stamped at its last second.
+func OHLCIntervals() []time.Duration { return slices.Clone(ohlcIntervals) }
+
+// granularityToMinutes maps a Duration in OHLCIntervals to Kraken's interval in minutes.
 func granularityToMinutes(d time.Duration) (int, error) {
-	switch d {
-	case 1 * time.Minute:
-		return 1, nil
-	case 5 * time.Minute:
-		return 5, nil
-	case 15 * time.Minute:
-		return 15, nil
-	case 30 * time.Minute:
-		return 30, nil
-	case 1 * time.Hour:
-		return 60, nil
-	case 4 * time.Hour:
-		return 240, nil
-	case 24 * time.Hour:
-		return 1440, nil
-	case 7 * 24 * time.Hour:
-		return 10080, nil
-	case 15 * 24 * time.Hour:
-		return 21600, nil
+	if slices.Contains(ohlcIntervals, d) {
+		return int(d / time.Minute), nil
 	}
 	return 0, fmt.Errorf("kraken.Backfill: unsupported granularity %v (supported: 1m/5m/15m/30m/1h/4h/1d/1w/15d)", d)
 }

@@ -578,15 +578,17 @@ func TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite(t *testing.T) {
 	}
 }
 
-// TestWalkedTo: a walk that ended early covers only up to its high-water trade; later rows are resume rows, not foreign.
+// TestWalkedTo: a walk that ended early covers up to the end of its high-water candle; later rows are resume rows, not foreign.
 func TestWalkedTo(t *testing.T) {
 	to := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
-	high := to.Add(-72 * time.Hour)
+	end := to.Add(-72 * time.Hour)
 	if got := walkedTo(to, time.Time{}, false); !got.Equal(to) {
 		t.Errorf("complete walk: %v, want %v", got, to)
 	}
-	if got, want := walkedTo(to, high, true), high.Add(time.Microsecond); !got.Equal(want) {
-		t.Errorf("partial walk: %v, want %v", got, want)
+	for _, res := range []time.Duration{time.Second, time.Millisecond} {
+		if got := walkedTo(to, end.Add(-res), true); !got.Equal(end) {
+			t.Errorf("partial walk, candle stamped at close-%v: %v, want its close %v", res, got, end)
+		}
 	}
 }
 

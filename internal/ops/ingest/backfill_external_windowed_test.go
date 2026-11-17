@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -263,31 +264,41 @@ var testRawPlan = windowPlan{size: 24 * time.Hour, overlap: time.Second}
 // bucket never sees it in [-from, -to), yet its fills would sit beside the candle's whole-bucket volume.
 func TestWalkRawTrades_RefusesFillsInsideAStoredCandle(t *testing.T) {
 	cases := []struct {
-		name     string
-		candle   time.Time
-		from, to time.Time
-		modes    []bool
-		resume   string
+		name      string
+		candle    time.Time
+		from, to  time.Time
+		modes     []bool
+		resume    string
+		advisedTo time.Time // the -to the refusal names with -from kept; zero when it says none exists
 	}{
 		{
 			name: "1d candle, half-day fills", candle: windowDay1.Add(24*time.Hour - time.Second),
 			from: windowDay1, to: windowDay1.Add(12 * time.Hour), modes: []bool{false, true},
+			resume: "No -to admits this -from: nothing in [2021-03-01T00:00:00Z, 2021-03-02T00:00:00Z)",
 		},
 		{
 			name: "1h candle, half-hour fills", candle: windowDay1.Add(11*time.Hour - time.Second),
 			from: windowDay1.Add(10 * time.Hour), to: windowDay1.Add(10*time.Hour + 30*time.Minute), modes: []bool{false, true},
+			resume: "No -to admits this -from: nothing in [2021-03-01T10:00:00Z, 2021-03-01T11:00:00Z)",
 		},
 		// Without -allow-overlap the pre-walk [-from, -to) probe refuses this candle; with it, only the window-end probe can.
 		{
 			name: "1d candle straddling a window end", candle: windowDay1.Add(48*time.Hour - time.Second),
 			from: windowDay1.Add(12 * time.Hour), to: windowDay1.Add(60 * time.Hour), modes: []bool{true},
-			resume: "resume with -from 2021-03-01T12:00:00Z -to 2021-03-02T00:00:00Z",
+			resume: "resume with -from 2021-03-01T12:00:00Z -to 2021-03-02T00:00:00Z", advisedTo: windowDay1.Add(24 * time.Hour),
+		},
+		// A coarser bucket that opened before -from: no -to after -from avoids it.
+		{
+			name: "1w candle opened before -from", candle: time.Date(2021, 3, 3, 23, 59, 59, 0, time.UTC),
+			from: windowDay1.Add(12 * time.Hour), to: windowDay1.Add(36 * time.Hour), modes: []bool{false, true},
+			resume: "No -to admits this -from: nothing in [2021-03-01T12:00:00Z, 2021-03-04T00:00:00Z)",
 		},
 	}
 	for _, tc := range cases {
 		for _, allowOverlap := range tc.modes {
 			t.Run(fmt.Sprintf("%s/allow-overlap=%v", tc.name, allowOverlap), func(t *testing.T) {
-				store := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: []canonical.Trade{tradeAt("candle", tc.candle)}}}
+				candle := []canonical.Trade{tradeAt("candle", tc.candle)}
+				store := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: candle}}
 				err := walkRawTrades(context.Background(), store, testRawPlan, fillsIn(windowTrades(tc.from, tc.to)), xlmUSD(t),
 					tc.from, tc.to, allowOverlap, 0, io.Discard)
 				if !errors.Is(err, errBackfillForeignRows) || !strings.Contains(err.Error(), tc.resume) {
@@ -295,6 +306,14 @@ func TestWalkRawTrades_RefusesFillsInsideAStoredCandle(t *testing.T) {
 				}
 				if len(store.got) != 0 {
 					t.Fatalf("wrote %d fill(s) inside the stored candle's bucket, want none", len(store.got))
+				}
+				if tc.advisedTo.IsZero() {
+					return
+				}
+				advised := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: candle}}
+				if err := walkRawTrades(context.Background(), advised, testRawPlan, fillsIn(windowTrades(tc.from, tc.advisedTo)), xlmUSD(t),
+					tc.from, tc.advisedTo, allowOverlap, 0, io.Discard); err != nil {
+					t.Fatalf("the advised run -to %s is refused: %v", tc.advisedTo.Format(time.RFC3339), err)
 				}
 			})
 		}
@@ -313,14 +332,121 @@ func TestWalkRawTrades_AllowOverlapProbesEachWindow(t *testing.T) {
 	if !errors.Is(err, errBackfillForeignRows) {
 		t.Fatalf("err = %v, want errBackfillForeignRows", err)
 	}
-	if want := "resume with -from 2021-03-02T00:00:00Z -to 2021-03-02T00:59:59Z"; !strings.Contains(err.Error(), want) {
+	// The stored row is the stamp of a 1h candle opened at 00:00, so no fills run from the stopping window's start avoids it.
+	if want := "nothing in [2021-03-02T00:00:00Z, 2021-03-02T01:00:00Z) can be written as fills"; !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %v, want it to name %q", err, want)
 	}
-	if !strings.Contains(err.Error(), "keep -from and end the run with -to 2021-03-02T00:59:59Z") {
-		t.Fatalf("inner refusal does not keep -from at the window start: %v", err)
+	if !strings.Contains(err.Error(), "Keep -from and end the run with -to 2021-03-02T00:00:00Z") {
+		t.Fatalf("inner refusal does not end the run at the candle's open: %v", err)
 	}
 	if len(store.got) != 4 {
 		t.Fatalf("wrote %d fill(s), want only day 1's 4", len(store.got))
+	}
+
+	// The advised run: the same -from, ending at the candle's open, over the day-1 fills the walk wrote.
+	written := append([]canonical.Trade{tradeAt("candle", candle)}, windowTrades(windowDay1, day2)...)
+	advised := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: written}}
+	if err := walkRawTrades(context.Background(), advised, testRawPlan, fillsIn(windowTrades(windowDay1, to)), xlmUSD(t), windowDay1, day2, true, 0, io.Discard); err != nil {
+		t.Fatalf("the advised run -from %s -to %s is refused: %v", windowDay1.Format(time.RFC3339), day2.Format(time.RFC3339), err)
+	}
+}
+
+// candleRunStore is a trades store for the candle path's pre-walk and post-walk refusals.
+type candleRunStore struct{ storedRowsProbe }
+
+func (s *candleRunStore) EarliestTradeInWindow(ctx context.Context, source string, pair canonical.Pair, from, to time.Time) (time.Time, bool, error) {
+	n, first, err := s.TradesInWindowOutside(ctx, source, pair, from, to, nil)
+	return first, n > 0, err
+}
+
+func (s *candleRunStore) TradeSourcesInWindow(context.Context, canonical.Pair, time.Time, time.Time, []string) ([]string, error) {
+	return nil, nil
+}
+
+func (s *candleRunStore) Prices1mRetentionArmed(context.Context) (bool, error) { return false, nil }
+
+// refuseCandleRun runs the candle path's refusals in order: pre-walk, then post-walk over the fetched candles.
+func refuseCandleRun(t *testing.T, store *candleRunStore, from, to time.Time, granularity time.Duration, candles []canonical.Trade, allowOverlap bool) error {
+	t.Helper()
+	if err := refuseStoredRows(context.Background(), store, "kraken", xlmUSD(t), from, to, allowOverlap); err != nil {
+		return err
+	}
+	return refuseCandleRunRows(context.Background(), store, "kraken", "XLM/USD", xlmUSD(t), from, to, granularity, candles)
+}
+
+// hourCandles are kraken XLM/USD 1h candles, with Backfill's identities, over [from, to).
+func hourCandles(t *testing.T, from, to time.Time) []canonical.Trade {
+	t.Helper()
+	var out []canonical.Trade
+	for open := from; open.Before(to); open = open.Add(time.Hour) {
+		stamp := open.Add(time.Hour - time.Second)
+		hash, err := externalkraken.CandleTxHash("XLM/USD", stamp, time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, tradeAt(hash, stamp))
+	}
+	return out
+}
+
+// TestRefuseCandleRunRows_InsideStoredCoarserCandle: 1h candles written inside a stored 1d candle's bucket count that span's
+// volume twice in every rollup at or above 1d; neither the pre-walk [-from, -to) probe nor the walked window sees the 1d stamp.
+func TestRefuseCandleRunRows_InsideStoredCoarserCandle(t *testing.T) {
+	day := &candleRunStore{storedRowsProbe{rows: []canonical.Trade{tradeAt("1d", windowDay1.Add(24*time.Hour-time.Second))}}}
+	nextDay := &candleRunStore{storedRowsProbe{rows: []canonical.Trade{tradeAt("1d", windowDay1.Add(48*time.Hour-time.Second))}}}
+	day2 := windowDay1.Add(24 * time.Hour)
+	for _, allowOverlap := range []bool{false, true} {
+		to := windowDay1.Add(12 * time.Hour)
+		err := refuseCandleRun(t, day, windowDay1, to, time.Hour, hourCandles(t, windowDay1, to), allowOverlap)
+		if want := "No -to admits this -from: nothing in [2021-03-01T00:00:00Z, 2021-03-02T00:00:00Z)"; !errors.Is(err, errBackfillForeignRows) || !strings.Contains(err.Error(), want) {
+			t.Errorf("allow-overlap=%v, 1h inside a stored 1d bucket: err = %v, want errBackfillForeignRows naming %q", allowOverlap, err, want)
+		}
+
+		to = day2.Add(12 * time.Hour)
+		err = refuseCandleRun(t, nextDay, windowDay1, to, time.Hour, hourCandles(t, windowDay1, to), allowOverlap)
+		if want := "Keep -from and end the run with -to 2021-03-02T00:00:00Z"; !errors.Is(err, errBackfillForeignRows) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("allow-overlap=%v, 1h run ending inside a stored 1d bucket: err = %v, want errBackfillForeignRows naming %q", allowOverlap, err, want)
+		}
+		if err := refuseCandleRun(t, nextDay, windowDay1, day2, time.Hour, hourCandles(t, windowDay1, day2), allowOverlap); err != nil {
+			t.Errorf("allow-overlap=%v: the advised run -to %s is refused: %v", allowOverlap, day2.Format(time.RFC3339), err)
+		}
+	}
+}
+
+// TestRefuseCandleRunRows_SameGranularityReRunAdmitted: a re-run over candles this command wrote is admitted, including one that
+// ends inside a coarser bucket whose stamp holds the run's own later candle (a 1h candle at 07:59:59 is also a 4h stamp).
+func TestRefuseCandleRunRows_SameGranularityReRunAdmitted(t *testing.T) {
+	to := windowDay1.Add(12 * time.Hour)
+	own := hourCandles(t, windowDay1, to)
+	store := &candleRunStore{storedRowsProbe{rows: own}}
+	if err := refuseCandleRun(t, store, windowDay1, to, time.Hour, own, true); err != nil {
+		t.Fatalf("complete re-run refused: %v", err)
+	}
+	partial := own[:6]
+	end := walkedTo(to, partial[len(partial)-1].Timestamp, true)
+	if err := refuseCandleRunRows(context.Background(), store, "kraken", "XLM/USD", xlmUSD(t), windowDay1, end, time.Hour, partial); err != nil {
+		t.Fatalf("partial re-run refused: %v", err)
+	}
+	if err := refuseCandleRun(t, store, windowDay1, windowDay1.Add(6*time.Hour+30*time.Minute), time.Hour, partial, true); err != nil {
+		t.Fatalf("re-run with -to inside its own stored candle refused: %v", err)
+	}
+	// The same stamp holding a 4h candle is foreign.
+	fourHour := &candleRunStore{storedRowsProbe{rows: append(slices.Clone(partial), tradeAt("4h", windowDay1.Add(8*time.Hour-time.Second)))}}
+	if err := refuseCandleRunRows(context.Background(), fourHour, "kraken", "XLM/USD", xlmUSD(t), windowDay1, end, time.Hour, partial); !errors.Is(err, errBackfillForeignRows) {
+		t.Fatalf("err = %v, want errBackfillForeignRows for a stored 4h candle straddling the walked end", err)
+	}
+}
+
+// TestRefuseCandleRunRows_PartialWalkCoversLastCandle: a walk that ended on a candle still writes that candle's whole bucket, so a
+// stored fill in its final second is foreign.
+func TestRefuseCandleRunRows_PartialWalkCoversLastCandle(t *testing.T) {
+	candles := hourCandles(t, windowDay1, windowDay1.Add(6*time.Hour))
+	last := candles[len(candles)-1].Timestamp
+	store := &candleRunStore{storedRowsProbe{rows: []canonical.Trade{tradeAt("fill", last.Add(500*time.Millisecond))}}}
+	end := walkedTo(windowDay1.Add(24*time.Hour), last, true)
+	err := refuseCandleRunRows(context.Background(), store, "kraken", "XLM/USD", xlmUSD(t), windowDay1, end, time.Hour, candles)
+	if !errors.Is(err, errBackfillForeignRows) {
+		t.Fatalf("err = %v, want errBackfillForeignRows for the fill inside the last candle's final second", err)
 	}
 }
 
