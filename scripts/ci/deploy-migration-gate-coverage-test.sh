@@ -51,21 +51,48 @@ done
 # The follow-up gate must run before the playbook applies migrations, and on
 # its own acknowledgement: config_acknowledged asserts a surface is already
 # applied, which a replay that has not run yet can never be.
-# With no BASE_SHA the numbering check compares the tag with itself and sees nothing.
-numbering="$(python3 - "$WORKFLOW" <<'PY'
+# With no BASE_SHA the numbering check compares the tag with itself and sees nothing. The base
+# must be the NEWEST release the host ran (migrate included): the database is migrated that far.
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+numbering="$(python3 - "$WORKFLOW" "$tmp/numbering-run.sh" <<'PY'
 import sys, yaml
 steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"].get("steps", [])
 play = next((i for i, s in enumerate(steps) if s.get("id") == "playbook"), len(steps))
-ok = any('BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh' in (s.get("run") or "")
-         and "steps.baseline.outputs.live" in str(s.get("env", {}))
-         for s in steps[:play])
-print("based" if ok else "unbased")
+gate = next((s for s in steps[:play] if 'BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh' in (s.get("run") or "")), None)
+if gate is None:
+    print("absent")
+    sys.exit(0)
+print("present")
+env = gate.get("env", {})
+print("newest" if str(env.get("BASELINE", "")).replace(" ", "") == "${{steps.baseline.outputs.newest}}" else "not-newest")
+open(sys.argv[2], "w").write(gate["run"])
 PY
 )" || { echo "deploy-migration-gate-coverage-test: could not read the numbering gate step" >&2; exit 2; }
-if [ "$numbering" = based ]; then
-  ok "numbering gate runs against the host's live version before the playbook"
+if grep -qx present <<<"$numbering"; then
+  ok "numbering gate runs lint-migrations.sh with BASE_SHA before the playbook"
 else
-  bad "no step runs lint-migrations.sh with BASE_SHA from steps.baseline.outputs.live before the playbook — the back-numbering check compares the tag with itself"
+  bad "no step runs lint-migrations.sh with BASE_SHA before the playbook — the back-numbering check compares the tag with itself"
+fi
+if grep -qx newest <<<"$numbering"; then
+  ok "numbering gate's base is steps.baseline.outputs.newest"
+else
+  bad "numbering gate's BASELINE is not steps.baseline.outputs.newest — a lower base lets a migration numbered below the database's version through"
+fi
+# Execute the step against stubs: with a base available it must reach the lint with that base's sha.
+if [ -s "$tmp/numbering-run.sh" ]; then
+  mkdir -p "$tmp/bin" "$tmp/ws/scripts/ci"
+  # shellcheck disable=SC2016 # stub bodies expand when the stubs run
+  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; *) exit 1 ;; esac' > "$tmp/bin/git"
+  # shellcheck disable=SC2016
+  printf '%s\n' 'echo "LINT-REACHED BASE_SHA=${BASE_SHA:-}"' > "$tmp/ws/scripts/ci/lint-migrations.sh"
+  chmod +x "$tmp/bin/git"
+  got="$(cd "$tmp/ws" && PATH="$tmp/bin:$PATH" VERSION=v0.60.0 BASELINE=v0.59.0 bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)"
+  if [[ "$got" == *"LINT-REACHED BASE_SHA=0123456789abcdef0123456789abcdef01234567"* ]]; then
+    ok "numbering gate reaches the lint with the base's sha when a base is available"
+  else
+    bad "numbering gate with BASELINE set returned before running lint-migrations.sh with BASE_SHA — output: ${got}"
+  fi
 fi
 
 followup="$(python3 - "$WORKFLOW" <<'PY'

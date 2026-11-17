@@ -1085,7 +1085,6 @@ jobs:
                   [ -d "$d" ] || exit 0;
                   for f in "$d"/stellarindex-*; do
                     [ -e "$f" ] || continue;
-                    case "$f" in *stellarindex-migrate) continue ;; esac;
                     v=$(awk 1 "$f") || exit 3;
                     printf "%s\t%s\n" "${f##*/}" "$v";
                   done;
@@ -1113,6 +1112,7 @@ jobs:
           # rows only; an empty set (a manifest row with no binaries)
           # falls through to every sidecar, which is the old behaviour.
           versions=""
+          all_versions=""
           applied=""
           has_marker=0
           while IFS=$'\t' read -r name ver; do
@@ -1122,6 +1122,9 @@ jobs:
               applied="$ver"
               continue
             fi
+            # Every sidecar, migrate and off-manifest ones included, bounds how far the database's migrations got.
+            all_versions="${all_versions}${ver}"$'\n'
+            [ "$name" = stellarindex-migrate ] && continue
             if [ -n "${REGION_SET:-}" ] && ! grep -qxF -- "$name" <<<"${REGION_SET// /$'\n'}"; then
               echo "::notice::ignoring sidecar ${name}=${ver}: not in ${REGION}'s manifest set (${REGION_SET})"
               continue
@@ -1142,6 +1145,9 @@ jobs:
             echo "::warning::the host has no deployed-versions sidecar (first deploy to this host, or the directory was wiped); the config-apply gate falls back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."
             echo "live=" >> "$GITHUB_OUTPUT"
           fi
+          newest=$(printf '%s' "$all_versions" | grep -E "$version_re" | sed 's/-/~/' | sort -V | sed -n '$p' | sed 's/~/-/' || true)
+          echo "host newest version (highest across every sidecar, migrate included): ${newest:-none}"
+          echo "newest=$newest" >> "$GITHUB_OUTPUT"
           # The sidecars say where the BINARIES are; .config-applied says how far
           # the CONFIG got. The playbook advances the sidecars whatever the gate
           # later decides, so after a red gate only the marker still remembers
@@ -1221,12 +1227,11 @@ jobs:
           bash "$gate" "$VERSION" "$FOLLOWUPS_ACK" "$BASELINE"
 
       - name: Migration numbering gate against the host's live version
-        # Without BASE_SHA, lint-migrations.sh compares the tag with its
-        # merge-base with origin/main, which is the tag itself, so a migration
-        # back-numbered into a gap passed. Compare with what the host runs.
+        # golang-migrate only runs numbers above the database's version, set by the newest release
+        # that ran on the host; a new migration numbered at or below that release's head never runs.
         env:
           VERSION: ${{ inputs.version }}
-          BASELINE: ${{ steps.baseline.outputs.live }}
+          BASELINE: ${{ steps.baseline.outputs.newest }}
         run: |
           set -euo pipefail
           base="${BASELINE:-}"
