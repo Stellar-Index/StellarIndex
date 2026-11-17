@@ -205,6 +205,49 @@ describe('AssetSwap page-asset leg', () => {
     expect(screen.getByText(/^Low confidence:/)).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
+
+  // A declared peg is not the market /v1/price refuses: the converter keeps
+  // the hook's derived price, re-read from /v1/assets/{id}.
+  function renderPegged() {
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/assets/native')
+        return { data: { price_usd: '1.08', price_basis: 'declared_peg' } };
+      return base(path);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <AssetSwap
+          symbol="XLM"
+          assetId="native"
+          priceUSD="1.07"
+          priceProvenance="declared_peg"
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('keeps converting at a declared peg the market poll withholds', async () => {
+    stubApi();
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+    });
+    renderPegged();
+    await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
+    vi.unstubAllGlobals();
+  });
+
+  it('never lets a thin market price displace a declared peg', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.5' }, flags: { thin_market: true } });
+    renderPegged();
+    await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
+    expect(screen.queryByText(/^Low confidence:/)).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
 });
 
 // Two independent polls could disagree: the headline withheld while the
