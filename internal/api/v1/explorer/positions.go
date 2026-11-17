@@ -67,12 +67,13 @@ const (
 	// supply/borrow.
 	AmountSemanticsNetUnderlying = "net_underlying_at_event_time"
 	// AmountSemanticsShares is an exact current count of a protocol's own share/LP token (Blend
-	// backstop, Phoenix stake), with no accrual ambiguity: the shares cannot leave the account
-	// except through the events summed.
+	// backstop of an account that never claimed, Phoenix stake), with no accrual ambiguity: the
+	// shares cannot enter or leave the account except through the events summed.
 	AmountSemanticsShares = "shares"
 	// AmountSemanticsNetShareFlows is shares minted by the account's deposits minus shares burned
-	// by its withdrawals. The share token is transferable and transfers are not counted, so this is
-	// not a balance; a negative net is served as "" (unknown). DeFindex vault.
+	// by its withdrawals. Shares that reach the account otherwise are not counted (DeFindex vault
+	// transfers; Blend backstop claims, which mint shares without naming a pool), so this is not a
+	// balance; a negative net is served as "" (unknown).
 	AmountSemanticsNetShareFlows = "net_share_flows"
 	// AmountSemanticsStatefulCurrent is the protocol's own last PUBLISHED figure (sorocredit).
 	// Its unit is not contract-source-confirmed, so it is served raw, never rescaled or valued.
@@ -555,7 +556,7 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 		if venueLabel != "" {
 			venueLabel += " backstop"
 		}
-		out = append(out, PositionEntry{
+		e := PositionEntry{
 			Protocol:        "blend",
 			PositionKind:    PositionKindBackstopShares,
 			Venue:           row.Pool,
@@ -566,7 +567,15 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),
 			Basis:           BasisEventDerived,
 			closed:          isZeroDecimal(row.SharesNet),
-		})
+		}
+		if row.Claimed {
+			// The claim's minted shares are uncounted, so the net is flows only and a zero net may still hold shares.
+			e.AmountSemantics, e.closed = AmountSemanticsNetShareFlows, false
+			if strings.HasPrefix(row.SharesNet, "-") {
+				e.Amount = ""
+			}
+		}
+		out = append(out, e)
 	}
 	return out
 }

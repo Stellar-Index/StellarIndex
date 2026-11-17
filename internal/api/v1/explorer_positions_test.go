@@ -357,6 +357,29 @@ func TestExplorer_AccountPositions_BlendLegClosedByTokenBalance(t *testing.T) {
 	assertPositions(t, servePositions(t, reader, true), open)
 }
 
+// A Blend backstop claim mints shares the fold cannot see, so once the account has claimed its net is flows, not a count: a
+// zero net stays open (it may hold the claim's shares) and a negative one is unknown. An account that never claimed keeps the
+// exact count and its zero-net closure.
+func TestExplorer_AccountPositions_BlendBackstopClaimIsNotACount(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	reader := &stubPositionsReader{backstop: []timescale.BlendBackstopFold{
+		{Pool: "CPOOLA", SharesNet: "1000", Claimed: true, LastActivity: now, LastLedger: 400},
+		{Pool: "CPOOLB", SharesNet: "0", Claimed: true, LastActivity: now, LastLedger: 401},
+		{Pool: "CPOOLC", SharesNet: "-50", Claimed: true, LastActivity: now, LastLedger: 402},
+		{Pool: "CPOOLD", SharesNet: "0", LastActivity: now, LastLedger: 403},
+		{Pool: "CPOOLE", SharesNet: "700", LastActivity: now, LastLedger: 404},
+	}}
+	open := map[string]positionWant{
+		"blend/backstop_shares/CPOOLA": {"1000", "net_share_flows"},
+		"blend/backstop_shares/CPOOLB": {"0", "net_share_flows"},
+		"blend/backstop_shares/CPOOLC": {"", "net_share_flows"},
+		"blend/backstop_shares/CPOOLE": {"700", "shares"},
+	}
+	assertPositions(t, servePositions(t, reader, false), open)
+	open["blend/backstop_shares/CPOOLD"] = positionWant{"0", "shares"}
+	assertPositions(t, servePositions(t, reader, true), open)
+}
+
 // A DeFindex vault share is a transferable token, and the fold sees only the account's own deposits and withdrawals. The
 // figure is served as net flows, never as a share count; an account that burned more than it minted (it was sent
 // shares) has an unknown amount, and a zero net is not a zero balance: every row stays open.

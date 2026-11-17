@@ -7374,12 +7374,15 @@ export interface components {
              *         amount.
              *       - shares: an exact current count of a protocol's own
              *         share/LP token, minted/burned 1:1 with the summed events
-             *         (Blend Backstop, Phoenix stake). These shares cannot
-             *         leave the account except through those events.
+             *         (Blend Backstop of an account that never claimed,
+             *         Phoenix stake). These shares cannot enter or leave the
+             *         account except through those events.
              *       - net_share_flows: shares minted by the account's deposits
              *         minus shares burned by its withdrawals (DeFindex vault
-             *         shares). The vault's share token is transferable and
-             *         transfers are NOT counted, so this is not a balance: an
+             *         shares; Blend Backstop once the account has claimed, as a
+             *         claim mints shares without naming a pool or a count). The
+             *         vault's share token is transferable and transfers, like
+             *         claims, are NOT counted, so this is not a balance: an
              *         account that sent shares away still shows them, and one
              *         that received shares shows none. When the account burned
              *         more than its deposits minted, amount is "".

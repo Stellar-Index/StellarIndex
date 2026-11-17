@@ -197,10 +197,13 @@ func scanLendingPositionFold(rows *sql.Rows) (BlendPositionFold, error) {
 	return f, nil
 }
 
-// BlendBackstopFold is one pool's backstop-share fold for a user from blend_backstop_events; SharesNet sums `amount2` signed +deposit/-withdraw, an exact current share count.
+// BlendBackstopFold is one pool's backstop-share fold for a user from blend_backstop_events; SharesNet sums `amount2` signed
+// +deposit/-withdraw. It is the exact share count only when Claimed is false: a `claim` mints shares in the user's pools but
+// names neither the pool nor the shares, so no fold can count them.
 type BlendBackstopFold struct {
 	Pool         string
 	SharesNet    string
+	Claimed      bool
 	LastActivity time.Time
 	LastLedger   uint32
 }
@@ -211,7 +214,9 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 		SELECT pool,
 		       COALESCE(SUM(CASE WHEN event_kind = 'deposit' THEN amount2
 		                         WHEN event_kind = 'withdraw' THEN -amount2 END),0)::text,
-		       MAX(ledger_close_time), MAX(ledger)
+		       MAX(ledger_close_time), MAX(ledger),
+		       EXISTS (SELECT 1 FROM blend_backstop_events c
+		                WHERE c.user_address = $1 AND c.event_kind = 'claim')
 		  FROM blend_backstop_events
 		 WHERE user_address = $1
 		   AND event_kind IN ('deposit','withdraw')
@@ -225,7 +230,7 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 			ledger  int64
 			closeAt time.Time
 		)
-		if err := rows.Scan(&f.Pool, &f.SharesNet, &closeAt, &ledger); err != nil {
+		if err := rows.Scan(&f.Pool, &f.SharesNet, &closeAt, &ledger, &f.Claimed); err != nil {
 			return f, err
 		}
 		f.LastActivity = closeAt.UTC()
