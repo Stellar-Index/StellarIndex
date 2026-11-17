@@ -227,10 +227,14 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 }
 
 // withRevokedDescendants lists the delegated keys a revoke's cascade removed on its key.revoke
-// row, which is their only audit trail; KeyIDs only, never key material.
-func withRevokedDescendants(meta map[string]any, descendants []string) map[string]any {
+// row, which is their only audit trail; KeyIDs only, never key material. failed marks a revoke
+// that errored after its cascade had already removed them.
+func withRevokedDescendants(meta map[string]any, descendants []string, failed bool) map[string]any {
 	if len(descendants) > 0 {
 		meta["revoked_descendant_key_ids"] = descendants
+	}
+	if failed {
+		meta["outcome"] = "failed"
 	}
 	return meta
 }
@@ -333,6 +337,9 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 
 	descendants, err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason)
 	if err != nil {
+		if len(descendants) > 0 {
+			s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants, true)
+		}
 		if clientAborted(r, err) {
 			return
 		}
@@ -360,7 +367,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 		"target_identifier", identifier,
 		"key_id", keyID,
 		"reason", reason)
-	s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants)
+	s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants, false)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -368,7 +375,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 // recordAdminKeyRevokeAudit persists the key.revoke row; best-effort, since failing to kill a leaked credential because the
 // audit log is down is the worse outcome.
 func (s *Server) recordAdminKeyRevokeAudit(
-	r *http.Request, actor auth.Subject, identifier, keyID, reason string, descendants []string,
+	r *http.Request, actor auth.Subject, identifier, keyID, reason string, descendants []string, failed bool,
 ) {
 	if s.Audit == nil {
 		return
@@ -378,7 +385,7 @@ func (s *Server) recordAdminKeyRevokeAudit(
 		"actor_identifier":  actor.Identifier,
 		"target_identifier": identifier,
 		"reason":            reason,
-	}, descendants))
+	}, descendants, failed))
 	if err != nil {
 		s.logger.Warn("admin key revoke: audit metadata marshal failed (skipping audit row)",
 			"err", err, "key_id", keyID)

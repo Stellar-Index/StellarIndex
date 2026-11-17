@@ -556,7 +556,7 @@ func (s *Server) recordAccountKeyMintAudit(
 // recordAccountKeyRevokeAudit persists the key.revoke row for every self-service revoke; best-effort, the revoke must not
 // be undone by a sink outage.
 func (s *Server) recordAccountKeyRevokeAudit(
-	r *http.Request, actor auth.Subject, keyID, reason string, descendants []string,
+	r *http.Request, actor auth.Subject, keyID, reason string, descendants []string, failed bool,
 ) {
 	s.logger.Info("account key revoke",
 		"actor_key_id", actor.KeyID,
@@ -572,7 +572,7 @@ func (s *Server) recordAccountKeyRevokeAudit(
 		"actor_identifier":  actor.Identifier,
 		"target_identifier": actor.Identifier,
 		"reason":            reason,
-	}, descendants))
+	}, descendants, failed))
 	if err != nil {
 		s.logger.Warn("account key revoke: audit metadata marshal failed (skipping audit row)",
 			"err", err, "key_id", keyID)
@@ -775,12 +775,15 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		s.logger.Error("account keys revoke failed", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
+		if len(descendants) > 0 {
+			s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, true)
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-revoke-failed",
 			"Could not revoke key", http.StatusInternalServerError,
 			"see X-Request-ID in server logs")
 		return
 	}
-	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants)
+	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
 }

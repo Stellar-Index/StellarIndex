@@ -1235,6 +1235,44 @@ type revokeFailingMirror struct {
 
 func (m revokeFailingMirror) RevokeKeyByID(context.Context, string, string) error { return m.err }
 
+// partialRevokeMirror is a cascade that removed some descendants and then failed.
+type partialRevokeMirror struct {
+	revokeFailingMirror
+	removed []string
+}
+
+func (m partialRevokeMirror) RevokeKeyTree(context.Context, string, string) ([]string, error) {
+	return m.removed, m.err
+}
+
+// Descendants a failed revoke already removed still get a key.revoke row, marked failed: a retry
+// cannot list them again.
+func TestDashboardRevoke_FailedCascadeStillAuditsRemovedDescendants(t *testing.T) {
+	for _, delegated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delegated=%v", delegated), func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sink := &recordingAuditSink{}
+			h.cfg.Audit = sink
+			h.cfg.Mirror = partialRevokeMirror{
+				revokeFailingMirror: revokeFailingMirror{err: errors.New("connection reset")},
+				removed:             []string{"kid_child"},
+			}
+			if !delegated {
+				store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, Name: "mine"}
+			}
+			if w := doRevoke(t, h, sc, "k-mine"); w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+			}
+			e := sink.only(t)
+			meta := string(e.Metadata)
+			if e.Action != "key.revoke" || e.TargetID != "k-mine" ||
+				!strings.Contains(meta, `"revoked_descendant_key_ids":["kid_child"]`) || !strings.Contains(meta, `"outcome":"failed"`) {
+				t.Fatalf("audit row = %+v, metadata %s; want key.revoke on k-mine naming kid_child, outcome failed", e, meta)
+			}
+		})
+	}
+}
+
 // A key the mirror never held revokes cleanly; a mirror that cannot drop a live credential fails
 // the revoke with the management row still active, so the dashboard never shows a working key as revoked.
 func TestDashboardRevoke_MirrorRemovalOutcome(t *testing.T) {

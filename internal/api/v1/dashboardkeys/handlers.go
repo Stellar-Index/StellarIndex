@@ -373,7 +373,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, status, problem, r.URL.Path)
 		return
 	}
-	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyMint, out, nil)
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyMint, out, nil, false)
 
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{
 		Plaintext: plaintext,
@@ -499,6 +499,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	descendants, err := h.revokeMirror(r.Context(), sc.Account, id)
 	if err != nil {
 		h.cfg.Logger.Error("revoke mirrored key", "err", err, "key_id", id)
+		h.recordFailedRevoke(r, sc, existing, descendants)
 		writeProblem(w, http.StatusInternalServerError,
 			"the key's live credential could not be removed; it is still active, retry", r.URL.Path)
 		return
@@ -509,6 +510,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.CacheInvalidator != nil && len(existing.KeyHash) > 0 {
 		if err := h.cfg.CacheInvalidator.InvalidateCachedKey(r.Context(), hex.EncodeToString(existing.KeyHash)); err != nil {
 			h.cfg.Logger.Error("evict auth cache before revoke", "err", err, "key_id", id)
+			h.recordFailedRevoke(r, sc, existing, descendants)
 			writeProblem(w, http.StatusInternalServerError,
 				"the key's cached credential could not be removed; it is still active, retry", r.URL.Path)
 			return
@@ -516,10 +518,11 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.cfg.Keys.Revoke(r.Context(), sc.Account.ID, id, sc.User.ID, "revoked from dashboard"); err != nil {
 		h.cfg.Logger.Error("revoke key in postgres", "err", err, "key_id", id)
+		h.recordFailedRevoke(r, sc, existing, descendants)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing, descendants)
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -551,17 +554,26 @@ func (h *Handlers) revokeDelegated(w http.ResponseWriter, r *http.Request, sc da
 	}
 	if err != nil {
 		h.cfg.Logger.Error("revoke delegated key", "err", err, "key_id", id)
+		h.recordFailedRevoke(r, sc, platform.APIKey{ID: id}, descendants)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, platform.APIKey{ID: id}, descendants)
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, platform.APIKey{ID: id}, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordFailedRevoke writes the key.revoke row for a revoke that errored after its cascade had
+// removed descendants; the retry cannot list them again, so this row is their only trail.
+func (h *Handlers) recordFailedRevoke(r *http.Request, sc dashboardauth.SessionContext, key platform.APIKey, descendants []string) {
+	if len(descendants) > 0 {
+		h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, key, descendants, true)
+	}
 }
 
 // recordKeyAudit appends the key.mint / key.revoke row for a dashboard session's key change. key is the stored row:
 // the created key for a mint, the pre-revoke row for a revoke.
 // descendants are the delegated KeyIDs a revoke's cascade removed; this row is their only audit trail.
-func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey, descendants []string) {
+func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey, descendants []string, failed bool) {
 	meta := map[string]any{
 		"route":  "/v1/dashboard/keys",
 		"tier":   string(key.Tier),
@@ -577,6 +589,9 @@ func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionConte
 		meta["already_revoked"] = !key.RevokedAt.IsZero()
 		if len(descendants) > 0 {
 			meta["revoked_descendant_key_ids"] = descendants
+		}
+		if failed {
+			meta["outcome"] = "failed"
 		}
 	}
 	dashboardauth.RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, dashboardauth.CredentialEvent{
