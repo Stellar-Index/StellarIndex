@@ -57,6 +57,7 @@ type lineageFixture struct {
 	store     *RedisAPIKeyStore
 	validator *RedisAPIKeyValidator
 	mr        *miniredis.Miniredis
+	rdb       *redis.Client
 	fail      *failSecondRemoval
 }
 
@@ -72,6 +73,7 @@ func newLineageFixture(t *testing.T) *lineageFixture {
 		store:     NewRedisAPIKeyStore(rdb, WithStoreClock(func() time.Time { return now })),
 		validator: NewRedisAPIKeyValidator(rdb, WithClock(func() time.Time { return now })),
 		mr:        mr,
+		rdb:       rdb,
 		fail:      f,
 	}
 }
@@ -228,9 +230,36 @@ func TestCreate_DelegatedMintAfterItsMinterIsRevokedIsRefused(t *testing.T) {
 	}
 }
 
-// TestRevoke_WaitsForTheMintLock: the revoke sweep and a delegated mint's minter check are
-// serialised by the identifier's mint lock, so neither can interleave with the other.
-func TestRevoke_WaitsForTheMintLock(t *testing.T) {
+// beforeCmd runs run once, just before the first command match accepts.
+type beforeCmd struct {
+	match func(args []any) bool
+	run   func()
+	fired bool
+}
+
+func (*beforeCmd) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (b *beforeCmd) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if !b.fired && b.match(cmd.Args()) {
+			b.fired = true
+			b.run()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (*beforeCmd) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func isScript(args []any, s *redis.Script) bool {
+	return len(args) > 1 && args[1] == s.Hash()
+}
+
+// TestRevoke_DoesNotWaitForTheMintLock: a mint holding the identifier's lock (or a flood of them) cannot delay or
+// fail a revoke.
+func TestRevoke_DoesNotWaitForTheMintLock(t *testing.T) {
 	f := newLineageFixture(t)
 	root, rootPlain, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
 	release, err := f.store.lockMint(context.Background(), "acct-x")
@@ -240,11 +269,63 @@ func TestRevoke_WaitsForTheMintLock(t *testing.T) {
 	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("RevokeKeyByID while a mint holds the lock = %v, want it to wait (deadline exceeded)", err)
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err != nil {
+		t.Fatalf("RevokeKeyByID while a mint holds the lock = %v, want nil", err)
 	}
-	if _, err := f.validator.Lookup(context.Background(), rootPlain); err != nil {
-		t.Fatalf("root after the blocked revoke: %v, want still live (nothing ran unlocked)", err)
+	f.assertDead(t, map[string]string{"root": rootPlain})
+}
+
+// Interleavings of a delegated mint (check minter, then write) with a revoke of its tree (mark, delete the root,
+// list, delete descendants deepest first):
+//   - the write lands before the revoke lists: the child is found by its chain and deleted
+//     (TestRevokingMinterRevokesDelegatedKeys);
+//   - the write lands after the revoke ran: the minter's record is gone and the root is marked, so the write is
+//     refused (TestCreate_DelegatedWriteAfterTheRevokeIsRefused);
+//   - the write lands after the listing but before its minter is deleted: the root's mark refuses it
+//     (TestCreate_DelegatedWriteDuringTheSweepIsRefused).
+
+// TestCreate_DelegatedWriteAfterTheRevokeIsRefused: a mint that passed its minter check before a revoke but
+// writes after it leaves nothing live.
+func TestCreate_DelegatedWriteAfterTheRevokeIsRefused(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	root, _, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	var revokeErr error
+	f.rdb.AddHook(&beforeCmd{
+		match: func(args []any) bool { return isScript(args, writeDelegatedRecordScript) },
+		run:   func() { revokeErr = f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID) },
+	})
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)); !errors.Is(err, ErrMintExceedsCaller) {
+		t.Fatalf("Create whose write follows its minter's revoke = %v, want ErrMintExceedsCaller", err)
+	}
+	if revokeErr != nil {
+		t.Fatalf("RevokeKeyByID: %v", revokeErr)
+	}
+	if recs, err := f.store.ListKeysForIdentifier(ctx, "acct-x"); err != nil || len(recs) != 0 {
+		t.Fatalf("keys after the refused mint = %d (err %v), want none", len(recs), err)
+	}
+}
+
+// TestCreate_DelegatedWriteDuringTheSweepIsRefused: a grandchild minted from a descendant the sweep has listed
+// but not yet deleted is refused, so the sweep leaves no orphan behind it.
+func TestCreate_DelegatedWriteDuringTheSweepIsRefused(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	root, _, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	mid, _, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+	var mintErr error
+	f.rdb.AddHook(&beforeCmd{
+		match: func(args []any) bool { return len(args) == 9 && args[8] == "1" && args[6] == mid.KeyID },
+		run:   func() { _, _, mintErr = f.store.Create(ctx, ChildKeyRequest(midSub, "late", nil)) },
+	})
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err != nil {
+		t.Fatalf("RevokeKeyByID: %v", err)
+	}
+	if !errors.Is(mintErr, ErrMintExceedsCaller) {
+		t.Fatalf("mint under a key the sweep listed = %v, want ErrMintExceedsCaller", mintErr)
+	}
+	if recs, err := f.store.ListKeysForIdentifier(ctx, "acct-x"); err != nil || len(recs) != 0 {
+		t.Fatalf("keys after the revoke = %d (err %v), want none", len(recs), err)
 	}
 }
 

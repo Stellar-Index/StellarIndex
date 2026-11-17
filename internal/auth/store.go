@@ -217,7 +217,7 @@ func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKey
 }
 
 // Create implements APIKeyStore: requires an Identifier, generates KeyID and plaintext, and SETs apikey:<sha256(plaintext)> (with MirroredKeyIdleTTL when req.SelfService); on Redis failure the plaintext is not surfaced.
-// A delegated mint (ParentKeyID set) runs under the identifier's mint lock, which RevokeKeyByID also takes.
+// A delegated mint (ParentKeyID set) runs under the identifier's mint lock.
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.ParentKeyID == "" || req.Identifier == "" {
 		return s.create(ctx, req)
@@ -245,7 +245,7 @@ func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) 
 	if !mintableTier(tier) {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: tier %q cannot hold a key (want %s, %s or %s)", tier, TierAPIKey, TierSEP10, TierOperator)
 	}
-	req, monthlyQuota, err := s.boundRequest(ctx, req)
+	req, monthlyQuota, parent, err := s.boundRequest(ctx, req)
 	if err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
 	}
@@ -298,27 +298,42 @@ func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) 
 	if req.SelfService {
 		ttl = MirroredKeyIdleTTL
 	}
-	if err := s.writeRecord(ctx, hash, rec, body, ttl); err != nil {
+	if err := s.writeMinted(ctx, hash, parent.hash, rec, body, ttl); err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: redis set: %w", err)
 	}
 	return rec, plaintext, nil
 }
 
-// boundRequest clamps scopes, expiry and monthly quota to the minter (when there is one) and resolves an unset quota from the identifier's plan.
-func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, int64, error) {
-	req, err := s.rebaseOnParent(ctx, req)
-	if err != nil {
-		return req, 0, err
+// writeMinted writes a new record, through the minter-checking write when it was minted under the record at parentHash.
+func (s *RedisAPIKeyStore) writeMinted(ctx context.Context, hash, parentHash string, rec APIKeyRecord, body []byte, ttl time.Duration) error {
+	if rec.ParentKeyID == "" {
+		return s.writeRecord(ctx, hash, rec, body, ttl)
 	}
+	return s.writeDelegatedRecord(ctx, hash, parentHash, rec, body, ttl)
+}
+
+// boundRequest clamps scopes, expiry and monthly quota to the minter (when there is one) and resolves an unset quota
+// from the identifier's plan. parent is the minting key's stored record (zero for a non-delegated mint).
+func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyRequest) (_ CreateAPIKeyRequest, _ int64, parent ownedRecord, _ error) {
+	req, parent, err := s.rebaseOnParent(ctx, req)
+	if err != nil {
+		return req, 0, parent, err
+	}
+	monthlyQuota, err := s.boundToMinter(ctx, &req)
+	return req, monthlyQuota, parent, err
+}
+
+// boundToMinter is boundRequest after the parent is resolved.
+func (s *RedisAPIKeyStore) boundToMinter(ctx context.Context, req *CreateAPIKeyRequest) (int64, error) {
 	if req.MintedBy != nil {
 		scopes, err := ClampToMinter(*req.MintedBy, req.Scopes, req.RateLimitPerMin)
 		if err != nil {
-			return req, 0, err
+			return 0, err
 		}
 		req.Scopes = scopes
 		expiresAt, err := clampExpiryToMinter(*req.MintedBy, req.ExpiresAt)
 		if err != nil {
-			return req, 0, err
+			return 0, err
 		}
 		req.ExpiresAt = expiresAt
 	}
@@ -329,40 +344,40 @@ func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyReq
 		// identifier whose plan is metered. Fail closed on a read error.
 		inherited, err := s.inheritedMonthlyQuota(ctx, req.Identifier)
 		if err != nil {
-			return req, 0, fmt.Errorf("inherit monthly quota: %w", err)
+			return 0, fmt.Errorf("inherit monthly quota: %w", err)
 		}
 		monthlyQuota = inherited
 	}
 	if req.MintedBy != nil {
 		q, err := clampMonthlyQuotaToMinter(*req.MintedBy, req.MonthlyQuota, monthlyQuota)
 		if err != nil {
-			return req, 0, err
+			return 0, err
 		}
 		monthlyQuota = q
 	}
-	return req, monthlyQuota, nil
+	return monthlyQuota, nil
 }
 
-// rebaseOnParent refuses a delegated mint whose minting key no longer has a live record on the
-// identifier (checked under the mint lock, so a revoke that already swept cannot be followed by a
-// child of the key it removed; a key with no record here cannot delegate). It then copies and
-// bounds the child's rate from that STORED record: the Subject's rate carries the account's
-// override floor, which a child must not keep once the override is lifted.
-func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, error) {
+// rebaseOnParent refuses a delegated mint whose minting key has no live record on the identifier
+// (a key with no record here cannot delegate; the write re-checks the record atomically). It then
+// copies and bounds the child's rate from that STORED record: the Subject's rate carries the
+// account's override floor, which a child must not keep once the override is lifted.
+func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, ownedRecord, error) {
 	if req.ParentKeyID == "" {
-		return req, nil
+		return req, ownedRecord{}, nil
 	}
-	_, parent, found, err := s.findRecordByKeyID(ctx, req.ParentKeyID)
+	hash, parent, found, err := s.findRecordByKeyID(ctx, req.ParentKeyID)
 	if err != nil {
-		return req, fmt.Errorf("read minting key: %w", err)
+		return req, ownedRecord{}, fmt.Errorf("read minting key: %w", err)
 	}
 	live := found && parent.Identifier == req.Identifier && parent.RevokedAt.IsZero() &&
 		(parent.ExpiresAt.IsZero() || s.now().Before(parent.ExpiresAt))
 	if !live {
-		return req, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
+		return req, ownedRecord{}, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
 	}
+	stored := ownedRecord{hash: hash, rec: parent}
 	if req.MintedBy == nil {
-		return req, nil
+		return req, stored, nil
 	}
 	// Asking for the minter's presented rate means inheriting it ([ChildKeyRequest]); any other
 	// value stays as asked and is refused below if it exceeds the stored rate.
@@ -372,7 +387,7 @@ func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyR
 	minter := *req.MintedBy
 	minter.RateLimitPerMin = parent.RateLimitPerMin
 	req.MintedBy = &minter
-	return req, nil
+	return req, stored, nil
 }
 
 // mintableTier reports whether a minted record may carry t. Anonymous is

@@ -72,13 +72,44 @@ end
 
 // writeIndexedRecordScript writes a record AND its index entries atomically so no reader sees a record the index lacks. KEYS: index, record. ARGV: body, ttl-ms (0 = none), hash, key_id, identifier.
 // The index is touched FIRST: Redis does not roll back a script, so an ACL denial must kill it before the record exists, letting the caller fall back to the plain write.
-var writeIndexedRecordScript = redis.NewScript(keyIndexAddLua + `
+var writeIndexedRecordScript = redis.NewScript(keyIndexAddLua + recordSetLua + `
 index_add(KEYS[1], ARGV[3], ARGV[4], ARGV[5])
-if ARGV[2] == '0' then
-	redis.call('SET', KEYS[2], ARGV[1])
-else
-	redis.call('SET', KEYS[2], ARGV[1], 'PX', ARGV[2])
+set_record(KEYS[2], ARGV[1], ARGV[2])
+return 1
+`)
+
+const recordSetLua = `
+local function set_record(key, body, ttl)
+	if ttl == '0' then
+		redis.call('SET', key, body)
+	else
+		redis.call('SET', key, body, 'PX', ttl)
+	end
 end
+`
+
+// writeDelegatedRecordScript is writeIndexedRecordScript for a delegated key: it writes nothing (returns 0) unless the
+// minter's record still exists and no ancestor is being revoked. KEYS: index, record, minter record, revoke markers…
+var writeDelegatedRecordScript = redis.NewScript(keyIndexAddLua + recordSetLua + `
+if redis.call('EXISTS', KEYS[3]) == 0 then
+	return 0
+end
+for i = 4, #KEYS do
+	if redis.call('EXISTS', KEYS[i]) == 1 then
+		return 0
+	end
+end
+index_add(KEYS[1], ARGV[3], ARGV[4], ARGV[5])
+set_record(KEYS[2], ARGV[1], ARGV[2])
+return 1
+`)
+
+// writeDelegatedUnindexedScript is the fallback when the ACL denies `apikey-index:*`. KEYS: record, minter record. ARGV: body, ttl-ms.
+var writeDelegatedUnindexedScript = redis.NewScript(recordSetLua + `
+if redis.call('EXISTS', KEYS[2]) == 0 then
+	return 0
+end
+set_record(KEYS[1], ARGV[1], ARGV[2])
 return 1
 `)
 
@@ -136,6 +167,28 @@ func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec API
 		return err
 	}
 	return s.rdb.Set(ctx, recordKey, body, ttl).Err()
+}
+
+// writeDelegatedRecord is writeRecord for a key minted under the record at parentHash. The minter check runs inside
+// the atomic write, so a revoke that removed the minter or marked an ancestor first always wins.
+func (s *RedisAPIKeyStore) writeDelegatedRecord(ctx context.Context, hash, parentHash string, rec APIKeyRecord, body []byte, ttl time.Duration) error {
+	recordKey := cachekeys.APIKey(hash).String()
+	parentKey := cachekeys.APIKey(parentHash).String()
+	keys := []string{cachekeys.APIKeyIndex().String(), recordKey, parentKey}
+	for _, id := range append(slices.Clone(rec.AncestorKeyIDs), rec.ParentKeyID) {
+		keys = append(keys, cachekeys.APIKeyRevoking(rec.Identifier, id).String())
+	}
+	wrote, err := writeDelegatedRecordScript.Run(ctx, s.rdb, keys, body, ttl.Milliseconds(), hash, rec.KeyID, rec.Identifier).Int()
+	if isRedisNoPerm(err) {
+		wrote, err = writeDelegatedUnindexedScript.Run(ctx, s.rdb, []string{recordKey, parentKey}, body, ttl.Milliseconds()).Int()
+	}
+	if err != nil {
+		return err
+	}
+	if wrote == 0 {
+		return fmt.Errorf("%w: the minting key %s was revoked before the new key was written", ErrMintExceedsCaller, rec.ParentKeyID)
+	}
+	return nil
 }
 
 // walkAPIKeyRecords visits every decodable `apikey:*` record until visit returns stop: the ONE sanctioned keyspace walk (scripts/ci/lint-apikey-scan.sh bans others), used by the index build and by lookups while the index is unusable.
@@ -409,31 +462,44 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 	if keyID == "" {
 		return nil, errors.New("auth: RevokeKeyByID: keyID is required")
 	}
-	release, err := s.lockRevoke(ctx, identifier)
-	if err != nil {
+	// Marked before anything is listed, so every delegated mint that writes after the listing is refused.
+	if err := s.markRevoking(ctx, identifier, keyID); err != nil {
 		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	defer release()
 	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	// The sweep runs even without the root's own record: a key can authenticate from Postgres
-	// with no mirror record here, and its delegated keys must still die with it.
+	owned := found && rec.Identifier == identifier
+	if owned {
+		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
+			return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		}
+	}
+	// The sweep runs even without the root's own record (a Postgres-backed key with no mirror here,
+	// or a retry after a failure below), so its delegated keys still die with it.
 	removed, err := s.revokeDescendants(ctx, identifier, keyID)
 	if err != nil {
 		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	if !found || rec.Identifier != identifier {
-		if len(removed) == 0 {
-			return nil, ErrKeyNotFound
-		}
-		return removed, nil
-	}
-	if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
-		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	if !owned && len(removed) == 0 {
+		return nil, ErrKeyNotFound
 	}
 	return removed, nil
+}
+
+// keyRevokeMarkerTTL outlasts any revoke sweep; once it lapses every key it guarded is gone, and a
+// mint under a gone key is refused by the minter-record check.
+const keyRevokeMarkerTTL = time.Hour
+
+// markRevoking records that keyID's tree on identifier is being revoked. An ACL that denies the
+// marker also denies the delegated write script, whose fallback still checks the minter's record.
+func (s *RedisAPIKeyStore) markRevoking(ctx context.Context, identifier, keyID string) error {
+	err := s.rdb.Set(ctx, cachekeys.APIKeyRevoking(identifier, keyID).String(), "1", keyRevokeMarkerTTL).Err()
+	if err != nil && !isRedisNoPerm(err) {
+		return fmt.Errorf("mark %s revoking: %w", keyID, err)
+	}
+	return nil
 }
 
 // KeyRevoker removes one credential record by key id, scoped to its owner.
@@ -452,20 +518,9 @@ func RevokeKeyTree(ctx context.Context, r KeyRevoker, identifier, keyID string) 
 	return nil, r.RevokeKeyByID(ctx, identifier, keyID)
 }
 
-// lockRevoke takes the mint lock so this sweep is ordered against delegated mints, which re-check
-// their minter under it. An ACL that denies the lock key also stops every delegated mint, so
-// revocation proceeds unlocked rather than leaving a credential live.
-func (s *RedisAPIKeyStore) lockRevoke(ctx context.Context, identifier string) (func(), error) {
-	release, err := s.lockMint(ctx, identifier)
-	if isRedisNoPerm(err) {
-		return func() {}, nil
-	}
-	return release, err
-}
-
 // revokeDescendants deletes every key on identifier delegated from keyID at any depth, deepest
-// first, and returns their KeyIDs. It runs before the root is deleted, so a failure leaves the
-// root and every not-yet-deleted link findable and a retry finishes the job.
+// first, and returns their KeyIDs. A failure leaves every not-yet-deleted descendant findable by
+// its stored chain, so a retry finishes the job.
 func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, keyID string) ([]string, error) {
 	owned, err := s.recordsForIdentifier(ctx, identifier)
 	if err != nil {
