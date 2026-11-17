@@ -66,8 +66,8 @@ func TestCachedMarketsReader_StalePageServedWhenNoSlot(t *testing.T) {
 		t.Fatal("cold fill did not return its slot")
 	}
 	expireMarketsEntries(c)
-	for range marketsFillSlots {
-		c.fills <- struct{}{}
+	for range marketsHeadRefreshSlots {
+		c.refreshes <- struct{}{}
 	}
 
 	rows, _, err := c.AllPools(context.Background(), f, "", 50, order)
@@ -78,12 +78,88 @@ func TestCachedMarketsReader_StalePageServedWhenNoSlot(t *testing.T) {
 		t.Fatalf("upstream scans = %d, want 1 (no refresh without a slot)", got)
 	}
 
-	<-c.fills
+	<-c.refreshes
 	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
 		t.Fatalf("stale read with a slot: %v", err)
 	}
 	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
 		t.Fatalf("upstream scans = %d, want the refresh to have started", up.calls.Load())
+	}
+}
+
+// TestCachedMarketsReader_ColdKeysCannotStarveRefresh pins the slot classes: client-chosen cold keys holding every fill slot must
+// not stop an expired, already-served page from refreshing.
+func TestCachedMarketsReader_ColdKeysCannotStarveRefresh(t *testing.T) {
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}}
+	c := NewCachedMarketsReader(up, time.Minute)
+	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+	order := timescale.MarketsOrderVolume24hDesc
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("cold read: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return len(c.fills) == 0 }) {
+		t.Fatal("cold fill did not return its slot")
+	}
+	expireMarketsEntries(c)
+	for range marketsFillSlots {
+		c.fills <- struct{}{}
+	}
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("stale read: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("upstream scans = %d, want the refresh started though every cold slot is held", up.calls.Load())
+	}
+}
+
+// TestCachedMarketsReader_StaleClientKeysCannotHoldTheRefreshSlots: a caller can mint any number of cursor keys, let them
+// expire and re-read them. Their refreshes must queue on the cold-fill pool, leaving every head refresh slot free.
+func TestCachedMarketsReader_StaleClientKeysCannotHoldTheRefreshSlots(t *testing.T) {
+	c := NewCachedMarketsReader(nil, time.Minute)
+	clientKeys := cap(c.refreshes)
+	hold := newUpstreamHold(int64(clientKeys) + 2)
+	t.Cleanup(hold.release)
+	up := &swrPoolsUpstream{fakeMarketsReader: &fakeMarketsReader{}, hold: hold}
+	c.upstream = up
+	f := timescale.PoolsFilter{Sources: []string{"aquarius"}}
+	order := timescale.MarketsOrderVolume24hDesc
+
+	for i := range clientKeys {
+		if _, _, err := c.AllPools(context.Background(), f, fmt.Sprintf("cursor-%d", i), 50, order); err != nil {
+			t.Fatalf("cold read cursor-%d: %v", i, err)
+		}
+	}
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("cold head read: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return len(c.fills) == 0 }) {
+		t.Fatal("cold fills did not return their slots")
+	}
+	expireMarketsEntries(c)
+
+	for i := range clientKeys {
+		if _, _, err := c.AllPools(context.Background(), f, fmt.Sprintf("cursor-%d", i), 50, order); err != nil {
+			t.Fatalf("stale read cursor-%d: %v", i, err)
+		}
+	}
+	want := int64(2*clientKeys + 1)
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == want }) {
+		t.Fatalf("upstream scans = %d, want %d (every client key refreshing)", up.calls.Load(), want)
+	}
+	if got := len(c.refreshes); got != 0 {
+		t.Fatalf("client-key refreshes hold %d of %d head refresh slots, want 0", got, cap(c.refreshes))
+	}
+	for len(c.fills) < cap(c.fills) {
+		c.fills <- struct{}{}
+	}
+
+	if _, _, err := c.AllPools(context.Background(), f, "", 50, order); err != nil {
+		t.Fatalf("stale head read: %v", err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == want+1 }) {
+		t.Fatalf("upstream scans = %d, want the head refresh started beside %d parked client refreshes", up.calls.Load(), clientKeys)
 	}
 }
 
@@ -182,5 +258,31 @@ func TestCachedRWAReferences_FailedRefillIsNotRestartedPerRequest(t *testing.T) 
 	}
 	if got := oracle.n.Load(); got != 2 {
 		t.Fatalf("oracle reads = %d, want 2 (one failed refill, then the retry interval)", got)
+	}
+}
+
+// TestMarketsHeadKey: only first pages at the head limit over registered venues (one, or every DEX) are head keys.
+func TestMarketsHeadKey(t *testing.T) {
+	dex := DexSourceNames()
+	for _, tc := range []struct {
+		name    string
+		cursor  string
+		fetch   int
+		sources []string
+		want    bool
+	}{
+		{"unfiltered first page", "", marketsHeadLimit, nil, true},
+		{"one registered venue", "", marketsHeadLimit, dex[:1], true},
+		{"every DEX", "", marketsHeadLimit, dex, true},
+		{"client cursor", "c", marketsHeadLimit, nil, false},
+		{"client limit", "", marketsHeadLimit + 1, nil, false},
+		{"unregistered venue", "", marketsHeadLimit, []string{"no-such-venue"}, false},
+	} {
+		if got := marketsHeadKey(tc.cursor, tc.fetch, tc.sources...); got != tc.want {
+			t.Errorf("%s: marketsHeadKey = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if len(dex) > 2 && marketsHeadKey("", marketsHeadLimit, dex[:2]...) {
+		t.Error("a client-chosen subset of DEXes is a head key; the subsets are unbounded in number")
 	}
 }

@@ -90,6 +90,9 @@ type LendingPoolSummary struct {
 	ReserveCount       int      `json:"reserve_count"`
 }
 
+// lendingPoolListBudget bounds the pool-list read: a cold fill runs per-pool auction and user counts over the trades hypertable.
+const lendingPoolListBudget = 8 * time.Second
+
 // handleLendingPools serves GET /v1/lending/pools: one row per Blend pool seen in the trailing-7d auction stream, by total
 // auctions desc. 200 with an empty array when no LendingReader is wired, like other feature-gated handlers.
 func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
@@ -98,44 +101,12 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []LendingPool{}, Flags{})
 		return
 	}
-	// 8s ceiling — same pattern as the cold-path series.
-	// ListBlendPools fans out per-pool auction-count + user-count
-	// queries against the trades hypertable; cold cache can take 5+s.
-	lpCtx, lpCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	lpCtx, lpCancel := context.WithTimeout(r.Context(), lendingPoolListBudget)
 	defer lpCancel()
 	var vintage dataVintage
-	var rows []timescale.BlendPoolSummary
-	var stale bool
-	var err error
-	if at, ok := reader.(lendingAtReader); ok {
-		var filled time.Time
-		rows, filled, stale, err = at.ListBlendPoolsAt(lpCtx)
-		vintage.note(filled)
-	} else {
-		rows, err = reader.ListBlendPools(lpCtx)
-		vintage.note(time.Time{})
-	}
+	rows, stale, err := listBlendPools(lpCtx, reader, &vintage)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(lpCtx, err) {
-			s.logger.Warn("ListBlendPools deadline exceeded")
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/lending-timeout",
-				"Lending pools query timed out", http.StatusServiceUnavailable,
-				"the per-pool auction + user aggregates didn't return in 8s; retry shortly.")
-			return
-		}
-		if IsCacheUnavailable(err) {
-			s.logger.Warn("ListBlendPools cache unavailable", "err", err)
-			writeCacheUnavailableProblem(w, r)
-			return
-		}
-		s.logger.Error("ListBlendPools failed", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+		s.writeListBlendPoolsError(lpCtx, w, r, err)
 		return
 	}
 	out := make([]LendingPool, 0, len(rows))
@@ -154,6 +125,31 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: flags})
 }
 
+// writeListBlendPoolsError maps a failed pool-list read: nothing for an aborted client, the retryable 503 on its deadline or an
+// unavailable cache, else 500.
+func (s *Server) writeListBlendPoolsError(ctx context.Context, w http.ResponseWriter, r *http.Request, err error) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(ctx, err) {
+		s.logger.Warn("ListBlendPools deadline exceeded")
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/lending-timeout",
+			"Lending pools query timed out", http.StatusServiceUnavailable,
+			"the per-pool auction + user aggregates didn't return in 8s; retry shortly.")
+		return
+	}
+	if IsCacheUnavailable(err) {
+		s.logger.Warn("ListBlendPools cache unavailable", "err", err)
+		writeCacheUnavailableProblem(w, r)
+		return
+	}
+	s.logger.Error("ListBlendPools failed", "err", err)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/internal",
+		"Internal error", http.StatusInternalServerError, "")
+}
+
 func lendingPoolRow(protocol string, p timescale.BlendPoolSummary) LendingPool {
 	return LendingPool{
 		Protocol:          protocol,
@@ -166,6 +162,20 @@ func lendingPoolRow(protocol string, p timescale.BlendPoolSummary) LendingPool {
 		NetBorrowed30d:    p.NetBorrowed30d,
 		Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),
 	}
+}
+
+// listBlendPools reads the Blend pool rows, dating vintage by the cache fill when the reader is cached.
+func listBlendPools(ctx context.Context, reader LendingReader, vintage *dataVintage) (rows []timescale.BlendPoolSummary, stale bool, err error) {
+	at, ok := reader.(lendingAtReader)
+	if !ok {
+		vintage.note(time.Time{})
+		rows, err = reader.ListBlendPools(ctx)
+		return rows, false, err
+	}
+	var filled time.Time
+	rows, filled, stale, err = at.ListBlendPoolsAt(ctx)
+	vintage.note(filled)
+	return rows, stale, err
 }
 
 // listBLNTPools reads the BLNT pool rows when the reader serves them. A failed read leaves them out and
@@ -421,9 +431,10 @@ const lendingReservesMaxEntries = 256
 
 // poolReserves is one built GET /v1/lending/pools/{pool}/reserves body and its flags, cached per pool.
 type poolReserves struct {
-	view   LendingPoolReservesView
-	flags  Flags
-	states []clickhouse.BlendReserveState // the raw reserve state behind view, for account earnings
+	view    LendingPoolReservesView
+	flags   Flags
+	states  []clickhouse.BlendReserveState // the raw reserve state behind view, for account earnings
+	version blend.PoolVersion              // PoolVersionUnknown for a BLNT pool
 }
 
 // lendingStageErr names the read that failed, so the handler maps it as it did before the cache.
@@ -482,7 +493,7 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	out.AsOfLedger = wmLedger
 	// A USD figure valued at a stale price is stale whatever the lake's own freshness.
 	stale = stale || slices.Contains(stalePrice, true)
-	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed}, states: states}, nil
+	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed}, states: states, version: version}, nil
 }
 
 // poolRead is one pool's reserve assets and lake state; configsFailed means APRs are withheld.

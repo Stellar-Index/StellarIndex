@@ -1353,6 +1353,15 @@ func TestProtocolEventRollup_RoundTrip(t *testing.T) {
 	if counts3["sdex"] != 3 || counts3["soroswap"] != 1 {
 		t.Errorf("live sources changed across prune: sdex=%d soroswap=%d, want 3/1", counts3["sdex"], counts3["soroswap"])
 	}
+
+	// A rollup no pass has refreshed within the max age is a read failure, never a current 24h count.
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE protocol_events_24h SET computed_at = now() - interval '1 hour'`); err != nil {
+		t.Fatalf("age rollup: %v", err)
+	}
+	if frozen, err := store.CountRecentEventsBySource(ctx); err == nil {
+		t.Errorf("frozen rollup served %v, want an error", frozen)
+	}
 }
 
 // TestRollupRefresh_ZeroRowPassKeepsLastGood: with EMPTY upstream (CAGG rebuilt WITH NO DATA or stalled policy), the three

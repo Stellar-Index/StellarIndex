@@ -22,10 +22,9 @@ type Market struct {
 	Volume24hUSD  *string
 	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time usd_volume.
 	VolumeLowerBound bool
-	// LastPrice is the last quote-per-base price: the newest prices_1m close within 24h, else the
-	// newest prices_1d close in the recency window. Under a source filter it is that VENUE's own
-	// price, from pools_per_source_1h. nil when no bucket has a non-null `last_price`. It is a
-	// numeric string for precision.
+	// LastPrice is the last quote-per-base price observed in the trailing 24h: the newest prices_1m
+	// close, or under a source filter that VENUE's own price from pools_per_source_1h. nil when the
+	// pair has no priced trade in 24h. It is a numeric string for precision.
 	LastPrice *string
 }
 
@@ -440,7 +439,11 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                  SUM(vol_24h_usd::numeric)       AS vol_24h_num,
                  ` + canonLastPriceSQL(flipped) + ` AS last_price,
                  bool_or(vol_lower_bound)        AS vol_lower_bound
-            FROM pools
+            -- /v1/markets serves only a price traded in the last 24h; /v1/pools keeps the venue's latest. Keyed on the trade's own
+            -- timestamp, not its hourly bucket, so a trade 23.5h old in a bucket begun 24.3h ago still counts.
+            FROM (SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, vol_lower_bound,
+                         CASE WHEN last_trade_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price
+                    FROM pools) pools
            GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
         SELECT base_asset, quote_asset, last_trade_at,
@@ -641,9 +644,7 @@ const distinctPairsActivityCTEs = `
         ),
         d AS (
             SELECT p.base_asset, p.quote_asset,
-                   MAX(p.bucket) AS bucket_close_at,
-                   (array_agg(p.last_price ORDER BY p.bucket DESC)
-                      FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
+                   MAX(p.bucket) AS bucket_close_at
               FROM prices_1d p
              WHERE p.bucket >= $1
                AND ($4 = '' OR $4 = ANY(p.sources))
@@ -661,9 +662,7 @@ const distinctPairsActivityCTEs = `
                    -- value per group. last() keeps the newest bucket's
                    -- close in the same single pass the sums already make;
                    -- FILTER drops null closes so a quiet tail bucket
-                   -- cannot mask the last real price. (The prices_1d CTE
-                   -- keeps array_agg: ~14 buckets per pair, nothing to
-                   -- gain.)
+                   -- cannot mask the last real price.
                    last(p.last_price, p.bucket)
                       FILTER (WHERE p.last_price IS NOT NULL)::text AS last_price
               FROM prices_1m p
@@ -701,8 +700,8 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// bucket-additive over a coarser CAGG: prices_1h understated 24h volume ~9%.
 	//
 	// d and h are FULL OUTER JOINed because prices_1d (6h end_offset, materialized_only) has no row
-	// yet for a pair whose first trade is today. last_price, last_trade_at and bucket_close_at
-	// prefer h and fall back to d only for pairs idle over 24h (count_24h is then COALESCE'd to 0).
+	// yet for a pair whose first trade is today. last_trade_at and bucket_close_at prefer h and fall back
+	// to d for pairs idle over 24h (count_24h is then COALESCE'd to 0); last_price is h's only, so null.
 	//
 	// $5 is a text[] of the asset's alias forms: XLM is keyed `native`, `crypto:XLM` or its SAC by
 	// venue, so a scalar match omitted markets. canon collapses flipped orientations (see
@@ -717,7 +716,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                             date_trunc('day', h.last_bucket_1m)) AS bucket_close_at,
                    COALESCE(h.count_24h, 0)  AS count_24h,
                    COALESCE(h.vol_24h_num, 0) AS vol_24h_num,
-                   COALESCE(h.last_price, d.last_price) AS last_price
+                   h.last_price
               FROM d
               FULL OUTER JOIN h
                 ON h.base_asset = d.base_asset
