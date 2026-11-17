@@ -39,6 +39,11 @@ patroni_synchronous_node_count: 1   # ANY 1 of 2 replicas
 
 # ── DCS (etcd) ─────────────────────────────────────────────────
 etcd_data_dir: /var/lib/etcd
+# "existing" only for a member added with `etcdctl member add` (README, Replacing an etcd member).
+etcd_initial_cluster_state: new
+# Lets an empty member start with state new although a peer has quorum, could not
+# be asked, or the play is partial: only to finish a half-done first bootstrap (README).
+etcd_allow_new_bootstrap: false
 etcd_client_port: 2379
 etcd_peer_port: 2380
 # Heartbeat / election timeouts in ms.
@@ -66,9 +71,14 @@ patroni_etcd_tls_dir: /etc/patroni/etcd-tls   # parent /etc/patroni exists (05)
 # initdb (default) or pgbackrest (restore-from-backup; for DR
 # rebuilds).
 patroni_bootstrap_method: initdb
-# Bootstrap refuses a data dir that holds a postgres cluster Patroni has not
-# initialised. true restores over it (pgbackrest) or adopts it as is (initdb).
+# Every host refuses a data dir that holds a postgres cluster Patroni has not
+# initialised. true lets db-01's pgBackRest restore overwrite it; initdb rejects it.
 patroni_adopt_existing_data_dir: false
+# Tries (10s apart) for a replica to report /replica 200; the first base backup
+# of a large database needs more.
+patroni_join_retries: 180
+# The restart handler counts a replica healthy only while streaming within this lag.
+patroni_restart_max_lag_bytes: 16777216
 # Used when method=pgbackrest:
 patroni_pgbackrest_stanza: stellarindex
 patroni_pgbackrest_restore_target: latest   # "latest" | "time:..."

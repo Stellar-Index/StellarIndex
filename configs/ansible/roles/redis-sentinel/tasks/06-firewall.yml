@@ -29,47 +29,59 @@
         set internal_v4 {
           type ipv4_addr
           flags interval
-          elements = {
+      {# nft rejects an empty `elements = { }`; a set with no elements line is valid. #}
       {% for cidr in redis_internal_cidrs if ':' not in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         set ssh_allowed_v4 {
           type ipv4_addr
           flags interval
-          elements = {
       {% for cidr in redis_allowed_ssh_cidrs if ':' not in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         # IPv6 CIDRs were silently filtered out of the v4-only sets
         # above and never placed in any set, so an operator adding an
         # IPv6 CIDR to redis_internal_cidrs/redis_allowed_ssh_cidrs got no
         # error and no rule — the entry just vanished. Mirror both sets
-        # for v6; empty is valid nftables and is today's default (no v6
-        # CIDRs configured).
+        # for v6.
         set internal_v6 {
           type ipv6_addr
           flags interval
-          elements = {
       {% for cidr in redis_internal_cidrs if ':' in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         set ssh_allowed_v6 {
           type ipv6_addr
           flags interval
-          elements = {
       {% for cidr in redis_allowed_ssh_cidrs if ':' in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         # Per-source SSH rate-limit state; bounded and expiring so an

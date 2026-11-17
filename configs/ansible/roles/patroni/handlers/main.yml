@@ -8,12 +8,64 @@
   throttle: 1
   listen: "etcd config changed"
 
+# Type=simple returns before postgres is back, so the wait lives in the same
+# task: throttle then holds the next member until this one is healthy.
+# A member that is itself unhealthy is always restarted (restarting it cannot
+# cost the cluster anything). A healthy one needs every other member healthy
+# and a leader, and the leader hands the lock over first so a restart never
+# causes an uncontrolled failover.
 - name: restart patroni
-  systemd:
-    name: patroni
-    state: restarted
-    daemon_reload: yes
-  # One member at a time, or the cluster has no leader until every node is back.
+  shell: |
+    set -eu
+    me={{ inventory_hostname | quote }}
+    check() {
+      curl -fsS --max-time 5 "http://{{ patroni_rest_connect_address }}/cluster" | jq -e \
+        --arg me "$me" --argjson lag {{ patroni_restart_max_lag_bytes | int }} '
+        def ok: if .role == "leader" then .state == "running"
+                else .state == "streaming" and (.lag | type) == "number" and .lag <= $lag end;
+        '"$1" >/dev/null 2>&1
+    }
+    self_ok='any(.members[]; .name == $me and ok)'
+    others_ok='([.members[] | select(.name != $me)] | length == {{ (groups["postgres_cluster"] | length) - 1 }} and all(ok))
+      and any(.members[]; .role == "leader" and .state == "running")'
+    self_leader='any(.members[]; .name == $me and .role == "leader")'
+    new_leader='any(.members[]; .name != $me and .role == "leader" and .state == "running")'
+    wait_for() {
+      for _ in $(seq 60); do
+        if check "$1"; then return 0; fi
+        sleep 5
+      done
+      return 1
+    }
+
+    whole_cluster=0
+    if check "$self_ok"; then
+      if ! check "$others_ok"; then
+        echo "refusing to restart patroni on $me: another member is not healthy or there is no leader" >&2
+        exit 1
+      fi
+      if check "$self_leader"; then
+        patronictl -c /etc/patroni/patroni.yml switchover --leader "$me" --force
+        if ! wait_for "$new_leader and ($self_ok)"; then
+          echo "switchover away from $me did not complete in 300s; not restarting" >&2
+          exit 1
+        fi
+      fi
+      whole_cluster=1
+    else
+      echo "patroni on $me is not healthy; restarting it" >&2
+    fi
+    systemctl daemon-reload
+    systemctl restart patroni
+    want="$self_ok"
+    if [ "$whole_cluster" = 1 ]; then want="$self_ok and $others_ok"; fi
+    if wait_for "$want"; then
+      exit 0
+    fi
+    echo "patroni on $me not healthy 300s after restart" >&2
+    exit 1
+  args:
+    executable: /bin/bash
   throttle: 1
   listen: "patroni config changed"
 

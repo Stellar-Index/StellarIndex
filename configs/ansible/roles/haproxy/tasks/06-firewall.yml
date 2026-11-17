@@ -34,41 +34,54 @@
         set internal_v4 {
           type ipv4_addr
           flags interval
-          elements = {
+      {# nft rejects an empty `elements = { }`; a set with no elements line is valid. #}
       {% for cidr in haproxy_internal_cidrs if ':' not in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         set ssh_allowed_v4 {
           type ipv4_addr
           flags interval
-          elements = {
       {% for cidr in haproxy_allowed_ssh_cidrs if ':' not in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         set internal_v6 {
           type ipv6_addr
           flags interval
-          elements = {
       {% for cidr in haproxy_internal_cidrs if ':' in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         set ssh_allowed_v6 {
           type ipv6_addr
           flags interval
-          elements = {
       {% for cidr in haproxy_allowed_ssh_cidrs if ':' in cidr %}
-            {{ cidr }}{% if not loop.last %},{% endif %}
-      {% endfor %}
+      {% if loop.first %}
+          elements = {
+      {% endif %}
+            {{ cidr }}{% if not loop.last %},{% else %}
           }
+      {% endif %}
+      {% endfor %}
         }
 
         # Per-source SSH rate-limit state; bounded and expiring so an
