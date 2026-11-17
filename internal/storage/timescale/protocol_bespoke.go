@@ -317,11 +317,7 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 	// ranking is possible (Aquarius has no published price), so rows are
 	// ordered most-recently-updated pool first and capped.
 	const maxRows = 100
-	tbl := BespokeTable{
-		Title:       "Pool liquidity depth (latest reserves)",
-		Columns:     []string{"Pool", "Token", "Reserve", "Observed (UTC)"},
-		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeCol(BespokeKindTime)},
-	}
+	tbl := aquariusReservesHeader
 	for _, p := range pools {
 		if len(tbl.Rows) >= maxRows {
 			break
@@ -449,10 +445,7 @@ func aquariusClaimKPIs(claims *AquariusClaimRewardWindow) []BespokeKPI {
 // aquariusClaimVolumeTable renders the 30d claim_reward volume per reward
 // token, busiest token first.
 func aquariusClaimVolumeTable(claims *AquariusClaimRewardWindow) BespokeTable {
-	tbl := BespokeTable{
-		Title: "Reward volume by token (30d)", Columns: []string{"Reward token", "Claims", "Amount"},
-		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindAsset), BespokeCol(BespokeKindCount), BespokeAmountOf(0)},
-	}
+	tbl := aquariusClaimVolumeHeader
 	for _, t := range claims.ByToken {
 		tbl.Rows = append(tbl.Rows, []string{aquariusRewardTokenLabel(t.RewardToken), strconv.FormatInt(t.Events, 10), t.Amount.String()})
 	}
@@ -475,10 +468,7 @@ func (s *Store) aquariusGovernanceTable(ctx context.Context, blk *BespokeBlock) 
 	if len(events) == 0 {
 		return nil
 	}
-	tbl := BespokeTable{
-		Title: "Recent governance events", Columns: []string{"When", "Kind", "Contract", "Admin", "Target", "Ledger"},
-		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindContract), BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindText), BespokeCol(BespokeKindText)},
-	}
+	tbl := aquariusGovernanceHeader
 	for _, e := range events {
 		admin, target := e.Admin, e.Target
 		if admin == "" {
@@ -534,11 +524,7 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 	)
 
 	const maxRows = 100
-	tbl := BespokeTable{
-		Title:       "Net liquidity flow by pool/token (window)",
-		Columns:     []string{"Pool", "Token", "Added", "Removed", "Net", "Events"},
-		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeAmountOf(1), BespokeAmountOf(1), BespokeCol(BespokeKindCount)},
-	}
+	tbl := cometLiquidityHeader
 	for _, f := range flows {
 		if len(tbl.Rows) >= maxRows {
 			break
@@ -596,11 +582,7 @@ func (s *Store) phoenixLiquidityBlocks(ctx context.Context, blk *BespokeBlock, w
 	)
 
 	const maxRows = 100
-	tbl := BespokeTable{
-		Title:       "Net liquidity flow by pool (window)",
-		Columns:     []string{"Pool", "Token A", "Net A", "Token B", "Net B", "Provides", "Withdraws"},
-		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeCol(BespokeKindAsset), BespokeAmountOf(3), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount)},
-	}
+	tbl := phoenixLiquidityHeader
 	for _, f := range flows {
 		if len(tbl.Rows) >= maxRows {
 			break
@@ -674,11 +656,7 @@ const soroswapSkimPairTableLimit = 25
 
 // soroswapSkimPairTable renders the per-pair skim totals, most-skimmed first.
 func soroswapSkimPairTable(pairs []SoroswapSkimPairTotal) BespokeTable {
-	tbl := BespokeTable{
-		Title:       "Skims by pair",
-		Columns:     []string{"Pair", "Skims", "Token0", "Token0 skimmed", "Token1", "Token1 skimmed"},
-		ColumnKinds: []BespokeColumnKind{BespokePoolOf(2, 4), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindAsset), BespokeAmountOf(2), BespokeCol(BespokeKindAsset), BespokeAmountOf(4)},
-	}
+	tbl := soroswapSkimPairHeader
 	orDash := func(v string) string {
 		if v == "" {
 			return "—"
@@ -738,12 +716,10 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 		BespokeKPI{Label: fmt.Sprintf("Flash loans (%dd)", windowDays), Value: flashLoans},
 	)
 
+	netFlow := lendingNetFlowHeader
+	netFlow.Title = fmt.Sprintf("Net flow by asset (%dd)", windowDays)
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{
-			Title:       fmt.Sprintf("Net flow by asset (%dd)", windowDays),
-			Columns:     []string{"Asset", "Net supplied (supplied − withdrawn)", "Net borrowed (borrowed − repaid)", "Events"},
-			ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindAsset), BespokeAmountOf(0), BespokeAmountOf(0), BespokeCol(BespokeKindCount)},
-		},
+		netFlow,
 		`SELECT asset,
 		   COALESCE(sum(`+blendSupplyNetExpr+`),0)::text,
 		   COALESCE(sum(`+blendBorrowNetExpr+`),0)::text,
@@ -764,14 +740,7 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 	// Util% ratio of two) mixes decimals across tokens. Side counts use the kind partition of
 	// lendingSupplySideKinds / lendingBorrowSideKinds in bespoke_lending.go.
 	poolTbl, err := s.scanTable(ctx,
-		BespokeTable{
-			Title:   "Activity by pool",
-			Columns: []string{"Pool", "Supply-side events", "Borrow-side events", "Users", "Events"},
-			ColumnKinds: []BespokeColumnKind{
-				BespokeCol(BespokeKindPool), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
-				BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
-			},
-		},
+		lendingPoolActivityHeader,
 		`SELECT pool,
 		   count(*) FILTER (WHERE event_kind IN (`+lendingSupplySideKinds+`))::text,
 		   count(*) FILTER (WHERE event_kind IN (`+lendingBorrowSideKinds+`))::text,
@@ -821,14 +790,7 @@ func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, sin
 	)
 
 	atbl, err := s.scanTable(ctx,
-		BespokeTable{
-			Title:   "Recent auctions",
-			Columns: []string{"When", "Type", "Kind", "User", "Fill %"},
-			ColumnKinds: []BespokeColumnKind{
-				BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindText),
-				BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindText),
-			},
-		},
+		lendingAuctionsHeader,
 		`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI'), kind_label, event_kind, user_address, fill
 		   FROM (SELECT ts,
 		                CASE auction_type WHEN 0 THEN 'user-liquidation' WHEN 1 THEN 'bad-debt' WHEN 2 THEN 'interest' ELSE auction_type::text END AS kind_label,
@@ -878,4 +840,65 @@ func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, sinc
 // blndUnits renders a 7-decimal token base-unit amount (BLND, Comet LP) as an exact decimal string.
 func blndUnits(a canonical.Amount) string {
 	return new(big.Rat).SetFrac(a.BigInt(), big.NewInt(10_000_000)).FloatString(7)
+}
+
+// Typed table headers (title, columns, kinds): each builder copies one; bespoke_headers_test.go checks them all.
+var aquariusReservesHeader = BespokeTable{
+	Title:   "Pool liquidity depth (latest reserves)",
+	Columns: []string{"Pool", "Token", "Reserve", "Observed (UTC)"},
+	// Reserve stays base units: its token is matched by position from a separate deposit/withdraw event, and that
+	// order is not verified here, so a wrong match would scale by another token's decimals.
+	ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeCol(BespokeKindAmount), BespokeCol(BespokeKindTime)},
+}
+
+var aquariusClaimVolumeHeader = BespokeTable{
+	Title: "Reward volume by token (30d)", Columns: []string{"Reward token", "Claims", "Amount"},
+	ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindAsset), BespokeCol(BespokeKindCount), BespokeAmountOf(0)},
+}
+
+var aquariusGovernanceHeader = BespokeTable{
+	Title: "Recent governance events", Columns: []string{"When", "Kind", "Contract", "Admin", "Target", "Ledger"},
+	ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindContract), BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindText), BespokeCol(BespokeKindText)},
+}
+
+var cometLiquidityHeader = BespokeTable{
+	Title:       "Net liquidity flow by pool/token (window)",
+	Columns:     []string{"Pool", "Token", "Added", "Removed", "Net", "Events"},
+	ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeAmountOf(1), BespokeAmountOf(1), BespokeCol(BespokeKindCount)},
+}
+
+var phoenixLiquidityHeader = BespokeTable{
+	Title:       "Net liquidity flow by pool (window)",
+	Columns:     []string{"Pool", "Token A", "Net A", "Token B", "Net B", "Provides", "Withdraws"},
+	ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset), BespokeAmountOf(1), BespokeCol(BespokeKindAsset), BespokeAmountOf(3), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount)},
+}
+
+var soroswapSkimPairHeader = BespokeTable{
+	Title:       "Skims by pair",
+	Columns:     []string{"Pair", "Skims", "Token0", "Token0 skimmed", "Token1", "Token1 skimmed"},
+	ColumnKinds: []BespokeColumnKind{BespokePoolOf(2, 4), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindAsset), BespokeAmountOf(2), BespokeCol(BespokeKindAsset), BespokeAmountOf(4)},
+}
+
+// lendingNetFlowHeader's title carries the window, set per build.
+var lendingNetFlowHeader = BespokeTable{
+	Columns:     []string{"Asset", "Net supplied (supplied − withdrawn)", "Net borrowed (borrowed − repaid)", "Events"},
+	ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindAsset), BespokeAmountOf(0), BespokeAmountOf(0), BespokeCol(BespokeKindCount)},
+}
+
+var lendingPoolActivityHeader = BespokeTable{
+	Title:   "Activity by pool",
+	Columns: []string{"Pool", "Supply-side events", "Borrow-side events", "Users", "Events"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindPool), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
+		BespokeCol(BespokeKindCount), BespokeCol(BespokeKindCount),
+	},
+}
+
+var lendingAuctionsHeader = BespokeTable{
+	Title:   "Recent auctions",
+	Columns: []string{"When", "Type", "Kind", "User", "Fill %"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindText),
+		BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindText),
+	},
 }

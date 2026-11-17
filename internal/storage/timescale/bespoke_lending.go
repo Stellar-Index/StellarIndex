@@ -316,14 +316,7 @@ func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdo
 // Omitted when no flash loan landed in the window.
 func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, since string) error {
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{
-			Title:   "Recent flash loans",
-			Columns: []string{"When", "Pool", "Asset", "Amount", "Borrower", "Tx"},
-			ColumnKinds: []BespokeColumnKind{
-				BespokeCol(BespokeKindTime), BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset),
-				BespokeAmountOf(2), BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindTx),
-			},
-		},
+		lendingFlashLoansHeader,
 		`SELECT to_char(ledger_close_time, 'YYYY-MM-DD HH24:MI'),
 		        pool,
 		        asset,
@@ -431,14 +424,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 	// Recent scheduled settlements. Ordered newest-first; settled_amount is
 	// rendered as text so the i128 NUMERIC never round-trips through int64.
 	tbl, err := s.scanTable(ctx,
-		BespokeTable{
-			Title:   "Recent scheduled settlements",
-			Columns: []string{"When", "Position", "Debt asset", "Settled amount", "Settler"},
-			ColumnKinds: []BespokeColumnKind{
-				BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindAsset),
-				BespokeAmountOf(2), BespokeCol(BespokeKindAccount),
-			},
-		},
+		creditSettlementsHeader,
 		`SELECT to_char(ledger_close_time, 'YYYY-MM-DD HH24:MI'),
 		        position_uuid,
 		        COALESCE(debt_asset, '—'),
@@ -528,3 +514,22 @@ func (s *Store) creditPositionExtras(ctx context.Context, blk *BespokeBlock, win
 // deposit/withdraw volume, per-vault net flow (an AUM proxy) and unique actors. The series and
 // per-vault net scope to the vault layer to avoid double-counting a deposit that fans out into
 // strategies.
+
+// Typed table headers (title, columns, kinds): each builder copies one; bespoke_headers_test.go checks them all.
+var lendingFlashLoansHeader = BespokeTable{
+	Title:   "Recent flash loans",
+	Columns: []string{"When", "Pool", "Asset", "Amount", "Borrower", "Tx"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindTime), BespokeCol(BespokeKindPool), BespokeCol(BespokeKindAsset),
+		BespokeAmountOf(2), BespokeCol(BespokeKindAccount), BespokeCol(BespokeKindTx),
+	},
+}
+
+var creditSettlementsHeader = BespokeTable{
+	Title:   "Recent scheduled settlements",
+	Columns: []string{"When", "Position", "Debt asset", "Settled amount", "Settler"},
+	ColumnKinds: []BespokeColumnKind{
+		BespokeCol(BespokeKindTime), BespokeCol(BespokeKindText), BespokeCol(BespokeKindAsset),
+		BespokeAmountOf(2), BespokeCol(BespokeKindAccount),
+	},
+}
