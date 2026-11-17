@@ -20,7 +20,7 @@ import (
 //
 // Rollup age is capped by [assetPriceSnapshotMaxAge] in the listing's join, so a dead aggregator
 // renders assets unpriced rather than stale. Observation age is not capped: the price is the newest
-// traded minute within the 7-day lookback ([priceArmPickExpr]), since a hard cutoff would blank
+// traded minute within the 7-day lookback, preferring one over the $0.01 notional floor ([priceArmPickExpr]); a hard cutoff would blank
 // every weekly-trading asset. The listing row can lag its detail page by up to that ceiling.
 
 // assetPriceSnapshotMaxAge is how old a snapshot row may be and still be served (enforced in the listing's LEFT JOIN, see
@@ -133,23 +133,28 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 		%[1]s_rows AS (
 		  SELECT asset_id, bucket, asset_leg, quote_leg, sources
 		    FROM (
-		      SELECT u.*, max(u.bucket) OVER (PARTITION BY u.asset_id) AS newest
+		      -- vwap carries no notional floor, so prefer the newest minute holding a trade over $0.01 and fall back to the newest
+		      -- minute only when the window has none; within the chosen minute a sub-cent direction is dropped too.
+		      SELECT u.*,
+		             COALESCE(max(u.bucket) FILTER (WHERE u.floored) OVER w, max(u.bucket) OVER w) AS newest,
+		             bool_or(u.floored) OVER w AS any_floored
 		        FROM (
 		          SELECT base_asset AS asset_id, bucket, volume_priced AS asset_leg,
-		                 vwap * volume_priced AS quote_leg, sources
+		                 vwap * volume_priced AS quote_leg, sources, notional_trade_count > 0 AS floored
 		            FROM prices_1m
 		           WHERE quote_asset IN (%[2]s)%[4]s
 		             AND %[3]s
 		             AND vwap > 0 AND volume_priced > 0
 		          UNION ALL
-		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources
+		          SELECT quote_asset, bucket, vwap * volume_priced, volume_priced, sources, notional_trade_count > 0 AS floored
 		            FROM prices_1m
 		           WHERE base_asset IN (%[2]s)%[5]s
 		             AND %[3]s
 		             AND vwap > 0 AND volume_priced > 0
 		        ) u
+		      WINDOW w AS (PARTITION BY u.asset_id)
 		    ) r
-		   WHERE bucket = newest
+		   WHERE bucket = newest AND (floored OR NOT any_floored)
 		),
 		%[1]s AS (
 		  SELECT v.asset_id, v.bucket, v.vwap, s.source_count
