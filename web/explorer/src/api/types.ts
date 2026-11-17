@@ -5522,6 +5522,9 @@ export interface paths {
          *     While `history_complete` is false the instance history is not
          *     genesis-complete: every total is a LOWER BOUND (`lower_bound` is true).
          *     `active_90d` is null when the activity census is unavailable, never 0.
+         *     `active_90d_through` is the census's newest day; when it is before
+         *     yesterday (UTC) the census has stalled, `active_90d` excludes the days
+         *     after it, and `lower_bound` is true.
          */
         get: operations["getContractStats"];
         put?: never;
@@ -27101,6 +27104,7 @@ export interface operations {
                      *         "total_sac": 200,
                      *         "total_wasm": 750,
                      *         "active_90d": 512,
+                     *         "active_90d_through": "2026-07-03",
                      *         "history_complete": true,
                      *         "lower_bound": false
                      *       },
@@ -27132,8 +27136,13 @@ export interface operations {
                             total_wasm: number;
                             /** Format: int64 */
                             active_90d: number | null;
+                            /**
+                             * Format: date
+                             * @description Newest census day (UTC, YYYY-MM-DD) counted in active_90d; null with active_90d.
+                             */
+                            active_90d_through?: string | null;
                             history_complete: boolean;
-                            /** @description True while the totals exclude pre-backfill deployments. */
+                            /** @description True while the totals exclude pre-backfill deployments, or while the census lags so active_90d excludes the days after active_90d_through. */
                             lower_bound: boolean;
                         };
                     };

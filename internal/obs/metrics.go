@@ -32,6 +32,7 @@ func registerAppMetrics() {
 		HTTPRequestDuration,
 		HTTPRequestSuccessDuration,
 		APIFlaggedResponsesTotal,
+		ContractsCensusLatestDay,
 		IngestGapLedgers,
 		IngestGapCount,
 		IngestGapMaxSize,
@@ -731,6 +732,14 @@ var APIFlaggedResponsesTotal = prometheus.NewCounterVec(
 		Help: "API responses served with flags.degraded (carried-forward or partial body) or flags.stale, labelled by route pattern and flag (degraded|stale).",
 	},
 	[]string{"route", "flag"},
+)
+
+// ContractsCensusLatestDay is the newest day in stellar.contracts_census_daily as a Unix timestamp, set on each /v1/contracts/stats snapshot read; a stalled census shrinks active_90d.
+var ContractsCensusLatestDay = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_contracts_census_latest_day_timestamp_seconds",
+		Help: "Newest day (UTC midnight, Unix seconds) present in the contracts census, read with the /v1/contracts/stats snapshot. 0 until the first read.",
+	},
 )
 
 // DependencyUp reports each /v1/readyz check as a gauge (1 answered, 0 not); alert on `== 0`, never on `absent()` alone.
