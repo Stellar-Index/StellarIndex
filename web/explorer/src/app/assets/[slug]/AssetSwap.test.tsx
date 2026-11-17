@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -21,6 +21,12 @@ import {
   type SwapToken,
 } from './AssetSwap';
 import { LiveAssetPrice } from './LiveAssetPrice';
+
+// The /v1/price poll uses raw fetch; unstubbed it reached the live API and
+// a real price replaced the baked one mid-test.
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+});
 
 // The converter's fiat legs come from /v1/price/batch, which
 // this widget typed as `{data: Array<{asset_id, price}>}` — so
@@ -337,6 +343,42 @@ describe('AssetSwap catalogue leg', () => {
         .map(([, params]) => (params as { asset_ids?: string }).asset_ids);
     await vi.waitFor(() => expect(legIds()).toContain('crypto:BTC'));
     expect(legIds()).not.toContain('btc');
+  });
+
+  it("never lists the page asset's catalogue row once its price is withheld", async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [{ asset_id: 'native', code: 'XLM', price_usd: '0.19' }],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => ({
+        status: 404,
+        ok: false,
+        json: async () => ({
+          type: 'https://stellarindex.io/problems/price-withheld',
+        }),
+      })),
+    );
+    renderSwap();
+    await vi.waitFor(() =>
+      expect(
+        (screen.getAllByRole('textbox')[1] as HTMLInputElement).value,
+      ).toBe(''),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('button', { name: /EUR/ });
+    expect(
+      within(dialog).queryByRole('button', { name: /XLM/ }),
+    ).not.toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });
 

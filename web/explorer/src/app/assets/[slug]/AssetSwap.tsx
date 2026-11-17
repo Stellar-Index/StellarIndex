@@ -685,7 +685,9 @@ function TokenPicker({
                 (verified != null && c.class === 'crypto' && c.code
                   ? `crypto:${c.code}`
                   : undefined));
-          if (!key) return [];
+          // The page asset is offered only at its live price (pageMatch): its
+          // listing snapshot must not stand in once the headline withdraws it.
+          if (!key || key === pageToken.key) return [];
           const price = c.price_usd != null ? Number(c.price_usd) : null;
           return [
             {
@@ -704,7 +706,7 @@ function TokenPicker({
         // Only offer legs we can actually price.
         .filter((t) => t.usdPrice != null)
     );
-  }, [coins.data, verified]);
+  }, [coins.data, verified, pageToken.key]);
 
   const q = debounced.toLowerCase();
   const fiatMatches = useMemo(
