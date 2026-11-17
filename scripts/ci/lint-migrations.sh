@@ -450,6 +450,25 @@ sql_stmts() {
     | awk 'BEGIN { RS = ";" } { gsub(/ +/, " "); sub(/^ /, ""); if ($0 != "") print }'
 }
 
+# cagg_views <file>: when the file creates anything WITH NO DATA, every view it
+# drops or creates WITH NO DATA, one bare lower-case name per line. Both leave
+# the view empty until refreshed, so passes 7 and 10 key on this one list.
+cagg_views() {
+  sql_stmts "$1" | awk '
+    function add(list,   n, p, i, t) {
+      n = split(list, p, ",")
+      for (i = 1; i <= n; i++) {
+        t = p[i]; sub(/^ +/, "", t); sub(/ .*/, "", t); gsub(/"/, "", t); sub(/^public\./, "", t)
+        if (t != "") v[t] = 1
+      }
+    }
+    { s = tolower($0) }
+    s ~ /with no data/ { nodata = 1 }
+    s ~ /^drop materialized view / { sub(/^drop materialized view (if exists )?/, "", s); add(s) }
+    s ~ /^create materialized view / && s ~ /with no data/ { sub(/^create materialized view (if not exists )?/, "", s); sub(/ .*/, "", s); add(s) }
+    END { if (nodata) for (t in v) print t }' | sort -u
+}
+
 # hyper_indexes <file>: `<idx>|<table>|<if-not-exists 0/1>|<lock_timeout 0/1>`
 # for every in-transaction CREATE INDEX on a table the file does not
 # itself create (an index on a table born in the same file is free).
@@ -467,9 +486,17 @@ hyper_indexes() {
       tbl = ""
       for (i = j; i <= n; i++) if (w[i] == "on") { tbl = (w[i+1] == "only") ? w[i+2] : w[i+1]; break }
       sub(/\(.*/, "", tbl); sub(/^public\./, "", tbl)
-      k++; idx[k] = w[j]; on[k] = tbl; ok[k] = ine
+      k++; idx[k] = w[j]; on[k] = tbl; ok[k] = ine; kind[k] = "index"
     }
-    END { for (i = 1; i <= k; i++) if (!(on[i] in here)) printf "%s|%s|%d|%d\n", idx[i], on[i], ok[i], lt + 0 }'
+    # ADD PRIMARY KEY / UNIQUE builds the same index under ACCESS EXCLUSIVE and
+    # has no IF NOT EXISTS form, so only the lock_timeout is asked of it.
+    s ~ /^alter table / && s ~ / add (constraint [^ ]+ )?(primary key|unique)[ (]/ && s !~ / using index / {
+      tbl = s; sub(/^alter table (if exists )?(only )?/, "", tbl); sub(/ .*/, "", tbl); sub(/^public\./, "", tbl)
+      c = "primary-key-or-unique"
+      if (match(s, / add constraint [^ ]+/)) c = substr(s, RSTART + 16, RLENGTH - 16)
+      k++; idx[k] = c; on[k] = tbl; ok[k] = 1; kind[k] = "constraint"
+    }
+    END { for (i = 1; i <= k; i++) if (!(on[i] in here)) printf "%s|%s|%d|%d|%s\n", idx[i], on[i], ok[i], lt + 0, kind[i] }'
 }
 
 # Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction
@@ -483,6 +510,20 @@ hyper_indexes() {
 # predating this pass are listed below (0150's operator note is in the README
 # register); an entry that no longer matches is stale and fails.
 hyper_index_baseline='0025_create_routers_and_attribution.up.sql:trades_routed_via_idx
+0030_asset_supply_history_unique_constraint.up.sql:asset_supply_history_asset_ledger_idx
+0053_blend_pk_granularity.up.sql:blend_positions_pkey
+0053_blend_pk_granularity.up.sql:blend_emissions_pkey
+0053_blend_pk_granularity.up.sql:blend_admin_pkey
+0054_blend_positions_event_index.up.sql:blend_positions_pkey
+0055_defindex_flows_event_index.up.sql:defindex_flows_pkey
+0056_soroswap_router_swaps_call_sig.up.sql:soroswap_router_swaps_pkey
+0057_sep41_supply_events_event_index.up.sql:sep41_supply_events_pkey
+0058_blend_auctions_event_index.up.sql:blend_auctions_pkey
+0059_comet_liquidity_event_index.up.sql:comet_liquidity_pkey
+0060_phoenix_event_index.up.sql:phoenix_liquidity_pkey
+0060_phoenix_event_index.up.sql:phoenix_stake_events_pkey
+0112_cctp_rozo_event_index.up.sql:cctp_events_pkey
+0112_cctp_rozo_event_index.up.sql:rozo_events_pkey
 0037_trades_pair_source_ts_index.up.sql:trades_pair_source_ts_idx
 0083_sep41_transfers_ledger_idx.up.sql:sep41_transfers_ledger_idx
 0091_aquarius_liquidity_pool_tokens_idx.up.sql:aquarius_liquidity_pool_token_idx
@@ -505,15 +546,20 @@ fi
 hi_seen=""
 hi_checked=0
 for f in "$MIG_DIR"/*.up.sql; do
-  grep -qiE 'create +(unique +)?index' "$f" || continue
+  grep -qiE 'create +(unique +)?index|add +(constraint|primary|unique)' "$f" || continue
   b="$(basename "$f")"
-  while IFS='|' read -r idx tbl ine lt; do
+  while IFS='|' read -r idx tbl ine lt kind; do
     [ -n "$idx" ] || continue
     grep -qx "$tbl" <<<"$hypertables" || continue
     hi_checked=$((hi_checked + 1))
     [ "$ine" = 1 ] && [ "$lt" = 1 ] && continue
     if grep -qx "${b}:${idx}" <<<"$hyper_index_baseline"; then
       hi_seen="${hi_seen}${b}:${idx}"$'\n'
+      continue
+    fi
+    if [ "$kind" = constraint ]; then
+      echo "lint-migrations ❌ ${f}: ADD CONSTRAINT ${idx} (PRIMARY KEY/UNIQUE) ON ${tbl} lacks SET LOCAL lock_timeout — ${tbl} is an existing hypertable, and the constraint builds a unique index on every chunk under ACCESS EXCLUSIVE, blocking reads and writes for the whole build. Set SET LOCAL lock_timeout so it cannot queue every session behind an open transaction, and name the maintenance window in the header and the README register row." >&2
+      fail=1
       continue
     fi
     missing=""
@@ -539,26 +585,39 @@ echo "lint-migrations: hypertable-index pass checked ${hi_checked} index build(s
 # refuses a transaction block, and golang-migrate runs each file as one. So the
 # file must NAME the refresh (`refresh_continuous_aggregate('<view>'`, in its
 # operator header) for every view it recreates, a down included (a rollback
-# empties the views as the up did).
+# empties the views as the up did). A view created WITH NO DATA under a new name
+# is just as empty; shipped files that create one without naming its refresh:
+cagg_refresh_baseline='0002_create_price_aggregates.up.sql
+0034_oracle_price_aggregates.up.sql
+0036_create_pools_per_source_cagg.up.sql
+0217_trade_sums_1m.up.sql'
+cr_seen=""
 cagg_files=0
 for f in "$MIG_DIR"/*.sql; do
   grep -qi 'with no data' "$f" || continue
   stmts="$(sql_stmts "$f")"
   grep -qi 'with no data' <<<"$stmts" || continue
   cagg_files=$((cagg_files + 1))
-  dropped="$(grep -iE '^drop materialized view ' <<<"$stmts" \
-    | sed -E 's/^[Dd][Rr][Oo][Pp] [Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll][Ii][Zz][Ee][Dd] [Vv][Ii][Ee][Ww] ([Ii][Ff] [Ee][Xx][Ii][Ss][Tt][Ss] )?//' \
-    | tr ',' '\n' | awk '{ print tolower($1) }' | sed 's/^public\.//' | sort -u || true)"
   named="$(grep -oE "refresh_continuous_aggregate\( *'[a-z0-9_]+'" "$f" | sed -E "s/.*'([a-z0-9_]+)'/\1/" | sort -u || true)"
   unnamed=""
-  for v in $dropped; do
+  for v in $(cagg_views "$f"); do
     grep -qx "$v" <<<"$named" || unnamed="${unnamed}${v} "
   done
-  if [ -n "$unnamed" ]; then
+  if [ -n "$unnamed" ] && grep -qx "$(basename "$f")" <<<"$cagg_refresh_baseline"; then
+    cr_seen="${cr_seen}$(basename "$f")"$'\n'
+  elif [ -n "$unnamed" ]; then
     echo "lint-migrations ❌ ${f}: recreates continuous aggregate(s) WITH NO DATA and names no refresh for: ${unnamed}— they serve nothing until re-materialized. Write the ordered CALL refresh_continuous_aggregate('<view>', …) sequence into the header (hierarchical views after their parent is whole) and the README register row." >&2
     fail=1
   fi
 done
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  [ -e "${MIG_DIR}/${entry}" ] || continue
+  if ! grep -qx "$entry" <<<"$cr_seen"; then
+    echo "lint-migrations ❌ stale cagg_refresh_baseline entry ${entry} — it now names a refresh for every view it leaves empty; remove it (the list only shrinks)" >&2
+    fail=1
+  fi
+done <<<"$cagg_refresh_baseline"
 echo "lint-migrations: CAGG re-materialization pass inspected ${cagg_files} WITH NO DATA file(s) under ${MIG_DIR}."
 
 # ── pass 8: atomicity ───────────────────────────────────────────────
@@ -703,13 +762,21 @@ echo "lint-migrations: priceable-division pass inspected ${pr_files} file(s) und
 # least one. A marker in any other spelling, or with no command, is invisible to
 # that gate and fails here. Shipped files predating the marker are listed below;
 # the list only shrinks.
-followup_baseline='0115_ohlc_extremes_notional_floor.up.sql
+followup_baseline='0002_create_price_aggregates.up.sql
+0034_oracle_price_aggregates.up.sql
+0036_create_pools_per_source_cagg.up.sql
+0064_create_dex_volume_cagg.up.sql
+0066_create_supply_cagg.up.sql
+0068_create_source_volume_cagg.up.sql
+0081_create_twap_aggregates.up.sql
+0115_ohlc_extremes_notional_floor.up.sql
 0126_twap_sample_count.up.sql
 0137_disarm_comet_replay_doublecount.up.sql
 0147_ohlc_deterministic_tiebreak.up.sql
 0164_disarm_cctp_rozo_replay_doublecount.up.sql
 0166_twap_notional_floor.up.sql
-0187_price_caggs_priceable_filter.up.sql'
+0187_price_caggs_priceable_filter.up.sql
+0217_trade_sums_1m.up.sql'
 
 # A follow-up that rebuilds a projected source (projector-replay or
 # projected-rebuild -source X) must sit in a file that also deletes X's
@@ -743,34 +810,46 @@ rebuild_ckpt_missing() {
   done <<<"$srcs"
 }
 
-# blanking_stmts <file>: the statements that blank data, one per line.
-# A DO block's first statement follows its BEGIN, hence the second form.
-# A CREATE FUNCTION body runs when called, not at migrate time, so it is skipped.
+# blanking_stmts <file>: `<relation>\t<statement>` for each relation the file
+# blanks: TRUNCATE (every name in its list), DELETE with no WHERE, a table
+# dropped and recreated with no INSERT refilling it, and cagg_views. A ranged
+# delete (DELETE … WHERE, drop_chunks) is a repair, not a blank; the compat
+# lint's dml class guards those.
+# Inside a DO block the verb follows BEGIN/THEN/ELSE/LOOP (a DECLARE's `;`
+# starts a new statement there). A CREATE FUNCTION body runs when called, not
+# at migrate time, so it is skipped.
 blanking_stmts() {
   sql_stmts "$1" | awk '
+    function rel(t) { sub(/^ +/, "", t); sub(/^only /, "", t); sub(/[ (].*/, "", t); gsub(/"/, "", t); sub(/^.*\./, "", t); return t }
+    function out(t, st) { t = rel(t); if (t != "") printf "%s\t%s\n", t, st }
     { s = tolower($0) }
     infn { if (gsub(/\$\$/, "&", s) % 2) infn = 0; next }
     s ~ /^create (or replace )?function / { if (gsub(/\$\$/, "&", s) % 2) infn = 1; next }
-    s ~ /^truncate / || s ~ / begin truncate / { print; next }
-    (s ~ /^delete from / || s ~ / begin delete from /) && s !~ / where / { print; next }
-    s ~ /^drop materialized view / { v = (s ~ /^drop materialized view if exists /) ? 6 : 4; split(s, w, " "); views = views w[v] " " }
-    s ~ /with no data/ { nodata = 1 }
-    END { if (nodata) { n = split(views, w, " "); for (i = 1; i <= n; i++) print "DROP MATERIALIZED VIEW " w[i] " … WITH NO DATA" } }'
+    {
+      st = ""
+      if (s ~ /^(truncate|delete from) /) st = s
+      else if (match(s, /(^| )(begin|then|else|loop) (truncate|delete from) /)) { st = substr(s, RSTART); sub(/^ ?[a-z]+ /, "", st) }
+      if (st ~ /^truncate /) { l = st; sub(/^truncate (table )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) out(p[i], st); next }
+      if (st ~ /^delete from / && st !~ / where /) { l = st; sub(/^delete from /, "", l); out(l, st); next }
+    }
+    s ~ /^drop table / { l = s; sub(/^drop table (if exists )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) gone[rel(p[i])] = 1; next }
+    s ~ /^create (unlogged )?table / { l = s; sub(/^create (unlogged )?table (if not exists )?/, "", l); t = rel(l); if (t in gone) made[t] = s; next }
+    s ~ /insert into / { l = s; sub(/.*insert into /, "", l); filled[rel(l)] = 1 }
+    END { for (t in made) if (!(t in filled)) printf "%s\tdrop table %s, then %s\n", t, t, made[t] }'
+  cagg_views "$1" | awk '{ printf "%s\tmaterialized view %s left empty (with no data)\n", $0, $0 }'
 }
 
-# uncovered_followup_targets <file> <blanks>: each relation the file blanks (a
-# DELETE/TRUNCATE target or a recreated view) that no REQUIRED-FOLLOWUP line
-# names, either whole or minus its last `_word` (cctp_events -> cctp, the
-# `-source` a replay takes).
+# uncovered_followup_targets <file> <blanks>: each relation the file blanks
+# that no REQUIRED-FOLLOWUP line names, either whole or minus its last `_word`
+# (cctp_events -> cctp, the `-source` a replay takes).
 uncovered_followup_targets() {
-  local markers t name stem
+  local markers name stem
   markers="$(grep -E '^-- REQUIRED-FOLLOWUP: [^[:space:]]' "$1")"
-  printf '%s\n' "$2" | tr '[:upper:]' '[:lower:]' \
-    | sed -nE 's/.*(delete from|truncate( table)?( only)?|drop materialized view) +([a-z0-9_."]+).*/\4/p' \
-    | while IFS= read -r t; do
-        name="${t##*.}"; name="${name//\"/}"; stem="${name%_*}"
-        grep -qiE "(^|[^a-z0-9_])(${name}|${stem})([^a-z0-9_]|\$)" <<<"$markers" || echo "$name"
-      done
+  cut -f1 <<<"$2" | sort -u | while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    stem="${name%_*}"
+    grep -qiE "(^|[^a-z0-9_])(${name}|${stem})([^a-z0-9_]|\$)" <<<"$markers" || echo "$name"
+  done
 }
 
 fu_seen=""
@@ -813,7 +892,7 @@ for f in "$MIG_DIR"/*.up.sql; do
     continue
   fi
   echo "lint-migrations ❌ ${f}: blanks data and declares no \`-- REQUIRED-FOLLOWUP: <command>\` header line — the data serves empty until someone rebuilds it, and the deploy gate only asks for the rebuilds a migration names. Add one line per replay / refresh command (migrations/README.md rule 12). Blanking statement(s):" >&2
-  indent "$(cut -c1-120 <<<"$blanks")" >&2
+  indent "$(cut -f2 <<<"$blanks" | sort -u | cut -c1-120)" >&2
   fail=1
 done
 while IFS= read -r entry; do
