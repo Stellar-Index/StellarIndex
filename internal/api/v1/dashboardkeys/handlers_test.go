@@ -1166,16 +1166,16 @@ type revokeFailingMirror struct {
 
 func (m revokeFailingMirror) RevokeKeyByID(context.Context, string, string) error { return m.err }
 
-// A key the mirror never held revokes cleanly; a mirror that cannot drop
-// a live credential fails the revoke so the caller retries, rather than
-// 204ing over a key that still works.
+// A key the mirror never held revokes cleanly; a mirror that cannot drop a live credential fails
+// the revoke with the management row still active, so the dashboard never shows a working key as revoked.
 func TestDashboardRevoke_MirrorRemovalOutcome(t *testing.T) {
 	for name, tc := range map[string]struct {
-		err  error
-		want int
+		err         error
+		want        int
+		wantRevoked bool
 	}{
-		"never mirrored": {auth.ErrKeyNotFound, http.StatusNoContent},
-		"redis down":     {errors.New("connection refused"), http.StatusInternalServerError},
+		"never mirrored": {auth.ErrKeyNotFound, http.StatusNoContent, true},
+		"redis down":     {errors.New("connection refused"), http.StatusInternalServerError, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, store, sc := newTestRig(t)
@@ -1188,8 +1188,8 @@ func TestDashboardRevoke_MirrorRemovalOutcome(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("status = %d, want %d; body = %s", w.Code, tc.want, w.Body.String())
 			}
-			if store.byID["k-mine"].RevokedAt.IsZero() {
-				t.Error("management row not revoked")
+			if revoked := !store.byID["k-mine"].RevokedAt.IsZero(); revoked != tc.wantRevoked {
+				t.Errorf("management row revoked = %v, want %v (it must not read revoked while the live credential survives)", revoked, tc.wantRevoked)
 			}
 		})
 	}

@@ -493,16 +493,20 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The mirror is the working credential under auth_backend=redis, so it dies first: a failure
+	// leaves the row active (a 500 the caller retries), never a revoked row over a live key.
+	if err := h.revokeMirror(r.Context(), sc.Account, id); err != nil {
+		h.cfg.Logger.Error("revoke mirrored key", "err", err, "key_id", id)
+		writeProblem(w, http.StatusInternalServerError,
+			"the key's live credential could not be removed; it is still active, retry", r.URL.Path)
+		return
+	}
 	if err := h.cfg.Keys.Revoke(r.Context(), sc.Account.ID, id, sc.User.ID, "revoked from dashboard"); err != nil {
 		h.cfg.Logger.Error("revoke key in postgres", "err", err, "key_id", id)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
 	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing)
-	// The mirror is the working credential under auth_backend=redis and
-	// slides its TTL on use, so failing to remove it is a 500 the caller
-	// retries (the Postgres revoke is idempotent), never a 204.
-	mirrorErr := h.revokeMirror(r.Context(), sc.Account, id)
 	// Best-effort cache invalidation. A failure here means the
 	// runtime auth cache keeps authenticating the revoked key
 	// until the TTL rolls it off; we log + 204 anyway so the
@@ -513,12 +517,6 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			h.cfg.Logger.Warn("invalidate auth cache after revoke",
 				"err", err, "key_id", id)
 		}
-	}
-	if mirrorErr != nil {
-		h.cfg.Logger.Error("revoke mirrored key after postgres revoke", "err", mirrorErr, "key_id", id)
-		writeProblem(w, http.StatusInternalServerError,
-			"key revoked, but its live credential could not be removed; retry", r.URL.Path)
-		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
