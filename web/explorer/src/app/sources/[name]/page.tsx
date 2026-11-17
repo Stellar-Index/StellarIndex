@@ -30,6 +30,8 @@ import {
   formatPairPrice,
 } from '@/lib/format';
 import { asExample } from '@/api/client';
+import type { components } from '@/api/types';
+import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import { shortAssetText } from '@/lib/asset-label';
 import { cn } from '@/lib/cn';
@@ -149,14 +151,7 @@ async function fetchCursors(): Promise<CursorRow[]> {
   return rows ?? [];
 }
 
-interface MarketRow {
-  base: string;
-  quote: string;
-  last_trade_at: string;
-  trade_count_24h: number;
-  volume_24h_usd?: string | null;
-  last_price?: string | null;
-}
+type MarketRow = components['schemas']['MarketRow'];
 
 async function fetchSourceMarkets(name: string): Promise<MarketRow[] | null> {
   // /v1/markets accepts ?source=<name> filter (DistinctPairs scoped
@@ -445,9 +440,19 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
                           {formatLastPrice(m.last_price)}
                         </Td>
                         <Td align="right" className="font-mono">
-                          {m.volume_24h_usd
-                            ? `$${formatCompactUnits(m.volume_24h_usd)}`
-                            : '—'}
+                          {m.volume_24h_usd ? (
+                            <span
+                              title={
+                                m.volume_lower_bound
+                                  ? VOLUME_FLOOR_HINT
+                                  : undefined
+                              }
+                            >
+                              {`${m.volume_lower_bound ? '≥ ' : ''}$${formatCompactUnits(m.volume_24h_usd)}`}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
                         </Td>
                         <Td align="right" className="font-mono">
                           {formatCompact(m.trade_count_24h)}
