@@ -20,4 +20,14 @@ describe('toCsv', () => {
       '123456789012345678901234,0.0000001234567890,7',
     );
   });
+
+  it('defuses formula-leading text but leaves numeric strings verbatim', () => {
+    const csv = toCsv(
+      ['m', 'n', 'x', 'y'],
+      [{ m: '=HYPERLINK("http://e")', n: '-1234.5', x: '@SUM(A1)', y: '+5' }],
+    );
+    expect(csv.split('\r\n')[1]).toBe(
+      `"'=HYPERLINK(""http://e"")",-1234.5,'@SUM(A1),+5`,
+    );
+  });
 });
