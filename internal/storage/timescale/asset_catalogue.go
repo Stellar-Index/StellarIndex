@@ -51,10 +51,8 @@ type AssetRow struct {
 	// all (native XLM has no registry row); the API omits the field.
 	ObservationCountUnmeasured bool
 
-	// Latest VWAP-against-USD if available. Nil when:
-	//   - no off-chain peg (illiquid Soroban-only token), or
-	//   - the asset has no `fiat:USD` quote pair, or
-	//   - the freeze writer has frozen this pair.
+	// Headline USD price from asset_price_snapshot (USD-proxy or XLM arm, see [priceArmPickExpr]); nil when no arm can price the
+	// asset. Not gated on a freeze of the asset's own pair: only the XLM/USD anchor honours freeze_events.
 	PriceUSD *string
 	// Trailing-24h USD-denominated trade volume. Nil when no
 	// trades hit `usd_volume`-eligible quotes in 24h.
