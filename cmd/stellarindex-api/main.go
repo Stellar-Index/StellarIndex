@@ -14,7 +14,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -2105,7 +2104,8 @@ var usdQuoteAsset = func() canonical.Asset {
 	return a
 }()
 
-// storeChange24hReader serves the latest closed prices_1m bucket at or before now-24h; sql.ErrNoRows becomes v1.ErrChange24hUnavailable.
+// storeChange24hReader serves the latest closed prices_1m bucket at or before now-24h and within
+// timescale.Change24hAnchorTolerance of it; sql.ErrNoRows becomes v1.ErrChange24hUnavailable.
 // On a literal miss it tries asset/<peg> from the operator-declared USD-pegged set (nothing on-chain quotes fiat:USD); decimals
 // normalises the anchor (see normalizeChange24hAnchor).
 // change24hStore is the part of *timescale.Store the anchor reads.
@@ -2123,9 +2123,6 @@ type storeChange24hReader struct {
 	logger    *slog.Logger                // nil → guard logging disabled
 }
 
-// change24hAnchorMaxStaleness is unbounded because ClosedVWAP1mAtOrBefore bounds nothing either.
-const change24hAnchorMaxStaleness = time.Duration(math.MaxInt64)
-
 // errChange24hAnchorGuarded: the anchor bucket exists but the guard refused it.
 var errChange24hAnchorGuarded = errors.New("change_24h anchor refused by the serving-sanity guard")
 
@@ -2136,17 +2133,23 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 	// of a percentage. The gates are asked only about a market that has a bucket, as LatestPrice does: most
 	// assets have none in their literal USD pair. The anchor is kept for every caller (minuteChange24hReader),
 	// hence the shared read.
+	// The read itself has no lower bound, so a market quiet for weeks would otherwise divide by a weeks-old price;
+	// the bound is the listing's 24h-window tolerance, so detail, batch and listing withhold the same anchors.
+	oldest := at.Add(-timescale.Change24hAnchorTolerance)
 	guardedAnchor24h := func(ctx context.Context, pair canonical.Pair, at time.Time) (timescale.Vwap1mRow, error) {
 		row, err := r.s.ClosedVWAP1mAtOrBefore(ctx, pair, at)
 		if err != nil {
 			return timescale.Vwap1mRow{}, err
 		}
+		if row.Bucket.Before(oldest) {
+			return timescale.Vwap1mRow{}, sql.ErrNoRows
+		}
 		if wiring.PriceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "change_anchor",
 			wiring.AsOfInstant(at), wiring.ForSharedRead()) != pricingguard.NotWithheld {
 			return timescale.Vwap1mRow{}, errChange24hAnchorGuarded
 		}
-		served, ok := pricingguard.GuardServedVWAP1mAt(ctx, r.s, r.logger, pair, row, at, change24hAnchorMaxStaleness)
-		if !ok {
+		served, ok := pricingguard.GuardServedVWAP1mAt(ctx, r.s, r.logger, pair, row, at, timescale.Change24hAnchorTolerance)
+		if !ok || served.Bucket.Before(oldest) {
 			return timescale.Vwap1mRow{}, errChange24hAnchorGuarded
 		}
 		return served, nil

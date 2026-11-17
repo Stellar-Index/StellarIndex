@@ -12151,7 +12151,7 @@ export interface components {
             thin_market?: boolean;
             /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
             substance?: components["schemas"]["SubstanceEvidence"];
-            /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket ~24h ago. */
+            /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket within 30 minutes of 24h ago. */
             change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
             market_cap_usd?: string | null;
@@ -12799,7 +12799,7 @@ export interface components {
                 observed_at: string;
                 sources: string[];
             } | null;
-            /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
+            /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists no more than 30 minutes before 24h ago; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
             change_24h_pct?: string | null;
             /**
              * Format: float
