@@ -20,6 +20,48 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.124.0] - 2026-11-17
+
+Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains response flags and fields. The OpenAPI contract gains `/v1/lending/rates` and additive flags and fields; nothing is removed. Host payload changed: ClickHouse view definitions (`ops_by_source`, `account_activity`, `ttl_live_until`, `contract_instance_changes`), the API and aggregator unit restart limits, the firewall and Caddy templates (rendered output unchanged unless `http_origin_lock_enabled` is set), and the patroni, redis-sentinel and loki roles. Run the role before deploying. After deploying, `stellar.lending_state_hourly` must be emptied and refilled from lending genesis, then proved (`ch-entry-history -lending-only`, `-prove`).
+
+### Added
+
+- **api:** `/v1/lending/rates` lists every Blend and BLNT reserve with supply and borrow APR, utilisation, supplied and borrowed amounts, factors and caps, filterable by asset and protocol.
+- **api:** `stellarindex_api_flagged_responses_total{route,flag}` counts degraded and stale responses; a gauge reports the newest day of the contract census.
+- **api:** `/v1/contracts/stats` carries `active_90d_through` and is a lower bound when the census is behind.
+- **explorer:** protocol tables show asset codes, asset pairs and curated pool names with the address on hover, and amounts in human units.
+- **ansible:** an opt-in origin lock restricts ports 80 and 443 to the CDN ranges, listed extra CIDRs and internal addresses. It is off by default.
+- **monitoring:** five new ticket alerts, including a stale baseline refresh and an ingestion sink fault drop.
+- **ci:** the lake-dedup lint watches all 31 ReplacingMergeTree lake tables and reads whose table name is spliced in; the docs lint rejects a partial-set rollback command and an any-branch release signer.
+
+### Changed
+
+- **api:** `/v1/ohlc`, `/v1/chart` and `/v1/history/since-inception` are cached on the short band, and `/v1/ohlc` returns the price-withheld 404 for a scam-flagged issuer.
+- **api:** folded OHLC intervals serve the buckets that start inside the requested window, as the native intervals do.
+- **api:** a published token `decimals` is always a scale read on-chain; an unknown scale is absent.
+- **api:** the API refuses to start, and `-dry-run` fails, on an unreadable or invalid holds file.
+- **ops:** `listing-sync` refuses a run that would prune more than 20% of the listing directory (floor 5) unless `-accept-churn` is passed.
+- **ops:** an external trades backfill refreshes the trades aggregates over the span it wrote.
+- **ops:** the API and aggregator units keep restarting through a 15-minute Postgres outage.
+
+### Fixed
+
+- **lending:** hourly lending state is derived from the lake's current rows only; superseded row versions stopped the fill and could have produced wrong hours. The fill runs in 100k-ledger windows.
+- **pricing:** a stale headline price, a dust-only market set and a single outlier bar no longer reach asset prices, markets and OHLC unflagged.
+- **rwa:** the premium is bounded by the published value on both surfaces, and the reference basis names the read that did not answer.
+- **assets:** failed, stale and partial reads reach the response flags on the asset listing, detail and verified routes.
+- **api:** account positions disclose a capped venue fold, and a DeFindex row is not closed on a zero net flow; lending earnings serves a capped read as a lower bound instead of a 500.
+- **api:** an unchecked peg is flagged rather than served as holding; lending pools, markets and issuers flag a failed or truncated read; a history cursor older than the defaulted `from` is not skipped.
+- **auth:** a minted key is bounded by its minter, key validation fails closed when the key store is down, and an interrupted account erasure is finished.
+- **lake:** the ops-by-source proof sees fee payers, and the backfill runbooks fail closed.
+- **ops:** `data-freshness.sh` fails a probe on a SQL error; `pg-chunk-scan.sh` samples correctly; a balance diagnostic no longer counts superseded row versions.
+- **ansible:** the patroni, redis-sentinel and loki roles fail safe on a bad bootstrap, an unauthenticated Redis and an unbounded Loki.
+- **monitoring:** five alerts that could not fire now can.
+- **ci:** bypasses in the migration gates are closed, and four lints are tightened.
+- **explorer:** CSV exports defuse spreadsheet formulas in text cells; floor, derived and stale figures are marked on asset and RWA pages.
+- **docs:** 35 operator procedures (rollback, release verification, recovery, credential rotation, privacy requests, runbooks) are corrected against the code they describe.
+- **tests:** two intermittently failing tests are deterministic.
+
 ## [v0.123.0] - 2026-11-17
 
 Tested against Stellar protocol 27. Two migrations, both additive on `blnt_events` (0225, an index on the user column; 0226, a nullable `tx_index` column). No `pkg/*` change. The OpenAPI contract gains seven lending paths and breaks none. Host payload: a new ClickHouse table `stellar.lending_state_hourly`, a `lending-state` unit and timer (not enabled by default) and one alert rule. After the deploy an operator rebuilds BLNT so existing rows gain their `tx_index`: `stellarindex-ops projected-rebuild -source blnt -from 65134154 -to <blnt projector cursor> -write`.
@@ -96,27 +138,3 @@ Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client
 - **explorer:** the og image rate limit keys IPv6 on the /64 and no longer resets itself. The icon proxy caches by icon. A cold contract WASM fill takes a refresh-gate slot. Shell crashes and errors thrown outside render are reported. The shadow Worker is removed and test nets resolve their own API.
 - **edge:** the access log redacts an API key in the request path.
 - **deploy:** the config-apply baseline ranks a pre-release below its release.
-
-## [v0.120.0] - 2026-11-16
-
-Tested against Stellar protocol 27. Migration 0223 (replaces the audit-erasure function; catalog only, no table rewrite). No `pkg/*` break; `pkg/client` gains `unread` on the price batch envelope. No config change. Host payload changed: the API, indexer and aggregator units and eight archival-node job units (a timer tick no longer starts a stopped datastore), and the r1 Prometheus rule tree (two alert descriptions).
-
-### Changed
-
-- **api:** a failed price read is no longer a miss: `/v1/price` and the tip answer an error, and `/v1/price/batch` lists the ids it could not read under `unread`. A markets list missing a failed leg is flagged `truncated`.
-- **api:** an RWA class or issuer total that is missing members is flagged as a lower bound. Aquarius DEX TVL is marked stale when its source stops, curated pools the lake cannot read are counted as missing, and a withdrawn figure is not served from cache.
-- **api:** a holders board read from the rollup carries the rollup cycle's time as `as_of`, omits `as_of_ledger`, and is flagged `stale` once that time is more than 300s old.
-- **auth:** the staff kill switch revokes keys under `auth_backend=postgres`. An inherited monthly quota is never unmetered, and a revoke evicts the Postgres key cache. Lowering or clearing a rate-limit override lowers the keys minted under it.
-- **privacy:** erasing an account also removes its webhook hosts, minted-key slug and passkey names from the audit log.
-- **ingest:** every lake read has a 60s deadline, so a hung storage request fails and is retried instead of holding the live tail or a backfill. `stream_path_total` reports `hot` where it reported `sdk`.
-- **explorer:** the asset page states identity only where it is proven, and five panels no longer state more than the data behind them.
-
-### Fixed
-
-- **forex:** a feed that keeps re-serving an old bar is not treated as live, and a held series does not rewrite the day it was fetched on.
-- **coinbase:** a product the venue refuses raises the rejected-subscription gauge. **bitstamp:** the history backfill walks from an off-grid start and refuses a body with no candles.
-- **alerts:** a price alert that delivered nothing does not start a cooldown. A stalled customer webhook endpoint holds its own lane, not the queue.
-- **ops:** a backfill window counts as done only through its recorded end and only while the lake still holds it. `fx-history-backfill` leaves the live worker's last 7 days alone. The SLA proof holds each endpoint to the window's coverage floor, the DNS perimeter check reads records tag by tag, and two deploy checks stop passing on no evidence.
-- **clickhouse:** two side-by-side rebuild runbooks cover the MV-creation ledger, catch up with a margin after cutover, and close the gap on a post-cutover rollback.
-- **docs:** the config reference says what the failed-auth limit does: past the cap a rejection answers 429 instead of 401; it does not stop a lookup or a correct guess.
-- **ci:** a lake read in a double-quoted Go string fails `lint-lake-dedup`.
