@@ -310,7 +310,7 @@ sudo -u postgres psql stellarindex -c \
 
 ## stellarindex_asset_volume_rollup_failing
 
-P3 (informational), `for: 30m`. Expr: `sum(rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0` (sweeps every ~2 min). `/v1/assets` `volume_24h_usd` freezes at its last-good value.
+P3, `for: 5m`. Expr: `sum(increase(stellarindex_asset_volume_rollup_sweeps_total{outcome="ok"}[10m])) < 1` (sweeps every ~2 min), so it fires ~15 min after the last good sweep whether the sweeps fail or hang. The sweep writes `asset_volume_24h` and `asset_price_snapshot`; listings ignore snapshot rows older than 15 min, so by the time it fires listing price, change and market cap are blank and `volume_24h_usd` is stale. `/v1/price` is unaffected.
 
 ### Check
 
