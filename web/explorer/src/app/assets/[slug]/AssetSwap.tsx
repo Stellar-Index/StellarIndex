@@ -676,10 +676,15 @@ function TokenPicker({
         .flatMap((c): SwapToken[] => {
           // A catalogue row's asset_id is its slug, which /v1/price/batch
           // rejects; price it as this network's verified issuance instead.
+          // A crypto ticker with no issuance on this network (BTC, ETH) is
+          // priced by its ADR-0014 cross-venue id; never an issued asset's code.
           const key =
             c.asset_id && isStellarAssetId(c.asset_id)
               ? c.asset_id
-              : verified?.issuanceBySlug?.get((c.slug ?? '').toLowerCase());
+              : (verified?.issuanceBySlug?.get((c.slug ?? '').toLowerCase()) ??
+                (verified != null && c.class === 'crypto' && c.code
+                  ? `crypto:${c.code}`
+                  : undefined));
           if (!key) return [];
           const price = c.price_usd != null ? Number(c.price_usd) : null;
           return [

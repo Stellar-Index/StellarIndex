@@ -304,6 +304,40 @@ describe('AssetSwap catalogue leg', () => {
     await vi.waitFor(() => expect(legIds()).toContain(USDC));
     expect(legIds()).not.toContain('usdc');
   });
+
+  it('keeps a crypto row with no issuance here and prices it as crypto:<TICKER>', async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === '/v1/assets/verified') return { data: [{ slug: 'btc' }] };
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: 'btc',
+              slug: 'btc',
+              code: 'BTC',
+              class: 'crypto',
+              type: 'global',
+              price_usd: '97000',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /BTC/ }));
+
+    const legIds = () =>
+      vi
+        .mocked(apiGet)
+        .mock.calls.filter(([p]) => p === '/v1/price/batch')
+        .map(([, params]) => (params as { asset_ids?: string }).asset_ids);
+    await vi.waitFor(() => expect(legIds()).toContain('crypto:BTC'));
+    expect(legIds()).not.toContain('btc');
+  });
 });
 
 // TokenPicker hand-rolled an Escape listener instead of the shared
