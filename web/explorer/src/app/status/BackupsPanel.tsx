@@ -125,6 +125,8 @@ function bytesText(n: number | null | undefined): string {
 export default function BackupsPanel() {
   const { data: env, error, isPending } = useBackupsDiagnostics();
   const doc = env?.data;
+  // react-query keeps the last good data beside a failed refetch.
+  const refreshFailed = error != null && doc != null;
 
   return (
     <section aria-labelledby="backups-heading">
@@ -138,8 +140,16 @@ export default function BackupsPanel() {
             · freshness vs. SLO, from the host&apos;s own exporters
           </span>
         </h2>
-        {doc && <OverallBadge doc={doc} />}
+        {doc && <OverallBadge doc={doc} refreshFailed={refreshFailed} />}
       </div>
+
+      {refreshFailed && (
+        <Card className="border-line bg-surface-muted text-ink-muted mb-3 px-4 py-3 text-sm">
+          Backup freshness could not be refreshed ({error.message}). The
+          verdicts below are the last known, as of {dateText(env?.as_of)}, and
+          may no longer hold.
+        </Card>
+      )}
 
       {error && !doc && (
         <Card className="border-line bg-surface-muted text-ink-muted px-4 py-3 text-sm">
@@ -166,7 +176,20 @@ export default function BackupsPanel() {
 // OverallBadge — the panel's roll-up. `source_status` outranks the
 // freshness roll-up in the label: an "unknown" source means the
 // verdicts below are blind, and the reader must know that first.
-function OverallBadge({ doc }: { doc: BackupsDiagnostics }) {
+function OverallBadge({
+  doc,
+  refreshFailed,
+}: {
+  doc: BackupsDiagnostics;
+  refreshFailed: boolean;
+}) {
+  if (refreshFailed) {
+    return (
+      <Badge tone="neutral" dot>
+        last known · not current
+      </Badge>
+    );
+  }
   if (doc.source_status === 'unknown') {
     return (
       <Badge tone="neutral" dot>
