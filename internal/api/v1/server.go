@@ -1498,10 +1498,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/oracle/prices", s.handleOraclePrices)
 	s.mux.HandleFunc("GET /v1/oracle/x_last_price", s.handleOracleXLastPrice)
 
-	// Lending — Blend pools observed in the auction stream.
+	// Lending (Blend and BLNT); reserve state is decoded from the lake's contract storage (ADR-0039).
 	s.mux.HandleFunc("GET /v1/lending/pools", s.handleLendingPools)
 	s.mux.HandleFunc("GET /v1/lending/rates", s.handleLendingRates)
-	// Real per-reserve current-state TVL/util/APY from the lake (ADR-0039).
+	s.mux.HandleFunc("GET /v1/lending/protocols", s.handleLendingProtocols)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves", s.handleLendingPoolReserves)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/config-history", s.handleLendingConfigHistory)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop", s.handleLendingPoolBackstop)
