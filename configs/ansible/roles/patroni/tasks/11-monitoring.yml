@@ -40,6 +40,8 @@
       # TYPE stellarindex_patroni_running gauge
       stellarindex_patroni_running $([[ "$STATE" == "running" ]] && echo 1 || echo 0)
       EOF
+      # mktemp creates 0600; node_exporter is not root.
+      chmod 0644 "$TMP"
       mv -f "$TMP" "$OUT"
 
 - name: install patroni-textfile-scraper systemd service
