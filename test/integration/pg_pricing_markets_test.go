@@ -542,6 +542,11 @@ func TestMarketsListingGrain(t *testing.T) {
 	// ── pair D: one priced print and one with no trade-time usd_volume ─
 	seedGrainTrade(t, ctx, db, 50, "sdex", now.Add(-40*time.Minute), "crypto:ADA", "fiat:USD", "1", "3", "3")
 
+	// ── pairs E/F on one venue: E idle 3 days; F's only print 2 min inside 24h, almost always in an hour bucket that began
+	// over 24h ago.
+	seedGrainTrade(t, ctx, db, 80, "aquarius", now.Add(-72*time.Hour), "crypto:BTC", "fiat:USD", "1", "50", "50")
+	seedGrainTrade(t, ctx, db, 81, "aquarius", now.Add(-24*time.Hour+2*time.Minute), "crypto:DOT", "fiat:USD", "1", "6", "6")
+
 	// prices_1m and pools_per_source_1h are materialized whole (end_offsets 30 s and 5 min); prices_1d only to the previous
 	// UTC midnight, the state its 6h end_offset leaves it in for every pair that traded today.
 	for _, stmt := range []string{
@@ -615,6 +620,37 @@ func TestMarketsListingGrain(t *testing.T) {
 		}
 		if !seen["soroswap"] || !seen["sdex"] {
 			t.Errorf("AllPools(PoolsFilter{}) sources = %v, want both soroswap and sdex (unset Sources is no filter)", seen)
+		}
+	})
+
+	t.Run("markets bound last_price to a 24h trade, pools keep the newest", func(t *testing.T) {
+		markets, _, err := store.SourceMarkets(ctx, "aquarius", "", 100, timescale.MarketsOrderPair)
+		if err != nil {
+			t.Fatalf("SourceMarkets: %v", err)
+		}
+		if idle := findGrainMarket(t, markets, "crypto:BTC", "fiat:USD"); idle.LastPrice != nil {
+			t.Errorf("/v1/markets?source=aquarius idle pair last_price = %s, want nil (last trade 3 days ago)", *idle.LastPrice)
+		}
+		if got := numeric(t, findGrainMarket(t, markets, "crypto:DOT", "fiat:USD").LastPrice); got != 6 {
+			t.Errorf("/v1/markets?source=aquarius last_price = %v, want 6 (traded 23h58m ago)", got)
+		}
+
+		pools, _, err := store.AllPools(ctx,
+			timescale.PoolsFilter{Sources: []string{"aquarius"}}, "", 100, timescale.MarketsOrderPair)
+		if err != nil {
+			t.Fatalf("AllPools: %v", err)
+		}
+		var idle *timescale.Pool
+		for i := range pools {
+			if pools[i].Pair.Base.String() == "crypto:BTC" && pools[i].Pair.Quote.String() == "fiat:USD" {
+				idle = &pools[i]
+			}
+		}
+		if idle == nil {
+			t.Fatalf("AllPools(aquarius) has no crypto:BTC/fiat:USD row: %+v", pools)
+		}
+		if got := numeric(t, idle.LastPrice); got != 50 {
+			t.Errorf("/v1/pools idle pool last_price = %v, want 50 (the venue's most recent price, however old)", got)
 		}
 	})
 
