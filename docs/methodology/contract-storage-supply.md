@@ -267,6 +267,10 @@ The markers are a **pre-filter only**. Every surviving row is decoded and
 re-checked in Go, because the marker proves the key's shape and not the value's
 meaning.
 
+The API caches each contract's reading, or the reader's decline, for five
+minutes with one fill in flight per contract, as it does the event net. A
+failed read is never cached.
+
 ---
 
 ## 9. What this does not do
