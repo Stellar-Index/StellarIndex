@@ -18275,7 +18275,10 @@ export interface operations {
                      *       ],
                      *       "as_of": "2026-11-17T07:00:00Z",
                      *       "flags": {
-                     *         "stale": false
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
                      *       }
                      *     }
                      */
