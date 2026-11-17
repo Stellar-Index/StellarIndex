@@ -33,8 +33,9 @@
 # operation_results, contract_events, ledgers.
 #
 # Per-partition rows_before/rows_after/dup_rows_removed land in
-# /var/log/lake-dedup-<table>.log. Partitions with zero measured duplicates are
-# skipped up front, so a non-shrinking partition should be rare.
+# /var/log/lake-dedup-<table>.log. Each partition's duplicates are counted
+# (one FINAL scan of that partition) before it is touched, and a partition with
+# none is skipped, so a non-shrinking partition should be rare.
 #
 # Progress also lands as node_exporter textfile gauges (stellarindex_lake_dedup_*
 # in <TEXTFILE_DIR>/lake_dedup_<table>.prom), written tmp-then-mv like
@@ -93,7 +94,7 @@ emit_metrics() {
     echo "# HELP stellarindex_lake_dedup_heartbeat_unix Unix time of the most recent liveness write, rewritten every 60s independent of partition progress so a stalled OPTIMIZE is distinguishable from a dead process."
     echo "# TYPE stellarindex_lake_dedup_heartbeat_unix gauge"
     echo "stellarindex_lake_dedup_heartbeat_unix{table=\"$T\"} $(date +%s)"
-    echo "# HELP stellarindex_lake_dedup_partitions_total Dup-candidate partitions found for the current run."
+    echo "# HELP stellarindex_lake_dedup_partitions_total Active partitions the current run probes for duplicates."
     echo "# TYPE stellarindex_lake_dedup_partitions_total gauge"
     echo "stellarindex_lake_dedup_partitions_total{table=\"$T\"} ${total:-0}"
     echo "# HELP stellarindex_lake_dedup_partitions_processed Partitions this run has finished OPTIMIZE-ing (or planned, under DRY_RUN) so far."
@@ -159,35 +160,34 @@ require_number() {
 
 log "=== lake-dedup start table=$T max_partitions=$MAXP dry_run=$DRY_RUN ==="
 
-# The table's own ORDER BY key is the real duplicate identity: equal keys are the
-# same ledger row seen twice, whatever their ingested_at. A months>1 proxy
-# false-negatives (both campaigns in one month) and false-positives (a partition
-# spanning two months with no dups, paying for an empty OPTIMIZE).
-SORTKEY=$($CH -q "SELECT sorting_key FROM system.tables WHERE database='stellar' AND name='${T}'" < /dev/null)
-sortkey_rc=$?
-if [ "$sortkey_rc" -ne 0 ] || [ -z "$SORTKEY" ]; then
-  log "ABORT: sorting-key lookup FAILED rc=$sortkey_rc sortkey='$SORTKEY' — cannot compute real dup counts"
-  exit 1
-fi
-
-# Partitions where row count exceeds distinct-key count hold duplicates under the
-# table's own ORDER BY: a direct measurement, not a proxy. Oldest first: coldest
-# data, and failures surface before the big recent partitions.
+# Active partitions come from part metadata, never a table scan. Oldest first:
+# coldest data, and failures surface before the big recent partitions.
 PARTS=$($CH -q "
-  SELECT partition FROM (
-    SELECT _partition_id AS partition, count() - uniqExact((${SORTKEY})) AS dup_rows
-    FROM stellar.${T} GROUP BY partition
-  ) WHERE dup_rows > 0 ORDER BY toUInt32OrZero(partition) ASC" < /dev/null)
+  SELECT DISTINCT partition_id FROM system.parts
+  WHERE database='stellar' AND table='${T}' AND active
+  ORDER BY toUInt32OrZero(partition_id) ASC" < /dev/null)
 enum_rc=$?
 if [ "$enum_rc" -ne 0 ]; then
   log "ABORT: partition-enumeration query FAILED rc=$enum_rc — NOT reporting success on an unknown partition list"
   exit 1
 fi
 
-# A legitimate zero (query succeeded, no dup candidates) is logged here; a failed
+# A legitimate zero (query succeeded, no partitions) is logged here; a failed
 # query takes the ABORT above instead.
 total=$(echo "$PARTS" | grep -c . || true)
-log "dup-candidate partitions: $total"
+log "active partitions: $total"
+
+# probe_dups <partition>: rows the engine's own merge would drop from one
+# partition. FINAL collapses on the table's ORDER BY key, the identity OPTIMIZE
+# FINAL dedups on, and streams it in key order; a whole-table uniqExact holds a
+# hash per row of the table and cannot finish on operations or transactions.
+probe_dups() {
+  $CH -q "
+    SELECT greatest(
+      toInt64((SELECT count() FROM stellar.${T} WHERE _partition_id = '$1'))
+      - toInt64((SELECT count() FROM stellar.${T} FINAL WHERE _partition_id = '$1')), 0)
+    SETTINGS max_threads = 4, max_memory_usage = 4294967296" < /dev/null
+}
 
 emit_metrics 1 ""
 if [ "$TEXTFILE_DIR" != "/dev/null" ]; then
@@ -200,7 +200,20 @@ fi
 n=0
 for p in $PARTS; do
   [ -f "$STOP" ] && { log "STOP file present — exiting cleanly after $n partitions"; break; }
-  n=$((n+1)); [ "$n" -gt "$MAXP" ] && { n=$((n-1)); log "max_partitions reached"; break; }
+  [ "$n" -ge "$MAXP" ] && { log "max_partitions reached"; break; }
+
+  dup_rows=$(probe_dups "$p")
+  probe_rc=$?
+  if [ "$probe_rc" -ne 0 ]; then
+    log "ABORT partition=$p: duplicate-count probe FAILED rc=$probe_rc"
+    exit 1
+  fi
+  require_number "dup_rows" "$dup_rows"
+  if [ "$dup_rows" -eq 0 ]; then
+    log "skip partition=$p dup_rows=0"
+    continue
+  fi
+  n=$((n+1))
 
   stats=$($CH -q "
     SELECT sum(rows), sum(bytes_on_disk) FROM system.parts
@@ -231,7 +244,7 @@ for p in $PARTS; do
   fi
 
   if [ "$DRY_RUN" = "1" ]; then
-    log "DRY partition=$p rows=$rows_before bytes=$bytes_before"
+    log "DRY partition=$p rows=$rows_before bytes=$bytes_before dup_rows=$dup_rows"
     write_progress "$n"
     continue
   fi

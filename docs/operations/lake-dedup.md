@@ -29,7 +29,8 @@ tail -f /var/log/lake-dedup-transactions.log
 ```
 
 - Stop gracefully: `touch /tmp/lake-dedup.stop` (finishes the in-flight partition); delete the file before resuming.
-- Re-running is safe: the driver skips partitions where `count() - uniqExact(<ORDER BY key>)` is 0.
+- Re-running is safe: the driver counts each partition's duplicates (`count()` minus `count()` under `FINAL`, one
+  partition per statement) and skips a partition where that is 0. `max_partitions` counts deduped partitions only.
 - `ledger_entry_changes` is excluded on purpose (~1.4% dup on 6.17 TiB = 6 TiB rewrite for ~90 GiB).
 - Scratch guard: aborts if free space < 3x the next partition (20-40 GB each) or below the heavy-job pool floor (`HEAVY_MIN_DATA_KB`).
 - The wrapper holds the shared heavy-job lock and its pool watchdog. ZFS snapshots pin the rewritten parts: wait for a

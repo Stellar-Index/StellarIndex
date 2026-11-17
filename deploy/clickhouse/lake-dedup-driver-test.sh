@@ -16,6 +16,9 @@
 #      ABORT is skipped into an unguarded OPTIMIZE.
 #   4. a nonzero OPTIMIZE exit code aborts the run.
 #   5. the ordinary success path processes every candidate and counts correctly.
+#   5b-d. duplicates are counted one partition at a time via FINAL (never a
+#      whole-table uniqExact); a zero-dup partition is skipped; a failed probe
+#      aborts before any OPTIMIZE.
 #   6. the <table> argument is spliced into SQL and the log path, so names
 #      outside the lake tables are refused before any statement is issued.
 #   6b. a non-integer max_partitions or a DRY_RUN other than 0/1 is refused the
@@ -59,19 +62,23 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$(printf '%s' "$sql" | tr '\n\t' '  ' | tr -s ' ')" >> "$CH_LOG"
 case "$sql" in
-  *"sorting_key FROM system.tables"*)
-    if [ -n "${SORTKEY_FAIL:-}" ]; then
-      echo "Code: 60. DB::Exception: Table stellar.x does not exist." >&2
-      exit 1
-    fi
-    printf '%s\n' "${SORTKEY_ANSWER:-ledger_seq}"
-    ;;
-  *"dup_rows > 0"*)
+  *"partition_id FROM system.parts"*)
     if [ -n "${ENUM_FAIL:-}" ]; then
       echo "Code: 210. DB::NetException: Connection refused." >&2
       exit 1
     fi
     printf '%b' "${ENUM_PARTS:-}"
+    ;;
+  *"FINAL WHERE _partition_id"*)
+    if [ -n "${PROBE_FAIL:-}" ]; then
+      echo "Code: 241. DB::Exception: Memory limit exceeded." >&2
+      exit 1
+    fi
+    part="${sql#*_partition_id = \'}"; part="${part%%\'*}"
+    case " ${ZERO_DUP_PARTS:-} " in
+      *" $part "*) echo 0 ;;
+      *) printf '%s\n' "${DUP_ROWS:-60}" ;;
+    esac
     ;;
   *"sum(rows), sum(bytes_on_disk)"*)
     if [ -n "${STATS_FAIL:-}" ]; then
@@ -130,11 +137,12 @@ run() {
   shift   # the --
   LOG_STMT="$TMP/stmt.$name.log"; : > "$LOG_STMT"
   LOG="$TMP/log.$name"; : > "$LOG"
-  env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u SORTKEY_FAIL \
+  env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u PROBE_FAIL \
+      -u ZERO_DUP_PARTS -u DUP_ROWS \
       PATH="$TMP/bin:$PATH" CH="$TMP/bin/fake-ch" CH_LOG="$LOG_STMT" \
       OUT="$LOG" STOP="$TMP/stop.$name" TEXTFILE_DIR=/dev/null \
       STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=50 DF_AVAIL=1000000000000 \
-      ENUM_PARTS='' SORTKEY_ANSWER='ledger_seq' \
+      ENUM_PARTS='' \
       ${envs[@]+"${envs[@]}"} bash "$DRIVER" "$@" >> "$LOG" 2>&1
   RC=$?
 }
@@ -180,7 +188,7 @@ else
   bad "legitimate zero candidates ⇒ exited $RC"
   sed 's/^/       /' "$LOG"
 fi
-if grep -q 'dup-candidate partitions: 0' "$LOG" && grep -q '=== done: 0 partitions processed ===' "$LOG"; then
+if grep -q 'active partitions: 0' "$LOG" && grep -q '=== done: 0 partitions processed ===' "$LOG"; then
   ok "legitimate zero candidates ⇒ zero is logged and distinguishable from a failure"
 else
   bad "legitimate zero candidates ⇒ expected log lines missing"
@@ -267,38 +275,54 @@ else
   sed 's/^/       /' "$LOG"
 fi
 
-# ── 5b. sorting-key lookup FAILS ⇒ abort before the candidate query ──
-run sortkey_fail SORTKEY_FAIL=1 -- transactions
-if [ "$RC" -ne 0 ]; then
-  ok "sorting-key lookup failure ⇒ non-zero exit"
+# ── 5b. the duplicate probe is per partition, never a whole-table scan ──
+# A whole-table uniqExact holds a hash per row of operations (~25B) at once and
+# never returns. Every statement that reads the lake table must be scoped to one
+# partition, and the count must come from FINAL (the engine's own collapse).
+run probe_shape ENUM_PARTS=$'0000000003\n0000000004\n' -- transactions
+unscoped="$(grep 'FROM stellar\.transactions' "$LOG_STMT" | grep -vc "_partition_id = '" || true)"
+if [ "$unscoped" -eq 0 ] && grep -q "FROM stellar.transactions FINAL WHERE _partition_id = '0000000004'" "$LOG_STMT"; then
+  ok "duplicate probe reads one partition per statement, via FINAL"
 else
-  bad "sorting-key lookup failure ⇒ exited 0"
-  sed 's/^/       /' "$LOG"
+  bad "duplicate probe issued $unscoped unscoped read(s) of the table, or no per-partition FINAL"
+  sed 's/^/       /' "$LOG_STMT"
 fi
-if grep -q 'dup_rows > 0' "$LOG_STMT"; then
-  bad "sorting-key lookup failure ⇒ candidate query was issued anyway"
+if grep -q 'uniqExact' "$LOG_STMT"; then
+  bad "duplicate probe still issues uniqExact"
   sed 's/^/       /' "$LOG_STMT"
 else
-  ok "sorting-key lookup failure ⇒ candidate query never issued"
+  ok "duplicate probe issues no uniqExact"
 fi
 
-# ── 5c. the dup-candidate probe uses the table's real ORDER BY key, ──
-# not a toYYYYMM(ingested_at) proxy: a partition spanning two ingest months
-# with no duplicate rows must not be flagged, and one with duplicates inside a
-# single month must be.
-run real_dup_probe SORTKEY_ANSWER='ledger_seq, tx_index' ENUM_PARTS=$'0000000003\n' -- transactions
-if grep -q 'uniqExact((ledger_seq, tx_index))' "$LOG_STMT"; then
-  ok "candidate query measures real duplicates via the table's own ORDER BY key"
+# ── 5c. a partition with no duplicates is skipped, and max_partitions ──
+# counts only partitions that are actually deduped.
+run probe_skip ENUM_PARTS=$'0000000001\n0000000002\n0000000003\n' ZERO_DUP_PARTS=0000000001 -- operations 1
+if [ "$RC" -eq 0 ] && grep -q "skip partition=0000000001 dup_rows=0" "$LOG" \
+   && [ "$(grep -c 'OPTIMIZE TABLE' "$LOG_STMT")" -eq 1 ] \
+   && grep -q "OPTIMIZE TABLE stellar.operations PARTITION '0000000002' FINAL" "$LOG_STMT"; then
+  ok "zero-dup partition skipped; max_partitions=1 dedups exactly the next candidate"
 else
-  bad "candidate query does not use the table's sorting key"
-  sed 's/^/       /' "$LOG_STMT"
+  bad "zero-dup skip / max_partitions accounting wrong (rc=$RC)"
+  sed 's/^/       /' "$LOG" "$LOG_STMT"
 fi
-if grep -q 'toYYYYMM' "$LOG_STMT"; then
-  bad "candidate query still uses the toYYYYMM(ingested_at) proxy heuristic"
-  sed 's/^/       /' "$LOG_STMT"
+
+# ── 5d. a failed or unparseable probe aborts before any OPTIMIZE ──────
+run probe_fail ENUM_PARTS=$'0000000001\n' PROBE_FAIL=1 -- operations
+if [ "$RC" -ne 0 ] && grep -q 'ABORT partition=0000000001: duplicate-count probe FAILED' "$LOG"; then
+  ok "probe failure ⇒ ABORT naming the partition"
 else
-  ok "candidate query no longer relies on the ingest-month proxy"
+  bad "probe failure ⇒ no ABORT (rc=$RC)"
+  sed 's/^/       /' "$LOG"
 fi
+no_optimize probe_fail "probe failure"
+run probe_garbage ENUM_PARTS=$'0000000001\n' DUP_ROWS='Code: 241' -- operations
+if [ "$RC" -ne 0 ] && grep -q "dup_rows='Code: 241' is not a number" "$LOG"; then
+  ok "unparseable probe answer ⇒ ABORT"
+else
+  bad "unparseable probe answer ⇒ no ABORT (rc=$RC)"
+  sed 's/^/       /' "$LOG"
+fi
+no_optimize probe_garbage "unparseable probe answer"
 
 # ── 6. the table argument is spliced into SQL: only lake tables pass ──
 for bad_table in 'transactions GROUP BY 1; DROP TABLE stellar.ledgers --' '../../etc/cron.d/x' 'ledger_entries_current'; do
@@ -417,11 +441,12 @@ fi
 # with the client killed and the gauges reporting failure.
 LOG="$TMP/log.metrics_sigterm"; : > "$LOG"
 OPT_STARTED="$TMP/opt-started"; rm -f "$OPT_STARTED"
-env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u SORTKEY_FAIL \
+env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u PROBE_FAIL \
+    -u ZERO_DUP_PARTS -u DUP_ROWS \
     PATH="$TMP/bin:$PATH" CH="$TMP/bin/fake-ch" CH_LOG="$TMP/stmt.metrics_sigterm.log" \
     OUT="$LOG" STOP="$TMP/stop.metrics_sigterm" TEXTFILE_DIR="$PROMDIR" \
     STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=50 DF_AVAIL=1000000000000 \
-    ENUM_PARTS=$'0000000001\n' SORTKEY_ANSWER='ledger_seq' \
+    ENUM_PARTS=$'0000000001\n' \
     OPT_BLOCK=30 OPT_STARTED="$OPT_STARTED" \
     bash "$DRIVER" operations >> "$LOG" 2>&1 &
 driver_pid=$!
