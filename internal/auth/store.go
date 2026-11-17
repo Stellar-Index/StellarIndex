@@ -306,7 +306,8 @@ func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) 
 
 // boundRequest clamps scopes, expiry and monthly quota to the minter (when there is one) and resolves an unset quota from the identifier's plan.
 func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, int64, error) {
-	if err := s.requireLiveParent(ctx, req); err != nil {
+	req, err := s.rebaseOnParent(ctx, req)
+	if err != nil {
 		return req, 0, err
 	}
 	if req.MintedBy != nil {
@@ -342,23 +343,36 @@ func (s *RedisAPIKeyStore) boundRequest(ctx context.Context, req CreateAPIKeyReq
 	return req, monthlyQuota, nil
 }
 
-// requireLiveParent refuses a delegated mint whose minting key no longer has a live record on the
-// identifier. Checked under the mint lock, so a revoke that already swept cannot be followed by a
-// child of the key it removed; a key with no record here (Postgres-only) cannot delegate.
-func (s *RedisAPIKeyStore) requireLiveParent(ctx context.Context, req CreateAPIKeyRequest) error {
+// rebaseOnParent refuses a delegated mint whose minting key no longer has a live record on the
+// identifier (checked under the mint lock, so a revoke that already swept cannot be followed by a
+// child of the key it removed; a key with no record here cannot delegate). It then copies and
+// bounds the child's rate from that STORED record: the Subject's rate carries the account's
+// override floor, which a child must not keep once the override is lifted.
+func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyRequest) (CreateAPIKeyRequest, error) {
 	if req.ParentKeyID == "" {
-		return nil
+		return req, nil
 	}
 	_, parent, found, err := s.findRecordByKeyID(ctx, req.ParentKeyID)
 	if err != nil {
-		return fmt.Errorf("read minting key: %w", err)
+		return req, fmt.Errorf("read minting key: %w", err)
 	}
 	live := found && parent.Identifier == req.Identifier && parent.RevokedAt.IsZero() &&
 		(parent.ExpiresAt.IsZero() || s.now().Before(parent.ExpiresAt))
 	if !live {
-		return fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
+		return req, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
 	}
-	return nil
+	if req.MintedBy == nil {
+		return req, nil
+	}
+	// Asking for the minter's presented rate means inheriting it ([ChildKeyRequest]); any other
+	// value stays as asked and is refused below if it exceeds the stored rate.
+	if req.RateLimitPerMin == req.MintedBy.RateLimitPerMin {
+		req.RateLimitPerMin = parent.RateLimitPerMin
+	}
+	minter := *req.MintedBy
+	minter.RateLimitPerMin = parent.RateLimitPerMin
+	req.MintedBy = &minter
+	return req, nil
 }
 
 // mintableTier reports whether a minted record may carry t. Anonymous is

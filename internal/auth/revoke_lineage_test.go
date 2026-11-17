@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // failSecondRemoval fails the second record removal (removeIndexedRecordScript with delete-record "1") once.
@@ -244,6 +245,49 @@ func TestRevoke_WaitsForTheMintLock(t *testing.T) {
 	}
 	if _, err := f.validator.Lookup(context.Background(), rootPlain); err != nil {
 		t.Fatalf("root after the blocked revoke: %v, want still live (nothing ran unlocked)", err)
+	}
+}
+
+// TestDelegatedRate_FollowsTheMintersStoredRateNotTheAccountFloor: a child minted while the account's
+// rate override (a floor) lifts its minter must not keep that rate once the override is removed.
+func TestDelegatedRate_FollowsTheMintersStoredRateNotTheAccountFloor(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	acct := acctWithStatus("floor", platform.AccountActive)
+	acct.RateLimitPerMinOverride = 5000
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{"floor": acct}}
+	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	validator := NewRedisAPIKeyValidator(f.store.rdb, WithAccountStatus(accounts), WithClock(func() time.Time { return now }))
+	lookup := func(plain string) Subject {
+		t.Helper()
+		sub, err := validator.Lookup(ctx, plain)
+		if err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+		return sub
+	}
+
+	_, parentPlain, err := f.store.Create(ctx, CreateAPIKeyRequest{Identifier: AccountIdentifier("floor"), RateLimitPerMin: 100})
+	if err != nil {
+		t.Fatalf("Create parent: %v", err)
+	}
+	parent := lookup(parentPlain)
+	if parent.RateLimitPerMin != 5000 {
+		t.Fatalf("parent rate under the override = %d, want 5000", parent.RateLimitPerMin)
+	}
+	child, childPlain, err := f.store.Create(ctx, ChildKeyRequest(parent, "child", nil))
+	if err != nil {
+		t.Fatalf("Create child: %v", err)
+	}
+	if child.RateLimitPerMin != 100 {
+		t.Errorf("stored child rate = %d, want the minter's stored 100", child.RateLimitPerMin)
+	}
+
+	acct.RateLimitPerMinOverride = 0
+	accounts.bySlug["floor"] = acct
+	now = now.Add(time.Hour) // past the account-status cache
+	if p, c := lookup(parentPlain).RateLimitPerMin, lookup(childPlain).RateLimitPerMin; c > p {
+		t.Errorf("after the override is removed child rate %d exceeds its minter's %d", c, p)
 	}
 }
 
