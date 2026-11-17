@@ -217,7 +217,7 @@ func (v *PostgresAPIKeyValidator) readRecord(ctx context.Context, key string) (A
 		return APIKeyRecord{}, false, err
 	}
 	var rec APIKeyRecord
-	if err := json.Unmarshal(raw, &rec); err != nil {
+	if json.Unmarshal(raw, &rec) != nil {
 		return APIKeyRecord{}, false, nil
 	}
 	return rec, true, nil

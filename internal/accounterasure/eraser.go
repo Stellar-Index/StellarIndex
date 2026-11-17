@@ -322,7 +322,7 @@ func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLis
 				"account_id", id, "finish_slug", rep.Plan.Slug, "err", err)
 			// Keep sweeping, but fail the sweep so the reaper's failure alert surfaces it. The cause is
 			// flattened: a wrapped context.DeadlineExceeded would make the reaper discard the error as a shutdown.
-			incomplete = append(incomplete, fmt.Errorf("account %s: %w: %s", id, ErrCleanupIncomplete, err))
+			incomplete = append(incomplete, fmt.Errorf("account %s: %w: %s", id, ErrCleanupIncomplete, err.Error()))
 		} else if err != nil {
 			return erased, errors.Join(append(incomplete, err)...)
 		}
