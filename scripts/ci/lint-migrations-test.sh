@@ -660,8 +660,7 @@ reg_with() { # reg_with <name> <number> <cell> -> echoes the fixture path
   local out="$TMP/$1.md"
   NUM="$2" CELL="$3" awk '
     index($0, "| " ENVIRON["NUM"] " | ") == 1 {
-      p = index(substr($0, 10), " | ") + 11
-      print substr($0, 1, p) ENVIRON["CELL"] " |"; next
+      print "| " ENVIRON["NUM"] " | " ENVIRON["CELL"] " |"; next
     }
     { print }' migrations/README.md > "$out"
   echo "$out"
