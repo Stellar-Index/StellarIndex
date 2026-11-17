@@ -913,6 +913,40 @@ func TestHandleRevoke_WritesKeyRevokeAuditRow(t *testing.T) {
 	}
 }
 
+// The key.revoke row lists the delegated keys the cascade removed: it is their only audit trail.
+func TestHandleRevoke_AuditRowListsCascadedKeyIDs(t *testing.T) {
+	rdb := newMiniRedis(t)
+	store := newFakeKeyStore()
+	_, _, sc := newTestRig(t)
+	h := newMirroredHandlers(t, store, rdb)
+	resp, w := mintViaDashboard(t, h, sc, createRequest{Name: "parent"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("mint status = %d, body = %s", w.Code, w.Body.String())
+	}
+	ctx := context.Background()
+	parent, err := auth.NewRedisAPIKeyValidator(rdb).Lookup(ctx, resp.Plaintext)
+	if err != nil {
+		t.Fatalf("Lookup parent: %v", err)
+	}
+	child, childPlain, err := auth.NewRedisAPIKeyStore(rdb).Create(ctx, auth.ChildKeyRequest(parent, "child", nil))
+	if err != nil {
+		t.Fatalf("mint child: %v", err)
+	}
+	sink := &recordingAuditSink{}
+	h.cfg.Audit = sink
+
+	if w := doRevoke(t, h, sc, resp.Key.ID); w.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d, body = %s", w.Code, w.Body.String())
+	}
+	meta := fmt.Sprintf("%s", sink.only(t).Metadata)
+	if !strings.Contains(meta, `"revoked_descendant_key_ids":["`+child.KeyID+`"]`) {
+		t.Errorf("key.revoke metadata = %s, want revoked_descendant_key_ids naming %s", meta, child.KeyID)
+	}
+	if strings.Contains(meta, childPlain) || strings.Contains(meta, resp.Plaintext) {
+		t.Error("key.revoke metadata carries key material")
+	}
+}
+
 // TestParseCreateRequest_LengthLimitsCountCodePoints: the spec's
 // maxLength and Postgres length() both count characters, so a CJK name
 // at the documented limit is valid even though it is 3× that in bytes.

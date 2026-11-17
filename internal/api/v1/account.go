@@ -556,7 +556,7 @@ func (s *Server) recordAccountKeyMintAudit(
 // recordAccountKeyRevokeAudit persists the key.revoke row for every self-service revoke; best-effort, the revoke must not
 // be undone by a sink outage.
 func (s *Server) recordAccountKeyRevokeAudit(
-	r *http.Request, actor auth.Subject, keyID, reason string,
+	r *http.Request, actor auth.Subject, keyID, reason string, descendants []string,
 ) {
 	s.logger.Info("account key revoke",
 		"actor_key_id", actor.KeyID,
@@ -566,13 +566,13 @@ func (s *Server) recordAccountKeyRevokeAudit(
 	if s.Audit == nil {
 		return
 	}
-	meta, err := json.Marshal(map[string]any{
+	meta, err := json.Marshal(withRevokedDescendants(map[string]any{
 		"route":             "/v1/account/keys",
 		"actor_key_id":      actor.KeyID,
 		"actor_identifier":  actor.Identifier,
 		"target_identifier": actor.Identifier,
 		"reason":            reason,
-	})
+	}, descendants))
 	if err != nil {
 		s.logger.Warn("account key revoke: audit metadata marshal failed (skipping audit row)",
 			"err", err, "key_id", keyID)
@@ -767,7 +767,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	// Postgres management row for a key that has one — a self-service
 	// caller can hold a /v1/register-minted key, which mirrors to both
 	// stores, alongside Redis-only keys minted via this same endpoint.
-	err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
+	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -781,6 +781,6 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 			"see X-Request-ID in server logs")
 		return
 	}
-	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason)
+	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants)
 	w.WriteHeader(http.StatusNoContent)
 }

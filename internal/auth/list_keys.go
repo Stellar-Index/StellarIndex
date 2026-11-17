@@ -396,37 +396,60 @@ func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifi
 
 // RevokeKeyByID deletes the key keyID constrained to identifier (ownership checked against the RECORD); ErrKeyNotFound covers missing and foreign keys alike (no existence oracle) and is never nil on a miss.
 func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID string) error {
+	_, err := s.RevokeKeyTree(ctx, identifier, keyID)
+	return err
+}
+
+// RevokeKeyTree is [RedisAPIKeyStore.RevokeKeyByID] that also returns the KeyIDs of the delegated
+// keys the cascade removed (keyID excluded), including those removed before a failure.
+func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID string) ([]string, error) {
 	if identifier == "" {
-		return errors.New("auth: RevokeKeyByID: identifier is required")
+		return nil, errors.New("auth: RevokeKeyByID: identifier is required")
 	}
 	if keyID == "" {
-		return errors.New("auth: RevokeKeyByID: keyID is required")
+		return nil, errors.New("auth: RevokeKeyByID: keyID is required")
 	}
 	release, err := s.lockRevoke(ctx, identifier)
 	if err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	defer release()
 	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
 	if err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	// The sweep runs even without the root's own record: a key can authenticate from Postgres
 	// with no mirror record here, and its delegated keys must still die with it.
 	removed, err := s.revokeDescendants(ctx, identifier, keyID)
 	if err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	if !found || rec.Identifier != identifier {
 		if len(removed) == 0 {
-			return ErrKeyNotFound
+			return nil, ErrKeyNotFound
 		}
-		return nil
+		return removed, nil
 	}
 	if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
-		return fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	return nil
+	return removed, nil
+}
+
+// KeyRevoker removes one credential record by key id, scoped to its owner.
+type KeyRevoker interface {
+	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
+}
+
+// RevokeKeyTree revokes keyID through r and returns the delegated KeyIDs its cascade removed, for
+// the revoke's audit row; nil when r does not report them.
+func RevokeKeyTree(ctx context.Context, r KeyRevoker, identifier, keyID string) ([]string, error) {
+	if t, ok := r.(interface {
+		RevokeKeyTree(ctx context.Context, identifier, keyID string) ([]string, error)
+	}); ok {
+		return t.RevokeKeyTree(ctx, identifier, keyID)
+	}
+	return nil, r.RevokeKeyByID(ctx, identifier, keyID)
 }
 
 // lockRevoke takes the mint lock so this sweep is ordered against delegated mints, which re-check
