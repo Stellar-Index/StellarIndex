@@ -264,8 +264,12 @@ command to quarantine a source's stored trades (a second writer to
 The control plane for that exclusion exists: `stellarindex-ops
 source-exclude` records a registered source, optionally one pair, over a
 time window in the `source_exclusions` table (migration 0231), audited and
-lifted rather than deleted, and never writes `trades`. Nothing reads the
-table yet, so it has no effect on served prices or the aggregator.
+lifted rather than deleted (an append-only trigger refuses every other
+change), and never writes `trades`. A pair is stored in canonical
+orientation; a reader MUST match it in both directions and across every
+`canonical.AssetAliases` form of each leg, as
+`timescale.SourceExclusion.Covers` does. Nothing reads the table yet, so
+it has no effect on served prices or the aggregator.
 
 ## SEP-40: what we serve and why there is no generic reader
 

@@ -5,14 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ErrSourceExclusionLifted is returned by [Store.LiftSourceExclusion] for a row that was already lifted.
 var ErrSourceExclusionLifted = errors.New("timescale: source exclusion already lifted")
 
 // SourceExclusion is one source_exclusions row (migration 0231). Base and Quote are both empty for a
-// source-wide exclusion; a zero Until is open-ended and a zero LiftedAt is still active.
+// source-wide exclusion, else the pair in canonical.Orient order; a zero Until is open-ended and a zero
+// LiftedAt is not lifted.
 type SourceExclusion struct {
 	ID         int64
 	Source     string
@@ -28,8 +32,56 @@ type SourceExclusion struct {
 	LiftReason string
 }
 
-// Active reports whether the row has not been lifted.
-func (e SourceExclusion) Active() bool { return e.LiftedAt.IsZero() }
+// Lifted reports whether the row has been lifted.
+func (e SourceExclusion) Lifted() bool { return !e.LiftedAt.IsZero() }
+
+// Source-exclusion states as of a given time, as [SourceExclusion.State] reports them.
+const (
+	SourceExclusionPending = "pending"
+	SourceExclusionInForce = "in-force"
+	SourceExclusionExpired = "expired"
+	SourceExclusionLifted  = "lifted"
+)
+
+// State reports the row's state at now: lifted, or else pending / in-force / expired against [From, Until).
+func (e SourceExclusion) State(now time.Time) string {
+	switch {
+	case e.Lifted():
+		return SourceExclusionLifted
+	case now.Before(e.From):
+		return SourceExclusionPending
+	case !e.Until.IsZero() && !now.Before(e.Until):
+		return SourceExclusionExpired
+	}
+	return SourceExclusionInForce
+}
+
+// Covers reports whether the un-lifted row excludes source's base/quote price at ts: ts in [From, Until)
+// and the row is source-wide or names the pair in either direction under any canonical.AssetAliases form.
+func (e SourceExclusion) Covers(source, base, quote string, ts time.Time) bool {
+	return !e.Lifted() && e.Source == source && !ts.Before(e.From) &&
+		(e.Until.IsZero() || ts.Before(e.Until)) && e.CoversPair(base, quote)
+}
+
+// CoversPair reports whether the row's pair scope includes base/quote, ignoring source, window and lift.
+func (e SourceExclusion) CoversPair(base, quote string) bool {
+	if e.Base == "" {
+		return true
+	}
+	return (sameAssetFamily(e.Base, base) && sameAssetFamily(e.Quote, quote)) ||
+		(sameAssetFamily(e.Base, quote) && sameAssetFamily(e.Quote, base))
+}
+
+func sameAssetFamily(stored, asked string) bool {
+	if stored == asked {
+		return true
+	}
+	a, err := canonical.ParseAsset(asked)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(canonical.AssetAliasStrings(a), stored)
+}
 
 // InsertSourceExclusion appends e and returns its id; ID, CreatedAt and the lift fields of e are ignored.
 func (s *Store) InsertSourceExclusion(ctx context.Context, e SourceExclusion) (int64, error) {
@@ -51,7 +103,7 @@ func (s *Store) InsertSourceExclusion(ctx context.Context, e SourceExclusion) (i
 	return id, nil
 }
 
-// LiftSourceExclusion stamps the lift columns of an active row; the row is kept. An unknown id returns
+// LiftSourceExclusion stamps the lift columns of an un-lifted row; the row is kept. An unknown id returns
 // ErrNotFound and an already-lifted one ErrSourceExclusionLifted.
 func (s *Store) LiftSourceExclusion(ctx context.Context, id int64, liftedBy, liftReason string) error {
 	const q = `
@@ -82,13 +134,13 @@ func (s *Store) LiftSourceExclusion(ctx context.Context, id int64, liftedBy, lif
 	return fmt.Errorf("source exclusion %d: %w", id, ErrNotFound)
 }
 
-// ActiveSourceExclusions returns every un-lifted row, including ones whose window has ended or not yet begun.
-func (s *Store) ActiveSourceExclusions(ctx context.Context) ([]SourceExclusion, error) {
+// UnliftedSourceExclusions returns every un-lifted row, including ones whose window has ended or not yet begun.
+func (s *Store) UnliftedSourceExclusions(ctx context.Context) ([]SourceExclusion, error) {
 	return s.ListSourceExclusions(ctx, true)
 }
 
-// ListSourceExclusions returns rows in id order, only the un-lifted ones when activeOnly.
-func (s *Store) ListSourceExclusions(ctx context.Context, activeOnly bool) ([]SourceExclusion, error) {
+// ListSourceExclusions returns rows in id order, only the un-lifted ones when unliftedOnly.
+func (s *Store) ListSourceExclusions(ctx context.Context, unliftedOnly bool) ([]SourceExclusion, error) {
 	const q = `
 		SELECT id, source, COALESCE(base_asset, ''), COALESCE(quote_asset, ''), from_ts, until_ts,
 		       reason, actor, created_at, lifted_at, COALESCE(lifted_by, ''), COALESCE(lift_reason, '')
@@ -96,7 +148,7 @@ func (s *Store) ListSourceExclusions(ctx context.Context, activeOnly bool) ([]So
 		 WHERE NOT $1 OR lifted_at IS NULL
 		 ORDER BY id
 	`
-	rows, err := s.db.QueryContext(ctx, q, activeOnly)
+	rows, err := s.db.QueryContext(ctx, q, unliftedOnly)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListSourceExclusions: %w", err)
 	}

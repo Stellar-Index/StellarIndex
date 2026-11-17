@@ -21,6 +21,9 @@ import (
 
 const readSideNote = "source-exclude: note: served prices do not read source_exclusions yet; this row takes effect when the read side ships"
 
+// maxFutureFrom bounds how far ahead -from may start without -allow-future: a guard against year typos.
+const maxFutureFrom = 24 * time.Hour
+
 // SourceExclude records, lists or lifts an operator exclusion of a price source in source_exclusions; it never writes
 // trades. Dry-run unless -write; the audit_log row is written before the table changes.
 func SourceExclude(args []string) error {
@@ -33,7 +36,7 @@ func SourceExclude(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	req, err := f.resolve()
+	req, err := f.resolve(time.Now().UTC(), gate.Enabled())
 	if err != nil {
 		return err
 	}
@@ -51,7 +54,7 @@ func SourceExclude(args []string) error {
 	defer func() { _ = store.Close() }()
 
 	if req.mode == modeList {
-		return listSourceExclusions(ctx, store)
+		return listSourceExclusions(ctx, store, req.now)
 	}
 	gate.Banner()
 	audit := postgresstore.NewAuditStore(postgresstore.New(store.DB()))
@@ -70,43 +73,56 @@ const (
 )
 
 type sourceExcludeFlags struct {
-	list, lift                                      *bool
+	list, lift, allowOverlap, allowFuture           *bool
 	id                                              *int64
 	source, base, quote, from, until, reason, actor *string
 }
 
 func registerSourceExcludeFlags(fs *flag.FlagSet) sourceExcludeFlags {
 	return sourceExcludeFlags{
-		list:   fs.Bool("list", false, "list every source_exclusions row, active and lifted, and exit without changing anything"),
-		lift:   fs.Bool("lift", false, "lift the active exclusion named by -id (requires -reason); the row is kept"),
-		id:     fs.Int64("id", 0, "source_exclusions id to lift (with -lift)"),
-		source: fs.String("source", "", "source to exclude, as named in the source registry (e.g. binance, soroswap)"),
-		base:   fs.String("base", "", "base asset of the one pair to exclude, canonical wire form (with -quote; omit both for every pair)"),
-		quote:  fs.String("quote", "", "quote asset of the one pair to exclude, canonical wire form (with -base)"),
-		from:   fs.String("from", "", "start of the excluded window, RFC3339 (required; may be in the past)"),
-		until:  fs.String("until", "", "end of the excluded window, RFC3339 (optional; open-ended when omitted)"),
-		reason: fs.String("reason", "", "why (required for a mutation; recorded in audit_log and on the row)"),
-		actor:  fs.String("actor", "", "who; recorded in audit_log and on the row. Defaults to the OS user."),
+		list:         fs.Bool("list", false, "list every source_exclusions row with its state now (pending, in-force, expired, lifted) and exit; takes no other flag but -config and -actor"),
+		lift:         fs.Bool("lift", false, "lift the un-lifted exclusion named by -id (requires -reason); the row is kept"),
+		id:           fs.Int64("id", 0, "source_exclusions id to lift (with -lift)"),
+		source:       fs.String("source", "", "source to exclude, as named in the source registry (e.g. binance, soroswap)"),
+		base:         fs.String("base", "", "base asset of the one pair to exclude, canonical wire form (with -quote; omit both for every pair). Stored in canonical orientation; readers match both directions and every alias form"),
+		quote:        fs.String("quote", "", "quote asset of the one pair to exclude, canonical wire form (with -base)"),
+		from:         fs.String("from", "", "start of the excluded window, RFC3339 (required; may be in the past, at most 24h ahead without -allow-future)"),
+		until:        fs.String("until", "", "end of the excluded window, RFC3339 (optional; open-ended when omitted)"),
+		reason:       fs.String("reason", "", "why (required for a mutation; recorded in audit_log and on the row)"),
+		actor:        fs.String("actor", "", "who; recorded in audit_log and on the row. Defaults to the OS user."),
+		allowOverlap: fs.Bool("allow-overlap", false, "record the exclusion even though un-lifted exclusions of the same source overlap its scope and window"),
+		allowFuture:  fs.Bool("allow-future", false, "allow -from more than 24h in the future"),
 	}
 }
 
 // sourceExcludeRequest is one validated invocation. base/quote are canonical asset strings in canonical.Orient order.
 type sourceExcludeRequest struct {
 	mode          sourceExcludeMode
+	now           time.Time
 	id            int64
 	source        string
 	base, quote   string
 	flipped       bool
 	from, until   time.Time
 	reason, actor string
+	allowOverlap  bool
 }
 
-func (f sourceExcludeFlags) resolve() (sourceExcludeRequest, error) {
+// mutationFlagSet reports whether any flag that only a create or lift reads was passed.
+func (f sourceExcludeFlags) mutationFlagSet() bool {
+	return *f.source != "" || *f.base != "" || *f.quote != "" || *f.from != "" || *f.until != "" ||
+		*f.reason != "" || *f.id != 0 || *f.allowOverlap || *f.allowFuture
+}
+
+func (f sourceExcludeFlags) resolve(now time.Time, write bool) (sourceExcludeRequest, error) {
 	switch {
 	case *f.list && *f.lift:
 		return sourceExcludeRequest{}, errors.New("-list and -lift are mutually exclusive")
 	case *f.list:
-		return sourceExcludeRequest{mode: modeList}, nil
+		if write || f.mutationFlagSet() {
+			return sourceExcludeRequest{}, errors.New("-list only reads: drop -source, -base, -quote, -from, -until, -reason, -id, -allow-overlap, -allow-future and -write")
+		}
+		return sourceExcludeRequest{mode: modeList, now: now}, nil
 	}
 	reason := strings.TrimSpace(*f.reason)
 	if reason == "" {
@@ -123,15 +139,19 @@ func (f sourceExcludeFlags) resolve() (sourceExcludeRequest, error) {
 		if *f.id <= 0 {
 			return sourceExcludeRequest{}, errors.New("-lift requires -id N (see -list)")
 		}
-		if *f.source != "" || *f.base != "" || *f.quote != "" || *f.from != "" || *f.until != "" {
+		if *f.source != "" || *f.base != "" || *f.quote != "" || *f.from != "" || *f.until != "" || *f.allowOverlap || *f.allowFuture {
 			return sourceExcludeRequest{}, errors.New("-lift takes only -id, -reason and -actor")
 		}
-		return sourceExcludeRequest{mode: modeLift, id: *f.id, reason: reason, actor: actor}, nil
+		return sourceExcludeRequest{mode: modeLift, now: now, id: *f.id, reason: reason, actor: actor}, nil
 	}
 	if *f.id != 0 {
 		return sourceExcludeRequest{}, errors.New("-id is only valid with -lift")
 	}
-	req := sourceExcludeRequest{mode: modeCreate, source: *f.source, reason: reason, actor: actor}
+	return f.resolveCreate(sourceExcludeRequest{mode: modeCreate, now: now, source: *f.source, reason: reason, actor: actor, allowOverlap: *f.allowOverlap})
+}
+
+func (f sourceExcludeFlags) resolveCreate(req sourceExcludeRequest) (sourceExcludeRequest, error) {
+	var err error
 	if err := validateSource(req.source); err != nil {
 		return sourceExcludeRequest{}, err
 	}
@@ -140,6 +160,10 @@ func (f sourceExcludeFlags) resolve() (sourceExcludeRequest, error) {
 	}
 	if req.from, req.until, err = resolveWindow(*f.from, *f.until); err != nil {
 		return sourceExcludeRequest{}, err
+	}
+	if req.from.After(req.now.Add(maxFutureFrom)) && !*f.allowFuture {
+		return sourceExcludeRequest{}, fmt.Errorf("-from %s is more than 24h ahead of now (%s); check the date, or pass -allow-future if it is meant",
+			req.from.Format(time.RFC3339), req.now.Format(time.RFC3339))
 	}
 	return req, nil
 }
@@ -207,7 +231,7 @@ func resolveWindow(fromFlag, untilFlag string) (from, until time.Time, err error
 type sourceExclusionStore interface {
 	InsertSourceExclusion(ctx context.Context, e timescale.SourceExclusion) (int64, error)
 	LiftSourceExclusion(ctx context.Context, id int64, liftedBy, liftReason string) error
-	ActiveSourceExclusions(ctx context.Context) ([]timescale.SourceExclusion, error)
+	UnliftedSourceExclusions(ctx context.Context) ([]timescale.SourceExclusion, error)
 }
 
 func (r sourceExcludeRequest) scope() string {
@@ -225,9 +249,34 @@ func (r sourceExcludeRequest) window() string {
 	return r.from.Format(time.RFC3339) + " .. " + until
 }
 
+// overlaps reports whether e is the same source as r with an intersecting pair scope and window.
+func (r sourceExcludeRequest) overlaps(e timescale.SourceExclusion) bool {
+	if e.Source != r.source || (r.base != "" && !e.CoversPair(r.base, r.quote)) {
+		return false
+	}
+	return (r.until.IsZero() || e.From.Before(r.until)) && (e.Until.IsZero() || r.from.Before(e.Until))
+}
+
 func createSourceExclusion(ctx context.Context, audit keys.AuditSink, store sourceExclusionStore, req sourceExcludeRequest, dryRun bool) error {
 	if req.flipped {
 		fmt.Printf("source-exclude: pair stored in canonical order as %s/%s\n", req.base, req.quote)
+	}
+	unlifted, err := store.UnliftedSourceExclusions(ctx)
+	if err != nil {
+		return err
+	}
+	var clash []timescale.SourceExclusion
+	for _, e := range unlifted {
+		if req.overlaps(e) {
+			clash = append(clash, e)
+		}
+	}
+	if len(clash) > 0 {
+		fmt.Printf("source-exclude: %d un-lifted exclusion(s) of %s overlap %s over %s:\n", len(clash), req.source, req.scope(), req.window())
+		printSourceExclusions(clash, req.now)
+		if !req.allowOverlap {
+			return fmt.Errorf("refusing to record an overlapping exclusion of %s: lift the rows above, or pass -allow-overlap", req.source)
+		}
 	}
 	if dryRun {
 		fmt.Printf("source-exclude: DRY RUN — would audit and exclude %s over %s (actor: %s, reason: %s)\n",
@@ -253,24 +302,30 @@ func createSourceExclusion(ctx context.Context, audit keys.AuditSink, store sour
 		return fmt.Errorf("insert source exclusion for %s (audit row written, table unchanged): %w", target, err)
 	}
 	fmt.Printf("source-exclude: exclusion %d recorded: %s over %s\n", id, req.scope(), req.window())
+	// The id only exists after the insert; this row joins the create audit row to the lift's id:N rows.
+	idTarget := "id:" + strconv.FormatInt(id, 10)
+	if err := keys.AppendOpsAudit(ctx, audit, "source.exclude.recorded", "source-exclude", "source_exclusion", idTarget, req.actor, req.reason,
+		map[string]any{"scope": target}); err != nil {
+		return fmt.Errorf("exclusion %d recorded, but its %s audit_log row failed: %w", id, idTarget, err)
+	}
 	fmt.Println(readSideNote)
 	return nil
 }
 
 func liftSourceExclusion(ctx context.Context, audit keys.AuditSink, store sourceExclusionStore, req sourceExcludeRequest, dryRun bool) error {
-	active, err := store.ActiveSourceExclusions(ctx)
+	unlifted, err := store.UnliftedSourceExclusions(ctx)
 	if err != nil {
 		return err
 	}
 	var row *timescale.SourceExclusion
-	for i := range active {
-		if active[i].ID == req.id {
-			row = &active[i]
+	for i := range unlifted {
+		if unlifted[i].ID == req.id {
+			row = &unlifted[i]
 			break
 		}
 	}
 	if row == nil {
-		return fmt.Errorf("no active source exclusion with id %d (see -list)", req.id)
+		return fmt.Errorf("no un-lifted source exclusion with id %d (see -list)", req.id)
 	}
 	if dryRun {
 		fmt.Printf("source-exclude: DRY RUN — would audit and lift exclusion %d (%s) (actor: %s, reason: %s)\n",
@@ -283,17 +338,41 @@ func liftSourceExclusion(ctx context.Context, audit keys.AuditSink, store source
 		return fmt.Errorf("audit_log append for %s failed, so NOTHING was changed: %w", target, err)
 	}
 	if err := store.LiftSourceExclusion(ctx, req.id, req.actor, req.reason); err != nil {
+		if errors.Is(err, timescale.ErrSourceExclusionLifted) {
+			return fmt.Errorf("lift source exclusion %d: another lift won after this run checked it; the row is lifted, but not by this run (its audit row was written): %w", req.id, err)
+		}
 		return fmt.Errorf("lift source exclusion %d (audit row written): %w", req.id, err)
 	}
 	fmt.Printf("source-exclude: exclusion %d (%s) lifted; the row is kept\n", req.id, row.Source)
+	return reportRemaining(ctx, store, row.Source, req.now)
+}
+
+// reportRemaining prints the source's other un-lifted rows, so a lift is not mistaken for un-excluding the source.
+func reportRemaining(ctx context.Context, store sourceExclusionStore, source string, now time.Time) error {
+	unlifted, err := store.UnliftedSourceExclusions(ctx)
+	if err != nil {
+		return fmt.Errorf("lifted, but listing the remaining exclusions of %s failed: %w", source, err)
+	}
+	var rest []timescale.SourceExclusion
+	for _, e := range unlifted {
+		if e.Source == source {
+			rest = append(rest, e)
+		}
+	}
+	if len(rest) == 0 {
+		fmt.Printf("source-exclude: no un-lifted exclusions of %s remain\n", source)
+		return nil
+	}
+	fmt.Printf("source-exclude: %s still has %d un-lifted exclusion(s):\n", source, len(rest))
+	printSourceExclusions(rest, now)
 	return nil
 }
 
 type sourceExclusionLister interface {
-	ListSourceExclusions(ctx context.Context, activeOnly bool) ([]timescale.SourceExclusion, error)
+	ListSourceExclusions(ctx context.Context, unliftedOnly bool) ([]timescale.SourceExclusion, error)
 }
 
-func listSourceExclusions(ctx context.Context, store sourceExclusionLister) error {
+func listSourceExclusions(ctx context.Context, store sourceExclusionLister, now time.Time) error {
 	rows, err := store.ListSourceExclusions(ctx, false)
 	if err != nil {
 		return err
@@ -302,20 +381,22 @@ func listSourceExclusions(ctx context.Context, store sourceExclusionLister) erro
 		fmt.Println("source-exclude: no source_exclusions rows")
 		return nil
 	}
-	fmt.Printf("%-6s %-7s %-18s %-60s %-20s %-20s %-16s %s\n", "ID", "STATE", "SOURCE", "PAIR", "FROM", "UNTIL", "ACTOR", "REASON")
+	printSourceExclusions(rows, now)
+	return nil
+}
+
+// printSourceExclusions writes rows as a table, STATE evaluated at now.
+func printSourceExclusions(rows []timescale.SourceExclusion, now time.Time) {
+	fmt.Printf("%-6s %-8s %-18s %-60s %-20s %-20s %-16s %s\n", "ID", "STATE", "SOURCE", "PAIR", "FROM", "UNTIL", "ACTOR", "REASON")
 	for _, e := range rows {
-		state, pair, until := "active", "*", "-"
-		if !e.Active() {
-			state = "lifted"
-		}
+		pair, until := "*", "-"
 		if e.Base != "" {
 			pair = e.Base + "/" + e.Quote
 		}
 		if !e.Until.IsZero() {
 			until = e.Until.UTC().Format(time.RFC3339)
 		}
-		fmt.Printf("%-6d %-7s %-18s %-60s %-20s %-20s %-16s %s\n",
-			e.ID, state, e.Source, pair, e.From.UTC().Format(time.RFC3339), until, e.Actor, e.Reason)
+		fmt.Printf("%-6d %-8s %-18s %-60s %-20s %-20s %-16s %s\n",
+			e.ID, e.State(now), e.Source, pair, e.From.UTC().Format(time.RFC3339), until, e.Actor, e.Reason)
 	}
-	return nil
 }
