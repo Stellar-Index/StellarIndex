@@ -47,3 +47,9 @@ stellar-core-auto-upgrade.service:NoNewPrivileges  # apt-get update seteuid()s t
 # NoNewPrivileges and ProtectKernel* makes runuser's setuid to postgres
 # fail with EPERM on systemd 255, and pg_dump needs that switch.
 config-backup.service:User
+
+# Installed verbatim from deploy/systemd. Root by omitting User= for the
+# same runuser reason; ProtectKernelModules hides /lib/modules, which the
+# zfs_module_on_disk assertion reads (see the unit's own comment).
+config-assertions.service:User
+config-assertions.service:ProtectKernelModules

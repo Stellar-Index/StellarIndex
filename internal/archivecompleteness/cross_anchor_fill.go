@@ -3,6 +3,7 @@ package archivecompleteness
 import (
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/network"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -88,6 +90,50 @@ type FillerOptions struct {
 	OwnerGroup string
 }
 
+// requirePubnetArchive refuses a root whose own history-archive state names another network, so a
+// mis-declared or defaulted Network cannot fill a test-net archive from pubnet. A root without the
+// file (a fresh or partial mirror) is not refused.
+func requirePubnetArchive(root string) error {
+	path := filepath.Join(root, ".well-known", "stellar-history.json")
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-configured archive root
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("archivecompleteness: read %s: %w", path, err)
+	}
+	var has struct {
+		NetworkPassphrase string `json:"networkPassphrase"`
+	}
+	if err := json.Unmarshal(raw, &has); err != nil {
+		return fmt.Errorf("archivecompleteness: parse %s: %w", path, err)
+	}
+	if has.NetworkPassphrase != "" && has.NetworkPassphrase != network.PublicNetworkPassphrase {
+		return fmt.Errorf(
+			"archivecompleteness: refusing to cross-anchor-fill %q from the built-in PUBNET sources — its %s names network %q",
+			root, path, has.NetworkPassphrase)
+	}
+	return nil
+}
+
+// fillSources is the explicit source list, or the built-in pubnet set once the archive is known to be pubnet.
+func fillSources(opts FillerOptions) ([]Source, error) {
+	if len(opts.Sources) > 0 {
+		return opts.Sources, nil
+	}
+	if opts.Network != "" && opts.Network != "pubnet" {
+		return nil, fmt.Errorf(
+			"archivecompleteness: refusing to cross-anchor-fill a %q archive from the built-in PUBNET sources — "+
+				"filling from pubnet archives would write pubnet checkpoints into a test-net store (corruption). "+
+				"Test nets self-heal archive gaps from their own galexie/captive-core; pass explicit Sources only if "+
+				"you truly have test-net cross-anchor mirrors", opts.Network)
+	}
+	if err := requirePubnetArchive(opts.ArchiveRoot); err != nil {
+		return nil, err
+	}
+	return DefaultCrossAnchorSources(), nil
+}
+
 // NewCrossAnchorFiller constructs a Filler; it errors when chown is requested but the user/group lookup fails (operator config issue, fail loud at startup).
 func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 	if opts.ArchiveRoot == "" {
@@ -101,16 +147,9 @@ func NewCrossAnchorFiller(opts FillerOptions) (*CrossAnchorFiller, error) {
 		return nil, fmt.Errorf("archivecompleteness: ArchiveRoot %q is not a directory", opts.ArchiveRoot)
 	}
 
-	sources := opts.Sources
-	if len(sources) == 0 {
-		if opts.Network != "" && opts.Network != "pubnet" {
-			return nil, fmt.Errorf(
-				"archivecompleteness: refusing to cross-anchor-fill a %q archive from the built-in PUBNET sources — "+
-					"filling from pubnet archives would write pubnet checkpoints into a test-net store (corruption). "+
-					"Test nets self-heal archive gaps from their own galexie/captive-core; pass explicit Sources only if "+
-					"you truly have test-net cross-anchor mirrors", opts.Network)
-		}
-		sources = DefaultCrossAnchorSources()
+	sources, err := fillSources(opts)
+	if err != nil {
+		return nil, err
 	}
 	httpClient := opts.HTTPClient
 	if httpClient == nil {

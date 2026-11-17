@@ -23,6 +23,7 @@ verify-archive-tier-b.service:ExecStart
 
 # Reference and template disagree on which env file the unit reads.
 # Which one matches what's actually on r1 has not been confirmed.
+archive-completeness.service:EnvironmentFile
 stellarindex-aggregator.service:EnvironmentFile
 stellarindex-api.service:EnvironmentFile
 stellarindex-indexer.service:EnvironmentFile
