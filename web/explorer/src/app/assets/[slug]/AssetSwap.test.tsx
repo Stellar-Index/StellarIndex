@@ -281,7 +281,7 @@ describe('swap picker look-alikes', () => {
     const base = vi.mocked(apiGet).getMockImplementation()!;
     vi.mocked(apiGet).mockImplementation(async (path: string) => {
       if (path.startsWith('/v1/assets/verified')) {
-        return { data: [{ slug: 'usdc' }] };
+        return { data: [{ slug: 'usdc', asset_id: `USDC-${G1}` }] };
       }
       if (path.startsWith('/v1/assets')) {
         return {
@@ -316,5 +316,39 @@ describe('swap picker look-alikes', () => {
     expect(
       await screen.findAllByRole('img', { name: 'Verified currency' }),
     ).toHaveLength(1);
+  });
+
+  it('never badges a classic asset whose bare code matches a fiat slug', async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/assets/verified')) {
+        return { data: [{ slug: 'euro', ticker: 'EUR', class: 'fiat' }] };
+      }
+      if (path.startsWith('/v1/assets')) {
+        return {
+          data: [
+            {
+              asset_id: `EURO-${G2}`,
+              slug: 'EURO',
+              code: 'EURO',
+              name: 'Euro',
+              price_usd: '1.08',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      }
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+
+    expect(
+      await screen.findByRole('button', { name: /EURO/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('img', { name: 'Verified currency' }),
+    ).not.toBeInTheDocument();
   });
 });

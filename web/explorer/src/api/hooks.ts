@@ -98,6 +98,30 @@ export function useVerifiedSlugs() {
     },
     staleTime: 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
+    retry: false,
+  });
+}
+
+/** Lowercase slugs and Stellar asset ids of every verified catalogue entry. */
+export type VerifiedIndex = { slugs: Set<string>; assetIds: Set<string> };
+
+export function useVerifiedIndex() {
+  return useQuery<VerifiedIndex>({
+    queryKey: ['/v1/assets/verified', 'index'],
+    queryFn: async () => {
+      const env = await apiGet<{
+        data: Array<{ slug: string; asset_id?: string }>;
+      }>('/v1/assets/verified');
+      const rows = env.data ?? [];
+      return {
+        slugs: new Set(rows.map((e) => e.slug.toLowerCase())),
+        assetIds: new Set(
+          rows.flatMap((e) => (e.asset_id ? [e.asset_id] : [])),
+        ),
+      };
+    },
+    staleTime: 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
     // Don't surface fetch errors to the UI — the badge degrades
     // silently to "not verified" when the catalogue endpoint isn't
     // wired or is unreachable. Same UX as if every slug were
@@ -608,6 +632,23 @@ export type Coin = Schemas['Asset'];
 // contract permits is a working link rather than "/assets/undefined".
 export function coinSlug(c: Coin): string {
   return c.slug ?? c.asset_id;
+}
+
+const STELLAR_ASSET_ID =
+  /^(native|[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}|C[A-Z2-7]{55})$/;
+
+/**
+ * True only for the verified row itself. A Stellar asset must be one the
+ * catalogue lists by asset id: the listing slug falls back to the bare code,
+ * so any issuer's EURO would otherwise match the fiat entry's "euro" slug.
+ */
+export function isVerifiedCoin(
+  c: Pick<Coin, 'asset_id' | 'slug' | 'unverified_ticker_collision'>,
+  v: VerifiedIndex | undefined,
+): boolean {
+  if (!v || c.unverified_ticker_collision) return false;
+  if (STELLAR_ASSET_ID.test(c.asset_id)) return v.assetIds.has(c.asset_id);
+  return v.slugs.has((c.slug ?? c.asset_id).toLowerCase());
 }
 
 export type CoinsPage = {

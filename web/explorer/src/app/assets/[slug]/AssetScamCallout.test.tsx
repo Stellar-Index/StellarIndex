@@ -1,12 +1,32 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { AssetScamCallout } from './AssetScamCallout';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AssetScamCallout, LiveAssetScamCallout } from './AssetScamCallout';
 
 // The shared scam banner. Its behaviour is pinned here rather than only
 // through the two pages that mount it, so the warning's own rules — which
 // flags trigger it, and that a clean asset stays quiet — survive a
 // refactor of either page.
+describe('LiveAssetScamCallout', () => {
+  it('warns from the live read when the baked page carried no flag', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(['/v1/assets/{id}', 'EVIL-G'], {
+      data: { issuer_directory_tags: ['malicious'] },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <LiveAssetScamCallout assetID="EVIL-G" directoryTags={[]} />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText('Flagged by community directory'),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('AssetScamCallout', () => {
   it('warns when the issuer carries a scam-class directory tag', () => {
     render(<AssetScamCallout directoryTags={['unsafe']} />);

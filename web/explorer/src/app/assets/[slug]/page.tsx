@@ -43,7 +43,7 @@ import {
   LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
-import { AssetScamCallout } from './AssetScamCallout';
+import { LiveAssetScamCallout } from './AssetScamCallout';
 import { UnverifiedTickerCallout } from './UnverifiedTickerCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
@@ -1036,7 +1036,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             the curated scam reason, the community directory attribution, and
             the directory-source link — all one finding from stellar.expert,
             no longer three overlapping banners. */}
-        <AssetScamCallout
+        <LiveAssetScamCallout
+          assetID={coin.asset_id}
           directoryTags={coin.issuer_directory_tags}
           scamReason={coin.issuer_scam_reason}
           directoryDomain={coin.issuer_directory_domain}

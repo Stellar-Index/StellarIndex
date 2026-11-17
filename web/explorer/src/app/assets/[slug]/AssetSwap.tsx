@@ -7,7 +7,12 @@ import { ArrowDownUp, BadgeCheck, ChevronDown, Search, X } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { useCoins, useVerifiedSlugs, coinSlug } from '@/api/hooks';
+import {
+  useCoins,
+  useVerifiedIndex,
+  coinSlug,
+  isVerifiedCoin,
+} from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
   formatRelative,
@@ -628,7 +633,7 @@ function TokenPicker({
   );
   const coins = isSearching ? searchedCoins : topCoins;
 
-  const { data: verifiedSlugs } = useVerifiedSlugs();
+  const { data: verified } = useVerifiedIndex();
   const cryptoTokens = useMemo<SwapToken[]>(() => {
     const rows = coins.data?.coins ?? [];
     return (
@@ -643,18 +648,14 @@ function TokenPicker({
             usdPrice: price != null && price > 0 ? price : null,
             kind: 'crypto',
             collision: c.unverified_ticker_collision ?? false,
-            // Same rule as the search modal: the slug match alone would badge
-            // a NULL-slug row that borrows the verified asset's code.
-            verified:
-              (verifiedSlugs?.has(coinSlug(c).toLowerCase()) ?? false) &&
-              !c.unverified_ticker_collision,
+            verified: isVerifiedCoin(c, verified),
             issuer: assetIssuer(c.asset_id ?? ''),
           };
         })
         // Only offer legs we can actually price.
         .filter((t) => t.usdPrice != null)
     );
-  }, [coins.data, verifiedSlugs]);
+  }, [coins.data, verified]);
 
   const q = debounced.toLowerCase();
   const fiatMatches = useMemo(

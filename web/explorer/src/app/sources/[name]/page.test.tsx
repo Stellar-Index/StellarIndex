@@ -97,6 +97,30 @@ describe('SourceDetailPage top markets', () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText(/0 pairs/)).toBeInTheDocument();
   });
+
+  it('marks a 24h volume the API flags as a lower bound', async () => {
+    const row = {
+      base: 'native',
+      quote: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      last_trade_at: '2026-11-17T00:00:00Z',
+      bucket_close_at: '2026-11-17T00:00:00Z',
+      trade_count_24h: 12,
+      last_price: '0.1',
+    };
+    mockFetches([
+      { ...row, volume_24h_usd: '1200', volume_lower_bound: true },
+      {
+        ...row,
+        base: 'AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA',
+        volume_24h_usd: '3400',
+      },
+    ]);
+    await renderPage();
+    const floor = screen.getByText('≥ $1.2K');
+    expect(floor).toHaveAttribute('title', expect.stringMatching(/^At least/));
+    const exact = screen.getByText('$3.4K');
+    expect(exact).not.toHaveAttribute('title');
+  });
 });
 
 // /v1/markets?source= answers 400 for a data vendor: its prices are served
