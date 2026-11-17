@@ -300,6 +300,7 @@ awk '
   /^--- before: / {
     if (task != "") {
       hunks[task]++
+      inhunk = 1
       path = substr($0, 13)
       marker = marker_for(path)
       indent = indent_semantic(path)
@@ -308,6 +309,19 @@ awk '
     next
   }
   /^(\+\+\+ after: |@@ )/ { next }
+  /^(changed|ok|skipping|fatal|failed|included): / { inhunk = 0 }
+  # A context line sits in both the before and the after text. difflib shows
+  # a swap of two adjacent lines as one moved line beside a context line, so
+  # only the context makes the reorder visible in the two sequences.
+  /^ / {
+    if (task == "" || !inhunk) next
+    body = effective(substr($0, 2), marker, indent)
+    if (body == "") next
+    minus_seq[task] = minus_seq[task] SUBSEP body
+    plus_seq[task] = plus_seq[task] SUBSEP body
+    seqtask[task] = 1
+    next
+  }
   /^[-+]/ {
     if (task == "") next
     body = effective(substr($0, 2), marker, indent)

@@ -84,7 +84,8 @@ Equivalent API form:
 
   gh api -X PUT "repos/<owner>/<repo>/environments/$ENV_NAME" \\$reviewers
     -F 'deployment_branch_policy[protected_branches]=false' \\
-    -F 'deployment_branch_policy[custom_branch_policies]=true'
+    -F 'deployment_branch_policy[custom_branch_policies]=true' \\
+    -F 'can_admins_bypass=false'
   gh api -X POST "repos/<owner>/<repo>/environments/$ENV_NAME/deployment-branch-policies" \\
     -f name=main -f type=branch
 EOF
@@ -172,6 +173,12 @@ if [ "$MODE" = observe ]; then
 fi
 
 echo "✅ deploy approval gate present on '$ENV_NAME': ${reviewer_count} required reviewer(s), prevent_self_review=${self_review}, main-only branch policy."
+if ! jq -e '.can_admins_bypass == false' "$JSON" >/dev/null; then
+  # Warning, not failure, for the same single-operator reason as self-review:
+  # a repo admin can already edit the environment, so bypass adds no reach, but
+  # the line above must not read as "no deploy skips the gate".
+  echo "::warning::'$ENV_NAME' lets repository administrators bypass its protection rules (can_admins_bypass is not false): the reviewer gate can be skipped by an admin. Untick 'Allow administrators to bypass configured protection rules'."
+fi
 if [ "$self_review" != "true" ]; then
   # Not fatal: a single-operator project would have every deploy blocked by a
   # second-human demand. The value is that an interactive approval by a

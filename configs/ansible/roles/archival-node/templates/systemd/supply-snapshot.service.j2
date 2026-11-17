@@ -24,10 +24,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# Sensible defaults. Listed before the EnvironmentFile= directives below
-# because systemd applies Environment=/EnvironmentFile= in file order and
-# later directives win — defaults must come first or they would always
-# override /etc/default/supply-snapshot.
+# Defaults. Values from EnvironmentFile= override Environment= wherever
+# either sits (systemd.exec(5)); between the files below, the later wins.
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=ASSET=native
 Environment=TEXTFILE_OUTPUT=
