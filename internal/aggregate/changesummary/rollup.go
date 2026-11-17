@@ -290,11 +290,12 @@ func newGuarded(series []TimedValue) *guarded {
 	return &guarded{series: series, verdict: make([]int8, len(series))}
 }
 
-// accepted reports whether /v1/price would serve series[i] rather than hold it back.
+// accepted reports whether the guard judged series[i] against a baseline and passed it. A point with no baseline
+// (the first after a quiet day) is served fail-open, but ratcheting it would refuse every later genuine bucket.
 func (g *guarded) accepted(i int) bool {
 	if g.verdict[i] == 0 {
 		g.verdict[i] = -1
-		if guardedIdx(g.series, i) == i {
+		if served, validated := guardVerdict(g.series, i); served == i && validated {
 			g.verdict[i] = 1
 		}
 	}
@@ -310,8 +311,8 @@ const extremeBand = 1000
 const minPointsForBand = 3
 
 // extremes returns the ATH and ATL over series, ignoring unparseable/zero points and (once long enough) points further than extremeBand from the median.
-// A point the served-price guard refuses never qualifies: the sink ratchets, so it would outlive the window.
-// ok is false when current is out of band or nothing qualifies: ATH/ATL stay NULL so the sink's GREATEST/LEAST keep stored extremes.
+// A point the served-price guard refuses or cannot judge never qualifies: the sink ratchets, so it would outlive the window.
+// ok is false when current is out of band or not guard-accepted: ATH/ATL stay NULL so the sink's GREATEST/LEAST keep stored extremes.
 // A zero mid-series must not become the ATL ([100,5,0,90] has ATL 5).
 func extremes(g *guarded, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
 	pts := positivePoints(g.series)
@@ -332,27 +333,29 @@ func extremes(g *guarded, current TimedValue) (athValue string, athAt time.Time,
 		if hi != nil && (q.v.Cmp(lo) < 0 || q.v.Cmp(hi) > 0) {
 			continue
 		}
-		if q.p.At.Equal(current.At) && q.p.Value == current.Value {
+		if q.p.At.Equal(current.At) && q.p.Value == current.Value && g.accepted(q.i) {
 			currentIn = true
 		}
 		inBand = append(inBand, q)
 	}
+	if !currentIn {
+		return "", time.Time{}, "", time.Time{}, false
+	}
 	// Stable on the oldest-first series, so a tied extreme keeps its earliest time.
 	sort.SliceStable(inBand, func(i, j int) bool { return inBand[i].v.Cmp(inBand[j].v) < 0 })
-	atl, atlFound := firstServed(g, inBand, current)
+	atl, atlFound := firstAccepted(g, inBand)
 	sort.SliceStable(inBand, func(i, j int) bool { return inBand[i].v.Cmp(inBand[j].v) > 0 })
-	ath, athFound := firstServed(g, inBand, current)
+	ath, athFound := firstAccepted(g, inBand)
 	if !atlFound || !athFound {
 		return "", time.Time{}, "", time.Time{}, false
 	}
-	return ath.p.Value, ath.p.At, atl.p.Value, atl.p.At, currentIn
+	return ath.p.Value, ath.p.At, atl.p.Value, atl.p.At, true
 }
 
-// firstServed returns the first sorted point /v1/price serves: one the guard accepts, or current,
-// which may be a stand-in the guard refused in its own minute but is the price served now.
-func firstServed(g *guarded, sorted []ratPoint, current TimedValue) (ratPoint, bool) {
+// firstAccepted returns the first sorted point the guard accepts against a baseline.
+func firstAccepted(g *guarded, sorted []ratPoint) (ratPoint, bool) {
 	for _, q := range sorted {
-		if (q.p.At.Equal(current.At) && q.p.Value == current.Value) || g.accepted(q.i) {
+		if g.accepted(q.i) {
 			return q, true
 		}
 	}
@@ -406,9 +409,15 @@ const (
 // guardedIdx returns the point that stands for series[idx]: itself, or the newest in-band point before it when the
 // served-price guard refuses it. /v1/price holds such a bucket back, so a change measured from it would contradict the price.
 func guardedIdx(series []TimedValue, idx int) int {
+	served, _ := guardVerdict(series, idx)
+	return served
+}
+
+// guardVerdict returns the index guardedIdx serves for series[idx] and whether a non-empty baseline judged it.
+func guardVerdict(series []TimedValue, idx int) (served int, validated bool) {
 	cand, ok := new(big.Rat).SetString(series[idx].Value)
 	if !ok {
-		return idx
+		return idx, false
 	}
 	var trailing []*big.Rat
 	for j := idx - 1; j >= 0 && len(trailing) < guardSample; j-- {
@@ -419,9 +428,9 @@ func guardedIdx(series []TimedValue, idx int) int {
 		trailing = append(trailing, v)
 	}
 	if accept, lkg := robuststat.GuardServedVWAP(cand, trailing); !accept {
-		return idx - 1 - lkg
+		return idx - 1 - lkg, true
 	}
-	return idx
+	return idx, robuststat.ServedBaselineValidated(trailing)
 }
 
 // deltaPct = (current - past) / past * 100; 0 on past=0 or an unparseable leg (undefined delta, avoids Inf%).

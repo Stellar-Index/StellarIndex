@@ -51,12 +51,12 @@ func TestComputeSummary_DeltasAndATH(t *testing.T) {
 		t.Errorf("D30DeltaPct = %v, want 30", row.D30DeltaPct)
 	}
 
-	// ATH = 130, ATL = 100 (across the 30d window).
+	// 100, 110 and 120 have nothing in the 24h before them, so no baseline validated them for the ratchet.
 	if row.ATHValue == nil || *row.ATHValue != "130.00" {
 		t.Errorf("ATH = %v, want 130.00", row.ATHValue)
 	}
-	if row.ATLValue == nil || *row.ATLValue != "100.00" {
-		t.Errorf("ATL = %v, want 100.00", row.ATLValue)
+	if row.ATLValue == nil || *row.ATLValue != "125.00" {
+		t.Errorf("ATL = %v, want 125.00", row.ATLValue)
 	}
 }
 
@@ -173,7 +173,7 @@ func TestComputeSummary_StaleBaselineLeavesHorizonNull(t *testing.T) {
 	}
 }
 
-// TestComputeStreak_Up — three consecutive daily increases → "up", 3.
+// TestComputeStreak_Up — three consecutive daily increases → "up", 3. The first day has no baseline, so it does not count.
 func TestComputeStreak_Up(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	series := make([]TimedValue, 5)
@@ -184,8 +184,8 @@ func TestComputeStreak_Up(t *testing.T) {
 		}
 	}
 	dir, days := computeStreak(newGuarded(series))
-	if dir != "up" || days == nil || *days != 4 {
-		t.Errorf("got dir=%q days=%v, want up/4", dir, days)
+	if dir != "up" || days == nil || *days != 3 {
+		t.Errorf("got dir=%q days=%v, want up/3", dir, days)
 	}
 }
 
@@ -196,6 +196,7 @@ func TestComputeStreak_Up(t *testing.T) {
 func TestComputeSummary_ATLSkipsZero(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	series := []TimedValue{
+		{At: now.Add(-4 * time.Hour), Value: "100"}, // baseline for the next point
 		{At: now.Add(-3 * time.Hour), Value: "100"},
 		{At: now.Add(-2 * time.Hour), Value: "50"},
 		{At: now.Add(-1 * time.Hour), Value: "0"}, // bad/zero point
@@ -325,21 +326,45 @@ func TestComputeSummary_ExtremesKeepRealMovesAndShortSeries(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	// A 50x genuine rally stays inside the band.
 	row := computeSummary(Entity{Type: "coin", ID: "x"}, []TimedValue{
+		{At: now.Add(-26 * time.Hour), Value: "1"}, // baseline for the next point only
 		{At: now.Add(-2 * time.Hour), Value: "1"},
 		{At: now.Add(-1 * time.Hour), Value: "25"},
 		{At: now, Value: "50"},
 	}, now)
-	if *row.ATHValue != "50" || *row.ATLValue != "1" {
-		t.Errorf("ATH/ATL = %s/%s, want 50/1", *row.ATHValue, *row.ATLValue)
+	if row.ATHValue == nil || row.ATLValue == nil || *row.ATHValue != "50" || *row.ATLValue != "1" {
+		t.Errorf("ATH/ATL = %v/%v, want 50/1", row.ATHValue, row.ATLValue)
 	}
-	// Too short for the median band, but /v1/price refuses a 100000x jump on a one-point
-	// history and serves 1, so 100000 must not reach the ratchet either.
+	// Too short for the median band: /v1/price refuses a 100000x jump on a one-point history and serves 1,
+	// which no baseline ever validated, so nothing reaches the ratchet.
 	row = computeSummary(Entity{Type: "coin", ID: "x"}, []TimedValue{
 		{At: now.Add(-1 * time.Hour), Value: "1"},
 		{At: now, Value: "100000"},
 	}, now)
-	if *row.ATHValue != "1" || *row.ATLValue != "1" {
-		t.Errorf("ATH/ATL = %s/%s, want 1/1", *row.ATHValue, *row.ATLValue)
+	if row.CurrentValue != "1" || row.ATHValue != nil || row.ATLValue != nil {
+		t.Errorf("current=%s ATH/ATL = %v/%v, want 1 and NULL/NULL", row.CurrentValue, row.ATHValue, row.ATLValue)
+	}
+}
+
+// A fat-finger print after a quiet day is served fail-open (empty baseline) but must never ratchet into ATH/ATL,
+// nor refuse the genuine buckets after it into a stand-in that does.
+func TestComputeSummary_UnvalidatedPrintAfterGapNeverRatchets(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct{ calm, wild string }{{"1", "400"}, {"100000", "1"}, {"100000", "1000"}} {
+		var s []TimedValue
+		for i := 10; i >= 1; i-- {
+			s = append(s, TimedValue{At: now.Add(-25*time.Hour - time.Duration(i)*time.Hour), Value: c.calm})
+		}
+		s = append(s, TimedValue{At: now.Add(-10 * time.Minute), Value: c.wild})
+		for i := 9; i >= 0; i-- {
+			s = append(s, TimedValue{At: now.Add(-time.Duration(i) * time.Minute), Value: c.calm})
+		}
+		row := computeSummary(Entity{Type: "coin", ID: "x"}, s, now)
+		if row.CurrentValue != c.calm {
+			t.Errorf("calm %s wild %s: current = %s, want %s", c.calm, c.wild, row.CurrentValue, c.calm)
+		}
+		if row.ATHValue == nil || *row.ATHValue != c.calm || row.ATLValue == nil || *row.ATLValue != c.calm {
+			t.Errorf("calm %s wild %s: ATH/ATL = %v/%v, want both %s", c.calm, c.wild, row.ATHValue, row.ATLValue, c.calm)
+		}
 	}
 }
 
@@ -430,11 +455,12 @@ func TestComputeAcceleration(t *testing.T) {
 func TestExtremes_BeyondFloat64NotDropped(t *testing.T) {
 	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	series := []TimedValue{
+		{At: now.Add(-3 * time.Hour), Value: "1e400"}, // baseline for the next point
 		{At: now.Add(-2 * time.Hour), Value: "1e400"},
 		{At: now.Add(-1 * time.Hour), Value: "3e400"},
 		{At: now, Value: "2e400"},
 	}
-	ath, _, atl, _, ok := extremes(newGuarded(series), series[2])
+	ath, _, atl, _, ok := extremes(newGuarded(series), series[3])
 	if !ok || ath != "3e400" || atl != "1e400" {
 		t.Errorf("ath=%q atl=%q ok=%v, want 3e400/1e400/true", ath, atl, ok)
 	}
@@ -457,6 +483,25 @@ func TestExtremes_BandEdgesInclusive(t *testing.T) {
 	ath, _, atl, _, ok := extremes(g, cur)
 	if !ok || ath != "1000" || atl != "0.001" {
 		t.Errorf("ath=%q atl=%q ok=%v, want 1000/0.001/true", ath, atl, ok)
+	}
+}
+
+// Zero and negative points never become ATL even when the guard accepts every point.
+func TestExtremes_NonPositiveNeverATL(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	for _, vals := range [][]string{{"0", "3"}, {"-5", "3"}, {"0", "-5", "3"}, {"3", "0", "-5", "3"}} {
+		var series []TimedValue
+		for i, v := range vals {
+			series = append(series, TimedValue{At: now.Add(time.Duration(i-len(vals)+1) * time.Hour), Value: v})
+		}
+		g := newGuarded(series)
+		for i := range g.verdict {
+			g.verdict[i] = 1
+		}
+		ath, _, atl, _, ok := extremes(g, series[len(series)-1])
+		if !ok || ath != "3" || atl != "3" {
+			t.Errorf("%v: ath=%q atl=%q ok=%v, want 3/3/true", vals, ath, atl, ok)
+		}
 	}
 }
 
