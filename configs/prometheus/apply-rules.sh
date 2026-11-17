@@ -108,6 +108,36 @@ for g in d.get("data",{}).get("groups",[]):
             print(r.get("name")+": "+str(r.get("health")))' "$@" 2>/dev/null | sort -u
 }
 
+# Prints "name: err" for every errored rule, scoped by which rule files this
+# apply changes ($CHANGED_FILES, basenames, one per line): "changed" keeps rules
+# in a changed file (or with no file reported: fail closed), "unchanged" keeps
+# the rest. An error in a file this apply did not touch is not caused by it and
+# a rollback would not cure it.
+errored_rules_scoped() {
+  CHANGED="${CHANGED_FILES:-}" python3 -c 'import sys,json,os
+scope=sys.argv[1]
+changed=set(os.environ.get("CHANGED","").split())
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+for g in d.get("data",{}).get("groups",[]):
+    base=os.path.basename(g.get("file") or "")
+    mine = (not base) or base in changed
+    if (scope=="changed") != mine: continue
+    for r in g.get("rules",[]):
+        if r.get("health")=="err":
+            print(r.get("name")+": err")' "$1" 2>/dev/null | sort -u
+}
+
+# Prints Prometheus's last successful config/rules reload time (it only
+# advances on success), empty when it cannot be read.
+prom_reload_ts() {
+  curl -sf --max-time 10 --get --data-urlencode 'query=prometheus_config_last_reload_success_timestamp_seconds' \
+    "$PROM_URL/api/v1/query" 2>/dev/null \
+    | python3 -c 'import sys,json
+try: print(json.load(sys.stdin)["data"]["result"][0]["value"][1])
+except Exception: pass' 2>/dev/null || true
+}
+
 # ─── 1. Validate BEFORE touching anything ───
 # On the host, not only CI: this checks what is about to be installed, which can
 # differ from the repo copy (partial scp, wrong SRC_DIR, local edit).
@@ -163,10 +193,23 @@ fi
 [ -d "$DEST" ] || die "destination not found: $DEST"
 
 # ─── 2. Atomic install, with a backup we can restore ───
-STAMP="$(date +%Y%m%d-%H%M%S)"
+# Two callers (release deploy, main-push workflow) run in different concurrency
+# groups, so serialise on the host: an interleaved apply would back up, delete
+# and restore each other's files.
+command -v flock >/dev/null 2>&1 || die "flock not on PATH — refusing an unserialised apply"
+exec 9>"${DEST}.lock"
+flock -w 120 9 || die "another apply holds ${DEST}.lock"
+
+STAMP="$(date +%Y%m%d-%H%M%S)-$$"
 BACKUP="${DEST}.bak-${STAMP}"
 cp -a "$DEST" "$BACKUP"
 echo "apply-rules: backup at $BACKUP"
+
+CHANGED_FILES=""
+for f in "${src_files[@]}"; do
+  cmp -s "$f" "$DEST/$(basename "$f")" || CHANGED_FILES+="$(basename "$f")"$'\n'
+done
+reload_before="$(prom_reload_ts)"
 
 for f in "${src_files[@]}"; do
   install -m 0644 "$f" "$DEST/$(basename "$f")"
@@ -205,12 +248,39 @@ echo "apply-rules: reloaded"
 # "unknown" is the transient state before the first evaluation: poll until it
 # settles. "err" never improves and fails fast.
 deadline=$(( $(date +%s) + VERIFY_TIMEOUT_S ))
+
+# The rules API answers with the OLD rule set until the reload lands, so a
+# healthy-looking first sample proves nothing. Wait for the reload timestamp to
+# advance (it only does on success) before reading any verdict.
+if [ -z "$reload_before" ]; then
+  echo "apply-rules: WARNING: could not read the reload timestamp; verifying without the reload barrier" >&2
+else
+  while :; do
+    reload_now="$(prom_reload_ts)"
+    if [ -n "$reload_now" ] && awk -v a="$reload_now" -v b="$reload_before" 'BEGIN{exit !(a>b)}'; then
+      break
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "apply-rules: prometheus did not complete a successful reload within ${VERIFY_TIMEOUT_S}s" >&2
+      restore
+      die "verification failed — rules restored from backup"
+    fi
+    sleep 1
+  done
+fi
+
 while :; do
   rules_json="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null || true)"
   loaded="$(printf '%s' "$rules_json" | parse_loaded_rule_names)"
   missing="$(comm -23 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
 
-  errored="$(printf '%s' "$rules_json" | rules_with_health err)"
+  errored="$(printf '%s' "$rules_json" | errored_rules_scoped changed)"
+  preexisting="$(printf '%s' "$rules_json" | errored_rules_scoped unchanged)"
+  if [ -n "$preexisting" ] && [ -z "${warned_preexisting:-}" ]; then
+    warned_preexisting=1
+    echo "apply-rules: WARNING: rule(s) in files this apply did not change are errored (not rolled back):" >&2
+    printf '  %s\n' "$preexisting" >&2
+  fi
   if [ -n "$errored" ]; then
     echo "apply-rules: rule(s) loaded but errored:" >&2
     printf '  %s\n' "$errored" >&2

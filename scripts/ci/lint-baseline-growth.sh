@@ -183,7 +183,7 @@ detect_growth() {
   # 11) Inline escape markers on the money and migration lints: each added marker exempts one line.
   git diff -U0 "${base}...${head}" -- '*.go' '*.sql' 2>/dev/null | awk '
     /^\+\+\+ / { f = substr($0, 7); next }
-    /^\+/ && $0 ~ /(i128|lint-money|migration-compat):ok/ { print f "\t" substr($0, 2) }
+    /^\+/ && tolower($0) ~ /(i128|lint-money|migration-compat|lint-priceable|lint-down-delete|floatmoney):ok/ { print f "\t" substr($0, 2) }
   '
 }
 

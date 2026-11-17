@@ -57,10 +57,8 @@ Type=notify
 NotifyAccess=main
 WatchdogSec=1h
 
-# Sensible defaults, declared BEFORE EnvironmentFile= below so operators
-# can actually override them: systemd resolves a repeated key in file
-# order, later wins, so a default declared after the file would silently
-# discard any operator override in /etc/default/stellarindex-ops.
+# Defaults. Values from EnvironmentFile= override Environment= wherever
+# either sits (systemd.exec(5)), so /etc/default/stellarindex-ops wins.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
 # 0 = uncapped: a mid-pass cap leaves the incremental state file unseeded.
@@ -79,9 +77,8 @@ Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 Environment=VERIFY_ARCHIVE_TEXTFILE=/var/lib/node_exporter/textfile_collector/verify_archive_tier_b.prom
 Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
 
-# Placed after the defaults above (not before): systemd resolves a
-# repeated key in file order, so operator overrides in this file only
-# take effect if it is declared last.
+# Operator overrides. Order matters only between EnvironmentFile= lines
+# (the later file wins); a forced value belongs in ExecStart argv.
 EnvironmentFile=-/etc/default/stellarindex-ops
 
 # Incremental scheme (shared with Tier A): -from-last-verified reads the

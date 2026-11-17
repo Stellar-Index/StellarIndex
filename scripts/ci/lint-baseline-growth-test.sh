@@ -527,6 +527,31 @@ inline_marker "$(printf 'chore: waive inline\n\nBaseline-Growth: internal/x/a.go
 runGate
 expect "declared inline markers pass" 0 "no undeclared"
 
+# --- 22. the other escape markers the lints accept, in any letter case
+inline_marker_more() {
+  (
+    cd "$TMP/repo" || exit 1
+    mkdir -p internal/x migrations
+    printf 'package x\n\nvar f = 1\n' > internal/x/a.go
+    printf 'ALTER TABLE t ADD COLUMN c int;\n' > migrations/0002_a.up.sql
+    git add -A && git commit -qm "chore: add files"
+    git rev-parse HEAD > "$TMP/base"
+    printf 'package x\n\nvar f float64 //floatmoney:ok display only\n' > internal/x/a.go
+    printf 'ALTER TABLE t ADD COLUMN fee_usd DOUBLE PRECISION; -- LINT-MONEY:OK display only\n' > migrations/0002_a.up.sql
+    printf 'CREATE VIEW v AS SELECT 1; -- lint-priceable:ok legacy\n' > migrations/0003_b.up.sql
+    git add -A
+    printf 'chore: waive inline\n' > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+  BASE="$(cat "$TMP/base")"
+}
+mkrepo 0
+inline_marker_more
+runGate
+expect "an added //floatmoney:ok fails undeclared" 1 "UNDECLARED GROWTH: internal/x/a.go"
+expect "an added upper-case LINT-MONEY:OK fails undeclared" 1 "UNDECLARED GROWTH: migrations/0002_a.up.sql"
+expect "an added lint-priceable:ok fails undeclared" 1 "UNDECLARED GROWTH: migrations/0003_b.up.sql"
+
 echo
 echo "lint-baseline-growth-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

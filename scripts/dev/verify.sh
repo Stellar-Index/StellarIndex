@@ -387,7 +387,7 @@ echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotati
 # Secret-rendering ansible template tasks must set `diff: false` (or
 # no_log) so `--check --diff` never prints vault material into scrollback
 # or the weekly drift job's CI log.
-echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py
+echo "=== Ansible secret-diff ===" && python3 ./scripts/ci/lint-ansible-secret-diff.py && bash ./scripts/ci/lint-ansible-secret-diff_test.sh
 # Installed scripts reaching ClickHouse without a credential file
 # (report-only until `default` is locked) + its self-test.
 echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-auth.py && ./scripts/ci/lint-ch-client-auth-test.sh
@@ -575,6 +575,7 @@ lane_d() { # everything else
     echo "=== Migration backward-compat ===" && ./scripts/ci/lint-migration-compat.sh
     echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
     echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
+    echo "=== i128 lint self-test ===" && ./scripts/ci/lint-i128-test.sh
     echo "=== ClickHouse apply scope (deploy/clickhouse is not a bootstrap manifest) ===" && ./scripts/ci/lint-ch-apply-scope.sh
     echo "=== ClickHouse apply scope self-test ===" && ./scripts/ci/lint-ch-apply-scope-test.sh
     echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh

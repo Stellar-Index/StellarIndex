@@ -2016,6 +2016,14 @@ func TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld(t *testing.T) {
 	if v.Summary.MarketCapUSD != nil {
 		t.Errorf("summary.market_cap_usd = %q — a withheld row must not reach the total", *v.Summary.MarketCapUSD)
 	}
+	// The issuer-written identity is the impersonation; /v1/assets blanks it for a flagged issuer, so this surface must too.
+	if a.Name != "" || a.AnchorAsset != "" || a.ISINCollision != nil || a.VettedISIN != nil {
+		t.Errorf("flagged issuer still serves name=%q anchor_asset=%q isin_collision=%v vetted_isin=%v",
+			a.Name, a.AnchorAsset, a.ISINCollision, a.VettedISIN)
+	}
+	if a.HomeDomain != "etherfuse.com" {
+		t.Errorf("home_domain = %q, want the bound SEP-1 domain kept as /v1/assets keeps a verified one", a.HomeDomain)
+	}
 }
 
 // TestRWAAssets_UnavailableWhenTheDirectoryCannotAnswer: requirement 3 keeps impersonators out, so it fails closed. With

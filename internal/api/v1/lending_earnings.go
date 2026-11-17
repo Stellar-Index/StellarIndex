@@ -66,7 +66,10 @@ const lendingEarningsNote = "accrued is current_value - net_flow, served only wh
 	"underlying deposited minus withdrawn (supply), borrowed minus repaid (borrow), or backstop tokens deposited minus " +
 	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. A BLNT clawback counts as a withdrawal, so " +
 	"accrued does not include the clawed-back amount as a loss. Emission claims are sums of the " +
-	"claim events projected so far and are a lower bound."
+	"claim events projected so far and are a lower bound. USD values use the price /v1/lending/pools/{pool}/reserves serves for " +
+	"the reserve; a backstop leg is unpriced. A leg without a USD value is left out of supplied_usd and borrowed_usd, which " +
+	"are then a lower bound naming it in excluded, and net_usd and net_apr are null. No health " +
+	"factor is served: the account read sums collateral and non-collateral supply."
 
 // LendingEarningsView is the GET /v1/lending/accounts/{account}/earnings body.
 type LendingEarningsView struct {
@@ -78,6 +81,9 @@ type LendingEarningsView struct {
 	// LowerBound is set when a read hit the per-account row cap; CoverageNote then names the capped reads.
 	LowerBound   bool   `json:"lower_bound"`
 	CoverageNote string `json:"coverage_note,omitempty"`
+	// Pools and Totals value the supply and borrow legs in USD, per pool and across all of them.
+	Pools  []LendingEarningsPool `json:"pools"`
+	Totals LendingUSDTotals      `json:"totals"`
 }
 
 // LendingEarningsLeg is one (pool, asset, side) or (pool, tier) backstop position; amounts are base-unit decimal strings.
@@ -98,6 +104,10 @@ type LendingEarningsLeg struct {
 	Accrued    *string   `json:"accrued"` // interest earned (supply), interest paid (borrow), earned (backstop)
 	Reconciled bool      `json:"reconciled"`
 	Reason     *string   `json:"reason"`
+	// ValueUSD and AccruedUSD are current_value and accrued at the reserve's /reserves price; UsdReason names why ValueUSD is null.
+	ValueUSD   *string `json:"value_usd"`
+	AccruedUSD *string `json:"accrued_usd"`
+	UsdReason  *string `json:"usd_reason"`
 }
 
 // LendingEmissionsClaim is the pool emissions one account claimed from one pool, in the pool's emission token.
@@ -237,13 +247,21 @@ func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsRea
 	jobs := append(poolEarningsJobs("blend", blendFolds), poolEarningsJobs(blnt.SourceName, blntFolds)...)
 	jobs = append(jobs, backstop...)
 	legs := make([][]LendingEarningsLeg, len(jobs))
+	reserves := make([]map[string]ReserveView, len(jobs))
 	failed, stale := make([]bool, len(jobs)), make([]bool, len(jobs))
 	forEachBounded(s.logger, len(jobs), readFanoutConcurrency, func(i int) {
 		failed[i] = true // stays set if the read panics
-		legs[i], failed[i], stale[i] = s.earningsJobLegs(ctx, sr, account, jobs[i])
+		legs[i], reserves[i], failed[i], stale[i] = s.earningsJobLegs(ctx, sr, account, jobs[i])
 	})
 	view.Legs = append(view.Legs, slices.Concat(legs...)...)
 	historyFailed, historyStale := s.withholdUnverifiedHistory(ctx, view.Legs)
+	poolReserveViews := map[string]map[string]ReserveView{}
+	for i, rv := range reserves {
+		if rv != nil {
+			poolReserveViews[jobs[i].pool] = rv
+		}
+	}
+	view.Pools, view.Totals = valueEarningsLegs(view.Legs, poolReserveViews)
 	for _, c := range flows.BlendClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: "blend", Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
@@ -335,18 +353,20 @@ func poolEarningsJobs(protocol string, folds []timescale.BlendPositionFold) []ea
 	return jobs
 }
 
-func (s *Server) earningsJobLegs(ctx context.Context, sr lendingAccountStateReader, account string, job earningsJob) (legs []LendingEarningsLeg, failed, stale bool) {
+func (s *Server) earningsJobLegs(ctx context.Context, sr lendingAccountStateReader, account string, job earningsJob,
+) (legs []LendingEarningsLeg, views map[string]ReserveView, failed, stale bool) {
 	if job.backstop != nil {
 		legs, failed = s.poolBackstopLegs(ctx, sr, job, account)
-		return legs, failed, false
+		return legs, nil, failed, false
 	}
 	return s.poolEarningsLegs(ctx, sr, job, account)
 }
 
-// poolEarningsLegs builds one pool's supply and borrow legs from its cached reserve state and the account's Positions entry;
-// stale reports a cached reserve state past its TTL or built from a stale lake.
-func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string) (out []LendingEarningsLeg, failed, stale bool) {
-	reserves, stale, err := s.earningsReserveStates(ctx, job.pool)
+// poolEarningsLegs builds one pool's supply and borrow legs from its cached reserve state and the account's Positions entry,
+// and returns the reserve views that price them; stale reports a cached reserve state past its TTL or built from a stale lake.
+func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string,
+) (out []LendingEarningsLeg, views map[string]ReserveView, failed, stale bool) {
+	reserves, views, stale, err := s.earningsReserveStates(ctx, job.pool)
 	if err != nil {
 		s.logger.Warn("lending earnings: reserve read failed", "err", err, "pool", job.pool)
 		failed = true
@@ -360,7 +380,7 @@ func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateRea
 	for _, f := range job.folds {
 		out = append(out, poolFoldLegs(job.protocol, f, reserves[f.Asset], pos, behind)...)
 	}
-	return out, failed, stale
+	return out, views, failed, stale
 }
 
 // newestFoldedLedger is the newest event ledger folded into a pool's legs. Every transaction that changes an account's
@@ -373,21 +393,25 @@ func newestFoldedLedger(folds []timescale.BlendPositionFold) uint32 {
 	return newest
 }
 
-// earningsReserveStates reads a pool's reserve state through the reserves endpoint's cache, by asset; a pool of unknown lineage
-// has none.
-func (s *Server) earningsReserveStates(ctx context.Context, pool string) (map[string]clickhouse.BlendReserveState, bool, error) {
+// earningsReserveStates reads a pool's reserve states and their served views through the reserves endpoint's cache, by asset;
+// a pool of unknown lineage has none.
+func (s *Server) earningsReserveStates(ctx context.Context, pool string) (map[string]clickhouse.BlendReserveState, map[string]ReserveView, bool, error) {
 	res, _, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
 	if errors.Is(err, errPoolLineageUnknown) {
-		return map[string]clickhouse.BlendReserveState{}, false, nil
+		return map[string]clickhouse.BlendReserveState{}, map[string]ReserveView{}, false, nil
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	out := make(map[string]clickhouse.BlendReserveState, len(res.states))
 	for _, st := range res.states {
 		out[st.Asset] = st
 	}
-	return out, cacheStale || res.flags.Stale, nil
+	views := make(map[string]ReserveView, len(res.view.Reserves))
+	for _, rv := range res.view.Reserves {
+		views[rv.Asset] = rv
+	}
+	return out, views, cacheStale || res.flags.Stale, nil
 }
 
 // poolFoldLegs turns one (pool, asset) fold into its supply and borrow legs.

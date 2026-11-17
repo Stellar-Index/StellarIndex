@@ -28,8 +28,8 @@ func premPublished(m rwaPremiumMember, n int) bool {
 	return ok
 }
 
-// TestRWAPremiumJoin_AnOffMarketDayIsWithheld: a day that clears the substance floor at more than 3x the market's own
-// preceding days is refused, as the live price path refuses it; the days around it publish.
+// TestRWAPremiumJoin_AnOffMarketDayIsWithheld: a day that clears the substance floor at more than 3x the published
+// value is refused, as the live surface refuses it; the days around it publish.
 func TestRWAPremiumJoin_AnOffMarketDayIsWithheld(t *testing.T) {
 	market := []timescale.MarketDay{}
 	for d := 1; d <= 6; d++ {
@@ -50,7 +50,7 @@ func TestRWAPremiumJoin_AnOffMarketDayIsWithheld(t *testing.T) {
 }
 
 // TestRWAPremiumJoin_FirstDayIsJudgedAgainstThePublishedValue: with no earlier day, the published value is the centre and
-// the band is the wide one, so a real premium publishes and an order-of-magnitude print does not.
+// a real premium publishes and an order-of-magnitude print does not.
 func TestRWAPremiumJoin_FirstDayIsJudgedAgainstThePublishedValue(t *testing.T) {
 	for _, tc := range []struct {
 		vwap      string
@@ -70,22 +70,50 @@ func TestRWAPremiumJoin_FirstDayIsJudgedAgainstThePublishedValue(t *testing.T) {
 	}
 }
 
-// TestRWAPremiumJoin_ALastingRepricingBecomesTheCentre: a market that moves and stays there is published again once
-// enough refused days in a row agree with each other, rather than refused forever.
-func TestRWAPremiumJoin_ALastingRepricingBecomesTheCentre(t *testing.T) {
-	market := []timescale.MarketDay{}
-	for d := 1; d <= 5; d++ {
-		market = append(market, premGoodDay(d, "1.00"))
+// TestRWAPremiumJoin_WashPrintsCannotMoveTheCentreOffThePublishedValue: the published value is the only centre, so no
+// run of floor-clearing prints far from it publishes, and a day priced at it is never withheld, whatever came before.
+func TestRWAPremiumJoin_WashPrintsCannotMoveTheCentreOffThePublishedValue(t *testing.T) {
+	seq := func(vals ...string) []string { return vals }
+	repeat := func(v string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = v
+		}
+		return out
 	}
-	for d := 6; d <= 13; d++ {
-		market = append(market, premGoodDay(d, "4.00"))
+	alternating := repeat("9.00", 5)
+	for i := 0; i < 15; i++ {
+		v := "1.07"
+		if i%2 == 0 {
+			v = "9.00"
+		}
+		alternating = append(alternating, v)
 	}
-	got := rwaPremiumJoin(premCand(), premRefDays(13), market, premDefaultFloor())
-	if premPublished(got, 6) {
-		t.Error("the first day of the move published against five days at a quarter of its price")
-	}
-	if !premPublished(got, 13) {
-		t.Errorf("day 13 still refused after eight days at the new price: withheld = %v", got.withheld)
+	for name, prints := range map[string][]string{
+		"five wash days, then par":       append(repeat("9.00", 5), repeat("1.07", 5)...),
+		"par, wash, then par":            append(append(repeat("1.07", 5), repeat("9.00", 6)...), repeat("1.07", 6)...),
+		"wash alternating with par":      alternating,
+		"3.2x then par":                  append(repeat("3.42", 14), "1.07"),
+		"a third of par then par":        append(repeat("0.36", 14), "1.07"),
+		"just inside the band, then par": seq("3.21", "3.21", "3.21", "3.21", "3.21", "3.21", "1.07"),
+	} {
+		market := make([]timescale.MarketDay, 0, len(prints))
+		for i, v := range prints {
+			market = append(market, premGoodDay(i+1, v))
+		}
+		got := rwaPremiumJoin(premCand(), premRefDays(len(prints)), market, premDefaultFloor())
+		for i, v := range prints {
+			if v == "1.07" && !premPublished(got, i+1) {
+				t.Errorf("%s: day %d at the published value was withheld", name, i+1)
+			}
+		}
+		limit := premRat("321/100")
+		floor := premRat("107/300")
+		for _, p := range got.days {
+			if m := premRat(p.market); m.Cmp(limit) > 0 || m.Cmp(floor) < 0 {
+				t.Errorf("%s: day %s published market %s, outside 3x of the published value", name, p.day.Format("01-02"), p.market)
+			}
+		}
 	}
 }
 
@@ -99,7 +127,7 @@ func TestRWAPremiumJoin_ARefusedPrintIsNotTheNextDaysBaseline(t *testing.T) {
 		return ref
 	}
 	for _, vwap := range []string{"12.00", "0.09"} {
-		for days := 1; days < rwaPremiumRecentreDays; days++ {
+		for days := 1; days <= 15; days++ {
 			market := []timescale.MarketDay{}
 			for d := 1; d <= days; d++ {
 				market = append(market, premGoodDay(d, vwap))
@@ -162,22 +190,6 @@ func TestRWAPremiumJoin_AThinHistoryCannotRatchetAwayFromThePublishedValue(t *te
 	}
 }
 
-// TestRWAPremiumJoin_ARepricingSurvivesAPrintAtTheOldLevel: an accepted day in between does not reset the refused run.
-func TestRWAPremiumJoin_ARepricingSurvivesAPrintAtTheOldLevel(t *testing.T) {
-	market := []timescale.MarketDay{}
-	for d := 1; d <= 25; d++ {
-		v := "4.00"
-		if d <= 5 || d%5 == 0 {
-			v = "1.00"
-		}
-		market = append(market, premGoodDay(d, v))
-	}
-	got := rwaPremiumJoin(premCand(), premRefDays(25), market, premDefaultFloor())
-	if premPublished(got, 6) || !premPublished(got, 24) {
-		t.Errorf("published = %v, want day 6 refused and day 24 published", got.published)
-	}
-}
-
 // TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay: the mirror of the case above.
 func TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay(t *testing.T) {
 	market := []timescale.MarketDay{premGoodDay(1, "12.00"), premGoodDay(2, "1.08"), premGoodDay(3, "1.09")}
@@ -214,7 +226,7 @@ func TestDailyMarketDaysHasOneGuardedCaller(t *testing.T) {
 				return err
 			}
 			if !guarded[rel] {
-				t.Errorf("%s calls DailyMarketDays: judge its days with rwaPremiumBaseline.offMarket (or an equal guard) and list it here", rel)
+				t.Errorf("%s calls DailyMarketDays: judge its days with rwaPremiumWithinReference (or an equal guard) and list it here", rel)
 			}
 			return nil
 		})
@@ -250,10 +262,10 @@ func TestRWAPremiumJoin_AStaleBaselineGivesWayToThePublishedValue(t *testing.T) 
 func TestRWAPremiumJoin_ALastingPrintFarFromThePublishedValueNeverPublishes(t *testing.T) {
 	for _, vwap := range []string{"12.00", "107.00", "0.09"} {
 		market := []timescale.MarketDay{}
-		for d := 1; d <= 3*rwaPremiumRecentreDays; d++ {
+		for d := 1; d <= 15; d++ {
 			market = append(market, premGoodDay(d, vwap))
 		}
-		got := rwaPremiumJoin(premCand(), premRefDays(3*rwaPremiumRecentreDays), market, premDefaultFloor())
+		got := rwaPremiumJoin(premCand(), premRefDays(15), market, premDefaultFloor())
 		if len(got.published) != 0 {
 			t.Errorf("%s every day against 1.07: published %v, want none", vwap, got.published)
 		}

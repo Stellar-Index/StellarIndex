@@ -2,6 +2,8 @@ package timescale
 
 import (
 	"math/big"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -75,7 +77,7 @@ func TestValueStrategyFlows_PricesExactlyAndNamesExclusions(t *testing.T) {
 		{strategy: "CUNMAPPEDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", direction: "withdraw", bucket: "2026-11-10", day: "2026-11-10", amount: rat("1"), flows: 4},
 	}
 	prices := map[assetDay]*big.Rat{{testCETES, "2026-11-10"}: rat("0.05")}
-	v := valueStrategyFlows(flows, defindexStrategyAssets, prices)
+	v := valueStrategyFlows(flows, defindexStrategyAssets, prices, nil)
 
 	wantUSDC := new(big.Rat).Mul(huge, tenToMinus(7))
 	want := new(big.Rat).Add(wantUSDC, rat("0.1")) // 2 CETES × $0.05
@@ -93,6 +95,61 @@ func TestValueStrategyFlows_PricesExactlyAndNamesExclusions(t *testing.T) {
 	}
 	if v.total("withdraw").Sign() != 0 {
 		t.Error("an unmapped strategy's flows must not be valued")
+	}
+}
+
+// A day is judged only against at least three other priced days; with fewer, no day is dropped.
+func TestGuardDailyUSDPrices_NeedsThreeOtherDays(t *testing.T) {
+	for name, tc := range map[string]struct {
+		vwaps   []string
+		dropped []int
+	}{
+		"two days":                 {[]string{"1", "11"}, nil},
+		"three days, one high":     {[]string{"1", "1", "100"}, nil},
+		"four days, only one high": {[]string{"1", "1", "1", "100"}, []int{3}},
+	} {
+		prices := map[assetDay]*big.Rat{}
+		for i, v := range tc.vwaps {
+			prices[assetDay{testCETES, "2026-11-1" + strconv.Itoa(i)}] = rat(v)
+		}
+		kept, outliers := guardDailyUSDPrices(prices)
+		for i := range tc.vwaps {
+			k := assetDay{testCETES, "2026-11-1" + strconv.Itoa(i)}
+			if want := slices.Contains(tc.dropped, i); outliers[k] != want || (kept[k] == nil) != want {
+				t.Errorf("%s: day %d dropped = %v (kept %v), want dropped %v", name, i, outliers[k], kept[k] != nil, want)
+			}
+		}
+	}
+}
+
+// A day whose VWAP a wash cross pushed to 10x the asset's other days is not used: its flows are excluded and named, so the
+// volume reads as a lower bound instead of a tenfold figure.
+func TestValueFlowsAtDailyUSD_ExcludesAnOutlierDay(t *testing.T) {
+	var rows []usdPriceRow
+	var flows []strategyFlowSum
+	for d := 10; d <= 16; d++ {
+		day := "2026-11-" + strconv.Itoa(d)
+		vwap := "0.05"
+		if d == 13 {
+			vwap = "0.5"
+		}
+		rows = append(rows, usdPriceRow{daily: true, day: day, asset: testCETES, vwap: rat(vwap), volPriced: rat("1000")})
+		flows = append(flows, strategyFlowSum{strategy: testCETESStrategy, direction: "deposit", bucket: day, day: day, amount: rat("100000000"), flows: 1})
+	}
+	v := valueFlowsAtDailyUSD(flows, rows, defindexPriceSpellings(defindexStrategyAssets))
+	if got, want := v.total("deposit"), rat("3"); got.Cmp(want) != 0 { // 6 clean days × 10 CETES × $0.05
+		t.Errorf("deposit total = %s, want %s with the 10x day excluded", got.FloatString(7), want.FloatString(7))
+	}
+	if _, ok := v.byDirBucket["deposit"]["2026-11-13"]; ok {
+		t.Error("the outlier day was valued")
+	}
+	if c := v.lowerBoundClause("deposit"); c != "excludes 1 strategy flows it could not value in USD: CETES (USD price that day outside its window's band)" {
+		t.Errorf("deposit clause = %q", c)
+	}
+	// A single priced day has no baseline and is kept.
+	one := valueFlowsAtDailyUSD(flows[3:4], rows[3:4], defindexPriceSpellings(defindexStrategyAssets))
+	if got := one.total("deposit"); got.Cmp(rat("5")) != 0 || one.lowerBoundClause("deposit") != "" {
+		t.Errorf("lone day total = %s, clause %q; want 5 and none", got.FloatString(7), one.lowerBoundClause("deposit"))
 	}
 }
 

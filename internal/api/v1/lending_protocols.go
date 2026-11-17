@@ -70,9 +70,9 @@ type LendingProtocolBackstop struct {
 	Tokens        string `json:"tokens"`
 }
 
-// LendingStatsExclusion names what a protocol's figures leave out and why.
+// LendingStatsExclusion names what a protocol's or an account's figures leave out and why.
 type LendingStatsExclusion struct {
-	Kind   string  `json:"kind"` // pool_list | pool | reserve | backstop | token
+	Kind   string  `json:"kind"` // pool_list | pool | reserve | backstop | token; an account's legs: supply | borrow | backstop
 	Pool   *string `json:"pool"`
 	Asset  *string `json:"asset"`
 	Reason string  `json:"reason"`
