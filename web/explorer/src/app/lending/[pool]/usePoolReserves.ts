@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-import { apiGet } from '@/api/client';
+import { apiGet, type EnvelopeFlags } from '@/api/client';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import type { PoolConfig, ReserveConfig } from '../poolConfig';
 
@@ -33,6 +33,8 @@ export interface ReservesResp {
   reserves: ReserveRow[];
   pool_config?: PoolConfig | null;
   config_decimals?: number;
+  /** The response envelope's flags, carried so the page can show them. */
+  flags?: EnvelopeFlags;
 }
 
 // One query shared by the reserve table and the pool details panel.
@@ -43,11 +45,11 @@ export function usePoolReserves(pool: string) {
     queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
     retry: false,
     queryFn: async () => {
-      const env = await apiGet<{ data: ReservesResp }>(
+      const env = await apiGet<{ data: ReservesResp; flags?: EnvelopeFlags }>(
         `/v1/lending/pools/${encodeURIComponent(pool)}/reserves`,
         {},
       );
-      return env.data;
+      return { ...env.data, flags: env.flags };
     },
     staleTime: 60_000,
   });
