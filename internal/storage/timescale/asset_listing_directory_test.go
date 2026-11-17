@@ -6,6 +6,7 @@ package timescale
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -464,4 +465,26 @@ func boundValue(t *testing.T, arg any) any {
 		t.Fatalf("Value() on bound arg %#v: %v", arg, err)
 	}
 	return got
+}
+
+// TestCheckListingPrune: a listing sync may prune at most the account-directory ceiling of the rows it held.
+func TestCheckListingPrune(t *testing.T) {
+	cases := []struct {
+		name         string
+		limit        DirectoryChurnLimit
+		held, pruned int64
+		wantExceeded bool
+	}{
+		{"first sync holds nothing", DefaultDirectoryChurnLimit, 0, 0, false},
+		{"under the floor", DefaultDirectoryChurnLimit, 400, 100, false},
+		{"shrunken catalogue", DefaultDirectoryChurnLimit, 4000, 3000, true},
+		{"just over 5%", DefaultDirectoryChurnLimit, 4000, 201, true},
+		{"operator opt-in", DirectoryChurnUnbounded, 4000, 3000, false},
+	}
+	for _, tc := range cases {
+		err := checkListingPrune(tc.limit, tc.held, tc.pruned)
+		if got := errors.Is(err, ErrDirectoryChurnExceeded); got != tc.wantExceeded {
+			t.Errorf("%s: err = %v, want exceeded=%v", tc.name, err, tc.wantExceeded)
+		}
+	}
 }
