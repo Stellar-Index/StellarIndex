@@ -33,6 +33,18 @@ const assets: Coin[] = [
     circulating_supply: '50000000000000',
     supply_basis: 'classic_trustline_sum',
   }),
+  // Catalogue rows carry the flag but no supply_basis.
+  coin('FLAGGED', {
+    price_usd: '1.00',
+    market_cap_usd: '3000000.00',
+    market_cap_lower_bound: true,
+  }),
+  coin('DERIVED', {
+    price_usd: '1.00',
+    market_cap_usd: '2000000.00',
+    circulating_supply: '20000000000000',
+    supply_basis: 'classic_lake_flows',
+  }),
   // A full supply reading and a fully valued volume.
   coin('EXACT', {
     price_usd: '1.00',
@@ -81,6 +93,17 @@ describe('AssetsTable marks the figures the server flagged as floors', () => {
     expect(screen.getByText('≥ $5M')).toBeInTheDocument();
     expect(screen.getByText('≥ $1.2K')).toBeInTheDocument();
     expect(screen.getByText(/^≥\s+5M$/)).toBeInTheDocument();
+  });
+
+  it('honours market_cap_lower_bound without a supply_basis', () => {
+    renderTable();
+    expect(screen.getByText('≥ $3M')).toBeInTheDocument();
+  });
+
+  it('marks a derived lake-flows cap and supply as an upper reading', () => {
+    renderTable();
+    expect(screen.getByText('≤ $2M')).toBeInTheDocument();
+    expect(screen.getByText(/^≤\s+2M$/)).toBeInTheDocument();
   });
 
   it('leaves exact figures unmarked', () => {

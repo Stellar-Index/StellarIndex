@@ -1,8 +1,14 @@
 export type CsvCell = string | number | boolean | null | undefined;
 
+const NUMERIC = /^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/;
+
 function csvField(v: CsvCell): string {
   if (v === null || v === undefined) return '';
-  const s = String(v);
+  let s = String(v);
+  // Spreadsheets evaluate cells starting with these as formulas; plain
+  // numeric strings (including negatives) are amounts and stay verbatim.
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s) && !NUMERIC.test(s))
+    s = `'${s}`;
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

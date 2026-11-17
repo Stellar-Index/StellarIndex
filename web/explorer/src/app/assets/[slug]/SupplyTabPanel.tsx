@@ -10,6 +10,13 @@ import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
 import { formatBaseUnits, formatCompactUnits } from '@/lib/format';
+import {
+  CLASSIC_FLOWS_CAVEAT,
+  supplyHint,
+  supplyIsDerived,
+  supplyIsFloor,
+  supplyMark,
+} from '@/lib/supplyFloor';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 import { CurrencyDeclarations } from './CurrencyDeclarations';
@@ -88,6 +95,12 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
     a.circulating_supply == null &&
     a.total_supply == null &&
     a.max_supply == null;
+  const floor =
+    supplyIsFloor(a) ||
+    onchain.data?.data?.circulating_supply_lower_bound === true;
+  const derived = supplyIsDerived(a);
+  const mark = supplyMark(floor, derived);
+  const hint = supplyHint(floor, derived);
 
   return (
     <Panel
@@ -116,7 +129,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <Metric
               label="Circulating"
-              value={formatCompactUnits(a.circulating_supply, decimals)}
+              value={withMark(
+                mark,
+                formatCompactUnits(a.circulating_supply, decimals),
+              )}
+              title={hint}
               sublabel={`In smallest unit: ${a.circulating_supply ?? '—'}`}
             />
             <Metric
@@ -144,19 +161,20 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
             decimals={decimals}
             maxDeclared={a.max_supply_basis === 'sep1_declared_max'}
             unlimited={a.is_unlimited === true}
-            floor={
-              a.supply_basis === 'classic_trustline_sum' ||
-              a.supply_basis === 'contract_storage_balances' ||
-              onchain.data?.data?.circulating_supply_lower_bound === true
-            }
-            derived={a.supply_basis === 'classic_lake_flows'}
+            floor={floor}
+            derived={derived}
           />
 
           {(a.market_cap_usd || a.fdv_usd) && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Metric
                 label="Market cap (USD)"
-                value={a.market_cap_usd ? formatUSD(a.market_cap_usd) : '—'}
+                value={
+                  a.market_cap_usd
+                    ? withMark(mark, formatUSD(a.market_cap_usd))
+                    : '—'
+                }
+                title={hint}
                 sublabel="circulating × USD price"
               />
               <Metric
@@ -380,9 +398,6 @@ function OnChainSupply({
   );
 }
 
-const CLASSIC_FLOWS_CAVEAT =
-  'Σ mint − burn − clawback over this classic asset’s Stellar Asset Contract events. A derived reading, not an issuer-certified supply: it is only as complete as the replayed flow history, and a replayed mint with no matching burn inflates it.';
-
 function supplySublabel(data: AssetSupply, decimals: number | null): string {
   if (decimals == null) return 'base units — the contract declares no scale';
   if (data.source === 'ledger_total_coins') return 'includes burned XLM';
@@ -403,17 +418,23 @@ function supplyFootnote(data: AssetSupply): string {
   return 'Σ mint − burn − clawback from on-chain supply flows, current to the latest ledger — no refresh lag.';
 }
 
+function withMark(mark: string, text: string): string {
+  return text === '—' ? text : `${mark}${text}`;
+}
+
 function Metric({
   label,
   value,
   sublabel,
+  title,
 }: {
   label: string;
   value: string;
   sublabel?: string;
+  title?: string;
 }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" title={title}>
       <div className={PANEL_LABEL_CLASS}>{label}</div>
       <div className="text-ink mt-1.5 font-mono text-xl font-semibold tracking-tight">
         {value}

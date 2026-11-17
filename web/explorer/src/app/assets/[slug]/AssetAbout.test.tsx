@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { AssetAbout } from './AssetAbout';
+import { AssetAbout, CURATED_ASSET_ABOUT } from './AssetAbout';
 
 const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const FAKE_USDC =
@@ -33,6 +37,33 @@ describe('AssetAbout', () => {
     for (const id of ['USDC', 'XLM', 'toString', 'constructor']) {
       const { container } = render(<AssetAbout assetId={id} symbol={id} />);
       expect(container.firstChild).toBeNull();
+    }
+  });
+});
+
+describe('CURATED_ASSET_ABOUT against the verified-currency registry', () => {
+  const seed = readFileSync(
+    resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../../../internal/currency/data/seed.yaml',
+    ),
+    'utf8',
+  );
+  const labels = new Map<string, string>();
+  for (const block of seed.split(/\n {2}- ticker:/).slice(1)) {
+    const label = /verified_issuer_label:\s*(.+)/.exec(block)?.[1];
+    if (!label) continue;
+    for (const m of block.matchAll(/asset_id:\s*(\S+)/g)) {
+      labels.set(m[1], label.replace(/\s*\(.*$/, '').trim());
+    }
+  }
+
+  it('keys every non-native entry on a registry asset id and names its issuer', () => {
+    for (const [id, text] of Object.entries(CURATED_ASSET_ABOUT)) {
+      if (id === 'native') continue;
+      const org = labels.get(id);
+      expect(org, `${id} is not a seed asset_id`).toBeTruthy();
+      expect(text, `${id} must name ${org}`).toContain(org as string);
     }
   });
 });

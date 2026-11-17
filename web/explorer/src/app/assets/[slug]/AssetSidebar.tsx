@@ -12,9 +12,11 @@ import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 import {
-  SUPPLY_FLOOR_HINT,
   VOLUME_FLOOR_HINT,
+  supplyHint,
+  supplyIsDerived,
   supplyIsFloor,
+  supplyMark,
 } from '@/lib/supplyFloor';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
@@ -42,6 +44,7 @@ export interface SidebarCoin {
   circulating_supply?: string | null;
   supply_basis?: string | null;
   value_lower_bound?: boolean;
+  market_cap_lower_bound?: boolean;
   change_24h_pct?: string | null;
   trade_count_24h?: number | null;
   observation_count: number;
@@ -59,6 +62,7 @@ export interface SidebarDetail {
   fdv_usd?: string | null;
   volume_24h_usd?: string | null;
   volume_lower_bound?: boolean;
+  market_cap_lower_bound?: boolean;
   supply_basis?: string | null;
   home_domain?: string | null;
 }
@@ -176,8 +180,19 @@ export function AssetSidebar({
   );
   // A floor over an exact cap is "at least", an exact volume over a floor
   // cap is "at most"; with both floors the ratio is bounded on neither side.
+  const derived = !capFloor && supplyIsDerived(detail ?? coin);
   const ratioMark =
-    volFloor && capFloor ? null : volFloor ? '≥ ' : capFloor ? '≤ ' : '';
+    volFloor && capFloor
+      ? null
+      : derived
+        ? null
+        : volFloor
+          ? '≥ '
+          : capFloor
+            ? '≤ '
+            : '';
+  const capTitle = supplyHint(capFloor, derived);
+  const circTitle = supplyHint(circFloor, !circFloor && derived);
   const code = coin.code || coin.slug || '—';
   const source = asExample(`/v1/assets/${coin.asset_id}`);
 
@@ -199,8 +214,8 @@ export function AssetSidebar({
       >
         <StatRow
           label="Market cap"
-          value={floorMark(usd(marketCap), capFloor)}
-          title={capFloor ? SUPPLY_FLOOR_HINT : undefined}
+          value={floorMark(usd(marketCap), capFloor, derived)}
+          title={capTitle}
         />
         <StatRow
           label="Volume (24h)"
@@ -216,7 +231,11 @@ export function AssetSidebar({
           }
         />
         <StatRow label="FDV" value={usd(fdv)} />
-        <StatRow label="Total supply" value={supply(total, code)} />
+        <StatRow
+          label="Total supply"
+          value={floorMark(supply(total, code), capFloor, derived)}
+          title={capTitle}
+        />
         <StatRow
           label="Max supply"
           value={max != null ? supply(max, code) : '—'}
@@ -226,9 +245,13 @@ export function AssetSidebar({
             <span className={PANEL_LABEL_CLASS}>Circulating supply</span>
             <span
               className="text-ink min-w-0 text-right font-mono text-sm tabular-nums"
-              title={circFloor ? SUPPLY_FLOOR_HINT : undefined}
+              title={circTitle}
             >
-              {floorMark(supply(circulating, code), circFloor)}
+              {floorMark(
+                supply(circulating, code),
+                circFloor,
+                !circFloor && derived,
+              )}
             </span>
           </div>
           {circPct != null && (
@@ -335,9 +358,9 @@ export function AssetSidebar({
   );
 }
 
-/** floorMark prefixes "≥" to a figure the server flagged as a floor. */
-function floorMark(text: string, floor: boolean): string {
-  return floor && text !== '—' ? `≥ ${text}` : text;
+/** floorMark prefixes "≥" to a floor figure and "≤" to a derived supply reading. */
+function floorMark(text: string, floor: boolean, derived = false): string {
+  return text !== '—' ? `${supplyMark(floor, derived)}${text}` : text;
 }
 
 function StatRow({

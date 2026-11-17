@@ -5,7 +5,8 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { apiGetData, asExample } from '@/api/client';
+import { apiGet, asExample } from '@/api/client';
+import type { Envelope } from '../explorer-shared';
 import type { components } from '@/api/types';
 import {
   changePct,
@@ -56,11 +57,24 @@ const VIEWS = [
   { label: 'By asset', value: 'asset' },
 ];
 
+/** The series is served from a stale cache; the line is not the current state. */
+export function StaleSeriesNotice() {
+  return (
+    <Callout tone="warn" title="This series may be out of date">
+      Its rebuild did not answer, so the last good series is shown. Values after
+      the last point may be missing.
+    </Callout>
+  );
+}
+
 function useRWAHistory(timeframe: string, groupBy: string) {
-  return useQuery<RWAHistoryView>({
+  return useQuery<Envelope<RWAHistoryView>>({
     queryKey: [ENDPOINT, timeframe, groupBy],
     queryFn: () =>
-      apiGetData<RWAHistoryView>(ENDPOINT, { timeframe, group_by: groupBy }),
+      apiGet<Envelope<RWAHistoryView>>(ENDPOINT, {
+        timeframe,
+        group_by: groupBy,
+      }),
     staleTime: 300_000,
     placeholderData: (prev) => prev,
   });
@@ -107,7 +121,10 @@ export function RWAHistoryPanel() {
   const [timeframe, setTimeframe] = useState('1y');
   const [view, setView] = useState('total');
   const groupBy = view === 'asset' ? 'asset' : 'none';
-  const { data, isLoading, isError, error } = useRWAHistory(timeframe, groupBy);
+  const query = useRWAHistory(timeframe, groupBy);
+  const { isLoading, isError, error } = query;
+  const data = query.data?.data;
+  const stale = query.data?.flags?.stale === true;
 
   const lines = useMemo<NamedLineSeries[]>(
     () => assetLines(data?.groups ?? []),
@@ -150,12 +167,15 @@ export function RWAHistoryPanel() {
       ) : isLoading && !data ? (
         <Skeleton className="h-[300px] w-full" />
       ) : (
-        <HistoryBody
-          data={data as RWAHistoryView}
-          view={view}
-          total={total}
-          lines={lines}
-        />
+        <>
+          {stale && <StaleSeriesNotice />}
+          <HistoryBody
+            data={data as RWAHistoryView}
+            view={view}
+            total={total}
+            lines={lines}
+          />
+        </>
       )}
     </Panel>
   );
@@ -279,7 +299,14 @@ function Coverage({
   return (
     <div className="text-ink-muted space-y-1.5 text-xs leading-relaxed">
       <p>
-        {last.lower_bound ? (
+        {last.lower_bound && last.assets_unvalued === 0 ? (
+          <>
+            <strong className="text-ink-body">A floor, not a total.</strong>{' '}
+            Every asset this series could see was valued, but the set itself may
+            be missing members (a rebuild cap or a failed read), so the line
+            covers at least {data.assets} assets.
+          </>
+        ) : last.lower_bound ? (
           <>
             <strong className="text-ink-body">A floor, not a total.</strong>{' '}
             {last.assets_valued} of {data.assets} assets in the set carried both

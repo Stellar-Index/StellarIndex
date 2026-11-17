@@ -27,7 +27,11 @@ vi.mock('@/api/client', async () => {
   // The page reads its own endpoint as an envelope through apiGet; the
   // stablecoin arm keeps the plain mock.
   const routed = (path: string, params?: unknown) =>
-    path === '/v1/rwa/assets' ? rwaGet(path) : apiGet(path, params);
+    path === '/v1/rwa/assets'
+      ? rwaGet(path)
+      : path === '/v1/rwa/history' || path === '/v1/rwa/premium'
+        ? Promise.reject(new Error('unavailable'))
+        : apiGet(path, params);
   return { ...actual, apiGetData, apiGet: routed };
 });
 
@@ -1295,6 +1299,37 @@ describe('sumUsd', () => {
   });
 });
 
+describe('sumStablecoins floors', () => {
+  it('reports a floor when a contributing row is flagged', () => {
+    expect(
+      sumStablecoins([{ market_cap_usd: '1.00', market_cap_lower_bound: true }])
+        .floor,
+    ).toBe(true);
+    expect(
+      sumStablecoins([
+        {
+          listing_valuation: {
+            status: 'published',
+            value_usd: '2.00',
+            value_lower_bound: true,
+          },
+        },
+      ]).floor,
+    ).toBe(true);
+    expect(sumStablecoins([{ market_cap_usd: '1.00' }]).floor).toBe(false);
+  });
+});
+
+describe('splitBasis is lossless', () => {
+  it('keeps text after a mid-token period', () => {
+    const text =
+      'Sum of caps. Two. Reference-priced v1.5 valuations are NOT in this total. Fourth.';
+    const { lead, rest } = splitBasis(text);
+    expect(`${lead} ${rest}`).toBe(text);
+    expect(rest).toContain('NOT in this total');
+  });
+});
+
 describe('sumStablecoins', () => {
   it.each([
     [
@@ -1304,11 +1339,11 @@ describe('sumStablecoins', () => {
         { listing_valuation: { status: 'not_listed' } },
         {},
       ],
-      { total: '3.50', valued: 2, unvalued: 2, listingPriced: 1 },
+      { total: '3.50', valued: 2, unvalued: 2, listingPriced: 1, floor: false },
     ],
     [
       [{ listing_valuation: { status: 'no_supply' } }],
-      { total: null, valued: 0, unvalued: 1, listingPriced: 0 },
+      { total: null, valued: 0, unvalued: 1, listingPriced: 0, floor: false },
     ],
   ])('totals %j', (rows, expected) => {
     expect(sumStablecoins(rows)).toEqual(expected);
@@ -1335,5 +1370,49 @@ describe('rwaCsvRow', () => {
     expect(row.market_cap_usd).toBe('');
     expect(row.market_cap_status).toBe('withheld_low_liquidity');
     expect(row.reference_source).toBe('');
+  });
+});
+
+describe('RWA row identity, reference caption and CSV floor', () => {
+  it('shows a contract-issued member by symbol with its contract address', async () => {
+    const CID = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+    show(
+      one({
+        code: '',
+        issuer: '',
+        slug: undefined,
+        symbol: 'CBOND',
+        contract_id: CID,
+      }),
+    );
+    expect(await screen.findByText('CBOND')).toBeInTheDocument();
+    expect(screen.getAllByText(/^CDLZFC/).length).toBeGreaterThan(0);
+  });
+
+  it('labels a listing-platform reference as the token price', async () => {
+    show(
+      one({
+        reference: {
+          ...asset().reference!,
+          source: 'somelister',
+          provenance: 'listing_platform_price',
+        },
+      }),
+    );
+    expect(
+      await screen.findByText(/somelister’s price for the token/),
+    ).toBeInTheDocument();
+  });
+
+  it('exports the supply floor flag and reference provenance', () => {
+    const row = rwaCsvRow(
+      asset({
+        circulating_supply_lower_bound: true,
+        reference: { ...asset().reference!, provenance: 'fund_nav' },
+      }),
+    );
+    expect(row.circulating_supply_lower_bound).toBe('true');
+    expect(row.reference_provenance).toBe('fund_nav');
+    expect(rwaCsvRow(asset()).circulating_supply_lower_bound).toBe('false');
   });
 });
