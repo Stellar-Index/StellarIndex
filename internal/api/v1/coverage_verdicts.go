@@ -378,7 +378,8 @@ func (s *Server) projectionHistoryVerdicts(ctx context.Context, sources ...strin
 	if s.CompletenessReader == nil {
 		return out
 	}
-	snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
+	// The all-sources stale verdict is dropped on purpose: each named source is gated on its own row below.
+	snaps, _, err := s.completenessVerdicts(ctx)
 	if err != nil {
 		s.logger.Warn("completeness read failed", "err", err)
 		for _, src := range sources {
