@@ -172,12 +172,15 @@ func (r *stubHistoryReader) HistoryPoints(_ context.Context, pair canonical.Pair
 // HistoryPointsInRange stub mirrors HistoryPoints — same fixture,
 // same error path. Records the from/to so chart tests can assert
 // the timeframe→window mapping.
-func (r *stubHistoryReader) HistoryPointsInRange(_ context.Context, _ canonical.Pair, granularity string, from, to time.Time, _ int) ([]v1.HistoryPoint, error) {
+func (r *stubHistoryReader) HistoryPointsInRange(_ context.Context, pair canonical.Pair, granularity string, from, to time.Time, _ int) ([]v1.HistoryPoint, error) {
 	r.lastCall.granularity = granularity
 	r.lastCall.from = from
 	r.lastCall.to = to
 	if r.pointsErr != nil {
 		return nil, r.pointsErr
+	}
+	if r.pointsByPair != nil {
+		return r.pointsByPair[pair.String()], nil
 	}
 	return r.points, nil
 }

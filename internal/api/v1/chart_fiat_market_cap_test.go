@@ -45,9 +45,17 @@ func TestChart_FiatMarketCap_HasNoInventedHistory(t *testing.T) {
 		}
 	}
 
+	// The default 1w grain is 1h, but each point is one fx_quotes day: the stamped grain is the served one.
+	fx.points = append(fx.points, v1.FXQuotePoint{Bucket: day(2), RateUSDText: "39", InverseUSDText: "0.02564102564102564103"})
+	got := getChartOpts(t, opts, "asset=fiat:TRY&quote=fiat:USD&price_type=market_cap&timeframe=1w")
+	if got.Granularity != "1d" || got.Discontinuous {
+		t.Errorf("timeframe=1w default grain: granularity=%q discontinuous=%v, want 1d and contiguous", got.Granularity, got.Discontinuous)
+	}
+	fx.points = fx.points[:3]
+
 	// No rate in the days read: an empty series must still say older days were not read.
 	fx.points = fx.points[:2]
-	got := getChartOpts(t, opts, "asset=fiat:TRY&quote=fiat:USD&price_type=market_cap&granularity=1d&timeframe=all")
+	got = getChartOpts(t, opts, "asset=fiat:TRY&quote=fiat:USD&price_type=market_cap&granularity=1d&timeframe=all")
 	if len(got.Points) != 0 || !got.Truncated {
 		t.Errorf("stale rates: points=%d truncated=%v, want an empty series marked truncated", len(got.Points), got.Truncated)
 	}

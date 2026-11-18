@@ -54,35 +54,38 @@ func (s *Server) pegUSDObservationPairs() []canonical.Pair {
 	return out
 }
 
-// proxyDeviationChecked reports whether any declared USD peg's observed price at `at` is outside the [depegBand]. unread: a peg's
-// read failed and none was seen outside the band, so false is not a verdict; "no observation" is neither.
-func (s *Server) proxyDeviationChecked(ctx context.Context, at time.Time) (deviated, unread bool) {
+// proxyDeviationChecked reports whether any declared USD peg's observed price at `at` is outside the [depegBand]. When none is
+// seen outside it, unchecked says some peg had no usable observation (missed or withheld) and failed says some read errored;
+// either way false is not a "peg holds" verdict.
+func (s *Server) proxyDeviationChecked(ctx context.Context, at time.Time) (deviated, unchecked, failed bool) {
 	if s.PriceAt == nil {
-		return false, false
+		return false, false, false
 	}
 	for _, pair := range s.pegUSDObservationPairs() {
 		value, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
 		switch {
 		case err == nil:
 			if outsideDepegBand(value) {
-				return true, false
+				return true, false, false
 			}
-		case !isPriceAtMiss(err):
-			unread = true
+		case isPriceAtMiss(err):
+			unchecked = true
+		default:
+			unchecked, failed = true, true
 		}
 	}
-	return false, unread
+	return false, unchecked, failed
 }
 
-// withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire and is
-// degraded (no-store), so the missing warning is neither read as a verdict nor cached.
+// withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire; a failed
+// read is also degraded (no-store), while a miss is a standing state the cache may hold.
 func (s *Server) withProxyDeviation(ctx context.Context, f Flags, at time.Time) Flags {
 	if !f.Triangulated {
 		return f
 	}
-	deviated, unread := s.proxyDeviationChecked(ctx, at)
+	deviated, unchecked, failed := s.proxyDeviationChecked(ctx, at)
 	f.ProxyDeviation = deviated
-	f.ProxyDeviationUnchecked = unread
-	f.Degraded = f.Degraded || unread
+	f.ProxyDeviationUnchecked = unchecked
+	f.Degraded = f.Degraded || failed
 	return f
 }

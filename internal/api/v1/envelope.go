@@ -74,7 +74,7 @@ type Flags struct {
 	// ProxyDeviation: a TRIANGULATED fiat:USD price assumes a declared USD peg is $1, and a declared
 	// peg's observed dollar price is more than 2% from $1.
 	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
-	// ProxyDeviationUnchecked: a peg read behind ProxyDeviation failed, so its false is not a "peg holds" verdict.
+	// ProxyDeviationUnchecked: a peg behind ProxyDeviation had no usable observation or its read failed, so its false is not a "peg holds" verdict.
 	ProxyDeviationUnchecked bool `json:"proxy_deviation_unchecked,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the asset's code matches a verified
 	// currency's ticker but its issuer does not (someone issued their own "USDC"); the
