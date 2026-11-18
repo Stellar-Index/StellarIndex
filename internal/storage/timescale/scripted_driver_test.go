@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,12 +68,15 @@ type scriptedConn struct {
 	// without recording it.
 	commits   int
 	rollbacks int
+	// closes counts driver-level closes: database/sql closes a connection it discards (driver.ErrBadConn) at once,
+	// while a healthy one stays pooled until the DB closes.
+	closes atomic.Int32
 }
 
 func (c *scriptedConn) Prepare(string) (driver.Stmt, error) {
 	return nil, errors.New("not implemented")
 }
-func (c *scriptedConn) Close() error { return nil }
+func (c *scriptedConn) Close() error { c.closes.Add(1); return nil }
 
 func (c *scriptedConn) Begin() (driver.Tx, error) {
 	return c.BeginTx(context.Background(), driver.TxOptions{})

@@ -320,6 +320,48 @@ expect_rc 13 "exit code = 13"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 
+echo "case: unannotated-swallow"
+SW="$TMP/sw"
+mkdir -p "$SW/scripts/ci" "$SW/configs/ansible/roles/fx/tasks"
+cp "$SRC" "$SW/scripts/ci/lint-ansible-tasks.sh"
+cat > "$SW/configs/ansible/roles/fx/tasks/swallow.yml" <<'YML'
+---
+- name: bad — bare swallow
+  ansible.builtin.command: /bin/true
+  failed_when: false
+
+- name: good — reason on the same line
+  ansible.builtin.command: /bin/true
+  ignore_errors: true  # si-swallow-ok: unit may not exist
+
+- name: good — reason on the line above
+  ansible.builtin.command: /bin/true
+  # si-swallow-ok: unit may not exist
+  ignore_errors: yes
+
+- name: good — check-mode conditional is not a swallow
+  ansible.builtin.command: /bin/true
+  ignore_errors: "{{ ansible_check_mode }}"
+YML
+runsw() { (cd "$SW" && SWALLOW_BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansible-tasks.sh 2>&1); }
+out="$(runsw)"; rc=$?
+expect_rc 1 "unannotated swallow fails"
+expect_hit 'swallow.yml:4: unannotated-swallow' "bare failed_when: false flagged"
+expect_miss 'swallow.yml:8:' "same-line annotation passes"
+expect_miss 'swallow.yml:13:' "line-above annotation passes"
+expect_miss 'swallow.yml:16:' "check-mode conditional passes"
+printf 'configs/ansible/roles/fx/tasks/swallow.yml|unannotated-swallow|1\n' > "$TMP/sw-base"
+out="$(runsw "$TMP/sw-base")"; rc=$?
+expect_rc 0 "baselined count passes"
+printf '\n- name: new swallow\n  ansible.builtin.command: /bin/true\n  failed_when: false\n' >> "$SW/configs/ansible/roles/fx/tasks/swallow.yml"
+out="$(runsw "$TMP/sw-base")"; rc=$?
+expect_rc 1 "count+1 fails"
+expect_hit 'baseline allows 1' "count+1 names the baselined count"
+printf 'configs/ansible/roles/fx/tasks/swallow.yml|unannotated-swallow|3\n' > "$TMP/sw-base"
+out="$(runsw "$TMP/sw-base")"; rc=$?
+expect_rc 1 "count below baseline is stale"
+expect_hit 'STALE swallow baseline.*lower the count' "stale count tells the author to lower it"
+
 echo "case: vacuity"
 mkdir -p "$TMP/empty/scripts/ci" "$TMP/empty/configs/ansible"
 cp "$SRC" "$TMP/empty/scripts/ci/"

@@ -42,6 +42,12 @@
 #   the app database every `PGOPTIONS=` assignment must carry the pin, since
 #   an assignment replaces an exported one. A DSN connection is not seen.
 #
+# Rule 6: unannotated-swallow. `failed_when: false` and `ignore_errors: true`
+#   turn any failure of the task into a pass, so a broken unit, a dead
+#   download or a failed migration reads as a green play. A site needs
+#   `# si-swallow-ok: <reason>` on its line or the line above. Pre-existing
+#   sites are baselined per file by count in lint-ansible-swallow.baseline.
+#
 # The rules are line-oriented (awk), deliberately conservative, and
 # self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
 # Prints a self-accounting line so a scan of zero files cannot pass silently.
@@ -256,6 +262,47 @@ for e in ${baseline_entries[@]+"${baseline_entries[@]}"}; do
     findings=$((findings + 1))
   fi
 done
+
+# ── Rule 6: unannotated-swallow ─────────────────────────────────────────
+# `failed_when: false` / `ignore_errors: true|yes` hides a real failure from
+# the play. Each site needs `# si-swallow-ok: <reason>` on the same line or
+# the line directly above. Existing unreviewed sites are baselined per file
+# by COUNT (`<path>|unannotated-swallow|<n>` in SWALLOW_BASELINE): a file may
+# not gain a swallow, and when its count drops the number must be lowered.
+SWALLOW_BASELINE="${SWALLOW_BASELINE:-scripts/ci/lint-ansible-swallow.baseline}"
+for f in "${yml_files[@]}"; do
+  sites="$(awk -v file="$f" '
+    { if ($0 ~ /^[ \t]*(failed_when:[ \t]*false|ignore_errors:[ \t]*(true|yes))[ \t]*(#.*)?$/ \
+          && $0 !~ /si-swallow-ok:[ \t]*[^ \t]/ && prev !~ /si-swallow-ok:[ \t]*[^ \t]/) {
+        printf("%s:%d: unannotated-swallow: failure is silenced — add `# si-swallow-ok: <reason>` on or above this line, or stop swallowing it\n", file, NR)
+      }
+      prev = $0 }
+  ' "$f")"
+  base=0
+  if [ -f "$SWALLOW_BASELINE" ]; then
+    b="$(awk -F'|' -v f="$f" '$1 == f && $2 == "unannotated-swallow" { print $3 }' "$SWALLOW_BASELINE")"
+    [ -n "$b" ] && base="$b"
+  fi
+  cnt=0
+  [ -n "$sites" ] && cnt="$(printf '%s\n' "$sites" | wc -l | tr -d ' ')"
+  if [ "$cnt" -gt "$base" ]; then
+    printf '%s\n' "$sites"
+    echo "$f: $cnt unannotated swallow(s), baseline allows $base — annotate the new site(s) with si-swallow-ok"
+    findings=$((findings + cnt - base))
+  elif [ "$cnt" -lt "$base" ]; then
+    echo "STALE swallow baseline: $f has $cnt unannotated swallow(s), baseline says $base — lower the count in ${SWALLOW_BASELINE}"
+    findings=$((findings + 1))
+  fi
+done
+if [ -f "$SWALLOW_BASELINE" ]; then
+  while IFS='|' read -r bf _; do
+    case "$bf" in ''|'#'*) continue ;; esac
+    if [ ! -f "$bf" ]; then
+      echo "STALE swallow baseline: $bf no longer exists — delete its line from ${SWALLOW_BASELINE}"
+      findings=$((findings + 1))
+    fi
+  done < "$SWALLOW_BASELINE"
+fi
 
 echo "lint-ansible-tasks: scanned ${#yml_files[@]} task files + ${#sh_files[@]} shell scripts under $ANSIBLE_DIR — $findings finding(s)"
 exit "$findings"

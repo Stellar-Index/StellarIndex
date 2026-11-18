@@ -1,0 +1,29 @@
+# lint-ansible-swallow.baseline — unreviewed `failed_when: false` /
+# `ignore_errors: true` sites, counted per file (shrink-only).
+# Format: <path>|unannotated-swallow|<count>. A file may not gain a swallow:
+# annotate a new one with `# si-swallow-ok: <reason>` instead. When a count
+# drops, lower the number (a stale count fails); delete the line at zero.
+# Growing this file needs a scoped `Baseline-Growth:` commit trailer
+# (scripts/ci/lint-baseline-growth.sh).
+configs/ansible/playbooks/deploy-binary.yml|unannotated-swallow|1
+configs/ansible/roles/archival-node/tasks/03-zfs.yml|unannotated-swallow|5
+configs/ansible/roles/archival-node/tasks/07-galexie.yml|unannotated-swallow|6
+configs/ansible/roles/archival-node/tasks/09-minio.yml|unannotated-swallow|4
+configs/ansible/roles/archival-node/tasks/10-observability.yml|unannotated-swallow|4
+configs/ansible/roles/archival-node/tasks/11-firewall.yml|unannotated-swallow|1
+configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml|unannotated-swallow|3
+configs/ansible/roles/archival-node/tasks/17-stellarindex-healthchecks.yml|unannotated-swallow|1
+configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml|unannotated-swallow|9
+configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml|unannotated-swallow|1
+configs/ansible/roles/archival-node/tasks/galexie-effective-checksum.yml|unannotated-swallow|1
+configs/ansible/roles/loki/tasks/server-01-preflight.yml|unannotated-swallow|1
+configs/ansible/roles/loki/tasks/server-04-systemd.yml|unannotated-swallow|1
+configs/ansible/roles/patroni/tasks/03-etcd-configure.yml|unannotated-swallow|1
+configs/ansible/roles/patroni/tasks/06-patroni-configure.yml|unannotated-swallow|1
+configs/ansible/roles/patroni/tasks/data-dir-gate.yml|unannotated-swallow|2
+configs/ansible/roles/prometheus/tasks/07-monitoring.yml|unannotated-swallow|1
+configs/ansible/roles/redis-sentinel/tasks/03-redis-configure.yml|unannotated-swallow|3
+configs/ansible/roles/redis-sentinel/tasks/04-sentinel-configure.yml|unannotated-swallow|1
+configs/ansible/tasks/cancel-asset-character-roll.yml|unannotated-swallow|1
+configs/ansible/tasks/deploy-one-binary.yml|unannotated-swallow|17
+configs/ansible/tasks/ship-ch-schema-intent.yml|unannotated-swallow|1

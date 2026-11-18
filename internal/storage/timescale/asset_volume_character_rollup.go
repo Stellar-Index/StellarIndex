@@ -194,6 +194,18 @@ func (s *Store) AssetVolumeCharacterComputedAt(ctx context.Context) (time.Time, 
 	return at.Time, nil
 }
 
+// resetParallelismOrDiscard lifts the roll's parallelism cap on a detached context, discarding the connection if it cannot:
+// a pooled connection left capped at 2 workers slows every API query that lands on it.
+func resetParallelismOrDiscard(ctx context.Context, conn *sql.Conn) error {
+	rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), caggRefreshRestoreTimeout)
+	defer rcancel()
+	if _, err := conn.ExecContext(rctx, "RESET max_parallel_workers_per_gather"); err != nil {
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		return fmt.Errorf("timescale: rollAssetVolumeCharacter reset parallelism: %w", err)
+	}
+	return nil
+}
+
 // rollAssetVolumeCharacter returns one row per canonical asset with priced volume. Like [Store.refreshCAGGBounded], it restores the pinned
 // connection's statement_timeout on a detached context, and marks the connection bad (driver.ErrBadConn) if the restore fails.
 func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolumeCharacterRow, err error) {
@@ -216,7 +228,7 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	if _, err := conn.ExecContext(ctx, "SET max_parallel_workers_per_gather = 2"); err != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter cap parallelism: %w", err)
 	}
-	defer func() { _, _ = conn.ExecContext(ctx, "RESET max_parallel_workers_per_gather") }()
+	defer func() { err = errors.Join(err, resetParallelismOrDiscard(ctx, conn)) }()
 
 	var prevTimeout string
 	if err := conn.QueryRowContext(ctx, `SELECT current_setting('statement_timeout')`).Scan(&prevTimeout); err != nil {
