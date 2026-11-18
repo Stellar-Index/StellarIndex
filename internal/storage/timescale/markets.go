@@ -162,14 +162,30 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 	return out, nextCursor, nil
 }
 
-// pools24hWholeHoursSQL and pools24hEdgesSQL split (now-24h, now] between pools_per_source_1h rows `r` and trades rows `r`.
-// time_bucket, not date_trunc: date_trunc follows the session time zone, the view's buckets do not.
+// pools24hWholeHoursSQL, pools24hLeadSQL and pools24hTailSQL split (now-24h, now] between pools_per_source_1h rows `r` and trades
+// rows `r`. time_bucket, not date_trunc: date_trunc follows the session time zone, the view's buckets do not.
+// pools24hTailCTE picks the tail start: two hours back, or the view's watermark if materialized-only and refreshed later than that,
+// capped at six hours so a stalled refresh cannot turn the tail into a 24h trades scan; past the cap tail_partial flags the volume.
 const (
 	pools24hFirstWholeHour = `time_bucket('1 hour', NOW() - INTERVAL '24 hours') + INTERVAL '1 hour'`
-	pools24hTailStart      = `time_bucket('1 hour', NOW()) - INTERVAL '1 hour'`
-	pools24hWholeHoursSQL  = `r.bucket >= ` + pools24hFirstWholeHour + ` AND r.bucket < ` + pools24hTailStart
-	pools24hEdgesSQL       = `r.ts > NOW() - INTERVAL '24 hours'
-             AND (r.ts < ` + pools24hFirstWholeHour + ` OR r.ts >= ` + pools24hTailStart + `)`
+	pools24hTwoHoursBack   = `time_bucket('1 hour', NOW()) - INTERVAL '1 hour'`
+	pools24hTailCap        = `time_bucket('1 hour', NOW()) - INTERVAL '6 hours'`
+	pools24hTailCTE        = `
+        pools_tail AS (
+          SELECT CASE WHEN ca.materialized_only
+                      THEN GREATEST(` + pools24hTailCap + `, LEAST(` + pools24hTwoHoursBack + `, w.watermark))
+                      ELSE ` + pools24hTwoHoursBack + ` END AS tail_start,
+                 ca.materialized_only AND w.watermark < ` + pools24hTailCap + ` AS tail_partial
+            FROM _timescaledb_catalog.continuous_agg ca
+           CROSS JOIN LATERAL (SELECT _timescaledb_functions.to_timestamp(
+                     _timescaledb_functions.cagg_watermark(ca.mat_hypertable_id)) AS watermark) w
+           WHERE ca.user_view_schema = 'public' AND ca.user_view_name = 'pools_per_source_1h'
+        )`
+	pools24hTailStart     = `(SELECT tail_start FROM pools_tail)`
+	pools24hWholeHoursSQL = `r.bucket >= ` + pools24hFirstWholeHour + ` AND r.bucket < ` + pools24hTailStart
+	// Two plain ts ranges, not one range with an OR: without a BitmapOr the planner walks the ts index over all 24h.
+	pools24hLeadSQL = `r.ts > NOW() - INTERVAL '24 hours' AND r.ts < ` + pools24hFirstWholeHour
+	pools24hTailSQL = `r.ts >= ` + pools24hTailStart
 )
 
 // perSourcePoolsCTE scans pools_per_source_1h per (source, base, quote), shared by /v1/pools and source-filtered /v1/markets so they
@@ -179,11 +195,13 @@ const (
 // pools_raw aggregates on the stored columns first: grouping 1.2M hourly rows on the COALESCEd fold made the planner expect a group per
 // row and spill a 218 MB sort, where the raw (source, base, quote) estimate fits a hash aggregate. Every aggregate re-composes exactly;
 // last() with a ROW comparator cannot run as a parallel partial aggregate, so neither stage uses one.
-// The 24h figures cover exactly (now-24h, now]: whole hours from the view, and from trades the hour holding now-24h (the view
-// cannot split it) and the two newest hours (materialized only once closed plus the 5 min end_offset), disjoint so nothing counts twice.
+// The 24h figures cover (now-24h, now]: whole hours from the view, and from trades the hour holding now-24h (the view cannot split it)
+// and the tail from pools_tail, disjoint so nothing counts twice. Real-time, the view serves every hour itself and the split only keeps
+// its rows from tail_start on out; materialized-only (0187 leaves it so until an operator restores real-time), it lacks every hour past
+// its watermark, which the tail covers up to the cap.
 func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
 	return `
-        WITH ` + aliasFoldCTE(foldIdx) + `,
+        WITH ` + aliasFoldCTE(foldIdx) + `,` + pools24hTailCTE + `,
         pools_hourly AS (
           SELECT
             r.source, r.base_asset, r.quote_asset,
@@ -206,8 +224,15 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
                  count(*) AS count_24h,
                  SUM(COALESCE(r.usd_volume, 0)::numeric) AS vol_24h_usd,
                  bool_or(r.usd_volume IS NULL) AS vol_lower_bound
-            FROM trades r
-           WHERE ` + pools24hEdgesSQL + rawFilter + `
+            FROM (
+              SELECT r.source, r.base_asset, r.quote_asset, r.usd_volume
+                FROM trades r
+               WHERE ` + pools24hLeadSQL + rawFilter + `
+              UNION ALL
+              SELECT r.source, r.base_asset, r.quote_asset, r.usd_volume
+                FROM trades r
+               WHERE ` + pools24hTailSQL + rawFilter + `
+            ) r
            GROUP BY r.source, r.base_asset, r.quote_asset
         ),
         -- Edge trades only add to a market the view lists, so the population and last_* stay the view's.
@@ -215,7 +240,8 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
           SELECT h.source, h.base_asset, h.quote_asset, h.last_trade_at,
                  h.count_24h + COALESCE(e.count_24h, 0) AS count_24h,
                  h.vol_24h_usd + COALESCE(e.vol_24h_usd, 0) AS vol_24h_usd,
-                 h.vol_lower_bound OR COALESCE(e.vol_lower_bound, false) AS vol_lower_bound,
+                 h.vol_lower_bound OR COALESCE(e.vol_lower_bound, false)
+                   OR COALESCE((SELECT tail_partial FROM pools_tail), false) AS vol_lower_bound,
                  h.last_price
             FROM pools_hourly h
             LEFT JOIN pools_edges e

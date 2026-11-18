@@ -45,7 +45,7 @@ func TestPerSourcePools_AggregateBeforeFold(t *testing.T) {
 	pools, _ := buildPoolsQuery(since, PoolsFilter{Sources: []string{"sdex"}}, "", 100, MarketsOrderVolume24hDesc)
 	venue, _ := buildSourceMarketsQuery(since, "sdex", "", 100, MarketsOrderVolume24hDesc)
 	for name, q := range map[string]string{"pools": pools, "source markets": venue} {
-		// pools_hourly (the view) and pools_edges (trades) are the raw scans; pools_raw joins them.
+		// pools_hourly (the view) and pools_edges (trades, twice) are the raw scans; pools_raw joins them.
 		raw := q[strings.Index(q, "pools_hourly AS ("):strings.Index(q, "pools AS (")]
 		for _, scan := range []string{"FROM pools_per_source_1h r", "FROM trades r"} {
 			if !strings.Contains(raw, scan) {
@@ -58,8 +58,15 @@ func TestPerSourcePools_AggregateBeforeFold(t *testing.T) {
 		if strings.Contains(raw, "alias_fold") {
 			t.Errorf("%s: a raw scan folds aliases before grouping:\n%s", name, raw)
 		}
-		if n := strings.Count(raw, "r.source = "); n != 2 {
-			t.Errorf("%s: the source filter reaches %d raw scans, want 2:\n%s", name, n, raw)
+		// pools_edges is two plain ts-range scans of trades (leading partial hour, tail), never one range with an OR.
+		if n := strings.Count(raw, "FROM trades r"); n != 2 {
+			t.Errorf("%s: %d trades scans, want 2 (lead and tail):\n%s", name, n, raw)
+		}
+		if strings.Contains(raw, " OR r.ts") {
+			t.Errorf("%s: the trades edges are one ts range with an OR:\n%s", name, raw)
+		}
+		if n := strings.Count(raw, "r.source = "); n != 3 {
+			t.Errorf("%s: the source filter reaches %d raw scans, want 3:\n%s", name, n, raw)
 		}
 		if strings.Contains(q, ", ROW(") {
 			t.Errorf("%s: last() with a ROW comparator cannot run as a parallel partial aggregate", name)
