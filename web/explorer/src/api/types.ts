@@ -3700,7 +3700,7 @@ export interface paths {
          *     moves no row into or out of that total. Because the two totals
          *     are taken over different rows, their difference is not a
          *     premium: `summary.both_bases` gives both figures over the
-         *     members carrying both, `premium.pct` gives the same gap per
+         *     members carrying both and a published premium, `premium.pct` gives the same gap per
          *     asset, and the funnel's `valuation` arm names the reason every
          *     uncovered row carries no figure.
          *
@@ -9613,13 +9613,17 @@ export interface components {
              */
             premium_pct: string;
             /**
-             * @description The day's volume-weighted average price, exact decimal string.
+             * @description The day's volume-weighted average price as an exact decimal
+             *     string, trailing zeros trimmed (rounded to 10 dp only if it
+             *     has no finite decimal form).
              * @example 0.0698283638
              */
             market_usd: string;
             /**
-             * @description The day's closing oracle value at the feed's own scale, exact decimal string.
-             * @example 0.0698890000
+             * @description The day's closing oracle value as an exact decimal string,
+             *     trailing zeros trimmed: every digit the feed published, so it
+             *     reconciles with `/v1/oracle/latest`.
+             * @example 0.069889
              */
             reference_usd: string;
             /**
@@ -10114,8 +10118,11 @@ export interface components {
         };
         /**
          * @description Totals over the members carrying a market cap AND a reference
-         *     valuation — the only subset on which the two bases can honestly
-         *     be compared.
+         *     valuation whose premium is published (`premium.status` =
+         *     `published`) — the only subset on which the two bases can
+         *     honestly be compared. It is a subset of the rows `assets_compared`
+         *     counts: those that also carry both totals (a thin-market row has a
+         *     published premium but no market cap).
          *
          *     It exists to stop one misreading. `market_cap_usd` and
          *     `reference_valuation.value_usd` are sums over different rows: an
@@ -10127,7 +10134,7 @@ export interface components {
          *     percentage terms is `premium.pct`.
          */
         RWABothBases: {
-            /** @description Members carrying both figures. */
+            /** @description Members carrying both figures and a published premium. */
             assets: number;
             /** @description Market-basis total over those rows only. Absent when `assets` is 0. */
             market_cap_usd?: string;
@@ -23681,15 +23688,15 @@ export interface operations {
                      *                 "t": "2026-09-10T00:00:00Z",
                      *                 "premium_pct": "-0.0868",
                      *                 "market_usd": "0.0698283638",
-                     *                 "reference_usd": "0.0698890000",
+                     *                 "reference_usd": "0.069889",
                      *                 "volume_usd": "18420.55",
                      *                 "trades": 37
                      *               },
                      *               {
                      *                 "t": "2026-09-11T00:00:00Z",
                      *                 "premium_pct": "0.1421",
-                     *                 "market_usd": "0.0699883100",
-                     *                 "reference_usd": "0.0698890000",
+                     *                 "market_usd": "0.06998831",
+                     *                 "reference_usd": "0.069889",
                      *                 "volume_usd": "9106.20",
                      *                 "trades": 21
                      *               }
