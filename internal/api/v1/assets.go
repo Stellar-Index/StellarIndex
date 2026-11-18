@@ -3769,6 +3769,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		// smallest unit paired with `decimals`, while a catalogue row's own Decimals is 0 for
 		// Stellar-issued entries. A stroop value on a decimals=0 row would render 10^7 too large.
 		dst.Decimals = twin.Decimals
+		dst.DecimalsUnresolved, dst.DecimalsUndeclared = twin.DecimalsUnresolved, twin.DecimalsUndeclared
 		// The basis says whether the figure is exact, a floor or a derived upper bound; without it a
 		// lake-flows or trustline-sum reading renders as exact.
 		dst.SupplyBasis = twin.SupplyBasis

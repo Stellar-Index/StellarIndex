@@ -33,6 +33,23 @@ func TestMergeTwinStats_CarriesDecimalsWithSupply(t *testing.T) {
 	}
 }
 
+// A twin whose scale is unknown hands over its supply with that verdict, not with its stamped 7.
+func TestMergeTwinStats_CarriesUnknownScaleWithSupply(t *testing.T) {
+	t.Parallel()
+
+	supply := "342797138733487851"
+	for _, twin := range []AssetDetail{
+		{CirculatingSupply: &supply, Decimals: 7, DecimalsUnresolved: true},
+		{CirculatingSupply: &supply, Decimals: 7, DecimalsUndeclared: true},
+	} {
+		dst := AssetDetail{Type: "global"}
+		mergeTwinStats(&dst, twin)
+		if !dst.scaleUnknown() {
+			t.Errorf("twin %+v: merged scale is known (decimals %d), want unknown", twin, dst.Decimals)
+		}
+	}
+}
+
 // The supply's basis travels with it: a lake-flows or trustline-sum reading without its basis renders as exact.
 func TestMergeTwinStats_CarriesSupplyBasisWithSupply(t *testing.T) {
 	t.Parallel()
