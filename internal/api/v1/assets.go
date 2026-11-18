@@ -69,7 +69,7 @@ type AssetReader interface {
 // ErrAssetNotFound is what AssetReader.GetAsset returns for an unknown asset; handlers translate it to 404 problem+json.
 var ErrAssetNotFound = errors.New("api: asset not found")
 
-// TokenDecimalsReader resolves a Soroban token's decimals() from lake contract-instance metadata; found=false keeps the caller's default.
+// TokenDecimalsReader resolves a Soroban token's decimals() from lake contract-instance metadata; found=false means the scale is unknown.
 type TokenDecimalsReader interface {
 	TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error)
 }
@@ -180,6 +180,10 @@ type AssetDetail struct {
 	// Set for missing RWA contract readings ([Server.fillContractDecimals]) and for Soroban rows
 	// whose lake read failed with no projection row ([Server.applyTokenDecimals]).
 	DecimalsUnresolved bool `json:"-"`
+	// DecimalsUndeclared is true when a Soroban token's lake read succeeded but found no derivable
+	// declaration and no projection row vouches for one: the scale is unknown, but as a fact, so the
+	// body stays cacheable and unflagged.
+	DecimalsUndeclared bool `json:"-"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
@@ -424,6 +428,23 @@ type FiatCodeAnchor struct {
 	Note string `json:"note"`
 }
 
+// scaleUnknown reports that Decimals is not the token's scale: every scale-dependent figure must be refused.
+func (d *AssetDetail) scaleUnknown() bool {
+	return d.DecimalsUnresolved || d.DecimalsUndeclared
+}
+
+// MarshalJSON omits `decimals` when the scale is unknown: the struct's placeholder must never reach the wire as the token's scale.
+func (d AssetDetail) MarshalJSON() ([]byte, error) {
+	type wire AssetDetail
+	if !d.scaleUnknown() {
+		return json.Marshal(wire(d))
+	}
+	return json.Marshal(struct {
+		wire
+		Decimals *int `json:"decimals,omitempty"`
+	}{wire: wire(d)})
+}
+
 // detailFromAsset builds an AssetDetail from the canonical shape when no AssetReader is wired (tests, dev); HomeDomain stays
 // nil and sep1_status defaults to "not_applicable".
 func detailFromAsset(a canonical.Asset) AssetDetail {
@@ -432,8 +453,7 @@ func detailFromAsset(a canonical.Asset) AssetDetail {
 		AssetID: a.String(),
 		Type:    string(a.Type),
 		Code:    a.Code,
-		// Classic and native are 7 by protocol; Soroban tokens get their real decimals() overlaid by
-		// applyTokenDecimals when the lake has the instance metadata, else 7 is the default.
+		// decimals-7: native/classic by protocol; applyTokenDecimals overlays a Soroban scale or marks it unknown.
 		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}
@@ -779,6 +799,12 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []AssetDetail{}
 	}
+	// The lean reader does no lake read, so a Soroban row's scale is the reader's placeholder, not the token's.
+	for i := range rows {
+		if rows[i].Type == string(canonical.AssetSoroban) {
+			rows[i].DecimalsUnresolved = true
+		}
+	}
 
 	env := Envelope{
 		Data:  rows,
@@ -1051,7 +1077,7 @@ func (s *Server) fillRowMarketCap(
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
-	if row.MarketCapDecimalsMismatch || row.DecimalsUnresolved {
+	if row.MarketCapDecimalsMismatch || row.scaleUnknown() {
 		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised
 		// through the nonstandard_decimals_assets projection while row.Decimals now holds a
 		// disagreeing lake reading, so supply over price would be off by a power of ten. Null
@@ -1104,8 +1130,12 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	}
 	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, row.AssetID)
 	if !lakeKnown {
-		if !hasConfirmed && lakeErr != nil {
+		switch {
+		case hasConfirmed:
+		case lakeErr != nil:
 			row.DecimalsUnresolved = true
+		default:
+			row.DecimalsUndeclared = true
 		}
 		return
 	}
@@ -1557,9 +1587,10 @@ func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
 func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	asset, err := canonical.ParseAsset(row.AssetID)
 	d := AssetDetail{
-		Kind:       "stellar_asset",
-		AssetID:    row.AssetID,
-		Code:       row.Code,
+		Kind:    "stellar_asset",
+		AssetID: row.AssetID,
+		Code:    row.Code,
+		// decimals-7: placeholder; applyConfirmedListingDecimals marks a Soroban scale unknown and MarshalJSON omits it.
 		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}
@@ -2517,7 +2548,8 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // applyTokenDecimals overlays a Soroban token's lake decimals() onto detail.Decimals (classic/native are 7) and is the lockstep
 // check with `nonstandard_decimals_assets`. A lake/projection disagreement serves the lake value but flags
 // MarketCapDecimalsMismatch (cap refused; obs.NonstandardDecimalsLockstepMismatchTotal{site="asset_detail"}); a FAILED lake
-// read with no projection row sets DecimalsUnresolved: cap refused, flags.stale uncached.
+// read with no projection row sets DecimalsUnresolved (flags.stale, uncached) and a read finding no declaration sets
+// DecimalsUndeclared; either way `decimals` is omitted and the cap refused.
 func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a canonical.Asset) {
 	if a.Type != canonical.AssetSoroban || a.ContractID == "" {
 		return
@@ -2525,10 +2557,13 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(a.ContractID)
 	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, a.ContractID)
 	if !lakeKnown {
-		if hasConfirmed {
+		switch {
+		case hasConfirmed:
 			detail.Decimals = confirmed
-		} else if lakeErr != nil {
+		case lakeErr != nil:
 			detail.DecimalsUnresolved = true
+		default:
+			detail.DecimalsUndeclared = true
 		}
 		return
 	}
@@ -2545,10 +2580,13 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	}
 }
 
-// lakeTokenDecimals is the bounded lake read behind applyTokenDecimals. known=false covers every missing-reading case; err is
-// non-nil only when the read FAILED (error or tokenMetadataReadTimeout), and callers must then not publish a scale-dependent
-// figure.
+// lakeTokenDecimals is every v1 surface's Soroban token scale: 7 for a known SAC (fixed by the protocol), else the bounded lake
+// read. known=false means no declaration was read (serve the scale absent, never a default); err is non-nil only when the read
+// FAILED (error or tokenMetadataReadTimeout), and callers must then not publish a scale-dependent figure.
 func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool, err error) {
+	if _, sac := s.resolveSACAsset(contractID); sac {
+		return defaultTokenDecimals, true, nil // decimals-7: known SAC, fixed by the protocol
+	}
 	if s.TokenDecimals == nil {
 		return 0, false, nil
 	}

@@ -40,10 +40,10 @@ const HISTORY_LIMIT = 100;
  */
 export function HistoryTabPanel({
   assetID,
-  decimals = 7,
+  decimals,
 }: {
   assetID: string;
-  decimals?: number;
+  decimals?: number | null;
 }) {
   const quote = historyQuote(assetID);
   const history = useHistory(assetID, quote, HISTORY_LIMIT);
@@ -177,9 +177,8 @@ export function HistoryTabPanel({
                   )}
                 </Td>
                 <Td align="right" className="font-mono text-xs">
-                  {/* quote leg is XLM or classic USDC, both fixed 7 decimals —
-                    never the base asset's own `decimals` prop. */}
-                  {formatUnitsReadable(r.quote_amount, r.quote_decimals ?? 7)}
+                  {/* The quote leg has its own scale; never the base's `decimals` prop. */}
+                  {formatUnitsReadable(r.quote_amount, r.quote_decimals)}
                 </Td>
                 <Td align="right" className="font-mono text-xs">
                   {r.price ?? '—'}

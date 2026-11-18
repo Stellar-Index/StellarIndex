@@ -337,6 +337,31 @@ func TestListingValuation_ObservationIsNeverPromotedOver(t *testing.T) {
 	}
 }
 
+// TestListingValuation_RefusesUnknownScale: a supply whose decimals were not declared or not read has no unit, so the
+// listing price must not be multiplied by it scaled by the row's placeholder.
+func TestListingValuation_RefusesUnknownScale(t *testing.T) {
+	for _, mark := range []func(*AssetDetail){
+		func(r *AssetDetail) { r.DecimalsUndeclared = true },
+		func(r *AssetDetail) { r.DecimalsUnresolved = true },
+	} {
+		s := tlvServer(t,
+			&stubAssetListingDirectory{rows: map[string]timescale.ListingEntry{
+				tlvUSDT0SAC: tlvEntry(tlvUSDT0SAC, "usdt0", "1", time.Minute),
+			}},
+			map[string]string{tlvUSDT0SAC: tlvUSDT0LakeSupply},
+		)
+		row := tlvDustSuppressedRow(tlvUSDT0Asset, "1.00", "")
+		mark(&row)
+		row = tlvApply(t, s, []AssetDetail{row})[0]
+		if row.ListingValuation == nil || row.ListingValuation.Status != ListingValuationScaleUnknown {
+			t.Fatalf("listing_valuation = %+v, want status %q", row.ListingValuation, ListingValuationScaleUnknown)
+		}
+		if row.ListingValuation.ValueUSD != nil || row.ListingReference != nil {
+			t.Errorf("value_usd = %v, reference = %+v; want neither on an unknown scale", row.ListingValuation.ValueUSD, row.ListingReference)
+		}
+	}
+}
+
 func tlvApply(t *testing.T, s *Server, rows []AssetDetail) []AssetDetail {
 	t.Helper()
 	s.applyListingValuations(t.Context(), rows)

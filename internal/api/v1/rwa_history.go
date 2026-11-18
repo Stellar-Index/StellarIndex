@@ -724,8 +724,7 @@ func rwaHistoryCandidates(m rwaMembership, excluded map[string]int) []rwaHistory
 			issuerLabel: rwaHistoryLabel(mem.dirName, mem.homeDomain),
 			feed:        feed,
 			sac:         sac,
-			// Every classic asset is 7 decimals. This arm admits classic assets only, so there is
-			// no other value, and a catalogue lookup would only add a way to be wrong.
+			// decimals-7: this arm admits classic assets only, and every classic asset is 7 by protocol.
 			decimals: 7,
 		})
 	}

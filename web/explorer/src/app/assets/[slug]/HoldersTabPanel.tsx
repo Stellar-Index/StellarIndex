@@ -56,10 +56,10 @@ function isNativeAssetID(assetID: string): boolean {
 
 export function HoldersTabPanel({
   assetID,
-  decimals = 7,
+  decimals,
 }: {
   assetID: string;
-  decimals?: number;
+  decimals?: number | null;
 }) {
   const { data, isLoading, isError } = useQuery<HoldersResp>({
     queryKey: ['/v1/assets/{id}/holders', assetID],
@@ -212,9 +212,9 @@ function HoldersConcentration({
   decimals,
 }: {
   holders: { account_id?: string; balance?: string }[];
-  decimals: number;
+  decimals: number | null | undefined;
 }) {
-  if (holders.length <= 10) return null;
+  if (holders.length <= 10 || decimals == null) return null;
   // Donut geometry only — but still BigInt-divide-first (scaleBaseUnits)
   // so a >2^53 whale balance isn't rounded before scaling (ADR-0003).
   const scaled = holders.map((h) => {

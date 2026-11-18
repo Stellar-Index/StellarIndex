@@ -35,14 +35,14 @@ export function formatCompact(value: number | string): string {
  */
 export function formatCompactUnits(
   raw: string | null | undefined,
-  decimals = 0,
+  shift = 0,
 ): string {
   if (raw == null) return '—';
   const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw.trim());
   if (!m) return '—';
   const [, sign, whole, frac = ''] = m;
   const units = BigInt(`${sign}${whole}${frac}`);
-  const scale = 10n ** BigInt(frac.length + decimals);
+  const scale = 10n ** BigInt(frac.length + shift);
   const intPart = units / scale;
   // From 1,000 up, compact notation rounds at the tens place or coarser,
   // where the truncated fraction cannot move the result; Intl formats a
@@ -56,6 +56,25 @@ export function formatCompactUnits(
   const r = hundredths % scale;
   if (2n * (r < 0n ? -r : r) >= scale) q += units < 0n ? -1n : 1n;
   return COMPACT_FORMATTER.format(Number(q) / 100);
+}
+
+/** Suffix for a token amount shown without a scale. */
+export const UNSCALED_LABEL = '(base units, scale unknown)';
+
+/**
+ * formatCompactTokenUnits — formatCompactUnits for a token amount whose
+ * `decimals` may be absent. An absent scale is never guessed: the raw
+ * base-unit integer renders with UNSCALED_LABEL.
+ */
+export function formatCompactTokenUnits(
+  raw: string | null | undefined,
+  decimals: number | null | undefined,
+): string {
+  if (decimals == null) {
+    const out = formatCompactUnits(raw);
+    return out === '—' ? out : `${out} ${UNSCALED_LABEL}`;
+  }
+  return formatCompactUnits(raw, decimals);
 }
 
 const USD_WHOLE_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -379,9 +398,9 @@ export function formatDurationLong(ms: number): string {
  */
 export function scaleBaseUnits(
   raw: string | null | undefined,
-  decimals: number,
+  decimals: number | null | undefined,
 ): number | null {
-  if (raw == null || raw === '') return null;
+  if (raw == null || raw === '' || decimals == null) return null;
   const t = raw.trim();
   if (/^-?\d+$/.test(t)) {
     const scale = 10n ** BigInt(decimals);
@@ -398,10 +417,15 @@ export function scaleBaseUnits(
  */
 export function baseUnitsDecimal(
   raw: string | null | undefined,
-  decimals: number,
+  decimals: number | null | undefined,
 ): string | null {
   const t = raw?.trim() ?? '';
-  if (!/^-?\d+$/.test(t) || !Number.isInteger(decimals) || decimals < 0)
+  if (
+    !/^-?\d+$/.test(t) ||
+    decimals == null ||
+    !Number.isInteger(decimals) ||
+    decimals < 0
+  )
     return null;
   const neg = t.startsWith('-');
   const padded = (neg ? t.slice(1) : t).padStart(decimals + 1, '0');
@@ -411,11 +435,18 @@ export function baseUnitsDecimal(
   return neg ? `-${out}` : out;
 }
 
-/** formatUnitsReadable — a smallest-unit integer string at formatReadable precision. */
+/**
+ * formatUnitsReadable — a smallest-unit integer string at formatReadable
+ * precision. An absent `decimals` renders the raw integer with UNSCALED_LABEL.
+ */
 export function formatUnitsReadable(
   raw: string | null | undefined,
-  decimals: number,
+  decimals: number | null | undefined,
 ): string {
+  if (decimals == null) {
+    const out = formatReadable(baseUnitsDecimal(raw, 0));
+    return out == null ? '—' : `${out} ${UNSCALED_LABEL}`;
+  }
   return formatReadable(baseUnitsDecimal(raw, decimals)) ?? '—';
 }
 
@@ -428,10 +459,14 @@ export function formatUnitsReadable(
  */
 export function formatBaseUnits(
   raw: string | null | undefined,
-  decimals: number,
+  decimals: number | null | undefined,
   maxFrac = 4,
 ): string {
   if (raw == null || raw === '') return '—';
+  if (decimals == null) {
+    const out = formatBaseUnits(raw, 0, 0);
+    return out === '—' ? out : `${out} ${UNSCALED_LABEL}`;
+  }
   const t = raw.trim();
   if (!/^-?\d+$/.test(t)) {
     const n = scaleBaseUnits(t, decimals);

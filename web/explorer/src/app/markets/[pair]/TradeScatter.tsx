@@ -33,7 +33,7 @@ export function scatterDots(trades: readonly ScatterTrade[]): {
 } | null {
   const pts = trades
     .map((t) => {
-      const amount = baseUnitsDecimal(t.base_amount, t.base_decimals ?? 7);
+      const amount = baseUnitsDecimal(t.base_amount, t.base_decimals);
       return {
         t,
         ms: new Date(t.ts).getTime(),

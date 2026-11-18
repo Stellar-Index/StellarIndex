@@ -361,9 +361,9 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		// market cap; supply_as_of says how old it is and flags.stale marks the body.
 		return
 	}
-	if detail.MarketCapDecimalsMismatch || detail.DecimalsUnresolved {
-		// DecimalsUnresolved: the lake read failed and no projection row vouches for the scale, so
-		// detail.Decimals is a guess.
+	if detail.MarketCapDecimalsMismatch || detail.scaleUnknown() {
+		// scaleUnknown: the lake read failed or found no declaration and no projection row vouches
+		// for the scale, so detail.Decimals is a placeholder.
 		//
 		// Decimals lockstep refusal (applyTokenDecimals): the price was normalised via the
 		// nonstandard_decimals_assets projection but detail.Decimals disagrees, so usdMarketValue
@@ -566,7 +566,7 @@ type sep1DeclaredMaxResolver struct {
 // SEP1MaxSupply implements [supply.MetadataResolver]; it never errors and degrades every junk shape to ok=false.
 func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.Asset) (string, bool, error) {
 	d := r.detail
-	if d == nil {
+	if d == nil || d.scaleUnknown() {
 		return "", false, nil
 	}
 	if d.IsUnlimited != nil && *d.IsUnlimited {

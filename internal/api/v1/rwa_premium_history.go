@@ -616,7 +616,7 @@ func rwaPremiumCandidates(m rwaMembership, excluded map[string]int) []rwaHistory
 			issuer:   mem.issuer,
 			label:    rwaHistoryLabel(mem.name, mem.code),
 			feed:     feed,
-			decimals: 7,
+			decimals: 7, // decimals-7: classic asset (built above), fixed by the protocol
 		})
 	}
 	return out

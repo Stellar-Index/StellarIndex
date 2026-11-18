@@ -108,7 +108,7 @@ type TradeRow struct {
 	// belongs to the row's source, not the asset: on-chain rows carry the asset's own scale, CEX
 	// rows carry 8 regardless of the pair. Never substitute a constant: the error is
 	// undetectable in the payload because `price` is scale-invariant. Omitted (0) on
-	// /v1/observations.
+	// /v1/observations and for a Soroban token that declares no readable scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router whose same-tx invocation drove this trade (routers.name). Omitted
@@ -328,9 +328,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// Resolve the per-asset scale once; each row overrides it with its source's scale. The
 	// per-asset value is wrong for off-chain rows (CEX 1e8, FX 1e6) and one page can mix them;
 	// the scale-invariant `price` would not reveal a 10x overstatement.
-	baseDec, baseOK := s.resolveAssetDecimals(hCtx, base)
-	quoteDec, quoteOK := s.resolveAssetDecimals(hCtx, quote)
-	if !baseOK || !quoteOK {
+	// An undeclared scale stays 0, which omits the field: amounts are then base units with no stated scale.
+	baseDec, baseErr := s.resolveAssetDecimals(hCtx, base)
+	quoteDec, quoteErr := s.resolveAssetDecimals(hCtx, quote)
+	if baseErr != nil || quoteErr != nil {
 		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/history-unavailable")
 		return
 	}

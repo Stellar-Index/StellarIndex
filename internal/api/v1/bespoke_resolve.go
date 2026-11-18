@@ -171,10 +171,10 @@ func (r *bespokeResolver) assetDecimals(id string) (int, bool) {
 	}
 	switch a.Type {
 	case canonical.AssetNative, canonical.AssetClassic:
-		return defaultTokenDecimals, true
+		return defaultTokenDecimals, true // decimals-7: native/classic, fixed by the protocol
 	case canonical.AssetSoroban:
 		if _, sac := r.s.resolveSACAsset(a.ContractID); sac {
-			return defaultTokenDecimals, true
+			return defaultTokenDecimals, true // decimals-7: known SAC, fixed by the protocol
 		}
 		if m, ok := r.metas[a.ContractID]; ok && m.HasMeta {
 			return int(m.Decimals), true

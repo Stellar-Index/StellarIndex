@@ -60,11 +60,11 @@ type PoolReserveToken struct {
 	// METADATA entry; omitted when the token declares none. It is
 	// self-declared by the token contract — NOT a verified identity.
 	Symbol string `json:"symbol,omitempty"`
-	// Decimals is the token's on-chain declaration; 7 (the SAC
-	// default) when no readable declaration is captured, in which case
-	// the row's mid prices are null.
-	Decimals uint32 `json:"decimals"`
-	Reserve  string `json:"reserve"` // base units, i128 decimal string
+	// Decimals is the token's on-chain declaration; omitted when no
+	// readable declaration is captured or the metadata read failed, in
+	// which case the row's mid prices are null and Reserve is base units.
+	Decimals *uint32 `json:"decimals,omitempty"`
+	Reserve  string  `json:"reserve"` // base units, i128 decimal string
 }
 
 // PoolDepthLevel is the depth estimate at one slippage tier: the largest input trade per direction whose average execution price stays within slippage_pct of mid, constant-product with fee on input.
@@ -260,8 +260,7 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 }
 
 // poolReservesDisplays batch-fetches token display metadata, best-effort, but ok=false on a fetch error so "errored" differs from "no
-// metadata":
-// conflating them would stamp decimals=7 and mis-scale every non-7dp mid price by 10^(d-7).
+// metadata": an errored fetch must null the mid prices even for tokens that do declare a scale.
 func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]clickhouse.SoroswapPairState) (map[string]clickhouse.TokenDisplayMeta, bool) {
 	tokenSet := make(map[string]struct{}, len(states)*2)
 	for _, st := range states {
@@ -281,16 +280,17 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 }
 
 // buildPoolReservesRow assembles one wire row; decimals-dependent mid prices are emitted only when BOTH tokens' decimals were
-// read, else null (not the default-7 stamp, which mis-scales by 10^(d-7)). Reserves and depth are base-unit exact, so always
+// read, else null, as is the unread token's decimals: a guessed scale mis-scales by 10^(d-7). Reserves and depth are base-unit exact, so always
 // served.
 func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta, displaysOK bool) PoolReservesRow {
 	tok := func(contract string, reserve *big.Int) (PoolReserveToken, bool) {
-		t := PoolReserveToken{Contract: contract, Decimals: 7, Reserve: reserve.String()}
+		t := PoolReserveToken{Contract: contract, Reserve: reserve.String()}
 		meta, ok := displays[contract]
 		if !ok || !meta.HasMeta {
 			return t, false
 		}
-		t.Decimals = meta.Decimals
+		d := meta.Decimals
+		t.Decimals = &d
 		// Contract-authored text: an implausible ticker is served as no symbol.
 		t.Symbol, _ = clickhouse.SanitiseTokenSymbol(meta.Symbol)
 		return t, true
@@ -311,8 +311,8 @@ func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]c
 		return row
 	}
 	if displaysOK && known0 && known1 {
-		m01 := midPriceString(st.Reserve1, st.Reserve0, row.Token1.Decimals, row.Token0.Decimals)
-		m10 := midPriceString(st.Reserve0, st.Reserve1, row.Token0.Decimals, row.Token1.Decimals)
+		m01 := midPriceString(st.Reserve1, st.Reserve0, *row.Token1.Decimals, *row.Token0.Decimals)
+		m10 := midPriceString(st.Reserve0, st.Reserve1, *row.Token0.Decimals, *row.Token1.Decimals)
 		row.MidPrice0In1 = &m01
 		row.MidPrice1In0 = &m10
 	}

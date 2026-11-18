@@ -33,7 +33,7 @@ export function SupplyComposition({
   circulating: string | null | undefined;
   total: string | null | undefined;
   max: string | null | undefined;
-  decimals: number;
+  decimals: number | null | undefined;
   maxDeclared?: boolean;
   unlimited?: boolean;
   floor?: boolean;

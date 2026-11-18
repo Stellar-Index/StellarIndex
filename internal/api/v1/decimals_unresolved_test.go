@@ -44,16 +44,17 @@ func (oneRowSEP41Transfers) ListSEP41Transfers(
 
 // /v1/contracts/{id}/transfers: `decimals` is the conversion factor for
 // every amount, so a failed read is a retryable 503, not decimals: 7. An
-// undeclared scale (found=false) keeps the documented default.
+// undeclared scale (found=false) or an unwired reader omits the field.
 func TestSEP41Transfers_DecimalsReadFailed_Returns503(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		dec      *countingDecStub
+		dec      v1.TokenDecimalsReader
 		status   int
 		contains string
 	}{
 		{"read failed", &countingDecStub{err: errDecimalsRead}, http.StatusServiceUnavailable, "decimals"},
-		{"not declared", &countingDecStub{}, http.StatusOK, `"decimals":7`},
+		{"not declared", &countingDecStub{}, http.StatusOK, ""},
+		{"no reader", nil, http.StatusOK, ""},
 		{"read", &countingDecStub{d: 18, found: true}, http.StatusOK, `"decimals":18`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,9 +62,15 @@ func TestSEP41Transfers_DecimalsReadFailed_Returns503(t *testing.T) {
 			ts := httpTestServer(t, srv)
 			resp := mustGet(t, ts.URL+"/v1/contracts/"+decTestContract+"/transfers")
 			body, _ := readAll(resp)
-			if resp.StatusCode != tc.status || !strings.Contains(body, tc.contains) {
-				t.Errorf("status = %d, want %d; body must contain %s: %s",
-					resp.StatusCode, tc.status, tc.contains, body)
+			if resp.StatusCode != tc.status {
+				t.Fatalf("status = %d, want %d: %s", resp.StatusCode, tc.status, body)
+			}
+			if tc.contains == "" {
+				if strings.Contains(body, `"decimals"`) {
+					t.Errorf("unread scale served as a number: %s", body)
+				}
+			} else if !strings.Contains(body, tc.contains) {
+				t.Errorf("body must contain %s: %s", tc.contains, body)
 			}
 		})
 	}
