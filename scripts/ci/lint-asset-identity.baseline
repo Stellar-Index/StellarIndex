@@ -1,0 +1,11 @@
+# Single-spelling asset predicates that predate scripts/ci/lint-asset-identity.sh, keyed
+# path|trimmed line|reason. Shrink-only: a row that no longer matches fails the lint as stale.
+internal/storage/clickhouse/account_cohort_rollup.go|SELECT rel, root, holders FROM stellar.account_cohort_holdings_staging WHERE asset = 'native'|the staging table's native partition is a storage key, not an asset read
+internal/storage/clickhouse/asset_holders_rollup.go|WHERE asset = 'native' AND rank <= 100|account XLM balances; the XLM SAC's holders are a different population
+internal/storage/clickhouse/asset_supply_reader.go|FROM stellar.asset_holders_counts WHERE asset != 'native'`|excludes the native account balance row from classic trustline counts
+internal/storage/clickhouse/classic_asset_holdings.go|AND asset != 'native'|excludes the native account balance row from classic trustline holdings
+internal/storage/timescale/asset_price_snapshot.go|WHEN ca.asset_id = 'native'|decimals branch on the canonical id the snapshot is keyed on
+internal/storage/timescale/asset_price_snapshot.go|CASE WHEN ca.asset_id = 'native' THEN NULL::int|source_count branch on the canonical id the snapshot is keyed on
+internal/storage/timescale/asset_catalogue.go|WHERE base_asset = 'native'|OPEN: native-row 24h volume reads only the native spelling of prices_1m; not traced, left for follow-up
+internal/storage/timescale/asset_catalogue.go|WHERE quote_asset = 'native'|OPEN: as above, quote leg
+internal/storage/timescale/asset_catalogue.go|WHERE u.asset_id = 'native' AND u.unpriced_trades > 0) AS volume_lower_bound|OPEN: as above, lower-bound probe

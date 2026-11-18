@@ -275,6 +275,7 @@ echo "=== Memory-mappings probe self-test ===" && ./scripts/ci/memory-mappings-t
 echo "=== pg-chunk-scan probe self-test ===" && ./scripts/ci/pg-chunk-scan-test.sh
 echo "=== catchup-lanes probe self-test ===" && ./scripts/ci/catchup-lanes-test.sh
 echo "=== lint-chunk-functions ===" && ./scripts/ci/lint-chunk-functions.sh && ./scripts/ci/lint-chunk-functions-test.sh
+echo "=== lint-asset-identity ===" && ./scripts/ci/lint-asset-identity.sh && ./scripts/ci/lint-asset-identity-test.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
 echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
