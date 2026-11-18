@@ -583,7 +583,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ps, adm := s.resolvePriceServeThin(r, reader, asset, quote)
+	ps, adm, market := s.resolvePriceServeQuoteAliases(r, reader, asset, quote)
 	// Withheld beats every fallback, which would re-serve the same substanceless market (see
 	// ErrPriceWithheld).
 	if errors.Is(ps.err, ErrPriceWithheld) {
@@ -610,7 +610,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot, sources, stale, served, triangulated, viaFallback := ps.snap, ps.sources, ps.stale, ps.served, ps.triangulated, ps.viaFallback
 	if !viaFallback {
-		if basis, ok := s.preferUSDAnchoredBasis(r.Context(), asset, quote, snapshot, sources); ok {
+		if basis, ok := s.preferUSDAnchoredBasis(r.Context(), asset, market, snapshot, sources); ok {
 			snapshot, sources, served, triangulated, stale = basis.snap, basis.sources, basis.served, true, basis.stale
 			viaFallback = true
 		}
@@ -618,7 +618,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 
 	// A frozen pair serves the value the freeze is HOLDING (see [Server.resolveFrozenServe]). It
 	// comes from the VWAP cache, so it is viaFallback: already normalized, and stale.
-	held := s.resolveFrozenServeFor(r, snapshot, asset, served, quote)
+	held := s.resolveFrozenServeFor(r, snapshot, asset, served, market)
 	if held.outcome == frozenServeNothingHeld {
 		writeFrozenNothingHeldProblem(w, r, asset, quote)
 		return
@@ -631,8 +631,35 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		stale, viaFallback = true, true
 		served = held.pairBase
 	}
+	snapshot.Quote = quote.String()
 
-	s.handlePriceTail(w, r, asset, quote, served, snapshot, sources, stale, triangulated, viaFallback, frozen, frozenChecked, adm)
+	s.handlePriceTail(w, r, asset, market, served, snapshot, sources, stale, triangulated, viaFallback, frozen, frozenChecked, adm)
+}
+
+// resolvePriceServeQuoteAliases runs [Server.resolvePriceServeThin] over each spelling of quote in alias priority order, so every
+// spelling of an XLM or SAC-wrapped quote reads the same book. market is the spelling that answered (the first on a miss); every
+// per-pair marker is keyed on it. A withheld verdict or read failure ends the walk, as in [Server.readPriceWithAliasesServedOnce].
+func (s *Server) resolvePriceServeQuoteAliases(r *http.Request, reader PriceReader, asset, quote canonical.Asset) (priceServe, *ThinAdmission, canonical.Asset) {
+	var first priceServe
+	var firstAdm *ThinAdmission
+	firstMarket := quote
+	for _, q := range assetAliases(quote) {
+		if q.Equal(asset) {
+			continue
+		}
+		ps, adm := s.resolvePriceServeThin(r, reader, asset, q)
+		if ps.miss == nil {
+			return ps, adm, q
+		}
+		if firstAdm == nil {
+			first, firstAdm, firstMarket = ps, adm, q
+		}
+	}
+	if firstAdm == nil {
+		ps, adm := s.resolvePriceServeThin(r, reader, asset, quote)
+		return ps, adm, quote
+	}
+	return first, firstAdm, firstMarket
 }
 
 // priceServe is one pass of /v1/price's read: closed-bucket read, then the fallback chain on a

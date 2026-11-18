@@ -839,6 +839,22 @@ func TestPrice_XLMAlias(t *testing.T) {
 	}
 }
 
+// The quote leg folds XLM's spellings like the base leg: every spelling of the quote reads the one stored book and echoes the
+// spelling the caller asked for.
+func TestPrice_XLMQuoteAlias(t *testing.T) {
+	book := v1.PriceSnapshot{AssetID: usdcClassicID, Quote: "native", Price: "8.1234567", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())}
+	reader := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdcClassicID + "/native": book}}
+	for _, q := range []string{"native", "crypto:XLM", canonical.XLMSacContractID} {
+		t.Run(q, func(t *testing.T) {
+			status, body := priceGet(t, v1.Options{Prices: reader}, "/v1/price?asset="+usdcClassicID+"&quote="+q)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			checkBody(t, body, []string{`"price":"8.1234567"`, `"quote":"` + q + `"`}, []string{`"stale":true`})
+		})
+	}
+}
+
 // gatingStubPriceReader also implements proxyPairGate (RecentClosedVWAP1mExists), which the stablecoin proxy uses to
 // skip empty pegs before the unbounded last-trade walk; latestCalls proves a gated-out peg is never walked.
 type gatingStubPriceReader struct {
