@@ -1462,7 +1462,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed archive-completeness.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── verify-served-values — the served-value truth harness ────────────
 # The one check on the served NUMBER rather than the pipe (XLM
@@ -1542,7 +1542,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed verify-served-values.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── wasm-drift — the detector of an unaudited in-place contract upgrade ──
 # The command and its two alerts shipped without a schedule, so no textfile
@@ -1706,7 +1706,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed listing-sync.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── supply-verify-rollup — SEP-41 supply-rollup reconciliation ───────
 # Daily `stellarindex-ops supply verify-rollup` so "the rollup reconciles"
@@ -1781,7 +1781,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed supply-verify-rollup.service compute-completeness-sep41.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── verify-archive Tier B — only where its anchor can be correct ─────
 # Tier B (checkpoint anchor): `verify_archive -tier checkpoint` reads a LOCAL
@@ -1865,7 +1865,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed verify-archive-tier-b.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── galexie-mirror-verify — mirror content vs the upstream dataset ───
 # galexie-archive-fill checks presence only, so an upstream re-export of a
