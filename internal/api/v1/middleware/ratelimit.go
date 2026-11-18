@@ -102,10 +102,32 @@ func (c *rateLimitCharge) effectiveMax() int {
 
 // spend charges tokens and settles the outcome onto w: true to proceed, false once it has written
 // a 429 or 503. Shared by the base charge and [ChargeRateLimit] so policy and headers cannot drift.
+// With a per-IP charge, the headers describe whichever bucket binds: the refusing one, else the one with fewer tokens left.
 func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens int) bool {
-	if c.perIP != nil && !c.perIP.spend(w, r, tokens) {
+	var ipRes *ratelimit.Result
+	if c.perIP != nil {
+		res, ok := c.perIP.take(w, r, tokens)
+		if !ok {
+			return false
+		}
+		ipRes = res
+	}
+	res, ok := c.take(w, r, tokens)
+	if !ok {
 		return false
 	}
+	switch {
+	case ipRes != nil && (res == nil || ipRes.Remaining < res.Remaining):
+		c.perIP.setHeaders(w, *ipRes)
+	case res != nil:
+		c.setHeaders(w, *res)
+	}
+	return true
+}
+
+// take charges tokens against this bucket alone. It returns false once it has written a 429 (with this bucket's headers)
+// or a fail-closed 503; a nil result with true means the limiter failed open.
+func (c *rateLimitCharge) take(w http.ResponseWriter, r *http.Request, tokens int) (*ratelimit.Result, bool) {
 	takeCtx, takeCancel := throttleContext(r)
 	res, err := c.bucket.Charge(takeCtx, c.key, tokens, c.override)
 	takeCancel()
@@ -116,29 +138,32 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI).Inc()
 			writeThrottleUnavailableProblem(w, r)
-			return false
+			return nil, false
 		}
 		// Debug level so an outage does not flood the error log; the metric is the alert signal.
 		c.logger.Debug("ratelimit redis error — failing open",
 			"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 		obs.RateLimitFailOpenTotal.Inc()
-		return true
+		return nil, true
 	}
 
-	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(c.effectiveMax()))
-	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(nextWindowResetUnix(c.bucket.Window()), 10))
-
 	if !res.Allowed {
+		c.setHeaders(w, res)
 		retryAfter := int(res.RetryAfter.Seconds())
 		if retryAfter < 1 {
 			retryAfter = 1
 		}
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		writeRateLimitProblem(w, r, retryAfter)
-		return false
+		return nil, false
 	}
-	return true
+	return &res, true
+}
+
+func (c *rateLimitCharge) setHeaders(w http.ResponseWriter, res ratelimit.Result) {
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(c.effectiveMax()))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
+	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(nextWindowResetUnix(c.bucket.Window()), 10))
 }
 
 // ChargeRateLimit re-prices the in-flight request at cost tokens IN TOTAL (capped at the subject's ceiling, no refund); false means it
@@ -230,15 +255,28 @@ func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *rat
 // sep10PerIPCharge also holds a SEP-10 JWT caller's IP to one subject's authenticated budget: the JWT's account is a keypair
 // anyone mints for free, so keyed on the account alone one IP would get a fresh budget per keypair. API keys are exempt.
 func sep10PerIPCharge(r *http.Request, bucket, authBucket *ratelimit.Bucket, logger *slog.Logger) *rateLimitCharge {
-	subject, ok := auth.SubjectFrom(r.Context())
-	if !ok || bucket != authBucket || subject.Tier != auth.TierSEP10 || subject.KeyID != "" {
+	key, ok := sep10PerIPKey(r)
+	if !ok || bucket != authBucket {
 		return nil
 	}
-	return &rateLimitCharge{bucket: authBucket, key: "sep10ip:" + anonymousRateLimitKey(r), logger: logger, paid: 1}
+	return &rateLimitCharge{bucket: authBucket, key: key, logger: logger, paid: 1}
 }
 
-// RateLimitCallerKey is the identity the rate limiter charges: the owner account for an authenticated subject, else the throttle IP.
+// sep10PerIPKey is the per-IP key a SEP-10 JWT subject (no key id) is held to; false for every other subject.
+func sep10PerIPKey(r *http.Request) (string, bool) {
+	subject, ok := auth.SubjectFrom(r.Context())
+	if !ok || subject.Tier != auth.TierSEP10 || subject.KeyID != "" {
+		return "", false
+	}
+	return "sep10ip:" + anonymousRateLimitKey(r), true
+}
+
+// RateLimitCallerKey is the identity a per-caller cap charges: the client IP for a SEP-10 JWT subject (a free keypair),
+// the owner account for any other authenticated subject, else the throttle IP.
 func RateLimitCallerKey(r *http.Request) string {
+	if key, ok := sep10PerIPKey(r); ok {
+		return key
+	}
 	if subject, ok := auth.SubjectFrom(r.Context()); ok && subject.Identifier != "" &&
 		subject.Tier != auth.TierAnonymous && subject.Tier != "" {
 		return authenticatedRateLimitKey(subject)
