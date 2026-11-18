@@ -90,7 +90,8 @@ func seedArmRecencyFixture(t *testing.T, ctx context.Context, store *timescale.S
 		}
 	}
 	const unit = 10_000_000 // one whole 7-decimals token
-	fresh, dayAgo := now.Add(-5*time.Minute), now.Add(-24*time.Hour)
+	// dayAgo is the minute that closes at or before 24h ago: the minute starting at now-24h closes after it.
+	fresh, dayAgo := now.Add(-5*time.Minute), now.Add(-24*time.Hour-time.Minute)
 	fiveDays, sixDays := now.Add(-5*24*time.Hour), now.Add(-6*24*time.Hour)
 
 	for _, ts := range []time.Time{fresh, dayAgo} {
@@ -283,9 +284,9 @@ func seedDecimalsFixture(t *testing.T, ctx context.Context, store *timescale.Sto
 		// seven: 100 tokens for 65 USDC. Raw vwap 0.65 IS the price.
 		add("soroswap", ts, pair(seven, usdc), 1_000_000_000, 650_000_000)
 	}
-	// nine an hour ago at HALF the price, inside the change_1h window (55-65 min): both legs are raw so the scale cancels
-	// and the percentage must read +100.00 whether or not the price itself is corrected.
-	add("soroswap", now.Add(-60*time.Minute), pair(nine, usdc), 1_000_000_000_000, 12_500_000_000)
+	// nine an hour ago at HALF the price, in the minute closing at or before 1h ago (the change_1h reference): both legs
+	// are raw so the scale cancels and the percentage must read +100.00 whether or not the price itself is corrected.
+	add("soroswap", now.Add(-61*time.Minute), pair(nine, usdc), 1_000_000_000_000, 12_500_000_000)
 
 	// The Soroban-venue legs carry no insert-time usd_volume; the listing
 	// spine and GetAssetBySlug admit a discovered contract only once it
