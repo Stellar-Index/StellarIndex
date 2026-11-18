@@ -276,6 +276,10 @@ func (s *Server) groupDivergenceRows(ctx context.Context, rows []timescale.Diver
 	idx := make(map[[2]string]int)
 	newest := make(map[[2]string]time.Time)
 	for _, d := range rows {
+		// A redistribution-barred vendor's price may not be re-served, here as on /v1/oracle/latest.
+		if external.RedistributionBarred(d.Reference) {
+			continue
+		}
 		if w, _ := withheld(ctx, d.AssetID, d.QuoteID); w {
 			continue
 		}
