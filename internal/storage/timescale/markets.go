@@ -162,6 +162,16 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 	return out, nextCursor, nil
 }
 
+// pools24hWholeHoursSQL and pools24hEdgesSQL split (now-24h, now] between pools_per_source_1h rows `r` and trades rows `r`.
+// time_bucket, not date_trunc: date_trunc follows the session time zone, the view's buckets do not.
+const (
+	pools24hFirstWholeHour = `time_bucket('1 hour', NOW() - INTERVAL '24 hours') + INTERVAL '1 hour'`
+	pools24hTailStart      = `time_bucket('1 hour', NOW()) - INTERVAL '1 hour'`
+	pools24hWholeHoursSQL  = `r.bucket >= ` + pools24hFirstWholeHour + ` AND r.bucket < ` + pools24hTailStart
+	pools24hEdgesSQL       = `r.ts > NOW() - INTERVAL '24 hours'
+             AND (r.ts < ` + pools24hFirstWholeHour + ` OR r.ts >= ` + pools24hTailStart + `)`
+)
+
 // perSourcePoolsCTE scans pools_per_source_1h per (source, base, quote), shared by /v1/pools and source-filtered /v1/markets so they
 // agree; pair-wide prices_1m/1d select buckets a venue printed in, not its contribution. $1 is the recency lower bound and
 // sacAliasFoldBind's arrays sit at $foldIdx, $foldIdx+1. vol_24h_usd sums trade-time usd_volume only (vol_lower_bound says so).
@@ -169,25 +179,47 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 // pools_raw aggregates on the stored columns first: grouping 1.2M hourly rows on the COALESCEd fold made the planner expect a group per
 // row and spill a 218 MB sort, where the raw (source, base, quote) estimate fits a hash aggregate. Every aggregate re-composes exactly;
 // last() with a ROW comparator cannot run as a parallel partial aggregate, so neither stage uses one.
+// The 24h figures cover exactly (now-24h, now]: whole hours from the view, and from trades the hour holding now-24h (the view
+// cannot split it) and the two newest hours (materialized only once closed plus the 5 min end_offset), disjoint so nothing counts twice.
 func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
 	return `
         WITH ` + aliasFoldCTE(foldIdx) + `,
-        pools_raw AS (
+        pools_hourly AS (
           SELECT
             r.source, r.base_asset, r.quote_asset,
             MAX(r.bucket_last_ts) AS last_trade_at,
             COALESCE(SUM(r.trade_count)
-                     FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours'), 0) AS count_24h,
+                     FILTER (WHERE ` + pools24hWholeHoursSQL + `), 0) AS count_24h,
             COALESCE(SUM(r.sum_usd_priced)
-                     FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours'), 0) AS vol_24h_usd,
+                     FILTER (WHERE ` + pools24hWholeHoursSQL + `), 0) AS vol_24h_usd,
             -- sum_base_unpriced is NULL exactly when the bucket held no unpriced trade.
             COALESCE(bool_or(r.sum_base_unpriced IS NOT NULL)
-                     FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours'), false) AS vol_lower_bound,
+                     FILTER (WHERE ` + pools24hWholeHoursSQL + `), false) AS vol_lower_bound,
             -- One spelling's hourly buckets close in distinct hours, so bucket_last_ts cannot tie here.
             last(r.bucket_last_price, r.bucket_last_ts) AS last_price
             FROM pools_per_source_1h r
            WHERE r.bucket >= $1` + rawFilter + `
            GROUP BY r.source, r.base_asset, r.quote_asset
+        ),
+        pools_edges AS (
+          SELECT r.source, r.base_asset, r.quote_asset,
+                 count(*) AS count_24h,
+                 SUM(COALESCE(r.usd_volume, 0)::numeric) AS vol_24h_usd,
+                 bool_or(r.usd_volume IS NULL) AS vol_lower_bound
+            FROM trades r
+           WHERE ` + pools24hEdgesSQL + rawFilter + `
+           GROUP BY r.source, r.base_asset, r.quote_asset
+        ),
+        -- Edge trades only add to a market the view lists, so the population and last_* stay the view's.
+        pools_raw AS (
+          SELECT h.source, h.base_asset, h.quote_asset, h.last_trade_at,
+                 h.count_24h + COALESCE(e.count_24h, 0) AS count_24h,
+                 h.vol_24h_usd + COALESCE(e.vol_24h_usd, 0) AS vol_24h_usd,
+                 h.vol_lower_bound OR COALESCE(e.vol_lower_bound, false) AS vol_lower_bound,
+                 h.last_price
+            FROM pools_hourly h
+            LEFT JOIN pools_edges e
+              ON e.source = h.source AND e.base_asset = h.base_asset AND e.quote_asset = h.quote_asset
         ),
         pools AS (
           SELECT
