@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -149,10 +150,9 @@ type RWAPremiumHistoryPoint struct {
 	// positive when the token traded ABOVE the independent valuation; same arithmetic and scale
 	// as `premium.pct` on /v1/rwa/assets.
 	PremiumPct string `json:"premium_pct"`
-	// MarketUSD is the day's volume-weighted average price, exact.
-	MarketUSD string `json:"market_usd"`
-	// ReferenceUSD is the day's closing oracle value at the feed's own
-	// scale, exact.
+	// MarketUSD is the day's volume-weighted average price and ReferenceUSD the day's closing oracle value, each exact with trailing
+	// zeros trimmed (rounded to 10 dp only if it has no finite decimal form).
+	MarketUSD    string `json:"market_usd"`
 	ReferenceUSD string `json:"reference_usd"`
 	// VolumeUSD and Trades are the market leg's evidence, the figures the day floor was applied
 	// to: a premium from a day that barely cleared the floor is a weaker claim than one from a
@@ -251,6 +251,7 @@ type rwaPremiumHistory struct {
 	excluded   map[string]int
 	sources    []string
 	builtAt    time.Time
+	membership rwaSeriesMembership
 	// marketFrom is the first day the market leg could have observed; zero when not read.
 	marketFrom time.Time
 	// stale marks a cached assembly served past its TTL because the
@@ -289,7 +290,7 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 	view.Assets = hist.setAssets
 	view.Issuers = hist.setIssuers
 	view.Bound = hist.bound
-	view.MembershipAsOf = WireTime(hist.builtAt)
+	view.MembershipAsOf = WireTime(hist.membership.at)
 	if !hist.marketFrom.IsZero() {
 		view.MarketObservedFrom = wireTimePtr(&hist.marketFrom)
 	}
@@ -300,7 +301,7 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 	// on `assets`; a narrower window may leave `series` shorter without the account lying.
 	view.Members = len(hist.members)
 	view.Coverage = rwaPremiumCoverage(view.Series, hist.setAssets)
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale, Degraded: hist.stale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: hist.membership.envelopeFlags(hist.stale)})
 }
 
 // parseRWAPremiumParams validates `timeframe` against [rwaHistoryTimeframes] verbatim: the same
@@ -497,6 +498,9 @@ func (s *Server) settleRWAPremiumHistory(built rwaPremiumHistory, err error) {
 	if err == nil && built.available {
 		s.rwaPremCache = &built
 		s.rwaPremAt = time.Now()
+	} else {
+		// The last good series keeps serving under flags.stale, so this counter is the only signal stellarindex_api_cache_refresh_failing sees.
+		obs.APICacheOpsTotal.WithLabelValues("rwa_premium_history", "build", "refresh_error").Inc()
 	}
 	s.rwaPremFlight = nil
 }
@@ -527,11 +531,13 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 		len(m.members) == 0 && len(m.contracts) == 0 {
 		return rwaPremiumHistory{}
 	}
+	now := time.Now().UTC()
 	out := rwaPremiumHistory{
 		setAssets:  len(m.members) + len(m.contracts),
 		setIssuers: rwaHistoryIssuerCount(m),
 		excluded:   map[string]int{},
-		builtAt:    time.Now().UTC(),
+		builtAt:    now,
+		membership: rwaSeriesMembershipOf(m, now),
 	}
 	out.excluded[RWAHistoryExcludedContract] = len(m.contracts)
 
@@ -789,6 +795,15 @@ func rwaPremiumDayClears(d timescale.MarketDay, floor pricingguard.SubstancePoli
 // rwaPremiumDayOf measures one day's premium against that day's published value. ok=false (not an error) means no comparison: the
 // oracle published nothing or a non-positive value (never divided by), or the market figure is not positive. Exact rationals; the
 // 4-dp scale is `premium.pct`'s on /v1/rwa/assets so the two surfaces cannot round one quantity two ways.
+// rwaExactDecimal renders a price with every digit it has, so it reconciles with the feed and VWAP it came from; only a value with no
+// finite decimal form is rounded, to 10 dp.
+func rwaExactDecimal(r *big.Rat) string {
+	if n, exact := r.FloatPrec(); exact {
+		return r.FloatString(n)
+	}
+	return r.FloatString(10)
+}
+
 func rwaPremiumDayOf(d timescale.MarketDay, refPrice *big.Rat) (rwaPremiumDay, bool) {
 	if refPrice == nil || refPrice.Sign() <= 0 {
 		return rwaPremiumDay{}, false
@@ -807,8 +822,8 @@ func rwaPremiumDayOf(d timescale.MarketDay, refPrice *big.Rat) (rwaPremiumDay, b
 	return rwaPremiumDay{
 		day:       d.Day,
 		pct:       pct.FloatString(4),
-		market:    marketPrice.FloatString(10),
-		reference: refPrice.FloatString(10),
+		market:    rwaExactDecimal(marketPrice),
+		reference: rwaExactDecimal(refPrice),
 		volumeUSD: volume.FloatString(2),
 		trades:    d.Trades,
 	}, true

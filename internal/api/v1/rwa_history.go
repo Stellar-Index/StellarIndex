@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -76,9 +77,10 @@ type RWAHistoryView struct {
 	// all — the ones carrying both a curated instrument binding and a
 	// readable supply history.
 	Members int `json:"members"`
-	// MembershipAsOf is when the set was decided. Every point in the
-	// series is valued against THIS membership, including points that
-	// predate an asset's admission. See the file comment.
+	// MembershipAsOf is when the set was decided (the membership's build,
+	// not this series'). Every point in the series is valued against THIS
+	// membership, including points that predate an asset's admission. See
+	// the file comment.
 	MembershipAsOf WireTime `json:"membership_as_of"`
 	// Excluded tallies, by reason, the set members left out of the series: a total that silently
 	// dropped rows is a smaller claim wearing the same label.
@@ -247,9 +249,30 @@ type rwaValueHistory struct {
 	excluded      map[string]int
 	sources       []string
 	builtAt       time.Time
+	membership    rwaSeriesMembership
 	// stale marks a cached assembly served past its TTL because the
 	// rebuild failed or has not answered; builtAt is then its real age.
 	stale bool
+}
+
+// rwaSeriesMembership is the membership a series was assembled against, so the series states when that set was decided and
+// inherits its stale/failed-rebuild state rather than claiming the freshness of its own build.
+type rwaSeriesMembership struct {
+	at    time.Time
+	flags Flags
+}
+
+func rwaSeriesMembershipOf(m rwaMembership, built time.Time) rwaSeriesMembership {
+	at := m.builtAt
+	if at.IsZero() {
+		at = built
+	}
+	return rwaSeriesMembership{at: at, flags: m.serveFlags()}
+}
+
+// envelopeFlags joins the series cache's own staleness with the membership's.
+func (sm rwaSeriesMembership) envelopeFlags(stale bool) Flags {
+	return Flags{Stale: stale || sm.flags.Stale, Degraded: stale || sm.flags.Degraded}
 }
 
 // ─── handler ────────────────────────────────────────────────────────
@@ -293,12 +316,12 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	view.Assets = hist.setAssets
 	view.Issuers = hist.setIssuers
 	view.Members = len(hist.members)
-	view.MembershipAsOf = WireTime(hist.builtAt)
+	view.MembershipAsOf = WireTime(hist.membership.at)
 	view.Excluded = rwaHistoryExcludedRows(hist.excluded)
 	view.Sources = hist.sources
 	view.Points, view.Truncated = hist.totalPoints(from)
 	view.Groups = rwaHistoryGroups(hist, groupBy, from)
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale, Degraded: hist.stale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: hist.membership.envelopeFlags(hist.stale)})
 }
 
 // writeRWASeriesUnavailable answers an RWA series with no assembly. A problem, not an envelope: a 200 would need zeros no read produced
@@ -579,6 +602,9 @@ func (s *Server) settleRWAValueHistory(built rwaValueHistory, err error) {
 	if err == nil && built.available {
 		s.rwaHistCache = &built
 		s.rwaHistAt = time.Now()
+	} else {
+		// The last good series keeps serving under flags.stale, so this counter is the only signal stellarindex_api_cache_refresh_failing sees.
+		obs.APICacheOpsTotal.WithLabelValues("rwa_history", "build", "refresh_error").Inc()
 	}
 	s.rwaHistFlight = nil
 }
@@ -605,6 +631,7 @@ func rwaHistorySetOf(m rwaMembership, now time.Time) rwaValueHistory {
 		setIssuers:    rwaHistoryIssuerCount(m),
 		excluded:      map[string]int{},
 		builtAt:       now,
+		membership:    rwaSeriesMembershipOf(m, now),
 	}
 	out.setByIssuer = make(map[string]int, out.setIssuers)
 	for _, mem := range m.members {
