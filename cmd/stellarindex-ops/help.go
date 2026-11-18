@@ -1588,6 +1588,34 @@ Subcommands:
                             stellarindex-ops change-summary-reset \
                               -config /etc/stellarindex.toml \
                               -entity-type coin -entity-id crypto:XLM -write
+  source-exclude -config PATH [-list] [-source S [-base A -quote Q] -from T [-until T] -reason "..." [-actor NAME] [-allow-overlap] [-allow-future]] [-lift -id N -reason "..."] [-write]
+                          Record an operator exclusion of a price
+                          source (a name in the source registry),
+                          optionally scoped to one pair, over
+                          [-from, -until) in source_exclusions.
+                          Never writes trades. The pair is stored
+                          in canonical orientation; readers match
+                          it in both directions and across every
+                          alias form of each leg. Refuses a window
+                          that overlaps an un-lifted exclusion of
+                          the same source unless -allow-overlap,
+                          and a -from more than 24h ahead unless
+                          -allow-future. -lift stamps the row
+                          lifted, keeps it, and lists the source's
+                          remaining un-lifted rows. -list shows
+                          each row as pending, in-force, expired
+                          or lifted, and takes no mutation flag.
+                          A "source.exclude" / "source.exclude.lift"
+                          audit_log row is written before the table
+                          changes; "source.exclude.recorded" links
+                          the create to the row's id:N. Dry-run
+                          unless -write. Served prices do not read
+                          the table yet.
+                          Example:
+                            stellarindex-ops source-exclude \
+                              -config /etc/stellarindex.toml \
+                              -source binance -from 2026-11-17T09:00:00Z \
+                              -reason "venue halted withdrawals" -write
   version                 Print version + build date.
   help                    This help.
 `

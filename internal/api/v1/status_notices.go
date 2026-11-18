@@ -98,8 +98,11 @@ func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, StatusNoticesList{Notices: views, Count: len(views)}, Flags{})
 }
 
-// handleAdminStatusNoticesList serves GET /v1/admin/status-notices: every notice, newest first. Operator-tier only; read-only (no audit
-// row).
+// adminStatusNoticesCap is the newest-first slice the admin list serves; one row past it is read to detect truncation.
+const adminStatusNoticesCap = 100
+
+// handleAdminStatusNoticesList serves GET /v1/admin/status-notices: the newest adminStatusNoticesCap notices of any status, with
+// flags.truncated when older ones exist. Operator-tier only; read-only (no audit row).
 func (s *Server) handleAdminStatusNoticesList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireOperator(w, r, "/v1/admin/status-notices"); !ok {
 		return
@@ -108,7 +111,7 @@ func (s *Server) handleAdminStatusNoticesList(w http.ResponseWriter, r *http.Req
 		writeStatusNoticeStoreUnavailable(w, r)
 		return
 	}
-	rows, err := s.StatusNotices.List(r.Context(), 0)
+	rows, err := s.StatusNotices.List(r.Context(), adminStatusNoticesCap+1)
 	if err != nil {
 		s.logger.Error("admin status notices list failed", "err", err)
 		writeProblem(w, r,
@@ -117,8 +120,12 @@ func (s *Server) handleAdminStatusNoticesList(w http.ResponseWriter, r *http.Req
 			"see X-Request-ID in server logs")
 		return
 	}
+	truncated := len(rows) > adminStatusNoticesCap
+	if truncated {
+		rows = rows[:adminStatusNoticesCap]
+	}
 	views := statusNoticeViews(rows)
-	writeJSON(w, StatusNoticesList{Notices: views, Count: len(views)}, Flags{})
+	writeJSON(w, StatusNoticesList{Notices: views, Count: len(views)}, Flags{Truncated: truncated})
 }
 
 // adminCreateNoticeRequest is the POST /v1/admin/status-notices body.
