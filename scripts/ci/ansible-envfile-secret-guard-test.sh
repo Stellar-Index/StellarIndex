@@ -25,5 +25,16 @@ for name in minio_root_user minio_root_password; do
   fi
 done
 
+# node-healthcheck only lists galexie-live; MinIO root in its env would let a
+# bug in that script delete the lake.
+HEALTHCHECK_TASKS="${HEALTHCHECK_TASKS:-configs/ansible/roles/archival-node/tasks/13-healthcheck.yml}"
+if grep -qE 'minio_root_(user|password)' "$HEALTHCHECK_TASKS"; then
+  bad "$HEALTHCHECK_TASKS renders MinIO root credentials into node-healthcheck; use the read-only stellarindex-reader key"
+elif grep -qE '^[[:space:]]+MC_HOST_local=.*stellarindex_reader_secret_key' "$HEALTHCHECK_TASKS"; then
+  ok "node-healthcheck authenticates mc with the read-only stellarindex-reader key"
+else
+  bad "$HEALTHCHECK_TASKS no longer renders MC_HOST_local from stellarindex_reader_secret_key"
+fi
+
 echo "ansible-envfile-secret-guard-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

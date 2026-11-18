@@ -37,6 +37,9 @@
   # child's environment (same pattern as HEALTHCHECK_PING_URL above);
   # env is only readable via /proc/<pid>/environ by the owning uid and
   # root, unlike argv which is world-readable via ps.
+  # The check only lists galexie-live, so it gets the read-only
+  # stellarindex-reader key (09-minio.yml), never MinIO root, which can
+  # delete the lake. Unset (no MinIO here): no alias, Check 4.5 reports mc failing.
   ansible.builtin.copy:
     dest: /etc/default/node-healthcheck
     owner: root
@@ -47,7 +50,9 @@
       HEALTHCHECK_PING_URL={{ healthcheck_ping_url | default('') }}
       MAX_LEDGER_AGE_SEC={{ healthcheck_max_ledger_age_sec | default(90) }}
       POOL_NAME={{ zfs_data_pool_name }}
-      MC_HOST_local=http://{{ minio_root_user }}:{{ minio_root_password }}@127.0.0.1:9000
+      {% if stellarindex_reader_secret_key | default('') | length > 0 %}
+      MC_HOST_local=http://{{ stellarindex_reader_access_key | urlencode | replace('/', '%2F') }}:{{ stellarindex_reader_secret_key | urlencode | replace('/', '%2F') }}@127.0.0.1:9000
+      {% endif %}
   no_log: true
 
 - name: Install node-healthcheck systemd service
