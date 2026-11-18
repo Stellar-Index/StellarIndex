@@ -477,6 +477,23 @@ export function sumDecimalStrings(
   return `${neg ? '-' : ''}${whole}${frac}`;
 }
 
+/**
+ * sumUsdVolumes — exact sum of rows' `volume_24h_usd`; `lowerBound` is true
+ * when any row flags `volume_lower_bound` (it excluded unpriced trades), so
+ * the total must render as "≥".
+ */
+export function sumUsdVolumes(
+  rows: readonly {
+    volume_24h_usd?: string | null;
+    volume_lower_bound?: boolean | null;
+  }[],
+): { total: string | null; lowerBound: boolean } {
+  return {
+    total: sumDecimalStrings(rows.map((r) => r.volume_24h_usd)),
+    lowerBound: rows.some((r) => r.volume_lower_bound === true),
+  };
+}
+
 /** `value / count` over a decimal string, truncated to `places`; null for a malformed value or a non-positive count. */
 export function divideDecimalString(
   value: string | null | undefined,

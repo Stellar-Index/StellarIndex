@@ -44,7 +44,7 @@ import {
   compareDecimalDesc,
   formatCompact,
   formatCompactUnits,
-  sumDecimalStrings,
+  sumUsdVolumes,
 } from '@/lib/format';
 import {
   type Envelope,
@@ -532,8 +532,8 @@ function HeroStats({
   // still shows the full CEX-vs-on-chain split by design.)
   const { data: sources } = useSources(undefined, true);
   const onChain = (sources ?? []).filter(isOnChainSource);
-  const stellarVolume = sumDecimalStrings(
-    onChain.filter((x) => x.subclass === 'dex').map((x) => x.volume_24h_usd),
+  const { total: stellarVolume, lowerBound: volumeLowerBound } = sumUsdVolumes(
+    onChain.filter((x) => x.subclass === 'dex'),
   );
   // Stellar markets = active (venue, pair) pools summed across on-chain
   // DEX venues (a pair traded on two DEXes counts as two markets).
@@ -565,10 +565,14 @@ function HeroStats({
           label="24h volume"
           value={
             stellarVolume != null && Number(stellarVolume) > 0
-              ? `$${formatCompactUnits(stellarVolume)}`
+              ? `${volumeLowerBound ? '≥ ' : ''}$${formatCompactUnits(stellarVolume)}`
               : '—'
           }
-          sub="Stellar on-chain"
+          sub={
+            volumeLowerBound
+              ? 'Stellar on-chain, lower bound'
+              : 'Stellar on-chain'
+          }
         />
       </StatCell>
       <StatCell>
@@ -995,8 +999,11 @@ function NetworkComposition() {
   // zero-volume day so we never claim "no on-chain volume" off missing
   // data.
   const statsAvailable = (data ?? []).some((s) => s.volume_24h_usd != null);
-  const slices = (data ?? [])
-    .filter(isOnChainSource)
+  const onChain = (data ?? []).filter(isOnChainSource);
+  // Zero and unpriced rows drop out of the slices but still count towards the total's lower-bound flag.
+  const { total: summed, lowerBound } = sumUsdVolumes(onChain);
+  const total = summed ?? '0';
+  const slices = onChain
     .map((s) => ({
       label: s.name,
       value: Number(s.volume_24h_usd ?? 0),
@@ -1004,7 +1011,6 @@ function NetworkComposition() {
     }))
     .filter((x) => Number.isFinite(x.value) && x.value > 0)
     .sort((a, b) => compareDecimalDesc(a.decimal, b.decimal));
-  const total = sumDecimalStrings(slices.map((s) => s.decimal)) ?? '0';
 
   return (
     <Panel
@@ -1030,8 +1036,8 @@ function NetworkComposition() {
       {slices.length > 0 && (
         <DonutChart
           data={slices}
-          centerLabel={`$${formatCompactUnits(total)}`}
-          centerSub="24h vol"
+          centerLabel={`${lowerBound ? '≥ ' : ''}$${formatCompactUnits(total)}`}
+          centerSub={lowerBound ? '24h vol, lower bound' : '24h vol'}
           formatValue={(n) => `$${formatCompact(n)}`}
         />
       )}

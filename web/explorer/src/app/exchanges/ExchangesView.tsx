@@ -15,7 +15,7 @@ import {
   formatCompactUnits,
   formatPairPrice,
   ratioPct,
-  sumDecimalStrings,
+  sumUsdVolumes,
 } from '@/lib/format';
 import { VolumeShare } from '@/components/charts/VolumeShare';
 import { shortAssetText } from '@/lib/asset-label';
@@ -84,7 +84,9 @@ export function ExchangesView() {
       r.trade_count_24h != null ||
       r.markets_count_24h != null,
   );
-  const totalVol = sumDecimalStrings(rows.map((r) => r.volume_24h_usd)) ?? '0';
+  const summed = sumUsdVolumes(rows);
+  const totalVol = summed.total ?? '0';
+  const volPrefix = summed.lowerBound ? '≥ ' : '';
   const totalTrades = rows.reduce((s, r) => s + (r.trade_count_24h ?? 0), 0);
   const totalMarkets = rows.reduce((s, r) => s + (r.markets_count_24h ?? 0), 0);
 
@@ -100,7 +102,14 @@ export function ExchangesView() {
           <StatCell>
             <Stat
               label="24h volume"
-              value={statsAvailable ? `$${formatCompactUnits(totalVol)}` : '—'}
+              value={
+                statsAvailable
+                  ? `${volPrefix}$${formatCompactUnits(totalVol)}`
+                  : '—'
+              }
+              sub={
+                statsAvailable && summed.lowerBound ? 'lower bound' : undefined
+              }
             />
           </StatCell>
           <StatCell>
@@ -128,7 +137,7 @@ export function ExchangesView() {
         }
         hint={
           statsAvailable
-            ? `Total 24h: $${formatCompactUnits(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
+            ? `Total 24h: ${volPrefix}$${formatCompactUnits(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
             : registryAvailable
               ? '24h stats unavailable — refreshing'
               : 'Venue registry'
