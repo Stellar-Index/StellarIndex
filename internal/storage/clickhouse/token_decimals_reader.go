@@ -54,6 +54,80 @@ func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (
 	return d, ok, rows.Err()
 }
 
+// tokenDecimalsBatchMax bounds the contracts in one [ExplorerReader.TokenDecimalsBatch] IN-list (two instance keys each).
+const tokenDecimalsBatchMax = 500
+
+// TokenDecimalsBatch is [ExplorerReader.TokenDecimals] for many contracts, one read per tokenDecimalsBatchMax ids. A contract absent
+// from the map has no usable declaration; any error fails the whole call, so no partial answer can pass as "declares none".
+func (r *ExplorerReader) TokenDecimalsBatch(ctx context.Context, contractIDs []string) (map[string]uint32, error) {
+	out := make(map[string]uint32, len(contractIDs))
+	for start := 0; start < len(contractIDs); start += tokenDecimalsBatchMax {
+		if err := r.tokenDecimalsChunk(ctx, contractIDs[start:min(start+tokenDecimalsBatchMax, len(contractIDs))], out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *ExplorerReader) tokenDecimalsChunk(ctx context.Context, contractIDs []string, out map[string]uint32) error {
+	byKey := make(map[string]string, 2*len(contractIDs))
+	keys := make([]string, 0, 2*len(contractIDs))
+	for _, id := range contractIDs {
+		raw, err := strkey.Decode(strkey.VersionByteContract, id)
+		if err != nil {
+			return fmt.Errorf("clickhouse: TokenDecimalsBatch: bad contract id %q: %w", id, err)
+		}
+		var cid xdr.Hash
+		copy(cid[:], raw)
+		ks, err := instanceKeyXDR(cid)
+		if err != nil {
+			return err
+		}
+		for _, k := range ks {
+			byKey[k] = id
+			keys = append(keys, k)
+		}
+	}
+	// Same table and PK-prefix lookup as TokenDecimals; the newest of a contract's two instance keys wins, as its LIMIT 1 does.
+	const q = `SELECT key_xdr, entry_xdr, toUInt32(ledger_seq) FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''`
+	rows, err := r.conn.Query(ctx, q, keys)
+	if err != nil {
+		return fmt.Errorf("clickhouse: token decimals batch scan[%d contracts]: %w", len(contractIDs), err)
+	}
+	defer func() { _ = rows.Close() }()
+	type newest struct {
+		seq uint32
+		b64 string
+	}
+	latest := make(map[string]newest, len(contractIDs))
+	for rows.Next() {
+		var (
+			key, b64 string
+			seq      uint32
+		)
+		if err := rows.Scan(&key, &b64, &seq); err != nil {
+			return fmt.Errorf("clickhouse: scan token decimals batch: %w", err)
+		}
+		id, ok := byKey[key]
+		if !ok {
+			continue
+		}
+		if cur, seen := latest[id]; !seen || seq > cur.seq {
+			latest[id] = newest{seq: seq, b64: b64}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("clickhouse: token decimals batch rows: %w", err)
+	}
+	for id, n := range latest {
+		if d, ok := decimalsFromInstanceEntry(n.b64); ok {
+			out[id] = d
+		}
+	}
+	return nil
+}
+
 // decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and returns its declared scale as read by [decimalsFromInstance].
 // ok=false when it isn't an instance or no usable scale exists (none, out of bounds, or two that DISAGREE: refused, not resolved by
 // preference, since picking one would invent an exponent for a money figure).

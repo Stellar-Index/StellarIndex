@@ -991,10 +991,11 @@ func (s *Server) fillMarketCapsWith(
 	// shape as rwaContractMetadataBudget for the contract-only surface.
 	dctx, cancel := context.WithTimeout(ctx, listingDecimalsLockstepBudget)
 	defer cancel()
+	scales := s.readListingScales(dctx, rows)
 	// Every row, priced or not and with or without supply: fillRowMarketCap resolves `decimals` before any
 	// early return, since it scales the row's own amounts for a client whether or not a cap is computed.
 	for i := range rows {
-		s.fillRowMarketCap(dctx, &rows[i], precise, lake, broad, sourceCounts)
+		s.fillRowMarketCap(dctx, &rows[i], scales, precise, lake, broad, sourceCounts)
 	}
 }
 
@@ -1049,12 +1050,13 @@ func (s *Server) latestPreciseSupply(ctx context.Context) (obs map[string]timesc
 func (s *Server) fillRowMarketCap(
 	ctx context.Context,
 	row *AssetDetail,
+	scales *listingScales,
 	precise map[string]timescale.SupplyObservation,
 	lake, broad map[string]string,
 	sourceCounts map[string]int,
 ) {
 	// Must precede every return: a Soroban row's scale is read or flagged unknown, never left at the stamped 7.
-	s.applyConfirmedListingDecimals(ctx, row)
+	s.applyConfirmedListingDecimals(ctx, row, scales)
 	// The substance gate rules on the market behind the price, not on the supply, so a gated row keeps its supply fact.
 	gated := row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
 	if row.MarketCapUSD != nil || (row.PriceUSD == nil && !gated) || row.ThinMarket {
@@ -1111,7 +1113,7 @@ func (s *Server) fillRowMarketCap(
 // applyConfirmedListingDecimals puts a row's supply divisor on its price's scale: rows are stamped 7, but asset_price_snapshot
 // holds true-scale prices for confirmed nonstandard_decimals_assets, so supply / 10^7 would be off by 10^(decimals - 7). Fresh
 // Soroban tokens the projection lags also try the bounded lake read and lockstep refusal of [Server.applyTokenDecimals].
-func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail) {
+func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail, scales *listingScales) {
 	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(row.AssetID)
 	if hasConfirmed {
 		row.Decimals = confirmed
@@ -1119,19 +1121,22 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	if row.Type != string(canonical.AssetSoroban) {
 		return
 	}
-	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, row.AssetID)
+	lake, lakeKnown, lakeErr := s.lakeScale(ctx, scales, row.AssetID)
 	if !lakeKnown {
 		switch {
 		case hasConfirmed:
 		case lakeErr != nil:
 			row.DecimalsUnresolved = true
+			reportUnreadRead(ctx)
 		default:
 			row.DecimalsUndeclared = true
 		}
 		return
 	}
 	row.Decimals = lake
-	if (hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals) {
+	// Only a price can have been normalised on the projection's scale: an unpriced row's lake scale is a fact, not drift.
+	valued := row.PriceUSD != nil || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
+	if valued && ((hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals)) {
 		row.MarketCapDecimalsMismatch = true
 		// Request-driven, so labelled by site and outcome only: a per-asset label here would be
 		// unbounded cardinality (see obs.NonstandardDecimalsLockstepMismatchTotal).
