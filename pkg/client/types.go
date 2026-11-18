@@ -287,10 +287,9 @@ type AssetDetail struct {
 	Issuer     string  `json:"issuer,omitempty"`
 	ContractID string  `json:"contract_id,omitempty"`
 	HomeDomain *string `json:"home_domain,omitempty"`
-	// Decimals is the asset's smallest-unit-to-display divisor power
-	// (always present on the wire). Stellar classic + native = 7;
-	// SEP-41 contracts publish their own value via `decimals()`.
-	Decimals int `json:"decimals"`
+	// Decimals is the smallest-unit-to-display divisor power: classic + native = 7, a SEP-41 contract's
+	// own `decimals()`. Nil when the server could not read the token's scale; amounts are then base units.
+	Decimals *int `json:"decimals,omitempty"`
 	// DisplayDecimals is the issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2): how many
 	// fractional digits to show. It is NOT a unit scale and must never enter amount math: divide by
 	// 10^[AssetDetail.Decimals], then round for display to this. Deriving the unit scale from this issuer-controlled

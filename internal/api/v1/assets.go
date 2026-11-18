@@ -986,21 +986,13 @@ func (s *Server) fillMarketCapsWith(
 	// tokens are held, so it alone sees claimable balances, LP reserves and SAC balances. It
 	// outranks the trustline sum but never falls below it; see classic_lake_supply.go.
 	lake := s.classicLakeSupply(ctx, rows)
-	// Every row, priced or not: `decimals` scales the row's own amounts for a client, so a confirmed
-	// nonstandard token must not publish the stamped 7 just because no cap is computed for it.
-	for i := range rows {
-		if confirmed, ok := s.NonstandardDecimals.Lookup(rows[i].AssetID); ok {
-			rows[i].Decimals = confirmed
-		}
-	}
-	if len(precise) == 0 && len(broad) == 0 && len(lake) == 0 {
-		return
-	}
 	// Bounded once for the whole page, not per row (tokenMetadataReadTimeout
 	// is a PER-CALL budget and a listing can carry many Soroban rows) — same
 	// shape as rwaContractMetadataBudget for the contract-only surface.
 	dctx, cancel := context.WithTimeout(ctx, listingDecimalsLockstepBudget)
 	defer cancel()
+	// Every row, priced or not and with or without supply: fillRowMarketCap resolves `decimals` before any
+	// early return, since it scales the row's own amounts for a client whether or not a cap is computed.
 	for i := range rows {
 		s.fillRowMarketCap(dctx, &rows[i], precise, lake, broad, sourceCounts)
 	}
@@ -1061,6 +1053,8 @@ func (s *Server) fillRowMarketCap(
 	lake, broad map[string]string,
 	sourceCounts map[string]int,
 ) {
+	// Must precede every return: a Soroban row's scale is read or flagged unknown, never left at the stamped 7.
+	s.applyConfirmedListingDecimals(ctx, row)
 	// The substance gate rules on the market behind the price, not on the supply, so a gated row keeps its supply fact.
 	gated := row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
 	if row.MarketCapUSD != nil || (row.PriceUSD == nil && !gated) || row.ThinMarket {
@@ -1070,9 +1064,6 @@ func (s *Server) fillRowMarketCap(
 	if circ == "" {
 		return
 	}
-	// Must precede every branch below: each stamps a smallest-unit supply figure that `decimals`
-	// has to be able to scale, whether or not a cap goes out beside it.
-	s.applyConfirmedListingDecimals(ctx, row)
 	if row.PriceUSD == nil {
 		stampCirculatingSupply(row, circ, basis)
 		return
