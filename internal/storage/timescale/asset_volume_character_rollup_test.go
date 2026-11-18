@@ -224,6 +224,32 @@ func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
 	}
 }
 
+// A failed RESET of the parallelism cap fails the call, on a cancelled caller context too: the connection must not return to
+// the pool still capped.
+func TestRollAssetVolumeCharacter_FailedParallelismResetFailsTheCall(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newScriptedStore(t,
+		scriptedResult{}, // SET max_parallel_workers_per_gather
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{"2m"}}},
+		scriptedResult{cols: []string{"current_setting"}, rows: [][]driver.Value{{""}}},
+		scriptedResult{}, // set application_name
+		scriptedResult{}, // SET statement_timeout
+		scriptedResult{cols: []string{
+			"asset_id", "total", "total_numeric", "makers", "takers",
+			"top_pair", "self_cross", "issuer_side", "market_styled",
+		}},
+		scriptedResult{}, // restore statement_timeout
+		scriptedResult{}, // restore application_name
+		scriptedResult{err: errors.New("connection reset by peer")}, // RESET fails
+	)
+
+	_, err := store.rollAssetVolumeCharacter(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reset parallelism") {
+		t.Fatalf("rollAssetVolumeCharacter err = %v, want the failed parallelism RESET named", err)
+	}
+}
+
 // TestAssetVolumeCharacterRollup_VolumeUSDExact: volume_usd is a NUMERIC money sum and must reach the caller
 // as exact decimal text; a double hop cannot hold 90071992547409.93 and serves wrong cents (ADR-0003).
 func TestAssetVolumeCharacterRollup_VolumeUSDExact(t *testing.T) {
