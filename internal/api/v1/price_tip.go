@@ -111,7 +111,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // Stale stays false (PriceReader's bit is ignored); divergence flags come from the requested (base, quote) spelling only, never ORed
 // across other quotes or aliases.
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
-	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation, ProxyDeviationUnchecked: snap.PegUnchecked, Degraded: snap.PegUnchecked}
+	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation, ProxyDeviationUnchecked: snap.PegUnchecked, Degraded: snap.PegReadFailed}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
 	return flags
 }
@@ -185,7 +185,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	cacheSnap, cacheSources, _, tri, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
 	if ok {
 		if tri {
-			cacheSnap.ProxyDeviation, cacheSnap.PegUnchecked = s.proxyDeviationChecked(ctx, time.Now().UTC())
+			cacheSnap.ProxyDeviation, cacheSnap.PegUnchecked, cacheSnap.PegReadFailed = s.proxyDeviationChecked(ctx, time.Now().UTC())
 		}
 		return cacheSnap, cacheSources, true, nil
 	}
@@ -200,7 +200,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 		return PriceSnapshot{}, nil, false, err
 	}
 	if proxyOK {
-		proxySnap.ProxyDeviation, proxySnap.PegUnchecked = s.proxyDeviationChecked(ctx, time.Now().UTC())
+		proxySnap.ProxyDeviation, proxySnap.PegUnchecked, proxySnap.PegReadFailed = s.proxyDeviationChecked(ctx, time.Now().UTC())
 		return proxySnap, proxySources, true, nil
 	}
 	// Fiat-vs-fiat cross-rate via the forex snapshot (see tryFiatCrossRate); no on-chain pair
@@ -215,7 +215,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	switch {
 	case ok:
 		// The cross's USD leg can be the stablecoin proxy or the triangulated cache value.
-		fxSnap.ProxyDeviation, fxSnap.PegUnchecked = s.proxyDeviationChecked(ctx, time.Now().UTC())
+		fxSnap.ProxyDeviation, fxSnap.PegUnchecked, fxSnap.PegReadFailed = s.proxyDeviationChecked(ctx, time.Now().UTC())
 		return fxSnap, fxSources, true, nil
 	case err != nil:
 		return PriceSnapshot{}, nil, false, err
