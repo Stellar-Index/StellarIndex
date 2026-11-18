@@ -62,6 +62,7 @@ interface Market {
   trade_count_24h: number;
   last_trade_at: string;
   volume_24h_usd?: string | null;
+  volume_lower_bound?: boolean;
 }
 
 interface ChartPoint {
@@ -250,6 +251,19 @@ function fetchOhlc(base: string, quote: string): Promise<OhlcResp | null> {
   );
 }
 
+// The server's trailing-24h figure; /v1/chart's hourly points are closed hours only and cover less.
+// softFail like fetchOhlc: no figure renders no stat rather than aborting the export.
+async function fetchPairMarket(
+  base: string,
+  quote: string,
+): Promise<Market | null> {
+  const rows = await buildFetchData<Market[]>(
+    `/v1/pairs?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
+  );
+  return rows?.[0] ?? null;
+}
+
 async function fetchHistory(base: string, quote: string): Promise<TradeRow[]> {
   const rows = await buildFetchData<TradeRow[]>(
     `/v1/history?base=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&limit=50`,
@@ -297,13 +311,15 @@ export default async function PairPage({ params }: { params: Params }) {
   }
   const { base, quote } = decoded;
 
-  const [price, chart, ohlc, history, sourceBreakdown] = await Promise.all([
-    buildFetchPairPrice(base, quote),
-    fetchChart(base, quote),
-    fetchOhlc(base, quote),
-    fetchHistory(base, quote),
-    fetchSourceBreakdown(base, quote),
-  ]);
+  const [price, chart, ohlc, history, sourceBreakdown, pairMarket] =
+    await Promise.all([
+      buildFetchPairPrice(base, quote),
+      fetchChart(base, quote),
+      fetchOhlc(base, quote),
+      fetchHistory(base, quote),
+      fetchSourceBreakdown(base, quote),
+      fetchPairMarket(base, quote),
+    ]);
 
   const baseLabel = shortAssetText(base);
   const quoteLabel = shortAssetText(quote);
@@ -326,9 +342,11 @@ export default async function PairPage({ params }: { params: Params }) {
   const change24hNum = change24hPct != null ? Number(change24hPct) : null;
   const change24h =
     change24hNum != null && Number.isFinite(change24hNum) ? change24hNum : null;
-  const volume24hUsd = formatUsd(
-    sumDecimalStrings(points.map((pt) => pt.v_usd)),
-  );
+  const volume24hText = formatUsd(pairMarket?.volume_24h_usd);
+  const volume24hUsd =
+    volume24hText !== '—' && pairMarket?.volume_lower_bound
+      ? `≥ ${volume24hText}`
+      : volume24hText;
 
   // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   // schema.org Dataset — eligibility for Google Dataset Search. contentUrl
@@ -418,7 +436,7 @@ export default async function PairPage({ params }: { params: Params }) {
             <Stat label="Sources in sample" value={String(perSource.size)} />
             {points.length > 0 && (
               <Stat
-                label="Last hour USD vol"
+                label="Last closed hour USD vol"
                 value={formatUsd(points[points.length - 1].v_usd)}
               />
             )}
