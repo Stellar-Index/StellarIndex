@@ -6,6 +6,6 @@ internal/storage/clickhouse/asset_supply_reader.go|FROM stellar.asset_holders_co
 internal/storage/clickhouse/classic_asset_holdings.go|AND asset != 'native'|excludes the native account balance row from classic trustline holdings
 internal/storage/timescale/asset_price_snapshot.go|WHEN ca.asset_id = 'native'|decimals branch on the canonical id the snapshot is keyed on
 internal/storage/timescale/asset_price_snapshot.go|CASE WHEN ca.asset_id = 'native' THEN NULL::int|source_count branch on the canonical id the snapshot is keyed on
-internal/storage/timescale/asset_catalogue.go|WHERE base_asset = 'native'|OPEN: native-row 24h volume reads only the native spelling of prices_1m; not traced, left for follow-up
-internal/storage/timescale/asset_catalogue.go|WHERE quote_asset = 'native'|OPEN: as above, quote leg
-internal/storage/timescale/asset_catalogue.go|WHERE u.asset_id = 'native' AND u.unpriced_trades > 0) AS volume_lower_bound|OPEN: as above, lower-bound probe
+internal/storage/timescale/asset_catalogue.go|WHERE base_asset = 'native'|DEBT: under-reports XLM: prices_1m also holds XLM as its SAC (Soroban pools) and crypto:XLM (CEX); every catalogue row keys volume on one literal spelling (asset_volume_24h rollup), so the fix is alias-folding in refreshAssetVolumeUpsert for all rows, after deciding whether CEX volume belongs in the catalogue
+internal/storage/timescale/asset_catalogue.go|WHERE quote_asset = 'native'|DEBT: as above, quote leg
+internal/storage/timescale/asset_catalogue.go|WHERE u.asset_id = 'native' AND u.unpriced_trades > 0) AS volume_lower_bound|DEBT: as above, lower-bound probe (asset_volume_24h unpriced_trades is per literal spelling)
