@@ -493,6 +493,71 @@ func TestClickHouseCohortFlowsRetypeMigratesAnInt128Table(t *testing.T) {
 	}
 }
 
+// A binary rolled before the operator file's ALTERs must refuse the cycle rather than narrow its Int256 sums into an Int128
+// staging half: the live snapshot stays as it was, and once the ALTERs are applied the cycle runs and swaps.
+func TestClickHouseCohortRollupRefusesAnInt128FlowsColumn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	raw := dialClickHouse(t, ctx, "stellar")
+	exec := func(q string) {
+		t.Helper()
+		if err := raw.Exec(ctx, q); err != nil {
+			t.Fatalf("%.96q: %v", q, err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = raw.Exec(context.Background(), `ALTER TABLE stellar.account_cohort_flows_staging MODIFY COLUMN inflow Int256`)
+	})
+
+	const sentinel = "GTEST_COHORT_PREFLIGHT_SENTINEL_AAAAAAAAAAAAAAAAAAAAAA"
+	countSentinel := func() uint64 {
+		t.Helper()
+		var n uint64
+		if err := raw.QueryRow(ctx, `SELECT count() FROM stellar.account_cohort_flows WHERE root = ?`, sentinel).Scan(&n); err != nil {
+			t.Fatalf("count sentinel: %v", err)
+		}
+		return n
+	}
+	const ledger = uint32(77_700_301)
+	if err := raw.Exec(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)
+		VALUES (?, ?, ?, '00', 23)`, ledger, time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC), fmt.Sprintf("%064d", ledger)); err != nil {
+		t.Fatalf("insert ledger: %v", err)
+	}
+	exec(`INSERT INTO stellar.account_cohort_flows (rel, root, month, asset, inflow, outflow, movements, active_accounts)
+		VALUES ('sponsored', '` + sentinel + `', '2026-05-01', 'native', 1, 0, 1, 1)`)
+	exec(`ALTER TABLE stellar.account_cohort_flows_staging MODIFY COLUMN inflow Int128`)
+
+	err := chstore.RunCohortRollup(ctx, addr, nil, nil, t.Logf)
+	if err == nil {
+		t.Fatal("RunCohortRollup with an Int128 account_cohort_flows_staging.inflow succeeded, want a refusal")
+	}
+	for _, want := range []string{"stellar.account_cohort_flows_staging.inflow is Int128", "account_cohort_rollup.sql"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("RunCohortRollup err = %q, want it to name %q", err, want)
+		}
+	}
+	if n := countSentinel(); n != 1 {
+		t.Fatalf("live account_cohort_flows lost its snapshot on a refused cycle: sentinel rows = %d, want 1", n)
+	}
+
+	stmts, err := clickHouseDeployStatements("account_cohort_rollup.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range stmts {
+		if strings.HasPrefix(strings.ToUpper(s), "ALTER TABLE STELLAR.ACCOUNT_COHORT_") {
+			exec(s)
+		}
+	}
+	if err := chstore.RunCohortRollup(ctx, addr, nil, nil, t.Logf); err != nil {
+		t.Fatalf("RunCohortRollup after the operator file's ALTERs: %v", err)
+	}
+	if n := countSentinel(); n != 0 {
+		t.Errorf("the cycle after the ALTERs did not swap: sentinel rows = %d, want 0", n)
+	}
+}
+
 // Read paths behind /v1/issuers (list, detail), /v1/coins (with and without ?issuer=) and the issuer-to-assets join.
 // Registry rows are inserted directly; in production ingest observers fill them.
 func TestIssuersAndAssetsRegistryReads(t *testing.T) {

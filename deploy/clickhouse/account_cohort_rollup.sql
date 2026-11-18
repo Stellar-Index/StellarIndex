@@ -9,8 +9,15 @@
 -- ── RUNBOOK (r1) ─────────────────────────────────────────────────────────
 --
 --   1. Apply the DDL (idempotent: IF NOT EXISTS, and the closing retype is
---      a no-op once applied):
+--      a no-op once applied) with the timer stopped, so no cycle runs
+--      against a half-retyped pair, then confirm every sum column is Int256
+--      before restarting it. A binary that finds one narrower refuses the
+--      cycle and keeps the previous snapshot live:
+--        systemctl stop cohort-rollup.timer
 --        clickhouse-client --port 9300 --multiquery < deploy/clickhouse/account_cohort_rollup.sql
+--        SELECT table, name, type FROM system.columns WHERE database = 'stellar'
+--          AND startsWith(table, 'account_cohort_') AND name IN ('inflow', 'outflow', 'amount')
+--        systemctl start cohort-rollup.timer
 --   2. Run one cycle by hand and read its step log — the movements walk
 --      is the long step (the whole account_movements archive, one 1M-
 --      ledger window at a time, joined to the cohort membership):
