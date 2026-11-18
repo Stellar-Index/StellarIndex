@@ -361,6 +361,11 @@ for f in ${md_files[@]+"${md_files[@]}"}; do
         add_step "lint-adr-refs" "an ADR or AGENTS.md changed" "$ci_dir/lint-adr-refs.sh"; break ;;
     esac
 done
+for f in ${go_files[@]+"${go_files[@]}"}; do
+    case "$f" in internal/storage/*|internal/platform/*)
+        add_step "lint-unflagged-limit" "storage Go changed" "$ci_dir/lint-unflagged-limit.sh"; break ;;
+    esac
+done
 
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.
 if [ "${#wf_files[@]}" -gt 0 ]; then

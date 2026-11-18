@@ -787,6 +787,11 @@ jobs:
         run: ./scripts/ci/lint-adr-refs.sh
       - name: lint-adr-refs self-test
         run: ./scripts/ci/lint-adr-refs-test.sh
+      - name: lint-unflagged-limit
+        # A literal LIMIT >= 100 in storage code says how its truncation is surfaced (cap-ok:).
+        run: ./scripts/ci/lint-unflagged-limit.sh
+      - name: lint-unflagged-limit self-test
+        run: ./scripts/ci/lint-unflagged-limit-test.sh
       - name: Changed-file dispatcher self-test
         # `make lint-changed` picks the applicable lints for a diff and runs
         # them in seconds, so a defect surfaces at the keyboard rather than

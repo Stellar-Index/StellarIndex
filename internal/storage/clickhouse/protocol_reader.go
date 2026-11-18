@@ -271,12 +271,22 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 }
 
 // FINAL and the row ceiling are load-bearing (see protocolEventBreakdownQuery). Complete days only,
-// so the roster counts do not wobble down on re-read as the current day accumulates.
+// so the roster counts do not wobble down on re-read as the current day accumulates. No LIMIT: the
+// result is one row per id in the IN list, and a cap would blank the quieter contracts' counts.
 const protocolContractActivityQuery = `SELECT contract_id, count() AS c, max(close_time) AS last_seen
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
 		  AND close_time < toStartOfDay(now())
-		GROUP BY contract_id ORDER BY c DESC LIMIT 1000` + protocolRawScanRowCeiling
+		GROUP BY contract_id ORDER BY c DESC` + protocolRawScanRowCeiling
+
+// protocolContractActivityFastQuery is protocolContractActivityQuery over the daily pre-aggregation; uncapped for the same reason.
+const protocolContractActivityFastQuery = `SELECT contract_id,
+		       toUInt64(uniqCombinedMerge(17)(events)) AS c,
+		       toDateTime(max(day)) AS last_seen
+		FROM stellar.contract_events_daily
+		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
+		  AND day < toDate(now())
+		GROUP BY contract_id ORDER BY c DESC`
 
 // ProtocolContractActivity returns per-contract event counts and last-seen from sinceLedger (>0 required, an all-time scan blows the 30 s budget), descending, complete days only.
 func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolContractActivity, error) {
@@ -365,14 +375,7 @@ func (r *ExplorerReader) protocolContractActivityFast(ctx context.Context, contr
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT contract_id,
-		       toUInt64(uniqCombinedMerge(17)(events)) AS c,
-		       toDateTime(max(day)) AS last_seen
-		FROM stellar.contract_events_daily
-		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
-		  AND day < toDate(now())
-		GROUP BY contract_id ORDER BY c DESC LIMIT 1000`
-	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
+	rows, err := r.conn.Query(ctx, protocolContractActivityFastQuery, contractIDs, sinceDay)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol contract activity (fast): %w", err)
 	}

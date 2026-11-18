@@ -331,6 +331,58 @@ func TestBuildProtocolDetail_ContractCountErrorDegradesStatus(t *testing.T) {
 	}
 }
 
+// cappedRosterReader enumerates a projection roster of ids and counts total contracts for every source.
+type cappedRosterReader struct {
+	ids   []string
+	total int64
+}
+
+func (cappedRosterReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
+	return nil, nil
+}
+
+func (r cappedRosterReader) ListSourceContractsFromProjection(context.Context, string) ([]string, error) {
+	return r.ids, nil
+}
+
+func (cappedRosterReader) ProtocolContractIndex(context.Context) (map[string]string, error) {
+	return nil, nil
+}
+
+func (r cappedRosterReader) CountSourceContracts(context.Context, string) (int64, bool, error) {
+	return r.total, true, nil
+}
+
+// TestBuildProtocolDetail_CappedRosterServesCountAndDegrades: when the count exceeds the enumerated roster, the roster
+// was capped, so contract_count is the count and analytics scoped to the roster subset must not read "ok".
+func TestBuildProtocolDetail_CappedRosterServesCountAndDegrades(t *testing.T) {
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+	ids := []string{"CCTP0", "CCTP1", "CCTP2"}
+	for _, tc := range []struct {
+		total      int64
+		wantStatus string
+	}{
+		{total: 3, wantStatus: protocolAnalyticsOK},
+		{total: 5, wantStatus: protocolAnalyticsUnavailable},
+	} {
+		srv := New(Options{
+			ProtocolActivity:  prewarmActivityStub{},
+			ProtocolBespoke:   &bespokeStub{},
+			ProtocolContracts: cappedRosterReader{ids: ids, total: tc.total},
+		})
+		v := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+		if v.ContractCount != int(tc.total)+len(meta.ExtraContracts) {
+			t.Errorf("total %d: contract_count = %d, want the counted total", tc.total, v.ContractCount)
+		}
+		if v.Analytics == nil || v.Analytics.Status != tc.wantStatus {
+			t.Errorf("total %d over a %d-contract roster: status = %+v, want %q", tc.total, len(ids), v.Analytics, tc.wantStatus)
+		}
+	}
+}
+
 // erroringRosterReader is a contracts reader whose roster enumeration always fails and has no count-without-enumeration
 // path (no CountSourceContracts), isolating a bare roster failure from erroringCountReader's count failure.
 type erroringRosterReader struct{ err error }

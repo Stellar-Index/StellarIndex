@@ -220,7 +220,9 @@ func proveLendingCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	t.Helper()
 	const base = lendingProofBase
 	at := func(h, m int) time.Time { return time.Date(2027, 2, 10, h, m, 0, 0, time.UTC) }
-	prove := []string{"ch-entry-history", "-lending-only", "-prove", "-ch-addr", addr}
+	// Without -from the count proof walks every 100k-ledger window from the Blend factory genesis (~1.2k queries,
+	// ~17 s each run on a CI runner) over a lake that holds nothing below base.
+	prove := []string{"ch-entry-history", "-lending-only", "-prove", "-ch-addr", addr, "-from", strconv.FormatUint(uint64(base), 10)}
 	if err := chops.Run(prove); err != nil {
 		t.Fatalf("proof on a correct table: %v", err)
 	}
@@ -334,7 +336,7 @@ func proveLendingBoundedCases(t *testing.T, ctx context.Context, conn driver.Con
 		})
 	}
 	at := func(h, m int) time.Time { return time.Date(2027, 2, 10, h, m, 0, 0, time.UTC) }
-	prove := []string{"ch-entry-history", "-lending-only", "-prove", "-ch-addr", addr}
+	prove := []string{"ch-entry-history", "-lending-only", "-prove", "-ch-addr", addr, "-from", strconv.FormatUint(uint64(base), 10)}
 	exec := func(q string, args ...any) {
 		t.Helper()
 		if err := conn.Exec(ctx, q, args...); err != nil {
