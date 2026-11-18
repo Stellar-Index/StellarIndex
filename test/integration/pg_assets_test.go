@@ -785,9 +785,9 @@ func TestAssetListing_ChangeNeedsLookbackOlderThanHeadline(t *testing.T) {
 	check("detail", detail)
 }
 
-// TestAssetListing_ChangeAnchorsAtOrBeforeTarget: each change compares the current price with the newest minute at
-// or before 1h / 24h / 7d ago. A minute between the target and its tolerance must not become the reference: that
-// served a 23.5h change as change_24h_pct (and 55 min as 1h, 6d22h as 7d).
+// TestAssetListing_ChangeAnchorsAtOrBeforeTarget: each change compares the current price with the newest minute
+// ending at or before 1h / 24h / 7d ago. A minute after the target, or the one containing it, must not become the
+// reference: that served a 23.5h change as change_24h_pct (and 55 min as 1h, 6d22h as 7d).
 func TestAssetListing_ChangeAnchorsAtOrBeforeTarget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -803,9 +803,17 @@ func TestAssetListing_ChangeAnchorsAtOrBeforeTarget(t *testing.T) {
 
 	id := mustClassicID(t, "ANCHR", goodIssuer)
 	seedRankAsset(t, ctx, db, id, "ANCHR", goodIssuer, 100)
+	// A trade at exactly a target sits in the minute containing it; that minute only stays the containing one
+	// at refresh time if no minute boundary passes in between, so start with at least 29 s of the minute left.
+	if s := time.Now().Second(); s > 30 {
+		time.Sleep(time.Duration(61-s) * time.Second)
+	}
 	for i, tr := range []struct{ ago, price string }{
 		{"2 minutes", "4"},           // headline
 		{"57 minutes", "2"},          // after the 1h target
+		{"1 hour", "2"},              // the minute containing the 1h target closes after it
+		{"24 hours", "2"},            // likewise for 24h
+		{"7 days", "2"},              // and 7d
 		{"62 minutes", "1"},          // the 1h reference
 		{"23 hours 45 minutes", "2"}, // after the 24h target
 		{"24 hours 10 minutes", "1"}, // the 24h reference

@@ -545,8 +545,9 @@ func TestPriceWindow24hMatchesChange24hAnchorTolerance(t *testing.T) {
 	if want := fmt.Sprintf("now() - INTERVAL '24 hours %d minutes'", tol); priceWindow24hLo != want {
 		t.Errorf("priceWindow24hLo = %q, want %q", priceWindow24hLo, want)
 	}
-	// The anchor reader reads at or before now-24h; the listing's upper bound must not reach past it.
-	if want := "now() - INTERVAL '24 hours'"; priceWindow24hHi != want {
+	// The anchor reader reads buckets ENDING at or before now-24h (bucket <= t - 1 minute); a bucket is labelled
+	// by its start, so the listing's upper bound is one minute earlier or its close includes trades after the target.
+	if want := "now() - INTERVAL '24 hours 1 minute'"; priceWindow24hHi != want {
 		t.Errorf("priceWindow24hHi = %q, want %q", priceWindow24hHi, want)
 	}
 }

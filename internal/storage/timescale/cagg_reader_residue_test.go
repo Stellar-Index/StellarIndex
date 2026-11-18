@@ -13,9 +13,9 @@ import (
 // token's 88-minute move serve as change_1h_pct; an upper bound past the target serves a 23.5-hour change as 24h.
 func TestChangeWindowsMatchDocumentedTolerance(t *testing.T) {
 	want := map[string]string{
-		"priceWindow1h":  `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '1 hour'`,
-		"priceWindow24h": `bucket BETWEEN now() - INTERVAL '24 hours 30 minutes' AND now() - INTERVAL '24 hours'`,
-		"priceWindow7d":  `bucket BETWEEN now() - INTERVAL '7 days 2 hours' AND now() - INTERVAL '7 days'`,
+		"priceWindow1h":  `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '1 hour 1 minute'`,
+		"priceWindow24h": `bucket BETWEEN now() - INTERVAL '24 hours 30 minutes' AND now() - INTERVAL '24 hours 1 minute'`,
+		"priceWindow7d":  `bucket BETWEEN now() - INTERVAL '7 days 2 hours' AND now() - INTERVAL '7 days 1 minute'`,
 	}
 	got := map[string]string{
 		"priceWindow1h":  priceWindow1h,
