@@ -18,9 +18,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier: scripts/ops/ch-rebuild-projected.sh DELETEs a
+// TestCHRebuildPreflight_RefusesWithoutTouchingTheServedTier: scripts/ops/ch-rebuild-projected.sh DELETEs a
 // window before asking ch-rebuild to re-derive it, so the refusals must come from a preflight asked first.
-func TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier(t *testing.T) {
+func TestCHRebuildPreflight_RefusesWithoutTouchingTheServedTier(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -100,15 +100,13 @@ func TestCHRebuildPreflight_AnswersWithoutTouchingTheLakeOrTheServedTier(t *test
 			"without this, a passing preflight proves nothing about WHERE it stopped", err)
 	}
 
-	// ── 2+3. the preflight passes the guards and stops short of it ─────
+	// ── 2+3. the preflight runs the same lake gate and refuses as the real run does ─
 	out, err = captureStdout(t, func() error { return chops.Run(args("-preflight")) })
-	if err != nil {
-		t.Fatalf("preflight: %v\n%s", err, out)
+	if err == nil || !strings.Contains(err.Error(), "wasm replay gate") || !strings.Contains(err.Error(), deadLake) {
+		t.Fatalf("preflight past an unreachable lake was not refused by the per-WASM gate: err=%v\n%s", err, out)
 	}
-	// Catalogue order, not -sources order: it is the list the run decodes.
-	want := fmt.Sprintf("ch-rebuild: preflight ok [%d,%d] rederive=soroswap,aquarius\n", from, to)
-	if out != want {
-		t.Fatalf("preflight stdout = %q, want exactly %q", out, want)
+	if strings.Contains(out, "preflight ok") {
+		t.Fatalf("a preflight the per-WASM gate refused still printed a verdict line — the script would delete on it:\n%s", out)
 	}
 
 	// ── 4. nothing was written ────────────────────────────────────────
