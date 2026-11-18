@@ -502,6 +502,8 @@ lane_a() { # doc lints
     echo "=== ADR refs self-test ===" && ./scripts/ci/lint-adr-refs-test.sh
     echo "=== unflagged LIMIT ===" && ./scripts/ci/lint-unflagged-limit.sh
     echo "=== unflagged LIMIT self-test ===" && ./scripts/ci/lint-unflagged-limit-test.sh
+    echo "=== rolling window grain ===" && ./scripts/ci/lint-rolling-window-grain.sh
+    echo "=== rolling window grain self-test ===" && ./scripts/ci/lint-rolling-window-grain-test.sh
 }
 
 lane_b() { # Go build/vet/unit tests

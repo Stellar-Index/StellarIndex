@@ -64,6 +64,26 @@ describe('LendingPoolsTable', () => {
     );
   });
 
+  it('says the list is a lower bound when the server flags it truncated, and only then', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ pool: POOL, protocol: 'blend', auctions_total: 0 }],
+      flags: { truncated: true },
+    });
+    const first = renderIt();
+    await waitFor(() =>
+      expect(screen.getAllByText(/Partial list/).length).toBeGreaterThan(0),
+    );
+    first.unmount();
+
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ pool: POOL, protocol: 'blend', auctions_total: 0 }],
+      flags: {},
+    });
+    renderIt();
+    await waitFor(() => expect(screen.getByText('Pools (1)')).toBeTruthy());
+    expect(screen.queryByText(/Partial list/)).toBeNull();
+  });
+
   const row = (extra: Record<string, unknown>) => ({
     pool: POOL,
     protocol: 'blend',

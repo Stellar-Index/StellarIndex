@@ -45,15 +45,28 @@ func TestPerSourcePools_AggregateBeforeFold(t *testing.T) {
 	pools, _ := buildPoolsQuery(since, PoolsFilter{Sources: []string{"sdex"}}, "", 100, MarketsOrderVolume24hDesc)
 	venue, _ := buildSourceMarketsQuery(since, "sdex", "", 100, MarketsOrderVolume24hDesc)
 	for name, q := range map[string]string{"pools": pools, "source markets": venue} {
-		raw := q[strings.Index(q, "pools_raw AS ("):strings.Index(q, "pools AS (")]
-		if !strings.Contains(raw, "FROM pools_per_source_1h r") || !strings.Contains(raw, "GROUP BY r.source, r.base_asset, r.quote_asset") {
-			t.Errorf("%s: pools_raw does not aggregate the stored columns:\n%s", name, raw)
+		// pools_hourly (the view) and pools_edges (trades, twice) are the raw scans; pools_raw joins them.
+		raw := q[strings.Index(q, "pools_hourly AS ("):strings.Index(q, "pools AS (")]
+		for _, scan := range []string{"FROM pools_per_source_1h r", "FROM trades r"} {
+			if !strings.Contains(raw, scan) {
+				t.Errorf("%s: no raw scan %q:\n%s", name, scan, raw)
+			}
+		}
+		if n := strings.Count(raw, "GROUP BY r.source, r.base_asset, r.quote_asset"); n != 2 {
+			t.Errorf("%s: %d raw scans aggregate the stored columns, want 2:\n%s", name, n, raw)
 		}
 		if strings.Contains(raw, "alias_fold") {
-			t.Errorf("%s: pools_raw folds aliases before grouping:\n%s", name, raw)
+			t.Errorf("%s: a raw scan folds aliases before grouping:\n%s", name, raw)
 		}
-		if !strings.Contains(raw, "r.source = ") {
-			t.Errorf("%s: the source filter does not reach the raw scan:\n%s", name, raw)
+		// pools_edges is two plain ts-range scans of trades (leading partial hour, tail), never one range with an OR.
+		if n := strings.Count(raw, "FROM trades r"); n != 2 {
+			t.Errorf("%s: %d trades scans, want 2 (lead and tail):\n%s", name, n, raw)
+		}
+		if strings.Contains(raw, " OR r.ts") {
+			t.Errorf("%s: the trades edges are one ts range with an OR:\n%s", name, raw)
+		}
+		if n := strings.Count(raw, "r.source = "); n != 3 {
+			t.Errorf("%s: the source filter reaches %d raw scans, want 3:\n%s", name, n, raw)
 		}
 		if strings.Contains(q, ", ROW(") {
 			t.Errorf("%s: last() with a ROW comparator cannot run as a parallel partial aggregate", name)

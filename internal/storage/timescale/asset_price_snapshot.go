@@ -120,16 +120,17 @@ const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 		    END`
 
 // Price-arm windows. The headline arms read the newest traded minute of the last 7 days; each
-// change arm reads the newest minute within the tolerance of 1 h / 24 h / 7 d ago (+-5 min /
-// +-30 min / +-2 h, see AssetRow.Change1hPct), else NULL. Wider would publish a 1.5-hour move as
-// change_1h_pct.
+// change arm reads the newest minute ending at or before 1 h / 24 h / 7 d ago and starting no older
+// than 5 min / 30 min / 2 h before it (see AssetRow.Change1hPct), else NULL. The band is one-sided: the
+// newest pick in a band reaching past the target would serve a 23.5-hour change as change_24h_pct.
+// A bucket is labelled by its start, so each Hi is the target minus one minute, as ClosedVWAP1mAtOrBefore reads.
 const (
 	priceWindow1hLo  = `now() - INTERVAL '65 minutes'`
-	priceWindow1hHi  = `now() - INTERVAL '55 minutes'`
+	priceWindow1hHi  = `now() - INTERVAL '1 hour 1 minute'`
 	priceWindow24hLo = `now() - INTERVAL '24 hours 30 minutes'`
-	priceWindow24hHi = `now() - INTERVAL '23 hours 30 minutes'`
+	priceWindow24hHi = `now() - INTERVAL '24 hours 1 minute'`
 	priceWindow7dLo  = `now() - INTERVAL '7 days 2 hours'`
-	priceWindow7dHi  = `now() - INTERVAL '6 days 22 hours'`
+	priceWindow7dHi  = `now() - INTERVAL '7 days 1 minute'`
 
 	priceWindowNow = `bucket >= now() - INTERVAL '7 days'`
 	priceWindow1h  = `bucket BETWEEN ` + priceWindow1hLo + ` AND ` + priceWindow1hHi
@@ -137,7 +138,7 @@ const (
 	priceWindow7d  = `bucket BETWEEN ` + priceWindow7dLo + ` AND ` + priceWindow7dHi
 )
 
-// Change24hAnchorTolerance is the 24h change arm's tolerance, the half-width of priceWindow24hLo/Hi; the detail and
+// Change24hAnchorTolerance is the 24h change arm's tolerance, 24h ago minus priceWindow24hLo; the detail and
 // /v1/price batch anchor read (stellarindex-api's storeChange24hReader) refuses a bucket older than 24h ago minus it.
 const Change24hAnchorTolerance = 30 * time.Minute
 
