@@ -440,18 +440,20 @@
 
 - name: heavy-job host-wide lock file (tmpfiles.d)
   # /run/lock is tmpfs, so the wrapper's host-wide lock is recreated at
-  # every boot. root:root 0644 because the wrapper opens it read-only:
-  # neither root nor stellarindex needs write, and a root-owned file in
-  # root-owned sticky /run/lock is one nobody else can delete or replace.
+  # every boot. The wrapper opens it read-only, so nobody needs write, and
+  # a root-owned file in root-owned sticky /run/lock is one nobody else can
+  # delete or replace. Group stellarindex, not world: flock needs only a
+  # read open, so any uid that can open the lock can hold it and starve
+  # every scheduled job. Only root and stellarindex units run the wrapper.
   ansible.builtin.copy:
     dest: /etc/tmpfiles.d/stellarindex-heavy-job.conf
     owner: root
     group: root
     mode: "0644"
     content: |
-      f /run/lock/stellarindex-heavy.lock 0644 root root -
-      f /run/lock/stellarindex-heavy-scheduled.lock 0644 root root -
-      d /run/lock/stellarindex-heavy-scheduled.lock.queue 1777 root root -
+      f /run/lock/stellarindex-heavy.lock 0640 root stellarindex -
+      f /run/lock/stellarindex-heavy-scheduled.lock 0640 root stellarindex -
+      d /run/lock/stellarindex-heavy-scheduled.lock.queue 1770 root stellarindex -
   tags: [heavy-job-wrapper]
 
 - name: create the heavy-job host-wide lock file now
@@ -686,6 +688,8 @@
             for t in "$q"/*; do
               [ "$t" = "$ticket" ] && break
               [ -e "$t" ] || continue
+              # Only a plain file is a ticket: a FIFO would block the open below forever.
+              { [ -f "$t" ] && [ ! -L "$t" ]; } || continue
               # A ticket nobody holds is a waiter that died: skip it (rm may fail on another user's file).
               if (exec 5<"$t" && flock -n -s 5) 2>/dev/null; then rm -f "$t" 2>/dev/null; continue; fi
               t=""; break

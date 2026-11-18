@@ -529,6 +529,18 @@ if [ "$(tr '\n' ' ' < "$TMP/order" 2>/dev/null)" = "early middle late " ] && [ -
 lrun sched-stale scheduled HEAVY_JOB_LOCK_WAIT=5 INVOCATION_ID=0123456789abcdef
 if [ "$rc" -eq 0 ] && ran; then ok "a dead waiter's ticket does not block the queue"; else bad "a stale ticket blocked a scheduled job (rc=$rc, err='$(errs)')"; fi
 rm -f "$QDIR/0000000001-0000000001"
+# A FIFO planted as the oldest ticket must be skipped, not opened: the
+# open blocks until a writer appears. The watchdog keeps being that writer,
+# so an unfixed walk fails slowly (it re-opens the FIFO every pass) instead
+# of hanging the suite.
+mkfifo "$QDIR/0000000001-0000000002"
+( /bin/sleep 6; while :; do exec 3>"$QDIR/0000000001-0000000002"; exec 3>&-; /bin/sleep 0.2; done ) & FIFO_DOG=$!
+fifo_t0=$(date +%s)
+lrun sched-fifo-ticket scheduled HEAVY_JOB_LOCK_WAIT=20 INVOCATION_ID=0123456789abcdef
+fifo_dt=$(( $(date +%s) - fifo_t0 ))
+kill "$FIFO_DOG" 2>/dev/null; wait "$FIFO_DOG" 2>/dev/null
+rm -f "$QDIR/0000000001-0000000002"
+if [ "$rc" -eq 0 ] && ran && [ "$fifo_dt" -lt 5 ]; then ok "a FIFO in the ticket queue is skipped, not opened"; else bad "a FIFO ticket stalled the queue (rc=$rc, ${fifo_dt}s, err='$(errs)')"; fi
 hold_start h5 sched-q2 scheduled
 lrun sched-x scheduled HEAVY_JOB_LOCK_WAIT=1 INVOCATION_ID=0123456789abcdef
 if [ "$rc" -eq 75 ] && ! ran && err_has "deferring sched-x (scheduled): another scheduled heavy job holds" && err_has "after waiting 1s"; then ok "a scheduled job outlasting the wait defers the scheduled job (exit 75, payload not run)"; else bad "expired wait behind a scheduled job did not defer (rc=$rc, err='$(errs)')"; fi
