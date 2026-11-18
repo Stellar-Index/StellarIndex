@@ -67,17 +67,45 @@ The two differ in what can make them wrong:
   made wrong by missing history.
 - An **accumulation** is only ever as complete as its log.
 
-The serving path picks one reading per token, by flow count alone: the storage
-reader is consulted **only when the event reading found zero flows**
-(`handleAssetSupply`, `internal/api/v1/asset_supply.go`), so the two never both
-contribute to one figure. A token with **any** recorded flow is served from
-events (`source: mint_burn_flows`), even when its log starts partway through
-its life. That figure then omits everything minted before the log starts, and
-the response does **not** flag it as a lower bound: neither
-`events_start_from` nor the storage level is consulted to detect the gap. If a
-contract's event log begins later than its first balance, read its
-`mint_burn_flows` total as incomplete; the storage level is the better figure,
-but it is not served for that token.
+The serving path picks one reading per Soroban token, in one function
+(`storageReadingSupersedes`, `internal/api/v1/asset_supply.go`) that
+`/v1/assets/{id}/supply`, the asset detail and the RWA contract listing all
+use:
+
+- **No recorded flows:** the storage level is served; if storage offers no
+  reading, nothing is.
+- **Storage level above the event net:** the storage level is a floor, so a
+  level above the net proves the log missed issuance (it starts partway
+  through the token's life). The storage level is served as a floor, unless it
+  disagrees with the contract's own declared total or holder count
+  (`supply_consistent: false`); then it proves nothing and the event net
+  stands. How each route marks the floor:
+  - `/v1/assets/{id}/supply`: `source: contract_storage_balances` with
+    `circulating_supply_lower_bound: true`.
+  - RWA rows: `supply_basis: contract_storage_balances` with
+    `circulating_supply_lower_bound: true`; a market cap built on it carries
+    `market_cap_lower_bound: true`.
+  - `/v1/assets/{id}`: `supply_basis: contract_storage_balances`, and no
+    `market_cap_usd` or `fdv_usd` is built on it, since the detail has no
+    lower-bound flag for either.
+- **Storage level at or below the event net, or storage declines by design:**
+  the event net is served (`source: mint_burn_flows`), unflagged. The reader
+  declines a Stellar Asset Contract, a contract with no captured instance entry
+  (the SAC check cannot run), a contract with no balances, and a holder set
+  above its 25,000-entry cap; for those the event net is not checked against
+  storage at all.
+- **Storage read failed** (any other error, or the request budget ran out) on a
+  token with flows: the event net is withheld, not served as a total.
+  `/v1/assets/{id}/supply` returns a `supply-error` problem (502, or the 503
+  timeout problem), and the asset detail and RWA listing mark the supply
+  unread so the gap is not cached. A flowless token whose storage read fails
+  keeps its no-reading outcome (404 on `/supply`, no figure elsewhere), except
+  that a spent budget is unread on every route.
+
+The figure is always one reading or the other. A log that is partial but still
+nets above the storage level is not detected, because `events_start_from` is
+not consulted. A classic asset's Stellar Asset Contract keeps its balances in
+trustlines, so its storage is asked only when its log is empty.
 
 Events remain valuable against this basis as a **cross-check**, never as an
 addend.
@@ -238,6 +266,10 @@ per-row XDR parse.
 The markers are a **pre-filter only**. Every surviving row is decoded and
 re-checked in Go, because the marker proves the key's shape and not the value's
 meaning.
+
+The API caches each contract's reading, or the reader's decline, for five
+minutes with one fill in flight per contract, as it does the event net. A
+failed read is never cached.
 
 ---
 

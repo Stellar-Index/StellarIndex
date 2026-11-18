@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -72,7 +73,7 @@ func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	entries, skipped, err := fetchDirectoryTarball(context.Background(), srv.URL, "")
+	entries, skipped, _, err := fetchDirectoryTarball(context.Background(), srv.URL, "")
 	if err != nil {
 		t.Fatalf("fetchDirectoryTarball: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestFetchDirectoryTarball_RefusesEmptyParse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, _, err := fetchDirectoryTarball(context.Background(), srv.URL, "")
+	_, _, _, err := fetchDirectoryTarball(context.Background(), srv.URL, "")
 	if err == nil || !strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("err = %v, want a refusal on 0 parsed entries", err)
 	}
@@ -119,7 +120,7 @@ func TestFetchDirectoryTarball_HTTPErrorIsFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, err := fetchDirectoryTarball(context.Background(), srv.URL, ""); err == nil {
+	if _, _, _, err := fetchDirectoryTarball(context.Background(), srv.URL, ""); err == nil {
 		t.Fatal("non-200 fetch returned nil error")
 	}
 }
@@ -209,7 +210,7 @@ func buildDirectoryTarballN(t *testing.T, n int) []byte {
 func TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 3) // 3 × 1024 B + 1024 B end-of-archive, uncompressed
 
-	entries, _, err := parseDirectoryTarball(bytes.NewReader(tarball), 2*1024)
+	entries, _, _, err := parseDirectoryTarball(bytes.NewReader(tarball), 2*1024)
 	if err == nil {
 		t.Fatalf("parse at a 2048 B bound returned %d entries and nil error; want a refusal, got a silently truncated snapshot", len(entries))
 	}
@@ -227,7 +228,7 @@ func TestParseDirectoryTarball_RejectsCorruptGzipTrailer(t *testing.T) {
 	// gzip trailer: 4-byte CRC-32 then 4-byte ISIZE, last 8 bytes.
 	tarball[len(tarball)-8] ^= 0xFF
 
-	entries, _, err := parseDirectoryTarball(bytes.NewReader(tarball), directoryMaxTarballBytes)
+	entries, _, _, err := parseDirectoryTarball(bytes.NewReader(tarball), directoryMaxTarballBytes)
 	if err == nil {
 		t.Fatalf("parse of a tarball with a corrupt CRC returned %d entries and nil error; want an integrity refusal", len(entries))
 	}
@@ -239,7 +240,7 @@ func TestParseDirectoryTarball_RejectsCorruptGzipTrailer(t *testing.T) {
 // TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound: integrity checks must not reject a well-formed archive that fits.
 func TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 3)
-	entries, skipped, err := parseDirectoryTarball(bytes.NewReader(tarball), 8*1024)
+	entries, skipped, _, err := parseDirectoryTarball(bytes.NewReader(tarball), 8*1024)
 	if err != nil {
 		t.Fatalf("parseDirectoryTarball: %v", err)
 	}
@@ -259,7 +260,7 @@ func TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball(t *testing.T) {
 	other := buildDirectoryTarballN(t, 2)
 	pin := sha256Hex(pinned)
 
-	entries, _, err := parsePinnedDirectoryTarball(bytes.NewReader(other), directoryMaxTarballBytes, pin)
+	entries, _, _, err := parsePinnedDirectoryTarball(bytes.NewReader(other), directoryMaxTarballBytes, pin)
 	if err == nil || !strings.Contains(err.Error(), "does not match the pinned -sha256") {
 		t.Fatalf("unpinned tarball: err = %v, want the digest refusal", err)
 	}
@@ -267,7 +268,7 @@ func TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball(t *testing.T) {
 		t.Errorf("entries = %v, want none from a refused tarball", entries)
 	}
 
-	entries, _, err = parsePinnedDirectoryTarball(bytes.NewReader(pinned), directoryMaxTarballBytes, strings.ToUpper(pin))
+	entries, _, _, err = parsePinnedDirectoryTarball(bytes.NewReader(pinned), directoryMaxTarballBytes, strings.ToUpper(pin))
 	if err != nil || len(entries) != 3 {
 		t.Fatalf("pinned tarball: entries=%d err=%v, want 3/nil", len(entries), err)
 	}
@@ -303,7 +304,7 @@ func TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB(t *testing.T) {
 
 // TestRenderDirectorySyncTextfile_ExportsUnflagged: per-kind counts, un-flags included, are exported for the directory-sync un-flag alert.
 func TestRenderDirectorySyncTextfile_ExportsUnflagged(t *testing.T) {
-	got := renderDirectorySyncTextfile("stellar-expert", timescale.DirectorySyncResult{Upserted: 18500, Pruned: 4, NewlyFlagged: 2, Unflagged: 7})
+	got := renderDirectorySyncTextfile(timescale.DirectorySyncResult{Upserted: 18500, Pruned: 4, NewlyFlagged: 2, Unflagged: 7}, time.Time{})
 	for _, want := range []string{
 		"# TYPE stellarindex_directory_sync_rows_changed gauge\n",
 		`stellarindex_directory_sync_rows_changed{source="stellar-expert",kind="pruned"} 4` + "\n",
@@ -316,10 +317,70 @@ func TestRenderDirectorySyncTextfile_ExportsUnflagged(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), directoryTextfileName)
-	stampDirectorySyncTextfile(path, timescale.DirectorySyncResult{Unflagged: 3})
+	stampDirectorySyncTextfile(path, timescale.DirectorySyncResult{Unflagged: 3}, time.Time{})
 	body, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(body), `kind="unflagged"} 3`) {
 		t.Fatalf("stamped textfile = %q (err %v), want unflagged 3", body, err)
+	}
+}
+
+// TestDirectorySnapshotAge_NewestMtimeIsExported: the newest file mtime in the archive (any file, not only the first or an
+// account) is exported, so the snapshot-age alert can see a pin left in place.
+func TestDirectorySnapshotAge_NewestMtimeIsExported(t *testing.T) {
+	older, newer := time.Unix(1_760_000_000, 0), time.Unix(1_761_000_000, 0)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range []struct {
+		name string
+		mod  time.Time
+	}{
+		{"public-directory-master/accounts/" + testDirAddrG + ".json", older},
+		{"public-directory-master/LICENSE", newer},
+	} {
+		body := `{"address": "` + testDirAddrG + `", "name": "Entry", "tags": ["exchange"]}`
+		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg, ModTime: f.mod}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, newest, err := parseDirectoryTarball(bytes.NewReader(buf.Bytes()), directoryMaxTarballBytes)
+	if err != nil {
+		t.Fatalf("parseDirectoryTarball: %v", err)
+	}
+	if !newest.Equal(newer) {
+		t.Fatalf("newest = %v, want %v", newest, newer)
+	}
+	got := renderDirectorySyncTextfile(timescale.DirectorySyncResult{}, newest)
+	if want := `stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds{source="stellar-expert"} 1761000000` + "\n"; !strings.Contains(got, want) {
+		t.Errorf("textfile missing %q; got:\n%s", want, got)
+	}
+}
+
+// TestDirectorySnapshotAge_NoMtimeNoGauge: an archive whose files carry no mtime yields no gauge, never 0 (a 1970 snapshot
+// the age alert would fire on forever).
+func TestDirectorySnapshotAge_NoMtimeNoGauge(t *testing.T) {
+	tarball := buildDirectoryTarball(t, map[string]string{
+		"public-directory-master/accounts/" + testDirAddrG + ".json": `{"address": "` + testDirAddrG + `", "name": "Entry", "tags": ["exchange"]}`,
+	})
+	_, _, newest, err := parseDirectoryTarball(bytes.NewReader(tarball), directoryMaxTarballBytes)
+	if err != nil {
+		t.Fatalf("parseDirectoryTarball: %v", err)
+	}
+	if !newest.IsZero() {
+		t.Errorf("newest = %v, want zero for an archive with no mtimes", newest)
+	}
+	if got := renderDirectorySyncTextfile(timescale.DirectorySyncResult{}, newest); strings.Contains(got, "snapshot_newest_file_timestamp_seconds") {
+		t.Errorf("gauge rendered for an archive with no mtimes:\n%s", got)
 	}
 }
 

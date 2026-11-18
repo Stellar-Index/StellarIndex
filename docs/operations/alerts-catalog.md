@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 306 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 307 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -507,6 +507,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_after_response_tasks_dropping` | `rate(after_response_tasks_dropped_total[5m])` | > 0 for 10 min (post-response worker queue full) | ticket | [after-response-tasks-dropping](runbooks/api.md#stellarindex_after_response_tasks_dropping) |
 | `stellarindex_scam_gate_fail_open` | `rate(scam_gate_lookup_failures_total[5m])` per surface | > 0 for 5 min (flagged issuers priced after a directory lookup error) | ticket | [scam-gate-fail-open](runbooks/api.md#stellarindex_scam_gate_fail_open) |
 | `stellarindex_directory_sync_unflagged` | `directory_sync_rows_changed{kind="unflagged"}` per (instance, source) | > 0 (last sync cleared a scam tag; issuer priced again); clears at next daily sync with none | ticket | [directory-sync-unflagged](runbooks/api.md#stellarindex_directory_sync_unflagged) |
+| `stellarindex_directory_sync_snapshot_stale` | `time() - directory_sync_snapshot_newest_file_timestamp_seconds` per (instance, source) | > 45 days for 1 h (synced snapshot's newest file is old; a pin left in place) | ticket | [directory-sync-snapshot-stale](runbooks/api.md#stellarindex_directory_sync_snapshot_stale) |
 | `stellarindex_admin_key_budget_clamp_failed` | `increase(admin_key_budget_clamps_total{outcome="failed"}[1h])` | > 0 for 5 min (key kept its pre-downgrade budget) | ticket | [admin-key-budget-clamp-failed](runbooks/api.md#stellarindex_admin_key_budget_clamp_failed) |
 | `stellarindex_admin_audit_write_failing` | `increase(admin_audit_write_failures_total[1h])` per surface | > 0 for 5 min (mutation committed with no audit row) | ticket | [admin-audit-write-failing](runbooks/api.md#stellarindex_admin_audit_write_failing) |
 | `stellarindex_passkey_clone_warning` | `increase(passkey_login_refusals_total{reason="clone_warning"}[1h])` | > 0 for 5 min (sign-counter regression: credential key copied) | ticket | [passkey-clone-warning](runbooks/api.md#stellarindex_passkey_clone_warning) |

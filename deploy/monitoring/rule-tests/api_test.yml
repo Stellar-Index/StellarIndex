@@ -1030,6 +1030,47 @@ tests:
         alertname: stellarindex_directory_sync_unflagged
         exp_alerts: []
 
+  # ── directory-sync snapshot age ticket ───────────────────────────
+  # promtool's clock starts at 0, so the snapshot's mtime is negative:
+  # -3,900,000 s is ~45.1 days before t=0 and past the 45-day line.
+  - interval: 1m
+    name: a directory-sync snapshot older than 45 days tickets
+    input_series:
+      - series: 'stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds{job="node_exporter",instance="r1:9100",source="stellar-expert"}'
+        values: '-3900000x120'
+
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_directory_sync_snapshot_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              instance: r1:9100
+              source: stellar-expert
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_directory_sync_snapshot_stale
+              summary: "directory-sync's stellar-expert snapshot is over 45 days old — scam flags may be stale"
+              description: |
+                The newest file in the public-directory snapshot the last
+                committed directory-sync read is over 45 days old. Scam
+                flags added upstream since then are not applied. Move the
+                pin (-url + -sha256) to a reviewed recent upstream commit
+                and re-run directory-sync.
+
+  # A snapshot ~44 days old at eval is quiet.
+  - interval: 1m
+    name: a directory-sync snapshot inside 45 days raises nothing
+    input_series:
+      - series: 'stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds{job="node_exporter",instance="r1:9100",source="stellar-expert"}'
+        values: '-3800000x120'
+
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_directory_sync_snapshot_stale
+        exp_alerts: []
+
   # ── sustained usage-counter write failures ticket ───────
   # The write side of the usage meter had no observability at all — a
   # failed Increment logged at Debug and was otherwise invisible. This

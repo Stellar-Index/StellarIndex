@@ -715,6 +715,26 @@ groups:
             not a genuine upstream correction, pin directory-sync to the
             last good upstream commit (-url + -sha256) and re-run it.
 
+      # A pinned snapshot never changes, so a pin left in place keeps serving
+      # scam flags that age silently. The gauge is the newest file mtime in
+      # the snapshot the last committed run read.
+      - alert: stellarindex_directory_sync_snapshot_stale
+        expr: time() - max by (instance, source) (stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds) > 45 * 86400
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_directory_sync_snapshot_stale
+          summary: "directory-sync's {{ $labels.source }} snapshot is over 45 days old — scam flags may be stale"
+          description: |
+            The newest file in the public-directory snapshot the last
+            committed directory-sync read is over 45 days old. Scam
+            flags added upstream since then are not applied. Move the
+            pin (-url + -sha256) to a reviewed recent upstream commit
+            and re-run directory-sync.
+
       # Admin-surface audit rows are appended best-effort after the mutation
       # commits, so a failure leaves an account tier, API credential or status
       # notice changed with NO durable record; the only other trace is one
