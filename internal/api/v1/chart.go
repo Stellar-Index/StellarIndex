@@ -382,7 +382,7 @@ func (s *Server) handleChartTWAP(
 	}
 
 	points, walk, err := s.chartSeriesPoints(ctx, pair,
-		chartWindow{from: from, gran: twapGran}, read)
+		chartWindow{from: chartClosedReadFrom(s.now(), from, twapGran), gran: twapGran}, read)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// twapChartGranularity only ever emits 1h / 1d, both of which have
 		// a CAGG — this arm guards a future grain change, not user input.
@@ -451,7 +451,21 @@ func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
 	if from.IsZero() {
 		return today.AddDate(-25, 0, 0), to
 	}
-	return from.UTC().Truncate(24 * time.Hour), to
+	// A window inside today (timeframe=1h) still holds yesterday's closed day.
+	return chartClosedReadFrom(now, from.UTC().Truncate(24*time.Hour), "1d"), to
+}
+
+// chartClosedReadFrom widens a window shorter than one served bucket back to the last CLOSED bucket's start, so a forced coarse
+// grain (TWAP 1h, market-cap 1d) never reads an empty range and answers a quiet 200 with no points. A zero `from` stays zero.
+func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
+	d, ok := chartFixedBucketWidth(gran)
+	if from.IsZero() || !ok {
+		return from
+	}
+	if last := now.UTC().Truncate(d).Add(-d); last.Before(from) {
+		return last
+	}
+	return from
 }
 
 // handleChartFiat serves fiat:fiat pairs from fx_quotes, one row per ticker per UTC day. The reader gives CCY-per-USD:
@@ -1666,8 +1680,9 @@ func (s *Server) handleChartMarketCapCrypto(
 
 	// USD price series (daily), with the stablecoin-USD proxy fallback
 	// the normal chart uses when nothing trades directly in fiat:USD.
+	readFrom := chartClosedReadFrom(s.now(), from, gran)
 	pricePts, walk, err := s.chartSeriesPoints(ctx, pair,
-		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
+		chartWindow{from: readFrom, gran: gran}, s.chartVWAPReader(gran))
 	if err != nil {
 		s.writeMarketCapReadFailure(ctx, w, r, err, "HistoryPointsInRange", pair, tfRaw, from)
 		return
@@ -1683,7 +1698,7 @@ func (s *Server) handleChartMarketCapCrypto(
 
 	// Daily circulating supply (forward-filled via the carry-in row).
 	to := s.now().UTC().Truncate(24 * time.Hour)
-	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
+	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, readFrom, to)
 	if err != nil {
 		s.writeMarketCapReadFailure(ctx, w, r, err, "DailyCirculatingSupply", pair, tfRaw, from)
 		return
