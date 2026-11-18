@@ -376,7 +376,7 @@ type RWASummary struct {
 	// prices instead of observed market prices, over a different subset of the same rows. Never
 	// a component of MarketCapUSD and never added to it.
 	ReferenceValuation RWAReferenceSummary `json:"reference_valuation"`
-	// BothBases totals only members carrying BOTH figures, so the gap between the bases reads
+	// BothBases totals only members carrying BOTH figures and a published premium, so the gap between the bases reads
 	// at set level without subtracting two totals taken over different rows.
 	BothBases RWABothBases `json:"both_bases"`
 	// Basis is a one-line statement of what was measured and how it was valued.
@@ -452,9 +452,9 @@ type RWAReferenceSummary struct {
 	Basis string `json:"basis"`
 }
 
-// RWABothBases totals members carrying both a market cap AND a reference valuation, so only these two totals share rows and their difference is the aggregate market-versus-reference gap.
+// RWABothBases totals members carrying both a market cap AND a reference valuation AND a published premium, so only these two totals share rows and their difference is the aggregate market-versus-reference gap.
 type RWABothBases struct {
-	// Assets is how many members carry both figures.
+	// Assets is how many members carry both figures and a published premium.
 	Assets int `json:"assets"`
 	// MarketCapUSD and ReferenceValueUSD are the two totals over those rows only; absent at zero.
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`

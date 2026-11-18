@@ -792,9 +792,6 @@ func rwaPremiumDayClears(d timescale.MarketDay, floor pricingguard.SubstancePoli
 	return pricingguard.SubstanceOK(volume, d.Hours, d.SpanSeconds, floor)
 }
 
-// rwaPremiumDayOf measures one day's premium against that day's published value. ok=false (not an error) means no comparison: the
-// oracle published nothing or a non-positive value (never divided by), or the market figure is not positive. Exact rationals; the
-// 4-dp scale is `premium.pct`'s on /v1/rwa/assets so the two surfaces cannot round one quantity two ways.
 // rwaExactDecimal renders a price with every digit it has, so it reconciles with the feed and VWAP it came from; only a value with no
 // finite decimal form is rounded, to 10 dp.
 func rwaExactDecimal(r *big.Rat) string {
@@ -804,6 +801,9 @@ func rwaExactDecimal(r *big.Rat) string {
 	return r.FloatString(10)
 }
 
+// rwaPremiumDayOf measures one day's premium against that day's published value. ok=false (not an error) means no comparison: the
+// oracle published nothing or a non-positive value (never divided by), or the market figure is not positive. Exact rationals; the
+// 4-dp scale is `premium.pct`'s on /v1/rwa/assets so the two surfaces cannot round one quantity two ways.
 func rwaPremiumDayOf(d timescale.MarketDay, refPrice *big.Rat) (rwaPremiumDay, bool) {
 	if refPrice == nil || refPrice.Sign() <= 0 {
 		return rwaPremiumDay{}, false

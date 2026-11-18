@@ -3700,7 +3700,7 @@ export interface paths {
          *     moves no row into or out of that total. Because the two totals
          *     are taken over different rows, their difference is not a
          *     premium: `summary.both_bases` gives both figures over the
-         *     members carrying both, `premium.pct` gives the same gap per
+         *     members carrying both and a published premium, `premium.pct` gives the same gap per
          *     asset, and the funnel's `valuation` arm names the reason every
          *     uncovered row carries no figure.
          *
@@ -10119,8 +10119,10 @@ export interface components {
         /**
          * @description Totals over the members carrying a market cap AND a reference
          *     valuation whose premium is published (`premium.status` =
-         *     `published`, the rows `assets_compared` counts) — the only subset
-         *     on which the two bases can honestly be compared.
+         *     `published`) — the only subset on which the two bases can
+         *     honestly be compared. It is a subset of the rows `assets_compared`
+         *     counts: those that also carry both totals (a thin-market row has a
+         *     published premium but no market cap).
          *
          *     It exists to stop one misreading. `market_cap_usd` and
          *     `reference_valuation.value_usd` are sums over different rows: an
@@ -10132,7 +10134,7 @@ export interface components {
          *     percentage terms is `premium.pct`.
          */
         RWABothBases: {
-            /** @description Members carrying both figures. */
+            /** @description Members carrying both figures and a published premium. */
             assets: number;
             /** @description Market-basis total over those rows only. Absent when `assets` is 0. */
             market_cap_usd?: string;
