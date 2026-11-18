@@ -173,6 +173,19 @@ export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
 # Never read the host's real per-host floor; case 4b points at a fixture.
 export HEAVY_JOB_FLOOR_FILE="$TMP/no-floor-file"
+# Lay out $TMP/lock from the shipped tmpfiles.d entries, as boot does on the host.
+python3 - "$TASKS" > "$TMP/tmpfiles.conf" <<'PY' || { echo "run-heavy-job-test: could not extract tmpfiles.d entries" >&2; exit 2; }
+import sys, yaml
+for t in yaml.safe_load(open(sys.argv[1])):
+    c = t.get("ansible.builtin.copy") or {}
+    if c.get("dest") == "/etc/tmpfiles.d/stellarindex-heavy-job.conf":
+        sys.stdout.write(c["content"])
+        sys.exit(0)
+sys.exit(1)
+PY
+while read -r kind tpath tmode _; do
+  [ "$kind" = d ] && mkdir -m "$tmode" "$TMP/lock${tpath#/run/lock}"
+done < "$TMP/tmpfiles.conf"
 
 # The payload prints exactly what the wrapped job would see.
 PAYLOAD="$TMP/payload.sh"
@@ -567,14 +580,71 @@ if [ "$rc" -eq 75 ] && ! ran && err_has "host-wide lock"; then ok "a lock file t
 hold_stop h3
 chmod 0644 "$GLOBAL_LOCK_FILE"
 
-# A host-wide lock that cannot be opened at all (any uid): nothing proves
-# the host is free, so an operator job is refused; a timer warns and runs.
-lrun op-i "" HEAVY_JOB_LOCK_DIR="$TMP/lock-broken"
-if [ "$rc" -eq 2 ] && ! ran && err_has "refusing to start op-i: cannot open the host-wide lock"; then ok "unopenable host-wide lock: operator job refused (exit 2, payload not run)"; else bad "unopenable host-wide lock: operator job not refused (rc=$rc, err='$(errs)')"; fi
-lrun sched-i scheduled HEAVY_JOB_LOCK_DIR="$TMP/lock-broken"
-if [ "$rc" -eq 0 ] && ran && err_has "WARNING sched-i (scheduled) could not open the host-wide lock"; then ok "unopenable host-wide lock: scheduled job warns and runs"; else bad "unopenable host-wide lock: scheduled job not run with a WARNING (rc=$rc, err='$(errs)')"; fi
+# A host-wide lock that is not a plain file of ours (here a dangling
+# symlink): nothing proves the host is free, so both classes fail with 2,
+# never the 75 a unit counts as success.
+for cls in "" scheduled; do
+  lrun "broken-${cls:-op}" "$cls" HEAVY_JOB_LOCK_DIR="$TMP/lock-broken"
+  if [ "$rc" -eq 2 ] && ! ran && err_has "stellarindex-heavy.lock is not a plain file"; then ok "symlinked host-wide lock: ${cls:-operator} job refused (exit 2, payload not run)"; else bad "symlinked host-wide lock: ${cls:-operator} job not refused with exit 2 (rc=$rc, err='$(errs)')"; fi
+done
+# EACCES on the host-wide lock is the same failure for a timer as for an operator.
+if [ "$REAL_UID" -ne 0 ]; then
+  chmod 000 "$GLOBAL_LOCK_FILE"
+  for cls in "" scheduled; do
+    lrun "eacces-${cls:-op}" "$cls" HEAVY_JOB_LOCK_WAIT=2
+    if [ "$rc" -eq 2 ] && ! ran && err_has "cannot open the host-wide lock"; then ok "unreadable host-wide lock: ${cls:-operator} job refused (exit 2, payload not run)"; else bad "unreadable host-wide lock: ${cls:-operator} job not refused with exit 2 (rc=$rc, err='$(errs)')"; fi
+  done
+  chmod 0640 "$GLOBAL_LOCK_FILE"
+else
+  echo "  note: running as real root, so mode 000 cannot make the host-wide lock unreadable; EACCES cases skipped"
+fi
+
+# Per-job locks live in the restricted directory, 0640, and never at the
+# old world-writable /run/lock path.
+JOB_DIR="$TMP/lock/stellarindex"
+if [ -n "$(find "$JOB_DIR/stellarindex-heavy-op-c.lock" -maxdepth 0 -type f -perm 640 2>/dev/null)" ] && [ ! -e "$TMP/lock/stellarindex-heavy-op-c.lock" ]; then ok "per-job lock is created 0640 inside the restricted directory, not in /run/lock"; else bad "per-job lock not at ${JOB_DIR} with mode 0640 (lock files: $(find "$TMP/lock" -name '*op-c*' 2>&1 | tr '\n' ' '))"; fi
+# A FIFO planted as a per-job lock is refused, never opened (an open blocks).
+mkfifo "$JOB_DIR/stellarindex-heavy-fifo-job.lock"
+for cls in "" scheduled; do
+  lrun fifo-job "$cls" HEAVY_JOB_LOCK_WAIT=2
+  if [ "$rc" -eq 2 ] && ! ran && err_has "is not a plain file"; then ok "FIFO per-job lock: ${cls:-operator} job refused (exit 2, payload not run)"; else bad "FIFO per-job lock: ${cls:-operator} job not refused with exit 2 (rc=$rc, err='$(errs)')"; fi
+done
+rm -f "$JOB_DIR/stellarindex-heavy-fifo-job.lock"
+if [ "$REAL_UID" -eq 0 ]; then
+  : > "$JOB_DIR/stellarindex-heavy-foreign-job.lock"; chown 65534 "$JOB_DIR/stellarindex-heavy-foreign-job.lock"
+  lrun foreign-job ""
+  if [ "$rc" -eq 2 ] && ! ran && err_has "is not a plain file owned by root or stellarindex"; then ok "per-job lock owned by another uid is refused (exit 2)"; else bad "foreign-owned per-job lock not refused (rc=$rc, err='$(errs)')"; fi
+  rm -f "$JOB_DIR/stellarindex-heavy-foreign-job.lock"
+else
+  echo "  note: not real root, so a lock owned by another uid cannot be planted; foreign-owner case skipped"
+fi
+# A run of the previous wrapper still holds the old-path lock: no double run.
+LEG="$TMP/lock/stellarindex-heavy-leg-job.lock"
+: > "$LEG"; rm -f "$TMP/leg.held" "$TMP/leg.release"
+( exec 3<"$LEG"; flock -x 3 && : > "$TMP/leg.held"; while [ ! -e "$TMP/leg.release" ]; do /bin/sleep 0.1; done ) & LEG_HOLDER=$!
+i=0; while [ ! -e "$TMP/leg.held" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.1; i=$((i + 1)); done
+lrun leg-job ""
+if [ "$rc" -eq 75 ] && ! ran && err_has "lock ${LEG} is held"; then ok "a job still holding the old-path lock excludes the new wrapper (exit 75)"; else bad "old-path lock holder did not exclude the new wrapper (rc=$rc, err='$(errs)')"; fi
+: > "$TMP/leg.release"; wait "$LEG_HOLDER"
+lrun leg-job ""
+if [ "$rc" -eq 0 ] && ran; then ok "a released old-path lock admits the job"; else bad "released old-path lock still blocks (rc=$rc, err='$(errs)')"; fi
+rm -f "$LEG"
+# Anything else at the old path is not ours: ignored, never opened.
+mkfifo "$TMP/lock/stellarindex-heavy-legfifo-job.lock"
+( /bin/sleep 6; while :; do exec 3>"$TMP/lock/stellarindex-heavy-legfifo-job.lock"; exec 3>&-; /bin/sleep 0.2; done ) & LEG_DOG=$!
+leg_t0=$(date +%s)
+lrun legfifo-job ""
+leg_dt=$(( $(date +%s) - leg_t0 ))
+kill "$LEG_DOG" 2>/dev/null; wait "$LEG_DOG" 2>/dev/null
+rm -f "$TMP/lock/stellarindex-heavy-legfifo-job.lock"
+if [ "$rc" -eq 0 ] && ran && [ "$leg_dt" -lt 5 ]; then ok "a FIFO at the old per-job path is ignored, not opened"; else bad "a FIFO at the old per-job path stalled or refused the job (rc=$rc, ${leg_dt}s, err='$(errs)')"; fi
+# A missing queue directory is never recreated world-writable.
+rm -rf "$QDIR"
+lrun sched-noq scheduled HEAVY_JOB_LOCK_WAIT=2
+if [ "$rc" -eq 0 ] && ran && err_has "cannot queue in" && { [ ! -e "$QDIR" ] || [ -n "$(find "$QDIR" -maxdepth 0 -perm 1770)" ]; }; then ok "missing queue directory: not recreated world-writable; the job waits unordered"; else bad "missing queue directory handled wrongly (rc=$rc, $(ls -ld "$QDIR" 2>&1), err='$(errs)')"; fi
+rm -rf "$QDIR"; mkdir -m 1770 "$QDIR"
 }
-mkdir -p "$TMP/lock-broken"
+mkdir -p "$TMP/lock-broken"; mkdir -m 3770 "$TMP/lock-broken/stellarindex"
 ln -s "$TMP/nowhere/stellarindex-heavy.lock" "$TMP/lock-broken/stellarindex-heavy.lock"
 
 mkdir -p "$TMP/heldbin"; printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/heldbin/flock"; chmod +x "$TMP/heldbin/flock"
@@ -584,6 +654,20 @@ PATH="$TMP/lockbin:$TMP/userbin:$PATH" run_lock_cases "non-root"
 mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 PATH="$TMP/lockbin:$TMP/rootbin:$PATH" run_lock_cases "root (id stubbed)"
+
+# ── 12. the lock modes and owners boot creates ───────────────────────
+# Only root and stellarindex run the wrapper; any other uid that can open a
+# lock can hold it and starve every job.
+echo "  [tmpfiles.d lock modes]"
+for want in \
+  "f /run/lock/stellarindex-heavy.lock 0640 root stellarindex -" \
+  "f /run/lock/stellarindex-heavy-scheduled.lock 0640 root stellarindex -" \
+  "d /run/lock/stellarindex-heavy-scheduled.lock.queue 1770 root stellarindex -" \
+  "d /run/lock/stellarindex 3770 root stellarindex -"; do
+  if grep -qxF -- "$want" "$TMP/tmpfiles.conf"; then ok "tmpfiles.d: $want"; else bad "tmpfiles.d entry missing or changed: $want"; fi
+done
+# shellcheck disable=SC2016 # the wrapper's literal source text, not an expansion
+if grep -qF 'LOCK_ROOT="${HEAVY_JOB_LOCK_DIR:-/run/lock}"' "$WRAP" && grep -qF 'JOB_LOCK_DIR="${LOCK_ROOT}/stellarindex"' "$WRAP"; then ok "the wrapper's per-job lock directory is the tmpfiles.d one"; else bad "the wrapper's per-job lock directory is not /run/lock/stellarindex"; fi
 
 # ── 12. every cron launcher of the wrapper declares itself scheduled ──
 echo "  [cron launchers]"

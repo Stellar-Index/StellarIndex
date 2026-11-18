@@ -198,8 +198,8 @@
       # /etc/default/galexie (07-galexie.yml) — sourced by config-assertions.sh
       galexie_s3_access_key: "{{ galexie_s3_access_key | default('') }}"
       galexie_s3_secret_key: "{{ galexie_s3_secret_key | default('') }}"
-      # /etc/default/node-healthcheck (13-healthcheck.yml, sourced by
-      # node-healthcheck.sh) and /etc/default/minio (minio.env.j2)
+      # /etc/default/minio (minio.env.j2); node-healthcheck uses the
+      # reader key, not these
       minio_root_user: "{{ minio_root_user | default('') }}"
       minio_root_password: "{{ minio_root_password | default('') }}"
   no_log: true
