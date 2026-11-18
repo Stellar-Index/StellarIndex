@@ -78,6 +78,8 @@ type rateLimitCharge struct {
 	key      string
 	override int
 	logger   *slog.Logger
+	// perIP is a second charge every token also pays (see [sep10PerIPCharge]); nil for other subjects.
+	perIP *rateLimitCharge
 
 	mu   sync.Mutex
 	paid int
@@ -101,6 +103,9 @@ func (c *rateLimitCharge) effectiveMax() int {
 // spend charges tokens and settles the outcome onto w: true to proceed, false once it has written
 // a 429 or 503. Shared by the base charge and [ChargeRateLimit] so policy and headers cannot drift.
 func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens int) bool {
+	if c.perIP != nil && !c.perIP.spend(w, r, tokens) {
+		return false
+	}
 	takeCtx, takeCancel := throttleContext(r)
 	res, err := c.bucket.Charge(takeCtx, c.key, tokens, c.override)
 	takeCancel()
@@ -191,6 +196,7 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 			}
 
 			charge := &rateLimitCharge{bucket: bucket, key: key, override: override, logger: logger, paid: 1}
+			charge.perIP = sep10PerIPCharge(r, bucket, authBucket, logger)
 			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}
@@ -219,6 +225,16 @@ func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *rat
 		return nil, "", 0
 	}
 	return anonBucket, anonymousRateLimitKey(r), 0
+}
+
+// sep10PerIPCharge also holds a SEP-10 JWT caller's IP to one subject's authenticated budget: the JWT's account is a keypair
+// anyone mints for free, so keyed on the account alone one IP would get a fresh budget per keypair. API keys are exempt.
+func sep10PerIPCharge(r *http.Request, bucket, authBucket *ratelimit.Bucket, logger *slog.Logger) *rateLimitCharge {
+	subject, ok := auth.SubjectFrom(r.Context())
+	if !ok || bucket != authBucket || subject.Tier != auth.TierSEP10 || subject.KeyID != "" {
+		return nil
+	}
+	return &rateLimitCharge{bucket: authBucket, key: "sep10ip:" + anonymousRateLimitKey(r), logger: logger, paid: 1}
 }
 
 // RateLimitCallerKey is the identity the rate limiter charges: the owner account for an authenticated subject, else the throttle IP.
