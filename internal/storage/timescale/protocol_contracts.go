@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 )
@@ -138,7 +139,8 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 	}
 	// #nosec G201 -- table+column come from the hard-coded switch above, never
 	// the request; source is only used as a known-key lookup.
-	q := fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE %s IS NOT NULL LIMIT 5000`, column, table, column)
+	// cap-ok: CountSourceContracts counts this roster; the API serves that count and flags analytics over the capped subset.
+	q := fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE %s IS NOT NULL ORDER BY %s LIMIT 5000`, column, table, column, column)
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListSourceContractsFromProjection %s: %w", source, err)
@@ -160,26 +162,41 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 
 // sourceContractCountQuery returns the COUNT giving a source's TRUE contract total without enumerating; ok=false when the roster IS the
 // count. sorocredit deploys one child per position, past the LIMIT 5000; each is announced once via NewCollateralContract in
-// credit_positions, so DISTINCT is the child set. Hard-coded.
-func sourceContractCountQuery(source string) (query string, ok bool) {
+// credit_positions, so DISTINCT is the child set. A projection-rostered source counts the same DISTINCT its capped roster enumerates,
+// but only while protocol_contracts holds none of its rows (the roster is then the uncapped registry): NULL means "no count".
+// Hard-coded.
+func sourceContractCountQuery(source string) (query string, args []any, ok bool) {
 	if source == "sorocredit" {
-		return `SELECT count(DISTINCT collateral_contract) FROM credit_positions`, true
+		return `SELECT count(DISTINCT collateral_contract) FROM credit_positions`, nil, true
 	}
-	return "", false
+	var table, column, scope string
+	switch source {
+	case "band", "chainlink-stellar", "reflector-cex", "reflector-dex", "reflector-fx", "redstone":
+		table, column, scope = "oracle_updates", "contract_id", "source = $1 AND "
+	default:
+		var ok bool
+		if table, column, ok = projectionContractColumn(source); !ok {
+			return "", nil, false
+		}
+	}
+	// #nosec G201 -- table, column and scope are hard-coded above; source binds as $1.
+	q := fmt.Sprintf(`SELECT CASE WHEN EXISTS (SELECT 1 FROM protocol_contracts WHERE source = $1) THEN NULL
+		ELSE (SELECT count(DISTINCT %s) FROM %s WHERE %s%s IS NOT NULL) END`, column, table, scope, column)
+	return q, []any{source}, true
 }
 
 // CountSourceContracts returns a source's exact contract total WITHOUT enumerating it, for protocols whose contracts exceed the roster
-// LIMIT 5000; ok=false with no query issued when the source has no count path.
+// LIMIT 5000; ok=false when the source has no count path (no query issued) or its roster is the registry.
 func (s *Store) CountSourceContracts(ctx context.Context, source string) (int64, bool, error) {
-	q, ok := sourceContractCountQuery(source)
+	q, args, ok := sourceContractCountQuery(source)
 	if !ok {
 		return 0, false, nil
 	}
-	var n int64
-	if err := s.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+	var n sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 		return 0, false, fmt.Errorf("timescale: CountSourceContracts %s: %w", source, err)
 	}
-	return n, true, nil
+	return n.Int64, n.Valid, nil
 }
 
 // listContractsFilteredBySource is the source-SCOPED roster for tables shared by several sources (oracle_updates); `table`/`column` are
@@ -187,7 +204,8 @@ func (s *Store) CountSourceContracts(ctx context.Context, source string) (int64,
 func (s *Store) listContractsFilteredBySource(ctx context.Context, table, column, source string) ([]string, error) {
 	// #nosec G201 -- table+column are hard-coded caller constants, never the
 	// request; source is a bind parameter.
-	q := fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE source = $1 AND %s IS NOT NULL LIMIT 5000`, column, table, column)
+	// cap-ok: CountSourceContracts counts this roster; the API serves that count and flags analytics over the capped subset.
+	q := fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE source = $1 AND %s IS NOT NULL ORDER BY %s LIMIT 5000`, column, table, column, column)
 	rows, err := s.db.QueryContext(ctx, q, source)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: listContractsFilteredBySource %s: %w", source, err)

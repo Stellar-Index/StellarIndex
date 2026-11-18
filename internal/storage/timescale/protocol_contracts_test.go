@@ -48,7 +48,7 @@ func TestProtocolContracts_rejectInvalidArgs(t *testing.T) {
 // total must be an unwindowed DISTINCT over credit_positions.collateral_contract (the lifetime set, not
 // window activity). Other sources have no such query, so their roster stays their count.
 func TestSourceContractCountQueryShape(t *testing.T) {
-	q, ok := sourceContractCountQuery("sorocredit")
+	q, _, ok := sourceContractCountQuery("sorocredit")
 	if !ok {
 		t.Fatal("sorocredit must have a count-only path: its ~116k child contracts are 23x the roster cap")
 	}
@@ -62,9 +62,33 @@ func TestSourceContractCountQueryShape(t *testing.T) {
 		t.Errorf("sorocredit count must be the unwindowed, uncapped total, got %q", q)
 	}
 
-	for _, source := range []string{"blend", "soroswap", "defindex", "aquarius", "sdex", ""} {
-		if q, ok := sourceContractCountQuery(source); ok {
+	for _, source := range []string{"blend", "soroswap", "sdex", ""} {
+		if q, _, ok := sourceContractCountQuery(source); ok {
 			t.Errorf("source %q must have no count-only path (its roster is its count), got %q", source, q)
+		}
+	}
+}
+
+// TestSourceContractCountQuery_ProjectionRostersAreCounted: every source whose roster is the capped projection DISTINCT has a
+// COUNT of that same DISTINCT, so contract_count never reads the cap; it yields NULL when protocol_contracts is the roster.
+func TestSourceContractCountQuery_ProjectionRostersAreCounted(t *testing.T) {
+	cases := map[string]string{
+		"defindex": "count(DISTINCT contract_id) FROM defindex_flows WHERE contract_id IS NOT NULL",
+		"phoenix":  "count(DISTINCT pool) FROM phoenix_liquidity WHERE pool IS NOT NULL",
+		"aquarius": "count(DISTINCT contract_id) FROM aquarius_liquidity WHERE contract_id IS NOT NULL",
+		"redstone": "count(DISTINCT contract_id) FROM oracle_updates WHERE source = $1 AND contract_id IS NOT NULL",
+	}
+	for source, want := range cases {
+		q, args, ok := sourceContractCountQuery(source)
+		if !ok {
+			t.Errorf("%s: no count path, so contract_count would be the capped roster length", source)
+			continue
+		}
+		if !strings.Contains(q, want) || !strings.Contains(q, "EXISTS (SELECT 1 FROM protocol_contracts WHERE source = $1) THEN NULL") {
+			t.Errorf("%s: count query %q, want %q gated on an empty registry", source, q, want)
+		}
+		if strings.Contains(q, "LIMIT") || len(args) != 1 || args[0] != source {
+			t.Errorf("%s: count must be uncapped and bind the source, got %q %v", source, q, args)
 		}
 	}
 }

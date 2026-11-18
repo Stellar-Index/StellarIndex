@@ -860,7 +860,8 @@ func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, ros
 	if !ok {
 		return len(roster), true
 	}
-	return n, true
+	// A non-empty roster shorter than the count was capped: analytics scoped to it cover a subset, not the protocol.
+	return n, len(roster) == 0 || len(roster) >= n
 }
 
 // enrichProtocolAnalytics fills the lake-derived analytics; true only when every fill completed (an empty roster is healthy), so absent
