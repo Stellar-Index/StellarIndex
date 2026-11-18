@@ -173,7 +173,8 @@ func DivergenceSeriesBucket(days int) time.Duration {
 }
 
 // ListDivergenceSeries returns the bucketed delta-% history of every reference for ONE (asset, quote) pair over the trailing `sinceDays`, ascending by bucket then reference, on divergence_observations_pair_ref_idx.
-func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]DivergenceSeriesPoint, error) {
+// assetIDs and quoteIDs are every alias form of each leg: the writer stores the one spelling its pair is configured with.
+func (s *Store) ListDivergenceSeries(ctx context.Context, assetIDs, quoteIDs []string, sinceDays int) ([]DivergenceSeriesPoint, error) {
 	if sinceDays <= 0 {
 		sinceDays = 7
 	}
@@ -187,11 +188,11 @@ func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID strin
 		       last(ref_price, observed_at)::text,
 		       bool_or(status = 'firing')
 		  FROM divergence_observations
-		 WHERE asset_id = $1 AND quote_id = $2
+		 WHERE asset_id = ANY($1) AND quote_id = ANY($2)
 		   AND observed_at > now() - make_interval(days => $4)
 		 GROUP BY bucket, reference
 		 ORDER BY bucket ASC, reference ASC`
-	rows, err := s.db.QueryContext(ctx, q, assetID, quoteID, int64(bucket.Seconds()), sinceDays)
+	rows, err := s.db.QueryContext(ctx, q, assetIDs, quoteIDs, int64(bucket.Seconds()), sinceDays)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListDivergenceSeries: %w", err)
 	}

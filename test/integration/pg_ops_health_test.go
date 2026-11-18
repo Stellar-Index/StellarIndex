@@ -337,7 +337,7 @@ func TestDivergenceGroupedReads(t *testing.T) {
 		t.Errorf("firing rows = %+v, want firing coingecko then clear chainlink", firing)
 	}
 
-	points, err := store.ListDivergenceSeries(ctx, "crypto:BTC", "fiat:USD", 7)
+	points, err := store.ListDivergenceSeries(ctx, []string{"crypto:BTC"}, []string{"fiat:USD"}, 7)
 	if err != nil {
 		t.Fatalf("ListDivergenceSeries: %v", err)
 	}
