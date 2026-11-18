@@ -238,11 +238,11 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- backfill rows stamp 4294967295 (math.MaxUint32, authoritative final state).
     --
     -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3). Version 3
-    -- renumbered every ledger, so a legacy row can carry a HIGHER version than the
-    -- corrected row for the same key, and a lower RMT version never displaces a
-    -- higher one. Re-deriving a range therefore requires DROPPING the partition
-    -- first, not just re-inserting. See migrations/0120 and
-    -- docs/operations/runbooks/entry-walk-renumbering.md.
+    -- renumbered every ledger, so a legacy ledger_entries_current row can carry a
+    -- HIGHER version than its correction and win FINAL. This table is versioned on
+    -- ingested_at, so a re-insert corrects it; the projection's stale rows must be
+    -- deleted. Procedure: docs/operations/runbooks/entry-walk-renumbering.md
+    -- (see also migrations/0120).
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     -- key_xdr is not in the sort key; the bloom prunes point lookups. 0.01 matches
