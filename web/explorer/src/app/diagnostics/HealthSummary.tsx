@@ -18,9 +18,20 @@ import { isLiveCursorSource } from '@/lib/cursors';
  * per-cursor table beneath it.
  */
 export function HealthSummary() {
-  const { data, isLoading } = useCursors();
+  const { data, isLoading, isError } = useCursors();
 
   const summary = useMemo(() => computeSummary(data ?? []), [data]);
+
+  if (isError && !data) {
+    return (
+      <section
+        role="alert"
+        className="border-line bg-surface text-down-strong rounded-md border p-4 text-sm"
+      >
+        Failed to load health summary.
+      </section>
+    );
+  }
 
   if (isLoading || !data) {
     return (
