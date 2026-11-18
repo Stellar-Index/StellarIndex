@@ -32,10 +32,9 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		"a.issuer <> '' AND (a.maker = a.issuer OR a.taker = a.issuer)",
 		// Issuer derivation: the G-strkey suffix of a classic id.
 		"split_part(asset_id, '-', 2)",
-		// Market-surface (real price surface) detection on the RAW counterpart.
-		"a.counterpart = 'native'",
+		// Market-surface detection on the RAW counterpart against every identity of XLM and Circle USDC.
+		"a.counterpart = ANY({{MARKET_COUNTERPARTS}})",
 		"a.counterpart LIKE 'fiat:%'",
-		"a.counterpart LIKE 'USDC-%'",
 		// Exact NUMERIC volume for the stored column (ADR-0003).
 		"SUM(a.v_num)::text",
 		// Grouped per canonical asset.

@@ -81,9 +81,8 @@ SELECT
     COALESCE(MAX(tp.top_pair_vol), 0)                                           AS top_pair_vol,
     COALESCE(SUM(a.v) FILTER (WHERE a.maker IS NOT NULL AND a.maker = a.taker), 0) AS self_cross_vol,
     COALESCE(SUM(a.v) FILTER (WHERE a.issuer <> '' AND (a.maker = a.issuer OR a.taker = a.issuer)), 0) AS issuer_side_vol,
-    COALESCE(SUM(a.v) FILTER (WHERE a.counterpart = 'native'
-                                 OR a.counterpart LIKE 'fiat:%'
-                                 OR a.counterpart LIKE 'USDC-%'), 0)            AS market_styled_vol
+    COALESCE(SUM(a.v) FILTER (WHERE a.counterpart = ANY({{MARKET_COUNTERPARTS}})
+                                 OR a.counterpart LIKE 'fiat:%'), 0)            AS market_styled_vol
   FROM legs_i a
   LEFT JOIN top_pair tp ON tp.asset_id = a.asset_id
  GROUP BY a.asset_id
@@ -202,6 +201,8 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	aliasValues, args := buildAliasMapValues(1)
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
 	query = strings.ReplaceAll(query, "{{WINDOW}}", window)
+	args = append(args, marketCounterpartArray())
+	query = strings.Replace(query, "{{MARKET_COUNTERPARTS}}", fmt.Sprintf("$%d", len(args)), 1)
 
 	// This all-asset roll scans the whole trailing window of trades and shares the primary with the API, so it runs on a dedicated
 	// connection with a bounded footprint: max_parallel_workers_per_gather=2 leaves cores free for the API, and

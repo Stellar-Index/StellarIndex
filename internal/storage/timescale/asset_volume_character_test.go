@@ -157,15 +157,39 @@ func TestAssetVolumeCharacterSQL_Shape(t *testing.T) {
 		"maker IS NOT NULL AND maker = taker",
 		// Issuer-side predicate, no-op when the issuer param is empty.
 		"$3 <> '' AND (maker = $3 OR taker = $3)",
-		// Market-surface (real price surface) detection.
-		"counterpart = 'native'",
+		// Market-surface detection keyed on every identity of XLM and Circle USDC, never a code.
+		"counterpart = ANY($4)",
 		"counterpart LIKE 'fiat:%'",
-		"counterpart LIKE 'USDC-%'",
 	}
 	for _, m := range musts {
 		if !strings.Contains(q, m) {
 			t.Errorf("assetVolumeCharacterSQL missing %q:\n%s", m, q)
 		}
+	}
+	for _, bad := range []string{"'native'", "LIKE 'USDC-%'"} {
+		if strings.Contains(q, bad) || strings.Contains(assetVolumeCharacterRollupSQLTemplate, bad) {
+			t.Errorf("volume-character SQL keys a market counterpart on %s, a single spelling or a bare code", bad)
+		}
+	}
+}
+
+// TestMarketCounterpartArray_EveryIdentity: XLM's three identities and Circle USDC with its SAC are market
+// counterparts; another issuer's USDC is not.
+func TestMarketCounterpartArray_EveryIdentity(t *testing.T) {
+	got := map[string]bool{}
+	for _, f := range marketCounterpartArray() {
+		got[f] = true
+	}
+	for _, want := range []string{
+		"native", "crypto:XLM", canonical.XLMSacContractID,
+		circleUSDCClassic, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+	} {
+		if !got[want] {
+			t.Errorf("marketCounterpartArray() lacks %s: %v", want, marketCounterpartArray())
+		}
+	}
+	if got["USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"] {
+		t.Error("marketCounterpartArray() trusts a non-Circle USDC")
 	}
 }
 

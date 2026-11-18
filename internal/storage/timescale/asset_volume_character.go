@@ -72,6 +72,18 @@ const (
 	volumeCharacterPairKeySQL    = `LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)`
 )
 
+// circleUSDCClassic is the one USDC the market-styled share trusts; any other issuer may call itself USDC.
+const circleUSDCClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+// marketCounterpartArray is every identity of the market-styled counterparts (XLM and Circle USDC, each with its SAC) for
+// `counterpart = ANY($n)`; fiat:* is matched by prefix beside it.
+func marketCounterpartArray() []string {
+	out := canonical.AssetAliasStrings(canonical.NativeAsset())
+	out = append(out, assetAliasArray(circleUSDCClassic)...)
+	// The Circle USDC SAC, as usdProxyQuotes names it, for a registry that has not learnt it.
+	return append(out, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+}
+
 // assetVolumeCharacterSQL rolls the window's signals in one query: $1 alias array, $2 window interval, $3 issuer G-address (empty makes
 // the issuer-side predicate constant-false). The (maker,taker) pair is UNORDERED (LEAST/GREATEST) so ping-pong reads as one pair; only
 // usd_volume rows count.
@@ -103,9 +115,8 @@ SELECT
   COALESCE((SELECT SUM(v) FROM w WHERE maker IS NOT NULL AND maker = taker), 0)    AS self_cross_vol,
   COALESCE((SELECT SUM(v) FROM w WHERE $3 <> '' AND (maker = $3 OR taker = $3)), 0) AS issuer_side_vol,
   COALESCE((SELECT SUM(v) FROM w
-              WHERE counterpart = 'native'
-                 OR counterpart LIKE 'fiat:%'
-                 OR counterpart LIKE 'USDC-%'), 0)                                 AS market_styled_vol
+              WHERE counterpart = ANY($4)
+                 OR counterpart LIKE 'fiat:%'), 0)                                 AS market_styled_vol
 `
 
 // AssetVolumeCharacter computes the signals and character for one asset; an asset with no priced trades in the window is the neutral
@@ -123,7 +134,7 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 		makers, takers                                      int64
 	)
 	err := s.db.QueryRowContext(ctx, assetVolumeCharacterSQL,
-		assetAliasArray(assetID), window, issuer).
+		assetAliasArray(assetID), window, issuer, marketCounterpartArray()).
 		Scan(&total, &totalNum, &makers, &takers, &topPair, &selfCross, &issuerSide, &marketStyled)
 	if err != nil {
 		return AssetVolumeCharacter{}, fmt.Errorf("timescale: AssetVolumeCharacter %s: %w", assetID, err)
