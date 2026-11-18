@@ -68,6 +68,10 @@ func TestDivergenceSeries_EveryXLMSpellingReachesTheStoredPair(t *testing.T) {
 		if !hasEveryForm(fake.gotAsset, "native", "crypto:XLM", canonical.NativeSACContractID()) {
 			t.Errorf("pair=%s~fiat:USD read asset forms %v, want every XLM identity", base, fake.gotAsset)
 		}
+		// The store serves the first spelling with rows: the requested one must lead so its own market wins.
+		if fake.gotAsset[0] != base || fake.gotQuote[0] != "fiat:USD" {
+			t.Errorf("pair=%s~fiat:USD read order (%v, %v), want the requested spelling first", base, fake.gotAsset, fake.gotQuote)
+		}
 	}
 }
 

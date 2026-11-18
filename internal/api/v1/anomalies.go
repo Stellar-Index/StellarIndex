@@ -437,7 +437,7 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, out, Flags{})
 		return
 	}
-	// The writer stores its configured pair's one spelling; every alias form of each leg must reach it.
+	// Requested spelling first; the store serves the first spelling with rows, never a mix of two configured markets.
 	points, err := s.Divergences.ListDivergenceSeries(r.Context(), sourceStatsAliases(base), sourceStatsAliases(quote), days)
 	if err != nil {
 		if clientAborted(r, err) {
