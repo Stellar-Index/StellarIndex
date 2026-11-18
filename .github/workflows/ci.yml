@@ -792,6 +792,11 @@ jobs:
         run: ./scripts/ci/lint-unflagged-limit.sh
       - name: lint-unflagged-limit self-test
         run: ./scripts/ci/lint-unflagged-limit-test.sh
+      - name: lint-rolling-window-grain
+        # An hourly-or-wider view's buckets are never bounded by NOW() minus hours/minutes (a "24h" figure would cover 23-24h).
+        run: ./scripts/ci/lint-rolling-window-grain.sh
+      - name: lint-rolling-window-grain self-test
+        run: ./scripts/ci/lint-rolling-window-grain-test.sh
       - name: Changed-file dispatcher self-test
         # `make lint-changed` picks the applicable lints for a diff and runs
         # them in seconds, so a defect surfaces at the keyboard rather than

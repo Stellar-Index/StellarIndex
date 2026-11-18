@@ -366,6 +366,11 @@ for f in ${go_files[@]+"${go_files[@]}"}; do
         add_step "lint-unflagged-limit" "storage Go changed" "$ci_dir/lint-unflagged-limit.sh"; break ;;
     esac
 done
+for f in ${go_files[@]+"${go_files[@]}"}; do
+    case "$f" in internal/storage/*)
+        add_step "lint-rolling-window-grain" "storage Go changed" "$ci_dir/lint-rolling-window-grain.sh"; break ;;
+    esac
+done
 
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.
 if [ "${#wf_files[@]}" -gt 0 ]; then
