@@ -22,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/ingest"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
@@ -48,6 +49,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	workers := fs.Int("workers", projectedRebuildDefaultWorkers, "concurrent ledger-window workers; capped at 3 so workers x 2 ClickHouse queries stay inside the ops_batch limit of 8")
 	resume := fs.Bool("resume", true, "skip windows already checkpointed by a prior -write run of THIS build for this source; another build's checkpoints are never trusted")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/last-exit gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_projected_rebuild_<source>.prom when that directory exists (r1), otherwise no heartbeat at all")
+	refreshCAGGs := fs.Bool("refresh-caggs", true, "after a -write of a source that feeds trades or oracle_updates, re-materialise the price and volume aggregates over [from,to] (also after a partial or interrupted run); without it the served OHLC, VWAP, TWAP and volume keep the pre-rebuild figures. Leave on unless a wrapper refreshes afterwards")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and run even though the live projector's cursor is inside [-from,-to]. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract in this command's doc comment.")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -200,7 +202,23 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		runErr, interrupted = errors.Join(runErr, rerr), false
 	}
 	runErr = errors.Join(runErr, sweepProjectedRebuildOracle(ctx, os.Stderr, store, *sourceName, fromLedger, toLedger, store.DeriveGeneration(), write, result, runErr, interrupted))
+	// Any window it wrote is behind every refresh policy's lookback, so a partial or interrupted run refreshes too.
+	if ferr := refreshAfterRebuild(ctx, os.Stderr,
+		projectedRebuildRefresh(*cfgPath, *sourceName, write, *refreshCAGGs, fromLedger, toLedger),
+		func(rctx context.Context) error {
+			return ingest.RefreshCAGGsForRange(rctx, logger, store, fromLedger, toLedger)
+		}); ferr != nil {
+		runErr, interrupted = errors.Join(runErr, ferr), false
+	}
 	return finishProjectedRebuild(hb, result, runErr, interrupted)
+}
+
+// projectedRebuildRefresh is the aggregate refresh a projected-rebuild of source owes over [from, to].
+func projectedRebuildRefresh(cfgPath, source string, write, refresh bool, from, to uint32) rebuildRefresh {
+	return rebuildRefresh{
+		verb: "projected-rebuild", cfgPath: cfgPath, write: write, refresh: refresh,
+		feeds: chRebuildFeedsAggregates(map[string]int{source: 1}), lo: from, hi: to,
+	}
 }
 
 // sep41RollupResetter is the one store method resetSEP41RollupAfterRebuild needs.

@@ -929,7 +929,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if !write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
-	return errors.Join(rerr, serr, refreshAfterCHRebuild(ctx, os.Stderr, write, *refreshCAGGs, written, lo, hi,
+	return errors.Join(rerr, serr, refreshAfterRebuild(ctx, os.Stderr,
+		rebuildRefresh{verb: "ch-rebuild", cfgPath: *cfgPath, write: write, refresh: *refreshCAGGs, feeds: chRebuildFeedsAggregates(written), lo: lo, hi: hi},
 		func(rctx context.Context) error { return ingest.RefreshCAGGsForRange(rctx, logger, store, lo, hi) }))
 }
 
@@ -948,23 +949,53 @@ func chRebuildFeedsAggregates(written map[string]int) bool {
 	return false
 }
 
-// refreshAfterCHRebuild re-materialises the aggregates over a range this run rewrote. No refresh policy reaches
+// rebuildRefresh is one rebuild command's post-write aggregate refresh: verb names the command in its output.
+type rebuildRefresh struct {
+	verb, cfgPath  string
+	write, refresh bool
+	feeds          bool // the run rewrites rows a continuous aggregate is built on
+	lo, hi         uint32
+}
+
+// followUp is the refresh-only command that brings the aggregates over the range back in line with the rows.
+func (r rebuildRefresh) followUp() string {
+	return fmt.Sprintf("stellarindex-ops %s -config %s -from %d -to %d -oracle -write", tradesCAGGRefreshVerb, r.cfgPath, r.lo, r.hi)
+}
+
+// refreshAfterRebuild re-materialises the aggregates over a range the run rewrote. No refresh policy reaches
 // back to a historical range and the views serve materialised buckets only, so without it the served OHLC,
 // VWAP and volume keep the pre-rebuild figures while the run reports success. Not cancelled with the run: the
 // rows are already written.
-func refreshAfterCHRebuild(ctx context.Context, w io.Writer, write, refresh bool, written map[string]int, lo, hi uint32, run func(context.Context) error) error {
-	if !write || !chRebuildFeedsAggregates(written) {
+func refreshAfterRebuild(ctx context.Context, w io.Writer, r rebuildRefresh, run func(context.Context) error) error {
+	if !r.feeds {
 		return nil
 	}
-	if !refresh {
-		_, _ = fmt.Fprintf(w, "ch-rebuild: FOLLOW-UP OWED: the trade and oracle aggregates over [%d,%d] are NOT refreshed (-refresh-caggs=false); served OHLC, VWAP and volume keep the old figures until `stellarindex-ops %s` covers the range\n", lo, hi, tradesCAGGRefreshVerb)
+	switch {
+	case !r.write && r.refresh:
+		_, _ = fmt.Fprintf(w, "%s: -write would then refresh the trade and oracle aggregates over [%d,%d]: %s\n", r.verb, r.lo, r.hi, strings.Join(rebuildRefreshViews(), ","))
+		return nil
+	case !r.write:
+		return nil
+	case !r.refresh:
+		_, _ = fmt.Fprintf(w, "%s: FOLLOW-UP OWED: the trade and oracle aggregates over [%d,%d] are NOT refreshed (-refresh-caggs=false); served OHLC, VWAP and volume keep the old figures until you run: %s\n", r.verb, r.lo, r.hi, r.followUp())
 		return nil
 	}
-	_, _ = fmt.Fprintf(w, "ch-rebuild: refreshing the aggregates over [%d,%d]\n", lo, hi)
+	_, _ = fmt.Fprintf(w, "%s: refreshing the aggregates over [%d,%d]\n", r.verb, r.lo, r.hi)
 	if err := run(context.WithoutCancel(ctx)); err != nil {
-		return fmt.Errorf("ch-rebuild: rows are written but the aggregates over [%d,%d] are not refreshed (served OHLC, VWAP and volume are stale; re-run, or run `stellarindex-ops %s`): %w", lo, hi, tradesCAGGRefreshVerb, err)
+		return fmt.Errorf("%s: rows are written but the aggregates over [%d,%d] are not refreshed (served OHLC, VWAP and volume are stale); run: %s: %w", r.verb, r.lo, r.hi, r.followUp(), err)
 	}
 	return nil
+}
+
+// rebuildRefreshViews names every view [ingest.RefreshCAGGsForRange] may refresh.
+func rebuildRefreshViews() []string {
+	views := make([]string, 0, len(timescale.TradesCAGGs)+len(timescale.OracleCAGGs))
+	for _, specs := range [][]timescale.CAGGSpec{timescale.TradesCAGGs, timescale.OracleCAGGs} {
+		for _, c := range specs {
+			views = append(views, c.Name)
+		}
+	}
+	return views
 }
 
 // reportCHRebuildCounts prints a row per source that wrote or failed anything, and per re-derived source even at zero, so an empty
