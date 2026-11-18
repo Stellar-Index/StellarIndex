@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -42,6 +46,50 @@ func TestProjectedRebuildRefresh(t *testing.T) {
 	err := call("soroswap", true, true, errors.New("lock timeout"))
 	if err == nil || !strings.Contains(err.Error(), wantRefreshFollowUp) {
 		t.Fatalf("failed refresh: err=%v, want an error naming %q", err, wantRefreshFollowUp)
+	}
+}
+
+// opsTradeWriteMarkers are the calls through which an ops command writes served trade or oracle rows, or rewinds the
+// projector so it re-writes them.
+var opsTradeWriteMarkers = []string{"pipeline.HandleEvent(", ".InsertTrade(", ".BatchInsertTrades(", ".InsertOracle", "RewindCursor("}
+
+// opsTradeWriterRefreshExempt names the writer files that register no default-on -refresh-caggs themselves, and why.
+var opsTradeWriterRefreshExempt = map[string]string{
+	"ingest/backfill_external.go": "a writer seam of the backfill verb, whose -refresh-caggs (backfill.go) refreshes every chunk it writes",
+}
+
+// Every ops command that rewrites trade or oracle rows behind the refresh policies' lookback refreshes the aggregates
+// over what it wrote by default; a new writer either registers -refresh-caggs defaulting to true or is exempt with a reason.
+func TestOpsTradeWriters_RefreshTheAggregatesByDefault(t *testing.T) {
+	writers := 0
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		s := string(src)
+		if !slices.ContainsFunc(opsTradeWriteMarkers, func(m string) bool { return strings.Contains(s, m) }) {
+			return nil
+		}
+		writers++
+		rel := filepath.ToSlash(strings.TrimPrefix(path, "../"))
+		if _, ok := opsTradeWriterRefreshExempt[rel]; ok {
+			return nil
+		}
+		if !strings.Contains(s, `"refresh-caggs", true`) {
+			t.Errorf("%s writes trade or oracle rows but registers no -refresh-caggs defaulting to true: refresh the aggregates over "+
+				"the written range (refreshAfterRebuild / ingest.RefreshCAGGsForRange) or add it to opsTradeWriterRefreshExempt with a reason", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if writers < 4 {
+		t.Fatalf("found %d trade writers under internal/ops, want at least 4 — the scan is not seeing the tree", writers)
 	}
 }
 
