@@ -80,7 +80,7 @@ func holdersBoardSteps(at string) []string {
 func holdersCountSteps(at string) []string {
 	return []string{
 		`INSERT INTO stellar.asset_holders_counts_staging (asset, holders, circulating, computed_at)
-		 SELECT asset, toInt64(count()), sum(toInt128(balance)), toDateTime(` + at + `)
+		 SELECT asset, toInt64(count()), sum(toInt128(balance)), toDateTime(` + at + `) -- i128sum:ok trustline balances are Int64 stroops
 		 FROM stellar.ledger_entries_current FINAL
 		 WHERE ` + classicCirculatingFilter + `
 		 GROUP BY asset
@@ -103,7 +103,7 @@ func accountsStatsStep(at string) string {
 		     FROM stellar.ledger_entries_current FINAL
 		     WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0
 		     UNION ALL
-		     SELECT 'xlm_total_stroops', toInt64(sum(balance))
+		     SELECT 'xlm_total_stroops', toInt64(sum(balance)) -- i128sum:ok ledger_entries_current.balance is Int64, not Int128
 		     FROM stellar.ledger_entries_current FINAL
 		     WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0
 		     UNION ALL
@@ -131,7 +131,7 @@ func accountsStatsStep(at string) string {
 		     FROM stellar.ledger_entries_current FINAL
 		     WHERE entry_type = 'trustline' AND change_type != 'removed'
 		     UNION ALL
-		     SELECT 'top100_xlm_stroops', toInt64(sum(balance))
+		     SELECT 'top100_xlm_stroops', toInt64(sum(balance)) -- i128sum:ok asset_holders_rollup.balance is Int64, not Int128
 		     FROM stellar.asset_holders_rollup_staging
 		     WHERE asset = 'native' AND rank <= 100
 		 )
@@ -144,7 +144,7 @@ func accountsHistogramSteps(at string) []string {
 	return []string{
 		`INSERT INTO stellar.accounts_wealth_histogram_staging (bucket, accounts, xlm_stroops, computed_at)
 		 SELECT toInt8(least(greatest(floor(log10(balance / 10000000.0)), -1), 10)) AS bucket,
-		        toUInt64(count()), toInt64(sum(balance)), toDateTime(` + at + `)
+		        toUInt64(count()), toInt64(sum(balance)), toDateTime(` + at + `) -- i128sum:ok ledger_entries_current.balance is Int64, not Int128
 		 FROM stellar.ledger_entries_current FINAL
 		 WHERE entry_type = 'account' AND change_type != 'removed' AND balance > 0
 		 GROUP BY bucket

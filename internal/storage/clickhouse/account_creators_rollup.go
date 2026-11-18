@@ -149,7 +149,7 @@ func creatorsBoardSteps() []rollupStep {
 	     FROM (
 	         SELECT creator,
 	                toUInt64(count()) AS accounts_created,
-	                sum(toInt128(amount)) AS funded_stroops,
+	                sum(toInt128(amount)) AS funded_stroops, -- i128sum:ok bounded by protocol: create_account moves only XLM, Int64 stroops
 	                min(ledger) AS first_ledger,
 	                max(ledger) AS last_ledger,
 	                min(closed_at) AS first_created_at,
@@ -160,7 +160,7 @@ func creatorsBoardSteps() []rollupStep {
 	     LEFT JOIN (
 	         SELECT creator,
 	                toUInt64(uniqExactIf(created, is_live)) AS live_accounts,
-	                sum(toInt128(live_balance)) AS live_stroops
+	                sum(toInt128(live_balance)) AS live_stroops -- i128sum:ok native balances are Int64 stroops
 	         FROM (
 	             SELECT c.creator AS creator,
 	                    c.created AS created,
@@ -222,7 +222,7 @@ func creatorsGraphSteps() []rollupStep {
 	     (creator, created, creations, funded_stroops, first_ledger, last_ledger, first_at, last_at)
 	 SELECT creator, created,
 	        toUInt64(count()) AS creations,
-	        sum(toInt128(amount)) AS funded_stroops,
+	        sum(toInt128(amount)) AS funded_stroops, -- i128sum:ok bounded by protocol: create_account moves only XLM, Int64 stroops
 	        min(ledger) AS first_ledger,
 	        max(ledger) AS last_ledger,
 	        min(closed_at) AS first_at,

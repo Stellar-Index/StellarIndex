@@ -93,7 +93,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_holdings_staging (rel, root, asset, holders, balance)
 	 SELECT c.rel, c.root, e.asset,
 	        toUInt64(count()) AS holders,
-	        sum(toInt128(e.balance)) AS balance
+	        sum(toInt128(e.balance)) AS balance -- i128sum:ok account and trustline balances are Int64 stroops
 	 FROM (
 	     SELECT account_id, if(entry_type = 'account', 'native', asset) AS asset, balance
 	     FROM stellar.ledger_entries_current FINAL
