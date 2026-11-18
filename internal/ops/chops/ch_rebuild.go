@@ -374,7 +374,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	refreshCAGGs := fs.Bool("refresh-caggs", true, "after a -write that landed trade or oracle rows, re-materialise the price and volume aggregates over [from,to]; without it the served OHLC, VWAP and volume keep the pre-rebuild figures. Leave on unless a wrapper refreshes afterwards")
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
-	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading the lake or writing a row. The per-WASM replay gate and the factory-preseed check read ClickHouse, so they run only in the real run and a preflight ok does not cover them. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
+	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, the buffered-range ceiling, the per-WASM replay gate and the factory-preseed check — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT streaming the range or writing a row. The last two read ClickHouse (the WASM history and each factory's creation events before -from), so a preflight needs the lake reachable. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
 	requireRows := fs.String("require-rows", "", "comma-separated sources that must write at least one row: the run fails when one of them re-derives none. scripts/ops/ch-rebuild-projected.sh passes every source whose window its DELETE found occupied, so an emptied window whose re-derive came back empty (an empty gate registry, a lake gap) exits non-zero and stays dirty instead of being marked done. A source absent here may legitimately be quiet over the range.")
 	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run records its own rewritten window before it writes; this mode is for a window left EMPTIED.")
 	tradesByAccount := fs.Bool("trades-by-account", false, "with -write -sdex: write the decoded trades to ClickHouse stellar.trades_by_account (one row per taker and per distinct maker, same storability gate and usd_volume as Postgres) and record [from,to] in trades_by_account_windows, INSTEAD of writing Postgres. Needs the full trade set, so it refuses -sources, -contracts, -sdex-gaps, -sdex-reconcile, -sep41, -contract-calls and -bulk-trades. Runbook: deploy/clickhouse/trades_by_account.sql.")
@@ -577,27 +577,16 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — every decode pass (event, sep41, sdex, contract-call) buffers in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
 			*from, *to, *to-*from, maxBufferedRange)
 	}
-	// -preflight stops HERE: past the last Postgres-only refusal, before the first lake read. The per-WASM gate and the
-	// factory-preseed check below can still refuse, so a caller that deletes on this answer can be left with an emptied window.
-	if *preflight {
-		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
-	}
 	// The per-WASM lake gate opens ClickHouse, so it runs after every cheap
-	// refusal and the -preflight stop, and before the first lake read or write.
+	// refusal and before the first event-stream read or write.
 	if write {
 		if gerr := gateCHRebuildLake(ctx, cfg, *chAddr, store, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled), lo, hi); gerr != nil {
 			return gerr
 		}
-		if *tradesByAccount {
-			if perr := clickhouse.PrepareTradesByAccountWindow(ctx, *chAddr, lo, hi, *replaceWindow); perr != nil {
-				return fmt.Errorf("ch-rebuild -trades-by-account: %w", perr)
-			}
-		}
 	}
-	gate.Banner()
 	// Factory-anchored sources (ADR-0035): seed each gate registry from the factory's creation events in [genesis, lo) before
 	// the re-derive, as verify-reconciliation does. Without it a source with no in-code curated set (blend) re-derives 0 rows
-	// above its factory deploys. Read-only and idempotent. It reads the lake, so it sits below the -preflight stop.
+	// above its factory deploys. Read-only and idempotent, so -preflight runs it: its refusal must come before a caller's DELETE.
 	for _, src := range cat {
 		if len(src.factories) == 0 {
 			continue
@@ -612,6 +601,16 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return fmt.Errorf("%s: preseed factory children: %s", src.name, pblind.Detail())
 		}
 	}
+	// -preflight stops HERE: past the last refusal, before the first event-stream read and the first write.
+	if *preflight {
+		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
+	}
+	if write && *tradesByAccount {
+		if perr := clickhouse.PrepareTradesByAccountWindow(ctx, *chAddr, lo, hi, *replaceWindow); perr != nil {
+			return fmt.Errorf("ch-rebuild -trades-by-account: %w", perr)
+		}
+	}
+	gate.Banner()
 
 	// A -write rewrites served rows below the completeness watermark, so the next verdict must
 	// re-reconcile [lo,hi], as with projector-replay. Record it before the first write and refuse
@@ -929,7 +928,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if !write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
-	return errors.Join(rerr, serr, refreshAfterCHRebuild(ctx, os.Stderr, write, *refreshCAGGs, written, lo, hi,
+	return errors.Join(rerr, serr, refreshAfterRebuild(ctx, os.Stderr,
+		rebuildRefresh{verb: "ch-rebuild", cfgPath: *cfgPath, write: write, refresh: *refreshCAGGs, feeds: chRebuildFeedsAggregates(written), lo: lo, hi: hi},
 		func(rctx context.Context) error { return ingest.RefreshCAGGsForRange(rctx, logger, store, lo, hi) }))
 }
 
@@ -948,23 +948,53 @@ func chRebuildFeedsAggregates(written map[string]int) bool {
 	return false
 }
 
-// refreshAfterCHRebuild re-materialises the aggregates over a range this run rewrote. No refresh policy reaches
+// rebuildRefresh is one rebuild command's post-write aggregate refresh: verb names the command in its output.
+type rebuildRefresh struct {
+	verb, cfgPath  string
+	write, refresh bool
+	feeds          bool // the run rewrites rows a continuous aggregate is built on
+	lo, hi         uint32
+}
+
+// followUp is the refresh-only command that brings the aggregates over the range back in line with the rows.
+func (r rebuildRefresh) followUp() string {
+	return fmt.Sprintf("stellarindex-ops %s -config %s -from %d -to %d -oracle -write", tradesCAGGRefreshVerb, r.cfgPath, r.lo, r.hi)
+}
+
+// refreshAfterRebuild re-materialises the aggregates over a range the run rewrote. No refresh policy reaches
 // back to a historical range and the views serve materialised buckets only, so without it the served OHLC,
 // VWAP and volume keep the pre-rebuild figures while the run reports success. Not cancelled with the run: the
 // rows are already written.
-func refreshAfterCHRebuild(ctx context.Context, w io.Writer, write, refresh bool, written map[string]int, lo, hi uint32, run func(context.Context) error) error {
-	if !write || !chRebuildFeedsAggregates(written) {
+func refreshAfterRebuild(ctx context.Context, w io.Writer, r rebuildRefresh, run func(context.Context) error) error {
+	if !r.feeds {
 		return nil
 	}
-	if !refresh {
-		_, _ = fmt.Fprintf(w, "ch-rebuild: FOLLOW-UP OWED: the trade and oracle aggregates over [%d,%d] are NOT refreshed (-refresh-caggs=false); served OHLC, VWAP and volume keep the old figures until `stellarindex-ops %s` covers the range\n", lo, hi, tradesCAGGRefreshVerb)
+	switch {
+	case !r.write && r.refresh:
+		_, _ = fmt.Fprintf(w, "%s: -write would then refresh the trade and oracle aggregates over [%d,%d]: %s\n", r.verb, r.lo, r.hi, strings.Join(rebuildRefreshViews(), ","))
+		return nil
+	case !r.write:
+		return nil
+	case !r.refresh:
+		_, _ = fmt.Fprintf(w, "%s: FOLLOW-UP OWED: the trade and oracle aggregates over [%d,%d] are NOT refreshed (-refresh-caggs=false); served OHLC, VWAP and volume keep the old figures until you run: %s\n", r.verb, r.lo, r.hi, r.followUp())
 		return nil
 	}
-	_, _ = fmt.Fprintf(w, "ch-rebuild: refreshing the aggregates over [%d,%d]\n", lo, hi)
+	_, _ = fmt.Fprintf(w, "%s: refreshing the aggregates over [%d,%d]\n", r.verb, r.lo, r.hi)
 	if err := run(context.WithoutCancel(ctx)); err != nil {
-		return fmt.Errorf("ch-rebuild: rows are written but the aggregates over [%d,%d] are not refreshed (served OHLC, VWAP and volume are stale; re-run, or run `stellarindex-ops %s`): %w", lo, hi, tradesCAGGRefreshVerb, err)
+		return fmt.Errorf("%s: rows are written but the aggregates over [%d,%d] are not refreshed (served OHLC, VWAP and volume are stale); run: %s: %w", r.verb, r.lo, r.hi, r.followUp(), err)
 	}
 	return nil
+}
+
+// rebuildRefreshViews names every view [ingest.RefreshCAGGsForRange] may refresh.
+func rebuildRefreshViews() []string {
+	views := make([]string, 0, len(timescale.TradesCAGGs)+len(timescale.OracleCAGGs))
+	for _, specs := range [][]timescale.CAGGSpec{timescale.TradesCAGGs, timescale.OracleCAGGs} {
+		for _, c := range specs {
+			views = append(views, c.Name)
+		}
+	}
+	return views
 }
 
 // reportCHRebuildCounts prints a row per source that wrote or failed anything, and per re-derived source even at zero, so an empty

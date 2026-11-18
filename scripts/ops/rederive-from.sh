@@ -206,7 +206,8 @@ for src in ${SOURCES[@]+"${SOURCES[@]}"}; do
   # No -to: projected-rebuild then stops at the live projector's cursor. -resume=false: its window checkpoints outlive
   # the run that wrote them, so a re-derive that resumed would skip every window an earlier rebuild covered and keep the
   # old rows. The stage marker is this script's resume; a retried stage rebuilds its source from L again.
-  stage "projected.$src" "$OPS" projected-rebuild -config "$CONFIG" -source "$src" -from "$FROM" -workers "$WORKERS" -resume=false -write
+  # -refresh-caggs=false: the trades-caggs stage below refreshes [L, lake tip] once for every source.
+  stage "projected.$src" "$OPS" projected-rebuild -config "$CONFIG" -source "$src" -from "$FROM" -workers "$WORKERS" -resume=false -refresh-caggs=false -write
 done
 # Run for any rebuilt source rather than list the trade writers here: a refresh
 # over a range with no rewritten trades changes nothing. The rebuild ran to the

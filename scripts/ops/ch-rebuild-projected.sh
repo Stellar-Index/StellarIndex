@@ -15,8 +15,8 @@
 # The DELETE is destructive, so five rules bound it:
 #
 #   1. Ask first. Each window runs `ch-rebuild -write -preflight` BEFORE its
-#      DELETE (same BackfillSafe / live-cursor / buffered-range refusals as the
-#      real run, same range and sources). Anything short of the verdict line (a
+#      DELETE (same BackfillSafe / live-cursor / buffered-range / per-WASM /
+#      factory-preseed refusals as the real run, same range and sources). Anything short of the verdict line (a
 #      refusal, a binary without -preflight, silence) deletes nothing.
 #   2. Delete only what the verdict says will be re-derived. The DELETE is built
 #      per source from the verdict's `rederive=` list (window_delete_sql) in ONE
