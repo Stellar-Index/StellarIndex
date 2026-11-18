@@ -321,6 +321,9 @@ type AssetDetail struct {
 	// priceUnmeasured: the substance gate could not measure this row, so its
 	// missing price is an unanswered read, not a market that produced none.
 	priceUnmeasured bool
+	// scaleSettled: the listing fill already answered this Soroban row's scale (read, vouched by the projection, or
+	// declared none), so a later overlay need not read it again.
+	scaleSettled bool
 	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
@@ -1125,15 +1128,18 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	if !lakeKnown {
 		switch {
 		case hasConfirmed:
+			row.scaleSettled = true
 		case lakeErr != nil:
 			row.DecimalsUnresolved = true
 			reportUnreadRead(ctx)
 		default:
 			row.DecimalsUndeclared = true
+			row.scaleSettled = true
 		}
 		return
 	}
 	row.Decimals = lake
+	row.scaleSettled = true
 	// Only a price can have been normalised on the projection's scale: an unpriced row's lake scale is a fact, not drift.
 	valued := row.PriceUSD != nil || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
 	if valued && ((hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals)) {

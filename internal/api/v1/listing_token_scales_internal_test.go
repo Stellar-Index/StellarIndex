@@ -168,6 +168,57 @@ func TestListingScales_MismatchOnlyOnValuedRows(t *testing.T) {
 	}
 }
 
+// A projection-confirmed scale the lake cannot answer is served alike by the listing and by the /v1/rwa contract arm.
+func TestContractDecimals_ConfirmedScaleMatchesTheListing(t *testing.T) {
+	for name, reader := range map[string]TokenDecimalsReader{
+		"undeclared":  undeclaredTokenDecimals{},
+		"read failed": failingTokenDecimals{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id := syntheticContractID(t, 7)
+			s := &Server{Options: Options{TokenDecimals: reader, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{id: 6})}, logger: discardLogger()}
+
+			listing := []AssetDetail{{AssetID: id, Type: string(canonical.AssetSoroban), Decimals: 7}}
+			s.fillMarketCapsFromSupply(context.Background(), listing, map[string]int{})
+			contract := []AssetDetail{{AssetID: id, Type: string(canonical.AssetSoroban), Decimals: 7}}
+			scaled, _ := s.fillContractDecimals(context.Background(), contract, map[string]timescale.AssetRow{id: {}})
+			refuseUnscaledContractCaps(contract, scaled)
+
+			l, c := rwaDecimalsOf(listing[0]), rwaDecimalsOf(contract[0])
+			if l == nil || c == nil || *l != 6 || *c != 6 {
+				t.Errorf("listing decimals=%v, rwa contract decimals=%v; want 6 on both", l, c)
+			}
+		})
+	}
+}
+
+// A contract row the listing fill already answered is not read a second time, and a fresh "declares none" clears an earlier unread.
+func TestContractDecimals_SettledRowIsNotReadTwice(t *testing.T) {
+	rows := sorobanRows(t, 2)
+	stub := &countingScaleReader{declared: map[string]uint32{rows[0].AssetID: 9}}
+	s := &Server{Options: Options{TokenDecimals: stub}, logger: discardLogger()}
+	src := map[string]timescale.AssetRow{rows[0].AssetID: {}, rows[1].AssetID: {}}
+
+	s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
+	scaled, cut := s.fillContractDecimals(context.Background(), rows, src)
+
+	if n := stub.batchN.Load() + stub.singles.Load(); n != 1 {
+		t.Errorf("%d scale reads across both fills, want 1", n)
+	}
+	if _, ok := scaled[rows[0].AssetID]; !ok || cut || rows[0].Decimals != 9 {
+		t.Errorf("declared row: scaled=%v cut=%v decimals=%d, want scaled 9", ok, cut, rows[0].Decimals)
+	}
+	if _, ok := scaled[rows[1].AssetID]; ok || !rows[1].DecimalsUndeclared {
+		t.Errorf("undeclared row: scaled=%v undeclared=%v, want unscaled and undeclared", ok, rows[1].DecimalsUndeclared)
+	}
+
+	fresh := []AssetDetail{{AssetID: rows[1].AssetID, Type: string(canonical.AssetSoroban), DecimalsUnresolved: true}}
+	s.fillContractDecimals(context.Background(), fresh, src)
+	if fresh[0].DecimalsUnresolved || !fresh[0].DecimalsUndeclared {
+		t.Errorf("after a successful empty read: unresolved=%v undeclared=%v, want undeclared only", fresh[0].DecimalsUnresolved, fresh[0].DecimalsUndeclared)
+	}
+}
+
 // sorobanListingReader serves one unpriced Soroban row through the listing handler.
 type sorobanListingReader struct {
 	AssetsReader

@@ -415,7 +415,13 @@ func (s *Server) fillContractDecimals(
 		if _, ok := src[rows[i].AssetID]; !ok {
 			continue
 		}
-		d, known, err := s.lakeTokenDecimals(ctx, rows[i].AssetID)
+		if rows[i].scaleSettled {
+			if !rows[i].scaleUnknown() {
+				resolved[rows[i].AssetID] = struct{}{}
+			}
+			continue
+		}
+		d, known, err := s.contractTokenScale(ctx, rows[i].AssetID)
 		if err != nil && ctx.Err() != nil {
 			return resolved, true
 		}
@@ -425,6 +431,7 @@ func (s *Server) fillContractDecimals(
 		}
 		if !known {
 			rows[i].DecimalsUndeclared = true
+			rows[i].DecimalsUnresolved = false
 			continue
 		}
 		// This reading owns the scale; the generic fill's failed or empty read must not outlive it.
@@ -434,6 +441,19 @@ func (s *Server) fillContractDecimals(
 		resolved[rows[i].AssetID] = struct{}{}
 	}
 	return resolved, cut
+}
+
+// contractTokenScale is the lake scale with applyTokenDecimals' fallback: a projection-confirmed scale answers when the lake does
+// not, so /v1/rwa serves the scale /v1/assets and the detail page serve.
+func (s *Server) contractTokenScale(ctx context.Context, contractID string) (decimals int, known bool, err error) {
+	d, known, err := s.lakeTokenDecimals(ctx, contractID)
+	if known {
+		return d, true, nil
+	}
+	if confirmed, ok := s.NonstandardDecimals.Lookup(contractID); ok {
+		return confirmed, true, nil
+	}
+	return 0, false, err
 }
 
 // fillContractMarketCaps fills circulating supply and market cap for contract rows from the certified lake: mints less burns and
