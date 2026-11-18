@@ -35,7 +35,7 @@ func TestRefreshPinnedPair_ReachesNoVerdict(t *testing.T) {
 
 	// A pinned value 10% off, held past the persistence window, never fires.
 	for i := range 3 {
-		if err := svc.RefreshPinnedPair(ctx, pair, 1.10, t0.Add(time.Duration(i)*step)); err != nil {
+		if err := svc.RefreshPinnedPair(ctx, pair, "1.1", t0.Add(time.Duration(i)*step)); err != nil {
 			t.Fatalf("RefreshPinnedPair: %v", err)
 		}
 	}
@@ -57,12 +57,12 @@ func TestRefreshPinnedPair_ReachesNoVerdict(t *testing.T) {
 	// A warning raised by fresh prices is carried through a pinned refresh
 	// whose value would, if judged, read as an all-clear.
 	t1 := t0.Add(10 * step)
-	_ = svc.RefreshPair(ctx, pair, 1.10, t1)
-	_ = svc.RefreshPair(ctx, pair, 1.10, t1.Add(step))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t1)
+	_ = svc.RefreshPair(ctx, pair, "1.10", t1.Add(step))
 	if fired != 1 {
 		t.Fatalf("fresh divergence: hooks = %d, want 1", fired)
 	}
-	_ = svc.RefreshPinnedPair(ctx, pair, 1.00, t1.Add(2*step))
+	_ = svc.RefreshPinnedPair(ctx, pair, "1.00", t1.Add(2*step))
 	got = readDivergence(t, rdb, pair)
 	if !got.WarningFired || got.FiringSince.IsZero() {
 		t.Errorf("pinned refresh cleared the carried warning: fired %v since %v", got.WarningFired, got.FiringSince)

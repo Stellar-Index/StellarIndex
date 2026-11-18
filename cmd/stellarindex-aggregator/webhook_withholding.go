@@ -177,7 +177,7 @@ func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates prici
 		payload := customerwebhook.MarshalPayload(logger, divergenceFiringWebhookPayload{
 			Event:         string(platform.WebhookEventDivergenceFiring),
 			Pair:          pair.String(),
-			OurPrice:      formatDivergencePrice(cached.OurPrice),
+			OurPrice:      cached.OurPriceExact,
 			Median:        formatDivergencePrice(cached.Median),
 			DivergencePct: cached.DivergencePct,
 			SuccessCount:  cached.SuccessCount,
