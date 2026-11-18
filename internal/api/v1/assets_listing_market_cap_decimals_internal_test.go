@@ -5,10 +5,12 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,18 +35,22 @@ func TestFillMarketCapsFromSupply_DividesSupplyByTheConfirmedDecimals(t *testing
 		{"9dp", map[string]int{sorobanContract: 9}, "1000000000000", "2.5000000000", "2500.00", 9},
 		{"18dp", map[string]int{sorobanContract: 18}, "1000000000000000000000", "14.0000000000", "14000.00", 18},
 		{"5dp", map[string]int{sorobanContract: 5}, "100000000", "2.0000000000", "2000.00", 5},
-		// No confirmed row: the price is the raw ratio it always was and
-		// the standard divisor is the one that matches it. Unchanged.
-		{"unflagged keeps the standard 7", map[string]int{}, "10000000000", "2.5000000000", "2500.00", 7},
+		// No confirmed row but the lake reads the standard 7: the raw-ratio
+		// price and the standard divisor match.
+		{"unflagged read as the standard 7", map[string]int{}, "10000000000", "2.5000000000", "2500.00", 7},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			price := tc.price
 			rows := []AssetDetail{assetDetailFromAssetRow(timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price})}
 			s := &Server{
+				logger: discardLogger(),
 				Options: Options{AssetsReader: &preciseSupplyStub{obs: map[string]timescale.SupplyObservation{
 					sorobanContract: {CirculatingSupply: tc.supply, Basis: "sep41_lake_flows"},
 				}}, NonstandardDecimals: decimalsCacheFlagging(t, tc.flagged)},
+			}
+			if len(tc.flagged) == 0 {
+				s.TokenDecimals = listingLakeDecimals{d: 7, found: true}
 			}
 			s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
 
@@ -69,8 +75,8 @@ func TestFillMarketCapsFromSupply_DividesSupplyByTheConfirmedDecimals(t *testing
 		})
 	}
 
-	// No cache wired at all (a test server, a degraded boot): nothing is
-	// on record, so nothing changes.
+	// No cache and no lake reader wired: nothing vouches for the scale, so the row's
+	// decimals are unknown and the cap is refused rather than computed at a guessed 7.
 	price := "2.5000000000"
 	rows := []AssetDetail{assetDetailFromAssetRow(timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &price})}
 	s := &Server{
@@ -79,9 +85,28 @@ func TestFillMarketCapsFromSupply_DividesSupplyByTheConfirmedDecimals(t *testing
 		}}},
 	}
 	s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
-	if rows[0].MarketCapUSD == nil || *rows[0].MarketCapUSD != "2500.00" || rows[0].Decimals != 7 {
-		t.Errorf("nil cache: cap = %v decimals = %d, want 2500.00 at 7", rows[0].MarketCapUSD, rows[0].Decimals)
+	if rows[0].MarketCapUSD != nil || !rows[0].scaleUnknown() {
+		t.Errorf("unread scale: cap = %v scaleUnknown = %v, want no cap and an unknown scale", rows[0].MarketCapUSD, rows[0].scaleUnknown())
 	}
+	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != "10000000000" {
+		t.Errorf("circulating_supply = %v, want the raw reading untouched", rows[0].CirculatingSupply)
+	}
+	b, err := json.Marshal(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"decimals"`) {
+		t.Errorf("unread scale served as a number: %s", b)
+	}
+}
+
+type listingLakeDecimals struct {
+	d     uint32
+	found bool
+}
+
+func (l listingLakeDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
+	return l.d, l.found, nil
 }
 
 type capDecimalsContractCatalogue struct{ rows map[string]timescale.AssetRow }

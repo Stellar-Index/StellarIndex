@@ -167,7 +167,7 @@ export function AssetSidebar({
   const marketCap = num((detail ?? coin).market_cap_usd);
   const vol = num((detail ?? coin).volume_24h_usd);
   const fdv = num(detail?.fdv_usd);
-  const decimals = detail?.decimals ?? coin.decimals ?? 7;
+  const decimals = detail?.decimals ?? coin.decimals;
   const circulating = supplyNum(
     detail?.circulating_supply ?? coin.circulating_supply,
     decimals,
@@ -444,10 +444,10 @@ function num(raw: string | null | undefined): number | null {
 // / HoldersTabPanel). Display-only — never re-used for arithmetic.
 function supplyNum(
   raw: string | null | undefined,
-  decimals: number,
+  decimals: number | null | undefined,
 ): number | null {
   const n = num(raw);
-  return n != null ? n / 10 ** decimals : null;
+  return n != null && decimals != null ? n / 10 ** decimals : null;
 }
 
 function usd(n: number | null): string {

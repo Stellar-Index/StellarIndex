@@ -5,6 +5,9 @@
 import coreWebVitals from 'eslint-config-next/core-web-vitals';
 import typescript from 'eslint-config-next/typescript';
 
+const DECIMALS_MESSAGE =
+  'Never default a token scale: an absent decimals means the scale is unknown; render the raw amount as unscaled.';
+
 const eslintConfig = [
   { ignores: ['.next/**', 'out/**', 'node_modules/**', 'next-env.d.ts'] },
   ...coreWebVitals,
@@ -34,6 +37,29 @@ const eslintConfig = [
       // silently-tolerated warning.
       'react-hooks/exhaustive-deps': 'error',
       'react-hooks/rules-of-hooks': 'error',
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            'LogicalExpression[operator=/^(\\?\\?|\\|\\|)$/][left.name=/decimals/i][right.raw=/^\\d/]',
+          message: DECIMALS_MESSAGE,
+        },
+        {
+          selector:
+            'LogicalExpression[operator=/^(\\?\\?|\\|\\|)$/][left.property.name=/decimals/i][right.raw=/^\\d/]',
+          message: DECIMALS_MESSAGE,
+        },
+        {
+          selector:
+            'AssignmentPattern[left.name=/decimals/i][right.raw=/^\\d/]',
+          message: DECIMALS_MESSAGE,
+        },
+      ],
     },
   },
 ];

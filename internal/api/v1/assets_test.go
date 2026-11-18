@@ -115,6 +115,32 @@ func TestAssetList_ReturnsFixtureWithPagination(t *testing.T) {
 	}
 }
 
+// The lean reader stamps 7 on every row; a Soroban row's scale was never read, so it must be absent, not 7.
+func TestAssetList_LeanReaderOmitsUnreadSorobanScale(t *testing.T) {
+	reader := &stubAssetReader{page: []v1.AssetDetail{
+		{AssetID: "native", Type: "native", Code: "XLM", Decimals: 7, Sep1Status: "not_applicable"},
+		{AssetID: "CUNREADTOKEN", Type: "soroban", Decimals: 7, Sep1Status: "not_applicable"},
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{Assets: reader}))
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=50")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []map[string]any `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 2 {
+		t.Fatalf("data wrong: %+v", env.Data)
+	}
+	if d, ok := env.Data[0]["decimals"]; !ok || d != float64(7) {
+		t.Errorf("native decimals = %v (present %v), want 7", d, ok)
+	}
+	if d, ok := env.Data[1]["decimals"]; ok {
+		t.Errorf("soroban decimals = %v, want absent (never read)", d)
+	}
+}
+
 func TestAssetList_InvalidLimitRejected(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := httpTestServer(t, srv)
@@ -1208,18 +1234,34 @@ func TestAssetDetail_SorobanDecimalsOverlay(t *testing.T) {
 	}
 }
 
-// TestAssetDetail_SorobanDecimalsNotDerivable: no captured metadata → the
-// documented default 7 stays.
+// TestAssetDetail_SorobanDecimalsNotDerivable: a token whose scale was not read (no derivable declaration, or the read failed)
+// serves no `decimals` and no cap, never a guessed 7; only the failed read marks the body stale.
 func TestAssetDetail_SorobanDecimalsNotDerivable(t *testing.T) {
-	srv := v1.New(v1.Options{TokenDecimals: &decStub{found: false}})
-	base := httpTestServer(t, srv).URL
-
-	detail, code := getAssetDetail(t, base, decTestContract)
-	if code != http.StatusOK {
-		t.Fatalf("status = %d", code)
-	}
-	if detail.Decimals != 7 {
-		t.Errorf("decimals = %d, want default 7 when metadata is not derivable", detail.Decimals)
+	for _, tc := range []struct {
+		name      string
+		dec       v1.TokenDecimalsReader
+		wantStale bool
+	}{
+		{"not declared", &countingDecStub{}, false},
+		{"no reader", nil, false},
+		{"read failed", &countingDecStub{err: errDecimalsRead}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{Prices: lockstepPrices(), Supply: lockstepSupply(), TokenDecimals: tc.dec})
+			body := lockstepGet(t, srv)
+			if strings.Contains(body, `"decimals"`) {
+				t.Errorf("unread scale served as a number: %s", body)
+			}
+			if strings.Contains(body, `"market_cap_usd":"`) || strings.Contains(body, `"fdv_usd":"`) {
+				t.Errorf("cap served on an unknown scale: %s", body)
+			}
+			if !strings.Contains(body, `"circulating_supply":"1000000000000"`) {
+				t.Errorf("raw supply must still serve: %s", body)
+			}
+			if got := strings.Contains(body, `"stale":true`); got != tc.wantStale {
+				t.Errorf("flags.stale = %v, want %v: %s", got, tc.wantStale, body)
+			}
+		})
 	}
 }
 
@@ -1268,7 +1310,7 @@ func TestAssetDetail_SupplyAgeBoundsTheCap(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			at := time.Now().UTC().Add(-tc.age).Truncate(time.Second)
-			srv := v1.New(v1.Options{Prices: lockstepPrices(), Supply: supplySnapAt(at)})
+			srv := v1.New(v1.Options{Prices: lockstepPrices(), Supply: supplySnapAt(at), TokenDecimals: &countingDecStub{d: 7, found: true}})
 			body := lockstepGet(t, srv)
 
 			if want := `"supply_as_of":"` + at.Format(time.RFC3339); !strings.Contains(body, want) {

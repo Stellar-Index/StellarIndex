@@ -152,7 +152,7 @@ func TestListingValuation_FloorSupplyIsALowerBound(t *testing.T) {
 
 // TestFillMarketCaps_ConfirmedDecimalsOnUnpricedRow: an unpriced row still publishes the token's confirmed scale.
 func TestFillMarketCaps_ConfirmedDecimalsOnUnpricedRow(t *testing.T) {
-	const id = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	const id = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J" // not a SAC: a SAC is 7 by protocol
 	s := &Server{NonstandardDecimals: &NonstandardDecimalsCache{
 		assets: map[string]timescale.NonstandardDecimalsAsset{id: {Asset: id, Decimals: 18}},
 	}}

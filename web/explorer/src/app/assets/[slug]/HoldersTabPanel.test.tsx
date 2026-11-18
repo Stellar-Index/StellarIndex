@@ -23,7 +23,7 @@ function renderPanel(assetID: string) {
   });
   return render(
     <QueryClientProvider client={client}>
-      <HoldersTabPanel assetID={assetID} />
+      <HoldersTabPanel assetID={assetID} decimals={7} />
     </QueryClientProvider>,
   );
 }

@@ -1588,7 +1588,7 @@ func rwaSortAssets(out []RWAAsset) {
 
 // rwaDecimalsOf is the row's scale as served: nil when it is the catalogue default, not a reading.
 func rwaDecimalsOf(d AssetDetail) *int {
-	if d.DecimalsUnresolved {
+	if d.scaleUnknown() {
 		return nil
 	}
 	v := d.Decimals
@@ -1615,7 +1615,7 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 			return RWAValuation{Status: RWAValuationLowLiquidity, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
 		// Reported before the supply reason: the row has a supply but lacks the exponent.
-		if d.DecimalsUnresolved || d.MarketCapDecimalsMismatch {
+		if d.scaleUnknown() || d.MarketCapDecimalsMismatch {
 			return RWAValuation{Status: RWAValuationDecimalsUnknown, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
 		return RWAValuation{Status: RWAValuationNoSupply, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}

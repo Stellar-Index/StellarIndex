@@ -698,7 +698,7 @@ func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserve
 		return int(st.Decimals), true
 	}
 	if _, ok := s.resolveSACAsset(st.Asset); ok {
-		return defaultTokenDecimals, true
+		return defaultTokenDecimals, true // decimals-7: known SAC, fixed by the protocol
 	}
 	d, known, err := s.lakeTokenDecimals(ctx, st.Asset)
 	if err != nil || !known {

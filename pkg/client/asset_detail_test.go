@@ -51,8 +51,8 @@ func TestAssetDetail_DecodesFullWirePayload(t *testing.T) {
 	if got.AssetID == "" || got.Type != "classic" || got.Code != "USDC" {
 		t.Fatalf("identity fields missing: %+v", got)
 	}
-	if got.Decimals != 7 || got.Sep1Status != "verified" {
-		t.Errorf("decimals/sep1_status: got %d / %q, want 7 / verified", got.Decimals, got.Sep1Status)
+	if got.Decimals == nil || *got.Decimals != 7 || got.Sep1Status != "verified" {
+		t.Errorf("decimals/sep1_status: got %v / %q, want 7 / verified", got.Decimals, got.Sep1Status)
 	}
 	if got.HomeDomain == nil || *got.HomeDomain != "centre.io" {
 		t.Errorf("home_domain not decoded: %+v", got.HomeDomain)
@@ -126,15 +126,36 @@ func TestAssetDetail_DecodesMaxSupplyBasis(t *testing.T) {
 	}
 }
 
+// A token whose scale the server could not read arrives without `decimals`; decoding it as 0 would show
+// raw base units as whole tokens.
+func TestAssetDetail_AbsentDecimalsIsNil(t *testing.T) {
+	t.Parallel()
+	var got client.AssetDetail
+	if err := json.Unmarshal([]byte(`{"kind":"stellar_asset","asset_id":"CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J","type":"soroban","sep1_status":"not_applicable"}`), &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.Decimals != nil {
+		t.Errorf("decimals = %d, want nil (scale unknown)", *got.Decimals)
+	}
+	out, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if containsKey(string(out), "decimals") {
+		t.Errorf("re-encoded form invents decimals: %s", out)
+	}
+}
+
 // Nil-pointer F2/overlay fields must re-encode as omitted keys, so a consumer re-emitting JSON never publishes
 // `"max_supply": null` when the server didn't.
 func TestAssetDetail_OmitsNullsOnReencode(t *testing.T) {
 	t.Parallel()
+	seven := 7
 	in := client.AssetDetail{
 		Kind:       "stellar_asset",
 		AssetID:    "native",
 		Type:       "native",
-		Decimals:   7,
+		Decimals:   &seven,
 		Sep1Status: "not_applicable",
 	}
 	out, err := json.Marshal(in)

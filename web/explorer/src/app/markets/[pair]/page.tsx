@@ -522,16 +522,10 @@ export default async function PairPage({ params }: { params: Params }) {
                         {t.price ?? '—'}
                       </Td>
                       <Td align="right" className="font-mono">
-                        {formatUnitsReadable(
-                          t.base_amount,
-                          t.base_decimals ?? 7,
-                        )}
+                        {formatUnitsReadable(t.base_amount, t.base_decimals)}
                       </Td>
                       <Td align="right" className="font-mono">
-                        {formatUnitsReadable(
-                          t.quote_amount,
-                          t.quote_decimals ?? 7,
-                        )}
+                        {formatUnitsReadable(t.quote_amount, t.quote_decimals)}
                       </Td>
                     </LinkRow>
                   ))}

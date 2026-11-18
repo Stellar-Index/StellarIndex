@@ -459,6 +459,7 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-test-patterns" "whole tree (takes no file list)" "$ci_dir/lint-test-patterns.sh"
     add_step "check-deprecations" "whole tree (takes no file list)" "$ci_dir/check-deprecations.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
+    add_step "lint-decimals-default" "whole tree (takes no file list)" "$ci_dir/lint-decimals-default.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
     add_step "lint-comments" "whole tree (takes no file list)" "$ci_dir/lint-comments.sh"
     # The typographic-quote scan runs whole tree even though it ACCEPTS a file

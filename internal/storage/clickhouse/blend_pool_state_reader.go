@@ -136,7 +136,7 @@ func assembleReserveStates(
 		if rd == nil {
 			continue
 		}
-		decimals := uint32(7)
+		decimals := uint32(7) // decimals-7: placeholder; DecimalsFound=false and every reader gates on it before using Decimals
 		decimalsFound := false
 		metrics := blend.BaseMetrics(*rd)
 		var config *blend.ReserveConfig

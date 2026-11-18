@@ -114,7 +114,7 @@ func irModDecimals(v blend.PoolVersion) int {
 	if v == blend.PoolV1 {
 		return 9
 	}
-	return 7
+	return 7 // decimals-7: ir_mod's fixed scale in the V2/BLNT pool contract, not a token scale
 }
 
 // reserveLastUpdate is ResData.last_time, the ledger close time (unix seconds) of the reserve's last accrual; nil when unset.

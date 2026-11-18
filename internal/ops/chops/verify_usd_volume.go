@@ -111,7 +111,7 @@ func xlmBaseBoundIsDust(stored, expected *big.Rat) bool {
 // xlmBaseLegScale returns the denominator lifting a raw XLM base-amount sum to whole XLM; the scale is a connector property (DEX 1e7, CEX
 // 1e8, FX 1e6), dispatched like the insert path's usdVolumeDecimals.
 func xlmBaseLegScale(source string) *big.Rat {
-	baseDecimals := int64(7) // on-chain stroop scale
+	baseDecimals := int64(7) // decimals-7: the base leg is XLM, stroops fixed by the protocol
 	md := external.Lookup(source)
 	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:

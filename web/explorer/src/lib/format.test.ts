@@ -45,6 +45,28 @@ describe('formatCompact', () => {
   ]);
 });
 
+describe('absent decimals never scale', () => {
+  const raw = '123456789';
+  it.each([undefined, null])('%s renders unscaled, not /10^7', (d) => {
+    expect(formatUnitsReadable(raw, d)).toBe(
+      `123.46M ${format.UNSCALED_LABEL}`,
+    );
+    expect(format.formatCompactTokenUnits(raw, d)).toBe(
+      `123.46M ${format.UNSCALED_LABEL}`,
+    );
+    expect(format.formatBaseUnits(raw, d)).toBe(
+      `123,456,789 ${format.UNSCALED_LABEL}`,
+    );
+    expect(format.scaleBaseUnits(raw, d)).toBeNull();
+    expect(format.baseUnitsDecimal(raw, d)).toBeNull();
+  });
+  it('keeps "—" for an absent amount and scales when decimals is served', () => {
+    expect(formatUnitsReadable(null, undefined)).toBe('—');
+    expect(format.formatCompactTokenUnits('x', null)).toBe('—');
+    expect(format.formatCompactTokenUnits('123456789', 7)).toBe('12.35');
+  });
+});
+
 describe('AGT-06: dead-code percentage footgun removed', () => {
   it('does not export formatPctChange/formatLedger — a fraction-based percentage helper is a footgun, every real percentage field is already a percentage point', () => {
     expect('formatPctChange' in format).toBe(false);

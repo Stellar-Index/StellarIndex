@@ -26,10 +26,10 @@ describe('markets/[pair] recent-trades amount scale', () => {
 
   it('renders base_amount/quote_amount through the shared BigInt-safe helper', () => {
     expect(src).toMatch(
-      /formatUnitsReadable\(\s*t\.base_amount,\s*t\.base_decimals \?\? 7,?\s*\)/,
+      /formatUnitsReadable\(\s*t\.base_amount,\s*t\.base_decimals,?\s*\)/,
     );
     expect(src).toMatch(
-      /formatUnitsReadable\(\s*t\.quote_amount,\s*t\.quote_decimals \?\? 7,?\s*\)/,
+      /formatUnitsReadable\(\s*t\.quote_amount,\s*t\.quote_decimals,?\s*\)/,
     );
   });
 

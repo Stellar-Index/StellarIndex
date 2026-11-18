@@ -50,7 +50,7 @@ func TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded(t *t
 	}
 	precise := observedSupply(map[string]string{contractID: "1000000000000"})
 
-	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{contractID: 5})
+	s.fillRowMarketCap(context.Background(), &row, nil, precise, nil, nil, map[string]int{contractID: 5})
 
 	if row.MarketCapUSD != nil {
 		t.Errorf("market_cap_usd = %q, want refused — the lake's live decimals() (9) and the "+
@@ -93,7 +93,7 @@ func TestFillRowMarketCap_SorobanLockstep_Agreement(t *testing.T) {
 	}
 	precise := observedSupply(map[string]string{contractID: "1000000000000"})
 
-	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{contractID: 5})
+	s.fillRowMarketCap(context.Background(), &row, nil, precise, nil, nil, map[string]int{contractID: 5})
 
 	if row.MarketCapDecimalsMismatch {
 		t.Error("market_cap_decimals_mismatch must be false when the lake and the confirmed projection agree")
@@ -127,7 +127,7 @@ func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
 			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7, PriceUSD: &price}
-			s.fillRowMarketCap(context.Background(), &row, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
+			s.fillRowMarketCap(context.Background(), &row, nil, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
 			if row.CirculatingSupply == nil {
 				t.Fatal("circulating_supply not published")
 			}
@@ -155,7 +155,7 @@ func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
 		UnverifiedTickerCollision: true,
 	}
 	precise := observedSupply(map[string]string{row.AssetID: "1000000000000000"})
-	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{row.AssetID: 5})
+	s.fillRowMarketCap(context.Background(), &row, nil, precise, nil, nil, map[string]int{row.AssetID: 5})
 	if row.MarketCapUSD != nil {
 		t.Errorf("market_cap_usd = %q, want suppressed (nil) for an unverified ticker collision", *row.MarketCapUSD)
 	}
@@ -176,7 +176,7 @@ func TestFillRowMarketCap_NativeNeverDustSuppressed(t *testing.T) {
 		PriceUSD: &price, VolumeUSD24h: &vol,
 	}
 	precise := observedSupply(map[string]string{"native": "100000000000000000"})
-	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{})
+	s.fillRowMarketCap(context.Background(), &row, nil, precise, nil, nil, map[string]int{})
 	if row.MarketCapUSD == nil {
 		t.Fatal("native market cap must never be dust-suppressed")
 	}

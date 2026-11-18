@@ -16,7 +16,7 @@ func TestBuildPoolReservesRow_RefusesImplausibleSymbol(t *testing.T) {
 		"CT1": {Symbol: " yXLM ", Decimals: 7, HasMeta: true},
 	}
 	row := buildPoolReservesRow(st, displays, true)
-	if row.Token0.Symbol != "" || row.Token0.Decimals != 6 {
+	if row.Token0.Symbol != "" || row.Token0.Decimals == nil || *row.Token0.Decimals != 6 {
 		t.Errorf("token0 = %+v, want no symbol and decimals 6", row.Token0)
 	}
 	if row.Token1.Symbol != "yXLM" {

@@ -69,7 +69,7 @@ type AssetReader interface {
 // ErrAssetNotFound is what AssetReader.GetAsset returns for an unknown asset; handlers translate it to 404 problem+json.
 var ErrAssetNotFound = errors.New("api: asset not found")
 
-// TokenDecimalsReader resolves a Soroban token's decimals() from lake contract-instance metadata; found=false keeps the caller's default.
+// TokenDecimalsReader resolves a Soroban token's decimals() from lake contract-instance metadata; found=false means the scale is unknown.
 type TokenDecimalsReader interface {
 	TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error)
 }
@@ -180,6 +180,10 @@ type AssetDetail struct {
 	// Set for missing RWA contract readings ([Server.fillContractDecimals]) and for Soroban rows
 	// whose lake read failed with no projection row ([Server.applyTokenDecimals]).
 	DecimalsUnresolved bool `json:"-"`
+	// DecimalsUndeclared is true when a Soroban token's lake read succeeded but found no derivable
+	// declaration and no projection row vouches for one: the scale is unknown, but as a fact, so the
+	// body stays cacheable and unflagged.
+	DecimalsUndeclared bool `json:"-"`
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
@@ -317,6 +321,9 @@ type AssetDetail struct {
 	// priceUnmeasured: the substance gate could not measure this row, so its
 	// missing price is an unanswered read, not a market that produced none.
 	priceUnmeasured bool
+	// scaleSettled: the listing fill already answered this Soroban row's scale (read, vouched by the projection, or
+	// declared none), so a later overlay need not read it again.
+	scaleSettled bool
 	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
@@ -424,6 +431,23 @@ type FiatCodeAnchor struct {
 	Note string `json:"note"`
 }
 
+// scaleUnknown reports that Decimals is not the token's scale: every scale-dependent figure must be refused.
+func (d *AssetDetail) scaleUnknown() bool {
+	return d.DecimalsUnresolved || d.DecimalsUndeclared
+}
+
+// MarshalJSON omits `decimals` when the scale is unknown: the struct's placeholder must never reach the wire as the token's scale.
+func (d AssetDetail) MarshalJSON() ([]byte, error) {
+	type wire AssetDetail
+	if !d.scaleUnknown() {
+		return json.Marshal(wire(d))
+	}
+	return json.Marshal(struct {
+		wire
+		Decimals *int `json:"decimals,omitempty"`
+	}{wire: wire(d)})
+}
+
 // detailFromAsset builds an AssetDetail from the canonical shape when no AssetReader is wired (tests, dev); HomeDomain stays
 // nil and sep1_status defaults to "not_applicable".
 func detailFromAsset(a canonical.Asset) AssetDetail {
@@ -432,8 +456,7 @@ func detailFromAsset(a canonical.Asset) AssetDetail {
 		AssetID: a.String(),
 		Type:    string(a.Type),
 		Code:    a.Code,
-		// Classic and native are 7 by protocol; Soroban tokens get their real decimals() overlaid by
-		// applyTokenDecimals when the lake has the instance metadata, else 7 is the default.
+		// decimals-7: native/classic by protocol; applyTokenDecimals overlays a Soroban scale or marks it unknown.
 		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}
@@ -779,6 +802,12 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []AssetDetail{}
 	}
+	// The lean reader does no lake read, so a Soroban row's scale is the reader's placeholder, not the token's.
+	for i := range rows {
+		if rows[i].Type == string(canonical.AssetSoroban) {
+			rows[i].DecimalsUnresolved = true
+		}
+	}
 
 	env := Envelope{
 		Data:  rows,
@@ -960,23 +989,16 @@ func (s *Server) fillMarketCapsWith(
 	// tokens are held, so it alone sees claimable balances, LP reserves and SAC balances. It
 	// outranks the trustline sum but never falls below it; see classic_lake_supply.go.
 	lake := s.classicLakeSupply(ctx, rows)
-	// Every row, priced or not: `decimals` scales the row's own amounts for a client, so a confirmed
-	// nonstandard token must not publish the stamped 7 just because no cap is computed for it.
-	for i := range rows {
-		if confirmed, ok := s.NonstandardDecimals.Lookup(rows[i].AssetID); ok {
-			rows[i].Decimals = confirmed
-		}
-	}
-	if len(precise) == 0 && len(broad) == 0 && len(lake) == 0 {
-		return
-	}
 	// Bounded once for the whole page, not per row (tokenMetadataReadTimeout
 	// is a PER-CALL budget and a listing can carry many Soroban rows) — same
 	// shape as rwaContractMetadataBudget for the contract-only surface.
 	dctx, cancel := context.WithTimeout(ctx, listingDecimalsLockstepBudget)
 	defer cancel()
+	scales := s.readListingScales(dctx, rows)
+	// Every row, priced or not and with or without supply: fillRowMarketCap resolves `decimals` before any
+	// early return, since it scales the row's own amounts for a client whether or not a cap is computed.
 	for i := range rows {
-		s.fillRowMarketCap(dctx, &rows[i], precise, lake, broad, sourceCounts)
+		s.fillRowMarketCap(dctx, &rows[i], scales, precise, lake, broad, sourceCounts)
 	}
 }
 
@@ -1031,10 +1053,13 @@ func (s *Server) latestPreciseSupply(ctx context.Context) (obs map[string]timesc
 func (s *Server) fillRowMarketCap(
 	ctx context.Context,
 	row *AssetDetail,
+	scales *listingScales,
 	precise map[string]timescale.SupplyObservation,
 	lake, broad map[string]string,
 	sourceCounts map[string]int,
 ) {
+	// Must precede every return: a Soroban row's scale is read or flagged unknown, never left at the stamped 7.
+	s.applyConfirmedListingDecimals(ctx, row, scales)
 	// The substance gate rules on the market behind the price, not on the supply, so a gated row keeps its supply fact.
 	gated := row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
 	if row.MarketCapUSD != nil || (row.PriceUSD == nil && !gated) || row.ThinMarket {
@@ -1044,14 +1069,11 @@ func (s *Server) fillRowMarketCap(
 	if circ == "" {
 		return
 	}
-	// Must precede every branch below: each stamps a smallest-unit supply figure that `decimals`
-	// has to be able to scale, whether or not a cap goes out beside it.
-	s.applyConfirmedListingDecimals(ctx, row)
 	if row.PriceUSD == nil {
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
-	if row.MarketCapDecimalsMismatch || row.DecimalsUnresolved {
+	if row.MarketCapDecimalsMismatch || row.scaleUnknown() {
 		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised
 		// through the nonstandard_decimals_assets projection while row.Decimals now holds a
 		// disagreeing lake reading, so supply over price would be off by a power of ten. Null
@@ -1094,7 +1116,7 @@ func (s *Server) fillRowMarketCap(
 // applyConfirmedListingDecimals puts a row's supply divisor on its price's scale: rows are stamped 7, but asset_price_snapshot
 // holds true-scale prices for confirmed nonstandard_decimals_assets, so supply / 10^7 would be off by 10^(decimals - 7). Fresh
 // Soroban tokens the projection lags also try the bounded lake read and lockstep refusal of [Server.applyTokenDecimals].
-func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail) {
+func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail, scales *listingScales) {
 	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(row.AssetID)
 	if hasConfirmed {
 		row.Decimals = confirmed
@@ -1102,15 +1124,25 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	if row.Type != string(canonical.AssetSoroban) {
 		return
 	}
-	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, row.AssetID)
+	lake, lakeKnown, lakeErr := s.lakeScale(ctx, scales, row.AssetID)
 	if !lakeKnown {
-		if !hasConfirmed && lakeErr != nil {
+		switch {
+		case hasConfirmed:
+			row.scaleSettled = true
+		case lakeErr != nil:
 			row.DecimalsUnresolved = true
+			reportUnreadRead(ctx)
+		default:
+			row.DecimalsUndeclared = true
+			row.scaleSettled = true
 		}
 		return
 	}
 	row.Decimals = lake
-	if (hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals) {
+	row.scaleSettled = true
+	// Only a price can have been normalised on the projection's scale: an unpriced row's lake scale is a fact, not drift.
+	valued := row.PriceUSD != nil || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
+	if valued && ((hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals)) {
 		row.MarketCapDecimalsMismatch = true
 		// Request-driven, so labelled by site and outcome only: a per-asset label here would be
 		// unbounded cardinality (see obs.NonstandardDecimalsLockstepMismatchTotal).
@@ -1557,9 +1589,10 @@ func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
 func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	asset, err := canonical.ParseAsset(row.AssetID)
 	d := AssetDetail{
-		Kind:       "stellar_asset",
-		AssetID:    row.AssetID,
-		Code:       row.Code,
+		Kind:    "stellar_asset",
+		AssetID: row.AssetID,
+		Code:    row.Code,
+		// decimals-7: placeholder; applyConfirmedListingDecimals marks a Soroban scale unknown and MarshalJSON omits it.
 		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}
@@ -2517,7 +2550,8 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // applyTokenDecimals overlays a Soroban token's lake decimals() onto detail.Decimals (classic/native are 7) and is the lockstep
 // check with `nonstandard_decimals_assets`. A lake/projection disagreement serves the lake value but flags
 // MarketCapDecimalsMismatch (cap refused; obs.NonstandardDecimalsLockstepMismatchTotal{site="asset_detail"}); a FAILED lake
-// read with no projection row sets DecimalsUnresolved: cap refused, flags.stale uncached.
+// read with no projection row sets DecimalsUnresolved (flags.stale, uncached) and a read finding no declaration sets
+// DecimalsUndeclared; either way `decimals` is omitted and the cap refused.
 func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a canonical.Asset) {
 	if a.Type != canonical.AssetSoroban || a.ContractID == "" {
 		return
@@ -2525,10 +2559,13 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(a.ContractID)
 	lake, lakeKnown, lakeErr := s.lakeTokenDecimals(ctx, a.ContractID)
 	if !lakeKnown {
-		if hasConfirmed {
+		switch {
+		case hasConfirmed:
 			detail.Decimals = confirmed
-		} else if lakeErr != nil {
+		case lakeErr != nil:
 			detail.DecimalsUnresolved = true
+		default:
+			detail.DecimalsUndeclared = true
 		}
 		return
 	}
@@ -2545,10 +2582,13 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	}
 }
 
-// lakeTokenDecimals is the bounded lake read behind applyTokenDecimals. known=false covers every missing-reading case; err is
-// non-nil only when the read FAILED (error or tokenMetadataReadTimeout), and callers must then not publish a scale-dependent
-// figure.
+// lakeTokenDecimals is every v1 surface's Soroban token scale: 7 for a known SAC (fixed by the protocol), else the bounded lake
+// read. known=false means no declaration was read (serve the scale absent, never a default); err is non-nil only when the read
+// FAILED (error or tokenMetadataReadTimeout), and callers must then not publish a scale-dependent figure.
 func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool, err error) {
+	if _, sac := s.resolveSACAsset(contractID); sac {
+		return defaultTokenDecimals, true, nil // decimals-7: known SAC, fixed by the protocol
+	}
 	if s.TokenDecimals == nil {
 		return 0, false, nil
 	}
@@ -3740,6 +3780,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		// smallest unit paired with `decimals`, while a catalogue row's own Decimals is 0 for
 		// Stellar-issued entries. A stroop value on a decimals=0 row would render 10^7 too large.
 		dst.Decimals = twin.Decimals
+		dst.DecimalsUnresolved, dst.DecimalsUndeclared = twin.DecimalsUnresolved, twin.DecimalsUndeclared
 		// The basis says whether the figure is exact, a floor or a derived upper bound; without it a
 		// lake-flows or trustline-sum reading renders as exact.
 		dst.SupplyBasis = twin.SupplyBasis

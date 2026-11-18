@@ -13,6 +13,7 @@ const T = (
   source,
   price,
   base_amount,
+  base_decimals: 7,
 });
 
 describe('scatterDots', () => {
@@ -36,6 +37,15 @@ describe('scatterDots', () => {
     ]);
     expect(s!.dots[0].title).toContain('0.1234567');
     expect(s!.dots[0].title).toContain('12345678901234.5678901');
+  });
+
+  it('never scales an amount whose base_decimals is absent', () => {
+    const s = scatterDots([
+      { ...T('2026-10-09T00:00:00Z', '0.1', '10000000'), base_decimals: null },
+      T('2026-10-09T01:00:00Z', '0.2', '40000000'),
+    ]);
+    expect(s!.dots[0].title).not.toContain('· 1');
+    expect(s!.dots[0].title).toBe('2026-10-09T00:00:00Z · sdex · 0.1');
   });
 
   it('needs two plottable trades', () => {

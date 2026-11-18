@@ -7162,9 +7162,8 @@ export interface components {
              * @description `amount`'s smallest-unit scale, per row: 7 for native, classic
              *     credit and `pool:<hex>` rows (protocol-fixed stroops); for a
              *     Soroban token row, the contract's declared decimals() read from
-             *     the lake (7 when the contract stores no derivable metadata, as
-             *     on /contracts/{id}/transfers). OMITTED when the scale could not
-             *     be resolved (the contract read failed or timed out): a consumer
+             *     the lake. OMITTED when the scale was not read (no derivable
+             *     declaration, or the contract read failed or timed out): a consumer
              *     must not substitute a default, because a wrong exponent mis-scales
              *     the amount by a power of ten.
              */
@@ -12016,10 +12015,10 @@ export interface components {
          */
         AssetListingValuation: {
             /**
-             * @description The single authority on why there is or is not a figure. `published`: a listing price and a supply reading were both available. `market_cap_published`: an observed market cap is served, so this arm stands down — it fills a hole, and there is none. `market_price_observed`: the row carries an observed market price that cleared every gate and still no cap, so the hole is a missing supply reading rather than a price problem, and filling it from a third party would hide a gap in this index's own data. `listing_unavailable`: the listing directory could not be read, is not wired, or holds no fresh rows — nobody looked, which is never the same statement as "nobody lists it". `not_listed`: the directory WAS read and names neither the classic id nor the SAC; the ordinary state of almost every asset on this network, and not an accusation. `no_listing_price`: named, but unpriced, or priced past the 24h bound the directory enforces on the platform's own publication clock. `listing_price_not_positive`: the published price is zero, negative or unparseable, so no valuation can be taken from it. `listing_price_expired`: the publication time is past the absolute 7-day bound. `no_supply`: no supply reading to multiply, refused rather than published as zero.
+             * @description The single authority on why there is or is not a figure. `published`: a listing price and a supply reading were both available. `market_cap_published`: an observed market cap is served, so this arm stands down — it fills a hole, and there is none. `market_price_observed`: the row carries an observed market price that cleared every gate and still no cap, so the hole is a missing supply reading rather than a price problem, and filling it from a third party would hide a gap in this index's own data. `listing_unavailable`: the listing directory could not be read, is not wired, or holds no fresh rows — nobody looked, which is never the same statement as "nobody lists it". `not_listed`: the directory WAS read and names neither the classic id nor the SAC; the ordinary state of almost every asset on this network, and not an accusation. `no_listing_price`: named, but unpriced, or priced past the 24h bound the directory enforces on the platform's own publication clock. `listing_price_not_positive`: the published price is zero, negative or unparseable, so no valuation can be taken from it. `listing_price_expired`: the publication time is past the absolute 7-day bound. `no_supply`: no supply reading to multiply, refused rather than published as zero. `scale_unknown`: the token's contract declares no decimals or they could not be read, so the raw supply has no unit to value.
              * @enum {string}
              */
-            status: "published" | "market_cap_published" | "market_price_observed" | "listing_unavailable" | "not_listed" | "no_listing_price" | "listing_price_not_positive" | "listing_price_expired" | "no_supply";
+            status: "published" | "market_cap_published" | "market_price_observed" | "listing_unavailable" | "not_listed" | "no_listing_price" | "listing_price_not_positive" | "listing_price_expired" | "no_supply" | "scale_unknown";
             /** @description circulating_supply / 10^decimals x listing_reference.price_usd, two fractional digits. Exact rational arithmetic throughout, rounded once at the end, so a consumer can add the served strings by hand and reach the same total. Present if and only if status is `published`. */
             value_usd?: string;
             /** @description The multiplicand: the raw integer supply, in the asset's smallest unit, that value_usd was computed from. Published here rather than inferred from the row's own `circulating_supply`, because the two can legitimately differ — this arm takes the LARGER of the row's reading and the lake's mint-burn total over the asset's SAC, and on the detail surface the row often has no reading at all. Scale it by the row's `decimals`. */
@@ -12077,8 +12076,8 @@ export interface components {
             /** @description C-strkey contract address. For Soroban tokens this is the token contract itself; for classic + native assets it is the deterministically-derived Stellar Asset Contract (SAC) address — present even before the SAC is deployed, since deployment is permissionless and address-stable. Looking an asset up BY a SAC address resolves to the wrapped classic asset (with its price), so wallets can use contract addresses as the primary key for any holding. */
             contract_id?: string | null;
             home_domain?: string | null;
-            /** @description On-chain smallest-unit scale. 7 for classic + native (stroops, protocol-fixed). For Soroban tokens this is the contract's real decimals() read from its captured instance metadata; 7 when the metadata isn't derivable from the lake. */
-            decimals: number;
+            /** @description On-chain smallest-unit scale. 7 for classic + native (stroops, protocol-fixed). For Soroban tokens this is the contract's real decimals() read from its captured instance metadata (or the confirmed nonstandard-decimals projection). OMITTED when no declaration was read (none derivable, or the read failed); supply figures are then base units, market_cap_usd and fdv_usd are null, and a consumer must not substitute a default. */
+            decimals?: number;
             /** @description Issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2) — a UI preference for how many fractional digits to SHOW, never a unit scale and never an input to amount math. Omitted when the issuer's SEP-1 overlay declares none. Distinct from `decimals` deliberately: setting the unit scale from this issuer-controlled hint would inflate market_cap_usd by up to 10^(7-display_decimals)×, so the two are separate fields with separate meanings — divide by 10^`decimals`, round for display to `display_decimals`. */
             display_decimals?: number;
             /**
@@ -13744,8 +13743,8 @@ export interface components {
             contract: string;
             /** @description Best-effort display symbol from the token's on-chain METADATA — SELF-DECLARED by the token contract, not a verified identity. Omitted when the token declares none. */
             symbol?: string;
-            /** @description Token's on-chain decimals declaration; 7 (the SAC default) when no readable declaration is captured. */
-            decimals: number;
+            /** @description Token's on-chain decimals declaration. OMITTED when no readable declaration is captured or the metadata read failed; the reserve is then base units and the mid prices are null. */
+            decimals?: number;
             /** @description Pool reserve, exact i128 base-unit decimal string (ADR-0003). */
             reserve: string;
         };
@@ -20458,11 +20457,12 @@ export interface operations {
                              * @description The token contract's on-chain `decimals()`, read
                              *     from its captured instance metadata — the divisor
                              *     exponent for every `amount` in this response
-                             *     (display value = amount / 10^decimals). Falls back
-                             *     to 7 (the SAC/classic default) when the contract's
-                             *     decimals declaration isn't derivable from the lake.
+                             *     (display value = amount / 10^decimals). OMITTED
+                             *     when the contract declares no derivable scale: the
+                             *     amounts are then base units, and a consumer must
+                             *     not substitute a default. A failed read is a 503.
                              */
-                            decimals: number;
+                            decimals?: number;
                             transfers: {
                                 ledger: number;
                                 /** Format: date-time */

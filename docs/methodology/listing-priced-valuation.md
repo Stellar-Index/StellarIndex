@@ -108,6 +108,9 @@ Every later one names itself in `listing_valuation.status`.
    itself the lake total, does the figure multiply the larger of that
    reading and Σmint − Σburn − Σclawback over the asset's SAC
    (`listingSupplyReading`, `internal/api/v1/asset_listing_valuation.go`).
+   A Soroban token whose contract declares no decimals, or whose
+   decimals could not be read, is `scale_unknown`: its raw supply has no
+   unit to value.
    `supply_basis` says which was used; when it is a provable floor,
    `value_lower_bound: true` marks `value_usd` as at least this much.
    USDT0 is why: its trustline-visible supply is

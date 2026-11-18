@@ -2,9 +2,11 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,14 +109,15 @@ func TestTokenMetadataOverlays_BoundedByOwnBudget(t *testing.T) {
 		if reader.probe.remaining <= 0 || reader.probe.remaining > tokenMetadataReadTimeout {
 			t.Fatalf("sub-budget = %v, want a positive budget no larger than %v", reader.probe.remaining, tokenMetadataReadTimeout)
 		}
-		// The bound must actually fire, and the documented default must
-		// survive it: a timed-out overlay may not corrupt Decimals (the
-		// market-cap / FDV math divides by 10^Decimals).
+		// The bound must actually fire, and a timed-out overlay leaves the scale unresolved: absent on the wire, cap refused.
 		if elapsed > tokenMetadataReadTimeout+2*time.Second {
 			t.Fatalf("overlay took %v — the sub-budget did not bound the wedged read", elapsed)
 		}
-		if detail.Decimals != defaultTokenDecimals {
-			t.Fatalf("Decimals = %d after a failed overlay, want the documented default %d", detail.Decimals, defaultTokenDecimals)
+		if !detail.DecimalsUnresolved || detail.DecimalsUndeclared {
+			t.Fatalf("after a timed-out read: unresolved=%v undeclared=%v, want unresolved only", detail.DecimalsUnresolved, detail.DecimalsUndeclared)
+		}
+		if b, err := json.Marshal(detail); err != nil || strings.Contains(string(b), `"decimals"`) {
+			t.Fatalf("decimals served after a failed read (err %v): %s", err, b)
 		}
 	})
 

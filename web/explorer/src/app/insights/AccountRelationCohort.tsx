@@ -21,6 +21,7 @@ import {
 } from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
 import {
+  formatCompactTokenUnits,
   formatCompactUnits,
   formatReadable,
   truncateMiddle,
@@ -555,12 +556,7 @@ export function AccountRelationCohort({
                     </Td>
                     <Td align="right">{numFmt.format(p.holders)}</Td>
                     <Td align="right">
-                      {formatCompactUnits(p.amount, p.decimals ?? 0)}
-                      {p.decimals == null && (
-                        <span className="text-ink-faint ml-1 text-[11px]">
-                          base units
-                        </span>
-                      )}
+                      {formatCompactTokenUnits(p.amount, p.decimals)}
                     </Td>
                   </LinkRow>
                 ))}

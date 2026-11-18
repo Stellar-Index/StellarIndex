@@ -30,7 +30,7 @@ func TestFillRowMarketCap_FloorSupplyMarksTheCapALowerBound(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{}
 			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7, PriceUSD: &price}
-			s.fillRowMarketCap(context.Background(), &row, tc.precise, nil, tc.broad, nil)
+			s.fillRowMarketCap(context.Background(), &row, nil, tc.precise, nil, tc.broad, nil)
 			if row.MarketCapUSD == nil {
 				t.Fatal("market_cap_usd not published")
 			}

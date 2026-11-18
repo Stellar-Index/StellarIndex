@@ -168,7 +168,7 @@ export function TokenFlowSummary({
   formatAmount,
 }: {
   rows: readonly FlowRow[];
-  decimals: number;
+  decimals: number | null | undefined;
   formatAmount: (raw: string) => string;
 }) {
   const s = tokenFlowSummary(rows);
@@ -178,7 +178,11 @@ export function TokenFlowSummary({
       id: p.address,
       label: short(p.address),
       title: p.address,
-      value: scaledUnits(p.raw.toString(), decimals),
+      // Bar length only ranks parties; with no scale it ranks raw base units.
+      value:
+        decimals == null
+          ? scaledUnits(p.raw.toString(), 0)
+          : scaledUnits(p.raw.toString(), decimals),
       display: formatAmount(p.raw.toString()),
       annotation: `${p.count} transfer${p.count === 1 ? '' : 's'}`,
     }));
