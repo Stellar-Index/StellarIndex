@@ -675,11 +675,8 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
 	// Same chain as /v1/chart ([Server.chartSeriesPoints]) so the two fallbacks cannot drift;
-	// only the read closure differs. A window unbounded below is never narrowed.
-	read := func(rc context.Context, p canonical.Pair, _, _ time.Time, limit int) ([]HistoryPoint, error) {
-		return s.History.HistoryPoints(rc, p, gran, limit)
-	}
-	points, walk, err := s.chartSeriesPoints(hCtx, pair, chartWindow{gran: gran}, read)
+	// only the read closure differs.
+	points, walk, err := s.chartSeriesPoints(hCtx, pair, chartWindow{gran: gran}, s.sinceInceptionReader(gran))
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
@@ -721,13 +718,29 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		Granularity: gran,
 		Points:      wire,
 	}
-	if len(points) == historyMaxPoints {
-		series.RowCapTruncated = true
-		last := wire[len(wire)-1].T
-		series.DataEndsAt = &last
-	}
+	series.markRowCap(walk)
 	series.markDiscontinuity()
 	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
+}
+
+// sinceInceptionReader reads unbounded, but honours bounds the walk sets (a later source's span, an XLM-cross pivot leg).
+func (s *Server) sinceInceptionReader(gran string) chartRead {
+	return func(rc context.Context, p canonical.Pair, from, to time.Time, limit int) ([]HistoryPoint, error) {
+		if from.IsZero() && to.IsZero() {
+			return s.History.HistoryPoints(rc, p, gran, limit)
+		}
+		return s.History.HistoryPointsInRange(rc, p, gran, from, to, limit)
+	}
+}
+
+// markRowCap stamps the walk's row-cap signal; a point count cannot see a capped leg of a derived cross.
+func (s *HistorySeries) markRowCap(res chartWalkResult) {
+	if res.cappedAt.IsZero() {
+		return
+	}
+	s.RowCapTruncated = true
+	end := WireTime(res.cappedAt)
+	s.DataEndsAt = &end
 }
 
 // tradesInRangeAfterWithAliases reads one page of raw trades unioned across every XLM alias form in both stored directions

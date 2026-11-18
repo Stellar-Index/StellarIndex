@@ -806,8 +806,8 @@ type chartWalkResult struct {
 	// series may be shorter than a full walk's → flags.stale.
 	degraded bool
 	// cappedAt is the last bucket of the earliest source read that hit
-	// historyMaxPoints on an unbounded window; the served series is
-	// incomplete after it. Zero when no read was capped.
+	// historyMaxPoints; the served series is incomplete after it. Zero
+	// when no read was capped.
 	cappedAt time.Time
 }
 
@@ -816,14 +816,12 @@ const chartReadLimit = historyMaxPoints + 1
 
 // noteCap records a source read that overran the row cap and returns it trimmed to the cap, judged on the raw read before any merge so
 // a union of uncapped sources never trips it.
-func (r *chartWalkResult) noteCap(win chartWindow, points []HistoryPoint) []HistoryPoint {
+func (r *chartWalkResult) noteCap(points []HistoryPoint) []HistoryPoint {
 	if len(points) <= historyMaxPoints {
 		return points
 	}
 	points = points[:historyMaxPoints]
-	if win.from.IsZero() {
-		r.mergeCap(points[len(points)-1].Bucket)
-	}
+	r.mergeCap(points[len(points)-1].Bucket)
 	return points
 }
 
@@ -971,7 +969,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 			w.res.degraded = true
 			return true, nil //nolint:nilerr // a proxy failure is never the answer — see above
 		}
-		w.claim(sp, w.res.noteCap(w.win, points))
+		w.claim(sp, w.res.noteCap(points))
 		return true, nil
 	}
 	now := w.s.now().UTC()
@@ -1005,7 +1003,7 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 		if !ok {
 			return cont
 		}
-		w.claim(sp, w.res.noteCap(w.win, points))
+		w.claim(sp, w.res.noteCap(points))
 	}
 	return true
 }
@@ -1079,6 +1077,7 @@ func (s *Server) chartSeriesPoints(
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
+	res.mergeCap(crossRes.cappedAt)
 	return nil, res, nil
 }
 
@@ -1267,7 +1266,13 @@ func (s *Server) fiatSeriesThroughXLM(
 	if len(assetPts) == 0 {
 		return nil, res, nil
 	}
-	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], win, read)
+	// The pivot is the densest series held; read oldest-first from genesis its cap would end before the asset leg begins,
+	// so it starts at the asset leg's first bucket (and a capped asset leg's cut still bounds the cross via mergeCap).
+	pivotWin := win
+	if pivotWin.from.IsZero() {
+		pivotWin.from = assetPts[0].Bucket
+	}
+	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], pivotWin, read)
 	if err != nil {
 		return nil, chartWalkResult{}, err
 	}
@@ -1483,6 +1488,8 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
+	// Every fiat market-cap point is one fx_quotes day, so the served grain is daily whatever was asked.
+	gran = fiatChartGranularity(gran)
 	if s.VerifiedCurrencies == nil || s.FXHistory == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/market-cap-unavailable",
