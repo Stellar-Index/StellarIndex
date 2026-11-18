@@ -76,6 +76,22 @@ func TestProtocolContractActivityQuery_ExcludesPartialDay(t *testing.T) {
 	}
 }
 
+// TestProtocolContractActivityQueries_Uncapped: both per-contract readers return one row per roster id; a row cap
+// leaves the quieter contracts with no row, which the roster merge renders as no events and no last_seen.
+func TestProtocolContractActivityQueries_Uncapped(t *testing.T) {
+	for name, q := range map[string]string{
+		"protocolContractActivityQuery":     protocolContractActivityQuery,
+		"protocolContractActivityFastQuery": protocolContractActivityFastQuery,
+	} {
+		if strings.Contains(strings.ToUpper(q), "LIMIT") {
+			t.Errorf("%s caps its rows, dropping contracts past the cap:\n%s", name, q)
+		}
+		if !strings.Contains(q, "GROUP BY contract_id") || !strings.Contains(q, "contract_id IN (?)") {
+			t.Errorf("%s must stay one row per id of the IN list (its only bound once uncapped):\n%s", name, q)
+		}
+	}
+}
+
 // TestProtocolRawScanQueries_NoExplorerScanSettings guards against a measured-wrong fix: adding
 // explorerScanSettings (max_threads = 4) ran nearly 2x slower for identical I/O, as its byte fan-out is a
 // ledger_entries_current part-layout effect.

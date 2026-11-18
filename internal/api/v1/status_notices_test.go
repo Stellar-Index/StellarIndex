@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,12 +70,20 @@ func (f *fakeStatusNoticeStore) ListActive(_ context.Context) ([]platform.Status
 	return out, nil
 }
 
-func (f *fakeStatusNoticeStore) List(_ context.Context, _ int) ([]platform.StatusNotice, error) {
+// List caps like the Postgres store: limit <= 0 means 100, hard max 500.
+func (f *fakeStatusNoticeStore) List(_ context.Context, limit int) ([]platform.StatusNotice, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
+	if limit <= 0 {
+		limit = 100
+	}
+	limit = min(limit, 500)
 	var out []platform.StatusNotice
 	for _, id := range f.order {
+		if len(out) == limit {
+			break
+		}
 		out = append(out, f.byID[id])
 	}
 	return out, nil
@@ -357,5 +366,41 @@ func TestAdminStatusNoticesList_OperatorSeesResolved(t *testing.T) {
 	}
 	if list := decodeNoticeList(t, adminResp); list.Count != 1 {
 		t.Errorf("admin list count = %d, want 1 (incl resolved)", list.Count)
+	}
+}
+
+// TestAdminStatusNoticesList_CappedListIsFlaggedTruncated: past the store's cap the admin list is a newest-first
+// slice, so it must carry flags.truncated instead of reading as every notice.
+func TestAdminStatusNoticesList_CappedListIsFlaggedTruncated(t *testing.T) {
+	for _, tc := range []struct {
+		notices       int
+		wantTruncated bool
+	}{{notices: 3}, {notices: 600, wantTruncated: true}} {
+		store := newFakeStatusNoticeStore()
+		for i := range tc.notices {
+			n := platform.StatusNotice{ID: uuid.New(), Title: fmt.Sprintf("n%d", i), Severity: "minor", Status: "active"}
+			store.byID[n.ID] = n
+			store.order = append(store.order, n.ID)
+		}
+		ts := newStatusNoticeServer(t, operatorSubject(), store, &recordingAuditSink{})
+		resp, err := http.Get(ts.URL + "/v1/admin/status-notices")
+		if err != nil {
+			t.Fatalf("admin GET: %v", err)
+		}
+		var env struct {
+			Data  v1.StatusNoticesList `json:"data"`
+			Flags v1.Flags             `json:"flags"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&env)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if env.Flags.Truncated != tc.wantTruncated {
+			t.Errorf("%d notices: flags.truncated = %v, want %v (count %d)", tc.notices, env.Flags.Truncated, tc.wantTruncated, env.Data.Count)
+		}
+		if env.Data.Count != len(env.Data.Notices) || (!tc.wantTruncated && env.Data.Count != tc.notices) {
+			t.Errorf("%d notices: count = %d over %d served", tc.notices, env.Data.Count, len(env.Data.Notices))
+		}
 	}
 }
