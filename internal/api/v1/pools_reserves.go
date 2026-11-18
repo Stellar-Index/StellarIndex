@@ -375,7 +375,7 @@ func constantProductOutput(reserveIn, reserveOut, dx *big.Int, feeBps int64) *bi
 }
 
 // midPriceString renders the decimals-adjusted mid price (reserveNum/10^decNum) / (reserveDen/10^decDen) with 18 fractional digits,
-// or 18 significant digits below 1 so a positive ratio never renders as "0"; trailing zeros trimmed.
+// widened below 1 by the num/denom length gap (18 or 19 significant digits) so a positive ratio never renders as "0"; trailing zeros trimmed.
 func midPriceString(reserveNum, reserveDen *big.Int, decNum, decDen uint32) string {
 	num := new(big.Int).Mul(reserveNum, pow10(decDen))
 	den := new(big.Int).Mul(reserveDen, pow10(decNum))

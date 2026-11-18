@@ -101,7 +101,7 @@ func TestMidPriceString(t *testing.T) {
 		{"repeating decimal capped at 18dp", 1, 3, 0, 0, "0.333333333333333333"},
 		// 1 XLM against 1e19 meme tokens: a positive, exact price must not publish as "0".
 		{"sub-1e-18 ratio keeps its magnitude", 1, 1, 19, 0, "0.0000000000000000001"},
-		{"sub-1e-18 repeating keeps 18 significant digits", 1, 3, 19, 0, "0.0000000000000000000333333333333333333"},
+		{"sub-1 keeps 18 decimals past the num/denom length gap: 18 significant digits here, 19 when the numerator's digits lead", 1, 3, 19, 0, "0.0000000000000000000333333333333333333"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
