@@ -3,6 +3,7 @@ package timescale
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -190,6 +191,25 @@ func TestMarketCounterpartArray_EveryIdentity(t *testing.T) {
 	}
 	if got["USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"] {
 		t.Error("marketCounterpartArray() trusts a non-Circle USDC")
+	}
+}
+
+// The USDC SAC and XLM SAC are derived on the installed network, not pinned to pubnet's contract ids.
+func TestMarketCounterpartArray_DerivesSACsOnTheInstalledNetwork(t *testing.T) {
+	installTestnetForBind(t)
+	usdc, err := canonical.ParseAsset(circleUSDCClassic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usdcSAC, err := usdc.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := marketCounterpartArray()
+	for _, want := range []string{testnetNativeSACForBind, usdcSAC} {
+		if !slices.Contains(got, want) {
+			t.Errorf("marketCounterpartArray() on testnet lacks %s: %v", want, got)
+		}
 	}
 }
 

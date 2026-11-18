@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -72,7 +73,8 @@ const (
 	volumeCharacterPairKeySQL    = `LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)`
 )
 
-// circleUSDCClassic is the one USDC the market-styled share trusts; any other issuer may call itself USDC.
+// circleUSDCClassic is the one USDC the market-styled share trusts; any other issuer may call itself USDC. It is the pubnet
+// issuer, like usdProxyQuotes: this package has no per-network issuer list.
 const circleUSDCClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
 // marketCounterpartArray is every identity of the market-styled counterparts (XLM and Circle USDC, each with its SAC) for
@@ -80,8 +82,15 @@ const circleUSDCClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE
 func marketCounterpartArray() []string {
 	out := canonical.AssetAliasStrings(canonical.NativeAsset())
 	out = append(out, assetAliasArray(circleUSDCClassic)...)
-	// The Circle USDC SAC, as usdProxyQuotes names it, for a registry that has not learnt it.
-	return append(out, "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+	// The SAC is derived on the installed network for a registry that has not learnt it.
+	usdc, err := canonical.ParseAsset(circleUSDCClassic)
+	if err != nil {
+		return out
+	}
+	if sac, err := usdc.SacContractID(); err == nil && !slices.Contains(out, sac) {
+		out = append(out, sac)
+	}
+	return out
 }
 
 // assetVolumeCharacterSQL rolls the window's signals in one query: $1 alias array, $2 window interval, $3 issuer G-address (empty makes

@@ -13,8 +13,9 @@ var assetParamNames = map[string]bool{
 	"asset_id": true, "asset": true, "base": true, "quote": true, "pair": true, "assets": true, "pairs": true,
 }
 
-// aliasSpellingTests maps each asset-taking route to the test proving every spelling of XLM (and of a SAC-wrapped classic) reads the
-// same stored rows. The named test must exist in this package or in explorer/.
+// aliasSpellingTests maps each asset-taking route to a test proving alias spellings read the same stored rows: XLM's spellings for
+// most routes, a SAC folding to its wrapped classic for the movements and holders routes. The named test must exist in this package
+// or in explorer/.
 var aliasSpellingTests = map[string]string{
 	"/price":                         "TestPrice_XLMQuoteAlias",
 	"/divergence/series":             "TestDivergenceSeries_EveryXLMSpellingReachesTheStoredPair",
@@ -26,7 +27,9 @@ var aliasSpellingTests = map[string]string{
 }
 
 // aliasSpellingDebt lists asset-taking routes with no spelling-equivalence test yet. Debt: shrink it by adding a test above; a
-// new route belongs above, not here.
+// new route belongs above, not here. aliasSpellingDebtCeiling is its current size: lower it as rows leave, never raise it.
+const aliasSpellingDebtCeiling = 30
+
 var aliasSpellingDebt = map[string]bool{
 	"/assets/{asset_id}":                             true,
 	"/assets/{asset_id}/entry-changes":               true,
@@ -65,6 +68,10 @@ var aliasSpellingDebt = map[string]bool{
 func TestAssetRoutes_DeclareAliasSpellingCoverage(t *testing.T) {
 	spec := loadOpenAPISpec(t)
 	tests := declaredTestNames(t)
+	if n := len(aliasSpellingDebt); n > aliasSpellingDebtCeiling {
+		t.Errorf("aliasSpellingDebt has %d rows, ceiling %d: the debt list only shrinks; cover the route in aliasSpellingTests instead",
+			n, aliasSpellingDebtCeiling)
+	}
 
 	seen := map[string]bool{}
 	var missing []string
@@ -83,8 +90,8 @@ func TestAssetRoutes_DeclareAliasSpellingCoverage(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, p := range missing {
-		t.Errorf("route %s takes an asset or pair: add a test that every spelling of XLM and of a SAC-wrapped classic asset "+
-			"reads the same rows, and name it in aliasSpellingTests", p)
+		t.Errorf("route %s takes an asset or pair: add a test that every XLM spelling (and, where the route takes a classic "+
+			"asset, its SAC) reads the same rows, and name it in aliasSpellingTests", p)
 	}
 	for _, table := range []map[string]bool{keysOf(aliasSpellingTests), aliasSpellingDebt} {
 		for p := range table {
