@@ -254,6 +254,17 @@ export function monthToDateBillable(
     .reduce((sum, r) => sum + (r.billable || 0), 0);
 }
 
+/** Days of history GET /v1/account/usage serves, today included. */
+const USAGE_WINDOW_DAYS = 30;
+
+/**
+ * True when the served window starts after the first of the UTC month (day 31
+ * of a 31-day month), so a month-to-date sum from it misses day 1.
+ */
+export function monthToDateIsLowerBound(now: Date = new Date()): boolean {
+  return now.getUTCDate() > USAGE_WINDOW_DAYS;
+}
+
 /** Month-to-date billable usage against the account's monthly quota. */
 function MonthlyQuota({
   me,
@@ -271,8 +282,16 @@ function MonthlyQuota({
         <Stat
           icon={<BarChart3 className="h-3.5 w-3.5" />}
           label="Month-to-date"
-          value={used === null ? '—' : fmtInt(used)}
-          sub="billable requests, UTC month"
+          value={
+            used === null
+              ? '—'
+              : `${monthToDateIsLowerBound() ? '≥ ' : ''}${fmtInt(used)}`
+          }
+          sub={
+            monthToDateIsLowerBound()
+              ? 'billable requests, UTC month; excludes day 1 (history window is 30 days)'
+              : 'billable requests, UTC month'
+          }
         />
       </StatCell>
       <StatCell>

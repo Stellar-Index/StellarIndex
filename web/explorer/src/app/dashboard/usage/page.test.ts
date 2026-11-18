@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 
 import { fmtDateUTC } from '@/lib/account-format';
 
-import { aggregateByDate, monthToDateBillable, usageWindowUTC } from './page';
+import {
+  aggregateByDate,
+  monthToDateBillable,
+  monthToDateIsLowerBound,
+  usageWindowUTC,
+} from './page';
 import type { UsageRow } from '@/api/account';
 
 describe('usageWindowUTC', () => {
@@ -42,14 +47,46 @@ describe('aggregateByDate', () => {
   });
 });
 
+describe('monthToDateIsLowerBound', () => {
+  it('is a lower bound only when the 30-day window cannot reach day 1', () => {
+    expect(monthToDateIsLowerBound(new Date('2026-10-31T12:00:00Z'))).toBe(
+      true,
+    );
+    expect(monthToDateIsLowerBound(new Date('2026-10-30T12:00:00Z'))).toBe(
+      false,
+    );
+    expect(monthToDateIsLowerBound(new Date('2026-11-01T00:00:00Z'))).toBe(
+      false,
+    );
+  });
+});
+
 describe('monthToDateBillable', () => {
   it('sums billable, not requests, so 5xx traffic never inflates month-to-date', () => {
     const rows: UsageRow[] = [
       // 20 of the 120 requests are 5xx (billable excludes them).
-      { date: '2026-09-10', requests: 120, billable: 100, errors: 20, throttled: 0 },
-      { date: '2026-09-30', requests: 50, billable: 50, errors: 0, throttled: 0 },
+      {
+        date: '2026-09-10',
+        requests: 120,
+        billable: 100,
+        errors: 20,
+        throttled: 0,
+      },
+      {
+        date: '2026-09-30',
+        requests: 50,
+        billable: 50,
+        errors: 0,
+        throttled: 0,
+      },
       // Prior calendar month — must not count toward the current month.
-      { date: '2026-08-31', requests: 999, billable: 999, errors: 0, throttled: 0 },
+      {
+        date: '2026-08-31',
+        requests: 999,
+        billable: 999,
+        errors: 0,
+        throttled: 0,
+      },
     ];
     expect(monthToDateBillable(rows, '2026-09')).toBe(150);
   });

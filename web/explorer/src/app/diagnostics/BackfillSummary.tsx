@@ -21,9 +21,20 @@ import { useCursors, type Cursor } from '@/api/hooks';
  * HealthSummary, so adding this card costs no extra round trip.
  */
 export function BackfillSummary() {
-  const { data, isLoading } = useCursors();
+  const { data, isLoading, isError } = useCursors();
 
   const summary = useMemo(() => computeSummary(data ?? []), [data]);
+
+  if (isError && !data) {
+    return (
+      <section
+        role="alert"
+        className="border-line bg-surface text-down-strong rounded-md border p-4 text-sm"
+      >
+        Failed to load backfill summary.
+      </section>
+    );
+  }
 
   if (isLoading || !data) {
     return (

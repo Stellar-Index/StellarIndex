@@ -57,6 +57,19 @@ describe('HomeLivePanels', () => {
     expect(screen.queryByText('#69000000')).toBeNull();
   });
 
+  it('shows an unavailable state, not "Loading…", when the cursors read fails', () => {
+    useCursors.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    });
+    useCoverage.mockReturnValue({ data: undefined });
+    render(<SystemHealthLivePanel />);
+
+    expect(screen.getByText(/System health is unavailable/)).toBeTruthy();
+    expect(screen.queryByText('Loading…')).toBeNull();
+  });
+
   it('rates the indexer on live cursors only', () => {
     useCursors.mockReturnValue({ data: cursors, isLoading: false });
     useCoverage.mockReturnValue({ data: undefined });
