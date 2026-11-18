@@ -18,6 +18,7 @@ import {
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import {
   compareDecimalStrings,
+  formatCompactTokenUnits,
   formatCompactUnits,
   formatPriceSmall,
   scaleBaseUnits,
@@ -651,9 +652,9 @@ function AssetRow({
   // in whole asset units by scaling down 10^decimals (7 for classic /
   // native, 0 for catalogue / fiat rows). market_cap / volume / price are
   // already server-pre-scaled — do NOT divide those.
-  const supply = formatCompactUnits(
+  const supply = formatCompactTokenUnits(
     coin.circulating_supply,
-    coin.decimals ?? 7,
+    coin.decimals,
   );
   // The raw canonical identifier, when it says something the code above
   // does not: `JFKBANK2-GB7KFNUR…` next to code `JFKBANK2`, but nothing
@@ -954,7 +955,7 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
 // sort: decimals vary per row, so ranking the raw smallest-unit integers
 // would order an 18-decimal token by 10^11 too much.
 function circulatingUnits(c: Coin): number | null {
-  return scaleBaseUnits(c.circulating_supply, c.decimals ?? 7);
+  return scaleBaseUnits(c.circulating_supply, c.decimals);
 }
 
 function parseDec(s: string | null | undefined): number | null {

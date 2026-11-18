@@ -45,7 +45,11 @@ import {
   DIRECTORY_OPERATOR_OVERRIDE_SOURCE,
   hasDirectoryScamFlag,
 } from '@/lib/directory-tags';
-import { baseUnitsDecimal, formatReadable } from '@/lib/format';
+import {
+  baseUnitsDecimal,
+  formatReadable,
+  formatUnitsReadable,
+} from '@/lib/format';
 import type { paths } from '@/api/types';
 import {
   type Envelope,
@@ -695,7 +699,11 @@ type InteractionsResp = NonNullable<
   GetJSON<'/contracts/{contract_id}/interactions'>['data']
 >;
 
-function transferAmount(amount: string, decimals: number): string {
+function transferAmount(
+  amount: string,
+  decimals: number | null | undefined,
+): string {
+  if (decimals == null) return formatUnitsReadable(amount, decimals);
   return formatReadable(baseUnitsDecimal(amount, decimals)) ?? amount;
 }
 
@@ -717,7 +725,7 @@ function Party({ id }: { id?: string }) {
 function TransfersPanel({ id }: { id: string }) {
   const { data, isError, refetch } = useTransfers(id);
   const rows = data?.transfers ?? [];
-  const decimals = data?.decimals ?? 7;
+  const decimals = data?.decimals;
   const source = asExample(`/v1/contracts/${id}/transfers`, { limit: 25 });
   if (isError) {
     return (
@@ -1016,7 +1024,7 @@ function EventDetail({
   decimals,
 }: {
   ev: ContractEvent;
-  decimals: number;
+  decimals: number | null | undefined;
 }) {
   const topics = ev.topics ?? [];
   const data = ev.data ?? '';
@@ -1074,7 +1082,7 @@ function EventsPanel({
   source: ReturnType<typeof asExample>;
 }) {
   const [kind, setKind] = useState<string | null>(null);
-  const decimals = useTransfers(id).data?.decimals ?? 7;
+  const decimals = useTransfers(id).data?.decimals;
 
   if (events.length === 0) {
     return (

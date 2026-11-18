@@ -26,6 +26,7 @@ import type { AssetDetail, IssuedAsset, Issuer } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
 import {
   formatCompact,
+  formatCompactTokenUnits,
   formatCompactUnits,
   formatPriceSmall,
   formatRelative,
@@ -536,12 +537,14 @@ function IssuedAssetsTable({
                 <Td align="right" className="hidden font-mono xl:table-cell">
                   {coin?.circulating_supply ? (
                     <span
-                      title={supplyIsFloor(coin) ? SUPPLY_FLOOR_HINT : undefined}
+                      title={
+                        supplyIsFloor(coin) ? SUPPLY_FLOOR_HINT : undefined
+                      }
                     >
                       {supplyIsFloor(coin) ? '≥ ' : ''}
-                      {formatCompactUnits(
+                      {formatCompactTokenUnits(
                         coin.circulating_supply,
-                        coin.decimals ?? 7,
+                        coin.decimals,
                       )}
                     </span>
                   ) : (

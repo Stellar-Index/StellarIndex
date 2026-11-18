@@ -413,6 +413,38 @@ func TestAccountMovements_AssetFilterScopesPostgresTailBeforeLimit(t *testing.T)
 	}
 }
 
+// ?asset=<SAC> names the same asset as its classic spelling: both arms filter on the spelling the movement tables store.
+func TestAccountMovements_SACAssetFilterFoldsToTheWrappedClassic(t *testing.T) {
+	usdc, err := canonical.NewClassicAsset("USDC", validTestAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac, err := usdc.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	floor := timescale.SEP41MovementsFloorLedger
+	when := time.Unix(1_700_000_000, 0).UTC()
+	tail := &scopedSEP41Tail{rows: []timescale.SEP41TransferRow{
+		{ContractID: validTestContract, Ledger: floor + 20, TxHash: validTestTxHash, ObservedAt: when, FromAddr: validTestAccount, ToAddr: validTestContract, Amount: big.NewInt(7)},
+		{ContractID: sac, Ledger: floor + 10, TxHash: validTestTxHash, ObservedAt: when, FromAddr: validTestAccount, ToAddr: validTestContract, Amount: big.NewInt(5)},
+	}}
+	for _, spelling := range []string{usdc.String(), sac} {
+		reader := &sacNamingReader{
+			movementsArmReader: &movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}},
+			sac:                sac,
+			name:               "USDC:" + validTestAccount,
+		}
+		page := callMovementsQuery(t, reader, tail, 10, url.Values{"asset": {spelling}})
+		if got := ledgersOf(page); !slices.Equal(got, []uint32{floor + 10}) {
+			t.Errorf("?asset=%s: ledgers = %v, want the one USDC transfer [%d]", spelling, got, floor+10)
+		}
+		if reader.gotFilter.Asset != usdc.String() {
+			t.Errorf("?asset=%s: archive filter = %q, want the stored spelling %q", spelling, reader.gotFilter.Asset, usdc.String())
+		}
+	}
+}
+
 // On a cap67 watermark read error with a populated archive, the CH arm must be clamped to the static P23 boundary so its
 // post-P23 cap67_derived rows aren't served alongside the Postgres tail's identical rows (wm=0 would double-emit).
 func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {

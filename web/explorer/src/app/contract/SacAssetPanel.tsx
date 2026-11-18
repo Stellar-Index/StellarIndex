@@ -22,6 +22,7 @@ import { assetSlug } from '@/components/AssetLink';
 import { assetHref } from '@/lib/fiat-slugs';
 import {
   formatCompact,
+  formatCompactTokenUnits,
   formatCompactUnits,
   formatPriceSmall,
   formatUnitsReadable,
@@ -104,7 +105,7 @@ export function SacAssetPanel({ contractId }: { contractId: string }) {
 }
 
 function AssetIdentity({ a }: { a: AssetDetail }) {
-  const decimals = a.decimals ?? 7;
+  const decimals = a.decimals;
   const code = a.code || (a.type === 'native' ? 'XLM' : a.asset_id);
   const slug = assetSlug(a.asset_id);
   const name = a.name ?? (a.type === 'native' ? 'Stellar Lumens' : undefined);
@@ -123,14 +124,14 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
         label: 'Circulating',
         value:
           a.circulating_supply != null
-            ? atLeast(formatCompactUnits(a.circulating_supply, decimals))
+            ? atLeast(formatCompactTokenUnits(a.circulating_supply, decimals))
             : null,
       },
       {
         label: 'Total supply',
         value:
           a.total_supply != null
-            ? formatCompactUnits(a.total_supply, decimals)
+            ? formatCompactTokenUnits(a.total_supply, decimals)
             : null,
       },
       {
@@ -210,7 +211,7 @@ function SacMovement({
   const slug = assetSlug(a.asset_id);
   const s = supply.data?.data;
   const supplyDecimals = s ? onChainSupplyDecimals(s, a.decimals) : null;
-  const decimals = a.decimals ?? 7;
+  const decimals = a.decimals;
   const rows = holders.data?.holders ?? [];
   return (
     <div className="grid gap-6 lg:grid-cols-2">

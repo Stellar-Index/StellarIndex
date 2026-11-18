@@ -109,6 +109,8 @@ const (
 	ListingValuationPriceExpired = "listing_price_expired"
 	// ListingValuationNoSupply: no supply to multiply. Refused rather than published as zero.
 	ListingValuationNoSupply = "no_supply"
+	// ListingValuationScaleUnknown: the token's decimals were not declared or not read, so the raw supply has no unit.
+	ListingValuationScaleUnknown = "scale_unknown"
 )
 
 // AssetListingValuation.SupplyBasis values.
@@ -374,6 +376,11 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 // net mint-burn-clawback total over the SAC; the larger of it and a trustline floor is safe because the trustline sum is a
 // provable lower bound. The reading stays inside the valuation block; `circulating_supply` is untouched.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
+	if row.scaleUnknown() {
+		row.ListingValuation = &AssetListingValuation{Status: ListingValuationScaleUnknown}
+		row.ListingReference = nil
+		return
+	}
 	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {
 		row.ListingValuation = &AssetListingValuation{Status: ListingValuationNoSupply}

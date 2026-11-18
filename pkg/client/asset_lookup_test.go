@@ -29,7 +29,7 @@ func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 		if !ok {
 			t.Fatal("StellarAsset() ok = false")
 		}
-		if asset.AssetID != "native" || asset.Type != "native" || asset.Decimals != 7 {
+		if asset.AssetID != "native" || asset.Type != "native" || asset.Decimals == nil || *asset.Decimals != 7 {
 			t.Errorf("StellarAsset() decoded wrong: %+v", asset)
 		}
 		if _, ok := got.Catalogue(); ok {
@@ -105,7 +105,7 @@ func TestAssetLookup_UnmarshalJSON_BothBranches(t *testing.T) {
 		if err := json.Unmarshal([]byte(catalogueBody), &direct); err != nil {
 			t.Fatalf("Unmarshal into AssetDetail: %v", err)
 		}
-		if direct.AssetID != "" || direct.Type != "" || direct.Decimals != 0 || direct.Sep1Status != "" {
+		if direct.AssetID != "" || direct.Type != "" || direct.Decimals != nil || direct.Sep1Status != "" {
 			t.Fatalf("test assumption broke: AssetDetail decoded non-zero required fields from a catalogue payload: %+v", direct)
 		}
 		// direct.err is nil: encoding/json "succeeded" with every required field zero-valued. That is the bug; AssetLookup must

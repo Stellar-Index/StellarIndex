@@ -7,17 +7,19 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // fakeDivergenceReader records the args the handler passed down so the
 // tests can pin the param plumbing (pair split, whitelisted days).
 type fakeDivergenceReader struct {
-	gotAsset, gotQuote string
+	gotAsset, gotQuote []string
 	gotDays            int
 	seriesCalls        int
 	points             []timescale.DivergenceSeriesPoint
@@ -27,8 +29,8 @@ func (f *fakeDivergenceReader) ListDivergenceLatest(context.Context, int, bool, 
 	return nil, nil
 }
 
-func (f *fakeDivergenceReader) ListDivergenceSeries(_ context.Context, assetID, quoteID string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error) {
-	f.gotAsset, f.gotQuote, f.gotDays = assetID, quoteID, sinceDays
+func (f *fakeDivergenceReader) ListDivergenceSeries(_ context.Context, assetIDs, quoteIDs []string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error) {
+	f.gotAsset, f.gotQuote, f.gotDays = assetIDs, quoteIDs, sinceDays
 	f.seriesCalls++
 	return f.points, nil
 }
@@ -43,6 +45,36 @@ func newSeriesServer(reader DivergenceReader, threshold float64) *Server {
 // TestDivergenceSeries_HappyPath pins the grouped shape: one point per
 // bucket carrying our price beside every reference, with our_price from
 // the bucket's newest observation.
+func hasEveryForm(got []string, want ...string) bool {
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// TestDivergenceSeries_EveryXLMSpellingReachesTheStoredPair:the writer stores native/fiat:USD, so each XLM
+// spelling a client may send must read native (and its siblings).
+func TestDivergenceSeries_EveryXLMSpellingReachesTheStoredPair(t *testing.T) {
+	for _, base := range []string{"native", "crypto:XLM", canonical.NativeSACContractID()} {
+		fake := &fakeDivergenceReader{}
+		rec := httptest.NewRecorder()
+		newSeriesServer(fake, 5.0).handleDivergenceSeries(rec, httptest.NewRequest(http.MethodGet,
+			"/v1/divergence/series?pair="+base+"~fiat:USD", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("pair=%s~fiat:USD: status = %d (body %s)", base, rec.Code, rec.Body.String())
+		}
+		if !hasEveryForm(fake.gotAsset, "native", "crypto:XLM", canonical.NativeSACContractID()) {
+			t.Errorf("pair=%s~fiat:USD read asset forms %v, want every XLM identity", base, fake.gotAsset)
+		}
+		// The store serves the first spelling with rows: the requested one must lead so its own market wins.
+		if fake.gotAsset[0] != base || fake.gotQuote[0] != "fiat:USD" {
+			t.Errorf("pair=%s~fiat:USD read order (%v, %v), want the requested spelling first", base, fake.gotAsset, fake.gotQuote)
+		}
+	}
+}
+
 func TestDivergenceSeries_HappyPath(t *testing.T) {
 	b0 := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	b1 := b0.Add(30 * time.Minute)
@@ -60,7 +92,7 @@ func TestDivergenceSeries_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
-	if fake.gotAsset != "crypto:BTC" || fake.gotQuote != "fiat:USD" || fake.gotDays != 7 || fake.seriesCalls != 1 {
+	if !hasEveryForm(fake.gotAsset, "crypto:BTC") || !hasEveryForm(fake.gotQuote, "fiat:USD") || fake.gotDays != 7 || fake.seriesCalls != 1 {
 		t.Errorf("reader args = (%q, %q, %d) ×%d, want one read of (crypto:BTC, fiat:USD, 7)",
 			fake.gotAsset, fake.gotQuote, fake.gotDays, fake.seriesCalls)
 	}

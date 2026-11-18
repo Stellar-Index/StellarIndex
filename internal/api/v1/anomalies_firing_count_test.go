@@ -214,7 +214,7 @@ func (f *withholdingDivergenceReader) ListDivergenceLatest(context.Context, int,
 	return f.latest, nil
 }
 
-func (f *withholdingDivergenceReader) ListDivergenceSeries(context.Context, string, string, int) ([]timescale.DivergenceSeriesPoint, error) {
+func (f *withholdingDivergenceReader) ListDivergenceSeries(context.Context, []string, []string, int) ([]timescale.DivergenceSeriesPoint, error) {
 	f.seriesRead = true
 	return f.points, nil
 }

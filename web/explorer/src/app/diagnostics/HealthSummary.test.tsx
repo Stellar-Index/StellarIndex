@@ -46,6 +46,18 @@ function cell(label: string): [string, string] {
 }
 
 describe('HealthSummary', () => {
+  it('shows an error, not "Loading…", when the cursors read fails', () => {
+    useCursors.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+    });
+    render(<HealthSummary />);
+
+    expect(screen.getByRole('alert').textContent).toMatch(/Failed to load/);
+    expect(screen.queryByText(/Loading/)).toBeNull();
+  });
+
   it('reads the live tip, live-source count and lag from live namespaces only', () => {
     useCursors.mockReturnValue({ data: cursors, isLoading: false });
     render(<HealthSummary />);

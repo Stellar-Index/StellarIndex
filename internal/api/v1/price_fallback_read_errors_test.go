@@ -19,6 +19,16 @@ func (failingVWAPLooker) LookupTriangulatedVWAP(context.Context, canonical.Asset
 	return v1.CachedVWAP{}, false, errors.New("redis: connection refused")
 }
 
+// quoteFailingVWAPLooker cannot be read for any quote but ok, which it reports as an ordinary cache miss.
+type quoteFailingVWAPLooker struct{ ok string }
+
+func (l quoteFailingVWAPLooker) LookupTriangulatedVWAP(_ context.Context, _, quote canonical.Asset, _ time.Duration) (v1.CachedVWAP, bool, error) {
+	if quote.String() == l.ok {
+		return v1.CachedVWAP{}, false, nil
+	}
+	return v1.CachedVWAP{}, false, errors.New("redis: i/o timeout")
+}
+
 // TestPriceFallback_ReadFailureIsNotAMiss: a fallback layer that could not be read is a retryable
 // error on every price surface, never "no trades" and never the next peg's market.
 func TestPriceFallback_ReadFailureIsNotAMiss(t *testing.T) {

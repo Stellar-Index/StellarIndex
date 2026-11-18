@@ -401,7 +401,7 @@ func rwaRowsUnanswered(rows map[string]AssetDetail) bool {
 
 // fillContractDecimals overlays each contract's real on-chain decimals; assetDetailFromAssetRow hardcodes 7, and market cap
 // divides supply by 10^decimals, so a 5-decimal fund read at 7 publishes one hundredth of its capitalisation. A token with no
-// readable metadata keeps 7 but may not be multiplied by it: the returned set holds addresses whose scale was READ, and a row
+// readable metadata is marked scale-unknown (refuseUnscaledContractCaps flags any row left unread): the returned set holds addresses whose scale was READ, and a row
 // absent from it carries no valuation (unwired reader, instance not in the lake, missing or conflicting scale all mean unknown).
 // A failed read or ctx ending mid-walk is not a refusal: cut reports it.
 func (s *Server) fillContractDecimals(
@@ -415,7 +415,13 @@ func (s *Server) fillContractDecimals(
 		if _, ok := src[rows[i].AssetID]; !ok {
 			continue
 		}
-		d, ok, err := s.TokenDecimals.TokenDecimals(ctx, rows[i].AssetID)
+		if rows[i].scaleSettled {
+			if !rows[i].scaleUnknown() {
+				resolved[rows[i].AssetID] = struct{}{}
+			}
+			continue
+		}
+		d, known, err := s.contractTokenScale(ctx, rows[i].AssetID)
 		if err != nil && ctx.Err() != nil {
 			return resolved, true
 		}
@@ -423,15 +429,31 @@ func (s *Server) fillContractDecimals(
 			cut = true
 			continue
 		}
-		if !ok {
+		if !known {
+			rows[i].DecimalsUndeclared = true
+			rows[i].DecimalsUnresolved = false
 			continue
 		}
-		// This reading owns the scale; the generic fill's failed read must not outlive it.
-		rows[i].Decimals = int(d)
+		// This reading owns the scale; the generic fill's failed or empty read must not outlive it.
+		rows[i].Decimals = d
 		rows[i].DecimalsUnresolved = false
+		rows[i].DecimalsUndeclared = false
 		resolved[rows[i].AssetID] = struct{}{}
 	}
 	return resolved, cut
+}
+
+// contractTokenScale is the lake scale with applyTokenDecimals' fallback: a projection-confirmed scale answers when the lake does
+// not, so /v1/rwa serves the scale /v1/assets and the detail page serve.
+func (s *Server) contractTokenScale(ctx context.Context, contractID string) (decimals int, known bool, err error) {
+	d, known, err := s.lakeTokenDecimals(ctx, contractID)
+	if known {
+		return d, true, nil
+	}
+	if confirmed, ok := s.NonstandardDecimals.Lookup(contractID); ok {
+		return confirmed, true, nil
+	}
+	return 0, false, err
 }
 
 // fillContractMarketCaps fills circulating supply and market cap for contract rows from the certified lake: mints less burns and
@@ -529,14 +551,14 @@ func (s *Server) contractPriceScaleDisagrees(row *AssetDetail) bool {
 }
 
 // refuseUnscaledContractCaps drops the cap from every row whose scale was not read, whichever supply
-// produced it: the generic fill divides by the default 7 without a reading.
+// produced it, and marks the scale unknown so `decimals` is never served as the stamped 7.
 func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) {
 	for i := range rows {
 		if _, ok := scaled[rows[i].AssetID]; ok {
 			continue
 		}
 		rows[i].MarketCapUSD = nil
-		if rows[i].CirculatingSupply != nil {
+		if !rows[i].DecimalsUndeclared {
 			rows[i].DecimalsUnresolved = true
 		}
 	}

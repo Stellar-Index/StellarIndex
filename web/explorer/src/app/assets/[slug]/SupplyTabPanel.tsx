@@ -9,7 +9,11 @@ import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
-import { formatBaseUnits, formatCompactUnits } from '@/lib/format';
+import {
+  formatBaseUnits,
+  formatCompactTokenUnits,
+  formatCompactUnits,
+} from '@/lib/format';
 import {
   CLASSIC_FLOWS_CAVEAT,
   supplyHint,
@@ -89,7 +93,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
     );
   }
 
-  const decimals = a.decimals ?? 7;
+  const decimals = a.decimals;
 
   const noSupply =
     a.circulating_supply == null &&
@@ -131,19 +135,19 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
               label="Circulating"
               value={withMark(
                 mark,
-                formatCompactUnits(a.circulating_supply, decimals),
+                formatCompactTokenUnits(a.circulating_supply, decimals),
               )}
               title={hint}
               sublabel={`In smallest unit: ${a.circulating_supply ?? '—'}`}
             />
             <Metric
               label="Total"
-              value={formatCompactUnits(a.total_supply, decimals)}
+              value={formatCompactTokenUnits(a.total_supply, decimals)}
               sublabel={a.is_unlimited ? 'Issuer asserts unbounded' : ''}
             />
             <Metric
               label="Max"
-              value={formatCompactUnits(a.max_supply, decimals)}
+              value={formatCompactTokenUnits(a.max_supply, decimals)}
               sublabel={
                 a.is_unlimited === true
                   ? 'Unlimited'
@@ -293,11 +297,11 @@ function MarketCapChart({ assetID }: { assetID: string }) {
  */
 export function onChainSupplyDecimals(
   supply: AssetSupply,
-  assetDecimals: number | undefined,
+  assetDecimals: number | null | undefined,
 ): number | null {
   if (supply.decimals != null) return supply.decimals;
   if (supply.source === 'contract_storage_balances') return null;
-  return assetDecimals ?? 7;
+  return assetDecimals ?? null;
 }
 
 function formatSupply(raw: string | undefined, decimals: number | null) {

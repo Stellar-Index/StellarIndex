@@ -250,6 +250,7 @@ echo "=== Test patterns self-test ===" && ./scripts/ci/lint-test-patterns-test.s
 echo "=== Deprecation removal versions ===" && ./scripts/ci/check-deprecations.sh
 echo "=== Deprecation removal versions self-test ===" && bash scripts/ci/check-deprecations-test.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
+echo "=== Token scale never defaulted to 7 ===" && ./scripts/ci/lint-decimals-default.sh
 # gofumpt's doc-comment reformatter rewrites a doubled apostrophe to U+201D,
 # so a comment quoting `entry_xdr != ''` stops saying what the filter is. The
 # corruption is fmt-STABLE, which is why a clean `gofumpt -l` cannot stand in
@@ -275,6 +276,7 @@ echo "=== Memory-mappings probe self-test ===" && ./scripts/ci/memory-mappings-t
 echo "=== pg-chunk-scan probe self-test ===" && ./scripts/ci/pg-chunk-scan-test.sh
 echo "=== catchup-lanes probe self-test ===" && ./scripts/ci/catchup-lanes-test.sh
 echo "=== lint-chunk-functions ===" && ./scripts/ci/lint-chunk-functions.sh && ./scripts/ci/lint-chunk-functions-test.sh
+echo "=== lint-asset-identity ===" && ./scripts/ci/lint-asset-identity.sh && ./scripts/ci/lint-asset-identity-test.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
 echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh
@@ -581,6 +583,7 @@ lane_d() { # everything else
     echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
     echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
     echo "=== i128 lint self-test ===" && ./scripts/ci/lint-i128-test.sh
+    echo "=== Decimals-default lint self-test ===" && ./scripts/ci/lint-decimals-default-test.sh
     echo "=== ClickHouse apply scope (deploy/clickhouse is not a bootstrap manifest) ===" && ./scripts/ci/lint-ch-apply-scope.sh
     echo "=== ClickHouse apply scope self-test ===" && ./scripts/ci/lint-ch-apply-scope-test.sh
     echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh

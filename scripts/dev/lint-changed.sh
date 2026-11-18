@@ -26,7 +26,8 @@
 #                            lint-imports (whole tree, ~1 s each — they
 #                            take no file list),
 #                            lint-go-typographic-quotes (whole tree, 0.55 s),
-#                            lint-unbounded-latest-row (whole tree, 0.8 s)
+#                            lint-unbounded-latest-row (whole tree, 0.8 s),
+#                            lint-asset-identity (whole tree)
 #                            and lint-http-timeouts scoped to the package
 #                            dirs; then go vet + go build on the touched
 #                            packages. The quote scan runs HERE and not only
@@ -463,6 +464,7 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-test-patterns" "whole tree (takes no file list)" "$ci_dir/lint-test-patterns.sh"
     add_step "check-deprecations" "whole tree (takes no file list)" "$ci_dir/check-deprecations.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
+    add_step "lint-decimals-default" "whole tree (takes no file list)" "$ci_dir/lint-decimals-default.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
     add_step "lint-comments" "whole tree (takes no file list)" "$ci_dir/lint-comments.sh"
     # The typographic-quote scan runs whole tree even though it ACCEPTS a file
@@ -473,6 +475,7 @@ if [ "${#go_files[@]}" -gt 0 ]; then
         python3 "$ci_dir/lint-go-typographic-quotes.py"
     add_step "lint-unbounded-latest-row" "whole tree (takes no file list)" \
         python3 "$ci_dir/lint-unbounded-latest-row.py"
+    add_step "lint-asset-identity" "whole tree (takes no file list)" "$ci_dir/lint-asset-identity.sh"
     # http-timeouts exempts _test.go and refuses a vacuous root, so scope it
     # to the package dirs that hold at least one non-test Go file.
     timeout_dirs=()

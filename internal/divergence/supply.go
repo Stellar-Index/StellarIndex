@@ -222,7 +222,7 @@ func DefaultSupplyChecks() []SupplyCheck {
 		{
 			Asset:    canonical.NativeAsset(),
 			AssetKey: "XLM", // supply.AssetKey(native) — see internal/supply/xlm.go
-			Decimals: 7,     // XLM stroops
+			Decimals: 7,     // decimals-7: native XLM stroops
 			Label:    "native",
 		},
 	}

@@ -257,10 +257,35 @@ func TestFillContractDecimals_AReadingOverridesTheProvisionalVerdict(t *testing.
 		t.Errorf("DecimalsUnresolved = %v after a successful reading, decimals = %v", rows[0].DecimalsUnresolved, rwaDecimalsOf(rows[0]))
 	}
 
-	s = &Server{TokenDecimals: failingTokenDecimals{}}
+	s = &Server{TokenDecimals: failingTokenDecimals{}, logger: discardLogger()}
 	rows = []AssetDetail{{AssetID: id}}
 	if _, cut := s.fillContractDecimals(context.Background(), rows, src); !cut {
 		t.Error("a failed decimals read was not reported as unread")
+	}
+}
+
+type undeclaredTokenDecimals struct{}
+
+func (undeclaredTokenDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
+	return 0, false, nil
+}
+
+// TestFillContractDecimals_UnknownScaleWithoutSupplyIsNotServedAsSeven: a contract with no declared or readable
+// scale and no supply reading still has the stamped 7 on its row; it must reach the wire as absent, not 7.
+func TestFillContractDecimals_UnknownScaleWithoutSupplyIsNotServedAsSeven(t *testing.T) {
+	const id = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	src := map[string]timescale.AssetRow{id: {}}
+	for name, reader := range map[string]TokenDecimalsReader{
+		"undeclared":  undeclaredTokenDecimals{},
+		"read failed": failingTokenDecimals{},
+	} {
+		s := &Server{TokenDecimals: reader, logger: discardLogger()}
+		rows := []AssetDetail{{AssetID: id, Type: "soroban", Decimals: 7}}
+		scaled, _ := s.fillContractDecimals(context.Background(), rows, src)
+		refuseUnscaledContractCaps(rows, scaled)
+		if got := rwaDecimalsOf(rows[0]); got != nil {
+			t.Errorf("%s: decimals = %d, want absent", name, *got)
+		}
 	}
 }
 

@@ -91,14 +91,13 @@ func TestPoolReserves_Listing(t *testing.T) {
 	if row.Token0.Reserve != "18446744073709551621" {
 		t.Fatalf("token0.reserve = %q, want exact i128 string", row.Token0.Reserve)
 	}
-	if row.Token0.Symbol != "YBX" || row.Token0.Decimals != 7 {
+	if row.Token0.Symbol != "YBX" || row.Token0.Decimals == nil || *row.Token0.Decimals != 7 {
 		t.Fatalf("token0 display = %+v", row.Token0)
 	}
-	if row.Token1.Symbol != "" || row.Token1.Decimals != 7 {
-		t.Fatalf("token1 must fall back to defaults, got %+v", row.Token1)
+	if row.Token1.Symbol != "" || row.Token1.Decimals != nil {
+		t.Fatalf("token1 has no declaration, so no symbol and no decimals; got %+v", row.Token1)
 	}
-	// token1's decimals were never read, so the 7 above is the documented
-	// default, not a declaration — no mid price may be computed from it.
+	// token1's decimals were never read, so no mid price may be computed.
 	if row.MidPrice0In1 != nil || row.MidPrice1In0 != nil {
 		t.Fatalf("mid prices = %v/%v, want null when token1's decimals are unknown",
 			row.MidPrice0In1, row.MidPrice1In0)
@@ -195,8 +194,8 @@ func TestPoolReserves_MidPricesUseDeclaredDecimals(t *testing.T) {
 		t.Fatalf("want 1 row, got %d", len(body.Data))
 	}
 	row := body.Data[0]
-	if row.Token1.Decimals != 18 {
-		t.Fatalf("token1.decimals = %d, want 18", row.Token1.Decimals)
+	if row.Token1.Decimals == nil || *row.Token1.Decimals != 18 {
+		t.Fatalf("token1.decimals = %v, want 18", row.Token1.Decimals)
 	}
 	if row.MidPrice0In1 == nil || *row.MidPrice0In1 != "0.3" {
 		t.Fatalf("mid_price_0_in_1 = %v, want 0.3", row.MidPrice0In1)

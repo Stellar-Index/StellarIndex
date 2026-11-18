@@ -190,7 +190,7 @@ func (s *Server) fillEmissionStreams(ctx context.Context, view *LendingEmissions
 	asOf := time.Time(view.AsOfTime)
 	if st.EmissionToken != "" {
 		view.EmissionToken = strRef(st.EmissionToken)
-		if d, ok := s.resolveTokenDecimals(ctx, st.EmissionToken); ok {
+		if d, known, err := s.lakeTokenDecimals(ctx, st.EmissionToken); known && err == nil {
 			view.EmissionTokenDecimals = &d
 		}
 	}

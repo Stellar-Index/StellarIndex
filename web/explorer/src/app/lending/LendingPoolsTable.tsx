@@ -18,7 +18,7 @@ import {
   LinkRow,
 } from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
-import { apiGet, asExample } from '@/api/client';
+import { apiGet, asExample, type Envelope } from '@/api/client';
 import { formatRelative } from '@/lib/format';
 import type { paths } from '@/api/types';
 
@@ -143,23 +143,30 @@ export const PENDING_POLL_MS = 3_000;
 export const PENDING_POLL_MAX = 20;
 
 export function LendingPoolsTable() {
-  const q = useQuery<LendingPool[]>({
+  const q = useQuery<{ rows: LendingPool[]; truncated: boolean }>({
     queryKey: ['/v1/lending/pools'],
     refetchInterval: (query) =>
-      query.state.data?.some((r) => r.summary_pending) &&
+      query.state.data?.rows.some((r) => r.summary_pending) &&
       query.state.dataUpdateCount < PENDING_POLL_MAX
         ? PENDING_POLL_MS
         : false,
     queryFn: async () => {
-      const env = await apiGet<{ data: LendingPool[] }>(
+      const env = await apiGet<Envelope<LendingPool[] | null>>(
         '/v1/lending/pools',
         {},
       );
-      return env.data ?? [];
+      return { rows: env.data ?? [], truncated: env.flags?.truncated === true };
     },
   });
 
-  const rows = q.data ?? [];
+  const rows = q.data?.rows ?? [];
+  // A failed BLNT read serves the Blend rows alone; the list is a lower bound.
+  const truncatedNote = q.data?.truncated ? (
+    <p role="status" className="text-warn-700 mb-2 text-xs">
+      Partial list: some pools could not be read, so pools and auction counts
+      below are a lower bound.
+    </p>
+  ) : null;
 
   // Liquidation-auction distribution across pools — same fetched rows,
   // no extra request. Renders only when at least one pool has auctions.
@@ -175,6 +182,7 @@ export function LendingPoolsTable() {
           hint="Auction events from the indexed lending event stream; the risk view of which pools actually liquidate."
           source={asExample('/v1/lending/pools', {})}
         >
+          {truncatedNote}
           <HBarList
             ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
               .map(
@@ -204,6 +212,12 @@ export function LendingPoolsTable() {
         source={asExample('/v1/lending/pools', {})}
         bodyClassName="-mx-4 -mb-4"
       >
+        {q.data?.truncated && (
+          <p role="status" className="text-warn-700 mx-4 mb-2 text-xs">
+            Partial list: some pools could not be read, so this list is a lower
+            bound.
+          </p>
+        )}
         <div className="overflow-x-auto">
           <Table>
             <THead>

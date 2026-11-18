@@ -337,7 +337,7 @@ func TestDivergenceGroupedReads(t *testing.T) {
 		t.Errorf("firing rows = %+v, want firing coingecko then clear chainlink", firing)
 	}
 
-	points, err := store.ListDivergenceSeries(ctx, "crypto:BTC", "fiat:USD", 7)
+	points, err := store.ListDivergenceSeries(ctx, []string{"crypto:BTC"}, []string{"fiat:USD"}, 7)
 	if err != nil {
 		t.Fatalf("ListDivergenceSeries: %v", err)
 	}
@@ -347,6 +347,49 @@ func TestDivergenceGroupedReads(t *testing.T) {
 	}
 	if points[1].OurPrice != "100" || points[1].RefPrice != "99" || !points[1].LastAt.Equal(at) {
 		t.Errorf("coingecko cell = %+v, want our 100 vs ref 99 at %v", points[1], at)
+	}
+
+	testDivergenceSeriesOneSpelling(ctx, t, sink, store, at)
+}
+
+// crypto:XLM/fiat:USD (CEX book) and native/fiat:USD (SDEX book) are two configured markets in the same bucket; a
+// series reads exactly one of them, the requested spelling when it has rows, else the first alias that does.
+func testDivergenceSeriesOneSpelling(ctx context.Context, t *testing.T, sink *timescale.DivergenceSink, store *timescale.Store, at time.Time) {
+	t.Helper()
+	cex, err := canonical.ParsePair("crypto:XLM/fiat:USD")
+	if err != nil {
+		t.Fatalf("ParsePair: %v", err)
+	}
+	sdex, err := canonical.ParsePair("native/fiat:USD")
+	if err != nil {
+		t.Fatalf("ParsePair: %v", err)
+	}
+	for _, rec := range []domain.DivergenceObservationRecord{
+		{Pair: cex, Reference: "coingecko", OurPrice: "0.31", RefPrice: "0.31", DeltaPct: "0", ObservedAt: at},
+		{Pair: sdex, Reference: "coingecko", OurPrice: "0.25", RefPrice: "0.31", DeltaPct: "-19.35", Firing: true, ObservedAt: at.Add(time.Minute)},
+	} {
+		if err := sink.RecordObservation(ctx, rec); err != nil {
+			t.Fatalf("RecordObservation %s: %v", rec.Pair, err)
+		}
+	}
+	sac := canonical.NativeSACContractID()
+	for _, tc := range []struct {
+		name     string
+		assets   []string
+		wantOur  string
+		wantFire bool
+	}{
+		{"crypto:XLM requested", []string{"crypto:XLM", "native", sac}, "0.31", false},
+		{"native requested", []string{"native", "crypto:XLM", sac}, "0.25", true},
+		{"SAC has no rows: first alias with rows", []string{sac, "native", "crypto:XLM"}, "0.25", true},
+	} {
+		got, err := store.ListDivergenceSeries(ctx, tc.assets, []string{"fiat:USD"}, 7)
+		if err != nil {
+			t.Fatalf("%s: ListDivergenceSeries: %v", tc.name, err)
+		}
+		if len(got) != 1 || got[0].OurPrice != tc.wantOur || got[0].Firing != tc.wantFire {
+			t.Errorf("%s: series = %+v, want one coingecko cell with our %s, firing=%v", tc.name, got, tc.wantOur, tc.wantFire)
+		}
 	}
 }
 

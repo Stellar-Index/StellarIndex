@@ -17,6 +17,7 @@ import {
 import {
   changePct,
   formatCompact,
+  formatCompactTokenUnits,
   formatCompactUnits,
   formatPriceSmall,
   multiplyDecimalStrings,
@@ -1101,7 +1102,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               history={
                 <HistoryTabPanel
                   assetID={coin.asset_id}
-                  decimals={detail?.decimals ?? 7}
+                  decimals={detail?.decimals}
                 />
               }
               supply={<SupplyTabPanel assetID={coin.asset_id} />}
@@ -1110,7 +1111,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                   <TrustlineHistoryPanel assetID={coin.asset_id} />
                   <HoldersTabPanel
                     assetID={coin.asset_id}
-                    decimals={detail?.decimals ?? 7}
+                    decimals={detail?.decimals}
                   />
                   <AssetEntryChangesPanel assetID={coin.asset_id} />
                 </div>
@@ -1263,7 +1264,7 @@ function OverviewBody({
               label="Circulating"
               value={fmtNum(
                 detail?.circulating_supply ?? coin.circulating_supply,
-                detail?.decimals ?? coin.decimals ?? 7,
+                detail?.decimals ?? coin.decimals,
               )}
               accent={supplyAsOfNote(detail?.supply_as_of)}
             />
@@ -1402,19 +1403,19 @@ function OverviewBody({
             {detail?.circulating_supply != null && (
               <Stat
                 label="Circulating"
-                value={fmtNum(detail.circulating_supply, detail.decimals ?? 7)}
+                value={fmtNum(detail.circulating_supply, detail.decimals)}
               />
             )}
             {detail?.total_supply != null && (
               <Stat
                 label="Total"
-                value={fmtNum(detail.total_supply, detail.decimals ?? 7)}
+                value={fmtNum(detail.total_supply, detail.decimals)}
               />
             )}
             {detail?.max_supply != null && (
               <Stat
                 label="Max"
-                value={fmtNum(detail.max_supply, detail.decimals ?? 7)}
+                value={fmtNum(detail.max_supply, detail.decimals)}
               />
             )}
             {detail?.fdv_usd != null && (
@@ -1480,11 +1481,14 @@ function fmtUsd(raw: string | null | undefined): string {
 }
 
 // fmtNum renders a RAW smallest-unit supply string (circulating / total
-// / max) in whole asset units — scaled down 10^decimals (7 for classic /
-// native, 0 for catalogue / fiat). market_cap / fdv arrive already
+// / max) in whole asset units — scaled down 10^decimals (0 for catalogue /
+// fiat); an absent scale renders the raw amount, labelled. market_cap / fdv arrive already
 // server-pre-scaled and go through fmtUsd, which must NOT divide.
-function fmtNum(raw: string | null | undefined, decimals: number): string {
-  return formatCompactUnits(raw || null, decimals);
+function fmtNum(
+  raw: string | null | undefined,
+  decimals: number | null | undefined,
+): string {
+  return formatCompactTokenUnits(raw || null, decimals);
 }
 
 // athDrawdown computes the % drop from ATH given the current

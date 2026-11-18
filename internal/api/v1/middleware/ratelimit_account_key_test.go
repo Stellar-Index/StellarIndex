@@ -42,4 +42,22 @@ func TestRateLimitCallerKey_MatchesTheLimiterIdentity(t *testing.T) {
 		middleware.RateLimitCallerKey(req("198.51.100.2:1", nil)); a == b {
 		t.Errorf("two anonymous IPs share caller key %q", a)
 	}
+
+	// A SEP-10 JWT account is a free keypair, so the cap keys on the IP the limiter also charges.
+	jwt := func(acct string) *auth.Subject { return &auth.Subject{Identifier: acct, Tier: auth.TierSEP10} }
+	if a, b := middleware.RateLimitCallerKey(req("198.51.100.1:1", jwt("GAAA"))),
+		middleware.RateLimitCallerKey(req("198.51.100.1:2", jwt("GBBB"))); a != b {
+		t.Errorf("two SEP-10 accounts from one IP keyed %q and %q, want one caller", a, b)
+	}
+	if a, b := middleware.RateLimitCallerKey(req("198.51.100.1:1", jwt("GAAA"))),
+		middleware.RateLimitCallerKey(req("198.51.100.2:1", jwt("GAAA"))); a == b {
+		t.Errorf("one SEP-10 account from two IPs shares caller key %q", a)
+	}
+	sep10Key := func(keyID string) *auth.Subject {
+		return &auth.Subject{Identifier: "GAAA", Tier: auth.TierSEP10, KeyID: keyID}
+	}
+	if a, b := middleware.RateLimitCallerKey(req("198.51.100.1:1", sep10Key("kid_a"))),
+		middleware.RateLimitCallerKey(req("203.0.113.9:1", sep10Key("kid_b"))); a != b {
+		t.Errorf("two API keys on one SEP-10 identifier keyed %q and %q, want one caller", a, b)
+	}
 }

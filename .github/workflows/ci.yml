@@ -1161,6 +1161,12 @@ jobs:
         # the deep go/types guard is TestI128TruncationGuard in
         # internal/canonical, which runs in the test job).
         run: ./scripts/ci/lint-i128.sh
+      - name: lint-decimals-default
+        # An undeclared or unread Soroban token scale is served absent, never
+        # as 7; every remaining 7 carries a decimals-7 reason marker.
+        run: |
+          ./scripts/ci/lint-decimals-default.sh
+          ./scripts/ci/lint-decimals-default-test.sh
       - name: lint-migrations
         # ADR-0003 SQL side: monetary migration columns must be NUMERIC —
         # never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escapes need an
@@ -1300,6 +1306,11 @@ jobs:
         run: ./scripts/ci/lint-chunk-functions.sh
       - name: lint-chunk-functions self-test
         run: ./scripts/ci/lint-chunk-functions-test.sh
+      - name: lint-asset-identity
+        # An asset read keyed on 'native' alone or on LIKE '<CODE>-%' drops XLM's other identities or trusts any issuer.
+        run: ./scripts/ci/lint-asset-identity.sh
+      - name: lint-asset-identity self-test
+        run: ./scripts/ci/lint-asset-identity-test.sh
       - name: lint-ch-apply-scope
         # deploy/clickhouse/ is not a bootstrap manifest. Executing every file
         # in the directory on each fresh provision would run OPERATOR migration

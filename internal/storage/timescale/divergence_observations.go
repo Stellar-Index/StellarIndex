@@ -173,25 +173,38 @@ func DivergenceSeriesBucket(days int) time.Duration {
 }
 
 // ListDivergenceSeries returns the bucketed delta-% history of every reference for ONE (asset, quote) pair over the trailing `sinceDays`, ascending by bucket then reference, on divergence_observations_pair_ref_idx.
-func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]DivergenceSeriesPoint, error) {
+// assetIDs and quoteIDs are each leg's alias forms in priority order, requested spelling first. The series is read from
+// ONE (asset, quote) spelling, the first in that order with rows in the window: two configured pairs (crypto:XLM and
+// native against fiat:USD) are two markets with their own VWAP, and a per-bucket mix of them is neither.
+func (s *Store) ListDivergenceSeries(ctx context.Context, assetIDs, quoteIDs []string, sinceDays int) ([]DivergenceSeriesPoint, error) {
 	if sinceDays <= 0 {
 		sinceDays = 7
 	}
 	bucket := DivergenceSeriesBucket(sinceDays)
 	const q = `
-		SELECT time_bucket(make_interval(secs => $3), observed_at) AS bucket,
-		       reference,
-		       max(observed_at),
-		       last(delta_pct, observed_at)::text,
-		       last(our_price, observed_at)::text,
-		       last(ref_price, observed_at)::text,
-		       bool_or(status = 'firing')
-		  FROM divergence_observations
-		 WHERE asset_id = $1 AND quote_id = $2
-		   AND observed_at > now() - make_interval(days => $4)
-		 GROUP BY bucket, reference
-		 ORDER BY bucket ASC, reference ASC`
-	rows, err := s.db.QueryContext(ctx, q, assetID, quoteID, int64(bucket.Seconds()), sinceDays)
+		WITH a AS (SELECT id, ord FROM unnest($1::text[]) WITH ORDINALITY AS t(id, ord)),
+		     b AS (SELECT id, ord FROM unnest($2::text[]) WITH ORDINALITY AS t(id, ord)),
+		     pick AS (
+		       SELECT a.id AS asset_id, b.id AS quote_id
+		         FROM a CROSS JOIN b
+		        WHERE EXISTS (SELECT 1 FROM divergence_observations o
+		                       WHERE o.asset_id = a.id AND o.quote_id = b.id
+		                         AND o.observed_at > now() - make_interval(days => $4))
+		        ORDER BY a.ord, b.ord
+		        LIMIT 1)
+		SELECT time_bucket(make_interval(secs => $3), d.observed_at) AS bucket,
+		       d.reference,
+		       max(d.observed_at),
+		       last(d.delta_pct, d.observed_at)::text,
+		       last(d.our_price, d.observed_at)::text,
+		       last(d.ref_price, d.observed_at)::text,
+		       bool_or(d.status = 'firing')
+		  FROM divergence_observations d
+		  JOIN pick ON d.asset_id = pick.asset_id AND d.quote_id = pick.quote_id
+		 WHERE d.observed_at > now() - make_interval(days => $4)
+		 GROUP BY bucket, d.reference
+		 ORDER BY bucket ASC, d.reference ASC`
+	rows, err := s.db.QueryContext(ctx, q, assetIDs, quoteIDs, int64(bucket.Seconds()), sinceDays)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListDivergenceSeries: %w", err)
 	}

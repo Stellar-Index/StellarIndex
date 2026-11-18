@@ -180,6 +180,7 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 	}
 	a := StablecoinAsset{
 		AssetID: m.code + "-" + m.issuer, Code: m.code, Issuer: m.issuer, Ticker: m.ticker, Peg: peg,
+		// decimals-7: stablecoinAssetOf admits classic assets only, fixed by the protocol.
 		YieldBearing: stablecoinYieldBearing[strings.ToUpper(m.ticker)], Decimals: 7,
 		ValuationStatus: stablecoinNotObserved,
 	}
@@ -198,7 +199,7 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 		bs := b.String()
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = &bs, b.LowerBound()
 	}
-	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.DecimalsUnresolved || d.UnverifiedTickerCollision ||
+	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.scaleUnknown() || d.UnverifiedTickerCollision ||
 		d.issuerDirectoryUnchecked
 	switch {
 	case d.MarketCapUSD != nil:

@@ -244,8 +244,8 @@ type ContributionRecord struct {
 
 // DivergenceRefresher keeps `div:<base>/<quote>` populated (production: [internal/divergence.Service]); ourPrice is the pair's shortest-window VWAP. RefreshPinnedPair serves a frozen pair, whose cached VWAP is the pinned last-known-good: references refresh but no verdict is reached against it.
 type DivergenceRefresher interface {
-	RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error
-	RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice float64, observedAt time.Time) error
+	RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice string, observedAt time.Time) error
+	RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice string, observedAt time.Time) error
 }
 
 // StreamPublisher fans closed-bucket events out (production: redispub.Publisher), best-effort since the VWAP cache is durable; coverage is nil when unknown. PublishFrozenBucket is called for a bucket a freeze refused so a frozen series is not silent; frozenSince is its first refused bucket's end.
@@ -1333,9 +1333,9 @@ func usdQuoteDecimals(quote canonical.Asset, classicUSDPegs, sorobanUSDPegs []ca
 	case aggregate.IsFiatProxyFor(quote, "USD"):
 		return 8, true
 	case quote.Type == canonical.AssetClassic && isUSDPeggedClassic(quote, classicUSDPegs):
-		return 7, true
+		return 7, true // decimals-7: classic, fixed by the protocol
 	case quote.Type == canonical.AssetSoroban && isUSDPeggedSoroban(quote, sorobanUSDPegs):
-		return 7, true
+		return 7, true // decimals-7: sorobanUSDPegs lists SACs, fixed by the protocol
 	default:
 		return 0, false
 	}

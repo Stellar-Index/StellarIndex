@@ -238,7 +238,7 @@ func TestThinPriceDerivesNoValuation(t *testing.T) {
 	price := "0.16"
 	row := AssetDetail{AssetID: "native", Code: "XLM", Decimals: 7, PriceUSD: &price, ThinMarket: true}
 	precise := observedSupply(map[string]string{"native": "100000000000000000"})
-	(&Server{}).fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{})
+	(&Server{}).fillRowMarketCap(context.Background(), &row, nil, precise, nil, nil, map[string]int{})
 	if row.MarketCapUSD != nil {
 		t.Errorf("market_cap_usd = %v from a thin price", *row.MarketCapUSD)
 	}

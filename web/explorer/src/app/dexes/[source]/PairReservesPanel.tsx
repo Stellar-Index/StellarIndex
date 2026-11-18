@@ -17,44 +17,23 @@ import {
   THead,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import type { components } from '@/api/types';
+import { formatCompactTokenUnits } from '@/lib/format';
 
-interface ReserveToken {
-  contract: string;
-  symbol?: string;
-  decimals: number;
-  reserve: string;
-}
-
-interface DepthSide {
-  max_input: string;
-  output: string;
-}
-
-interface DepthLevel {
-  slippage_pct: string;
-  token0_in: DepthSide;
-  token1_in: DepthSide;
-}
-
-interface PoolReservesRow {
-  pool: string;
-  source: string;
-  model: string;
-  fee_bps: number;
-  as_of_ledger: number;
-  token0: ReserveToken;
-  token1: ReserveToken;
-  mid_price_0_in_1: string | null;
-  mid_price_1_in_0: string | null;
-  depth: DepthLevel[];
-}
+type ReserveToken = components['schemas']['PoolReserveToken'];
+type PoolReservesRow = components['schemas']['PoolReservesRow'];
 
 /**
  * Scale an exact base-unit integer string by 10^decimals for DISPLAY.
  * The API keeps reserves as exact i128 decimal strings (ADR-0003);
- * floats appear only here, at the presentation edge.
+ * floats appear only here, at the presentation edge. An absent scale
+ * renders the raw base units, labelled.
  */
-function displayUnits(baseUnits: string, decimals: number): string {
+export function displayUnits(
+  baseUnits: string,
+  decimals: number | undefined,
+): string {
+  if (decimals == null) return formatCompactTokenUnits(baseUnits, null);
   if (!/^\d+$/.test(baseUnits)) return '—';
   const padded = baseUnits.padStart(decimals + 1, '0');
   const whole = padded.slice(0, padded.length - decimals) || '0';

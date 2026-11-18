@@ -364,7 +364,11 @@
     name: stellarindex-aggregator
     state: stopped
     enabled: false
-  failed_when: false
+  register: retired_aggregator
+  # A host that never had the unit is fine; any other failure leaves a second aggregator running.
+  failed_when: >-
+    retired_aggregator is failed and
+    'Could not find the requested service' not in (retired_aggregator.msg | default(''))
 
 # ──── API service ─────────────────────────────────────────────────────
 # The public REST + SSE server. Caddy terminates TLS on :80/:443 and
@@ -1439,7 +1443,11 @@
       loop:
         - archive-completeness.timer
         - archive-completeness.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove archive-completeness unit files
       ansible.builtin.file:
@@ -1454,7 +1462,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed archive-completeness.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── verify-served-values — the served-value truth harness ────────────
 # The one check on the served NUMBER rather than the pipe (XLM
@@ -1515,7 +1523,11 @@
       loop:
         - verify-served-values.timer
         - verify-served-values.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove verify-served-values unit files
       ansible.builtin.file:
@@ -1530,7 +1542,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed verify-served-values.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── wasm-drift — the detector of an unaudited in-place contract upgrade ──
 # The command and its two alerts shipped without a schedule, so no textfile
@@ -1573,7 +1585,11 @@
       loop:
         - wasm-drift.timer
         - wasm-drift.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove wasm-drift unit files
       ansible.builtin.file:
@@ -1613,7 +1629,11 @@
       loop:
         - galexie-archive-trim.timer
         - galexie-archive-trim.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove galexie-archive-trim units + env file
       ansible.builtin.file:
@@ -1667,7 +1687,11 @@
       loop:
         - listing-sync.timer
         - listing-sync.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove listing-sync unit files
       ansible.builtin.file:
@@ -1682,7 +1706,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed listing-sync.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── supply-verify-rollup — SEP-41 supply-rollup reconciliation ───────
 # Daily `stellarindex-ops supply verify-rollup` so "the rollup reconciles"
@@ -1736,7 +1760,11 @@
         - supply-verify-rollup.service
         - compute-completeness-sep41.timer
         - compute-completeness-sep41.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove supply-verify-rollup unit files
       ansible.builtin.file:
@@ -1753,7 +1781,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed supply-verify-rollup.service compute-completeness-sep41.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── verify-archive Tier B — only where its anchor can be correct ─────
 # Tier B (checkpoint anchor): `verify_archive -tier checkpoint` reads a LOCAL
@@ -1818,7 +1846,11 @@
       loop:
         - verify-archive-tier-b.timer
         - verify-archive-tier-b.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove verify-archive-tier-b unit files
       ansible.builtin.file:
@@ -1833,7 +1865,7 @@
       ansible.builtin.command:
         cmd: systemctl reset-failed verify-archive-tier-b.service
       changed_when: false
-      failed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 # ── galexie-mirror-verify — mirror content vs the upstream dataset ───
 # galexie-archive-fill checks presence only, so an upstream re-export of a
@@ -1876,7 +1908,11 @@
       loop:
         - galexie-mirror-verify.timer
         - galexie-mirror-verify.service
-      failed_when: false
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
 
     - name: Remove galexie-mirror-verify unit files
       ansible.builtin.file:
@@ -1897,7 +1933,10 @@
     name: cap67-movements.timer
     state: stopped
     enabled: false
-  failed_when: false
+  register: retired_cap67_timer
+  failed_when: >-
+    retired_cap67_timer is failed and
+    'Could not find the requested service' not in (retired_cap67_timer.msg | default(''))
 
 - name: Remove the retired cap67-movements.timer unit file
   ansible.builtin.file:
