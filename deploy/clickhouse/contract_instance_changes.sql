@@ -81,9 +81,14 @@
 -- ── Step 3: verify ──────────────────────────────────────────────────────
 -- Spot-check N contracts already present in the index: its captured
 -- instance-write identity set must equal a direct scan over
--- ledger_entry_changes with the same predicate the MV uses (bounded
--- per-contract reads):
+-- ledger_entry_changes with the same predicate the MV uses.
+-- ***Heavy op.*** The key_xdr bloom cannot serve a predicate on a function of
+-- key_xdr, so each of the 20 subqueries reads every contract_data row in the
+-- lake. Never run it as a bare query on the serving host; run it under the
+-- heavy-job lock, off-peak:
 --
+--   /usr/local/sbin/run-heavy-job.sh instance-changes-verify \
+--     clickhouse-client --port 9300 --max_threads 4 -q "
 --   SELECT countIf(a != b) FROM (
 --     SELECT
 --       (SELECT countDistinct(ledger_seq, tx_hash, change_index)
@@ -100,7 +105,7 @@
 --         WHERE contract_hash = c.contract_hash) AS b,
 --       c.contract_hash
 --     FROM (SELECT DISTINCT contract_hash FROM stellar.contract_instance_changes
---           LIMIT 20) c)
+--           LIMIT 20) c)"
 --
 -- Expect 0.
 

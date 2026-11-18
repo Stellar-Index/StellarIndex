@@ -144,9 +144,15 @@ WHERE fee_account != '';
 -- run the block with the ops and tx obs_job calls removed.
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
--- Spot-check N accounts: the projection's per-account key set must equal the
--- bloom-probe answer over the source tables (bounded per-account reads):
+-- Spot-check N accounts: the projection's per-account key set must equal a
+-- direct read of the source table.
+-- ***Heavy op.*** fee_account has no skip index, so the OR defeats
+-- idx_tx_source and each of the 20 subqueries scans all of transactions.
+-- Never run it as a bare query on the serving host; run it under the
+-- heavy-job lock, off-peak:
 --
+--   /usr/local/sbin/run-heavy-job.sh obs-verify \
+--     clickhouse-client --port 9300 --max_threads 4 -q "
 --   SELECT countIf(a != b) FROM (
 --     SELECT
 --       (SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE source_account = t.sa OR fee_account = t.sa) AS a,  -- countDistinct, NOT count(): raw counts include un-merged RMT duplicate parts (a first verify run flagged 20/20 'mismatches' that were exactly this)
@@ -155,7 +161,7 @@ WHERE fee_account != '';
 --       sa
 --     FROM (SELECT DISTINCT source_account AS sa FROM stellar.transactions
 --           WHERE ledger_seq > (SELECT max(ledger_seq) - 10000 FROM stellar.ledgers)
---           LIMIT 20) t)
+--           LIMIT 20) t)"
 --
 -- Expect 0. Then prove the whole table, window by window, and record the
 -- proof watermark the API probes (ops_by_source_proof):
