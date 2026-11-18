@@ -240,8 +240,11 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3). Version 3
     -- renumbered every ledger, so a legacy ledger_entries_current row can carry a
     -- HIGHER version than its correction and win FINAL. This table is versioned on
-    -- ingested_at, so a re-insert corrects it; the projection's stale rows must be
-    -- deleted. Procedure: docs/operations/runbooks/entry-walk-renumbering.md
+    -- ingested_at, so a re-insert corrects a row whose key did not move; but the key
+    -- holds change_index, which the renumbering moved on P23+ ledgers, so a row left
+    -- at its old change_index is an orphan that survives FINAL and must be deleted,
+    -- as must the projection's stale rows. Procedure (orphans: step 5):
+    -- docs/operations/runbooks/entry-walk-renumbering.md
     -- (see also migrations/0120).
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
