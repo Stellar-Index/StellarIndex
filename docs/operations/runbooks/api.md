@@ -638,6 +638,22 @@ After an API restart no reconciliation has run and the alert cannot fire. **Esca
 
 **Escalate:** none; related [scam_gate_fail_open](#stellarindex_scam_gate_fail_open), [systemd-unit-failed](infra.md#stellarindex_systemd_unit_failed).
 
+## stellarindex_directory_sync_snapshot_stale
+
+**Trigger.** `time() - max by (instance, source) (stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds) > 45 * 86400` for 1h, P3. The gauge is the newest file modification time in the tarball the last committed `stellarindex-ops directory-sync` read. A pinned `-url` + `-sha256` never changes, so scam flags added upstream since the pin are not applied. The gauge is absent when the archive carries no mtimes.
+
+**Check.**
+
+1. `grep EXTRA_FLAGS /etc/default/directory-sync`: which commit is pinned.
+2. Compare the upstream repository history since that commit for added scam-class tags.
+
+**Fix.**
+
+1. Pin a reviewed recent commit: `EXTRA_FLAGS=-url https://github.com/stellar-expert/public-directory/archive/<commit>.tar.gz -sha256 <hex digest of that tarball>` in `/etc/default/directory-sync`, then `systemctl start directory-sync`.
+2. Unpinned and still firing: upstream has not committed in 45 days; confirm and leave it, it clears on the next upstream commit.
+
+**Escalate:** none; related [directory_sync_unflagged](#stellarindex_directory_sync_unflagged).
+
 ## stellarindex_failed_auth_rate_high
 
 **Trigger.** `sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m])) > 1` for 15m, P3. Credential guessing may be underway; nothing got through. Past `api.failed_auth_rate_limit_per_min` (default 20/min) per IP and key prefix, a rejection answers 429 and is counted as `throttled`, so a sustained 1/s of `rejected` means more than three sources at cap or many under it. The cap changes the answer only: every credential is still looked up.

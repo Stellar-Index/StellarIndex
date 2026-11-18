@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,8 +42,8 @@ type AssetSupply struct {
 	FlowCount     uint64  `json:"flow_count"`
 	// Source is how TotalSupply was derived: "mint_burn_flows" (supply_flows), "ledger_total_coins"
 	// (XLM, from the ledger header; it has no SAC mint/burn events), or "contract_storage_balances"
-	// (the token's own storage balances, a DIFFERENT BASIS, served only for tokens emitting no
-	// supply events).
+	// (the token's own storage balances, a DIFFERENT BASIS, served when the event log is empty or
+	// its net is below the storage level).
 	Source string `json:"source"`
 
 	// SupplyBasis names the reading behind a "mint_burn_flows" TotalSupply in the supply.Basis
@@ -143,15 +144,28 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 			"This token's on-chain supply flows are incompletely seeded (recorded burns exceed recorded mints), so a total supply isn't available for it yet.")
 		return
 	}
-	// A token with NO flows is the one case the event log cannot speak to: an unseen contract scans
-	// to zeros, and zero claims "fully burned" rather than absence. Ask the contract's storage; if
-	// it declines too, publish nothing. Gated on FlowCount == 0, not a magnitude comparison, so the
-	// two readings never feed one figure (they measure from opposite ends; summing double-counts).
-	if sup.FlowCount == 0 {
-		if resp, storageStale, ok := s.storageSupplyResponse(ctx, assetID, contractID); ok {
+	// A classic asset's SAC keeps balances in trustlines, so its storage is only asked when the log is empty.
+	if sup.FlowCount == 0 || canonical.IsContractID(assetID) {
+		st, ok, err := s.storageReadingSupersedes(ctx, contractID, sup)
+		if err != nil {
+			writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
+				"Supply read failed", http.StatusBadGateway,
+				"Could not read the token's contract storage, so its event-log total cannot be shown complete.")
+			return
+		}
+		if ok {
+			resp, storageStale := s.storageSupplyResponse(ctx, assetID, contractID, st)
 			writeJSON(w, resp, Flags{Stale: storageStale})
 			return
 		}
+	}
+	// A spent budget may have cut the storage read short, so the event net is not shown complete.
+	if err := ctx.Err(); err != nil {
+		writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
+			"Supply read failed", http.StatusBadGateway, "Could not read token supply.")
+		return
+	}
+	if sup.FlowCount == 0 {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-incomplete",
 			"Supply not available", http.StatusNotFound,
 			"No supply flows are recorded for this contract and its storage offers no balance reading, so a total supply isn't available for it.")
@@ -183,26 +197,66 @@ type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error)
 }
 
-// storageSupplyResponse builds the storage-derived answer for a token the event log cannot speak to; ok=false means no
-// defensible answer (404), since a flowless token's event reading is an unfounded zero. Refusals are silent: an optional
-// fallback must not turn a 200 into a 502.
-func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID string) (AssetSupply, bool, bool) {
+// storageReadingSupersedes is the one event-vs-storage choice for a contract's supply: the storage level wins for a flowless
+// log (whose zero is unfounded), and otherwise only when it exceeds the event net. Storage is a floor, so a level above the
+// net proves the log partial and is the tighter floor, unless it fails the contract's own cross-check. The two are never
+// summed: they count the same tokens. A failed read is an error only for a log with flows, whose net it may have proved partial;
+// a flowless log has no figure to withhold.
+func (s *Server) storageReadingSupersedes(
+	ctx context.Context, contractID string, sup clickhouse.TokenSupply,
+) (clickhouse.ContractStorageSupply, bool, error) {
+	st, ok, err := s.contractStorageReading(ctx, contractID)
+	if err != nil && sup.FlowCount > 0 {
+		return clickhouse.ContractStorageSupply{}, false, err
+	}
+	if !ok {
+		return clickhouse.ContractStorageSupply{}, false, nil
+	}
+	if sup.FlowCount > 0 && sup.Total != nil &&
+		(st.Total.Cmp(sup.Total) <= 0 || (st.HasSelfChecks() && !st.SelfConsistent())) {
+		return clickhouse.ContractStorageSupply{}, false, nil
+	}
+	return st, true, nil
+}
+
+// contractStorageReading is the contract's storage level. ok=false with a nil error is a decline by design; an error is a read
+// that did not answer.
+func (s *Server) contractStorageReading(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, bool, error) {
 	if s.ContractStorageSupply == nil {
-		return AssetSupply{}, false, false
+		return clickhouse.ContractStorageSupply{}, false, nil
 	}
 	st, err := s.ContractStorageSupply.ContractStorageSupply(ctx, contractID)
 	if err != nil {
-		// Refusals (a SAC, an oversized holder set) and read errors land here. A SAC is the expected
-		// case for every classic asset, so log at debug, not warn.
-		s.logger.Debug("supply: contract storage fallback declined",
-			"contract_id", contractID, "err", err)
-		return AssetSupply{}, false, false
+		if storageSupplyDeclined(err) {
+			// A SAC is the expected case for every classic asset, so log at debug, not warn.
+			s.logger.Debug("supply: contract storage reading declined",
+				"contract_id", contractID, "err", err)
+			return clickhouse.ContractStorageSupply{}, false, nil
+		}
+		if ctx.Err() == nil {
+			s.logger.Warn("supply: contract storage reading failed", "contract_id", contractID, "err", err)
+		}
+		return clickhouse.ContractStorageSupply{}, false, err
 	}
 	if st.BalanceEntries == 0 || st.Total == nil || st.Total.Sign() == 0 {
 		// No balances is the absence of a reading, not a supply of zero.
-		return AssetSupply{}, false, false
+		return clickhouse.ContractStorageSupply{}, false, nil
 	}
+	return st, true, nil
+}
 
+// storageSupplyDeclined reports the reader's deliberate refusals: a SAC, a holder set past its cap, and a missing instance entry
+// that leaves the SAC check unrun. Each is a fixed property of the lake state, not a transient fault.
+func storageSupplyDeclined(err error) bool {
+	return errors.Is(err, clickhouse.ErrStorageSupplyIsStellarAsset) ||
+		errors.Is(err, clickhouse.ErrStorageSupplyTooManyEntries) ||
+		errors.Is(err, clickhouse.ErrStorageSupplyNoInstance)
+}
+
+// storageSupplyResponse renders a storage reading [Server.storageReadingSupersedes] chose; stale is the lake watermark's verdict.
+func (s *Server) storageSupplyResponse(
+	ctx context.Context, assetID, contractID string, st clickhouse.ContractStorageSupply,
+) (AssetSupply, bool) {
 	resp := AssetSupply{
 		AssetID:                     assetID,
 		ContractID:                  contractID,
@@ -226,7 +280,7 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 	// The lake watermark stamps as_of_ledger and decides flags.stale, as on the mint/burn arm.
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	resp.AsOfLedger = wmLedger
-	return resp, stale, true
+	return resp, stale
 }
 
 // resolveSupplyContractID maps an asset_id to the contract_id supply_flows is keyed by: a C-strkey is itself, a classic asset

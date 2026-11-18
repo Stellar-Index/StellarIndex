@@ -97,7 +97,7 @@ func directorySync(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	entries, skipped, err := fetchDirectoryTarball(ctx, *url, *pinSHA256)
+	entries, skipped, newest, err := fetchDirectoryTarball(ctx, *url, *pinSHA256)
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func directorySync(args []string) error {
 	}
 	hb.Progress(uint64(res.Upserted+res.Existing), 0) //nolint:gosec // non-negative row counts
 	exitOK = true
-	stampDirectorySyncTextfile(directoryTextfilePath(*textfile), res)
+	stampDirectorySyncTextfile(directoryTextfilePath(*textfile), res, newest)
 	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d un-flagged, %d held before, %d shadowed by another owner (source=%s).\n",
 		res.Upserted, res.Pruned, res.NewlyFlagged, res.Unflagged, res.Existing, res.Shadowed, directorySource)
 	return nil
@@ -149,22 +149,22 @@ func directorySync(args []string) error {
 const directoryFetchTimeout = 2 * time.Minute
 
 // fetchDirectoryTarball downloads the repo tarball and parses every
-// accounts/*.json blob into DirectoryEntry rows.
-func fetchDirectoryTarball(ctx context.Context, url, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, err error) {
+// accounts/*.json blob into DirectoryEntry rows; newest is the archive's latest file mtime, zero when none carries one.
+func fetchDirectoryTarball(ctx context.Context, url, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, newest time.Time, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, time.Time{}, err
 	}
 	// http.DefaultClient has no timeout; a host that stalls after connecting would hang this command
 	// forever, so the bound is made unconditional.
 	client := &http.Client{Timeout: directoryFetchTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("directory-sync: fetch: %w", err)
+		return nil, 0, time.Time{}, fmt.Errorf("directory-sync: fetch: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("directory-sync: fetch: HTTP %d from %s", resp.StatusCode, url)
+		return nil, 0, time.Time{}, fmt.Errorf("directory-sync: fetch: HTTP %d from %s", resp.StatusCode, url)
 	}
 
 	return parsePinnedDirectoryTarball(resp.Body, directoryMaxTarballBytes, wantSHA256)
@@ -186,30 +186,30 @@ func checkDirectorySourceFlags(url, wantSHA256 string) error {
 
 // parsePinnedDirectoryTarball is parseDirectoryTarball plus, when wantSHA256 is set, a SHA-256 over
 // every compressed byte (trailing bytes included) so any other tarball is refused before an entry returns.
-func parsePinnedDirectoryTarball(body io.Reader, maxBytes int64, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, err error) {
+func parsePinnedDirectoryTarball(body io.Reader, maxBytes int64, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, newest time.Time, err error) {
 	if wantSHA256 == "" {
 		return parseDirectoryTarball(body, maxBytes)
 	}
 	h := sha256.New()
 	tee := io.TeeReader(body, h)
-	if entries, skipped, err = parseDirectoryTarball(tee, maxBytes); err != nil {
-		return nil, 0, err
+	if entries, skipped, newest, err = parseDirectoryTarball(tee, maxBytes); err != nil {
+		return nil, 0, time.Time{}, err
 	}
 	if _, err = io.Copy(io.Discard, &boundedReader{r: tee, left: maxBytes}); err != nil {
-		return nil, 0, fmt.Errorf("directory-sync: tarball digest: %w", err)
+		return nil, 0, time.Time{}, fmt.Errorf("directory-sync: tarball digest: %w", err)
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, wantSHA256) {
-		return nil, 0, fmt.Errorf("directory-sync: tarball sha256 %s does not match the pinned -sha256 %s — refusing", got, strings.ToLower(wantSHA256))
+		return nil, 0, time.Time{}, fmt.Errorf("directory-sync: tarball sha256 %s does not match the pinned -sha256 %s — refusing", got, strings.ToLower(wantSHA256))
 	}
-	return entries, skipped, nil
+	return entries, skipped, newest, nil
 }
 
 // parseDirectoryTarball walks a gzip tarball, bounding compressed and decompressed streams at maxBytes and verifying the gzip trailer:
 // a truncated, corrupt or oversized snapshot is an error, never a shorter entry set.
-func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.DirectoryEntry, skipped int, err error) {
+func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.DirectoryEntry, skipped int, newest time.Time, err error) {
 	gz, err := gzip.NewReader(&boundedReader{r: body, left: maxBytes})
 	if err != nil {
-		return nil, 0, fmt.Errorf("directory-sync: gzip: %w", err)
+		return nil, 0, time.Time{}, fmt.Errorf("directory-sync: gzip: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
 
@@ -221,10 +221,14 @@ func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.
 			break
 		}
 		if herr != nil {
-			return nil, 0, fmt.Errorf("directory-sync: tar: %w", herr)
+			return nil, 0, time.Time{}, fmt.Errorf("directory-sync: tar: %w", herr)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
+		}
+		// An unset mtime decodes as the epoch; it is absent, not 1970.
+		if hdr.ModTime.Unix() > 0 && hdr.ModTime.After(newest) {
+			newest = hdr.ModTime
 		}
 		// Tarball paths are <repo>-<branch>/accounts/<ADDRESS>.json.
 		dir, file := path.Split(hdr.Name)
@@ -241,12 +245,12 @@ func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.
 	// tar.Reader stops before the gzip trailer; draining to EOF makes gzip verify the CRC and length,
 	// the only integrity signal an unpinned tarball carries.
 	if _, err := io.Copy(io.Discard, plain); err != nil {
-		return nil, 0, fmt.Errorf("directory-sync: tarball integrity: %w", err)
+		return nil, 0, time.Time{}, fmt.Errorf("directory-sync: tarball integrity: %w", err)
 	}
 	if len(entries) == 0 {
-		return nil, skipped, fmt.Errorf("directory-sync: parsed 0 entries (%d skipped) — refusing; upstream layout changed or fetch was truncated", skipped)
+		return nil, skipped, time.Time{}, fmt.Errorf("directory-sync: parsed 0 entries (%d skipped) — refusing; upstream layout changed or fetch was truncated", skipped)
 	}
-	return entries, skipped, nil
+	return entries, skipped, newest, nil
 }
 
 // directoryTextfileName is the node_exporter textfile a committed sync's
@@ -267,18 +271,20 @@ func directoryTextfilePath(explicit string) string {
 
 // stampDirectorySyncTextfile records what a committed sync changed; a
 // failure to stamp is a warning, never the run's outcome.
-func stampDirectorySyncTextfile(path string, res timescale.DirectorySyncResult) {
+func stampDirectorySyncTextfile(path string, res timescale.DirectorySyncResult, newest time.Time) {
 	if path == "" {
 		return
 	}
-	if err := writeTextfileAtomic(path, renderDirectorySyncTextfile(directorySource, res)); err != nil {
+	if err := writeTextfileAtomic(path, renderDirectorySyncTextfile(res, newest)); err != nil {
 		fmt.Fprintf(os.Stderr, "directory-sync: WARN textfile: %v\n", err)
 	}
 }
 
 // renderDirectorySyncTextfile renders stellarindex_directory_sync_rows_changed. An un-flag re-publishes a withheld price, so it is
-// exported for alerting rather than left in journald.
-func renderDirectorySyncTextfile(source string, res timescale.DirectorySyncResult) string {
+// exported for alerting rather than left in journald. The snapshot's newest file mtime ages a pin left in place; with none
+// the gauge is omitted, since 0 would read as a 1970 snapshot.
+func renderDirectorySyncTextfile(res timescale.DirectorySyncResult, newest time.Time) string {
+	const source = directorySource
 	var b strings.Builder
 	b.WriteString("# HELP stellarindex_directory_sync_rows_changed Rows the most recent committed directory-sync changed, by kind: pruned, newly_flagged (scam-class tag added: price withheld) and unflagged (scam-class tag cleared or row pruned: price no longer withheld).\n# TYPE stellarindex_directory_sync_rows_changed gauge\n")
 	for _, k := range []struct {
@@ -286,6 +292,10 @@ func renderDirectorySyncTextfile(source string, res timescale.DirectorySyncResul
 		n    int64
 	}{{"pruned", res.Pruned}, {"newly_flagged", res.NewlyFlagged}, {"unflagged", res.Unflagged}} {
 		fmt.Fprintf(&b, "stellarindex_directory_sync_rows_changed{source=%q,kind=%q} %d\n", source, k.kind, k.n)
+	}
+	if !newest.IsZero() {
+		b.WriteString("# HELP stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds Newest file modification time in the snapshot the most recent committed directory-sync read (Unix seconds); a pinned snapshot's age.\n# TYPE stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds gauge\n")
+		fmt.Fprintf(&b, "stellarindex_directory_sync_snapshot_newest_file_timestamp_seconds{source=%q} %d\n", source, newest.Unix())
 	}
 	return b.String()
 }

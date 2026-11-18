@@ -438,7 +438,7 @@ func (s *Server) fillContractDecimals(
 // clawbacks in the smallest unit, as /v1/assets/{id}/supply serves.
 // An INCOMPLETE reading (negative net: under-seeded flows) is UNAVAILABLE, never clamped to zero, which would read as fully burned. The
 // dust-liquidity guard suppresses the CAP only.
-// cut reports ctx ended mid-walk: unread, not refused.
+// cut reports ctx ended mid-walk or a row's supply read did not answer: unread, not refused.
 func (s *Server) fillContractMarketCaps(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 	scaled map[string]struct{},
@@ -449,11 +449,12 @@ func (s *Server) fillContractMarketCaps(
 	}
 	for i := range rows {
 		row := &rows[i]
-		circ, basis, ok := s.contractSupplyReading(ctx, row.AssetID)
+		circ, basis, ok, unread := s.contractSupplyReadingChecked(ctx, row.AssetID)
 		if !ok && ctx.Err() != nil {
 			return true
 		}
 		if !ok {
+			cut = cut || unread
 			row.MarketCapUSD, row.MarketCapLowerBound = nil, false // no reading of this contract's own supply: a cap from another basis does not stand in
 			continue
 		}
@@ -464,7 +465,7 @@ func (s *Server) fillContractMarketCaps(
 		}
 		s.applyContractMarketCap(row, circ, basis, isScaled, sources)
 	}
-	return false
+	return cut
 }
 
 // applyContractMarketCap fills one contract row's supply/cap from a successful supply reading, encoding the refusal rules: unscaled
@@ -505,6 +506,7 @@ func (s *Server) applyContractMarketCap(
 		return
 	}
 	row.MarketCapUSD = &mc
+	row.MarketCapLowerBound = basis.LowerBound()
 }
 
 // contractPriceScaleDisagrees reports that a contract row's DEX price (normalised through nonstandard_decimals_assets, else
@@ -540,19 +542,11 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 	}
 }
 
-// contractSupplyReading resolves one contract token's circulating supply and basis. Counterpart to [classicSupplyReading]: the
-// preference order lives in ONE place, or two surfaces publish different bases under one field name. Readings measure ISSUANCE
-// against DISTRIBUTION and are never summed. ok=false means no defensible figure: an INCOMPLETE flow sum (negative net, never
-// clamped to zero), or no flows and no storage reading.
-func (s *Server) contractSupplyReading(
-	ctx context.Context, assetID string,
-) (string, supply.Basis, bool) {
-	figure, basis, ok, _ := s.contractSupplyReadingChecked(ctx, assetID)
-	return figure, basis, ok
-}
-
-// contractSupplyReadingChecked is [Server.contractSupplyReading] plus unread: the flow read did not answer,
-// which is not "no defensible figure" and must not be cached as one.
+// contractSupplyReadingChecked resolves one contract token's circulating supply and basis. Counterpart to [classicSupplyReading]:
+// the preference order lives in ONE place, or two surfaces publish different bases under one field name. Readings measure
+// ISSUANCE against DISTRIBUTION and are never summed. ok=false means no defensible figure: an INCOMPLETE flow sum (negative net,
+// never clamped to zero), or no flows and no storage reading. unread means a read did not answer, which is not "no defensible
+// figure" and must not be cached as one.
 func (s *Server) contractSupplyReadingChecked(
 	ctx context.Context, assetID string,
 ) (figure string, basis supply.Basis, ok, unread bool) {
@@ -563,40 +557,21 @@ func (s *Server) contractSupplyReadingChecked(
 	if sup.Total == nil || sup.Incomplete {
 		return "", "", false, false
 	}
-	// A token emitting no SEP-41 events is ABSENT from the event reader and sums to a confident zero.
-	// With no log at all, read held balances; if storage declines too there is no figure, as on
+	// Held balances win for a flowless log or one whose net they exceed, by the same choice as
 	// GET /v1/assets/{id}/supply.
+	st, ok, err := s.storageReadingSupersedes(ctx, assetID, sup)
+	if ok {
+		return st.Total.String(), supply.BasisContractStorageBalances, true, false
+	}
+	// A failed storage read or a spent deadline is unread, not "no figure" and not "storage agreed": a SAC declines by design.
+	if err != nil || ctx.Err() != nil {
+		return "", "", false, true
+	}
 	if sup.FlowCount == 0 {
-		st, ok := s.contractStorageCirculating(ctx, assetID)
-		if !ok {
-			// A SAC declines by design, so only a spent deadline is counted as unread here.
-			return "", "", false, ctx.Err() != nil
-		}
-		return st, supply.BasisContractStorageBalances, true, false
+		return "", "", false, false
 	}
 	// The lake's event-flow sum over the contract's own mint/burn/clawback log.
 	return sup.Total.String(), supply.BasisSEP41LakeFlows, true, false
-}
-
-// contractStorageCirculating reads supply from per-holder balance entries in contract storage, for a contract that emits no
-// SEP-41 events. It is a DIFFERENT BASIS, used only where the event reading has no history and never summed with it. ok=false on
-// no reader, a read error, a SAC (balances live in trustlines) or a holder set past the cap; a zero-entry read is the ABSENCE of
-// a reading, not zero supply.
-func (s *Server) contractStorageCirculating(ctx context.Context, contractID string) (string, bool) {
-	if s.ContractStorageSupply == nil {
-		return "", false
-	}
-	st, err := s.ContractStorageSupply.ContractStorageSupply(ctx, contractID)
-	if err != nil {
-		// A SAC is the expected structural refusal here, so this is debug volume, not a warning.
-		s.logger.Debug("rwa: contract storage supply declined",
-			"contract_id", contractID, "err", err)
-		return "", false
-	}
-	if st.BalanceEntries == 0 || st.Total == nil || st.Total.Sign() == 0 {
-		return "", false
-	}
-	return st.Total.String(), true
 }
 
 // fillContractDirectoryTags stamps the curated label from the CONTRACT address and applies scam suppression to it: the classic
