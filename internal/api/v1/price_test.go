@@ -855,6 +855,21 @@ func TestPrice_XLMQuoteAlias(t *testing.T) {
 	}
 }
 
+// A quote spelling that could not be read ends the walk: the SAC's thin book must not answer for an established book
+// that failed, or a cache outage reads as a 200 from the weakest market.
+func TestPrice_XLMQuoteAlias_ReadFailureEndsTheWalk(t *testing.T) {
+	thin := v1.PriceSnapshot{AssetID: usdcClassicID, Quote: canonical.XLMSacContractID, Price: "9.9", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())}
+	reader := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdcClassicID + "/" + canonical.XLMSacContractID: thin}}
+	status, body := priceGet(t, v1.Options{Prices: reader, Triangulated: quoteFailingVWAPLooker{ok: canonical.XLMSacContractID}},
+		"/v1/price?asset="+usdcClassicID+"&quote=native")
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (native unreadable): %s", status, body)
+	}
+	if strings.Contains(body, `"price":"9.9"`) {
+		t.Errorf("served the SAC book in place of the unread native one: %s", body)
+	}
+}
+
 // gatingStubPriceReader also implements proxyPairGate (RecentClosedVWAP1mExists), which the stablecoin proxy uses to
 // skip empty pegs before the unbounded last-trade walk; latestCalls proves a gated-out peg is never walked.
 type gatingStubPriceReader struct {

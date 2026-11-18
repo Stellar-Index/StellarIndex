@@ -648,7 +648,7 @@ func (s *Server) resolvePriceServeQuoteAliases(r *http.Request, reader PriceRead
 			continue
 		}
 		ps, adm := s.resolvePriceServeThin(r, reader, asset, q)
-		if ps.miss == nil {
+		if ps.miss == nil || ps.miss.err != nil || ps.miss.withheld != "" {
 			return ps, adm, q
 		}
 		if firstAdm == nil {
