@@ -93,8 +93,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
     month     Date,
     asset     String,
     contract  String,
-    inflow    Int128,
-    outflow   Int128,
+    inflow    Int256,
+    outflow   Int256,
     movements UInt64,
     actives   AggregateFunction(uniqCombined, String),
     first_at  DateTime('UTC'),
@@ -112,8 +112,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows
     root            String,
     month           Date,
     asset           String,
-    inflow          Int128,
-    outflow         Int128,
+    inflow          Int256,
+    outflow         Int256,
     movements       UInt64,
     active_accounts UInt64
 )
@@ -224,3 +224,13 @@ ALTER TABLE stellar.account_cohort_positions
     MODIFY COLUMN amount Int256;
 ALTER TABLE stellar.account_cohort_positions_staging
     MODIFY COLUMN amount Int256;
+
+-- Flows sum i128 token amounts, which wrap in Int128. Retype the working table
+-- and both EXCHANGE halves the same way (a no-op once applied; the tables are
+-- rebuilt every cycle). Apply before rolling the binary that fills Int256.
+ALTER TABLE stellar.account_cohort_parts_staging
+    MODIFY COLUMN inflow Int256, MODIFY COLUMN outflow Int256;
+ALTER TABLE stellar.account_cohort_flows
+    MODIFY COLUMN inflow Int256, MODIFY COLUMN outflow Int256;
+ALTER TABLE stellar.account_cohort_flows_staging
+    MODIFY COLUMN inflow Int256, MODIFY COLUMN outflow Int256;

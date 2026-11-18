@@ -144,8 +144,8 @@ var cohortRollupStatements = []rollupStep{
 	        toStartOfMonth(m.closed_at) AS month,
 	        m.asset,
 	        if(startsWith(m.counterparty, 'C'), m.counterparty, '') AS contract,
-	        sumIf(toInt128(m.amount), m.direction = '` + string(AccountMovementReceived) + `') AS inflow,
-	        sumIf(toInt128(m.amount), m.direction = '` + string(AccountMovementSent) + `') AS outflow,
+	        sumIf(toInt256(m.amount), m.direction = '` + string(AccountMovementReceived) + `') AS inflow,
+	        sumIf(toInt256(m.amount), m.direction = '` + string(AccountMovementSent) + `') AS outflow,
 	        toUInt64(count()) AS movements,
 	        uniqCombinedState(m.address) AS actives,
 	        min(m.closed_at) AS first_at,
@@ -164,7 +164,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_flows_staging
 	     (rel, root, month, asset, inflow, outflow, movements, active_accounts)
 	 SELECT rel, root, month, asset,
-	        sum(toInt128(inflow)), sum(toInt128(outflow)),
+	        sum(toInt256(inflow)), sum(toInt256(outflow)),
 	        toUInt64(sum(movements)), toUInt64(uniqCombinedMerge(actives))
 	 FROM stellar.account_cohort_parts_staging
 	 GROUP BY rel, root, month, asset
@@ -174,7 +174,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_flows_staging
 	     (rel, root, month, asset, inflow, outflow, movements, active_accounts)
 	 SELECT rel, root, month, '` + CohortAllAssets + `',
-	        toInt128(0), toInt128(0),
+	        toInt256(0), toInt256(0),
 	        toUInt64(sum(movements)), toUInt64(uniqCombinedMerge(actives))
 	 FROM stellar.account_cohort_parts_staging
 	 GROUP BY rel, root, month

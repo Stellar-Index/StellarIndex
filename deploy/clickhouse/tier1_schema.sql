@@ -1262,8 +1262,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
     month     Date,
     asset     String,
     contract  String,
-    inflow    Int128,
-    outflow   Int128,
+    inflow    Int256,
+    outflow   Int256,
     movements UInt64,
     actives   AggregateFunction(uniqCombined, String),
     first_at  DateTime('UTC'),
@@ -1283,8 +1283,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows
     root            String,
     month           Date,
     asset           String,
-    inflow          Int128,
-    outflow         Int128,
+    inflow          Int256,
+    outflow         Int256,
     movements       UInt64,
     active_accounts UInt64
 )
