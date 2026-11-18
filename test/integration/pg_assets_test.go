@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -658,7 +659,12 @@ func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 	if err := decimals.Refresh(ctx); err != nil {
 		t.Fatalf("decimals cache refresh: %v", err)
 	}
-	srv := v1.New(v1.Options{AssetsReader: store, NonstandardDecimals: decimals})
+	// The lake declares every fixture token's decimals(), as production's ClickHouse reader would; the projection
+	// records only the nonstandard three, so the 7-dp control's scale comes from the lake alone.
+	lake := lockstepResolver{
+		decimalsNineContract: 9, decimalsEighteenContract: 18, decimalsFiveContract: 5, decimalsSevenContract: 7,
+	}
+	srv := v1.New(v1.Options{AssetsReader: store, NonstandardDecimals: decimals, TokenDecimals: lake})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
@@ -678,7 +684,7 @@ func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 		decimalsNineContract:     {"2.5000000000", "2500.00", 9},
 		decimalsEighteenContract: {"14.0000000000", "14000.00", 18},
 		decimalsFiveContract:     {"2.0000000000", "2000.00", 5},
-		decimalsSevenContract:    {"0.6500000000", "650.00", 7}, // unflagged control
+		decimalsSevenContract:    {"0.6500000000", "650.00", 7}, // unflagged control, lake-declared 7
 	} {
 		row, ok := byID[id]
 		if !ok {
@@ -709,6 +715,45 @@ func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 			t.Errorf("/v1/assets/{18dp} price_usd = %s, want 14.0000000000", got)
 		}
 	})
+
+	// The control with NO scale source: neither the projection nor the lake knows its decimals, so 7 would be a guess.
+	// The listing must omit `decimals` (not serve 0 or 7) and refuse the cap; the projection-confirmed rows keep theirs.
+	for name, reader := range map[string]v1.TokenDecimalsReader{
+		"no lake reader":     nil,
+		"lake declares none": lockstepResolver{},
+	} {
+		t.Run("unknown scale/"+name, func(t *testing.T) {
+			opts := v1.Options{AssetsReader: store, NonstandardDecimals: decimals}
+			if reader != nil {
+				opts.TokenDecimals = reader
+			}
+			ts := httptest.NewServer(v1.New(opts).Handler())
+			defer ts.Close()
+			var raw struct {
+				Data []map[string]json.RawMessage `json:"data"`
+			}
+			getJSON(t, ts.URL+"/v1/assets?type=soroban&limit=50", &raw)
+			got := make(map[string]map[string]json.RawMessage, len(raw.Data))
+			for _, d := range raw.Data {
+				var id string
+				_ = json.Unmarshal(d["asset_id"], &id)
+				got[id] = d
+			}
+			seven, ok := got[decimalsSevenContract]
+			if !ok {
+				t.Fatalf("%s missing from the listing", decimalsSevenContract)
+			}
+			if d, present := seven["decimals"]; present {
+				t.Errorf("unknown-scale row serves decimals = %s, want the field absent", d)
+			}
+			if mc := seven["market_cap_usd"]; len(mc) != 0 && string(mc) != "null" {
+				t.Errorf("unknown-scale row serves market_cap_usd = %s, want none", mc)
+			}
+			if d := string(got[decimalsNineContract]["decimals"]); d != "9" {
+				t.Errorf("projection-confirmed row decimals = %q, want 9", d)
+			}
+		})
+	}
 }
 
 // TestAssetListing_ChangeNeedsLookbackOlderThanHeadline: the headline arm falls back days to the newest trade over the
