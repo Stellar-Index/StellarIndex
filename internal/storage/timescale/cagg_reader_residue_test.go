@@ -8,14 +8,14 @@ import (
 	"testing"
 )
 
-// TestChangeWindowsMatchDocumentedTolerance pins that every change lookback reads within AssetRow's
-// documented tolerance of its target (1h +-5 min, 24h +-30 min, 7d +-2 h). Looser lower bounds let a thin
-// token's 88-minute move serve as change_1h_pct.
+// TestChangeWindowsMatchDocumentedTolerance pins that every change lookback reads at or before its target and
+// within AssetRow's documented tolerance below it (1h 5 min, 24h 30 min, 7d 2 h). Looser lower bounds let a thin
+// token's 88-minute move serve as change_1h_pct; an upper bound past the target serves a 23.5-hour change as 24h.
 func TestChangeWindowsMatchDocumentedTolerance(t *testing.T) {
 	want := map[string]string{
-		"priceWindow1h":  `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '55 minutes'`,
-		"priceWindow24h": `bucket BETWEEN now() - INTERVAL '24 hours 30 minutes' AND now() - INTERVAL '23 hours 30 minutes'`,
-		"priceWindow7d":  `bucket BETWEEN now() - INTERVAL '7 days 2 hours' AND now() - INTERVAL '6 days 22 hours'`,
+		"priceWindow1h":  `bucket BETWEEN now() - INTERVAL '65 minutes' AND now() - INTERVAL '1 hour'`,
+		"priceWindow24h": `bucket BETWEEN now() - INTERVAL '24 hours 30 minutes' AND now() - INTERVAL '24 hours'`,
+		"priceWindow7d":  `bucket BETWEEN now() - INTERVAL '7 days 2 hours' AND now() - INTERVAL '7 days'`,
 	}
 	got := map[string]string{
 		"priceWindow1h":  priceWindow1h,
