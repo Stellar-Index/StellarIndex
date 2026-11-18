@@ -78,8 +78,21 @@ export function NetworkLivePanel() {
  * completeness is the lake axis of /v1/coverage.
  */
 export function SystemHealthLivePanel() {
-  const { data, isLoading } = useCursors();
+  const { data, isLoading, isError } = useCursors();
   const coverage = useCoverage();
+
+  if (isError && !data) {
+    return (
+      <Panel
+        headingLevel={2}
+        title="System health"
+        source={asExample('/v1/diagnostics/cursors')}
+        bodyClassName="text-xs text-down-strong"
+      >
+        System health is unavailable: the cursors read failed.
+      </Panel>
+    );
+  }
 
   if (isLoading || !data) {
     return (
