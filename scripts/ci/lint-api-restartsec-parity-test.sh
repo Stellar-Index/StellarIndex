@@ -69,6 +69,18 @@ for unit in stellarindex-api stellarindex-aggregator stellarindex-indexer; do
   done
 done
 
+# ProtectSystem=full leaves /var writable, so the API's ReadWritePaths would
+# confine nothing; only strict makes it the API's one writable path.
+for f in deploy/systemd/stellarindex-api.service configs/ansible/roles/archival-node/templates/systemd/stellarindex-api.service.j2; do
+  if grep -q '^ProtectSystem=strict$' "$f" && grep -q '^ReadWritePaths=/var/lib/stellarindex$' "$f"; then
+    echo "ok: $f confines writes to /var/lib/stellarindex"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: $f lacks ProtectSystem=strict + ReadWritePaths=/var/lib/stellarindex — the internet-facing API can write all of /var" >&2
+    fail=$((fail + 1))
+  fi
+done
+
 echo
 echo "lint-api-restartsec-parity-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
