@@ -69,12 +69,10 @@ const (
 )
 
 // parseMovementFilter reads optional ?kind= / ?direction= / ?asset=. An invalid direction is a problem+json (ok=false); an unknown kind
-// matches nothing. asset is canonicalised if it parses as an asset id, else passed verbatim.
-func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (clickhouse.AccountMovementFilter, bool) {
-	f := clickhouse.AccountMovementFilter{
-		Kind:  r.URL.Query().Get("kind"),
-		Asset: normalizeMovementAssetFilter(r.URL.Query().Get("asset")),
-	}
+// matches nothing. asset is canonicalised if it parses as an asset id, else passed verbatim; assetLookupFailed is
+// [Handler.normalizeMovementAssetFilter]'s.
+func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (f clickhouse.AccountMovementFilter, assetLookupFailed, ok bool) {
+	f = clickhouse.AccountMovementFilter{Kind: r.URL.Query().Get("kind")}
 	if dir := r.URL.Query().Get("direction"); dir != "" {
 		switch clickhouse.AccountMovementDirection(dir) {
 		case clickhouse.AccountMovementSent, clickhouse.AccountMovementReceived, clickhouse.AccountMovementSelf:
@@ -83,26 +81,31 @@ func (h *Handler) parseMovementFilter(w http.ResponseWriter, r *http.Request) (c
 			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
 				"Invalid parameter", http.StatusBadRequest,
 				"direction must be one of sent, received, self")
-			return clickhouse.AccountMovementFilter{}, false
+			return clickhouse.AccountMovementFilter{}, false, false
 		}
 	}
-	return f, true
+	f.Asset, assetLookupFailed = h.normalizeMovementAssetFilter(r.Context(), r.URL.Query().Get("asset"))
+	return f, assetLookupFailed, true
 }
 
 // normalizeMovementAssetFilter folds ?asset= to the stores' spelling ("native" / "CODE-ISSUER"); the filter is exact-match, so "XLM"
-// would serve an authoritative-looking empty feed. Non-asset values (pool:<hex> legs, raw C... ids) pass through verbatim.
-func normalizeMovementAssetFilter(raw string) string {
+// or a SAC id would serve an authoritative-looking empty feed. A SAC folds to the asset it wraps, as [Handler.assetMovementsID] does;
+// lookupFailed means a C... id could not be proven a non-SAC. Non-asset values (pool:<hex> legs) pass through verbatim.
+func (h *Handler) normalizeMovementAssetFilter(ctx context.Context, raw string) (asset string, lookupFailed bool) {
 	if raw == "" {
-		return ""
+		return "", false
 	}
 	parsed, err := canonical.ParseAsset(raw)
 	if err != nil {
-		return raw
+		return raw, false
 	}
 	if isNativeHoldersAsset(parsed) {
-		return canonical.NativeAsset().String()
+		return canonical.NativeAsset().String(), false
 	}
-	return parsed.String()
+	if parsed.Type == canonical.AssetSoroban {
+		return h.resolveSEP41MovementAssetChecked(ctx, parsed.ContractID)
+	}
+	return parsed.String(), false
 }
 
 // movementCursorParts is the (ledger, tx_hash, op_index, leg_index) tuple the opaque `?cursor=` encodes; leg_index on the CH side maps
@@ -188,7 +191,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	filter, ok := h.parseMovementFilter(w, r)
+	filter, assetLookupFailed, ok := h.parseMovementFilter(w, r)
 	if !ok {
 		return
 	}
@@ -245,7 +248,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// every subsequent page reuses it.
 		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed, time.Time{})
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed, time.Time{})
 }
 
 // movementsWatermark resolves the cap67 watermark splitting a page between the CH archive and the PG tail, so arms stay gap- and double-

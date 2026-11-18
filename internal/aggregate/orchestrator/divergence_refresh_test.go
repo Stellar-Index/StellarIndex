@@ -30,16 +30,16 @@ type captureRefresher struct {
 
 type refreshCall struct {
 	Pair     canonical.Pair
-	OurPrice float64
+	OurPrice string
 	At       time.Time
 	Pinned   bool
 }
 
-func (r *captureRefresher) RefreshPair(_ context.Context, pair canonical.Pair, ourPrice float64, at time.Time) error {
+func (r *captureRefresher) RefreshPair(_ context.Context, pair canonical.Pair, ourPrice string, at time.Time) error {
 	return r.record(refreshCall{Pair: pair, OurPrice: ourPrice, At: at})
 }
 
-func (r *captureRefresher) RefreshPinnedPair(_ context.Context, pair canonical.Pair, pinnedPrice float64, at time.Time) error {
+func (r *captureRefresher) RefreshPinnedPair(_ context.Context, pair canonical.Pair, pinnedPrice string, at time.Time) error {
 	return r.record(refreshCall{Pair: pair, OurPrice: pinnedPrice, At: at, Pinned: true})
 }
 
@@ -164,7 +164,7 @@ func TestRefreshDivergenceAll_HappyPath(t *testing.T) {
 	if !got.Pair.Equal(pair) {
 		t.Errorf("pair = %v, want %v", got.Pair, pair)
 	}
-	if got.OurPrice != 0.42 {
+	if got.OurPrice != "0.42" {
 		t.Errorf("ourPrice = %v, want 0.42", got.OurPrice)
 	}
 	if !got.At.Equal(now) {
@@ -199,7 +199,7 @@ func TestRefreshDivergenceAll_NativeReadsTheCryptoXLMKey(t *testing.T) {
 	if len(capR.calls) != 1 {
 		t.Fatalf("RefreshPair calls: got %d, want 1", len(capR.calls))
 	}
-	if got := capR.calls[0]; !got.Pair.Equal(pair) || got.OurPrice != 0.18 {
+	if got := capR.calls[0]; !got.Pair.Equal(pair) || got.OurPrice != "0.18" {
 		t.Errorf("call = %v @ %v, want %v @ 0.18", got.Pair, got.OurPrice, pair)
 	}
 }
@@ -234,7 +234,7 @@ func TestRefreshDivergenceAll_ReversedWindowsUseShortest(t *testing.T) {
 	if len(capR.calls) != 1 {
 		t.Fatalf("RefreshPair calls: got %d, want 1", len(capR.calls))
 	}
-	if got := capR.calls[0].OurPrice; got != 0.42 {
+	if got := capR.calls[0].OurPrice; got != "0.42" {
 		t.Errorf("ourPrice = %v, want 0.42 (the 5m VWAP); windows listed longest-first "+
 			"must not make the 24h VWAP the divergence input", got)
 	}

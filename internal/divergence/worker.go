@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"strconv"
 	"sync"
 	"time"
@@ -33,8 +34,10 @@ type CachedResult struct {
 	PairID string `json:"pair_id"`
 
 	// OurPrice / Median / DivergencePct mirror the comparator output.
-	//floatmoney:ok internal Redis cache wire shape read only by the aggregator's cross-oracle signal (confidence.go lookupCrossOracle); never re-served — the durable ObservationRecord path formats to decimal strings at the sink boundary (worker.go RecordObservation)
-	OurPrice      float64 `json:"our_price"`
+	//floatmoney:ok comparator input, read only by the aggregator's cross-oracle signal (confidence.go lookupCrossOracle); never stored or served — OurPriceExact is
+	OurPrice float64 `json:"our_price"`
+	// OurPriceExact is our VWAP verbatim as the cache holds it; divergence_observations and the divergence.firing webhook carry this.
+	OurPriceExact string  `json:"our_price_exact,omitempty"`
 	Median        float64 `json:"median"`
 	DivergencePct float64 `json:"divergence_pct"`
 
@@ -279,17 +282,28 @@ func recordReferenceHealth(pair canonical.Pair, res Result, quorumMet bool) {
 // ErrNoReferenceResponded is returned by RefreshPair when no configured reference answered and at least one genuinely failed; the outage result is still cached, so it can be paged on.
 var ErrNoReferenceResponded = errors.New("divergence: no reference responded for pair")
 
-// RefreshPair compares ourPrice with the references and caches the result at div:<base>/<quote>; it returns nil when no references are configured, ErrNoReferenceResponded, or a cache error.
-func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time) error {
+// ErrUnparseablePrice is returned when ourPrice is not a decimal number.
+var ErrUnparseablePrice = errors.New("divergence: our price is not a decimal number")
+
+// RefreshPair compares ourPrice (the exact decimal string we serve) with the references and caches the result at div:<base>/<quote>; it returns nil when no references are configured, ErrUnparseablePrice, ErrNoReferenceResponded, or a cache error.
+func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice string, observedAt time.Time) error {
 	return s.refresh(ctx, pair, ourPrice, observedAt, false)
 }
 
 // RefreshPinnedPair is [Service.RefreshPair] for a frozen pair: references are polled but reach no verdict against pinnedPrice, so the entry is marked Pinned and no hook fires.
-func (s *Service) RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice float64, observedAt time.Time) error {
+func (s *Service) RefreshPinnedPair(ctx context.Context, pair canonical.Pair, pinnedPrice string, observedAt time.Time) error {
 	return s.refresh(ctx, pair, pinnedPrice, observedAt, true)
 }
 
-func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice float64, observedAt time.Time, pinned bool) error {
+func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPriceExact string, observedAt time.Time, pinned bool) error {
+	if _, ok := new(big.Rat).SetString(ourPriceExact); !ok {
+		return fmt.Errorf("%w: %q", ErrUnparseablePrice, ourPriceExact)
+	}
+	// The float is the comparator's ratio input only; ourPriceExact is what is stored and served.
+	ourPrice, err := strconv.ParseFloat(ourPriceExact, 64)
+	if err != nil {
+		return fmt.Errorf("%w: %q", ErrUnparseablePrice, ourPriceExact)
+	}
 	if len(s.refs) == 0 {
 		return nil
 	}
@@ -333,6 +347,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	cached := CachedResult{
 		PairID:         pair.String(),
 		OurPrice:       ourPrice,
+		OurPriceExact:  ourPriceExact,
 		Median:         res.Median,
 		DivergencePct:  res.DivergencePct,
 		WarningFired:   warningFired,
@@ -377,7 +392,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 		if observedAt.IsZero() {
 			stampedAt = cached.ComputedAt
 		}
-		s.flushObservations(ctx, pair, ourPrice, res, stampedAt)
+		s.flushObservations(ctx, pair, ourPriceExact, ourPrice, res, stampedAt)
 	}
 
 	if evaluated {
@@ -514,6 +529,7 @@ func (s *Service) restoreWarningState(ctx context.Context, pairKey, cacheKey str
 func (s *Service) flushObservations(
 	ctx context.Context,
 	pair canonical.Pair,
+	ourPriceExact string,
 	ourPrice float64,
 	res Result,
 	observedAt time.Time,
@@ -526,11 +542,11 @@ func (s *Service) flushObservations(
 		}
 		deltaPct := (ourPrice - refPrice) / refPrice * 100.0
 		firing := absFloat(deltaPct) > s.threshold
-		// ADR-0003: price/delta fields are decimal strings (shortest round-trip, as api/v1.moneyStr), so no raw float64 is bound into a NUMERIC column.
+		// ADR-0003: OurPrice is our VWAP verbatim; the reference price and delta are float comparator outputs rendered shortest round-trip.
 		if err := s.sink.RecordObservation(ctx, ObservationRecord{
 			Pair:          pair,
 			Reference:     refName,
-			OurPrice:      strconv.FormatFloat(ourPrice, 'f', -1, 64),
+			OurPrice:      ourPriceExact,
 			RefPrice:      strconv.FormatFloat(refPrice, 'f', -1, 64),
 			DeltaPct:      strconv.FormatFloat(deltaPct, 'f', -1, 64),
 			Firing:        firing,

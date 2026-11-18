@@ -136,7 +136,7 @@ func TestDivergenceFiringHook_WithholdsFlaggedIssuer(t *testing.T) {
 			}
 			pub := &recordingPublisher{}
 			hook := divergenceFiringHook(discardLogger(), pub, flaggedWithholding())
-			if err := hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: time.Now()}); err != nil {
+			if err := hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, OurPriceExact: "0.42", Median: 0.3, ComputedAt: time.Now()}); err != nil {
 				t.Fatalf("withheld hook returned %v, want nil", err)
 			}
 			if len(pub.payloads) != 0 {
@@ -162,7 +162,7 @@ func TestDivergenceFiringHook_FanoutFailureIsReturned(t *testing.T) {
 	pub := &recordingPublisher{err: boom}
 	hook := divergenceFiringHook(discardLogger(), pub, flaggedWithholding())
 	since := time.Unix(1700000000, 0)
-	cached := divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: since.Add(time.Minute), FiringSince: since}
+	cached := divergence.CachedResult{OurPrice: 0.42, OurPriceExact: "0.42", Median: 0.3, ComputedAt: since.Add(time.Minute), FiringSince: since}
 	if got := hook(context.Background(), pair, cached); !errors.Is(got, boom) {
 		t.Fatalf("hook err = %v, want %v", got, boom)
 	}
@@ -185,7 +185,7 @@ func TestDivergenceFiringHook_UnflaggedPairStillDelivers(t *testing.T) {
 	}
 	pub := &recordingPublisher{}
 	hook := divergenceFiringHook(discardLogger(), pub, flaggedWithholding())
-	if err := hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, Median: 0.3, ComputedAt: time.Now()}); err != nil {
+	if err := hook(context.Background(), pair, divergence.CachedResult{OurPrice: 0.42, OurPriceExact: "0.42", Median: 0.3, ComputedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	if len(pub.payloads) != 1 || pub.events[0] != platform.WebhookEventDivergenceFiring {

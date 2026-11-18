@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -32,10 +33,9 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		"a.issuer <> '' AND (a.maker = a.issuer OR a.taker = a.issuer)",
 		// Issuer derivation: the G-strkey suffix of a classic id.
 		"split_part(asset_id, '-', 2)",
-		// Market-surface (real price surface) detection on the RAW counterpart.
-		"a.counterpart = 'native'",
+		// Market-surface detection on the RAW counterpart against every identity of XLM and Circle USDC.
+		"a.counterpart = ANY({{MARKET_COUNTERPARTS}})",
 		"a.counterpart LIKE 'fiat:%'",
-		"a.counterpart LIKE 'USDC-%'",
 		// Exact NUMERIC volume for the stored column (ADR-0003).
 		"SUM(a.v_num)::text",
 		// Grouped per canonical asset.
@@ -221,6 +221,71 @@ func TestRollAssetVolumeCharacter_FailedRestoreFailsTheCall(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "restore statement_timeout") {
 		t.Errorf("error = %q, want it to name the failed restore", err.Error())
+	}
+}
+
+// A failed RESET of the parallelism cap fails the call, on a cancelled caller context too: the connection must not return to
+// the pool still capped.
+func TestRollAssetVolumeCharacter_FailedParallelismResetFailsTheCall(t *testing.T) {
+	t.Parallel()
+
+	script := rollAssetVolumeCharacterScript()
+	script[8] = scriptedResult{err: errors.New("connection reset by peer")} // RESET fails
+
+	store, conn := newScriptedStore(t, script...)
+
+	_, err := store.rollAssetVolumeCharacter(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "reset parallelism") {
+		t.Fatalf("rollAssetVolumeCharacter err = %v, want the failed parallelism RESET named", err)
+	}
+	if n := conn.closes.Load(); n != 1 {
+		t.Errorf("driver connection closed %d times, want 1: a connection still capped at 2 workers went back to the pool", n)
+	}
+}
+
+// A caller cancelled mid-read must still lift the parallelism cap, on a detached bounded context, and keep the
+// connection: the RESET on the caller's own context is what left pooled connections capped.
+func TestRollAssetVolumeCharacter_CancelledCallerStillResetsParallelism(t *testing.T) {
+	t.Parallel()
+
+	script := rollAssetVolumeCharacterScript()
+	script[5] = scriptedResult{stall: true} // the roll itself, until the caller cancels
+	store, conn := newScriptedStore(t, script...)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	_, err := store.rollAssetVolumeCharacter(ctx)
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "reset parallelism") {
+		t.Fatalf("rollAssetVolumeCharacter err = %v, want only the caller's cancellation", err)
+	}
+	stmts := conn.stmts
+	last := stmts[len(stmts)-1]
+	if last.sql != "RESET max_parallel_workers_per_gather" {
+		t.Fatalf("last statement = %q, want the parallelism RESET", last.sql)
+	}
+	if last.deadline.IsZero() {
+		t.Errorf("RESET ran on the cancelled caller context, want a detached bounded one")
+	}
+	if n := conn.closes.Load(); n != 0 {
+		t.Errorf("driver connection closed %d times, want 0: a cleanly reset connection stays pooled", n)
+	}
+}
+
+// rollAssetVolumeCharacterScript is the statement sequence of a roll that finds no assets and restores cleanly.
+func rollAssetVolumeCharacterScript() []scriptedResult {
+	return []scriptedResult{
+		{}, // SET max_parallel_workers_per_gather
+		{cols: []string{"current_setting"}, rows: [][]driver.Value{{"2m"}}},
+		{cols: []string{"current_setting"}, rows: [][]driver.Value{{""}}},
+		{}, // set application_name
+		{}, // SET statement_timeout
+		{cols: []string{
+			"asset_id", "total", "total_numeric", "makers", "takers",
+			"top_pair", "self_cross", "issuer_side", "market_styled",
+		}},
+		{}, // restore statement_timeout
+		{}, // restore application_name
+		{}, // RESET max_parallel_workers_per_gather
 	}
 }
 

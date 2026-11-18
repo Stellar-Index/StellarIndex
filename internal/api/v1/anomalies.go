@@ -30,7 +30,7 @@ type AnomalyReader interface {
 // DivergenceReader backs /v1/divergence and its series, the per-reference divergence history.
 type DivergenceReader interface {
 	ListDivergenceLatest(ctx context.Context, sinceDays int, firingOnly bool, limit int) ([]timescale.DivergenceRow, error)
-	ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error)
+	ListDivergenceSeries(ctx context.Context, assetIDs, quoteIDs []string, sinceDays int) ([]timescale.DivergenceSeriesPoint, error)
 }
 
 // ── /v1/anomalies ────────────────────────────────────────────────
@@ -437,7 +437,8 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, out, Flags{})
 		return
 	}
-	points, err := s.Divergences.ListDivergenceSeries(r.Context(), base, quote, days)
+	// Requested spelling first; the store serves the first spelling with rows, never a mix of two configured markets.
+	points, err := s.Divergences.ListDivergenceSeries(r.Context(), sourceStatsAliases(base), sourceStatsAliases(quote), days)
 	if err != nil {
 		if clientAborted(r, err) {
 			return

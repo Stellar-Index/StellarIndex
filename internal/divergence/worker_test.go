@@ -53,7 +53,7 @@ func newTestService(t *testing.T, refs []divergence.Reference, opts divergence.S
 // refreshQuiet is the only sound "must not fire" check under the default WarningPersistence debounce: it refreshes twice, a full window apart,
 // and asserts neither WarningFired nor the raw condition (FiringSince) fired. Returns the last cached result.
 func refreshQuiet(t *testing.T, svc *divergence.Service, rdb *redis.Client,
-	pair canonical.Pair, ourPrice float64, t0 time.Time,
+	pair canonical.Pair, ourPrice string, t0 time.Time,
 ) divergence.CachedResult {
 	t.Helper()
 	var cached divergence.CachedResult
@@ -63,7 +63,7 @@ func refreshQuiet(t *testing.T, svc *divergence.Service, rdb *redis.Client,
 		}
 		cached = readDivergence(t, rdb, pair)
 		if cached.WarningFired || !cached.FiringSince.IsZero() {
-			t.Errorf("refresh #%d of %s at our=%g: WarningFired=%v FiringSince=%v, want quiet "+
+			t.Errorf("refresh #%d of %s at our=%s: WarningFired=%v FiringSince=%v, want quiet "+
 				"(no published warning and no raw firing)", i+1, pair, ourPrice, cached.WarningFired, cached.FiringSince)
 		}
 	}
@@ -85,7 +85,7 @@ func TestNewService_RequiresCache(t *testing.T) {
 // no Redis writes and no error.
 func TestRefreshPair_NoReferencesIsNoop(t *testing.T) {
 	svc, _, mr := newTestService(t, nil, divergence.ServiceOptions{})
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Errorf("RefreshPair on empty refs: %v", err)
 	}
 	if keys := mr.Keys(); len(keys) != 0 {
@@ -103,7 +103,7 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 	}
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{})
 
-	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 1.00, time.Now())
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), "1.00", time.Now())
 	if cached.SuccessCount != 3 {
 		t.Errorf("SuccessCount = %d, want 3", cached.SuccessCount)
 	}
@@ -131,27 +131,27 @@ func TestRefreshPair_OnWarningFiredEdgeOnly(t *testing.T) {
 	})
 	ctx := context.Background()
 	// 1) Below threshold (1%) → no fire.
-	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.01, time.Now())
+	_ = svc.RefreshPair(ctx, xlmUSD(t), "1.01", time.Now())
 	if fired != 0 {
 		t.Fatalf("fired=%d after below-threshold refresh, want 0", fired)
 	}
 	// 2) Above threshold (10%) → first fire.
-	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.10, time.Now())
+	_ = svc.RefreshPair(ctx, xlmUSD(t), "1.10", time.Now())
 	if fired != 1 {
 		t.Fatalf("fired=%d after first above-threshold, want 1", fired)
 	}
 	// 3) Still above threshold → no second fire (latch held).
-	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.12, time.Now())
+	_ = svc.RefreshPair(ctx, xlmUSD(t), "1.12", time.Now())
 	if fired != 1 {
 		t.Fatalf("fired=%d on still-elevated refresh, want 1 (latch should hold)", fired)
 	}
 	// 4) Drop below threshold → latch resets (no fire on the way down).
-	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.02, time.Now())
+	_ = svc.RefreshPair(ctx, xlmUSD(t), "1.02", time.Now())
 	if fired != 1 {
 		t.Fatalf("fired=%d on recovery refresh, want 1", fired)
 	}
 	// 5) Re-cross threshold → second fire.
-	_ = svc.RefreshPair(ctx, xlmUSD(t), 1.10, time.Now())
+	_ = svc.RefreshPair(ctx, xlmUSD(t), "1.10", time.Now())
 	if fired != 2 {
 		t.Fatalf("fired=%d after re-cross, want 2 (latch should re-arm)", fired)
 	}
@@ -170,7 +170,7 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 	})
 
 	// Our price is 10% above the consensus.
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.10, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.10", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
 		WarningPersistence:   -1, // isolate the veto from the persistence debounce
 	})
 
-	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 50000, time.Now())
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), "50000", time.Now())
 	if cached.AgreementCount != 1 {
 		t.Fatalf("AgreementCount = %d, want 1 (sanity: exactly one reference should agree)", cached.AgreementCount)
 	}
@@ -218,7 +218,7 @@ func TestRefreshPair_ZeroAgreementLegStillFires(t *testing.T) {
 		WarningPersistence:   -1,
 	})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	cached := readDivergence(t, rdb, xlmUSD(t))
@@ -242,7 +242,7 @@ func TestRefreshPair_BelowMinSourcesNoWarning(t *testing.T) {
 		MinSourcesForWarning: 2, // require 2+ agreeing sources
 	})
 	// A single source 50% away must not fire; it should require ≥ 2.
-	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 1.50, time.Now())
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), "1.50", time.Now())
 	// But the comparator's data should still be cached so operators
 	// can see what one source thinks.
 	if cached.SuccessCount != 1 {
@@ -256,7 +256,7 @@ func TestRefreshPair_TTLApplied(t *testing.T) {
 	refs := []divergence.Reference{&stubReference{name: "a", price: 1.00}}
 	svc, _, mr := newTestService(t, refs, divergence.ServiceOptions{})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	ttl := mr.TTL(cachekeys.Divergence(xlmUSD(t)).String())
@@ -275,7 +275,7 @@ func TestLookupCached_PresentEntry(t *testing.T) {
 	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 1.0, MinSourcesForWarning: 2, WarningPersistence: -1})
 
 	pair := xlmUSD(t)
-	if err := svc.RefreshPair(context.Background(), pair, 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
@@ -339,7 +339,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 	// Both refresh orderings must yield firing=true for the base (USD diverging, GBP in tolerance).
 	type step struct {
 		pair  canonical.Pair
-		price float64
+		price string
 	}
 	eurPair := xlmPair(t, "EUR")
 	for _, tc := range []struct {
@@ -349,18 +349,18 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 	}{
 		{
 			name:       "diverging_first_clean_last",
-			order:      []step{{usdPair, 1.50}, {gbpPair, 1.00}},
+			order:      []step{{usdPair, "1.50"}, {gbpPair, "1.00"}},
 			firingPair: usdPair,
 		},
 		{
 			name:       "clean_first_diverging_last",
-			order:      []step{{gbpPair, 1.00}, {usdPair, 1.50}},
+			order:      []step{{gbpPair, "1.00"}, {usdPair, "1.50"}},
 			firingPair: usdPair,
 		},
 		{
 			// The firing quote (EUR) sorts before the clean one (USD), so SMembers returns the clean pair LAST; only a true OR, not last-value-wins, keeps the base firing.
 			name:       "firing_quote_sorts_first",
-			order:      []step{{eurPair, 1.50}, {usdPair, 1.00}},
+			order:      []step{{eurPair, "1.50"}, {usdPair, "1.00"}},
 			firingPair: eurPair,
 		},
 	} {
@@ -412,7 +412,7 @@ func TestLookupCached_PerPairOR_AllClean(t *testing.T) {
 	})
 	ctx := context.Background()
 	for _, p := range []canonical.Pair{xlmPair(t, "USD"), xlmPair(t, "GBP")} {
-		refreshQuiet(t, svc, rdb, p, 1.00, time.Now())
+		refreshQuiet(t, svc, rdb, p, "1.00", time.Now())
 	}
 	cached, found, err := svc.LookupCached(ctx, canonical.NativeAsset())
 	if err != nil {
@@ -438,12 +438,12 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	// 2 min sources). 4% deviation → no warning.
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{})
 	base := time.Now()
-	refreshQuiet(t, svc, rdb, xlmUSD(t), 1.04, base)
+	refreshQuiet(t, svc, rdb, xlmUSD(t), "1.04", base)
 
 	// 6% deviation: the warning fires only once the divergence has persisted past the default debounce window. The
 	// first refresh must not fire (the fast-move false-warning class the debounce removes); a sustained 6% gap must.
 	t0 := base.Add(time.Hour)
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, t0); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.06", t0); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	cached := readDivergence(t, rdb, xlmUSD(t))
@@ -453,7 +453,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	}
 
 	// Second refresh, same 6% gap, one debounce window later → fires.
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06,
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.06",
 		t0.Add(divergence.DefaultWarningPersistence+time.Minute)); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
@@ -490,8 +490,9 @@ func TestRefreshPair_FiresObservationSink(t *testing.T) {
 	})
 
 	// Our price is 10% above both refs — both observations should
-	// be recorded with status=firing.
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.10, time.Now()); err != nil {
+	// be recorded with status=firing. It carries more digits than a float64 holds, as a VWAP render does.
+	const ourVWAP = "1.1000000000000000000000001"
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), ourVWAP, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
@@ -502,10 +503,10 @@ func TestRefreshPair_FiresObservationSink(t *testing.T) {
 		if !r.Firing {
 			t.Errorf("ref %s: Firing=false, want true (10%% delta exceeds 5%% threshold)", r.Reference)
 		}
-		// ADR-0003: OurPrice/RefPrice/DeltaPct are decimal strings, never float64. Asserting exact strings pins the
-		// shortest-round-trip format the worker must emit, matching the read side's ::text cast.
-		if r.OurPrice != "1.1" {
-			t.Errorf("ref %s: OurPrice = %q, want decimal string \"1.1\"", r.Reference, r.OurPrice)
+		// ADR-0003: OurPrice is our VWAP verbatim, never a float64 round-trip; RefPrice/DeltaPct are the
+		// comparator's floats in shortest-round-trip form, matching the read side's ::text cast.
+		if r.OurPrice != ourVWAP {
+			t.Errorf("ref %s: OurPrice = %q, want our VWAP verbatim %q", r.Reference, r.OurPrice, ourVWAP)
 		}
 		if r.RefPrice != "1" {
 			t.Errorf("ref %s: RefPrice = %q, want decimal string \"1\"", r.Reference, r.RefPrice)
@@ -530,7 +531,7 @@ func TestRefreshPair_NoSinkIsLegacyBehaviour(t *testing.T) {
 	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{
 		// ObservationSink: nil (default)
 	})
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	// No sink, no records — but no panic, no error. Legacy
@@ -552,7 +553,7 @@ func TestRefreshPair_ObservationStampedWithComparisonTime(t *testing.T) {
 		ObservationSink:      sink,
 	})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, comparedAt); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", comparedAt); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	if len(sink.records) != 1 {
@@ -580,7 +581,7 @@ func TestRefreshPair_ObservationCarriesReferenceAsOf(t *testing.T) {
 		ObservationSink:      sink,
 	})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, comparedAt); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", comparedAt); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	want := map[string]time.Time{"chainlink": freshAsOf, "coingecko": agedAsOf}
@@ -615,7 +616,7 @@ func TestRefreshPair_StampsVerdictWindow(t *testing.T) {
 				&stubReference{name: "chainlink", price: 1.00},
 				&stubReference{name: "coingecko", price: 1.00},
 			}, divergence.ServiceOptions{Threshold: 5.0, MinSourcesForWarning: 2, Window: tc.window})
-			if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+			if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 				t.Fatalf("RefreshPair: %v", err)
 			}
 			if got := readDivergence(t, rdb, xlmUSD(t)).WindowSeconds; got != int(tc.want/time.Second) {
@@ -645,7 +646,7 @@ func TestRefreshPair_ObservationFallsBackWhenNoComparisonTime(t *testing.T) {
 	})
 
 	before := time.Now().UTC()
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Time{}); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Time{}); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	if len(sink.records) != 1 {
@@ -763,7 +764,7 @@ func TestRefreshPair_HookErrorReleasesLatch(t *testing.T) {
 	})
 	ctx := context.Background()
 	for i, want := range []int{1, 2, 2} {
-		_ = svc.RefreshPair(ctx, xlmUSD(t), 1.10, time.Now())
+		_ = svc.RefreshPair(ctx, xlmUSD(t), "1.10", time.Now())
 		if calls != want {
 			t.Fatalf("refresh %d: hook calls=%d, want %d", i+1, calls, want)
 		}
@@ -1610,7 +1611,7 @@ func TestRefreshPair_ReflectorDEXCannotCorroborate(t *testing.T) {
 		MinSourcesForWarning: 2,
 		WarningPersistence:   -1,
 	})
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.10, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.10", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
@@ -1669,7 +1670,7 @@ func TestRefreshPair_ExportsReferenceOutcomesAndQuorumLoss(t *testing.T) {
 	okBefore := testutil.ToFloat64(obs.DivergenceReferenceTotal.WithLabelValues("gh679-healthy", "ok"))
 	failBefore := testutil.ToFloat64(obs.DivergenceReferenceTotal.WithLabelValues("gh679-degraded", "price_unavailable"))
 
-	if err := svc.RefreshPair(context.Background(), pair, 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v (a below-quorum pass is not a refresh error)", err)
 	}
 
@@ -1686,7 +1687,7 @@ func TestRefreshPair_ExportsReferenceOutcomesAndQuorumLoss(t *testing.T) {
 	// Recovery re-arms the gauge.
 	refs[1].(*stubReference).err = nil
 	refs[1].(*stubReference).price = 1.00
-	if err := svc.RefreshPair(context.Background(), pair, 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	if got := testutil.ToFloat64(obs.DivergencePairQuorumMet.WithLabelValues(pair.String())); got != 1 {
@@ -1711,7 +1712,7 @@ func TestRefreshPair_ExportsBoundedGapGauges(t *testing.T) {
 		return testutil.ToFloat64(obs.DivergencePairsOver.WithLabelValues(th))
 	}
 
-	if err := svc.RefreshPair(context.Background(), pair, 1.12, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.12", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	if got := gap("gap-far"); got < 0.119 || got > 0.121 {
@@ -1724,7 +1725,7 @@ func TestRefreshPair_ExportsBoundedGapGauges(t *testing.T) {
 		t.Errorf("pairs_over = 5pct:%v 10pct:%v, want 1 and 1", over("5pct"), over("10pct"))
 	}
 
-	if err := svc.RefreshPinnedPair(context.Background(), pair, 1.12, time.Now()); err != nil {
+	if err := svc.RefreshPinnedPair(context.Background(), pair, "1.12", time.Now()); err != nil {
 		t.Fatalf("RefreshPinnedPair: %v", err)
 	}
 	if gap("gap-far") != 0 || over("5pct") != 0 {
@@ -1784,7 +1785,7 @@ func TestRefreshPair_TTLBridgesRefreshCadence(t *testing.T) {
 	refs := []divergence.Reference{&stubReference{name: "a", price: 1.00}}
 	svc, _, mr := newTestService(t, refs, divergence.ServiceOptions{RefreshInterval: cadence})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	if ttl := mr.TTL(cachekeys.Divergence(xlmUSD(t)).String()); ttl <= cadence {
@@ -1810,7 +1811,7 @@ func TestRefreshPair_TTLCoversWorstCasePass(t *testing.T) {
 		PairCount:           pairs,
 		PerReferenceTimeout: perRef,
 	})
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	worstGap := cadence + pairs*2*perRef
@@ -1938,7 +1939,7 @@ func TestRefreshPair_AgreementCountPersisted(t *testing.T) {
 	}
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 5.0})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
@@ -1966,7 +1967,7 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 	}
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 5.0})
 
-	err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now())
+	err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now())
 	if !errors.Is(err, divergence.ErrNoReferenceResponded) {
 		t.Fatalf("RefreshPair err = %v, want ErrNoReferenceResponded", err)
 	}
@@ -1995,7 +1996,7 @@ func TestRefreshPair_AllUnsupportedIsNotAnOutage(t *testing.T) {
 	}
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 5.0})
 
-	err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now())
+	err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now())
 	if err != nil {
 		t.Fatalf("RefreshPair err = %v, want nil — every reference is structurally unsupported, not failed", err)
 	}
@@ -2026,7 +2027,7 @@ func TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage(t *testing.T) {
 	}
 	svc, _, _ := newTestService(t, refs, divergence.ServiceOptions{Threshold: 5.0})
 
-	err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now())
+	err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now())
 	if !errors.Is(err, divergence.ErrNoReferenceResponded) {
 		t.Fatalf("RefreshPair err = %v, want ErrNoReferenceResponded (a genuine failure is mixed in with the unsupported one)", err)
 	}
@@ -2044,7 +2045,7 @@ func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
 		WarningPersistence:   -1, // isolate the agreement leg from the persistence debounce
 	})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.00", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
@@ -2092,7 +2093,7 @@ func TestRefreshPair_OneDissenterDoesNotFireWarning(t *testing.T) {
 
 	// The agreement leg must require that NO reference corroborates us, so
 	// one dissenter leaves the pair quiet.
-	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), 1.00, time.Now())
+	cached := refreshQuiet(t, svc, rdb, xlmUSD(t), "1.00", time.Now())
 	if cached.AgreementCount != 2 {
 		t.Fatalf("AgreementCount = %d, want 2", cached.AgreementCount)
 	}
@@ -2441,7 +2442,7 @@ func TestRefreshPair_OnChainOracleReferences(t *testing.T) {
 	sink := &recordingObservationSink{}
 	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{ObservationSink: sink})
 
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 0.11, now); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "0.11", now); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
@@ -2525,7 +2526,7 @@ func TestRefreshPair_FastMoveDoesNotFalseWarn(t *testing.T) {
 
 	// Our 5m VWAP is 10% above the spot references — a fast move the
 	// VWAP hasn't caught up to yet.
-	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.10, time.Now()); err != nil {
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), "1.10", time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 	cached := readDivergence(t, rdb, xlmUSD(t))
@@ -2563,7 +2564,7 @@ func TestRefreshPair_SustainedDivergenceStillWarns(t *testing.T) {
 	t0 := time.Now()
 
 	// First observation of the gap — held (debounced).
-	if err := svc.RefreshPair(context.Background(), pair, 1.10, t0); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.10", t0); err != nil {
 		t.Fatalf("RefreshPair #1: %v", err)
 	}
 	if got := readDivergence(t, rdb, pair); got.WarningFired || got.FiringSince.IsZero() {
@@ -2573,7 +2574,7 @@ func TestRefreshPair_SustainedDivergenceStillWarns(t *testing.T) {
 
 	// Same gap, one debounce window later — a genuine sustained
 	// divergence. The warning must now fire.
-	if err := svc.RefreshPair(context.Background(), pair, 1.10,
+	if err := svc.RefreshPair(context.Background(), pair, "1.10",
 		t0.Add(divergence.DefaultWarningPersistence+time.Minute)); err != nil {
 		t.Fatalf("RefreshPair #2: %v", err)
 	}
@@ -2599,7 +2600,7 @@ func TestRefreshPair_TransientDivergenceSelfClears(t *testing.T) {
 	win := divergence.DefaultWarningPersistence
 
 	// Spike #1: 10% gap → held.
-	if err := svc.RefreshPair(context.Background(), pair, 1.10, t0); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.10", t0); err != nil {
 		t.Fatalf("RefreshPair spike#1: %v", err)
 	}
 	if got := readDivergence(t, rdb, pair); got.WarningFired || got.FiringSince.IsZero() {
@@ -2608,7 +2609,7 @@ func TestRefreshPair_TransientDivergenceSelfClears(t *testing.T) {
 	}
 
 	// Recovery: prices agree again → streak resets.
-	if err := svc.RefreshPair(context.Background(), pair, 1.00, t0.Add(win/2)); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.00", t0.Add(win/2)); err != nil {
 		t.Fatalf("RefreshPair recovery: %v", err)
 	}
 	if readDivergence(t, rdb, pair).WarningFired {
@@ -2618,7 +2619,7 @@ func TestRefreshPair_TransientDivergenceSelfClears(t *testing.T) {
 	// Spike #2, well past a window since spike #1 — but the streak
 	// restarted at recovery, so this is a fresh onset and must NOT fire
 	// even though (t0.Add(2*win) - t0) > window.
-	if err := svc.RefreshPair(context.Background(), pair, 1.10, t0.Add(2*win)); err != nil {
+	if err := svc.RefreshPair(context.Background(), pair, "1.10", t0.Add(2*win)); err != nil {
 		t.Fatalf("RefreshPair spike#2: %v", err)
 	}
 	if readDivergence(t, rdb, pair).WarningFired {
@@ -2646,13 +2647,13 @@ func TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence(t *testing.T) {
 	t0 := time.Now()
 
 	// First over-threshold refresh: debounced, so no hook.
-	_ = svc.RefreshPair(context.Background(), pair, 1.10, t0)
+	_ = svc.RefreshPair(context.Background(), pair, "1.10", t0)
 	if fired != 0 {
 		t.Fatalf("hook fired=%d after the first (debounced) refresh, want 0", fired)
 	}
 
 	// Persisted a full window later: WarningFired flips true → one hook.
-	_ = svc.RefreshPair(context.Background(), pair, 1.10, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = svc.RefreshPair(context.Background(), pair, "1.10", t0.Add(divergence.DefaultWarningPersistence+time.Minute))
 	if fired != 1 {
 		t.Fatalf("hook fired=%d after the divergence persisted, want 1", fired)
 	}
@@ -2679,14 +2680,14 @@ func TestRefreshPair_BelowQuorumTickFreezesWarning(t *testing.T) {
 	t0 := time.Now()
 	step := divergence.DefaultWarningPersistence + time.Minute
 
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(step))
 	if got := readDivergence(t, rdb, pair); !got.WarningFired || fired != 1 {
 		t.Fatalf("setup: WarningFired=%v hooks=%d, want a firing pair with one hook", got.WarningFired, fired)
 	}
 
 	flaky.err = divergence.ErrPriceUnavailable
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(step+time.Minute))
 	below := readDivergence(t, rdb, pair)
 	if below.SuccessCount != 1 {
 		t.Fatalf("below-quorum tick SuccessCount = %d, want 1", below.SuccessCount)
@@ -2696,11 +2697,11 @@ func TestRefreshPair_BelowQuorumTickFreezesWarning(t *testing.T) {
 	}
 
 	flaky.err = nil
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+2*time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(step+2*time.Minute))
 	if got := readDivergence(t, rdb, pair); !got.WarningFired {
 		t.Errorf("first refresh after references returned: WarningFired=false; the persistence streak was reset by the below-quorum tick")
 	}
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(2*step+2*time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(2*step+2*time.Minute))
 	if fired != 1 {
 		t.Errorf("hook fired %d times for one uninterrupted divergence, want 1", fired)
 	}
@@ -2747,8 +2748,8 @@ func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 	pair := xlmUSD(t)
 	t0 := time.Now()
 	ctx := context.Background()
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(divergence.DefaultWarningPersistence+time.Minute))
 	if !readDivergence(t, rdb, pair).WarningFired || firstHooks != 1 {
 		t.Fatalf("precondition: want a published warning and one hook, got fired=%v hooks=%d",
 			readDivergence(t, rdb, pair).WarningFired, firstHooks)
@@ -2759,12 +2760,12 @@ func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 		return nil
 	})
 	t1 := t0.Add(41 * time.Minute)
-	_ = restarted.RefreshPair(ctx, pair, 1.00, t1)
+	_ = restarted.RefreshPair(ctx, pair, "1.00", t1)
 	if !readDivergence(t, rdb, pair).WarningFired {
 		t.Error("WarningFired = false on the first refresh after a restart for a pair that never " +
 			"stopped diverging: the restart published a false all-clear")
 	}
-	_ = restarted.RefreshPair(ctx, pair, 1.00, t1.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = restarted.RefreshPair(ctx, pair, "1.00", t1.Add(divergence.DefaultWarningPersistence+time.Minute))
 	if secondHooks != 0 {
 		t.Errorf("restarted process fired divergence.firing %d time(s) for a divergence already "+
 			"announced before the restart, want 0", secondHooks)
@@ -2783,12 +2784,12 @@ func TestRefreshPair_StreakSurvivesRestartInsideDebounce(t *testing.T) {
 	pair := xlmUSD(t)
 	t0 := time.Now()
 	ctx := context.Background()
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, 1.00, t0.Add(3*time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, "1.00", t0.Add(3*time.Minute))
 	if readDivergence(t, rdb, pair).WarningFired {
 		t.Fatal("WarningFired = true 3m into the streak; the debounce must still hold it")
 	}
-	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, 1.00, t0.Add(6*time.Minute))
+	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, "1.00", t0.Add(6*time.Minute))
 	got := readDivergence(t, rdb, pair)
 	if !got.WarningFired {
 		t.Error("WarningFired = false 6m into a divergence spanning two restarts: the streak " +
@@ -2819,7 +2820,7 @@ func TestRefreshPair_RestartFromLegacyCachedWarning(t *testing.T) {
 	if err := rdb.Set(context.Background(), cachekeys.Divergence(pair).String(), legacy, cachekeys.DivergenceTTL).Err(); err != nil {
 		t.Fatalf("seed legacy result: %v", err)
 	}
-	_ = svc.RefreshPair(context.Background(), pair, 1.00, time.Now())
+	_ = svc.RefreshPair(context.Background(), pair, "1.00", time.Now())
 	if !readDivergence(t, rdb, pair).WarningFired {
 		t.Error("WarningFired = false after restarting over a pre-FiringSince cached warning")
 	}
@@ -2837,12 +2838,12 @@ func TestRefreshPair_RestartDoesNotResurrectClearedWarning(t *testing.T) {
 	pair := xlmUSD(t)
 	t0 := time.Now()
 	ctx := context.Background()
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(10*time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(10*time.Minute))
 	if !readDivergence(t, rdb, pair).WarningFired {
 		t.Fatal("precondition: want a published warning")
 	}
-	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, 0.93, t0.Add(11*time.Minute))
+	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, "0.93", t0.Add(11*time.Minute))
 	got := readDivergence(t, rdb, pair)
 	if got.WarningFired || !got.FiringSince.IsZero() {
 		t.Errorf("after recovery: WarningFired=%v FiringSince=%v, want false and zero",
@@ -2868,8 +2869,8 @@ func TestRefreshPair_GapDoesNotMatureStreak(t *testing.T) {
 	t0 := time.Now()
 	afterGap := t0.Add(3 * time.Hour)
 
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, afterGap)
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.00", afterGap)
 	got := readDivergence(t, rdb, pair)
 	if got.WarningFired || fired != 0 {
 		t.Fatalf("first firing refresh after a 3h unevaluated gap: WarningFired=%v hooks=%d, "+
@@ -2880,7 +2881,7 @@ func TestRefreshPair_GapDoesNotMatureStreak(t *testing.T) {
 		t.Errorf("FiringSince = %v, want the streak restarted at %v", got.FiringSince, afterGap)
 	}
 
-	_ = svc.RefreshPair(ctx, pair, 1.00, afterGap.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.00", afterGap.Add(divergence.DefaultWarningPersistence+time.Minute))
 	if !readDivergence(t, rdb, pair).WarningFired || fired != 1 {
 		t.Errorf("divergence observed across two refreshes after the gap did not publish (hooks=%d)", fired)
 	}
@@ -2898,8 +2899,8 @@ func TestRefreshPair_SlowCadenceStillWarns(t *testing.T) {
 	ctx := context.Background()
 	pair := xlmUSD(t)
 	t0 := time.Now()
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(time.Hour))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(time.Hour))
 	if !readDivergence(t, rdb, pair).WarningFired {
 		t.Error("two consecutive firing refreshes at a 1h cadence did not publish: the gap reset blinded the warning")
 	}
@@ -2920,9 +2921,9 @@ func TestRefreshPair_PublishedWarningSurvivesGap(t *testing.T) {
 	ctx := context.Background()
 	pair := xlmUSD(t)
 	t0 := time.Now()
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(3*time.Hour))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(3*time.Hour))
 	if !readDivergence(t, rdb, pair).WarningFired || fired != 1 {
 		t.Errorf("published warning after a gap: WarningFired=%v hooks=%d, want true and 1",
 			readDivergence(t, rdb, pair).WarningFired, fired)
@@ -2957,21 +2958,21 @@ func TestRefreshPair_HookErrorKeepsVerdictThroughBelowQuorum(t *testing.T) {
 	t0 := time.Now()
 	step := divergence.DefaultWarningPersistence + time.Minute
 
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(step))
 	if calls != 1 || !readDivergence(t, rdb, pair).WarningFired {
 		t.Fatalf("setup: hooks=%d WarningFired=%v, want 1 failed hook on a firing pair",
 			calls, readDivergence(t, rdb, pair).WarningFired)
 	}
 
 	flaky.err = divergence.ErrPriceUnavailable
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(step+time.Minute))
 	if !readDivergence(t, rdb, pair).WarningFired {
 		t.Fatal("below-quorum tick after a failed hook rewrote WarningFired to false for a diverging pair")
 	}
 
 	flaky.err = nil
-	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+2*time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.10", t0.Add(step+2*time.Minute))
 	if calls != 2 || !readDivergence(t, rdb, pair).WarningFired {
 		t.Errorf("after recovery: hooks=%d WarningFired=%v, want the hook retried once and the verdict kept",
 			calls, readDivergence(t, rdb, pair).WarningFired)
@@ -2991,13 +2992,13 @@ func TestRefreshPair_HookErrorKeepsVerdictThroughGap(t *testing.T) {
 	ctx := context.Background()
 	pair := xlmUSD(t)
 	t0 := time.Now()
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(divergence.DefaultWarningPersistence+time.Minute))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0)
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(divergence.DefaultWarningPersistence+time.Minute))
 	if calls != 1 {
 		t.Fatalf("setup: hooks=%d, want 1 failed hook", calls)
 	}
 
-	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(3*time.Hour))
+	_ = svc.RefreshPair(ctx, pair, "1.00", t0.Add(3*time.Hour))
 	if got := readDivergence(t, rdb, pair); !got.WarningFired || calls != 2 {
 		t.Errorf("refresh after a gap: WarningFired=%v hooks=%d, want true and the hook retried (2)", got.WarningFired, calls)
 	}
