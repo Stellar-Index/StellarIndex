@@ -155,22 +155,47 @@ func TestAssetHolders_HorizonSpellingNormalized(t *testing.T) {
 	}
 }
 
-// TestAssetHolders_SACFormKeepsItsOwnBoard: the XLM SAC wrapper's C-address
-// is NOT folded to native — it identifies the wrapper's own balance domain
-// and must reach the reader under its own key.
-func TestAssetHolders_SACFormKeepsItsOwnBoard(t *testing.T) {
-	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}
-	h := newProbeHandler(reader, nil)
+// sacHoldersKeyReader resolves SAC contract ids to their wrapped asset's instance-metadata name.
+type sacHoldersKeyReader struct {
+	*holdersKeyReader
+	names map[string]string
+}
 
-	var view AssetHoldersView
-	if code := getHolders(t, h, &view, canonical.XLMSacContractID); code != http.StatusOK {
-		t.Fatalf("SAC holders status = %d, want 200", code)
+func (r *sacHoldersKeyReader) SACClassicAssetName(_ context.Context, id string) (string, bool, error) {
+	name, ok := r.names[id]
+	return name, ok, nil
+}
+
+// TestAssetHolders_SACFoldsToTheWrappedAssetsBoard: a SAC C-address has no trustline rows, so it reads the board of the asset it
+// wraps, under that asset's key, instead of an empty board under its own.
+func TestAssetHolders_SACFoldsToTheWrappedAssetsBoard(t *testing.T) {
+	usdc, err := canonical.NewClassicAsset("USDC", validTestAccount)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := reader.seen(); len(got) != 1 || got[0] != canonical.XLMSacContractID {
-		t.Fatalf("reader keys = %v, want the SAC C-address itself", got)
+	usdcSAC, err := usdc.SacContractID()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if view.Asset != canonical.XLMSacContractID {
-		t.Errorf("SAC response echoes asset %q, want the C-address", view.Asset)
+	for _, tc := range []struct{ sac, want string }{
+		{canonical.XLMSacContractID, "native"},
+		{usdcSAC, usdc.String()},
+	} {
+		reader := &sacHoldersKeyReader{
+			holdersKeyReader: &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}},
+			names:            map[string]string{canonical.XLMSacContractID: "native", usdcSAC: "USDC:" + validTestAccount},
+		}
+		h := newProbeHandler(reader, nil)
+		var view AssetHoldersView
+		if code := getHolders(t, h, &view, tc.sac); code != http.StatusOK {
+			t.Fatalf("%s holders status = %d, want 200", tc.sac, code)
+		}
+		if got := reader.seen(); len(got) != 1 || got[0] != tc.want {
+			t.Errorf("%s reader keys = %v, want [%s]", tc.sac, got, tc.want)
+		}
+		if view.Asset != tc.want || view.HolderCount != 9915982 {
+			t.Errorf("%s served asset %q holder_count %d, want %q's board", tc.sac, view.Asset, view.HolderCount, tc.want)
+		}
 	}
 }
 

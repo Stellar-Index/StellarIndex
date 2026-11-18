@@ -46,7 +46,7 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 
 	// Step 3: what our aggregator would publish. With one trade the VWAP is just the trade price, so the orchestrator
 	// is not needed. Amounts are 7-decimal stroops; price is 0.10.
-	const ourPrice = 0.10
+	const ourPrice = "0.10"
 
 	// Step 4 — the actual market: USDC depegged to 0.95 USD this
 	// hour, so the true XLM/USD is 0.10 × 0.95 = 0.0950. Three
@@ -82,7 +82,7 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 	}
 	if !cached.WarningFired {
 		t.Errorf("WarningFired = false on simulated USDC depeg "+
-			"(our=%g vs ref=%g, delta ~5.3%%); the divergence safety "+
+			"(our=%s vs ref=%g, delta ~5.3%%); the divergence safety "+
 			"net is supposed to compensate for stablecoin late-binding "+
 			"concealment per ADR-0026 + F-1230",
 			ourPrice, 0.0950)
@@ -111,7 +111,7 @@ func TestStablecoinPegHolds_DivergenceWorkerStaysQuiet(t *testing.T) {
 		t.Fatalf("ProxyTrade should rewrite")
 	}
 
-	const ourPrice = 0.10
+	const ourPrice = "0.10"
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 0.10},
 		&stubReference{name: "chainlink", price: 0.10},

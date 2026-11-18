@@ -444,8 +444,8 @@ type AssetHolderV struct {
 	Balance   string `json:"balance"`
 }
 
-// isNativeHoldersAsset reports whether an asset form serves the native-XLM holders board: `native`, `crypto:XLM` and "XLM" fold in;
-// the SAC C-address does NOT, because its Soroban `Balance(addr)` holder set differs from classic balances.
+// isNativeHoldersAsset reports whether an asset text form serves the native-XLM holders board: `native`, `crypto:XLM` and "XLM" fold
+// in; the SAC C-address folds through the lake's SAC resolver in [Handler.AssetHolders] instead.
 func isNativeHoldersAsset(a canonical.Asset) bool {
 	if a.Type == canonical.AssetSoroban {
 		return false
@@ -497,6 +497,19 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
+
+	// A SAC's holders board is the wrapped asset's (contract balances are out of the board's scope either way); the C-address has no
+	// trustline rows, so read verbatim it would serve an authoritative-looking empty board.
+	if parsed.Type == canonical.AssetSoroban {
+		name, lookupFailed := h.resolveSEP41MovementAssetChecked(ctx, parsed.ContractID)
+		if lookupFailed {
+			w.Header().Set("Retry-After", retryAfterDependencyDown)
+			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/asset-holders-timeout", "Asset holders unavailable",
+				http.StatusServiceUnavailable, "the lake read that resolves "+asset+" to the asset it wraps failed; retry shortly")
+			return
+		}
+		asset = name
+	}
 
 	// Cached + single-flighted: this unauthenticated route runs two ledger_entries_current FINAL
 	// scans on the shared explorer pool, so one looping client could stall every lake-backed

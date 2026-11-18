@@ -1295,6 +1295,11 @@ jobs:
         run: ./scripts/ci/lint-chunk-functions.sh
       - name: lint-chunk-functions self-test
         run: ./scripts/ci/lint-chunk-functions-test.sh
+      - name: lint-asset-identity
+        # An asset read keyed on 'native' alone or on LIKE '<CODE>-%' drops XLM's other identities or trusts any issuer.
+        run: ./scripts/ci/lint-asset-identity.sh
+      - name: lint-asset-identity self-test
+        run: ./scripts/ci/lint-asset-identity-test.sh
       - name: lint-ch-apply-scope
         # deploy/clickhouse/ is not a bootstrap manifest. Executing every file
         # in the directory on each fresh provision would run OPERATOR migration

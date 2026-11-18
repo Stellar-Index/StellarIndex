@@ -140,6 +140,15 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 		insertCharTrade(t, ctx, db, next(), ts, goodID, "fiat:USD", p[0], p[1], 1000)
 	}
 
+	// (4) The scam-AUD wash again, but against XLM spelled as its SAC (how a Soroban pool records it):
+	// still market-styled, so concentrated, not the benign operational label.
+	sacWashIssuer := charAccount(20)
+	sacWashID := mustClassicID(t, "SACW", sacWashIssuer)
+	for i := 0; i < 9; i++ {
+		insertCharTrade(t, ctx, db, next(), ts, sacWashID, c.XLMSacContractID, charAccount(21), sacWashIssuer, 1000)
+	}
+	insertCharTrade(t, ctx, db, next(), ts, sacWashID, c.XLMSacContractID, charAccount(22), charAccount(23), 100)
+
 	if err := store.RefreshAssetVolumeCharacter(ctx); err != nil {
 		t.Fatalf("RefreshAssetVolumeCharacter: %v", err)
 	}
@@ -150,6 +159,7 @@ func TestAssetVolumeCharacterRollup_OracleMatchesPerAsset(t *testing.T) {
 		wantChar string
 	}{
 		{"scam_AUD_concentrated", audID, timescale.VolumeCharacterConcentrated},
+		{"XLM_SAC_counterpart_wash_concentrated", sacWashID, timescale.VolumeCharacterConcentrated},
 		{"AUDD_operational_corridor", auddID, timescale.VolumeCharacterOperational},
 		{"GOODX_market", goodID, timescale.VolumeCharacterMarket},
 	}

@@ -1131,8 +1131,12 @@ paths:
         balance, and `holder_count` is the exact number of funded accounts.
         `asset_id` is the canonical form (`CODE-ISSUER`, or `native`; the
         `crypto:XLM` alias serves the native board, echoed as
-        `asset: "native"`). Balances are strings (ADR-0003). Coverage tracks
-        the entry-change capture.
+        `asset: "native"`). A SAC contract id (`C…`) folds to the asset it
+        wraps and serves that asset's board, echoed under the classic id
+        (`CODE-ISSUER`, or `native` for the XLM SAC). The board ranks account
+        balances only: balances held by contracts through the SAC are not
+        included. Balances are strings (ADR-0003). Coverage tracks the
+        entry-change capture.
 
         Freshness (ADR-0041): the board is either scanned on demand or
         read from a rollup rebuilt about every 30 minutes. The envelope

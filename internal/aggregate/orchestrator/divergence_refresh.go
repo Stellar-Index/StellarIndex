@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
-	"strconv"
+	"math/big"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
@@ -57,15 +57,15 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 				"pair", pair.String(), "window", shortest, "err", err)
 			continue
 		}
-		ourPrice, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
+		if _, ok := new(big.Rat).SetString(raw); !ok {
 			obs.DivergenceRefreshTotal.WithLabelValues("parse_error").Inc()
 			obs.DivergenceRefreshDurationSeconds.WithLabelValues("parse_error").Observe(time.Since(start).Seconds())
 			o.logger.Warn("divergence refresh: vwap parse failed",
-				"pair", pair.String(), "raw", raw, "err", err)
+				"pair", pair.String(), "raw", raw)
 			continue
 		}
-		if err := o.refreshPairDivergence(ctx, pair, shortest, ourPrice, now); err != nil {
+		// raw goes on verbatim: it is what /v1/price serves, so divergence_observations and the webhook must carry the same digits.
+		if err := o.refreshPairDivergence(ctx, pair, shortest, raw, now); err != nil {
 			// Distinguish "all references dark" from a real refresh
 			// error so a total reference outage is alertable, not silently
 			// folded into the healthy path. Both still `continue`.
@@ -87,7 +87,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 // refreshPairDivergence hands the refresher the pair's cached VWAP, as a pinned price when frozen at that window ([Orchestrator.keepFrozenVWAPAlive]).
 // Judged as fresh, the refused price would read as divergence, fire divergence_warning for a pair deliberately not updating, and feed a depressed input into the confidence that is itself a freeze leg. frozenLeg covers a freeze made this tick and one still in its hold.
 func (o *Orchestrator) refreshPairDivergence(
-	ctx context.Context, pair canonical.Pair, window time.Duration, price float64, now time.Time,
+	ctx context.Context, pair canonical.Pair, window time.Duration, price string, now time.Time,
 ) error {
 	if o.frozenLeg(pair, window) {
 		return o.cfg.DivergenceRefresher.RefreshPinnedPair(ctx, pair, price, now)
