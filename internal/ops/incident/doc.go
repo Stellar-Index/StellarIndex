@@ -1,2 +1,2 @@
-// Package incident holds the stellarindex-ops `emit-incident` subcommand.
+// Package incident holds the stellarindex-ops incident-response subcommands `emit-incident` and `source-exclude`.
 package incident

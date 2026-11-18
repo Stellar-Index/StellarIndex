@@ -12210,7 +12210,9 @@ export interface components {
              *     reports for the same asset.
              *     `contract_storage_balances` sums the per-holder Balance
              *     entries out of a contract's own storage, for a token whose
-             *     event log is empty. Also a lower bound, but blind to
+             *     event log is empty or whose event net is below that
+             *     storage level (the log is then provably partial). Also a
+             *     lower bound, but blind to
              *     uncaptured entries rather than to domains: a balance entry
              *     the lake's current-state projection never captured is absent.
              *
@@ -12676,7 +12678,7 @@ export interface components {
              */
             flow_count: number;
             /**
-             * @description How total_supply was derived: mint/burn/clawback flows, the ledger header total_coins (native XLM), or — for a token whose event log is empty — the per-holder Balance entries summed out of the contract's own storage.
+             * @description How total_supply was derived: mint/burn/clawback flows, the ledger header total_coins (native XLM), or — for a Soroban token whose event log is empty, or whose event net is below its storage level and so provably partial — the per-holder Balance entries summed out of the contract's own storage. The two are never summed.
              * @enum {string}
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";

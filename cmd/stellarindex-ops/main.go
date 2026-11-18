@@ -55,6 +55,7 @@ var subcommands = map[string]func(args []string) error{
 	"freeze-unfreeze":       leaf(accounts.FreezeUnfreeze),
 	"account-erase":         leaf(accounts.Erase),
 	"change-summary-reset":  leaf(usage.ChangeSummaryReset),
+	"source-exclude":        leaf(incident.SourceExclude),
 
 	"rpc-probe":             diagnostics.Run,
 	"verify-decoders":       diagnostics.Run,

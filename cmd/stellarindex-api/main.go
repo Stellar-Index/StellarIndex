@@ -763,7 +763,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
 			issuerAuthFlagsReader = er
-			storageSupplyReader = er
+			storageSupplyReader = v1.NewCachedContractStorageSupplyReader(er)
 			tokenSymbolReader = er
 			soroswapTVLReserves = er
 			phoenixTVLReserves = er

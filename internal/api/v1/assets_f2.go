@@ -47,7 +47,7 @@ type SorobanVolumeReader interface {
 }
 
 // contractSupplySnapshot is the detail's supply for a Soroban token with no fresh observer snapshot, by the
-// one preference order [Server.contractSupplyReading] owns: the lake's flow sum, or held balances for a
+// one preference order [Server.contractSupplyReadingChecked] owns: the lake's flow sum, or held balances for a
 // contract with no flows. ok=false leaves the supply fields absent: an incomplete flow sum is not negative
 // supply, and "no event seen" is not zero (ADR-0003). unread means the read did not answer.
 //
