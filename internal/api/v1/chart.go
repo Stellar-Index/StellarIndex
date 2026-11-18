@@ -26,16 +26,19 @@ type ChartSeries struct {
 	Points        []HistoryPointWire `json:"points"`
 	Truncated     bool               `json:"truncated"`                // true when the requested window starts before the earliest available data
 	DataStartsAt  *WireTime          `json:"data_starts_at,omitempty"` // earliest bucket timestamp present in the result; only populated when Truncated
-	RequestedFrom *WireTime          `json:"requested_from,omitempty"` // window start the consumer asked for; only populated when Truncated
-	Discontinuous bool               `json:"discontinuous"`            // true when points skip at least one whole bucket between two served buckets
-	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"`  // last bucket before the WIDEST interior gap; only populated when Discontinuous
-	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`    // first bucket after it; only populated when Discontinuous
+	RequestedFrom *WireTime          `json:"requested_from,omitempty"` // window start the consumer asked for; only populated when Truncated or StartsBeforeWindow
+	// StartsBeforeWindow: the window is shorter than one bucket of Granularity, so the first point is the last closed
+	// bucket and ends at or before RequestedFrom (timeframe=1h on a daily series serves yesterday's point).
+	StartsBeforeWindow bool      `json:"starts_before_window,omitempty"`
+	Discontinuous      bool      `json:"discontinuous"`           // true when points skip at least one whole bucket between two served buckets
+	GapStartsAt        *WireTime `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap; only populated when Discontinuous
+	GapEndsAt          *WireTime `json:"gap_ends_at,omitempty"`   // first bucket after it; only populated when Discontinuous
 	// MarketCapLowLiquidity: price_type=market_cap only. The series is
 	// withheld (empty points) for the reason /v1/assets/{id} withholds
 	// market_cap_usd and raises the same-named flag.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
-	// RowCapTruncated: the read hit historyMaxPoints, so Points holds the OLDEST slice and stops
-	// short of the present. Only reachable for timeframe=all; DataEndsAt marks where it ends.
+	// RowCapTruncated: the read hit historyMaxPoints, so Points holds the OLDEST slice and stops short of the present:
+	// timeframe=all, or a bounded window whose read of any source or leg was capped. DataEndsAt marks where it ends.
 	RowCapTruncated bool      `json:"row_cap_truncated,omitempty"`
 	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"`
 	// Credit names the vendor when every point of a fiat series comes from one licensed off-chain
@@ -64,6 +67,25 @@ func (c *ChartSeries) markDiscontinuity() {
 		c.GapStartsAt = &from
 		c.GapEndsAt = &to
 	}
+}
+
+// markWindowStart stamps where a bounded series starts against the requested `from`: Truncated when its first bucket starts
+// more than one bucket after it (retention), StartsBeforeWindow when that bucket ends at or before it. Zero `from` is a no-op.
+func (c *ChartSeries) markWindowStart(from time.Time) {
+	if from.IsZero() || len(c.Points) == 0 {
+		return
+	}
+	first := c.Points[0].T
+	switch end := chartBucketStep(first.Time(), c.Granularity); {
+	case first.Time().Sub(from) > chartGranularityGrace(c.Granularity):
+		c.Truncated = true
+		c.DataStartsAt = &first
+	case !end.IsZero() && !end.After(from):
+		c.StartsBeforeWindow = true
+	default:
+		return
+	}
+	c.RequestedFrom = wireTimePtr(&from)
 }
 
 // chartBucketStep returns the START of the bucket after t on the CAGG `time_bucket` grid, zero if unknown. `1mo` advances by a
@@ -223,15 +245,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	// Truncated when a bounded window's earliest bucket starts more than one granularity unit
 	// after `from`: the difference between "the last 7 days are flat" and "this deployment only
 	// has 7 days". `timeframe=all` never trips it; there a short result IS the full result.
-	if !from.IsZero() && len(points) > 0 {
-		if grace := chartGranularityGrace(gran); points[0].Bucket.Sub(from) > grace {
-			startsAt := points[0].Bucket
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = wireTimePtr(&startsAt)
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 
 	series.markRowCap(walk)
 
@@ -428,15 +442,7 @@ func (s *Server) handleChartTWAP(
 		PriceType:   "twap",
 		Points:      wire,
 	}
-	if !from.IsZero() && len(points) > 0 {
-		if grace := chartGranularityGrace(twapGran); points[0].Bucket.Sub(from) > grace {
-			startsAt := points[0].Bucket
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = wireTimePtr(&startsAt)
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 	series.markRowCap(walk)
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
@@ -504,7 +510,7 @@ func (s *Server) handleChartFiat(
 		// Cross-fiat (e.g. EUR/JPY) — triangulate both legs vs USD.
 		// (USD/USD can't reach here: identity pairs are rejected in
 		// parseChartPair.)
-		s.handleChartFiatCross(w, r, pair, series, gran, from)
+		s.handleChartFiatCross(w, r, pair, series, from)
 		return
 	}
 
@@ -545,17 +551,7 @@ func (s *Server) handleChartFiat(
 	series.Points = wire
 	series.Credit = fxSeriesCredit(points)
 
-	// Retention-truncation signal — same shape as the crypto path.
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
-
+	series.markWindowStart(from)
 	writeChartJSON(w, series, Flags{})
 }
 
@@ -566,7 +562,6 @@ func (s *Server) handleChartFiatCross(
 	r *http.Request,
 	pair canonical.Pair,
 	series ChartSeries,
-	gran string,
 	from time.Time,
 ) {
 	queryFrom, to := fxClosedDayWindow(s.now(), from)
@@ -606,16 +601,7 @@ func (s *Server) handleChartFiatCross(
 	series.Points = wire
 	series.Credit = fxSeriesCredit(append(append([]FXQuotePoint{}, basePts...), quotePts...))
 
-	// Retention-truncation signal — same shape as the direct path.
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0})
 }
 
@@ -1576,6 +1562,8 @@ func (s *Server) handleChartMarketCap(
 			requested := from
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
+	} else {
+		series.markWindowStart(from)
 	}
 	writeChartJSON(w, series, Flags{})
 }
@@ -1718,15 +1706,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		Points:                wire,
 		MarketCapLowLiquidity: lowLiquidity,
 	}
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 	if !refused {
 		series.markRowCap(walk)
 	}

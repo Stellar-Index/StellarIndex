@@ -1405,6 +1405,14 @@ export interface paths {
          *     over an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted
          *     compute from raw trades).
          *
+         *     A window shorter than one bucket of the served grain (TWAP's
+         *     `1h`, the daily `market_cap` and fiat series) is read back to the
+         *     last CLOSED bucket, so it is never an empty answer for a priced
+         *     asset. That bucket starts before the window; when it also ENDS at
+         *     or before the window start (`timeframe=1h` on a daily series
+         *     serves yesterday's point) the response sets
+         *     `data.starts_before_window=true` and `data.requested_from`.
+         *
          *     XLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are
          *     different venue populations, so a pair with no buckets under the
          *     requested spelling is retried under the others and the first
@@ -13117,9 +13125,19 @@ export interface components {
                  * Format: date-time
                  * @description Window start the consumer asked for (derived
                  *     from `timeframe`). Only present when
-                 *     `truncated=true`.
+                 *     `truncated=true` or `starts_before_window=true`.
                  */
                 requested_from?: string;
+                /**
+                 * @description True when the window is shorter than one bucket of
+                 *     `granularity`, so the series is the last closed
+                 *     bucket and that bucket ends at or before
+                 *     `requested_from` (e.g. `timeframe=1h` on a daily
+                 *     market-cap or fiat series serves yesterday's point).
+                 *     A bucket that overlaps the window is not flagged.
+                 *     Omitted when false.
+                 */
+                starts_before_window?: boolean;
                 /**
                  * @description True when `points` skips at least one whole bucket
                  *     between two served buckets, at the granularity
@@ -13164,8 +13182,9 @@ export interface components {
                  */
                 market_cap_low_liquidity?: boolean;
                 /**
-                 * @description True when an unbounded read (`timeframe=all`) hit the
-                 *     50 000-bucket response cap, so `points` holds the
+                 * @description True when the read hit the 50 000-bucket response cap
+                 *     (`timeframe=all`, or a bounded window whose read of
+                 *     any source or leg was capped), so `points` holds the
                  *     OLDEST slice of this pair's history and stops short of
                  *     the present. Request a coarser `granularity` to see
                  *     the whole span. Omitted when false.
