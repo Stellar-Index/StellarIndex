@@ -1333,9 +1333,9 @@ func usdQuoteDecimals(quote canonical.Asset, classicUSDPegs, sorobanUSDPegs []ca
 	case aggregate.IsFiatProxyFor(quote, "USD"):
 		return 8, true
 	case quote.Type == canonical.AssetClassic && isUSDPeggedClassic(quote, classicUSDPegs):
-		return 7, true
+		return 7, true // decimals-7: classic, fixed by the protocol
 	case quote.Type == canonical.AssetSoroban && isUSDPeggedSoroban(quote, sorobanUSDPegs):
-		return 7, true
+		return 7, true // decimals-7: sorobanUSDPegs lists SACs, fixed by the protocol
 	default:
 		return 0, false
 	}

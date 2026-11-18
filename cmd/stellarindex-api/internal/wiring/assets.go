@@ -186,9 +186,7 @@ func AssetToDetail(ctx context.Context, a canonical.Asset, homeDomainLookup func
 		AssetID: a.String(),
 		Type:    string(a.Type),
 		Code:    a.Code,
-		// Classic + native are 7 by protocol (stroops). Soroban tokens get
-		// their real on-chain decimals() overlaid by the v1 handler
-		// (applyTokenDecimals, reading the lake's instance METADATA).
+		// decimals-7: native/classic by protocol; v1 overlays a Soroban row's scale or marks it unknown before serving.
 		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}

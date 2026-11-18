@@ -1151,6 +1151,12 @@ jobs:
         # the deep go/types guard is TestI128TruncationGuard in
         # internal/canonical, which runs in the test job).
         run: ./scripts/ci/lint-i128.sh
+      - name: lint-decimals-default
+        # An undeclared or unread Soroban token scale is served absent, never
+        # as 7; every remaining 7 carries a decimals-7 reason marker.
+        run: |
+          ./scripts/ci/lint-decimals-default.sh
+          ./scripts/ci/lint-decimals-default-test.sh
       - name: lint-migrations
         # ADR-0003 SQL side: monetary migration columns must be NUMERIC —
         # never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escapes need an

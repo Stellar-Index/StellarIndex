@@ -17,12 +17,12 @@ type DecimalsLookup interface {
 // ResolveDecimals returns lookup's confirmed decimals for asset, or [StandardDecimals] when lookup is nil or has no row; it never errors.
 func ResolveDecimals(lookup DecimalsLookup, asset canonical.Asset) int {
 	if lookup == nil {
-		return StandardDecimals
+		return StandardDecimals // decimals-7: aggregator policy default (see DecimalsLookup), not a served token scale
 	}
 	if d, ok := lookup.Lookup(asset.String()); ok {
 		return d
 	}
-	return StandardDecimals
+	return StandardDecimals // decimals-7: aggregator policy default (see DecimalsLookup), not a served token scale
 }
 
 // DecimalsAdjustment returns the exact *big.Rat factor 10^(baseDecimals-quoteDecimals) that turns a raw quote/base ratio into the true price (ADR-0003).
