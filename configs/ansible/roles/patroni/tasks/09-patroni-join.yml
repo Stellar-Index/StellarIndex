@@ -38,3 +38,16 @@
   retries: "{{ patroni_join_retries | int }}"
   delay: 10
   until: _replica_check.status == 200
+  when: not _patroni_initialized.stat.exists
+
+# A member that joined before may hold the leader lock now (a switchover or
+# failover moves it), and /replica answers 503 on the leader.
+- name: confirm a member that joined before is running in either role
+  uri:
+    url: "http://{{ patroni_rest_connect_address }}/health"
+    status_code: 200
+  register: _member_health
+  retries: 30
+  delay: 5
+  until: _member_health.status == 200
+  when: _patroni_initialized.stat.exists

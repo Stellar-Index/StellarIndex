@@ -35,10 +35,10 @@
       # HELP stellarindex_patroni_role 1 if this node has the named role, 0 otherwise.
       # TYPE stellarindex_patroni_role gauge
       stellarindex_patroni_role{role="leader"} $([[ "$ROLE" == "leader" ]] && echo 1 || echo 0)
-      stellarindex_patroni_role{role="replica"} $([[ "$ROLE" == "replica" ]] && echo 1 || echo 0)
-      # HELP stellarindex_patroni_running 1 if Patroni reports state=running for this node.
+      stellarindex_patroni_role{role="replica"} $([[ "$ROLE" == "replica" || "$ROLE" == "sync_standby" ]] && echo 1 || echo 0)
+      # HELP stellarindex_patroni_running 1 if Patroni reports this node running (a 3.x replica reports streaming).
       # TYPE stellarindex_patroni_running gauge
-      stellarindex_patroni_running $([[ "$STATE" == "running" ]] && echo 1 || echo 0)
+      stellarindex_patroni_running $([[ "$STATE" == "running" || "$STATE" == "streaming" ]] && echo 1 || echo 0)
       EOF
       # mktemp creates 0600; node_exporter is not root.
       chmod 0644 "$TMP"

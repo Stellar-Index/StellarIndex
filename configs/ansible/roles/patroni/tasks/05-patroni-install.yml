@@ -24,6 +24,26 @@
                                   # metrics never reach Prometheus.
     state: present
 
+# The restart handler reads replica state "streaming" (Patroni >= 3.0.4) and
+# runs `switchover --leader`; 2.x reports "running" and only has --master.
+- name: read the installed Patroni version
+  command: patroni --version
+  register: _patroni_version
+  changed_when: false
+  check_mode: false
+  tags: [always]
+
+- name: assert Patroni is 3.0.4 or newer
+  assert:
+    that:
+      - (_patroni_version.stdout.split() | last) is version('3.0.4', '>=')
+    fail_msg: >-
+      {{ _patroni_version.stdout }} is installed; this role needs Patroni
+      3.0.4 or newer (Ubuntu 24.04's package, or the PGDG repository on 22.04).
+      Older Patroni reports replicas as "running", which the restart handler
+      treats as unhealthy.
+  tags: [always]
+
 - name: ensure Patroni config directory
   file:
     path: /etc/patroni

@@ -109,7 +109,7 @@ check(probe is not None and probe.get("check_mode") is False and probe.get("chan
 am_unit = next(t for t in tasks("prometheus/tasks/05-systemd.yml") if t.get("name") == "render alertmanager systemd unit")
 am_handler = next((h for h in yaml.safe_load(text("prometheus/handlers/main.yml"))
                    if h.get("listen") == am_unit.get("notify")), None)
-check(am_handler is not None and am_handler["systemd"].get("state") == "restarted",
+check(am_handler is not None and "systemctl restart alertmanager" in am_handler.get("shell", ""),
       "alertmanager unit change notifies a restarting handler")
 
 # firewalls: nft rejects an empty `elements = { }`.
@@ -163,6 +163,7 @@ def run_patroni_restart(before, after=None, switched=None, me="db-02"):
         patroni_rest_connect_address="10.0.0.12:8008", inventory_hostname=me,
         patroni_restart_max_lag_bytes=16777216, groups={"postgres_cluster": ["db-01", "db-02", "db-03"]})
     with tempfile.TemporaryDirectory() as d:
+        script = script.replace("/etc/patroni/.restart-pending", f"{d}/restart-pending")
         stub = {"curl": f'case "$*" in *"/cluster"*) cat {d}/cluster.json 2>/dev/null || exit 7 ;; esac\n',
                 "systemctl": f'echo "systemctl $*" >> {d}/calls.log\n'
                              f'case "$*" in restart*) [ -f {d}/after.json ] && cp {d}/after.json {d}/cluster.json ;; esac\nexit 0\n',
@@ -181,6 +182,7 @@ def run_patroni_restart(before, after=None, switched=None, me="db-02"):
         rc = subprocess.run(["bash", "-c", script], env=env, stdin=subprocess.DEVNULL,
                             capture_output=True).returncode
         log = open(f"{d}/calls.log").read() if os.path.exists(f"{d}/calls.log") else ""
+        run_patroni_restart.pending = os.path.exists(f"{d}/restart-pending")
     return rc, log
 
 
@@ -197,11 +199,12 @@ else:
     healthy = {"members": [member("db-01", "leader", "running"), member("db-02", "sync_standby", "streaming"),
                            member("db-03", "replica", "streaming")]}
     rc, log = run_patroni_restart(healthy)
-    check(rc == 0 and "restart patroni" in log and "switchover" not in log,
-          "patroni restart handler restarts a healthy cluster's replica without a switchover")
+    check(rc == 0 and "restart patroni" in log and "switchover" not in log and not run_patroni_restart.pending,
+          "patroni restart handler restarts a healthy cluster's replica without a switchover and clears the pending marker")
     degraded = {"members": healthy["members"][:2]}
     rc, log = run_patroni_restart(degraded)
     check(rc != 0 and "restart" not in log, "patroni restart handler refuses a healthy member while another is missing")
+    check(run_patroni_restart.pending, "a refused patroni restart leaves the pending marker for the next run")
     leaderless = {"members": [member(n, "replica", "streaming") for n in ("db-01", "db-02", "db-03")]}
     rc, log = run_patroni_restart(leaderless)
     check(rc != 0 and "restart" not in log, "patroni restart handler refuses a healthy member while there is no leader")
@@ -353,23 +356,52 @@ for target, want in (("latest", False), ("immediate", True), ("time:2026-04-30 1
     check(("--target-action=promote" in cmd) == want, f"pgbackrest restore for {target} has target-action={want}")
 
 # patroni: a replica join is confirmed by the member's own /replica check, retried through the base backup.
-confirm = next(t for t in tasks("patroni/tasks/09-patroni-join.yml") if t["name"] == "confirm we joined as a replica")
+join_tasks = {t["name"]: t for t in tasks("patroni/tasks/09-patroni-join.yml")}
+confirm = join_tasks["confirm we joined as a replica"]
 check(confirm.get("uri", {}).get("url", "").endswith("/replica") and "_replica_check" in str(confirm.get("until")),
       "replica join asserts /replica answers 200")
+# A member that joined before may be the leader now (/replica answers 503 there).
+rejoin = join_tasks.get("confirm a member that joined before is running in either role", {})
+for initialized in (False, True):
+    v = dict(_patroni_initialized={"stat": {"exists": initialized}})
+    check(fires(confirm.get("when", "true"), **v) == (not initialized) and fires(rejoin.get("when", "false"), **v) == initialized
+          and rejoin.get("uri", {}).get("url", "").endswith("/health"),
+          f"join check (patroni data dir already initialized={initialized}) uses "
+          f"{'/health, which a leader passes' if initialized else '/replica'}")
 
 # patroni/etcd: "new" on an empty data dir is refused beside a live quorum or on a partial play.
 pdefaults = yaml.safe_load(text("patroni/defaults/main.yml"))
 check(pdefaults["etcd_initial_cluster_state"] == "new" and pdefaults.get("etcd_allow_new_bootstrap") is False,
       "etcd initial cluster state defaults to new; the new-bootstrap override defaults to false")
 etcd_conf = jinja2.Environment(undefined=jinja2.ChainableUndefined).from_string(text("patroni/templates/etcd.conf.j2"))
-for member_dir, state, want in ((False, "new", "new"), (False, "existing", "existing"), (True, "new", "existing"),
-                                (True, "existing", "existing")):
-    out = etcd_conf.render(**{**pdefaults, "inventory_hostname": "db-02", "ansible_host": "10.0.0.12",
-                              "groups": {"postgres_cluster": ["db-01", "db-02"]},
-                              "hostvars": {"db-01": {"ansible_host": "10.0.0.11"}, "db-02": {"ansible_host": "10.0.0.12"}},
-                              "etcd_initial_cluster_state": state, "_etcd_member_dir": {"stat": {"exists": member_dir}}})
-    check(f'ETCD_INITIAL_CLUSTER_STATE="{want}"' in out,
-          f"etcd.conf renders initial state {want} for member dir={member_dir} variable={state}")
+
+
+def render_etcd(member_dir, state, started=None):
+    v = {**pdefaults, "inventory_hostname": "db-02", "ansible_host": "10.0.0.12",
+         "groups": {"postgres_cluster": ["db-01", "db-02"]},
+         "hostvars": {"db-01": {"ansible_host": "10.0.0.11"}, "db-02": {"ansible_host": "10.0.0.12"}},
+         "etcd_initial_cluster_state": state, "_etcd_member_dir": {"stat": {"exists": member_dir}}}
+    if started is not None:
+        v["_etcd_started_state"] = started
+    return etcd_conf.render(**v)
+
+
+for member_dir, state, started, want in ((False, "new", None, "new"), (False, "existing", None, "existing"),
+                                         (True, "new", "new", "new"), (True, "new", "existing", "existing"),
+                                         (True, "existing", "new", "new"), (True, "new", None, "existing")):
+    check(f'ETCD_INITIAL_CLUSTER_STATE="{want}"' in render_etcd(member_dir, state, started),
+          f"etcd.conf renders initial state {want} for member dir={member_dir} variable={state} started with={started}")
+# The second converge of a new cluster must not change the file (a change restarts etcd on every member).
+first = render_etcd(False, "new")
+started = re.search(r'^ETCD_INITIAL_CLUSTER_STATE="(\w+)"', first, re.M).group(1)
+check(render_etcd(True, "new", started) == first, "etcd.conf renders byte-identical on the run after etcd first started")
+started_task = next((t for t in tasks("patroni/tasks/03-etcd-configure.yml")
+                     if "_etcd_started_state" in str(t.get("set_fact", {}))), None)
+check(started_task is not None and "ETCD_INITIAL_CLUSTER_STATE" in str(started_task["set_fact"]),
+      "03 reads the started initial cluster state back from /etc/default/etcd")
+unit = code("patroni/templates/patroni.service.j2")
+check(not re.search(r'^(Requires|BindsTo|PartOf|Requisite)=.*\betcd\b', unit, re.M) and re.search(r'^Wants=.*\betcd\.service', unit, re.M),
+      "patroni.service only Wants= etcd, so an etcd restart does not restart Patroni")
 check(re.search(r'^ETCD_AUTO_COMPACTION_RETENTION="(?!0")[^"]+"', code("patroni/templates/etcd.conf.j2"), re.M) is not None,
       "etcd auto-compaction is enabled")
 etcd_tasks = {t.get("name"): t for t in tasks("patroni/tasks/03-etcd-configure.yml")}
@@ -426,6 +458,50 @@ for managed, answered, render, want in ((False, False, True, False), (True, True
              redis_sentinel_answered=answered, redis_render_configs=render)
     check(fires(enforce["when"], **v) == want,
           f"redis policy enforce (managed={managed} answered={answered} render={render}) runs={want}")
+
+# patroni: a refused or failed restart is re-notified from the handler's marker on the next run.
+requeue = next((t for t in tasks("patroni/tasks/06-patroni-configure.yml") if t.get("notify") == "patroni config changed"
+                and "_patroni_restart_pending" in str(t.get("when"))), None)
+marker = next((t for t in tasks("patroni/tasks/06-patroni-configure.yml") if t.get("register") == "_patroni_restart_pending"), {})
+check(requeue is not None and requeue.get("changed_when") is True
+      and marker.get("stat", {}).get("path") == "/etc/patroni/.restart-pending"
+      and "pending=/etc/patroni/.restart-pending" in handlers["restart patroni"]["shell"],
+      "06 re-notifies the patroni restart while the handler's pending marker exists")
+
+# patroni: the handler's state vocabulary ("streaming") and `switchover --leader` need Patroni >= 3.0.4.
+install = tasks("patroni/tasks/05-patroni-install.yml")
+gate = next((t for t in install if "version('3.0.4', '>=')" in str(t.get("assert", {}))), None)
+check(gate is not None and "always" in gate.get("tags", []), "patroni install refuses Patroni older than 3.0.4, on every tag")
+scraper = code("patroni/tasks/11-monitoring.yml")
+check('"$STATE" == "streaming"' in scraper and '"$ROLE" == "sync_standby"' in scraper,
+      "patroni textfile scraper counts a 3.x streaming replica and a sync standby as running replicas")
+
+# patroni: a pgBackRest restore outside Patroni loses its recovery settings, so it is refused.
+boot = tasks("patroni/tasks/08-patroni-bootstrap.yml")
+refuse_restore = next((t for t in boot[0]["block"] if "fail" in t), {"when": "false"})
+for method, initialized, want in (("pgbackrest", False, True), ("pgbackrest", True, False), ("initdb", False, False)):
+    v = dict(patroni_bootstrap_method=method, _patroni_initialized={"stat": {"exists": initialized}})
+    check(fires(refuse_restore["when"], **v) == want and boot[0]["block"][0] is refuse_restore,
+          f"bootstrap refuses an out-of-Patroni restore (method={method} initialized={initialized}) -> {want}")
+
+# promtail: a finite retry budget drops a batch while Loki is down, after the journal position moved on.
+promtail = yaml.safe_load(jinja2.Environment(undefined=jinja2.ChainableUndefined).from_string(
+    text("loki/templates/promtail-config.yaml.j2")).render(promtail_target_url="http://10.0.2.5:3100/loki/api/v1/push"))
+check(all(c.get("backoff_config", {}).get("max_retries") == 0 for c in promtail["clients"]),
+      "promtail retries a batch until Loki accepts it (max_retries 0)")
+
+# firewalls: every role that renders the whole /etc/nftables.conf refuses an archival node,
+# whose own role renders the same file.
+for role in sorted(os.listdir(roles)):
+    tdir = f"{roles}/{role}/tasks"
+    if role == "archival-node" or not os.path.isdir(tdir):
+        continue
+    files = [f for f in os.listdir(tdir) if f.endswith(".yml")]
+    if not any("/etc/nftables.conf" in open(f"{tdir}/{f}").read() for f in files):
+        continue
+    guarded = any("archival_nodes" in str(t.get("assert", {}))
+                  for f in files for t in (yaml.safe_load(open(f"{tdir}/{f}")) or []) if isinstance(t, dict))
+    check(guarded, f"{role} renders /etc/nftables.conf and refuses hosts in archival_nodes")
 
 if failed:
     sys.exit(1)
