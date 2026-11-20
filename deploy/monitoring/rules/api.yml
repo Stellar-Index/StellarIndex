@@ -376,8 +376,8 @@ groups:
       # job matcher keeps the other binaries' zero-value series out.
       - alert: stellarindex_customer_webhook_worker_stalled
         expr: |
-          (time() - stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"}) > 900
-            and stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"} > 0
+          (time() - stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_api"}) > 900
+            and stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_api"} > 0
         for: 5m
         labels:
           severity: ticket
