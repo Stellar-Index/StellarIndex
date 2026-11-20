@@ -246,13 +246,11 @@ export function LendingPoolsTable() {
         ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
           .map(
             (p) =>
-              `${LENDING_POOL_META[p.pool ?? '']?.name ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
+              `${poolChartLabel(p.pool ?? '', p.protocol)} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
           )
           .join(', ')}`}
         items={auctionRows.map((p) => ({
-          label:
-            LENDING_POOL_META[p.pool ?? '']?.name ??
-            `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
+          label: poolChartLabel(p.pool ?? '', p.protocol),
           value: p.auctions_total ?? 0,
           display: (p.auctions_total ?? 0).toLocaleString('en-US'),
           annotation:
@@ -299,10 +297,6 @@ export function LendingPoolsTable() {
                 <Th align="right" className="hidden md:table-cell">
                   Auctions
                 </Th>
-                <Th align="right" className="hidden xl:table-cell">
-                  Auctions 24h
-                </Th>
-                <Th className="hidden xl:table-cell">Deployed</Th>
                 <Th align="right" className="hidden xl:table-cell">
                   Users (30d)
                 </Th>
@@ -357,13 +351,18 @@ export function LendingPoolsTable() {
                         className="text-brand-600 text-sm whitespace-nowrap hover:underline"
                         title={poolId}
                       >
-                        {meta?.name ?? `${protocol?.name ?? 'Lending'} pool`}
+                        {poolDisplayName(poolId, p.protocol)}
                       </Link>
                       <div className="text-ink-muted flex items-center gap-1 font-mono text-xs whitespace-nowrap">
                         <span title={poolId}>
                           {poolId.slice(0, 4)}…{poolId.slice(-4)}
                         </span>
                         <CopyButton value={poolId} />
+                        {meta?.deployedAt && (
+                          <span className="hidden xl:inline" title="Deployed">
+                            · {meta.deployedAt}
+                          </span>
+                        )}
                       </div>
                     </Td>
                     <Td>
@@ -379,16 +378,10 @@ export function LendingPoolsTable() {
                       className="text-ink-muted hidden font-mono tabular-nums md:table-cell"
                     >
                       {(p.auctions_total ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <Td
-                      align="right"
-                      className="text-ink-muted hidden font-mono tabular-nums xl:table-cell"
-                    >
-                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <Td className="text-ink-muted hidden font-mono text-xs whitespace-nowrap xl:table-cell">
-                      {meta?.deployedAt ?? (
-                        <span className="text-ink-faint">—</span>
+                      {(p.auctions_24h ?? 0) > 0 && (
+                        <div className="text-xs">
+                          {(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h
+                        </div>
                       )}
                     </Td>
                     <Td
@@ -434,4 +427,20 @@ export function LendingPoolsTable() {
   );
 }
 
-const COLS = 12;
+const COLS = 10;
+
+/** Curated name, else "<Protocol> pool"; we don't invent pool names. */
+function poolDisplayName(pool: string, protocol?: string | null) {
+  const meta = LENDING_POOL_META[pool];
+  return (
+    meta?.name ??
+    `${lendingProtocol(meta?.protocol ?? protocol ?? undefined)?.name ?? 'Lending'} pool`
+  );
+}
+
+// A chart bar has no secondary line, so an uncurated pool keeps its short id to stay distinct.
+function poolChartLabel(pool: string, protocol?: string | null) {
+  return LENDING_POOL_META[pool]
+    ? poolDisplayName(pool, protocol)
+    : `${poolDisplayName(pool, protocol)} ${pool.slice(0, 4)}…${pool.slice(-4)}`;
+}
