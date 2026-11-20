@@ -2335,6 +2335,28 @@ export interface paths {
          *     `live` is `expiration > as_of_time`. `archived` marks a
          *     TTL-archived entry, served with its last written value.
          *
+         *     Every stream carries its current rate. `tokens_per_day` is
+         *     `eps x 86400 / 10^eps_decimals`, emission-token base units per day,
+         *     exact. `usd_per_day` values it at `emission_token_price_usd`, the
+         *     emission token's CURRENT price as `/v1/lending/protocols` reads it,
+         *     2 dp. A stream past its expiration (`live: false`) has ended:
+         *     `tokens_per_day` is `"0"` and `usd_per_day` `"0.00"`, never its last
+         *     `eps` annualised. `usd_per_day` is null with `usd_reason` when the
+         *     token is unpriced (`unpriced`), its decimals are unknown
+         *     (`decimals_unknown`) or disagree with the lake's
+         *     (`price_scale_mismatch`), the pool names no emission token
+         *     (`emission_token_unread`), or the pool's emission token is not the
+         *     SAC of the protocol's verified BLND or BLNT
+         *     (`emission_token_unverified`). Each reserve stream's
+         *     `emissions_apr` is `usd_per_day x 365` over the side's current USD
+         *     size (supplied for `supply`, borrowed for `borrow`, at the
+         *     `/reserves` price and decimals), a decimal string at 4 dp
+         *     (`0.1577` = 15.77%); `"0.0000"` for an ended stream. It is null with
+         *     `emissions_apr_reason` when `usd_per_day` is null (that reason),
+         *     the reserve is not read (`reserve_unread`), the side has no USD
+         *     price (`side_unpriced`) or the side is empty (`side_empty`). Backstop
+         *     streams carry no APR.
+         *
          *     `storage_available` is false, with `storage_unavailable_reason`,
          *     for a Blend V1 pool (`blend_v1_emission_storage_unverified`: its
          *     emission storage layout is not verified, so none is guessed), a
@@ -19390,6 +19412,7 @@ export interface operations {
                      *         "protocol": "blend",
                      *         "emission_token": "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY",
                      *         "emission_token_decimals": 7,
+                     *         "emission_token_price_usd": "0.05",
                      *         "eps_decimals": 7,
                      *         "storage_available": true,
                      *         "reserves": [
@@ -19401,7 +19424,12 @@ export interface operations {
                      *             "expiration": "2026-11-20T00:00:00Z",
                      *             "last_update": "2026-11-13T00:00:00Z",
                      *             "live": true,
-                     *             "archived": false
+                     *             "archived": false,
+                     *             "tokens_per_day": "17851239669.41856",
+                     *             "usd_per_day": "89.26",
+                     *             "usd_reason": null,
+                     *             "emissions_apr": "0.0326",
+                     *             "emissions_apr_reason": null
                      *           }
                      *         ],
                      *         "backstop": [
@@ -19411,7 +19439,10 @@ export interface operations {
                      *             "expiration": "2026-11-20T00:00:00Z",
                      *             "last_update": "2026-11-13T00:00:00Z",
                      *             "live": true,
-                     *             "archived": false
+                     *             "archived": false,
+                     *             "tokens_per_day": "35702479338.83712",
+                     *             "usd_per_day": "178.51",
+                     *             "usd_reason": null
                      *           }
                      *         ],
                      *         "claims": {
@@ -19450,6 +19481,8 @@ export interface operations {
                             emission_token: string | null;
                             /** @description The emission token's decimals(); null when it could not be read. */
                             emission_token_decimals: number | null;
+                            /** @description Current USD price per whole emission token that every `usd_per_day` uses; null when unpriced or unverified. */
+                            emission_token_price_usd?: string | null;
                             /** @description Fixed-point scale of every `eps`: `eps / 10^eps_decimals` is emission-token base units per second. */
                             eps_decimals: number;
                             storage_available: boolean;
@@ -19468,6 +19501,16 @@ export interface operations {
                                 last_update: string;
                                 live: boolean;
                                 archived: boolean;
+                                /** @description Emission-token base units per day, exact; "0" once ended. */
+                                tokens_per_day?: string;
+                                /** @description tokens_per_day at the current price, 2 dp; null with usd_reason. */
+                                usd_per_day?: string | null;
+                                /** @enum {string|null} */
+                                usd_reason?: "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "emission_token_unread" | "emission_token_unverified" | null;
+                                /** @description usd_per_day x 365 / the side's current USD size, 4 dp; "0.0000" once ended. */
+                                emissions_apr?: string | null;
+                                /** @enum {string|null} */
+                                emissions_apr_reason?: "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "emission_token_unread" | "emission_token_unverified" | "reserve_unread" | "side_unpriced" | "side_empty" | null;
                             }[];
                             backstop: {
                                 /** @enum {string|null} */
@@ -19479,6 +19522,12 @@ export interface operations {
                                 last_update: string;
                                 live: boolean;
                                 archived: boolean;
+                                /** @description Emission-token base units per day, exact; "0" once ended. */
+                                tokens_per_day?: string;
+                                /** @description tokens_per_day at the current price, 2 dp; null with usd_reason. */
+                                usd_per_day?: string | null;
+                                /** @enum {string|null} */
+                                usd_reason?: "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "emission_token_unread" | "emission_token_unverified" | null;
                             }[];
                             claims: {
                                 available: boolean;

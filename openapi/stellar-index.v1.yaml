@@ -4859,6 +4859,28 @@ paths:
         `live` is `expiration > as_of_time`. `archived` marks a
         TTL-archived entry, served with its last written value.
 
+        Every stream carries its current rate. `tokens_per_day` is
+        `eps x 86400 / 10^eps_decimals`, emission-token base units per day,
+        exact. `usd_per_day` values it at `emission_token_price_usd`, the
+        emission token's CURRENT price as `/v1/lending/protocols` reads it,
+        2 dp. A stream past its expiration (`live: false`) has ended:
+        `tokens_per_day` is `"0"` and `usd_per_day` `"0.00"`, never its last
+        `eps` annualised. `usd_per_day` is null with `usd_reason` when the
+        token is unpriced (`unpriced`), its decimals are unknown
+        (`decimals_unknown`) or disagree with the lake's
+        (`price_scale_mismatch`), the pool names no emission token
+        (`emission_token_unread`), or the pool's emission token is not the
+        SAC of the protocol's verified BLND or BLNT
+        (`emission_token_unverified`). Each reserve stream's
+        `emissions_apr` is `usd_per_day x 365` over the side's current USD
+        size (supplied for `supply`, borrowed for `borrow`, at the
+        `/reserves` price and decimals), a decimal string at 4 dp
+        (`0.1577` = 15.77%); `"0.0000"` for an ended stream. It is null with
+        `emissions_apr_reason` when `usd_per_day` is null (that reason),
+        the reserve is not read (`reserve_unread`), the side has no USD
+        price (`side_unpriced`) or the side is empty (`side_empty`). Backstop
+        streams carry no APR.
+
         `storage_available` is false, with `storage_unavailable_reason`,
         for a Blend V1 pool (`blend_v1_emission_storage_unverified`: its
         emission storage layout is not verified, so none is guessed), a
@@ -4899,12 +4921,13 @@ paths:
                   protocol: blend
                   emission_token: CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
                   emission_token_decimals: 7
+                  emission_token_price_usd: '0.05'
                   eps_decimals: 7
                   storage_available: true
                   reserves:
-                  - { token_id: 1, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, side: supply, eps: '2066115702479', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false }
+                  - { token_id: 1, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, side: supply, eps: '2066115702479', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false, tokens_per_day: '17851239669.41856', usd_per_day: '89.26', usd_reason: null, emissions_apr: '0.0326', emissions_apr_reason: null }
                   backstop:
-                  - { tier: null, eps: '4132231404958', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false }
+                  - { tier: null, eps: '4132231404958', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false, tokens_per_day: '35702479338.83712', usd_per_day: '178.51', usd_reason: null }
                   claims:
                     available: true
                     pool: { claims: 1200, claims_30d: 85, claimers: 310, claimers_30d: 60, amount: '125000000000000', amount_30d: '9000000000000' }
@@ -4932,6 +4955,7 @@ paths:
                           protocol: { type: string, enum: [blend, blnt] }
                           emission_token: { type: [string, "null"], description: "Emitted token contract: the pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread." }
                           emission_token_decimals: { type: [integer, "null"], description: "The emission token's decimals(); null when it could not be read." }
+                          emission_token_price_usd: { type: [string, "null"], description: "Current USD price per whole emission token that every `usd_per_day` uses; null when unpriced or unverified." }
                           eps_decimals: { type: integer, description: "Fixed-point scale of every `eps`: `eps / 10^eps_decimals` is emission-token base units per second." }
                           storage_available: { type: boolean }
                           storage_unavailable_reason: { type: string, enum: [blend_v1_emission_storage_unverified, pool_instance_unavailable, emission_storage_reader_unavailable] }
@@ -4948,6 +4972,11 @@ paths:
                                 last_update: { type: string, format: date-time }
                                 live: { type: boolean }
                                 archived: { type: boolean }
+                                tokens_per_day: { type: string, description: "Emission-token base units per day, exact; \"0\" once ended." }
+                                usd_per_day: { type: [string, "null"], description: "tokens_per_day at the current price, 2 dp; null with usd_reason." }
+                                usd_reason: { type: [string, "null"], enum: [unpriced, decimals_unknown, price_scale_mismatch, emission_token_unread, emission_token_unverified, null] }
+                                emissions_apr: { type: [string, "null"], description: "usd_per_day x 365 / the side's current USD size, 4 dp; \"0.0000\" once ended." }
+                                emissions_apr_reason: { type: [string, "null"], enum: [unpriced, decimals_unknown, price_scale_mismatch, emission_token_unread, emission_token_unverified, reserve_unread, side_unpriced, side_empty, null] }
                               required: [token_id, asset, side, eps, expiration, last_update, live, archived]
                           backstop:
                             type: array
@@ -4960,6 +4989,9 @@ paths:
                                 last_update: { type: string, format: date-time }
                                 live: { type: boolean }
                                 archived: { type: boolean }
+                                tokens_per_day: { type: string, description: "Emission-token base units per day, exact; \"0\" once ended." }
+                                usd_per_day: { type: [string, "null"], description: "tokens_per_day at the current price, 2 dp; null with usd_reason." }
+                                usd_reason: { type: [string, "null"], enum: [unpriced, decimals_unknown, price_scale_mismatch, emission_token_unread, emission_token_unverified, null] }
                               required: [tier, eps, expiration, last_update, live, archived]
                           claims:
                             type: object
