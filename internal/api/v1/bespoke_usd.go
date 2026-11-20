@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -71,5 +72,31 @@ func (s *Server) kpiTokenPrice(ctx context.Context, ticker string) kpiTokenPrice
 	case tok.Decimals <= 0:
 		return kpiTokenPrice{reason: kpiUSDDecimalsUnknown}
 	}
-	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals, stale: flags.Stale}
+	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals, stale: s.kpiPriceStale(ctx, tok, flags.Stale)}
+}
+
+// kpiPriceStale is the price reader's own verdict on the price the asset route served. The asset envelope's stale flag also covers
+// supply and home-domain reads, so it is used only when the served price is not the reader's (a fill), erring towards stale.
+func (s *Server) kpiPriceStale(ctx context.Context, tok *LendingProtocolToken, envelopeStale bool) bool {
+	a, err := canonical.ParseAsset(tok.AssetID)
+	if err != nil {
+		return envelopeStale
+	}
+	if l := s.lookupUSDPriceWithSources(ctx, a); l.price != "" && l.price == *tok.PriceUSD {
+		return l.stale
+	}
+	return envelopeStale
+}
+
+// bespokePriceStale reports whether any served KPI value_usd rests on a stale price; it raises the envelope's flags.stale.
+func bespokePriceStale(b *ProtocolBespoke) bool {
+	if b == nil {
+		return false
+	}
+	for _, k := range b.KPIs {
+		if k.ValueUSD != nil && k.PriceStale {
+			return true
+		}
+	}
+	return false
 }

@@ -656,7 +656,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	tvlStale := view.TVL != nil && view.TVL.Stale
 	// The flag tracks the ANALYTICS status, not just entry age: analytics.status="stale" always
 	// travels with flags.stale (openapi contract).
-	staleFlag := stale || view.verdictsStale || tvlStale ||
+	staleFlag := stale || view.verdictsStale || tvlStale || bespokePriceStale(view.Bespoke) ||
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")

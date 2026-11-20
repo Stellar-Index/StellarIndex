@@ -43,6 +43,42 @@ func TestValueBespokeKPIs_PricedUnpricedAndUnpriceable(t *testing.T) {
 	}
 }
 
+type blntBespokeReader struct{}
+
+func (blntBespokeReader) BuildProtocolBespoke(context.Context, string, string, int) (*timescale.BespokeBlock, error) {
+	return &timescale.BespokeBlock{Category: "lending", KPIs: []timescale.BespokeKPI{
+		{Label: "Claim events (90d)", Value: "2"},
+		{Label: "Emissions claimed (90d)", Value: "20000000", Unit: "BLNT base units", Amount: big.NewInt(20_000_000), Token: "BLNT"},
+	}}, nil
+}
+
+// TestEnrichBespoke_BLNTEmissionsUSD runs the protocol-detail bespoke path end to end: a store block whose emissions KPI is tagged
+// BLNT is served with value_usd and price_usd at BLNT's verified-catalogue price, or with usd_reason when BLNT has no price.
+func TestEnrichBespoke_BLNTEmissionsUSD(t *testing.T) {
+	priced := newProtocolsServer(t, protocolsCase{clean: true}).srv // BLNT 0.01
+	priced.ProtocolBespoke = blntBespokeReader{}
+	out := priced.EnrichBespokeForTest(context.Background(), "blnt", "lending", 90)
+	if out == nil || len(out.KPIs) != 2 {
+		t.Fatalf("enriched bespoke = %+v, want the store block's two KPIs", out)
+	}
+	if got := out.KPIs[1]; strOrNil(got.ValueUSD) != "0.02" || strOrNil(got.PriceUSD) != "0.01" || got.USDReason != "" {
+		t.Errorf("priced BLNT emissions = %+v, want value_usd 0.02 at price_usd 0.01 (2 BLNT)", got)
+	}
+	if got := out.KPIs[0]; got.ValueUSD != nil || got.PriceUSD != nil || got.USDReason != "" {
+		t.Errorf("count KPI gained USD fields: %+v", got)
+	}
+
+	unpriced := newProtocolsServer(t, protocolsCase{}).srv // BLNT unpriced
+	unpriced.ProtocolBespoke = blntBespokeReader{}
+	out = unpriced.EnrichBespokeForTest(context.Background(), "blnt", "lending", 90)
+	if out == nil || len(out.KPIs) != 2 {
+		t.Fatalf("enriched bespoke = %+v, want the store block's two KPIs", out)
+	}
+	if got := out.KPIs[1]; got.ValueUSD != nil || got.PriceUSD != nil || got.USDReason != "unpriced" {
+		t.Errorf("unpriced BLNT emissions = %+v, want null value_usd + usd_reason unpriced", got)
+	}
+}
+
 // TestValueBespokeKPIs_BLNTPriced values BLNT emissions once BLNT has a price.
 func TestValueBespokeKPIs_BLNTPriced(t *testing.T) {
 	srv := newProtocolsServer(t, protocolsCase{clean: true}).srv // BLNT 0.01

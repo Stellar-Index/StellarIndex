@@ -238,11 +238,14 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- backfill rows stamp 4294967295 (math.MaxUint32, authoritative final state).
     --
     -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3). Version 3
-    -- renumbered every ledger, so a legacy row can carry a HIGHER version than the
-    -- corrected row for the same key, and a lower RMT version never displaces a
-    -- higher one. Re-deriving a range therefore requires DROPPING the partition
-    -- first, not just re-inserting. See migrations/0120 and
-    -- docs/operations/runbooks/entry-walk-renumbering.md.
+    -- renumbered every ledger, so a legacy ledger_entries_current row can carry a
+    -- HIGHER version than its correction and win FINAL. This table is versioned on
+    -- ingested_at, so a re-insert corrects a row whose key did not move; but the key
+    -- holds change_index, which the renumbering moved on P23+ ledgers, so a row left
+    -- at its old change_index is an orphan that survives FINAL and must be deleted,
+    -- as must the projection's stale rows. Procedure (orphans: step 5):
+    -- docs/operations/runbooks/entry-walk-renumbering.md
+    -- (see also migrations/0120).
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     -- key_xdr is not in the sort key; the bloom prunes point lookups. 0.01 matches
@@ -1262,8 +1265,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
     month     Date,
     asset     String,
     contract  String,
-    inflow    Int128,
-    outflow   Int128,
+    inflow    Int256,
+    outflow   Int256,
     movements UInt64,
     actives   AggregateFunction(uniqCombined, String),
     first_at  DateTime('UTC'),
@@ -1283,8 +1286,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows
     root            String,
     month           Date,
     asset           String,
-    inflow          Int128,
-    outflow         Int128,
+    inflow          Int256,
+    outflow         Int256,
     movements       UInt64,
     active_accounts UInt64
 )

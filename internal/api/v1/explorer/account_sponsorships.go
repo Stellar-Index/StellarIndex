@@ -278,7 +278,7 @@ func accountSponsorshipsNote(wm uint32, match *bool) string {
 		"an arrangement that began below the derivation floor is listed without a start", wm)
 	switch {
 	case match == nil:
-		return note + "; the proof is not comparable: the account entry changed after that ledger or does not exist"
+		return note + "; the proof is not comparable: the account entry changed after that ledger, was read before it, or does not exist"
 	case !*match:
 		return note + "; the account entry's counters DISAGREE with the derived in-force reserves"
 	}

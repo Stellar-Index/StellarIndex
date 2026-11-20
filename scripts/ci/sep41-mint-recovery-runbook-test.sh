@@ -6,7 +6,7 @@
 # The wrapper's contract (configs/ansible/roles/archival-node/tasks/
 # 14-stellarindex-services.yml, the /usr/local/sbin/run-heavy-job.sh
 # copy task) derives its singleton lock straight from NAME:
-# `LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-${NAME}.lock"`.
+# `LOCK="${JOB_LOCK_DIR}/stellarindex-heavy-${NAME}.lock"`.
 # This runbook's own Preconditions section requires "One heavy job at a
 # time" — but the step-2 re-derive used `sep41-mint-recover` while the
 # step-3 "reset line was missing, re-run" fallback used the DIFFERENT

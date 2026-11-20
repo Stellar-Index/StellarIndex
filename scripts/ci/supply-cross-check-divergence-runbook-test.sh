@@ -66,6 +66,9 @@ PY
 [[ -s "$TMP/reseed.sh" ]] || { echo "supply-cross-check-divergence-runbook-test: empty extracted block" >&2; exit 2; }
 
 mkdir -p "$TMP/bin" "$TMP/lock"
+# Per-job lock dir as the host's tmpfiles.d line lays it out; the wrapper
+# refuses to run without it (it only creates it when root).
+mkdir -m 3770 "$TMP/lock/stellarindex"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/flock"   # macOS has no flock
 chmod +x "$TMP/bin/flock"
 printf '#!/usr/bin/env bash\necho 1000\n' > "$TMP/bin/id"   # non-root branch

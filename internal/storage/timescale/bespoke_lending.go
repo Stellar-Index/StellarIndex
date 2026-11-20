@@ -94,11 +94,18 @@ const (
 // lendingBackstopInflowKinds / lendingBackstopOutflowKinds are the backstop event kinds that move
 // funds INTO vs OUT OF a backstop (deposit/donate vs withdraw/draw). The remaining kinds (claim,
 // queue/dequeue_withdrawal, distribute, gulp_emissions, rw_zone*) are accounting or queueing
-// events, excluded from the flow series but kept in the backstop-events KPI count.
+// events, excluded from the flow series.
 const (
 	lendingBackstopInflowKinds  = `'deposit','donate'`
 	lendingBackstopOutflowKinds = `'withdraw','draw'`
 )
+
+// lendingBackstopDepositorKinds are the kinds the Blend and BLNT "Backstop events" KPIs count: depositor flows plus claim, draw
+// and donate. Admin and emission kinds (distribute, gulp_emissions, rw_zone*) are not backstop activity.
+const lendingBackstopDepositorKinds = `'deposit','queue_withdrawal','dequeue_withdrawal','withdraw','claim','draw','donate'`
+
+// lendingBackstopEventsHint is the shared "Backstop events" KPI hint.
+const lendingBackstopEventsHint = "deposit + queue_withdrawal + dequeue_withdrawal + withdraw + claim + draw + donate backstop events in the window"
 
 // lendingSideSeriesQuery builds the per-bucket position-event counts for one side (bridgeSeriesGrain); kinds MUST be a lending*SideKinds
 // constant.

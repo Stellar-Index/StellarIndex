@@ -16,6 +16,7 @@ const (
 	backstopUSDDecimals       = "decimals_unknown"
 	backstopUSDScaleMismatch  = "price_scale_mismatch"
 	backstopUSDNoBalance      = "balance_unavailable"
+	backstopUSDTokenUnknown   = "token_unknown"
 	backstopUSDNegativeAmount = "negative_amount"
 )
 
@@ -44,12 +45,20 @@ func (s *Server) tokenUSD(ctx context.Context, token string, amount *big.Int) (u
 	return v, price, stale, ""
 }
 
-// backstopUnitUSD values a backstop amount in unit token; a Blend backstop is a Comet BLND:USDC LP share, which nothing here values.
-func (s *Server) backstopUnitUSD(ctx context.Context, protocol, token string, amount *big.Int) (*big.Rat, string, bool, string) {
+// backstopUnitUSD values a backstop amount in unit token. Only a BLNT tier of a plain token is valued: a Blend backstop and a BLNT
+// BlntUsdc/BlntXlm tier hold Comet LP shares, and an asset kind not listed here is withheld, never assumed to be a token.
+func (s *Server) backstopUnitUSD(ctx context.Context, protocol, asset, token string, amount *big.Int) (*big.Rat, string, bool, string) {
 	if protocol != blnt.SourceName {
 		return nil, "", false, backstopUSDLPShare
 	}
-	return s.tokenUSD(ctx, token, amount)
+	switch asset {
+	case "Usdc", "Xlm":
+		return s.tokenUSD(ctx, token, amount)
+	case "BlntUsdc", "BlntXlm":
+		return nil, "", false, backstopUSDLPShare
+	default:
+		return nil, "", false, backstopUSDTokenUnknown
+	}
 }
 
 // valueBackstopView sets each tier's tokens_usd and the view's total_usd; the total is a lower bound when a tier is unvalued.
@@ -68,10 +77,13 @@ func (s *Server) valueBackstopView(ctx context.Context, view *LendingBackstopVie
 		}
 		if t.Balance == nil || token == "" {
 			tv.USDReason = strRef(backstopUSDNoBalance)
+			if t.Balance != nil {
+				tv.USDReason = strRef(backstopUSDTokenUnknown)
+			}
 			vals = append(vals, nil)
 			continue
 		}
-		usd, price, stale, reason := s.backstopUnitUSD(ctx, protocol, token, t.Balance.Tokens)
+		usd, price, stale, reason := s.backstopUnitUSD(ctx, protocol, t.Asset, token, t.Balance.Tokens)
 		vals = append(vals, usd)
 		if usd == nil {
 			tv.USDReason = strRef(reason)
@@ -97,7 +109,7 @@ func (s *Server) valueProtocolBackstop(ctx context.Context, st *LendingProtocolS
 			vals = append(vals, nil)
 			continue
 		}
-		usd, _, stale, reason := s.backstopUnitUSD(ctx, st.Protocol, b.BackstopToken, amt)
+		usd, _, stale, reason := s.backstopUnitUSD(ctx, st.Protocol, b.asset, b.BackstopToken, amt)
 		vals = append(vals, usd)
 		if usd == nil {
 			b.USDReason = strRef(reason)

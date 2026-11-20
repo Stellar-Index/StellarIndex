@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -50,7 +51,8 @@ const blntAllTimeKPISQL = `
 		  FROM blnt_events
 		 WHERE contract_role = 'pool' AND event_kind IN (` + blntPositionKinds + `)`
 
-// blntNetFlowSQL leaves out an asset with an undecoded amount rather than serve a sum that silently skipped a row.
+// blntNetFlowSQL leaves out an asset with an undecoded amount rather than serve a sum that silently skipped a row; the asset is
+// named in a block note (blntNetFlowWithheldSQL).
 const blntNetFlowSQL = `
 		SELECT asset,
 		       COALESCE(sum(` + blntSupplyNetExpr + `),0)::text,
@@ -60,6 +62,13 @@ const blntNetFlowSQL = `
 		 GROUP BY asset
 		HAVING NOT bool_or(amount IS NULL)
 		 ORDER BY count(*) DESC, asset LIMIT 25`
+
+const blntNetFlowWithheldSQL = `
+		SELECT asset` + blntPoolEventsWhere + `
+		   AND asset IS NOT NULL
+		 GROUP BY asset
+		HAVING bool_or(amount IS NULL)
+		 ORDER BY asset`
 
 const blntPoolActivitySQL = `
 		SELECT contract_id,
@@ -102,6 +111,9 @@ func (s *Store) blntPositionBlocks(ctx context.Context, blk *BespokeBlock, since
 	netFlow := lendingNetFlowHeader
 	netFlow.Title = fmt.Sprintf("Net flow by asset (%dd)", windowDays)
 	if err := s.appendTable(ctx, blk, netFlow, blntNetFlowSQL, since); err != nil {
+		return err
+	}
+	if err := s.noteWithheldGroups(ctx, blk, netFlow.Title, "asset", blntNetFlowWithheldSQL, since); err != nil {
 		return err
 	}
 	if err := s.appendTable(ctx, blk, lendingPoolActivityHeader, blntPoolActivitySQL, since); err != nil {
@@ -149,23 +161,31 @@ func (s *Store) blntAuctionBlocks(ctx context.Context, blk *BespokeBlock, since 
 
 const blntBackstopCountSQL = `
 		SELECT count(*)::text FROM blnt_events
-		 WHERE contract_role = 'backstop' AND ledger_close_time > now() - $1::interval`
+		 WHERE contract_role = 'backstop' AND event_kind IN (` + lendingBackstopDepositorKinds + `)
+		   AND ledger_close_time > now() - $1::interval`
 
 // blntBackstopFlowSQL sums tier-asset tokens (amount) of deposit and withdraw per (pool, tier); the share-only kinds carry shares in
-// amount2 and are not summed. A group with an undecoded amount is left out rather than understated.
+// amount2 and are not summed. A group with an undecoded amount is left out rather than understated, and named in a block note.
 const blntBackstopFlowSQL = `
 		SELECT pool, tier,
 		       COALESCE(sum(amount) FILTER (WHERE event_kind = 'deposit'),0)::text,
 		       COALESCE(sum(amount) FILTER (WHERE event_kind = 'withdraw'),0)::text,
 		       count(*) FILTER (WHERE event_kind = 'deposit')::text,
-		       count(*) FILTER (WHERE event_kind = 'withdraw')::text
+		       count(*) FILTER (WHERE event_kind = 'withdraw')::text` + blntBackstopFlowGroups + `
+		HAVING NOT bool_or(amount IS NULL)
+		 ORDER BY pool, tier`
+
+const blntBackstopFlowWithheldSQL = `
+		SELECT pool || ' ' || tier` + blntBackstopFlowGroups + `
+		HAVING bool_or(amount IS NULL)
+		 ORDER BY pool, tier`
+
+const blntBackstopFlowGroups = `
 		  FROM blnt_events
 		 WHERE contract_role = 'backstop' AND event_kind IN ('deposit','withdraw')
 		   AND pool IS NOT NULL AND tier IS NOT NULL
 		   AND ledger_close_time > now() - $1::interval
-		 GROUP BY pool, tier
-		HAVING NOT bool_or(amount IS NULL)
-		 ORDER BY pool, tier`
+		 GROUP BY pool, tier`
 
 var blntBackstopFlowHeader = BespokeTable{
 	Title:   "Backstop flow by pool and tier (window)",
@@ -179,8 +199,32 @@ func (s *Store) blntBackstopBlocks(ctx context.Context, blk *BespokeBlock, since
 	if err := s.db.QueryRowContext(ctx, blntBackstopCountSQL, since).Scan(&events); err != nil {
 		return fmt.Errorf("timescale: bespokeBLNT backstop KPIs: %w", err)
 	}
-	blk.KPIs = append(blk.KPIs, BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: events})
-	return s.appendTable(ctx, blk, blntBackstopFlowHeader, blntBackstopFlowSQL, since)
+	blk.KPIs = append(blk.KPIs, BespokeKPI{
+		Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: events,
+		Hint: lendingBackstopEventsHint,
+	})
+	if err := s.appendTable(ctx, blk, blntBackstopFlowHeader, blntBackstopFlowSQL, since); err != nil {
+		return err
+	}
+	return s.noteWithheldGroups(ctx, blk, blntBackstopFlowHeader.Title, "pool and tier", blntBackstopFlowWithheldSQL, since)
+}
+
+// noteWithheldGroups names, in a block note, the groups a table left out because an event in them has an undecoded amount.
+func (s *Store) noteWithheldGroups(ctx context.Context, blk *BespokeBlock, title, groupedBy, query string, args ...any) error {
+	tbl, err := s.scanTable(ctx, BespokeTable{Title: title + " (withheld)", Columns: []string{groupedBy}}, query, args...)
+	if err != nil {
+		return err
+	}
+	if len(tbl.Rows) == 0 {
+		return nil
+	}
+	groups := make([]string, len(tbl.Rows))
+	for i, r := range tbl.Rows {
+		groups[i] = r[0]
+	}
+	blk.Notes = append(blk.Notes, fmt.Sprintf("%s leaves out %d %s group(s) with an undecoded amount, withheld rather than understated: %s.",
+		title, len(groups), groupedBy, strings.Join(groups, ", ")))
+	return nil
 }
 
 // blntEmissionSQL: a pool claim's amount is amount_claimed and a backstop claim's is blnt_amount, both BLNT base units.
@@ -206,11 +250,18 @@ func (s *Store) blntEmissionKPIs(ctx context.Context, blk *BespokeBlock, since s
 	if rows == 0 {
 		return nil
 	}
+	claimLabel := fmt.Sprintf("Emissions claimed (%dd)", windowDays)
 	if nullClaim == nil || !*nullClaim {
+		// BLNT: every sampled pool and backstop claim tx carries a SEP-41 transfer of exactly the claimed amount from the BLNT SAC.
 		blk.KPIs = append(blk.KPIs, BespokeKPI{
-			Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: claimed.String(), Unit: "BLNT base units",
+			Label: claimLabel, Value: claimed.String(), Unit: "BLNT base units",
 			Hint:   "summed pool claim (amount_claimed) + backstop claim (blnt_amount) in BLNT base units; a WINDOW sum, not USD",
 			Amount: claimed.BigInt(), Token: "BLNT",
+		})
+	} else {
+		blk.KPIs = append(blk.KPIs, BespokeKPI{
+			Label: claimLabel, Value: "withheld",
+			Hint: "a claim event in the window has an undecoded amount, so the sum is withheld rather than understated",
 		})
 	}
 	blk.KPIs = append(blk.KPIs,

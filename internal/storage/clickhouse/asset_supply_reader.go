@@ -10,7 +10,7 @@ import (
 // ledger_entries_current, hence explorerScanSettings (max_threads 4 bounds memory). max_execution_time is explicit because the Go client
 // pins the default to 30s, below this query's runtime; 150s must stay inside classicSupplyRefreshBudget (3 min) or the server works for
 // nobody.
-const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balance))) AS circ
+const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balance))) AS circ -- i128sum:ok trustline balances are Int64 stroops
 		FROM stellar.ledger_entries_current FINAL
 		WHERE ` + classicCirculatingFilter + `
 		GROUP BY asset` + explorerScanSettings + `, max_execution_time = 150`

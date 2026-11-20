@@ -22,6 +22,74 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// A cohort's monthly inflow sums i128 token amounts, so it must not wrap at 2^127: three 2^126 receipts are served as
+// exactly 3·2^126, never a negative number.
+func TestClickHouseCohortFlowsSumI128AmountsExactly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	raw := dialClickHouse(t, ctx, "stellar")
+
+	const (
+		root   = "GTEST_COHORT_I128_SPONSOR_AAAAAAAAAAAAAAAAAAAAAAAAAA"
+		member = "GTEST_COHORT_I128_MEMBER_AAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		token  = "CTEST_COHORT_I128_TOKEN_AAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		ledger = uint32(77_700_101)
+	)
+	at := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
+	if err := raw.Exec(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)
+		VALUES (?, ?, ?, '00', 23)`, ledger, at, fmt.Sprintf("%064d", ledger)); err != nil {
+		t.Fatalf("insert ledger: %v", err)
+	}
+	if err := raw.Exec(ctx, `INSERT INTO stellar.account_sponsor_edges
+		(sponsor, sponsored, sponsorships_started, first_ledger, last_ledger, first_at, last_at)
+		VALUES (?, ?, 1, ?, ?, ?, ?)`, root, member, ledger, ledger, at, at); err != nil {
+		t.Fatalf("insert sponsor edge: %v", err)
+	}
+	mb, err := raw.PrepareBatch(ctx, `INSERT INTO stellar.account_movements
+		(address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction, movement_kind, provenance, asset, counterparty, amount)`)
+	if err != nil {
+		t.Fatalf("prepare movements: %v", err)
+	}
+	leg := new(big.Int).Lsh(big.NewInt(1), 126)
+	for i := range 3 {
+		if err := mb.Append(member, ledger, at, fmt.Sprintf("%064d", ledger), uint32(0), uint32(i),
+			string(chstore.AccountMovementReceived), "transfer", "soroban", token, "", leg); err != nil {
+			t.Fatalf("append movement: %v", err)
+		}
+	}
+	if err := mb.Send(); err != nil {
+		t.Fatalf("send movements: %v", err)
+	}
+
+	if err := chstore.RunCohortRollup(ctx, addr, nil, nil, t.Logf); err != nil {
+		t.Fatalf("RunCohortRollup: %v", err)
+	}
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	t.Cleanup(func() { _ = er.Close() })
+	cohort, ok, err := er.AccountCohort(ctx, root, chstore.CohortRelationSponsored)
+	if err != nil || !ok {
+		t.Fatalf("AccountCohort: ok=%v err=%v", ok, err)
+	}
+	want := new(big.Int).Mul(leg, big.NewInt(3))
+	found := false
+	for _, f := range cohort.Flows {
+		if f.Asset != token {
+			continue
+		}
+		found = true
+		if f.Inflow.Cmp(want) != 0 || f.Outflow.Sign() != 0 {
+			t.Errorf("token inflow/outflow = %s/%s, want %s/0", f.Inflow, f.Outflow, want)
+		}
+	}
+	if !found {
+		t.Fatalf("no flow row for %s: %+v", token, cohort.Flows)
+	}
+}
+
 // Pins the read-time join of a whole cohort cycle: a flow row carries the price for ITS (asset, month) only. USDC is
 // priced for May, XLM for May only; the cohort moved USDC in May and XLM in June, so June XLM must be unpriced. A join on
 // asset alone or month alone fails.
@@ -359,6 +427,134 @@ func TestClickHouseCohortPositionsRetypeMigratesAFloatTable(t *testing.T) {
 	}
 	if amount != "1234" {
 		t.Errorf("migrated amount = %q, want 1234", amount)
+	}
+}
+
+// The operator file's ALTERs on a pre-retype (Int128) flows pair and working table must leave every inflow/outflow
+// Int256; an Int128 half left behind wraps the cycle's sum on insert.
+func TestClickHouseCohortFlowsRetypeMigratesAnInt128Table(t *testing.T) {
+	ctx := context.Background()
+	const db = "stellar_cohort_flows_retype"
+	conn := dialClickHouse(t, ctx, "default")
+	exec := func(q string) {
+		t.Helper()
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%.96q: %v", q, err)
+		}
+	}
+	exec("DROP DATABASE IF EXISTS " + db + " SYNC")
+	t.Cleanup(func() { _ = conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+db+" SYNC") })
+	exec("CREATE DATABASE " + db)
+	exec(`CREATE TABLE ` + db + `.account_cohort_flows
+		(rel LowCardinality(String), root String, month Date, asset String,
+		 inflow Int128, outflow Int128, movements UInt64, active_accounts UInt64)
+		ENGINE = MergeTree ORDER BY (rel, root, month, asset)`)
+	exec(`CREATE TABLE ` + db + `.account_cohort_flows_staging AS ` + db + `.account_cohort_flows`)
+	exec(`CREATE TABLE ` + db + `.account_cohort_parts_staging
+		(rel LowCardinality(String), root String, month Date, asset String, contract String,
+		 inflow Int128, outflow Int128, movements UInt64, actives AggregateFunction(uniqCombined, String),
+		 first_at DateTime('UTC'), last_at DateTime('UTC'))
+		ENGINE = MergeTree ORDER BY (rel, root, month, asset, contract)`)
+	exec(`INSERT INTO ` + db + `.account_cohort_flows VALUES ('sponsored','G','2026-05-01','native',-7,1234,1,1)`)
+
+	stmts, err := clickHouseDeployStatements("account_cohort_rollup.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := 0
+	for _, s := range stmts {
+		u := strings.ToUpper(s)
+		if strings.HasPrefix(u, "ALTER TABLE STELLAR.ACCOUNT_COHORT_FLOWS") || strings.HasPrefix(u, "ALTER TABLE STELLAR.ACCOUNT_COHORT_PARTS_STAGING") {
+			exec(cohortPosStellarRef.ReplaceAllString(s, db+"."))
+			applied++
+		}
+	}
+	if applied != 3 {
+		t.Fatalf("applied %d flows/parts ALTERs from account_cohort_rollup.sql, want 3", applied)
+	}
+	for _, table := range []string{"account_cohort_flows", "account_cohort_flows_staging", "account_cohort_parts_staging"} {
+		for _, col := range []string{"inflow", "outflow"} {
+			var typ string
+			if err := conn.QueryRow(ctx, `SELECT type FROM system.columns
+				WHERE database = ? AND table = ? AND name = ?`, db, table, col).Scan(&typ); err != nil {
+				t.Fatalf("%s.%s: read column type: %v", table, col, err)
+			}
+			if typ != "Int256" {
+				t.Errorf("%s.%s is %s after the operator file's ALTERs, want Int256", table, col, typ)
+			}
+		}
+	}
+	var in, out string
+	if err := conn.QueryRow(ctx, `SELECT toString(inflow), toString(outflow) FROM `+db+`.account_cohort_flows`).Scan(&in, &out); err != nil {
+		t.Fatalf("read migrated row: %v", err)
+	}
+	if in != "-7" || out != "1234" {
+		t.Errorf("migrated inflow/outflow = %s/%s, want -7/1234", in, out)
+	}
+}
+
+// A binary rolled before the operator file's ALTERs must refuse the cycle rather than narrow its Int256 sums into an Int128
+// staging half: the live snapshot stays as it was, and once the ALTERs are applied the cycle runs and swaps.
+func TestClickHouseCohortRollupRefusesAnInt128FlowsColumn(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	raw := dialClickHouse(t, ctx, "stellar")
+	exec := func(q string) {
+		t.Helper()
+		if err := raw.Exec(ctx, q); err != nil {
+			t.Fatalf("%.96q: %v", q, err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = raw.Exec(context.Background(), `ALTER TABLE stellar.account_cohort_flows_staging MODIFY COLUMN inflow Int256`)
+	})
+
+	const sentinel = "GTEST_COHORT_PREFLIGHT_SENTINEL_AAAAAAAAAAAAAAAAAAAAAA"
+	countSentinel := func() uint64 {
+		t.Helper()
+		var n uint64
+		if err := raw.QueryRow(ctx, `SELECT count() FROM stellar.account_cohort_flows WHERE root = ?`, sentinel).Scan(&n); err != nil {
+			t.Fatalf("count sentinel: %v", err)
+		}
+		return n
+	}
+	const ledger = uint32(77_700_301)
+	if err := raw.Exec(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)
+		VALUES (?, ?, ?, '00', 23)`, ledger, time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC), fmt.Sprintf("%064d", ledger)); err != nil {
+		t.Fatalf("insert ledger: %v", err)
+	}
+	exec(`INSERT INTO stellar.account_cohort_flows (rel, root, month, asset, inflow, outflow, movements, active_accounts)
+		VALUES ('sponsored', '` + sentinel + `', '2026-05-01', 'native', 1, 0, 1, 1)`)
+	exec(`ALTER TABLE stellar.account_cohort_flows_staging MODIFY COLUMN inflow Int128`)
+
+	err := chstore.RunCohortRollup(ctx, addr, nil, nil, t.Logf)
+	if err == nil {
+		t.Fatal("RunCohortRollup with an Int128 account_cohort_flows_staging.inflow succeeded, want a refusal")
+	}
+	for _, want := range []string{"stellar.account_cohort_flows_staging.inflow is Int128", "account_cohort_rollup.sql"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("RunCohortRollup err = %q, want it to name %q", err, want)
+		}
+	}
+	if n := countSentinel(); n != 1 {
+		t.Fatalf("live account_cohort_flows lost its snapshot on a refused cycle: sentinel rows = %d, want 1", n)
+	}
+
+	stmts, err := clickHouseDeployStatements("account_cohort_rollup.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range stmts {
+		if strings.HasPrefix(strings.ToUpper(s), "ALTER TABLE STELLAR.ACCOUNT_COHORT_") {
+			exec(s)
+		}
+	}
+	if err := chstore.RunCohortRollup(ctx, addr, nil, nil, t.Logf); err != nil {
+		t.Fatalf("RunCohortRollup after the operator file's ALTERs: %v", err)
+	}
+	if n := countSentinel(); n != 0 {
+		t.Errorf("the cycle after the ALTERs did not swap: sentinel rows = %d, want 0", n)
 	}
 }
 

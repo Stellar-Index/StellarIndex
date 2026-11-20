@@ -55,9 +55,11 @@ MemoryMax=8G
 
 # Hardening — read-only most of the filesystem, write only the
 # working dir. Mirrors deploy/systemd/stellarindex-api.service.
+# strict, not full: under full all of /var stays writable, so ReadWritePaths
+# confined nothing and the internet-facing API could rewrite alert textfiles.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
