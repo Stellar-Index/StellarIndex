@@ -325,6 +325,40 @@ func TestChops_RequireAStatedMode(t *testing.T) {
 	}
 }
 
+// Skips a backfill records must reach the heartbeat so the ops-job rule covers it; every reason is present at 0 from the first sample.
+func TestBackfillProgress_SupplySkipsReachHeartbeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ops_job_ch_backfill.prom")
+	prog := newBackfillProgress(path)
+	read := func() string {
+		raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+		if err != nil {
+			t.Fatalf("heartbeat textfile not written: %v", err)
+		}
+		return string(raw)
+	}
+	series := func(reason string) string {
+		return `stellarindex_ops_job_skipped_total{ops_job="ch-backfill",reason="` + reason + `"} `
+	}
+	first := read()
+	for _, reason := range clickhouse.SupplySkipReasons {
+		if got := gaugeValue(t, first, series(reason)); got != "0" {
+			t.Errorf("first heartbeat skipped_total{reason=%s} = %s, want 0", reason, got)
+		}
+	}
+
+	prog.record(0, 100, map[string]int{clickhouse.SupplySkipAmountNotI128: 2})
+	prog.record(1, 101, map[string]int{clickhouse.SupplySkipAmountNotI128: 1, clickhouse.SupplySkipNotTokenShaped: 4})
+	prog.markOK()
+	prog.stop()
+
+	body := read()
+	for reason, want := range map[string]string{"amount_not_i128": "3", "not_token_shaped": "4", "body_unparseable": "0"} {
+		if got := gaugeValue(t, body, series(reason)); got != want {
+			t.Errorf("skipped_total{reason=%s} = %s, want %s", reason, got, want)
+		}
+	}
+}
+
 // A re-derive over a trimmed archive range must read through to the cold tier; the live tail never does.
 func TestBackfillStreamConfig_ArchiveReadsThroughToCold(t *testing.T) {
 	cfg := testBackfillConfig(0)

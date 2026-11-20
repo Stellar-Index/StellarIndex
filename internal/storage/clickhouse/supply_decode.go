@@ -68,7 +68,12 @@ func ClassifySupplyBodyXDR(dataXDR string) (amount *big.Int, skip string) {
 		}
 		return amt.BigInt(), ""
 	}
-	if sv.Type != xdr.ScValTypeScvMap {
+	switch sv.Type {
+	case xdr.ScValTypeScvU128, xdr.ScValTypeScvI256, xdr.ScValTypeScvU256:
+		// An amount-shaped value we cannot decode: a token's supply would be short, so it is not foreign traffic.
+		return nil, SupplySkipAmountNotI128
+	case xdr.ScValTypeScvMap:
+	default:
 		return nil, SupplySkipNotTokenShaped
 	}
 	entries, merr := scval.AsMap(sv)

@@ -173,6 +173,10 @@ func TestExtractEvents_TxSuccessGate(t *testing.T) {
 		{"u32 token id", xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &tokenID}, SupplySkipNotTokenShaped},
 		{"string body", xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &nftName}, SupplySkipNotTokenShaped},
 		{"map without amount", mapOf("token_id", xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &tokenID}), SupplySkipNotTokenShaped},
+		{"bare u64", xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64Amt}, SupplySkipNotTokenShaped},
+		{"bare u128", xdr.ScVal{Type: xdr.ScValTypeScvU128, U128: &xdr.UInt128Parts{Hi: 0, Lo: 5}}, SupplySkipAmountNotI128},
+		{"bare i256", xdr.ScVal{Type: xdr.ScValTypeScvI256, I256: &xdr.Int256Parts{LoLo: 5}}, SupplySkipAmountNotI128},
+		{"bare u256", xdr.ScVal{Type: xdr.ScValTypeScvU256, U256: &xdr.UInt256Parts{LoLo: 5}}, SupplySkipAmountNotI128},
 		{"map amount not i128", mapOf("amount", xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64Amt}), SupplySkipAmountNotI128},
 	} {
 		t.Run("supply body skipped: "+tc.name, func(t *testing.T) {

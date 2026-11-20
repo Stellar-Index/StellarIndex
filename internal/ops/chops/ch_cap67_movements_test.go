@@ -415,6 +415,24 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	}
 }
 
+// The first sample written must already carry every reason at 0: increase() cannot see a series' first sample, so a
+// reason first appearing at N loses the skip that produced it.
+func TestCap67Progress_FirstHeartbeatSeedsEveryReasonAtZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ops_job_ch_cap67_movements.prom")
+	prog := newCap67Progress(path)
+	defer prog.stop(true)
+
+	raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("heartbeat textfile not written: %v", err)
+	}
+	for _, reason := range []string{"not_token_shaped", "amount_not_i128", "body_unparseable", "decode_failed"} {
+		if got := gaugeValue(t, string(raw), `stellarindex_ops_job_skipped_total{ops_job="ch-cap67-movements",reason="`+reason+`"}`+" "); got != "0" {
+			t.Errorf("first heartbeat skipped_total{reason=%s} = %s, want 0", reason, got)
+		}
+	}
+}
+
 // TestCap67Progress_InertWithoutHeartbeatPath: an empty -heartbeat flag (the default, and every non-r1 environment)
 // makes the heartbeat a safe no-op, with no directory created and no panic on record/stop with an unresolved path.
 func TestCap67Progress_InertWithoutHeartbeatPath(t *testing.T) {

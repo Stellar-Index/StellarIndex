@@ -111,6 +111,10 @@ func newCap67Progress(heartbeatPath string) *cap67Progress {
 	if hb.Enabled() {
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: heartbeat -> %s\n", hb.Path())
 	}
+	// Seed every reason at 0 before Start writes the first sample, so increase() sees the first skip.
+	for _, reason := range cap67SkipReasons {
+		hb.Skipped(reason, 0)
+	}
 	hb.Start()
 	return &cap67Progress{hb: hb}
 }
