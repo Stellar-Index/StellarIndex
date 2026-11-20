@@ -1922,8 +1922,11 @@ export interface paths {
          *     verified-currency catalogue and read through
          *     `/v1/assets/{asset_id}`, so its price, supply and market cap are
          *     that route's; `market_cap_usd` is null, never zero, without a
-         *     price or supply. A token missing from the catalogue is null and
-         *     named in `excluded`.
+         *     price or supply. The token is read as `include_thin=true`: a price
+         *     from a market below the substance floor is served with
+         *     `thin_market: true` and its `substance` evidence, display-only;
+         *     no market cap or emission value derives from it. A token missing
+         *     from the catalogue is null and named in `excluded`.
          *
          *     The USD totals are exact decimal sums over every pool
          *     `/v1/lending/pools` lists (a pool on both the Blend and BLNT
@@ -2368,7 +2371,7 @@ export interface paths {
          *     2 dp. A stream past its expiration (`live: false`) has ended:
          *     `tokens_per_day` is `"0"` and `usd_per_day` `"0.00"`, never its last
          *     `eps` annualised. `usd_per_day` is null with `usd_reason` when the
-         *     token is unpriced (`unpriced`), its decimals are unknown
+         *     token is unpriced or priced only thin (`unpriced`), its decimals are unknown
          *     (`decimals_unknown`) or disagree with the lake's
          *     (`price_scale_mismatch`), the pool names no emission token
          *     (`emission_token_unread`), or the pool's emission token is not the
@@ -18537,8 +18540,12 @@ export interface operations {
                                 circulating_supply?: string | null;
                                 /** @description Base units; null when no supply snapshot. */
                                 total_supply?: string | null;
-                                /** @description As `/v1/assets/{asset_id}` `market_cap_usd`; null without a price or supply, or when a valuation guard withholds it. */
+                                /** @description As `/v1/assets/{asset_id}` `market_cap_usd`; null without a price or supply, when a valuation guard withholds it, or when the price is thin. */
                                 market_cap_usd?: string | null;
+                                /** @description Present and true when `price_usd` comes from a market below the substance floor; display-only. */
+                                thin_market?: boolean;
+                                /** @description The substance measurement behind a thin `price_usd`; present only with `thin_market`. */
+                                substance?: components["schemas"]["SubstanceEvidence"];
                             } | null;
                             /** @description Pools listed, including any in `excluded`. */
                             pool_count?: number;

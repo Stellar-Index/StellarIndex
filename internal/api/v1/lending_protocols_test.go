@@ -8,12 +8,15 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stellar/go-stellar-sdk/network"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 const (
@@ -83,6 +86,7 @@ type protocolsCase struct {
 	v1Pool            func(ratesFixture) string
 	blntListFail      bool
 	blntListsBlendOne bool
+	thinBLNT          bool // BLND 0.05 clears the substance floor, BLNT 0.01 trades below it
 }
 
 type protocolsFixture struct {
@@ -126,10 +130,16 @@ func newProtocolsServer(t *testing.T, c protocolsCase) protocolsFixture {
 			t.Fatal(err)
 		}
 	}
+	var priceReader v1.PriceReader = &assetKeyedPriceReader{usd: prices}
+	if c.thinBLNT {
+		r := newChokepointReader(nil, blntAssetID)
+		r.prices[blndAssetID+"/fiat:USD"], r.prices[blntAssetID+"/fiat:USD"] = "0.05", "0.01"
+		priceReader = r
+	}
 	srv := v1.New(v1.Options{
 		Explorer:           ex,
 		Lending:            lending,
-		Prices:             &assetKeyedPriceReader{usd: prices},
+		Prices:             priceReader,
 		Supply:             &stubSupplyLooker{hit: true, snap: supply.Supply{CirculatingSupply: big.NewInt(1e14), TotalSupply: big.NewInt(2e14)}},
 		VerifiedCurrencies: cat,
 	})
@@ -361,7 +371,35 @@ func TestLendingProtocols_TokenValuation(t *testing.T) {
 	}
 }
 
-// TestLendingProtocols_TokenNotInCatalogue — with no verified entry the token is absent and named, never guessed.
+// TestLendingProtocols_ThinTokenPriceIsLabelledAndNeverValued — a token below the substance floor serves its price only
+// flagged thin_market with the evidence, and no market cap or emission value derives from it.
+func TestLendingProtocols_ThinTokenPriceIsLabelledAndNeverValued(t *testing.T) {
+	f := newProtocolsServer(t, protocolsCase{thinBLNT: true})
+	stats, _ := getProtocols(t, f.srv)
+	blnd, blntTok := stats[0].Token, stats[1].Token
+	if blnd == nil || blntTok == nil {
+		t.Fatalf("tokens = %+v, %+v", blnd, blntTok)
+	}
+	if blnd.ThinMarket || blnd.Substance != nil || strOrNil(blnd.MarketCapUSD) == "" {
+		t.Errorf("blnd (deep market) = %+v, want unflagged with a market cap", blnd)
+	}
+	if p, _ := new(big.Rat).SetString(strOrNil(blntTok.PriceUSD)); p == nil || p.Cmp(big.NewRat(1, 100)) != 0 || !blntTok.ThinMarket {
+		t.Fatalf("blnt price_usd = %q thin_market = %v, want 0.01 flagged thin", strOrNil(blntTok.PriceUSD), blntTok.ThinMarket)
+	}
+	if blntTok.Substance == nil || blntTok.Substance.Base != blntAssetID {
+		t.Errorf("blnt substance = %+v, want the measurement behind the thin price", blntTok.Substance)
+	}
+	if blntTok.MarketCapUSD != nil {
+		t.Errorf("blnt market_cap_usd = %q from a thin price", *blntTok.MarketCapUSD)
+	}
+	blntSAC, _ := xdrjson.SACContractID(blntAssetID, network.PublicNetworkPassphrase)
+	f.srv.NetworkPassphrase = network.PublicNetworkPassphrase
+	if p, why := f.srv.EmissionTokenPriceForTest(context.Background(), "blnt", blntSAC); p != "" || why != "unpriced" {
+		t.Errorf("blnt emission price = %q reason = %q, want unpriced: a thin price values no emission", p, why)
+	}
+}
+
+// TestLendingProtocols_TokenNotInCatalogue —with no verified entry the token is absent and named, never guessed.
 func TestLendingProtocols_TokenNotInCatalogue(t *testing.T) {
 	f := newProtocolsServer(t, protocolsCase{clean: true, noCatalogue: true})
 	stats, resp := getProtocols(t, f.srv)

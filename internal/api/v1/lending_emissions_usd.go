@@ -64,7 +64,7 @@ func (s *Server) emissionTokenPrice(ctx context.Context, protocol, token string,
 		return kpiTokenPrice{reason: emissionUSDTokenUnverified}
 	}
 	switch {
-	case tok.PriceUSD == nil:
+	case tok.PriceUSD == nil, tok.ThinMarket: // a thin price is display-only and values no stream
 		return kpiTokenPrice{reason: kpiUSDUnpriced}
 	case tok.Decimals <= 0:
 		return kpiTokenPrice{reason: kpiUSDDecimalsUnknown}
