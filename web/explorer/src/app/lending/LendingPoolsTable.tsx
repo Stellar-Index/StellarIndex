@@ -19,7 +19,7 @@ import {
 } from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample, type Envelope } from '@/api/client';
-import { formatRelative } from '@/lib/format';
+import { decimalOrNull, formatRelative } from '@/lib/format';
 import type { paths } from '@/api/types';
 
 import { LENDING_POOL_META, lendingProtocol } from './poolMeta';
@@ -51,6 +51,8 @@ function basisNote(s: PoolSummary) {
 function StatCells({
   tvl,
   tvlTitle,
+  borrowed = tvl,
+  borrowedTitle,
   util,
   supply,
   borrow,
@@ -58,6 +60,8 @@ function StatCells({
 }: {
   tvl: string;
   tvlTitle?: string;
+  borrowed?: string;
+  borrowedTitle?: string;
   util: string;
   supply: string;
   borrow: string;
@@ -65,8 +69,19 @@ function StatCells({
 }) {
   return (
     <>
-      <Td align="right" className="font-mono tabular-nums" title={tvlTitle}>
+      <Td
+        align="right"
+        className="text-ink font-mono font-medium tabular-nums"
+        title={tvlTitle}
+      >
         {tvl}
+      </Td>
+      <Td
+        align="right"
+        className="text-ink font-mono font-medium tabular-nums"
+        title={borrowedTitle}
+      >
+        {borrowed}
       </Td>
       {[util, supply, borrow].map((v, i) => (
         <Td
@@ -92,7 +107,9 @@ function StatCells({
 function PoolStats({ row }: { row: LendingPool }) {
   const s = row.summary;
   if (s) {
-    const tvl = s.tvl_usd != null ? Number(s.tvl_usd) : null;
+    // Display-only: compact USD rounds far above float error.
+    const tvl = decimalOrNull(s.tvl_usd);
+    const borrowed = decimalOrNull(s.borrowed_usd);
     const dash = (v: number | null | undefined, fmt: (n: number) => string) =>
       v != null && Number.isFinite(v) ? fmt(v) : '—';
     return (
@@ -101,7 +118,18 @@ function PoolStats({ row }: { row: LendingPool }) {
         tvlTitle={
           s.lower_bound
             ? `Lower bound: ${basisNote(s).toLowerCase()}`
-            : undefined
+            : (s.tvl_usd ?? undefined)
+        }
+        borrowed={dash(
+          borrowed,
+          (n) => (s.borrowed_lower_bound ? '≥' : '') + fmtUsd(n),
+        )}
+        borrowedTitle={
+          s.borrowed_usd == null
+            ? 'No USD value: no priced reserve has a borrow'
+            : s.borrowed_lower_bound
+              ? `Lower bound: ${basisNote(s).toLowerCase()}`
+              : s.borrowed_usd
         }
         util={dash(s.utilization_pct, (n) => `${n.toFixed(1)}%`)}
         supply={dash(s.supply_apr, pctFmt)}
@@ -224,12 +252,8 @@ export function LendingPoolsTable() {
               <tr>
                 <Th>Pool</Th>
                 <Th>Protocol</Th>
-                <Th className="hidden xl:table-cell">Deployed</Th>
-                <Th align="right" className="hidden xl:table-cell">
-                  Auctions 24h
-                </Th>
-                <Th align="right">Auctions</Th>
                 <Th align="right">TVL</Th>
+                <Th align="right">Borrowed</Th>
                 <Th align="right" className="hidden sm:table-cell">
                   Utilization
                 </Th>
@@ -239,6 +263,13 @@ export function LendingPoolsTable() {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrow APR
                 </Th>
+                <Th align="right" className="hidden md:table-cell">
+                  Auctions
+                </Th>
+                <Th align="right" className="hidden xl:table-cell">
+                  Auctions 24h
+                </Th>
+                <Th className="hidden xl:table-cell">Deployed</Th>
                 <Th align="right" className="hidden xl:table-cell">
                   Users (30d)
                 </Th>
@@ -275,7 +306,8 @@ export function LendingPoolsTable() {
               {!q.isLoading && !q.isError && rows.length === 0 && (
                 <TR className="hover:bg-transparent">
                   <Td colSpan={COLS} className="text-ink-muted py-4">
-                    No lending pools have emitted auction events yet.
+                    No lending pools are indexed yet: none has an auction or a
+                    position.
                   </Td>
                 </TR>
               )}
@@ -308,21 +340,24 @@ export function LendingPoolsTable() {
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                    <Td className="hidden font-mono text-xs whitespace-nowrap xl:table-cell">
+                    <PoolStats row={p} />
+                    <Td
+                      align="right"
+                      className="text-ink-muted hidden font-mono tabular-nums md:table-cell"
+                    >
+                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
+                    </Td>
+                    <Td
+                      align="right"
+                      className="text-ink-muted hidden font-mono tabular-nums xl:table-cell"
+                    >
+                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
+                    </Td>
+                    <Td className="text-ink-muted hidden font-mono text-xs whitespace-nowrap xl:table-cell">
                       {meta?.deployedAt ?? (
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                    <Td
-                      align="right"
-                      className="hidden font-mono tabular-nums xl:table-cell"
-                    >
-                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <Td align="right" className="font-mono tabular-nums">
-                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <PoolStats row={p} />
                     <Td
                       align="right"
                       className="hidden font-mono tabular-nums xl:table-cell"
@@ -346,4 +381,4 @@ export function LendingPoolsTable() {
   );
 }
 
-const COLS = 11;
+const COLS = 12;

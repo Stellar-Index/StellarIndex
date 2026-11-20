@@ -1,0 +1,161 @@
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+
+import { Button, Skeleton, Stat, StatCell, StatGrid } from '@/components/ui';
+import { apiGet, type Envelope } from '@/api/client';
+import type { paths } from '@/api/types';
+import { formatCompactTokenUnits } from '@/lib/format';
+
+import { LENDING_POOL_META } from './poolMeta';
+import { UsdFigure, exclusionText } from './lendingUsd';
+
+export type LendingProtocolRow = NonNullable<
+  paths['/lending/protocols']['get']['responses'][200]['content']['application/json']['data']
+>[number];
+
+export function useLendingProtocols() {
+  return useQuery({
+    queryKey: ['/v1/lending/protocols'],
+    staleTime: 60_000,
+    queryFn: async () =>
+      (
+        await apiGet<Envelope<LendingProtocolRow[] | null>>(
+          '/v1/lending/protocols',
+          {},
+        )
+      ).data ?? [],
+  });
+}
+
+const poolName = (p: string) =>
+  LENDING_POOL_META[p]?.name ?? `pool ${p.slice(0, 6)}…${p.slice(-4)}`;
+
+/**
+ * LendingProtocolStats — one protocol's lending totals and token from
+ * /v1/lending/protocols. The USD totals cover priced reserves only; a
+ * partial total renders as a lower bound and names what it left out.
+ */
+export function LendingProtocolStats({
+  protocol,
+}: {
+  protocol: 'blend' | 'blnt';
+}) {
+  const q = useLendingProtocols();
+  if (q.isLoading) return <Skeleton className="h-16 w-full" />;
+  if (q.isError)
+    return (
+      <p role="alert" className="text-ink-muted text-sm">
+        Protocol totals are unavailable right now.
+        <Button
+          variant="secondary"
+          size="sm"
+          className="ml-3"
+          onClick={() => void q.refetch()}
+        >
+          Retry
+        </Button>
+      </p>
+    );
+  const row = q.data?.find((r) => r.protocol === protocol);
+  if (!row)
+    return (
+      <p className="text-ink-muted text-sm">
+        No pool totals are served for this protocol yet.
+      </p>
+    );
+  const lb = row.lower_bound === true;
+  // backstop and token exclusions do not touch the USD totals.
+  const left = (row.excluded ?? []).filter(
+    (e) => e.kind !== 'backstop' && e.kind !== 'token',
+  );
+  const leftText = left.map((e) => exclusionText(e, poolName)).join(', ');
+  const reason = lb ? `excludes ${leftText || 'some reserves'}` : undefined;
+  const t = row.token;
+  return (
+    <div className="space-y-2">
+      <StatGrid cols={3} className="grid-cols-2">
+        <StatCell>
+          <Stat
+            label="Total supplied"
+            value={
+              <UsdFigure
+                value={row.total_supplied_usd}
+                lowerBound={lb}
+                reason={reason}
+              />
+            }
+            sub={`${row.pool_count ?? 0} pools · ${row.reserve_count ?? 0} reserves`}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Total borrowed"
+            value={
+              <UsdFigure
+                value={row.total_borrowed_usd}
+                lowerBound={lb}
+                reason={reason}
+              />
+            }
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Available liquidity"
+            value={
+              <UsdFigure
+                value={row.available_usd}
+                lowerBound={lb}
+                reason={reason}
+              />
+            }
+            sub="Supplied minus borrowed"
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label={t?.code ? `${t.code} price` : 'Token price'}
+            value={
+              <UsdFigure
+                value={t?.price_usd}
+                reason={t ? 'no reliable price' : 'token not verified'}
+              />
+            }
+            sub={t?.code ? <span title={t.asset_id}>{t.code}</span> : undefined}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Market cap"
+            value={
+              <UsdFigure
+                value={t?.market_cap_usd}
+                reason="no price or supply"
+              />
+            }
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Circulating supply"
+            value={
+              <span title={t?.circulating_supply ?? undefined}>
+                {t?.circulating_supply != null
+                  ? formatCompactTokenUnits(t.circulating_supply, t.decimals)
+                  : '—'}
+              </span>
+            }
+            sub={t?.code}
+          />
+        </StatCell>
+      </StatGrid>
+      {lb && (
+        <p role="status" className="text-ink-muted text-xs">
+          USD totals are a lower bound: they exclude{' '}
+          {leftText || 'some reserves'}.
+        </p>
+      )}
+    </div>
+  );
+}

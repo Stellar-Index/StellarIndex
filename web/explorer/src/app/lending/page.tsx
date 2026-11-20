@@ -5,6 +5,7 @@ import { ExternalLink } from 'lucide-react';
 import { NoteBadge } from '@/components/NoteBadge';
 import { Panel } from '@/components/reveal';
 import { LendingPoolsTable } from './LendingPoolsTable';
+import { LendingProtocolStats } from './LendingProtocolStats';
 import { Badge, Container, PageHeader } from '@/components/ui';
 import { protocolMeta } from '@/app/protocols/registry';
 
@@ -31,6 +32,7 @@ export default function LendingPage() {
         hint="Isolated pools, priced by Reflector, liquidated through a Comet backstop"
         bodyClassName="space-y-3"
       >
+        <LendingProtocolStats protocol="blend" />
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="ok" dot>
             Live
@@ -97,10 +99,18 @@ export default function LendingPage() {
         hint="Blend-derived pools with RWA support and tiered backstops"
         bodyClassName="space-y-3"
       >
+        <LendingProtocolStats protocol="blnt" />
         <div className="flex flex-wrap items-center gap-2">
+          <Badge>Isolated pools</Badge>
+          <Badge title="Supports real-world-asset reserves.">
+            RWA reserves
+          </Badge>
+          <Badge title="Backstop deposits sit in first-, second- and third-loss tiers.">
+            Tiered backstop
+          </Badge>
           <Link
             href="/protocols/blnt"
-            className="text-brand-600 text-xs hover:underline"
+            className="text-brand-600 ml-auto text-xs hover:underline"
           >
             Protocol page
           </Link>
@@ -116,8 +126,9 @@ export default function LendingPage() {
         </div>
       </Panel>
       <LendingPoolsTable />
-      <NoteBadge label="partial: pools with auctions only">
-        Only pools that have had an auction are listed.
+      <NoteBadge label="indexed pools only">
+        Pools are listed once they have an indexed auction or a position; a pool
+        with neither is not listed yet.
       </NoteBadge>
     </Container>
   );

@@ -49,9 +49,7 @@ describe('LendingPoolsTable', () => {
         screen.getByText(/The pools list is unavailable right now/),
       ).toBeInTheDocument(),
     );
-    expect(
-      screen.queryByText(/No lending pools have emitted auction events yet/),
-    ).toBeNull();
+    expect(screen.queryByText(/No lending pools are indexed yet/)).toBeNull();
   });
 
   it('keeps the empty-state copy for a served-and-empty pools list', async () => {
@@ -59,7 +57,7 @@ describe('LendingPoolsTable', () => {
     renderIt();
     await waitFor(() =>
       expect(
-        screen.getByText(/No lending pools have emitted auction events yet/),
+        screen.getByText(/No lending pools are indexed yet/),
       ).toBeInTheDocument(),
     );
   });
@@ -115,6 +113,8 @@ describe('LendingPoolsTable', () => {
     renderIt();
     await waitFor(() => expect(screen.getByText('40.0%')).toBeInTheDocument());
     expect(screen.getByText('≥$2.50M')).toBeInTheDocument();
+    // Borrowed carries its own lower-bound flag, rendered like TVL's.
+    expect(screen.getByText('≥$1.00M')).toBeInTheDocument();
     expect(screen.getByText('4.00%')).toBeInTheDocument();
     expect(screen.getByText('8.00%')).toBeInTheDocument();
     expect(screen.getAllByTitle('Priced reserves only (1 of 2)').length).toBe(
@@ -157,7 +157,7 @@ describe('LendingPoolsTable', () => {
     });
     renderIt();
     await waitFor(() =>
-      expect(screen.getAllByText('unavailable').length).toBe(4),
+      expect(screen.getAllByText('unavailable').length).toBe(5),
     );
     expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1);
   });
