@@ -1875,6 +1875,12 @@ Counter.
 
 Offer change rows skipped because `entry_xdr` failed to decode. A skip FREEZES that offer's earlier state. Should read 0; sustained increments mean an upstream lake problem.
 
+### `stellarindex_lending_reserve_undecodable_total`
+
+Counter.
+
+Live lending reserve `ResData` entries the pool-state reader returned but could not decode. Each one is served as `decode_failed` and left out of its pool's totals. Should read 0; an increment means a contract upgrade changed the layout or a lake row is corrupt. Alert: `stellarindex_lending_reserve_undecodable` (ticket).
+
 ### `stellarindex_worker_panics_total`
 
 Counter, label `worker`. Incremented by `worker.Recover` when a background goroutine panics and is swallowed.
