@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import {
   LendingOverviewCharts,
-  protocolPairRows,
+  protocolRows,
+  topPoolsWithTail,
   tvlBarItems,
 } from './LendingOverviewCharts';
 
@@ -50,20 +51,53 @@ beforeEach(() => {
   vi.mocked(apiGet).mockReset();
 });
 
-describe('protocolPairRows', () => {
+describe('protocolRows', () => {
   it('keeps exact inputs for hover and marks a lower bound', () => {
-    const [r] = protocolPairRows([proto({ lower_bound: true })]);
-    expect(r.aDisplay).toMatch(/^≥\$1\.2/);
-    expect(r.title).toContain('At least $1,234,567.89');
-    expect(r.aHatch).toBe(true);
+    const [r] = protocolRows([proto({ lower_bound: true })]);
+    expect(r.supplied?.display).toMatch(/^≥\$1\.2/);
+    expect(r.supplied?.exact).toContain('At least $1,234,567.89');
+    expect(r.lowerBound).toBe(true);
     expect(r.color).toBe('var(--color-chart-1)');
+  });
+  it('scales borrowed within the protocol and shares across protocols', () => {
+    const rows = protocolRows([
+      proto({ total_supplied_usd: '300', total_borrowed_usd: '75' }),
+      proto({
+        protocol: 'blnt',
+        total_supplied_usd: '100',
+        total_borrowed_usd: '50',
+      }),
+    ]);
+    expect(rows.map((r) => r.utilPct)).toEqual([25, 50]);
+    expect(rows.map((r) => r.sharePct)).toEqual([75, 25]);
   });
   it('drops a protocol with nothing priced', () => {
     expect(
-      protocolPairRows([
+      protocolRows([
         proto({ total_supplied_usd: null, total_borrowed_usd: null }),
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('topPoolsWithTail', () => {
+  it('groups the long tail into one exact row', () => {
+    const { items } = tvlBarItems(
+      ['1000', '500', '0.10', '0.20'].map((v, i) =>
+        pool({ pool: `C${i}`, summary: { tvl_usd: v, lower_bound: false } }),
+      ),
+    );
+    const shown = topPoolsWithTail(items, 2);
+    expect(shown).toHaveLength(3);
+    expect(shown[2]).toMatchObject({ label: '2 more pools' });
+    expect(shown[2].title).toMatch(/^\$0\.30 · /);
+  });
+  it('never draws a lower bound of zero', () => {
+    const { items, unpriced } = tvlBarItems([
+      pool({ summary: { tvl_usd: '0', lower_bound: true } }),
+    ]);
+    expect(items).toEqual([]);
+    expect(unpriced).toBe(1);
   });
 });
 

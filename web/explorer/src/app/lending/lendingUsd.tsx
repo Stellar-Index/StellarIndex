@@ -42,6 +42,45 @@ export function reasonText(reason: string | null | undefined): string {
   );
 }
 
+const PRICE_REASONS = new Set(['no_usd_value', 'unpriced', 'withheld']);
+
+/**
+ * One line for a lower bound ("12 reserves have no reliable price, 24 could
+ * not be read") and the excluded names grouped by reason for a disclosure.
+ */
+export function exclusionGroups(
+  excluded: readonly Exclusion[],
+  name: (e: Exclusion) => string,
+): { line: string; groups: { reason: string; names: string[] }[] } {
+  const unpriced = excluded.filter((e) => PRICE_REASONS.has(e.reason));
+  const unread = excluded.filter((e) => !PRICE_REASONS.has(e.reason));
+  const noun = (es: Exclusion[]) =>
+    es.every((e) => e.asset) ? 'reserve' : 'item';
+  const count = (es: Exclusion[], verb: [string, string]) =>
+    es.length === 0
+      ? []
+      : [
+          `${es.length} ${noun(es)}${es.length === 1 ? '' : 's'} ${es.length === 1 ? verb[0] : verb[1]}`,
+        ];
+  const line = [
+    ...count(unpriced, ['has no reliable price', 'have no reliable price']),
+    ...count(unread, ['could not be read', 'could not be read']),
+  ].join(', ');
+  const by = new Map<string, Set<string>>();
+  for (const e of excluded) {
+    const r = reasonText(e.reason);
+    if (!by.has(r)) by.set(r, new Set());
+    by.get(r)!.add(name(e));
+  }
+  return {
+    line,
+    groups: [...by].map(([reason, names]) => ({
+      reason,
+      names: [...names].sort(),
+    })),
+  };
+}
+
 /** "USDC (no reliable price)", or "pool CABC…1234 (pool could not be read)". */
 export function exclusionText(
   e: Exclusion,
@@ -65,16 +104,24 @@ export function UsdFigure({
   value,
   lowerBound = false,
   reason,
+  showReason = false,
 }: {
   value: string | null | undefined;
   lowerBound?: boolean;
   reason?: string;
+  /** Print the reason under the dash instead of only on hover. */
+  showReason?: boolean;
 }) {
   const shown = formatReadable(value, true);
   if (shown == null)
     return (
       <span className="text-ink-faint" title={reason ?? 'No USD value'}>
         —
+        {showReason && reason && (
+          <span className="text-ink-muted block text-xs font-normal">
+            {reason}
+          </span>
+        )}
       </span>
     );
   const exact = `$${formatDecimalAmount(value, 2)}`;

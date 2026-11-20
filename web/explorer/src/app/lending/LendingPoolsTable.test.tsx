@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import {
@@ -138,12 +138,13 @@ describe('LendingPoolsTable', () => {
             priced_reserve_count: 0,
             reserve_count: 2,
           },
+          auctions_total: 3,
         }),
       ],
     });
     renderIt();
     await waitFor(() =>
-      expect(screen.getByText(/Pool #1/)).toBeInTheDocument(),
+      expect(screen.getAllByText(/Pool #1/).length).toBeGreaterThan(0),
     );
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
     expect(screen.queryByText(/%$/)).toBeNull();
@@ -246,11 +247,11 @@ describe('LendingPoolsTable', () => {
 
   it('labels a BLNT pool from the curated map, badges its protocol and links to its pool page', async () => {
     vi.mocked(apiGet).mockResolvedValue({
-      data: [{ pool: BLNT_POOL, protocol: 'blnt', auctions_total: 0 }],
+      data: [{ pool: BLNT_POOL, protocol: 'blnt', auctions_total: 2 }],
     });
     renderIt();
     await waitFor(() =>
-      expect(screen.getByText('BLNT Fixed pool')).toBeInTheDocument(),
+      expect(screen.getAllByText('BLNT Fixed pool').length).toBeGreaterThan(0),
     );
     expect(screen.getByText('BLNT V3')).toBeInTheDocument();
     expect(screen.queryByText(/Blend/)).toBeNull();
@@ -261,8 +262,8 @@ describe('LendingPoolsTable', () => {
   it('never calls an uncurated non-Blend row a Blend pool', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: [
-        row({ pool: 'CUNCURATED000', protocol: 'blnt' }),
-        row({ pool: 'CUNKNOWN000', protocol: 'mystery' }),
+        row({ pool: 'CUNCURATED000', protocol: 'blnt', auctions_total: 1 }),
+        row({ pool: 'CUNKNOWN000', protocol: 'mystery', auctions_total: 1 }),
       ],
     });
     renderIt();
@@ -271,5 +272,38 @@ describe('LendingPoolsTable', () => {
     );
     expect(screen.getByText('Lending pool')).toBeInTheDocument();
     expect(screen.queryByText(/Blend/)).toBeNull();
+  });
+
+  it('sorts by TVL, hides stateless pools behind a toggle and never shows ≥$0', async () => {
+    const sum = (tvl: string | null, lb = false) => ({
+      tvl_usd: tvl,
+      lower_bound: lb,
+      borrowed_usd: tvl == null ? null : '0',
+      borrowed_lower_bound: lb,
+      utilization_pct: null,
+      supply_apr: null,
+      borrow_apr: null,
+    });
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        row({ pool: 'CSMALL000', summary: sum('10') }),
+        row({ pool: 'CBIG00000', summary: sum('9000') }),
+        row({ pool: 'CZERO0000', summary: sum('5', true) }),
+        row({ pool: 'CIDLE0000', summary: null, auctions_total: 0 }),
+      ],
+    });
+    renderIt();
+    const toggle = await screen.findByRole('button', {
+      name: 'Show 1 inactive pool',
+    });
+    const order = () =>
+      screen
+        .getAllByRole('link')
+        .map((a) => a.getAttribute('title'))
+        .filter((t) => t?.startsWith('C'));
+    expect(order()).toEqual(['CBIG00000', 'CSMALL000', 'CZERO0000']);
+    expect(screen.queryByText('≥$0')).toBeNull();
+    fireEvent.click(toggle);
+    expect(order()).toContain('CIDLE0000');
   });
 });

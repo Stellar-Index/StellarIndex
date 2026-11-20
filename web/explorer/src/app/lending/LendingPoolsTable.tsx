@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -112,18 +113,18 @@ function PoolStats({ row }: { row: LendingPool }) {
     const borrowed = decimalOrNull(s.borrowed_usd);
     const dash = (v: number | null | undefined, fmt: (n: number) => string) =>
       v != null && Number.isFinite(v) ? fmt(v) : '—';
+    // "≥$0" says nothing: a zero lower bound renders as unknown.
+    const usd = (n: number, lb: boolean | undefined) =>
+      lb && n === 0 ? '—' : (lb ? '≥' : '') + fmtUsd(n);
     return (
       <StatCells
-        tvl={dash(tvl, (n) => (s.lower_bound ? '≥' : '') + fmtUsd(n))}
+        tvl={dash(tvl, (n) => usd(n, s.lower_bound))}
         tvlTitle={
           s.lower_bound
             ? `Lower bound: ${basisNote(s).toLowerCase()}`
             : (s.tvl_usd ?? undefined)
         }
-        borrowed={dash(
-          borrowed,
-          (n) => (s.borrowed_lower_bound ? '≥' : '') + fmtUsd(n),
-        )}
+        borrowed={dash(borrowed, (n) => usd(n, s.borrowed_lower_bound))}
         borrowedTitle={
           s.borrowed_usd == null
             ? 'No USD value: no priced reserve has a borrow'
@@ -189,10 +190,36 @@ export function useLendingPools() {
   });
 }
 
+/** No state read and no auction: nothing to show but dashes. */
+export function isInactivePool(p: LendingPool): boolean {
+  const s = p.summary;
+  return (
+    !p.summary_pending &&
+    !p.summary_error &&
+    (s == null || (s.tvl_usd == null && s.borrowed_usd == null)) &&
+    (p.auctions_total ?? 0) === 0
+  );
+}
+
+/** TVL descending; unpriced pools after priced ones, by auctions then users. */
+export function sortPools(rows: readonly LendingPool[]): LendingPool[] {
+  const tvl = (p: LendingPool) => decimalOrNull(p.summary?.tvl_usd) ?? -1;
+  return [...rows].sort(
+    (a, b) =>
+      tvl(b) - tvl(a) ||
+      (b.auctions_total ?? 0) - (a.auctions_total ?? 0) ||
+      (b.unique_users_30d ?? 0) - (a.unique_users_30d ?? 0),
+  );
+}
+
 export function LendingPoolsTable() {
   const q = useLendingPools();
+  const [showInactive, setShowInactive] = useState(false);
 
-  const rows = q.data?.rows ?? [];
+  const all = q.data?.rows ?? [];
+  const rows = sortPools(all);
+  const inactive = rows.filter(isInactivePool);
+  const listed = showInactive ? rows : rows.filter((p) => !isInactivePool(p));
   // A failed BLNT read serves the Blend rows alone; the list is a lower bound.
   const truncatedNote = q.data?.truncated ? (
     <p role="status" className="text-warn-700 mb-2 text-xs">
@@ -317,26 +344,26 @@ export function LendingPoolsTable() {
                   </Td>
                 </TR>
               )}
-              {rows.map((p) => {
+              {listed.map((p) => {
                 const poolId = p.pool ?? '';
                 const meta = LENDING_POOL_META[poolId];
                 const protocol = lendingProtocol(meta?.protocol ?? p.protocol);
                 return (
                   <LinkRow href={`/lending/${poolId}`} key={poolId}>
                     <Td>
-                      <div className="flex items-center gap-1">
-                        <Link
-                          href={`/lending/${poolId}`}
-                          className="text-brand-600 font-mono text-xs whitespace-nowrap hover:underline"
-                          title={poolId}
-                        >
-                          {poolId.slice(0, 6)}…{poolId.slice(-6)}
-                        </Link>
-                        <CopyButton value={poolId} />
-                      </div>
                       {/* Curated label where we have one; we don't invent pool names. */}
-                      <div className="text-ink-muted text-xs whitespace-nowrap">
+                      <Link
+                        href={`/lending/${poolId}`}
+                        className="text-brand-600 text-sm whitespace-nowrap hover:underline"
+                        title={poolId}
+                      >
                         {meta?.name ?? `${protocol?.name ?? 'Lending'} pool`}
+                      </Link>
+                      <div className="text-ink-muted flex items-center gap-1 font-mono text-xs whitespace-nowrap">
+                        <span title={poolId}>
+                          {poolId.slice(0, 4)}…{poolId.slice(-4)}
+                        </span>
+                        <CopyButton value={poolId} />
                       </div>
                     </Td>
                     <Td>
@@ -382,6 +409,25 @@ export function LendingPoolsTable() {
             </TBody>
           </Table>
         </div>
+        {inactive.length > 0 && (
+          <div className="px-4 py-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-expanded={showInactive}
+              onClick={() => setShowInactive((v) => !v)}
+            >
+              {showInactive
+                ? `Hide ${inactive.length} inactive pools`
+                : `Show ${inactive.length} inactive pool${inactive.length === 1 ? '' : 's'}`}
+            </Button>
+            {!showInactive && (
+              <span className="text-ink-muted ml-3 text-xs">
+                No readable state and no auctions.
+              </span>
+            )}
+          </div>
+        )}
       </Panel>
       {auctionsPanel}
     </>

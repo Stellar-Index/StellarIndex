@@ -8,7 +8,7 @@ import type { paths } from '@/api/types';
 import { formatCompactTokenUnits } from '@/lib/format';
 
 import { LENDING_POOL_META } from './poolMeta';
-import { UsdFigure, exclusionText, useAssetText } from './lendingUsd';
+import { UsdFigure, exclusionGroups, useAssetText } from './lendingUsd';
 
 export type LendingProtocolRow = NonNullable<
   paths['/lending/protocols']['get']['responses'][200]['content']['application/json']['data']
@@ -58,7 +58,7 @@ export function LendingProtocolStats({
         </Button>
       </p>
     );
-  const row =q.data?.find((r) => r.protocol === protocol);
+  const row = q.data?.find((r) => r.protocol === protocol);
   if (!row)
     return (
       <p className="text-ink-muted text-sm">
@@ -71,10 +71,12 @@ export function LendingProtocolStats({
     (e) => e.kind !== 'backstop' && e.kind !== 'token',
   );
   // One asset is often excluded from several pools; name it once.
-  const leftText = [
-    ...new Set(left.map((e) => exclusionText(e, poolName, assetText))),
-  ].join(', ');
-  const reason = lb ? `excludes ${leftText || 'some reserves'}` : undefined;
+  const { line, groups } = exclusionGroups(left, (e) =>
+    e.asset ? assetText(e.asset) : e.pool ? poolName(e.pool) : e.kind,
+  );
+  const reason = lb
+    ? `lower bound: ${line || 'some reserves left out'}`
+    : undefined;
   const t = row.token;
   return (
     <div className="space-y-2">
@@ -123,7 +125,10 @@ export function LendingProtocolStats({
             value={
               <UsdFigure
                 value={t?.price_usd}
-                reason={t ? 'no reliable price' : 'token not verified'}
+                reason={
+                  t ? 'no reliable market price yet' : 'token not verified'
+                }
+                showReason
               />
             }
             sub={t?.code ? <span title={t.asset_id}>{t.code}</span> : undefined}
@@ -135,7 +140,12 @@ export function LendingProtocolStats({
             value={
               <UsdFigure
                 value={t?.market_cap_usd}
-                reason="no price or supply"
+                reason={
+                  t?.price_usd == null
+                    ? 'no reliable market price yet'
+                    : 'not served yet'
+                }
+                showReason
               />
             }
           />
@@ -155,10 +165,19 @@ export function LendingProtocolStats({
         </StatCell>
       </StatGrid>
       {lb && (
-        <p role="status" className="text-ink-muted text-xs">
-          USD totals are a lower bound: they exclude{' '}
-          {leftText || 'some reserves'}.
-        </p>
+        <details className="text-ink-muted text-xs">
+          <summary role="status" className="cursor-pointer">
+            ≥ lower bound: {line || 'some reserves are left out'}
+          </summary>
+          <dl className="mt-2 space-y-1.5 pl-3">
+            {groups.map((g) => (
+              <div key={g.reason}>
+                <dt className="text-ink-body inline">{g.reason}: </dt>
+                <dd className="inline">{g.names.join(', ')}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
       )}
     </div>
   );

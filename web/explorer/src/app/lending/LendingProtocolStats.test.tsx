@@ -94,7 +94,9 @@ describe('LendingProtocolStats', () => {
     expect(blnt.getByText('BLNT price')).toBeInTheDocument();
     const protocolReads = vi
       .mocked(apiGet)
-      .mock.calls.filter(([path]) => String(path).includes('/lending/protocols'));
+      .mock.calls.filter(([path]) =>
+        String(path).includes('/lending/protocols'),
+      );
     expect(protocolReads).toHaveLength(1);
   });
 
@@ -107,8 +109,22 @@ describe('LendingProtocolStats', () => {
         '≥',
       ),
     );
-    expect(blend.getByText(/lower bound: they exclude EURC/)).toHaveTextContent(
-      'no reliable price',
+    expect(
+      blend.getByText(/≥ lower bound: 1 reserve has no reliable price/),
+    ).toBeInTheDocument();
+    expect(blend.getByText(/no reliable price:/).nextSibling).toHaveTextContent(
+      'EURC',
+    );
+  });
+
+  it('says why the token price is missing instead of a bare dash', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: ROWS });
+    renderBoth();
+    const blnt = within(await screen.findByTestId('blnt'));
+    await waitFor(() =>
+      expect(
+        blnt.getAllByText('no reliable market price yet').length,
+      ).toBeGreaterThanOrEqual(2),
     );
   });
 
