@@ -1172,6 +1172,24 @@ groups:
             same as heartbeat_stale — deliberate, so a failed run does
             not go invisible just because nothing is currently running.
 
+      # A job that skips undecodable records and carries on (a -follow daemon cannot exit on a
+      # deterministic skip without crash-looping) advances its watermark past rows it never wrote.
+      - alert: stellarindex_ops_job_records_skipped
+        expr: increase(stellarindex_ops_job_skipped_total[30m]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
+          summary: "ops job {{ $labels.ops_job }} skipped undecodable records"
+          description: |
+            The job dropped records it could not decode and moved its
+            watermark past them, so its target table is missing those
+            rows. The raw events are still in the lake; the job's log
+            names each window with a skip count.
+
       # The entry index (stellar.account_entry_ledgers / asset_entry_ledgers) is
       # what per-account and per-asset ledger walks read; a builder that stops
       # (timer silent, lock wedged, watermark refusing a hole) leaves recent

@@ -114,14 +114,19 @@ func newCap67Progress(heartbeatPath string) *cap67Progress {
 	return &cap67Progress{hb: hb}
 }
 
-// record is the per-window progress callback for runCap67CatchUp: rows is the window's derived-row count, cursor the
-// highest ledger reached.
-func (p *cap67Progress) record(rows int64, cursor uint32) {
+// cap67ProgressFunc is the per-window progress callback: the window's derived-row count, its events skipped as
+// undecodable, and the highest ledger reached.
+type cap67ProgressFunc func(rows int64, skipped uint64, cursor uint32)
+
+// record is the cap67ProgressFunc behind the heartbeat. The skip count is the only alertable trace of a -follow
+// window whose watermark advanced past undecodable events.
+func (p *cap67Progress) record(rows int64, skipped uint64, cursor uint32) {
 	p.mu.Lock()
 	p.total += rows
 	total := p.total
 	p.mu.Unlock()
 	p.hb.Progress(uint64(total), uint64(cursor)) //nolint:gosec // total/cursor are non-negative by construction
+	p.hb.Skipped(skipped)
 }
 
 // stop writes the heartbeat's terminal state. Deferred so it runs on every
@@ -158,7 +163,7 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 // runCap67CatchUp streams the range into account_movements, advancing the watermark per window; it never steps past a lake hole (Cap67Range
 // clamps, each advance re-proves its window hole-free). progress, when non-nil, runs per window so a long -follow tick shows a stalled
 // watermark.
-func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress func(rows int64, cursor uint32)) (cap67CatchUp, error) {
+func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress cap67ProgressFunc) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
 		return cap67CatchUp{}, err
@@ -194,7 +199,7 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 			}
 		}
 		if progress != nil {
-			progress(n, hi)
+			progress(n, skipped, hi)
 		}
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d] done — %d movement rows (total %d, elapsed %s)\n",
 			lo, hi, n, res.rows, time.Since(runStart).Round(time.Second))
@@ -233,7 +238,7 @@ func followTick(base time.Duration, idle int) time.Duration {
 
 // runCap67Follow is the daemon loop keeping the feed real-time until ctx is cancelled; a transient error is retried
 // next tick without skipping a ledger, as the watermark holds.
-func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32, progress func(rows int64, cursor uint32)) error {
+func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32, progress cap67ProgressFunc) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
 	fill := &cap67SupplyFill{chAddr: chAddr, window: window, floorLedger: floorLedger, progress: progress}
 	return followLoop(ctx, interval, func(ctx context.Context, idle int) (bool, error) {

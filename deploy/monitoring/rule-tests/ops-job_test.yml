@@ -39,6 +39,39 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # A -follow daemon that skips undecodable events keeps running and exits clean; only the skip gauge rising shows it.
+  - interval: 1m
+    name: a running job whose skip count rises tickets records_skipped
+    input_series:
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements"}'
+        values: '0+0x10 3+0x50'
+
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ops_job_records_skipped
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_ops_job_records_skipped
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-cap67-movements
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
+              summary: "ops job ch-cap67-movements skipped undecodable records"
+              description: |
+                The job dropped records it could not decode and moved its
+                watermark past them, so its target table is missing those
+                rows. The raw events are still in the lake; the job's log
+                names each window with a skip count.
+      - eval_time: 55m
+        alertname: stellarindex_ops_job_records_skipped
+        exp_alerts: []
+
   # ── the process died hard ────────────────────────────────────────
   # running is stuck at 1 (nothing cleared it — OOM kill) and the 60s
   # liveness ticker stopped at t=20m. By t=60m the heartbeat is 40 min

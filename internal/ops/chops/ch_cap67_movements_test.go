@@ -380,9 +380,9 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 
 	// Two windows within one catch-up, then a later -follow tick — the
 	// shape runCap67CatchUp / runCap67Follow drive this callback with.
-	prog.record(5, 63_100_000)
-	prog.record(3, 63_150_000)
-	prog.record(2, 63_150_100)
+	prog.record(5, 0, 63_100_000)
+	prog.record(3, 4, 63_150_000)
+	prog.record(2, 3, 63_150_100)
 	prog.stop(true)
 
 	raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
@@ -396,6 +396,11 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	}
 	if got := gaugeValue(t, body, "stellarindex_ops_job_progress_cursor"); got != "63150100" {
 		t.Errorf("progress_cursor = %s, want the highest ledger reached (63150100)", got)
+	}
+	// -follow advances the watermark past undecodable events and never exits, so this gauge is
+	// the only alertable trace that its movements are missing rows.
+	if got := gaugeValue(t, body, "stellarindex_ops_job_skipped_total"); got != "7" {
+		t.Errorf("skipped_total = %s, want 7 (4+3 undecodable events, cumulative across calls)", got)
 	}
 	if !strings.Contains(body, `{ops_job="ch-cap67-movements"}`) {
 		t.Errorf("series must carry ops_job=\"ch-cap67-movements\":\n%s", body)
@@ -415,7 +420,7 @@ func TestCap67Progress_InertWithoutHeartbeatPath(t *testing.T) {
 	if prog.hb.Enabled() {
 		t.Fatal("empty path without DefaultTextfileDir present must stay inert")
 	}
-	prog.record(1, 100)
+	prog.record(1, 1, 100)
 	prog.stop(false)
 }
 

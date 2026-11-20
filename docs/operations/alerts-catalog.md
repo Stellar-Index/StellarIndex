@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 307 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 308 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -96,6 +96,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_ops_job_heartbeat_stale` | `ops_job_heartbeat_unix` while `_running` | > 15 min, for 10 min (process died) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md) |
 | `stellarindex_ops_job_no_progress` | `changes()[30m]` of ops_job progress units and bytes while `_running` | both 0 for 30 min, for 15 min (job hung) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md) |
 | `stellarindex_ops_job_run_failed` | `ops_job_last_exit_ok == 0` | last run exited non-zero, `for: 0m` | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md) |
+| `stellarindex_ops_job_records_skipped` | `increase(ops_job_skipped_total[30m])` | > 0, `for: 0m` (records dropped as undecodable, watermark moved on) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#records-skipped) |
 | `stellarindex_entry_index_lagging` | ledgerstream cursor minus `ch-entry-index` cursor | > 20000 ledgers for 30 min (timer silent, builder refusing, or initial build) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#entry-index-lagging) |
 | `stellarindex_lending_state_lagging` | ledgerstream cursor minus `ch-entry-history-lending` cursor; silent where the job never reported | > 20000 ledgers for 30 min (timer silent, derive refusing, or initial catch-up) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-state-lagging) |
 | `stellarindex_projector_lag_high` | `projector_lag_ledgers` unless a replay window is active | > 256 for 10 min (replay rewinds covered by `projector_replay_stalled`) | ticket | [projector-lag](runbooks/projector.md#stellarindex_projector_lag_high) |

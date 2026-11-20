@@ -38,6 +38,7 @@ type JobHeartbeat struct {
 	total    uint64
 	cursor   uint64
 	bytes    uint64
+	skipped  uint64
 	running  bool
 	finished bool
 	exitOK   bool
@@ -202,6 +203,16 @@ func (h *JobHeartbeat) ProgressBytes(moved uint64) {
 	h.mu.Unlock()
 }
 
+// Skipped adds n records the job dropped as undecodable and carried on past, so a daemon that cannot exit on a skip still surfaces it.
+func (h *JobHeartbeat) Skipped(n uint64) {
+	if !h.Enabled() || n == 0 {
+		return
+	}
+	h.mu.Lock()
+	h.skipped += n
+	h.mu.Unlock()
+}
+
 // Stop halts the ticker and writes running=0 with last_finish_unix and last_exit_ok; safe on an inert heartbeat and when called twice.
 func (h *JobHeartbeat) Stop(exitOK bool) {
 	if !h.Enabled() {
@@ -246,7 +257,7 @@ func (h *JobHeartbeat) Stop(exitOK bool) {
 // filesystem.
 func (h *JobHeartbeat) render() string {
 	h.mu.Lock()
-	job, started, total, cursor, moved := h.job, h.started, h.total, h.cursor, h.bytes
+	job, started, total, cursor, moved, skipped := h.job, h.started, h.total, h.cursor, h.bytes, h.skipped
 	running, finished, exitOK := h.running, h.finished, h.exitOK
 	h.mu.Unlock()
 
@@ -287,6 +298,9 @@ func (h *JobHeartbeat) render() string {
 	writeGauge("stellarindex_ops_job_progress_bytes_total",
 		"Bytes of storage a stellarindex-ops job has OBSERVED move in the current run during a phase that completes no units of work (a Timescale chunk decompress). Flat TOGETHER with progress_total while running = hung.",
 		fmt.Sprintf("%d", moved))
+	writeGauge("stellarindex_ops_job_skipped_total",
+		"Records a stellarindex-ops job dropped as undecodable in the current run and carried on past; those rows are missing from its target.",
+		fmt.Sprintf("%d", skipped))
 	// last_finish/last_exit are only meaningful once a run has ended. Emitting them mid-run (as 0, or as the PREVIOUS run's
 	// values) would be worse than absent: a 0 finish timestamp reads as 1970 to every `time() - x` expression.
 	if finished {
