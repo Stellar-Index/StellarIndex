@@ -1184,8 +1184,8 @@ groups:
       # A job that skips undecodable records and carries on (a -follow daemon cannot exit on a
       # deterministic skip without crash-looping) advances its watermark past rows it never wrote.
       - alert: stellarindex_ops_job_records_skipped
-        expr: increase(stellarindex_ops_job_skipped_total[30m]) > 0
-        for: 0m
+        expr: sum by (ops_job) (increase(stellarindex_ops_job_skipped_total{reason!="not_token_shaped"}[1h])) > 0
+        for: 2h
         labels:
           severity: ticket
           team: stellarindex
@@ -1194,10 +1194,13 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
           summary: "ops job {{ $labels.ops_job }} skipped undecodable records"
           description: |
-            The job dropped records it could not decode and moved its
-            watermark past them, so its target table is missing those
-            rows. The raw events are still in the lake; the job's log
-            names each window with a skip count.
+            The job dropped records of a token-shaped body it could not
+            decode (reason amount_not_i128, body_unparseable or
+            decode_failed) and moved its watermark past them, so its
+            target table is missing those rows. not_token_shaped skips
+            (an NFT's transfer with a u32 id) are foreign traffic and
+            never alert. The raw events are still in the lake; the job's
+            log names each window with its skip counts by reason.
 
       # The entry index (stellar.account_entry_ledgers / asset_entry_ledgers) is
       # what per-account and per-asset ledger walks read; a builder that stops

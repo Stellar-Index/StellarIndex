@@ -67,7 +67,8 @@ func (f *cap67SupplyFill) step(ctx context.Context) (skipped uint64, worked bool
 	if !ok {
 		return 0, false, nil
 	}
-	rows, skipped, err := deriveCap67Window(ctx, f.chAddr, lo, hi, cap67SupplyTopics, false)
+	rows, skips, err := deriveCap67Window(ctx, f.chAddr, lo, hi, cap67SupplyTopics, false)
+	skipped = skips.actionable()
 	if err != nil {
 		return skipped, false, fmt.Errorf("supply window [%d,%d]: %w", lo, hi, err)
 	}
@@ -75,7 +76,7 @@ func (f *cap67SupplyFill) step(ctx context.Context) (skipped uint64, worked bool
 		return skipped, false, fmt.Errorf("extend supply coverage over [%d,%d]: %w", lo, hi, err)
 	}
 	if f.progress != nil {
-		f.progress(rows, skipped, cov.Thru)
+		f.progress(rows, skips, cov.Thru)
 	}
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: supply window [%d,%d] done — %d movement rows\n", lo, hi, rows)
 	return skipped, true, nil

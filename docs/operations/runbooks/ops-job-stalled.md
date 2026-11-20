@@ -27,7 +27,7 @@ Rules: `deploy/monitoring/rules/ingestion.yml` and `configs/prometheus/rules.r1/
 | `stellarindex_ops_job_progress_cursor{ops_job}` | highest ledger reached (running max) |
 | `stellarindex_ops_job_progress_bytes_total{ops_job}` | bytes of storage observed moving during a phase that completes no units |
 | `stellarindex_ops_job_last_exit_ok{ops_job}` | only after a run ends: 1 clean, 0 errored |
-| `stellarindex_ops_job_skipped_total{ops_job}` | records dropped as undecodable this run (see [Records skipped](#records-skipped)) |
+| `stellarindex_ops_job_skipped_total{ops_job}` | records dropped as undecodable this run, by `reason` (see [Records skipped](#records-skipped)) |
 
 - `heartbeat_stale`: `running==1` but the ticker stopped; the process died without cleanup (OOM-kill, SIGKILL, reboot, owning SSH session closed).
 - `no_progress`: `running==1`, ticker fine, BOTH progress counters flat for 30 min.
@@ -132,10 +132,12 @@ The textfile persists after the process dies, deliberately. The next run overwri
 
 ## Records skipped
 
-`stellarindex_ops_job_records_skipped` (P3 ticket) fires when `stellarindex_ops_job_skipped_total` rises. Today only `ch-cap67-movements` reports it: its `-follow` daemon drops a transfer/mint/burn/clawback event it cannot decode and advances the watermark, so `stellar.account_movements` lacks that event's rows. The raw event stays in `stellar.contract_events`.
+`stellarindex_ops_job_records_skipped` (P3 ticket) fires when `stellarindex_ops_job_skipped_total{reason!="not_token_shaped"}` has risen over the last hour for two hours running. Today only `ch-cap67-movements` reports it: its `-follow` daemon drops a transfer/mint/burn/clawback event it cannot decode and advances the watermark, so `stellar.account_movements` lacks that event's rows. The raw event stays in `stellar.contract_events`.
 
-1. `journalctl -u <unit> | grep 'events skipped (decode)'` names each window `[lo,hi]` and its count.
-2. Read those events from `stellar.contract_events` and find why the decoder refused them. A foreign contract emitting a malformed `transfer` is expected noise; a real token whose body shape changed is a decoder bug.
+Reasons: `not_token_shaped` (a foreign contract's event whose body is neither a bare i128 nor a map with `amount`, e.g. an NFT's u32 id) is expected traffic, is metered and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode; `decode_failed` is a token-shaped body the decoder still refused (topics, close time). The one-shot run's `-max-decode-errors` budget counts only these three.
+
+1. `journalctl -u <unit> | grep 'events skipped (decode)'` names each window `[lo,hi]` and its counts by reason.
+2. Read those events from `stellar.contract_events` and find why the decoder refused them. A foreign contract emitting a malformed `transfer` is noise; a real token whose body shape changed is a decoder bug.
 3. After a decoder fix, re-derive the windows: `stellarindex-ops ch-cap67-movements -write -from <lo> -to <hi>` (idempotent). The one-shot run exits non-zero if anything is still skipped.
 
 ## Entry index lagging

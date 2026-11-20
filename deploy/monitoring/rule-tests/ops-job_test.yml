@@ -40,22 +40,23 @@ evaluation_interval: 1m
 
 tests:
   # A -follow daemon that skips undecodable events keeps running and exits clean; only the skip gauge rising shows it.
+  # Only a reason other than not_token_shaped alerts, and only after it has risen for 2h.
   - interval: 1m
-    name: a running job whose skip count rises tickets records_skipped
+    name: a running job whose actionable skip count rises tickets records_skipped
     input_series:
-      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements"}'
-        values: '0+0x10 3+0x50'
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="amount_not_i128"}'
+        values: '0+1x300'
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="not_token_shaped"}'
+        values: '0+0x300'
 
     alert_rule_test:
-      - eval_time: 5m
+      - eval_time: 90m
         alertname: stellarindex_ops_job_records_skipped
         exp_alerts: []
-      - eval_time: 15m
+      - eval_time: 200m
         alertname: stellarindex_ops_job_records_skipped
         exp_alerts:
           - exp_labels:
-              job: node_exporter
-              instance: r1:9100
               ops_job: ch-cap67-movements
               severity: ticket
               team: stellarindex
@@ -64,11 +65,24 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#records-skipped
               summary: "ops job ch-cap67-movements skipped undecodable records"
               description: |
-                The job dropped records it could not decode and moved its
-                watermark past them, so its target table is missing those
-                rows. The raw events are still in the lake; the job's log
-                names each window with a skip count.
-      - eval_time: 55m
+                The job dropped records of a token-shaped body it could not
+                decode (reason amount_not_i128, body_unparseable or
+                decode_failed) and moved its watermark past them, so its
+                target table is missing those rows. not_token_shaped skips
+                (an NFT's transfer with a u32 id) are foreign traffic and
+                never alert. The raw events are still in the lake; the job's
+                log names each window with its skip counts by reason.
+
+  # Foreign-contract traffic (an NFT's transfer with a u32 token id) climbs forever without alerting.
+  - interval: 1m
+    name: not_token_shaped skips alone never ticket records_skipped
+    input_series:
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="not_token_shaped"}'
+        values: '0+5x300'
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="amount_not_i128"}'
+        values: '0+0x300'
+    alert_rule_test:
+      - eval_time: 200m
         alertname: stellarindex_ops_job_records_skipped
         exp_alerts: []
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,7 +39,7 @@ type JobHeartbeat struct {
 	total    uint64
 	cursor   uint64
 	bytes    uint64
-	skipped  uint64
+	skipped  map[string]uint64 // by reason
 	running  bool
 	finished bool
 	exitOK   bool
@@ -203,13 +204,17 @@ func (h *JobHeartbeat) ProgressBytes(moved uint64) {
 	h.mu.Unlock()
 }
 
-// Skipped adds n records the job dropped as undecodable and carried on past, so a daemon that cannot exit on a skip still surfaces it.
-func (h *JobHeartbeat) Skipped(n uint64) {
-	if !h.Enabled() || n == 0 {
+// Skipped adds n records the job dropped as undecodable and carried on past, by reason, so a daemon that cannot exit on a skip still
+// surfaces it. n == 0 registers the reason's series at 0: increase() cannot see a series' first sample, so a reason must exist before it counts.
+func (h *JobHeartbeat) Skipped(reason string, n uint64) {
+	if !h.Enabled() {
 		return
 	}
 	h.mu.Lock()
-	h.skipped += n
+	if h.skipped == nil {
+		h.skipped = map[string]uint64{}
+	}
+	h.skipped[reason] += n
 	h.mu.Unlock()
 }
 
@@ -257,7 +262,11 @@ func (h *JobHeartbeat) Stop(exitOK bool) {
 // filesystem.
 func (h *JobHeartbeat) render() string {
 	h.mu.Lock()
-	job, started, total, cursor, moved, skipped := h.job, h.started, h.total, h.cursor, h.bytes, h.skipped
+	job, started, total, cursor, moved := h.job, h.started, h.total, h.cursor, h.bytes
+	skipped := make(map[string]uint64, len(h.skipped))
+	for reason, n := range h.skipped {
+		skipped[reason] = n
+	}
 	running, finished, exitOK := h.running, h.finished, h.exitOK
 	h.mu.Unlock()
 
@@ -298,9 +307,20 @@ func (h *JobHeartbeat) render() string {
 	writeGauge("stellarindex_ops_job_progress_bytes_total",
 		"Bytes of storage a stellarindex-ops job has OBSERVED move in the current run during a phase that completes no units of work (a Timescale chunk decompress). Flat TOGETHER with progress_total while running = hung.",
 		fmt.Sprintf("%d", moved))
-	writeGauge("stellarindex_ops_job_skipped_total",
-		"Records a stellarindex-ops job dropped as undecodable in the current run and carried on past; those rows are missing from its target.",
-		fmt.Sprintf("%d", skipped))
+	// One series per reason; a job that never calls Skipped emits none (the alert reads only what a job registered).
+	reasons := make([]string, 0, len(skipped))
+	for reason := range skipped {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	if len(reasons) > 0 {
+		fmt.Fprint(&b, "# HELP stellarindex_ops_job_skipped_total Records a stellarindex-ops job dropped in the current run and carried on past, by reason; reasons other than not_token_shaped are rows missing from its target.\n")
+		fmt.Fprint(&b, "# TYPE stellarindex_ops_job_skipped_total gauge\n")
+		for _, reason := range reasons {
+			skipLabel := strings.TrimSuffix(label, "}") + fmt.Sprintf(",reason=%q}", reason)
+			fmt.Fprintf(&b, "stellarindex_ops_job_skipped_total%s %d\n", skipLabel, skipped[reason])
+		}
+	}
 	// last_finish/last_exit are only meaningful once a run has ended. Emitting them mid-run (as 0, or as the PREVIOUS run's
 	// values) would be worse than absent: a 0 finish timestamp reads as 1970 to every `time() - x` expression.
 	if finished {
