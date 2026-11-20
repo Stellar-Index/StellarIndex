@@ -43,6 +43,43 @@ func TestReserveValue_UsesTheAssetPagesCatalogueRowPrice(t *testing.T) {
 	}
 }
 
+// A reserve token with no feed and no catalogue row is valued at its transitive price when both legs clear the substance gate,
+// and not when either leg is refused.
+func TestReserveValue_TransitiveOnlyPriceUnderBothLegGates(t *testing.T) {
+	const hop = "CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN"
+	near, far := reservePriceToken+"|"+hop, hop+"|native"
+	for _, tc := range []struct {
+		name  string
+		allow map[string]bool
+		want  string
+	}{
+		{"both legs clear", map[string]bool{near: true, far: true}, "25.00"},
+		{"near leg refused", map[string]bool{far: true}, ""},
+		{"far leg refused", map[string]bool{near: true}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(Options{
+				AssetsReader:     &truthAssetsReader{byID: map[string]timescale.AssetRow{}},
+				TransitivePricer: &stubPricer{ok: true, tp: timescale.TransitivePrice{PriceUSD: "2.5", Hop: hop, HopVolume24hUSD: "5000", HopQuote: "native"}},
+				Substance:        &stubListingGate{allow: tc.allow},
+			})
+			rv, supplied, _ := s.buildReserveView(context.Background(), catalogueOnlyReserve())
+			if got := strPtrOr(rv.SuppliedUSD); got != tc.want && (tc.want != "" || rv.SuppliedUSD != nil) {
+				t.Fatalf("supplied_usd = %s, want %q", got, tc.want)
+			}
+			if tc.want == "" {
+				if supplied != nil || rv.PriceUSD != nil {
+					t.Errorf("refused leg valued: price_usd = %s", strPtrOr(rv.PriceUSD))
+				}
+				return
+			}
+			if strPtrOr(rv.BorrowedUSD) != "10.00" || supplied == nil || supplied.Cmp(big.NewRat(25, 1)) != 0 {
+				t.Errorf("borrowed_usd = %s TVL contribution = %v, want 10.00 and exactly 25", strPtrOr(rv.BorrowedUSD), supplied)
+			}
+		})
+	}
+}
+
 // A catalogue row price the substance gate refuses (a thin market) stays withheld for a reserve, under its own reason.
 func TestReserveValue_ThinCatalogueRowPriceIsWithheldNotValued(t *testing.T) {
 	s := New(Options{AssetsReader: catalogueRowReader("2.5"), Substance: &stubListingGate{allow: map[string]bool{}}})
