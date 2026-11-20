@@ -860,6 +860,45 @@ groups:
             ceremony. The sign-in was refused. A replay means a captured
             request was resent; check the API log for the client address.
 
+      # A credential asked to mint a key with more scope or rate limit than it
+      # holds. Refused, but the dashboard never asks for that, so it is someone
+      # probing the clamp. Both routes are pre-seeded at zero.
+      - alert: stellarindex_mint_scope_clamp_refused
+        expr: sum by (route) (increase(stellarindex_mint_scope_clamp_refused_total[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_mint_scope_clamp_refused
+          summary: "Key mint on {{ $labels.route }} refused as a scope escalation"
+          description: |
+            A key mint on {{ $labels.route }} asked for more scope or rate
+            limit than the minting credential holds and was refused with
+            403. Repeats mean a caller is probing the mint clamp; the API
+            log's WARN line names the minting key.
+
+      # Degraded = a carried-forward or partial body served as 200, which the
+      # 5xx-based SLO never sees. Same probe exclusion on both sides of the ratio.
+      - alert: stellarindex_api_degraded_responses_sustained
+        expr: |
+          sum by (route) (rate(stellarindex_api_flagged_responses_total{flag="degraded"}[15m]))
+            / sum by (route) (rate(http_requests_total[15m])) > 0.1
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_degraded_responses_sustained
+          summary: "{{ $value | humanizePercentage }} of {{ $labels.route }} responses are degraded"
+          description: |
+            More than 10% of {{ $labels.route }} responses have carried
+            flags.degraded for 30m: a backend read behind the route is
+            failing and the body is a carried-forward or partial answer.
+            The API log names the failing read.
+
       # The failed-auth throttle caps each client IP and API-key prefix at
       # failed_auth_rate_limit_per_min (20/min), so guessing spread over many
       # of both never 429s; this fleet-wide rate is where API-key guessing shows.

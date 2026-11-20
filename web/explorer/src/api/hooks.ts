@@ -445,6 +445,9 @@ export function useChangeSummary(
     },
     enabled: !!entityID && PRICING_ENABLED, // change-summary rows come from the aggregator
     staleTime: 60_000,
+    // The pill sits beside a price polled every 60s; without its own poll
+    // the arrow could point the wrong way for as long as the tab stays open.
+    refetchInterval: 60_000,
   });
 }
 

@@ -4651,8 +4651,8 @@ paths:
                   legs:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, side: supply, tier: null, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, decimals: 7, net_flow: '1000000000', folded_tokens: '950000000', onchain_tokens: '950000000', current_value: '1045000000', rate_as_of: '2026-07-03T22:31:05Z', accrued: '45000000', reconciled: true, reason: null, value_usd: '104.50', accrued_usd: '4.50', usd_reason: null }
                   pools:
-                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null }
-                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null }
+                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null, accrued_supply_usd: '4.50', accrued_borrow_usd: '0.00', accrued_usd: '4.50', accrued_usd_reason: null, accrued_partial: false, accrued_excluded: [] }
+                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null, accrued_supply_usd: '4.50', accrued_borrow_usd: '0.00', accrued_usd: '4.50', accrued_usd_reason: null, accrued_partial: false, accrued_excluded: [] }
                   emissions:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, claimed: '120000000', lower_bound: true }
                   note: accrued is current_value - net_flow, served only when the token balance folded from this account's events equals its current on-chain balance.
@@ -4751,6 +4751,31 @@ paths:
         is then not cacheable. 503 when the deployment has no auction
         history reader.
 
+        `lot_usd` and `bid_usd` value the auction's STARTING lot and bid at
+        TODAY's prices and reserve rates (`valued_at: current`): not scaled
+        for the block it was filled at, and not what a filler paid or
+        received. A leg's kind follows the protocol and auction type. For
+        Blend, user_liquidation bids dTokens and lots bTokens; bad_debt bids
+        dTokens and lots backstop tokens; interest bids backstop tokens and
+        lots the reserve's underlying. For BLNT only interest is
+        established (as Blend's); every BLNT user_liquidation, bad_debt and
+        protocol_fee leg is unvalued (`leg_kind_unknown`). A bToken or dToken leg is converted to underlying at the
+        reserve's current `b_rate` / `d_rate`, rounded as the contract
+        rounds, then valued at the `/reserves` price and decimals; an
+        underlying leg is valued directly. A BLNT backstop-token leg is
+        valued at its token price only when its token is a backstop tier's
+        plain token (`Xlm` or `Usdc`); a BLNT Comet LP-share tier's token and
+        every Blend backstop token (a Comet BLND:USDC LP share) are unvalued
+        (`lp_share_unvalued`), and a token no tier names is
+        `leg_kind_unknown`. A protocol_fee or unknown auction type is
+        unvalued (`leg_kind_unknown`). Each side sums its valued legs to 2 dp
+        (`"0.00"` for an empty side, null when no leg is valued);
+        `*_usd_lower_bound` is true when a leg is left out, and
+        `*_unvalued` names each (`asset`, `kind`, `reason`: `unpriced`,
+        `reserve_unread`, `rate_unread`, `lp_share_unvalued`,
+        `leg_kind_unknown`, `decimals_unknown`, `price_scale_mismatch`,
+        `withheld`, `negative_amount`).
+
         Pagination: pass `pagination.next` back as `cursor`;
         `pagination` is omitted on the last page.
       parameters:
@@ -4783,6 +4808,13 @@ paths:
                       time: '2026-07-03T22:57:00Z'
                       tx_hash: 9e8d7c6b5a49382716051f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a
                     deleted: false
+                    lot_usd: '1033.64'
+                    lot_usd_lower_bound: false
+                    lot_unvalued: []
+                    bid_usd: '125.40'
+                    bid_usd_lower_bound: false
+                    bid_unvalued: []
+                    valued_at: current
                   lifecycle_truncated: false
                 as_of: '2026-07-03T22:58:00.032774886Z'
                 flags:
@@ -4830,7 +4862,14 @@ paths:
                                 deleted: { type: boolean }
                                 deleted_ledger: { type: integer, format: int64 }
                                 deleted_time: { type: string, format: date-time }
-                              required: [auction_type, auction_type_label, user, start_ledger, start_time, tx_hash, percent, block, bid, lot, fills, deleted]
+                                lot_usd: { type: [string, "null"], description: "The starting lot at today's price and rates, 2 dp: the sum of its valued legs; null when no leg is valued. Not scaled for the fill block and not what a filler received." }
+                                lot_usd_lower_bound: { type: boolean }
+                                lot_unvalued: { type: array, items: { $ref: "#/components/schemas/LendingAuctionUnvaluedLeg" } }
+                                bid_usd: { type: [string, "null"], description: "The starting bid at today's price and rates, 2 dp: the sum of its valued legs; null when no leg is valued. Not scaled for the fill block and not what a filler paid." }
+                                bid_usd_lower_bound: { type: boolean }
+                                bid_unvalued: { type: array, items: { $ref: "#/components/schemas/LendingAuctionUnvaluedLeg" } }
+                                valued_at: { type: string, enum: [current], description: "Today's price and reserve rates, not the price at start or fill." }
+                              required: [auction_type, auction_type_label, user, start_ledger, start_time, tx_hash, percent, block, bid, lot, fills, deleted, lot_usd, lot_usd_lower_bound, lot_unvalued, bid_usd, bid_usd_lower_bound, bid_unvalued, valued_at]
                         required: [pool, lifecycle_truncated, auctions]
                       pagination: { $ref: "#/components/schemas/Pagination" }
                     required: [data]
@@ -4844,8 +4883,9 @@ paths:
       summary: Lending pool — emission streams and claim totals.
       description: |
         The pool's emission configuration as contract storage holds it
-        now, read from the lake, and its claim totals from decoded events.
-        No APR and no USD values.
+        now, read from the lake, and its claim totals from decoded events,
+        with each stream's current rate in tokens and USD per day and each
+        reserve stream's emissions APR.
 
         `reserves` lists every `EmisData(token_id)` entry of the pool's
         reserves in `ResList` order: `token_id` is `reserve_index * 2` for
@@ -4858,6 +4898,30 @@ paths:
         and `emission_token_decimals` scales base units to whole tokens.
         `live` is `expiration > as_of_time`. `archived` marks a
         TTL-archived entry, served with its last written value.
+
+        Every stream carries its current rate. `tokens_per_day` is
+        `eps x 86400 / 10^eps_decimals`, emission-token base units per day,
+        exact. `usd_per_day` values it at `emission_token_price_usd`, the
+        emission token's CURRENT price as `/v1/lending/protocols` reads it,
+        2 dp. A stream past its expiration (`live: false`) has ended:
+        `tokens_per_day` is `"0"` and `usd_per_day` `"0.00"`, never its last
+        `eps` annualised. `usd_per_day` is null with `usd_reason` when the
+        token is unpriced (`unpriced`), its decimals are unknown
+        (`decimals_unknown`) or disagree with the lake's
+        (`price_scale_mismatch`), the pool names no emission token
+        (`emission_token_unread`), or the pool's emission token is not the
+        SAC of the protocol's verified BLND or BLNT
+        (`emission_token_unverified`). Each reserve stream's
+        `emissions_apr` is `usd_per_day x 365` over the side's current USD
+        size (supplied for `supply`, borrowed for `borrow`, at the
+        `/reserves` price and decimals), a decimal string at 4 dp
+        (`0.1577` = 15.77%); `"0.0000"` for an ended stream. It is null with
+        `emissions_apr_reason` when `usd_per_day` is null (that reason),
+        the reserve is not read (`reserve_unread`), the side has no USD
+        price (`side_unpriced`), the side is empty (`side_empty`) or the
+        side is under $1 (`side_dust`), where the ratio measures rounding,
+        not yield. Backstop
+        streams carry no APR.
 
         `storage_available` is false, with `storage_unavailable_reason`,
         for a Blend V1 pool (`blend_v1_emission_storage_unverified`: its
@@ -4899,12 +4963,13 @@ paths:
                   protocol: blend
                   emission_token: CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
                   emission_token_decimals: 7
+                  emission_token_price_usd: '0.05'
                   eps_decimals: 7
                   storage_available: true
                   reserves:
-                  - { token_id: 1, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, side: supply, eps: '2066115702479', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false }
+                  - { token_id: 1, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, side: supply, eps: '2066115702479', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false, tokens_per_day: '17851239669.41856', usd_per_day: '89.26', usd_reason: null, emissions_apr: '0.0326', emissions_apr_reason: null }
                   backstop:
-                  - { tier: null, eps: '4132231404958', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false }
+                  - { tier: null, eps: '4132231404958', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false, tokens_per_day: '35702479338.83712', usd_per_day: '178.51', usd_reason: null }
                   claims:
                     available: true
                     pool: { claims: 1200, claims_30d: 85, claimers: 310, claimers_30d: 60, amount: '125000000000000', amount_30d: '9000000000000' }
@@ -4932,6 +4997,7 @@ paths:
                           protocol: { type: string, enum: [blend, blnt] }
                           emission_token: { type: [string, "null"], description: "Emitted token contract: the pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread." }
                           emission_token_decimals: { type: [integer, "null"], description: "The emission token's decimals(); null when it could not be read." }
+                          emission_token_price_usd: { type: [string, "null"], description: "Current USD price per whole emission token that every `usd_per_day` uses; null when unpriced or unverified." }
                           eps_decimals: { type: integer, description: "Fixed-point scale of every `eps`: `eps / 10^eps_decimals` is emission-token base units per second." }
                           storage_available: { type: boolean }
                           storage_unavailable_reason: { type: string, enum: [blend_v1_emission_storage_unverified, pool_instance_unavailable, emission_storage_reader_unavailable] }
@@ -4948,6 +5014,11 @@ paths:
                                 last_update: { type: string, format: date-time }
                                 live: { type: boolean }
                                 archived: { type: boolean }
+                                tokens_per_day: { type: string, description: "Emission-token base units per day, exact; \"0\" once ended." }
+                                usd_per_day: { type: [string, "null"], description: "tokens_per_day at the current price, 2 dp; null with usd_reason." }
+                                usd_reason: { type: [string, "null"], enum: [unpriced, decimals_unknown, price_scale_mismatch, emission_token_unread, emission_token_unverified, null] }
+                                emissions_apr: { type: [string, "null"], description: "usd_per_day x 365 / the side's current USD size, 4 dp; \"0.0000\" once ended." }
+                                emissions_apr_reason: { type: [string, "null"], enum: [unpriced, decimals_unknown, price_scale_mismatch, emission_token_unread, emission_token_unverified, reserve_unread, side_unpriced, side_empty, side_dust, null] }
                               required: [token_id, asset, side, eps, expiration, last_update, live, archived]
                           backstop:
                             type: array
@@ -4960,6 +5031,9 @@ paths:
                                 last_update: { type: string, format: date-time }
                                 live: { type: boolean }
                                 archived: { type: boolean }
+                                tokens_per_day: { type: string, description: "Emission-token base units per day, exact; \"0\" once ended." }
+                                usd_per_day: { type: [string, "null"], description: "tokens_per_day at the current price, 2 dp; null with usd_reason." }
+                                usd_reason: { type: [string, "null"], enum: [unpriced, decimals_unknown, price_scale_mismatch, emission_token_unread, emission_token_unverified, null] }
                               required: [tier, eps, expiration, last_update, live, archived]
                           claims:
                             type: object
@@ -12703,7 +12777,7 @@ paths:
             application/json:
               example:
                 data:
-                  token: eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...
+                  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...
                   expires_at: '2026-07-03T23:45:19.000000Z'
                   account: GB3Y3ALKAPYFMBEDS5G4KDDQBFV5FVJVGXWL4RPUCV3GTMOENIVXFAHW
                 as_of: '2026-07-03T22:45:19.000000Z'
@@ -16245,6 +16319,14 @@ components:
                 instance: "/v1/assets"
 
   schemas:
+    LendingAuctionUnvaluedLeg:
+      type: object
+      description: One auction bid or lot entry left out of its side's USD sum.
+      properties:
+        asset: { type: string, description: "The leg's map key: the reserve's underlying asset, or the backstop token." }
+        kind: { type: string, enum: [b_token, d_token, underlying, backstop_token, unknown] }
+        reason: { type: string }
+      required: [asset, kind, reason]
     LendingUSDTotals:
       type: object
       description: USD sums of a lending account's valued supply and borrow legs, decimal strings, exact sums rounded half away from zero to 2 dp. A backstop leg is never valued, so it is always in `excluded`.
@@ -16257,7 +16339,13 @@ components:
         excluded: { type: array, items: { $ref: "#/components/schemas/LendingStatsExclusion" }, description: "Legs left out, as kind `supply`, `borrow` or `backstop` with reason `withheld` or `unpriced`." }
         net_apr: { type: [string, "null"], description: "(Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; rounded half away from zero to 4 dp." }
         net_apr_reason: { type: [string, "null"], enum: [inputs_partial, apr_unavailable, net_value_not_positive, null] }
-      required: [supplied_usd, borrowed_usd, net_usd, net_usd_reason, lower_bound, excluded, net_apr, net_apr_reason]
+        accrued_supply_usd: { type: string, description: "Σ supply legs' accrued_usd (interest earned) at the reserves' current prices, exact then 2 dp. When `accrued_partial` is true it is a partial sum over the valued legs, not a floor: a leg's accrued can be negative (rounding, a BLNT reconcile_loss)." }
+        accrued_borrow_usd: { type: string, description: "Σ borrow legs' accrued_usd (interest paid), as accrued_supply_usd." }
+        accrued_usd: { type: [string, "null"], description: "accrued_supply_usd - accrued_borrow_usd; may be negative. Null whenever a leg is left out, since a partial sum bounds it in neither direction." }
+        accrued_usd_reason: { type: [string, "null"], enum: [inputs_partial, null] }
+        accrued_partial: { type: boolean, description: "True when a leg is left out of the accrued sums, which are then partial sums over the valued legs (neither a floor nor a ceiling); `accrued_excluded` names each." }
+        accrued_excluded: { type: array, items: { $ref: "#/components/schemas/LendingStatsExclusion" }, description: "Legs left out of the accrued sums: every leg in `excluded`, plus valued legs whose accrued is unread (`accrued_unavailable`) or unpriced." }
+      required: [supplied_usd, borrowed_usd, net_usd, net_usd_reason, lower_bound, excluded, net_apr, net_apr_reason, accrued_supply_usd, accrued_borrow_usd, accrued_usd, accrued_usd_reason, accrued_partial, accrued_excluded]
     LendingStatsExclusion:
       type: object
       description: What a lending figure leaves out and why.
@@ -24747,7 +24835,7 @@ components:
       properties:
         token:
           type: string
-          description: JWT bearer the client sends as `Authorization` on subsequent requests.
+          description: JWT bearer the client sends as `Authorization` on subsequent requests. HS256 under a server-held secret, so only the server can verify it; treat it as opaque.
         expires_at: { type: string, format: date-time }
         account:
           type: string

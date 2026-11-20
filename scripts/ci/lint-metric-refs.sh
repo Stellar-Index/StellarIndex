@@ -6,9 +6,9 @@
 # emitters included). A rule selecting a metric nothing produces can never fire. Every `job=` in
 # an expr must also name a job_name in that tree's scrape config.
 #
-# Only the alert->producer direction is enforced. The reverse (emitted but never alerted) is an
-# advisory pass: most metrics are dashboard-only, and a hard fail would need an exception list as
-# large as the registry.
+# The reverse (emitted but never alerted) is advisory for most metrics, which are dashboard-only.
+# It is enforced for failure-class names (FAILURE_CLASS_RE): an error/failure/refusal counter
+# that no rule reads fails silently, so it needs a rule or an UNALERTED_FAILURE_OK entry.
 #
 # Scope:
 #   - Only `stellarindex_*` is enforced; node_/pg_/redis_/pgbackrest_ come from third-party
@@ -207,6 +207,20 @@ done
 UNALERTED_OK=(
 )
 
+FAILURE_CLASS_RE='_(error|errors|failure|failures|failed|refused)(_total)?$'
+# Failure-class metrics with no rule, each with its reason. An entry that gains a rule must go.
+UNALERTED_FAILURE_OK=(
+  # Pre-existing gaps, not yet triaged: write the rule or replace this reason with why none.
+  stellarindex_api_tip_producers_refused_total
+  stellarindex_cross_region_check_errors_total
+  stellarindex_healthcheck_consecutive_failures
+  stellarindex_ledger_meta_decode_failures
+  stellarindex_ops_job_run_failed
+  stellarindex_postgres_ping_failures_total
+  stellarindex_redis_command_errors_total
+  stellarindex_systemd_unit_failed
+)
+
 # Producer -> alert direction (advisory, does not affect exit code). The alerted set is built
 # once, not per emitted token (re-parsing took 66s+). A newline-joined string, not `declare -A`,
 # which bash 3.2 on macOS rejects.
@@ -227,7 +241,8 @@ is_alerted() {
 collect_emitted_tokens() {
   local f
   while IFS= read -r f; do
-    [[ "$f" == "$self_rel" ]] && continue
+    # The self-test's fixture metrics are not emitted by anything.
+    [[ "$f" == "$self_rel" || "$f" == "${self_rel%.sh}-test.sh" ]] && continue
     strip_comments "$f" | grep -oE 'stellarindex_[a-zA-Z0-9_]+'
   done < <(grep -rlE --include="*.go" --include="*.sh" --include="*.prom" \
     'stellarindex_' "${EMITTER_PATHS[@]}" 2>/dev/null)
@@ -243,9 +258,21 @@ while IFS= read -r tok; do
   [[ -z "$tok" ]] && continue
   in_list "$tok" ${UNALERTED_OK[@]+"${UNALERTED_OK[@]}"} && continue
   is_alerted "$tok" && continue
+  if [[ "$tok" =~ $FAILURE_CLASS_RE ]] && ! in_list "$tok" "${UNALERTED_FAILURE_OK[@]}"; then
+    echo "UNALERTED-FAILURE: '$tok' is a failure-class metric no rule expr reads — add a rule or an UNALERTED_FAILURE_OK entry with its reason." >&2
+    dead=$((dead + 1))
+    continue
+  fi
   echo "UNALERTED (advisory): '$tok' is emitted but no rule expr references it yet."
   unalerted=$((unalerted + 1))
 done < <(collect_emitted_tokens | sort -u)
+
+for tok in "${UNALERTED_FAILURE_OK[@]}"; do
+  if is_alerted "$tok"; then
+    echo "STALE-UNALERTED: '$tok' is in UNALERTED_FAILURE_OK but a rule now reads it — drop the entry." >&2
+    dead=$((dead + 1))
+  fi
+done
 
 if [[ "$dead" -eq 0 ]]; then
   echo "lint-metric-refs: OK — every stellarindex_* expr token resolves to an emitter or a documented KNOWN_INERT entry."

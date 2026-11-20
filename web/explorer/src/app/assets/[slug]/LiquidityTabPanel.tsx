@@ -26,6 +26,7 @@ import type { Pool as PoolRow } from '@/api/hooks';
 import { isCIStub } from '@/lib/buildFetch';
 import { assetIdentityLabel } from '@/lib/asset-label';
 import { LiquidityVenueBars } from './LiquidityVenueBars';
+import { bakedAtDeploy } from './priceProvenance';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -69,8 +70,9 @@ async function fetchPoolsForAsset(
  * fetches merged client-side), so we get one cache key, one SQL scan, and a smaller cached
  * payload.
  *
- * Server component; fetched at request time. Empty-state when the
- * asset has no DEX activity in the recency window.
+ * Server component of a static export: fetched once at build time, so the
+ * volume and trade figures are captioned with the build time. Empty-state
+ * when the asset has no DEX activity in the recency window.
  */
 export async function LiquidityTabPanel({
   assetID,
@@ -103,7 +105,7 @@ export async function LiquidityTabPanel({
           ? `Liquidity — the ${merged.length} most active DEX pools touching ${code}`
           : `Liquidity — every DEX pool that touches ${code}`
       }
-      hint="Per-source breakdown across DEXes. Backed by /v1/pools?asset= (base OR quote)."
+      hint={`Per-source breakdown across DEXes. Backed by /v1/pools?asset= (base OR quote). Prices, 24h volume and trades ${bakedAtDeploy()}.`}
       source={asExample('/v1/pools', {
         asset: assetID,
         limit: 100,

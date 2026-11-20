@@ -329,6 +329,32 @@ groups:
             class). Recovery: free disk → BGSAVE → cache rebuilds.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors
 
+      # price_source_contributions is the per-source record of how each served
+      # VWAP was built; a batch write is atomic, so one failure loses a whole
+      # bucket's record while the price itself still serves. The second arm
+      # catches a series whose first sample is already non-zero.
+      - alert: stellarindex_aggregator_contribution_write_errors
+        expr: |
+          increase(stellarindex_aggregator_contribution_write_errors_total[15m]) > 0
+          or (
+            stellarindex_aggregator_contribution_write_errors_total
+            unless max_over_time(stellarindex_aggregator_contribution_write_errors_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_contribution_write_errors
+          summary: "Aggregator failed to persist source contributions"
+          description: |
+            A per-(pair, window) contribution batch failed to write to
+            price_source_contributions in the last 15 minutes. The VWAP
+            still served, but the record of which sources built it is
+            gone for that bucket. Check the aggregator's Postgres
+            connectivity and its log for the write error.
+
       # ── Protocol-events rollup worker ──
       #
       # protoeventsrollup folds the trailing-24h per-source event census into

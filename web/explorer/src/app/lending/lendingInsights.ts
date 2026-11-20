@@ -1,9 +1,19 @@
 import { formatBaseUnits } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
-import { fixedPct, supplyCapText } from './poolConfig';
+import { fixedPct, isUnlimitedCap, supplyCapText } from './poolConfig';
 
 export type HistoryMetric =
-  'supply_apr' | 'borrow_apr' | 'utilization' | 'supplied' | 'borrowed';
+  | 'supply_apr'
+  | 'borrow_apr'
+  | 'utilization'
+  | 'supplied'
+  | 'borrowed'
+  | 'collateral_factor'
+  | 'liability_factor'
+  | 'supply_cap';
+
+/** A metric choice in the history picker; `aprs` overlays supply and borrow APR. */
+export type HistoryView = HistoryMetric | 'aprs';
 
 export interface HistoryPoint {
   t: string;
@@ -37,12 +47,16 @@ export const RANGES: RangeOption[] = [
   { id: '7d', label: '7 days (hourly)', window: '7d', interval: '1h' },
 ];
 
-export const METRICS: { id: HistoryMetric; label: string; isPct: boolean }[] = [
+export const METRICS: { id: HistoryView; label: string; isPct: boolean }[] = [
+  { id: 'aprs', label: 'Supply vs borrow APR', isPct: true },
   { id: 'supply_apr', label: 'Supply APR', isPct: true },
   { id: 'borrow_apr', label: 'Borrow APR', isPct: true },
   { id: 'utilization', label: 'Utilisation', isPct: true },
   { id: 'supplied', label: 'Supplied', isPct: false },
   { id: 'borrowed', label: 'Borrowed', isPct: false },
+  { id: 'collateral_factor', label: 'Collateral factor', isPct: true },
+  { id: 'liability_factor', label: 'Liability factor', isPct: true },
+  { id: 'supply_cap', label: 'Supply cap', isPct: false },
 ];
 
 const BUCKET_SECONDS = { '1h': 3600, '1d': 86_400 } as const;
@@ -53,9 +67,28 @@ export function metricValue(
   p: HistoryPoint,
   metric: HistoryMetric,
   decimals: number | null | undefined,
+  configDecimals?: number | null,
 ): number | null {
   if (p.removed) return null;
   switch (metric) {
+    case 'collateral_factor':
+    case 'liability_factor': {
+      const raw = p[metric];
+      if (raw == null || configDecimals == null) return null;
+      const n = scaledUnits(raw, configDecimals);
+      return Number.isFinite(n) ? n * 100 : null;
+    }
+    case 'supply_cap': {
+      // A max placeholder is "no cap": a gap, never a giant spike.
+      if (
+        p.supply_cap == null ||
+        decimals == null ||
+        isUnlimitedCap(p.supply_cap)
+      )
+        return null;
+      const n = scaledUnits(p.supply_cap, decimals);
+      return Number.isFinite(n) ? n : null;
+    }
     case 'supply_apr':
       return p.supply_apr == null ? null : p.supply_apr * 100;
     case 'borrow_apr':

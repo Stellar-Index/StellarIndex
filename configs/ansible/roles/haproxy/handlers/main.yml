@@ -11,6 +11,8 @@
     name: keepalived
     state: restarted
     daemon_reload: yes
+  # One LB at a time, or both release the VIP together.
+  throttle: 1
   listen: "keepalived config changed"
 
 - name: reload firewall

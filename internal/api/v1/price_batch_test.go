@@ -835,7 +835,7 @@ func TestPriceBatch_FrozenRowCarriesLastKnownGood(t *testing.T) {
 		}
 	})
 
-	t.Run("nothing held omits the row", func(t *testing.T) {
+	t.Run("nothing held omits the row and names it withheld", func(t *testing.T) {
 		srv := v1.New(v1.Options{
 			Prices:       reader,
 			Freeze:       frozenPairs{xlmGBP: true},
@@ -848,6 +848,10 @@ func TestPriceBatch_FrozenRowCarriesLastKnownGood(t *testing.T) {
 		}
 		if strings.Contains(body, movedBucket) || strings.Contains(body, `"asset_id":"crypto:XLM"`) {
 			t.Fatalf("frozen row with nothing held must be omitted: %s", body)
+		}
+		// Omitted with no list reads as "no price data" to an SDK caller; the freeze gate declined to publish.
+		if !strings.Contains(body, `"withheld":["crypto:XLM"]`) {
+			t.Errorf("frozen id with nothing held must be on the withheld list: %s", body)
 		}
 		if !strings.Contains(body, `"price":"51234.5"`) {
 			t.Errorf("the healthy row must still serve: %s", body)

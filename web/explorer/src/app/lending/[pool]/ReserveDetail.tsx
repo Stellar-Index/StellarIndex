@@ -27,6 +27,20 @@ export function rateModelOf(rv: ReserveRow): RateModel | null {
   return { target, rBase, rOne, rTwo, rThree };
 }
 
+/** The curve's rate at a utilisation (1e7 scale), linear between samples; plot only. */
+export function curveRateAt(curve: CurvePoint[], util: number): number | null {
+  for (let i = 1; i < curve.length; i++) {
+    const u0 = Number(curve[i - 1].util);
+    const u1 = Number(curve[i].util);
+    if (util >= u0 && util <= u1) {
+      const r0 = Number(curve[i - 1].rate);
+      const r1 = Number(curve[i].rate);
+      return u1 === u0 ? r0 : r0 + ((util - u0) / (u1 - u0)) * (r1 - r0);
+    }
+  }
+  return null;
+}
+
 const W = 320;
 const H = 140;
 const PAD = { l: 40, r: 8, t: 8, b: 22 };
@@ -47,6 +61,7 @@ function RateChart({
     )
     .join(' ');
   const top = fixedPct(String(maxRate), RATE_DECIMALS);
+  const now = currentUtil == null ? null : curveRateAt(curve, currentUtil);
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
@@ -87,6 +102,19 @@ function RateChart({
           stroke="var(--color-ink-muted)"
           strokeDasharray="3 3"
         />
+      )}
+      {now != null && currentUtil != null && (
+        <circle
+          data-testid="curve-now"
+          cx={x(currentUtil)}
+          cy={y(now)}
+          r={4}
+          fill="var(--color-brand-500)"
+          stroke="var(--color-surface)"
+          strokeWidth={2}
+        >
+          <title>{`Now: ${(currentUtil / 1e5).toFixed(1)}% utilisation, borrow APR ${fixedPct(String(Math.round(now)), RATE_DECIMALS)}`}</title>
+        </circle>
       )}
       <g fill="var(--color-ink-muted)" fontSize={10}>
         <text x={PAD.l - 4} y={PAD.t + 8} textAnchor="end">
@@ -130,7 +158,8 @@ export function ReserveDetail({
   );
 
   return (
-    <div className="grid gap-6 py-2 md:grid-cols-2">
+    // min-w-0: a grid item otherwise grows to the metric picker's width on a phone.
+    <div className="grid gap-6 py-2 md:grid-cols-2 [&>*]:min-w-0">
       <div className="space-y-4">
         <h3 className="text-ink text-sm font-medium">Risk parameters</h3>
         <FactList columns={2}>
@@ -169,7 +198,7 @@ export function ReserveDetail({
             <RateChart curve={curve} currentUtil={currentUtil} />
             <p className="text-ink-muted text-xs">
               Computed from the reserve&apos;s rate model and current modifier.
-              The dashed line marks current utilisation.
+              The dashed line and dot mark current utilisation.
             </p>
           </>
         ) : (

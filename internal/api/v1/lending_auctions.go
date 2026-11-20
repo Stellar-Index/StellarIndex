@@ -36,6 +36,7 @@ type LendingAuctionView struct {
 	Deleted          bool                     `json:"deleted"`
 	DeletedLedger    *uint32                  `json:"deleted_ledger,omitempty"`
 	DeletedTime      *WireTime                `json:"deleted_time,omitempty"`
+	LendingAuctionUSDView
 }
 
 // LendingAuctionFillView is one fill of an auction.
@@ -98,6 +99,7 @@ func (s *Server) handleLendingPoolAuctions(w http.ResponseWriter, r *http.Reques
 	for _, a := range rows {
 		view.Auctions = append(view.Auctions, auctionView(a))
 	}
+	s.valueAuctions(ctx, pool, view.Auctions, &env.Flags)
 	writeEnvelope(w, env)
 }
 

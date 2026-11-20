@@ -38,6 +38,8 @@ type LendingEmissionsView struct {
 	// EmissionToken is the pool instance's BLNDTkn (Blend) or BLNTTkn (BLNT); null when unread.
 	EmissionToken         *string `json:"emission_token"`
 	EmissionTokenDecimals *int    `json:"emission_token_decimals"`
+	// EmissionTokenPriceUSD is the current USD price per whole emission token every usd_per_day uses; null when unpriced.
+	EmissionTokenPriceUSD *string `json:"emission_token_price_usd"`
 	// EPSDecimals scales every eps: eps / 10^eps_decimals is emission-token base units per second.
 	EPSDecimals int `json:"eps_decimals"`
 	// StorageAvailable is false when the emission streams cannot be read; StorageUnavailableReason says why and the
@@ -59,6 +61,7 @@ type LendingEmissionStreamView struct {
 	LastUpdate WireTime `json:"last_update"`
 	Live       bool     `json:"live"`     // expiration is after as_of_time
 	Archived   bool     `json:"archived"` // the entry is TTL-archived: its last written value, restorable but not live
+	LendingEmissionRateView
 }
 
 // LendingReserveEmissionView is one reserve token's stream: token_id = reserve_index*2 (borrow, dToken) or +1 (supply, bToken).
@@ -67,6 +70,10 @@ type LendingReserveEmissionView struct {
 	Asset   *string `json:"asset"` // null when the id is past the pool's reserve list
 	Side    string  `json:"side"`
 	LendingEmissionStreamView
+	// EmissionsAPR is usd_per_day x 365 / the side's current USD size (supplied or borrowed) at 4 dp, "0.0000" for an ended
+	// stream; null with EmissionsAPRReason when the USD rate or the side's size is unavailable or the side is empty.
+	EmissionsAPR       *string `json:"emissions_apr"`
+	EmissionsAPRReason *string `json:"emissions_apr_reason"`
 }
 
 // LendingBackstopEmissionView is the pool's stream in its backstop; Tier is null for Blend's single stream.
@@ -150,13 +157,15 @@ func (s *Server) handleLendingPoolEmissions(w http.ResponseWriter, r *http.Reque
 		Reserves: []LendingReserveEmissionView{}, Backstop: []LendingBackstopEmissionView{},
 	}
 	isBLNT := protocol == blnt.SourceName
+	var flags Flags
 	if reason == backstopReasonV1 {
 		view.StorageUnavailableReason = strRef(emissionsReasonV1)
 	} else if err := s.fillEmissionStreams(ctx, &view, isBLNT); err != nil {
 		s.writeLendingLookupError(ctx, w, r, "LendingEmissions", pool, err)
 		return
+	} else if view.StorageAvailable {
+		s.valueEmissions(ctx, &view, &flags)
 	}
-	var flags Flags
 	if err := s.fillEmissionClaims(ctx, &view, isBLNT, asOf, &flags); err != nil {
 		s.writeLendingLookupError(ctx, w, r, "LendingEmissionClaims", pool, err)
 		return
