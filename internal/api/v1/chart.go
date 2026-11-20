@@ -26,16 +26,19 @@ type ChartSeries struct {
 	Points        []HistoryPointWire `json:"points"`
 	Truncated     bool               `json:"truncated"`                // true when the requested window starts before the earliest available data
 	DataStartsAt  *WireTime          `json:"data_starts_at,omitempty"` // earliest bucket timestamp present in the result; only populated when Truncated
-	RequestedFrom *WireTime          `json:"requested_from,omitempty"` // window start the consumer asked for; only populated when Truncated
-	Discontinuous bool               `json:"discontinuous"`            // true when points skip at least one whole bucket between two served buckets
-	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"`  // last bucket before the WIDEST interior gap; only populated when Discontinuous
-	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`    // first bucket after it; only populated when Discontinuous
+	RequestedFrom *WireTime          `json:"requested_from,omitempty"` // window start the consumer asked for; only populated when Truncated or StartsBeforeWindow
+	// StartsBeforeWindow: the window is shorter than one bucket of Granularity, so the first point is the last closed
+	// bucket and ends at or before RequestedFrom (timeframe=1h on a daily series serves yesterday's point).
+	StartsBeforeWindow bool      `json:"starts_before_window,omitempty"`
+	Discontinuous      bool      `json:"discontinuous"`           // true when points skip at least one whole bucket between two served buckets
+	GapStartsAt        *WireTime `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap; only populated when Discontinuous
+	GapEndsAt          *WireTime `json:"gap_ends_at,omitempty"`   // first bucket after it; only populated when Discontinuous
 	// MarketCapLowLiquidity: price_type=market_cap only. The series is
 	// withheld (empty points) for the reason /v1/assets/{id} withholds
 	// market_cap_usd and raises the same-named flag.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
-	// RowCapTruncated: the read hit historyMaxPoints, so Points holds the OLDEST slice and stops
-	// short of the present. Only reachable for timeframe=all; DataEndsAt marks where it ends.
+	// RowCapTruncated: the read hit historyMaxPoints, so Points holds the OLDEST slice and stops short of the present:
+	// timeframe=all, or a bounded window whose read of any source or leg was capped. DataEndsAt marks where it ends.
 	RowCapTruncated bool      `json:"row_cap_truncated,omitempty"`
 	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"`
 	// Credit names the vendor when every point of a fiat series comes from one licensed off-chain
@@ -64,6 +67,25 @@ func (c *ChartSeries) markDiscontinuity() {
 		c.GapStartsAt = &from
 		c.GapEndsAt = &to
 	}
+}
+
+// markWindowStart stamps where a bounded series starts against the requested `from`: Truncated when its first bucket starts
+// more than one bucket after it (retention), StartsBeforeWindow when that bucket ends at or before it. Zero `from` is a no-op.
+func (c *ChartSeries) markWindowStart(from time.Time) {
+	if from.IsZero() || len(c.Points) == 0 {
+		return
+	}
+	first := c.Points[0].T
+	switch end := chartBucketStep(first.Time(), c.Granularity); {
+	case first.Time().Sub(from) > chartGranularityGrace(c.Granularity):
+		c.Truncated = true
+		c.DataStartsAt = &first
+	case !end.IsZero() && !end.After(from):
+		c.StartsBeforeWindow = true
+	default:
+		return
+	}
+	c.RequestedFrom = wireTimePtr(&from)
 }
 
 // chartBucketStep returns the START of the bucket after t on the CAGG `time_bucket` grid, zero if unknown. `1mo` advances by a
@@ -223,15 +245,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	// Truncated when a bounded window's earliest bucket starts more than one granularity unit
 	// after `from`: the difference between "the last 7 days are flat" and "this deployment only
 	// has 7 days". `timeframe=all` never trips it; there a short result IS the full result.
-	if !from.IsZero() && len(points) > 0 {
-		if grace := chartGranularityGrace(gran); points[0].Bucket.Sub(from) > grace {
-			startsAt := points[0].Bucket
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = wireTimePtr(&startsAt)
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 
 	series.markRowCap(walk)
 
@@ -382,7 +396,7 @@ func (s *Server) handleChartTWAP(
 	}
 
 	points, walk, err := s.chartSeriesPoints(ctx, pair,
-		chartWindow{from: from, gran: twapGran}, read)
+		chartWindow{from: chartClosedReadFrom(s.now(), from, twapGran), gran: twapGran}, read)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// twapChartGranularity only ever emits 1h / 1d, both of which have
 		// a CAGG — this arm guards a future grain change, not user input.
@@ -428,15 +442,7 @@ func (s *Server) handleChartTWAP(
 		PriceType:   "twap",
 		Points:      wire,
 	}
-	if !from.IsZero() && len(points) > 0 {
-		if grace := chartGranularityGrace(twapGran); points[0].Bucket.Sub(from) > grace {
-			startsAt := points[0].Bucket
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = wireTimePtr(&startsAt)
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 	series.markRowCap(walk)
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
@@ -451,7 +457,21 @@ func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
 	if from.IsZero() {
 		return today.AddDate(-25, 0, 0), to
 	}
-	return from.UTC().Truncate(24 * time.Hour), to
+	// A window inside today (timeframe=1h) still holds yesterday's closed day.
+	return chartClosedReadFrom(now, from.UTC().Truncate(24*time.Hour), "1d"), to
+}
+
+// chartClosedReadFrom widens a window shorter than one served bucket back to the last CLOSED bucket's start, so a forced coarse
+// grain (TWAP 1h, market-cap 1d) never reads an empty range and answers a quiet 200 with no points. A zero `from` stays zero.
+func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
+	d, ok := chartFixedBucketWidth(gran)
+	if from.IsZero() || !ok {
+		return from
+	}
+	if last := now.UTC().Truncate(d).Add(-d); last.Before(from) {
+		return last
+	}
+	return from
 }
 
 // handleChartFiat serves fiat:fiat pairs from fx_quotes, one row per ticker per UTC day. The reader gives CCY-per-USD:
@@ -490,7 +510,7 @@ func (s *Server) handleChartFiat(
 		// Cross-fiat (e.g. EUR/JPY) — triangulate both legs vs USD.
 		// (USD/USD can't reach here: identity pairs are rejected in
 		// parseChartPair.)
-		s.handleChartFiatCross(w, r, pair, series, gran, from)
+		s.handleChartFiatCross(w, r, pair, series, from)
 		return
 	}
 
@@ -531,17 +551,7 @@ func (s *Server) handleChartFiat(
 	series.Points = wire
 	series.Credit = fxSeriesCredit(points)
 
-	// Retention-truncation signal — same shape as the crypto path.
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
-
+	series.markWindowStart(from)
 	writeChartJSON(w, series, Flags{})
 }
 
@@ -552,7 +562,6 @@ func (s *Server) handleChartFiatCross(
 	r *http.Request,
 	pair canonical.Pair,
 	series ChartSeries,
-	gran string,
 	from time.Time,
 ) {
 	queryFrom, to := fxClosedDayWindow(s.now(), from)
@@ -592,16 +601,7 @@ func (s *Server) handleChartFiatCross(
 	series.Points = wire
 	series.Credit = fxSeriesCredit(append(append([]FXQuotePoint{}, basePts...), quotePts...))
 
-	// Retention-truncation signal — same shape as the direct path.
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0})
 }
 
@@ -806,8 +806,8 @@ type chartWalkResult struct {
 	// series may be shorter than a full walk's → flags.stale.
 	degraded bool
 	// cappedAt is the last bucket of the earliest source read that hit
-	// historyMaxPoints on an unbounded window; the served series is
-	// incomplete after it. Zero when no read was capped.
+	// historyMaxPoints; the served series is incomplete after it. Zero
+	// when no read was capped.
 	cappedAt time.Time
 }
 
@@ -816,14 +816,12 @@ const chartReadLimit = historyMaxPoints + 1
 
 // noteCap records a source read that overran the row cap and returns it trimmed to the cap, judged on the raw read before any merge so
 // a union of uncapped sources never trips it.
-func (r *chartWalkResult) noteCap(win chartWindow, points []HistoryPoint) []HistoryPoint {
+func (r *chartWalkResult) noteCap(points []HistoryPoint) []HistoryPoint {
 	if len(points) <= historyMaxPoints {
 		return points
 	}
 	points = points[:historyMaxPoints]
-	if win.from.IsZero() {
-		r.mergeCap(points[len(points)-1].Bucket)
-	}
+	r.mergeCap(points[len(points)-1].Bucket)
 	return points
 }
 
@@ -971,7 +969,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 			w.res.degraded = true
 			return true, nil //nolint:nilerr // a proxy failure is never the answer — see above
 		}
-		w.claim(sp, w.res.noteCap(w.win, points))
+		w.claim(sp, w.res.noteCap(points))
 		return true, nil
 	}
 	now := w.s.now().UTC()
@@ -1005,7 +1003,7 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 		if !ok {
 			return cont
 		}
-		w.claim(sp, w.res.noteCap(w.win, points))
+		w.claim(sp, w.res.noteCap(points))
 	}
 	return true
 }
@@ -1079,6 +1077,7 @@ func (s *Server) chartSeriesPoints(
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
+	res.mergeCap(crossRes.cappedAt)
 	return nil, res, nil
 }
 
@@ -1267,7 +1266,13 @@ func (s *Server) fiatSeriesThroughXLM(
 	if len(assetPts) == 0 {
 		return nil, res, nil
 	}
-	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], win, read)
+	// The pivot is the densest series held; read oldest-first from genesis its cap would end before the asset leg begins,
+	// so it starts at the asset leg's first bucket (and a capped asset leg's cut still bounds the cross via mergeCap).
+	pivotWin := win
+	if pivotWin.from.IsZero() {
+		pivotWin.from = assetPts[0].Bucket
+	}
+	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], pivotWin, read)
 	if err != nil {
 		return nil, chartWalkResult{}, err
 	}
@@ -1483,6 +1488,8 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
+	// Every fiat market-cap point is one fx_quotes day, so the served grain is daily whatever was asked.
+	gran = fiatChartGranularity(gran)
 	if s.VerifiedCurrencies == nil || s.FXHistory == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/market-cap-unavailable",
@@ -1555,6 +1562,8 @@ func (s *Server) handleChartMarketCap(
 			requested := from
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
+	} else {
+		series.markWindowStart(from)
 	}
 	writeChartJSON(w, series, Flags{})
 }
@@ -1659,8 +1668,9 @@ func (s *Server) handleChartMarketCapCrypto(
 
 	// USD price series (daily), with the stablecoin-USD proxy fallback
 	// the normal chart uses when nothing trades directly in fiat:USD.
+	readFrom := chartClosedReadFrom(s.now(), from, gran)
 	pricePts, walk, err := s.chartSeriesPoints(ctx, pair,
-		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
+		chartWindow{from: readFrom, gran: gran}, s.chartVWAPReader(gran))
 	if err != nil {
 		s.writeMarketCapReadFailure(ctx, w, r, err, "HistoryPointsInRange", pair, tfRaw, from)
 		return
@@ -1676,7 +1686,7 @@ func (s *Server) handleChartMarketCapCrypto(
 
 	// Daily circulating supply (forward-filled via the carry-in row).
 	to := s.now().UTC().Truncate(24 * time.Hour)
-	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
+	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, readFrom, to)
 	if err != nil {
 		s.writeMarketCapReadFailure(ctx, w, r, err, "DailyCirculatingSupply", pair, tfRaw, from)
 		return
@@ -1696,15 +1706,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		Points:                wire,
 		MarketCapLowLiquidity: lowLiquidity,
 	}
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
-			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
-			series.RequestedFrom = wireTimePtr(&requested)
-		}
-	}
+	series.markWindowStart(from)
 	if !refused {
 		series.markRowCap(walk)
 	}

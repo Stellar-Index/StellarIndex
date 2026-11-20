@@ -73,8 +73,9 @@ type AssetRow struct {
 	// pipeline doesn't yet cover.
 	CirculatingSupply *string
 	// Trailing 1h / 24h / 7d price change as a signed percentage with two decimals ("+1.27").
-	// Nil without a current price, or when no past prices_1m bucket exists within the window's
-	// tolerance (5min for 1h, 30min for 24h, 2h for 7d) older than the current price's minute.
+	// The reference is the newest prices_1m bucket at or before 1h / 24h / 7d ago. Nil without a
+	// current price, when that bucket is more than 5min / 30min / 2h before the target, or when it
+	// is not older than the current price's minute.
 	Change1hPct  *string
 	Change24hPct *string
 	Change7dPct  *string

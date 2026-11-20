@@ -1405,6 +1405,14 @@ export interface paths {
          *     over an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted
          *     compute from raw trades).
          *
+         *     A window shorter than one bucket of the served grain (TWAP's
+         *     `1h`, the daily `market_cap` and fiat series) is read back to the
+         *     last CLOSED bucket, so it is never an empty answer for a priced
+         *     asset. That bucket starts before the window; when it also ENDS at
+         *     or before the window start (`timeframe=1h` on a daily series
+         *     serves yesterday's point) the response sets
+         *     `data.starts_before_window=true` and `data.requested_from`.
+         *
          *     XLM's canonical spellings (`native`, `crypto:XLM`, its SAC) are
          *     different venue populations, so a pair with no buckets under the
          *     requested spelling is retried under the others and the first
@@ -3700,7 +3708,7 @@ export interface paths {
          *     moves no row into or out of that total. Because the two totals
          *     are taken over different rows, their difference is not a
          *     premium: `summary.both_bases` gives both figures over the
-         *     members carrying both, `premium.pct` gives the same gap per
+         *     members carrying both and a published premium, `premium.pct` gives the same gap per
          *     asset, and the funnel's `valuation` arm names the reason every
          *     uncovered row carries no figure.
          *
@@ -8855,12 +8863,12 @@ export interface components {
              */
             pivot_unverified: boolean;
             /**
-             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false, including when no observation was available. Meaningful only when `proxy_deviation_unchecked` is absent.
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false. Meaningful only when `proxy_deviation_unchecked` is absent.
              * @default false
              */
             proxy_deviation: boolean;
             /**
-             * @description Set beside a TRIANGULATED price when a declared USD peg's price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. Sent with `Cache-Control: no-store`. Omitted when false.
+             * @description Set beside a TRIANGULATED price when a declared USD peg had no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
              * @default false
              */
             proxy_deviation_unchecked: boolean;
@@ -9613,13 +9621,17 @@ export interface components {
              */
             premium_pct: string;
             /**
-             * @description The day's volume-weighted average price, exact decimal string.
+             * @description The day's volume-weighted average price as an exact decimal
+             *     string, trailing zeros trimmed (rounded to 10 dp only if it
+             *     has no finite decimal form).
              * @example 0.0698283638
              */
             market_usd: string;
             /**
-             * @description The day's closing oracle value at the feed's own scale, exact decimal string.
-             * @example 0.0698890000
+             * @description The day's closing oracle value as an exact decimal string,
+             *     trailing zeros trimmed: every digit the feed published, so it
+             *     reconciles with `/v1/oracle/latest`.
+             * @example 0.069889
              */
             reference_usd: string;
             /**
@@ -10114,8 +10126,11 @@ export interface components {
         };
         /**
          * @description Totals over the members carrying a market cap AND a reference
-         *     valuation — the only subset on which the two bases can honestly
-         *     be compared.
+         *     valuation whose premium is published (`premium.status` =
+         *     `published`) — the only subset on which the two bases can
+         *     honestly be compared. It is a subset of the rows `assets_compared`
+         *     counts: those that also carry both totals (a thin-market row has a
+         *     published premium but no market cap).
          *
          *     It exists to stop one misreading. `market_cap_usd` and
          *     `reference_valuation.value_usd` are sums over different rows: an
@@ -10127,7 +10142,7 @@ export interface components {
          *     percentage terms is `premium.pct`.
          */
         RWABothBases: {
-            /** @description Members carrying both figures. */
+            /** @description Members carrying both figures and a published premium. */
             assets: number;
             /** @description Market-basis total over those rows only. Absent when `assets` is 0. */
             market_cap_usd?: string;
@@ -12168,7 +12183,7 @@ export interface components {
             thin_market?: boolean;
             /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
             substance?: components["schemas"]["SubstanceEvidence"];
-            /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no comparison bucket within 30 minutes of 24h ago. */
+            /** @description Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. "+1.27", "-0.05", "0.00"). Null when the asset has no current USD price or no closed comparison bucket no more than 30 minutes before 24h ago. */
             change_24h_pct?: string | null;
             /** @description circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale. */
             market_cap_usd?: string | null;
@@ -13117,9 +13132,19 @@ export interface components {
                  * Format: date-time
                  * @description Window start the consumer asked for (derived
                  *     from `timeframe`). Only present when
-                 *     `truncated=true`.
+                 *     `truncated=true` or `starts_before_window=true`.
                  */
                 requested_from?: string;
+                /**
+                 * @description True when the window is shorter than one bucket of
+                 *     `granularity`, so the series is the last closed
+                 *     bucket and that bucket ends at or before
+                 *     `requested_from` (e.g. `timeframe=1h` on a daily
+                 *     market-cap or fiat series serves yesterday's point).
+                 *     A bucket that overlaps the window is not flagged.
+                 *     Omitted when false.
+                 */
+                starts_before_window?: boolean;
                 /**
                  * @description True when `points` skips at least one whole bucket
                  *     between two served buckets, at the granularity
@@ -13164,8 +13189,9 @@ export interface components {
                  */
                 market_cap_low_liquidity?: boolean;
                 /**
-                 * @description True when an unbounded read (`timeframe=all`) hit the
-                 *     50 000-bucket response cap, so `points` holds the
+                 * @description True when the read hit the 50 000-bucket response cap
+                 *     (`timeframe=all`, or a bounded window whose read of
+                 *     any source or leg was capped), so `points` holds the
                  *     OLDEST slice of this pair's history and stops short of
                  *     the present. Request a coarser `granularity` to see
                  *     the whole span. Omitted when false.
@@ -23681,15 +23707,15 @@ export interface operations {
                      *                 "t": "2026-09-10T00:00:00Z",
                      *                 "premium_pct": "-0.0868",
                      *                 "market_usd": "0.0698283638",
-                     *                 "reference_usd": "0.0698890000",
+                     *                 "reference_usd": "0.069889",
                      *                 "volume_usd": "18420.55",
                      *                 "trades": 37
                      *               },
                      *               {
                      *                 "t": "2026-09-11T00:00:00Z",
                      *                 "premium_pct": "0.1421",
-                     *                 "market_usd": "0.0699883100",
-                     *                 "reference_usd": "0.0698890000",
+                     *                 "market_usd": "0.06998831",
+                     *                 "reference_usd": "0.069889",
                      *                 "volume_usd": "9106.20",
                      *                 "trades": 21
                      *               }

@@ -697,6 +697,146 @@ func TestMarketsListingGrain(t *testing.T) {
 	})
 }
 
+// TestPerSourceFigures_CoverExactly24h: /v1/pools and /v1/markets?source= sum (now-24h, now]. The hourly view cannot split the
+// hour holding now-24h and lags the newest hours, so a trade a minute inside the window must count, once, and one a moment
+// outside it in the same hour must not; an unpriced trade there still makes the volume a lower bound.
+func TestPerSourceFigures_CoverExactly24h(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	now := time.Now().UTC()
+	// The query's NOW() is a few seconds later than now, so the outside print stays outside and a minute's margin keeps
+	// the inside one inside.
+	seedGrainTrade(t, ctx, db, 900, "aquarius", now.Add(-24*time.Hour-30*time.Second), "crypto:XRP", "fiat:USD", "1", "1", "1")
+	seedGrainTrade(t, ctx, db, 901, "aquarius", now.Add(-24*time.Hour+time.Minute), "crypto:XRP", "fiat:USD", "1", "2", "2")
+	seedGrainTrade(t, ctx, db, 902, "aquarius", now.Add(-12*time.Hour), "crypto:XRP", "fiat:USD", "1", "4", "4")
+	seedGrainTrade(t, ctx, db, 903, "aquarius", now.Add(-90*time.Minute), "crypto:XRP", "fiat:USD", "1", "8", "8")
+	seedGrainTrade(t, ctx, db, 904, "aquarius", now.Add(-time.Minute), "crypto:XRP", "fiat:USD", "1", "16", "16")
+
+	seedGrainTrade(t, ctx, db, 910, "aquarius", now.Add(-12*time.Hour), "crypto:LTC", "fiat:USD", "1", "5", "5")
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount)
+		VALUES ('aquarius', 70000911, $1, 0, $2, 'crypto:LTC', 'fiat:USD', 1, 5)`,
+		fmt.Sprintf("%064x", 700_911), now.Add(-24*time.Hour+time.Minute),
+	); err != nil {
+		t.Fatalf("seed unpriced trade: %v", err)
+	}
+	for _, stmt := range []string{
+		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
+		`CALL refresh_continuous_aggregate('prices_1d', NULL, NULL)`,
+		`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("refresh cagg (%s): %v", stmt, err)
+		}
+	}
+
+	type fig struct {
+		count int64
+		vol   float64
+		lower bool
+	}
+	want := map[string]fig{"crypto:XRP": {4, 30, false}, "crypto:LTC": {2, 5, true}}
+
+	markets, _, err := store.SourceMarkets(ctx, "aquarius", "", 100, timescale.MarketsOrderPair)
+	if err != nil {
+		t.Fatalf("SourceMarkets: %v", err)
+	}
+	for base, w := range want {
+		m := findGrainMarket(t, markets, base, "fiat:USD")
+		if got := (fig{m.TradeCount24h, numeric(t, m.Volume24hUSD), m.VolumeLowerBound}); got != w {
+			t.Errorf("SourceMarkets(aquarius) %s = %+v, want %+v", base, got, w)
+		}
+	}
+	pools, _, err := store.AllPools(ctx, timescale.PoolsFilter{Sources: []string{"aquarius"}}, "", 100, timescale.MarketsOrderPair)
+	if err != nil {
+		t.Fatalf("AllPools: %v", err)
+	}
+	seen := 0
+	for _, p := range pools {
+		w, ok := want[p.Pair.Base.String()]
+		if !ok || p.Pair.Quote.String() != "fiat:USD" {
+			continue
+		}
+		seen++
+		if got := (fig{p.TradeCount24h, numeric(t, p.Volume24hUSD), p.VolumeLowerBound}); got != w {
+			t.Errorf("AllPools(aquarius) %s = %+v, want %+v", p.Pair.Base, got, w)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("AllPools(aquarius) listed %d of %d markets: %+v", seen, len(want), pools)
+	}
+}
+
+// TestPerSourceFigures_StalledViewRefresh: materialized-only, pools_per_source_1h lacks every hour past its watermark. A refresh
+// lagging more than two hours must not drop those hours from the 24h figure; past the six-hour cap the volume is a lower bound.
+func TestPerSourceFigures_StalledViewRefresh(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	// The SQL's hour must be the one the fixture was laid out in.
+	if n := time.Now(); n.Minute() == 59 {
+		time.Sleep(time.Until(n.Truncate(time.Hour).Add(time.Hour + 5*time.Second)))
+	}
+	hour := time.Now().UTC().Truncate(time.Hour)
+	seedGrainTrade(t, ctx, db, 920, "aquarius", hour.Add(-12*time.Hour), "crypto:XRP", "fiat:USD", "1", "4", "4")
+	seedGrainTrade(t, ctx, db, 921, "aquarius", hour.Add(-7*time.Hour+30*time.Minute), "crypto:XRP", "fiat:USD", "1", "8", "8")
+	seedGrainTrade(t, ctx, db, 922, "aquarius", hour.Add(-3*time.Hour+30*time.Minute), "crypto:XRP", "fiat:USD", "1", "2", "2")
+	seedGrainTrade(t, ctx, db, 923, "aquarius", time.Now().UTC().Add(-time.Minute), "crypto:XRP", "fiat:USD", "1", "16", "16")
+	for _, view := range []string{"prices_1m", "prices_1d"} {
+		if _, err := db.ExecContext(ctx, "CALL refresh_continuous_aggregate('"+view+"', NULL, NULL)"); err != nil {
+			t.Fatalf("refresh %s: %v", view, err)
+		}
+	}
+
+	type fig struct {
+		count int64
+		vol   float64
+		lower bool
+	}
+	for _, phase := range []struct {
+		watermarkHoursBack int
+		want               fig
+	}{
+		// Watermark 8h back, past the cap: the 7h-old trade is in neither the view nor the capped tail.
+		{8, fig{3, 22, true}},
+		// Watermark 5h back: the tail starts there, so the 3h-old trade counts and the figure is exact.
+		{5, fig{4, 30, false}},
+	} {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(
+			`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, time_bucket('1 hour', now()) - INTERVAL '%d hours')`,
+			phase.watermarkHoursBack)); err != nil {
+			t.Fatalf("refresh pools_per_source_1h: %v", err)
+		}
+		markets, _, err := store.SourceMarkets(ctx, "aquarius", "", 100, timescale.MarketsOrderPair)
+		if err != nil {
+			t.Fatalf("SourceMarkets: %v", err)
+		}
+		m := findGrainMarket(t, markets, "crypto:XRP", "fiat:USD")
+		if got := (fig{m.TradeCount24h, numeric(t, m.Volume24hUSD), m.VolumeLowerBound}); got != phase.want {
+			t.Errorf("watermark %dh back: SourceMarkets(aquarius) = %+v, want %+v", phase.watermarkHoursBack, got, phase.want)
+		}
+	}
+}
+
 // seedGrainTrade writes one trade straight to the hypertable so the
 // fixture can set usd_volume (the pricing pipeline's output) without
 // running the pipeline.
