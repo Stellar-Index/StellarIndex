@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -82,6 +83,8 @@ func TestMarketCap_PriceFilledAfterF2IsValuedUnderTheSameGuards(t *testing.T) {
 const (
 	capTestAsset = "BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY"
 	capTestHop   = "CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN"
+	// capTestImpostor claims the catalogue's BLND ticker under an issuer the catalogue does not list.
+	capTestImpostor = "BLND-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
 )
 
 // capTestServer prices capTestAsset at 0.0767 through the transitive step, over 10^7 circulating and 2x10^7 max tokens.
@@ -95,6 +98,7 @@ func capTestServer(prices PriceReader, snap supply.Supply) *Server {
 			}},
 			Substance: &stubListingGate{allow: map[string]bool{
 				capTestAsset + "|native": true, capTestAsset + "|" + capTestHop: true, capTestHop + "|native": true,
+				capTestImpostor + "|native": true, capTestImpostor + "|" + capTestHop: true,
 			}},
 			MaxMarketCapVolumeRatio: 100,
 		},
@@ -110,19 +114,66 @@ func capTestSupply() supply.Supply {
 // transitive step fills.
 func capTestRun(t *testing.T, s *Server, withRow bool) AssetDetail {
 	t.Helper()
-	asset, err := canonical.ParseAsset(capTestAsset)
+	return capTestRunAsset(t, s, capTestAsset, withRow, nil)
+}
+
+// capTestRunAsset is capTestRun for assetID; between the two steps it applies between to the detail.
+func capTestRunAsset(t *testing.T, s *Server, assetID string, withRow bool, between func(*AssetDetail)) AssetDetail {
+	t.Helper()
+	asset, err := canonical.ParseAsset(assetID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	detail := AssetDetail{Decimals: 7}
 	s.applyF2Fields(context.Background(), &detail, asset)
+	if between != nil {
+		between(&detail)
+	}
 	row, rowErr := timescale.AssetRow{}, error(sql.ErrNoRows)
 	if withRow {
 		p := "0.0767"
 		row, rowErr = timescale.AssetRow{PriceUSD: &p}, nil
 	}
-	s.applyAssetRowToDetail(context.Background(), &detail, asset, row, rowErr, capTestAsset)
+	s.applyAssetRowToDetail(context.Background(), &detail, asset, row, rowErr, assetID)
 	return detail
+}
+
+// TestMarketCap_FilledPriceGuards — the deferred cap over a catalogue-row or transitive fill keeps populateMarketCap's guards:
+// a thin price, a stale supply observation and an unverified ticker collision each value no cap or FDV.
+func TestMarketCap_FilledPriceGuards(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := capTestSupply()
+	stale.ObservedAt = time.Now().Add(-preciseSupplyMaxAge - time.Hour)
+	thin := func(d *AssetDetail) {
+		p := "0.0767"
+		d.PriceUSD, d.ThinMarket = &p, true
+	}
+	for _, withRow := range []bool{true, false} {
+		t.Run(fmt.Sprintf("catalogue_row=%v", withRow), func(t *testing.T) {
+			if d := capTestRun(t, capTestServer(withheldUSDReader{}, capTestSupply()), withRow); strOrEmpty(d.MarketCapUSD) != "767000.00" {
+				t.Errorf("fill: market_cap_usd = %q, want 767000.00", strOrEmpty(d.MarketCapUSD))
+			}
+			if d := capTestRunAsset(t, capTestServer(withheldUSDReader{}, capTestSupply()), capTestAsset, withRow, thin); d.MarketCapUSD != nil || d.FDVUSD != nil {
+				t.Errorf("thin price: market_cap_usd = %q fdv_usd = %q, want both null", strOrEmpty(d.MarketCapUSD), strOrEmpty(d.FDVUSD))
+			}
+			if d := capTestRun(t, capTestServer(withheldUSDReader{}, stale), withRow); d.PriceUSD == nil || d.MarketCapUSD != nil || d.FDVUSD != nil || !d.SupplyStale {
+				t.Errorf("stale supply: price %v market_cap_usd = %q fdv_usd = %q supply_stale = %v, want a price, no cap, no FDV, stale",
+					d.PriceUSD, strOrEmpty(d.MarketCapUSD), strOrEmpty(d.FDVUSD), d.SupplyStale)
+			}
+			collide := capTestServer(withheldUSDReader{}, capTestSupply())
+			collide.VerifiedCurrencies = cat
+			if d := capTestRunAsset(t, collide, capTestImpostor, withRow, nil); d.PriceUSD == nil || d.MarketCapUSD != nil || d.FDVUSD != nil {
+				t.Errorf("ticker collision: price %v market_cap_usd = %q fdv_usd = %q, want a price and no cap or FDV",
+					d.PriceUSD, strOrEmpty(d.MarketCapUSD), strOrEmpty(d.FDVUSD))
+			}
+			if d := capTestRun(t, collide, withRow); strOrEmpty(d.MarketCapUSD) != "767000.00" {
+				t.Errorf("verified issuer under the catalogue: market_cap_usd = %q, want 767000.00", strOrEmpty(d.MarketCapUSD))
+			}
+		})
+	}
 }
 
 // TestMarketCap_FilledPriceValuesNoCapWhenF2RefusedOrCouldNotRead — a price the direct reader refused, or could not read, is no
