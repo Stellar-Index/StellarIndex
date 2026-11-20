@@ -735,9 +735,11 @@ export function convertDecimalAmount(
   const den = q.units * 10n ** BigInt(a.frac + p.frac);
   let scale = places;
   if (minSignificant > 0 && num > 0n && num < den) {
-    let lead = 0;
-    while (num * 10n ** BigInt(lead + 1) < den) lead++;
-    scale = Math.max(places, lead + minSignificant);
+    // Zeros after the point: num×10^k < den holds for every k below the
+    // digit-length gap and is one comparison away at the gap itself.
+    const gap = den.toString().length - num.toString().length;
+    const lead = num * 10n ** BigInt(gap) < den ? gap : gap - 1;
+    scale = Math.max(places, Math.max(0, lead) + minSignificant);
   }
   const r = (2n * num * 10n ** BigInt(scale) + den) / (2n * den);
   const digits = r.toString().padStart(scale + 1, '0');
