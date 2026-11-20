@@ -18471,10 +18471,10 @@ export interface operations {
                                 /** @description True when the price behind `tokens_usd` is past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null; `lp_share_unvalued` for Blend's Comet BLND:USDC LP backstop token.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the token is a Comet LP share (Blend's BLND:USDC backstop token, or a BLNT `BlntUsdc`/`BlntXlm` tier's), which has no valuation here. `token_unknown`: the tiers summed in this token name no plain-token asset kind (`Usdc` or `Xlm`), so it is withheld.
                                  * @enum {string|null}
                                  */
-                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "negative_amount" | null;
+                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | null;
                             }[];
                             /** @description True when a `pool_list`, `pool` or `reserve` exclusion leaves something out of the USD totals, which are then floors. */
                             lower_bound?: boolean;
@@ -18961,10 +18961,10 @@ export interface operations {
                                 /** @description True when `price_usd` is the newest price but past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: a Blend backstop holds Comet BLND:USDC LP shares, which have no valuation here.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier's `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld.
                                  * @enum {string|null}
                                  */
-                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "negative_amount" | null;
+                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | null;
                             }[];
                             /** @description Sum of the tiers' `tokens_usd`; null when no tier is valued. */
                             total_usd?: string | null;
