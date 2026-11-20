@@ -349,6 +349,39 @@ describe('LiveAssetPrice — 24h change pill', () => {
     hides(/\+2\.10%/);
   });
 
+  it('re-reads the 24h change on the price poll cadence', async () => {
+    let pct = 3.4;
+    const reply = async (input: string | URL) => {
+      const hit = String(input).includes('/v1/changes/');
+      return {
+        status: hit ? 200 : 404,
+        ok: hit,
+        json: async () =>
+          hit
+            ? {
+                data: {
+                  entity_type: 'coin',
+                  entity_id: 'native',
+                  h24_delta_pct: pct,
+                },
+              }
+            : {},
+      };
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderPrice({ initialChangePct: 2.1 });
+      expect(await screen.findByText(/\+3\.40%/)).toBeInTheDocument();
+      pct = -6.5;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await screen.findByText(/-6\.50%/)).toBeInTheDocument();
+      hides(/\+3\.40%/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the baked pill when the worker has no row yet', () => {
     renderPrice({ initialChangePct: 2.1 });
     shows(/\+2\.10%/);
