@@ -711,7 +711,7 @@ function CuratedPanel({
                         {usd(a.reference?.price_usd) ?? '—'}
                       </Td>
                       <Td align="right" className="tnum">
-                        {usd(a.reference_valuation.value_usd) ?? '—'}
+                        <CuratedValueCell asset={a} />
                       </Td>
                       <Td>
                         {a.curator?.also_verified ? (
@@ -1829,10 +1829,8 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
       <Td align="right">
         {cap == null ? (
           <Withheld reason={reason} />
-        ) : asset.circulating_supply_lower_bound ? (
-          <span title={SUPPLY_FLOOR_HINT}>≥ {cap}</span>
         ) : (
-          cap
+          <SupplyScaled value={cap} asset={asset} />
         )}
       </Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
@@ -1870,6 +1868,24 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
  * dash and never a number: a dash in a money column beside real figures
  * is read as zero, and zero is the one reading that is certainly wrong.
  */
+/** A row figure scaled by its circulating supply: "≥" when that supply is a floor. */
+function SupplyScaled({ value, asset }: { value: string; asset: RWAAsset }) {
+  if (!asset.circulating_supply_lower_bound) return <>{value}</>;
+  return <span title={SUPPLY_FLOOR_HINT}>≥ {value}</span>;
+}
+
+function CuratedValueCell({ asset }: { asset: RWAAsset }) {
+  const value = usd(asset.reference_valuation.value_usd);
+  if (value == null) {
+    return (
+      <Withheld
+        reason={REFERENCE_VALUE_REASON[asset.reference_valuation.status]}
+      />
+    );
+  }
+  return <SupplyScaled value={value} asset={asset} />;
+}
+
 function Withheld({ reason }: { reason?: string }) {
   return (
     <span

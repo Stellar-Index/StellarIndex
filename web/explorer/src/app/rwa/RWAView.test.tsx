@@ -1250,6 +1250,50 @@ describe('RWAView — curated arm', () => {
     expect(screen.queryByText('$560.02M', headline)).not.toBeInTheDocument();
   });
 
+  it('marks a curated row’s value a floor when its supply is a floor, and explains a withheld one', async () => {
+    const row = (contract: string, over: Partial<Asset>): Asset => ({
+      ...asset(),
+      asset_id: contract,
+      contract_id: contract,
+      slug: contract,
+      symbol: contract.slice(0, 4),
+      basis: 'third_party_curated',
+      curator: {
+        curator: 'dune:stellar',
+        company: 'Realiz',
+        subclass: 'Corporate Credit',
+        also_verified: false,
+      },
+      ...over,
+    });
+    show(
+      view({
+        curated_assets: [
+          row('CAAA', {
+            circulating_supply_lower_bound: true,
+            reference_valuation: {
+              status: 'published',
+              value_usd: '4210000.00',
+            },
+          }),
+          row('CBBB', {
+            reference_valuation: { status: 'supply_unavailable' },
+          }),
+        ],
+        curated: curated({ assets: 2, assets_valued: 1 }),
+      } as Partial<View>),
+    );
+
+    await screen.findByText('Value at that price');
+    present('≥ $4.21M');
+    expect(screen.getByText('≥ $4.21M')).toHaveAttribute(
+      'title',
+      expect.stringMatching(/^At least/),
+    );
+    absent('$4.21M');
+    atLeast('Unavailable', 1);
+  });
+
   it('draws the comparison without a published panel when no published block is served', async () => {
     show(view({ curated: curated({ verified_value_usd: REF }) }));
 
