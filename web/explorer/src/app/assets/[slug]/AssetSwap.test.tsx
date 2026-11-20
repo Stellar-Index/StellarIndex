@@ -17,6 +17,7 @@ import { apiGet } from '@/api/client';
 import {
   AssetSwap,
   assetIssuer,
+  missingPriceNote,
   rankSwapTokens,
   type SwapToken,
 } from './AssetSwap';
@@ -190,7 +191,29 @@ describe('AssetSwap page-asset leg', () => {
       title: 'withheld',
     });
     renderSwap();
-    await vi.waitFor(() => expect(receiveValue()).toBe(''));
+    // A dash with the reason, never a blank or a zero that reads as a value.
+    await vi.waitFor(() => expect(receiveValue()).toBe('—'));
+    expect(
+      screen.getByText(
+        'XLM has no USD price: withheld by the server (withheld)',
+      ),
+    ).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  // 123456789012.3456789 USD at 0.12345678901234567891 USD/XLM is
+  // 999999999999.9999999 XLM exactly; a float division prints 1,000,000,000,000.
+  it('converts an amount above 2^53 base units exactly', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.12345678901234567891' } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.1235'));
+    fireEvent.change(screen.getAllByRole('textbox')[1], {
+      target: { value: '123456789012.3456789' },
+    });
+    expect((screen.getAllByRole('textbox')[0] as HTMLInputElement).value).toBe(
+      '999,999,999,999.9999999',
+    );
     vi.unstubAllGlobals();
   });
 
@@ -247,6 +270,37 @@ describe('AssetSwap page-asset leg', () => {
     await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
     expect(screen.queryByText(/^Low confidence:/)).not.toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  // The page leg is the headline's number; it must carry what the headline
+  // says about it rather than look like a fresh market quote.
+  const note = () => screen.getByText(/^XLM price:/).textContent ?? '';
+
+  it('names a declared peg as not a market price', async () => {
+    stubApi();
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+    });
+    renderPegged();
+    await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
+    expect(note()).toMatch(/declared 1:1 fiat peg .* not a market price/);
+    vi.unstubAllGlobals();
+  });
+
+  it('marks a stale live price as stale', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.26' }, flags: { stale: true } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    expect(note()).toMatch(/stale/);
+    vi.unstubAllGlobals();
+  });
+
+  it('labels the build-time price when the poll has failed', async () => {
+    stubApi();
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.195'));
+    await vi.waitFor(() => expect(note()).toMatch(/as baked at deploy/));
   });
 });
 
@@ -310,7 +364,7 @@ describe('AssetSwap and the headline share one price resolution', () => {
     await vi.waitFor(() =>
       expect(screen.getByText('issuer flagged')).toBeInTheDocument(),
     );
-    expect(receiveValue()).toBe('');
+    expect(receiveValue()).toBe('—');
     vi.unstubAllGlobals();
   });
 });
@@ -413,7 +467,7 @@ describe('AssetSwap catalogue leg', () => {
     await vi.waitFor(() =>
       expect(
         (screen.getAllByRole('textbox')[1] as HTMLInputElement).value,
-      ).toBe(''),
+      ).toBe('—'),
     );
     fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
     const dialog = await screen.findByRole('dialog');
@@ -484,6 +538,48 @@ describe('AssetSwap token picker dialog contract', () => {
   });
 });
 
+// A catalogue row priced by a peg or a two-hop route is not a market quote;
+// picking it must carry that basis (and when it was priced) into the note.
+describe('AssetSwap catalogue leg basis', () => {
+  const AUDD = 'AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU';
+
+  it.each([
+    [
+      'declared_peg',
+      /AUDD price: declared 1:1 fiat peg × fx rate, not a market price · observed 3h ago/,
+    ],
+    ['transitive', /AUDD price: derived two-hop DEX route · observed 3h ago/],
+  ] as const)('labels a picked %s row in the note', async (basis, note) => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string, params) => {
+      const ids = (params as { asset_ids?: string } | undefined)?.asset_ids;
+      if (path === '/v1/price/batch' && ids === AUDD)
+        throw new Error('offline');
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: AUDD,
+              code: 'AUDD',
+              price_usd: '0.655',
+              price_basis: basis,
+              price_as_of: hoursAgo(3),
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /AUDD/ }));
+    await vi.waitFor(() =>
+      expect(screen.getByText(/AUDD price:/).textContent).toMatch(note),
+    );
+  });
+});
+
 describe('AssetSwap token picker crypto rows', () => {
   it("labels a crypto row with the catalogue's asset name", async () => {
     stubApi();
@@ -523,7 +619,7 @@ describe('swap picker look-alikes', () => {
   const tok = (key: string, extra: Partial<SwapToken>): SwapToken => ({
     key,
     symbol: 'USDC',
-    usdPrice: 1,
+    usdPrice: '1',
     kind: 'crypto',
     ...extra,
   });
@@ -628,5 +724,97 @@ describe('swap picker look-alikes', () => {
     expect(
       screen.queryByRole('img', { name: 'Verified currency' }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('AssetSwap amounts', () => {
+  function renderAt(
+    price: string,
+    props: { assetId?: string; decimals?: number } = {},
+  ) {
+    stubApi();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (input: string | URL) => {
+        const hit = String(input).includes('/v1/price?');
+        return {
+          status: hit ? 200 : 500,
+          ok: hit,
+          json: async () => ({ data: { price } }),
+        };
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <AssetSwap
+          symbol="TKN"
+          assetId={props.assetId ?? 'native'}
+          priceUSD={price}
+          decimals={props.decimals}
+        />
+      </QueryClientProvider>,
+    );
+  }
+  const field = (i: number) =>
+    screen.getAllByRole('textbox')[i] as HTMLInputElement;
+
+  it('never shows a non-zero conversion as zero', async () => {
+    renderAt('97000');
+    await vi.waitFor(() => expect(field(1).value).toBe('97,000'));
+    fireEvent.change(field(1), { target: { value: '0.003' } });
+    // 0.003 ÷ 97000 = 3.09e-8: below the 7-decimal leg's smallest unit.
+    expect(field(0).value).toBe('< 0.0000001');
+    fireEvent.change(field(1), { target: { value: '0.0097' } });
+    expect(field(0).value).toBe('0.0000001');
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves both fields alone on focus and recomputes from the field typed in', async () => {
+    renderAt('3.456789');
+    await vi.waitFor(() => expect(field(1).value).toBe('3.46'));
+    fireEvent.focus(field(1));
+    expect(field(0).value).toBe('1');
+    expect(field(1).value).toBe('3.46');
+    fireEvent.focus(field(0));
+    expect(field(0).value).toBe('1');
+    fireEvent.change(field(1), { target: { value: '6.913578' } });
+    expect(field(0).value).toBe('2');
+    expect(field(1).value).toBe('6.913578');
+    vi.unstubAllGlobals();
+  });
+
+  it('caps what can be typed into either amount', () => {
+    renderAt('1');
+    expect(field(0).maxLength).toBeGreaterThan(0);
+    expect(field(1).maxLength).toBe(field(0).maxLength);
+    vi.unstubAllGlobals();
+  });
+
+  it("rounds the page asset's leg to the asset's own decimals", async () => {
+    renderAt('3', {
+      assetId: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      decimals: 2,
+    });
+    await vi.waitFor(() => expect(field(1).value).toBe('3'));
+    fireEvent.change(field(1), { target: { value: '1' } });
+    expect(field(0).value).toBe('0.33');
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('missingPriceNote', () => {
+  it('names every leg without a price, each with its reason', () => {
+    expect(
+      missingPriceNote([
+        { symbol: 'AAA', withheld: true, detail: 'thin market' },
+        { symbol: 'BBB', withheld: false },
+      ]),
+    ).toBe(
+      'AAA has no USD price: withheld by the server (thin market). BBB has no USD price available',
+    );
+    expect(missingPriceNote([])).toBeNull();
   });
 });

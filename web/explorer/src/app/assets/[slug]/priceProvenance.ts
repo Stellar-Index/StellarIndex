@@ -31,6 +31,36 @@ export function provenanceFromBasis(
   }
 }
 
+/**
+ * What a non-market or non-live price IS, in a few words; null for a live
+ * market price. Shared by the converter so it names what the headline names.
+ */
+export function provenanceQualifier(p: PriceProvenance): string | null {
+  switch (p) {
+    case 'declared_peg':
+      return 'declared 1:1 fiat peg × fx rate, not a market price';
+    case 'transitive':
+      return 'derived two-hop DEX route';
+    case 'global_market':
+      return 'global aggregator price, not a Stellar market';
+    case 'listing':
+      return 'listing snapshot, not a live aggregated price';
+    default:
+      return null;
+  }
+}
+
+export const BAKED_AT_DEPLOY = 'as baked at deploy';
+
+/** The caption for a figure frozen into the static export, with its build time when known. */
+export function bakedAtDeploy(
+  builtAt: string | undefined = process.env.NEXT_PUBLIC_BUILD_TIME,
+): string {
+  const t = builtAt ? new Date(builtAt) : null;
+  if (!t || Number.isNaN(t.getTime())) return BAKED_AT_DEPLOY;
+  return `${BAKED_AT_DEPLOY} (built ${t.toISOString().slice(0, 16).replace('T', ' ')} UTC)`;
+}
+
 /** Caption vocabulary for the headline price on the static asset page. */
 export function headlinePriceProvenance(
   price:

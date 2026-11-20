@@ -45,6 +45,22 @@ describe('LiquidityTabPanel', () => {
     expect(screen.getByText(/Pool list unavailable:/)).toBeInTheDocument();
   });
 
+  // A static export bakes these figures; they must not read as current.
+  it('captions the pool figures with the build time', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BUILD_TIME', '2026-11-20T10:30:12.345Z');
+    try {
+      mockFetch(async () => jsonResponse({ data: [] }));
+      await renderPanel();
+      expect(
+        screen.getByText(
+          /24h volume and trades as baked at deploy \(built 2026-11-20 10:30 UTC\)/,
+        ),
+      ).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('keeps the genuine empty claim when the API returns no pools', async () => {
     mockFetch(async () => jsonResponse({ data: [] }));
     await renderPanel();

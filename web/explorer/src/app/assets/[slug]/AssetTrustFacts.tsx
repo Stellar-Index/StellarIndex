@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { useAsset, useIssuer } from '@/api/hooks';
+import { useIssuer } from '@/api/hooks';
 import { scamFlagTags } from '@/lib/directory-tags';
+import { useIssuerScamFlags } from './AssetScamCallout';
 import type { paths } from '@/api/types';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
@@ -93,7 +94,11 @@ export function AssetTrustFacts({
   volumeCharacterSignals?: VolumeSignals | null;
 }) {
   const issuerQ = useIssuer(issuer ?? undefined);
-  const assetQ = useAsset(assetID);
+  const scam = useIssuerScamFlags(assetID, {
+    directoryTags,
+    scamReason,
+    directoryDomain,
+  });
   const holdersQ = useQuery<HoldersResp>({
     queryKey: ['/v1/assets/{id}/holders', assetID],
     retry: false,
@@ -186,18 +191,9 @@ export function AssetTrustFacts({
     });
   }
 
-  // The baked flags only seed a pre-rendered page; the live read supersedes
-  // them so a flag raised after the build is not contradicted here.
-  const liveAsset = assetQ.data?.data;
-  const flagged = scamFlagTags(
-    liveAsset ? liveAsset.issuer_directory_tags : directoryTags,
-  );
-  const reason = (
-    liveAsset ? liveAsset.issuer_scam_reason : scamReason
-  )?.trim();
-  const domain = liveAsset
-    ? liveAsset.issuer_directory_domain
-    : directoryDomain;
+  const flagged = scamFlagTags(scam.directoryTags);
+  const reason = scam.scamReason?.trim();
+  const domain = scam.directoryDomain;
   facts.push({
     label: 'Directory / scam status',
     value: [
@@ -205,7 +201,9 @@ export function AssetTrustFacts({
         ? `flagged: ${reason}`
         : flagged.length > 0
           ? `flagged by community directory: ${flagged.join(', ')}`
-          : 'no scam flag recorded',
+          : scam.liveUnchecked
+            ? 'no scam flag at build; live directory check unavailable'
+            : 'no scam flag recorded',
       domain ? `directory lists issuer domain: ${domain}` : '',
     ]
       .filter(Boolean)

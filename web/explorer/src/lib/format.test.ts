@@ -402,3 +402,52 @@ describe('sharePct', () => {
     expect(format.sharePct(1.5, 5)).toBeNull();
   });
 });
+
+describe('convertDecimalAmount', () => {
+  const { convertDecimalAmount } = format;
+
+  it('rounds half up exactly at the boundary', () => {
+    expect(convertDecimalAmount('0.005', '1', '1', 2)).toBe('0.01');
+    expect(convertDecimalAmount('0.0049999', '1', '1', 2)).toBe('0.00');
+  });
+
+  it('rounds a tiny exact value to zero when no significant digits are asked for', () => {
+    // 0.01 × 0.3 ÷ 97000 = 3.0927…e-8
+    expect(convertDecimalAmount('0.01', '0.3', '97000', 7)).toBe('0.0000000');
+  });
+
+  it('extends places below one unit until minSignificant digits show', () => {
+    expect(convertDecimalAmount('0.01', '0.3', '97000', 7, 4)).toBe(
+      '0.00000003093',
+    );
+    expect(convertDecimalAmount('2', '1', '3', 2, 4)).toBe('0.6667');
+    expect(convertDecimalAmount('0.1', '1', '1', 2, 4)).toBe('0.1000');
+    expect(convertDecimalAmount('5', '1', '2', 2, 4)).toBe('2.50');
+  });
+
+  it('is null for a zero or negative priceOut or a negative input', () => {
+    expect(convertDecimalAmount('1', '1', '0', 2)).toBeNull();
+    expect(convertDecimalAmount('1', '1', '-2', 2)).toBeNull();
+    expect(convertDecimalAmount('-1', '1', '2', 2)).toBeNull();
+    expect(convertDecimalAmount('1', 'x', '2', 2)).toBeNull();
+  });
+
+  it('stays exact above 2^53 base units', () => {
+    expect(
+      convertDecimalAmount(
+        '123456789012.3456789',
+        '1',
+        '0.12345678901234567891',
+        7,
+      ),
+    ).toBe('999999999999.9999999');
+  });
+
+  it('counts leading zeros without a loop over them', () => {
+    const amount = `0.${'0'.repeat(20_000)}1`;
+    const t0 = performance.now();
+    const out = convertDecimalAmount(amount, '1', '1', 2, 4);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(out).toBe(`0.${'0'.repeat(20_000)}1000`);
+  });
+});
