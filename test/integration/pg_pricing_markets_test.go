@@ -777,8 +777,9 @@ func TestPerSourceFigures_CoverExactly24h(t *testing.T) {
 	}
 }
 
-// TestPerSourceFigures_StalledViewRefresh: materialized-only, pools_per_source_1h lacks every hour past its watermark. A refresh
-// lagging more than two hours must not drop those hours from the 24h figure; past the six-hour cap the volume is a lower bound.
+// TestPerSourceFigures_StalledViewRefresh: materialized-only (0232 leaves a stale view so), pools_per_source_1h lacks every hour
+// past its watermark. A refresh lagging more than two hours must not drop those hours from the 24h figure; past the six-hour cap
+// the volume is a lower bound. Real-time, the view serves those hours from trades itself, so the figure stays exact.
 func TestPerSourceFigures_StalledViewRefresh(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -812,27 +813,39 @@ func TestPerSourceFigures_StalledViewRefresh(t *testing.T) {
 		vol   float64
 		lower bool
 	}
+	// A refresh cannot move the watermark back, so each watermark is read in both modes before the next refresh.
 	for _, phase := range []struct {
 		watermarkHoursBack int
-		want               fig
+		materializedOnly   fig
+		realTime           fig
 	}{
-		// Watermark 8h back, past the cap: the 7h-old trade is in neither the view nor the capped tail.
-		{8, fig{3, 22, true}},
+		// Watermark 8h back, past the cap: materialized-only, the 7h-old trade is in neither the view nor the capped tail.
+		{8, fig{3, 22, true}, fig{4, 30, false}},
 		// Watermark 5h back: the tail starts there, so the 3h-old trade counts and the figure is exact.
-		{5, fig{4, 30, false}},
+		{5, fig{4, 30, false}, fig{4, 30, false}},
 	} {
 		if _, err := db.ExecContext(ctx, fmt.Sprintf(
 			`CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, time_bucket('1 hour', now()) - INTERVAL '%d hours')`,
 			phase.watermarkHoursBack)); err != nil {
 			t.Fatalf("refresh pools_per_source_1h: %v", err)
 		}
-		markets, _, err := store.SourceMarkets(ctx, "aquarius", "", 100, timescale.MarketsOrderPair)
-		if err != nil {
-			t.Fatalf("SourceMarkets: %v", err)
-		}
-		m := findGrainMarket(t, markets, "crypto:XRP", "fiat:USD")
-		if got := (fig{m.TradeCount24h, numeric(t, m.Volume24hUSD), m.VolumeLowerBound}); got != phase.want {
-			t.Errorf("watermark %dh back: SourceMarkets(aquarius) = %+v, want %+v", phase.watermarkHoursBack, got, phase.want)
+		for _, mode := range []struct {
+			materializedOnly bool
+			want             fig
+		}{{true, phase.materializedOnly}, {false, phase.realTime}} {
+			if _, err := db.ExecContext(ctx, fmt.Sprintf(
+				`ALTER MATERIALIZED VIEW pools_per_source_1h SET (timescaledb.materialized_only = %t)`, mode.materializedOnly)); err != nil {
+				t.Fatalf("set materialized_only = %t: %v", mode.materializedOnly, err)
+			}
+			markets, _, err := store.SourceMarkets(ctx, "aquarius", "", 100, timescale.MarketsOrderPair)
+			if err != nil {
+				t.Fatalf("SourceMarkets: %v", err)
+			}
+			m := findGrainMarket(t, markets, "crypto:XRP", "fiat:USD")
+			if got := (fig{m.TradeCount24h, numeric(t, m.Volume24hUSD), m.VolumeLowerBound}); got != mode.want {
+				t.Errorf("watermark %dh back, materialized_only=%t: SourceMarkets(aquarius) = %+v, want %+v",
+					phase.watermarkHoursBack, mode.materializedOnly, got, mode.want)
+			}
 		}
 	}
 }
