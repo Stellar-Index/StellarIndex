@@ -512,7 +512,6 @@ export function AssetSwap({
           active={edited === 'from'}
           token={fromToken}
           onEdit={(v) => onEdit('from', v)}
-          onFocus={() => reseed('from')}
           onPick={() => openPicker('from')}
         />
         <SwapRow
@@ -520,7 +519,6 @@ export function AssetSwap({
           active={edited === 'to'}
           token={toToken}
           onEdit={(v) => onEdit('to', v)}
-          onFocus={() => reseed('to')}
           onPick={() => openPicker('to')}
         />
 
@@ -559,30 +557,22 @@ export function AssetSwap({
       )}
     </Panel>
   );
-
-  // Reseed the edited amount when the user clicks into the non-edited field,
-  // so typing continues from the value they see rather than a stale string.
-  function reseed(side: 'from' | 'to') {
-    if (side === edited) return;
-    const shown = side === 'from' ? fromValue : toValue;
-    setEdited(side);
-    setAmount(shown === '—' ? '' : (shown || '').replace(/,/g, ''));
-  }
 }
+
+// Bounds an amount field: an exact BigInt conversion scales with the typed length.
+const AMOUNT_MAX_LENGTH = 64;
 
 function SwapRow({
   value,
   active,
   token,
   onEdit,
-  onFocus,
   onPick,
 }: {
   value: string;
   active: boolean;
   token: SwapToken;
   onEdit: (v: string) => void;
-  onFocus: () => void;
   onPick: () => void;
 }) {
   return (
@@ -601,7 +591,7 @@ function SwapRow({
           inputMode="decimal"
           value={value}
           onChange={(e) => onEdit(e.target.value)}
-          onFocus={onFocus}
+          maxLength={AMOUNT_MAX_LENGTH}
           placeholder="0"
           aria-label={`Amount in ${token.symbol}`}
           className="text-ink placeholder:text-ink-faint w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums focus:outline-none"

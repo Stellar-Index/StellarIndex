@@ -772,6 +772,27 @@ describe('AssetSwap amounts', () => {
     vi.unstubAllGlobals();
   });
 
+  it('leaves both fields alone on focus and recomputes from the field typed in', async () => {
+    renderAt('3.456789');
+    await vi.waitFor(() => expect(field(1).value).toBe('3.46'));
+    fireEvent.focus(field(1));
+    expect(field(0).value).toBe('1');
+    expect(field(1).value).toBe('3.46');
+    fireEvent.focus(field(0));
+    expect(field(0).value).toBe('1');
+    fireEvent.change(field(1), { target: { value: '6.913578' } });
+    expect(field(0).value).toBe('2');
+    expect(field(1).value).toBe('6.913578');
+    vi.unstubAllGlobals();
+  });
+
+  it('caps what can be typed into either amount', () => {
+    renderAt('1');
+    expect(field(0).maxLength).toBeGreaterThan(0);
+    expect(field(1).maxLength).toBe(field(0).maxLength);
+    vi.unstubAllGlobals();
+  });
+
   it("rounds the page asset's leg to the asset's own decimals", async () => {
     renderAt('3', {
       assetId: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
