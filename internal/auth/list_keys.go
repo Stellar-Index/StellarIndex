@@ -516,19 +516,24 @@ const keyRevokedTombstoneTTL = 24 * time.Hour
 
 // RecordRevoked notes that revokers held authority over keyID, now revoked, so their retry still
 // qualifies under [MayRevoke] once keyID's record is gone. Key ids are random and never reissued.
+// An ACL that denies the note's key family writes nothing and is not an error.
 func (s *RedisAPIKeyStore) RecordRevoked(ctx context.Context, identifier, keyID string, revokers []string) error {
 	if len(revokers) == 0 {
 		return nil
 	}
-	return s.rdb.Set(ctx, cachekeys.APIKeyRevoked(identifier, keyID).String(),
+	err := s.rdb.Set(ctx, cachekeys.APIKeyRevoked(identifier, keyID).String(),
 		strings.Join(revokers, ","), keyRevokedTombstoneTTL).Err()
+	if isRedisNoPerm(err) {
+		return nil
+	}
+	return err
 }
 
 // RevokedBy returns the revokers [RedisAPIKeyStore.RecordRevoked] noted for keyID; nil when none
-// were, or the note lapsed.
+// were, the note lapsed, or the ACL denies the note's key family (no note could have been written).
 func (s *RedisAPIKeyStore) RevokedBy(ctx context.Context, identifier, keyID string) ([]string, error) {
 	v, err := s.rdb.Get(ctx, cachekeys.APIKeyRevoked(identifier, keyID).String()).Result()
-	if errors.Is(err, redis.Nil) {
+	if errors.Is(err, redis.Nil) || isRedisNoPerm(err) {
 		return nil, nil
 	}
 	if err != nil {

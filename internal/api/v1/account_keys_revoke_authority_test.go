@@ -161,6 +161,8 @@ func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {
 			dead: []string{"owner", "child", "grandchild", "sibling", "restricted"},
 		},
 		{actor: "child", target: "child", want: http.StatusNoContent, dead: []string{"child", "grandchild"}},
+		// No descendant names a leaf, so only the self rule lets it go.
+		{actor: "sibling", target: "sibling", want: http.StatusNoContent, dead: []string{"sibling"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.actor+"→"+tc.target, func(t *testing.T) {
@@ -194,5 +196,88 @@ func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+var errNoteStore = errors.New("retry note store down")
+
+// noteFailingStore is the real store with every retry-note read and write failing.
+type noteFailingStore struct{ *auth.RedisAPIKeyStore }
+
+func (noteFailingStore) RevokedBy(context.Context, string, string) ([]string, error) {
+	return nil, errNoteStore
+}
+
+func (noteFailingStore) RecordRevoked(context.Context, string, string, []string) error {
+	return errNoteStore
+}
+
+// A fault in the retry-note store must not block a revoke the live tree already authorises, and must never stand
+// in for an authorisation the tree does not give.
+func TestAccountKeysRevoke_RetryNoteFaultBlocksOnlyRevokesThatNeedTheNote(t *testing.T) {
+	cases := []struct {
+		actor, target string
+		want          int
+		dead          []string
+	}{
+		{actor: "sibling", target: "sibling", want: http.StatusNoContent, dead: []string{"sibling"}},
+		{actor: "owner", target: "child", want: http.StatusNoContent, dead: []string{"child", "grandchild"}},
+		{actor: "child", target: "owner", want: http.StatusInternalServerError},
+		{actor: "owner", target: "absent", want: http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.actor+"→"+tc.target, func(t *testing.T) {
+			tr := newRevokeTree(t)
+			targetID := "kid_0000000000000000"
+			if s, ok := tr.subjects[tc.target]; ok {
+				targetID = s.KeyID
+			}
+			ts := newAdminTestServer(t, tr.subjects[tc.actor], noteFailingStore{tr.store}, &recordingAuditSink{})
+			resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+targetID, "", "")
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			dead := map[string]bool{}
+			for _, n := range tc.dead {
+				dead[n] = true
+			}
+			for name := range tr.plains {
+				if got := tr.live(name); got == dead[name] {
+					t.Errorf("%s live = %v, want %v", name, got, !dead[name])
+				}
+			}
+		})
+	}
+}
+
+// A key revoking itself loses its credential with the Redis leg, so its management row is revoked first: a failed
+// row leaves the key alive, and its retry completes both stores.
+func TestAccountKeysRevoke_SelfRevokeFailedRowLeavesTheKeyToRetry(t *testing.T) {
+	tr := newRevokeTree(t)
+	self := tr.subjects["sibling"]
+	platformKeys, accts := seedOwnedPlatformKey("co", self.KeyID)
+	platformKeys.revokeErr = errors.New("postgres down")
+	ts := newAdminTestServerWithPlatformKeys(t, self, tr.store, platformKeys, accts)
+	del := func() int {
+		return doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+self.KeyID, "leaked", "").StatusCode
+	}
+
+	if got := del(); got != http.StatusInternalServerError {
+		t.Fatalf("revoke with the row failing = %d, want 500", got)
+	}
+	if !tr.live("sibling") {
+		t.Fatal("a failed row revoke killed the key, so it can never retry and the row stays live")
+	}
+	platformKeys.mu.Lock()
+	platformKeys.revokeErr = nil
+	platformKeys.mu.Unlock()
+	if got := del(); got != http.StatusNoContent {
+		t.Fatalf("retry = %d, want 204", got)
+	}
+	if tr.live("sibling") {
+		t.Error("key still authenticates after the retry")
+	}
+	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != self.KeyID {
+		t.Errorf("row revokes = %v, want [%s]", platformKeys.revokedIDs, self.KeyID)
 	}
 }

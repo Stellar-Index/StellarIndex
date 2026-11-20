@@ -732,24 +732,30 @@ func (s *Server) mayRevokeAccountKey(
 ) ([]auth.APIKeyRecord, bool) {
 	actor := auth.RevokeActorOf(subject)
 	var owned []auth.APIKeyRecord
-	var revokedBy []string
 	if !actor.AnyKey {
 		recs, err := s.Accounts.ListKeysForIdentifier(r.Context(), subject.Identifier)
-		if err == nil {
-			owned = recs
-			revokedBy, err = s.Accounts.RevokedBy(r.Context(), subject.Identifier, keyID)
-		}
 		if err != nil {
 			s.logger.Error("account keys revoke: read the caller's keys", "err", err, "identifier", subject.Identifier)
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/account-revoke-failed",
-				"Could not revoke key", http.StatusInternalServerError,
-				"see X-Request-ID in server logs")
+			writeRevokeFailed(w, r)
 			return nil, false
 		}
+		owned = recs
 	}
-	if auth.MayRevoke(actor, keyID, owned, revokedBy) {
+	if auth.MayRevoke(actor, keyID, owned, nil) {
 		return owned, true
+	}
+	// The retry note is read only when the live tree does not already authorise the revoke, so a fault in the note
+	// store cannot block a key revoking itself or its subtree; a fault here is an error, never an allow.
+	if !actor.AnyKey {
+		revokedBy, err := s.Accounts.RevokedBy(r.Context(), subject.Identifier, keyID)
+		if err != nil {
+			s.logger.Error("account keys revoke: read the retry note", "err", err, "identifier", subject.Identifier)
+			writeRevokeFailed(w, r)
+			return nil, false
+		}
+		if auth.MayRevoke(actor, keyID, owned, revokedBy) {
+			return owned, true
+		}
 	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/key-not-delegated",
@@ -757,6 +763,13 @@ func (s *Server) mayRevokeAccountKey(
 		"an API key may revoke only itself and keys minted from it, directly or through keys it minted. Nothing was revoked. "+
 			"Authenticate with the key itself or the key that minted it; a dashboard user can also revoke it from the dashboard")
 	return nil, false
+}
+
+func writeRevokeFailed(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/account-revoke-failed",
+		"Could not revoke key", http.StatusInternalServerError,
+		"see X-Request-ID in server logs")
 }
 
 // handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. An API key may revoke
@@ -808,7 +821,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	// Postgres management row for a key that has one — a self-service
 	// caller can hold a /v1/register-minted key, which mirrors to both
 	// stores, alongside Redis-only keys minted via this same endpoint.
-	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
+	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason, subject.KeyID == keyID)
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		w.WriteHeader(http.StatusNoContent)
 		return
