@@ -2298,6 +2298,26 @@ export interface paths {
          *     is then not cacheable. 503 when the deployment has no auction
          *     history reader.
          *
+         *     `lot_usd` and `bid_usd` value each side at TODAY's prices and
+         *     reserve rates (`valued_at: current`), not the prices at start or
+         *     fill. A leg's kind follows its auction type: user_liquidation bids
+         *     dTokens and lots bTokens; bad_debt bids dTokens and lots backstop
+         *     tokens; interest bids backstop tokens and lots the reserve's
+         *     underlying. A bToken or dToken leg is converted to underlying at the
+         *     reserve's current `b_rate` / `d_rate`, rounded as the contract
+         *     rounds, then valued at the `/reserves` price and decimals; an
+         *     underlying leg is valued directly. A backstop-token leg is valued
+         *     for BLNT at its token price; a Blend backstop token is a Comet
+         *     BLND:USDC LP share and is unvalued (`lp_share_unvalued`). A
+         *     protocol_fee or unknown auction type is unvalued
+         *     (`leg_kind_unknown`). Each side sums its valued legs to 2 dp
+         *     (`"0.00"` for an empty side, null when no leg is valued);
+         *     `*_usd_lower_bound` is true when a leg is left out, and
+         *     `*_unvalued` names each (`asset`, `kind`, `reason`: `unpriced`,
+         *     `reserve_unread`, `rate_unread`, `lp_share_unvalued`,
+         *     `leg_kind_unknown`, `decimals_unknown`, `price_scale_mismatch`,
+         *     `withheld`, `negative_amount`).
+         *
          *     Pagination: pass `pagination.next` back as `cursor`;
          *     `pagination` is omitted on the last page.
          */
@@ -6746,6 +6766,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description One auction bid or lot entry left out of its side's USD sum. */
+        LendingAuctionUnvaluedLeg: {
+            /** @description The leg's map key: the reserve's underlying asset, or the backstop token. */
+            asset: string;
+            /** @enum {string} */
+            kind: "b_token" | "d_token" | "underlying" | "backstop_token" | "unknown";
+            reason: string;
+        };
         /** @description USD sums of a lending account's valued supply and borrow legs, decimal strings, exact sums rounded half away from zero to 2 dp. A backstop leg is never valued, so it is always in `excluded`. */
         LendingUSDTotals: {
             /** @description A floor when `lower_bound` is true. */
@@ -19324,7 +19352,14 @@ export interface operations {
                      *                 "tx_hash": "9e8d7c6b5a49382716051f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a"
                      *               }
                      *             ],
-                     *             "deleted": false
+                     *             "deleted": false,
+                     *             "lot_usd": "1033.64",
+                     *             "lot_usd_lower_bound": false,
+                     *             "lot_unvalued": [],
+                     *             "bid_usd": "125.40",
+                     *             "bid_usd_lower_bound": false,
+                     *             "bid_unvalued": [],
+                     *             "valued_at": "current"
                      *           }
                      *         ],
                      *         "lifecycle_truncated": false
@@ -19377,6 +19412,19 @@ export interface operations {
                                 deleted_ledger?: number;
                                 /** Format: date-time */
                                 deleted_time?: string;
+                                /** @description Sum of the lot's valued legs at today's prices, 2 dp; null when no leg is valued. */
+                                lot_usd?: string | null;
+                                lot_usd_lower_bound?: boolean;
+                                lot_unvalued?: components["schemas"]["LendingAuctionUnvaluedLeg"][];
+                                /** @description Sum of the bid's valued legs at today's prices, 2 dp; null when no leg is valued. */
+                                bid_usd?: string | null;
+                                bid_usd_lower_bound?: boolean;
+                                bid_unvalued?: components["schemas"]["LendingAuctionUnvaluedLeg"][];
+                                /**
+                                 * @description Today's price and reserve rates, not the price at fill.
+                                 * @enum {string}
+                                 */
+                                valued_at?: "current";
                             }[];
                         };
                         pagination?: components["schemas"]["Pagination"];
