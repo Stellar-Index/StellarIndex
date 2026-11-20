@@ -159,7 +159,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		if snap.Basis != supply.BasisContractStorageBalances {
 			s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
 			if detail.PriceUSD == nil {
-				detail.capPending = &pendingMarketCap{snap: snap, key: key}
+				detail.capPending = &pendingMarketCap{snap: snap, key: key, withheld: detail.PriceWithheldReason, unread: detail.priceUnread}
 			}
 		}
 	}
@@ -420,14 +420,21 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 type pendingMarketCap struct {
 	snap supply.Supply
 	key  string
+	// withheld and unread are the direct reader's verdict when F2 ended; a later fill clears the detail's copy, not this one.
+	withheld PriceWithheldReason
+	unread   bool
 }
 
 // capFilledPrice values a catalogue-row or transitive price the extension step filled after applyF2Fields found none, under
-// populateMarketCap's guards. No direct venue backs that price, so the dust floor counts zero sources.
+// populateMarketCap's guards. No direct venue backs that price, so the dust floor counts zero sources. A price the direct
+// reader refused or could not read values no cap: the fill only closes a market that does not exist.
 func (s *Server) capFilledPrice(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	p := detail.capPending
 	detail.capPending = nil
-	if p == nil || detail.PriceUSD == nil || detail.ThinMarket || (detail.PriceBasis != "" && detail.PriceBasis != priceBasisTransitive) {
+	if p == nil || p.withheld != "" || p.unread {
+		return
+	}
+	if detail.PriceUSD == nil || detail.ThinMarket || (detail.PriceBasis != "" && detail.PriceBasis != priceBasisTransitive) {
 		return
 	}
 	s.populateMarketCap(ctx, detail, asset, p.snap, p.key, 0)

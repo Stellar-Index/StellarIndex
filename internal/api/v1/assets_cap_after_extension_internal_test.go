@@ -6,6 +6,8 @@ package v1
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -74,6 +76,87 @@ func TestMarketCap_PriceFilledAfterF2IsValuedUnderTheSameGuards(t *testing.T) {
 				t.Errorf("market_cap_usd = %q low_liquidity = %v, want %q %v", got, detail.MarketCapLowLiquidity, tc.wantCap, tc.wantLowLq)
 			}
 		})
+	}
+}
+
+const (
+	capTestAsset = "BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY"
+	capTestHop   = "CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN"
+)
+
+// capTestServer prices capTestAsset at 0.0767 through the transitive step, over 10^7 circulating and 2x10^7 max tokens.
+func capTestServer(prices PriceReader, snap supply.Supply) *Server {
+	return &Server{
+		Options: Options{
+			Prices: prices,
+			Supply: capSupplyStub{snap: snap},
+			TransitivePricer: &stubPricer{ok: true, tp: timescale.TransitivePrice{
+				PriceUSD: "0.0767", Hop: capTestHop, HopVolume24hUSD: "5000", HopQuote: "native",
+			}},
+			Substance: &stubListingGate{allow: map[string]bool{
+				capTestAsset + "|native": true, capTestAsset + "|" + capTestHop: true, capTestHop + "|native": true,
+			}},
+			MaxMarketCapVolumeRatio: 100,
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func capTestSupply() supply.Supply {
+	return supply.Supply{CirculatingSupply: big.NewInt(100_000_000_000_000), MaxSupply: big.NewInt(200_000_000_000_000), ObservedAt: time.Now()}
+}
+
+// capTestRun runs F2 then the extension row step: withRow fills from a catalogue row price, otherwise there is no row and the
+// transitive step fills.
+func capTestRun(t *testing.T, s *Server, withRow bool) AssetDetail {
+	t.Helper()
+	asset, err := canonical.ParseAsset(capTestAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := AssetDetail{Decimals: 7}
+	s.applyF2Fields(context.Background(), &detail, asset)
+	row, rowErr := timescale.AssetRow{}, error(sql.ErrNoRows)
+	if withRow {
+		p := "0.0767"
+		row, rowErr = timescale.AssetRow{PriceUSD: &p}, nil
+	}
+	s.applyAssetRowToDetail(context.Background(), &detail, asset, row, rowErr, capTestAsset)
+	return detail
+}
+
+// TestMarketCap_FilledPriceValuesNoCapWhenF2RefusedOrCouldNotRead — a price the direct reader refused, or could not read, is no
+// gap for a later fill to close: neither the catalogue row nor the transitive step may then value a market cap or FDV.
+func TestMarketCap_FilledPriceValuesNoCapWhenF2RefusedOrCouldNotRead(t *testing.T) {
+	direct := capTestAsset + "/" + defaultPriceQuote.String()
+	for _, tc := range []struct {
+		name   string
+		reader withheldUSDReader
+	}{
+		{"withheld scam_issuer", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldScamIssuer)}}},
+		{"withheld upstream_leg", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldUpstreamLeg)}}},
+		{"withheld substance", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldSubstance)}}},
+		{"price read failed", withheldUSDReader{direct: {err: errors.New("price store unreachable")}}},
+	} {
+		for _, withRow := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/catalogue_row=%v", tc.name, withRow), func(t *testing.T) {
+				detail := capTestRun(t, capTestServer(tc.reader, capTestSupply()), withRow)
+				if detail.PriceUSD == nil {
+					t.Fatal("price_usd = nil, want the later fill (the case under test)")
+				}
+				if detail.MarketCapUSD != nil || detail.FDVUSD != nil {
+					t.Errorf("market_cap_usd = %q fdv_usd = %q, want both null", strOrEmpty(detail.MarketCapUSD), strOrEmpty(detail.FDVUSD))
+				}
+			})
+		}
+	}
+	// Control: the same fills value the cap when F2 simply found no market.
+	for _, withRow := range []bool{true, false} {
+		detail := capTestRun(t, capTestServer(withheldUSDReader{}, capTestSupply()), withRow)
+		if strOrEmpty(detail.MarketCapUSD) != "767000.00" || strOrEmpty(detail.FDVUSD) != "1534000.00" {
+			t.Errorf("catalogue_row=%v: market_cap_usd = %q fdv_usd = %q, want 767000.00 and 1534000.00",
+				withRow, strOrEmpty(detail.MarketCapUSD), strOrEmpty(detail.FDVUSD))
+		}
 	}
 }
 
