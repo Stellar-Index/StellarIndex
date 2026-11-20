@@ -211,6 +211,26 @@ func TestMarketCap_FilledPriceValuesNoCapWhenF2RefusedOrCouldNotRead(t *testing.
 	}
 }
 
+// TestReadProtocolToken_CarriesPriceBasis — a protocol token priced only through the transitive step names that basis, as the
+// asset route does.
+func TestReadProtocolToken_CarriesPriceBasis(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := capTestServer(withheldUSDReader{}, capTestSupply())
+	s.VerifiedCurrencies = cat
+	s.AssetsReader = &truthAssetsReader{byID: map[string]timescale.AssetRow{}} // no catalogue row: the transitive step prices
+	var flags Flags
+	tok, reason := s.readProtocolToken(context.Background(), "BLND", &flags)
+	if tok == nil || reason != "" {
+		t.Fatalf("token = %+v reason = %q, want a read", tok, reason)
+	}
+	if strOrEmpty(tok.PriceUSD) != "0.0767" || tok.PriceBasis != priceBasisTransitive {
+		t.Errorf("price_usd = %q price_basis = %q, want 0.0767 and %q", strOrEmpty(tok.PriceUSD), tok.PriceBasis, priceBasisTransitive)
+	}
+}
+
 func strOrEmpty(p *string) string {
 	if p == nil {
 		return ""

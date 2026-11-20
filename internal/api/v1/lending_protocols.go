@@ -64,6 +64,7 @@ type LendingProtocolToken struct {
 	Issuer            string  `json:"issuer"`
 	Decimals          int     `json:"decimals"`
 	PriceUSD          *string `json:"price_usd"`
+	PriceBasis        string  `json:"price_basis,omitempty"`
 	CirculatingSupply *string `json:"circulating_supply"`
 	TotalSupply       *string `json:"total_supply"`
 	MarketCapUSD      *string `json:"market_cap_usd"`
@@ -338,6 +339,7 @@ func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Fl
 		Data struct {
 			Decimals          int                `json:"decimals"`
 			PriceUSD          *string            `json:"price_usd"`
+			PriceBasis        string             `json:"price_basis"`
 			CirculatingSupply *string            `json:"circulating_supply"`
 			TotalSupply       *string            `json:"total_supply"`
 			MarketCapUSD      *string            `json:"market_cap_usd"`
@@ -354,7 +356,7 @@ func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Fl
 	d := body.Data
 	tok := &LendingProtocolToken{
 		AssetID: a.String(), Code: a.Code, Issuer: a.Issuer, Decimals: d.Decimals,
-		PriceUSD: d.PriceUSD, CirculatingSupply: d.CirculatingSupply, TotalSupply: d.TotalSupply, MarketCapUSD: d.MarketCapUSD,
+		PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis, CirculatingSupply: d.CirculatingSupply, TotalSupply: d.TotalSupply, MarketCapUSD: d.MarketCapUSD,
 		ThinMarket: d.ThinMarket, Substance: d.Substance,
 	}
 	if tok.ThinMarket {
