@@ -14352,7 +14352,7 @@ export interface components {
             valid_until: string;
         };
         SEP10Token: {
-            /** @description JWT bearer the client sends as `Authorization` on subsequent requests. */
+            /** @description JWT bearer the client sends as `Authorization` on subsequent requests. HS256 under a server-held secret, so only the server can verify it; treat it as opaque. */
             token: string;
             /** Format: date-time */
             expires_at: string;
@@ -27041,7 +27041,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...",
+                     *         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...",
                      *         "expires_at": "2026-07-03T23:45:19.000000Z",
                      *         "account": "GB3Y3ALKAPYFMBEDS5G4KDDQBFV5FVJVGXWL4RPUCV3GTMOENIVXFAHW"
                      *       },

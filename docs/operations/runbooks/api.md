@@ -799,6 +799,18 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 
 **Check.** The `passkey.login_replay` rows in `audit_log` and the API log name the client address. **Fix.** Block the address at the edge if it repeats. **Escalate:** the replayed assertions are for accounts whose sessions were also reported stolen.
 
+## stellarindex_mint_scope_clamp_refused
+
+**Trigger.** `sum by (route) (increase(stellarindex_mint_scope_clamp_refused_total[1h])) > 0` for 5m, ticket. A mint on `/v1/admin/keys` or `/v1/account/keys` asked for more scope or rate limit than the minting credential holds, and `clampMintToCaller` refused it with 403. The dashboard never asks for that.
+
+**Check.** The API log line `key mint refused: request exceeds the minting credential` carries `actor_key_id`, `actor_identifier` and `request_id`. **Fix.** Revoke the actor key if the attempts repeat or vary their scopes. **Escalate:** any such mint that returned 2xx.
+
+## stellarindex_api_degraded_responses_sustained
+
+**Trigger.** More than 10% of a route's responses carried `flags.degraded` (a carried-forward or partial body served as 200) over a 15m rate, for 30m; ticket. The 5xx SLO does not see these.
+
+**Check.** The route's handler logs name the read that failed (`includes_unread`, carried-forward or degraded warnings). Fix the backing store, not the route.
+
 ## stellarindex_passkey_clone_warning
 
 **Trigger.** `sum(increase(stellarindex_passkey_login_refusals_total{reason="clone_warning"}[1h])) > 0` for 5m, P3. `POST /v1/auth/passkey/finish-login` refused an assertion whose signature verifies but whose counter is at or below the stored one (two copies of a hardware/device-bound key), and wrote a `passkey.clone_warning` row to `audit_log`. No session was issued. Counter-0 authenticators (iCloud, synced passkeys) are exempt.

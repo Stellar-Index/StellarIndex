@@ -342,6 +342,28 @@ groups:
             serves a stale active_90d lower bound. `systemctl status
             census-rollup.timer census-rollup.service`.
 
+      # The same stopped-timer gap for the oneshots whose output no freshness
+      # probe reads (cohort-rollup has one in data-freshness.sh). Daily timers
+      # get 50h (one missed cycle plus run time), hourly listing-sync 3h; the
+      # 2h `for` rides out the longest OnBootSec (90min).
+      - alert: stellarindex_oneshot_timer_stale
+        expr: |
+          (time() - node_systemd_timer_last_trigger_seconds{name=~"creators-rollup\\.timer|sponsors-rollup\\.timer|issuer-flags\\.timer"} > 180000)
+          or (time() - node_systemd_timer_last_trigger_seconds{name="listing-sync.timer"} > 10800)
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+          summary: "{{ $labels.name }} has stopped firing on {{ $labels.instance }}"
+          description: |
+            {{ $labels.name }} has not been triggered for longer than its
+            schedule allows. A stopped timer leaves no failed unit, so the
+            table it writes freezes with no other alert.
+            `systemctl status {{ $labels.name }}`.
+
       # r1's boot/root disks are mdadm RAID1 (md0 swap, md1 /). A component
       # dropping out is the same redundancy loss
       # stellarindex_zfs_pool_degraded pages for, on the OS disks. Uses

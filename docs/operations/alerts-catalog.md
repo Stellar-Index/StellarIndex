@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 307 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 312 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -427,6 +427,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_anomaly_freeze_escalated` | `anomaly_freeze_escalated_total` | increase > 0 in 15 min (4-extension ladder exhausted; will NOT auto-unfreeze) | page | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_escalated) |
 | `stellarindex_anomaly_freeze_extension_rate` | `anomaly_freeze_extensions_total` | increase >= 3 in 1 h, 10 min | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_extension_rate) |
 | `stellarindex_anomaly_freeze_ladder_write_failures` | `anomaly_freeze_ladder_write_failures_total` per op | increase > 0 in 15 min | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_write_failures) |
+| `stellarindex_anomaly_freeze_ladder_read_failures` | `anomaly_freeze_ladder_read_failures_total` | increase > 0 in 15 min | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_read_failures) |
 | `stellarindex_api_freeze_lookup_failing` | `api_freeze_lookup_failures_total` | increase > 0 in 10 min, 5 min (prices served `frozen_checked=false`) | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_api_freeze_lookup_failing) |
 | `stellarindex_anomaly_freeze_operator_unfreeze_rate` | `anomaly_freeze_released_total{mode="operator"}` | increase >= 3 in 1 h, 10 min | ticket | [freeze-lifecycle](runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_operator_unfreeze_rate) |
 | `stellarindex_anomaly_freeze_active` | `anomaly_freeze_active` | > 0 for 5 min (informational) | informational | [anomaly-freeze-engaged](runbooks/anomaly.md#stellarindex_anomaly_freeze_engaged) |
@@ -458,6 +459,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_aggregator_triangulation_chains_dry` | `missing_leg` triangulations > 0 and `ok` == 0 | 30 min | ticket | [aggregator-triangulation-chains-dry](runbooks/aggregator.md#stellarindex_aggregator_triangulation_chains_dry) |
 | `stellarindex_aggregator_bootstrap_cap_reengaged` | pairs with `bootstrap_capped` flipping 0 to 1 | >= 3 pairs in 1 h, 10 min (one pair alone stays silent) | ticket | [aggregator-bootstrap-cap-reengaged](runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged) |
 | `stellarindex_aggregator_cache_write_errors` | `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | page | [redis-write-blocked-disk-full](runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors) |
+| `stellarindex_aggregator_contribution_write_errors` | `stellarindex_aggregator_contribution_write_errors_total` | increase > 0 in 15 min | ticket | [aggregator](runbooks/aggregator.md#stellarindex_aggregator_contribution_write_errors) |
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.05/s for ≥ 15 min | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_failing) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `customer_webhook_delivery_attempts_total{outcome="exhausted"}` | > 0, `for: 0m` | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted) |
 | `stellarindex_customer_webhook_mark_errors` | `increase(...{outcome="mark_error"}[30m])` | > 0 for 15 min (POST done, result not saved; re-POSTs each lease) | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_mark_errors) |
@@ -513,6 +515,8 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_passkey_clone_warning` | `increase(passkey_login_refusals_total{reason="clone_warning"}[1h])` | > 0 for 5 min (sign-counter regression: credential key copied) | ticket | [passkey-clone-warning](runbooks/api.md#stellarindex_passkey_clone_warning) |
 | `stellarindex_passkey_credential_added_burst` | `increase(passkey_credential_changes_total{change="added"}[1h])` | > 10 for 5 min (passkeys added across accounts: hijacked sessions made durable) | ticket | [passkey-credential-added-burst](runbooks/api.md#stellarindex_passkey_credential_added_burst) |
 | `stellarindex_passkey_ceremony_replay` | `increase(passkey_login_refusals_total{reason="ceremony_replay"}[1h])` | > 0 for 5 min (a finish-login ceremony was replayed) | ticket | [passkey-ceremony-replay](runbooks/api.md#stellarindex_passkey_ceremony_replay) |
+| `stellarindex_mint_scope_clamp_refused` | `increase(stellarindex_mint_scope_clamp_refused_total[1h])` per route | > 0 for 5 min (a mint asked for more than its credential holds) | ticket | [api](runbooks/api.md#stellarindex_mint_scope_clamp_refused) |
+| `stellarindex_api_degraded_responses_sustained` | `flagged_responses_total{flag="degraded"}` / `http_requests_total` per route, 15 min rate | > 10% for 30 min | ticket | [api](runbooks/api.md#stellarindex_api_degraded_responses_sustained) |
 | `stellarindex_failed_auth_rate_high` | `rate(failed_auth_total{outcome="rejected"}[5m])` | > 1/s for 15 min (distributed guessing under per-IP caps) | ticket | [failed-auth-rate-high](runbooks/api.md#stellarindex_failed_auth_rate_high) |
 | `stellarindex_magic_link_token_table_growing` | `stellarindex_magic_link_token_rows` | > 10000 for 30 min | ticket | [auth-reaper-stalled](runbooks/api.md#stellarindex_magic_link_token_table_growing) |
 | `stellarindex_login_code_lockout_table_growing` | `login_code_lockout_rows`, `login_code_lockout_errors_total{op="status_check"}` | rows > 10000 or any fail-open, 30 min | ticket | [login-code-lockout-table-growing](runbooks/api.md#stellarindex_login_code_lockout_table_growing) |
@@ -554,6 +558,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_host_down` | `up` for any host | == 0 for > 2 min | ticket | [infra](runbooks/infra.md#stellarindex_host_down) |
 | `stellarindex_keepalived_textfile_stale` | `node_textfile_mtime_seconds{file="keepalived.prom"}` age | > 10 min, 5 min | ticket | [infra](runbooks/infra.md#stellarindex_keepalived_textfile_stale) |
 | `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age | > 2 h, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
+| `stellarindex_oneshot_timer_stale` | `node_systemd_timer_last_trigger_seconds` age (creators/sponsors-rollup, issuer-flags; listing-sync) | > 50 h daily, > 3 h listing-sync; 2 h | ticket | [infra](runbooks/infra.md#stellarindex_oneshot_timer_stale) |
 | `stellarindex_host_cpu_high` | 100 - avg idle CPU `[5m]` | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_cpu_high) |
 | `stellarindex_host_memory_high` | used / total memory | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_memory_high) |
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_degraded) |

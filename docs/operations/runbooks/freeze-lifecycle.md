@@ -65,6 +65,10 @@ P3. `increase(stellarindex_anomaly_freeze_extensions_total[1h]) >= 3`, `for: 10m
 
 P3. `increase(stellarindex_anomaly_freeze_ladder_write_failures_total[15m]) > 0`, `for: 0m`; label `op` = `record_freeze|mark_hold|clear`. A durable write (migration 0119) failed after one retry. `record_freeze`: the `freeze_events` row is missing, Redis still freezes but SQL readers treat the minute as unfrozen (log: `component=freeze-writer`). `mark_hold`: the ladder was not recorded, so a Redis flush silently releases an escalated pair. `clear`: only widens the recovery window. Causes: Postgres error, or a binary deployed before 0119 applied. Fix: check the aggregator's Postgres connectivity; confirm `migrations/0119_freeze_events_lifecycle` is applied.
 
+## stellarindex_anomaly_freeze_ladder_read_failures
+
+Ticket. `increase(stellarindex_anomaly_freeze_ladder_read_failures_total[15m]) > 0`, `for: 0m`. A freeze-marker rebuild could not read the durable `freeze_events` ladder and restored none, so a live escalated freeze may have restarted from its first rung. Check the logging process's Postgres connectivity, then list the open freezes in `freeze_events` and confirm each marker's rung matches its ladder.
+
 ## stellarindex_api_freeze_lookup_failing
 
 P3. `increase(stellarindex_api_freeze_lookup_failures_total[10m]) > 0`, `for: 5m`. The API cannot read freeze markers (Redis outage/timeout); `/v1/price` is served with `frozen_checked=false` and a frozen pair may publish as live. Fix: check API to Redis connectivity.

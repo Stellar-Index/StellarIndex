@@ -2138,7 +2138,7 @@ func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset
 }
 
 // holdFrozenBatchRow is [Server.resolveFrozenServe] for one /v1/price/batch row: a frozen row carries the held value; one with
-// nothing held is omitted, the batch contract's only spelling of "no price" (callers probe /v1/price for the reason).
+// nothing held is omitted and named on `withheld`: prices exist and the freeze gate declined them, so it must not read as "no data".
 func (s *Server) holdFrozenBatchRow(r *http.Request, row batchRowResult, served, quote canonical.Asset) batchRowResult {
 	held := s.resolveFrozenServeFor(r, row.snap, row.asset, served, quote)
 	switch held.outcome {
@@ -2146,7 +2146,7 @@ func (s *Server) holdFrozenBatchRow(r *http.Request, row batchRowResult, served,
 		row.freezeUnknown = s.Freeze != nil && !held.checked
 		return row
 	case frozenServeNothingHeld:
-		return batchRowResult{skip: true}
+		return batchRowResult{skip: true, withheld: true}
 	case frozenServeHeld:
 	}
 	row.snap, row.sources, row.triangulated = held.snapshot, held.sources, held.triangulated

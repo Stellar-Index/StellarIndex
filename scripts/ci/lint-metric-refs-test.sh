@@ -370,6 +370,51 @@ else
   echo "ok: a dead job selector fails the gate"; pass=$((pass + 1))
 fi
 
+# Failure-class reverse gate: an emitted error counter no rule reads fails; a plain metric stays
+# advisory; a waived name that gained a rule is a stale waiver.
+FROOT="$TMP/failroot"
+mkdir -p "$FROOT/scripts/ci" "$FROOT/deploy/monitoring/rules" "$FROOT/configs/prometheus/rules.r1" "$FROOT/internal"
+cp "$SRC" "$FROOT/scripts/ci/lint-metric-refs.sh"
+seed_scrape_configs "$FROOT"
+cat > "$FROOT/internal/metrics.go" <<'GO'
+package internal
+
+var _ = []string{
+	"stellarindex_fixture_boom_errors_total",
+	"stellarindex_fixture_dashboard_total",
+	"stellarindex_redis_command_errors_total",
+}
+GO
+cat > "$FROOT/deploy/monitoring/rules/fixture.yml" <<'YML'
+groups:
+  - name: fixture
+    rules:
+      - alert: WaivedNowAlerted
+        expr: rate(stellarindex_redis_command_errors_total[5m]) > 0
+YML
+FAIL_STATUS=0
+FAIL_OUT="$(bash "$FROOT/scripts/ci/lint-metric-refs.sh" 2>&1)" || FAIL_STATUS=$?
+expect_fail_line() { # <name> <pattern> <present|absent>
+  local hit=0
+  grep -qF "$2" <<<"$FAIL_OUT" && hit=1
+  if { [ "$3" = present ] && [ "$hit" -eq 0 ]; } || { [ "$3" = absent ] && [ "$hit" -eq 1 ]; }; then
+    echo "FAIL: $1 — expected '$2' to be $3" >&2
+    printf '%s\n' "$FAIL_OUT" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); return
+  fi
+  echo "ok: $1"; pass=$((pass + 1))
+}
+expect_fail_line 'an unalerted error counter fails the gate' "UNALERTED-FAILURE: 'stellarindex_fixture_boom_errors_total'" present
+expect_fail_line 'an unalerted dashboard metric stays advisory' "UNALERTED (advisory): 'stellarindex_fixture_dashboard_total'" present
+expect_fail_line 'a dashboard metric is not failure-class' "UNALERTED-FAILURE: 'stellarindex_fixture_dashboard_total'" absent
+expect_fail_line 'a waived metric that gained a rule is stale' "STALE-UNALERTED: 'stellarindex_redis_command_errors_total'" present
+if [ "$FAIL_STATUS" -eq 0 ]; then
+  echo "FAIL: an unalerted failure-class metric must fail the gate (exit=0)" >&2
+  fail=$((fail + 1))
+else
+  echo "ok: an unalerted failure-class metric fails the gate"; pass=$((pass + 1))
+fi
+
 echo "----"
 echo "lint-metric-refs-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
