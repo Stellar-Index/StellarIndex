@@ -89,6 +89,10 @@ ssh root@136.243.90.96 'redis-cli SET test:probe ok && redis-cli GET test:probe 
 
 Escalate: disk will not free, or Redis still rejects writes after BGSAVE. Past incident: `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`.
 
+## stellarindex_aggregator_contribution_write_errors
+
+Ticket. `increase(stellarindex_aggregator_contribution_write_errors_total[15m]) > 0`, `for: 0m`. The `ContributionSink` failed to write a per-(pair, window) batch to `price_source_contributions`. The write is atomic, so the bucket's per-source record is lost while its VWAP still served. Check the aggregator log for the write error and its Postgres connectivity; a lost bucket is not backfilled.
+
 ## stellarindex_aggregator_class_drop_spike
 
 P3. Expr: `sum(rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m]))` above 10x its `offset 1h` baseline, `for: 15m`. The class filter is dropping trades; most often a new venue not yet in `external.Registry` hits the fail-closed `IncludeInVWAP=false` fallback. Ingest still records rows.

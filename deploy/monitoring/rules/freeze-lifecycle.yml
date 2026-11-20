@@ -292,6 +292,30 @@ groups:
             migration 0119 is applied in this environment.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_write_failures
 
+      # The read-side twin: a marker rebuild that could not read the durable
+      # ladder restores none, so a live escalated freeze restarts at rung one.
+      - alert: stellarindex_anomaly_freeze_ladder_read_failures
+        expr: |
+          increase(stellarindex_anomaly_freeze_ladder_read_failures_total[15m]) > 0
+          or (
+            stellarindex_anomaly_freeze_ladder_read_failures_total
+            unless max_over_time(stellarindex_anomaly_freeze_ladder_read_failures_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_read_failures
+          summary: "Freeze-marker rebuild could not read the durable ladder"
+          description: |
+            A freeze-marker rebuild failed to read the freeze_events
+            ladder in the last 15 minutes and restored no ladder, so a
+            live escalated freeze may have restarted from its first
+            rung and could release early. Check Postgres connectivity
+            from the process that logged the read error.
+
       # ─── P3: API cannot read freeze markers ─────────────────────
       #
       # stellarindex_api_freeze_lookup_failures_total counts API-side

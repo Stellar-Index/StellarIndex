@@ -1,0 +1,199 @@
+---
+# promtool unit tests for failure counters and timers that had no rule:
+#
+#   stellarindex_mint_scope_clamp_refused            (api.yml)
+#   stellarindex_api_degraded_responses_sustained    (api.yml)
+#   stellarindex_aggregator_contribution_write_errors (aggregator.yml)
+#   stellarindex_anomaly_freeze_ladder_read_failures (freeze-lifecycle.yml)
+#   stellarindex_oneshot_timer_stale                 (infra.yml)
+#
+#   promtool test rules deploy/monitoring/rule-tests/unalerted-signals_test.yml
+
+rule_files:
+  - ../rules/api.yml
+  - ../rules/aggregator.yml
+  - ../rules/freeze-lifecycle.yml
+  - ../rules/infra.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a refused mint escalation tickets per route; a quiet route does not
+    input_series:
+      - series: 'stellarindex_mint_scope_clamp_refused_total{route="/v1/account/keys"}'
+        values: '0x10 3x30'
+      - series: 'stellarindex_mint_scope_clamp_refused_total{route="/v1/admin/keys"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_mint_scope_clamp_refused
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_mint_scope_clamp_refused
+        exp_alerts:
+          - exp_labels:
+              route: /v1/account/keys
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_mint_scope_clamp_refused
+              summary: "Key mint on /v1/account/keys refused as a scope escalation"
+              description: |
+                A key mint on /v1/account/keys asked for more scope or rate
+                limit than the minting credential holds and was refused with
+                403. Repeats mean a caller is probing the mint clamp; the API
+                log's WARN line names the minting key.
+
+  - interval: 1m
+    name: a route serving degraded 200s tickets; a mostly-healthy route does not
+    input_series:
+      - series: 'stellarindex_api_flagged_responses_total{route="/v1/price",flag="degraded"}'
+        values: '0+1x90'
+      - series: 'http_requests_total{route="/v1/price",method="GET",status="200"}'
+        values: '0+2x90'
+      - series: 'stellarindex_api_flagged_responses_total{route="/v1/assets",flag="degraded"}'
+        values: '0+1x90'
+      - series: 'http_requests_total{route="/v1/assets",method="GET",status="200"}'
+        values: '0+100x90'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_api_degraded_responses_sustained
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_api_degraded_responses_sustained
+        exp_alerts:
+          - exp_labels:
+              route: /v1/price
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_degraded_responses_sustained
+              summary: "50% of /v1/price responses are degraded"
+              description: |
+                More than 10% of /v1/price responses have carried
+                flags.degraded for 30m: a backend read behind the route is
+                failing and the body is a carried-forward or partial answer.
+                The API log names the failing read.
+
+  - interval: 1m
+    name: a failed contribution write tickets; a flat counter does not
+    input_series:
+      - series: 'stellarindex_aggregator_contribution_write_errors_total{instance="agg"}'
+        values: '0x20 1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_aggregator_contribution_write_errors
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: stellarindex_aggregator_contribution_write_errors
+        exp_alerts:
+          - exp_labels:
+              instance: agg
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_contribution_write_errors
+              summary: "Aggregator failed to persist source contributions"
+              description: |
+                A per-(pair, window) contribution batch failed to write to
+                price_source_contributions in the last 15 minutes. The VWAP
+                still served, but the record of which sources built it is
+                gone for that bucket. Check the aggregator's Postgres
+                connectivity and its log for the write error.
+
+  - interval: 1m
+    name: a failed durable-ladder read tickets; a flat counter does not
+    input_series:
+      - series: 'stellarindex_anomaly_freeze_ladder_read_failures_total{instance="agg"}'
+        values: '0x20 1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_anomaly_freeze_ladder_read_failures
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: stellarindex_anomaly_freeze_ladder_read_failures
+        exp_alerts:
+          - exp_labels:
+              instance: agg
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-lifecycle.md#stellarindex_anomaly_freeze_ladder_read_failures
+              summary: "Freeze-marker rebuild could not read the durable ladder"
+              description: |
+                A freeze-marker rebuild failed to read the freeze_events
+                ladder in the last 15 minutes and restored no ladder, so a
+                live escalated freeze may have restarted from its first
+                rung and could release early. Check Postgres connectivity
+                from the process that logged the read error.
+
+  # Daily threshold is 50h + 2h for; listing-sync is 3h + 2h. The fresh series
+  # keep being re-triggered (last trigger tracks the sample time).
+  - interval: 1m
+    name: a stopped oneshot timer tickets; a firing one and an unlisted one do not
+    input_series:
+      - series: 'node_systemd_timer_last_trigger_seconds{name="creators-rollup.timer",instance="stale"}'
+        values: '0x3200'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="sponsors-rollup.timer",instance="fresh"}'
+        values: '0+60x3200'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="listing-sync.timer",instance="stale"}'
+        values: '0x3200'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="other.timer",instance="stale"}'
+        values: '0x3200'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: stellarindex_oneshot_timer_stale
+        exp_alerts: []
+      - eval_time: 6h
+        alertname: stellarindex_oneshot_timer_stale
+        exp_alerts:
+          - exp_labels:
+              name: listing-sync.timer
+              instance: stale
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "listing-sync.timer has stopped firing on stale"
+              description: |
+                listing-sync.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status listing-sync.timer`.
+      - eval_time: 53h
+        alertname: stellarindex_oneshot_timer_stale
+        exp_alerts:
+          - exp_labels:
+              name: creators-rollup.timer
+              instance: stale
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "creators-rollup.timer has stopped firing on stale"
+              description: |
+                creators-rollup.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status creators-rollup.timer`.
+          - exp_labels:
+              name: listing-sync.timer
+              instance: stale
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "listing-sync.timer has stopped firing on stale"
+              description: |
+                listing-sync.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status listing-sync.timer`.

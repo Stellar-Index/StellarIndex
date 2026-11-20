@@ -257,6 +257,10 @@ Fix: partial write: remove the file, the next run regenerates it; bad syntax: fi
 
 Ticket. `time() - node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"} > 7200`, `for: 15m`. The 30-minute contracts-census rollup stopped being triggered, so `/v1/contracts/stats` serves `active_90d` as a stale lower bound. A failing run is caught by `stellarindex_systemd_unit_failed`, not this alert. Check `systemctl status census-rollup.timer census-rollup.service` and `systemctl list-timers census-rollup.timer`; re-enable with `systemctl enable --now census-rollup.timer` if it is inactive.
 
+## stellarindex_oneshot_timer_stale
+
+Ticket. `time() - node_systemd_timer_last_trigger_seconds` above 50h for `creators-rollup.timer`, `sponsors-rollup.timer` and `issuer-flags.timer`, or 3h for `listing-sync.timer`, `for: 2h`. The timer stopped being triggered, so its table freezes with no failed unit. A failing run is `stellarindex_systemd_unit_failed`'s job. Check `systemctl list-timers <name>`; re-enable with `systemctl enable --now <name>` if it is inactive.
+
 ## stellarindex_keepalived_textfile_stale
 
 Ticket. `time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/keepalived.prom"} > 600`, `for: 5m`. A dead scraper freezes `stellarindex_keepalived_active` / `stellarindex_haproxy_vip_owner`. Producer: `keepalived-textfile-scraper.timer` (30 s) running `/usr/local/bin/keepalived-textfile-scraper` (`configs/ansible/roles/haproxy/tasks/07-monitoring.yml`).
