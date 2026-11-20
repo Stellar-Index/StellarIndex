@@ -17,11 +17,12 @@ import {
   formatOraclePrice,
   formatRelative,
   formatRelativeLong,
+  subtractDecimalStrings,
 } from '@/lib/format';
 import { hasDirectoryScamFlag } from '@/lib/directory-tags';
 import { assetHref } from '@/lib/fiat-slugs';
 import { truncateMiddle } from '@/components/ui/Mono';
-import { SUPPLY_FLOOR_HINT } from '@/lib/supplyFloor';
+import { SUPPLY_FLOOR_HINT, VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 import {
   Badge,
   Callout,
@@ -481,12 +482,16 @@ export function RWAView() {
         {assets.length === 0 ? (
           <EmptyState
             headingLevel={3}
-            title="No asset currently meets the definition"
-            {...(unavailable && {
-              title: 'The set could not be established',
-              description: summary.basis,
-            })}
-            description="An asset qualifies only when its issuer both declares the real-world anchor in its own SEP-1 file and is independently recognised. Nothing on this network clears both today — which is a statement about the evidence available, not about what issuers claim."
+            {...(unavailable
+              ? {
+                  title: 'The set could not be established',
+                  description: summary.basis,
+                }
+              : {
+                  title: 'No asset currently meets the definition',
+                  description:
+                    'An asset qualifies only when its issuer both declares the real-world anchor in its own SEP-1 file and is independently recognised. Nothing on this network clears both today — which is a statement about the evidence available, not about what issuers claim.',
+                })}
           />
         ) : (
           <div className="overflow-x-auto">
@@ -615,13 +620,7 @@ function CuratedPanel({
         </p>
       ) : (
         <>
-          {published && (
-            <PublishedTotals
-              published={published}
-              verified={verified}
-              verifiedFloor={verifiedFloor}
-            />
-          )}
+          {published && <PublishedTotals published={published} />}
           {curated.status === 'served' && (
             <div
               className={`grid gap-4 sm:grid-cols-3 ${published ? 'mt-4' : ''}`}
@@ -712,7 +711,7 @@ function CuratedPanel({
                         {usd(a.reference?.price_usd) ?? '—'}
                       </Td>
                       <Td align="right" className="tnum">
-                        {usd(a.reference_valuation.value_usd) ?? '—'}
+                        <CuratedValueCell asset={a} />
                       </Td>
                       <Td>
                         {a.curator?.also_verified ? (
@@ -742,17 +741,18 @@ function CuratedPanel({
  */
 function PublishedTotals({
   published,
-  verified,
-  verifiedFloor,
 }: {
   published: Schemas['RWACuratedPublished'];
-  verified: string | null;
-  verifiedFloor: boolean;
 }) {
   const total = usd(published.total_usd);
-  const gapUsd = signedUsd(published.gap_vs_verified_usd);
-  // A floor under "verified" makes the gap a ceiling.
-  const gap = gapUsd != null && verifiedFloor ? `≤ ${gapUsd}` : gapUsd;
+  // The served gap is taken against the history's exact total on as_of, so
+  // that operand (not today's total) is the one shown beside it.
+  const verified = usd(
+    subtractDecimalStrings(published.total_usd, published.gap_vs_verified_usd),
+  );
+  const gap = signedUsd(published.gap_vs_verified_usd);
+  const noExactTotal =
+    'this index holds no exact verified total for that month-end';
   return (
     <>
       <div className="grid gap-4 sm:grid-cols-3">
@@ -770,13 +770,15 @@ function PublishedTotals({
         </StatCell>
         <StatCell>
           <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
-            Verified by this index
+            Verified by this index on {published.as_of}
           </div>
           <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
             {verified ?? '—'}
           </div>
           <div className="text-ink-muted mt-0.5 text-xs">
-            the value-of-backing figure above
+            {verified == null
+              ? noExactTotal
+              : 'the same month-end, from this index’s history'}
           </div>
         </StatCell>
         <StatCell>
@@ -787,9 +789,9 @@ function PublishedTotals({
             {gap ?? '—'}
           </div>
           <div className="text-ink-muted mt-0.5 text-xs">
-            what the curator counts that this index cannot verify
-            {verifiedFloor &&
-              ', including members this index holds but could not value'}
+            {gap == null
+              ? `not drawn: ${noExactTotal}`
+              : 'what the curator counts that this index did not verify on that day'}
           </div>
         </StatCell>
       </div>
@@ -1636,9 +1638,10 @@ function HeadlineStats({
         {both != null && both.assets > 0 && (
           <>
             <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
-            carry both figures and a published premium: {usd(both.reference_value_usd)} at the reference
-            against {usd(both.market_cap_usd)} at traded prices. That gap, per
-            asset, is the premium or discount column below.{' '}
+            carry both figures and a published premium:{' '}
+            {usd(both.reference_value_usd)} at the reference against{' '}
+            {usd(both.market_cap_usd)} at traded prices. That gap, per asset, is
+            the premium or discount column below.{' '}
           </>
         )}
         {summary.assets_with_reference > 0 && (
@@ -1710,6 +1713,7 @@ const RWA_CSV_COLUMNS = [
   'premium_pct',
   'premium_status',
   'volume_24h_usd',
+  'volume_lower_bound',
 ] as const;
 
 /** One CSV row per asset, statuses beside each value so a withheld figure stays explained. */
@@ -1737,6 +1741,7 @@ export function rwaCsvRow(a: RWAAsset): Record<string, string> {
     premium_pct: a.premium.pct ?? '',
     premium_status: a.premium.status,
     volume_24h_usd: a.volume_24h_usd ?? '',
+    volume_lower_bound: a.volume_lower_bound ? 'true' : 'false',
   };
 }
 
@@ -1826,10 +1831,8 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
       <Td align="right">
         {cap == null ? (
           <Withheld reason={reason} />
-        ) : asset.circulating_supply_lower_bound ? (
-          <span title={SUPPLY_FLOOR_HINT}>≥ {cap}</span>
         ) : (
-          cap
+          <SupplyScaled value={cap} asset={asset} />
         )}
       </Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
@@ -1847,6 +1850,8 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
           >
             —
           </span>
+        ) : asset.volume_lower_bound ? (
+          <span title={VOLUME_FLOOR_HINT}>≥ ${volume}</span>
         ) : (
           `$${volume}`
         )}
@@ -1867,6 +1872,24 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
  * dash and never a number: a dash in a money column beside real figures
  * is read as zero, and zero is the one reading that is certainly wrong.
  */
+/** A row figure scaled by its circulating supply: "≥" when that supply is a floor. */
+function SupplyScaled({ value, asset }: { value: string; asset: RWAAsset }) {
+  if (!asset.circulating_supply_lower_bound) return <>{value}</>;
+  return <span title={SUPPLY_FLOOR_HINT}>≥ {value}</span>;
+}
+
+function CuratedValueCell({ asset }: { asset: RWAAsset }) {
+  const value = usd(asset.reference_valuation.value_usd);
+  if (value == null) {
+    return (
+      <Withheld
+        reason={REFERENCE_VALUE_REASON[asset.reference_valuation.status]}
+      />
+    );
+  }
+  return <SupplyScaled value={value} asset={asset} />;
+}
+
 function Withheld({ reason }: { reason?: string }) {
   return (
     <span
