@@ -207,3 +207,14 @@ The alert clears 30 min after the last increment. If only one path advanced, loo
 - [sink-undrained-rows](ingestion-sink.md#stellarindex_ingestion_sink_undrained_rows): the Postgres twin of drops; re-derive from the lake, no timer heals it.
 - `ingestion.md#stellarindex_ingestion_all_sources_stopped`: live ingest itself stopped.
 - `internal/storage/clickhouse/live_sink.go`, `cmd/stellarindex-indexer/main.go` (`recordCHLiveSinkUndercount`, `recordLedgerIngestCensusSkip`).
+
+### stellarindex_supply_flow_skipped
+
+Ticket. `sum(increase(stellarindex_supply_flow_skipped_total{reason!="not_token_shaped"}[1h])) > 0` for 2 h. The lake extract wrote a mint/burn/clawback event to `contract_events` but no `supply_flows` row. `not_token_shaped` (a foreign contract's body that is not a bare i128 or a map with `amount`, e.g. an NFT's u32 id) is expected and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode, so that token's supply sum is short.
+
+```sh
+curl -s localhost:9464/metrics | grep supply_flow_skipped_total
+```
+
+Find the contract in `contract_events` (topic0 mint/burn/clawback, recent ledgers) and why its body did not decode. A foreign contract with a malformed body is noise; a real token whose body shape changed is a decoder bug. Re-derive with `ch-backfill` over the range once fixed.
+

@@ -656,6 +656,27 @@ groups:
             heal the lake case: the ledgers row exists. A climb on
             every ledger is a TransactionMeta version break.
 
+      # Any contract can emit a mint/burn/clawback; not_token_shaped (an NFT's u32 id) loses no supply and is excluded.
+      # The other reasons are a token-shaped body whose amount did not decode: a supply_flows row is missing.
+      - alert: stellarindex_supply_flow_skipped
+        expr: sum(increase(stellarindex_supply_flow_skipped_total{reason!="not_token_shaped"}[1h])) > 0
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_supply_flow_skipped
+          summary: "Supply events written without a supply_flows row"
+          description: |
+            stellarindex_supply_flow_skipped_total rose for a reason
+            other than not_token_shaped (amount_not_i128 or
+            body_unparseable) in the last hour, for two hours running.
+            A token-shaped mint/burn/clawback body was not decoded, so
+            that token's supply_flows sum is short. The raw event is in
+            contract_events.
+
+
       # Served-tier twin of the ch_live_sink rules. The Postgres sink's shutdown drain
       # is bounded and the cursor is upserted before the sink writes, so an abandoned
       # row is a served-tier gap unless the exit rewinds the cursor below it.

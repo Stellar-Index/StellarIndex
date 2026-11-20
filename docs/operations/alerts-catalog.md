@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 308 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 309 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -77,6 +77,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | page | [ch-live-sink-drops](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_drops) |
 | `stellarindex_ingestion_ch_live_sink_errors` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m])` | > 0 sustained 15 min | ticket | [ch-live-sink-errors](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_errors) |
 | `stellarindex_ingestion_ch_live_sink_read_undercount` | `increase(ch_live_sink_read_undercount_total[30m])` per kind | > 0 for 15 min (ledger written short of txs/events/changes) | ticket | [ch-live-sink-read-undercount](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_read_undercount) |
+| `stellarindex_supply_flow_skipped` | `sum(increase(supply_flow_skipped_total{reason!="not_token_shaped"}[1h]))` | > 0 for 2 h (token-shaped mint/burn/clawback body whose amount did not decode) | ticket | [supply-flow-skipped](runbooks/clickhouse.md#stellarindex_supply_flow_skipped) |
 | `stellarindex_ingestion_sink_undrained_rows` | `increase(sink_undrained_rows_total[1h])` | > 0, `for: 0m` (shutdown drain abandoned rows past the cursor) | ticket | [sink-undrained-rows](runbooks/ingestion-sink.md#stellarindex_ingestion_sink_undrained_rows) |
 | `stellarindex_gate_admission_unpersisted` | `max by (source) (gate_admissions_unpersisted)` | > 0, `for: 5m` (a factory child is gated in memory only; a restart loses it) | ticket | [gate-admission-unpersisted](runbooks/ingestion-sink.md#stellarindex_gate_admission_unpersisted) |
 | `stellarindex_gate_admission_persist_failed` | `increase(gate_admission_persist_failures_total[2h])` | > 0 (a factory child's admission write failed; survives a restart) | ticket | [gate-admission-persist-failed](runbooks/ingestion-sink.md#stellarindex_gate_admission_persist_failed) |
