@@ -826,9 +826,9 @@ type DashboardConfig struct {
 
 	SessionTTLDays int `toml:"session_ttl_days" doc:"Session-cookie lifetime in days. Default 30 — matches typical SaaS dashboards; users sign in monthly without re-authing." default:"30"`
 
-	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the JS-readable session-presence hint cookie. The credential cookies (session, login intent, passkey ceremony) are __Host- prefixed and always Secure; browsers treat http://localhost as a secure context. Production = true; dev (http://localhost) may set false." default:"true"`
+	CookieSecure bool `toml:"cookie_secure" doc:"Set the Secure flag on the JS-readable session-presence hint cookie and on the HttpOnly stellarindex_login_device cookie (a per-address proof that earns a send past the sign-in throttle and its own verify-code lockout budget). The credential cookies (session, login intent, passkey ceremony) are __Host- prefixed and always Secure; browsers treat http://localhost as a secure context. Production = true; dev (http://localhost) may set false." default:"true"`
 
-	CookieDomain string `toml:"cookie_domain" doc:"Domain attribute of the JS-readable session-presence hint cookie only, so an explorer on a sibling host can see that a session exists; it carries no credential. Empty (default) means host-only. The credential cookies (session, login intent, passkey ceremony) are always host-only __Host- cookies and ignore this setting." default:""`
+	CookieDomain string `toml:"cookie_domain" doc:"Domain attribute of the JS-readable session-presence hint cookie, so an explorer on a sibling host can see that a session exists, and of the HttpOnly stellarindex_login_device cookie on /v1/auth. The hint carries no credential; the login-device cookie is a per-address proof that earns a send past the sign-in throttle and its own verify-code lockout budget, so a parent domain shares it with every sibling host. Empty (default) means host-only. The credential cookies (session, login intent, passkey ceremony) are always host-only __Host- cookies and ignore this setting." default:""`
 }
 
 // StreamingConfig lists the (asset, quote) pairs the closed-bucket SSE producer broadcasts on /v1/price/stream, polling PriceReader at [PollInterval]; static, a new pair needs a restart.
