@@ -98,6 +98,9 @@ func chBackfill(args []string) error {
 	if cerr := backfillCoverage(uint32(*from), uint32(*to), total, streamBucket, ctx.Err() != nil); cerr != nil {
 		return fmt.Errorf("ch-backfill: %w", cerr)
 	}
+	if s := loss.supplySkipSummary(); s != "" {
+		fmt.Fprintf(os.Stderr, "ch-backfill: %s\n", s)
+	}
 	if lerr := loss.err(); lerr != nil {
 		return fmt.Errorf("ch-backfill: %w", lerr)
 	}
@@ -247,10 +250,9 @@ func chBackfillChunk(
 				return nil
 			}
 			if loss.record(ext, changesOnly) {
-				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d supply_flows_undecodable=%d\n",
+				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d\n",
 					idx, lcm.LedgerSequence(), ext.TxReadErrors, ext.TxEventReadErrors, ext.EntryMetaUnsupported,
-					ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable,
-					ext.SupplyFlowsUndecodable)
+					ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable)
 			}
 			if changesOnly {
 				ext = changesOnlyExtract(ext)
@@ -281,6 +283,25 @@ type extractLoss struct {
 	mu      sync.Mutex
 	ledgers int64
 	kinds   map[string]int64
+	// supplySkips is reported, never failed on: any contract can emit a mint/burn/clawback topic, so failing would let one
+	// transaction wedge every re-derive over its ledger.
+	supplySkips map[string]int64
+}
+
+// supplySkipSummary is the one-line skip tally for the run summary, "" when nothing was skipped.
+func (l *extractLoss) supplySkipSummary() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.supplySkips) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(l.supplySkips))
+	for k, n := range l.supplySkips {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, n))
+	}
+	sort.Strings(parts)
+	return "supply events with no supply_flows row (raw events kept in contract_events; only non-" + clickhouse.SupplySkipNotTokenShaped +
+		" reasons short a token's supply): " + strings.Join(parts, " ")
 }
 
 // record adds one ledger's undercounts and reports whether it had any. Changes-only writes no txs or events, so only
@@ -295,10 +316,17 @@ func (l *extractLoss) record(ext clickhouse.LedgerExtract, changesOnly bool) boo
 		kinds["tx_read_errors"] = ext.TxReadErrors
 		kinds["tx_event_read_errors"] = ext.TxEventReadErrors
 		kinds["soroban_fee_meta_unsupported"] = ext.SorobanFeeMetaUnsupported
-		kinds["supply_flows_undecodable"] = ext.SupplyFlowsUndecodable
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if !changesOnly {
+		for reason, n := range ext.SupplyFlowSkips {
+			if l.supplySkips == nil {
+				l.supplySkips = map[string]int64{}
+			}
+			l.supplySkips[reason] += int64(n)
+		}
+	}
 	short := false
 	for k, n := range kinds {
 		if n == 0 {

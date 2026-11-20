@@ -216,6 +216,29 @@ func TestExtractLoss_EveryUndercountFailsTheRun(t *testing.T) {
 	}
 }
 
+// Any contract can emit a mint/burn/clawback topic, so a skipped supply body (an NFT's u32 mint, or a token-shaped map whose amount is
+// not an i128) is reported in the summary and never fails the run.
+func TestExtractLoss_SupplySkipsNeverFailTheRun(t *testing.T) {
+	var loss extractLoss
+	if loss.record(clickhouse.LedgerExtract{SupplyFlowSkips: map[string]int{clickhouse.SupplySkipNotTokenShaped: 1}}, false) {
+		t.Error("a not-token-shaped supply body was recorded as a read undercount")
+	}
+	if loss.record(clickhouse.LedgerExtract{SupplyFlowSkips: map[string]int{clickhouse.SupplySkipAmountNotI128: 2}}, false) {
+		t.Error("a token-shaped amount decode failure was recorded as a read undercount")
+	}
+	if err := loss.err(); err != nil || loss.ledgers != 0 || len(loss.kinds) != 0 {
+		t.Fatalf("err = %v, ledgers = %d, kinds = %v; want a clean run", err, loss.ledgers, loss.kinds)
+	}
+	want := "amount_not_i128=2 not_token_shaped=1"
+	if got := loss.supplySkipSummary(); !strings.HasSuffix(got, want) {
+		t.Errorf("summary = %q, want it to end %q", got, want)
+	}
+	var clean extractLoss
+	if got := clean.supplySkipSummary(); got != "" {
+		t.Errorf("clean run summary = %q, want empty", got)
+	}
+}
+
 // TestWindowedCHBackfills_RefuseImplicitFullRun: every windowed ClickHouse backfill refuses a bare invocation (no
 // -from/-to/-full) rather than starting the whole ledger-2..tip history outside run-heavy-job.sh. The refusal fires
 // before any connection, so no live lake is needed.

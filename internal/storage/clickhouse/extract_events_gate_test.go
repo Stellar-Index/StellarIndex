@@ -155,21 +155,40 @@ func TestExtractEvents_TxSuccessGate(t *testing.T) {
 		}
 	})
 
-	t.Run("undecodable supply body: event kept, flow counted as lost", func(t *testing.T) {
-		bad := gateContractEvent(t)
-		s := xdr.ScString("not an amount")
-		bad.Body.V0.Data = xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &s}
-		ext := &LedgerExtract{}
-		extractEvents(ext, gateTx(t, bad, true), 42, closeTime, "txbad", nil, true)
+	// An NFT-style mint (u32 token id) or a map without `amount` is no token's supply; a map whose amount is not an i128 is a
+	// token-shaped body the decoder lost. Every case keeps the raw event and writes no flow.
+	tokenID := xdr.Uint32(7)
+	nftName := xdr.ScString("token #7")
+	u64Amt := xdr.Uint64(5)
+	mapOf := func(key string, v xdr.ScVal) xdr.ScVal {
+		k := xdr.ScSymbol(key)
+		m := &xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &k}, Val: v}}
+		return xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &m}
+	}
+	for _, tc := range []struct {
+		name string
+		data xdr.ScVal
+		want string
+	}{
+		{"u32 token id", xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &tokenID}, SupplySkipNotTokenShaped},
+		{"string body", xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &nftName}, SupplySkipNotTokenShaped},
+		{"map without amount", mapOf("token_id", xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &tokenID}), SupplySkipNotTokenShaped},
+		{"map amount not i128", mapOf("amount", xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64Amt}), SupplySkipAmountNotI128},
+	} {
+		t.Run("supply body skipped: "+tc.name, func(t *testing.T) {
+			bad := gateContractEvent(t)
+			bad.Body.V0.Data = tc.data
+			ext := &LedgerExtract{}
+			extractEvents(ext, gateTx(t, bad, true), 42, closeTime, "txbad", nil, true)
 
-		if len(ext.Events) != 1 || len(ext.SupplyFlows) != 0 {
-			t.Fatalf("Events = %d, SupplyFlows = %d; want 1 and 0", len(ext.Events), len(ext.SupplyFlows))
-		}
-		if ext.SupplyFlowsUndecodable != 1 {
-			t.Errorf("SupplyFlowsUndecodable = %d, want 1 — a mint left out of supply_flows must be counted, "+
-				"or the served supply is short with nothing to say so", ext.SupplyFlowsUndecodable)
-		}
-	})
+			if len(ext.Events) != 1 || len(ext.SupplyFlows) != 0 {
+				t.Fatalf("Events = %d, SupplyFlows = %d; want 1 and 0", len(ext.Events), len(ext.SupplyFlows))
+			}
+			if len(ext.SupplyFlowSkips) != 1 || ext.SupplyFlowSkips[tc.want] != 1 {
+				t.Errorf("SupplyFlowSkips = %v, want {%s: 1}", ext.SupplyFlowSkips, tc.want)
+			}
+		})
+	}
 
 	t.Run("failed tx: nothing captured", func(t *testing.T) {
 		ext := &LedgerExtract{}
