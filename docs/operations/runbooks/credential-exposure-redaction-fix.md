@@ -1,6 +1,6 @@
 ---
 title: Runbook — credential-exposure redaction fix
-last_verified: 2026-09-24
+last_verified: 2026-11-21
 status: ratified
 severity: P2
 ---
@@ -19,7 +19,7 @@ Manual trigger (no metric exists) whenever a redaction-class fix ships: a change
 2. Scan the log store's full retention window for the value (e.g. a targeted LogQL query counting matches for `email=` or the header name), and the host journal for the same window (`journalctl -u <unit> --since <window start>`), since journald can outlive or predate Loki. Zero matches: it rolled off; record the scanned line count. Non-zero: a targeted purge of those lines is needed before closing; no Loki purge procedure exists yet, so escalate.
 3. File the incident record under `internal/incidents/data/` per the template, with the scan result in the timeline. Required even when the scan is clean.
 4. Classify and rotate/notify:
-   - API key: identify every subject authenticated in the window (usage rollup / access logs, scoped to the route or header). Tell each what to do and why; a revoke takes every key minted from the revoked one with it, so a replacement minted from the exposed key (`POST /v1/account/keys`) dies with it. An exposed child key: revoke it with `DELETE /v1/account/keys/{key_id}`, authenticated with its minter or itself. An exposed root key: first get an independent root (a dashboard user mints one in the dashboard; a `/v1/register` account has no second root, so `POST /v1/register` a new account and re-apply any staff limit override to it), move clients over, then revoke the exposed root with itself (`DELETE /v1/account/keys/{key_id}` sent with that key, 204). Do not force-revoke without notice unless misuse shows.
+   - API key: identify every subject authenticated in the window (usage rollup / access logs, scoped to the route or header). Tell each what to do and why; a revoke takes every key minted from the revoked one with it, so a replacement minted from the exposed key (`POST /v1/account/keys`) dies with it. An exposed child key: revoke it with `DELETE /v1/account/keys/{key_id}`, authenticated with its minter or itself. An exposed root key: first get an independent root (a dashboard user mints one with `POST /v1/dashboard/keys` or on the Keys page; a `/v1/register`-only account has no self-service way, so an operator mints one for the same identifier with `POST /v1/admin/keys` or `stellarindex-ops mint-key`, with a reason, and re-applies any staff limit override), move clients over, then revoke the exposed root with itself (`DELETE /v1/account/keys/{key_id}` sent with that key, 204). Do not force-revoke without notice unless misuse shows.
    - Session token: revoking an API key does not touch sessions. Revoke the affected users' sessions now, without waiting for misuse: a replayed cookie stays valid up to 30 days (7 idle) and active use keeps it alive. No operator route does this short of closing the account, so run the same statement the store's `RevokeAllUserSessions` runs, for each user id found in the window, in a transaction and check the row count:
 
      ```sql
