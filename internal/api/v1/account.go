@@ -745,14 +745,14 @@ func (s *Server) mayRevokeAccountKey(w http.ResponseWriter, r *http.Request, sub
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/key-not-delegated",
 		"This key can't revoke that key", http.StatusForbidden,
-		"an API key may revoke only keys minted from it, directly or through keys it minted. Nothing was revoked. "+
-			"Revoke the account's other keys from the dashboard")
+		"an API key may revoke only itself and keys minted from it, directly or through keys it minted. Nothing was revoked. "+
+			"Authenticate with the key itself or the key that minted it; a dashboard user can also revoke it from the dashboard")
 	return false
 }
 
 // handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. An API key may revoke
-// only keys delegated from it (403 otherwise, whether or not the id exists); revoking the key the request used is 409.
-// Operator audit row only when a key was actually revoked.
+// itself or keys delegated from it (403 otherwise, whether or not the id exists); revoking itself takes its subtree with
+// it, so a leaked root with no dashboard can still be killed. Operator audit row only when a key was actually revoked.
 func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -771,13 +771,6 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if refuseSecretAsKeyID(w, r, keyID) {
-		return
-	}
-	if subject.KeyID == keyID {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/cannot-revoke-self",
-			"Can't revoke the key you're using", http.StatusConflict,
-			"authenticate with a different key (or SEP-10 token) and retry")
 		return
 	}
 	if s.Accounts == nil {

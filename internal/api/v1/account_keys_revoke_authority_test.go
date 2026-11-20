@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -85,6 +86,12 @@ func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {
 		{actor: "other", target: "child", want: http.StatusForbidden},
 		{actor: "owner", target: "absent", want: http.StatusForbidden},
 		{actor: "sep10", target: "member", sep10: true, want: http.StatusNoContent, dead: []string{"member"}},
+		// A key may kill itself, and the cascade takes everything it minted: a register-only account has no dashboard.
+		{
+			actor: "owner", target: "owner", want: http.StatusNoContent,
+			dead: []string{"owner", "child", "grandchild", "sibling", "restricted"},
+		},
+		{actor: "child", target: "child", want: http.StatusNoContent, dead: []string{"child", "grandchild"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.actor+"→"+tc.target, func(t *testing.T) {
@@ -97,10 +104,16 @@ func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {
 			if s, ok := tr.subjects[tc.target]; ok {
 				targetID = s.KeyID
 			}
-			ts := newAdminTestServer(t, subject, tr.store, &recordingAuditSink{})
+			sink := &recordingAuditSink{}
+			ts := newAdminTestServer(t, subject, tr.store, sink)
 			resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+targetID, "", "")
 			if resp.StatusCode != tc.want {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			if tc.want == http.StatusNoContent {
+				if len(sink.entries) != 1 || !strings.Contains(string(sink.entries[0].Metadata), `"actor_key_id":"`+subject.KeyID+`"`) {
+					t.Errorf("audit entries = %+v, want one key.revoke naming actor %q", sink.entries, subject.KeyID)
+				}
 			}
 			dead := map[string]bool{}
 			for _, n := range tc.dead {

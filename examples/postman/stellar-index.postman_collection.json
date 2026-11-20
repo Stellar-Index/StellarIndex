@@ -31736,7 +31736,7 @@
                   "request": {
                     "name": "Revoke an API key by KeyID.",
                     "description": {
-                      "content": "Revokes the API key whose KeyID matches the path parameter,\nwith every key delegated from it.\n\nAn API key may revoke only keys minted from it, directly or\nthrough keys it minted: never the key that minted it, a\nsibling, or another account key that was not minted under it\n(dashboard and `/v1/register` keys are each their own root).\nAny other key id gets 403 `key-not-delegated` and nothing is\nrevoked; the answer does not depend on whether the id exists,\nso it cannot be used to probe for key ids. Revoke the account's\nother keys from the dashboard, which applies the user's role.\nA SEP-10 session and an operator-tier caller may revoke any key\non their own identifier.\n\nThe caller cannot revoke the key they're authenticated with —\nthat would orphan the connection mid-request. 409 in that\ncase so the UI can prompt for an alternate credential.\n\nAn **operator-tier** caller must send `X-Reason` (400 without\nit); the revoke is recorded as a `key.revoke` audit row, as\n`DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers\nneed no header.\n",
+                      "content": "Revokes the API key whose KeyID matches the path parameter,\nwith every key delegated from it.\n\nAn API key may revoke itself and the keys minted from it,\ndirectly or through keys it minted: never the key that minted\nit, a sibling, or another account key that was not minted under\nit (dashboard and `/v1/register` keys are each their own root).\nAny other key id gets 403 `key-not-delegated` and nothing is\nrevoked; the answer does not depend on whether the id exists,\nso it cannot be used to probe for key ids. A dashboard user can\nrevoke the account's other keys from the dashboard, which\napplies the user's role. A SEP-10 session and an operator-tier\ncaller may revoke any key on their own identifier.\n\nRevoking the key the request is authenticated with is allowed:\nit answers 204 and the key, with every key minted from it,\nstops working from the next request. This is how a leaked\n`/v1/register` root key, which has no dashboard, is killed.\n\nAn **operator-tier** caller must send `X-Reason` (400 without\nit); the revoke is recorded as a `key.revoke` audit row, as\n`DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers\nneed no header.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -31917,7 +31917,7 @@
                       "_postman_previewlanguage": "text"
                     },
                     {
-                      "name": "The key is not delegated from the calling key (`key-not-delegated`); nothing was revoked.",
+                      "name": "The key is neither the calling key nor delegated from it (`key-not-delegated`); nothing was revoked.",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -31970,51 +31970,6 @@
                       "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume_unvalued\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"unattributed\"\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
-                    },
-                    {
-                      "name": "Caller tried to revoke the key they're using.",
-                      "originalRequest": {
-                        "url": {
-                          "path": [
-                            "account",
-                            "keys",
-                            ":keyID"
-                          ],
-                          "host": [
-                            "{{baseUrl}}"
-                          ],
-                          "query": [],
-                          "variable": [
-                            {
-                              "disabled": false,
-                              "description": {
-                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
-                                "type": "text/plain"
-                              },
-                              "type": "any",
-                              "value": "<string>",
-                              "key": "keyID"
-                            }
-                          ]
-                        },
-                        "header": [
-                          {
-                            "description": {
-                              "content": "Added as a part of security scheme: bearer",
-                              "type": "text/plain"
-                            },
-                            "key": "Authorization",
-                            "value": "Bearer <token>"
-                          }
-                        ],
-                        "method": "DELETE",
-                        "body": {}
-                      },
-                      "status": "Conflict",
-                      "code": 409,
-                      "header": [],
-                      "cookie": [],
-                      "_postman_previewlanguage": "text"
                     },
                     {
                       "name": "The revoke, or the read of the caller's keys it is checked against, failed (`account-revoke-failed`).",

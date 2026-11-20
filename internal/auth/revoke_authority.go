@@ -25,15 +25,18 @@ func RevokeActorOf(s Subject) RevokeActor {
 }
 
 // MayRevoke reports whether actor may revoke keyID, given owned, the identifier's records. A key
-// may revoke exactly the tree its own revoke would cascade to, minus itself — never its minter,
-// a sibling or an unrelated root. A target whose record is already gone still qualifies while a
-// remaining descendant of actor names it, so a retry can finish a failed cascade.
+// may revoke exactly the tree its own revoke would cascade to: itself and what it minted, never
+// its minter, a sibling or an unrelated root. A target whose record is already gone still
+// qualifies while a remaining descendant of actor names it, so a retry can finish a failed cascade.
 func MayRevoke(actor RevokeActor, keyID string, owned []APIKeyRecord) bool {
 	if actor.AnyKey {
 		return true
 	}
-	if actor.KeyID == "" || keyID == "" || keyID == actor.KeyID {
+	if actor.KeyID == "" || keyID == "" {
 		return false
+	}
+	if keyID == actor.KeyID {
+		return true
 	}
 	records := make([]ownedRecord, 0, len(owned))
 	for _, rec := range owned {

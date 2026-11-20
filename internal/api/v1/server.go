@@ -2115,7 +2115,6 @@ var knownErrorSlugs = map[string]struct{}{
 	"backups-unavailable":             {},
 	"body-too-large":                  {},
 	"cache-unavailable":               {},
-	"cannot-revoke-self":              {},
 	"capacity":                        {},
 	"change-summary-error":            {},
 	"change-summary-not-found":        {},
