@@ -790,8 +790,122 @@ check 'a raw FROM stellar.` + ident + ` splice fails' 1 "$xrawsplice"
 xbase="$(mk xbase)"
 printf 'package clickhouse\n\nvar q = "SELECT count() FROM stellar." + t + " WHERE a = 1"\n' > "$xbase/$GODIR/reader.go"
 mkdir -p "$xbase/scripts/ci"
-printf '%s  census constant, compared against system.parts\n' "$GODIR/reader.go:#interp" > "$xbase/scripts/ci/lint-lake-dedup.baseline"
+printf '%s  1 read: census constant, compared against system.parts\n' "$GODIR/reader.go:#interp" > "$xbase/scripts/ci/lint-lake-dedup.baseline"
 check "a baselined #interp file is not reported" 0 "$xbase"
+
+# The #interp entry pins how many reads it excuses, so it can neither hide
+# the file's next unexaminable read nor outlive the ones it names.
+xbase2="$(mk xbase2)"
+printf 'package clickhouse\n\nvar q = "SELECT count() FROM stellar." + t + " WHERE a = 1"\n\nvar q2 = "SELECT sum(amount) FROM stellar." + t + " WHERE a = 2"\n' > "$xbase2/$GODIR/reader.go"
+mkdir -p "$xbase2/scripts/ci"
+printf '%s  1 read: census constant, compared against system.parts\n' "$GODIR/reader.go:#interp" > "$xbase2/scripts/ci/lint-lake-dedup.baseline"
+check "a second unexaminable read in a baselined #interp file fails" 1 "$xbase2"
+
+xstale="$(mk xstale)"
+mkdir -p "$xstale/scripts/ci"
+printf '%s  1 read: census constant, compared against system.parts\n' "$GODIR/detail_reader.go:#interp" > "$xstale/scripts/ci/lint-lake-dedup.baseline"
+check "an #interp entry for a file with no unexaminable read is stale" 1 "$xstale"
+
+xnocount="$(mk xnocount)"
+printf 'package clickhouse\n\nvar q = "SELECT count() FROM stellar." + t + " WHERE a = 1"\n' > "$xnocount/$GODIR/reader.go"
+mkdir -p "$xnocount/scripts/ci"
+printf '%s  census constant, compared against system.parts\n' "$GODIR/reader.go:#interp" > "$xnocount/scripts/ci/lint-lake-dedup.baseline"
+check "an #interp entry that does not state its read count is refused" 1 "$xnocount"
+
+xkind="$(mk xkind)"
+mkdir -p "$xkind/scripts/ci"
+printf '%s  an entry of a kind the gate has no staleness rule for\n' "$GODIR/detail_reader.go:#other" > "$xkind/scripts/ci/lint-lake-dedup.baseline"
+check "a baseline key of an unknown kind is refused" 1 "$xkind"
+
+# ── the consumer of a non-collapsing block, wherever it sits ─────────
+probe cte_chain "an aggregate in a later CTE over a lake CTE is caught" stellar.transactions \
+  'WITH t AS (SELECT fee_charged AS fee FROM stellar.transactions WHERE ledger_seq > 1), s AS (SELECT sum(fee) AS total FROM t) SELECT total FROM s;'
+probe cte_sub "an aggregate in a subquery over a lake CTE is caught" stellar.transactions \
+  'WITH t AS (SELECT fee_charged AS fee FROM stellar.transactions WHERE ledger_seq > 1) SELECT x FROM (SELECT sum(fee) AS x FROM t);'
+probe win_sub "a window max() OVER in a subquery is not a collapse" stellar.transactions \
+  'SELECT sum(fee) FROM (SELECT fee_charged AS fee, max(ingested_at) OVER (PARTITION BY tx_hash) AS m FROM stellar.transactions);'
+probe win_cte "a window max() OVER in a CTE is not a collapse" stellar.supply_flows \
+  'WITH t AS (SELECT amount, max(ledger_seq) OVER (PARTITION BY asset) AS m FROM stellar.supply_flows WHERE ledger_seq > 1) SELECT sum(amount) FROM t;'
+probe max2 "the scalar max2() is not a collapse" stellar.supply_flows \
+  'SELECT sum(amt) FROM (SELECT max2(amount, 0) AS amt FROM stellar.supply_flows WHERE ledger_seq > 1);'
+probe minus "the scalar minus() is not a collapse" stellar.supply_flows \
+  'SELECT sum(a) FROM (SELECT minus(amount, fee) AS a FROM stellar.supply_flows);'
+probe par_union "a sum() over a parenthesised UNION ALL arm is caught" stellar.supply_flows \
+  'SELECT sum(a) FROM ((SELECT amount AS a FROM stellar.supply_flows) UNION ALL (SELECT amount AS a FROM stellar.account_movements));'
+
+cte_quiet="$(mk cte_quiet)"
+cat > "$cte_quiet/$SQLDIR/q.sql" <<'SQL'
+WITH t AS (SELECT amount FROM stellar.supply_flows WHERE ledger_seq > 1) SELECT amount FROM t LIMIT 10;
+WITH t AS (SELECT id, amount, ingested_at FROM stellar.supply_flows), u AS (SELECT argMax(amount, ingested_at) AS a FROM t GROUP BY id) SELECT sum(a) FROM u;
+SELECT count() FROM (SELECT maxIf(amount, amount > 0) AS m FROM stellar.supply_flows);
+SQL
+check "a CTE read by a detail select, a collapsing CTE, and maxIf() pass" 0 "$cte_quiet"
+
+# gprobe <name> <desc> <table> <go-source>: the same, carried in a Go file.
+gprobe() {
+  local d
+  d="$(mk "$1")"
+  printf '%s\n' "$4" > "$d/$GODIR/probe.go"
+  catches "$2" "$d" "$3"
+}
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+gprobe split_cte "a CTE body in its own constant fails closed" stellar.supply_flows \
+  'package clickhouse
+
+const legsCTE = `legs AS (SELECT asset, amount FROM stellar.supply_flows WHERE ledger_seq > ?)`
+
+const q = `WITH ` + legsCTE + ` SELECT asset, sum(amount) FROM legs GROUP BY asset`'
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+gprobe splice_cte "a CTE consumer after a call splice in WHERE is caught" stellar.supply_flows \
+  'package clickhouse
+
+var q = `WITH t AS (SELECT amount FROM stellar.supply_flows WHERE ledger_seq IN (` + joinIDs(list) + `)) SELECT sum(amount) FROM t`'
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+gprobe splice_having "a HAVING count() after a call splice in WHERE is caught" stellar.operations \
+  'package clickhouse
+
+var q = `SELECT op_type FROM stellar.operations WHERE ledger_seq IN (` + joinIDs(c) + `) GROUP BY op_type HAVING count() > 1`'
+
+xidx="$(mk xidx)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = fmt.Sprintf(`SELECT sum(fee_charged) FROM stellar.%%[1]s WHERE ledger_seq > 1`, t)\n' > "$xidx/$GODIR/reader.go"
+check "an indexed Sprintf verb after stellar. is watched" 1 "$xidx"
+
+xcall="$(mk xcall)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = `SELECT count() FROM ` + tableFor(x) + ` WHERE a = 1`\n' > "$xcall/$GODIR/reader.go"
+check "a FROM spliced to a call expression fails" 1 "$xcall"
+
+# ── every ReplacingMergeTree DDL shape is derived ────────────────────
+ddlprobe() { # ddlprobe <name> <desc> <file> <ddl>
+  local d
+  d="$(mk "$1")"
+  printf '%s\n' "$4" > "$d/$3"
+  check "$2" 1 "$d"
+}
+ddlprobe ddl_ml "a two-line ENGINE = ReplacingMergeTree is derived" "$SQLDIR/a.sql" \
+  'CREATE TABLE IF NOT EXISTS stellar.brand_alpha (a UInt32)
+ENGINE =
+    ReplacingMergeTree(v)
+ORDER BY a;'
+ddlprobe ddl_noeq "ENGINE ReplacingMergeTree with no = is derived" "$SQLDIR/b.sql" \
+  'CREATE TABLE IF NOT EXISTS stellar.brand_beta (a UInt32) ENGINE ReplacingMergeTree ORDER BY a;'
+# shellcheck disable=SC2016  # backticks are SQL identifier quotes
+ddlprobe ddl_bt "a backtick-quoted stellar.name is derived" "$SQLDIR/c.sql" \
+  'CREATE TABLE `stellar`.`brand_gamma` (a UInt32) ENGINE = ReplacingMergeTree ORDER BY a;'
+ddlprobe ddl_tab "CREATE<TAB>TABLE is derived" "$SQLDIR/d.sql" \
+  "$(printf 'CREATE\tTABLE stellar.brand_delta (a UInt32) ENGINE = ReplacingMergeTree ORDER BY a;')"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+ddlprobe ddl_go "Go DDL with a Sprintf database is derived" "$GODIR/ddl.go" \
+  'package clickhouse
+
+const ddl = `CREATE TABLE IF NOT EXISTS %s.brand_eps (a UInt32)
+ENGINE = ReplacingMergeTree
+ORDER BY a`'
+
+ddlquiet="$(mk ddlquiet)"
+printf 'CREATE TABLE stellar.plain_mt (a UInt32) ENGINE = MergeTree ORDER BY a;\nCREATE TABLE stellar.supply_flows (a UInt32)\nENGINE = ReplacingMergeTree(v) ORDER BY a;\n' > "$ddlquiet/$SQLDIR/e.sql"
+check "a MergeTree beside a watched ReplacingMergeTree is not derived" 0 "$ddlquiet"
 
 newrmt="$(mk newrmt)"
 printf 'CREATE TABLE IF NOT EXISTS stellar.brand_new_rollup (a UInt32)\nENGINE = ReplacingMergeTree(ingested_at)\nORDER BY a;\n' > "$newrmt/$SQLDIR/brand_new.sql"
