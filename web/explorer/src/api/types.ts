@@ -18466,11 +18466,24 @@ export interface operations {
                                 backstop_token?: string;
                                 /** @description Backstop deposits across the protocol's pools, base units of `backstop_token`. */
                                 tokens?: string;
+                                /** @description `tokens` at the token's CURRENT price and decimals (the reserve valuation path), 2-dp; null with `usd_reason` when it cannot be valued exactly. */
+                                tokens_usd?: string | null;
+                                /** @description True when the price behind `tokens_usd` is past its freshness window. */
+                                price_stale?: boolean;
+                                /**
+                                 * @description Why `tokens_usd` is null; `lp_share_unvalued` for Blend's Comet BLND:USDC LP backstop token.
+                                 * @enum {string|null}
+                                 */
+                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "negative_amount" | null;
                             }[];
                             /** @description True when a `pool_list`, `pool` or `reserve` exclusion leaves something out of the USD totals, which are then floors. */
                             lower_bound?: boolean;
                             /** @description True when a `backstop` exclusion leaves a pool's deposits out of the `backstop` sums, which are then floors. */
                             backstop_lower_bound?: boolean;
+                            /** @description Sum of the `backstop` entries' `tokens_usd`; null when none is valued. */
+                            backstop_total_usd?: string | null;
+                            /** @description True when `backstop_total_usd` leaves out an unvalued `backstop` entry or a pool's backstop (`backstop_lower_bound`); the total is then a floor. */
+                            backstop_usd_lower_bound?: boolean;
                             /** @description Kinds `pool_list`, `pool`, `reserve`, `backstop` and `token`; `supply` and `borrow` are an account's earnings legs. */
                             excluded?: components["schemas"]["LendingStatsExclusion"][];
                         }[];
@@ -18941,7 +18954,22 @@ export interface operations {
                                 backstop_token: string | null;
                                 /** @description BLNT tier's configured take-rate weight (1..100, raw contract integer); null for Blend and when unread. */
                                 take_rate_weight: number | null;
+                                /** @description `tokens` at the tier token's CURRENT `price_usd` and decimals (the reserve valuation path), 2-dp decimal string; null with `usd_reason` when it cannot be valued exactly. */
+                                tokens_usd?: string | null;
+                                /** @description USD per whole backstop token used for `tokens_usd`; null when unvalued. */
+                                price_usd?: string | null;
+                                /** @description True when `price_usd` is the newest price but past its freshness window. */
+                                price_stale?: boolean;
+                                /**
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: a Blend backstop holds Comet BLND:USDC LP shares, which have no valuation here.
+                                 * @enum {string|null}
+                                 */
+                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "negative_amount" | null;
                             }[];
+                            /** @description Sum of the tiers' `tokens_usd`; null when no tier is valued. */
+                            total_usd?: string | null;
+                            /** @description True when `total_usd` leaves out a tier with no `tokens_usd`; the total is then a floor. */
+                            lower_bound?: boolean;
                         };
                     };
                 };

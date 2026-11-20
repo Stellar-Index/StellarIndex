@@ -48,8 +48,11 @@ type LendingProtocolStats struct {
 	// LowerBound covers the USD totals: a pool_list, pool or reserve exclusion leaves something out of them.
 	LowerBound bool `json:"lower_bound"`
 	// BackstopLowerBound covers the backstop sums: a backstop exclusion leaves a pool's deposits out of them.
-	BackstopLowerBound bool                    `json:"backstop_lower_bound"`
-	Excluded           []LendingStatsExclusion `json:"excluded"`
+	BackstopLowerBound bool `json:"backstop_lower_bound"`
+	// BackstopTotalUSD sums the valued backstop[] tokens_usd; BackstopUSDLowerBound when an entry or a pool's backstop is left out.
+	BackstopTotalUSD      *string                 `json:"backstop_total_usd"`
+	BackstopUSDLowerBound bool                    `json:"backstop_usd_lower_bound"`
+	Excluded              []LendingStatsExclusion `json:"excluded"`
 }
 
 // LendingProtocolToken is the protocol token's price, supply and market cap as /v1/assets/{id} serves them.
@@ -68,6 +71,10 @@ type LendingProtocolToken struct {
 type LendingProtocolBackstop struct {
 	BackstopToken string `json:"backstop_token"`
 	Tokens        string `json:"tokens"`
+	// TokensUSD is tokens at the token's current price; null with USDReason when it cannot be valued exactly.
+	TokensUSD  *string `json:"tokens_usd"`
+	PriceStale bool    `json:"price_stale"`
+	USDReason  *string `json:"usd_reason"`
 }
 
 // LendingStatsExclusion names what a protocol's or an account's figures leave out and why.
@@ -171,6 +178,7 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 			st.BackstopLowerBound = st.BackstopLowerBound || e.Kind == "backstop"
 			flags.Degraded = flags.Degraded || e.readFailed()
 		}
+		flags.Stale = s.valueProtocolBackstop(ctx, &st) || flags.Stale
 		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}

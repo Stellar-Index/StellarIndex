@@ -3979,8 +3979,16 @@ paths:
                                 properties:
                                   backstop_token: { type: string, description: Backstop token contract C-strkey. }
                                   tokens:         { type: string, description: "Backstop deposits across the protocol's pools, base units of `backstop_token`." }
+                                  tokens_usd:     { type: [string, "null"], description: "`tokens` at the token's CURRENT price and decimals (the reserve valuation path), 2-dp; null with `usd_reason` when it cannot be valued exactly." }
+                                  price_stale:    { type: boolean, description: "True when the price behind `tokens_usd` is past its freshness window." }
+                                  usd_reason:
+                                    type: [string, "null"]
+                                    enum: [lp_share_unvalued, unpriced, decimals_unknown, price_scale_mismatch, balance_unavailable, negative_amount, null]
+                                    description: "Why `tokens_usd` is null; `lp_share_unvalued` for Blend's Comet BLND:USDC LP backstop token."
                             lower_bound:          { type: boolean, description: "True when a `pool_list`, `pool` or `reserve` exclusion leaves something out of the USD totals, which are then floors." }
                             backstop_lower_bound: { type: boolean, description: "True when a `backstop` exclusion leaves a pool's deposits out of the `backstop` sums, which are then floors." }
+                            backstop_total_usd:   { type: [string, "null"], description: "Sum of the `backstop` entries' `tokens_usd`; null when none is valued." }
+                            backstop_usd_lower_bound: { type: boolean, description: "True when `backstop_total_usd` leaves out an unvalued `backstop` entry or a pool's backstop (`backstop_lower_bound`); the total is then a floor." }
                             excluded:
                               type: array
                               description: "Kinds `pool_list`, `pool`, `reserve`, `backstop` and `token`; `supply` and `borrow` are an account's earnings legs."
@@ -4432,7 +4440,16 @@ paths:
                                 backstop_asset: { type: [string, "null"], enum: [BlntXlm, BlntUsdc, Usdc, Xlm, null], description: "BLNT tier's configured BackstopAsset; null for Blend and when the configuration is unread." }
                                 backstop_token: { type: [string, "null"], description: "Token contract of the tier's backstop_asset, from the backstop's instance; null for Blend and when unread." }
                                 take_rate_weight: { type: [integer, "null"], description: "BLNT tier's configured take-rate weight (1..100, raw contract integer); null for Blend and when unread." }
+                                tokens_usd: { type: [string, "null"], description: "`tokens` at the tier token's CURRENT `price_usd` and decimals (the reserve valuation path), 2-dp decimal string; null with `usd_reason` when it cannot be valued exactly." }
+                                price_usd: { type: [string, "null"], description: "USD per whole backstop token used for `tokens_usd`; null when unvalued." }
+                                price_stale: { type: boolean, description: "True when `price_usd` is the newest price but past its freshness window." }
+                                usd_reason:
+                                  type: [string, "null"]
+                                  enum: [lp_share_unvalued, unpriced, decimals_unknown, price_scale_mismatch, balance_unavailable, negative_amount, null]
+                                  description: "Why `tokens_usd` is null. `lp_share_unvalued`: a Blend backstop holds Comet BLND:USDC LP shares, which have no valuation here."
                               required: [tier, tokens, shares, queued_shares, queued_pct, backstop_asset, backstop_token, take_rate_weight]
+                          total_usd: { type: [string, "null"], description: "Sum of the tiers' `tokens_usd`; null when no tier is valued." }
+                          lower_bound: { type: boolean, description: "True when `total_usd` leaves out a tier with no `tokens_usd`; the total is then a floor." }
                         required: [pool, protocol, available, backstop, backstop_token, take_rate, config_decimals, tiers]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
