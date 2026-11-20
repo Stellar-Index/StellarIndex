@@ -40,9 +40,17 @@ func TestMayRevoke(t *testing.T) {
 			t.Errorf("%s: MayRevoke = %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	for tier, want := range map[Tier]bool{TierOperator: true, TierSEP10: true, TierAPIKey: false} {
-		if got := RevokeActorOf(Subject{Tier: tier, KeyID: "kid_x"}).AnyKey; got != want {
-			t.Errorf("RevokeActorOf(%s).AnyKey = %v, want %v", tier, got, want)
+	for _, tc := range []struct {
+		subject Subject
+		want    bool
+	}{
+		{Subject{Tier: TierOperator, KeyID: "kid_x"}, true},
+		{Subject{Tier: TierSEP10}, true},
+		{Subject{Tier: TierSEP10, KeyID: "kid_x"}, false},
+		{Subject{Tier: TierAPIKey, KeyID: "kid_x"}, false},
+	} {
+		if got := RevokeActorOf(tc.subject).AnyKey; got != tc.want {
+			t.Errorf("RevokeActorOf(tier %s, key %q).AnyKey = %v, want %v", tc.subject.Tier, tc.subject.KeyID, got, tc.want)
 		}
 	}
 }
