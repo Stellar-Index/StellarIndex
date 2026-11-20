@@ -4,9 +4,10 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { Fact, FactList } from '@/components/ui/Facts';
+import { CopyButton } from '@/components/ui';
 import { asExample } from '@/api/client';
+import { formatCompactUnits, truncateMiddle } from '@/lib/format';
 import { fixedPct, poolStatusText } from '../poolConfig';
-import { amountText } from '../lendingInsights';
 import { usePoolReserves } from './usePoolReserves';
 
 function addressHref(a: string): string {
@@ -17,13 +18,22 @@ function addressHref(a: string): string {
 function AddressValue({ value }: { value: string | undefined }) {
   if (!value) return <>—</>;
   return (
-    <Link
-      href={addressHref(value)}
-      className="text-brand-600 break-all hover:underline"
-    >
-      {value}
-    </Link>
+    <span className="inline-flex items-center gap-1 font-mono">
+      <Link
+        href={addressHref(value)}
+        className="text-brand-600 hover:underline"
+        title={value}
+      >
+        {truncateMiddle(value, 6, 6)}
+      </Link>
+      <CopyButton value={value} />
+    </span>
   );
+}
+
+/** Raw i128 in the oracle's base unit, which the API does not name: compact, exact on hover. */
+function minCollateralText(raw: string): string {
+  return `${formatCompactUnits(raw)} base units`;
 }
 
 export function PoolDetails({ pool }: { pool: string }) {
@@ -58,9 +68,12 @@ export function PoolDetails({ pool }: { pool: string }) {
             ? cfg.max_positions.toLocaleString('en-US')
             : '—'}
         </Fact>
-        <Fact label="Min collateral" title={cfg.min_collateral}>
+        <Fact
+          label="Min collateral"
+          title={cfg.min_collateral && `${cfg.min_collateral} base units`}
+        >
           {cfg.min_collateral != null
-            ? amountText(cfg.min_collateral, null)
+            ? minCollateralText(cfg.min_collateral)
             : '—'}
         </Fact>
       </FactList>

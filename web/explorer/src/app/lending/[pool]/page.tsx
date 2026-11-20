@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import {
   Badge,
   Container,
+  Mono,
   PageHeader,
   Stat,
   StatCell,
@@ -19,8 +20,10 @@ import type { paths } from '@/api/types';
 import { LendingPoolPathView } from './LendingPoolPathView';
 import { AuctionsPanel } from './AuctionsPanel';
 import { BackstopPanel } from './BackstopPanel';
+import { EmissionsPanel } from './EmissionsPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
+import { PoolHeadlineStats } from './PoolHeadlineStats';
 import { PoolReserves } from './PoolReserves';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { LENDING_POOL_META, poolProtocol } from '../poolMeta';
@@ -170,21 +173,20 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           { label: 'Lending', href: '/lending' },
           { label: poolName },
         ]}
-        title={
-          <span className="font-mono break-all">
-            {pool.slice(0, 8)}…{pool.slice(-8)}
-          </span>
-        }
+        title={label?.name ?? `${protocol?.name ?? 'Lending'} pool`}
         meta={
           <span className="flex flex-wrap items-center gap-2">
             {protocol && <Badge>{protocol.name}</Badge>}
-            {label && <Badge tone="brand">{label.name}</Badge>}
+            <Mono
+              value={pool}
+              truncate={{ head: 8, tail: 8 }}
+              className="text-ink-muted text-xs"
+            />
             {label?.deployedAt && <span>deployed {label.deployedAt}</span>}
           </span>
         }
       />
       <div className="text-ink-muted space-y-2 text-xs">
-        <p className="font-mono break-all">{pool}</p>
         {label?.initiator && (
           <p>
             Deployed by{' '}
@@ -231,6 +233,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         </Panel>
       )}
 
+      <PoolHeadlineStats pool={pool} />
       <StatGrid cols={4} className="grid-cols-2">
         <StatCell>
           <Stat
@@ -268,10 +271,15 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           Auction statistics are unavailable for this build.
         </p>
       )}
-      <PoolDetails pool={pool} />
       <PoolReserves pool={pool} />
       <BackstopPanel pool={pool} />
-      <AuctionsPanel pool={pool} />
+      <EmissionsPanel pool={pool} />
+      <AuctionsPanel
+        pool={pool}
+        total={listed ? (data?.auctions_total ?? 0) : null}
+        lastSeen={data?.last_seen ?? null}
+      />
+      <PoolDetails pool={pool} />
       <ConfigHistory pool={pool} />
     </Container>
   );

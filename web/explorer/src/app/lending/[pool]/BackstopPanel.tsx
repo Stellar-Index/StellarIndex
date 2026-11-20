@@ -1,15 +1,21 @@
 'use client';
 
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
+import { InlineMeter } from '@/components/charts/Bars';
 import { Button } from '@/components/ui';
 import { Fact, FactList } from '@/components/ui/Facts';
 import { apiGet, asExample } from '@/api/client';
 import type { paths } from '@/api/types';
-import { formatCompact } from '@/lib/format';
+import {
+  formatCompact,
+  formatCompactUnits,
+  formatReadable,
+  ratioPct,
+  sumDecimalStrings,
+} from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
 import { fixedPct } from '../poolConfig';
 import {
@@ -76,7 +82,15 @@ function BackstopHistory({ pool }: { pool: string }) {
   const d = q.data;
   if (!d) return null;
   return (
-    <div className="space-y-4">
+    <div
+      className={
+        d.tiers.length > 2
+          ? 'grid gap-4 lg:grid-cols-3'
+          : d.tiers.length === 2
+            ? 'grid gap-4 lg:grid-cols-2'
+            : 'space-y-4'
+      }
+    >
       {d.tiers.map((t) => {
         const label = tierLabel(t.tier) ?? 'Backstop';
         const series = carryForward(
@@ -119,7 +133,7 @@ function BackstopHistory({ pool }: { pool: string }) {
         );
       })}
       {d.history_through_time && (
-        <p className="text-ink-muted text-xs">
+        <p className="text-ink-muted text-xs lg:col-span-full">
           Data through {d.history_through_time.slice(0, 16).replace('T', ' ')}{' '}
           UTC. Each value holds until the next change.
         </p>
@@ -128,57 +142,131 @@ function BackstopHistory({ pool }: { pool: string }) {
   );
 }
 
-function TierFacts({ tier, many }: { tier: Tier; many: boolean }) {
+// `tokens_usd` ships in a later API release; read it when the response has it.
+type TierUsd = Tier & { tokens_usd?: string | null };
+
+const assetKey = (t: Tier) => t.backstop_token ?? t.backstop_asset ?? '';
+
+function AssetName({ tier }: { tier: Tier }) {
+  const named =
+    tier.backstop_asset && BACKSTOP_ASSET_LABELS[tier.backstop_asset];
+  if (named)
+    return <span title={tier.backstop_token ?? undefined}>{named}</span>;
+  if (tier.backstop_token) return <AssetLink canonical={tier.backstop_token} />;
+  return <>{tier.backstop_asset ?? '—'}</>;
+}
+
+function TierFacts({ tier, many }: { tier: TierUsd; many: boolean }) {
   const label = tierLabel(tier.tier);
-  const dash = '—';
+  const tokens =
+    tier.tokens == null
+      ? null
+      : formatCompactUnits(tier.tokens, BACKSTOP_DECIMALS);
+  const usd = formatReadable(tier.tokens_usd, true);
   return (
-    <div className="space-y-2">
-      {many && label && (
-        <h3 className="text-ink text-sm font-medium">{label}</h3>
-      )}
-      <FactList columns={3}>
-        <Fact label="Backstop tokens" title={tier.tokens ?? undefined}>
-          {tier.tokens == null
-            ? dash
-            : amountText(tier.tokens, BACKSTOP_DECIMALS)}
-        </Fact>
-        <Fact label="Shares" title={tier.shares ?? undefined}>
-          {tier.shares == null
-            ? dash
-            : amountText(tier.shares, BACKSTOP_DECIMALS)}
-        </Fact>
-        <Fact
-          label="Queued for withdrawal"
-          title={tier.queued_shares ?? undefined}
-        >
-          {tier.queued_shares == null
-            ? dash
-            : `${amountText(tier.queued_shares, BACKSTOP_DECIMALS)} shares${
-                tier.queued_pct != null
-                  ? ` (${tier.queued_pct.toFixed(2)}%)`
-                  : ''
-              }`}
-        </Fact>
-        {tier.backstop_asset && (
-          <Fact label="Backstop asset">
-            {tier.backstop_token ? (
-              <AssetLink canonical={tier.backstop_token} />
-            ) : (
-              (BACKSTOP_ASSET_LABELS[tier.backstop_asset] ??
-              tier.backstop_asset)
-            )}
-          </Fact>
+    <div className="border-line space-y-2 rounded-xs border p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        {many && label && (
+          <h3 className="text-ink text-sm font-medium">{label}</h3>
         )}
         {tier.take_rate_weight != null && (
-          <Fact label="Take-rate weight">{tier.take_rate_weight}</Fact>
+          <span className="text-ink-muted text-xs">
+            take-rate weight {tier.take_rate_weight}
+          </span>
         )}
-      </FactList>
+      </div>
+      <div
+        className="text-ink font-mono text-xl tabular-nums"
+        title={
+          tier.tokens != null
+            ? `${amountText(tier.tokens, BACKSTOP_DECIMALS)} tokens`
+            : undefined
+        }
+      >
+        {usd ?? tokens ?? '—'}
+      </div>
+      <div className="text-ink-muted text-xs">
+        {usd && tokens ? `${tokens} ` : ''}
+        <AssetName tier={tier} />
+      </div>
+      {tier.queued_pct != null && Number.isFinite(tier.queued_pct) && (
+        <div
+          className="text-ink-muted flex items-center gap-2 text-xs"
+          title={
+            tier.queued_shares != null
+              ? `${amountText(tier.queued_shares, BACKSTOP_DECIMALS)} shares queued`
+              : undefined
+          }
+        >
+          <InlineMeter
+            frac={tier.queued_pct / 100}
+            label={`${tier.queued_pct.toFixed(1)}% of shares queued for withdrawal`}
+            color="var(--color-chart-4)"
+            className="w-20"
+          />
+          <span>
+            <span className="text-ink font-mono tabular-nums">
+              {tier.queued_pct.toFixed(1)}%
+            </span>{' '}
+            queued for withdrawal
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TIER_COLORS = [
+  'var(--color-chart-1)',
+  'var(--color-chart-3)',
+  'var(--color-chart-4)',
+];
+
+/** Relative tier size; drawn only when every tier is the same asset, so the sizes compare. */
+function TierShare({ tiers }: { tiers: Tier[] }) {
+  if (tiers.length < 2) return null;
+  const key = assetKey(tiers[0]);
+  if (!key || tiers.some((t) => assetKey(t) !== key || t.tokens == null))
+    return null;
+  const total = sumDecimalStrings(tiers.map((t) => t.tokens));
+  const parts = tiers.map((t, i) => ({
+    label: tierLabel(t.tier) ?? `Tier ${i + 1}`,
+    pct: ratioPct(t.tokens, total, 1) ?? 0,
+    color: TIER_COLORS[i % TIER_COLORS.length],
+  }));
+  return (
+    <div className="space-y-1.5">
+      <div
+        role="img"
+        aria-label={`Tier sizes: ${parts.map((p) => `${p.label} ${p.pct}%`).join(', ')}`}
+        className="flex h-2 w-full gap-px overflow-hidden rounded-xs"
+      >
+        {parts.map((p) => (
+          <span
+            key={p.label}
+            className="min-w-[3px]"
+            style={{ width: `${p.pct}%`, backgroundColor: p.color }}
+          />
+        ))}
+      </div>
+      <ul className="text-ink-muted flex flex-wrap gap-x-4 text-xs">
+        {parts.map((p) => (
+          <li key={p.label} className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block h-2 w-2 rounded-xs"
+              style={{ backgroundColor: p.color }}
+            />
+            {p.label}{' '}
+            <span className="text-ink font-mono tabular-nums">{p.pct}%</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
 
 export function BackstopPanel({ pool }: { pool: string }) {
-  const [showHistory, setShowHistory] = useState(false);
   const q = useQuery({
     queryKey: ['/v1/lending/pools/{pool}/backstop', pool],
     retry: false,
@@ -235,25 +323,17 @@ export function BackstopPanel({ pool }: { pool: string }) {
               No backstop balances recorded for this pool.
             </p>
           )}
-          {d.tiers.map((t) => (
-            <TierFacts
-              key={t.tier ?? 'single'}
-              tier={t}
-              many={d.tiers.length > 1}
-            />
-          ))}
-          {d.tiers.length > 0 &&
-            (showHistory ? (
-              <BackstopHistory pool={pool} />
-            ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShowHistory(true)}
-              >
-                Show size over time
-              </Button>
+          <TierShare tiers={d.tiers} />
+          <div className="grid gap-3 md:grid-cols-3">
+            {d.tiers.map((t) => (
+              <TierFacts
+                key={t.tier ?? 'single'}
+                tier={t}
+                many={d.tiers.length > 1}
+              />
             ))}
+          </div>
+          {d.tiers.length > 0 && <BackstopHistory pool={pool} />}
         </>
       )}
     </Panel>

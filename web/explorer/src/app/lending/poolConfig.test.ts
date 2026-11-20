@@ -32,6 +32,14 @@ describe('fixedDecimal and supplyCapText', () => {
     expect(fixedDecimal(null, 7)).toBe('—');
     expect(supplyCapText('1000000000', 7)).toBe('100');
     expect(supplyCapText(null, 7)).toBe('—');
+    expect(supplyCapText('100000000000000000', 7)).toBe('10B');
+    for (const max of [
+      '9223372036854775807',
+      '18446744073709551615',
+      '170141183460469231731687303715884105727',
+    ])
+      expect(supplyCapText(max, 7)).toBe('No cap');
+    expect(supplyCapText('9223372036854775806', null)).toBe('—');
   });
 });
 
