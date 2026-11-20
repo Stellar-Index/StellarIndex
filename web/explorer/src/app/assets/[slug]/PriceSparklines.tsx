@@ -5,6 +5,8 @@ import { useState } from 'react';
 import { Segmented } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
+import { useResolvedAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+
 interface Point {
   t: string;
   p?: string | null;
@@ -16,16 +18,31 @@ interface Point {
  * empty. Hides itself entirely when both are too sparse to plot.
  */
 export function PriceSparklines({
+  assetId,
+  priceUSD,
+  priceProvenance,
+  priceStale,
   points24h,
   points7d,
 }: {
+  assetId: string;
+  priceUSD: string | null;
+  priceProvenance: PriceProvenance;
+  priceStale?: boolean;
   points24h: Point[];
   points7d: Point[];
 }) {
+  // The baked series is withdrawn with the headline price, as PerformanceRange is.
+  const resolved = useResolvedAssetPrice(
+    assetId,
+    priceUSD,
+    priceProvenance,
+    priceStale,
+  );
   const has24 = points24h.filter((p) => p.p != null).length >= 2;
   const has7 = points7d.filter((p) => p.p != null).length >= 2;
   const [pref, setPref] = useState<'24h' | '7d'>('24h');
-  if (!has24 && !has7) return null;
+  if (resolved.withheld || (!has24 && !has7)) return null;
   const active = !has24 ? '7d' : !has7 ? '24h' : pref;
   const points = active === '24h' ? points24h : points7d;
 

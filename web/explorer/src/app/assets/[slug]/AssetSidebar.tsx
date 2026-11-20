@@ -11,6 +11,7 @@ import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { PerformanceRange } from './PerformanceRange';
+import { bakedAtDeploy } from './priceProvenance';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 import {
   VOLUME_FLOOR_HINT,
@@ -212,6 +213,7 @@ export function AssetSidebar({
     <div className="space-y-4">
       <Panel
         title="Market"
+        hint={bakedAtDeploy()}
         source={source}
         headingLevel={2}
         bodyClassName="divide-line -mx-4 -mb-4 divide-y"

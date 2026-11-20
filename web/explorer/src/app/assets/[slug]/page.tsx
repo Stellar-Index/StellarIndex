@@ -1090,7 +1090,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <Suspense fallback={null}>
             <ActiveTabSlot
               overview={
-                <OverviewBody coin={coin} detail={detail} price={price} />
+                <OverviewBody
+                  coin={coin}
+                  detail={detail}
+                  price={price}
+                  headlinePrice={headlinePrice}
+                />
               }
               chart={<ChartPanel assetID={coin.asset_id} />}
               markets={
@@ -1165,8 +1170,10 @@ function OverviewBody({
   coin,
   detail,
   price,
+  headlinePrice,
 }: {
   coin: CoinSummary;
+  headlinePrice: string | null;
   detail: AssetDetail | null;
   price: PriceResp | null;
 }) {
@@ -1234,6 +1241,10 @@ function OverviewBody({
             )}
           </div>
           <PriceSparklines
+            assetId={coin.asset_id}
+            priceUSD={headlinePrice}
+            priceProvenance={headlinePriceProvenance(price, coin)}
+            priceStale={Boolean(price?.flags?.stale)}
             points24h={coin.price_history_24h ?? []}
             points7d={coin.price_history_7d ?? []}
           />
