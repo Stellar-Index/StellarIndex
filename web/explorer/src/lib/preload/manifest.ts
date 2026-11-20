@@ -42,6 +42,7 @@ export const PRELOAD_ROUTES: PreloadRoute[] = [
     path: /^\/lending\/?$/,
     urls: ['/v1/lending/pools', '/v1/lending/protocols'],
   },
+  { path: /^\/lending\/rates\/?$/, urls: ['/v1/lending/rates'] },
   {
     path: /^\/assets\/?$/,
     urls: [

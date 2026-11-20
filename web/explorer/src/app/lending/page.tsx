@@ -26,6 +26,11 @@ export default function LendingPage() {
         title="Lending"
         meta="Collateralised lending on Stellar. Blend and BLNT V3 pools, side by side."
       />
+      <nav aria-label="Lending sections" className="flex gap-4 text-sm">
+        <Link href="/lending/rates" className="text-brand-600 hover:underline">
+          Compare rates across pools
+        </Link>
+      </nav>
       <Panel
         headingLevel={2}
         title="Blend"
