@@ -269,6 +269,21 @@ type IssuerSep1Cached struct {
 var sep1PayloadOutlivedSQL = `(COALESCE(sep1_consecutive_failures, 0) > 0
        AND NOT COALESCE(sep1_payload_fetched_at >= NOW() - '` + intervalArg(Sep1AttestationMaxAge) + `'::interval, false))`
 
+// BoundOrgName returns ORG_NAME only when some [[CURRENCIES]] entry lists issuer back: any account may set any home_domain,
+// so an unbound document's org name is the domain's, not the issuer's.
+func (c *IssuerSep1Cached) BoundOrgName(issuer string) (string, bool) {
+	name := strings.TrimSpace(c.OrgName)
+	if name == "" {
+		return "", false
+	}
+	for i := range c.Currencies {
+		if Sep1EntryBindsTo(c.Currencies[i].Issuer, issuer) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // IssuerSep1Currency mirrors [metadata.Currency], the fields /v1/assets/{id} overlays per asset.
 type IssuerSep1Currency struct {
 	Code            string `json:"Code,omitempty"`

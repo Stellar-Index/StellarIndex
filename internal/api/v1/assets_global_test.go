@@ -1324,8 +1324,41 @@ func TestAssetGet_Sep1OverlayNoMatch(t *testing.T) {
 	if env.Data.Name != nil {
 		t.Errorf("should NOT overlay currency fields on issuer mismatch")
 	}
-	if env.Data.OrgName == nil || *env.Data.OrgName != "Someone Else" {
-		t.Errorf("org_name should be surfaced even on no_match: %+v", env.Data.OrgName)
+	// The toml does not list this issuer at all: its ORG_NAME belongs to the domain, not to this issuer.
+	if env.Data.OrgName != nil {
+		t.Errorf("org_name = %q, want absent: the toml lists no currency under this issuer", *env.Data.OrgName)
+	}
+}
+
+func TestAssetGet_Sep1OverlayNoMatchIssuerListedForOtherCode(t *testing.T) {
+	issuer := testUSDCIssuer
+	domain := "example.com"
+	reader := &stubAssetReader{
+		byID: map[string]v1.AssetDetail{
+			"USDC-" + testUSDCIssuer: {
+				AssetID: "USDC-" + testUSDCIssuer, Type: "classic", Code: "USDC",
+				Issuer: &issuer, HomeDomain: &domain, Decimals: 7,
+			},
+		},
+	}
+	sep1 := &stubSep1Cache{
+		byIssuer: map[string]*timescale.IssuerSep1Cached{
+			testUSDCIssuer: {
+				OrgName:    "Bound Org",
+				Currencies: []timescale.IssuerSep1Currency{{Code: "EURC", Issuer: testUSDCIssuer}},
+			},
+		},
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{Assets: reader, Sep1Cache: sep1}))
+	var env struct {
+		Data v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/assets/USDC-"+testUSDCIssuer), &env)
+	if env.Data.Sep1Status != "no_match" {
+		t.Errorf("sep1_status = %q, want no_match", env.Data.Sep1Status)
+	}
+	if env.Data.OrgName == nil || *env.Data.OrgName != "Bound Org" {
+		t.Errorf("org_name = %v, want \"Bound Org\": the toml lists this issuer for another code", env.Data.OrgName)
 	}
 }
 

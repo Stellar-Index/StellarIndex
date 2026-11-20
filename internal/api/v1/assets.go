@@ -2999,14 +2999,14 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	match := findMatchingCachedCurrency(sep, asset)
 	if match == nil {
 		detail.Sep1Status = "no_match"
-		if name := strings.TrimSpace(sep.OrgName); name != "" {
+		if name, ok := sep.BoundOrgName(asset.Issuer); ok {
 			detail.OrgName = &name
 		}
 		return
 	}
 
 	detail.Sep1Status = "verified"
-	applySep1VerifiedFields(detail, sep, match)
+	applySep1VerifiedFields(detail, sep, match, asset.Issuer)
 }
 
 // applySep1VerifiedFields copies the issuer's own [[CURRENCIES]] entry onto the row, split from
@@ -3015,8 +3015,8 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 // answer in place instead of overwriting it with an empty string.
 //
 //nolint:gocyclo // linear field-overlay sequence; splitting would scatter the per-field nil checks across helpers.
-func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cached, match *timescale.IssuerSep1Currency) {
-	if name := strings.TrimSpace(sep.OrgName); name != "" {
+func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cached, match *timescale.IssuerSep1Currency, issuer string) {
+	if name, ok := sep.BoundOrgName(issuer); ok {
 		detail.OrgName = &name
 	}
 	if v := strings.TrimSpace(match.Name); v != "" {
