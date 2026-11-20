@@ -1,6 +1,6 @@
 ---
 title: Runbook — ClickHouse alerts
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: draft
 ---
 # Runbook — ClickHouse server health
@@ -190,7 +190,7 @@ Counter advancing about as fast as `written`: systematic (protocol upgrade chang
 Fix:
 
 1. Systematic: decoder / SDK upgrade; neither `ch-live-catchup` nor a restart helps. See [decode-errors](ingestion.md#stellarindex_ingestion_decode_error).
-2. Isolated, lake path, once the reader is fixed: `stellarindex-ops ch-backfill -config PATH -from <ledger> -to <ledger>` (idempotent), then `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>` for each projected source that read them.
+2. Isolated, lake path, once the reader is fixed: `stellarindex-ops ch-backfill -config PATH -from <ledger> -to <ledger> -write` (idempotent), then `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write` for each projected source that read them.
 3. Isolated, substrate path: `stellarindex-ops census-backfill -config PATH -from <ledger> -to <ledger> -write` (exits non-zero if any ledger is still unreadable).
 4. Verify the counter stops and the substrate has rows:
 

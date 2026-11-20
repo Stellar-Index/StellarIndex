@@ -1,6 +1,6 @@
 ---
 title: Runbook — data freshness alerts
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: draft
 ---
 # Runbook — data freshness
@@ -167,7 +167,7 @@ sudo systemctl start compute-completeness-sdex.service   # or compute-completene
 # equivalent: run-compute-completeness.sh -source <X> -timeout 360m
 ```
 
-A window within a day of ledgers is cleared by the next nightly run. Exception: after `backfill -write [F,T]` on a projected source (not sdex, band or soroswap-router), raw events landed behind the projector cursor and nothing re-projects them; run `stellarindex-ops projector-replay -config PATH -source <X> -from F`.
+A window within a day of ledgers is cleared by the next nightly run. Exception: after `backfill -write [F,T]` on a projected source (not sdex, band or soroswap-router), raw events landed behind the projector cursor and nothing re-projects them; run `stellarindex-ops projector-replay -config PATH -source <X> -from F -write`.
 
 ### Stale: projection evidence older than 10 d 6 h, or unknown
 

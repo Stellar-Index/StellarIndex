@@ -1,6 +1,6 @@
 ---
 title: Runbook — divergence and oracle alerts
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: draft
 ---
 
@@ -56,7 +56,7 @@ psql -d stellarindex -c \
 ### Fix
 
 1. Eyeball the order of magnitude, find the contributing sources and any stale one.
-2. Decoder bug: revert the decoder PR, audit and delete the trades ingested with that version from `trades`, redeploy (postmortem).
+2. Decoder bug: revert or fix the decoder and deploy, then re-derive the affected `(source, ledger range)` with that source's writer, one source at a time. Never delete the rows and stop: the deleted window then under-reports volume and VWAP for good, and CAGG buckets older than the refresh policies' trailing windows keep the corrupted values. Wrong rows on a projected source: `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source <s> -from <from> -to <to> -resume=false -write`; on a non-projected one, `stellarindex-ops ch-rebuild ... -sources <s> -write` (`projector-replay` writes at the broken release's generation and keeps stale `usd_volume`). A shifted key (`ts`, `op_index`) needs the range deleted first, then the same replay. Then `stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -from <from> -to <to> -write`, and confirm a non-zero `trades` count for the range. Details: [rollback.md](../rollback.md) ("Wrong rows") and [adr-0033-data-recovery.md](../adr-0033-data-recovery.md). Postmortem.
 3. Stale source: mitigate per the ingestion runbook; disable a chronically stopped one.
 4. Broken reference: set it `enabled = false` under `[divergence]` and restart aggregator and API.
 5. Verify divergence is under 5% (10% for critical) and the alert clears.

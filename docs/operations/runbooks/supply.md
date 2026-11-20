@@ -1,6 +1,6 @@
 ---
 title: Runbook — supply
-last_verified: 2026-10-21
+last_verified: 2026-11-20
 status: living
 severity: P2
 ---
@@ -120,7 +120,7 @@ stellarindex-ops supply audit USDC-GA5Z... \
     -history-hours 24
 ```
 
-2. Replay Algorithm 3 (projected source `sep41_supply_events`). Decompress the window first ([projector-replay](projector.md#stellarindex_projector_replay_stalled) pre-flight). The command also resets the `sep41_supply_rollup` fold.
+2. Replay Algorithm 3 (projected source `sep41_supply_events`). Decompress the window first ([projector-replay](projector.md#stellarindex_projector_replay_stalled) pre-flight). The command also resets the `sep41_supply_rollup` fold. First check `SELECT max(derive_generation) FROM sep41_supply_events WHERE contract_id = '<C>' AND ledger >= <first-diverging-ledger>`: above 0, a re-derive already stamped those rows and a generation-0 replay leaves them unchanged, so use `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source sep41_supply -from <first-diverging-ledger> -to <last ledger> -resume=false -write` instead. Otherwise:
 
 ```sh
 stellarindex-ops projector-replay -config /etc/stellarindex.toml \
@@ -364,9 +364,9 @@ P3 (`ticket`), `for: 6h`. Expr: per asset, `increase(..._supply_refresh_total{ou
 ### Fix
 
 - No baseline and the auto-seed fails: `stellarindex-ops supply seed-sep41-genesis` for the contract; the log line carries the seed error.
-- Served tier differs from the lake: `stellarindex-ops projector-replay -source sep41_supply` over the range the log names (decompress the chunks first).
+- Served tier differs from the lake: re-derive the range the log names (decompress the chunks first) with `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source sep41_supply -from <from> -to <to> -resume=false -write`. Use `projector-replay -source sep41_supply -from <from> -write` only for rows that are missing: it writes at generation 0 and cannot correct a row a re-derive stamped higher.
 
-Escalate: the sums still differ after a clean replay. Then the lake and the decoder disagree on an event, which a replay cannot fix; compare per-kind counts for the contract in `stellar.supply_flows FINAL` and `sep41_supply_events`.
+Escalate: the sums still differ after a clean `projected-rebuild`, and `max(derive_generation)` over the range shows the rebuild's generation. Then the lake and the decoder disagree on an event, which a replay cannot fix; compare per-kind counts for the contract in `stellar.supply_flows FINAL` and `sep41_supply_events`.
 
 ## stellarindex_aggregator_supply_refresh_dormant_fleet
 
@@ -405,7 +405,7 @@ sudo journalctl -u stellarindex-indexer --since "30 min ago" | grep -i 'projecto
 
 1. Get the projector committing `sep41_supply` cycles (align the watched lists).
 2. Not advancing: [projector-wedged](projector.md#stellarindex_projector_wedged) or [projector-row-quarantined](projector.md#stellarindex_projector_row_quarantined).
-3. Lost cursor: never insert a cursor row by hand (it claims settlement never evidenced). Re-run `stellarindex-ops projector-replay -source sep41_supply` ([projector-replay](projector.md#stellarindex_projector_replay_stalled)).
+3. Lost cursor: never insert a cursor row by hand (it claims settlement never evidenced). Re-run `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source sep41_supply -from <ledger> -write` ([projector-replay](projector.md#stellarindex_projector_replay_stalled)).
 4. Verify `ok` or `noop` resumes on the next rollup pass.
 
 Reset and re-fold: [sep41-mint-recovery](../sep41-mint-recovery.md). 

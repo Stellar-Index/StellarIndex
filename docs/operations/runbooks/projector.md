@@ -1,6 +1,6 @@
 ---
 title: Runbook — projector
-last_verified: 2026-10-06
+last_verified: 2026-11-20
 status: living
 severity: P3
 ---
@@ -227,7 +227,7 @@ Trips on `outcome="sink_i128_overflow"`, `for: 0m`, **`severity: page` (SEV-1)**
 Response:
 
 1. Find the conversion (`git log` the decoder and sink for the source; look for `int64(parts.Lo)`-style narrowing; use `canonical.FromInt128Parts` / `FromUInt128Parts`).
-2. Fix it, then re-drive the WHOLE affected range with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger> -write` (or `projected-rebuild` over ~1M ledgers).
+2. Fix it, then re-derive the WHOLE affected range with `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source <X> -from <from> -to <to> -resume=false -write` at any range size, then `stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -from <from> -to <to> -write` for a trades source. The rows that landed are wrong, not missing: `projector-replay` writes at generation 0, the generation the broken path wrote, so it cannot correct a row a re-derive stamped higher and keeps a stored `usd_volume` the replay cannot price. Use `projector-replay` only for rows that were skipped or quarantined.
 
 ## stellarindex_projector_decode_error_rate_high
 
