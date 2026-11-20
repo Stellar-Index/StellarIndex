@@ -1286,41 +1286,112 @@ func TestClaimableSeed_SameLedgerRemovalCoherence(t *testing.T) {
 	}
 }
 
-// Legacy rows (intra_ledger_seq 0) of two transactions in one ledger have no apply order: tx_hash would pick the creation
-// ("f3…" > "0a…") over the later claim and seed a claimed balance as live. The walk must refuse, naming the ledger.
-func TestClaimableSeed_RefusesUnorderedSameLedgerTransactions(t *testing.T) {
+// cbsLegacyCreateClaim is a legacy (intra_ledger_seq 0) ledger where one tx creates a balance and another claims it; tx_hash orders the
+// creation ("f3…") after the claim ("0a…"), the opposite of apply order. intra > 0 gives the re-derived versions of the same rows.
+func cbsLegacyCreateClaim(t *testing.T, id [32]byte, ledger uint32, ct time.Time, intra uint32) []chstore.LedgerEntryChangeRow {
+	t.Helper()
+	claimIntra := intra
+	if intra > 0 {
+		claimIntra = intra + 1
+	}
+	return []chstore.LedgerEntryChangeRow{
+		{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: fmt.Sprintf("f3cbs%02x", id[0]), IntraLedgerSeq: intra,
+			ChangeType: "created", EntryType: "claimable_balance", KeyXDR: cbsKeyXDR(t, id),
+			EntryXDR: cbsEntryXDR(t, id, cbsAsset(t, "AQUA"), 1_000_000, ledger),
+		},
+		{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: fmt.Sprintf("0acbs%02x", id[0]), IntraLedgerSeq: claimIntra,
+			ChangeType: "removed", EntryType: "claimable_balance", KeyXDR: cbsKeyXDR(t, id),
+		},
+	}
+}
+
+// A removal in a balance's latest ledger settles it whatever the in-ledger order metadata says, and the walk does not error.
+func TestClaimableSeed_LegacyCreateClaimTwoTransactionsNotSeeded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
 
 	id := cbsID(t, 0x0A)
 	const ledger = uint32(36_500_000)
-	ct := time.Date(2022, 7, 1, 0, 0, 0, 0, time.UTC)
 	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
+	if _, err := chstore.InsertEntryChanges(ctx, addr,
+		cbsLegacyCreateClaim(t, id, ledger, time.Date(2022, 7, 1, 0, 0, 0, 0, time.UTC), 0), 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+	if got, ok := cbsSeedsByID(t, ctx, addr, nil)[cbsHex(id)]; ok {
+		t.Errorf("legacy create+claim in one ledger seeded a live balance (%+v)", got)
+	}
+}
 
+// A legacy ledger where another tx also touches the balance (a sponsorship 'updated' row) and an unrelated balance is still seeded.
+func TestClaimableSeed_LegacyLedgerSharedWithOtherTxIsSeeded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	id, other := cbsID(t, 0x0B), cbsID(t, 0x0C)
+	const ledger = uint32(36_600_000)
+	ct := time.Date(2022, 7, 2, 0, 0, 0, 0, time.UTC)
+	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
 	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{
 		{
-			LedgerSeq: ledger, CloseTime: ct, TxHash: "f3cbs0a", OpIndex: 0, ChangeIndex: 0,
-			IntraLedgerSeq: 0, ChangeType: "created", EntryType: "claimable_balance",
-			KeyXDR:   cbsKeyXDR(t, id),
-			EntryXDR: cbsEntryXDR(t, id, cbsAsset(t, "AQUA"), 1_000_000, ledger),
+			LedgerSeq: ledger, CloseTime: ct, TxHash: "0acbs0b", ChangeType: "created", EntryType: "claimable_balance",
+			KeyXDR: cbsKeyXDR(t, id), EntryXDR: cbsEntryXDR(t, id, cbsAsset(t, "AQUA"), 2_500_000, ledger),
 		},
 		{
-			LedgerSeq: ledger, CloseTime: ct, TxHash: "0acbs0a", OpIndex: 0, ChangeIndex: 0,
-			IntraLedgerSeq: 0, ChangeType: "removed", EntryType: "claimable_balance",
-			KeyXDR: cbsKeyXDR(t, id),
+			LedgerSeq: ledger, CloseTime: ct, TxHash: "f3cbs0b", ChangeType: "updated", EntryType: "claimable_balance",
+			KeyXDR: cbsKeyXDR(t, id), EntryXDR: cbsEntryXDR(t, id, cbsAsset(t, "AQUA"), 2_500_000, ledger),
+		},
+		{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: "77cbs0c", ChangeType: "created", EntryType: "claimable_balance",
+			KeyXDR: cbsKeyXDR(t, other), EntryXDR: cbsEntryXDR(t, other, cbsAsset(t, "AQUA"), 7, ledger),
 		},
 	}, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
 	}
+	seeds := cbsSeedsByID(t, ctx, addr, nil)
+	if got, ok := seeds[cbsHex(id)]; !ok || got.Balance.Int64() != 2_500_000 || got.LedgerSeq != ledger {
+		t.Errorf("seed = %+v (present %v), want balance 2500000 at ledger %d", got, ok, ledger)
+	}
+	if got, ok := seeds[cbsHex(other)]; !ok || got.Balance.Int64() != 7 {
+		t.Errorf("unrelated balance seed = %+v (present %v), want balance 7", got, ok)
+	}
+}
 
-	seeded := false
-	_, err := chstore.StreamClaimableBalanceSeeds(ctx, addr, nil, nil, chstore.SeedWalk{}, func(s chstore.ClaimableBalanceSeed) error {
-		seeded = seeded || s.ClaimableID == cbsHex(id)
-		return nil
-	})
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprint(ledger)) {
-		t.Fatalf("err = %v, want a refusal naming ledger %d (seeded this balance: %v)", err, ledger, seeded)
+// Legacy rows and their re-derived versions coexist until a merge; the seed reads one version per identity and is still correct.
+func TestClaimableSeed_LegacyAndRederivedVersionsUnmerged(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	claimed, live := cbsID(t, 0x0D), cbsID(t, 0x0E)
+	const ledger = uint32(36_700_000)
+	ct := time.Date(2022, 7, 3, 0, 0, 0, 0, time.UTC)
+	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
+	liveRow := func(intra uint32) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: "55cbs0e", IntraLedgerSeq: intra, ChangeType: "created",
+			EntryType: "claimable_balance", KeyXDR: cbsKeyXDR(t, live),
+			EntryXDR: cbsEntryXDR(t, live, cbsAsset(t, "AQUA"), 3_000_000, ledger),
+		}
+	}
+	for i, intra := range []uint32{0, 20} {
+		if i > 0 {
+			time.Sleep(1100 * time.Millisecond) // ingested_at is whole seconds: the re-derive must be a newer version
+		}
+		rows := append(cbsLegacyCreateClaim(t, claimed, ledger, ct, intra), liveRow(2*intra))
+		if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+			t.Fatalf("InsertEntryChanges (intra %d): %v", intra, err)
+		}
+	}
+	seeds := cbsSeedsByID(t, ctx, addr, nil)
+	if got, ok := seeds[cbsHex(claimed)]; ok {
+		t.Errorf("claimed balance seeded as live (%+v)", got)
+	}
+	if got, ok := seeds[cbsHex(live)]; !ok || got.Balance.Int64() != 3_000_000 {
+		t.Errorf("live balance seed = %+v (present %v), want balance 3000000", got, ok)
 	}
 }
 
