@@ -8,20 +8,27 @@
 -- as real-time and the closed-bucket readyz check cannot see the drift.
 --
 -- The real-time half reads raw `trades` above the materialization
--- watermark, so flipping an unrefreshed view over a populated `trades`
--- would scan the whole table on every read. The ALTER runs only when the
--- view already holds materialized rows, or `trades` is empty (a fresh
--- install, where the watermark tracks the refresh policy from the start).
--- Otherwise it raises a NOTICE and the operator runs 0187's refresh and
--- then the same ALTER. Re-running it on a view already real-time is a no-op.
+-- watermark, so flipping a view whose watermark lags far behind a populated
+-- `trades` would scan every trade past it on each read. The ALTER runs only
+-- when the watermark is within 6 hours of now (the refresh policy keeps it
+-- there), or `trades` is empty (a fresh install, where the watermark tracks
+-- the refresh policy from the start). Having rows is not enough: a view
+-- refreshed once and then left stale still lags. Otherwise it raises a
+-- NOTICE and the operator refreshes and then runs the same ALTER.
+-- Re-running it on a view already real-time is a no-op.
+
+SET LOCAL lock_timeout = '5s';
 
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM pools_per_source_1h LIMIT 1)
-       OR NOT EXISTS (SELECT 1 FROM trades LIMIT 1) THEN
+    IF NOT EXISTS (SELECT 1 FROM trades LIMIT 1)
+       OR (SELECT _timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(ca.mat_hypertable_id))
+             FROM _timescaledb_catalog.continuous_agg ca
+            WHERE ca.user_view_schema = 'public' AND ca.user_view_name = 'pools_per_source_1h')
+          >= now() - interval '6 hours' THEN
         ALTER MATERIALIZED VIEW pools_per_source_1h SET (timescaledb.materialized_only = false);
     ELSE
-        RAISE NOTICE '0232: pools_per_source_1h is unrefreshed over a populated trades table; left materialized_only. Refresh it (0187 header), then run: ALTER MATERIALIZED VIEW pools_per_source_1h SET (timescaledb.materialized_only = false)';
+        RAISE NOTICE '0232: pools_per_source_1h watermark is more than 6 hours behind a populated trades table; left materialized_only. Refresh it (0187 header), then run: ALTER MATERIALIZED VIEW pools_per_source_1h SET (timescaledb.materialized_only = false)';
     END IF;
 END
 $$;

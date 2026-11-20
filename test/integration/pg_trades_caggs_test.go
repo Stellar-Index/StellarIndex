@@ -2294,3 +2294,82 @@ func assertReadersSkipUnpricedBucket(t *testing.T, ctx context.Context, dsn stri
 	vw, err := store.VWAPsForPair1m(ctx, p, from, to)
 	empty("VWAPsForPair1m", len(vw), err)
 }
+
+// TestMigration0232FlipsOnlyAFreshView: 0232 restores pools_per_source_1h's real-time tail only when its watermark is within 6 hours
+// of now (or trades is empty); a view holding rows but refreshed long ago stays materialized-only, or every read scans raw trades.
+func TestMigration0232FlipsOnlyAFreshView(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	quiesceCAGGRefreshPolicies(t, ctx, db)
+
+	materializedOnly := func() bool {
+		t.Helper()
+		var mo bool
+		if err := db.QueryRowContext(ctx, `SELECT materialized_only FROM timescaledb_information.continuous_aggregates
+			 WHERE view_name = 'pools_per_source_1h'`).Scan(&mo); err != nil {
+			t.Fatalf("read materialized_only: %v", err)
+		}
+		return mo
+	}
+	if materializedOnly() {
+		t.Fatal("empty trades at head: 0232 left the view materialized-only")
+	}
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	m, err := migrate.New("file://"+filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations"), dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	t.Cleanup(func() { _, _ = m.Close() })
+	rerun0232 := func() {
+		t.Helper()
+		if err := m.Migrate(231); err != nil {
+			t.Fatalf("migrate down 0232: %v", err)
+		}
+		if !materializedOnly() {
+			t.Fatal("0232 down did not restore materialized_only")
+		}
+		if err := m.Migrate(232); err != nil {
+			t.Fatalf("migrate up 0232: %v", err)
+		}
+	}
+	refreshUntil := func(until string) {
+		t.Helper()
+		q := `CALL refresh_continuous_aggregate('pools_per_source_1h', now() - interval '4 days', ` + until + `)`
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+
+	t0 := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour)
+	seed(t, db, ctx, ohlcDustPair{base: "FRSH-" + priceableIssuer, quote: "native"}, []seedTrade{
+		{off: 5 * time.Second, base: "10000000", quote: "50000000", usd: "10"},
+	}, t0)
+
+	refreshUntil(`now() - interval '24 hours'`)
+	var rows int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pools_per_source_1h`).Scan(&rows); err != nil || rows == 0 {
+		t.Fatalf("stale refresh materialized %d row(s) (err %v), want > 0", rows, err)
+	}
+	rerun0232()
+	if !materializedOnly() {
+		t.Error("a view with rows but a watermark 24h behind was flipped to real-time")
+	}
+
+	// The watermark is the end of the last materialized bucket holding data, so freshness needs a recent trade as well as a refresh.
+	seed(t, db, ctx, ohlcDustPair{base: "FRSH-" + priceableIssuer, quote: "native"}, []seedTrade{
+		{off: 5 * time.Second, base: "10000000", quote: "50000000", usd: "10"},
+	}, time.Now().UTC().Add(-2*time.Hour).Truncate(time.Hour))
+	refreshUntil(`date_trunc('hour', now())`)
+	rerun0232()
+	if materializedOnly() {
+		t.Error("a view refreshed to the current hour was left materialized-only")
+	}
+}
