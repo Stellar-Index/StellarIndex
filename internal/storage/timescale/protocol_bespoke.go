@@ -27,6 +27,9 @@ type BespokeKPI struct {
 	Value string
 	Unit  string
 	Hint  string
+	// Amount and Token are a token-amount KPI's exact base units and its protocol token's ticker, for serve-time USD; never wire.
+	Amount *big.Int
+	Token  string
 }
 
 // BespokeSeries is a named time-series for a chart.
@@ -685,7 +688,7 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 		return nil // no emission activity captured yet
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: blndUnits(em.ClaimVolume), Unit: "BLND", Hint: "summed blend_emissions claim amount (BLND, 7 decimals)"},
+		BespokeKPI{Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: blndUnits(em.ClaimVolume), Unit: "BLND", Hint: "summed blend_emissions claim amount (BLND, 7 decimals)", Amount: em.ClaimVolume.BigInt(), Token: "BLND"},
 		BespokeKPI{Label: fmt.Sprintf("Claim events (%dd)", windowDays), Value: strconv.FormatInt(em.Claims, 10)},
 		BespokeKPI{Label: fmt.Sprintf("Emission gulps (%dd)", windowDays), Value: strconv.FormatInt(em.Gulps, 10), Hint: "gulp + gulp_emissions accounting events in the window"},
 		BespokeKPI{Label: fmt.Sprintf("Credit-risk events (%dd)", windowDays), Value: strconv.FormatInt(em.CreditRisk, 10), Hint: "bad_debt + defaulted_debt events — a genuine risk signal (unlike sorocredit's scheduled settlements)"},

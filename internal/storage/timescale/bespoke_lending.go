@@ -21,6 +21,9 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 	if source == "sorocredit" {
 		return s.bespokeCredit(ctx, windowDays)
 	}
+	if source == "blnt" {
+		return s.bespokeBLNT(ctx, windowDays)
+	}
 	if source != "blend" {
 		return nil, nil
 	}
