@@ -57,6 +57,7 @@ const POSITION_KIND_LABEL: Record<string, string> = {
 
 const PROTOCOL_LABEL: Record<string, string> = {
   blend: 'Blend',
+  blnt: 'BLNT',
   phoenix: 'Phoenix',
   defindex: 'DeFindex',
   sorocredit: 'sorocredit',
@@ -103,7 +104,8 @@ export function AccountDefiPositionsPanel({ id }: { id: string }) {
   });
 
   const source = asExample(`/v1/accounts/${id}/positions`, queryParams);
-  const panelHint = 'Not valued';
+  const panelHint =
+    'Token amounts; lending positions are valued in Lending positions below';
 
   const filters = (
     <label className="text-ink-muted flex items-center gap-2 text-xs">

@@ -1,6 +1,11 @@
 package v1
 
-import "time"
+import (
+	"context"
+	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+)
 
 // TipStreamDivergenceBudget is the production divergence sub-budget.
 const TipStreamDivergenceBudget = tipStreamDivergenceBudget
@@ -14,6 +19,21 @@ const LivezLakeTTL = livezLakeTTL
 func (s *Server) SetStreamTimingForTest(second, divergenceBudget time.Duration) {
 	s.streamSecondFor, s.tipDivergenceBudgetFor = second, divergenceBudget
 }
+
+// ValueBespokeKPIsForTest runs the serve-time USD valuation of a bespoke block's token KPIs.
+func (s *Server) ValueBespokeKPIsForTest(ctx context.Context, blk *timescale.BespokeBlock, out *ProtocolBespoke) {
+	s.valueBespokeKPIs(ctx, blk, out)
+}
+
+// EnrichBespokeForTest runs enrichBespoke for one protocol and returns the served bespoke block.
+func (s *Server) EnrichBespokeForTest(ctx context.Context, name, category string, windowDays int) *ProtocolBespoke {
+	var view ProtocolDetailView
+	s.enrichBespoke(ctx, ProtocolMeta{Name: name, Category: category}, &view, windowDays)
+	return view.Bespoke
+}
+
+// BespokeFromStoreForTest is bespokeFromStore.
+func BespokeFromStoreForTest(b *timescale.BespokeBlock) *ProtocolBespoke { return bespokeFromStore(b) }
 
 // ClassicSupplyTTL is the production broad classic supply map TTL.
 const ClassicSupplyTTL = classicSupplyTTL

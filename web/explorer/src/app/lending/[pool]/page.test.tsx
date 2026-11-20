@@ -15,7 +15,9 @@ vi.mock('./PoolReserves', () => ({ PoolReserves: () => <div /> }));
 vi.mock('./PoolDetails', () => ({ PoolDetails: () => <div /> }));
 vi.mock('./ConfigHistory', () => ({ ConfigHistory: () => <div /> }));
 vi.mock('./BackstopPanel', () => ({ BackstopPanel: () => <div /> }));
+vi.mock('./EmissionsPanel', () => ({ EmissionsPanel: () => <div /> }));
 vi.mock('./AuctionsPanel', () => ({ AuctionsPanel: () => <div /> }));
+vi.mock('./PoolHeadlineStats', () => ({ PoolHeadlineStats: () => <div /> }));
 
 import { buildFetchData } from '@/lib/buildFetch';
 import LendingPoolPage from './page';

@@ -10,6 +10,7 @@ var typedBespokeHeaders = map[string]BespokeTable{
 	"defindexVaultFlowsHeader":  defindexVaultFlowsHeader,
 	"defindexStrategyHeader":    defindexStrategyHeader,
 	"lendingFlashLoansHeader":   lendingFlashLoansHeader,
+	"blntBackstopFlowHeader":    blntBackstopFlowHeader,
 	"creditSettlementsHeader":   creditSettlementsHeader,
 	"aquariusReservesHeader":    aquariusReservesHeader,
 	"aquariusClaimVolumeHeader": aquariusClaimVolumeHeader,
