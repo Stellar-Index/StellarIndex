@@ -10,6 +10,8 @@ import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { asExample } from '@/api/client';
 import { FreshnessMarker } from '@/components/primitives';
 import {
+  baseUnitsDecimal,
+  multiplyDecimalStrings,
   decimalOrNull,
   compareDecimalStrings,
   formatCompactUnits,
@@ -43,8 +45,70 @@ function tokenAmount(base: string, decimals: number | null): string {
   }).format(n);
 }
 
+const negate = (d: string) => (d.startsWith('-') ? d.slice(1) : `-${d}`);
+
+/**
+ * reserveAvailable — supplied minus borrowed, exact over the decimal
+ * strings: in USD when both sides are priced, else in base units.
+ */
+export function reserveAvailable(rv: {
+  supplied: string;
+  borrowed: string;
+  supplied_usd?: string | null;
+  borrowed_usd?: string | null;
+}): { usd: string | null; units: string | null } {
+  const usd =
+    rv.supplied_usd != null && rv.borrowed_usd != null
+      ? sumDecimalStrings([rv.supplied_usd, negate(rv.borrowed_usd)])
+      : null;
+  return {
+    usd,
+    units: sumDecimalStrings([rv.supplied, negate(rv.borrowed)]),
+  };
+}
+
 function pct(f: number | null): string {
   return f == null ? '—' : `${(f * 100).toFixed(2)}%`;
+}
+
+function AvailableCell({
+  rv,
+}: {
+  rv: Parameters<typeof reserveAvailable>[0] & { decimals: number | null };
+}) {
+  const a = reserveAvailable(rv);
+  const tokens = a.units == null ? '—' : tokenAmount(a.units, rv.decimals);
+  return (
+    <Td
+      align="right"
+      className="hidden font-mono tabular-nums sm:table-cell"
+      title={a.usd != null ? `${tokens} tokens` : undefined}
+    >
+      {a.usd != null ? formatUsdWhole(a.usd) : tokens}
+    </Td>
+  );
+}
+
+function SupplyCapUsd({
+  cap,
+  decimals,
+  price,
+}: {
+  cap: string | null | undefined;
+  decimals: number | null | undefined;
+  price: string | null | undefined;
+}) {
+  const whole = baseUnitsDecimal(cap, decimals);
+  const usd =
+    whole != null && price != null
+      ? multiplyDecimalStrings(whole, price)
+      : null;
+  const shown = formatReadable(usd, true);
+  return shown == null ? null : (
+    <span className="text-ink-muted block text-xs" title={usd ?? undefined}>
+      {shown}
+    </span>
+  );
 }
 
 export function PoolReserves({ pool }: { pool: string }) {
@@ -255,6 +319,9 @@ export function PoolReserves({ pool }: { pool: string }) {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrowed
                 </Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Available
+                </Th>
                 <Th align="right">Util</Th>
                 <Th align="right" className="hidden sm:table-cell">
                   Supply APR
@@ -304,6 +371,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                       ? formatUsdWhole(rv.borrowed_usd)
                       : tokenAmount(rv.borrowed, rv.decimals)}
                   </Td>
+                  <AvailableCell rv={rv} />
                   <Td align="right" className="font-mono tabular-nums">
                     {rv.utilization_pct.toFixed(1)}%
                   </Td>
@@ -352,6 +420,11 @@ export function PoolReserves({ pool }: { pool: string }) {
                       rv.config?.supply_cap,
                       rv.decimals ?? rv.config?.decimals,
                     )}
+                    <SupplyCapUsd
+                      cap={rv.config?.supply_cap}
+                      decimals={rv.decimals ?? rv.config?.decimals}
+                      price={rv.price_usd}
+                    />
                   </Td>
                   <Td align="right">
                     <Button
@@ -369,7 +442,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                 ...(open === rv.asset
                   ? [
                       <TR key={`${rv.asset}-detail`}>
-                        <Td colSpan={11}>
+                        <Td colSpan={12}>
                           <ReserveDetail
                             pool={pool}
                             reserve={rv}

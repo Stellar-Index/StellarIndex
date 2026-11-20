@@ -170,8 +170,9 @@ function PendingPoolStats({ pool }: { pool: string }) {
 export const PENDING_POLL_MS = 3_000;
 export const PENDING_POLL_MAX = 20;
 
-export function LendingPoolsTable() {
-  const q = useQuery<{ rows: LendingPool[]; truncated: boolean }>({
+/** useLendingPools — the shared /v1/lending/pools read, polling while any summary is pending. */
+export function useLendingPools() {
+  return useQuery<{ rows: LendingPool[]; truncated: boolean }>({
     queryKey: ['/v1/lending/pools'],
     refetchInterval: (query) =>
       query.state.data?.rows.some((r) => r.summary_pending) &&
@@ -186,6 +187,10 @@ export function LendingPoolsTable() {
       return { rows: env.data ?? [], truncated: env.flags?.truncated === true };
     },
   });
+}
+
+export function LendingPoolsTable() {
+  const q = useLendingPools();
 
   const rows = q.data?.rows ?? [];
   // A failed BLNT read serves the Blend rows alone; the list is a lower bound.

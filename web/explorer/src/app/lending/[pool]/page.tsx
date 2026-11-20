@@ -21,6 +21,7 @@ import { AuctionsPanel } from './AuctionsPanel';
 import { BackstopPanel } from './BackstopPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
+import { PoolHeadlineStats } from './PoolHeadlineStats';
 import { PoolReserves } from './PoolReserves';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { LENDING_POOL_META, poolProtocol } from '../poolMeta';
@@ -231,6 +232,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         </Panel>
       )}
 
+      <PoolHeadlineStats pool={pool} />
       <StatGrid cols={4} className="grid-cols-2">
         <StatCell>
           <Stat
