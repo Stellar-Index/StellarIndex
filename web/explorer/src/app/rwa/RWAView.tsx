@@ -22,7 +22,7 @@ import {
 import { hasDirectoryScamFlag } from '@/lib/directory-tags';
 import { assetHref } from '@/lib/fiat-slugs';
 import { truncateMiddle } from '@/components/ui/Mono';
-import { SUPPLY_FLOOR_HINT } from '@/lib/supplyFloor';
+import { SUPPLY_FLOOR_HINT, VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 import {
   Badge,
   Callout,
@@ -1713,6 +1713,7 @@ const RWA_CSV_COLUMNS = [
   'premium_pct',
   'premium_status',
   'volume_24h_usd',
+  'volume_lower_bound',
 ] as const;
 
 /** One CSV row per asset, statuses beside each value so a withheld figure stays explained. */
@@ -1740,6 +1741,7 @@ export function rwaCsvRow(a: RWAAsset): Record<string, string> {
     premium_pct: a.premium.pct ?? '',
     premium_status: a.premium.status,
     volume_24h_usd: a.volume_24h_usd ?? '',
+    volume_lower_bound: a.volume_lower_bound ? 'true' : 'false',
   };
 }
 
@@ -1848,6 +1850,8 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
           >
             —
           </span>
+        ) : asset.volume_lower_bound ? (
+          <span title={VOLUME_FLOOR_HINT}>≥ ${volume}</span>
         ) : (
           `$${volume}`
         )}

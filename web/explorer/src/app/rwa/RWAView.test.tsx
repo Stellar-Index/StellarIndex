@@ -1547,4 +1547,22 @@ describe('RWA row identity, reference caption and CSV floor', () => {
     expect(row.reference_provenance).toBe('fund_nav');
     expect(rwaCsvRow(asset()).circulating_supply_lower_bound).toBe('false');
   });
+
+  it('marks a floored 24h volume "≥" in the table and flags it in the CSV', async () => {
+    const floored = { volume_24h_usd: '8214.55', volume_lower_bound: true };
+    show(one(floored));
+    const cell = await screen.findByText('≥ $8.21K');
+    expect(cell).toHaveAttribute('title', expect.stringMatching(/^At least/));
+    expect(rwaCsvRow(asset(floored)).volume_lower_bound).toBe('true');
+    expect(rwaCsvRow(asset(floored)).volume_24h_usd).toBe('8214.55');
+    expect(rwaCsvRow(asset()).volume_lower_bound).toBe('false');
+  });
+
+  it('shows a complete 24h volume above 2^53 exactly, without a mark', async () => {
+    const big = { volume_24h_usd: '9007199254740993.01' };
+    show(one(big));
+    expect(await screen.findByText(/^\$9[\d.,]*[KMBTQ]$/)).toBeInTheDocument();
+    absent(/^≥ \$9/);
+    expect(rwaCsvRow(asset(big)).volume_24h_usd).toBe('9007199254740993.01');
+  });
 });
