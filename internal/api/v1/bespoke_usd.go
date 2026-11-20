@@ -30,10 +30,6 @@ func (s *Server) valueBespokeKPIs(ctx context.Context, blk *timescale.BespokeBlo
 	}
 	prices := map[string]kpiTokenPrice{}
 	for i, k := range blk.KPIs {
-		if k.USDReason != "" {
-			out.KPIs[i].USDReason = k.USDReason
-			continue
-		}
 		if k.Token == "" || k.Amount == nil {
 			continue
 		}

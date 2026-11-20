@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,8 @@ func TestBLNTBespoke_KPIsTablesAndExactAmounts(t *testing.T) {
 		backstop = "CBSTOPBLNTFIXTUREXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 		user     = "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL"
 		asset    = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+
+		undecodedAsset = "CUNDECODEDBLNTFIXTUREXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 	)
 	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
 	ev := func(i uint32, contract, role, kind, tier, assetID, amount, amount2 string, attrs map[string]any) timescale.BLNTEvent {
@@ -55,6 +58,9 @@ func TestBLNTBespoke_KPIsTablesAndExactAmounts(t *testing.T) {
 		ev(9, backstop, br, "withdraw", "FirstLoss", "", "300", "250", nil),
 		ev(10, backstop, br, "deposit", "SecondLoss", "", "55", "50", nil),
 		ev(11, pool, pr, "bad_debt", "", asset, "3", "", nil),
+		ev(12, backstop, br, "rw_zone_add", "", "", "", "", nil),      // admin: not a backstop event
+		ev(13, backstop, br, "deposit", "ThirdLoss", "", "", "", nil), // undecoded amount: group withheld, named in a note
+		ev(14, pool, pr, "supply", "", undecodedAsset, "", "", nil),   // undecoded amount: asset withheld, named in a note
 	} {
 		if err := store.InsertBLNTEvent(ctx, e); err != nil {
 			t.Fatalf("InsertBLNTEvent %s: %v", e.EventKind, err)
@@ -69,10 +75,10 @@ func TestBLNTBespoke_KPIsTablesAndExactAmounts(t *testing.T) {
 	assertKPI(t, kpis, "Active users (90d)", "1")
 	assertKPI(t, kpis, "Flash loans (90d)", "1")
 	assertKPI(t, kpis, "Borrow-side events (90d)", "2")
-	assertKPI(t, kpis, "All-time position events", "3")
+	assertKPI(t, kpis, "All-time position events", "4")
 	assertKPI(t, kpis, "Auctions started (90d)", "1")
 	assertKPI(t, kpis, "Auctions filled (90d)", "1")
-	assertKPI(t, kpis, "Backstop events (90d)", "4")
+	assertKPI(t, kpis, "Backstop events (90d)", "5")                     // claim, 3 deposits, withdraw; rw_zone_add excluded
 	assertKPI(t, kpis, "Emissions claimed (90d)", "9223372036854775810") // pool 2^63 + backstop 2, exact base units
 	assertKPI(t, kpis, "Claim events (90d)", "2")
 	assertKPI(t, kpis, "Credit-risk events (90d)", "1")
@@ -93,6 +99,19 @@ func TestBLNTBespoke_KPIsTablesAndExactAmounts(t *testing.T) {
 	if len(bf.Rows) != 2 || bf.Rows[0][1] != want[0][1] || bf.Rows[0][2] != want[0][2] || bf.Rows[0][3] != want[0][3] ||
 		bf.Rows[1][2] != want[1][2] || bf.Rows[1][3] != want[1][3] {
 		t.Errorf("backstop flow rows = %v, want %v", bf.Rows, want)
+	}
+	var flowNote, netNote bool
+	for _, n := range blk.Notes {
+		flowNote = flowNote || strings.Contains(n, "Backstop flow by pool and tier") && strings.Contains(n, pool+" ThirdLoss")
+		netNote = netNote || strings.Contains(n, "Net flow by asset (90d)") && strings.Contains(n, undecodedAsset)
+	}
+	if !flowNote || !netNote {
+		t.Errorf("notes = %q, want the withheld %s ThirdLoss backstop group and the withheld %s net-flow asset named", blk.Notes, pool, undecodedAsset)
+	}
+	for _, k := range blk.KPIs {
+		if k.Label == "Emissions claimed (90d)" && (k.Token != "BLNT" || k.Amount == nil || k.Amount.String() != "9223372036854775810") {
+			t.Errorf("Emissions claimed KPI = %+v, want tagged BLNT with its exact amount for serve-time USD", k)
+		}
 	}
 	ra := tables["Recent auctions"].Rows
 	if len(ra) != 2 || ra[0][1] != "user-liquidation" || ra[0][2] != "fill" || ra[0][4] != "100" || ra[1][2] != "new" {

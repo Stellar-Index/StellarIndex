@@ -30,8 +30,6 @@ type BespokeKPI struct {
 	// Amount and Token are a token-amount KPI's exact base units and its protocol token's ticker, for serve-time USD; never wire.
 	Amount *big.Int
 	Token  string
-	// USDReason withholds value_usd from a token-amount KPI whose token is not confirmed; never wire here, served as usd_reason.
-	USDReason string
 }
 
 // BespokeSeries is a named time-series for a chart.
@@ -825,19 +823,19 @@ func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, sinc
 	// tokens, queue_withdrawal/dequeue_withdrawal are backstop-LP shares, and
 	// distribute/gulp_emissions/claim/donate are BLND emissions. Summing across kinds yields a
 	// mixed-unit figure dominated by the most frequent kind, so this token-volume KPI sums only the
-	// two token-denominated kinds. The event count stays unfiltered: it is a coherent tally.
+	// two token-denominated kinds. The event count leaves out admin and emission kinds, as BLNT's does.
 	var backstopVol canonical.Amount
 	var backstopCount string
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0),
-		       count(*)::text
+		       count(*) FILTER (WHERE event_kind IN (`+lendingBackstopDepositorKinds+`))::text
 		FROM blend_backstop_events WHERE ledger_close_time > now() - $1::interval`, since).
 		Scan(&backstopVol, &backstopCount); err != nil {
 		return fmt.Errorf("timescale: bespokeLending backstop KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
 		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: blndUnits(backstopVol), Unit: "BLND:USDC LP", Hint: "summed deposit+withdraw backstop-token (Comet BLND:USDC LP, 7 decimals) amounts; excludes share/emission kinds; not USD", Amount: backstopVol.BigInt(), Token: "BLND:USDC LP"},
-		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
+		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount, Hint: lendingBackstopEventsHint},
 	)
 	return nil
 }

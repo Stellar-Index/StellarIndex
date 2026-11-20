@@ -25,6 +25,13 @@ func (s *Server) ValueBespokeKPIsForTest(ctx context.Context, blk *timescale.Bes
 	s.valueBespokeKPIs(ctx, blk, out)
 }
 
+// EnrichBespokeForTest runs enrichBespoke for one protocol and returns the served bespoke block.
+func (s *Server) EnrichBespokeForTest(ctx context.Context, name, category string, windowDays int) *ProtocolBespoke {
+	var view ProtocolDetailView
+	s.enrichBespoke(ctx, ProtocolMeta{Name: name, Category: category}, &view, windowDays)
+	return view.Bespoke
+}
+
 // BespokeFromStoreForTest is bespokeFromStore.
 func BespokeFromStoreForTest(b *timescale.BespokeBlock) *ProtocolBespoke { return bespokeFromStore(b) }
 

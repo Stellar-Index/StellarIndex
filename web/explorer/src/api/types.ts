@@ -8977,10 +8977,10 @@ export interface components {
             /** @description True when price_usd is the newest price but past its freshness window. */
             price_stale?: boolean;
             /**
-             * @description Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, the unit (a Comet BLND:USDC LP share) has no valuation here, or the amount's token is not confirmed on chain (token_unconfirmed).
+             * @description Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, or the unit (a Comet BLND:USDC LP share) has no valuation here.
              * @enum {string}
              */
-            usd_reason?: "unpriced" | "decimals_unknown" | "unit_not_priceable" | "token_unconfirmed";
+            usd_reason?: "unpriced" | "decimals_unknown" | "unit_not_priceable";
         };
         /** @description A named time-series for a chart. */
         BespokeSeries: {

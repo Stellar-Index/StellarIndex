@@ -18560,11 +18560,10 @@ components:
         price_stale: { type: boolean, description: "True when price_usd is the newest price but past its freshness window." }
         usd_reason:
           type: string
-          enum: [unpriced, decimals_unknown, unit_not_priceable, token_unconfirmed]
+          enum: [unpriced, decimals_unknown, unit_not_priceable]
           description: >-
-            Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, the unit
-            (a Comet BLND:USDC LP share) has no valuation here, or the amount's token is not confirmed on chain
-            (token_unconfirmed).
+            Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, or the unit
+            (a Comet BLND:USDC LP share) has no valuation here.
       required: [label, value]
 
     BespokeSeries:
