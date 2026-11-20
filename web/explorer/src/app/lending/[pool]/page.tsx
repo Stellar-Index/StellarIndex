@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import {
   Badge,
   Container,
+  Mono,
   PageHeader,
   Stat,
   StatCell,
@@ -172,21 +173,20 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           { label: 'Lending', href: '/lending' },
           { label: poolName },
         ]}
-        title={
-          <span className="font-mono break-all">
-            {pool.slice(0, 8)}…{pool.slice(-8)}
-          </span>
-        }
+        title={label?.name ?? `${protocol?.name ?? 'Lending'} pool`}
         meta={
           <span className="flex flex-wrap items-center gap-2">
             {protocol && <Badge>{protocol.name}</Badge>}
-            {label && <Badge tone="brand">{label.name}</Badge>}
+            <Mono
+              value={pool}
+              truncate={{ head: 8, tail: 8 }}
+              className="text-ink-muted text-xs"
+            />
             {label?.deployedAt && <span>deployed {label.deployedAt}</span>}
           </span>
         }
       />
       <div className="text-ink-muted space-y-2 text-xs">
-        <p className="font-mono break-all">{pool}</p>
         {label?.initiator && (
           <p>
             Deployed by{' '}
@@ -271,11 +271,15 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           Auction statistics are unavailable for this build.
         </p>
       )}
-      <PoolDetails pool={pool} />
       <PoolReserves pool={pool} />
       <BackstopPanel pool={pool} />
       <EmissionsPanel pool={pool} />
-      <AuctionsPanel pool={pool} />
+      <AuctionsPanel
+        pool={pool}
+        total={listed ? (data?.auctions_total ?? 0) : null}
+        lastSeen={data?.last_seen ?? null}
+      />
+      <PoolDetails pool={pool} />
       <ConfigHistory pool={pool} />
     </Container>
   );

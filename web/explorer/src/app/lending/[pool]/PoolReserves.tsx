@@ -119,6 +119,7 @@ export function PoolReserves({ pool }: { pool: string }) {
   const configDecimals = q.data?.config_decimals;
 
   const reserves = q.data?.reserves ?? [];
+  const openRow = reserves.find((rv) => rv.asset === open);
   const priced = reserves
     .filter(
       (rv) =>
@@ -332,10 +333,11 @@ export function PoolReserves({ pool }: { pool: string }) {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrow APR
                 </Th>
-                <Th align="right" className="hidden md:table-cell">
+                {/* In the reserve detail too; shown inline only where the table fits. */}
+                <Th align="right" className="hidden 2xl:table-cell">
                   Collateral factor
                 </Th>
-                <Th align="right" className="hidden md:table-cell">
+                <Th align="right" className="hidden 2xl:table-cell">
                   Liability factor
                 </Th>
                 <Th align="right" className="hidden md:table-cell">
@@ -400,14 +402,14 @@ export function PoolReserves({ pool }: { pool: string }) {
                   </Td>
                   <Td
                     align="right"
-                    className="hidden font-mono tabular-nums md:table-cell"
+                    className="hidden font-mono tabular-nums 2xl:table-cell"
                     title={rv.config?.collateral_factor}
                   >
                     {fixedPct(rv.config?.collateral_factor, configDecimals)}
                   </Td>
                   <Td
                     align="right"
-                    className="hidden font-mono tabular-nums md:table-cell"
+                    className="hidden font-mono tabular-nums 2xl:table-cell"
                     title={rv.config?.liability_factor}
                   >
                     {fixedPct(rv.config?.liability_factor, configDecimals)}
@@ -450,23 +452,32 @@ export function PoolReserves({ pool }: { pool: string }) {
                     </Button>
                   </Td>
                 </TR>,
-                ...(open === rv.asset
-                  ? [
-                      <TR key={`${rv.asset}-detail`}>
-                        <Td colSpan={12}>
-                          <ReserveDetail
-                            pool={pool}
-                            reserve={rv}
-                            configDecimals={configDecimals}
-                          />
-                        </Td>
-                      </TR>,
-                    ]
-                  : []),
               ])}
             </TBody>
           </Table>
         </div>
+      )}
+      {/* Outside the scrolling table, so the detail and its charts take the
+          card's width rather than the table's. */}
+      {openRow && (
+        <section
+          aria-label={`${assetText(openRow.asset)} reserve detail`}
+          className="border-line space-y-3 border-t pt-4"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-ink text-sm font-medium">
+              {assetText(openRow.asset)} reserve
+            </h3>
+            <Button variant="secondary" size="sm" onClick={() => setOpen(null)}>
+              Close
+            </Button>
+          </div>
+          <ReserveDetail
+            pool={pool}
+            reserve={openRow}
+            configDecimals={configDecimals}
+          />
+        </section>
       )}
       <p className="text-ink-muted text-xs">
         Exact current state from on-chain b_rate/d_rate. APR shows{' '}

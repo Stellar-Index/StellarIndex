@@ -158,7 +158,8 @@ export function ReserveDetail({
   );
 
   return (
-    <div className="grid gap-6 py-2 md:grid-cols-2">
+    // min-w-0: a grid item otherwise grows to the metric picker's width on a phone.
+    <div className="grid gap-6 py-2 md:grid-cols-2 [&>*]:min-w-0">
       <div className="space-y-4">
         <h3 className="text-ink text-sm font-medium">Risk parameters</h3>
         <FactList columns={2}>
