@@ -365,13 +365,14 @@ func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T)
 	preseed := strings.Index(body, "preseedFactoryChildren(")
 	lake := strings.Index(body, "clickhouse.Stream")
 	prepare := strings.Index(body, "clickhouse.PrepareTradesByAccountWindow(")
-	if exit < 0 || leg2 < 0 || overlap < 0 || rangeGuard < 0 || wasmGate < 0 || preseed < 0 || lake < 0 || prepare < 0 {
+	supplyOnly := strings.Index(body, `"-sep41-supply-only excludes the transfer topic firehose`)
+	if exit < 0 || leg2 < 0 || overlap < 0 || rangeGuard < 0 || wasmGate < 0 || preseed < 0 || lake < 0 || prepare < 0 || supplyOnly < 0 {
 		t.Fatalf("anchors not found (exit %d, leg2 %d, overlap %d, range %d, wasm %d, preseed %d, lake %d, prepare %d) — this test is asserting nothing",
 			exit, leg2, overlap, rangeGuard, wasmGate, preseed, lake, prepare)
 	}
 	for name, pos := range map[string]int{
 		"BackfillSafe leg 2": leg2, "live-cursor guard": overlap, "buffered-range guard": rangeGuard,
-		"per-WASM replay gate": wasmGate, "factory-preseed check": preseed,
+		"per-WASM replay gate": wasmGate, "factory-preseed check": preseed, "-sep41-supply-only transfer refusal": supplyOnly,
 	} {
 		if exit < pos {
 			t.Errorf("-preflight returns BEFORE the %s — it would answer ok to a run the guard refuses", name)
