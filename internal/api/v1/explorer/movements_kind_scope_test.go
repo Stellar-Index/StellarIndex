@@ -496,6 +496,34 @@ func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 	}
 }
 
+// A watermark read error on a continuation page keeps the cursor's pin (the CH arm still reaches it), and a fail-closed first page
+// does not pin its 0 into next_cursor, so later pages re-read the live watermark instead of inheriting the P23 split unflagged.
+func TestAccountMovements_WatermarkReadErrorKeepsPin(t *testing.T) {
+	floor := timescale.MovementsFloor()
+	pin := floor + 2_000_000
+	reader := &movementsArmReader{
+		capReader: &capReader{probe: &deadlineProbe{}},
+		wmErr:     errors.New("clickhouse: cap67 watermark: context deadline exceeded"),
+	}
+	cursor := fmt.Sprintf("%d.%s.0.0.%d", floor+1_500_000, validTestTxHash, pin)
+	callMovements(t, reader, &stubSEP41Tail{}, cursor)
+	if !reader.gotFilter.HasMaxLedger || reader.gotFilter.MaxLedger != pin {
+		t.Errorf("CH ceiling on a failed read with pin %d = %d (has=%v), want the pin", pin, reader.gotFilter.MaxLedger, reader.gotFilter.HasMaxLedger)
+	}
+
+	row := clickhouse.AccountMovementRow{Ledger: floor + 10, TxHash: validTestTxHash}
+	next := nextMovementCursor(row, 0, true)
+	h := newProbeHandler(reader, nil)
+	r := httptest.NewRequest(http.MethodGet, "/v1/accounts/"+validTestAccount+"/movements?cursor="+next, nil)
+	parsed, ok := h.parseMovementCursor(httptest.NewRecorder(), r)
+	if !ok || parsed.HasPinnedWatermark {
+		t.Errorf("fail-closed next_cursor %q pins a watermark (ok=%v, pinned=%v)", next, ok, parsed.HasPinnedWatermark)
+	}
+	if got := nextMovementCursor(row, pin, false); !strings.HasSuffix(got, fmt.Sprintf(".%d", pin)) {
+		t.Errorf("next_cursor %q dropped the pin %d", got, pin)
+	}
+}
+
 // TestAccountMovements_PaginationPinsWatermark: a continuation page reuses the watermark pinned
 // into the cursor by page 1, not the live (advanced) one, which would move the CH ceiling and make
 // the coverage note claim completeness through the higher boundary.

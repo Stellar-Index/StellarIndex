@@ -535,6 +535,10 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 	}
 	enabled := func(name string) bool { return len(srcFilter) == 0 || srcFilter[name] }
+	// Asked here, not in the sep41 pass, so -preflight refuses it before a caller's DELETE.
+	if *sep41SupplyOnly && enabled(sep41transfers.SourceName) {
+		return fmt.Errorf("-sep41-supply-only excludes the transfer topic firehose but sep41_transfers is enabled (it would silently recover nothing); restrict with -sources sep41_supply")
+	}
 
 	// ─── ADR-0048 D3 one-writer contract (ported from projected-rebuild) ──
 	// A -write pass over a PROJECTED source is a second writer of a domain
@@ -686,13 +690,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				}
 			}
 			// Topic prefilter: -sep41-supply-only reads ONLY the supply-affecting topics (mint/burn/clawback), skipping the
-			// transfer firehose at the SQL layer. Invalid with sep41_transfers enabled — it would silently drop transfer
-			// recovery — so require -sources sep41_supply.
+			// transfer firehose at the SQL layer (sep41_transfers was refused above).
 			var sep41Topic0 []string
 			if *sep41SupplyOnly {
-				if enabled(sep41transfers.SourceName) {
-					return fmt.Errorf("-sep41-supply-only excludes the transfer topic firehose but sep41_transfers is enabled (it would silently recover nothing); restrict with -sources sep41_supply")
-				}
 				sep41Topic0 = []string{sep41supply.SymbolMint, sep41supply.SymbolBurn, sep41supply.SymbolClawback}
 			}
 			sepStart := time.Now()
@@ -798,8 +798,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX gap-only read done (%d gaps) in %s\n", ng, time.Since(sStart).Round(time.Second))
 		} else if *sdexReconcile {
 			// Re-derive only partial-drop ledgers, where the distinct Validate-passing census exceeds the served count; the
-			// empty-gap pass misses these because served > 0. Per 100k window, queue every event of a short ledger. Writing the
-			// full set is fine, as ON CONFLICT no-ops existing rows.
+			// empty-gap pass misses these because served > 0. Per window, write every event of a short ledger before the next
+			// window streams, as decodeRange does. Writing the full set is fine, as ON CONFLICT no-ops existing rows.
 			type pk struct {
 				tx string
 				op uint32
@@ -845,11 +845,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				if serr != nil {
 					return fmt.Errorf("ch-rebuild: sdex reconcile served counts [%d,%d]: %w", wlo, whi, serr)
 				}
+				var win []consumer.Event
 				for ledger, evs := range byLedger {
 					if len(seen[ledger]) > served[ledger] {
-						buf = append(buf, evs...)
+						win = append(win, evs...)
 						nShort++
 					}
+				}
+				if err := sink.drain(win); err != nil {
+					return err
 				}
 			}
 			fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX reconcile read done (%d short ledgers) in %s\n", nShort, time.Since(sStart).Round(time.Second))

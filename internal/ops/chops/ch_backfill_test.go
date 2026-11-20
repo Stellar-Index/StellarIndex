@@ -208,8 +208,12 @@ func TestExtractLoss_EveryUndercountFailsTheRun(t *testing.T) {
 		t.Error("a clean extract failed the run")
 	}
 	var changes extractLoss
-	if changes.record(clickhouse.LedgerExtract{TxReadErrors: 1, TxEventReadErrors: 1, SorobanFeeMetaUnsupported: 1}, true) || changes.err() != nil {
-		t.Error("-changes-only failed on tx/event undercounts it never writes")
+	if changes.record(clickhouse.LedgerExtract{TxEventReadErrors: 1, SorobanFeeMetaUnsupported: 1}, true) || changes.err() != nil {
+		t.Error("-changes-only failed on event undercounts it never writes")
+	}
+	var unreadTx extractLoss
+	if !unreadTx.record(clickhouse.LedgerExtract{TxReadErrors: 1}, true) || unreadTx.err() == nil {
+		t.Error("-changes-only passed a ledger with an unreadable tx, whose entry changes were never walked")
 	}
 	if !changes.record(clickhouse.LedgerExtract{EntryMetaUnsupported: 1}, true) || changes.err() == nil {
 		t.Error("-changes-only passed a ledger whose entry changes were skipped")
