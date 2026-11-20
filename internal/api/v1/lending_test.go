@@ -443,9 +443,10 @@ func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
 	for i := range assets {
 		assets[i] = mkCStrkey(t, byte(20+i))
 		states[i] = clickhouse.BlendReserveState{
-			Pool:     pool,
-			Asset:    assets[i],
-			Decimals: 7,
+			Pool:          pool,
+			Asset:         assets[i],
+			Decimals:      7,
+			DecimalsFound: true, // a reserve with unknown decimals is never priced
 			Metrics: blend.ReserveMetrics{
 				SuppliedUnderlying: big.NewInt(int64(1_000_000 * (i + 1))),
 				BorrowedUnderlying: big.NewInt(int64(400_000 * (i + 1))),
