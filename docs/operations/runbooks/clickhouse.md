@@ -210,7 +210,7 @@ The alert clears 30 min after the last increment. If only one path advanced, loo
 
 ### stellarindex_supply_flow_skipped
 
-Ticket. `sum(increase(stellarindex_supply_flow_skipped_total{reason!="not_token_shaped"}[1h])) > 0` for 2 h. The lake extract wrote a mint/burn/clawback event to `contract_events` but no `supply_flows` row. `not_token_shaped` (a foreign contract's body that is not a bare i128 or a map with `amount`, e.g. an NFT's u32 id) is expected and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode, so that token's supply sum is short.
+Ticket. `sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!="not_token_shaped"}[3h])) > 0`, fires on a single skip and keeps firing 1 h. The lake extract wrote a mint/burn/clawback event to `contract_events` but no `supply_flows` row. `not_token_shaped` (a foreign contract's body that is not a bare i128 or a map with `amount`, e.g. an NFT's u32 id) is expected and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode, so that token's supply sum is short.
 
 ```sh
 curl -s localhost:9464/metrics | grep supply_flow_skipped_total

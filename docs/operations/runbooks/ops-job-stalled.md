@@ -132,7 +132,7 @@ The textfile persists after the process dies, deliberately. The next run overwri
 
 ## Records skipped
 
-`stellarindex_ops_job_records_skipped` (P3 ticket) fires when `stellarindex_ops_job_skipped_total{reason!="not_token_shaped"}` has risen over the last hour for two hours running. Today only `ch-cap67-movements` reports it: its `-follow` daemon drops a transfer/mint/burn/clawback event it cannot decode and advances the watermark, so `stellar.account_movements` lacks that event's rows. The raw event stays in `stellar.contract_events`.
+`stellarindex_ops_job_records_skipped` (P3 ticket) fires when `stellarindex_ops_job_skipped_total{reason!="not_token_shaped"}` has risen over the last 3 hours (one skip fires it; it keeps firing 1 h). `ch-cap67-movements` and `ch-backfill` report it; the `ch-cap67-movements` `-follow` daemon drops a transfer/mint/burn/clawback event it cannot decode and advances the watermark, so `stellar.account_movements` lacks that event's rows. The raw event stays in `stellar.contract_events`.
 
 Reasons: `not_token_shaped` (a foreign contract's event whose body is neither a bare i128 nor a map with `amount`, e.g. an NFT's u32 id) is expected traffic, is metered and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode; `decode_failed` is a token-shaped body the decoder still refused (topics, close time). The one-shot run's `-max-decode-errors` budget counts only these three.
 
