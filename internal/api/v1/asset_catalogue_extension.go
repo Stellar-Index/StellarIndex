@@ -122,14 +122,9 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// verdict as the listing (listingSubstanceVerdict, cached ~60s). The change pills derive from that
 	// price so a gated-out row loses them too; the declared-peg fill downstream (nil PriceUSD only)
 	// can still supply the operator-declared basis.
-	priceAllowed := true
-	if s.Substance != nil {
-		var measured bool
-		priceAllowed, measured, _ = s.listingSubstanceVerdict(ctx, asset, false)
-		if !priceAllowed && !measured {
-			// The gate did not rule: the row price is withheld, and the answer is not a clean "no price".
-			detail.extensionUnread = true
-		}
+	priceAllowed, gateUnread := s.catalogueRowPriceAllowed(ctx, asset)
+	if gateUnread {
+		detail.extensionUnread = true
 	}
 	// Fill PriceUSD from the row only when the canonical price path left it nil, so
 	// /v1/assets/native agrees with /v1/price. The row price is a raw prices_1m ratio, so it is
@@ -364,6 +359,16 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *
 		}
 	}
 	return nil, false
+}
+
+// catalogueRowPriceAllowed is the listing's substance verdict on a catalogue row's price, which is computed outside /v1/price's
+// gated read. unread: the gate did not rule, so a withheld price is not a clean "no price". No gate wired allows it.
+func (s *Server) catalogueRowPriceAllowed(ctx context.Context, asset canonical.Asset) (allowed, unread bool) {
+	if s.Substance == nil {
+		return true, false
+	}
+	allowed, measured, _ := s.listingSubstanceVerdict(ctx, asset, false)
+	return allowed, !allowed && !measured
 }
 
 // assetPriceAllowed is the allow half of [Server.listingSubstanceVerdict] for a

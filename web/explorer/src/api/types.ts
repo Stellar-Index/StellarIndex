@@ -6842,8 +6842,11 @@ export interface components {
             pool: string | null;
             /** @description Reserve token C-strkey for a `reserve`, `supply` or `borrow` exclusion; the backstop token for an account's `backstop` leg; the ticker for a `token` exclusion. */
             asset: string | null;
-            /** @enum {string} */
-            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
+            /**
+             * @description For a `reserve`: `no_usd_value` when its token has no USD price or established decimals, `withheld` when a price gate (thin market, scam-flagged issuer) refused its price, `price_read_failed` when a read on the price chain failed (the response is also degraded).
+             * @enum {string}
+             */
+            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "price_read_failed" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
         };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's

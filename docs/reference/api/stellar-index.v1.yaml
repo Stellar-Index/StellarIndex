@@ -16387,6 +16387,7 @@ components:
         asset:  { type: [string, "null"], description: "Reserve token C-strkey for a `reserve`, `supply` or `borrow` exclusion; the backstop token for an account's `backstop` leg; the ticker for a `token` exclusion." }
         reason:
           type: string
+          description: "For a `reserve`: `no_usd_value` when its token has no USD price or established decimals, `withheld` when a price gate (thin market, scam-flagged issuer) refused its price, `price_read_failed` when a read on the price chain failed (the response is also degraded)."
           enum:
             - pool_list_read_failed
             - pool_read_failed
@@ -16396,6 +16397,7 @@ components:
             - pool_lineage_unknown
             - no_decoded_reserve_state
             - no_usd_value
+            - price_read_failed
             - backstop_reader_unavailable
             - backstop_read_failed
             - blend_v1_unsupported

@@ -1952,8 +1952,8 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 		if err != nil {
 			return nil
 		}
-		if allowed, measured, _ := s.listingSubstanceVerdict(ctx, asset, false); !allowed {
-			if !measured {
+		if allowed, unread := s.catalogueRowPriceAllowed(ctx, asset); !allowed {
+			if unread {
 				reportUnreadRead(ctx)
 			}
 			return nil

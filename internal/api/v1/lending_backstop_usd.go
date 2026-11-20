@@ -27,11 +27,12 @@ func (s *Server) tokenUSD(ctx context.Context, token string, amount *big.Int) (u
 	if !ok {
 		return nil, "", false, backstopUSDDecimals
 	}
-	price, scale, stale, ok := s.reservePriceUSD(ctx, token)
-	if !ok {
+	rp := s.reservePriceUSD(ctx, token)
+	if rp.price == "" {
 		return nil, "", false, backstopUSDUnpriced
 	}
-	if scale != dec {
+	price, stale = rp.price, rp.stale
+	if rp.scale != dec {
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_backstop", "").Inc()
 		return nil, "", false, backstopUSDScaleMismatch
 	}

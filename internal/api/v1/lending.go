@@ -10,7 +10,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -385,6 +384,8 @@ type ReserveView struct {
 	IRModDecimals  int       `json:"ir_mod_decimals"`
 	BackstopCredit *string   `json:"backstop_credit"` // underlying base units owed to the backstop
 	LastUpdate     *WireTime `json:"last_update"`
+	// usdExclusion names why the USD values are null when a reason finer than no_usd_value is known.
+	usdExclusion string
 }
 
 // handleLendingPoolReserves serves GET /v1/lending/pools/{pool}/reserves: current-state TVL, utilization and APY per reserve
@@ -502,7 +503,9 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	out.AsOfLedger = wmLedger
 	// A USD figure valued at a stale price is stale whatever the lake's own freshness.
 	stale = stale || slices.Contains(stalePrice, true)
-	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed}, states: states, version: version}, nil
+	// A reserve left unvalued by a failed price read is a degraded answer, not a complete one.
+	priceUnread := slices.ContainsFunc(views, func(v ReserveView) bool { return v.usdExclusion == exclusionPriceReadFailed })
+	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed || priceUnread}, states: states, version: version}, nil
 }
 
 // poolRead is one pool's reserve assets and lake state; configsFailed means APRs are withheld.
@@ -640,13 +643,18 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		d := uint32(dec)
 		rv.Decimals = &d
 	}
-	price, priceScale, stale, ok := s.reservePriceUSD(ctx, st.Asset)
-	if !ok || !decKnown {
+	rp := s.reservePriceUSD(ctx, st.Asset)
+	if !decKnown {
 		// Without established decimals the USD figures, and the pool TVL,
 		// would be wrong by a power of ten; withhold the valuation instead.
 		return rv, nil, false
 	}
-	if priceScale != dec {
+	if rp.price == "" {
+		rv.usdExclusion = rp.exclusion()
+		return rv, nil, false
+	}
+	price, stale := rp.price, rp.stale
+	if rp.scale != dec {
 		// The price was normalised on a different scale than the amounts
 		// are divided by; their product is off by 10^|difference|.
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_reserve", "").Inc()
@@ -705,26 +713,6 @@ func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserve
 		return 0, false
 	}
 	return d, true
-}
-
-// reservePriceUSD resolves a USD price for a reserve's token. A SAC C-id is mapped back to the classic/native asset it wraps and priced
-// there (feeds are keyed by (code, issuer)); ok=false means token units only. scale is the decimals the price was normalised with
-// (nonstandard-decimals projection, else 7): only an amount divided by that same exponent can be multiplied by it. stale is the
-// price's own verdict ([usdPriceLookup]).
-func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price string, scale int, stale, ok bool) {
-	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
-		if a, err := canonical.ParseAsset(canonicalID); err == nil {
-			if l := s.lookupUSDPriceWithSources(ctx, a); l.price != "" {
-				return l.price, aggregate.ResolveDecimals(s.NonstandardDecimals, a), l.stale, true
-			}
-		}
-	}
-	asset, err := canonical.ParseAsset(assetC)
-	if err != nil {
-		return "", 0, false, false
-	}
-	l := s.lookupUSDPriceWithSources(ctx, asset)
-	return l.price, aggregate.ResolveDecimals(s.NonstandardDecimals, asset), l.stale, l.price != ""
 }
 
 // pubnetPassphrase is the mainnet passphrase; the verified-currency catalogue is pubnet-only, so SAC contract ids are computed

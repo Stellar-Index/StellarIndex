@@ -26,6 +26,8 @@ const (
 	exclusionPoolReadFailed     = "pool_read_failed"
 	exclusionNoDecodedState     = "no_decoded_reserve_state"
 	exclusionNoUSDValue         = "no_usd_value"
+	exclusionPriceWithheld      = "withheld"
+	exclusionPriceReadFailed    = "price_read_failed"
 	exclusionBackstopNoReader   = "backstop_reader_unavailable"
 	exclusionBackstopReadFailed = "backstop_read_failed"
 	exclusionBackstopNoBalance  = "backstop_balance_unavailable"
@@ -250,7 +252,11 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 			sup, supOK := parseUSD(rv.SuppliedUSD)
 			bor, borOK := parseUSD(rv.BorrowedUSD)
 			if !supOK || !borOK {
-				st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(rv.Asset), Reason: exclusionNoUSDValue})
+				reason := exclusionNoUSDValue
+				if rv.usdExclusion != "" {
+					reason = rv.usdExclusion
+				}
+				st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(rv.Asset), Reason: reason})
 				continue
 			}
 			supplied.Add(supplied, sup)
