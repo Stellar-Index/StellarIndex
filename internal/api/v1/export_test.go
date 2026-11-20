@@ -25,6 +25,12 @@ func (s *Server) ValueBespokeKPIsForTest(ctx context.Context, blk *timescale.Bes
 	s.valueBespokeKPIs(ctx, blk, out)
 }
 
+// EmissionTokenPriceForTest is emissionTokenPrice's price and reason.
+func (s *Server) EmissionTokenPriceForTest(ctx context.Context, protocol, token string) (string, string) {
+	p := s.emissionTokenPrice(ctx, protocol, token, nil)
+	return p.price, p.reason
+}
+
 // EnrichBespokeForTest runs enrichBespoke for one protocol and returns the served bespoke block.
 func (s *Server) EnrichBespokeForTest(ctx context.Context, name, category string, windowDays int) *ProtocolBespoke {
 	var view ProtocolDetailView

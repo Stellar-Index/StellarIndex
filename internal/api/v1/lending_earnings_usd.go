@@ -36,6 +36,7 @@ type LendingUSDTotals struct {
 	// excluded; null with NetAPRReason when net_usd is null, an APR is unread, or net_usd is not positive.
 	NetAPR       *string `json:"net_apr"`
 	NetAPRReason *string `json:"net_apr_reason"`
+	LendingAccruedUSD
 }
 
 // LendingEarningsPool is one pool's USD totals.
@@ -50,6 +51,7 @@ type usdTally struct {
 	supplied, borrowed, supplyYield, borrowYield big.Rat
 	excluded                                     []LendingStatsExclusion
 	aprMissing                                   bool
+	accrued                                      accruedTally
 }
 
 func (t *usdTally) add(side string, value *big.Rat, apr *float64) {
@@ -73,6 +75,7 @@ func (t *usdTally) totals() LendingUSDTotals {
 	out := LendingUSDTotals{
 		SuppliedUSD: ratString(&t.supplied, 2), BorrowedUSD: ratString(&t.borrowed, 2),
 		LowerBound: len(t.excluded) > 0, Excluded: append([]LendingStatsExclusion{}, t.excluded...),
+		LendingAccruedUSD: t.accrued.view(),
 	}
 	if out.LowerBound {
 		out.NetUSDReason, out.NetAPRReason = strRef(netInputsPartial), strRef(netInputsPartial)
@@ -128,13 +131,17 @@ func valueEarningsLegs(legs []LendingEarningsLeg, reserves map[string]map[string
 			asset = *leg.Asset
 		}
 		rv := reserves[leg.Pool][asset]
-		value, reason := valueLeg(leg, rv)
+		value, accrued, reason := valueLeg(leg, rv)
 		if reason != "" {
 			pool := leg.Pool
 			ex := LendingStatsExclusion{Kind: leg.Side, Pool: &pool, Asset: leg.Asset, Reason: reason}
 			t.excluded, all.excluded = append(t.excluded, ex), append(all.excluded, ex)
+			t.accrued.exclude(ex)
+			all.accrued.exclude(ex)
 			continue
 		}
+		t.accrued.add(leg, accrued)
+		all.accrued.add(leg, accrued)
 		apr := rv.SupplyAPR
 		if leg.Side == earningsSideBorrow {
 			apr = rv.BorrowAPR
@@ -150,11 +157,12 @@ func valueEarningsLegs(legs []LendingEarningsLeg, reserves map[string]map[string
 	return pools, all.totals()
 }
 
-// valueLeg sets a leg's value_usd, accrued_usd and usd_reason and returns its USD value, or the reason it has none.
-func valueLeg(leg *LendingEarningsLeg, rv ReserveView) (*big.Rat, string) {
+// valueLeg sets a leg's value_usd, accrued_usd and usd_reason and returns its USD value and exact accrued USD (nil when
+// unavailable), or the reason it has no value.
+func valueLeg(leg *LendingEarningsLeg, rv ReserveView) (*big.Rat, *big.Rat, string) {
 	if leg.Side == earningsSideBackstop {
 		leg.UsdReason = strRef(earningsUSDUnpriced)
-		return nil, earningsUSDUnpriced
+		return nil, nil, earningsUSDUnpriced
 	}
 	if leg.Decimals == nil && rv.Decimals != nil {
 		d := int(*rv.Decimals)
@@ -163,19 +171,20 @@ func valueLeg(leg *LendingEarningsLeg, rv ReserveView) (*big.Rat, string) {
 	value, reason := legUSD(leg.CurrentValue, rv)
 	if reason != "" {
 		leg.UsdReason = strRef(reason)
-		return nil, reason
+		return nil, nil, reason
 	}
 	leg.ValueUSD = strRef(ratString(value, 2))
 	if leg.Accrued == nil {
-		return value, ""
+		return value, nil, ""
 	}
 	// A zero current_value is worth zero unpriced, so a non-zero accrued can still fail to price here.
-	if accrued, r := legUSD(leg.Accrued, rv); r != "" {
+	accrued, r := legUSD(leg.Accrued, rv)
+	if r != "" {
 		leg.UsdReason = strRef(r)
-	} else {
-		leg.AccruedUSD = strRef(ratString(accrued, 2))
+		return value, nil, ""
 	}
-	return value, ""
+	leg.AccruedUSD = strRef(ratString(accrued, 2))
+	return value, accrued, ""
 }
 
 // legUSD values a base-unit amount at the reserve view's own price and decimals, the pair its supplied_usd uses; a zero

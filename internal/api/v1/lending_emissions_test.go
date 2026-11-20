@@ -101,6 +101,15 @@ func TestLendingPoolEmissions_BlendV2(t *testing.T) {
 	if len(got.Backstop) != 1 || got.Backstop[0].Tier != nil || !got.Backstop[0].Live {
 		t.Fatalf("backstop = %+v", got.Backstop)
 	}
+	// 9e18 eps x 86400 / 10^7, exact; the expired borrow stream is zero, not its eps annualised; a pool emission token that is
+	// not the verified BLND SAC is never priced.
+	ended, live := got.Reserves[0], got.Reserves[1]
+	if ended.TokensPerDay != "0" || strOrNil(ended.USDPerDay) != "0.00" || strOrNil(ended.EmissionsAPR) != "0.0000" ||
+		live.TokensPerDay != "77760000000000000" || live.USDPerDay != nil || strOrNil(live.USDReason) != "emission_token_unverified" ||
+		live.EmissionsAPR != nil || strOrNil(live.EmissionsAPRReason) != "emission_token_unverified" ||
+		got.Backstop[0].TokensPerDay != "0.0432" || got.EmissionTokenPriceUSD != nil {
+		t.Fatalf("rates = ended %+v live %+v backstop %+v", ended, live, got.Backstop[0])
+	}
 	c := got.Claims
 	if !c.Available || c.Pool == nil || c.Pool.Amount != "18446744073709551621" || c.Pool.Claims != 3 || c.Backstop != nil ||
 		c.BackstopUnavailableReason == nil {
