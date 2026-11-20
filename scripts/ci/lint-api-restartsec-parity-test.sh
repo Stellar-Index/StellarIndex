@@ -57,7 +57,7 @@ expect_no_diverged 'authority gate reports no undeclared RestartSec divergence f
 
 # Without the backoff a fixed-delay restart loop exhausts StartLimitBurst ~10
 # min into a Postgres outage and the daemon stays down after Postgres returns.
-for unit in stellarindex-api stellarindex-aggregator; do
+for unit in stellarindex-api stellarindex-aggregator stellarindex-indexer; do
   for f in "deploy/systemd/$unit.service" "configs/ansible/roles/archival-node/templates/systemd/$unit.service.j2"; do
     if grep -q '^RestartSteps=[1-9]' "$f" && grep -q '^RestartMaxDelaySec=2min$' "$f"; then
       echo "ok: $f backs restarts off to 2min"
@@ -67,6 +67,18 @@ for unit in stellarindex-api stellarindex-aggregator; do
       fail=$((fail + 1))
     fi
   done
+done
+
+# ProtectSystem=full leaves /var writable, so the API's ReadWritePaths would
+# confine nothing; only strict makes it the API's one writable path.
+for f in deploy/systemd/stellarindex-api.service configs/ansible/roles/archival-node/templates/systemd/stellarindex-api.service.j2; do
+  if grep -q '^ProtectSystem=strict$' "$f" && grep -q '^ReadWritePaths=/var/lib/stellarindex$' "$f"; then
+    echo "ok: $f confines writes to /var/lib/stellarindex"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: $f lacks ProtectSystem=strict + ReadWritePaths=/var/lib/stellarindex — the internet-facing API can write all of /var" >&2
+    fail=$((fail + 1))
+  fi
 done
 
 echo

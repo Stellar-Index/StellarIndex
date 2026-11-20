@@ -159,8 +159,14 @@ func runRunbook(t *testing.T, section string, nested bool, env ...string) runboo
 	}
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(filepath.Join(dir, "lock"), 0o755); err != nil {
+	// The per-job lock directory as the host's tmpfiles.d line lays it out
+	// (d 3770); the wrapper refuses to run without it.
+	jobLockDir := filepath.Join(dir, "lock", "stellarindex")
+	if err := os.MkdirAll(jobLockDir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(jobLockDir, 0o770|os.ModeSetgid|os.ModeSticky); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
