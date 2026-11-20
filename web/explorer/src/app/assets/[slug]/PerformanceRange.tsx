@@ -5,6 +5,7 @@ import { Panel } from '@/components/reveal';
 import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 
 import { useResolvedAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+import { bakedAtDeploy } from './priceProvenance';
 
 /**
  * The 24h price range bar. The series is baked at deploy, so it says so; the
@@ -50,7 +51,7 @@ export function PerformanceRange({
     <Panel
       headingLevel={2}
       title="Price range"
-      hint="24h · USD · as baked at deploy"
+      hint={`24h · USD · ${bakedAtDeploy()}`}
       source={source}
     >
       <div className="text-ink-muted flex items-center justify-between text-[11px]">

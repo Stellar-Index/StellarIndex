@@ -50,6 +50,17 @@ export function provenanceQualifier(p: PriceProvenance): string | null {
   }
 }
 
+export const BAKED_AT_DEPLOY = 'as baked at deploy';
+
+/** The caption for a figure frozen into the static export, with its build time when known. */
+export function bakedAtDeploy(
+  builtAt: string | undefined = process.env.NEXT_PUBLIC_BUILD_TIME,
+): string {
+  const t = builtAt ? new Date(builtAt) : null;
+  if (!t || Number.isNaN(t.getTime())) return BAKED_AT_DEPLOY;
+  return `${BAKED_AT_DEPLOY} (built ${t.toISOString().slice(0, 16).replace('T', ' ')} UTC)`;
+}
+
 /** Caption vocabulary for the headline price on the static asset page. */
 export function headlinePriceProvenance(
   price:
