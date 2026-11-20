@@ -4651,8 +4651,8 @@ paths:
                   legs:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, side: supply, tier: null, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, decimals: 7, net_flow: '1000000000', folded_tokens: '950000000', onchain_tokens: '950000000', current_value: '1045000000', rate_as_of: '2026-07-03T22:31:05Z', accrued: '45000000', reconciled: true, reason: null, value_usd: '104.50', accrued_usd: '4.50', usd_reason: null }
                   pools:
-                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null }
-                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null }
+                  - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null, accrued_supply_usd: '4.50', accrued_borrow_usd: '0.00', accrued_usd: '4.50', accrued_usd_reason: null, accrued_partial: false, accrued_excluded: [] }
+                  totals: { supplied_usd: '104.50', borrowed_usd: '0.00', net_usd: '104.50', net_usd_reason: null, lower_bound: false, excluded: [], net_apr: '0.0413', net_apr_reason: null, accrued_supply_usd: '4.50', accrued_borrow_usd: '0.00', accrued_usd: '4.50', accrued_usd_reason: null, accrued_partial: false, accrued_excluded: [] }
                   emissions:
                   - { protocol: blend, pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD, claimed: '120000000', lower_bound: true }
                   note: accrued is current_value - net_flow, served only when the token balance folded from this account's events equals its current on-chain balance.

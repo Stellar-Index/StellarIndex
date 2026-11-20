@@ -19217,7 +19217,13 @@ export interface operations {
                      *             "lower_bound": false,
                      *             "excluded": [],
                      *             "net_apr": "0.0413",
-                     *             "net_apr_reason": null
+                     *             "net_apr_reason": null,
+                     *             "accrued_supply_usd": "4.50",
+                     *             "accrued_borrow_usd": "0.00",
+                     *             "accrued_usd": "4.50",
+                     *             "accrued_usd_reason": null,
+                     *             "accrued_partial": false,
+                     *             "accrued_excluded": []
                      *           }
                      *         ],
                      *         "totals": {
@@ -19228,7 +19234,13 @@ export interface operations {
                      *           "lower_bound": false,
                      *           "excluded": [],
                      *           "net_apr": "0.0413",
-                     *           "net_apr_reason": null
+                     *           "net_apr_reason": null,
+                     *           "accrued_supply_usd": "4.50",
+                     *           "accrued_borrow_usd": "0.00",
+                     *           "accrued_usd": "4.50",
+                     *           "accrued_usd_reason": null,
+                     *           "accrued_partial": false,
+                     *           "accrued_excluded": []
                      *         },
                      *         "emissions": [
                      *           {
