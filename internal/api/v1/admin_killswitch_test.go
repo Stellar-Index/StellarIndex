@@ -208,6 +208,14 @@ func (s *recordingRevokeStore) ListKeysForIdentifier(_ context.Context, _ string
 	panic("unused")
 }
 
+func (s *recordingRevokeStore) RecordRevoked(context.Context, string, string, []string) error {
+	return nil
+}
+
+func (s *recordingRevokeStore) RevokedBy(context.Context, string, string) ([]string, error) {
+	panic("unused")
+}
+
 func (s *recordingRevokeStore) RevokeKeyByID(_ context.Context, identifier, keyID string) error {
 	s.calls++
 	s.identifier, s.keyID = identifier, keyID

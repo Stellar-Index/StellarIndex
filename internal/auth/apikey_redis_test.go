@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/netip"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,7 @@ func seedKey(t *testing.T, mr *miniredis.Miniredis, key string, rec APIKeyRecord
 func TestRedisAPIKey_LookupHappyPath(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	seedKey(t, mr, "rek_test_abc123", APIKeyRecord{
+		KeyID:      "kid_00000000000000a1",
 		Identifier: "owner-42",
 		Tier:       TierAPIKey,
 		Label:      "ci-bot",
@@ -149,6 +151,7 @@ func TestRedisAPIKey_LookupExactlyAtExpiry(t *testing.T) {
 func TestRedisAPIKey_FutureExpiryStillValid(t *testing.T) {
 	v, mr, now := newTestValidator(t)
 	seedKey(t, mr, "rek_future", APIKeyRecord{
+		KeyID:      "kid_00000000000000a2",
 		Identifier: "owner-future",
 		Tier:       TierAPIKey,
 		ExpiresAt:  now.Add(time.Second),
@@ -169,6 +172,7 @@ func TestRedisAPIKey_FutureExpiryStillValid(t *testing.T) {
 func TestRedisAPIKey_DefaultsToAPIKeyTier(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	seedKey(t, mr, "rek_no_tier", APIKeyRecord{
+		KeyID:      "kid_00000000000000a3",
 		Identifier: "owner-default",
 		// Tier deliberately empty
 	})
@@ -182,12 +186,30 @@ func TestRedisAPIKey_DefaultsToAPIKeyTier(t *testing.T) {
 	}
 }
 
+// A record with no KeyID has no revoke scope or audit identity, so it must not authenticate.
+func TestRedisAPIKey_RecordWithoutKeyIDFailsClosed(t *testing.T) {
+	v, mr, _ := newTestValidator(t)
+	seedKey(t, mr, "sip_no_kid_secret", APIKeyRecord{Identifier: "owner-nokid", Tier: TierAPIKey})
+
+	got, err := v.Lookup(context.Background(), "sip_no_kid_secret")
+	if err == nil {
+		t.Fatalf("Lookup of a record with no key id = %+v, want an error", got)
+	}
+	if strings.Contains(err.Error(), "sip_no_kid_secret") {
+		t.Errorf("error %q carries the plaintext key", err)
+	}
+	if got.Identifier != "" {
+		t.Errorf("rejected lookup returned Subject %+v, want zero", got)
+	}
+}
+
 // TestRedisAPIKey_OperatorTierPreserved ensures an explicit
 // tier=operator survives the round-trip. The middleware uses this
 // to gate /v1/admin/* endpoints.
 func TestRedisAPIKey_OperatorTierPreserved(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	seedKey(t, mr, "rek_admin", APIKeyRecord{
+		KeyID:      "kid_00000000000000a4",
 		Identifier: "ops-bot",
 		Tier:       TierOperator,
 	})
@@ -259,6 +281,7 @@ func TestNewRedisAPIKeyValidator_PanicsOnNil(t *testing.T) {
 func TestRedisAPIKey_LookupMapsMonthlyQuota(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	seedKey(t, mr, "rek_test_quota", APIKeyRecord{
+		KeyID:        "kid_00000000000000a5",
 		Identifier:   "owner-metered",
 		Tier:         TierAPIKey,
 		MonthlyQuota: 1_000_000,
@@ -300,6 +323,9 @@ func fullSubject(t *testing.T) Subject {
 	}
 	rv := reflect.ValueOf(sub)
 	for i := range rv.NumField() {
+		if rv.Type().Field(i).Name == "sep10Session" {
+			continue // a key's Subject is never a session; no record carries it
+		}
 		if rv.Field(i).IsZero() {
 			t.Fatalf("fullSubject leaves Subject.%s zero — populate it so the round-trip tests cover it", rv.Type().Field(i).Name)
 		}
@@ -328,7 +354,13 @@ func TestPostgresValidator_CacheRoundTripCarriesEverySubjectField(t *testing.T) 
 func assertSameSubject(t *testing.T, got, want Subject) {
 	t.Helper()
 	gv, wv := reflect.ValueOf(got), reflect.ValueOf(want)
+	if got.IsSEP10Session() {
+		t.Error("a key's Subject reads as a SEP-10 session")
+	}
 	for i := range wv.NumField() {
+		if !wv.Type().Field(i).IsExported() {
+			continue
+		}
 		if !reflect.DeepEqual(gv.Field(i).Interface(), wv.Field(i).Interface()) {
 			t.Errorf("Subject.%s = %v, want %v", wv.Type().Field(i).Name, gv.Field(i).Interface(), wv.Field(i).Interface())
 		}

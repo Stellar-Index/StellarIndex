@@ -253,6 +253,34 @@ func TestRevoke_SweepsWhenTheRootHasNoRecord(t *testing.T) {
 	}
 }
 
+// TestRevoke_WritesNothingForAKeyTheCallerDoesNotHold: a revoke of an unknown, oversized or foreign key id
+// changes no state, so neither a flood of junk ids nor another account's id leaves a revoke marker behind.
+func TestRevoke_WritesNothingForAKeyTheCallerDoesNotHold(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	foreign, _, foreignSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-victim"})
+	_, foreignChildPlain, _ := f.mint(t, ChildKeyRequest(foreignSub, "child", nil))
+	before := f.mr.Keys()
+	for name, id := range map[string]string{
+		"unknown":   "kid_0123456789abcdef",
+		"oversized": "kid_" + strings.Repeat("a", 512<<10),
+		"foreign":   foreign.KeyID,
+	} {
+		if _, err := f.store.RevokeKeyTree(ctx, "acct-attacker", id); !errors.Is(err, ErrKeyNotFound) {
+			t.Errorf("%s: RevokeKeyTree = %v, want ErrKeyNotFound", name, err)
+		}
+	}
+	if after := f.mr.Keys(); !slices.Equal(before, after) {
+		t.Fatalf("keyspace changed by refused revokes: before %v, after %v", before, after)
+	}
+	if _, err := f.validator.Lookup(ctx, foreignChildPlain); err != nil {
+		t.Fatalf("foreign child after the refused revoke: %v, want live", err)
+	}
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(foreignSub, "after", nil)); err != nil {
+		t.Fatalf("foreign key minting after the refused revoke: %v, want nil", err)
+	}
+}
+
 // TestCreate_DelegatedMintAfterItsMinterIsRevokedIsRefused: a mint authenticated before its minter
 // was revoked, but writing after, must not leave a live child of the revoked key.
 func TestCreate_DelegatedMintAfterItsMinterIsRevokedIsRefused(t *testing.T) {
