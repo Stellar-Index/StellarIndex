@@ -197,6 +197,8 @@ func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *
 			"customerwebhook: New: BatchLimit(%d) x (effective HTTPClient.Timeout(%s) + markWriteTimeout(%s)) = %s, must stay under the store's %s claim lease (storeLeaseDuration) or a row is re-claimed and double-delivered before this batch finishes it",
 			opts.BatchLimit, effectiveTimeout, markWriteTimeout, worst, storeLeaseDuration))
 	}
+	// Seed the heartbeat so a worker that is built but never runs goes stale from now.
+	obs.CustomerWebhookWorkerLastPollUnix.Set(float64(opts.Clock().Unix()))
 	return &Worker{
 		store:    store,
 		accounts: accounts,
@@ -298,6 +300,7 @@ func (w *Worker) dispatch(ctx context.Context) {
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("list_error").Inc()
 		return
 	}
+	obs.CustomerWebhookWorkerLastPollUnix.Set(float64(w.opts.Clock().Unix()))
 	for _, lane := range lanesByWebhook(pending) {
 		endpoint := lane[0].WebhookID
 		w.slots <- struct{}{}

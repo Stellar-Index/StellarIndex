@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 312 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 313 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -464,6 +464,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_customer_webhook_delivery_exhausted` | `customer_webhook_delivery_attempts_total{outcome="exhausted"}` | > 0, `for: 0m` | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted) |
 | `stellarindex_customer_webhook_mark_errors` | `increase(...{outcome="mark_error"}[30m])` | > 0 for 15 min (POST done, result not saved; re-POSTs each lease) | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_mark_errors) |
 | `stellarindex_customer_webhook_delivery_stalled` | `increase(...{outcome=~"list_error\|lookup_error"}[15m])` per outcome | > 0 for 30 min (pending rows not read, or stuck with their budget unspent) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_delivery_stalled) |
+| `stellarindex_customer_webhook_worker_stalled` | `time() - stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"}`, gauge > 0 | > 900 s for 5 min (worker never started, died or wedged; outcome counters stay flat) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_worker_stalled) |
 | `stellarindex_customer_webhook_delivery_dropped` | `increase(...{outcome=~"no_secret\|build_error"}[1h])` per outcome | > 0, `for: 0m` (terminal before any POST) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_delivery_dropped) |
 | `stellarindex_customer_webhook_fanout_failing` | `increase(customer_webhook_fanout_failures_total[1h])` per (event_type, reason) | > 0 for 5 min (no delivery row; no retry) | ticket | [customer-webhook-fanout-failing](runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing) |
 | `stellarindex_usage_rollup_failing` | `rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error\|sink_error"}[15m])` | > 0 for ≥ 30 min | ticket | [usage-rollup-failing](runbooks/api.md#stellarindex_usage_rollup_failing) |
