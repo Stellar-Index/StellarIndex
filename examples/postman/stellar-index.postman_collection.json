@@ -31827,7 +31827,7 @@
                       "_postman_previewlanguage": "text"
                     },
                     {
-                      "name": "Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id.",
+                      "name": "Missing keyID, the path carries a plaintext key (`key-id-is-a-secret`) instead of its id, or it is not shaped like a key id, `kid_` and 12 to 64 lowercase hex digits (`invalid-key-id`). Nothing is revoked.",
                       "originalRequest": {
                         "url": {
                           "path": [

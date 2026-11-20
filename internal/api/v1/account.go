@@ -782,6 +782,13 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if refuseSecretAsKeyID(w, r, keyID) {
 		return
 	}
+	if !auth.IsKeyIDShaped(keyID) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-key-id",
+			"Not a key id", http.StatusBadRequest,
+			"the path takes a key's public id, kid_ followed by lowercase hex, as listed by GET /v1/account/keys. Nothing was revoked")
+		return
+	}
 	if s.Accounts == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",

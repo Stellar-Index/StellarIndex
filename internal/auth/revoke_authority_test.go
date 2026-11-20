@@ -6,6 +6,7 @@ package auth
 import (
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestMayRevoke(t *testing.T) {
@@ -64,7 +65,9 @@ func TestMayRevoke(t *testing.T) {
 		want    bool
 	}{
 		{Subject{Tier: TierOperator, KeyID: "kid_x"}, true},
-		{Subject{Tier: TierSEP10}, true},
+		{NewSEP10Session("GAAA", time.Time{}), true},
+		{Subject{Tier: TierSEP10}, false}, // tier and an empty KeyID are what a stored record can carry
+		{func() Subject { s, _ := subjectFromRecord(APIKeyRecord{Tier: TierSEP10}); return s }(), false},
 		{Subject{Tier: TierSEP10, KeyID: "kid_x"}, false},
 		{Subject{Tier: TierAPIKey, KeyID: "kid_x"}, false},
 	} {

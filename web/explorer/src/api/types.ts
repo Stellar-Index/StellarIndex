@@ -24318,7 +24318,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id. */
+            /** @description Missing keyID, the path carries a plaintext key (`key-id-is-a-secret`) instead of its id, or it is not shaped like a key id, `kid_` and 12 to 64 lowercase hex digits (`invalid-key-id`). Nothing is revoked. */
             400: {
                 headers: {
                     [name: string]: unknown;

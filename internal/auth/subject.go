@@ -26,6 +26,21 @@ const (
 // String makes Tier usable as a Prometheus label value.
 func (t Tier) String() string { return string(t) }
 
+// NewSEP10Session is the Subject of a SEP-10 session for account. The token carries no per-endpoint
+// policy, so it is unrestricted; the zero value would be KeyPolicy's closed posture.
+func NewSEP10Session(account string, issued time.Time) Subject {
+	return Subject{
+		Identifier:          account,
+		Tier:                TierSEP10,
+		CreatedAt:           issued,
+		AllowAllPermissions: true,
+		sep10Session:        true,
+	}
+}
+
+// IsSEP10Session reports whether s is a SEP-10 session rather than a key, whatever its tier.
+func (s Subject) IsSEP10Session() bool { return s.sep10Session && s.Tier == TierSEP10 }
+
 // Subject is the authenticated identity on a request, set before rate limiting; for anonymous requests Identifier is a RemoteIP + User-Agent hash.
 type Subject struct {
 	// Identifier is the stable identity (G-strkey for SEP-10, owner-account reference for API
@@ -42,6 +57,10 @@ type Subject struct {
 	// KeyID is the public-safe credential identifier (APIKeyRecord.KeyID, distinct from the secret
 	// hash); empty for anonymous and SEP-10 subjects.
 	KeyID string
+
+	// sep10Session marks a SEP-10 session, which proved control of the account; only
+	// [NewSEP10Session] sets it, so no stored key record can read as one.
+	sep10Session bool
 
 	// RateLimitPerMin: zero means the deployment default for the tier; non-zero overrides per key.
 	RateLimitPerMin int

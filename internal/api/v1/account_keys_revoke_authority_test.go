@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -62,6 +63,46 @@ func (tr *revokeTree) mint(t *testing.T, name string, req auth.CreateAPIKeyReque
 func (tr *revokeTree) live(name string) bool {
 	_, err := tr.validator.Lookup(context.Background(), tr.plains[name])
 	return !errors.Is(err, auth.ErrUnauthorized)
+}
+
+// An operator and a SEP-10 session revoke a /v1/register key's Postgres management row through this route too.
+func TestAccountKeysRevoke_AccountWideActorsRevokeThePostgresRow(t *testing.T) {
+	const keyID = "kid_0123456789abcdef01234567"
+	for name, subject := range map[string]auth.Subject{
+		"operator": {Identifier: "acct:reg-abc123", Tier: auth.TierOperator, KeyID: "kid_00000000000000aa"},
+		"sep10":    auth.NewSEP10Session("acct:reg-abc123", time.Now()),
+	} {
+		t.Run(name, func(t *testing.T) {
+			platformKeys, accts := seedOwnedPlatformKey("reg-abc123", keyID)
+			ts := newAdminTestServerWithPlatformKeys(t, subject, &fakeAccountStore{}, platformKeys, accts)
+			resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+keyID, "leaked key", "")
+			if resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("status = %d, want 204", resp.StatusCode)
+			}
+			if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != keyID {
+				t.Errorf("postgres management row revokes = %v, want [%s]", platformKeys.revokedIDs, keyID)
+			}
+		})
+	}
+}
+
+// A path value not shaped like a key id is refused before any store is read, for every caller.
+func TestAccountKeysRevoke_RejectsMalformedKeyIDBeforeAnyStoreCall(t *testing.T) {
+	for _, keyID := range []string{"abc", "kid_XYZ0123456789ab", "kid_0123", "kid_" + strings.Repeat("0", 65), "kid_0123456789ab%2Fx"} {
+		for name, subject := range map[string]auth.Subject{
+			"key":      {Identifier: "acct:co", Tier: auth.TierAPIKey, KeyID: "kid_00000000000000aa"},
+			"operator": {Identifier: "acct:co", Tier: auth.TierOperator, KeyID: "kid_00000000000000aa"},
+			"sep10":    auth.NewSEP10Session("acct:co", time.Now()),
+		} {
+			store := &fakeAccountStore{}
+			ts := newAdminTestServer(t, subject, store, &recordingAuditSink{})
+			resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+keyID, "r", "")
+			if resp.StatusCode != http.StatusBadRequest || store.listCalls != 0 || store.revokeCalls != 0 {
+				t.Errorf("%s %q: status %d, list %d, revoke %d; want 400 and no store call",
+					name, keyID, resp.StatusCode, store.listCalls, store.revokeCalls)
+			}
+		}
+	}
 }
 
 // A retried revoke (its 204 lost) is still 204 for the key that was allowed to make it, and stays 403 for anyone
@@ -126,7 +167,7 @@ func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {
 			tr := newRevokeTree(t)
 			subject := tr.subjects[tc.actor]
 			if tc.sep10 {
-				subject = auth.Subject{Identifier: "acct:co", Tier: auth.TierSEP10}
+				subject = auth.NewSEP10Session("acct:co", time.Now())
 			}
 			targetID := "kid_0000000000000000"
 			if s, ok := tr.subjects[tc.target]; ok {

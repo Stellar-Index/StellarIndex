@@ -2116,6 +2116,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"body-too-large":                  {},
 	"cache-unavailable":               {},
 	"capacity":                        {},
+	"invalid-key-id":                  {},
 	"change-summary-error":            {},
 	"change-summary-not-found":        {},
 	"change-summary-unavailable":      {},

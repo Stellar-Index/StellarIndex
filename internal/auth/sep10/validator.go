@@ -336,12 +336,7 @@ func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, erro
 // sessionSubject is the Subject of a SEP-10 session. The token carries no per-endpoint policy, so it is
 // unrestricted; the zero value would be KeyPolicy's closed posture and 403 every request.
 func sessionSubject(account string, issued time.Time) auth.Subject {
-	return auth.Subject{
-		Identifier:          account,
-		Tier:                auth.TierSEP10,
-		CreatedAt:           issued,
-		AllowAllPermissions: true,
-	}
+	return auth.NewSEP10Session(account, issued)
 }
 
 // classifyVerifyError maps the SDK's errors to our auth errors by substring match, since the SDK exposes no sentinels to errors.Is.

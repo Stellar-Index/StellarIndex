@@ -16,9 +16,9 @@ type RevokeActor struct {
 
 // RevokeActorOf is the revoke authority of an authenticated request's Subject. An API key's
 // Subject carries no dashboard role, so it never gets the account-wide power. A key can be
-// minted at the sep10 tier (and its children inherit it), so only a session with no KeyID is one.
+// minted at the sep10 tier (and its children inherit it), so tier alone does not mark a session.
 func RevokeActorOf(s Subject) RevokeActor {
-	if s.Tier == TierOperator || (s.Tier == TierSEP10 && s.KeyID == "") {
+	if s.Tier == TierOperator || s.IsSEP10Session() {
 		return RevokeActor{AnyKey: true}
 	}
 	return RevokeActor{KeyID: s.KeyID}
