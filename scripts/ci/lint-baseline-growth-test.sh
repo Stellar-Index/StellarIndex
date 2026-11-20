@@ -527,6 +527,31 @@ inline_marker "$(printf 'chore: waive inline\n\nBaseline-Growth: internal/x/a.go
 runGate
 expect "declared inline markers pass" 0 "no undeclared"
 
+# --- 21b. a secret-scan allow marker in ANY file silences gitleaks for that line
+leak_marker() {
+  (
+    cd "$TMP/repo" || exit 1
+    mkdir -p configs
+    printf 'key = "placeholder"\n' > configs/x.toml
+    git add -A && git commit -qm "chore: add config"
+    git rev-parse HEAD > "$TMP/base"
+    printf 'key = "placeholder" # gitleaks:%s\n' allow > configs/x.toml
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+  BASE="$(cat "$TMP/base")"
+}
+mkrepo 0
+leak_marker "chore: waive secret scan"
+runGate
+expect "an added gitleaks allow marker in a .toml fails undeclared" 1 "UNDECLARED GROWTH: configs/x.toml"
+
+mkrepo 0
+leak_marker "$(printf 'chore: waive secret scan\n\nBaseline-Growth: configs/x.toml — fixture value, not a credential')"
+runGate
+expect "a declared gitleaks allow marker passes" 0 "no undeclared"
+
 # --- 22. the other escape markers the lints accept, in any letter case
 inline_marker_more() {
   (

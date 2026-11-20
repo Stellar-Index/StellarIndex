@@ -7,7 +7,8 @@
 #   lint-migrations.sh, and (mutations only,
 #   since new migrations append freely) scripts/ci/migration-immutability.sha256, and the
 #   inline escape markers `i128:ok`, `lint-money:ok` and `migration-compat:ok` in .go/.sql
-#   (the trailer names the file the marker was added to).
+#   (the trailer names the file the marker was added to), and the secret scan's inline allow
+#   marker in any file.
 #
 # Linters fail on stale entries, but nothing stopped one commit from growing an allowlist while
 # introducing the violation it hides. Any range that ADDS entries fails unless a commit message
@@ -184,6 +185,13 @@ detect_growth() {
   git diff -U0 "${base}...${head}" -- '*.go' '*.sql' 2>/dev/null | awk '
     /^\+\+\+ / { f = substr($0, 7); next }
     /^\+/ && tolower($0) ~ /(i128|lint-money|migration-compat|lint-priceable|lint-down-delete|floatmoney):ok/ { print f "\t" substr($0, 2) }
+  '
+
+  # 13) The secret scan's inline allow marker: gitleaks skips any line carrying it, in any file
+  #     type, so one added marker lands a real secret with a green scan.
+  git diff -U0 "${base}...${head}" 2>/dev/null | awk '
+    /^\+\+\+ / { f = substr($0, 7); next }
+    /^\+/ && tolower($0) ~ /gitleaks[:]allow/ { print f "\t" substr($0, 2) }
   '
 }
 
