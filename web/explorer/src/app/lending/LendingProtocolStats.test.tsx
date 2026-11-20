@@ -92,7 +92,10 @@ describe('LendingProtocolStats', () => {
       within(screen.getByTestId('blend')).getByText('BLND price'),
     ).toBeInTheDocument();
     expect(blnt.getByText('BLNT price')).toBeInTheDocument();
-    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1);
+    const protocolReads = vi
+      .mocked(apiGet)
+      .mock.calls.filter(([path]) => String(path).includes('/lending/protocols'));
+    expect(protocolReads).toHaveLength(1);
   });
 
   it('renders a lower-bound total with ≥ and names what it excluded', async () => {

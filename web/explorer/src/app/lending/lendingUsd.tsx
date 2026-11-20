@@ -1,6 +1,16 @@
 import type { components } from '@/api/types';
+import { useSACWrappers } from '@/api/hooks';
 import { formatDecimalAmount, formatReadable } from '@/lib/format';
-import { shortAssetText } from '@/lib/asset-label';
+import { isNativeXlmSac, shortAssetText } from '@/lib/asset-label';
+
+/** Reserve ids are SAC contracts; label them with the wrapped asset's code, not the C-address. */
+export function useAssetText(): (asset: string | null | undefined) => string {
+  const { data: sac } = useSACWrappers();
+  return (asset) =>
+    isNativeXlmSac(asset)
+      ? 'XLM'
+      : shortAssetText((asset && sac?.[asset]) || asset);
+}
 
 type Exclusion = components['schemas']['LendingStatsExclusion'];
 
@@ -33,9 +43,13 @@ export function reasonText(reason: string | null | undefined): string {
 }
 
 /** "USDC (no reliable price)", or "pool CABC…1234 (pool could not be read)". */
-export function exclusionText(e: Exclusion, poolName?: (p: string) => string) {
+export function exclusionText(
+  e: Exclusion,
+  poolName?: (p: string) => string,
+  assetText: (a: string) => string = shortAssetText,
+) {
   const what = e.asset
-    ? shortAssetText(e.asset)
+    ? assetText(e.asset)
     : e.pool
       ? (poolName?.(e.pool) ?? `pool ${e.pool.slice(0, 6)}…${e.pool.slice(-4)}`)
       : e.kind.replace(/_/g, ' ');

@@ -23,7 +23,7 @@ import { scaledUnits } from '../../explorer-shared';
 import { fixedPct, isUnlimitedCap, supplyCapText } from '../poolConfig';
 import { ReserveDetail } from './ReserveDetail';
 import { usePoolReserves } from './usePoolReserves';
-import { shortAssetText } from '@/lib/asset-label';
+import { useAssetText } from '../lendingUsd';
 
 const usdFmt = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -115,6 +115,7 @@ function SupplyCapUsd({
 export function PoolReserves({ pool }: { pool: string }) {
   const q = usePoolReserves(pool);
   const [open, setOpen] = useState<string | null>(null);
+  const assetText = useAssetText();
   const configDecimals = q.data?.config_decimals;
 
   const reserves = q.data?.reserves ?? [];
@@ -139,8 +140,8 @@ export function PoolReserves({ pool }: { pool: string }) {
   const omitted = q.data?.omitted_reserves ?? [];
   const lowerBound = q.data?.lower_bound === true || unpriced.length > 0;
   const left = [
-    ...unpriced.map((rv) => `${shortAssetText(rv.asset)} (unpriced)`),
-    ...omitted.map((a) => `${shortAssetText(a)} (no decoded state)`),
+    ...unpriced.map((rv) => `${assetText(rv.asset)} (unpriced)`),
+    ...omitted.map((a) => `${assetText(a)} (no decoded state)`),
   ];
   const excluded = left.length > 0 ? left.join(', ') : 'some reserves';
 
@@ -182,7 +183,7 @@ export function PoolReserves({ pool }: { pool: string }) {
           <DonutChart
             data={priced.map((rv) => ({
               id: rv.asset,
-              label: shortAssetText(rv.asset),
+              label: assetText(rv.asset),
               value: Number(rv.supplied_usd),
               decimal: rv.supplied_usd,
             }))}
@@ -201,14 +202,14 @@ export function PoolReserves({ pool }: { pool: string }) {
               ariaLabel={`Supplied vs borrowed per priced reserve: ${priced
                 .map(
                   (rv) =>
-                    `${shortAssetText(rv.asset)} $${formatCompactUnits(rv.supplied_usd)} supplied, ${rv.borrowed_usd != null ? `$${formatCompactUnits(rv.borrowed_usd)}` : 'unpriced'} borrowed`,
+                    `${assetText(rv.asset)} $${formatCompactUnits(rv.supplied_usd)} supplied, ${rv.borrowed_usd != null ? `$${formatCompactUnits(rv.borrowed_usd)}` : 'unpriced'} borrowed`,
                 )
                 .join('; ')}`}
               aLabel="Supplied"
               bLabel="Borrowed"
               rows={priced.map((rv) => ({
                 id: rv.asset,
-                label: shortAssetText(rv.asset),
+                label: assetText(rv.asset),
                 a: Number(rv.supplied_usd),
                 b: decimalOrNull(rv.borrowed_usd),
                 aDisplay: `$${formatCompactUnits(rv.supplied_usd)}`,
@@ -229,13 +230,13 @@ export function PoolReserves({ pool }: { pool: string }) {
               ariaLabel={`Utilization per reserve: ${reserves
                 .map(
                   (rv) =>
-                    `${shortAssetText(rv.asset)} ${rv.utilization_pct.toFixed(1)}%`,
+                    `${assetText(rv.asset)} ${rv.utilization_pct.toFixed(1)}%`,
                 )
                 .join(', ')}`}
               max={100}
               items={reserves.map((rv) => ({
                 id: rv.asset,
-                label: shortAssetText(rv.asset),
+                label: assetText(rv.asset),
                 value: Math.max(0, Math.min(100, rv.utilization_pct)),
                 display: `${rv.utilization_pct.toFixed(1)}%`,
                 color:
@@ -262,7 +263,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                   )
                   .map(
                     (rv) =>
-                      `${shortAssetText(rv.asset)} supply ${pct(rv.supply_apr)}, borrow ${pct(rv.borrow_apr)}`,
+                      `${assetText(rv.asset)} supply ${pct(rv.supply_apr)}, borrow ${pct(rv.borrow_apr)}`,
                   )
                   .join('; ')}`}
                 aLabel="Supply APR"
@@ -274,7 +275,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                   )
                   .map((rv) => ({
                     id: rv.asset,
-                    label: shortAssetText(rv.asset),
+                    label: assetText(rv.asset),
                     a: rv.supply_apr ?? null,
                     b: rv.borrow_apr ?? null,
                     aDisplay: pct(rv.supply_apr),
@@ -311,7 +312,8 @@ export function PoolReserves({ pool }: { pool: string }) {
         </p>
       )}
       {reserves.length > 0 && (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
+          {/* relative: clips the detail row's absolutely-placed chart canvases, which otherwise widen the page */}
           <Table>
             <THead>
               <tr>
@@ -379,7 +381,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                   >
                     <InlineMeter
                       frac={rv.utilization_pct / 100}
-                      label={`${shortAssetText(rv.asset)} utilisation: borrowed over supplied`}
+                      label={`${assetText(rv.asset)} utilisation: borrowed over supplied`}
                       className="mr-2 hidden sm:inline-block"
                     />
                     {rv.utilization_pct.toFixed(1)}%

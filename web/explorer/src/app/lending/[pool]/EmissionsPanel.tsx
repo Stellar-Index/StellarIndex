@@ -9,6 +9,7 @@ import { apiGet, asExample, type Envelope } from '@/api/client';
 import type { paths } from '@/api/types';
 import { formatBaseUnits, formatCompactTokenUnits } from '@/lib/format';
 import { shortAssetText } from '@/lib/asset-label';
+import { useAssetText } from '../lendingUsd';
 
 export type Emissions =
   paths['/lending/pools/{pool}/emissions']['get']['responses'][200]['content']['application/json']['data'];
@@ -42,10 +43,13 @@ export type EmissionRow = {
 };
 
 /** One row per stream (reserve side, backstop tier) in the served order. */
-export function emissionRows(d: Emissions): EmissionRow[] {
+export function emissionRows(
+  d: Emissions,
+  assetText: (a: string) => string = shortAssetText,
+): EmissionRow[] {
   const res = d.reserves.map((r) => ({
     id: `r${r.token_id}`,
-    label: `${r.asset ? shortAssetText(r.asset) : `reserve ${Math.floor(r.token_id / 2)}`} ${r.side === 'supply' ? 'suppliers' : 'borrowers'}`,
+    label: `${r.asset ? assetText(r.asset) :`reserve ${Math.floor(r.token_id / 2)}`} ${r.side === 'supply' ? 'suppliers' : 'borrowers'}`,
     perDay: perDayBase(r.eps, d.eps_decimals),
     live: r.live,
     archived: r.archived,
@@ -91,10 +95,11 @@ export function EmissionsPanel({ pool }: { pool: string }) {
         )
       ).data,
   });
+  const assetText = useAssetText();
   const d = q.data;
-  const token = d?.emission_token ? shortAssetText(d.emission_token) : 'tokens';
+  const token = d?.emission_token ? assetText(d.emission_token) : 'tokens';
   const dec = d?.emission_token_decimals ?? null;
-  const rows = d ? emissionRows(d) : [];
+  const rows = d ? emissionRows(d, assetText) : [];
   const bars = emissionBars(rows, dec);
   return (
     <Panel

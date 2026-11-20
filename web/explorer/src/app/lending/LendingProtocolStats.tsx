@@ -8,7 +8,7 @@ import type { paths } from '@/api/types';
 import { formatCompactTokenUnits } from '@/lib/format';
 
 import { LENDING_POOL_META } from './poolMeta';
-import { UsdFigure, exclusionText } from './lendingUsd';
+import { UsdFigure, exclusionText, useAssetText } from './lendingUsd';
 
 export type LendingProtocolRow = NonNullable<
   paths['/lending/protocols']['get']['responses'][200]['content']['application/json']['data']
@@ -42,6 +42,7 @@ export function LendingProtocolStats({
   protocol: 'blend' | 'blnt';
 }) {
   const q = useLendingProtocols();
+  const assetText = useAssetText();
   if (q.isLoading) return <Skeleton className="h-16 w-full" />;
   if (q.isError)
     return (
@@ -57,7 +58,7 @@ export function LendingProtocolStats({
         </Button>
       </p>
     );
-  const row = q.data?.find((r) => r.protocol === protocol);
+  const row =q.data?.find((r) => r.protocol === protocol);
   if (!row)
     return (
       <p className="text-ink-muted text-sm">
@@ -69,7 +70,10 @@ export function LendingProtocolStats({
   const left = (row.excluded ?? []).filter(
     (e) => e.kind !== 'backstop' && e.kind !== 'token',
   );
-  const leftText = left.map((e) => exclusionText(e, poolName)).join(', ');
+  // One asset is often excluded from several pools; name it once.
+  const leftText = [
+    ...new Set(left.map((e) => exclusionText(e, poolName, assetText))),
+  ].join(', ');
   const reason = lb ? `excludes ${leftText || 'some reserves'}` : undefined;
   const t = row.token;
   return (

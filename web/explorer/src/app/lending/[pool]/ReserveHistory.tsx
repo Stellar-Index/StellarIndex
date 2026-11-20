@@ -114,6 +114,7 @@ export function ReserveHistory({
       <div className="flex flex-wrap gap-x-6 gap-y-2">
         <Segmented
           ariaLabel="Metric"
+          className="max-w-full overflow-x-auto"
           options={METRICS.map((m) => ({ label: m.label, value: m.id }))}
           value={metric}
           onChange={(v) => setMetric(v as HistoryView)}
