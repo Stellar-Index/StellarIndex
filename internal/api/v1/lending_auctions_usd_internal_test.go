@@ -12,6 +12,7 @@ func auctionTestValuer(backstop func(string, *big.Int) (*big.Rat, string)) aucti
 	seven := uint32(7)
 	rate := func(s string) *big.Int { n, _ := new(big.Int).SetString(s, 10); return n }
 	return auctionValuer{
+		protocol: blend.SourceName,
 		states: map[string]clickhouse.BlendReserveState{
 			"CUSDC":   {Asset: "CUSDC", Data: blend.ReserveData{Version: blend.PoolV2, BRate: rate("1100000000000"), DRate: rate("1000000000000")}},
 			"CXLM":    {Asset: "CXLM", Data: blend.ReserveData{Version: blend.PoolV2, BRate: rate("1000000000000"), DRate: rate("1250000000000")}},
@@ -100,18 +101,45 @@ func TestAuctionValuer_LegKindsPerAuctionType(t *testing.T) {
 	}
 }
 
-// TestAuctionValuer_BLNTBackstopLegPriced values a BLNT backstop-token leg through the backstop valuer.
-func TestAuctionValuer_BLNTBackstopLegPriced(t *testing.T) {
-	av := auctionTestValuer(func(token string, amount *big.Int) (*big.Rat, string) {
-		if token != "CBLNT" {
-			return nil, backstopUSDUnpriced
+// TestAuctionValuer_BLNTUnprovenTypesWithheld: BLNT liquidation and bad-debt legs are withheld on both sides though every leg
+// would be priced under Blend's table; BLNT interest lots are valued; an unknown protocol values nothing.
+func TestAuctionValuer_BLNTUnprovenTypesWithheld(t *testing.T) {
+	av := auctionTestValuer(blendBackstop)
+	av.protocol = "blnt"
+	for _, typ := range []uint32{0, 1, 3} {
+		v := LendingAuctionView{AuctionType: typ, Bid: map[string]string{"CXLM": "20000000000"}, Lot: map[string]string{"CUSDC": "10000000000"}}
+		av.value(&v)
+		if v.BidUSD != nil || v.LotUSD != nil || oneUnvalued(v.BidUnvalued) != "CXLM/unknown/leg_kind_unknown" ||
+			oneUnvalued(v.LotUnvalued) != "CUSDC/unknown/leg_kind_unknown" {
+			t.Errorf("BLNT type %d = %+v, want both sides withheld as leg_kind_unknown", typ, v.LendingAuctionUSDView)
 		}
-		return new(big.Rat).SetFrac(amount, big.NewInt(1e9)), "" // 0.01 USD per whole 7-dp token
-	})
-	v := LendingAuctionView{AuctionType: 2, Bid: map[string]string{"CBLNT": "5000000000"}, Lot: map[string]string{"CUSDC": "50000000"}}
+	}
+	v := LendingAuctionView{AuctionType: 2, Bid: map[string]string{}, Lot: map[string]string{"CUSDC": "50000000"}}
 	av.value(&v)
-	if deref(v.BidUSD) != "5.00" || v.BidUSDLowerBound || len(v.BidUnvalued) != 0 || deref(v.LotUSD) != "5.00" {
-		t.Errorf("BLNT interest auction = %+v", v.LendingAuctionUSDView)
+	if deref(v.LotUSD) != "5.00" || v.LotUSDLowerBound {
+		t.Errorf("BLNT interest lot = %+v, want 5.00", v.LendingAuctionUSDView)
+	}
+	av.protocol = ""
+	v = LendingAuctionView{AuctionType: 0, Bid: map[string]string{"CXLM": "1"}, Lot: map[string]string{}}
+	av.value(&v)
+	if oneUnvalued(v.BidUnvalued) != "CXLM/unknown/leg_kind_unknown" {
+		t.Errorf("unknown protocol = %+v, want leg_kind_unknown", v.LendingAuctionUSDView)
+	}
+}
+
+// TestBackstopTierAsset resolves a token to its tier's kind, and refuses an unconfigured token or tiers that disagree.
+func TestBackstopTierAsset(t *testing.T) {
+	tiers := []clickhouse.BackstopTierState{
+		{Asset: "Xlm", Token: "CXLM"},
+		{Asset: "BlntXlm", Token: "CSHARE"},
+		{Token: "CBARE"},
+		{Asset: "Usdc", Token: "CDUP"},
+		{Asset: "BlntUsdc", Token: "CDUP"},
+	}
+	for token, want := range map[string]string{"CXLM": "Xlm", "CSHARE": "BlntXlm", "CBARE": "", "CDUP": "", "CNONE": ""} {
+		if got, ok := backstopTierAsset(tiers, token); got != want || ok != (want != "") {
+			t.Errorf("%s = %q %v, want %q", token, got, ok, want)
+		}
 	}
 }
 
