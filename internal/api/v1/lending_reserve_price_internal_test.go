@@ -7,9 +7,37 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
+
+type nativeRowErrReader struct{ AssetsReader }
+
+func (nativeRowErrReader) GetNativeAssetRow(context.Context) (timescale.AssetRow, error) {
+	return timescale.AssetRow{}, errors.New("db down")
+}
+
+// A backstop tier whose price read failed is a read failure that degrades the response, never "unpriced".
+func TestBackstopValue_FailedPriceReadIsAReadFailureNotUnpriced(t *testing.T) {
+	xlmSAC, ok := xdrjson.SACContractID("native", pubnetPassphrase)
+	if !ok {
+		t.Fatal("native SAC")
+	}
+	s := New(Options{AssetsReader: nativeRowErrReader{}})
+	view := LendingBackstopView{Protocol: strRef(blnt.SourceName), Tiers: make([]LendingBackstopTierView, 1)}
+	st := clickhouse.LendingBackstopState{Tiers: []clickhouse.BackstopTierState{
+		{Tier: "FirstLoss", Asset: "Xlm", Token: xlmSAC, Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(1), Tokens: big.NewInt(1e7), Q4W: big.NewInt(0)}},
+	}}
+	_, degraded := s.valueBackstopView(context.Background(), &view, st)
+	if tv := view.Tiers[0]; tv.TokensUSD != nil || strPtrOr(tv.USDReason) != exclusionPriceReadFailed {
+		t.Errorf("tier tokens_usd=%s usd_reason=%s, want null with %s", strPtrOr(tv.TokensUSD), strPtrOr(tv.USDReason), exclusionPriceReadFailed)
+	}
+	if !degraded {
+		t.Error("a failed price read did not degrade the backstop response")
+	}
+}
 
 // reservePriceToken is a Soroban token with no canonical USD feed: only its catalogue row prices it.
 const reservePriceToken = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"

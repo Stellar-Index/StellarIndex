@@ -185,7 +185,9 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 			st.BackstopLowerBound = st.BackstopLowerBound || e.Kind == "backstop"
 			flags.Degraded = flags.Degraded || e.readFailed()
 		}
-		flags.Stale = s.valueProtocolBackstop(ctx, &st) || flags.Stale
+		backstopStale, backstopUnread := s.valueProtocolBackstop(ctx, &st)
+		flags.Stale = backstopStale || flags.Stale
+		flags.Degraded = backstopUnread || flags.Degraded
 		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}
