@@ -300,9 +300,6 @@ export function LendingPoolsTable() {
                 <Th align="right" className="hidden xl:table-cell">
                   Users (30d)
                 </Th>
-                <Th align="right" className="hidden xl:table-cell">
-                  Last activity
-                </Th>
               </tr>
             </THead>
             <TBody>
@@ -389,12 +386,12 @@ export function LendingPoolsTable() {
                       className="hidden font-mono tabular-nums xl:table-cell"
                     >
                       {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <Td
-                      align="right"
-                      className="text-ink-muted hidden text-xs whitespace-nowrap xl:table-cell"
-                    >
-                      {formatRelative(p.last_seen)}
+                      <div
+                        className="text-ink-muted text-xs whitespace-nowrap"
+                        title="Last activity"
+                      >
+                        {formatRelative(p.last_seen)}
+                      </div>
                     </Td>
                   </LinkRow>
                 );
@@ -427,7 +424,7 @@ export function LendingPoolsTable() {
   );
 }
 
-const COLS = 10;
+const COLS = 9;
 
 /** Curated name, else "<Protocol> pool"; we don't invent pool names. */
 function poolDisplayName(pool: string, protocol?: string | null) {

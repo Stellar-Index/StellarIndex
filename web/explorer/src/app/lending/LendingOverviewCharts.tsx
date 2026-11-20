@@ -60,7 +60,7 @@ export function protocolRows(rows: LendingProtocolRow[]): ProtocolRow[] {
 }
 
 const poolLabel = (pool: string) =>
-  LENDING_POOL_META[pool]?.name ?? `${pool.slice(0, 4)}…${pool.slice(-4)}`;
+  LENDING_POOL_META[pool]?.name ?? `pool ${pool.slice(0, 4)}…${pool.slice(-4)}`;
 
 type TvlItem = HBarItem & { usd: string };
 
