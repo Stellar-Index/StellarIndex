@@ -28,9 +28,12 @@ Design rationale lives in
   - Ubuntu 24.04 LTS (or 22.04).
   - Network reachability between them on ports 5432 (Postgres),
     8008 (Patroni REST), 2379 + 2380 (etcd).
-  - The `archival-node` role's preflight + zfs steps already
-    applied (this role builds on the postgres install from that
-    role).
+  - The PostgreSQL + TimescaleDB apt repositories present (the
+    `archival-node` role's postgres repo tasks add them). The hosts
+    must not be in `archival_nodes`: both roles own the whole
+    `/etc/nftables.conf`, and preflight refuses an archival node.
+  - Patroni 3.0.4 or newer (Ubuntu 24.04's package, or PGDG on
+    22.04); preflight refuses older ones.
 
 - Vault contents:
   - `patroni_replicator_password` — Postgres replication user.
@@ -108,16 +111,14 @@ ssh db-02 patronictl -c /etc/patroni/patroni.yml failover stellarindex-r1
 
 ## Restore-from-backup path
 
-For DR rebuilds: set in inventory and run:
-
-```yaml
-patroni_bootstrap_method: pgbackrest        # default: initdb
-patroni_pgbackrest_stanza: stellarindex
-patroni_pgbackrest_restore_target: latest   # or "time:2026-04-30 14:00:00"
-```
-
-On a host with the distro's empty main cluster still at `patroni_data_dir`,
-also set `patroni_adopt_existing_data_dir: true` so the restore overwrites it.
+Not supported yet: `patroni_bootstrap_method: pgbackrest` fails at 08.
+Patroni treats a data dir restored outside it as crashed, strips
+`restore_command` and the recovery target from `postgresql.auto.conf` and
+removes `recovery.signal`, so the WAL after the backup would never be
+replayed. The restore has to move into a Patroni custom bootstrap method
+(`bootstrap.method: pgbackrest` with `keep_existing_recovery_conf` and a
+`recovery_conf.restore_command`), validated on a real cluster, before the
+role accepts it.
 
 ## Replacing an etcd member
 
@@ -136,9 +137,10 @@ etcdctl member add db-02 --peer-urls=https://10.0.0.12:2380
 ansible-playbook ... --limit db-02 -e etcd_initial_cluster_state=existing
 ```
 
-Once a host's etcd data dir holds a member, `/etc/default/etcd` renders
-`existing` regardless of the variable, so later full runs do not need the
-`-e` and do not restart etcd over it.
+Once a host's etcd data dir holds a member, `/etc/default/etcd` keeps the
+initial state that member was started with, whatever the variable says, so
+later full runs do not need the `-e` and do not restart etcd over it.
+Patroni's unit only `Wants=` etcd, so an etcd restart never restarts Patroni.
 
 The role also refuses `new` when a peer cannot be asked at all (TLS,
 firewall, timeout), because that is not evidence that no cluster exists.

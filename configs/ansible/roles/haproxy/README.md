@@ -60,11 +60,14 @@ all:
 ```
 
 Both LBs start as `BACKUP`; the distinct per-host `keepalived_priority`
-elects the MASTER. A failed `api_pool` probe lowers that LB's priority
-and moves the VIP to the peer. When the higher-priority LB recovers it
-waits `keepalived_preempt_delay` seconds (default 60) before taking the
-VIP back, so a flapping pool does not bounce it. Preflight refuses a
-leftover `keepalived_initial_state`.
+elects the MASTER. A failed `api_pool` probe (two failures, ~4 s) lowers
+that LB's priority by `keepalived_pool_weight` (50) and the peer takes the
+VIP at once. The recovered LB's priority comes back only after
+`keepalived_pool_recovery_seconds` (default 60) of healthy probes, so a
+flapping pool does not bounce the VIP. Preflight refuses a leftover
+`keepalived_initial_state` or `keepalived_preempt_delay`, and a priority
+gap of `keepalived_pool_weight` or more, which would never move the VIP.
+The hosts must not be in `archival_nodes`: both roles own `/etc/nftables.conf`.
 
 ## Running
 
