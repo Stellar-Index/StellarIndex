@@ -725,3 +725,49 @@ describe('swap picker look-alikes', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe('AssetSwap amounts', () => {
+  function renderAt(
+    price: string,
+    props: { assetId?: string; decimals?: number } = {},
+  ) {
+    stubApi();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (input: string | URL) => {
+        const hit = String(input).includes('/v1/price?');
+        return {
+          status: hit ? 200 : 500,
+          ok: hit,
+          json: async () => ({ data: { price } }),
+        };
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <AssetSwap
+          symbol="TKN"
+          assetId={props.assetId ?? 'native'}
+          priceUSD={price}
+          decimals={props.decimals}
+        />
+      </QueryClientProvider>,
+    );
+  }
+  const field = (i: number) =>
+    screen.getAllByRole('textbox')[i] as HTMLInputElement;
+
+  it("rounds the page asset's leg to the asset's own decimals", async () => {
+    renderAt('3', {
+      assetId: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      decimals: 2,
+    });
+    await vi.waitFor(() => expect(field(1).value).toBe('3'));
+    fireEvent.change(field(1), { target: { value: '1' } });
+    expect(field(0).value).toBe('0.33');
+    vi.unstubAllGlobals();
+  });
+});

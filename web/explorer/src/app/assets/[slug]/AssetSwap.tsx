@@ -323,6 +323,7 @@ export function AssetSwap({
   priceUSD: bakedPriceUSD,
   priceProvenance = null,
   priceStale,
+  decimals = null,
 }: {
   symbol: string;
   assetId: string;
@@ -331,6 +332,8 @@ export function AssetSwap({
   priceUSD: string | null;
   priceProvenance?: PriceProvenance;
   priceStale?: boolean;
+  /** The asset's on-chain decimals; its converted amount rounds to them. */
+  decimals?: number | null;
 }) {
   // The headline's own resolution: polled live, blanked when withheld.
   const resolved = useResolvedAssetPrice(
@@ -347,9 +350,10 @@ export function AssetSwap({
       symbol,
       image,
       usdPrice: priceUSD,
+      decimals: onChainDecimals(assetId, decimals),
       kind: 'crypto',
     }),
-    [assetId, symbol, image, priceUSD],
+    [assetId, symbol, image, priceUSD, decimals],
   );
 
   const [fromToken, setFromToken] = useState<SwapToken>(pageToken);
@@ -742,7 +746,7 @@ function TokenPicker({
               name: c.name,
               image: c.image,
               usdPrice: positiveDecimal(c.price_usd),
-              decimals: c.decimals ?? null,
+              decimals: onChainDecimals(key, c.decimals),
               observedAt: c.price_as_of ?? null,
               qualifiers: qualifier != null ? [qualifier] : undefined,
               kind: 'crypto',
@@ -1031,6 +1035,15 @@ function normalizeAmount(raw: string): string | null {
 // Stellar classic precision when a crypto leg's decimals are unknown; a fiat
 // leg rounds to cents but keeps four significant digits below one unit.
 const DEFAULT_CRYPTO_DECIMALS = 7;
+
+// A catalogue row (crypto:BTC, a slug) reports decimals 0, which is no
+// precision at all; only a Stellar asset's decimals bound its amounts.
+function onChainDecimals(
+  key: string,
+  decimals: number | null | undefined,
+): number | null {
+  return decimals != null && isStellarAssetId(key) ? decimals : null;
+}
 
 function convertLeg(
   amount: string,

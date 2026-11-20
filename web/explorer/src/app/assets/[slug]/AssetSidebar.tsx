@@ -350,6 +350,7 @@ export function AssetSidebar({
             priceUSD={seed}
             priceProvenance={priceProvenance ?? null}
             priceStale={priceStale}
+            decimals={decimals}
           />
           <PerformanceRange
             assetId={coin.asset_id}
