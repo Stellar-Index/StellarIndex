@@ -511,6 +511,62 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 // mint under a gone key is refused by the minter-record check.
 const keyRevokeMarkerTTL = time.Hour
 
+// keyRevokedTombstoneTTL covers a client retrying a revoke whose 204 it never received.
+const keyRevokedTombstoneTTL = 24 * time.Hour
+
+// RecordRevoked notes that revokers held authority over keyID, now revoked, so their retry still
+// qualifies under [MayRevoke] once keyID's record is gone. Key ids are random and never reissued.
+func (s *RedisAPIKeyStore) RecordRevoked(ctx context.Context, identifier, keyID string, revokers []string) error {
+	if len(revokers) == 0 {
+		return nil
+	}
+	return s.rdb.Set(ctx, cachekeys.APIKeyRevoked(identifier, keyID).String(),
+		strings.Join(revokers, ","), keyRevokedTombstoneTTL).Err()
+}
+
+// RevokedBy returns the revokers [RedisAPIKeyStore.RecordRevoked] noted for keyID; nil when none
+// were, or the note lapsed.
+func (s *RedisAPIKeyStore) RevokedBy(ctx context.Context, identifier, keyID string) ([]string, error) {
+	v, err := s.rdb.Get(ctx, cachekeys.APIKeyRevoked(identifier, keyID).String()).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(v, ","), nil
+}
+
+// RevokersOf is who may revoke keyID by [MayRevoke]'s delegation rule, as recorded for a retry:
+// actor and keyID's minters at every depth.
+func RevokersOf(actor RevokeActor, keyID string, owned []APIKeyRecord) []string {
+	if actor.KeyID == "" || actor.KeyID == keyID {
+		return nil // an account-wide actor needs no note; a key that revoked itself cannot retry
+	}
+	byID := make(map[string]APIKeyRecord, len(owned))
+	for _, rec := range owned {
+		byID[rec.KeyID] = rec
+	}
+	revokers := []string{actor.KeyID}
+	seen := map[string]bool{actor.KeyID: true, keyID: true}
+	add := func(id string) bool {
+		if id == "" || seen[id] {
+			return false
+		}
+		seen[id] = true
+		revokers = append(revokers, id)
+		return true
+	}
+	rec, ok := byID[keyID]
+	for _, id := range rec.AncestorKeyIDs {
+		add(id)
+	}
+	for ok && add(rec.ParentKeyID) {
+		rec, ok = byID[rec.ParentKeyID]
+	}
+	return revokers
+}
+
 // markRevoking records that keyID's tree on identifier is being revoked. An ACL that denies the
 // marker also denies the delegated write script, whose fallback still checks the minter's record.
 func (s *RedisAPIKeyStore) markRevoking(ctx context.Context, identifier, keyID string) error {

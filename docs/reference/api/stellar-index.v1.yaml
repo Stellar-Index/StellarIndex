@@ -10257,7 +10257,7 @@ paths:
           description: "Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing."
       responses:
         "204":
-          description: Revoked (or already gone, for a key the caller may revoke).
+          description: Revoked. Repeating a revoke within 24 hours, with the key that made it or a key that minted the revoked one, also answers 204, as does any revoke by a SEP-10 session or operator of a key already gone.
         "400":
           description: Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id.
         "401":

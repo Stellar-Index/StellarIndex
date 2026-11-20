@@ -28,6 +28,9 @@ type AccountStore interface {
 	CreateCapped(ctx context.Context, req auth.CreateAPIKeyRequest, maxActive int) (auth.APIKeyRecord, string, error)
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
+	// RecordRevoked and RevokedBy keep a revoked key's revokers for a short while so a retried DELETE is still 204.
+	RecordRevoked(ctx context.Context, identifier, keyID string, revokers []string) error
+	RevokedBy(ctx context.Context, identifier, keyID string) ([]string, error)
 }
 
 // Account is the wire shape for /v1/account/me: a union where API-key callers fill the key_* fields and magic-link callers fill nested `user` + `account`.
@@ -723,31 +726,37 @@ func refuseSecretAsKeyID(w http.ResponseWriter, r *http.Request, keyID string) b
 }
 
 // mayRevokeAccountKey answers 403 unless subject may revoke keyID ([auth.MayRevoke]). The answer does not depend on
-// whether keyID exists, so it is no enumeration oracle.
-func (s *Server) mayRevokeAccountKey(w http.ResponseWriter, r *http.Request, subject auth.Subject, keyID string) bool {
+// whether keyID exists, so it is no enumeration oracle. It reads only; owned is returned for the revoke's retry note.
+func (s *Server) mayRevokeAccountKey(
+	w http.ResponseWriter, r *http.Request, subject auth.Subject, keyID string,
+) ([]auth.APIKeyRecord, bool) {
 	actor := auth.RevokeActorOf(subject)
 	var owned []auth.APIKeyRecord
+	var revokedBy []string
 	if !actor.AnyKey {
 		recs, err := s.Accounts.ListKeysForIdentifier(r.Context(), subject.Identifier)
+		if err == nil {
+			owned = recs
+			revokedBy, err = s.Accounts.RevokedBy(r.Context(), subject.Identifier, keyID)
+		}
 		if err != nil {
-			s.logger.Error("account keys revoke: list keys", "err", err, "identifier", subject.Identifier)
+			s.logger.Error("account keys revoke: read the caller's keys", "err", err, "identifier", subject.Identifier)
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/account-revoke-failed",
 				"Could not revoke key", http.StatusInternalServerError,
 				"see X-Request-ID in server logs")
-			return false
+			return nil, false
 		}
-		owned = recs
 	}
-	if auth.MayRevoke(actor, keyID, owned) {
-		return true
+	if auth.MayRevoke(actor, keyID, owned, revokedBy) {
+		return owned, true
 	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/key-not-delegated",
 		"This key can't revoke that key", http.StatusForbidden,
 		"an API key may revoke only itself and keys minted from it, directly or through keys it minted. Nothing was revoked. "+
 			"Authenticate with the key itself or the key that minted it; a dashboard user can also revoke it from the dashboard")
-	return false
+	return nil, false
 }
 
 // handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. An API key may revoke
@@ -784,7 +793,8 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if !s.mayRevokeAccountKey(w, r, subject, keyID) {
+	owned, ok := s.mayRevokeAccountKey(w, r, subject, keyID)
+	if !ok {
 		return
 	}
 	// revokeKeyEverywhere (admin_keys.go) also clears the
@@ -809,5 +819,11 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, false)
+	revokers := auth.RevokersOf(auth.RevokeActorOf(subject), keyID, owned)
+	if err := s.Accounts.RecordRevoked(r.Context(), subject.Identifier, keyID, revokers); err != nil {
+		// Best-effort: the key is revoked; a retry that misses the note answers 403, not a live key.
+		s.logger.Warn("account keys revoke: retry note not written", "err", err,
+			"identifier", subject.Identifier, "key_id", keyID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

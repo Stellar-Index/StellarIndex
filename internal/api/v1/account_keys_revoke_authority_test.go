@@ -64,6 +64,34 @@ func (tr *revokeTree) live(name string) bool {
 	return !errors.Is(err, auth.ErrUnauthorized)
 }
 
+// A retried revoke (its 204 lost) is still 204 for the key that was allowed to make it, and stays 403 for anyone
+// else; a refused revoke leaves no retry note behind.
+func TestAccountKeysRevoke_RetryAfterSuccessIsIdempotent(t *testing.T) {
+	tr := newRevokeTree(t)
+	childID := tr.subjects["child"].KeyID
+	del := func(actor string) int {
+		ts := newAdminTestServer(t, tr.subjects[actor], tr.store, &recordingAuditSink{})
+		return doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+childID, "", "").StatusCode
+	}
+	if got := del("sibling"); got != http.StatusForbidden {
+		t.Fatalf("sibling revoke = %d, want 403", got)
+	}
+	if note, err := tr.store.RevokedBy(context.Background(), "acct:co", childID); err != nil || note != nil {
+		t.Fatalf("refused revoke left a retry note %v (err %v)", note, err)
+	}
+	if got := del("owner"); got != http.StatusNoContent {
+		t.Fatalf("first revoke = %d, want 204", got)
+	}
+	if got := del("owner"); got != http.StatusNoContent {
+		t.Errorf("retried revoke = %d, want 204", got)
+	}
+	for _, actor := range []string{"sibling", "member", "other"} {
+		if got := del(actor); got != http.StatusForbidden {
+			t.Errorf("%s revoke of the revoked child = %d, want 403", actor, got)
+		}
+	}
+}
+
 // An API key may revoke only keys delegated from it: never its minter, a sibling, or another root on the account (a
 // member's key and the owner's are both roots). A SEP-10 session proved control of the account and may revoke any key.
 func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {

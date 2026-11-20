@@ -24311,7 +24311,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Revoked (or already gone, for a key the caller may revoke). */
+            /** @description Revoked. Repeating a revoke within 24 hours, with the key that made it or a key that minted the revoked one, also answers 204, as does any revoke by a SEP-10 session or operator of a key already gone. */
             204: {
                 headers: {
                     [name: string]: unknown;

@@ -3,7 +3,10 @@
 
 package auth
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestMayRevoke(t *testing.T) {
 	// root → mid (record gone after a failed cascade) → leaf; root → sib; legacy → legacyChild (ParentKeyID only).
@@ -37,9 +40,24 @@ func TestMayRevoke(t *testing.T) {
 		{"account-wide authority", RevokeActor{AnyKey: true}, "kid_other", true},
 	}
 	for _, tc := range cases {
-		if got := MayRevoke(tc.actor, tc.target, owned); got != tc.want {
+		if got := MayRevoke(tc.actor, tc.target, owned, nil); got != tc.want {
 			t.Errorf("%s: MayRevoke = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+	// A revoked key's retry note authorises exactly the keys it names.
+	note := RevokersOf(key("kid_root"), "kid_leaf", owned)
+	if want := []string{"kid_root", "kid_mid"}; !slices.Equal(note, want) {
+		t.Errorf("RevokersOf = %v, want %v", note, want)
+	}
+	gone := []APIKeyRecord{{KeyID: "kid_root"}, {KeyID: "kid_sib", ParentKeyID: "kid_root", AncestorKeyIDs: []string{"kid_root"}}}
+	if !MayRevoke(key("kid_root"), "kid_leaf", gone, note) || !MayRevoke(key("kid_mid"), "kid_leaf", gone, note) {
+		t.Error("a key the retry note names may not retry its revoke")
+	}
+	if MayRevoke(key("kid_sib"), "kid_leaf", gone, note) {
+		t.Error("a key the retry note does not name may revoke through it")
+	}
+	if got := RevokersOf(key("kid_root"), "kid_root", owned); got != nil {
+		t.Errorf("RevokersOf(self) = %v, want nil", got)
 	}
 	for _, tc := range []struct {
 		subject Subject
