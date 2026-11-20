@@ -56,7 +56,7 @@ groups:
                 run) held the shared `verify-archive` lock for the whole
                 HEAVY_JOB_LOCK_WAIT (20h); the journal says "still held
                 after waiting". Find the holder with
-                `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`.
+                `fuser -v /run/lock/stellarindex/stellarindex-heavy-verify-archive.lock`.
             Customer impact: zero immediate; the API serves from existing
             data. Cross-region trust model degrades after 48h without a
             clean run (see stellarindex_verify_archive_run_stale).
@@ -159,7 +159,7 @@ groups:
                 run) held the shared `verify-archive` lock for the whole
                 HEAVY_JOB_LOCK_WAIT (20h); the journal says "still held
                 after waiting". Find the holder with
-                `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`.
+                `fuser -v /run/lock/stellarindex/stellarindex-heavy-verify-archive.lock`.
             Customer impact: zero immediate; the API serves from existing data.
 
             Runbook: docs/operations/runbooks/verify-archive.md#stellarindex_verify_archive_tier_b_unit_failed

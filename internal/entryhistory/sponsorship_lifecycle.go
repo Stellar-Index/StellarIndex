@@ -33,7 +33,8 @@ func SponsorshipEpisodes(events []clickhouse.SponsorshipEventRow) (episodes []Sp
 
 // SponsorshipProof sets the account entry's own sponsorship counters against the reserves of the in-force
 // arrangements derived through the watermark. Every change to either counter also modifies the account entry,
-// so an entry last modified at or below the watermark must agree with the derivation exactly.
+// so an entry last modified at or below the watermark, read from a snapshot taken at or after it, must agree
+// with the derivation exactly.
 type SponsorshipProof struct {
 	NumSponsoring      uint32
 	NumSponsored       uint32
@@ -41,8 +42,8 @@ type SponsorshipProof struct {
 	DerivedSponsored   uint64
 	LastModifiedLedger uint32
 	ThroughLedger      uint32
-	// Match is nil when the two are not comparable: the account does not exist, nothing is derived, or the entry
-	// was modified after the watermark.
+	// Match is nil when the two are not comparable: the account does not exist, nothing is derived, the entry
+	// was modified after the watermark, or the entry snapshot predates the watermark (or has no vintage).
 	Match *bool
 }
 
@@ -53,7 +54,8 @@ func ProveSponsorships(st clickhouse.AccountState, wm uint32, sponsoring, sponso
 		DerivedSponsoring: sponsoring.InForceReserves, DerivedSponsored: sponsored.InForceReserves,
 		LastModifiedLedger: st.LastModifiedLedger, ThroughLedger: wm,
 	}
-	if !st.Exists || wm == 0 || st.LastModifiedLedger > wm {
+	// A snapshot older than wm can miss a counter change in (AsOfLedger, wm] that the derivation already holds.
+	if !st.Exists || wm == 0 || st.LastModifiedLedger > wm || st.AsOfLedger < wm {
 		return p
 	}
 	match := uint64(st.NumSponsoring) == sponsoring.InForceReserves && uint64(st.NumSponsored) == sponsored.InForceReserves

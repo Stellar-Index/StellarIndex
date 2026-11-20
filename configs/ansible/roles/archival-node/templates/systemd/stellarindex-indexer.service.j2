@@ -37,14 +37,11 @@ Wants=network-online.target
 # of hot-looping forever (resource governance —
 # this had drifted from the deploy/systemd/*.service reference copies).
 #
-# Sized as a DEPENDENCY-OUTAGE budget: with RestartSec=10s
-# below, 60 restarts is ~10 minutes of continuous failure before the
-# unit parks — longer than a MinIO or Postgres restart (2-3 min on r1,
-# including a config apply) — and the interval must exceed 60 × 10s =
-# 600s or the burst could never accumulate inside the window and the
-# unit would hot-loop forever instead of parking. Was 10/5min, i.e.
-# ~100 SECONDS, so a dependency blip parked ingest in `failed` before
-# the dependency had finished restarting. Keep in lockstep with
+# Sized as a DEPENDENCY-OUTAGE budget: RestartSteps/RestartMaxDelaySec
+# in [Service] back restarts off to 2 min, so even an hours-long Postgres
+# or MinIO outage stays under this burst and the unit recovers on its own.
+# On systemd < 254, which ignores the backoff, a fixed 10s delay parks the
+# unit ~10 minutes into an outage. Keep in lockstep with
 # deploy/systemd/stellarindex-indexer.service.
 StartLimitIntervalSec=15min
 StartLimitBurst=60
@@ -64,6 +61,11 @@ TimeoutStopSec=120s
 LimitNOFILE=1048576
 Restart=on-failure
 RestartSec=10s
+# Back restarts off to 2 min, as the API and aggregator do: a fixed 10s delay
+# spends the burst above ~10 min into a Postgres outage and parks ingest in
+# `failed` after Postgres returns. Needs systemd >= 254; older ignores both.
+RestartSteps=10
+RestartMaxDelaySec=2min
 
 # Memory ceiling — bounds a leak so it can't starve Postgres/ClickHouse
 # on this shared, memory-tight host (188 GiB total, already running

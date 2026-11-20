@@ -95,7 +95,7 @@ If a stop outlives the bound (scope still listed, or `systemctl status heavy-<na
 3. A compression policy left paused (`scheduled` must be `true`):
    `sudo -u postgres psql -d stellarindex -c "SELECT job_id, scheduled FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy';"`
    `usd-volume-restamp -chunks` prints the exact repair (`compress_chunk` and `alter_job(..., scheduled => true)`) to stderr before each statement that can outlive it; run what the job log shows.
-4. The locks `/run/lock/stellarindex-heavy-<name>.lock` and `/run/lock/stellarindex-heavy.lock` are released with the cgroup; a relaunch is not blocked.
+4. The locks `/run/lock/stellarindex/stellarindex-heavy-<name>.lock` and `/run/lock/stellarindex-heavy.lock` are released with the cgroup; a relaunch is not blocked.
 5. If the job's cleanup exceeded its bound, raise `HEAVY_JOB_STOP_TIMEOUT` on the next launch line and write the measurement down.
 
 The bound reaches r1 only when the wrapper is re-rendered (`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`, tag `heavy-job-wrapper`, from `configs/ansible/`):

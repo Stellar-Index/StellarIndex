@@ -9,8 +9,15 @@
 -- ── RUNBOOK (r1) ─────────────────────────────────────────────────────────
 --
 --   1. Apply the DDL (idempotent: IF NOT EXISTS, and the closing retype is
---      a no-op once applied):
+--      a no-op once applied) with the timer stopped, so no cycle runs
+--      against a half-retyped pair, then confirm every sum column is Int256
+--      before restarting it. A binary that finds one narrower refuses the
+--      cycle and keeps the previous snapshot live:
+--        systemctl stop cohort-rollup.timer
 --        clickhouse-client --port 9300 --multiquery < deploy/clickhouse/account_cohort_rollup.sql
+--        SELECT table, name, type FROM system.columns WHERE database = 'stellar'
+--          AND startsWith(table, 'account_cohort_') AND name IN ('inflow', 'outflow', 'amount')
+--        systemctl start cohort-rollup.timer
 --   2. Run one cycle by hand and read its step log — the movements walk
 --      is the long step (the whole account_movements archive, one 1M-
 --      ledger window at a time, joined to the cohort membership):
@@ -93,8 +100,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
     month     Date,
     asset     String,
     contract  String,
-    inflow    Int128,
-    outflow   Int128,
+    inflow    Int256,
+    outflow   Int256,
     movements UInt64,
     actives   AggregateFunction(uniqCombined, String),
     first_at  DateTime('UTC'),
@@ -112,8 +119,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows
     root            String,
     month           Date,
     asset           String,
-    inflow          Int128,
-    outflow         Int128,
+    inflow          Int256,
+    outflow         Int256,
     movements       UInt64,
     active_accounts UInt64
 )
@@ -224,3 +231,13 @@ ALTER TABLE stellar.account_cohort_positions
     MODIFY COLUMN amount Int256;
 ALTER TABLE stellar.account_cohort_positions_staging
     MODIFY COLUMN amount Int256;
+
+-- Flows sum i128 token amounts, which wrap in Int128. Retype the working table
+-- and both EXCHANGE halves the same way (a no-op once applied; the tables are
+-- rebuilt every cycle). Apply before rolling the binary that fills Int256.
+ALTER TABLE stellar.account_cohort_parts_staging
+    MODIFY COLUMN inflow Int256, MODIFY COLUMN outflow Int256;
+ALTER TABLE stellar.account_cohort_flows
+    MODIFY COLUMN inflow Int256, MODIFY COLUMN outflow Int256;
+ALTER TABLE stellar.account_cohort_flows_staging
+    MODIFY COLUMN inflow Int256, MODIFY COLUMN outflow Int256;

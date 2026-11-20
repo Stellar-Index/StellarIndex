@@ -53,15 +53,10 @@ Wants=network-online.target
 # for: 15m (configs/prometheus/rules.r1/infra.yml), not a page.
 #
 # Sized as a DEPENDENCY-OUTAGE budget, not a magic number (#371 F3).
-# With RestartSec=10s below, 60 restarts is ~10 minutes of continuous
-# failure before the unit parks — comfortably longer than a MinIO or
-# Postgres restart (2-3 min observed on r1, including a config apply),
-# and the interval must exceed 60 × 10s = 600s or the burst could never
-# accumulate inside the window and the unit would hot-loop forever
-# instead of parking. Was 10/5min, i.e. ~100 SECONDS: an indexer that
-# exits on a dependency blip was parked in `failed` before the
-# dependency finished restarting, needing a human `systemctl
-# reset-failed` to bring ingest back.
+# RestartSteps/RestartMaxDelaySec in [Service] back restarts off to 2 min,
+# so even an hours-long Postgres or MinIO outage stays under this burst and
+# the unit recovers on its own. On systemd < 254, which ignores the backoff,
+# a fixed 10s delay parks the unit ~10 minutes into an outage.
 #
 # What this does NOT do, so nobody plans around it: a permanently broken
 # config (bad credentials, deleted bucket) will not park the unit either.
@@ -143,6 +138,11 @@ LimitNPROC=1048576
 # derives its burst FROM this value.
 Restart=on-failure
 RestartSec=10s
+# Back restarts off to 2 min, as the API and aggregator do: a fixed 10s delay
+# spends the burst above ~10 min into a Postgres outage and parks ingest in
+# `failed` after Postgres returns. Needs systemd >= 254; older ignores both.
+RestartSteps=10
+RestartMaxDelaySec=2min
 
 # Hardening — read-only most of the filesystem, write only to
 # the working dir + the cache dir if any.
