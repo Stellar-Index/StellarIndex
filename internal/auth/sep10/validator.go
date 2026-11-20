@@ -267,11 +267,7 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 		JWT:       jwt,
 		IssuedAt:  now,
 		ExpiresAt: expiresAt,
-		Subject: auth.Subject{
-			Identifier: clientAccountID,
-			Tier:       auth.TierSEP10,
-			CreatedAt:  now,
-		},
+		Subject:   sessionSubject(clientAccountID, now),
 	}, nil
 }
 
@@ -334,11 +330,18 @@ func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, erro
 		return auth.Subject{}, fmt.Errorf("%w: JWT nbf is in the future (not valid yet)",
 			auth.ErrUnauthorized)
 	}
+	return sessionSubject(claims.Sub, time.Unix(claims.Iat, 0).UTC()), nil
+}
+
+// sessionSubject is the Subject of a SEP-10 session. The token carries no per-endpoint policy, so it is
+// unrestricted; the zero value would be KeyPolicy's closed posture and 403 every request.
+func sessionSubject(account string, issued time.Time) auth.Subject {
 	return auth.Subject{
-		Identifier: claims.Sub,
-		Tier:       auth.TierSEP10,
-		CreatedAt:  time.Unix(claims.Iat, 0).UTC(),
-	}, nil
+		Identifier:          account,
+		Tier:                auth.TierSEP10,
+		CreatedAt:           issued,
+		AllowAllPermissions: true,
+	}
 }
 
 // classifyVerifyError maps the SDK's errors to our auth errors by substring match, since the SDK exposes no sentinels to errors.Is.
