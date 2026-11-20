@@ -86,9 +86,46 @@ describe('BackstopPanel', () => {
     wrap(<BackstopPanel pool={POOL} />);
     expect(await screen.findByText('First-loss tier')).toBeTruthy();
     expect(screen.getByText('Second-loss tier')).toBeTruthy();
-    expect(screen.getByText('5,000,000')).toBeTruthy();
+    expect(screen.getByTitle('5,000,000 tokens')).toHaveTextContent('5M');
+    expect(screen.getByText('USDC')).toBeTruthy();
     expect(screen.getByText('50%')).toBeTruthy();
-    expect(screen.getAllByText('—').length).toBeGreaterThan(2);
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
+    // Tiers in different assets never share a size bar.
+    expect(screen.queryByRole('img', { name: /Tier sizes/ })).toBeNull();
+  });
+
+  it('compares same-asset tiers, shows queued share and lights up tokens_usd', async () => {
+    const tier = (t: string, tokens: string, usd: string | null) => ({
+      tier: t,
+      tokens,
+      tokens_usd: usd,
+      shares: tokens,
+      queued_shares: '0',
+      queued_pct: 7.5,
+      backstop_asset: 'Usdc',
+      backstop_token: null,
+      take_rate_weight: 1,
+    });
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        pool: POOL,
+        available: true,
+        take_rate: '5000000',
+        config_decimals: 7,
+        tiers: [
+          tier('FirstLoss', '30000000', '3.00'),
+          tier('SecondLoss', '10000000', null),
+        ],
+      },
+    });
+    wrap(<BackstopPanel pool={POOL} />);
+    expect(
+      await screen.findByRole('img', {
+        name: 'Tier sizes: First-loss tier 75%, Second-loss tier 25%',
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText('$3.00')).toBeTruthy();
+    expect(screen.getAllByRole('meter')).toHaveLength(2);
   });
 });
 
