@@ -103,6 +103,7 @@ func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string)
 // applyAssetRowToDetail mirrors scalar AssetRow fields onto AssetDetail. sql.ErrNoRows is the
 // expected "no catalogue row" case; other errors log at Debug.
 func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail, asset canonical.Asset, row timescale.AssetRow, err error, assetID string) {
+	defer s.capFilledPrice(ctx, detail, asset)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			s.logger.Debug("asset extension: row lookup failed",
