@@ -1,6 +1,6 @@
 ---
 title: Backfill procedure — replaying a historical ledger range
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: operator runbook
 ---
 
@@ -104,26 +104,25 @@ psql stellarindex -c "SELECT bucket, base_asset, quote_asset, vwap, trade_count 
   ORDER BY bucket LIMIT 5;"
 ```
 
-If CAGGs are empty, refresh by hand: all seven price views, `prices_1m` first, then
-`twap_*` LAST (they build on `prices_1m`):
+If CAGGs are empty, refresh them with the typed command, not hand `CALL`s. It
+refreshes every `trades` rollup in dependency order (`prices_1m` first, `twap_*`
+last), pads each window to its view's minimum width, and refuses a TWAP window that
+starts below `prices_1m`'s earliest bucket:
 
-```sql
-CALL refresh_continuous_aggregate('prices_1m',  '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
-CALL refresh_continuous_aggregate('prices_15m', '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
-CALL refresh_continuous_aggregate('prices_1h',  '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
-CALL refresh_continuous_aggregate('prices_4h',  '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
-CALL refresh_continuous_aggregate('prices_1d',  '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
-CALL refresh_continuous_aggregate('prices_1w',  '2026-04-01'::timestamptz, '2026-04-22'::timestamptz);
-CALL refresh_continuous_aggregate('prices_1mo', '2026-02-01'::timestamptz, '2026-05-01'::timestamptz);
-CALL refresh_continuous_aggregate('twap_1h',    '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
-CALL refresh_continuous_aggregate('twap_1d',    '2026-04-15'::timestamptz, '2026-04-21'::timestamptz);
+```sh
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size   # read-only plan
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml \
+  -from <first ledger> -to <last ledger> -write
 ```
 
-Each window must span at least 2 buckets of its own grain or the call fails with
-`SQLSTATE 22023: refresh window too small` (hence the wider last three; per-grain
-minimums are the `MinWindow` values in `TradesCAGGs` / `OracleCAGGs`). Policies
-cover only `prices_1m`'s 5-minute `start_offset` up to `prices_1mo`'s 3 months, so
-older buckets are never materialised on their own.
+Check `SELECT min(bucket) FROM prices_1m;` first. If the range is older and
+`prices_1m`'s retention (migration 0156) is armed, those chunks are gone: a TWAP
+refresh there processes the drop's invalidations against an empty `prices_1m` and
+deletes the stored TWAP bars. Follow the Recovery section of
+`migrations/0156_prices_1m_retention.up.sql` (disarm and confirm) before refreshing,
+as [`stellarindex_twap_history_missing`](runbooks/data-freshness.md#stellarindex_twap_history_missing)
+step 1 does. Policies cover only `prices_1m`'s 5-minute `start_offset` up to
+`prices_1mo`'s 3 months, so older buckets are never materialised on their own.
 
 ## Failure modes
 
@@ -160,15 +159,15 @@ the data window shrinks below 1 year. ~6.3M ledgers; budget 6-12 h on one r1 at 
    done
    ```
 5. **CAGGs refresh automatically** per chunk. Only on a binary lacking
-   `-refresh-caggs` run the nine calls from step 6 after the chunk, with
-   `<T_LO>` / `<T_HI>` = THIS chunk's timestamps, `prices_1m` first, windows
-   widened for coarse rungs (`prices_1mo` needs two calendar months). A binary
-   that refreshed only `prices_1h` and coarser needs the repair section below.
+   `-refresh-caggs` run `stellarindex-ops trades-cagg-refresh -config PATH
+   -from "$week_from" -to "$week_to" -write` after the chunk (the Steps-section
+   refresh, with its `prices_1m` retention check). A binary that refreshed only
+   `prices_1h` and coarser needs the repair section below.
 
-   > **`NULL, NULL` is the WHOLE view**: order-of-10M `prices_1m` rows per 30 days
-   > in one uninterruptible `CALL`, nine times. Only for a small or freshly-seeded
-   > deployment. Otherwise walk `[T_LO, T_HI]` in weekly or monthly slices under a
-   > heavy-job scope, off the 14:00-22:00 UTC peak ([cagg-broad-recompute.md](cagg-broad-recompute.md)).
+   > **Never refresh with `NULL, NULL`**: it is the WHOLE view, and a TWAP view
+   > refreshed that way deletes history wherever `prices_1m` retention dropped
+   > chunks. Walk wide ranges in weekly or monthly slices under a heavy-job
+   > scope, off the 14:00-22:00 UTC peak ([cagg-broad-recompute.md](cagg-broad-recompute.md)).
 
 6. **Verify at 1m grain, not only the default**:
    ```sh
@@ -188,15 +187,7 @@ the data window shrinks below 1 year. ~6.3M ledgers; budget 6-12 h on one r1 at 
 
 A binary older than the per-chunk refresh left `twap_1h`, `twap_1d`, `dex_volume_by_pair_1d`, `source_volume_1h`, `pools_per_source_1h` and every `oracle_prices_*` rung stale. For the `trades` rollups: `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger> -write` refreshes all twelve in order; for the oracle rungs run migration 0040's `refresh_continuous_aggregate` calls over the range.
 
-An older range may also lack `prices_1m` / `prices_15m` buckets and the `twap` bars over them (`trades` rows are intact, so no archive read). Migration 0147 already re-materialised both grains over older history: run `SELECT min(bucket) FROM prices_1m;` first and skip what it covered.
-
-```sql
--- [T_LO, T_HI] = the backfilled range's timestamps. prices_1m FIRST.
-CALL refresh_continuous_aggregate('prices_1m',  '<T_LO>', '<T_HI>');
-CALL refresh_continuous_aggregate('prices_15m', '<T_LO>', '<T_HI>');
-CALL refresh_continuous_aggregate('twap_1h',    '<T_LO>', '<T_HI>');
-CALL refresh_continuous_aggregate('twap_1d',    '<T_LO>', '<T_HI>');
-```
+An older range may also lack `prices_1m` / `prices_15m` buckets and the `twap` bars over them (`trades` rows are intact, so no archive read). Migration 0147 already re-materialised both grains over older history: run `SELECT min(bucket) FROM prices_1m;` first and skip what it covered. Repair the rest with the same `trades-cagg-refresh -from <ledger> -to <ledger> -write`; for a range below `prices_1m`'s `min(bucket)` while its retention is armed, disarm first as in the Steps section above, or the TWAP refresh deletes the stored bars.
 
 Walk it in weekly or monthly slices under a heavy-job scope, off the 14:00-22:00 UTC
 peak; abort/monitor steps are in [cagg-broad-recompute.md](cagg-broad-recompute.md).
