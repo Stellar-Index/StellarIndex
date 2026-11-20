@@ -815,5 +815,82 @@ REGISTER="$(reg_with tail-cut 0060 '(F-1324).')" \
 REGISTER="$(reg_with bold-end 0016 '**Operator warning ends in bold.**')" \
   clean "a row ending in a bold full stop passes" deploy/clickhouse
 
+echo "lint-migrations-test: comments and strings do not hide statements"
+
+d="$(mig lex-dash-in-block 0002_reset.up.sql <<'SQL'
+/* Operator: run stellarindex-ops projector-replay --source comet after this */
+TRUNCATE comet_swaps;
+SQL
+)"
+mcatches "a TRUNCATE after a block comment holding -- is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig lex-nested-block 0002_reset.up.sql <<'SQL'
+/* outer /* inner */ still a comment */ TRUNCATE comet_swaps;
+SQL
+)"
+mcatches "a TRUNCATE after a nested block comment is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig lex-dash-in-string 0002_reset.up.sql <<'SQL'
+COMMENT ON TABLE trades IS 'a -- b';
+TRUNCATE trades;
+SQL
+)"
+mcatches "a TRUNCATE after a string holding -- is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig lex-block-in-string 0002_reset.up.sql <<'SQL'
+COMMENT ON TABLE trades IS 'written by internal/sources/*';
+TRUNCATE trades;
+SQL
+)"
+mcatches "a TRUNCATE after a string holding /* is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig lex-verb-in-string 0002_note.up.sql <<'SQL'
+COMMENT ON TABLE trades IS 'never TRUNCATE trades; replay instead';
+SQL
+)"
+clean_mig "a TRUNCATE inside a string literal is not a statement" "$d"
+
+echo "lint-migrations-test: blanking DML in any statement position"
+
+d="$(mig fu-cte-delete 0002_reset.up.sql <<'SQL'
+WITH d AS (DELETE FROM comet_liquidity RETURNING 1) SELECT count(*) FROM d;
+SQL
+)"
+mcatches "an unqualified DELETE in a data-modifying CTE is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-do-cte-delete 0002_reset.up.sql <<'SQL'
+DO $$
+DECLARE n bigint;
+BEGIN
+    WITH d AS (DELETE FROM blend_positions RETURNING 1) SELECT count(*) INTO n FROM d;
+    IF n = 0 THEN RAISE EXCEPTION 'nothing deleted'; END IF;
+END
+$$;
+SQL
+)"
+mcatches "an unqualified CTE DELETE inside a DO block is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig fu-cte-delete-where 0002_repair.up.sql <<'SQL'
+WITH d AS (DELETE FROM comet_liquidity WHERE ledger < 5 RETURNING 1) SELECT count(*) FROM d;
+REVOKE TRUNCATE ON trades FROM PUBLIC;
+SQL
+)"
+clean_mig "a ranged CTE DELETE and a REVOKE TRUNCATE are not blanks" "$d"
+
+echo "lint-migrations-test: every file golang-migrate loads is linted"
+
+d="$(mig name-psql 0002_sneak.up.sql <<'SQL'
+SELECT 1;
+SQL
+)"
+printf 'TRUNCATE trades;\n' > "$d/0003_sneak.up.psql"
+mcatches "a loadable migration with a non-.sql suffix fails" "$d" "0003_sneak.up.psql"
+
 echo "lint-migrations-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]
