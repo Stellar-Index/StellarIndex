@@ -19,6 +19,7 @@ import type { paths } from '@/api/types';
 import { LendingPoolPathView } from './LendingPoolPathView';
 import { AuctionsPanel } from './AuctionsPanel';
 import { BackstopPanel } from './BackstopPanel';
+import { EmissionsPanel } from './EmissionsPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolHeadlineStats } from './PoolHeadlineStats';
@@ -273,6 +274,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       <PoolDetails pool={pool} />
       <PoolReserves pool={pool} />
       <BackstopPanel pool={pool} />
+      <EmissionsPanel pool={pool} />
       <AuctionsPanel pool={pool} />
       <ConfigHistory pool={pool} />
     </Container>

@@ -16,8 +16,15 @@ import {
   METRICS,
   RANGES,
   type HistoryMetric,
+  type HistoryView,
   type RangeOption,
 } from '../lendingInsights';
+import { isUnlimitedCap } from '../poolConfig';
+
+const APR_COLORS = {
+  supply: 'var(--color-chart-2)',
+  borrow: 'var(--color-chart-4)',
+};
 import { HistoryChart } from './HistoryChart';
 
 type Resp =
@@ -51,29 +58,49 @@ export function ReserveHistory({
   pool: string;
   asset: string;
 }) {
-  const [metric, setMetric] = useState<HistoryMetric>('borrow_apr');
+  const [metric, setMetric] = useState<HistoryView>('borrow_apr');
   const [rangeId, setRangeId] = useState<RangeOption['id']>('90d');
   const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
   const q = useReserveHistory(pool, asset, range);
   const meta = METRICS.find((m) => m.id === metric) ?? METRICS[0];
   const d = q.data;
 
-  const series = useMemo(() => {
-    if (!d) return [];
+  const { series, overlay } = useMemo(() => {
+    if (!d) return { series: [], overlay: undefined };
     const endIso =
       d.history_through_time && d.history_through_time < d.to
         ? d.history_through_time
         : d.to;
-    return carryForward(
-      d.points.map((p) => ({
-        t: p.t,
-        value: metricValue(p, metric, d.decimals),
-      })),
-      range.interval,
-      d.from,
-      endIso,
-    );
+    const of = (m: HistoryMetric) =>
+      carryForward(
+        d.points.map((p) => ({
+          t: p.t,
+          value: metricValue(p, m, d.decimals, d.config_decimals),
+        })),
+        range.interval,
+        d.from,
+        endIso,
+      );
+    if (metric !== 'aprs') return { series: of(metric), overlay: undefined };
+    return {
+      series: [],
+      overlay: [
+        {
+          label: 'Supply APR',
+          points: of('supply_apr'),
+          color: APR_COLORS.supply,
+        },
+        {
+          label: 'Borrow APR',
+          points: of('borrow_apr'),
+          color: APR_COLORS.borrow,
+        },
+      ],
+    };
   }, [d, metric, range.interval]);
+  const capUnlimited =
+    metric === 'supply_cap' &&
+    (d?.points ?? []).some((p) => isUnlimitedCap(p.supply_cap));
 
   const changes = useMemo(
     () =>
@@ -89,7 +116,7 @@ export function ReserveHistory({
           ariaLabel="Metric"
           options={METRICS.map((m) => ({ label: m.label, value: m.id }))}
           value={metric}
-          onChange={(v) => setMetric(v as HistoryMetric)}
+          onChange={(v) => setMetric(v as HistoryView)}
         />
         <Segmented
           ariaLabel="Range"
@@ -144,6 +171,7 @@ export function ReserveHistory({
           ) : (
             <HistoryChart
               points={series}
+              overlay={overlay}
               label={meta.label}
               pct={meta.isPct}
               hourly={range.interval === '1h'}
@@ -151,6 +179,11 @@ export function ReserveHistory({
                 meta.isPct ? `${n.toFixed(2)}%` : formatCompact(n)
               }
             />
+          )}
+          {capUnlimited && (
+            <p className="text-ink-muted text-xs">
+              Gaps in the supply cap line are periods with no cap.
+            </p>
           )}
           <p className="text-ink-muted text-xs">
             Each value holds until the next change.

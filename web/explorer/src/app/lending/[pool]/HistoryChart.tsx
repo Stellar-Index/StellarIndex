@@ -16,14 +16,18 @@ export function HistoryChart({
   formatValue,
   hourly,
   pct,
+  overlay,
 }: {
   points: StepPoint[];
   label: string;
   formatValue: (n: number) => string;
   hourly?: boolean;
   pct?: boolean;
+  /** Several lines on one scale (same unit only); replaces `points`. */
+  overlay?: { label: string; points: StepPoint[]; color: string }[];
 }) {
-  if (points.every((p) => p.value == null)) {
+  const all = overlay ? overlay.flatMap((s) => s.points) : points;
+  if (all.every((p) => p.value == null)) {
     return (
       <p className="text-ink-muted py-6 text-center text-sm">
         No data points in this range.
@@ -33,6 +37,12 @@ export function HistoryChart({
   return (
     <LineChart
       data={points}
+      series={overlay?.map((s) => ({
+        label: s.label,
+        data: s.points,
+        tone: 'brand' as const,
+        color: s.color,
+      }))}
       height={224}
       tone="brand"
       area={false}

@@ -6,7 +6,7 @@ import { Panel } from '@/components/reveal';
 import { Button, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
-import { HBarList, PairedBars } from '@/components/charts/Bars';
+import { HBarList, InlineMeter, PairedBars } from '@/components/charts/Bars';
 import { asExample } from '@/api/client';
 import { FreshnessMarker } from '@/components/primitives';
 import {
@@ -20,7 +20,7 @@ import {
   sumDecimalStrings,
 } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
-import { fixedPct, supplyCapText } from '../poolConfig';
+import { fixedPct, isUnlimitedCap, supplyCapText } from '../poolConfig';
 import { ReserveDetail } from './ReserveDetail';
 import { usePoolReserves } from './usePoolReserves';
 import { shortAssetText } from '@/lib/asset-label';
@@ -98,6 +98,7 @@ function SupplyCapUsd({
   decimals: number | null | undefined;
   price: string | null | undefined;
 }) {
+  if (isUnlimitedCap(cap)) return null;
   const whole = baseUnitsDecimal(cap, decimals);
   const usd =
     whole != null && price != null
@@ -372,7 +373,15 @@ export function PoolReserves({ pool }: { pool: string }) {
                       : tokenAmount(rv.borrowed, rv.decimals)}
                   </Td>
                   <AvailableCell rv={rv} />
-                  <Td align="right" className="font-mono tabular-nums">
+                  <Td
+                    align="right"
+                    className="font-mono whitespace-nowrap tabular-nums"
+                  >
+                    <InlineMeter
+                      frac={rv.utilization_pct / 100}
+                      label={`${shortAssetText(rv.asset)} utilisation: borrowed over supplied`}
+                      className="mr-2 hidden sm:inline-block"
+                    />
                     {rv.utilization_pct.toFixed(1)}%
                   </Td>
                   <Td
