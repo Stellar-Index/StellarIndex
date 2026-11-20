@@ -57,6 +57,7 @@ export const assetKey = (r: LendingRate) => r.asset_id ?? r.asset ?? '';
 export function LendingRatesTable() {
   const [protocol, setProtocol] = useState<'all' | 'blend' | 'blnt'>('all');
   const [asset, setAsset] = useState('');
+  const [scope, setScope] = useState<'obtainable' | 'all'>('obtainable');
   const q = useQuery({
     queryKey: ['/v1/lending/rates'],
     staleTime: 60_000,
@@ -70,11 +71,15 @@ export function LendingRatesTable() {
     for (const r of all) m.set(assetKey(r), shortAssetText(assetKey(r)));
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [all]);
-  const rows = all.filter(
+  const matching = all.filter(
     (r) =>
       (protocol === 'all' || r.protocol === protocol) &&
       (asset === '' || assetKey(r) === asset),
   );
+  const rows =
+    scope === 'all' ? matching : matching.filter((r) => r.obtainable !== false);
+  const hidden = matching.length - rows.length;
+  const anyUnobtainable = rows.some((r) => r.obtainable === false);
   const { sorted, sort, toggle, ariaSort } = useTableSort<LendingRate, SortKey>(
     rows,
     [
@@ -128,6 +133,20 @@ export function LendingRatesTable() {
             label: p === 'all' ? 'All' : (lendingProtocol(p)?.name ?? p),
           }))}
         />
+        <Segmented
+          ariaLabel="Rates shown"
+          value={scope}
+          onChange={(v) => setScope(v as typeof scope)}
+          options={[
+            { value: 'obtainable', label: 'Obtainable only' },
+            { value: 'all', label: 'All' },
+          ]}
+        />
+        {scope === 'obtainable' && hidden > 0 && (
+          <span role="status" className="text-ink-muted text-xs">
+            {hidden} not obtainable hidden
+          </span>
+        )}
         <label className="text-ink-muted ml-auto text-xs">
           Asset{' '}
           <select
@@ -154,6 +173,13 @@ export function LendingRatesTable() {
         </p>
       )}
       {q.data && <RatesCharts rows={rows} asset={asset} />}
+      {anyUnobtainable && (
+        <p className="text-ink-muted mx-4 mb-2 text-xs">
+          <span aria-hidden>○</span> marks a rate a new position cannot earn or
+          pay: the pool is not active or its status is unknown (every Blend V1
+          pool), or the reserve is disabled. Hover the mark for the reason.
+        </p>
+      )}
       <div className="overflow-x-auto">
         <Table>
           <THead>
@@ -224,14 +250,17 @@ export function LendingRatesTable() {
                   <Td
                     align="right"
                     className="text-ink font-mono font-medium tabular-nums"
-                    title={why || undefined}
                   >
-                    {pct(r.supply_apr)}
                     {r.obtainable === false && (
-                      <span className="text-warn-500 ml-1 text-xs">
-                        not obtainable
+                      <span
+                        className="text-ink-faint mr-1.5 text-xs"
+                        title={`Not obtainable: ${why || 'no reason given'}`}
+                        aria-label={`not obtainable: ${why || 'no reason given'}`}
+                      >
+                        ○
                       </span>
                     )}
+                    {pct(r.supply_apr)}
                   </Td>
                   <Td align="right" className="font-mono tabular-nums">
                     {pct(r.borrow_apr)}

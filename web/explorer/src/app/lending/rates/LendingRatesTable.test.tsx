@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { LendingRatesTable } from './LendingRatesTable';
@@ -104,6 +110,37 @@ describe('LendingRatesTable', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Blend/ }));
     expect(screen.getAllByTestId('scatter-dot')).toHaveLength(1);
     expect(screen.queryByText(/not priced/)).toBeNull();
+  });
+
+  it('hides non-obtainable rates by default, counts them, and marks them under All', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        rates: [
+          rate({}),
+          rate({
+            asset: 'CFROZEN',
+            asset_id: null,
+            obtainable: false,
+            exclusions: ['pool_not_active'],
+          }),
+        ],
+      },
+    });
+    renderIt();
+    expect(await screen.findByText('1 not obtainable hidden')).toBeVisible();
+    expect(screen.getByText('Reserves (1)')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/not obtainable:/)).toBeNull();
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Rates shown' })).getByRole(
+        'button',
+        { name: 'All' },
+      ),
+    );
+    expect(screen.getByText('Reserves (2)')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('not obtainable: pool not active'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/marks a rate a new position/)).toBeVisible();
   });
 
   it('says a partial list is partial', async () => {

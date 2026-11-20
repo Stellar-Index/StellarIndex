@@ -86,7 +86,7 @@ export function assetAprItems(rows: LendingRate[]): HBarItem[] {
     }));
 }
 
-function ProtocolKey() {
+function ProtocolKey({ hollow }: { hollow: boolean }) {
   return (
     <ul className="text-ink-muted flex flex-wrap gap-x-4 gap-y-1 text-xs">
       {(['blend', 'blnt'] as const).map((p) => (
@@ -99,13 +99,15 @@ function ProtocolKey() {
           {lendingProtocol(p)?.name ?? p}
         </li>
       ))}
-      <li className="flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className="border-ink-muted inline-block h-2 w-2 rounded-full border-2"
-        />
-        Not obtainable
-      </li>
+      {hollow && (
+        <li className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="border-ink-muted inline-block h-2 w-2 rounded-full border-2"
+          />
+          Not obtainable
+        </li>
+      )}
       <li>Dot area: supplied USD</li>
     </ul>
   );
@@ -135,7 +137,7 @@ export function RatesCharts({
             { value: 'borrow', label: 'Borrow APR' },
           ]}
         />
-        <ProtocolKey />
+        <ProtocolKey hollow={points.some((p) => p.hollow)} />
       </div>
       {points.length === 0 ? (
         <p className="text-ink-muted text-sm">
@@ -148,6 +150,7 @@ export function RatesCharts({
           yLabel={label}
           formatX={(n) => `${n.toFixed(0)}%`}
           formatY={(n) => `${n.toFixed(n < 10 ? 1 : 0)}%`}
+          yFloor={10}
           ariaLabel={`${label} against utilisation for ${points.length} reserves; the table below lists every value`}
         />
       )}
