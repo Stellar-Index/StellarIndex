@@ -388,31 +388,33 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 			}
 			ext.Events = append(ext.Events, row)
 			ext.Ledger.SorobanEventCount++
-			// Decode supply events (mint/burn/clawback) at ingest (ADR-0034) so per-token supply
-			// is a pure SQL sum. A skipped body adds no flow and is tallied by reason; the raw
-			// event stays in contract_events.
 			if IsSupplyFlowSym(row.Topic0Sym) {
-				amt, skip := ClassifySupplyBodyXDR(row.DataXDR)
-				if skip != "" {
-					if ext.SupplyFlowSkips == nil {
-						ext.SupplyFlowSkips = map[string]int{}
-					}
-					ext.SupplyFlowSkips[skip]++
-				} else {
-					ext.SupplyFlows = append(ext.SupplyFlows, SupplyFlowRow{
-						ContractID: row.ContractID,
-						LedgerSeq:  seq,
-						CloseTime:  closeTime,
-						TxHash:     txHash,
-						OpIndex:    row.OpIndex,
-						EventIndex: row.EventIndex,
-						Kind:       row.Topic0Sym,
-						Amount:     amt,
-					})
-				}
+				recordSupplyFlow(ext, row, seq, closeTime, txHash)
 			}
 		}
 	}
+}
+
+// recordSupplyFlow decodes a mint/burn/clawback event (ADR-0034) so per-token supply is a pure SQL sum; a skipped body adds no flow and is tallied by reason.
+func recordSupplyFlow(ext *LedgerExtract, row ContractEventRow, seq uint32, closeTime time.Time, txHash string) {
+	amt, skip := ClassifySupplyBodyXDR(row.DataXDR)
+	if skip != "" {
+		if ext.SupplyFlowSkips == nil {
+			ext.SupplyFlowSkips = map[string]int{}
+		}
+		ext.SupplyFlowSkips[skip]++
+		return
+	}
+	ext.SupplyFlows = append(ext.SupplyFlows, SupplyFlowRow{
+		ContractID: row.ContractID,
+		LedgerSeq:  seq,
+		CloseTime:  closeTime,
+		TxHash:     txHash,
+		OpIndex:    row.OpIndex,
+		EventIndex: row.EventIndex,
+		Kind:       row.Topic0Sym,
+		Amount:     amt,
+	})
 }
 
 // eventRow maps one contract event to a row under the same eligibility gate as
