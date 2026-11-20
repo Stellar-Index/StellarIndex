@@ -1286,6 +1286,44 @@ func TestClaimableSeed_SameLedgerRemovalCoherence(t *testing.T) {
 	}
 }
 
+// Legacy rows (intra_ledger_seq 0) of two transactions in one ledger have no apply order: tx_hash would pick the creation
+// ("f3…" > "0a…") over the later claim and seed a claimed balance as live. The walk must refuse, naming the ledger.
+func TestClaimableSeed_RefusesUnorderedSameLedgerTransactions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	id := cbsID(t, 0x0A)
+	const ledger = uint32(36_500_000)
+	ct := time.Date(2022, 7, 1, 0, 0, 0, 0, time.UTC)
+	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
+
+	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{
+		{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: "f3cbs0a", OpIndex: 0, ChangeIndex: 0,
+			IntraLedgerSeq: 0, ChangeType: "created", EntryType: "claimable_balance",
+			KeyXDR:   cbsKeyXDR(t, id),
+			EntryXDR: cbsEntryXDR(t, id, cbsAsset(t, "AQUA"), 1_000_000, ledger),
+		},
+		{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: "0acbs0a", OpIndex: 0, ChangeIndex: 0,
+			IntraLedgerSeq: 0, ChangeType: "removed", EntryType: "claimable_balance",
+			KeyXDR: cbsKeyXDR(t, id),
+		},
+	}, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	seeded := false
+	_, err := chstore.StreamClaimableBalanceSeeds(ctx, addr, nil, nil, chstore.SeedWalk{}, func(s chstore.ClaimableBalanceSeed) error {
+		seeded = seeded || s.ClaimableID == cbsHex(id)
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprint(ledger)) {
+		t.Fatalf("err = %v, want a refusal naming ledger %d (seeded this balance: %v)", err, ledger, seeded)
+	}
+}
+
 // Native (XLM) claimable balances are never seeded (Algorithm 1 does not read claimable_observations and the live observer
 // declines them); -assets scoping filters classic ones; the nil scope includes every classic asset.
 func TestClaimableSeed_NativeAndAssetScope(t *testing.T) {

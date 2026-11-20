@@ -389,7 +389,32 @@ func TestClaimableSeedReducer_SameLedgerRemovalWinsOnChangeIndex(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedReducer_RecreateAfterRemovalWins: a removal in an earlier window must not suppress a
+// TestClaimableSeedReducer_UnorderedWinnerRefusesUntilSuperseded: a winner picked by tx_hash (no apply order) refuses the
+// whole emit; a later ordered change for the key settles it.
+func TestClaimableSeedReducer_UnorderedWinnerRefusesUntilSuperseded(t *testing.T) {
+	id := cbID(0x5A)
+	ct := time.Date(2022, 7, 1, 0, 0, 0, 0, time.UTC)
+	r := newCBReducer(t, nil)
+	if err := r.offerOrdered(cbKeyXDR(t, id), cbEntryXDR(t, id, cbAsset4(t, "AQUA"), 1_000_000),
+		"created", ct, cbOrd(50_000_000, 0, "f3", 0, 0), true); err != nil {
+		t.Fatalf("offer: %v", err)
+	}
+	err := r.emit(func(ClaimableBalanceSeed) error {
+		t.Error("seeded a balance whose winner has no apply order")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "50000000") {
+		t.Fatalf("emit err = %v, want a refusal naming ledger 50000000", err)
+	}
+	if err := r.offerOrdered(cbKeyXDR(t, id), "", "removed", ct, cbOrd(50_000_001, 3, "0a", 0, 0), false); err != nil {
+		t.Fatalf("offer removal: %v", err)
+	}
+	if got := collectClaimableSeeds(t, r); len(got) != 0 {
+		t.Errorf("emitted %d seed(s) after an ordered removal superseded the unordered winner", len(got))
+	}
+}
+
+// TestClaimableSeedReducer_RecreateAfterRemovalWins:a removal in an earlier window must not suppress a
 // later live change for the same key. Ids are not expected to recur, but the reduction must not depend on
 // it; removal is not terminal.
 func TestClaimableSeedReducer_RecreateAfterRemovalWins(t *testing.T) {

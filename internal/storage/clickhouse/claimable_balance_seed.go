@@ -91,7 +91,8 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 // projected column keyed on (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index): per-column argMax could stitch a live
 // entry_xdr to a later 'removed' change_type, resurrecting a claimed balance. PREWHERE on entry_type skips wide columns; aliases must not
 // shadow source columns (ILLEGAL_AGGREGATION), hence win_. SETTINGS: a memory ceiling so an oversized window bisects; group-by spill OFF
-// (its threshold compares against the whole query's tracker).
+// (its threshold compares against the whole query's tracker). win_ambiguous marks a winning ledger holding intra_ledger_seq = 0 rows from
+// several transactions, where tx_hash rather than apply order picked the row (the lending derive's check).
 func scanClaimableSeedWindow(ctx context.Context, conn driver.Conn, from, to uint32, red *claimableSeedReducer) error {
 	const q = `SELECT key_xdr,
 		       tupleElement(win, 1) AS win_ledger_seq,
@@ -101,15 +102,23 @@ func scanClaimableSeedWindow(ctx context.Context, conn driver.Conn, from, to uin
 		       tupleElement(win, 5) AS win_change_index,
 		       tupleElement(win, 6) AS win_entry_xdr,
 		       tupleElement(win, 7) AS win_change_type,
-		       tupleElement(win, 8) AS win_close_time
+		       tupleElement(win, 8) AS win_close_time,
+		       tupleElement(win, 9) AS win_ambiguous
 		FROM (
 		    SELECT key_xdr,
-		           argMax((ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index,
-		                   entry_xdr, toString(change_type), close_time),
-		                  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win
-		    FROM stellar.ledger_entry_changes
-		    PREWHERE entry_type = 'claimable_balance'
-		    WHERE ledger_seq BETWEEN ? AND ?
+		           argMax((ledger_seq, tupleElement(lw, 1), tupleElement(lw, 2), tupleElement(lw, 3), tupleElement(lw, 4),
+		                   tupleElement(lw, 5), tupleElement(lw, 6), tupleElement(lw, 7), amb),
+		                  ledger_seq) AS win
+		    FROM (
+		        SELECT key_xdr, ledger_seq,
+		               argMax((intra_ledger_seq, tx_hash, op_index, change_index, entry_xdr, toString(change_type), close_time),
+		                      (intra_ledger_seq, tx_hash, op_index, change_index)) AS lw,
+		               toUInt8(min(intra_ledger_seq) = 0 AND uniqExact(tx_hash) > 1) AS amb
+		        FROM stellar.ledger_entry_changes
+		        PREWHERE entry_type = 'claimable_balance'
+		        WHERE ledger_seq BETWEEN ? AND ?
+		        GROUP BY key_xdr, ledger_seq
+		    )
 		    GROUP BY key_xdr
 		)
 		SETTINGS max_memory_usage = 4000000000,
@@ -126,13 +135,14 @@ func scanClaimableSeedWindow(ctx context.Context, conn driver.Conn, from, to uin
 			keyXDR, txHash, entryXDR, changeType string
 			ord                                  lakeEntryChangeOrder
 			closeTime                            time.Time
+			ambiguous                            uint8
 		)
 		if err := rows.Scan(&keyXDR, &ord.ledgerSeq, &ord.intraLedgerSeq, &txHash,
-			&ord.opIndex, &ord.changeIndex, &entryXDR, &changeType, &closeTime); err != nil {
+			&ord.opIndex, &ord.changeIndex, &entryXDR, &changeType, &closeTime, &ambiguous); err != nil {
 			return fmt.Errorf("clickhouse: scan claimable_balance row [%d, %d]: %w", from, to, err)
 		}
 		ord.txHash = txHash
-		if err := red.offer(keyXDR, entryXDR, changeType, closeTime, ord); err != nil {
+		if err := red.offerOrdered(keyXDR, entryXDR, changeType, closeTime, ord, ambiguous == 1); err != nil {
 			return err
 		}
 	}
@@ -170,17 +180,22 @@ type claimableSeedReducer struct {
 	served  map[[32]byte]string
 	retired map[[32]byte]claimableSeedRemoval
 
+	// ambiguous holds the winning ledger of each key whose current winner was picked by tx_hash, not apply order; emit refuses while any
+	// remain (a same-ledger claim could otherwise be seeded as a live balance).
+	ambiguous map[[32]byte]uint32
+
 	windowStart    uint32
 	haveWindowSeen bool
 }
 
 func newClaimableSeedReducer(assets map[string]struct{}) *claimableSeedReducer {
 	return &claimableSeedReducer{
-		assets:  assets,
-		intern:  make(map[string]string),
-		live:    make(map[[32]byte]claimableSeedWinner),
-		dead:    make(map[[32]byte]lakeEntryChangeOrder),
-		retired: make(map[[32]byte]claimableSeedRemoval),
+		assets:    assets,
+		intern:    make(map[string]string),
+		live:      make(map[[32]byte]claimableSeedWinner),
+		dead:      make(map[[32]byte]lakeEntryChangeOrder),
+		retired:   make(map[[32]byte]claimableSeedRemoval),
+		ambiguous: make(map[[32]byte]uint32),
 	}
 }
 
@@ -222,6 +237,13 @@ func (r *claimableSeedReducer) startWindow(from uint32) error {
 // order-independent (a bisected retry re-reads rows). Removals must be able to win (a claim in N suppresses the creation in N-1):
 // tombstones, dropped at emit.
 func (r *claimableSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord lakeEntryChangeOrder) error {
+	return r.offerOrdered(keyXDR, entryXDR, changeType, closeTime, ord, false)
+}
+
+// offerOrdered is offer for a row whose winning ledger may lack apply order (ambiguous: see scanClaimableSeedWindow).
+func (r *claimableSeedReducer) offerOrdered(keyXDR, entryXDR, changeType string, closeTime time.Time, ord lakeEntryChangeOrder,
+	ambiguous bool,
+) error {
 	id, ok, err := claimableIDFromKeyXDR(keyXDR)
 	if err != nil {
 		// An undecodable key on a removed change identifies no balance; only a live entry's corrupt
@@ -243,6 +265,11 @@ func (r *claimableSeedReducer) offer(keyXDR, entryXDR, changeType string, closeT
 	if prev, seen := r.retired[id]; seen && !ord.after(prev.order) {
 		return nil
 	}
+	if ambiguous {
+		r.ambiguous[id] = ord.ledgerSeq
+	} else {
+		delete(r.ambiguous, id)
+	}
 	if changeType == "removed" {
 		delete(r.live, id)
 		r.dead[id] = ord
@@ -256,8 +283,9 @@ func (r *claimableSeedReducer) offer(keyXDR, entryXDR, changeType string, closeT
 	win, inScope, err := r.decodeLiveEntry(entryXDR)
 	if err == nil && !inScope {
 		// Native XLM (Algorithm 1) or outside -assets: the latest state is not ours to seed, so
-		// drop any earlier record; the winner stays authoritative.
+		// drop any earlier record; the winner stays authoritative. Either order is the same out-of-scope balance.
 		delete(r.live, id)
+		delete(r.ambiguous, id)
 		return nil
 	}
 	win.order, win.closeTime, win.decodeErr = ord, closeTime.UTC(), err
@@ -305,6 +333,15 @@ func (r *claimableSeedReducer) internAssetKey(k string) string {
 // emit hands every surviving live balance, and tombstones for served-live balances whose latest change is a removal (disjoint ids), to fn
 // in ascending id order so output is reproducible; raw-byte order equals lowercase-hex order.
 func (r *claimableSeedReducer) emit(fn func(ClaimableBalanceSeed) error) error {
+	if len(r.ambiguous) > 0 {
+		ledgers := make([]uint32, 0, len(r.ambiguous))
+		for _, l := range r.ambiguous {
+			ledgers = append(ledgers, l)
+		}
+		sort.Slice(ledgers, func(i, j int) bool { return ledgers[i] < ledgers[j] })
+		return fmt.Errorf("clickhouse: claimable seed: %d balance(s) end in a ledger with several transactions without intra-ledger order "+
+			"(ledgers %v); re-derive those lake partitions (ch-backfill -changes-only) first", len(ledgers), ledgers[:min(len(ledgers), 10)])
+	}
 	ids := make([][32]byte, 0, len(r.live)+len(r.retired))
 	for id := range r.live {
 		ids = append(ids, id)
