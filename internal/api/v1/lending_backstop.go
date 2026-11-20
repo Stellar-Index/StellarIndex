@@ -42,6 +42,9 @@ type LendingBackstopView struct {
 	ConfigDecimals    int                       `json:"config_decimals"`
 	Tiers             []LendingBackstopTierView `json:"tiers"`
 	AsOfLedger        uint32                    `json:"as_of_ledger,omitempty"`
+	// TotalUSD sums the valued tiers' tokens_usd; null when none is valued, and LowerBound when a tier is left out.
+	TotalUSD   *string `json:"total_usd"`
+	LowerBound bool    `json:"lower_bound"`
 }
 
 // LendingBackstopTierView is one backstop tier's PoolBalance; the amounts are null when the lake holds no live entry.
@@ -55,6 +58,11 @@ type LendingBackstopTierView struct {
 	BackstopAsset  *string `json:"backstop_asset"`
 	BackstopToken  *string `json:"backstop_token"`
 	TakeRateWeight *uint32 `json:"take_rate_weight"`
+	// TokensUSD is tokens at the backstop token's current price; null with USDReason when it cannot be valued exactly.
+	TokensUSD  *string `json:"tokens_usd"`
+	PriceUSD   *string `json:"price_usd"`
+	PriceStale bool    `json:"price_stale"`
+	USDReason  *string `json:"usd_reason"`
 }
 
 const (
@@ -103,9 +111,10 @@ func (s *Server) handleLendingPoolBackstop(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	fillBackstopView(&view, st)
+	priceStale := view.Available && s.valueBackstopView(ctx, &view, st)
 	wm, stale, _ := s.lakeWatermark(ctx)
 	view.AsOfLedger = wm
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale || priceStale}})
 }
 
 // backstopLineage names the pool's protocol, or the unavailable reason: V1 backstop storage keys are not verified, so never guessed.

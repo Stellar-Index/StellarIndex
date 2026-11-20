@@ -48,8 +48,11 @@ type LendingProtocolStats struct {
 	// LowerBound covers the USD totals: a pool_list, pool or reserve exclusion leaves something out of them.
 	LowerBound bool `json:"lower_bound"`
 	// BackstopLowerBound covers the backstop sums: a backstop exclusion leaves a pool's deposits out of them.
-	BackstopLowerBound bool                    `json:"backstop_lower_bound"`
-	Excluded           []LendingStatsExclusion `json:"excluded"`
+	BackstopLowerBound bool `json:"backstop_lower_bound"`
+	// BackstopTotalUSD sums the valued backstop[] tokens_usd; BackstopUSDLowerBound when an entry or a pool's backstop is left out.
+	BackstopTotalUSD      *string                 `json:"backstop_total_usd"`
+	BackstopUSDLowerBound bool                    `json:"backstop_usd_lower_bound"`
+	Excluded              []LendingStatsExclusion `json:"excluded"`
 }
 
 // LendingProtocolToken is the protocol token's price, supply and market cap as /v1/assets/{id} serves them.
@@ -68,6 +71,11 @@ type LendingProtocolToken struct {
 type LendingProtocolBackstop struct {
 	BackstopToken string `json:"backstop_token"`
 	Tokens        string `json:"tokens"`
+	// TokensUSD is tokens at the token's current price; null with USDReason when it cannot be valued exactly.
+	TokensUSD  *string `json:"tokens_usd"`
+	PriceStale bool    `json:"price_stale"`
+	USDReason  *string `json:"usd_reason"`
+	asset      string  // the tiers' BackstopAsset; "" for Blend, and when tiers in this token disagree
 }
 
 // LendingStatsExclusion names what a protocol's or an account's figures leave out and why.
@@ -171,6 +179,7 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 			st.BackstopLowerBound = st.BackstopLowerBound || e.Kind == "backstop"
 			flags.Degraded = flags.Degraded || e.readFailed()
 		}
+		flags.Stale = s.valueProtocolBackstop(ctx, &st) || flags.Stale
 		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}
@@ -213,7 +222,7 @@ func (s *Server) readProtocolPool(ctx context.Context, p ratePool) protocolPoolR
 func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintage *dataVintage, flags *Flags) {
 	supplied, borrowed := new(big.Rat), new(big.Rat)
 	priced := 0
-	backstop := map[string]*big.Int{}
+	backstop, assets := map[string]*big.Int{}, map[string]string{}
 	var tokens []string
 	for i := range reads {
 		pr := &reads[i]
@@ -245,20 +254,20 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 			borrowed.Add(borrowed, bor)
 			priced++
 		}
-		tokens = addProtocolBackstop(st, pr, backstop, tokens)
+		tokens = addProtocolBackstop(st, pr, backstop, assets, tokens)
 	}
 	if priced > 0 {
 		sup, bor, avail := supplied.FloatString(2), borrowed.FloatString(2), new(big.Rat).Sub(supplied, borrowed).FloatString(2)
 		st.TotalSuppliedUSD, st.TotalBorrowedUSD, st.AvailableUSD = &sup, &bor, &avail
 	}
 	for _, t := range tokens {
-		st.Backstop = append(st.Backstop, LendingProtocolBackstop{BackstopToken: t, Tokens: backstop[t].String()})
+		st.Backstop = append(st.Backstop, LendingProtocolBackstop{BackstopToken: t, Tokens: backstop[t].String(), asset: assets[t]})
 	}
 }
 
 // addProtocolBackstop adds one pool's backstop tiers to the per-token sums; a Blend tier is denominated in the backstop's own
-// token, a BLNT tier in the token it names.
-func addProtocolBackstop(st *LendingProtocolStats, pr *protocolPoolRead, sums map[string]*big.Int, tokens []string) []string {
+// token, a BLNT tier in the token it names. assets records each token's BackstopAsset so the sum is valued as its tiers would be.
+func addProtocolBackstop(st *LendingProtocolStats, pr *protocolPoolRead, sums map[string]*big.Int, assets map[string]string, tokens []string) []string {
 	pool := pr.pool
 	exclude := func(reason string) {
 		st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "backstop", Pool: &pool, Reason: reason})
@@ -283,6 +292,9 @@ func addProtocolBackstop(st *LendingProtocolStats, pr *protocolPoolRead, sums ma
 		if sums[token] == nil {
 			sums[token] = new(big.Int)
 			tokens = append(tokens, token)
+			assets[token] = t.Asset
+		} else if assets[token] != t.Asset {
+			assets[token] = "" // one token named as two asset kinds: withhold rather than pick one
 		}
 		sums[token].Add(sums[token], t.Balance.Tokens)
 	}
