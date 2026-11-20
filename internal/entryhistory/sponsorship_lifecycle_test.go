@@ -52,7 +52,7 @@ func TestSponsorshipEpisodes(t *testing.T) {
 }
 
 func TestProveSponsorships(t *testing.T) {
-	entry := clickhouse.AccountState{Exists: true, NumSponsoring: 3, NumSponsored: 2, LastModifiedLedger: 100}
+	entry := clickhouse.AccountState{Exists: true, NumSponsoring: 3, NumSponsored: 2, LastModifiedLedger: 100, AsOfLedger: 100}
 	sponsoring := clickhouse.SponsorshipTotals{InForce: 2, InForceReserves: 3}
 	sponsored := clickhouse.SponsorshipTotals{InForce: 1, InForceReserves: 2}
 	want := func(name string, p SponsorshipProof, match *bool) {
@@ -71,6 +71,15 @@ func TestProveSponsorships(t *testing.T) {
 	want("modified after the watermark", ProveSponsorships(entry, 99, sponsoring, sponsored), nil)
 	want("nothing derived", ProveSponsorships(entry, 0, sponsoring, sponsored), nil)
 	want("absent account", ProveSponsorships(clickhouse.AccountState{}, 100, sponsoring, sponsored), nil)
+	// The entry was read at ledger 1000; at 1500 the account began sponsoring, which the derive through 2000 holds.
+	stale := clickhouse.AccountState{Exists: true, LastModifiedLedger: 900, AsOfLedger: 1000}
+	want("snapshot predates the watermark", ProveSponsorships(stale, 2000, clickhouse.SponsorshipTotals{InForceReserves: 1}, clickhouse.SponsorshipTotals{}), nil)
+	unstamped := entry
+	unstamped.AsOfLedger = 0
+	want("snapshot with no vintage", ProveSponsorships(unstamped, 100, sponsoring, sponsored), nil)
+	later := entry
+	later.AsOfLedger = 5000
+	want("snapshot after the watermark", ProveSponsorships(later, 100, sponsoring, sponsored), &yes)
 	if p := ProveSponsorships(entry, 100, sponsoring, sponsored); p.DerivedSponsoring != 3 || p.DerivedSponsored != 2 || p.ThroughLedger != 100 {
 		t.Fatalf("proof numbers = %+v", p)
 	}

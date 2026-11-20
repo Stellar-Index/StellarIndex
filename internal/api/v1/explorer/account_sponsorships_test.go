@@ -68,7 +68,7 @@ func newSponsorshipsReader(wm uint32) *sponsorshipsReader {
 		totals: map[string]clickhouse.SponsorshipTotals{
 			clickhouse.SponsorshipSideSponsored: {InForce: 2, InForceReserves: 2, Started: 3, Revoked: 1},
 		},
-		state: clickhouse.AccountState{Exists: true, NumSponsored: 2, LastModifiedLedger: 150},
+		state: clickhouse.AccountState{Exists: true, NumSponsored: 2, LastModifiedLedger: 150, AsOfLedger: wm},
 	}
 }
 
@@ -160,7 +160,13 @@ func TestAccountSponsorships_ProofNotComparableAndMismatch(t *testing.T) {
 		t.Fatalf("entry modified after the watermark: proof = %+v note %q", view.Proof, view.CoverageNote)
 	}
 	reader.state.LastModifiedLedger = 150
+	reader.state.AsOfLedger = 180
 	reader.state.NumSponsored = 3
+	_, view = callAccountSponsorships(t, reader, nil, 25)
+	if view.Proof.Match != nil || !strings.Contains(view.CoverageNote, "not comparable") {
+		t.Fatalf("cached entry read before the watermark: proof = %+v note %q", view.Proof, view.CoverageNote)
+	}
+	reader.state.AsOfLedger = 200
 	_, view = callAccountSponsorships(t, reader, nil, 25)
 	if view.Proof.Match == nil || *view.Proof.Match || !strings.Contains(view.CoverageNote, "DISAGREE") {
 		t.Fatalf("counter drift: proof = %+v note %q", view.Proof, view.CoverageNote)

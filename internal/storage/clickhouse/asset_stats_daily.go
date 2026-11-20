@@ -23,10 +23,10 @@ func assetStatsSnapshotFill(at, day, rankedSource string) string {
 	     SELECT asset,
 	            toInt64(countIf(balance > 0)) AS holders,
 	            toInt64(count()) AS trustlines,
-	            sum(toInt128(balance)) AS total,
-	            sumIf(toInt128(balance), rank <= 10) AS top10,
-	            sumIf(toInt128(balance), rank <= 100) AS top100,
-	            sum(toInt128(rank) * toInt128(balance)) AS weighted
+	            sum(toInt128(balance)) AS total, -- i128sum:ok trustline balances are Int64 stroops
+	            sumIf(toInt128(balance), rank <= 10) AS top10, -- i128sum:ok trustline balances are Int64 stroops
+	            sumIf(toInt128(balance), rank <= 100) AS top100, -- i128sum:ok trustline balances are Int64 stroops
+	            sum(toInt128(rank) * toInt128(balance)) AS weighted -- i128sum:ok rank x Int64 balance, bounded by holders x 2^63
 	     FROM (` + rankedSource + `)
 	     GROUP BY asset
 	 )

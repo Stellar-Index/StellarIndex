@@ -366,7 +366,7 @@ type AccountWealth struct {
 const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
 		sum(toDecimal256(balance, 0) * arrayElement(px, indexOf(?, k))) AS stroop_value
 		SELECT account_id, toString(stroop_value),
-		sumIf(toInt128(balance), k = 'native') AS native_stroops
+		sumIf(toInt128(balance), k = 'native') AS native_stroops -- i128sum:ok native balances are Int64 stroops
 		FROM (
 			SELECT account_id, balance, if(entry_type = 'account', 'native', asset) AS k
 			FROM stellar.ledger_entries_current FINAL
