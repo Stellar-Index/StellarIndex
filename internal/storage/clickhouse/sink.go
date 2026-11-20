@@ -198,6 +198,10 @@ type LedgerExtract struct {
 	// EntryChangesUnencodable counts changes that could not be re-marshalled and wrote no
 	// row (each still took its intra_ledger_seq position). Unreachable on decoded input.
 	EntryChangesUnencodable int
+
+	// SupplyFlowsUndecodable counts mint/burn/clawback events whose amount body did not
+	// decode: the event row is written but no supply_flows row, so per-token supply is short.
+	SupplyFlowsUndecodable int
 }
 
 // ErrBufferFull is returned by Sink.Add when the buffer is full and flushes keep failing; the extract is DROPPED (a bounded drop, not an error) and the ch-live-catchup gap scan heals it.

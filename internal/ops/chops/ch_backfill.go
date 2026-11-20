@@ -247,9 +247,10 @@ func chBackfillChunk(
 				return nil
 			}
 			if loss.record(ext, changesOnly) {
-				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d\n",
+				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d supply_flows_undecodable=%d\n",
 					idx, lcm.LedgerSequence(), ext.TxReadErrors, ext.TxEventReadErrors, ext.EntryMetaUnsupported,
-					ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable)
+					ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable,
+					ext.SupplyFlowsUndecodable)
 			}
 			if changesOnly {
 				ext = changesOnlyExtract(ext)
@@ -294,6 +295,7 @@ func (l *extractLoss) record(ext clickhouse.LedgerExtract, changesOnly bool) boo
 		kinds["tx_read_errors"] = ext.TxReadErrors
 		kinds["tx_event_read_errors"] = ext.TxEventReadErrors
 		kinds["soroban_fee_meta_unsupported"] = ext.SorobanFeeMetaUnsupported
+		kinds["supply_flows_undecodable"] = ext.SupplyFlowsUndecodable
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()

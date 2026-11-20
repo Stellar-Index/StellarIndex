@@ -389,10 +389,13 @@ func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, 
 			ext.Events = append(ext.Events, row)
 			ext.Ledger.SorobanEventCount++
 			// Decode supply events (mint/burn/clawback) at ingest (ADR-0034) so per-token supply
-			// is a pure SQL sum. An undecodable body adds no flow; the raw event stays in
-			// contract_events.
+			// is a pure SQL sum. An undecodable body adds no flow and is counted as a loss; the
+			// raw event stays in contract_events.
 			if IsSupplyFlowSym(row.Topic0Sym) {
-				if amt, _, okAmt := DecodeSupplyAmountXDR(row.DataXDR); okAmt {
+				amt, _, okAmt := DecodeSupplyAmountXDR(row.DataXDR)
+				if !okAmt {
+					ext.SupplyFlowsUndecodable++
+				} else {
 					ext.SupplyFlows = append(ext.SupplyFlows, SupplyFlowRow{
 						ContractID: row.ContractID,
 						LedgerSeq:  seq,

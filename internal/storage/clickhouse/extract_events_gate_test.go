@@ -155,6 +155,22 @@ func TestExtractEvents_TxSuccessGate(t *testing.T) {
 		}
 	})
 
+	t.Run("undecodable supply body: event kept, flow counted as lost", func(t *testing.T) {
+		bad := gateContractEvent(t)
+		s := xdr.ScString("not an amount")
+		bad.Body.V0.Data = xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &s}
+		ext := &LedgerExtract{}
+		extractEvents(ext, gateTx(t, bad, true), 42, closeTime, "txbad", nil, true)
+
+		if len(ext.Events) != 1 || len(ext.SupplyFlows) != 0 {
+			t.Fatalf("Events = %d, SupplyFlows = %d; want 1 and 0", len(ext.Events), len(ext.SupplyFlows))
+		}
+		if ext.SupplyFlowsUndecodable != 1 {
+			t.Errorf("SupplyFlowsUndecodable = %d, want 1 — a mint left out of supply_flows must be counted, "+
+				"or the served supply is short with nothing to say so", ext.SupplyFlowsUndecodable)
+		}
+	})
+
 	t.Run("failed tx: nothing captured", func(t *testing.T) {
 		ext := &LedgerExtract{}
 		extractEvents(ext, gateTx(t, ev, false), 42, closeTime, "txfail", nil, false)

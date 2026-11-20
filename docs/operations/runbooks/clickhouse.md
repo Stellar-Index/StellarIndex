@@ -173,7 +173,7 @@ The alert clears 30 min after the last error. A short burst during a ClickHouse 
 
 Ticket. `increase(stellarindex_ch_live_sink_read_undercount_total[30m]) > 0`. Ledgers are in the lake with fewer transactions, events or entry changes than the chain, or lack a `ledger_ingest_log` row; nothing downstream can tell. The `kind` label separates paths; the value is transactions affected:
 
-- Lake path (ledger written short; the projector treats it as complete): `tx_read_errors`, `tx_event_read_errors`, `entry_meta_unsupported`; `soroban_fee_meta_unsupported` (fee columns 0 in `stellar.transactions`); `evicted_keys_unreadable` (+1 per ledger; evicted entries still read live in `stellar.ledger_entries_current`); `entry_changes_unencodable` (+1 per change).
+- Lake path (ledger written short; the projector treats it as complete): `tx_read_errors`, `tx_event_read_errors`, `entry_meta_unsupported`; `soroban_fee_meta_unsupported` (fee columns 0 in `stellar.transactions`); `evicted_keys_unreadable` (+1 per ledger; evicted entries still read live in `stellar.ledger_entries_current`); `entry_changes_unencodable` (+1 per change); `supply_flows_undecodable` (+1 per mint/burn/clawback whose amount did not decode: the event is in `stellar.contract_events` but `stellar.supply_flows` lacks it, so that token's supply is short).
 - Substrate path: `tx_read_errors_census`, `tx_event_read_errors_census` (the `ledger_ingest_log` row is skipped, leaving a substrate gap).
 
 Check:

@@ -1548,8 +1548,12 @@ func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
 // alertable trace.
 func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logger) {
 	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 &&
-		ext.SorobanFeeMetaUnsupported == 0 && ext.EvictedKeysUnreadable == 0 && ext.EntryChangesUnencodable == 0 {
+		ext.SorobanFeeMetaUnsupported == 0 && ext.EvictedKeysUnreadable == 0 && ext.EntryChangesUnencodable == 0 &&
+		ext.SupplyFlowsUndecodable == 0 {
 		return
+	}
+	if ext.SupplyFlowsUndecodable > 0 {
+		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("supply_flows_undecodable").Add(float64(ext.SupplyFlowsUndecodable))
 	}
 	if ext.TxReadErrors > 0 {
 		obs.ChLiveSinkReadUndercountTotal.WithLabelValues("tx_read_errors").Add(float64(ext.TxReadErrors))
@@ -1576,7 +1580,8 @@ func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logge
 		"entry_meta_unsupported", ext.EntryMetaUnsupported,
 		"soroban_fee_meta_unsupported", ext.SorobanFeeMetaUnsupported,
 		"evicted_keys_unreadable", ext.EvictedKeysUnreadable,
-		"entry_changes_unencodable", ext.EntryChangesUnencodable)
+		"entry_changes_unencodable", ext.EntryChangesUnencodable,
+		"supply_flows_undecodable", ext.SupplyFlowsUndecodable)
 }
 
 // watchCHLiveSink samples the dual-sink's counters every 15 s and emits the
