@@ -4288,13 +4288,23 @@ export interface paths {
         /**
          * Revoke an API key by KeyID.
          * @description Revokes the API key whose KeyID matches the path parameter,
-         *     scoped to the authenticated caller's Identifier so accounts
-         *     can only revoke their own keys. "Not found" and "not yours"
-         *     collapse to 204 to prevent cross-account enumeration probes.
+         *     with every key delegated from it.
          *
-         *     The caller cannot revoke the key they're authenticated with —
-         *     that would orphan the connection mid-request. 409 in that
-         *     case so the UI can prompt for an alternate credential.
+         *     An API key may revoke itself and the keys minted from it,
+         *     directly or through keys it minted: never the key that minted
+         *     it, a sibling, or another account key that was not minted under
+         *     it (dashboard and `/v1/register` keys are each their own root).
+         *     Any other key id gets 403 `key-not-delegated` and nothing is
+         *     revoked; the answer does not depend on whether the id exists,
+         *     so it cannot be used to probe for key ids. A dashboard user can
+         *     revoke the account's other keys from the dashboard, which
+         *     applies the user's role. A SEP-10 session and an operator-tier
+         *     caller may revoke any key on their own identifier.
+         *
+         *     Revoking the key the request is authenticated with is allowed:
+         *     it answers 204 and the key, with every key minted from it,
+         *     stops working from the next request. This is how a leaked
+         *     `/v1/register` root key, which has no dashboard, is killed.
          *
          *     An **operator-tier** caller must send `X-Reason` (400 without
          *     it); the revoke is recorded as a `key.revoke` audit row, as
@@ -24469,14 +24479,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Revoked (or no-op when the key didn't belong to the caller). */
+            /** @description Revoked. Repeating a revoke within 24 hours, with the key that made it or a key that minted the revoked one, also answers 204, as does any revoke by a SEP-10 session or operator of a key already gone. */
             204: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id. */
+            /** @description Missing keyID, the path carries a plaintext key (`key-id-is-a-secret`) instead of its id, or it is not shaped like a key id, `kid_` and 12 to 64 lowercase hex digits (`invalid-key-id`). Nothing is revoked. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -24490,8 +24500,17 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Caller tried to revoke the key they're using. */
-            409: {
+            /** @description The key is neither the calling key nor delegated from it (`key-not-delegated`); nothing was revoked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The revoke, or the read of the caller's keys it is checked against, failed (`account-revoke-failed`). */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -265,7 +265,7 @@ func sep10PerIPCharge(r *http.Request, bucket, authBucket *ratelimit.Bucket, log
 // sep10PerIPKey is the per-IP key a SEP-10 JWT subject (no key id) is held to; false for every other subject.
 func sep10PerIPKey(r *http.Request) (string, bool) {
 	subject, ok := auth.SubjectFrom(r.Context())
-	if !ok || subject.Tier != auth.TierSEP10 || subject.KeyID != "" {
+	if !ok || !subject.IsSEP10Session() {
 		return "", false
 	}
 	return "sep10ip:" + anonymousRateLimitKey(r), true

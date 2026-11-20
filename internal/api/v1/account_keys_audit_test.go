@@ -54,7 +54,7 @@ func TestAccountKeysRevoke_OperatorRequiresReasonAndAudits(t *testing.T) {
 	sink := &recordingAuditSink{}
 	ts := newAdminTestServer(t, operatorSelfSubject(), store, sink)
 
-	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_other", "", "")
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_00000000000000ff", "", "")
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (operator revoke without X-Reason)", resp.StatusCode)
 	}
@@ -62,7 +62,7 @@ func TestAccountKeysRevoke_OperatorRequiresReasonAndAudits(t *testing.T) {
 		t.Fatalf("audit entries = %d, want 0", len(sink.entries))
 	}
 
-	resp = doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_other", "leaked in CI log", "")
+	resp = doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_00000000000000ff", "leaked in CI log", "")
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
@@ -70,7 +70,7 @@ func TestAccountKeysRevoke_OperatorRequiresReasonAndAudits(t *testing.T) {
 		t.Fatalf("audit entries = %d, want 1 key.revoke row", len(sink.entries))
 	}
 	e := sink.entries[0]
-	if e.Action != "key.revoke" || e.ActorKind != platform.ActorStaff || e.TargetID != "kid_other" {
+	if e.Action != "key.revoke" || e.ActorKind != platform.ActorStaff || e.TargetID != "kid_00000000000000ff" {
 		t.Errorf("audit entry = %+v", e)
 	}
 	if !strings.Contains(string(e.Metadata), `"reason":"leaked in CI log"`) {
@@ -82,47 +82,49 @@ func TestAccountKeysRevoke_OperatorRequiresReasonAndAudits(t *testing.T) {
 // user-actor key.revoke row.
 func TestAccountKeysRevoke_CustomerNeedsNoReason(t *testing.T) {
 	sink := &recordingAuditSink{}
-	ts := newAdminTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, &fakeAccountStore{}, sink)
-	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_other", "", "")
+	store := &fakeAccountStore{listed: map[string][]auth.APIKeyRecord{
+		"owner-42": {{KeyID: "kid_00000000000000ff", Identifier: "owner-42", ParentKeyID: "kid_owner"}},
+	}}
+	ts := newAdminTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, store, sink)
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_00000000000000ff", "", "")
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
 	}
 	if len(sink.entries) != 1 {
 		t.Fatalf("audit entries = %d, want 1 key.revoke row", len(sink.entries))
 	}
-	if e := sink.entries[0]; e.Action != "key.revoke" || e.ActorKind != platform.ActorUser || e.TargetID != "kid_other" {
-		t.Errorf("audit entry = %+v, want a user-actor key.revoke row for kid_other", e)
+	if e := sink.entries[0]; e.Action != "key.revoke" || e.ActorKind != platform.ActorUser || e.TargetID != "kid_00000000000000ff" {
+		t.Errorf("audit entry = %+v, want a user-actor key.revoke row for kid_00000000000000ff", e)
 	}
 }
 
 // TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive: a customer's DELETE /v1/account/keys/{kid} with another account's
 // key id must not revoke that account's api_keys row.
 func TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive(t *testing.T) {
-	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
+	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_00000000000000b1")
 	attacker := auth.Subject{Identifier: "acct:attacker-co", Tier: auth.TierAPIKey, KeyID: "kid_attacker"}
 	ts := newAdminTestServerWithPlatformKeys(t, attacker, &fakeAccountStore{}, platformKeys, accts)
 
-	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_victim01", "", "")
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204 (a non-owner revoke is a silent no-op)", resp.StatusCode)
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_00000000000000b1", "", "")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (another account's key is not delegated from the caller)", resp.StatusCode)
 	}
-	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
+	assertPlatformKeyLive(t, platformKeys, "kid_00000000000000b1")
 }
 
-// TestAccountKeysRevoke_OwnerRevokesPostgresRow is the positive
-// self-service case: the owner's revoke clears the management row.
-func TestAccountKeysRevoke_OwnerRevokesPostgresRow(t *testing.T) {
-	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
-	owner := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_other"}
-	ts := newAdminTestServerWithPlatformKeys(t, owner, &fakeAccountStore{}, platformKeys, accts)
+// TestAccountKeysRevoke_RootKeyCannotRevokeAnotherRootsRow: a management row (register or dashboard key) is a root, so
+// no other API key on the account can revoke it here; a member's key would otherwise revoke the owner's. The
+// dashboard path, which knows the user's role, revokes it.
+func TestAccountKeysRevoke_RootKeyCannotRevokeAnotherRootsRow(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_00000000000000b2")
+	member := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_00000000000000ff"}
+	ts := newAdminTestServerWithPlatformKeys(t, member, &fakeAccountStore{}, platformKeys, accts)
 
-	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_shared01", "", "")
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_00000000000000b2", "", "")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
-	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
-		t.Errorf("owner's postgres management row not revoked: revokedIDs = %v, want [kid_shared01]", platformKeys.revokedIDs)
-	}
+	assertPlatformKeyLive(t, platformKeys, "kid_00000000000000b2")
 }
 
 // A plaintext key pasted where a key id belongs is refused on both revoke routes: nothing is looked up, the answer

@@ -456,6 +456,11 @@ func APIKeyRevoking(identifier, keyID string) APIKeyIndexKey {
 	return APIKeyIndexKey("apikey-index:revoking:" + identifier + ":" + keyID)
 }
 
+// APIKeyRevoked lists the keys that held revoke authority over keyID on identifier when it was revoked, so their retry still answers 204.
+func APIKeyRevoked(identifier, keyID string) APIKeyIndexKey {
+	return APIKeyIndexKey("apikey-index:revoked:" + identifier + ":" + keyID)
+}
+
 // ─── Per-source freshness gauge ───────────────────────────────────
 //
 // Wire shape: `health:<source>`

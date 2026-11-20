@@ -610,3 +610,25 @@ func TestKeyIndex_InvalidateDropsPointersOfExpiredRecords(t *testing.T) {
 		t.Fatal("the live record was not re-indexed")
 	}
 }
+
+// The retry note lives in the apikey-index family: an ACL denying it means no note was written, not a fault, while
+// any other error still surfaces.
+func TestRetryNote_ACLDenialIsNoNote(t *testing.T) {
+	f := newKeyIndexFixture(t)
+	ctx := context.Background()
+	f.denier.deny.Store(true)
+	if err := f.store.RecordRevoked(ctx, "acct:co", "kid_aa", []string{"kid_bb"}); err != nil {
+		t.Errorf("RecordRevoked under NOPERM = %v, want nil", err)
+	}
+	if note, err := f.store.RevokedBy(ctx, "acct:co", "kid_aa"); err != nil || note != nil {
+		t.Errorf("RevokedBy under NOPERM = %v, %v; want nil, nil", note, err)
+	}
+	transient := "LOADING Redis is loading the dataset in memory"
+	f.denier.failWith.Store(&transient)
+	if _, err := f.store.RevokedBy(ctx, "acct:co", "kid_aa"); err == nil {
+		t.Error("RevokedBy swallowed a transient error")
+	}
+	if err := f.store.RecordRevoked(ctx, "acct:co", "kid_aa", []string{"kid_bb"}); err == nil {
+		t.Error("RecordRevoked swallowed a transient error")
+	}
+}

@@ -550,7 +550,7 @@ func TestRateLimitBySubject_TruncatesLongAuthKeys(t *testing.T) {
 	longShared := strings.Repeat("a", middleware.MaxRateLimitKeyLen+50)
 	reqWithIdentifier := func(suffix string) *http.Request {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		subject := auth.Subject{Identifier: longShared + suffix, Tier: auth.TierSEP10}
+		subject := auth.NewSEP10Session(longShared+suffix, time.Time{})
 		return r.WithContext(auth.WithSubject(r.Context(), subject))
 	}
 

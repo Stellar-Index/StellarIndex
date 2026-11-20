@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -44,7 +45,7 @@ func TestRateLimitCallerKey_MatchesTheLimiterIdentity(t *testing.T) {
 	}
 
 	// A SEP-10 JWT account is a free keypair, so the cap keys on the IP the limiter also charges.
-	jwt := func(acct string) *auth.Subject { return &auth.Subject{Identifier: acct, Tier: auth.TierSEP10} }
+	jwt := func(acct string) *auth.Subject { s := auth.NewSEP10Session(acct, time.Time{}); return &s }
 	if a, b := middleware.RateLimitCallerKey(req("198.51.100.1:1", jwt("GAAA"))),
 		middleware.RateLimitCallerKey(req("198.51.100.1:2", jwt("GBBB"))); a != b {
 		t.Errorf("two SEP-10 accounts from one IP keyed %q and %q, want one caller", a, b)
