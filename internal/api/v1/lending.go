@@ -438,6 +438,16 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 // request per pool at once, and each build is a lake read plus per-reserve pricing.
 const lendingReservesTTL = time.Minute
 
+// lendingReservesDegradedTTL is a degraded build's lifetime: while one is cached the protocols build it feeds is not cached at all.
+const lendingReservesDegradedTTL = 10 * time.Second
+
+func poolReservesTTL(r poolReserves) time.Duration {
+	if r.flags.Degraded {
+		return lendingReservesDegradedTTL
+	}
+	return lendingReservesTTL
+}
+
 // lendingReservesMaxEntries bounds the per-pool cache: the key is a client-supplied C-strkey.
 const lendingReservesMaxEntries = 256
 

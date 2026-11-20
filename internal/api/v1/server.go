@@ -957,7 +957,7 @@ func New(opts Options) *Server {
 		Options:               opts,
 		logger:                logger,
 		coverageFloorCache:    &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
-		lendingReserves:       newSWRCache[poolReserves](logger, "lending_reserves", "api-lending-reserves-fill", lendingReservesTTL, lendingReservesMaxEntries),
+		lendingReserves:       newSWRCache[poolReserves](logger, "lending_reserves", "api-lending-reserves-fill", lendingReservesTTL, lendingReservesMaxEntries).withTTLOf(poolReservesTTL),
 		lendingProtocolsCache: newSWRCache[lendingProtocolsBuild](logger, "lending_protocols", "api-lending-protocols-fill", lendingReservesTTL, 1),
 		fxCrossMaxAge:         fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
 		fxFixings:             newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
