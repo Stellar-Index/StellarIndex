@@ -30,6 +30,8 @@ type BespokeKPI struct {
 	// Amount and Token are a token-amount KPI's exact base units and its protocol token's ticker, for serve-time USD; never wire.
 	Amount *big.Int
 	Token  string
+	// USDReason withholds value_usd from a token-amount KPI whose token is not confirmed; never wire here, served as usd_reason.
+	USDReason string
 }
 
 // BespokeSeries is a named time-series for a chart.

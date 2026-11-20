@@ -4446,7 +4446,7 @@ paths:
                                 usd_reason:
                                   type: [string, "null"]
                                   enum: [lp_share_unvalued, unpriced, decimals_unknown, price_scale_mismatch, balance_unavailable, token_unknown, negative_amount, null]
-                                  description: "Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier's `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld."
+                                  description: "Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier has a balance but its token is unread, or its `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld."
                               required: [tier, tokens, shares, queued_shares, queued_pct, backstop_asset, backstop_token, take_rate_weight]
                           total_usd: { type: [string, "null"], description: "Sum of the tiers' `tokens_usd`; null when no tier is valued." }
                           lower_bound: { type: boolean, description: "True when `total_usd` leaves out a tier with no `tokens_usd`; the total is then a floor." }
@@ -18553,17 +18553,18 @@ components:
         value_usd:
           type: string
           description: >-
-            USD value of a token-amount KPI (emissions claimed, backstop volume): its exact base-unit amount at the
-            token's CURRENT price_usd and decimals, 2-dp decimal string. Absent on count KPIs; absent with usd_reason
-            when the token amount cannot be valued.
+            USD value of a token-amount KPI (emissions claimed, backstop volume): the window token sum × today's
+            price_usd at the token's decimals, 2-dp decimal string; not the historical value at claim time. Absent on
+            count KPIs; absent with usd_reason when the token amount cannot be valued.
         price_usd: { type: string, description: "The token's current USD price value_usd used, as /v1/assets/{id} serves it." }
         price_stale: { type: boolean, description: "True when price_usd is the newest price but past its freshness window." }
         usd_reason:
           type: string
-          enum: [unpriced, decimals_unknown, unit_not_priceable]
+          enum: [unpriced, decimals_unknown, unit_not_priceable, token_unconfirmed]
           description: >-
-            Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, or the unit
-            (a Comet BLND:USDC LP share) has no valuation here.
+            Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, the unit
+            (a Comet BLND:USDC LP share) has no valuation here, or the amount's token is not confirmed on chain
+            (token_unconfirmed).
       required: [label, value]
 
     BespokeSeries:

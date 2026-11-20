@@ -61,6 +61,7 @@ func TestLendingPoolBackstop_BLNTUnknownAssetIsWithheld(t *testing.T) {
 		Instance: &clickhouse.PoolInstance{Backstop: blnt.MainnetBackstop},
 		Tiers: []clickhouse.BackstopTierState{
 			{Tier: "FirstLoss", Asset: "BlntEurc", Token: xlmSAC, Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(1e7), Tokens: big.NewInt(1e7), Q4W: big.NewInt(0)}},
+			{Tier: "SecondLoss", Asset: "Xlm", Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(1), Tokens: big.NewInt(1), Q4W: big.NewInt(0)}},
 		},
 	}}
 	srv := v1.New(v1.Options{
@@ -68,8 +69,12 @@ func TestLendingPoolBackstop_BLNTUnknownAssetIsWithheld(t *testing.T) {
 		Lending: &stubBLNTLendingReader{stubLendingReader: stubLendingReader{version: &unknown}, blntAssets: []string{mkCStrkey(t, 3)}},
 	})
 	got := getBackstop(t, srv, blnt.MainnetFixedPool)
-	if len(got.Tiers) != 1 || got.Tiers[0].TokensUSD != nil || strOrNil(got.Tiers[0].USDReason) != "token_unknown" || got.TotalUSD != nil {
+	if len(got.Tiers) != 2 || got.Tiers[0].TokensUSD != nil || strOrNil(got.Tiers[0].USDReason) != "token_unknown" || got.TotalUSD != nil {
 		t.Errorf("unknown asset kind = %+v, want token_unknown and a null total", got)
+	}
+	// A balance with no token read is not a missing balance.
+	if st := got.Tiers[1]; st.TokensUSD != nil || strOrNil(st.USDReason) != "token_unknown" {
+		t.Errorf("tokenless SecondLoss = %+v, want token_unknown", st)
 	}
 }
 

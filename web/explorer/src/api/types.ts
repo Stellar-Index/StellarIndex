@@ -8970,17 +8970,17 @@ export interface components {
             value: string;
             unit?: string;
             hint?: string;
-            /** @description USD value of a token-amount KPI (emissions claimed, backstop volume): its exact base-unit amount at the token's CURRENT price_usd and decimals, 2-dp decimal string. Absent on count KPIs; absent with usd_reason when the token amount cannot be valued. */
+            /** @description USD value of a token-amount KPI (emissions claimed, backstop volume): the window token sum × today's price_usd at the token's decimals, 2-dp decimal string; not the historical value at claim time. Absent on count KPIs; absent with usd_reason when the token amount cannot be valued. */
             value_usd?: string;
             /** @description The token's current USD price value_usd used, as /v1/assets/{id} serves it. */
             price_usd?: string;
             /** @description True when price_usd is the newest price but past its freshness window. */
             price_stale?: boolean;
             /**
-             * @description Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, or the unit (a Comet BLND:USDC LP share) has no valuation here.
+             * @description Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, the unit (a Comet BLND:USDC LP share) has no valuation here, or the amount's token is not confirmed on chain (token_unconfirmed).
              * @enum {string}
              */
-            usd_reason?: "unpriced" | "decimals_unknown" | "unit_not_priceable";
+            usd_reason?: "unpriced" | "decimals_unknown" | "unit_not_priceable" | "token_unconfirmed";
         };
         /** @description A named time-series for a chart. */
         BespokeSeries: {
@@ -18961,7 +18961,7 @@ export interface operations {
                                 /** @description True when `price_usd` is the newest price but past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier's `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier has a balance but its token is unread, or its `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld.
                                  * @enum {string|null}
                                  */
                                 usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | null;

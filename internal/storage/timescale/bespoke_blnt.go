@@ -149,7 +149,12 @@ func (s *Store) blntAuctionBlocks(ctx context.Context, blk *BespokeBlock, since 
 
 const blntBackstopCountSQL = `
 		SELECT count(*)::text FROM blnt_events
-		 WHERE contract_role = 'backstop' AND ledger_close_time > now() - $1::interval`
+		 WHERE contract_role = 'backstop' AND event_kind IN (` + blntBackstopDepositorKinds + `)
+		   AND ledger_close_time > now() - $1::interval`
+
+// blntBackstopDepositorKinds are the backstop's per-pool, per-tier flows; admin and emission kinds (distribute, gulp_emissions,
+// migration and zone events) are not backstop activity.
+const blntBackstopDepositorKinds = `'deposit','queue_withdrawal','dequeue_withdrawal','withdraw','claim','draw','donate'`
 
 // blntBackstopFlowSQL sums tier-asset tokens (amount) of deposit and withdraw per (pool, tier); the share-only kinds carry shares in
 // amount2 and are not summed. A group with an undecoded amount is left out rather than understated.
@@ -179,7 +184,10 @@ func (s *Store) blntBackstopBlocks(ctx context.Context, blk *BespokeBlock, since
 	if err := s.db.QueryRowContext(ctx, blntBackstopCountSQL, since).Scan(&events); err != nil {
 		return fmt.Errorf("timescale: bespokeBLNT backstop KPIs: %w", err)
 	}
-	blk.KPIs = append(blk.KPIs, BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: events})
+	blk.KPIs = append(blk.KPIs, BespokeKPI{
+		Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: events,
+		Hint: "deposit + queue_withdrawal + dequeue_withdrawal + withdraw + claim + draw + donate backstop events in the window",
+	})
 	return s.appendTable(ctx, blk, blntBackstopFlowHeader, blntBackstopFlowSQL, since)
 }
 
@@ -206,11 +214,18 @@ func (s *Store) blntEmissionKPIs(ctx context.Context, blk *BespokeBlock, since s
 	if rows == 0 {
 		return nil
 	}
+	claimLabel := fmt.Sprintf("Emissions claimed (%dd)", windowDays)
 	if nullClaim == nil || !*nullClaim {
+		// The pool claim ABI does not name amount_claimed's token, so no price is applied until a payout transfer confirms it is BLNT.
 		blk.KPIs = append(blk.KPIs, BespokeKPI{
-			Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: claimed.String(), Unit: "BLNT base units",
-			Hint:   "summed pool claim (amount_claimed) + backstop claim (blnt_amount) in BLNT base units; a WINDOW sum, not USD",
-			Amount: claimed.BigInt(), Token: "BLNT",
+			Label: claimLabel, Value: claimed.String(), Unit: "BLNT base units",
+			Hint:      "summed pool claim (amount_claimed) + backstop claim (blnt_amount) in BLNT base units; a WINDOW sum, not USD",
+			USDReason: "token_unconfirmed",
+		})
+	} else {
+		blk.KPIs = append(blk.KPIs, BespokeKPI{
+			Label: claimLabel, Value: "withheld",
+			Hint: "a claim event in the window has an undecoded amount, so the sum is withheld rather than understated",
 		})
 	}
 	blk.KPIs = append(blk.KPIs,

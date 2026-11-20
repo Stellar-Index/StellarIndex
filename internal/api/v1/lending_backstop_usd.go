@@ -77,6 +77,9 @@ func (s *Server) valueBackstopView(ctx context.Context, view *LendingBackstopVie
 		}
 		if t.Balance == nil || token == "" {
 			tv.USDReason = strRef(backstopUSDNoBalance)
+			if t.Balance != nil {
+				tv.USDReason = strRef(backstopUSDTokenUnknown)
+			}
 			vals = append(vals, nil)
 			continue
 		}
