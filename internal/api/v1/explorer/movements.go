@@ -127,6 +127,15 @@ func encodeMovementCursor(r clickhouse.AccountMovementRow, pinnedWatermark uint3
 	return fmt.Sprintf("%d.%s.%d.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex, pinnedWatermark)
 }
 
+// nextMovementCursor leaves the pin off when the page's boundary came from a failed read, not a watermark: a fail-closed 0
+// pinned into the cursor would hold every later page at the static P23 split, unflagged, after the read recovers.
+func nextMovementCursor(r clickhouse.AccountMovementRow, wm uint32, failClosed bool) string {
+	if failClosed {
+		return fmt.Sprintf("%d.%s.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex)
+	}
+	return encodeMovementCursor(r, wm)
+}
+
 // parseMovementCursor decodes the dotted `?cursor=` (tx_hash is fixed 64-char hex, so never contains '.'). An optional 5th segment is
 // the pinned cap67 watermark. Malformed values write a problem+json and return ok=false.
 func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (movementCursorParts, bool) {
@@ -246,16 +255,22 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// Pin the boundary this sequence committed to (the live watermark
 		// on page 1, the already-pinned value on continuation pages) so
 		// every subsequent page reuses it.
-		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
+		out.NextCursor = nextMovementCursor(merged[len(merged)-1], wm, wmFailed && !cur.HasPinnedWatermark)
 	}
 	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed, time.Time{})
 }
 
 // movementsWatermark resolves the cap67 watermark splitting a page between the CH archive and the PG tail, so arms stay gap- and double-
-// count-free. A client pin is re-validated; a read error fails closed to wm=0 (static P23 boundary) and failed is reported.
+// count-free. A client pin is re-validated; on a read error a pinned page keeps its pin and a first page fails closed to wm=0 (static
+// P23 boundary), and failed is reported either way.
 func (h *Handler) movementsWatermark(ctx context.Context, w http.ResponseWriter, r *http.Request, cur movementCursorParts) (wm uint32, failed, ok bool) {
 	liveWM, err := h.Reader.Cap67MovementsWatermark(ctx)
 	if err != nil {
+		// The archive watermark never moves backwards, so a continuation page keeps its pin rather than dropping [P23, pin].
+		if cur.HasPinnedWatermark {
+			h.Logger.Warn("cap67 movements watermark read failed — keeping the cursor's pinned boundary", "err", err)
+			return postP23Boundary(cur.PinnedWatermark), true, true
+		}
 		h.Logger.Warn("cap67 movements watermark read failed — failing closed to the static P23 boundary", "err", err)
 		return 0, true, true
 	}
