@@ -663,12 +663,12 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		d := uint32(dec)
 		rv.Decimals = &d
 	}
-	rp := s.reservePriceUSD(ctx, st.Asset)
 	if !decKnown {
 		// Without established decimals the USD figures, and the pool TVL,
 		// would be wrong by a power of ten; withhold the valuation instead.
 		return rv, nil, false
 	}
+	rp := s.reservePriceUSD(ctx, st.Asset)
 	if rp.price == "" {
 		rv.usdExclusion = rp.exclusion()
 		return rv, nil, false
