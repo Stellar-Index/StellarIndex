@@ -102,6 +102,7 @@ type fakeRegisterKeyStore struct {
 	lastMaxKeys int
 	createErr   error    // when set, Create fails (durable management-row write failure)
 	revokedIDs  []string // KeyIDs passed to Revoke, in call order
+	revokeErr   error    // when set, Revoke fails and changes nothing
 }
 
 func newFakeRegisterKeyStore() *fakeRegisterKeyStore {
@@ -175,8 +176,11 @@ func (f *fakeRegisterKeyStore) Update(_ context.Context, accountID uuid.UUID, k 
 func (f *fakeRegisterKeyStore) Revoke(_ context.Context, accountID uuid.UUID, id string, _ uuid.UUID, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
 	k, ok := f.byID[id]
-	if !ok || k.AccountID != accountID {
+	if !ok || k.AccountID != accountID || !k.RevokedAt.IsZero() {
 		return platform.ErrNotFound
 	}
 	k.RevokedAt = time.Now().UTC()
