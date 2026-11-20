@@ -585,7 +585,7 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 	return &env, nil
 }
 
-// RevokeKey permanently deletes the API key keyID (the public KeyID, NOT the secret) and returns nil on 204 even when keyID is unknown, already revoked or foreign; passing the secret is a silent no-op, and revoking the request's own credential is a 409 *APIError.
+// RevokeKey permanently deletes keyID (the public KeyID, not the secret) with every key minted from it; nil on 204, a 403 *APIError for a key the caller may not revoke (including unknown ids), a 400 for a value not shaped like a key id.
 func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return &APIError{Status: 400, Title: "keyID required"}

@@ -132,9 +132,24 @@ deployment that already has Redis, which the replay guard requires, and
 a ClickHouse lake (`storage.clickhouse_addr`), from which the account's
 signers and medium threshold are read.
 
-For API-key accounts, rotation is `POST /v1/account/keys` and
-revocation is `DELETE /v1/account/keys/{keyID}` — self-service, scoped
-to the caller's own keys.
+For API-key accounts, `POST /v1/account/keys` mints a key under the
+calling key and `DELETE /v1/account/keys/{keyID}` revokes a key with
+every key minted from it. A key may revoke only itself and the keys
+minted from it.
+
+If a key leaks:
+
+- **A key you minted with `POST /v1/account/keys`:** revoke it,
+  authenticated with the key that minted it or with the leaked key
+  itself. Its minter keeps working.
+- **A root key** (the one `/v1/register` returned, or a dashboard key):
+  a replacement minted from it dies with it, so first get an
+  independent key. With a dashboard, mint a new key there. Without one,
+  `POST /v1/register` creates a new account with its own root key;
+  limits a staff member raised on the old account do not carry over.
+  Move your clients to the new key, then revoke the leaked one with
+  itself: `DELETE /v1/account/keys/{its keyID}` sent with the leaked key
+  answers 204, and the key and everything minted from it stop working.
 
 ## Rate limits
 

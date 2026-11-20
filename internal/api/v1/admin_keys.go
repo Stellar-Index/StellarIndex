@@ -215,15 +215,33 @@ func writeMintRefused(w http.ResponseWriter, r *http.Request, err error) {
 // NULL and the row keeps counting toward the cap). Both legs are scoped to identifier and treat "no such key" and "another
 // owner's key" alike. Returns [auth.ErrKeyNotFound] only when NEITHER leg revoked anything.
 // It also returns the delegated KeyIDs the Redis cascade removed, for the audit row.
-func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) ([]string, error) {
+// Redis goes first so the credential dies even when Postgres is down, and the caller's own key survives to retry a
+// failed row. self (the request's key revoking itself) reverses that: the Redis leg ends the caller's authentication,
+// so the row goes first and a failure there leaves the key alive to retry both.
+func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string, self bool) ([]string, error) {
+	rowRevoked := false
+	if self {
+		switch pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason); {
+		case pgErr == nil:
+			rowRevoked = true
+		case !errors.Is(pgErr, platform.ErrNotFound):
+			return nil, pgErr
+		}
+	}
 	err := auth.ErrKeyNotFound
 	var descendants []string
 	if redisKeys := s.redisKeyRevoker(); redisKeys != nil {
 		descendants, err = auth.RevokeKeyTree(ctx, redisKeys, identifier, keyID)
 	}
-	revoked := err == nil
+	revoked := err == nil || rowRevoked
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		err = nil
+	}
+	if self {
+		if err == nil && !revoked {
+			return nil, auth.ErrKeyNotFound
+		}
+		return descendants, err
 	}
 	pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason)
 	switch {
@@ -351,7 +369,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	descendants, err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason)
+	descendants, err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason, subject.KeyID == keyID)
 	if err != nil {
 		if len(descendants) > 0 {
 			s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants, true)

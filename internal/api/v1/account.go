@@ -28,6 +28,9 @@ type AccountStore interface {
 	CreateCapped(ctx context.Context, req auth.CreateAPIKeyRequest, maxActive int) (auth.APIKeyRecord, string, error)
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
+	// RecordRevoked and RevokedBy keep a revoked key's revokers for a short while so a retried DELETE is still 204.
+	RecordRevoked(ctx context.Context, identifier, keyID string, revokers []string) error
+	RevokedBy(ctx context.Context, identifier, keyID string) ([]string, error)
 }
 
 // Account is the wire shape for /v1/account/me: a union where API-key callers fill the key_* fields and magic-link callers fill nested `user` + `account`.
@@ -722,9 +725,56 @@ func refuseSecretAsKeyID(w http.ResponseWriter, r *http.Request, keyID string) b
 	return true
 }
 
-// handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. Missing key returns 204
-// too, so another account's keyIDs do not leak; revoking the key the request used is 409. Operator audit row only when a key
-// was actually revoked.
+// mayRevokeAccountKey answers 403 unless subject may revoke keyID ([auth.MayRevoke]). The answer does not depend on
+// whether keyID exists, so it is no enumeration oracle. It reads only; owned is returned for the revoke's retry note.
+func (s *Server) mayRevokeAccountKey(
+	w http.ResponseWriter, r *http.Request, subject auth.Subject, keyID string,
+) ([]auth.APIKeyRecord, bool) {
+	actor := auth.RevokeActorOf(subject)
+	var owned []auth.APIKeyRecord
+	if !actor.AnyKey {
+		recs, err := s.Accounts.ListKeysForIdentifier(r.Context(), subject.Identifier)
+		if err != nil {
+			s.logger.Error("account keys revoke: read the caller's keys", "err", err, "identifier", subject.Identifier)
+			writeRevokeFailed(w, r)
+			return nil, false
+		}
+		owned = recs
+	}
+	if auth.MayRevoke(actor, keyID, owned, nil) {
+		return owned, true
+	}
+	// The retry note is read only when the live tree does not already authorise the revoke, so a fault in the note
+	// store cannot block a key revoking itself or its subtree; a fault here is an error, never an allow.
+	if !actor.AnyKey {
+		revokedBy, err := s.Accounts.RevokedBy(r.Context(), subject.Identifier, keyID)
+		if err != nil {
+			s.logger.Error("account keys revoke: read the retry note", "err", err, "identifier", subject.Identifier)
+			writeRevokeFailed(w, r)
+			return nil, false
+		}
+		if auth.MayRevoke(actor, keyID, owned, revokedBy) {
+			return owned, true
+		}
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/key-not-delegated",
+		"This key can't revoke that key", http.StatusForbidden,
+		"an API key may revoke only itself and keys minted from it, directly or through keys it minted. Nothing was revoked. "+
+			"Authenticate with the key itself or the key that minted it; a dashboard user can also revoke it from the dashboard")
+	return nil, false
+}
+
+func writeRevokeFailed(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/account-revoke-failed",
+		"Could not revoke key", http.StatusInternalServerError,
+		"see X-Request-ID in server logs")
+}
+
+// handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. An API key may revoke
+// itself or keys delegated from it (403 otherwise, whether or not the id exists); revoking itself takes its subtree with
+// it, so a leaked root with no dashboard can still be killed. Operator audit row only when a key was actually revoked.
 func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -745,11 +795,11 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if refuseSecretAsKeyID(w, r, keyID) {
 		return
 	}
-	if subject.KeyID == keyID {
+	if !auth.IsKeyIDShaped(keyID) {
 		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/cannot-revoke-self",
-			"Can't revoke the key you're using", http.StatusConflict,
-			"authenticate with a different key (or SEP-10 token) and retry")
+			"https://api.stellarindex.io/errors/invalid-key-id",
+			"Not a key id", http.StatusBadRequest,
+			"the path takes a key's public id, kid_ followed by lowercase hex, as listed by GET /v1/account/keys. Nothing was revoked")
 		return
 	}
 	if s.Accounts == nil {
@@ -763,11 +813,15 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	owned, ok := s.mayRevokeAccountKey(w, r, subject, keyID)
+	if !ok {
+		return
+	}
 	// revokeKeyEverywhere (admin_keys.go) also clears the
 	// Postgres management row for a key that has one — a self-service
 	// caller can hold a /v1/register-minted key, which mirrors to both
 	// stores, alongside Redis-only keys minted via this same endpoint.
-	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason)
+	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason, subject.KeyID == keyID)
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -785,5 +839,11 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, false)
+	revokers := auth.RevokersOf(auth.RevokeActorOf(subject), keyID, owned)
+	if err := s.Accounts.RecordRevoked(r.Context(), subject.Identifier, keyID, revokers); err != nil {
+		// Best-effort: the key is revoked; a retry that misses the note answers 403, not a live key.
+		s.logger.Warn("account keys revoke: retry note not written", "err", err,
+			"identifier", subject.Identifier, "key_id", keyID)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
