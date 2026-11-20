@@ -525,6 +525,14 @@ ssh r1 'curl -s http://localhost:3000/metrics | grep stellarindex_customer_webho
 
 **Fix.** Restore the failing store or key; pending rows are picked up on the next poll with their budget intact. **Escalate:** none.
 
+## stellarindex_customer_webhook_worker_stalled
+
+**Trigger.** `(time() - stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"}) > 900` with the gauge above 0, for 5m, P3. The delivery worker stamps the gauge on every successful pending-delivery query and seeds it when it is built, so a worker that never started, died or is wedged goes stale while every outcome counter stays flat. A gauge at 0 means no worker is wired (no dashboard webhook store).
+
+**Check.** `journalctl -u stellarindex-api | grep -i customer-webhook` for "worker exited", a recovered panic, or no "delivery worker started" line. If `stellarindex_customer_webhook_delivery_stalled` fires too, the claim query itself is failing: follow that section.
+
+**Fix.** Restart the API (`systemctl restart stellarindex-api`); pending rows keep their attempt budget and are claimed on the first poll. **Escalate:** a repeat after restart is a code defect in the worker loop.
+
 ## stellarindex_customer_webhook_delivery_dropped
 
 **Trigger.** `sum by (outcome) (increase(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"no_secret|build_error"}[1h])) > 0`, `for: 0m`, P3. A delivery was marked terminally failed before any POST: `no_secret` (signing secret empty or not unsealable with the configured key) or `build_error` (stored URL is not a valid request target). The customer never got the event.

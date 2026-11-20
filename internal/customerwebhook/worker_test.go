@@ -46,6 +46,8 @@ type fakeStore struct {
 	// recording — used to simulate a store WRITE failure on a terminal
 	// mark.
 	markErr error
+	// listErr, when set, is returned by ListPendingDeliveries.
+	listErr error
 }
 
 type fail struct {
@@ -80,6 +82,9 @@ func (s *fakeStore) enqueue(d platform.WebhookDelivery) {
 func (s *fakeStore) ListPendingDeliveries(_ context.Context, limit int, busy []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	var out, rest []platform.WebhookDelivery
 	for _, d := range s.pending {
 		if slices.Contains(busy, d.WebhookID) || (limit > 0 && len(out) >= limit) {
@@ -698,6 +703,47 @@ func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) 
 // poll loop. This pins the sequential case, since a naive "reset the running flag on return"
 // guard passes the concurrent race test but re-arms Run once the first call exits, breaking
 // the one-shot-per-worker contract.
+// The stalled-worker alert reads this gauge: it must be seeded at build, advance only on a
+// successful claim query, and hold still while the query fails.
+func TestWorker_LastPollHeartbeat(t *testing.T) {
+	built := time.Unix(1_700_000_000, 0)
+	now := built
+	var clockMu sync.Mutex
+	clock := func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return now }
+	setNow := func(t time.Time) { clockMu.Lock(); defer clockMu.Unlock(); now = t }
+	gauge := func() float64 { return testutil.ToFloat64(obs.CustomerWebhookWorkerLastPollUnix) }
+	runOnce := func(w *customerwebhook.Worker) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = w.Run(ctx)
+	}
+
+	store := newFakeStore()
+	store.listErr = errors.New("postgres down")
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: time.Hour, HTTPClient: &http.Client{Timeout: time.Second}, Clock: clock,
+	})
+	if got := gauge(); got != float64(built.Unix()) {
+		t.Fatalf("after New: heartbeat = %v, want seeded %d", got, built.Unix())
+	}
+	setNow(built.Add(time.Minute))
+	runOnce(w)
+	if got := gauge(); got != float64(built.Unix()) {
+		t.Fatalf("after a failed claim query: heartbeat = %v, want unchanged %d", got, built.Unix())
+	}
+
+	store.listErr = nil
+	w2 := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: time.Hour, HTTPClient: &http.Client{Timeout: time.Second}, Clock: clock,
+	})
+	polled := built.Add(3 * time.Minute)
+	setNow(polled)
+	runOnce(w2)
+	if got := gauge(); got != float64(polled.Unix()) {
+		t.Fatalf("after a successful claim query: heartbeat = %v, want %d", got, polled.Unix())
+	}
+}
+
 func TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning(t *testing.T) {
 	store := newFakeStore()
 	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# check-selftest-runners.sh — every scripts/ci/*-test.sh must be executed by
-# a workflow under .github/workflows/ or by scripts/dev/verify.sh.
+# check-selftest-runners.sh — every tracked *-test.sh / *_test.sh (scripts/ci
+# and beside any ops script) must be executed by a workflow under
+# .github/workflows/ or by scripts/dev/verify.sh.
 #
 # A self-test that no runner executes guards nothing: it stays green while the
 # gate it covers regresses. lint-changed.sh does not count as a runner — it is
@@ -11,7 +12,7 @@
 # longer exists, so the baseline can only shrink.
 #
 # Env overrides (used by the self-test): CI_DIR, WORKFLOWS_DIR, VERIFY_SH,
-# BASELINE.
+# BASELINE, OTHER_TESTS (newline list of repo-relative paths).
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -47,6 +48,16 @@ fi
 
 baseline="$(sed -E 's/#.*//; s/[[:space:]]+//g' "$BASELINE" | grep -v '^$' | sort -u || true)"
 
+# Self-tests elsewhere in the tree (next to the ops script they cover) are
+# matched by repo-relative path; their baseline entries carry the path.
+if [ -n "${OTHER_TESTS+x}" ]; then
+  others="$OTHER_TESTS"
+else
+  others="$(git ls-files '*-test.sh' '*_test.sh' | grep -vE "^${CI_DIR}/[^/]+$" || true)"
+fi
+corpus="$(cat "$WORKFLOWS_DIR"/*.yml "$VERIFY_SH" 2>/dev/null)"
+path_is_run() { grep -qF -e "./$1" -e "bash $1" <<<"$corpus"; }
+
 bad=0
 while IFS= read -r t; do
   grep -qxF "$t" <<<"$invoked" && continue
@@ -55,8 +66,26 @@ while IFS= read -r t; do
   bad=$((bad + 1))
 done <<<"$tests"
 
+while IFS= read -r t; do
+  [ -n "$t" ] || continue
+  path_is_run "$t" && continue
+  grep -qxF "$t" <<<"$baseline" && continue
+  echo "check-selftest-runners: $t is run by no workflow and not by $VERIFY_SH" >&2
+  bad=$((bad + 1))
+done <<<"$others"
+
 while IFS= read -r b; do
   [ -n "$b" ] || continue
+  if [[ "$b" == */* ]]; then
+    if ! grep -qxF "$b" <<<"$others"; then
+      echo "check-selftest-runners: stale baseline entry $b — it does not exist; remove it from $BASELINE" >&2
+      bad=$((bad + 1))
+    elif path_is_run "$b"; then
+      echo "check-selftest-runners: stale baseline entry $b — it now has a runner; remove it from $BASELINE" >&2
+      bad=$((bad + 1))
+    fi
+    continue
+  fi
   if ! grep -qxF "$b" <<<"$tests"; then
     echo "check-selftest-runners: stale baseline entry $b — $CI_DIR/$b does not exist; remove it from $BASELINE" >&2
     bad=$((bad + 1))

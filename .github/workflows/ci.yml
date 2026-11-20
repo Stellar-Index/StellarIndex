@@ -1981,6 +1981,10 @@ jobs:
         # count against an independent one and fail on disagreement.
         run: |
           bash configs/prometheus/apply-rules.sh --check-only
+          # --check-only stops before install, so the install, reload barrier,
+          # rollback and verify paths are covered only by these two suites.
+          bash configs/prometheus/apply-rules-test.sh
+          bash configs/prometheus/apply-rules-health-test.sh
           extracted=$(bash configs/prometheus/apply-rules.sh --check-only \
             | sed -nE 's/^apply-rules: expecting ([0-9]+) alert.*/\1/p')
           independent=$(grep -rhoE '^\s*-\s*alert:\s*\S+' configs/prometheus/rules.r1/*.yml \

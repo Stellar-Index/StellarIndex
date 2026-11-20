@@ -623,6 +623,7 @@ lane_d() { # everything else
     # Makefile target hard-fails, so verify.sh guards it to keep local runs working.
     if command -v promtool >/dev/null 2>&1; then
         echo "=== Monitoring ===" && make monitoring-check
+        echo "=== Rules-apply self-tests ===" && bash configs/prometheus/apply-rules-test.sh && bash configs/prometheus/apply-rules-health-test.sh
     else
         defer_check_lane "$LANEDIR/d.deferred" "Monitoring" "promtool is not installed"
         # The dead-metric-ref guard needs no promtool, so run it even when
