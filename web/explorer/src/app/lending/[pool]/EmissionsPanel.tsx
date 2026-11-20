@@ -49,7 +49,7 @@ export function emissionRows(
 ): EmissionRow[] {
   const res = d.reserves.map((r) => ({
     id: `r${r.token_id}`,
-    label: `${r.asset ? assetText(r.asset) :`reserve ${Math.floor(r.token_id / 2)}`} ${r.side === 'supply' ? 'suppliers' : 'borrowers'}`,
+    label: `${r.asset ? assetText(r.asset) : `reserve ${Math.floor(r.token_id / 2)}`} ${r.side === 'supply' ? 'suppliers' : 'borrowers'}`,
     perDay: perDayBase(r.eps, d.eps_decimals),
     live: r.live,
     archived: r.archived,
