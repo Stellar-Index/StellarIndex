@@ -2,8 +2,8 @@
 
 # A wedged haproxy faults this LB (weight 0). An empty api_pool only lowers
 # priority: the peer probes the same pool, so a FAULT on both would drop the
-# VIP. The weight must exceed the LBs' priority gap for a one-sided pool loss
-# to move the VIP.
+# VIP. The weight must exceed the LBs' priority gap (preflight asserts it) for
+# a one-sided pool loss to move the VIP.
 vrrp_script chk_haproxy_alive {
     script "/usr/local/bin/chk_haproxy.sh alive"
     interval 2
@@ -11,20 +11,20 @@ vrrp_script chk_haproxy_alive {
     rise 2
 }
 
+# Damping lives on the recovery edge: a long rise holds a recovered LB's
+# priority down before it takes the VIP back. preempt_delay would also delay
+# the peer taking over from a degraded master, which keeps advertising.
 vrrp_script chk_api_pool {
     script "/usr/local/bin/chk_haproxy.sh pool"
     interval 2
     fall 2
-    rise 2
-    weight -50
+    rise {{ (keepalived_pool_recovery_seconds | int) // 2 }}
+    weight -{{ keepalived_pool_weight | int }}
 }
 
 vrrp_instance VI_API {
-    # Both LBs start BACKUP and priority elects the MASTER: keepalived applies
-    # preempt_delay only to a BACKUP-state instance, and the delay stops a
-    # flapping pool probe from bouncing the VIP back on every recovery.
+    # Both LBs start BACKUP and priority elects the MASTER.
     state BACKUP
-    preempt_delay {{ keepalived_preempt_delay | int }}
     interface {{ keepalived_iface }}
     virtual_router_id {{ keepalived_vrid }}
     priority {{ keepalived_priority }}

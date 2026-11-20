@@ -45,7 +45,7 @@ fi
 
 # Both LBs probe the same pool: an empty pool must lower priority, not FAULT
 # both instances and drop the VIP. Only the alive probe may fault.
-if grep -qE '^\s*weight\s+-[1-9]' <<<"$pool_block" && ! grep -qE '^\s*weight' <<<"$alive_block"; then
+if grep -qE '^\s*weight\s+-([1-9]|\{\{ keepalived_pool_weight \| int \}\})' <<<"$pool_block" && ! grep -qE '^\s*weight' <<<"$alive_block"; then
   ok "pool probe lowers priority (negative weight); alive probe faults"
 else
   bad "chk_api_pool needs a negative weight and chk_haproxy_alive none"
@@ -58,16 +58,28 @@ else
   bad "VI_API does not track chk_haproxy_alive and chk_api_pool"
 fi
 
-# A flapping pool probe must not bounce the VIP: preemption is delayed, and
-# keepalived honours preempt_delay only on an instance whose state is BACKUP.
+# A degraded MASTER keeps advertising at its lowered priority, and preempt_delay
+# makes the peer accept those adverts, so failover would wait out the delay.
+# A flapping pool is damped on the probe's rise (the recovery edge) instead.
 instance="$(awk '/^vrrp_instance VI_API/{f=1} f{print} f&&/^}/{exit}' "$KEEPALIVED_TPL")"
 defaults="$(dirname "$KEEPALIVED_TPL")/../defaults/main.yml"
-delay="$(sed -n 's/^keepalived_preempt_delay:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$defaults" 2>/dev/null)"
-if grep -qE '^\s*state\s+BACKUP\s*$' <<<"$instance" && grep -qE '^\s*preempt_delay\s+\{\{ keepalived_preempt_delay' <<<"$instance" &&
-   ! grep -qE '^\s*nopreempt' <<<"$instance" && [ "${delay:-0}" -gt 0 ]; then
-  ok "VI_API starts BACKUP with a non-zero preempt_delay (default ${delay}s)"
+recovery="$(sed -n 's/^keepalived_pool_recovery_seconds:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$defaults")"
+weight="$(sed -n 's/^keepalived_pool_weight:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$defaults")"
+if grep -qE '^\s*state\s+BACKUP\s*$' <<<"$instance" && ! grep -qE '^\s*(preempt_delay|nopreempt)' <<<"$instance" &&
+   grep -qE '^\s*rise\s+\{\{ \(keepalived_pool_recovery_seconds \| int\) // 2 \}\}' <<<"$pool_block" &&
+   grep -qE '^\s*interval\s+2\s*$' <<<"$pool_block" && [ "${recovery:-0}" -ge 30 ]; then
+  ok "VI_API starts BACKUP without preempt_delay; the pool probe needs ${recovery}s healthy to rise"
 else
-  bad "VI_API needs state BACKUP, preempt_delay {{ keepalived_preempt_delay }} and a positive default"
+  bad "VI_API needs state BACKUP and no preempt_delay, and chk_api_pool rise from keepalived_pool_recovery_seconds (>= 30)"
+fi
+
+# The weight must exceed the LBs' priority gap, or a one-sided pool loss never moves the VIP.
+preflight="$(dirname "$KEEPALIVED_TPL")/../tasks/01-preflight.yml"
+if [ "${weight:-0}" -gt 0 ] && grep -qF "(_lb_priorities | max) - (_lb_priorities | min) < (keepalived_pool_weight | int)" "$preflight" &&
+   grep -qF "keepalived_preempt_delay is not defined" "$preflight"; then
+  ok "preflight bounds the priority gap by keepalived_pool_weight (${weight}) and refuses a stale preempt_delay"
+else
+  bad "preflight must assert the LB priority gap is below keepalived_pool_weight and refuse keepalived_preempt_delay"
 fi
 
 # The deployed probe script must actually query the stats endpoint and gate

@@ -13,8 +13,12 @@ keepalived_vip_prefix_length: 24
 # another VRRP service is already running on the LAN.
 keepalived_vrid: 51
 keepalived_priority: 99            # 100 on lb-01, 99 on lb-02 (per-host override)
-# Seconds a recovered higher-priority LB waits before taking the VIP back.
-keepalived_preempt_delay: 60
+# Seconds of healthy api_pool probes a recovered LB needs before its priority
+# (and so the VIP) comes back. A failing pool hands the VIP over in ~4 s.
+keepalived_pool_recovery_seconds: 60
+# Priority an empty api_pool costs; preflight requires it to exceed the gap
+# between the two LBs' keepalived_priority.
+keepalived_pool_weight: 50
 # Vault-supplied. Note: keepalived truncates auth_pass beyond 8
 # bytes silently — keep this <=8 chars to avoid surprises.
 keepalived_vrrp_password: ""
