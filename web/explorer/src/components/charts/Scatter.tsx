@@ -28,6 +28,19 @@ export function dotRadius(size: number | null | undefined, maxSize: number) {
 }
 
 /**
+ * Y-axis top: the 95th percentile of the values (never under `floor`), so one
+ * outlier cannot flatten the rest; values above it are drawn pinned and marked.
+ */
+export function autoYMax(ys: number[], floor = 0): number {
+  if (ys.length === 0) return floor;
+  const sorted = [...ys].sort((a, b) => a - b);
+  const p95 =
+    sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
+  const max = sorted[sorted.length - 1];
+  return Math.max(floor, Math.min(max, p95) * 1.1);
+}
+
+/**
  * Scatter — dots on a linear x/y plane, area by an optional size. HTML marks
  * on a percentage grid (like Bars), so dots stay round at any width and the
  * axis text keeps its size on a phone. Hover or focus shows a tooltip.
@@ -42,11 +55,14 @@ export function Scatter({
   formatY = (n) => String(n),
   ariaLabel,
   height = 240,
+  yFloor = 0,
   className,
 }: {
   points: ScatterPoint[];
   xMax?: number;
   yMax?: number;
+  /** Lowest automatic y-axis top. */
+  yFloor?: number;
   xLabel: string;
   yLabel: string;
   formatX?: (n: number) => string;
@@ -60,7 +76,12 @@ export function Scatter({
     (p) => Number.isFinite(p.x) && Number.isFinite(p.y),
   );
   if (finite.length === 0) return null;
-  const yMax = yMaxProp ?? Math.max(...finite.map((p) => p.y), 0) * 1.08;
+  const yMax =
+    yMaxProp ??
+    autoYMax(
+      finite.map((p) => p.y),
+      yFloor,
+    );
   const maxSize = Math.max(0, ...finite.map((p) => p.size ?? 0));
   const ySpan = yMax > 0 ? yMax : 1;
   const xPct = (x: number) => (Math.min(Math.max(x, 0), xMax) / xMax) * 100;
@@ -68,7 +89,8 @@ export function Scatter({
   // Largest first so small dots stay on top and hoverable.
   const drawn = [...finite].sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
   const shown = drawn.find((p) => p.id === active);
-  const yTicks = [0, ySpan / 2, ySpan];
+  const offScale = finite.filter((p) => p.y > ySpan).length;
+  const yTicks = [0, ySpan / 4, ySpan / 2, (ySpan * 3) / 4, ySpan];
 
   return (
     <figure className={cn('space-y-1', className)}>
@@ -107,13 +129,14 @@ export function Scatter({
           {drawn.map((p) => {
             const r = dotRadius(p.size, maxSize);
             const hit = Math.max(r * 2, 20);
+            const clipped = p.y > ySpan;
             return (
               <span
                 key={p.id}
                 role="img"
                 tabIndex={0}
-                aria-label={p.lines.join(', ')}
-                data-testid="scatter-dot"
+                aria-label={`${p.lines.join(', ')}${clipped ? ' (off scale)' : ''}`}
+                data-testid={clipped ? 'scatter-offscale' : 'scatter-dot'}
                 className="absolute flex -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full outline-none focus-visible:ring-2"
                 style={{
                   left: `${xPct(p.x)}%`,
@@ -125,19 +148,34 @@ export function Scatter({
                 onFocus={() => setActive(p.id)}
                 onBlur={() => setActive(null)}
               >
-                <span
-                  aria-hidden
-                  className="block rounded-full"
-                  style={{
-                    width: r * 2,
-                    height: r * 2,
-                    backgroundColor: p.hollow ? 'transparent' : p.color,
-                    opacity: p.hollow ? 1 : 0.85,
-                    border: p.hollow
-                      ? `2px solid ${p.color}`
-                      : '2px solid var(--color-surface)',
-                  }}
-                />
+                {clipped ? (
+                  // Pinned at the top edge: an up-pointing triangle, not a dot.
+                  <span
+                    aria-hidden
+                    className="block"
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderLeft: '6px solid transparent',
+                      borderRight: '6px solid transparent',
+                      borderBottom: `10px solid ${p.color}`,
+                    }}
+                  />
+                ) : (
+                  <span
+                    aria-hidden
+                    className="block rounded-full"
+                    style={{
+                      width: r * 2,
+                      height: r * 2,
+                      backgroundColor: p.hollow ? 'transparent' : p.color,
+                      opacity: p.hollow ? 1 : 0.85,
+                      border: p.hollow
+                        ? `2px solid ${p.color}`
+                        : '2px solid var(--color-surface)',
+                    }}
+                  />
+                )}
               </span>
             );
           })}
@@ -167,6 +205,11 @@ export function Scatter({
       </div>
       <figcaption className="text-ink-muted ml-12 text-center text-xs">
         {xLabel}
+        {offScale > 0 && (
+          <span className="text-ink-faint block">
+            ▲ {offScale} off-scale above {formatY(ySpan)}: hover for the value
+          </span>
+        )}
       </figcaption>
     </figure>
   );
