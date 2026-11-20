@@ -26,6 +26,19 @@
       this role must be applied against hosts in the
       postgres_cluster group (see role README inventory model)
 
+# 10-firewall.yml renders the WHOLE /etc/nftables.conf (`flush ruleset`), as
+# archival-node does: on one host each run would drop the other's ports.
+- name: assert host is not an archival node (this role owns the host firewall)
+  assert:
+    that:
+      - inventory_hostname not in groups['archival_nodes'] | default([])
+    fail_msg: >-
+      {{ inventory_hostname }} is in archival_nodes. The patroni role replaces
+      the host's entire nftables ruleset, and archival-node rewrites it back
+      without etcd 2379/2380 and Patroni 8008, which costs etcd quorum and
+      demotes the primary. Run it on dedicated postgres_cluster hosts only.
+  tags: [always]
+
 - name: assert postgres_cluster has exactly 3 hosts
   assert:
     that:

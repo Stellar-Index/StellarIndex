@@ -13,6 +13,24 @@
 # and registered _patroni_initialized.
 
 - block:
+    # Patroni treats a data dir restored outside it as crashed: it strips
+    # restore_command and the recovery target from postgresql.auto.conf and
+    # removes recovery.signal, so the restore never replays archived WAL (or
+    # promotes at the backup's end). Until the restore runs through a Patroni
+    # custom bootstrap method, refuse instead of starting a half-recovered DB.
+    - name: refuse a pgBackRest restore that Patroni would cut short
+      fail:
+        msg: >-
+          patroni_bootstrap_method=pgbackrest is refused: Patroni discards the
+          recovery settings of a data dir restored outside it, so the WAL after
+          the backup (and any point-in-time target) would not be replayed. This
+          role cannot rebuild a cluster from pgBackRest until the restore runs as
+          a Patroni custom bootstrap method; see the role README,
+          Restore-from-backup path.
+      when:
+        - patroni_bootstrap_method == "pgbackrest"
+        - not _patroni_initialized.stat.exists
+
     # Honor `patroni_pgbackrest_restore_target` per the defaults /
     # README / design-note documented contract. Ignoring it would
     # mean an operator setting `time:2026-05-12T14:00:00Z` for a

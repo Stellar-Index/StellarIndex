@@ -9,6 +9,7 @@ import { AssetsTable } from '@/app/assets/AssetsTable';
 import ContractsPage from '@/app/contracts/page';
 import LedgersPage from '@/app/ledgers/page';
 import LendingPage from '@/app/lending/page';
+import LendingRatesPage from '@/app/lending/rates/page';
 import HomePage from '@/app/page';
 import ProtocolsPage from '@/app/protocols/page';
 import TransactionsPage from '@/app/transactions/page';
@@ -94,6 +95,7 @@ describe('preload lists match what each page fetches first', () => {
   it.each<[string, () => React.ReactNode]>([
     ['/', () => <HomePage />],
     ['/lending/', () => <LendingPage />],
+    ['/lending/rates/', () => <LendingRatesPage />],
     ['/assets/', () => <AssetsTable verifiedSlugs={[]} />],
     ['/contracts/', () => <ContractsPage />],
     ['/ledgers/', () => <LedgersPage />],

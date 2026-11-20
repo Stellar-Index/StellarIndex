@@ -19,6 +19,19 @@
       this role must be applied against hosts in the
       redis_cluster group (see role README inventory model)
 
+# 06-firewall.yml renders the WHOLE /etc/nftables.conf (`flush ruleset`), as
+# archival-node does: on one host each run would drop the other's ports.
+- name: assert host is not an archival node (this role owns the host firewall)
+  assert:
+    that:
+      - inventory_hostname not in groups['archival_nodes'] | default([])
+    fail_msg: >-
+      {{ inventory_hostname }} is in archival_nodes. The redis-sentinel role
+      replaces the host's entire nftables ruleset, and archival-node rewrites
+      it back without 6379/26379, which cuts the replicas and Sentinels off.
+      Run it on dedicated redis_cluster hosts only.
+  tags: [always]
+
 - name: assert redis_cluster has exactly 3 hosts
   assert:
     that:

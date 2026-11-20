@@ -7,6 +7,7 @@ import {
   rawOracleSymbol,
 } from '@/lib/asset-label';
 import { truncateMiddle } from '@/lib/format';
+import { CopyButton } from '@/components/ui/Mono';
 
 /**
  * AssetLabel — single shared component for rendering a canonical
@@ -184,11 +185,19 @@ export function AssetLabel({
       const issuer = resolved.slice(sepIx + 1);
       return renderCodeIssuer(code, issuer, issuerMap, 'SAC');
     }
-    // Unresolved SAC — truncate the C-strkey and tooltip the full value.
+    // Unresolved SAC — truncate the C-strkey, tooltip and copy the full value.
     return (
-      <span className="font-mono text-[11px]" title={canonical}>
-        {truncateMiddle(canonical, 6, 4)}
-      </span>
+      <div>
+        <span className="inline-flex items-center gap-1">
+          <span className="font-mono text-[11px]" title={canonical}>
+            {truncateMiddle(canonical, 6, 4)}
+          </span>
+          <CopyButton value={canonical} />
+        </span>
+        {sacMap && (
+          <div className="text-ink-muted text-[11px]">unlisted token</div>
+        )}
+      </div>
     );
   }
   // Classic credit asset: <CODE>-<G-issuer>. Pool/trade rows from the
