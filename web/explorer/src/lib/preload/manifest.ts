@@ -94,6 +94,7 @@ export const PRELOAD_ROUTES: PreloadRoute[] = [
       '/v1/accounts/{id}/activity',
       '/v1/accounts/{id}/movements?limit=25',
       '/v1/accounts/{id}/positions',
+      '/v1/lending/accounts/{id}/earnings',
       '/v1/accounts/{id}/trades?limit=25',
       '/v1/accounts/{id}/graph',
       '/v1/accounts/{id}/sponsorships?limit=1',
