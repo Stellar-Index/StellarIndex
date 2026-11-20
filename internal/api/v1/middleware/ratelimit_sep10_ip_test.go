@@ -28,7 +28,7 @@ func TestRateLimitBySubject_SEP10AccountsFromOneIPShareTheAllowance(t *testing.T
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	jwt := func(acct string) auth.Subject { return auth.Subject{Identifier: acct, Tier: auth.TierSEP10} }
+	jwt := func(acct string) auth.Subject { return auth.NewSEP10Session(acct, time.Time{}) }
 
 	if c := serve("198.51.100.7:1", jwt("GAAA")); c != http.StatusOK {
 		t.Fatalf("first account: %d, want 200", c)
@@ -64,7 +64,7 @@ func TestRateLimitBySubject_SEP10HeadersReportTheBindingBucket(t *testing.T) {
 	serve := func(target, acct string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, target, nil)
 		r.RemoteAddr = "198.51.100.7:1"
-		r = r.WithContext(auth.WithSubject(r.Context(), auth.Subject{Identifier: acct, Tier: auth.TierSEP10}))
+		r = r.WithContext(auth.WithSubject(r.Context(), auth.NewSEP10Session(acct, time.Time{})))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		return w

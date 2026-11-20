@@ -89,6 +89,12 @@ func (f *fakeAccountStore) RevokeKeyByID(_ context.Context, _ string, _ string) 
 	return nil
 }
 
+func (f *fakeAccountStore) RecordRevoked(context.Context, string, string, []string) error { return nil }
+
+func (f *fakeAccountStore) RevokedBy(context.Context, string, string) ([]string, error) {
+	return nil, nil
+}
+
 // fakeAuthMiddleware stamps the supplied Subject onto the request context, standing in for the
 // real auth middleware so handler tests need no validator or Redis. The zero Subject leaves the
 // context bare, simulating a request that went through no auth layer.
