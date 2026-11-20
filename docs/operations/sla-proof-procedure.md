@@ -1,6 +1,6 @@
 ---
 title: SLA proof procedure (Task #77)
-last_verified: 2026-09-25
+last_verified: 2026-11-20
 status: ratified
 related:
   - scripts/ops/sla-proof-from-probe.sh
@@ -159,8 +159,10 @@ report is committed to a public repo and records it verbatim); nothing measured.
   sample count) absent; series spanning more than one host (pass `--host <name>`); retained
   window under `--min-window` (default 24h; Prometheus retention is 15 days).
 
-A **breached** threshold is not a refusal: it renders (exit 1) with `Verdict: FAIL` and the
-document is retained. A probe window with **holes** renders as `Verdict: NOT PROVEN`: a gap in
+A **breached** threshold is not a refusal: the k6 renderer writes `Verdict: FAIL` (exit 1) and
+the document is retained. The weekly probe generator has no `FAIL`: a breach there reads
+`Verdict: NOT PROVEN`, the same as a gap. `scripts/dev/cut-release.sh` therefore refuses any
+verdict but `PROVEN` unless `SLA_PROOF_OVERRIDE_REASON` gives a reason. A probe window with **holes** renders as `Verdict: NOT PROVEN`: a gap in
 `stellarindex_sla_probe_run_duration_seconds` means scraping stopped; a frozen
 `last_pass_timestamp` means the probe stopped while the textfile collector kept re-serving its
 last output. An **unevaluable headline cell** renders `n/a`, is named in the report and keeps
