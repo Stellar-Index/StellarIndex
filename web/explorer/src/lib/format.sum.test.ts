@@ -1,6 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { changePct, ratioPct, sumDecimalStrings } from './format';
+import {
+  changePct,
+  ratioPct,
+  subtractDecimalStrings,
+  sumDecimalStrings,
+} from './format';
+
+describe('subtractDecimalStrings', () => {
+  it('subtracts exactly above 2^53', () => {
+    expect(subtractDecimalStrings('9007199254740993.01', '0.02')).toBe(
+      '9007199254740992.99',
+    );
+  });
+
+  it('subtracts a negative operand and crosses zero', () => {
+    expect(subtractDecimalStrings('4000000000.00', '-12.50')).toBe(
+      '4000000012.50',
+    );
+    expect(subtractDecimalStrings('1.00', '3.25')).toBe('-2.25');
+    expect(subtractDecimalStrings('1.00', '0.00')).toBe('1.00');
+  });
+
+  it('is null when an operand is missing or malformed', () => {
+    expect(subtractDecimalStrings('1.00', null)).toBeNull();
+    expect(subtractDecimalStrings(undefined, '1.00')).toBeNull();
+    expect(subtractDecimalStrings('1.00', 'abc')).toBeNull();
+  });
+});
 
 // Row-sum money headlines were float reductions over served decimal
 // strings; the helper sums them exactly (ADR-0003).

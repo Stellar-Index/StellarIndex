@@ -311,16 +311,16 @@ func (l *extractLoss) supplySkipSummary() string {
 		" reasons short a token's supply): " + strings.Join(parts, " ")
 }
 
-// record adds one ledger's undercounts and reports whether it had any. Changes-only writes no txs or events, so only
-// the entry-change undercounts lose rows there.
+// record adds one ledger's undercounts and reports whether it had any. Changes-only writes no txs or events, so it
+// ignores the event undercounts; an unreadable tx still counts there, since ExtractLedger never walks its entry changes.
 func (l *extractLoss) record(ext clickhouse.LedgerExtract, changesOnly bool) bool {
 	kinds := map[string]int{
+		"tx_read_errors":            ext.TxReadErrors,
 		"entry_meta_unsupported":    ext.EntryMetaUnsupported,
 		"entry_changes_unencodable": ext.EntryChangesUnencodable,
 		"evicted_keys_unreadable":   ext.EvictedKeysUnreadable,
 	}
 	if !changesOnly {
-		kinds["tx_read_errors"] = ext.TxReadErrors
 		kinds["tx_event_read_errors"] = ext.TxEventReadErrors
 		kinds["soroban_fee_meta_unsupported"] = ext.SorobanFeeMetaUnsupported
 	}

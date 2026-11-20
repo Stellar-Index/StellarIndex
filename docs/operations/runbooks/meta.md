@@ -242,6 +242,8 @@ As [redis_exporter_down](#stellarindex_redis_exporter_down) with `up{job="minio"
 
 ## stellarindex_alertmanager_silence_active
 
+**Backstop.** A silence can mute this ticket with every page. So once a silence has been active at every 5-minute sample for 24h, `stellarindex_deadmansswitch` stops beating and the external heartbeat check pages as "alerting dead". If that page arrives while Prometheus and Alertmanager are both up, run `amtool silence query`: a held silence is the cause. A maintenance silence meant to last more than a day trips it too; split it into silences of under 24h.
+
 **Trigger.** `max(alertmanager_silences{state="active"}) > 0` for 24h, P3. A silence leaves no trace in Prometheus and can mute every page while the deadman heartbeat stays green. Alertmanager's API on r1 has no authentication.
 
 **Check.** `amtool --alertmanager.url=http://localhost:9093 silence query` for matchers, creator and expiry. **Fix.** Expire any silence nobody can account for (`amtool silence expire <id>`); if the creator is not an operator, treat the host as compromised. A planned long silence needs an expiry inside 24h or an explicit ticket.

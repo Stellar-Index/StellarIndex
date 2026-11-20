@@ -317,7 +317,12 @@ describe('RWAView', () => {
       'The set of real-world assets could not be established',
     );
     present('The set could not be established');
-    absent('No asset currently meets the definition');
+    // Once in the page's basis line, once as the empty panel's own reason.
+    atLeast('Membership could not be established: no set is published.', 2);
+    absent(
+      'No asset currently meets the definition',
+      /Nothing on this network clears both today/,
+    );
   });
 
   it('shows no notice for a clean answer', async () => {
@@ -1245,6 +1250,50 @@ describe('RWAView — curated arm', () => {
     expect(screen.queryByText('$560.02M', headline)).not.toBeInTheDocument();
   });
 
+  it('marks a curated row’s value a floor when its supply is a floor, and explains a withheld one', async () => {
+    const row = (contract: string, over: Partial<Asset>): Asset => ({
+      ...asset(),
+      asset_id: contract,
+      contract_id: contract,
+      slug: contract,
+      symbol: contract.slice(0, 4),
+      basis: 'third_party_curated',
+      curator: {
+        curator: 'dune:stellar',
+        company: 'Realiz',
+        subclass: 'Corporate Credit',
+        also_verified: false,
+      },
+      ...over,
+    });
+    show(
+      view({
+        curated_assets: [
+          row('CAAA', {
+            circulating_supply_lower_bound: true,
+            reference_valuation: {
+              status: 'published',
+              value_usd: '4210000.00',
+            },
+          }),
+          row('CBBB', {
+            reference_valuation: { status: 'supply_unavailable' },
+          }),
+        ],
+        curated: curated({ assets: 2, assets_valued: 1 }),
+      } as Partial<View>),
+    );
+
+    await screen.findByText('Value at that price');
+    present('≥ $4.21M');
+    expect(screen.getByText('≥ $4.21M')).toHaveAttribute(
+      'title',
+      expect.stringMatching(/^At least/),
+    );
+    absent('$4.21M');
+    atLeast('Unavailable', 1);
+  });
+
   it('draws the comparison without a published panel when no published block is served', async () => {
     show(view({ curated: curated({ verified_value_usd: REF }) }));
 
@@ -1277,12 +1326,14 @@ describe('RWAView — curated arm', () => {
     expect(screen.queryByText('$4B', headline)).not.toBeInTheDocument();
   });
 
-  it('marks the verified figure a floor and the gap a ceiling when the reference total is a floor', async () => {
+  // The served gap is taken against the history's EXACT month-end total, so
+  // today's floor neither qualifies it nor is the operand shown beside it.
+  it('pairs the exact gap with the month-end verified total it was taken from, not today’s floor', async () => {
     const v = view({
       curated: curated({
         status: 'published_totals',
         verified_value_usd: '345599978.73',
-        published: { ...PUBLISHED, gap_vs_verified_usd: '3659195881.27' },
+        published: { ...PUBLISHED, gap_vs_verified_usd: '3704795860.00' },
       }),
     });
     v.summary.reference_valuation = {
@@ -1293,9 +1344,50 @@ describe('RWAView — curated arm', () => {
     show(v);
 
     await screen.findByText(/As a third-party curator counts it/);
-    expect(screen.getByText('≤ +$3.66B')).toBeInTheDocument();
-    expect(screen.getAllByText('≥ $345.6M').length).toBeGreaterThan(0);
-    present(/including members this index holds but could not value/);
+    // published $4,004,795,860.00 − gap $3,704,795,860.00 = $300M on 2025-08-31.
+    present('Verified by this index on 2025-08-31', '$300M', '+$3.7B');
+    absent(
+      '≤ +$3.7B',
+      /including members this index holds but could not value/,
+    );
+  });
+
+  it('derives the month-end verified total exactly above 2^53', async () => {
+    show(
+      view({
+        curated: curated({
+          status: 'published_totals',
+          published: {
+            ...PUBLISHED,
+            total_usd: '9007199254740993.00',
+            gap_vs_verified_usd: '9007199254740980.50',
+          },
+        }),
+      }),
+    );
+
+    await screen.findByText(/As a third-party curator counts it/);
+    // In float both operands round to even integers: 12, never 12.50.
+    present('$12.50');
+  });
+
+  it('gives the reason, not a figure, when no exact month-end total exists', async () => {
+    show(
+      view({
+        curated: curated({
+          status: 'published_totals',
+          verified_value_usd: '345599978.73',
+          published: { ...PUBLISHED },
+        }),
+      }),
+    );
+
+    await screen.findByText(/As a third-party curator counts it/);
+    present(
+      /^this index holds no exact verified total for that month-end$/,
+      /^not drawn: this index holds no exact verified total/,
+    );
+    absent('$345.6M');
   });
 
   it('renders no curated panel when the deployment has no curated reader', async () => {
@@ -1454,5 +1546,23 @@ describe('RWA row identity, reference caption and CSV floor', () => {
     expect(row.circulating_supply_lower_bound).toBe('true');
     expect(row.reference_provenance).toBe('fund_nav');
     expect(rwaCsvRow(asset()).circulating_supply_lower_bound).toBe('false');
+  });
+
+  it('marks a floored 24h volume "≥" in the table and flags it in the CSV', async () => {
+    const floored = { volume_24h_usd: '8214.55', volume_lower_bound: true };
+    show(one(floored));
+    const cell = await screen.findByText('≥ $8.21K');
+    expect(cell).toHaveAttribute('title', expect.stringMatching(/^At least/));
+    expect(rwaCsvRow(asset(floored)).volume_lower_bound).toBe('true');
+    expect(rwaCsvRow(asset(floored)).volume_24h_usd).toBe('8214.55');
+    expect(rwaCsvRow(asset()).volume_lower_bound).toBe('false');
+  });
+
+  it('shows a complete 24h volume above 2^53 exactly, without a mark', async () => {
+    const big = { volume_24h_usd: '9007199254740993.01' };
+    show(one(big));
+    expect(await screen.findByText(/^\$9[\d.,]*[KMBTQ]$/)).toBeInTheDocument();
+    absent(/^≥ \$9/);
+    expect(rwaCsvRow(asset(big)).volume_24h_usd).toBe('9007199254740993.01');
   });
 });

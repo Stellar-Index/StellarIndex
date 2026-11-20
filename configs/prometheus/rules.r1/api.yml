@@ -368,6 +368,31 @@ groups:
             reach the retry budget or the exhausted alert. Check
             Postgres first, then that the webhook seal key is loaded.
 
+      # A worker that never started, died or is wedged records no outcome at
+      # all, so every rule above stays silent. The worker stamps a heartbeat
+      # on each successful claim query and seeds it when built; a lane is
+      # bounded by the 5-minute claim lease, so 15 minutes is three leases.
+      # A gauge at 0 means no worker is wired (no dashboard store), and the
+      # job matcher keeps the other binaries' zero-value series out.
+      - alert: stellarindex_customer_webhook_worker_stalled
+        expr: |
+          (time() - stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"}) > 900
+            and stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"} > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_worker_stalled
+          summary: "Customer webhook worker on {{ $labels.instance }} has not polled for over 15 minutes"
+          description: |
+            The delivery worker on {{ $labels.instance }} has not
+            completed a pending-delivery query in over 15 minutes. It
+            never started, its goroutine died, or it is wedged, so no
+            customer webhook is being delivered and the outcome-based
+            webhook alerts cannot see it.
+
       # `no_secret` and `build_error` end a delivery terminally before any
       # POST: the same loss as `exhausted`, without the 8 hours of retries.
       # One is an event, so no `for:`; the children are pre-seeded at 0.

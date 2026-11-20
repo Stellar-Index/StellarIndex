@@ -177,7 +177,8 @@ type LedgerExtract struct {
 
 	// TxReadErrors / TxEventReadErrors count txs not fully read (malformed, or events
 	// unreadable under an unsupported meta version). In-memory only: the ledger is still
-	// written to keep the lake contiguous, but its Events undercount. The indexer meters
+	// written to keep the lake contiguous, but its Events undercount, and an unreadable tx
+	// (TxReadErrors) also loses its entry changes and shifts later ordinals. The indexer meters
 	// them on stellarindex_ch_live_sink_read_undercount_total.
 	TxReadErrors      int
 	TxEventReadErrors int

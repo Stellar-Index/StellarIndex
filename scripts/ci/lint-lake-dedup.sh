@@ -113,8 +113,10 @@ LAKE_TABLES="$LAKE_TABLES|contract_instance_changes_v2|sponsorship_events|sponso
 LAKE_TABLES="$LAKE_TABLES|lending_state_hourly|account_entry_ledgers|account_claimables"
 LAKE_TABLES="$LAKE_TABLES|claimable_removals|asset_entry_ledgers|trades_by_account"
 LAKE_TABLES="$LAKE_TABLES|trades_by_account_windows|cap67_movements_watermark|entry_history_watermark"
-# A Sprintf verb in the table position: the table is unknown, so it is watched.
-READ_TABLES="${LAKE_TABLES}|%[sv]"
+# A Sprintf verb in the table position (`%s`, `%[1]s`): the table is unknown,
+# so it is watched. Bracket expressions, not `\[`, so awk -v keeps it intact.
+VERB_RE='%([[][0-9]+[]])?[sqv]'
+READ_TABLES="${LAKE_TABLES}|${VERB_RE}"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
@@ -128,10 +130,24 @@ if [ -d deploy/clickhouse ] || [ -d internal/storage/clickhouse ]; then
       \( -name '*.sql' -o -name '*.go' \) ! -name '*_test.go' 2>/dev/null | sort)
   rmt_tables=""
   if [ "${#ddl_files[@]}" -gt 0 ]; then
+    # Each file is judged as one whitespace-collapsed string split at CREATE,
+    # so a multi-line, `=`-less, tab-separated or backtick-quoted DDL derives
+    # the same as the one-line form. `%s.` is the Go DDL's Sprintf database.
     rmt_tables="$(LC_ALL=C awk '
-      { l = tolower($0) }
-      l ~ /create[ ]+table/ { cur = ""; if (match(l, /stellar\.[a-z0-9_]+/)) cur = substr(l, RSTART + 8, RLENGTH - 8) }
-      l ~ /engine[ ]*=[ ]*(replicated|shared)?replacingmergetree/ { if (cur != "") print cur; cur = "" }
+      function scan(t,    n, p, k, c) {
+        n = split(t, p, /create /)
+        for (k = 2; k <= n; k++) {
+          c = p[k]; sub(/;.*$/, "", c)
+          if (!match(c, /^(or replace )?table (if not exists )?(stellar|%[sv]) ?\. ?[a-z0-9_]+/)) continue
+          if (c !~ /engine ?=? ?(replicated|shared)?replacingmergetree/) continue
+          c = substr(c, RSTART, RLENGTH); sub(/^.*\. ?/, "", c); print c
+        }
+      }
+      FNR == 1 && NR > 1 { scan(t); t = "" }
+      { l = tolower($0); gsub(/[`"\t\r]/, " ", l)
+        while (l ~ /  /) gsub(/  /, " ", l)
+        sub(/^ /, "", l); sub(/ $/, "", l); if (l != "") t = t " " l }
+      END { scan(t) }
     ' "${ddl_files[@]}" | sort -u)"
   fi
   if [ -z "$rmt_tables" ] && [ -f deploy/clickhouse/tier1_schema.sql ]; then
@@ -286,55 +302,87 @@ violations="$(
     # GROUP BY, DISTINCT, LIMIT 1 BY or an idempotent aggregate. Takes the
     # lowercased own_text of the block.
     function collapses(c) {
-      return c ~ /(^|[^a-z0-9_])(group by|distinct|limit 1 by)([^a-z0-9_]|$)/ ||
-             c ~ /(^|[^a-z0-9_])(min|max|any|argmax|argmin|uniq|uniqexact|uniqcombined|groupuniqarray)[a-z0-9]*[ ]*\(/
+      return c ~ /(^|[^a-z0-9_])(group by|distinct|limit 1 by)([^a-z0-9_]|$)/ || idem_agg(c)
+    }
+    # idem_agg - an idempotent aggregate call by its whole name (plus
+    # combinators) that is not a window: max(x) OVER (...) keeps every row,
+    # and max2()/minus() are row-level scalars.
+    function idem_agg(c,    p, j, n, depth, ch) {
+      while (match(c, /(^|[^a-z0-9_])(min|max|any|anylast|anyheavy|argmax|argmin|uniq|uniqexact|uniqcombined|uniqcombined64|uniqhll12|uniqtheta|groupuniqarray)(if|state|merge|ornull|ordefault|array|distinct)*[ ]*\(/)) {
+        p = RSTART + RLENGTH - 1
+        depth = 1; n = length(c)
+        for (j = p + 1; j <= n && depth > 0; j++) {
+          ch = substr(c, j, 1)
+          if (ch == "(") depth++; else if (ch == ")") depth--
+        }
+        c = substr(c, j)
+        if (c !~ /^[ ]*over[ ]*[(a-z_]/) return 1
+      }
+      return 0
+    }
+    # enclosing_open - the unmatched "(" left of pos in this statement, or 0.
+    function enclosing_open(s, pos,    i, depth, ch) {
+      depth = 0
+      for (i = pos - 1; i >= 1; i--) {
+        ch = substr(s, i, 1)
+        if (ch == ")") depth++
+        else if (ch == "(") { if (depth == 0) return i; depth-- }
+        else if (ch == ";") return 0
+      }
+      return 0
+    }
+    # owner_of - the SELECT owning position pos: the last one before it at
+    # the same paren depth, or 0.
+    function owner_of(s, pos,    i, depth, ch) {
+      depth = 0
+      for (i = pos; i >= 1; i--) {
+        ch = substr(s, i, 1)
+        if (ch == ")") depth++
+        else if (ch == "(") { if (depth == 0) return 0; depth-- }
+        else if (depth == 0 && is_select(s, i)) return i
+      }
+      return 0
     }
     # consumed - a read whose own block does not aggregate still feeds an
     # aggregate when it sits in a FROM/JOIN subquery (or a CTE) that does not
-    # collapse its rows and an enclosing block aggregates over them.
-    function consumed(s, owner,    blk, i, depth, ch, open, outer, pre, j, rest) {
-      while (1) {
-        blk = own_text(block_of(s, owner))
-        if (collapses(blk)) return 0
-        open = 0; depth = 0
-        for (i = owner - 1; i >= 1; i--) {
-          ch = substr(s, i, 1)
-          if (ch == ")") depth++
-          else if (ch == "(") { if (depth == 0) { open = i; break } depth-- }
-          else if (ch == ";") break
-        }
-        if (open == 0) return 0
-        pre = substr(s, 1, open - 1)
-        if (pre ~ /(^|[^a-z0-9_])(from|join)[ ]*$/) {
-          outer = 0; depth = 0
-          for (i = open - 1; i >= 1; i--) {
-            ch = substr(s, i, 1)
-            if (ch == ")") depth++
-            else if (ch == "(") { if (depth == 0) break; depth-- }
-            else if (depth == 0 && is_select(s, i)) { outer = i; break }
-          }
-          if (outer == 0) return 0
-          if (mult_agg(own_text(with_prefix(s, outer) block_of(s, outer)))) return 1
-          owner = outer
-        } else if (pre ~ /(^|[^a-z0-9_])as[ ]*$/) {
-          depth = 1
-          for (j = open + 1; j <= length(s) && depth > 0; j++) {
-            ch = substr(s, j, 1)
-            if (ch == "(") depth++; else if (ch == ")") depth--
-          }
-          rest = substr(s, j); depth = 0
-          for (i = 1; i <= length(rest); i++) {
-            ch = substr(rest, i, 1)
-            if (ch == "(") depth++
-            else if (ch == ")") { if (depth == 0) break; depth-- }
-            else if (ch == ";") break
-            else if (depth == 0 && is_select(rest, i)) {
-              return mult_agg(own_text(block_of(rest, i))) ? 1 : 0
-            }
-          }
-          return 0
-        } else return 0
+    # collapse its rows and any block above it, or reading the CTE, aggregates.
+    function consumed(s, owner, hops,    blk, open, outer, pre, j, depth, ch, alias, from, ref, refown, found) {
+      if (hops > 32) return 1
+      blk = own_text(block_of(s, owner))
+      if (collapses(blk)) return 0
+      open = enclosing_open(s, owner)
+      # A parenthesised UNION arm, or a doubled paren, passes its rows up.
+      while (open > 0 && substr(s, 1, open - 1) ~ /(\(|(^|[^a-z0-9_])union( all| distinct)?)[ ]*$/)
+        open = enclosing_open(s, open)
+      if (open == 0) return 0
+      pre = substr(s, 1, open - 1)
+      if (pre ~ /(^|[^a-z0-9_])(from|join)[ ]*$/) {
+        outer = owner_of(s, open - 1)
+        if (outer == 0) return 0
+        if (mult_agg(own_text(with_prefix(s, outer) block_of(s, outer)))) return 1
+        return consumed(s, outer, hops + 1)
       }
+      if (pre !~ /(^|[^a-z0-9_])as[ ]*$/) return 0
+      alias = pre; sub(/[ ]*as[ ]*$/, "", alias)
+      if (!match(alias, /[a-z_][a-z0-9_]*$/)) return 1
+      alias = substr(alias, RSTART, RLENGTH)
+      depth = 1
+      for (j = open + 1; j <= length(s) && depth > 0; j++) {
+        ch = substr(s, j, 1)
+        if (ch == "(") depth++; else if (ch == ")") depth--
+      }
+      found = 0; from = j
+      while (match(substr(s, from), "(^|[^a-z0-9_])(from|join)[ ]+" alias "([^a-z0-9_.]|$)")) {
+        ref = from + RSTART; from = ref + RLENGTH - 1
+        found = 1
+        refown = owner_of(s, ref)
+        if (refown == 0) continue
+        if (mult_agg(own_text(with_prefix(s, refown) block_of(s, refown)))) return 1
+        if (consumed(s, refown, hops + 1)) return 1
+      }
+      # No reader of the CTE in this text: it is spliced into a consumer the
+      # gate cannot see (a CTE in its own constant), so fail closed.
+      return found ? 0 : 1
     }
 
     # ── unit accumulation ────────────────────────────────────────────
@@ -370,6 +418,7 @@ violations="$(
         len = RLENGTH
         tbl = substr(L, pos, len)
         sub(/^.*stellar\./, "stellar.", tbl)
+        sub(/%[[][0-9]+[]]/, "%", tbl)
         sub(/[^a-z0-9_.%].*$/, "", tbl)
         from = pos + len - 1
         examined++
@@ -388,7 +437,7 @@ violations="$(
         # Its whole block, minus nested selects: an aggregate in HAVING or
         # ORDER BY consumes the same rows as one in the select list.
         clause = own_text(with_prefix(L, owner) block_of(L, owner))
-        if (!mult_agg(clause) && !consumed(L, owner)) continue  # not an aggregating read
+        if (!mult_agg(clause) && !consumed(L, owner, 0)) continue  # not an aggregating read
         aggregating++
 
         # FINAL attached to this read (optionally through an alias).
@@ -471,10 +520,15 @@ violations="$(
         } else {
           glue = glue part
           if (i < n) {
-            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*(stellar\.)?[ ]*$/ && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*$/) printf "#interp\t%s:%d\n", FILENAME, FNR
-            # Glue between two literals: `+ ident +` splices them,
-            # anything else ends the statement.
-            if (U != "" && glue !~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/) flush()
+            # Glue between two literals: `+ ident +` or `+ f(x) +` splices
+            # them into one statement, anything else ends it. A spliced
+            # expression stands in as `?`, so a clause after it (a CTE
+            # consumer, a HAVING) is still judged with the read.
+            identglue = glue ~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/
+            splice = identglue || glue ~ /^[ \t]*\+.*\+[ \t]*$/
+            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*(stellar\.)?[ ]*$/ && splice && glue ~ /[A-Za-z_]/) printf "#interp\t%s:%d\n", FILENAME, FNR
+            if (U != "" && !splice) flush()
+            else if (U != "" && !identglue) add("?")
             glue = ""
           }
         }
@@ -574,7 +628,7 @@ fi
 #
 # `<file>:<table>  <reason>`; the reason is required: an unexplained exemption
 # is what baselines exist to stop.
-declare -a base_keys=()
+declare -a base_keys=() base_reasons=()
 if [ -f "$BASELINE" ]; then
   lineno=0
   while IFS= read -r raw; do
@@ -589,7 +643,19 @@ if [ -f "$BASELINE" ]; then
   Format is \`<file>:<table>  <reason>\`. An exemption without a stated
   reason is the failure mode a baseline exists to prevent."
     fi
+    case "$key" in
+      *:stellar.*) : ;;
+      *:#interp)
+        # The count is what stops one entry excusing the file's next read.
+        [[ "$reason" =~ ^[0-9]+\ reads?[:\;] ]] || die "$BASELINE:$lineno does not state its read count:
+    $raw
+  Format is \`<file>:#interp  <N> read(s): <reason>\`; N is how many unexaminable
+  reads the gate reports in that file." ;;
+      *) die "$BASELINE:$lineno has a key of no known kind (\`<file>:stellar.<table>\` or \`<file>:#interp\`):
+    $raw" ;;
+    esac
     base_keys+=("$key")
+    base_reasons+=("$reason")
   done < "$BASELINE"
 fi
 
@@ -601,15 +667,37 @@ in_baseline() {
   return 1
 }
 
+# baseline_count <key>: the read count an `#interp` entry states, or nothing.
+baseline_count() {
+  local i=0
+  while [ "$i" -lt "${#base_keys[@]}" ]; do
+    if [ "${base_keys[$i]}" = "$1" ]; then
+      printf '%s' "${base_reasons[$i]%% *}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
 # An unexaminable read (double-quoted or spliced string) is grandfathered per
-# file as `<file>:#interp`.
+# file as `<file>:#interp` with the count of such reads it excuses; one more
+# fails as unbaselined, one fewer as stale.
+interp_files="$(printf '%s\n' "$interpreted" | sed -n 's/^  //p' | sort -u |
+  sed 's/:[0-9]*$//' | sort | uniq -c | awk '{print $2 "\t" $1}')"
 unbaselined_interp=""
-while IFS= read -r il; do
-  [ -n "$il" ] || continue
-  ifile="${il#"${il%%[![:space:]]*}"}"
-  ifile="${ifile%:*}"
-  in_baseline "${ifile}:#interp" || unbaselined_interp="${unbaselined_interp}${il}"$'\n'
-done <<<"$interpreted"
+interp_stale=0
+while IFS=$'\t' read -r ifile icount; do
+  [ -n "$ifile" ] || continue
+  if want="$(baseline_count "${ifile}:#interp")"; then
+    if [ "$icount" -lt "$want" ]; then
+      echo "lint-lake-dedup: baseline stale: ${ifile}:#interp states $want read(s), the gate finds $icount — lower the count in $BASELINE." >&2
+      interp_stale=1
+    fi
+    [ "$icount" -gt "$want" ] || continue
+  fi
+  unbaselined_interp="${unbaselined_interp}$(printf '%s\n' "$interpreted" | grep -F "  ${ifile}:" | sort -u)"$'\n'
+done <<<"$interp_files"
 if [ -n "$unbaselined_interp" ]; then
   echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
   printf '%s' "$unbaselined_interp" >&2
@@ -631,8 +719,14 @@ while IFS=$'\t' read -r file line tbl snip; do
   echo "    $snip" >&2
 done <<<"$violations"
 
-stale=0
+stale=$interp_stale
 for b in ${base_keys+"${base_keys[@]}"}; do
+  case "$b" in
+    *:#interp)
+      grep -qF "${b%:#interp}"$'\t' <<<"$interp_files" ||
+        { echo "lint-lake-dedup: baseline stale: $b — the file has no unexaminable read; remove it from $BASELINE." >&2; stale=1; }
+      continue ;;
+  esac
   # An entry for a table this copy does not watch is not stale: CI judges a PR
   # with the base branch's copy, which must accept the entries of the PR that
   # adds the table.

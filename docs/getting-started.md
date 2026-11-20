@@ -1,6 +1,6 @@
 ---
 title: Getting started with Stellar Index
-last_verified: 2026-07-05
+last_verified: 2026-11-21
 status: living doc
 ---
 
@@ -137,19 +137,29 @@ calling key and `DELETE /v1/account/keys/{keyID}` revokes a key with
 every key minted from it. A key may revoke only itself and the keys
 minted from it.
 
-If a key leaks:
+There is no rotate endpoint. Revoking a key revokes every key minted
+from it, so a replacement minted from the key being replaced dies with
+it. Replace a key like this:
 
-- **A key you minted with `POST /v1/account/keys`:** revoke it,
-  authenticated with the key that minted it or with the leaked key
-  itself. Its minter keeps working.
+- **A key you minted with `POST /v1/account/keys` (a child):** mint the
+  replacement with its parent (a sibling of the old key), deploy it, then
+  revoke the old key with `DELETE /v1/account/keys/{keyID}`, sent with
+  the parent or with the old key itself.
 - **A root key** (the one `/v1/register` returned, or a dashboard key):
-  a replacement minted from it dies with it, so first get an
-  independent key. With a dashboard, mint a new key there. Without one,
-  `POST /v1/register` creates a new account with its own root key;
-  limits a staff member raised on the old account do not carry over.
-  Move your clients to the new key, then revoke the leaked one with
-  itself: `DELETE /v1/account/keys/{its keyID}` sent with the leaked key
-  answers 204, and the key and everything minted from it stop working.
+  it has no parent, so mint an independent key first. With dashboard
+  access, create one with `POST /v1/dashboard/keys` (signed-in session,
+  or the dashboard's Keys page); deploy it, then revoke the old root
+  with itself. A SEP-10 session cannot mint keys (`403`). An account
+  that holds only its `/v1/register` key has no self-service way to
+  replace it today: ask for operator-assisted replacement at
+  `security@stellarindex.io`, quoting the key id (`kid_...`, never the
+  secret). An operator mints the independent key for your identifier
+  (`POST /v1/admin/keys`, or `stellarindex-ops mint-key`), and you then
+  revoke the old root.
+- **A leaked key:** revoke it now. It may revoke itself:
+  `DELETE /v1/account/keys/{its keyID}` sent with the leaked key answers
+  204, and the key and everything minted from it stop working. Then
+  replace it as above.
 
 ## Rate limits
 

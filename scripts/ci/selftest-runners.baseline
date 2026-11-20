@@ -1,12 +1,33 @@
 # scripts/ci/*-test.sh self-tests that no workflow and not scripts/dev/verify.sh
 # runs, read by scripts/ci/check-selftest-runners.sh.
 #
-# Format: one basename per line; `#` starts a comment.
+# Format: one entry per line; `#` starts a comment. A scripts/ci self-test is
+# listed by basename, one anywhere else in the tree by repo-relative path.
 #
 # Each entry is debt, not an exemption: the gate fails on a self-test missing
 # from this list AND on an entry that has since been wired or deleted, so the
 # list only shrinks. To retire an entry, make the self-test pass, invoke it from
 # ci.yml's import-checks job and from verify.sh, and delete its line here.
+
+# Self-tests outside scripts/ci that had no runner when the gate first scanned
+# the whole tree; untriaged (some may need a host, Docker or network).
+configs/ansible/roles/archival-node/files/pgbackrest-wal-drop-probe-test.sh  # Makefile target only
+configs/healthchecks/sla-probe-apikey-test.sh
+configs/healthchecks/sla-probe-concurrency-doc-test.sh
+configs/healthchecks/smoke-tmp-cleanup-test.sh
+configs/libvirt/provision-vms-test.sh
+scripts/dev/bootstrap-worktree-test.sh
+scripts/dev/branch-status-test.sh
+scripts/dev/cut-release_test.sh
+scripts/dev/preflight-deploy-baseline-test.sh
+scripts/dev/preflight-deploy-gh556-test.sh
+scripts/dev/prepush-native-fmt-guard-test.sh
+scripts/dev/r1-smoke-test.sh
+scripts/dev/verify-changed-test.sh
+scripts/dev/verify-lane-errexit-test.sh
+scripts/ops/ch-lake-backup-roundtrip-test.sh
+scripts/ops/config-backup-test.sh
+scripts/ops/galexie-archive-mirror-test.sh
 
 ansible-exporter-service-gating-test.sh
 ansible-fact-cache-path-test.sh

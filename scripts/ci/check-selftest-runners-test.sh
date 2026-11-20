@@ -30,7 +30,7 @@ setup() {
 expect() {
   local name="$1" want="$2" needle="${3:-}" got out
   out="$(CI_DIR="$TMP/f/ci" WORKFLOWS_DIR="$TMP/f/wf" VERIFY_SH="$TMP/f/verify.sh" \
-    BASELINE="$TMP/f/baseline" bash "$CHECK" 2>&1)"
+    BASELINE="$TMP/f/baseline" OTHER_TESTS="${OTHER:-}" bash "$CHECK" 2>&1)"
   got=$?
   if [ "$got" -ne "$want" ]; then
     echo "  FAIL $name: exit $got, want $want"
@@ -71,6 +71,25 @@ expect "bash-prefixed and non-ci.yml workflow invocations count" 0
 
 setup 'echo nothing' 'run: ./scripts/ci/lint-a.sh' ''
 expect "no invocations at all fails instead of passing vacuously" 1 "must not pass vacuously"
+
+OTHER='configs/prometheus/apply-rules-test.sh'
+setup './scripts/ci/a-test.sh' 'run: ./scripts/ci/b-test.sh' ''
+expect "an orphan outside scripts/ci fails and is named by path" 1 "configs/prometheus/apply-rules-test.sh is run by no workflow"
+
+setup './scripts/ci/a-test.sh
+bash configs/prometheus/apply-rules-test.sh' 'run: ./scripts/ci/b-test.sh' ''
+expect "a self-test outside scripts/ci with a runner passes" 0
+
+setup './scripts/ci/a-test.sh' 'run: ./scripts/ci/b-test.sh' 'configs/prometheus/apply-rules-test.sh'
+expect "a baselined path orphan passes" 0
+
+setup './scripts/ci/a-test.sh
+bash configs/prometheus/apply-rules-test.sh' 'run: ./scripts/ci/b-test.sh' 'configs/prometheus/apply-rules-test.sh'
+expect "a baselined path entry that now has a runner is stale" 1 "stale baseline entry configs/prometheus/apply-rules-test.sh"
+
+setup './scripts/ci/a-test.sh' 'run: ./scripts/ci/b-test.sh' 'configs/gone-test.sh'
+expect "a baselined path entry that no longer exists is stale" 1 "stale baseline entry configs/gone-test.sh"
+OTHER=''
 
 echo "check-selftest-runners-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

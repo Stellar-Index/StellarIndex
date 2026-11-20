@@ -67,7 +67,7 @@ func (tr *revokeTree) live(name string) bool {
 
 // An operator and a SEP-10 session revoke a /v1/register key's Postgres management row through this route too.
 func TestAccountKeysRevoke_AccountWideActorsRevokeThePostgresRow(t *testing.T) {
-	const keyID = "kid_0123456789abcdef01234567"
+	keyID := "kid_" + strings.Repeat("0a", 12)
 	for name, subject := range map[string]auth.Subject{
 		"operator": {Identifier: "acct:reg-abc123", Tier: auth.TierOperator, KeyID: "kid_00000000000000aa"},
 		"sep10":    auth.NewSEP10Session("acct:reg-abc123", time.Now()),

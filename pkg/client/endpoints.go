@@ -530,7 +530,8 @@ type CreateKeyRequest struct {
 	Reason         string   `json:"-"`
 }
 
-// CreateKey issues a new API key inheriting the caller's identifier and tier; the plaintext secret appears in the response exactly once and is unrecoverable.
+// CreateKey issues a new API key, a child of the calling key, inheriting its identifier and tier; the plaintext secret appears in the response exactly once and is unrecoverable.
+// To replace a key, mint from its parent, not from the key being replaced: revoking a key also revokes its children (see [Client.RevokeKey]).
 func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*Envelope[KeyCreated], error) {
 	if req.Label == "" {
 		return nil, &APIError{Status: 400, Title: "label required"}
@@ -585,7 +586,7 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 	return &env, nil
 }
 
-// RevokeKey permanently deletes keyID (the public KeyID, not the secret) with every key minted from it; nil on 204, a 403 *APIError for a key the caller may not revoke (including unknown ids), a 400 for a value not shaped like a key id.
+// RevokeKey permanently deletes keyID (the public KeyID, not the secret) with every key minted from it, so a replacement minted from keyID dies too; a key may revoke itself and its descendants. nil on 204, a 403 *APIError for a key the caller may not revoke (including unknown ids), a 400 for a value not shaped like a key id.
 func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return &APIError{Status: 400, Title: "keyID required"}
@@ -643,7 +644,7 @@ func (c *Client) Cursors(ctx context.Context) (*Envelope[[]Cursor], error) {
 	return &env, nil
 }
 
-// Keys lists the caller's API keys by CreatedAt ascending; anonymous calls get 401 and the plaintext is NEVER returned (rotate via [Client.CreateKey] then revoke).
+// Keys lists the caller's API keys by CreatedAt ascending; anonymous calls get 401 and the plaintext is NEVER returned.
 func (c *Client) Keys(ctx context.Context) (*Envelope[[]Account], error) {
 	var env Envelope[[]Account]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/account/keys", nil, nil, &env); err != nil {

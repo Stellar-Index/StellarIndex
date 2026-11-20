@@ -1,0 +1,107 @@
+# promtool unit tests for the customer-webhook worker heartbeat:
+#
+#   stellarindex_customer_webhook_worker_stalled
+#
+# The multi-host tree scrapes the API as job="stellarindex_api", r1 as
+# job="stellarindex-api"; every case feeds both so each tree is exercised.
+#
+#   promtool test rules deploy/monitoring/rule-tests/api-webhook-worker_test.yml
+
+rule_files:
+  - ../rules/api.yml
+  - ../../../configs/prometheus/rules.r1/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # A polling worker stamps the gauge every minute: never fires.
+  - interval: 1m
+    name: worker_stalled — a worker that keeps polling stays quiet
+    input_series:
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api",instance="r1:8080"}'
+        values: '60+60x60'
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_api",instance="api1:8080"}'
+        values: '60+60x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_customer_webhook_worker_stalled
+        exp_alerts: []
+
+  # The heartbeat freezes at 660 (11m): over 900 s stale from 26m, firing after `for: 5m`.
+  - interval: 1m
+    name: worker_stalled — a worker that stops polling tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api",instance="r1:8080"}'
+        values: '60+60x10 660x50'
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_api",instance="api1:8080"}'
+        values: '60+60x10 660x50'
+    alert_rule_test:
+      - eval_time: 28m
+        alertname: stellarindex_customer_webhook_worker_stalled
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_customer_webhook_worker_stalled
+        exp_alerts: &stalled
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              job: stellarindex-api
+              instance: r1:8080
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_worker_stalled"
+              summary: "Customer webhook worker on r1:8080 has not polled for over 15 minutes"
+              description: |
+                The delivery worker on r1:8080 has not
+                completed a pending-delivery query in over 15 minutes. It
+                never started, its goroutine died, or it is wedged, so no
+                customer webhook is being delivered and the outcome-based
+                webhook alerts cannot see it.
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              job: stellarindex_api
+              instance: api1:8080
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_worker_stalled"
+              summary: "Customer webhook worker on api1:8080 has not polled for over 15 minutes"
+              description: |
+                The delivery worker on api1:8080 has not
+                completed a pending-delivery query in over 15 minutes. It
+                never started, its goroutine died, or it is wedged, so no
+                customer webhook is being delivered and the outcome-based
+                webhook alerts cannot see it.
+
+  # Seeded once at build and never polled (Run never called): one value, held. Fires.
+  - interval: 1m
+    name: worker_stalled — a worker that was built but never ran tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api",instance="r1:8080"}'
+        values: '60x40'
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_api",instance="api1:8080"}'
+        values: '60x40'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: stellarindex_customer_webhook_worker_stalled
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: stellarindex_customer_webhook_worker_stalled
+        exp_alerts: *stalled
+
+  # 0 = no worker wired; another binary's zero-value series is out of scope by job.
+  - interval: 1m
+    name: worker_stalled — an unwired worker or a non-API binary stays quiet
+    input_series:
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api",instance="r1:8080"}'
+        values: '0x60'
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_api",instance="api1:8080"}'
+        values: '0x60'
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-indexer",instance="r1:9100"}'
+        values: '60x60'
+      - series: 'stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex_indexer",instance="idx1:9100"}'
+        values: '60x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_customer_webhook_worker_stalled
+        exp_alerts: []

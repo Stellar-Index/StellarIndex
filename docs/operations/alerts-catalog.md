@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 314 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 315 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -466,6 +466,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_customer_webhook_delivery_exhausted` | `customer_webhook_delivery_attempts_total{outcome="exhausted"}` | > 0, `for: 0m` | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted) |
 | `stellarindex_customer_webhook_mark_errors` | `increase(...{outcome="mark_error"}[30m])` | > 0 for 15 min (POST done, result not saved; re-POSTs each lease) | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_mark_errors) |
 | `stellarindex_customer_webhook_delivery_stalled` | `increase(...{outcome=~"list_error\|lookup_error"}[15m])` per outcome | > 0 for 30 min (pending rows not read, or stuck with their budget unspent) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_delivery_stalled) |
+| `stellarindex_customer_webhook_worker_stalled` | `time() - stellarindex_customer_webhook_worker_last_poll_unix{job="stellarindex-api"}`, gauge > 0 | > 900 s for 5 min (worker never started, died or wedged; outcome counters stay flat) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_worker_stalled) |
 | `stellarindex_customer_webhook_delivery_dropped` | `increase(...{outcome=~"no_secret\|build_error"}[1h])` per outcome | > 0, `for: 0m` (terminal before any POST) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_delivery_dropped) |
 | `stellarindex_customer_webhook_fanout_failing` | `increase(customer_webhook_fanout_failures_total[1h])` per (event_type, reason) | > 0 for 5 min (no delivery row; no retry) | ticket | [customer-webhook-fanout-failing](runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing) |
 | `stellarindex_usage_rollup_failing` | `rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error\|sink_error"}[15m])` | > 0 for ≥ 30 min | ticket | [usage-rollup-failing](runbooks/api.md#stellarindex_usage_rollup_failing) |
@@ -595,7 +596,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_prometheus_scrape_failing` | `up{job=~"api\|indexer\|aggregator"}` | == 0 for any target > 2 min | ticket | [scrape-failing](runbooks/meta.md#stellarindex_prometheus_scrape_failing) |
 | `stellarindex_alertmanager_config_bad` | `alertmanager_config_last_reload_successful` | == 0 | ticket | [alertmanager-bad-config](runbooks/meta.md#stellarindex_alertmanager_config_bad) |
 | `stellarindex_prometheus_rules_failing` | `prometheus_rule_evaluation_failures_total`, `prometheus_rule_group_iterations_missed_total`, `prometheus_config_last_reload_successful` | any failure or missed iteration in 15 min, or reload == 0, for 5 min | ticket | [prometheus-rules-failing](runbooks/meta.md#stellarindex_prometheus_rules_failing) |
-| `stellarindex_deadmansswitch` | `vector(1)` constant | MUST fire every minute | informational | [deadmansswitch](runbooks/meta.md#stellarindex_deadmansswitch) |
+| `stellarindex_deadmansswitch` | `vector(1)`, unless a silence was active at every sample for 24h | MUST fire every minute; stops (and the external check pages) under a day-long silence | informational | [deadmansswitch](runbooks/meta.md#stellarindex_deadmansswitch) |
 | `stellarindex_alertmanager_silence_active` | `max(alertmanager_silences{state="active"})` | > 0 for 24h (a silence held for a day: forgotten or hostile) | ticket | [alertmanager-silence-active](runbooks/meta.md#stellarindex_alertmanager_silence_active) |
 | `stellarindex_alertmanager_down` | `up{job="alertmanager"}` | == 0 for > 5 min OR series absent for 10 min | page | [alertmanager-down](runbooks/meta.md#stellarindex_alertmanager_down) |
 | `stellarindex_alertmanager_not_notifying` | `alertmanager_notifications_total{integration="webhook"}` | no increase 15 min (deadman alone gives ~30/h) | page | [alertmanager-not-notifying](runbooks/meta.md#stellarindex_alertmanager_not_notifying) |

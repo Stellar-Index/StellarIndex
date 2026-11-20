@@ -591,13 +591,24 @@ func TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild(t *tes
 	}
 	defer func() { _ = resp2.Body.Close() }()
 	var env2 struct {
-		Data map[string]any `json:"data"`
+		Data  map[string]any `json:"data"`
+		Flags Flags          `json:"flags"`
 	}
 	if err := json.NewDecoder(resp2.Body).Decode(&env2); err != nil {
 		t.Fatal(err)
 	}
-	if env2.Data["source_status"] != "ok" {
-		t.Errorf("source_status = %v after an all-failed rebuild, want the previous good snapshot (ok) kept", env2.Data["source_status"])
+	// The last-known values are kept, but a snapshot no query refreshed must not read as current.
+	if env2.Data["source_status"] != "unknown" {
+		t.Errorf("source_status = %v after an all-failed rebuild, want unknown (carried forward, not current)", env2.Data["source_status"])
+	}
+	if !env2.Flags.Stale {
+		t.Error("flags.stale = false after an all-failed rebuild, want true")
+	}
+	if cc := resp2.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q after an all-failed rebuild, want no-store (degraded: a shared cache must not keep it)", cc)
+	}
+	if fmt.Sprint(env2.Data["freshness"]) != fmt.Sprint(env1.Data["freshness"]) {
+		t.Errorf("freshness = %v, want the previous snapshot's last-known values %v", env2.Data["freshness"], env1.Data["freshness"])
 	}
 }
 

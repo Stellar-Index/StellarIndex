@@ -125,6 +125,7 @@ func registerPricingMetrics() {
 		AnomalyWarnTotal,
 		CustomerWebhookDeliveryAttemptsTotal,
 		CustomerWebhookFanoutFailuresTotal,
+		CustomerWebhookWorkerLastPollUnix,
 		AggregatorDroppedTradesTotal,
 		AggregatorVenueVWAP, AggregatorWindowTrades, AggregatorWindowBaseVolume,
 		AggregatorDroppedWindowsTotal,
@@ -2223,6 +2224,14 @@ var CustomerWebhookFanoutFailuresTotal = prometheus.NewCounterVec(
 		Help: "Customer events that never became a webhook delivery row, by event type and reason. Non-zero = a subscribed customer permanently lost an event (no retry row exists).",
 	},
 	[]string{"event_type", "reason"},
+)
+
+// CustomerWebhookWorkerLastPollUnix stamps the delivery worker's last successful claim query; the outcome counters stay flat when the worker is dead, so `time() - this` drives the stalled-worker alert.
+var CustomerWebhookWorkerLastPollUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_customer_webhook_worker_last_poll_unix",
+		Help: "Unix seconds of the customer-webhook delivery worker's most recent successful pending-delivery query, seeded when the worker is built; 0 when no worker is wired (no dashboard webhook store). Staleness means the worker never started, died or is wedged, so no delivery is being attempted.",
+	},
 )
 
 // CustomerWebhookDeliveryDurationSeconds is outbound delivery POST latency by outcome; buckets 10ms-60s reach the worker's 60s timeout.

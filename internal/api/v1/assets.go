@@ -1350,26 +1350,23 @@ func capExceedsObservedTurnover(capUSD string, volume24hUSD *string, maxRatio fl
 }
 
 // computeMarketCapUSD returns (circulating / 10^decimals) x priceUSD as a 2-dp decimal string, "" on unparseable input or a
-// negative result; big.Float keeps huge supplies exact (ADR-0003). Zero renders "0.00" to agree with [usdMarketValue]; dust
-// suppression is the caller's job.
+// negative result. Exact big.Rat with [usdMarketValue]'s rounding, so the listing and the detail serve the same string;
+// dust suppression is the caller's job.
 func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
-	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
+	circ, ok := new(big.Rat).SetString(strings.TrimSpace(circRaw))
+	if !ok || decimals < 0 {
+		return ""
+	}
+	price, ok := new(big.Rat).SetString(strings.TrimSpace(priceRaw))
 	if !ok {
 		return ""
 	}
-	price, ok := new(big.Float).SetPrec(128).SetString(priceRaw)
-	if !ok {
-		return ""
-	}
-	scale := new(big.Float).SetPrec(128).SetInt(
-		new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil),
-	)
-	mc := new(big.Float).SetPrec(128).Quo(circ, scale)
-	mc.Mul(mc, price)
+	mc := new(big.Rat).Mul(circ, price)
+	mc.Quo(mc, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)))
 	if mc.Sign() < 0 {
 		return ""
 	}
-	return mc.Text('f', 2)
+	return mc.FloatString(2)
 }
 
 // sep1ImagesTTL bounds when a refresh is kicked, not how long the map is served: the last good map is served while it runs.
@@ -3002,14 +2999,14 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 	match := findMatchingCachedCurrency(sep, asset)
 	if match == nil {
 		detail.Sep1Status = "no_match"
-		if name := strings.TrimSpace(sep.OrgName); name != "" {
+		if name, ok := sep.BoundOrgName(asset.Issuer); ok {
 			detail.OrgName = &name
 		}
 		return
 	}
 
 	detail.Sep1Status = "verified"
-	applySep1VerifiedFields(detail, sep, match)
+	applySep1VerifiedFields(detail, sep, match, asset.Issuer)
 }
 
 // applySep1VerifiedFields copies the issuer's own [[CURRENCIES]] entry onto the row, split from
@@ -3018,8 +3015,8 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 // answer in place instead of overwriting it with an empty string.
 //
 //nolint:gocyclo // linear field-overlay sequence; splitting would scatter the per-field nil checks across helpers.
-func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cached, match *timescale.IssuerSep1Currency) {
-	if name := strings.TrimSpace(sep.OrgName); name != "" {
+func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cached, match *timescale.IssuerSep1Currency, issuer string) {
+	if name, ok := sep.BoundOrgName(issuer); ok {
 		detail.OrgName = &name
 	}
 	if v := strings.TrimSpace(match.Name); v != "" {

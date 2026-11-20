@@ -10155,7 +10155,8 @@ paths:
         returned**; it's only retrievable at POST-time.
 
         Use this to render an account dashboard ("here are your
-        keys") or verify rotation worked.
+        keys") or confirm a replacement key exists before revoking the
+        old one.
       security:
         - APIKeyAuth: []
       responses:
@@ -10220,14 +10221,21 @@ paths:
         an `auth_mode = "sep10"` deployment honours only SEP-10 tokens,
         so a minted key would have no use there.
 
-        The new key inherits the caller's identifier and tier. An
-        **operator-tier** caller rotating its own credential here is
+        The new key inherits the caller's identifier and tier and is a
+        child of the calling key: revoking the caller also revokes the
+        new key. There is no rotate endpoint. To replace a key, mint the
+        replacement with its parent (a sibling), deploy it, then revoke
+        the old key. A root key has no parent: replace it with an
+        independent key from the dashboard (`POST /v1/dashboard/keys`),
+        or by operator-assisted mint for a `/v1/register`-only account.
+
+        An **operator-tier** caller minting for its own identifier here is
         held to the admin-write contract: the `X-Reason` header is
         required (400 without it) and the mint is recorded as a
         `key.mint` audit row, exactly as `POST /v1/admin/keys`.
         Customer-tier callers need no header. A key minted by the retired
         `/v1/signup` carries its email-verification stamp over to the
-        child, so rotated keys keep working under
+        child, so replacement keys keep working under
         `signup_require_email_verification`.
         Only `apikey` and `operator` callers may mint; a SEP-10 token
         gets 403.
@@ -11366,9 +11374,10 @@ paths:
         to a different account (same shape so attackers can't
         enumerate cross-account key_ids).
         A `delegated` key is removed outright, by an owner or admin
-        only, and a second revoke of it is 404. Revoking a key does
-        not revoke the keys it minted: revoke each one listed with
-        its `parent_key_id`.
+        only, and a second revoke of it is 404. Revoking a key also
+        revokes every key minted from it, so mint a replacement
+        independently (a new dashboard key, or a sibling minted from
+        the old key's parent) before revoking the old one.
       parameters:
         - name: id
           in: path

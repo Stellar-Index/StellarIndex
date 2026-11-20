@@ -772,24 +772,44 @@ func ExampleClient_CreateKey() {
 	// Output: created ak_demo_xyz789 (label=production-server-1, plaintext=42 chars)
 }
 
-// Revocation is permanent; a new key needs CreateKey. keyID is the public ID (KeyCreated.KeyID / Keys rows), not the
-// plaintext secret. An unknown, already-revoked or foreign ID, or a plaintext secret, returns nil (204); *APIError for
-// 400 (operator without X-Reason), 401, 409, 503.
+// Replacing a child key. Revoking a key also revokes every key minted from it, so the replacement is minted from the
+// old key's PARENT (a sibling), never from the old key itself; once clients run on it, the old key is revoked with the
+// parent (it may also revoke itself). keyID is the public ID (KeyCreated.KeyID / Keys rows), not the plaintext secret.
+// A root key cannot be replaced this way: it has no parent, and a replacement minted from it dies with it.
 func ExampleClient_RevokeKey() {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer sip_parent" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"data": {"key_id": "kid_new", "plaintext": "sip_new", "label": "server-1-v2"}, "as_of": "2026-05-10T12:00:00Z", "flags": {}}`))
 	}))
 	defer srv.Close()
 
-	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "sip_demo"})
-	err := c.RevokeKey(context.Background(), "ak_demo_xyz789")
+	parent := client.New(client.Options{BaseURL: srv.URL, APIKey: "sip_parent"})
+	created, err := parent.CreateKey(context.Background(), client.CreateKeyRequest{Label: "server-1-v2"})
 	if err != nil {
 		fmt.Println("error:", err)
 		return
 	}
-	fmt.Println("revoked")
+	fmt.Println("minted sibling", created.Data.KeyID)
 
-	// Output: revoked
+	// Deploy created.Data.Plaintext to the clients here, then retire the old child.
+	if err := parent.RevokeKey(context.Background(), "kid_old_child"); err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("revoked old child")
+
+	// Output:
+	// minted sibling kid_new
+	// revoked old child
 }
 
 // Example: list every API key the caller owns (KeyID, Label, tier, creation time).

@@ -1,0 +1,76 @@
+# promtool unit tests for the deadman heartbeat's silence gate: a silence held
+# for 24h stops stellarindex_deadmansswitch so the external check pages.
+#
+#   promtool test rules deploy/monitoring/rule-tests/meta-silence-deadman_test.yml
+
+rule_files:
+  - ../rules/meta.yml
+  - ../../../configs/prometheus/rules.r1/meta.yml
+
+evaluation_interval: 1m
+
+tests:
+  # No silence: the heartbeat fires (once per tree).
+  - interval: 5m
+    name: deadmansswitch — beats with no silence
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '0x300'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: &beat
+          - exp_labels: {severity: informational, team: stellarindex, component: meta}
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_deadmansswitch"
+              summary: "This alert fires constantly — alarm is when it STOPS"
+              description: |
+                Routing target (e.g., an external watchdog.healthchecks.io URL)
+                expects to receive this every minute. If it doesn't, IT pages
+                us via a separate channel — which catches Prometheus or
+                AlertManager being down.
+          - exp_labels: {severity: informational, team: stellarindex, component: meta}
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_deadmansswitch"
+              summary: "This alert fires constantly — alarm is when it STOPS"
+              description: |
+                Routing target (e.g., an external watchdog.healthchecks.io URL)
+                expects to receive this every minute. If it doesn't, IT pages
+                us via a separate channel — which catches Prometheus or
+                AlertManager being down.
+
+  # A silence held from t=0: the heartbeat still beats at 23h, stops past 24h.
+  - interval: 5m
+    name: deadmansswitch — stops once a silence is held for a day
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '1x300'
+    alert_rule_test:
+      - eval_time: 23h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: *beat
+      - eval_time: 24h5m
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: []
+
+  # One sample of an active silence, then none: the heartbeat never stops.
+  - interval: 5m
+    name: deadmansswitch — a single short silence does not stop it
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '0x100 1 0x200'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: *beat
+
+  # Silenced for 20h, a gap, silenced again: never held a full day, keeps beating.
+  - interval: 5m
+    name: deadmansswitch — a broken run of silences does not stop it
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '1x240 0x5 1x60'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: *beat

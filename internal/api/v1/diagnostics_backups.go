@@ -578,9 +578,10 @@ func (s *Server) rebuildBackups() BackupsDiagnostics {
 	s.backups.mu.Lock()
 	defer s.backups.mu.Unlock()
 	if fresh.SourceStatus == "unknown" && !s.backups.builtAt.IsZero() {
-		// Every query failed (or the fan-out was starved): keep the previous good snapshot rather
-		// than an all-"unknown" document, but advance builtAt so requests do not hammer Prometheus
-		// until a query succeeds again.
+		// Every query failed (or the fan-out was starved): keep the previous snapshot's last-known
+		// values rather than an all-"unknown" document, but mark it unknown so it is never served as
+		// current, and advance builtAt so requests do not hammer Prometheus until a query succeeds.
+		s.backups.snap.SourceStatus = "unknown"
 		s.backups.builtAt = builtAt
 	} else {
 		s.backups.snap = fresh
@@ -609,5 +610,6 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "public, max-age=60, s-maxage=60")
 	// flags.stale mirrors the roll-up so polling clients can spot a
 	// non-green document without parsing every verdict.
-	writeJSON(w, snap, Flags{Stale: snap.Freshness.Overall != freshnessOK, Degraded: snap.SourceStatus != "ok"})
+	// A snapshot no query could refresh is stale whatever its last-known roll-up said.
+	writeJSON(w, snap, Flags{Stale: snap.Freshness.Overall != freshnessOK || snap.SourceStatus == "unknown", Degraded: snap.SourceStatus != "ok"})
 }

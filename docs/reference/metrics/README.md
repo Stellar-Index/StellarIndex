@@ -899,6 +899,13 @@ Per-attempt outcome of the delivery worker. `server_error` and `network_error` a
 
 `mark_error` means the POST succeeded but recording it failed, so the same payload is re-POSTed every lease interval with no retry budget to end it. One wedged row is about 0.003/s, far under the `server_error` alert threshold, so it needs its own alert.
 
+### `stellarindex_customer_webhook_worker_last_poll_unix`
+
+Gauge, Unix seconds of the delivery worker's last successful pending-delivery query, seeded when the worker is built. 0 means no worker is wired (no dashboard webhook store). A dead or never-started worker records no outcome on the counter above, so staleness of this gauge is the only signal.
+
+Alert: `stellarindex_customer_webhook_worker_stalled` →
+[customer-webhook](../../operations/runbooks/api.md#stellarindex_customer_webhook_worker_stalled).
+
 ### `stellarindex_customer_webhook_fanout_failures_total`
 
 Counter, labels `event_type` (`incident.sev1` / `incident.resolved` /

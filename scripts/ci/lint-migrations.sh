@@ -172,6 +172,17 @@ if [ -n "$nested" ]; then
   fail=1
 fi
 
+# golang-migrate loads any top-level NNN_x.(up|down).<ext>, but every pass and
+# gate selects *.up.sql / *.down.sql. Holding the directory to that one shape
+# is what makes those globs see every file the deploy will run.
+nonconform="$(find "${MIG_DIR:-migrations}" -maxdepth 1 -type f 2>/dev/null | sed 's#.*/##' \
+  | grep -E '^[0-9]+_.*\.(up|down)\..*$' | grep -vE '^[0-9]{4}_[a-z0-9_]+\.(up|down)\.sql$' || true)"
+if [ -n "$nonconform" ]; then
+  echo "lint-migrations ❌ file(s) golang-migrate loads that are not NNNN_name.(up|down).sql, so no migration gate reads them:" >&2
+  indent "$nonconform" >&2
+  fail=1
+fi
+
 # Duplicate NNNN prefixes among *.up.sql (two migrations claiming one number).
 dupes=$(find migrations -maxdepth 1 -name '*.up.sql' \
   | sed -E 's#.*/([0-9]+)_.*#\1#' | sort | uniq -d || true)
@@ -443,17 +454,39 @@ fi
 # two passes at fixture trees; the passes above always read migrations/.
 MIG_DIR="${MIG_DIR:-migrations}"
 
-# sql_stmts <file>: one SQL statement per line, `--` and `/* */` comments
-# stripped and whitespace collapsed, so a statement split across lines matches.
+# sql_stmts <file>: one SQL statement per line, `--` and (nested) `/* */`
+# comments stripped and whitespace collapsed, so a statement split across lines
+# matches. One lexer pass: a comment marker or `;` inside a '…' / E'…' string
+# or "…" identifier is content. A $$ body is still split at `;`, which is how
+# blanking_stmts reads the statements of a DO block.
 sql_stmts() {
-  sed -E 's/--.*$//' "$1" | tr '\n\t' '  ' \
-    | awk '{ s = $0; o = ""
-        while ((i = index(s, "/*")) > 0) {
-          o = o substr(s, 1, i - 1) " "; s = substr(s, i + 2)
-          j = index(s, "*/"); if (j == 0) { s = ""; break }; s = substr(s, j + 2)
+  LC_ALL=C awk '
+    function emit(s) { gsub(/[\n\t\r]/, " ", s); gsub(/ +/, " ", s); sub(/^ /, "", s); if (s != "") print s }
+    { src = src $0 "\n" }
+    END {
+      n = length(src); st = ""; q = ""; depth = 0; i = 1
+      while (i <= n) {
+        c = substr(src, i, 1); c2 = substr(src, i, 2)
+        if (depth > 0) {
+          if (c2 == "*/") { depth--; i += 2; if (depth == 0) st = st " "; continue }
+          if (c2 == "/*") { depth++; i += 2; continue }
+          i++; continue
         }
-        print o s }' \
-    | awk 'BEGIN { RS = ";" } { gsub(/ +/, " "); sub(/^ /, ""); if ($0 != "") print }'
+        if (q != "") {
+          st = st c
+          if (q == "e" && c == "\\") { st = st substr(src, i + 1, 1); i += 2; continue }
+          if ((q == "e" && c == "\047") || c == q) q = ""
+          i++; continue
+        }
+        if (c2 == "--") { j = index(substr(src, i), "\n"); i = j ? i + j - 1 : n + 1; continue }
+        if (c2 == "/*") { depth = 1; i += 2; continue }
+        if (c == ";") { emit(st); st = ""; i++; continue }
+        if (c == "\047") q = (substr(src, i - 1, 1) ~ /[eE]/ && substr(src, i - 2, 1) !~ /[A-Za-z0-9_]/) ? "e" : c
+        else if (c == "\"") q = c
+        st = st c; i++
+      }
+      emit(st)
+    }' "$1"
 }
 
 # cagg_views <file>: when the file creates anything WITH NO DATA, every view it
@@ -848,6 +881,18 @@ blanking_stmts() {
       else if (match(s, /(^| )(begin|then|else|loop) (truncate|delete from) /)) { st = substr(s, RSTART); sub(/^ ?[a-z]+ /, "", st) }
       if (st ~ /^truncate /) { l = st; sub(/^truncate (table )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) out(p[i], st); next }
       if (st ~ /^delete from / && (st !~ / where / || st ~ / where \(?true\)?( returning .*)? ?$/)) { l = st; sub(/^delete from /, "", l); out(l, st); next }
+      # Any other position (a data-modifying CTE, a subquery): the verb ends
+      # at its closing paren. String contents are blanked first.
+      b = (st == "") ? s : ""; gsub(/\047[^\047]*\047/, "\047\047", b)
+      while (match(b, /[ (](truncate|delete from) /)) {
+        st = substr(b, RSTART + 1); b = substr(b, RSTART + RLENGTH)
+        d = 0
+        for (k = 1; k <= length(st); k++) { c = substr(st, k, 1); if (c == "(") d++; else if (c == ")" && --d < 0) break }
+        st = substr(st, 1, k - 1)
+        if (st ~ /^truncate on /) continue
+        if (st ~ /^truncate /) { l = st; sub(/^truncate (table )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) out(p[i], st); continue }
+        if (st !~ / where / || st ~ / where \(?true\)?( returning .*)? ?$/) { l = st; sub(/^delete from /, "", l); out(l, st) }
+      }
     }
     s ~ /^drop table / { l = s; sub(/^drop table (if exists )?/, "", l); n = split(l, p, ","); for (i = 1; i <= n; i++) gone[rel(p[i])] = 1; next }
     s ~ /^create (unlogged )?table / {
