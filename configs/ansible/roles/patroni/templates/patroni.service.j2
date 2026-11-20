@@ -3,8 +3,9 @@
 Description=Patroni — Postgres HA + DCS leader election
 Documentation=https://patroni.readthedocs.io/
 After=network-online.target etcd.service postgresql.service
-Wants=network-online.target
-Requires=etcd.service
+# Wants, not Requires: Requires= would restart Patroni (stopping postgres) on every
+# etcd restart, bypassing the switchover in the role's restart handler.
+Wants=network-online.target etcd.service
 
 [Service]
 Type=simple

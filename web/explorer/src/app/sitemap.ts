@@ -80,6 +80,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     '/diagnostics',
     '/dexes',
     '/lending',
+    '/lending/rates',
     '/amm',
     '/yield',
     '/convert',

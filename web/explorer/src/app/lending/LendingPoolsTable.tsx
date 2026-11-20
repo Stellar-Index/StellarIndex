@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -19,7 +20,7 @@ import {
 } from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample, type Envelope } from '@/api/client';
-import { formatRelative } from '@/lib/format';
+import { decimalOrNull, formatRelative } from '@/lib/format';
 import type { paths } from '@/api/types';
 
 import { LENDING_POOL_META, lendingProtocol } from './poolMeta';
@@ -51,6 +52,8 @@ function basisNote(s: PoolSummary) {
 function StatCells({
   tvl,
   tvlTitle,
+  borrowed = tvl,
+  borrowedTitle,
   util,
   supply,
   borrow,
@@ -58,6 +61,8 @@ function StatCells({
 }: {
   tvl: string;
   tvlTitle?: string;
+  borrowed?: string;
+  borrowedTitle?: string;
   util: string;
   supply: string;
   borrow: string;
@@ -65,8 +70,19 @@ function StatCells({
 }) {
   return (
     <>
-      <Td align="right" className="font-mono tabular-nums" title={tvlTitle}>
+      <Td
+        align="right"
+        className="text-ink font-mono font-medium tabular-nums"
+        title={tvlTitle}
+      >
         {tvl}
+      </Td>
+      <Td
+        align="right"
+        className="text-ink font-mono font-medium tabular-nums"
+        title={borrowedTitle}
+      >
+        {borrowed}
       </Td>
       {[util, supply, borrow].map((v, i) => (
         <Td
@@ -92,16 +108,29 @@ function StatCells({
 function PoolStats({ row }: { row: LendingPool }) {
   const s = row.summary;
   if (s) {
-    const tvl = s.tvl_usd != null ? Number(s.tvl_usd) : null;
+    // Display-only: compact USD rounds far above float error.
+    const tvl = decimalOrNull(s.tvl_usd);
+    const borrowed = decimalOrNull(s.borrowed_usd);
     const dash = (v: number | null | undefined, fmt: (n: number) => string) =>
       v != null && Number.isFinite(v) ? fmt(v) : '—';
+    // "≥$0" says nothing: a zero lower bound renders as unknown.
+    const usd = (n: number, lb: boolean | undefined) =>
+      lb && n === 0 ? '—' : (lb ? '≥' : '') + fmtUsd(n);
     return (
       <StatCells
-        tvl={dash(tvl, (n) => (s.lower_bound ? '≥' : '') + fmtUsd(n))}
+        tvl={dash(tvl, (n) => usd(n, s.lower_bound))}
         tvlTitle={
           s.lower_bound
             ? `Lower bound: ${basisNote(s).toLowerCase()}`
-            : undefined
+            : (s.tvl_usd ?? undefined)
+        }
+        borrowed={dash(borrowed, (n) => usd(n, s.borrowed_lower_bound))}
+        borrowedTitle={
+          s.borrowed_usd == null
+            ? 'No USD value: no priced reserve has a borrow'
+            : s.borrowed_lower_bound
+              ? `Lower bound: ${basisNote(s).toLowerCase()}`
+              : s.borrowed_usd
         }
         util={dash(s.utilization_pct, (n) => `${n.toFixed(1)}%`)}
         supply={dash(s.supply_apr, pctFmt)}
@@ -142,8 +171,9 @@ function PendingPoolStats({ pool }: { pool: string }) {
 export const PENDING_POLL_MS = 3_000;
 export const PENDING_POLL_MAX = 20;
 
-export function LendingPoolsTable() {
-  const q = useQuery<{ rows: LendingPool[]; truncated: boolean }>({
+/** useLendingPools — the shared /v1/lending/pools read, polling while any summary is pending. */
+export function useLendingPools() {
+  return useQuery<{ rows: LendingPool[]; truncated: boolean }>({
     queryKey: ['/v1/lending/pools'],
     refetchInterval: (query) =>
       query.state.data?.rows.some((r) => r.summary_pending) &&
@@ -158,8 +188,38 @@ export function LendingPoolsTable() {
       return { rows: env.data ?? [], truncated: env.flags?.truncated === true };
     },
   });
+}
 
-  const rows = q.data?.rows ?? [];
+/** No state read and no auction: nothing to show but dashes. */
+export function isInactivePool(p: LendingPool): boolean {
+  const s = p.summary;
+  return (
+    !p.summary_pending &&
+    !p.summary_error &&
+    (s == null || (s.tvl_usd == null && s.borrowed_usd == null)) &&
+    (p.auctions_total ?? 0) === 0
+  );
+}
+
+/** TVL descending; unpriced pools after priced ones, by auctions then users. */
+export function sortPools(rows: readonly LendingPool[]): LendingPool[] {
+  const tvl = (p: LendingPool) => decimalOrNull(p.summary?.tvl_usd) ?? -1;
+  return [...rows].sort(
+    (a, b) =>
+      tvl(b) - tvl(a) ||
+      (b.auctions_total ?? 0) - (a.auctions_total ?? 0) ||
+      (b.unique_users_30d ?? 0) - (a.unique_users_30d ?? 0),
+  );
+}
+
+export function LendingPoolsTable() {
+  const q = useLendingPools();
+  const [showInactive, setShowInactive] = useState(false);
+
+  const all = q.data?.rows ?? [];
+  const rows = sortPools(all);
+  const inactive = rows.filter(isInactivePool);
+  const listed = showInactive ? rows : rows.filter((p) => !isInactivePool(p));
   // A failed BLNT read serves the Blend rows alone; the list is a lower bound.
   const truncatedNote = q.data?.truncated ? (
     <p role="status" className="text-warn-700 mb-2 text-xs">
@@ -174,38 +234,37 @@ export function LendingPoolsTable() {
     .filter((p) => (p.auctions_total ?? 0) > 0)
     .sort((x, y) => (y.auctions_total ?? 0) - (x.auctions_total ?? 0));
 
+  // Secondary to TVL: rendered after the pools table.
+  const auctionsPanel = auctionRows.length > 0 && (
+    <Panel
+      title="Liquidation auctions by pool — all time"
+      hint="Auction events from the indexed lending event stream; the risk view of which pools actually liquidate."
+      source={asExample('/v1/lending/pools', {})}
+    >
+      {truncatedNote}
+      <HBarList
+        ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
+          .map(
+            (p) =>
+              `${poolChartLabel(p.pool ?? '', p.protocol)} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
+          )
+          .join(', ')}`}
+        items={auctionRows.map((p) => ({
+          label: poolChartLabel(p.pool ?? '', p.protocol),
+          value: p.auctions_total ?? 0,
+          display: (p.auctions_total ?? 0).toLocaleString('en-US'),
+          annotation:
+            (p.auctions_24h ?? 0) > 0
+              ? `${(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h`
+              : undefined,
+          title: p.pool ?? undefined,
+        }))}
+      />
+    </Panel>
+  );
+
   return (
     <>
-      {auctionRows.length > 0 && (
-        <Panel
-          title="Liquidation auctions by pool — all time"
-          hint="Auction events from the indexed lending event stream; the risk view of which pools actually liquidate."
-          source={asExample('/v1/lending/pools', {})}
-        >
-          {truncatedNote}
-          <HBarList
-            ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
-              .map(
-                (p) =>
-                  `${LENDING_POOL_META[p.pool ?? '']?.name ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
-              )
-              .join(', ')}`}
-            items={auctionRows.map((p) => ({
-              label:
-                LENDING_POOL_META[p.pool ?? '']?.name ??
-                `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
-              value: p.auctions_total ?? 0,
-              display: (p.auctions_total ?? 0).toLocaleString('en-US'),
-              annotation:
-                (p.auctions_24h ?? 0) > 0
-                  ? `${(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h`
-                  : undefined,
-              title: p.pool ?? undefined,
-            }))}
-          />
-        </Panel>
-      )}
-
       <Panel
         title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
         hint="TVL and utilization read live from pool storage; auctions and users from the indexed event stream"
@@ -224,12 +283,8 @@ export function LendingPoolsTable() {
               <tr>
                 <Th>Pool</Th>
                 <Th>Protocol</Th>
-                <Th className="hidden xl:table-cell">Deployed</Th>
-                <Th align="right" className="hidden xl:table-cell">
-                  Auctions 24h
-                </Th>
-                <Th align="right">Auctions</Th>
                 <Th align="right">TVL</Th>
+                <Th align="right">Borrowed</Th>
                 <Th align="right" className="hidden sm:table-cell">
                   Utilization
                 </Th>
@@ -239,11 +294,11 @@ export function LendingPoolsTable() {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrow APR
                 </Th>
-                <Th align="right" className="hidden xl:table-cell">
-                  Users (30d)
+                <Th align="right" className="hidden md:table-cell">
+                  Auctions
                 </Th>
                 <Th align="right" className="hidden xl:table-cell">
-                  Last activity
+                  Users (30d)
                 </Th>
               </tr>
             </THead>
@@ -275,30 +330,36 @@ export function LendingPoolsTable() {
               {!q.isLoading && !q.isError && rows.length === 0 && (
                 <TR className="hover:bg-transparent">
                   <Td colSpan={COLS} className="text-ink-muted py-4">
-                    No lending pools have emitted auction events yet.
+                    No lending pools are indexed yet: none has an auction or a
+                    position.
                   </Td>
                 </TR>
               )}
-              {rows.map((p) => {
+              {listed.map((p) => {
                 const poolId = p.pool ?? '';
                 const meta = LENDING_POOL_META[poolId];
                 const protocol = lendingProtocol(meta?.protocol ?? p.protocol);
                 return (
                   <LinkRow href={`/lending/${poolId}`} key={poolId}>
                     <Td>
-                      <div className="flex items-center gap-1">
-                        <Link
-                          href={`/lending/${poolId}`}
-                          className="text-brand-600 font-mono text-xs whitespace-nowrap hover:underline"
-                          title={poolId}
-                        >
-                          {poolId.slice(0, 6)}…{poolId.slice(-6)}
-                        </Link>
-                        <CopyButton value={poolId} />
-                      </div>
                       {/* Curated label where we have one; we don't invent pool names. */}
-                      <div className="text-ink-muted text-xs whitespace-nowrap">
-                        {meta?.name ?? `${protocol?.name ?? 'Lending'} pool`}
+                      <Link
+                        href={`/lending/${poolId}`}
+                        className="text-brand-600 text-sm whitespace-nowrap hover:underline"
+                        title={poolId}
+                      >
+                        {poolDisplayName(poolId, p.protocol)}
+                      </Link>
+                      <div className="text-ink-muted flex items-center gap-1 font-mono text-xs whitespace-nowrap">
+                        <span title={poolId}>
+                          {poolId.slice(0, 4)}…{poolId.slice(-4)}
+                        </span>
+                        <CopyButton value={poolId} />
+                        {meta?.deployedAt && (
+                          <span className="hidden xl:inline" title="Deployed">
+                            · {meta.deployedAt}
+                          </span>
+                        )}
                       </div>
                     </Td>
                     <Td>
@@ -308,32 +369,29 @@ export function LendingPoolsTable() {
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                    <Td className="hidden font-mono text-xs whitespace-nowrap xl:table-cell">
-                      {meta?.deployedAt ?? (
-                        <span className="text-ink-faint">—</span>
+                    <PoolStats row={p} />
+                    <Td
+                      align="right"
+                      className="text-ink-muted hidden font-mono tabular-nums md:table-cell"
+                    >
+                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
+                      {(p.auctions_24h ?? 0) > 0 && (
+                        <div className="text-xs">
+                          {(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h
+                        </div>
                       )}
                     </Td>
                     <Td
                       align="right"
                       className="hidden font-mono tabular-nums xl:table-cell"
                     >
-                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <Td align="right" className="font-mono tabular-nums">
-                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <PoolStats row={p} />
-                    <Td
-                      align="right"
-                      className="hidden font-mono tabular-nums xl:table-cell"
-                    >
                       {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
-                    </Td>
-                    <Td
-                      align="right"
-                      className="text-ink-muted hidden text-xs whitespace-nowrap xl:table-cell"
-                    >
-                      {formatRelative(p.last_seen)}
+                      <div
+                        className="text-ink-muted text-xs whitespace-nowrap"
+                        title="Last activity"
+                      >
+                        {formatRelative(p.last_seen)}
+                      </div>
                     </Td>
                   </LinkRow>
                 );
@@ -341,9 +399,45 @@ export function LendingPoolsTable() {
             </TBody>
           </Table>
         </div>
+        {inactive.length > 0 && (
+          <div className="px-4 py-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-expanded={showInactive}
+              onClick={() => setShowInactive((v) => !v)}
+            >
+              {showInactive
+                ? `Hide ${inactive.length} inactive pools`
+                : `Show ${inactive.length} inactive pool${inactive.length === 1 ? '' : 's'}`}
+            </Button>
+            {!showInactive && (
+              <span className="text-ink-muted ml-3 text-xs">
+                No readable state and no auctions.
+              </span>
+            )}
+          </div>
+        )}
       </Panel>
+      {auctionsPanel}
     </>
   );
 }
 
-const COLS = 11;
+const COLS = 9;
+
+/** Curated name, else "<Protocol> pool"; we don't invent pool names. */
+function poolDisplayName(pool: string, protocol?: string | null) {
+  const meta = LENDING_POOL_META[pool];
+  return (
+    meta?.name ??
+    `${lendingProtocol(meta?.protocol ?? protocol ?? undefined)?.name ?? 'Lending'} pool`
+  );
+}
+
+// A chart bar has no secondary line, so an uncurated pool keeps its short id to stay distinct.
+function poolChartLabel(pool: string, protocol?: string | null) {
+  return LENDING_POOL_META[pool]
+    ? poolDisplayName(pool, protocol)
+    : `${poolDisplayName(pool, protocol)} ${pool.slice(0, 4)}…${pool.slice(-4)}`;
+}

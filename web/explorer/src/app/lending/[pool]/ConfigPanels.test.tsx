@@ -90,7 +90,9 @@ describe('PoolDetails', () => {
       },
     });
     wrap(<PoolDetails pool={POOL} />);
-    expect(await screen.findByText('12345 base units')).toBeInTheDocument();
+    expect(await screen.findByTitle('12345 base units')).toHaveTextContent(
+      /^12\.35K base units$/,
+    );
   });
 
   it('shows the raw status code when there is no label, and a null min collateral as a dash', async () => {
@@ -98,11 +100,10 @@ describe('PoolDetails', () => {
     wrap(<PoolDetails pool={POOL} />);
     expect(await screen.findByText('Status code 7')).toBeInTheDocument();
     expect(screen.getByText('10%')).toBeInTheDocument();
-    expect(screen.getByText(ORACLE)).toHaveAttribute(
-      'href',
-      `/contracts/${ORACLE}/`,
-    );
-    expect(screen.getByText('GADMIN')).toHaveAttribute(
+    const oracle = screen.getByTitle(ORACLE);
+    expect(oracle).toHaveAttribute('href', `/contracts/${ORACLE}/`);
+    expect(oracle.textContent).toMatch(/^CBORAC…AAAAAA$/);
+    expect(screen.getByTitle('GADMIN')).toHaveAttribute(
       'href',
       '/accounts/GADMIN/',
     );

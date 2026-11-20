@@ -26,6 +26,7 @@ type protocolsExplorer struct {
 	*ratesExplorer
 	panicPool, failBackstop string
 	backstopReads           atomic.Int32
+	blntTiers               []clickhouse.BackstopTierState // replaces the one tier of a tiered pool when set
 }
 
 func (e *protocolsExplorer) LendingBackstop(_ context.Context, pool string, tiered bool) (clickhouse.LendingBackstopState, error) {
@@ -44,6 +45,9 @@ func (e *protocolsExplorer) LendingBackstop(_ context.Context, pool string, tier
 		st.Token = "CBLENDLPTOKEN"
 	}
 	st.Tiers = []clickhouse.BackstopTierState{tier}
+	if tiered && e.blntTiers != nil {
+		st.Tiers = e.blntTiers
+	}
 	return st, nil
 }
 

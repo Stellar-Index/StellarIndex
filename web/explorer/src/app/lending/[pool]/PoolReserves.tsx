@@ -6,10 +6,12 @@ import { Panel } from '@/components/reveal';
 import { Button, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
-import { HBarList, PairedBars } from '@/components/charts/Bars';
+import { HBarList, InlineMeter, PairedBars } from '@/components/charts/Bars';
 import { asExample } from '@/api/client';
 import { FreshnessMarker } from '@/components/primitives';
 import {
+  baseUnitsDecimal,
+  multiplyDecimalStrings,
   decimalOrNull,
   compareDecimalStrings,
   formatCompactUnits,
@@ -18,10 +20,10 @@ import {
   sumDecimalStrings,
 } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
-import { fixedPct, supplyCapText } from '../poolConfig';
+import { fixedPct, isUnlimitedCap, supplyCapText } from '../poolConfig';
 import { ReserveDetail } from './ReserveDetail';
 import { usePoolReserves } from './usePoolReserves';
-import { shortAssetText } from '@/lib/asset-label';
+import { useAssetText } from '../lendingUsd';
 
 const usdFmt = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -43,16 +45,81 @@ function tokenAmount(base: string, decimals: number | null): string {
   }).format(n);
 }
 
+const negate = (d: string) => (d.startsWith('-') ? d.slice(1) : `-${d}`);
+
+/**
+ * reserveAvailable — supplied minus borrowed, exact over the decimal
+ * strings: in USD when both sides are priced, else in base units.
+ */
+export function reserveAvailable(rv: {
+  supplied: string;
+  borrowed: string;
+  supplied_usd?: string | null;
+  borrowed_usd?: string | null;
+}): { usd: string | null; units: string | null } {
+  const usd =
+    rv.supplied_usd != null && rv.borrowed_usd != null
+      ? sumDecimalStrings([rv.supplied_usd, negate(rv.borrowed_usd)])
+      : null;
+  return {
+    usd,
+    units: sumDecimalStrings([rv.supplied, negate(rv.borrowed)]),
+  };
+}
+
 function pct(f: number | null): string {
   return f == null ? '—' : `${(f * 100).toFixed(2)}%`;
+}
+
+function AvailableCell({
+  rv,
+}: {
+  rv: Parameters<typeof reserveAvailable>[0] & { decimals: number | null };
+}) {
+  const a = reserveAvailable(rv);
+  const tokens = a.units == null ? '—' : tokenAmount(a.units, rv.decimals);
+  return (
+    <Td
+      align="right"
+      className="hidden font-mono tabular-nums sm:table-cell"
+      title={a.usd != null ? `${tokens} tokens` : undefined}
+    >
+      {a.usd != null ? formatUsdWhole(a.usd) : tokens}
+    </Td>
+  );
+}
+
+function SupplyCapUsd({
+  cap,
+  decimals,
+  price,
+}: {
+  cap: string | null | undefined;
+  decimals: number | null | undefined;
+  price: string | null | undefined;
+}) {
+  if (isUnlimitedCap(cap)) return null;
+  const whole = baseUnitsDecimal(cap, decimals);
+  const usd =
+    whole != null && price != null
+      ? multiplyDecimalStrings(whole, price)
+      : null;
+  const shown = formatReadable(usd, true);
+  return shown == null ? null : (
+    <span className="text-ink-muted block text-xs" title={usd ?? undefined}>
+      {shown}
+    </span>
+  );
 }
 
 export function PoolReserves({ pool }: { pool: string }) {
   const q = usePoolReserves(pool);
   const [open, setOpen] = useState<string | null>(null);
+  const assetText = useAssetText();
   const configDecimals = q.data?.config_decimals;
 
   const reserves = q.data?.reserves ?? [];
+  const openRow = reserves.find((rv) => rv.asset === open);
   const priced = reserves
     .filter(
       (rv) =>
@@ -74,8 +141,8 @@ export function PoolReserves({ pool }: { pool: string }) {
   const omitted = q.data?.omitted_reserves ?? [];
   const lowerBound = q.data?.lower_bound === true || unpriced.length > 0;
   const left = [
-    ...unpriced.map((rv) => `${shortAssetText(rv.asset)} (unpriced)`),
-    ...omitted.map((a) => `${shortAssetText(a)} (no decoded state)`),
+    ...unpriced.map((rv) => `${assetText(rv.asset)} (unpriced)`),
+    ...omitted.map((a) => `${assetText(a)} (no decoded state)`),
   ];
   const excluded = left.length > 0 ? left.join(', ') : 'some reserves';
 
@@ -117,7 +184,7 @@ export function PoolReserves({ pool }: { pool: string }) {
           <DonutChart
             data={priced.map((rv) => ({
               id: rv.asset,
-              label: shortAssetText(rv.asset),
+              label: assetText(rv.asset),
               value: Number(rv.supplied_usd),
               decimal: rv.supplied_usd,
             }))}
@@ -136,14 +203,14 @@ export function PoolReserves({ pool }: { pool: string }) {
               ariaLabel={`Supplied vs borrowed per priced reserve: ${priced
                 .map(
                   (rv) =>
-                    `${shortAssetText(rv.asset)} $${formatCompactUnits(rv.supplied_usd)} supplied, ${rv.borrowed_usd != null ? `$${formatCompactUnits(rv.borrowed_usd)}` : 'unpriced'} borrowed`,
+                    `${assetText(rv.asset)} $${formatCompactUnits(rv.supplied_usd)} supplied, ${rv.borrowed_usd != null ? `$${formatCompactUnits(rv.borrowed_usd)}` : 'unpriced'} borrowed`,
                 )
                 .join('; ')}`}
               aLabel="Supplied"
               bLabel="Borrowed"
               rows={priced.map((rv) => ({
                 id: rv.asset,
-                label: shortAssetText(rv.asset),
+                label: assetText(rv.asset),
                 a: Number(rv.supplied_usd),
                 b: decimalOrNull(rv.borrowed_usd),
                 aDisplay: `$${formatCompactUnits(rv.supplied_usd)}`,
@@ -164,13 +231,13 @@ export function PoolReserves({ pool }: { pool: string }) {
               ariaLabel={`Utilization per reserve: ${reserves
                 .map(
                   (rv) =>
-                    `${shortAssetText(rv.asset)} ${rv.utilization_pct.toFixed(1)}%`,
+                    `${assetText(rv.asset)} ${rv.utilization_pct.toFixed(1)}%`,
                 )
                 .join(', ')}`}
               max={100}
               items={reserves.map((rv) => ({
                 id: rv.asset,
-                label: shortAssetText(rv.asset),
+                label: assetText(rv.asset),
                 value: Math.max(0, Math.min(100, rv.utilization_pct)),
                 display: `${rv.utilization_pct.toFixed(1)}%`,
                 color:
@@ -197,7 +264,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                   )
                   .map(
                     (rv) =>
-                      `${shortAssetText(rv.asset)} supply ${pct(rv.supply_apr)}, borrow ${pct(rv.borrow_apr)}`,
+                      `${assetText(rv.asset)} supply ${pct(rv.supply_apr)}, borrow ${pct(rv.borrow_apr)}`,
                   )
                   .join('; ')}`}
                 aLabel="Supply APR"
@@ -209,7 +276,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                   )
                   .map((rv) => ({
                     id: rv.asset,
-                    label: shortAssetText(rv.asset),
+                    label: assetText(rv.asset),
                     a: rv.supply_apr ?? null,
                     b: rv.borrow_apr ?? null,
                     aDisplay: pct(rv.supply_apr),
@@ -246,7 +313,8 @@ export function PoolReserves({ pool }: { pool: string }) {
         </p>
       )}
       {reserves.length > 0 && (
-        <div className="overflow-x-auto">
+        <div className="relative overflow-x-auto">
+          {/* relative: clips the detail row's absolutely-placed chart canvases, which otherwise widen the page */}
           <Table>
             <THead>
               <tr>
@@ -255,6 +323,9 @@ export function PoolReserves({ pool }: { pool: string }) {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrowed
                 </Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Available
+                </Th>
                 <Th align="right">Util</Th>
                 <Th align="right" className="hidden sm:table-cell">
                   Supply APR
@@ -262,10 +333,11 @@ export function PoolReserves({ pool }: { pool: string }) {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrow APR
                 </Th>
-                <Th align="right" className="hidden md:table-cell">
+                {/* In the reserve detail too; shown inline only where the table fits. */}
+                <Th align="right" className="hidden 2xl:table-cell">
                   Collateral factor
                 </Th>
-                <Th align="right" className="hidden md:table-cell">
+                <Th align="right" className="hidden 2xl:table-cell">
                   Liability factor
                 </Th>
                 <Th align="right" className="hidden md:table-cell">
@@ -304,7 +376,16 @@ export function PoolReserves({ pool }: { pool: string }) {
                       ? formatUsdWhole(rv.borrowed_usd)
                       : tokenAmount(rv.borrowed, rv.decimals)}
                   </Td>
-                  <Td align="right" className="font-mono tabular-nums">
+                  <AvailableCell rv={rv} />
+                  <Td
+                    align="right"
+                    className="font-mono whitespace-nowrap tabular-nums"
+                  >
+                    <InlineMeter
+                      frac={rv.utilization_pct / 100}
+                      label={`${assetText(rv.asset)} utilisation: borrowed over supplied`}
+                      className="mr-2 hidden sm:inline-block"
+                    />
                     {rv.utilization_pct.toFixed(1)}%
                   </Td>
                   <Td
@@ -321,14 +402,14 @@ export function PoolReserves({ pool }: { pool: string }) {
                   </Td>
                   <Td
                     align="right"
-                    className="hidden font-mono tabular-nums md:table-cell"
+                    className="hidden font-mono tabular-nums 2xl:table-cell"
                     title={rv.config?.collateral_factor}
                   >
                     {fixedPct(rv.config?.collateral_factor, configDecimals)}
                   </Td>
                   <Td
                     align="right"
-                    className="hidden font-mono tabular-nums md:table-cell"
+                    className="hidden font-mono tabular-nums 2xl:table-cell"
                     title={rv.config?.liability_factor}
                   >
                     {fixedPct(rv.config?.liability_factor, configDecimals)}
@@ -352,6 +433,11 @@ export function PoolReserves({ pool }: { pool: string }) {
                       rv.config?.supply_cap,
                       rv.decimals ?? rv.config?.decimals,
                     )}
+                    <SupplyCapUsd
+                      cap={rv.config?.supply_cap}
+                      decimals={rv.decimals ?? rv.config?.decimals}
+                      price={rv.price_usd}
+                    />
                   </Td>
                   <Td align="right">
                     <Button
@@ -366,23 +452,32 @@ export function PoolReserves({ pool }: { pool: string }) {
                     </Button>
                   </Td>
                 </TR>,
-                ...(open === rv.asset
-                  ? [
-                      <TR key={`${rv.asset}-detail`}>
-                        <Td colSpan={11}>
-                          <ReserveDetail
-                            pool={pool}
-                            reserve={rv}
-                            configDecimals={configDecimals}
-                          />
-                        </Td>
-                      </TR>,
-                    ]
-                  : []),
               ])}
             </TBody>
           </Table>
         </div>
+      )}
+      {/* Outside the scrolling table, so the detail and its charts take the
+          card's width rather than the table's. */}
+      {openRow && (
+        <section
+          aria-label={`${assetText(openRow.asset)} reserve detail`}
+          className="border-line space-y-3 border-t pt-4"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-ink text-sm font-medium">
+              {assetText(openRow.asset)} reserve
+            </h3>
+            <Button variant="secondary" size="sm" onClick={() => setOpen(null)}>
+              Close
+            </Button>
+          </div>
+          <ReserveDetail
+            pool={pool}
+            reserve={openRow}
+            configDecimals={configDecimals}
+          />
+        </section>
       )}
       <p className="text-ink-muted text-xs">
         Exact current state from on-chain b_rate/d_rate. APR shows{' '}
