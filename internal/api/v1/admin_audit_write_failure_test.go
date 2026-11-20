@@ -197,8 +197,8 @@ func (s *partialRevokeStore) RevokeKeyTree(_ context.Context, _, _ string) ([]st
 // the admin and the self-service surface: a retry cannot list them again.
 func TestKeyRevoke_FailedCascadeStillAuditsRemovedDescendants(t *testing.T) {
 	for name, path := range map[string]string{
-		"admin":   "/v1/admin/keys/kid_parent?identifier=signup-victim",
-		"account": "/v1/account/keys/kid_parent",
+		"admin":   "/v1/admin/keys/kid_0000000000c0ffee?identifier=signup-victim",
+		"account": "/v1/account/keys/kid_0000000000c0ffee",
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &partialRevokeStore{
@@ -217,9 +217,9 @@ func TestKeyRevoke_FailedCascadeStillAuditsRemovedDescendants(t *testing.T) {
 				t.Fatalf("audit rows = %d, want 1", len(sink.entries))
 			}
 			e, meta := sink.entries[0], string(sink.entries[0].Metadata)
-			if e.Action != "key.revoke" || e.TargetID != "kid_parent" ||
+			if e.Action != "key.revoke" || e.TargetID != "kid_0000000000c0ffee" ||
 				!strings.Contains(meta, `"revoked_descendant_key_ids":["kid_child"]`) || !strings.Contains(meta, `"outcome":"failed"`) {
-				t.Fatalf("audit row = %+v, metadata %s; want key.revoke on kid_parent naming kid_child, outcome failed", e, meta)
+				t.Fatalf("audit row = %+v, metadata %s; want key.revoke on kid_0000000000c0ffee naming kid_child, outcome failed", e, meta)
 			}
 		})
 	}

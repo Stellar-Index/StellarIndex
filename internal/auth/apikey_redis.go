@@ -214,7 +214,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	// A malformed allowlist entry fails closed (401) on both validators; see [subjectFromRecord].
 	sub, err := subjectFromRecord(rec)
 	if err != nil {
-		return Subject{}, fmt.Errorf("auth: apikey ip_allowlist decode: %w", err)
+		return Subject{}, fmt.Errorf("auth: apikey record rejected: %w", err)
 	}
 	if isAccount {
 		// Account overrides apply as on the Postgres validator: a rate-limit floor and a monthly-quota
@@ -234,6 +234,10 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 // used by both validators, so no path can drop a field. Rejection gates stay with the caller; an
 // unparseable allowlist entry is an error so the caller fails closed.
 func subjectFromRecord(rec APIKeyRecord) (Subject, error) {
+	// Revoke authority and the audit trail key on KeyID; a record without one cannot be scoped.
+	if rec.KeyID == "" {
+		return Subject{}, errors.New("auth: apikey record has no key id")
+	}
 	ipAllowlist, err := decodeIPAllowlist(rec.IPAllowlist)
 	if err != nil {
 		return Subject{}, err

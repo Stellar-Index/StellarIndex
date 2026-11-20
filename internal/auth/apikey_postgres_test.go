@@ -885,6 +885,35 @@ func TestPostgresValidator_CanonicalRecordRejectsSuspendedAccount(t *testing.T) 
 	}
 }
 
+// A canonical record with no key id cannot be scoped for revoke or audit, so it never authenticates as a keyless
+// subject: the lookup falls through to the row, which carries the id.
+func TestPostgresValidator_KeylessCanonicalRecordFallsThroughToTheRow(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys:     keys,
+		Accounts: accounts,
+		Cache:    rdb,
+	})
+	acct := seedActiveAccount(accounts, "keyless")
+	const plaintext = "sip_keyless_canonical"
+	row := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 60)
+	body, _ := json.Marshal(auth.APIKeyRecord{
+		Identifier: auth.AccountIdentifier(acct.Slug),
+		Tier:       auth.TierAPIKey,
+	})
+	if err := rdb.Set(context.Background(), cachekeys.APIKey(hexHashOf(plaintext)).String(), body, 0).Err(); err != nil {
+		t.Fatalf("seed canonical record: %v", err)
+	}
+
+	sub, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if sub.KeyID != row.ID {
+		t.Errorf("KeyID = %q, want the row's %q", sub.KeyID, row.ID)
+	}
+}
+
 // TestPostgresValidator_CanonicalRecordAppliesAccountOverrides: a dashboard key's mirror record
 // holds its mint-time limits and has no TTL, so the account's current overrides apply on the hit.
 func TestPostgresValidator_CanonicalRecordAppliesAccountOverrides(t *testing.T) {

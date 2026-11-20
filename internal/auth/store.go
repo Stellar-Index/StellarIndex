@@ -567,6 +567,21 @@ const keySecretPrefix = "sip_"
 // IsKeySecret reports whether s is shaped like a plaintext API key, as opposed to a key id.
 func IsKeySecret(s string) bool { return strings.HasPrefix(s, keySecretPrefix) }
 
+// IsKeyIDShaped reports whether s has the `kid_<hex>` form every key id is minted in (8 or 12 random
+// bytes; the api_keys CHECK allows 12+ hex digits), capped at 64 digits.
+func IsKeyIDShaped(s string) bool {
+	hexPart, ok := strings.CutPrefix(s, "kid_")
+	if !ok || len(hexPart) < 12 || len(hexPart) > 64 {
+		return false
+	}
+	for _, c := range hexPart {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // RedactKeySecrets replaces each plaintext-key-shaped run in s (a request path, a log field) with a marker, so a
 // key pasted where an id belongs is not copied into logs or error bodies.
 func RedactKeySecrets(s string) string {
