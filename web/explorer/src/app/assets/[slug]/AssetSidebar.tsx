@@ -4,12 +4,13 @@ import { asExample } from '@/api/client';
 import { Panel } from '@/components/reveal';
 import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatCompact, formatPriceSmall, positiveDecimal } from '@/lib/format';
+import { formatCompact, positiveDecimal } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+import { PerformanceRange } from './PerformanceRange';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 import {
   VOLUME_FLOOR_HINT,
@@ -160,7 +161,6 @@ export function AssetSidebar({
   homeDomain?: string | null;
 }) {
   const seed = positiveDecimal(priceUSD);
-  const priceNum = seed != null ? Number(seed) : null;
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
   // num() only, never divide. The supply fields (circulating / total /
   // max) are RAW smallest-unit integers, so scale them down 10^decimals.
@@ -350,8 +350,11 @@ export function AssetSidebar({
             priceStale={priceStale}
           />
           <PerformanceRange
+            assetId={coin.asset_id}
+            priceUSD={seed}
+            priceProvenance={priceProvenance ?? null}
+            priceStale={priceStale}
             points={coin.price_history_24h ?? []}
-            current={priceNum}
             source={source}
           />
         </>
@@ -384,52 +387,6 @@ function StatRow({
         {value}
       </span>
     </div>
-  );
-}
-
-function PerformanceRange({
-  points,
-  current,
-  source,
-}: {
-  points: { t: string; p?: string | null }[];
-  current: number | null;
-  source: ReturnType<typeof asExample>;
-}) {
-  const vals = points
-    .map((pt) => (pt.p != null ? Number(pt.p) : null))
-    .filter((v): v is number => v != null && Number.isFinite(v));
-  if (vals.length < 2) return null;
-  const low = Math.min(...vals);
-  const high = Math.max(...vals);
-  const cur = current ?? vals[vals.length - 1];
-  const pct =
-    high > low
-      ? Math.max(0, Math.min(100, ((cur - low) / (high - low)) * 100))
-      : 50;
-  return (
-    <Panel
-      headingLevel={2}
-      title="Price range"
-      hint="24h · USD"
-      source={source}
-    >
-      <div className="text-ink-muted flex items-center justify-between text-[11px]">
-        <span>Low</span>
-        <span>High</span>
-      </div>
-      <div className="bg-surface-muted relative mt-1 h-1.5 rounded-full">
-        <div
-          className="bg-ink absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full"
-          style={{ left: `calc(${pct}% - 1px)` }}
-          aria-hidden
-        />
-      </div>
-      <div className="text-ink-body mt-1.5 flex items-baseline justify-between font-mono text-xs tabular-nums">
-        <span>${formatPriceSmall(low)}</span>
-        <span>${formatPriceSmall(high)}</span>
-      </div>
-    </Panel>
   );
 }
 

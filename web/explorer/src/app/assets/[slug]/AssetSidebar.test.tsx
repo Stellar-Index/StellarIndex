@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 
@@ -173,5 +173,46 @@ describe('AssetSidebar floor marks', () => {
     expect(getByText('$5M')).toBeTruthy();
     expect(getByText('0.02%')).toBeTruthy();
     expect(queryByText(/≥/)).toBeNull();
+  });
+});
+
+// The 24h series is baked at deploy: the panel must say so, and must go
+// with the headline when the server withholds the price.
+describe('AssetSidebar price range', () => {
+  const ranged: SidebarCoin = {
+    ...coin,
+    price_history_24h: [
+      { t: '2026-01-01T00:00:00Z', p: '0.19' },
+      { t: '2026-01-01T12:00:00Z', p: '0.21' },
+    ],
+  };
+  function stubPrice(status: number, body: unknown) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (input: string | URL) => {
+        const code = String(input).includes('/v1/price?') ? status : 500;
+        return { status: code, ok: code === 200, json: async () => body };
+      }),
+    );
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('captions the range as baked at deploy', () => {
+    stubPrice(500, {});
+    const { getByText } = renderWithQuery(
+      <AssetSidebar coin={ranged} detail={null} priceUSD="0.2" />,
+    );
+    expect(getByText(/24h · USD · as baked at deploy/)).toBeTruthy();
+  });
+
+  it('withdraws the range when the server withholds the price', async () => {
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+      title: 'withheld',
+    });
+    const { queryByText } = renderWithQuery(
+      <AssetSidebar coin={ranged} detail={null} priceUSD="0.2" />,
+    );
+    await waitFor(() => expect(queryByText('Price range')).toBeNull());
   });
 });
