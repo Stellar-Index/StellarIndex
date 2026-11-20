@@ -207,38 +207,39 @@ export function LendingPoolsTable() {
     .filter((p) => (p.auctions_total ?? 0) > 0)
     .sort((x, y) => (y.auctions_total ?? 0) - (x.auctions_total ?? 0));
 
+  // Secondary to TVL: rendered after the pools table.
+  const auctionsPanel = auctionRows.length > 0 && (
+    <Panel
+      title="Liquidation auctions by pool — all time"
+      hint="Auction events from the indexed lending event stream; the risk view of which pools actually liquidate."
+      source={asExample('/v1/lending/pools', {})}
+    >
+      {truncatedNote}
+      <HBarList
+        ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
+          .map(
+            (p) =>
+              `${LENDING_POOL_META[p.pool ?? '']?.name ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
+          )
+          .join(', ')}`}
+        items={auctionRows.map((p) => ({
+          label:
+            LENDING_POOL_META[p.pool ?? '']?.name ??
+            `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
+          value: p.auctions_total ?? 0,
+          display: (p.auctions_total ?? 0).toLocaleString('en-US'),
+          annotation:
+            (p.auctions_24h ?? 0) > 0
+              ? `${(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h`
+              : undefined,
+          title: p.pool ?? undefined,
+        }))}
+      />
+    </Panel>
+  );
+
   return (
     <>
-      {auctionRows.length > 0 && (
-        <Panel
-          title="Liquidation auctions by pool — all time"
-          hint="Auction events from the indexed lending event stream; the risk view of which pools actually liquidate."
-          source={asExample('/v1/lending/pools', {})}
-        >
-          {truncatedNote}
-          <HBarList
-            ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
-              .map(
-                (p) =>
-                  `${LENDING_POOL_META[p.pool ?? '']?.name ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
-              )
-              .join(', ')}`}
-            items={auctionRows.map((p) => ({
-              label:
-                LENDING_POOL_META[p.pool ?? '']?.name ??
-                `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
-              value: p.auctions_total ?? 0,
-              display: (p.auctions_total ?? 0).toLocaleString('en-US'),
-              annotation:
-                (p.auctions_24h ?? 0) > 0
-                  ? `${(p.auctions_24h ?? 0).toLocaleString('en-US')} in 24h`
-                  : undefined,
-              title: p.pool ?? undefined,
-            }))}
-          />
-        </Panel>
-      )}
-
       <Panel
         title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
         hint="TVL and utilization read live from pool storage; auctions and users from the indexed event stream"
@@ -382,6 +383,7 @@ export function LendingPoolsTable() {
           </Table>
         </div>
       </Panel>
+      {auctionsPanel}
     </>
   );
 }
