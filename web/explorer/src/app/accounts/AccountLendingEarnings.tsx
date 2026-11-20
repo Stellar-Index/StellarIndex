@@ -13,6 +13,8 @@ import { shortAssetText } from '@/lib/asset-label';
 import { type Envelope } from '../explorer-shared';
 import { LENDING_POOL_META, lendingProtocol } from '../lending/poolMeta';
 import { UsdFigure, exclusionText, reasonText } from '../lending/lendingUsd';
+import { PairedBars, type PairedBarRow } from '@/components/charts/Bars';
+import { plotNumber, protocolColor, usdLabel } from '../lending/chartColors';
 
 export type LendingEarnings =
   paths['/lending/accounts/{account}/earnings']['get']['responses'][200]['content']['application/json']['data'];
@@ -33,6 +35,67 @@ export function poolAccrued(legs: Leg[], pool: string) {
     usd: sumDecimalStrings(own.map((l) => l.accrued_usd)),
     lowerBound: own.some((l) => l.accrued_usd == null),
   };
+}
+
+/** Supplied vs borrowed USD per pool, coloured by protocol; exact figures on hover. */
+export function positionMixRows(d: LendingEarnings): PairedBarRow[] {
+  return d.pools.flatMap((p) => {
+    const a = usdLabel(p.supplied_usd, p.lower_bound);
+    const b = usdLabel(p.borrowed_usd, p.lower_bound);
+    if (!a && !b) return [];
+    return [
+      {
+        id: p.pool,
+        label: poolName(p.pool),
+        a: plotNumber(p.supplied_usd),
+        b: plotNumber(p.borrowed_usd),
+        aDisplay: a?.display,
+        bDisplay: b?.display,
+        aHatch: p.lower_bound && a != null,
+        bHatch: p.lower_bound && b != null,
+        color: protocolColor(p.protocol),
+        title: `${p.pool} · ${[a && `supplied ${a.exact}`, b && `borrowed ${b.exact}`].filter(Boolean).join(', ')}`,
+      },
+    ];
+  });
+}
+
+function PositionMix({ d }: { d: LendingEarnings }) {
+  const rows = positionMixRows(d);
+  const apr = d.totals.net_apr == null ? null : ratioPct(d.totals.net_apr, '1');
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-baseline gap-x-4">
+        <h3 className="text-ink text-sm font-medium">Position mix</h3>
+        {apr != null && (
+          <span
+            className="text-ink-muted text-xs"
+            title={d.totals.net_apr ?? undefined}
+          >
+            Net APR{' '}
+            <span className="text-ink font-mono">
+              <span aria-hidden>{apr >= 0 ? '▲' : '▼'}</span>{' '}
+              {aprText(d.totals.net_apr)}
+            </span>{' '}
+            {apr >= 0 ? 'earning' : 'paying'} on net
+          </span>
+        )}
+      </div>
+      {rows.length > 0 && (
+        <PairedBars
+          rows={rows}
+          aLabel="Supplied"
+          bLabel="Borrowed"
+          ariaLabel={`Supplied and borrowed USD per pool: ${rows
+            .map(
+              (r) =>
+                `${r.label} supplied ${r.aDisplay ?? 'unpriced'}, borrowed ${r.bDisplay ?? 'unpriced'}`,
+            )
+            .join('; ')}`}
+        />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -203,6 +266,9 @@ export function AccountLendingEarnings({ id }: { id: string }) {
             </TBody>
           </Table>
         </div>
+      )}
+      {d && legs.filter((l) => l.value_usd != null).length >= 2 && (
+        <PositionMix d={d} />
       )}
       {(unpriced.length > 0 || excluded.length > 0) && (
         <p role="status" className="text-ink-muted text-xs">
