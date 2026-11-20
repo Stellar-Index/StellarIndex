@@ -16331,6 +16331,12 @@ components:
         excluded: { type: array, items: { $ref: "#/components/schemas/LendingStatsExclusion" }, description: "Legs left out, as kind `supply`, `borrow` or `backstop` with reason `withheld` or `unpriced`." }
         net_apr: { type: [string, "null"], description: "(Σ supply value × supply_apr − Σ borrow value × borrow_apr) / net_usd at the reserves' current APRs, emissions excluded; rounded half away from zero to 4 dp." }
         net_apr_reason: { type: [string, "null"], enum: [inputs_partial, apr_unavailable, net_value_not_positive, null] }
+        accrued_supply_usd: { type: string, description: "Σ supply legs' accrued_usd (interest earned) at the reserves' current prices, exact then 2 dp; a floor when `accrued_lower_bound` is true." }
+        accrued_borrow_usd: { type: string, description: "Σ borrow legs' accrued_usd (interest paid), as accrued_supply_usd." }
+        accrued_usd: { type: [string, "null"], description: "accrued_supply_usd - accrued_borrow_usd; may be negative. Null whenever a leg is left out, since an omitted borrow would make it too high." }
+        accrued_usd_reason: { type: [string, "null"], enum: [inputs_partial, null] }
+        accrued_lower_bound: { type: boolean, description: "True when a leg is left out of the accrued sums; `accrued_excluded` names each." }
+        accrued_excluded: { type: array, items: { $ref: "#/components/schemas/LendingStatsExclusion" }, description: "Legs left out of the accrued sums: every leg in `excluded`, plus valued legs whose accrued is unread (`accrued_unavailable`) or unpriced." }
       required: [supplied_usd, borrowed_usd, net_usd, net_usd_reason, lower_bound, excluded, net_apr, net_apr_reason]
     LendingStatsExclusion:
       type: object

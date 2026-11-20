@@ -6792,6 +6792,18 @@ export interface components {
             net_apr: string | null;
             /** @enum {string|null} */
             net_apr_reason: "inputs_partial" | "apr_unavailable" | "net_value_not_positive" | null;
+            /** @description Σ supply legs' accrued_usd (interest earned) at the reserves' current prices, exact then 2 dp; a floor when `accrued_lower_bound` is true. */
+            accrued_supply_usd?: string;
+            /** @description Σ borrow legs' accrued_usd (interest paid), as accrued_supply_usd. */
+            accrued_borrow_usd?: string;
+            /** @description accrued_supply_usd - accrued_borrow_usd; may be negative. Null whenever a leg is left out, since an omitted borrow would make it too high. */
+            accrued_usd?: string | null;
+            /** @enum {string|null} */
+            accrued_usd_reason?: "inputs_partial" | null;
+            /** @description True when a leg is left out of the accrued sums; `accrued_excluded` names each. */
+            accrued_lower_bound?: boolean;
+            /** @description Legs left out of the accrued sums: every leg in `excluded`, plus valued legs whose accrued is unread (`accrued_unavailable`) or unpriced. */
+            accrued_excluded?: components["schemas"]["LendingStatsExclusion"][];
         };
         /** @description What a lending figure leaves out and why. */
         LendingStatsExclusion: {
