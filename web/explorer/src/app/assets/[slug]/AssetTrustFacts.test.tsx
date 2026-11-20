@@ -103,7 +103,30 @@ describe('AssetTrustFacts', () => {
       expect(screen.getByText(/issuer facts \(read failed\)/)).toBeTruthy(),
     );
     expect(screen.getByText(/holder facts \(read failed\)/)).toBeTruthy();
-    expect(screen.getByText('no scam flag recorded')).toBeTruthy();
+    // A failed live read is not a clean bill of health.
+    expect(screen.getByText(/live directory check unavailable/)).toBeTruthy();
+    expect(screen.queryByText('no scam flag recorded')).toBeNull();
+  });
+
+  it('keeps a baked flag when the live read carries no tags', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === `/v1/assets/USDC-${G}`) {
+        return {
+          data: {
+            asset_id: `USDC-${G}`,
+            issuer_directory_domain: 'live.example',
+          },
+        } as never;
+      }
+      throw new Error('boom');
+    });
+    renderFacts({ directoryTags: ['malicious'] });
+    await waitFor(() =>
+      expect(screen.getByText(/issuer domain: live\.example/)).toBeTruthy(),
+    );
+    expect(
+      screen.getByText(/flagged by community directory: malicious/),
+    ).toBeTruthy();
   });
 
   it('renders volume character with its window and drops it from the uncaptured list', async () => {
@@ -167,10 +190,18 @@ describe('AssetTrustFacts', () => {
     expect(screen.queryByText('no scam flag recorded')).toBeNull();
     flagged.unmount();
 
-    respond({ asset_id: `USDC-${G}`, issuer_directory_tags: [] });
-    renderFacts({ scamReason: 'cleared since the build' });
+    // An empty live read cannot clear a baked flag: the payload has no
+    // "checked, not flagged" answer distinct from a failed lookup.
+    respond({
+      asset_id: `USDC-${G}`,
+      issuer_directory_tags: [],
+      issuer_directory_domain: 'live.example',
+    });
+    renderFacts({ scamReason: 'flagged at build' });
     await waitFor(() =>
-      expect(screen.getByText('no scam flag recorded')).toBeTruthy(),
+      expect(screen.getByText(/issuer domain: live\.example/)).toBeTruthy(),
     );
+    expect(screen.getByText(/flagged: flagged at build/)).toBeTruthy();
+    expect(screen.queryByText('no scam flag recorded')).toBeNull();
   });
 });

@@ -30,25 +30,51 @@ type ScamFlags = {
   directoryDomain?: string | null;
 };
 
+export type ResolvedScamFlags = ScamFlags & {
+  /** True when the live read failed or answered stale. */
+  liveUnchecked: boolean;
+};
+
 /**
- * The banner on a pre-rendered page: the baked flags are only a seed, and
- * the live read supersedes them, so an issuer flagged after the build
- * still gets the warning.
+ * The issuer's scam flags on a pre-rendered page, for every consumer.
+ * The live read may add a flag but never clears a baked one: the payload
+ * omits the tags both for "not flagged" and for a failed directory lookup
+ * (that failure is not on the JSON wire), so absence is not a clean answer.
  */
+export function useIssuerScamFlags(
+  assetID: string,
+  baked: ScamFlags,
+): ResolvedScamFlags {
+  const q = useAsset(assetID);
+  const live = q.data?.data;
+  const tags = [
+    ...new Set([
+      ...(baked.directoryTags ?? []),
+      ...(live?.issuer_directory_tags ?? []),
+    ]),
+  ];
+  return {
+    directoryTags: tags,
+    scamReason: live?.issuer_scam_reason?.trim() || baked.scamReason,
+    directoryDomain: live?.issuer_directory_domain || baked.directoryDomain,
+    liveUnchecked: q.isError || !!q.data?.flags?.stale,
+  };
+}
+
+/** The banner on a pre-rendered page, seeded by the baked flags. */
 export function LiveAssetScamCallout({
   assetID,
   ...baked
 }: ScamFlags & { assetID: string }) {
-  const live = useAsset(assetID).data?.data;
+  const { directoryTags, scamReason, directoryDomain } = useIssuerScamFlags(
+    assetID,
+    baked,
+  );
   return (
     <AssetScamCallout
-      {...(live
-        ? {
-            directoryTags: live.issuer_directory_tags,
-            scamReason: live.issuer_scam_reason,
-            directoryDomain: live.issuer_directory_domain,
-          }
-        : baked)}
+      directoryTags={directoryTags}
+      scamReason={scamReason}
+      directoryDomain={directoryDomain}
     />
   );
 }
