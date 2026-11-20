@@ -1,6 +1,6 @@
 ---
 title: API Design — Stellar Index v1
-last_verified: 2026-09-27
+last_verified: 2026-11-21
 status: ratified — `openapi/stellar-index.v1.yaml` is the binding contract; this doc records design intent
 ---
 
@@ -413,7 +413,7 @@ Decimals and resolution exposed via `/v1/oracle/decimals` and
 | ------ | ---- | ------- |
 | GET | `/v1/account/me` | API key holder info + quota status. |
 | GET | `/v1/account/usage?from=&to=` | Per-day request counts for the authenticated key over the trailing 30 days. Backed by the Redis usage counter the rate-limit middleware writes. Returns `[]` only when the counter isn't wired (Redis-less deployment); the absence is reflected on `/v1/readyz` under `checks`. F-1259 (codex audit-2026-05-12). |
-| POST | `/v1/account/keys` | Create a new API key (rotate). |
+| POST | `/v1/account/keys` | Create a child API key under the calling key (revoking a key also revokes its children). |
 
 Self-service signup flow lives at `https://stellarindex.io/signup`;
 the API returns the generated key once.
