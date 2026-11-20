@@ -329,8 +329,9 @@ type ProtocolsView struct {
 	Protocols []ProtocolView `json:"protocols"`
 	// TotalProtocols is len(protocols), a COUNT of directory rows, not the money figure TVLTotal.
 	TotalProtocols int `json:"total_protocols"`
-	// TVLTotal is the reconciled pooled-liquidity total across the protocols carrying a `tvl`
-	// block on this response; absent on cold start or with no TVL derivation.
+	// TVLTotal is the reconciled pooled-liquidity total over the protocols named in its own
+	// `protocols` list, which can include one whose row a failed roster read left out of
+	// Protocols (named in coverage_note); absent on cold start or with no TVL derivation.
 	TVLTotal *DEXTVLTotalView `json:"tvl_total,omitempty"`
 	// CoverageNote is non-empty when a source's roster read failed with no last-good count, so the
 	// source is OMITTED from `protocols` rather than published with a fabricated contract_count: 0.

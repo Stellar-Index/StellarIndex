@@ -84,7 +84,7 @@ type Flags struct {
 	// UnderReview: an operator hold covers the asset, contract or ledger; figures are served unchanged but unconfirmed.
 	UnderReview bool `json:"under_review,omitempty"`
 	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1. Read it only
-	// when ProxyDeviationUnchecked is false: that marks a failed peg read, so an absent deviation is not a "peg holds" verdict.
+	// when ProxyDeviationUnchecked is false: that marks a peg not observed (none in 24 h, withheld by a guard, or a failed read).
 	ProxyDeviation          bool `json:"proxy_deviation,omitempty"`
 	ProxyDeviationUnchecked bool `json:"proxy_deviation_unchecked,omitempty"`
 	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the requested asset's code matches a verified currency's
@@ -1099,15 +1099,15 @@ type ChartSeries struct {
 	Discontinuous bool           `json:"discontinuous"`
 	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
 	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
-	// Credit names the licensed off-chain feed when every point of a
-	// fiat series comes from it; empty once an on-chain venue feeds it.
+	// Credit names the licensed off-chain feed when every point of a fiat series comes from it; empty once an on-chain venue feeds it.
 	Credit string `json:"credit,omitempty"`
+	// StartsBeforeWindow: the first point is the last closed bucket and ends at or before RequestedFrom (1h on a daily series).
+	StartsBeforeWindow bool `json:"starts_before_window,omitempty"`
 	// MarketCapLowLiquidity (price_type=market_cap only) reports that
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
-	// RowCapTruncated: a Timeframe "all" read hit the 50,000-bucket cap, so
-	// Points is the OLDEST slice and ends at DataEndsAt, short of the present.
+	// RowCapTruncated: a read (Timeframe "all" or a capped bounded window) hit the 50,000-bucket cap; Points ends at DataEndsAt.
 	RowCapTruncated bool       `json:"row_cap_truncated,omitempty"`
 	DataEndsAt      *time.Time `json:"data_ends_at,omitempty"`
 }

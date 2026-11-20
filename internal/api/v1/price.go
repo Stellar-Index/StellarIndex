@@ -316,6 +316,8 @@ type PriceSnapshot struct {
 	ProxyDeviation bool `json:"-"`
 	// PegUnchecked: the peg check behind ProxyDeviation did not answer, so its false is not a verdict.
 	PegUnchecked bool `json:"-"`
+	// PegReadFailed: a peg read errored (not merely missed), so the answer is degraded and not cached.
+	PegReadFailed bool `json:"-"`
 
 	// FXRate is the USD→quote fixing a closed USD-anchored cross converted
 	// at: the vendor bar's exact close, quote units per 1 USD.

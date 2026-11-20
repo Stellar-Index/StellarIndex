@@ -265,7 +265,16 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	writeJSON(w, s.groupDivergenceRows(r.Context(), rows), Flags{})
+	// The cap applies to pairs before barred references and withheld pairs are dropped, so a capped page may be short.
+	writeJSON(w, s.groupDivergenceRows(r.Context(), rows), Flags{Truncated: divergencePairCount(rows) >= limit})
+}
+
+func divergencePairCount(rows []timescale.DivergenceRow) int {
+	pairs := make(map[[2]string]struct{})
+	for _, d := range rows {
+		pairs[[2]string{d.AssetID, d.QuoteID}] = struct{}{}
+	}
+	return len(pairs)
 }
 
 // groupDivergenceRows folds per-reference rows into one entry per pair in reader order. A pair /v1/price withholds is omitted,
@@ -276,6 +285,10 @@ func (s *Server) groupDivergenceRows(ctx context.Context, rows []timescale.Diver
 	idx := make(map[[2]string]int)
 	newest := make(map[[2]string]time.Time)
 	for _, d := range rows {
+		// A redistribution-barred vendor's price may not be re-served, here as on /v1/oracle/latest.
+		if external.RedistributionBarred(d.Reference) {
+			continue
+		}
 		if w, _ := withheld(ctx, d.AssetID, d.QuoteID); w {
 			continue
 		}
@@ -458,6 +471,9 @@ func groupDivergenceSeries(points []timescale.DivergenceSeriesPoint) []Divergenc
 	idx := make(map[time.Time]int)
 	newest := make(map[time.Time]time.Time)
 	for _, p := range points {
+		if external.RedistributionBarred(p.Reference) {
+			continue
+		}
 		b := p.Bucket.UTC()
 		i, seen := idx[b]
 		if !seen {

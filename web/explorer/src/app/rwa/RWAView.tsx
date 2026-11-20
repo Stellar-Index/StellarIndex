@@ -1636,7 +1636,7 @@ function HeadlineStats({
         {both != null && both.assets > 0 && (
           <>
             <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
-            carry both figures: {usd(both.reference_value_usd)} at the reference
+            carry both figures and a published premium: {usd(both.reference_value_usd)} at the reference
             against {usd(both.market_cap_usd)} at traded prices. That gap, per
             asset, is the premium or discount column below.{' '}
           </>

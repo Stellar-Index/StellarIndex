@@ -376,7 +376,7 @@ type RWASummary struct {
 	// prices instead of observed market prices, over a different subset of the same rows. Never
 	// a component of MarketCapUSD and never added to it.
 	ReferenceValuation RWAReferenceSummary `json:"reference_valuation"`
-	// BothBases totals only members carrying BOTH figures, so the gap between the bases reads
+	// BothBases totals only members carrying BOTH figures and a published premium, so the gap between the bases reads
 	// at set level without subtracting two totals taken over different rows.
 	BothBases RWABothBases `json:"both_bases"`
 	// Basis is a one-line statement of what was measured and how it was valued.
@@ -452,9 +452,9 @@ type RWAReferenceSummary struct {
 	Basis string `json:"basis"`
 }
 
-// RWABothBases totals members carrying both a market cap AND a reference valuation, so only these two totals share rows and their difference is the aggregate market-versus-reference gap.
+// RWABothBases totals members carrying both a market cap AND a reference valuation AND a published premium, so only these two totals share rows and their difference is the aggregate market-versus-reference gap.
 type RWABothBases struct {
-	// Assets is how many members carry both figures.
+	// Assets is how many members carry both figures and a published premium.
 	Assets int `json:"assets"`
 	// MarketCapUSD and ReferenceValueUSD are the two totals over those rows only; absent at zero.
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
@@ -1378,7 +1378,7 @@ func (s *Server) rwaListingRows(
 
 	out := make(map[string]AssetDetail, len(m.members))
 	for _, issuer := range issuers {
-		rows, at, stale, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{
+		rows, at, _, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{
 			Limit:  rwaAssetsPerIssuer,
 			Issuer: issuer,
 			Type:   "classic",
@@ -1386,7 +1386,8 @@ func (s *Server) rwaListingRows(
 		if err != nil {
 			return nil, join, err
 		}
-		join.notePage(issuer, at, stale, len(rows))
+		// Judged against the view, not the catalogue's 2-minute TTL that every 5-minute prewarm outlives; the age still lands in as_of.
+		join.notePage(issuer, at, !at.IsZero() && time.Since(at) >= rwaAssetsViewTTL, len(rows))
 		keep, memberCodes := rwaMatchMemberRows(codesByIssuer[issuer], rows)
 		if len(keep) == 0 {
 			continue
@@ -1682,8 +1683,7 @@ func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
 	return &s, valued
 }
 
-// rwaBothBases totals, on each basis separately, the rows carrying both a market cap and a reference valuation: subtracting full
-// sums compares two different populations, and the difference reads as a premium nobody measured.
+// rwaBothBases totals, per basis, only rows with a PUBLISHED premium, so the aggregate gap holds no refused comparison.
 func rwaBothBases(assets []RWAAsset) RWABothBases {
 	market := new(big.Rat)
 	reference := new(big.Rat)
@@ -1691,7 +1691,7 @@ func rwaBothBases(assets []RWAAsset) RWABothBases {
 	for _, a := range assets {
 		mc := ratFromOptionalString(a.Valuation.MarketCapUSD)
 		rv := ratFromOptionalString(a.ReferenceValuation.ValueUSD)
-		if mc == nil || rv == nil {
+		if mc == nil || rv == nil || a.Premium.Status != RWAPremiumPublished {
 			continue
 		}
 		market.Add(market, mc)

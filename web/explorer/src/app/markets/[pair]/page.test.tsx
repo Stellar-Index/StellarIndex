@@ -94,7 +94,9 @@ describe('markets/[pair]/page USD volume stats', () => {
     vi.unstubAllGlobals();
   });
 
-  function withPoints(vUsd: string[]) {
+  // The chart's closed hourly points cover less than 24h, so the 24h stat is the
+  // server's own /v1/pairs figure, never their sum.
+  function withData(vUsd: string[], pair?: Record<string, unknown>) {
     vi.mocked(buildFetchData).mockImplementation(async (path: string) => {
       if (path.startsWith('/v1/chart')) {
         return {
@@ -106,6 +108,17 @@ describe('markets/[pair]/page USD volume stats', () => {
           })),
         } as never;
       }
+      if (path.startsWith('/v1/pairs') && pair) {
+        return [
+          {
+            base: BASE,
+            quote: QUOTE,
+            trade_count_24h: 3,
+            last_trade_at: '2026-01-01T02:00:00Z',
+            ...pair,
+          },
+        ] as never;
+      }
       return null as never;
     });
   }
@@ -114,22 +127,36 @@ describe('markets/[pair]/page USD volume stats', () => {
     return screen.getByText(label, { selector: 'dt' }).nextElementSibling;
   }
 
-  it('sums and formats the hourly volumes exactly', async () => {
-    withPoints(['999.994999999999998', '0.000000000000001']);
+  it('renders the server 24h volume, not the sum of closed hours', async () => {
+    withData(['5', '0.000000000000001'], {
+      volume_24h_usd: '999.994999999999998',
+    });
     await renderPair();
     expect(stat('24h USD vol')).toHaveTextContent('$999.99');
-    expect(stat('Last hour USD vol')).toHaveTextContent('<$0.01');
+    expect(stat('Last closed hour USD vol')).toHaveTextContent('<$0.01');
   });
 
   it('shows a million-dollar total in compact form', async () => {
-    withPoints(['1234567', '1000']);
+    withData(['1000'], { volume_24h_usd: '1235567' });
     await renderPair();
     expect(stat('24h USD vol')).toHaveTextContent('$1.24M');
-    expect(stat('Last hour USD vol')).toHaveTextContent('$1K');
+    expect(stat('Last closed hour USD vol')).toHaveTextContent('$1K');
+  });
+
+  it('marks a lower-bound 24h volume', async () => {
+    withData(['1'], { volume_24h_usd: '250', volume_lower_bound: true });
+    await renderPair();
+    expect(stat('24h USD vol')).toHaveTextContent('≥ $250');
+  });
+
+  it('shows no 24h volume without the server figure', async () => {
+    withData(['1234567']);
+    await renderPair();
+    expect(screen.queryByText('24h USD vol')).toBeNull();
   });
 
   it.each(['1e5', '0', '-5'])('hides a 24h total of %s', async (v) => {
-    withPoints([v]);
+    withData(['1'], { volume_24h_usd: v });
     await renderPair();
     expect(screen.queryByText('24h USD vol')).toBeNull();
   });
