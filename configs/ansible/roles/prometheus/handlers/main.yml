@@ -9,11 +9,27 @@
 
 # SIGHUP re-reads prometheus.yml and rules only. Command-line flags
 # (retention, --web.config.file) live in the unit and need a restart.
+# One replica at a time, and the next waits until this one serves again
+# (TSDB WAL replay takes minutes): both down at once is a gap in every series
+# and no rule evaluation. Type=simple returns before Prometheus is ready.
 - name: restart prometheus
-  systemd:
-    name: prometheus
-    state: restarted
-    daemon_reload: yes
+  shell: |
+    set -eu
+    systemctl daemon-reload
+    systemctl restart prometheus
+    for _ in $(seq 120); do
+      if curl -fsS --max-time 5 -o /dev/null -K - <<EOF
+    url = "http://{{ '127.0.0.1' if prometheus_listen.startswith('0.0.0.0:') else ansible_host }}:{{ prometheus_port }}/-/ready"
+    {% if prometheus_basic_auth_password_hash %}user = "{{ prometheus_basic_auth_username }}:$(cat /etc/prometheus/prometheus-client-password)"{% endif %}
+    EOF
+      then exit 0; fi
+      sleep 5
+    done
+    echo "prometheus not ready 600s after restart on {{ inventory_hostname }}" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  throttle: 1
   listen: "prometheus unit changed"
 
 - name: reload alertmanager
@@ -24,11 +40,25 @@
   listen: "alertmanager config changed"
 
 # Flags (--web.config.file, cluster peers) live in the unit; SIGHUP skips them.
+# One peer at a time, each ready before the next, as for prometheus above.
 - name: restart alertmanager
-  systemd:
-    name: alertmanager
-    state: restarted
-    daemon_reload: yes
+  shell: |
+    set -eu
+    systemctl daemon-reload
+    systemctl restart alertmanager
+    for _ in $(seq 60); do
+      if curl -fsS --max-time 5 -o /dev/null -K - <<EOF
+    url = "http://{{ '127.0.0.1' if alertmanager_listen.startswith('0.0.0.0:') else ansible_host }}:{{ alertmanager_port }}/-/ready"
+    {% if alertmanager_basic_auth_password_hash %}user = "{{ alertmanager_basic_auth_username }}:$(cat /etc/prometheus/alertmanager-client-password)"{% endif %}
+    EOF
+      then exit 0; fi
+      sleep 5
+    done
+    echo "alertmanager not ready 300s after restart on {{ inventory_hostname }}" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  throttle: 1
   listen: "alertmanager unit changed"
 
 - name: reload firewall

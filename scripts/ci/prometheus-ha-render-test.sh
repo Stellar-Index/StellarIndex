@@ -8,7 +8,8 @@
 #     has no plaintext;
 #   - the Loki scrape job targets loki_listen_address:loki_http_port, and has
 #     no target for a loopback-bound Loki;
-#   - the unit template notifies a restarting handler, not SIGHUP.
+#   - the unit template notifies a restarting handler, not SIGHUP, and the
+#     restart handlers go one replica at a time, each waiting for /-/ready.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.." || exit 1
@@ -142,13 +143,48 @@ else
   bad "loopback-bound loki rendered a target: $(loki_targets "$TMPD/off.yml")"
 fi
 
-handler=$(grep -A5 'name: restart prometheus' "$ROLE/handlers/main.yml" || true)
-if grep -q 'notify: "prometheus unit changed"' "$ROLE/tasks/05-systemd.yml" \
-  && [[ "$handler" == *'state: restarted'* ]]; then
-  ok "prometheus unit change restarts the service"
+if grep -q 'notify: "prometheus unit changed"' "$ROLE/tasks/05-systemd.yml"; then
+  ok "prometheus unit change notifies the restart handler"
 else
   bad "prometheus unit change is applied by SIGHUP only"
 fi
+
+# Restart handlers: one replica at a time, each waits for /-/ready (credential on
+# stdin, not argv) before the next replica restarts.
+if "$PY" -I - "$ROLE/handlers/main.yml" <<'PYEOF'
+import jinja2, os, subprocess, sys, tempfile, yaml
+hs = {h["name"]: h for h in yaml.safe_load(open(sys.argv[1]))}
+bad = 0
+for svc in ("prometheus", "alertmanager"):
+    h = hs[f"restart {svc}"]
+    v = {f"{svc}_listen": "0.0.0.0:9", f"{svc}_port": 9, f"{svc}_basic_auth_password_hash": "h",
+         f"{svc}_basic_auth_username": "operator", "ansible_host": "10.0.0.5", "inventory_hostname": "prom1"}
+    script = jinja2.Environment().from_string(h["shell"]).render(**v)
+    # The credential is read from the client password file on the host, never rendered into the script.
+    if "s3cret-fake" in script or f"/etc/prometheus/{svc}-client-password" not in script:
+        bad += 1
+    for ready_after, want_rc in ((2, 0), (10**6, 1)):
+        with tempfile.TemporaryDirectory() as d:
+            open(f"{d}/{svc}-client-password", "w").write("s3cret-fake")
+            run = script.replace("/etc/prometheus/", f"{d}/")
+            stubs = {"systemctl": f'echo "systemctl $*" >> {d}/calls\n',
+                     "sleep": "",
+                     "curl": f'echo "curl $*" >> {d}/calls; cat >> {d}/stdin; n=$(grep -c ^curl {d}/calls); [ "$n" -gt {ready_after} ]\n'}
+            for n, body in stubs.items():
+                open(f"{d}/{n}", "w").write("#!/bin/sh\n" + body)
+                os.chmod(f"{d}/{n}", 0o755)
+            env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}"}
+            rc = subprocess.run(["bash", "-c", run], env=env, stdin=subprocess.DEVNULL, capture_output=True).returncode
+            calls, stdin = open(f"{d}/calls").read(), open(f"{d}/stdin").read()
+        good = (h.get("throttle") == 1 and rc == want_rc
+                and f"systemctl restart {svc}" in calls and "s3cret-fake" not in calls
+                and 'user = "operator:s3cret-fake"' in stdin and "http://127.0.0.1:9/-/ready" in stdin)
+        label = "waits for /-/ready" if want_rc == 0 else "fails when never ready"
+        print(("  ok — " if good else "  FAIL — ") + f"restart {svc} is throttled to one host and {label}")
+        bad += not good
+sys.exit(1 if bad else 0)
+PYEOF
+then :; else failed=1; fi
 
 # Run the real preflight assert task, alone, against each hash/plaintext combination.
 "$PY" -I -c '
