@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { LendingProtocolStats } from './LendingProtocolStats';
@@ -109,12 +115,19 @@ describe('LendingProtocolStats', () => {
         '≥',
       ),
     );
-    expect(
-      blend.getByText(/≥ lower bound: 1 reserve has no reliable price/),
-    ).toBeInTheDocument();
-    expect(blend.getByText(/no reliable price:/).nextSibling).toHaveTextContent(
-      'EURC',
+    const summary = blend.getByText(
+      /≥ lower bound: 1 reserve has no reliable price/,
     );
+    // The asset-name map loads only once the reader opens the list.
+    expect(vi.mocked(apiGet).mock.calls.map((c) => c[0])).not.toContain(
+      '/v1/sac-wrappers',
+    );
+    const details = summary.closest('details')!;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    expect(
+      (await blend.findByText(/no reliable price:/)).nextSibling,
+    ).toHaveTextContent('EURC');
   });
 
   it('says why the token price is missing instead of a bare dash', async () => {

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Button, Skeleton, Stat, StatCell, StatGrid } from '@/components/ui';
@@ -42,7 +43,7 @@ export function LendingProtocolStats({
   protocol: 'blend' | 'blnt';
 }) {
   const q = useLendingProtocols();
-  const assetText = useAssetText();
+  const [open, setOpen] = useState(false);
   if (q.isLoading) return <Skeleton className="h-16 w-full" />;
   if (q.isError)
     return (
@@ -70,10 +71,7 @@ export function LendingProtocolStats({
   const left = (row.excluded ?? []).filter(
     (e) => e.kind !== 'backstop' && e.kind !== 'token',
   );
-  // One asset is often excluded from several pools; name it once.
-  const { line, groups } = exclusionGroups(left, (e) =>
-    e.asset ? assetText(e.asset) : e.pool ? poolName(e.pool) : e.kind,
-  );
+  const { line } = exclusionGroups(left, (e) => e.kind);
   const reason = lb
     ? `lower bound: ${line || 'some reserves left out'}`
     : undefined;
@@ -165,20 +163,39 @@ export function LendingProtocolStats({
         </StatCell>
       </StatGrid>
       {lb && (
-        <details className="text-ink-muted text-xs">
+        <details
+          className="text-ink-muted text-xs"
+          onToggle={(e) => setOpen(e.currentTarget.open)}
+        >
           <summary role="status" className="cursor-pointer">
             ≥ lower bound: {line || 'some reserves are left out'}
           </summary>
-          <dl className="mt-2 space-y-1.5 pl-3">
-            {groups.map((g) => (
-              <div key={g.reason}>
-                <dt className="text-ink-body inline">{g.reason}: </dt>
-                <dd className="inline">{g.names.join(', ')}</dd>
-              </div>
-            ))}
-          </dl>
+          {open && <ExcludedNames excluded={left} />}
         </details>
       )}
     </div>
+  );
+}
+
+// Mounted only when the disclosure opens, so the asset-name map is not a first-paint request.
+function ExcludedNames({
+  excluded,
+}: {
+  excluded: NonNullable<LendingProtocolRow['excluded']>;
+}) {
+  const assetText = useAssetText();
+  // One asset is often excluded from several pools; name it once.
+  const { groups } = exclusionGroups(excluded, (e) =>
+    e.asset ? assetText(e.asset) : e.pool ? poolName(e.pool) : e.kind,
+  );
+  return (
+    <dl className="mt-2 space-y-1.5 pl-3">
+      {groups.map((g) => (
+        <div key={g.reason}>
+          <dt className="text-ink-body inline">{g.reason}: </dt>
+          <dd className="inline">{g.names.join(', ')}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
