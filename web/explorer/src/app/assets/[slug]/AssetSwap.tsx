@@ -1044,8 +1044,7 @@ function onChainDecimals(
 
 /** A converted amount, or a bound when it is below the leg's smallest unit. */
 type Converted =
-  | { kind: 'amount'; value: string }
-  | { kind: 'below'; unit: string };
+  { kind: 'amount'; value: string } | { kind: 'below'; unit: string };
 
 function convertLeg(
   amount: string,

@@ -3,6 +3,17 @@ import { render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 
+vi.mock('@/api/client', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  return {
+    ...actual,
+    apiGet: vi.fn().mockRejectedValue(new Error('offline')),
+  };
+});
+
+import { apiGet } from '@/api/client';
+
 import {
   AssetIdentityCard,
   AssetSidebar,
@@ -214,5 +225,73 @@ describe('AssetSidebar price range', () => {
       <AssetSidebar coin={ranged} detail={null} priceUSD="0.2" />,
     );
     await waitFor(() => expect(queryByText('Price range')).toBeNull());
+  });
+});
+
+// The market and activity figures are baked into the static export; the
+// live /v1/assets/{id} row replaces them, and the baked ones say so.
+describe('AssetSidebar live market figures', () => {
+  const baked = {
+    market_cap_usd: '5000000',
+    volume_24h_usd: '1200',
+    fdv_usd: '8000000',
+    decimals: 7,
+  };
+  const bakedCoin: SidebarCoin = { ...coin, trade_count_24h: 1500 };
+  function liveRow(row: Record<string, unknown> | null) {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (row && path === `/v1/assets/${encodeURIComponent(coin.asset_id)}`)
+        return { data: row };
+      throw new Error('offline');
+    });
+  }
+  afterEach(() => vi.mocked(apiGet).mockReset());
+
+  it('replaces the baked figures with the live row', async () => {
+    liveRow({
+      ...coin,
+      market_cap_usd: '7000000',
+      volume_24h_usd: '3000',
+      fdv_usd: '9000000',
+      trade_count_24h: 4321,
+    });
+    const { findByText, getByText, queryByText } = renderWithQuery(
+      <AssetSidebar coin={bakedCoin} detail={baked} priceUSD="0.9998" />,
+    );
+    expect(await findByText('$7M')).toBeTruthy();
+    expect(getByText('$3K')).toBeTruthy();
+    expect(getByText('$9M')).toBeTruthy();
+    expect(getByText('4.32K')).toBeTruthy();
+    expect(queryByText('$5M')).toBeNull();
+    expect(queryByText('as baked at deploy')).toBeNull();
+  });
+
+  it('hides a USD figure the live row withholds instead of falling back', async () => {
+    liveRow({
+      ...coin,
+      price_usd: null,
+      price_withheld_reason: 'substance',
+      market_cap_usd: null,
+      fdv_usd: null,
+      volume_24h_usd: '3000',
+    });
+    const { findByText, queryByText } = renderWithQuery(
+      <AssetSidebar coin={bakedCoin} detail={baked} priceUSD="0.9998" />,
+    );
+    expect(await findByText('$3K')).toBeTruthy();
+    expect(queryByText('$5M')).toBeNull();
+    expect(queryByText('$8M')).toBeNull();
+  });
+
+  it('labels the baked figures when the live read fails', async () => {
+    liveRow(null);
+    const { getAllByText, getByText } = renderWithQuery(
+      <AssetSidebar coin={bakedCoin} detail={baked} priceUSD="0.9998" />,
+    );
+    await waitFor(() => expect(apiGet).toHaveBeenCalled());
+    expect(getByText('$5M')).toBeTruthy();
+    expect(getByText('1.5K')).toBeTruthy();
+    // Both the Market and the Activity panel carry the caption.
+    expect(getAllByText('as baked at deploy')).toHaveLength(2);
   });
 });

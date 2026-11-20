@@ -52,7 +52,7 @@ import { SacRedirect } from './SacRedirect';
 import { AssetIdentityCard, AssetSidebar } from './AssetSidebar';
 import { AssetIdentityLine } from './AssetIdentityLine';
 import { AssetTrustFacts } from './AssetTrustFacts';
-import { headlinePriceProvenance } from './priceProvenance';
+import { bakedAtDeploy, headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { AssetAbout } from './AssetAbout';
@@ -1286,6 +1286,9 @@ function OverviewBody({
               accentTone={athDrawdown(coin.price_usd, coin.ath?.usd)?.tone}
             />
           </dl>
+          <p className="text-ink-muted mt-2 text-xs">
+            Volume, markets, market cap, supply and ATH: {bakedAtDeploy()}
+          </p>
         </Panel>
 
         {/* `observation_count` counts TRADE observations and nothing

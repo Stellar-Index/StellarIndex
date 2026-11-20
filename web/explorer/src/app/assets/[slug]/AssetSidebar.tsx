@@ -1,6 +1,9 @@
+'use client';
+
 import Link from 'next/link';
 
 import { asExample } from '@/api/client';
+import { useAsset } from '@/api/hooks';
 import { Panel } from '@/components/reveal';
 import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -147,7 +150,7 @@ export function AssetIdentityCard({
  */
 export function AssetSidebar({
   coin,
-  detail,
+  detail: bakedDetail,
   priceUSD,
   priceProvenance,
   priceStale,
@@ -162,6 +165,12 @@ export function AssetSidebar({
   homeDomain?: string | null;
 }) {
   const seed = positiveDecimal(priceUSD);
+  // The live row replaces the baked figures whole, so a USD figure it
+  // serves null (a withheld price, a refused cap) stays blank.
+  const live = useAsset(coin.asset_id).data?.data ?? null;
+  const detail: SidebarDetail | null = live ?? bakedDetail;
+  const activity = live ?? coin;
+  const bakedHint = live ? undefined : bakedAtDeploy();
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
   // num() only, never divide. The supply fields (circulating / total /
   // max) are RAW smallest-unit integers, so scale them down 10^decimals.
@@ -213,7 +222,7 @@ export function AssetSidebar({
     <div className="space-y-4">
       <Panel
         title="Market"
-        hint={bakedAtDeploy()}
+        hint={bakedHint}
         source={source}
         headingLevel={2}
         bodyClassName="divide-line -mx-4 -mb-4 divide-y"
@@ -274,6 +283,7 @@ export function AssetSidebar({
 
       <Panel
         title={coin.issuer || homeDomain ? 'Issuer & activity' : 'Activity'}
+        hint={bakedHint}
         source={source}
         headingLevel={2}
         bodyClassName="divide-line -mx-4 -mb-4 divide-y"
@@ -320,20 +330,24 @@ export function AssetSidebar({
         <StatRow
           label="Trades (24h)"
           value={
-            coin.trade_count_24h != null
-              ? formatCompact(coin.trade_count_24h)
+            activity.trade_count_24h != null
+              ? formatCompact(activity.trade_count_24h)
               : '—'
           }
         />
         <StatRow
           label="Observations"
-          value={formatCompact(coin.observation_count)}
+          value={
+            activity.observation_count != null
+              ? formatCompact(activity.observation_count)
+              : '—'
+          }
         />
         <StatRow
           label="Markets (24h)"
           value={
-            coin.markets_count != null
-              ? coin.markets_count.toLocaleString('en-US')
+            activity.markets_count != null
+              ? activity.markets_count.toLocaleString('en-US')
               : '—'
           }
         />
