@@ -9,6 +9,7 @@ import { AssetLink } from '@/components/AssetLink';
 import {
   Badge,
   Button,
+  Segmented,
   Skeleton,
   TBody,
   TR,
@@ -117,17 +118,15 @@ export function LendingRatesTable() {
       bodyClassName="-mx-4 -mb-4"
     >
       <div className="mx-4 mb-3 flex flex-wrap items-center gap-2">
-        {(['all', 'blend', 'blnt'] as const).map((p) => (
-          <Button
-            key={p}
-            size="sm"
-            variant={protocol === p ? 'primary' : 'secondary'}
-            aria-pressed={protocol === p}
-            onClick={() => setProtocol(p)}
-          >
-            {p === 'all' ? 'All' : (lendingProtocol(p)?.name ?? p)}
-          </Button>
-        ))}
+        <Segmented
+          ariaLabel="Protocol"
+          value={protocol}
+          onChange={(v) => setProtocol(v as typeof protocol)}
+          options={(['all', 'blend', 'blnt'] as const).map((p) => ({
+            value: p,
+            label: p === 'all' ? 'All' : (lendingProtocol(p)?.name ?? p),
+          }))}
+        />
         <label className="text-ink-muted ml-auto text-xs">
           Asset{' '}
           <select
