@@ -1350,26 +1350,23 @@ func capExceedsObservedTurnover(capUSD string, volume24hUSD *string, maxRatio fl
 }
 
 // computeMarketCapUSD returns (circulating / 10^decimals) x priceUSD as a 2-dp decimal string, "" on unparseable input or a
-// negative result; big.Float keeps huge supplies exact (ADR-0003). Zero renders "0.00" to agree with [usdMarketValue]; dust
-// suppression is the caller's job.
+// negative result. Exact big.Rat with [usdMarketValue]'s rounding, so the listing and the detail serve the same string;
+// dust suppression is the caller's job.
 func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
-	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
+	circ, ok := new(big.Rat).SetString(strings.TrimSpace(circRaw))
+	if !ok || decimals < 0 {
+		return ""
+	}
+	price, ok := new(big.Rat).SetString(strings.TrimSpace(priceRaw))
 	if !ok {
 		return ""
 	}
-	price, ok := new(big.Float).SetPrec(128).SetString(priceRaw)
-	if !ok {
-		return ""
-	}
-	scale := new(big.Float).SetPrec(128).SetInt(
-		new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil),
-	)
-	mc := new(big.Float).SetPrec(128).Quo(circ, scale)
-	mc.Mul(mc, price)
+	mc := new(big.Rat).Mul(circ, price)
+	mc.Quo(mc, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)))
 	if mc.Sign() < 0 {
 		return ""
 	}
-	return mc.Text('f', 2)
+	return mc.FloatString(2)
 }
 
 // sep1ImagesTTL bounds when a refresh is kicked, not how long the map is served: the last good map is served while it runs.

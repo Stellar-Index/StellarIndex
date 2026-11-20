@@ -98,6 +98,23 @@ func TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue(t *testing.T) {
 
 // TestComputeMarketCapUSD_NegativeStillRejected pins that the guard rejects only negatives
 // (corrupt input, never a legitimate supply or price): they return "", not a negative market cap.
+// The listing cap must equal the detail's exact figure, including on half-cent ties a binary float rounds the other way.
+func TestComputeMarketCapUSD_AgreesWithUsdMarketValueOnTies(t *testing.T) {
+	for _, c := range []struct {
+		circ, price string
+		dec         int
+	}{{"50000000", "0.001", 7}, {"250000000", "0.025", 7}, {"10", "0.0005", 0}, {"123456789012345678901234567890", "0.37", 7}} {
+		circ, _ := new(big.Int).SetString(c.circ, 10)
+		want, err := usdMarketValue(circ, c.price, c.dec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := computeMarketCapUSD(c.circ, c.price, c.dec); got != want {
+			t.Errorf("computeMarketCapUSD(%s, %s, %d) = %q, detail usdMarketValue = %q", c.circ, c.price, c.dec, got, want)
+		}
+	}
+}
+
 func TestComputeMarketCapUSD_NegativeStillRejected(t *testing.T) {
 	got := computeMarketCapUSD("-5", "1", 0)
 	if got != "" {
