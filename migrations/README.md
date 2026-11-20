@@ -539,6 +539,7 @@ rejects a row that is not.
 | 0229 | Adds nullable `issuers.sep1_payload_previous`: the payload a `home_domain` change clears is held there until the new domain's first fetch diffs against it into `issuer_identity_history`, so a domain move no longer erases an identity change. Never served. Nullable, no default: catalog-only, old-binary-safe (rule 9). |
 | 0230 | Replaces `audit_log_erase_metadata(jsonb)` so an account erasure also strips `reason` (staff free-text justification) and `actor_email` (a staff actor's address) from kept audit rows. No back-fill. |
 | 0231 | Creates `source_exclusions`, the operator control table behind `stellarindex-ops source-exclude`: a price source, optionally one pair (stored in canonical orientation; readers match both directions and every alias form), excluded over a time window. An append-only trigger refuses DELETE, TRUNCATE and any UPDATE but a one-time lift. New empty plain table, old-binary-safe (rule 9); the down refuses while rows exist. |
+| 0232 | Restores `pools_per_source_1h` to real-time aggregation (0187 recreated it materialized-only and left the restore to an operator comment, so a fresh install served pools without the current hour). Runs only when the view already holds materialized rows or `trades` is empty, so an unrefreshed view is never flipped into scanning raw `trades`; otherwise it raises a NOTICE and the operator refreshes first. Catalog-only flag change, no data rewritten; the down sets it back to materialized-only. |
 
 ## References
 

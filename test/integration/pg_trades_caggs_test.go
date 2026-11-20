@@ -238,9 +238,8 @@ func seedDetectorTrade(t *testing.T, ctx context.Context, db *sql.DB, nonce int,
 }
 
 // wantRealtimeCAGGs: the exact sorted set of views the migrations leave real-time (0069), each also allowed by
-// timescale.RealTimeCAGGAllowed. 0187 made pools_per_source_1h materialized-only; the operator restores its real-time tail
-// after a refresh.
-var wantRealtimeCAGGs = []string{"source_volume_1h"}
+// timescale.RealTimeCAGGAllowed. 0187 made pools_per_source_1h materialized-only and 0232 restores its real-time tail.
+var wantRealtimeCAGGs = []string{"pools_per_source_1h", "source_volume_1h"}
 
 // pinnedCAGGs: served views whose unguarded readers depend on CLOSED buckets only. Listed so a rename fails the test.
 var pinnedCAGGs = []string{
@@ -821,7 +820,8 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	assertPriceableSchema(t, ctx, db, true)
+	// A fresh install migrated to head: trades is empty, so 0232 restores the real-time tail 0187 dropped.
+	assertPriceableSchema(t, ctx, db, true, false)
 
 	for _, stmt := range []string{
 		`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_base_amount_check`,
@@ -949,13 +949,14 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 		t.Fatalf("migrate down 0187: %v", err)
 	}
 	quiesceCAGGRefreshPolicies(t, ctx, db)
-	assertPriceableSchema(t, ctx, db, false)
+	assertPriceableSchema(t, ctx, db, false, false)
 	refreshAll(t)
 	if err := m.Up(); err != nil {
 		t.Fatalf("migrate up 0187 again: %v", err)
 	}
 	quiesceCAGGRefreshPolicies(t, ctx, db)
-	assertPriceableSchema(t, ctx, db, true)
+	// 0187 recreated the view empty over seeded trades: 0232 must hold it materialized_only, or every read scans raw trades.
+	assertPriceableSchema(t, ctx, db, true, true)
 	seed(t, db, ctx, mixed, []seedTrade{
 		{off: 5 * time.Second, base: "0", quote: "7000", usd: "5"},
 		{off: 50 * time.Second, base: "3000000", quote: "0", usd: "5"},
@@ -1015,7 +1016,7 @@ func assertExact(t *testing.T, col string, got sql.NullString, want string) {
 // assertPriceableSchema checks the 0187 shape (up) or the restored
 // pre-0187 shape (down): the new columns, pools_per_source_1h's
 // real-time flag, and 0156's retention policy re-attached disarmed.
-func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up bool) {
+func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up, poolsMaterializedOnly bool) {
 	t.Helper()
 	for _, grain := range priceableGrains {
 		var n int
@@ -1035,8 +1036,8 @@ func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up boo
 			t.Errorf("%s: materialized_only = false (up=%v)", v, up)
 		}
 	}
-	if mo["pools_per_source_1h"] != up {
-		t.Errorf("pools_per_source_1h materialized_only = %v, want %v", mo["pools_per_source_1h"], up)
+	if mo["pools_per_source_1h"] != poolsMaterializedOnly {
+		t.Errorf("pools_per_source_1h materialized_only = %v, want %v (up=%v)", mo["pools_per_source_1h"], poolsMaterializedOnly, up)
 	}
 	var total, active int
 	if err := db.QueryRowContext(ctx, `
