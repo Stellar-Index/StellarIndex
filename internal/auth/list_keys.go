@@ -470,15 +470,26 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 	if keyID == "" {
 		return nil, errors.New("auth: RevokeKeyByID: keyID is required")
 	}
-	// Marked before anything is listed, so every delegated mint that writes after the listing is refused.
-	if err := s.markRevoking(ctx, identifier, keyID); err != nil {
-		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
-	}
 	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
 	owned := found && rec.Identifier == identifier
+	if !owned {
+		// Nothing is written for a key identifier does not hold. With no root record no new key can
+		// join the tree (a mint needs its minter's record), so an empty listing here stays empty.
+		records, err := s.recordsForIdentifier(ctx, identifier)
+		if err != nil {
+			return nil, fmt.Errorf("auth: RevokeKeyByID: list keys delegated from %s: %w", keyID, err)
+		}
+		if len(descendantsOf(records, keyID)) == 0 {
+			return nil, ErrKeyNotFound
+		}
+	}
+	// Marked before the sweep lists, so every delegated mint that writes after the listing is refused.
+	if err := s.markRevoking(ctx, identifier, keyID); err != nil {
+		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
 	if owned {
 		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
 			return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
