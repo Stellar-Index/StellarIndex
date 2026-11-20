@@ -32,7 +32,7 @@ import {
   useResolvedAssetPrice,
   type PriceProvenance,
 } from './LiveAssetPrice';
-import { provenanceQualifier } from './priceProvenance';
+import { provenanceFromBasis, provenanceQualifier } from './priceProvenance';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -412,7 +412,7 @@ export function AssetSwap({
       basis: rate.basis,
       observedAt: isPage ? pageObservedAt : rate.observedAt,
       thin,
-      qualifiers: isPage ? pageQualifiers : undefined,
+      qualifiers: isPage ? pageQualifiers : rate.qualifiers,
     };
   };
   const basisNote = swapBasisNote([
@@ -710,6 +710,9 @@ function TokenPicker({
           // listing snapshot must not stand in once the headline withdraws it.
           if (!key || key === pageToken.key) return [];
           const price = c.price_usd != null ? Number(c.price_usd) : null;
+          const qualifier = provenanceQualifier(
+            provenanceFromBasis(c.price_basis, 'listing'),
+          );
           return [
             {
               key,
@@ -717,6 +720,8 @@ function TokenPicker({
               name: c.name,
               image: c.image,
               usdPrice: price != null && price > 0 ? price : null,
+              observedAt: c.price_as_of ?? null,
+              qualifiers: qualifier != null ? [qualifier] : undefined,
               kind: 'crypto',
               collision: c.unverified_ticker_collision ?? false,
               verified: isVerifiedCoin(c, verified),
@@ -848,7 +853,10 @@ function TokenPicker({
                 )}
               </span>
             </span>
-            <span className="text-ink-muted shrink-0 font-mono text-xs tabular-nums">
+            <span
+              className="text-ink-muted shrink-0 font-mono text-xs tabular-nums"
+              title={t.qualifiers?.join(' · ')}
+            >
               {t.usdPrice != null ? fmtUsd(t.usdPrice) : '—'}
               {t.basis === 'peg' && (
                 <span
@@ -878,27 +886,33 @@ function TokenPicker({
  * so a stale or declared-peg rate is visible rather than
  * assumed live.
  */
+interface LegRate {
+  price: number | null;
+  basis: PriceType | null;
+  observedAt: string | null;
+  /** What a picker snapshot price is (peg, route, listing); cleared by a live read. */
+  qualifiers?: string[];
+}
+
 function useLegRate(
   token: SwapToken,
   pageKey: string,
   pagePriceUSD: number | null,
-): {
-  price: number | null;
-  basis: PriceType | null;
-  observedAt: string | null;
-} {
+): LegRate {
   const isPageLeg = token.key === pageKey;
   const isUsd = token.key === USD_TOKEN.key;
   const fetchable = !isPageLeg && !isUsd && isPriceableAssetId(token.key);
-  const q = useQuery<{
-    price: number | null;
-    basis: PriceType | null;
-    observedAt: string | null;
-  }>({
+  const q = useQuery<LegRate>({
     queryKey: ['/v1/price/batch', token.key, 'swapLeg'],
     enabled: fetchable && CURRENT_NETWORK.pricing,
     queryFn: async () => {
-      const { rows } = await fetchPriceBatchChunked([token.key], 'fiat:USD');
+      const { rows, failedIds } = await fetchPriceBatchChunked(
+        [token.key],
+        'fiat:USD',
+      );
+      // A failed read keeps the labelled snapshot; it is not "no price".
+      if (failedIds.includes(token.key))
+        throw new Error(`price batch failed for ${token.key}`);
       const row = rows.find((r) => r.asset_id === token.key);
       const price = row?.price != null ? Number(row.price) : null;
       return {
@@ -917,7 +931,8 @@ function useLegRate(
         ? {
             price: token.usdPrice,
             basis: token.basis ?? null,
-            observedAt: null,
+            observedAt: token.observedAt ?? null,
+            qualifiers: token.qualifiers,
           }
         : undefined,
     initialDataUpdatedAt: 0,

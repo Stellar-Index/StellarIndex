@@ -515,6 +515,48 @@ describe('AssetSwap token picker dialog contract', () => {
   });
 });
 
+// A catalogue row priced by a peg or a two-hop route is not a market quote;
+// picking it must carry that basis (and when it was priced) into the note.
+describe('AssetSwap catalogue leg basis', () => {
+  const AUDD = 'AUDD-GDC7X2MXTYSAKUUGAIQ7J7RPEIM7GXSAIWFYWWH4GLNFECQVJJLB2EEU';
+
+  it.each([
+    [
+      'declared_peg',
+      /AUDD price: declared 1:1 fiat peg × fx rate, not a market price · observed 3h ago/,
+    ],
+    ['transitive', /AUDD price: derived two-hop DEX route · observed 3h ago/],
+  ] as const)('labels a picked %s row in the note', async (basis, note) => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string, params) => {
+      const ids = (params as { asset_ids?: string } | undefined)?.asset_ids;
+      if (path === '/v1/price/batch' && ids === AUDD)
+        throw new Error('offline');
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: AUDD,
+              code: 'AUDD',
+              price_usd: '0.655',
+              price_basis: basis,
+              price_as_of: hoursAgo(3),
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /AUDD/ }));
+    await vi.waitFor(() =>
+      expect(screen.getByText(/AUDD price:/).textContent).toMatch(note),
+    );
+  });
+});
+
 describe('AssetSwap token picker crypto rows', () => {
   it("labels a crypto row with the catalogue's asset name", async () => {
     stubApi();
