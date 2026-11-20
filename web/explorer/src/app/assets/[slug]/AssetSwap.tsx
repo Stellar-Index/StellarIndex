@@ -17,8 +17,9 @@ import {
 } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import {
+  convertDecimalAmount,
+  formatPriceSmall,
   formatRelative,
-  formatSubunitPrice,
   positiveDecimal,
   truncateMiddle,
 } from '@/lib/format';
@@ -66,8 +67,10 @@ export interface SwapToken {
   symbol: string;
   name?: string | null;
   image?: string | null;
-  /** USD per 1 unit. null while unresolved. */
-  usdPrice: number | null;
+  /** USD per 1 unit, a wire decimal string (never a float). null while unresolved. */
+  usdPrice: string | null;
+  /** On-chain decimals, where known; the converted amount rounds to them. */
+  decimals?: number | null;
   /**
    * How the pricing API says `usdPrice` was derived, where it told us —
    * `peg` is the operator's standing 1:1 declaration rather than an
@@ -309,7 +312,7 @@ const USD_TOKEN: SwapToken = {
   key: 'fiat:USD',
   symbol: 'USD',
   name: 'US Dollar',
-  usdPrice: 1,
+  usdPrice: '1',
   kind: 'fiat',
 };
 
@@ -336,8 +339,7 @@ export function AssetSwap({
     priceProvenance,
     priceStale,
   );
-  const livePrice = resolved.withheld ? null : positiveDecimal(resolved.price);
-  const priceUSD = livePrice != null ? Number(livePrice) : null;
+  const priceUSD = resolved.withheld ? null : positiveDecimal(resolved.price);
   // The page asset is the default "pay" leg; USD is the default "receive" leg.
   const pageToken = useMemo<SwapToken>(
     () => ({
@@ -381,7 +383,7 @@ export function AssetSwap({
   const toRate = useLegRate(toToken, pageToken.key, priceUSD);
   const pFrom = fromRate.price;
   const pTo = toRate.price;
-  const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
+  const priceable = pFrom != null && pTo != null;
   // What the legs' USD prices actually are, for the legs whose price
   // came with a declared basis and an observation time.
   const fromThin = resolved.thin && fromToken.key === pageToken.key;
@@ -420,21 +422,39 @@ export function AssetSwap({
     legNote(toToken, toRate, toThin),
   ]);
 
-  const numeric = Number(amount.replace(/,/g, ''));
-  const validInput = Number.isFinite(numeric) && numeric >= 0;
+  const input = normalizeAmount(amount);
 
-  // The computed counter value for the non-edited field.
+  // The computed counter value for the non-edited field: exact decimal
+  // arithmetic, rounded once to the output leg's precision.
+  const outToken = edited === 'from' ? toToken : fromToken;
   const counter =
-    priceable && validInput
+    priceable && input != null
       ? edited === 'from'
-        ? (numeric * (pFrom as number)) / (pTo as number)
-        : (numeric * (pTo as number)) / (pFrom as number)
+        ? convertLeg(input, pFrom, pTo, outToken)
+        : convertLeg(input, pTo, pFrom, outToken)
       : null;
+  // An unpriced leg shows a dash and says why; an empty input shows nothing.
+  const counterText =
+    counter != null ? fmtAmount(counter) : input != null ? '—' : '';
+  const missing = [
+    { token: fromToken, rate: fromRate },
+    { token: toToken, rate: toRate },
+  ].find((l) => l.rate.price == null);
+  const missingReason =
+    missing == null
+      ? null
+      : missing.token.key === pageToken.key && resolved.withheld
+        ? `${missing.token.symbol} has no USD price: withheld by the server${
+            (resolved.poll.withheldDetail ?? resolved.poll.withheldTitle)
+              ? ` (${resolved.poll.withheldDetail ?? resolved.poll.withheldTitle})`
+              : ''
+          }`
+        : `${missing.token.symbol} has no USD price${
+            missing.rate.withheld ? ': withheld by the server' : ' available'
+          }`;
 
-  const fromValue =
-    edited === 'from' ? amount : counter != null ? fmtAmount(counter) : '';
-  const toValue =
-    edited === 'to' ? amount : counter != null ? fmtAmount(counter) : '';
+  const fromValue = edited === 'from' ? amount : counterText;
+  const toValue = edited === 'to' ? amount : counterText;
 
   function swap() {
     setFromToken(toToken);
@@ -515,6 +535,9 @@ export function AssetSwap({
           />
         )}
       </div>
+      {missingReason != null && input != null && (
+        <p className="text-ink-muted mt-3 text-xs">{missingReason}</p>
+      )}
       {basisNote != null && (
         <p className="text-ink-muted mt-3 text-xs">{basisNote}</p>
       )}
@@ -532,7 +555,7 @@ export function AssetSwap({
     if (side === edited) return;
     const shown = side === 'from' ? fromValue : toValue;
     setEdited(side);
-    setAmount((shown || '').replace(/,/g, ''));
+    setAmount(shown === '—' ? '' : (shown || '').replace(/,/g, ''));
   }
 }
 
@@ -709,7 +732,6 @@ function TokenPicker({
           // The page asset is offered only at its live price (pageMatch): its
           // listing snapshot must not stand in once the headline withdraws it.
           if (!key || key === pageToken.key) return [];
-          const price = c.price_usd != null ? Number(c.price_usd) : null;
           const qualifier = provenanceQualifier(
             provenanceFromBasis(c.price_basis, 'listing'),
           );
@@ -719,7 +741,8 @@ function TokenPicker({
               symbol: c.code ?? coinSlug(c),
               name: c.name,
               image: c.image,
-              usdPrice: price != null && price > 0 ? price : null,
+              usdPrice: positiveDecimal(c.price_usd),
+              decimals: c.decimals ?? null,
               observedAt: c.price_as_of ?? null,
               qualifiers: qualifier != null ? [qualifier] : undefined,
               kind: 'crypto',
@@ -857,7 +880,7 @@ function TokenPicker({
               className="text-ink-muted shrink-0 font-mono text-xs tabular-nums"
               title={t.qualifiers?.join(' · ')}
             >
-              {t.usdPrice != null ? fmtUsd(t.usdPrice) : '—'}
+              {t.usdPrice != null ? `$${formatPriceSmall(t.usdPrice)}` : '—'}
               {t.basis === 'peg' && (
                 <span
                   className="ml-1 text-[11px] tracking-wider uppercase"
@@ -887,17 +910,20 @@ function TokenPicker({
  * assumed live.
  */
 interface LegRate {
-  price: number | null;
+  /** USD per unit, a wire decimal string. */
+  price: string | null;
   basis: PriceType | null;
   observedAt: string | null;
   /** What a picker snapshot price is (peg, route, listing); cleared by a live read. */
   qualifiers?: string[];
+  /** The pricing API refused this leg (thin market, flagged issuer). */
+  withheld?: boolean;
 }
 
 function useLegRate(
   token: SwapToken,
   pageKey: string,
-  pagePriceUSD: number | null,
+  pagePriceUSD: string | null,
 ): LegRate {
   const isPageLeg = token.key === pageKey;
   const isUsd = token.key === USD_TOKEN.key;
@@ -906,7 +932,7 @@ function useLegRate(
     queryKey: ['/v1/price/batch', token.key, 'swapLeg'],
     enabled: fetchable && CURRENT_NETWORK.pricing,
     queryFn: async () => {
-      const { rows, failedIds } = await fetchPriceBatchChunked(
+      const { rows, failedIds, withheld } = await fetchPriceBatchChunked(
         [token.key],
         'fiat:USD',
       );
@@ -914,11 +940,11 @@ function useLegRate(
       if (failedIds.includes(token.key))
         throw new Error(`price batch failed for ${token.key}`);
       const row = rows.find((r) => r.asset_id === token.key);
-      const price = row?.price != null ? Number(row.price) : null;
       return {
-        price: price != null && price > 0 ? price : null,
+        price: positiveDecimal(row?.price),
         basis: row?.price_type ?? null,
         observedAt: row?.observed_at ?? null,
+        withheld: withheld.includes(token.key),
       };
     },
     // Seed with the picker's snapshot so the leg has a number the instant
@@ -941,7 +967,7 @@ function useLegRate(
   });
 
   if (isPageLeg) return { price: pagePriceUSD, basis: null, observedAt: null };
-  if (isUsd) return { price: 1, basis: null, observedAt: null };
+  if (isUsd) return { price: '1', basis: null, observedAt: null };
   return q.data ?? { price: null, basis: null, observedAt: null };
 }
 
@@ -961,8 +987,8 @@ function useFiatTokens(enabled: boolean): SwapToken[] {
       const out: SwapToken[] = [];
       for (const row of rows) {
         const ticker = row.asset_id.replace(/^fiat:/, '');
-        const price = row.price ? Number(row.price) : 0;
-        if (!(price > 0)) continue;
+        const price = positiveDecimal(row.price);
+        if (price == null) continue;
         out.push({
           key: `fiat:${ticker}`,
           symbol: ticker,
@@ -994,28 +1020,39 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────
-function fmtAmount(n: number): string {
-  if (!Number.isFinite(n)) return '';
-  if (n === 0) return '0';
-  if (n >= 1_000_000)
-    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (n >= 1) return n.toLocaleString('en-US', { maximumFractionDigits: 6 });
-  if (n >= 0.0001) return trimZeros(n.toFixed(6));
-  return formatSubunitPrice(n);
+/** The typed amount as a plain decimal string ("1." → "1", ".5" → "0.5"); null when empty. */
+function normalizeAmount(raw: string): string | null {
+  const t = raw.replace(/,/g, '').replace(/\.$/, '');
+  if (t === '' || t === '.') return null;
+  const s = t.startsWith('.') ? `0${t}` : t;
+  return /^\d+(\.\d+)?$/.test(s) ? s : null;
 }
 
-const usdFmt = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 2,
-});
+// Stellar classic precision when a crypto leg's decimals are unknown; a fiat
+// leg rounds to cents but keeps four significant digits below one unit.
+const DEFAULT_CRYPTO_DECIMALS = 7;
 
-function fmtUsd(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (n > 0 && n < 0.01) return `$${formatSubunitPrice(n)}`;
-  return usdFmt.format(n);
+function convertLeg(
+  amount: string,
+  priceIn: string | null,
+  priceOut: string | null,
+  out: SwapToken,
+): string | null {
+  if (priceIn == null || priceOut == null) return null;
+  return out.kind === 'fiat'
+    ? convertDecimalAmount(amount, priceIn, priceOut, 2, 4)
+    : convertDecimalAmount(
+        amount,
+        priceIn,
+        priceOut,
+        out.decimals ?? DEFAULT_CRYPTO_DECIMALS,
+      );
 }
 
-function trimZeros(s: string): string {
-  return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+/** A rounded decimal string, whole part grouped, trailing fraction zeros trimmed. */
+function fmtAmount(s: string): string {
+  const [whole, frac = ''] = s.split('.');
+  const f = frac.replace(/0+$/, '');
+  const grouped = BigInt(whole).toLocaleString('en-US');
+  return f ? `${grouped}.${f}` : grouped;
 }

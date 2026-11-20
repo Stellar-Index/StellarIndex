@@ -190,7 +190,29 @@ describe('AssetSwap page-asset leg', () => {
       title: 'withheld',
     });
     renderSwap();
-    await vi.waitFor(() => expect(receiveValue()).toBe(''));
+    // A dash with the reason, never a blank or a zero that reads as a value.
+    await vi.waitFor(() => expect(receiveValue()).toBe('—'));
+    expect(
+      screen.getByText(
+        'XLM has no USD price: withheld by the server (withheld)',
+      ),
+    ).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  // 123456789012.3456789 USD at 0.12345678901234567891 USD/XLM is
+  // 999999999999.9999999 XLM exactly; a float division prints 1,000,000,000,000.
+  it('converts an amount above 2^53 base units exactly', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.12345678901234567891' } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.1235'));
+    fireEvent.change(screen.getAllByRole('textbox')[1], {
+      target: { value: '123456789012.3456789' },
+    });
+    expect((screen.getAllByRole('textbox')[0] as HTMLInputElement).value).toBe(
+      '999,999,999,999.9999999',
+    );
     vi.unstubAllGlobals();
   });
 
@@ -341,7 +363,7 @@ describe('AssetSwap and the headline share one price resolution', () => {
     await vi.waitFor(() =>
       expect(screen.getByText('issuer flagged')).toBeInTheDocument(),
     );
-    expect(receiveValue()).toBe('');
+    expect(receiveValue()).toBe('—');
     vi.unstubAllGlobals();
   });
 });
@@ -444,7 +466,7 @@ describe('AssetSwap catalogue leg', () => {
     await vi.waitFor(() =>
       expect(
         (screen.getAllByRole('textbox')[1] as HTMLInputElement).value,
-      ).toBe(''),
+      ).toBe('—'),
     );
     fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
     const dialog = await screen.findByRole('dialog');
@@ -596,7 +618,7 @@ describe('swap picker look-alikes', () => {
   const tok = (key: string, extra: Partial<SwapToken>): SwapToken => ({
     key,
     symbol: 'USDC',
-    usdPrice: 1,
+    usdPrice: '1',
     kind: 'crypto',
     ...extra,
   });

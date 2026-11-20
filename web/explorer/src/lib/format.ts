@@ -714,6 +714,38 @@ export function multiplyDecimalStrings(a: string, b: string): string | null {
 }
 
 /**
+ * convertDecimalAmount — `amount × priceIn ÷ priceOut` over decimal strings
+ * as one exact rational, rounded once (half up) to `places`. Below 1, places
+ * extend until `minSignificant` significant digits show. Null for a
+ * non-decimal or negative input or a non-positive `priceOut`.
+ */
+export function convertDecimalAmount(
+  amount: string,
+  priceIn: string,
+  priceOut: string,
+  places: number,
+  minSignificant = 0,
+): string | null {
+  const a = parseDecimal(amount);
+  const p = parseDecimal(priceIn);
+  const q = parseDecimal(priceOut);
+  if (!a || !p || !q || a.units < 0n || p.units < 0n || q.units <= 0n)
+    return null;
+  const num = a.units * p.units * 10n ** BigInt(q.frac);
+  const den = q.units * 10n ** BigInt(a.frac + p.frac);
+  let scale = places;
+  if (minSignificant > 0 && num > 0n && num < den) {
+    let lead = 0;
+    while (num * 10n ** BigInt(lead + 1) < den) lead++;
+    scale = Math.max(places, lead + minSignificant);
+  }
+  const r = (2n * num * 10n ** BigInt(scale) + den) / (2n * den);
+  const digits = r.toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  return scale > 0 ? `${whole}.${digits.slice(digits.length - scale)}` : whole;
+}
+
+/**
  * Truncate a long identifier (G-strkey, C-id, tx hash) to `head…tail`.
  * Server-safe here in lib: ui/Mono.tsx is a 'use client' module, and server
  * components cannot call client-module exports (RSC turns them into
