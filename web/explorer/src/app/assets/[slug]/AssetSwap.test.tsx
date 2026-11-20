@@ -248,6 +248,37 @@ describe('AssetSwap page-asset leg', () => {
     expect(screen.queryByText(/^Low confidence:/)).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
+
+  // The page leg is the headline's number; it must carry what the headline
+  // says about it rather than look like a fresh market quote.
+  const note = () => screen.getByText(/^XLM price:/).textContent ?? '';
+
+  it('names a declared peg as not a market price', async () => {
+    stubApi();
+    stubPrice(404, {
+      type: 'https://stellarindex.io/problems/price-withheld',
+    });
+    renderPegged();
+    await vi.waitFor(() => expect(receiveValue()).toBe('1.08'));
+    expect(note()).toMatch(/declared 1:1 fiat peg .* not a market price/);
+    vi.unstubAllGlobals();
+  });
+
+  it('marks a stale live price as stale', async () => {
+    stubApi();
+    stubPrice(200, { data: { price: '0.26' }, flags: { stale: true } });
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.26'));
+    expect(note()).toMatch(/stale/);
+    vi.unstubAllGlobals();
+  });
+
+  it('labels the build-time price when the poll has failed', async () => {
+    stubApi();
+    renderSwap();
+    await vi.waitFor(() => expect(receiveValue()).toBe('0.195'));
+    await vi.waitFor(() => expect(note()).toMatch(/as baked at deploy/));
+  });
 });
 
 // Two independent polls could disagree: the headline withheld while the

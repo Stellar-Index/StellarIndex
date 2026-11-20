@@ -31,6 +31,25 @@ export function provenanceFromBasis(
   }
 }
 
+/**
+ * What a non-market or non-live price IS, in a few words; null for a live
+ * market price. Shared by the converter so it names what the headline names.
+ */
+export function provenanceQualifier(p: PriceProvenance): string | null {
+  switch (p) {
+    case 'declared_peg':
+      return 'declared 1:1 fiat peg × fx rate, not a market price';
+    case 'transitive':
+      return 'derived two-hop DEX route';
+    case 'global_market':
+      return 'global aggregator price, not a Stellar market';
+    case 'listing':
+      return 'listing snapshot, not a live aggregated price';
+    default:
+      return null;
+  }
+}
+
 /** Caption vocabulary for the headline price on the static asset page. */
 export function headlinePriceProvenance(
   price:

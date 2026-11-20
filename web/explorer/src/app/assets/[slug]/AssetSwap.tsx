@@ -32,6 +32,7 @@ import {
   useResolvedAssetPrice,
   type PriceProvenance,
 } from './LiveAssetPrice';
+import { provenanceQualifier } from './priceProvenance';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -43,7 +44,8 @@ import {
  *
  * Conversion is pure client-side maths through each token's USD price:
  * amount(out) = amount(in) × usdPrice(in) / usdPrice(out). The page asset's
- * price is the headline's live resolution (useResolvedAssetPrice); every other token
+ * price is the headline's live resolution (useResolvedAssetPrice), noted with
+ * the same basis, stale and as-baked qualifiers the headline shows; every other token
  * carries its snapshot USD price from the catalogue / forex batch, which is
  * exactly the freshness the old converter used. A forex-batch leg says so:
  * the batch's `price_type` and `observed_at` ride with the rate and are
@@ -85,6 +87,8 @@ export interface SwapToken {
   issuer?: string | null;
   /** The price comes from a market below the substance floor. */
   thin?: boolean;
+  /** The page leg's headline qualifiers (derived basis, stale, baked). */
+  qualifiers?: string[];
 }
 
 /** assetIssuer — the G…/C… address in a canonical asset id, if it has one. */
@@ -293,6 +297,7 @@ function swapBasisNote(tokens: SwapToken[]): string | null {
     if (t.basis === 'peg') {
       bits.push('declared 1:1 peg, not an observed market rate');
     }
+    bits.push(...(t.qualifiers ?? []));
     if (t.observedAt != null)
       bits.push(`observed ${formatRelative(t.observedAt)}`);
     if (bits.length > 0) parts.push(`${t.symbol} price: ${bits.join(' · ')}`);
@@ -382,21 +387,37 @@ export function AssetSwap({
   const fromThin = resolved.thin && fromToken.key === pageToken.key;
   const toThin = resolved.thin && toToken.key === pageToken.key;
   const thinShown = (fromThin && pFrom != null) || (toThin && pTo != null);
+  // The page leg is the headline's number, so it carries the headline's
+  // qualifiers: a peg, route, stale or build-time price is never bare.
+  const pageQualifiers = [
+    provenanceQualifier(resolved.provenance),
+    resolved.stale ? 'stale' : null,
+    ...(resolved.fromAssets ? [] : resolved.poll.caveats),
+    resolved.bakedDerived ||
+    (!resolved.live && !resolved.derived && resolved.provenance !== 'listing')
+      ? 'as baked at deploy'
+      : null,
+  ].filter((q): q is string => q != null);
+  const pageObservedAt =
+    resolved.live && !resolved.fromAssets ? resolved.poll.observedAt : null;
+  const legNote = (
+    token: SwapToken,
+    rate: ReturnType<typeof useLegRate>,
+    thin: boolean,
+  ): SwapToken => {
+    const isPage = token.key === pageToken.key;
+    return {
+      ...token,
+      usdPrice: rate.price,
+      basis: rate.basis,
+      observedAt: isPage ? pageObservedAt : rate.observedAt,
+      thin,
+      qualifiers: isPage ? pageQualifiers : undefined,
+    };
+  };
   const basisNote = swapBasisNote([
-    {
-      ...fromToken,
-      usdPrice: pFrom,
-      basis: fromRate.basis,
-      observedAt: fromRate.observedAt,
-      thin: fromThin,
-    },
-    {
-      ...toToken,
-      usdPrice: pTo,
-      basis: toRate.basis,
-      observedAt: toRate.observedAt,
-      thin: toThin,
-    },
+    legNote(fromToken, fromRate, fromThin),
+    legNote(toToken, toRate, toThin),
   ]);
 
   const numeric = Number(amount.replace(/,/g, ''));
