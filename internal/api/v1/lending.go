@@ -349,6 +349,8 @@ type LendingPoolReservesView struct {
 	Reserves   []ReserveView `json:"reserves"`
 	// OmittedReserves are the pool's reserve assets with no decoded state in the lake; TVLUSD leaves them out.
 	OmittedReserves []string `json:"omitted_reserves,omitempty"`
+	// omittedWhy maps each omitted reserve to its exclusion reason.
+	omittedWhy map[string]string
 	// PoolConfig is the pool's instance-storage config; null when that entry, or every reserve's state, is missing.
 	PoolConfig *LendingPoolConfigView `json:"pool_config"`
 	// ConfigDecimals is the fixed-point scale of the config fractions and backstop_take_rate.
@@ -492,6 +494,14 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	out := LendingPoolReservesView{
 		Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(pr.assets, states),
 		PoolConfig: poolConfigView(pr.state.Instance, version), ConfigDecimals: lendingConfigDecimals,
+	}
+	out.omittedWhy = make(map[string]string, len(out.OmittedReserves))
+	for _, a := range out.OmittedReserves {
+		why, known := pr.state.Unavailable[a]
+		if !known {
+			why = exclusionNotCaptured
+		}
+		out.omittedWhy[a] = why
 	}
 	out.TVLUSD, out.LowerBound = reservesTVLUSD(suppliedUSD)
 	out.LowerBound = out.LowerBound || (out.TVLUSD != nil && len(out.OmittedReserves) > 0)

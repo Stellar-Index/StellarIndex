@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
@@ -257,7 +259,7 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	byAsset, bstop, matched, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("scanReserveParts: %v", err)
 	}
@@ -289,7 +291,7 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 		{blendTestResDataKey, resDataEntryFixture(t)},
 		{"resdata-undecodable", "!!!not-base64!!!"},
 	}}
-	byAsset, _, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	byAsset, _, matched, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("scanReserveParts: %v", err)
 	}
@@ -308,12 +310,19 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	before := testutil.ToFloat64(obs.LendingReserveUndecodableTotal)
+	byAsset, _, _, undecoded, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
 	if len(byAsset) != 0 {
 		t.Errorf("byAsset = %v, want the reserve reported absent", byAsset)
+	}
+	if !reflect.DeepEqual(undecoded, []string{blendTestAssetSAC}) {
+		t.Errorf("undecoded = %v, want the reserve named as a decode failure", undecoded)
+	}
+	if got := testutil.ToFloat64(obs.LendingReserveUndecodableTotal) - before; got != 1 {
+		t.Errorf("undecodable counter moved by %v, want 1", got)
 	}
 }
 
@@ -323,7 +332,7 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
+	if _, _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
 	}
 }

@@ -6843,10 +6843,10 @@ export interface components {
             /** @description Reserve token C-strkey for a `reserve`, `supply` or `borrow` exclusion; the backstop token for an account's `backstop` leg; the ticker for a `token` exclusion. */
             asset: string | null;
             /**
-             * @description For a `reserve`: `no_usd_value` when its token has no USD price or established decimals, `withheld` when a price gate (thin market, scam-flagged issuer) refused its price, `price_read_failed` when a read on the price chain failed (the response is also degraded).
+             * @description For a `reserve` with no decoded state: `reserve_archived` when its entry or the pool instance is TTL-archived, `decode_failed` when the lake holds its entry but it did not decode, `not_captured` when the lake holds no entry for it (`no_decoded_reserve_state` is no longer emitted; kept for compatibility). For a decoded reserve: `no_usd_value` when its token has no USD price or established decimals, `withheld` when a price gate (thin market, scam-flagged issuer) refused its price, `price_read_failed` when a read on the price chain failed (the response is also degraded).
              * @enum {string}
              */
-            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "price_read_failed" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
+            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "reserve_archived" | "decode_failed" | "not_captured" | "no_usd_value" | "price_read_failed" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
         };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's

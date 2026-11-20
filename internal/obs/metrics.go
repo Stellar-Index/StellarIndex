@@ -370,6 +370,7 @@ func registerStorageAndExplorerMetrics() {
 		SDEXOrderBookCrossedPairs,
 		SDEXOrderBookPendingOffers,
 		SDEXOrderBookUndecodableOffersTotal,
+		LendingReserveUndecodableTotal,
 		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
 		ExplorerRefreshGateSaturatedTotal,
 		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, DerivedIndexWatermarkLedger, ExplorerSchemaAbsentEmptyTotal,
@@ -3109,6 +3110,15 @@ var SDEXOrderBookPendingOffers = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_sdex_orderbook_pending_offers",
 		Help: "SDEX offers quarantined from the served book awaiting lake removal-verification.",
+	},
+)
+
+// LendingReserveUndecodableTotal counts lending reserve ResData entries the pool-state reader could not decode; each leaves that
+// reserve out of its pool's view as decode_failed. Should be 0.
+var LendingReserveUndecodableTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_lending_reserve_undecodable_total",
+		Help: "Lending reserve ResData entries the pool-state reader returned but could not decode; each reserve is served as decode_failed.",
 	},
 )
 

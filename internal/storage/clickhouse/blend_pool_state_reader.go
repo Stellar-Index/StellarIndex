@@ -2,11 +2,13 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
@@ -27,6 +29,8 @@ type BlendReserveState struct {
 type BlendPoolState struct {
 	Instance *PoolInstance // nil when the instance entry is missing, undecodable or archived
 	Reserves []BlendReserveState
+	// Unavailable maps a requested reserve with no state to why; a requested reserve in neither field was not captured.
+	Unavailable map[string]string
 }
 
 // PoolInstance is a lending pool's decoded instance storage: its PoolConfig, admin and backstop ("" when absent).
@@ -95,9 +99,17 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, inst, matched, err := scanReserveParts(rows, refByKey, model.decode)
+	dataByAsset, inst, matched, undecoded, err := scanReserveParts(rows, refByKey, model.decode)
 	if err != nil {
 		return BlendPoolState{}, err
+	}
+	unavailable := make(map[string]string, len(undecoded))
+	for _, a := range undecoded {
+		unavailable[a] = ReserveDecodeFailed
+	}
+	decoded := make([]string, 0, len(dataByAsset))
+	for a := range dataByAsset {
+		decoded = append(decoded, a)
 	}
 	// Drop archived entries before anything is reported: the projection keeps a lapsed
 	// entry's last value. Verdicts come from the shared SWR cache, so no per-request scan;
@@ -109,8 +121,23 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 	if instArchived {
 		inst = nil
 	}
-	return BlendPoolState{Instance: inst, Reserves: assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics)}, nil
+	for _, a := range decoded {
+		if _, live := dataByAsset[a]; !live {
+			unavailable[a] = ReserveArchived
+		}
+	}
+	return BlendPoolState{
+		Instance: inst, Reserves: assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics), Unavailable: unavailable,
+	}, nil
 }
+
+var errUndecodableEntry = errors.New("contract data entry did not decode")
+
+// Reasons a requested reserve has no state in [BlendPoolState.Unavailable].
+const (
+	ReserveArchived     = "reserve_archived" // its entry, or the pool instance, is TTL-archived
+	ReserveDecodeFailed = "decode_failed"    // the lake holds its entry but it did not decode
+)
 
 // assembleBlendReserveStates builds states in the caller's asset order. Without the config: config-free metrics and placeholder decimals 7
 // (DecimalsFound=false). A nil inst withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
@@ -202,41 +229,49 @@ type reserveRows interface {
 }
 
 // scanReserveParts decodes rows into per-asset ResData and the pool instance, and reports the keys that produced a row (matched). The
-// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
+// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served. undecoded lists
+// the reserves whose ResData row was returned but did not decode, each counted in the metric.
 func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
-) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched []string, err error) {
+) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched, undecoded []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
 		var keyXDR, b64 string
 		if err := rows.Scan(&keyXDR, &b64); err != nil {
-			return nil, nil, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
 		}
 		ref, ok := refByKey[keyXDR]
 		if !ok {
 			continue
 		}
-		val, ok := contractDataValue(b64)
-		if !ok {
-			continue
-		}
+		val, valOK := contractDataValue(b64)
 		switch ref.kind {
 		case "Instance":
+			if !valOK {
+				continue
+			}
 			if pi, ok := poolInstanceFromStorage(val); ok {
 				inst = &pi
 			}
 			matched = append(matched, keyXDR)
 		case "ResData":
-			if rd, err := decode(val); err == nil {
-				rdCopy := rd
-				dataByAsset[ref.asset] = &rdCopy
-				matched = append(matched, keyXDR)
+			var rd blend.ReserveData
+			decErr := errUndecodableEntry
+			if valOK {
+				rd, decErr = decode(val)
 			}
+			if decErr != nil {
+				obs.LendingReserveUndecodableTotal.Inc()
+				undecoded = append(undecoded, ref.asset)
+				continue
+			}
+			dataByAsset[ref.asset] = &rd
+			matched = append(matched, keyXDR)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
 	}
-	return dataByAsset, inst, matched, nil
+	return dataByAsset, inst, matched, undecoded, nil
 }
 
 // dropArchivedBlendReserves removes reserve state whose entry is TTL-archived: ledger_entries_current keeps the last value after Soroban

@@ -24,7 +24,7 @@ var lendingProtocols = []struct{ protocol, ticker string }{
 const (
 	exclusionPoolListFailed     = "pool_list_read_failed"
 	exclusionPoolReadFailed     = "pool_read_failed"
-	exclusionNoDecodedState     = "no_decoded_reserve_state"
+	exclusionNotCaptured        = "not_captured" // a reserve the lake holds no state entry for; see clickhouse.BlendPoolState.Unavailable
 	exclusionNoUSDValue         = "no_usd_value"
 	exclusionPriceWithheld      = "withheld"
 	exclusionPriceReadFailed    = "price_read_failed"
@@ -246,7 +246,11 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 		v := pr.res.view
 		st.ReserveCount += len(v.Reserves) + len(v.OmittedReserves)
 		for _, a := range v.OmittedReserves {
-			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(a), Reason: exclusionNoDecodedState})
+			reason, ok := v.omittedWhy[a]
+			if !ok {
+				reason = exclusionNotCaptured
+			}
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(a), Reason: reason})
 		}
 		for _, rv := range v.Reserves {
 			sup, supOK := parseUSD(rv.SuppliedUSD)

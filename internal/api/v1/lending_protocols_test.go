@@ -282,7 +282,7 @@ func TestLendingProtocols_UnpricedReserveIsALowerBound(t *testing.T) {
 	if !stats[0].LowerBound || !hasProtocolExclusion(stats[0].Excluded, "reserve", f.activePool, f.otherToken, "no_usd_value") {
 		t.Errorf("blend excluded = %+v", stats[0].Excluded)
 	}
-	if !hasProtocolExclusion(stats[0].Excluded, "reserve", f.frozenPool, f.otherToken, "no_decoded_reserve_state") {
+	if !hasProtocolExclusion(stats[0].Excluded, "reserve", f.frozenPool, f.otherToken, "not_captured") {
 		t.Errorf("omitted reserve not excluded: %+v", stats[0].Excluded)
 	}
 	if hasProtocolExclusion(stats[0].Excluded, "reserve", f.activePool, f.xlmSAC, "no_usd_value") {
