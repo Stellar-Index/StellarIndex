@@ -361,8 +361,18 @@ groups:
       # When the heartbeat stops, that receiver pages — which catches
       # BOTH Prometheus-down and AlertManager-down (our primary alerting
       # channels being broken).
+      #
+      # A silence mutes the silence_active ticket along with every page while
+      # sparing this heartbeat, so the heartbeat itself stops once a silence
+      # has been held at every sample for 24h: the external check then pages
+      # through a path no silence can reach.
       - alert: stellarindex_deadmansswitch
-        expr: vector(1)
+        expr: |
+          vector(1)
+            unless on() (
+              min_over_time(max(alertmanager_silences{state="active"})[24h:5m]) > 0
+                and on() count_over_time(max(alertmanager_silences{state="active"})[24h:5m]) >= 288
+            )
         for: 0s
         labels:
           severity: informational
