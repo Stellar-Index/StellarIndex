@@ -2298,19 +2298,24 @@ export interface paths {
          *     is then not cacheable. 503 when the deployment has no auction
          *     history reader.
          *
-         *     `lot_usd` and `bid_usd` value each side at TODAY's prices and
-         *     reserve rates (`valued_at: current`), not the prices at start or
-         *     fill. A leg's kind follows its auction type: user_liquidation bids
-         *     dTokens and lots bTokens; bad_debt bids dTokens and lots backstop
-         *     tokens; interest bids backstop tokens and lots the reserve's
-         *     underlying. A bToken or dToken leg is converted to underlying at the
+         *     `lot_usd` and `bid_usd` value the auction's STARTING lot and bid at
+         *     TODAY's prices and reserve rates (`valued_at: current`): not scaled
+         *     for the block it was filled at, and not what a filler paid or
+         *     received. A leg's kind follows the protocol and auction type. For
+         *     Blend, user_liquidation bids dTokens and lots bTokens; bad_debt bids
+         *     dTokens and lots backstop tokens; interest bids backstop tokens and
+         *     lots the reserve's underlying. For BLNT only interest is
+         *     established (as Blend's); every BLNT user_liquidation, bad_debt and
+         *     protocol_fee leg is unvalued (`leg_kind_unknown`). A bToken or dToken leg is converted to underlying at the
          *     reserve's current `b_rate` / `d_rate`, rounded as the contract
          *     rounds, then valued at the `/reserves` price and decimals; an
-         *     underlying leg is valued directly. A backstop-token leg is valued
-         *     for BLNT at its token price; a Blend backstop token is a Comet
-         *     BLND:USDC LP share and is unvalued (`lp_share_unvalued`). A
-         *     protocol_fee or unknown auction type is unvalued
-         *     (`leg_kind_unknown`). Each side sums its valued legs to 2 dp
+         *     underlying leg is valued directly. A BLNT backstop-token leg is
+         *     valued at its token price only when its token is a backstop tier's
+         *     plain token (`Xlm` or `Usdc`); a BLNT Comet LP-share tier's token and
+         *     every Blend backstop token (a Comet BLND:USDC LP share) are unvalued
+         *     (`lp_share_unvalued`), and a token no tier names is
+         *     `leg_kind_unknown`. A protocol_fee or unknown auction type is
+         *     unvalued (`leg_kind_unknown`). Each side sums its valued legs to 2 dp
          *     (`"0.00"` for an empty side, null when no leg is valued);
          *     `*_usd_lower_bound` is true when a leg is left out, and
          *     `*_unvalued` names each (`asset`, `kind`, `reason`: `unpriced`,
@@ -2340,8 +2345,9 @@ export interface paths {
         /**
          * Lending pool — emission streams and claim totals.
          * @description The pool's emission configuration as contract storage holds it
-         *     now, read from the lake, and its claim totals from decoded events.
-         *     No APR and no USD values.
+         *     now, read from the lake, and its claim totals from decoded events,
+         *     with each stream's current rate in tokens and USD per day and each
+         *     reserve stream's emissions APR.
          *
          *     `reserves` lists every `EmisData(token_id)` entry of the pool's
          *     reserves in `ResList` order: `token_id` is `reserve_index * 2` for
@@ -2374,7 +2380,9 @@ export interface paths {
          *     (`0.1577` = 15.77%); `"0.0000"` for an ended stream. It is null with
          *     `emissions_apr_reason` when `usd_per_day` is null (that reason),
          *     the reserve is not read (`reserve_unread`), the side has no USD
-         *     price (`side_unpriced`) or the side is empty (`side_empty`). Backstop
+         *     price (`side_unpriced`), the side is empty (`side_empty`) or the
+         *     side is under $1 (`side_dust`), where the ratio measures rounding,
+         *     not yield. Backstop
          *     streams carry no APR.
          *
          *     `storage_available` is false, with `storage_unavailable_reason`,
@@ -6792,18 +6800,18 @@ export interface components {
             net_apr: string | null;
             /** @enum {string|null} */
             net_apr_reason: "inputs_partial" | "apr_unavailable" | "net_value_not_positive" | null;
-            /** @description Σ supply legs' accrued_usd (interest earned) at the reserves' current prices, exact then 2 dp; a floor when `accrued_lower_bound` is true. */
-            accrued_supply_usd?: string;
+            /** @description Σ supply legs' accrued_usd (interest earned) at the reserves' current prices, exact then 2 dp. When `accrued_partial` is true it is a partial sum over the valued legs, not a floor: a leg's accrued can be negative (rounding, a BLNT reconcile_loss). */
+            accrued_supply_usd: string;
             /** @description Σ borrow legs' accrued_usd (interest paid), as accrued_supply_usd. */
-            accrued_borrow_usd?: string;
-            /** @description accrued_supply_usd - accrued_borrow_usd; may be negative. Null whenever a leg is left out, since an omitted borrow would make it too high. */
-            accrued_usd?: string | null;
+            accrued_borrow_usd: string;
+            /** @description accrued_supply_usd - accrued_borrow_usd; may be negative. Null whenever a leg is left out, since a partial sum bounds it in neither direction. */
+            accrued_usd: string | null;
             /** @enum {string|null} */
-            accrued_usd_reason?: "inputs_partial" | null;
-            /** @description True when a leg is left out of the accrued sums; `accrued_excluded` names each. */
-            accrued_lower_bound?: boolean;
+            accrued_usd_reason: "inputs_partial" | null;
+            /** @description True when a leg is left out of the accrued sums, which are then partial sums over the valued legs (neither a floor nor a ceiling); `accrued_excluded` names each. */
+            accrued_partial: boolean;
             /** @description Legs left out of the accrued sums: every leg in `excluded`, plus valued legs whose accrued is unread (`accrued_unavailable`) or unpriced. */
-            accrued_excluded?: components["schemas"]["LendingStatsExclusion"][];
+            accrued_excluded: components["schemas"]["LendingStatsExclusion"][];
         };
         /** @description What a lending figure leaves out and why. */
         LendingStatsExclusion: {
@@ -19424,19 +19432,19 @@ export interface operations {
                                 deleted_ledger?: number;
                                 /** Format: date-time */
                                 deleted_time?: string;
-                                /** @description Sum of the lot's valued legs at today's prices, 2 dp; null when no leg is valued. */
-                                lot_usd?: string | null;
-                                lot_usd_lower_bound?: boolean;
-                                lot_unvalued?: components["schemas"]["LendingAuctionUnvaluedLeg"][];
-                                /** @description Sum of the bid's valued legs at today's prices, 2 dp; null when no leg is valued. */
-                                bid_usd?: string | null;
-                                bid_usd_lower_bound?: boolean;
-                                bid_unvalued?: components["schemas"]["LendingAuctionUnvaluedLeg"][];
+                                /** @description The starting lot at today's price and rates, 2 dp: the sum of its valued legs; null when no leg is valued. Not scaled for the fill block and not what a filler received. */
+                                lot_usd: string | null;
+                                lot_usd_lower_bound: boolean;
+                                lot_unvalued: components["schemas"]["LendingAuctionUnvaluedLeg"][];
+                                /** @description The starting bid at today's price and rates, 2 dp: the sum of its valued legs; null when no leg is valued. Not scaled for the fill block and not what a filler paid. */
+                                bid_usd: string | null;
+                                bid_usd_lower_bound: boolean;
+                                bid_unvalued: components["schemas"]["LendingAuctionUnvaluedLeg"][];
                                 /**
-                                 * @description Today's price and reserve rates, not the price at fill.
+                                 * @description Today's price and reserve rates, not the price at start or fill.
                                  * @enum {string}
                                  */
-                                valued_at?: "current";
+                                valued_at: "current";
                             }[];
                         };
                         pagination?: components["schemas"]["Pagination"];
@@ -19570,7 +19578,7 @@ export interface operations {
                                 /** @description usd_per_day x 365 / the side's current USD size, 4 dp; "0.0000" once ended. */
                                 emissions_apr?: string | null;
                                 /** @enum {string|null} */
-                                emissions_apr_reason?: "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "emission_token_unread" | "emission_token_unverified" | "reserve_unread" | "side_unpriced" | "side_empty" | null;
+                                emissions_apr_reason?: "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "emission_token_unread" | "emission_token_unverified" | "reserve_unread" | "side_unpriced" | "side_empty" | "side_dust" | null;
                             }[];
                             backstop: {
                                 /** @enum {string|null} */

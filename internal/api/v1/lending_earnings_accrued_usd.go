@@ -13,9 +13,10 @@ type LendingAccruedUSD struct {
 	// borrow would make it too high, so it cannot be a lower bound.
 	AccruedUSD       *string `json:"accrued_usd"`
 	AccruedUSDReason *string `json:"accrued_usd_reason"`
-	// AccruedLowerBound marks the two sums as floors; AccruedExcluded names each leg left out of them.
-	AccruedLowerBound bool                    `json:"accrued_lower_bound"`
-	AccruedExcluded   []LendingStatsExclusion `json:"accrued_excluded"`
+	// AccruedPartial marks the two sums as partial sums over the valued legs, not floors: a leg's accrued can be negative
+	// (rounding, a BLNT reconcile_loss). AccruedExcluded names each leg left out.
+	AccruedPartial  bool                    `json:"accrued_partial"`
+	AccruedExcluded []LendingStatsExclusion `json:"accrued_excluded"`
 }
 
 type accruedTally struct {
@@ -46,9 +47,9 @@ func (a *accruedTally) add(leg *LendingEarningsLeg, accrued *big.Rat) {
 func (a *accruedTally) view() LendingAccruedUSD {
 	out := LendingAccruedUSD{
 		AccruedSupplyUSD: ratString(&a.supply, 2), AccruedBorrowUSD: ratString(&a.borrow, 2),
-		AccruedLowerBound: len(a.excluded) > 0, AccruedExcluded: append([]LendingStatsExclusion{}, a.excluded...),
+		AccruedPartial: len(a.excluded) > 0, AccruedExcluded: append([]LendingStatsExclusion{}, a.excluded...),
 	}
-	if out.AccruedLowerBound {
+	if out.AccruedPartial {
 		out.AccruedUSDReason = strRef(netInputsPartial)
 		return out
 	}

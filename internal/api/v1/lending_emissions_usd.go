@@ -28,7 +28,12 @@ const (
 	emissionAPRReserveUnread   = "reserve_unread"
 	emissionAPRSideUnpriced    = "side_unpriced"
 	emissionAPRSideEmpty       = "side_empty"
+	emissionAPRSideDust        = "side_dust"
 )
+
+// emissionAPRMinSideUSD is the smallest side an APR is served over: below a dollar the ratio measures rounding, not yield
+// (one stroop of USDC under a live stream reads as trillions of percent).
+var emissionAPRMinSideUSD = big.NewRat(1, 1)
 
 const (
 	secondsPerDay  = 86_400
@@ -66,7 +71,7 @@ func (s *Server) emissionTokenPrice(ctx context.Context, protocol, token string,
 	case lakeDecimals != nil && *lakeDecimals != tok.Decimals:
 		return kpiTokenPrice{reason: emissionUSDScaleMismatch}
 	}
-	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals, stale: flags.Stale}
+	return kpiTokenPrice{price: *tok.PriceUSD, decimals: tok.Decimals, stale: s.kpiPriceStale(ctx, tok, flags.Stale)}
 }
 
 // valueEmissions sets every stream's current rate and each reserve stream's emissions_apr against the pool's /reserves views.
@@ -159,6 +164,8 @@ func emissionAPR(eps *big.Int, live bool, side string, rv ReserveView, found boo
 		return nil, strRef(emissionAPRSideUnpriced)
 	case size.Sign() <= 0:
 		return nil, strRef(emissionAPRSideEmpty)
+	case size.Cmp(emissionAPRMinSideUSD) < 0:
+		return nil, strRef(emissionAPRSideDust)
 	}
 	annual, err := usdValueRat(new(big.Int).Mul(eps, big.NewInt(secondsPerYear)), p.price, p.decimals+clickhouse.EmissionEPSDecimals)
 	if err != nil {

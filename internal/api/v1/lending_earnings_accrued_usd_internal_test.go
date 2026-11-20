@@ -20,16 +20,16 @@ func TestValueEarningsLegs_AccruedUSDPerPoolAndTotal(t *testing.T) {
 	}
 	for i, g := range []LendingAccruedUSD{pools[0].LendingAccruedUSD, pools[1].LendingAccruedUSD, totals.LendingAccruedUSD} {
 		w := want[i]
-		if g.AccruedSupplyUSD != w.sup || g.AccruedBorrowUSD != w.bor || strOr(g.AccruedUSD) != w.net || g.AccruedLowerBound ||
+		if g.AccruedSupplyUSD != w.sup || g.AccruedBorrowUSD != w.bor || strOr(g.AccruedUSD) != w.net || g.AccruedPartial ||
 			len(g.AccruedExcluded) != 0 || g.AccruedUSDReason != nil {
 			t.Errorf("%d accrued = %+v (net %s), want %+v", i, g, strOr(g.AccruedUSD), w)
 		}
 	}
 }
 
-// TestValueEarningsLegs_AccruedLowerBoundNamesEveryLeg: an unreconciled leg, an unpriced leg and a backstop leg are each named
-// in accrued_excluded, the sums become floors and accrued_usd is withheld.
-func TestValueEarningsLegs_AccruedLowerBoundNamesEveryLeg(t *testing.T) {
+// TestValueEarningsLegs_AccruedPartialNamesEveryLeg: an unreconciled leg, an unpriced leg and a backstop leg are each named
+// in accrued_excluded, the sums are flagged partial and accrued_usd is withheld.
+func TestValueEarningsLegs_AccruedPartialNamesEveryLeg(t *testing.T) {
 	legs := []LendingEarningsLeg{
 		{Protocol: "blend", Pool: "C", Side: earningsSideSupply, Asset: strRef("x"), CurrentValue: strRef("10000000"), Accrued: strRef("1000000")},
 		{Protocol: "blend", Pool: "C", Side: earningsSideBorrow, Asset: strRef("x"), CurrentValue: strRef("4000000")},
@@ -40,7 +40,7 @@ func TestValueEarningsLegs_AccruedLowerBoundNamesEveryLeg(t *testing.T) {
 	pools, totals := valueEarningsLegs(legs, reserves)
 	for _, g := range []LendingAccruedUSD{pools[0].LendingAccruedUSD, totals.LendingAccruedUSD} {
 		if g.AccruedSupplyUSD != "0.25" || g.AccruedBorrowUSD != "0.00" || g.AccruedUSD != nil || strOr(g.AccruedUSDReason) != netInputsPartial ||
-			!g.AccruedLowerBound || len(g.AccruedExcluded) != 3 ||
+			!g.AccruedPartial || len(g.AccruedExcluded) != 3 ||
 			g.AccruedExcluded[0].Kind != earningsSideBorrow || g.AccruedExcluded[0].Reason != earningsAccruedUnavailable ||
 			g.AccruedExcluded[1].Reason != earningsUSDUnpriced || g.AccruedExcluded[2].Kind != earningsSideBackstop {
 			t.Errorf("accrued = %+v", g)

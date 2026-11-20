@@ -47,6 +47,11 @@ func TestEmissionRate_PricedUnpricedEndedAndAbove2To64(t *testing.T) {
 	}
 }
 
+func withBorrowed(rv ReserveView, borrowed string) ReserveView {
+	rv.Borrowed = borrowed
+	return rv
+}
+
 // TestEmissionAPR_SidesAndReasons: annual USD over the side's current USD size; an empty, unpriced or unread side, or an unpriced
 // token, is null with a reason and never divides by zero; an ended stream is zero.
 func TestEmissionAPR_SidesAndReasons(t *testing.T) {
@@ -71,6 +76,11 @@ func TestEmissionAPR_SidesAndReasons(t *testing.T) {
 		{"reserve unread", true, "supply", ReserveView{}, false, blnd, "", emissionAPRReserveUnread},
 		{"token unpriced", true, "supply", rv, true, kpiTokenPrice{reason: kpiUSDUnpriced}, "", kpiUSDUnpriced},
 		{"ended", false, "borrow", rv, true, blnd, "0.0000", ""},
+		// The $1 side floor: one stroop would otherwise serve 1,576,800 / 0.0000001 = 1.5768e13.
+		{"side one stroop", true, "borrow", withBorrowed(rv, "1"), true, blnd, "", emissionAPRSideDust},
+		{"side just below floor", true, "borrow", withBorrowed(rv, "9999999"), true, blnd, "", emissionAPRSideDust},
+		{"side at floor", true, "borrow", withBorrowed(rv, "10000000"), true, blnd, "1576800.0000", ""},
+		{"side just above floor", true, "borrow", withBorrowed(rv, "10000001"), true, blnd, "1576799.8423", ""},
 	}
 	for _, tc := range cases {
 		apr, why := emissionAPR(eps, tc.live, tc.side, tc.rv, tc.found, tc.p)
