@@ -148,7 +148,17 @@ export type PairedBarRow = {
   aDisplay?: string;
   bDisplay?: string;
   title?: string;
+  /**
+   * Entity colour for both halves (e.g. a protocol hue): `a` draws solid,
+   * `b` faded, and the legend swatches turn neutral solid / faded.
+   */
+  color?: string;
+  /** Hatched lower-bound tail on a half (pair with a "≥" display). */
+  aHatch?: boolean;
+  bHatch?: boolean;
 };
+
+const FADED = 0.45;
 
 /**
  * PairedBars — two series compared per entity (supplied vs borrowed,
@@ -182,6 +192,8 @@ export function PairedBars({
   if (finite.length === 0) return null;
   const max = Math.max(...finite.flatMap((r) => [r.a ?? 0, r.b ?? 0]), 0);
   if (max <= 0) return null;
+  const entityColored = finite.some((r) => r.color);
+  const neutral = 'var(--color-ink-muted)';
 
   return (
     <div className={cn('space-y-2', className)}>
@@ -190,7 +202,7 @@ export function PairedBars({
           <span
             aria-hidden
             className="inline-block h-2 w-2 rounded-full"
-            style={{ backgroundColor: aColor }}
+            style={{ backgroundColor: entityColored ? neutral : aColor }}
           />
           {aLabel}
         </li>
@@ -198,7 +210,10 @@ export function PairedBars({
           <span
             aria-hidden
             className="inline-block h-2 w-2 rounded-full"
-            style={{ backgroundColor: bColor }}
+            style={{
+              backgroundColor: entityColored ? neutral : bColor,
+              opacity: entityColored ? FADED : undefined,
+            }}
           />
           {bLabel}
         </li>
@@ -216,20 +231,43 @@ export function PairedBars({
             <span className="min-w-0 space-y-0.5">
               {(
                 [
-                  { v: r.a, d: r.aDisplay, c: aColor, s: aLabel },
-                  { v: r.b, d: r.bDisplay, c: bColor, s: bLabel },
+                  {
+                    v: r.a,
+                    d: r.aDisplay,
+                    c: r.color ?? aColor,
+                    o: undefined,
+                    h: r.aHatch,
+                    s: aLabel,
+                  },
+                  {
+                    v: r.b,
+                    d: r.bDisplay,
+                    c: r.color ?? bColor,
+                    o: r.color ? FADED : undefined,
+                    h: r.bHatch,
+                    s: bLabel,
+                  },
                 ] as const
               ).map((half) => (
                 <span key={half.s} className="flex items-center gap-2">
                   {half.v !== null && (
                     <span
                       aria-hidden
-                      className="h-1.5 min-w-[2px] shrink-0 rounded-xs"
-                      style={{
-                        width: barWidth(half.v / max),
-                        backgroundColor: half.c,
-                      }}
-                    />
+                      className="relative h-1.5 min-w-[2px] shrink-0 rounded-xs"
+                      style={{ width: barWidth(half.v / max) }}
+                    >
+                      <span
+                        className="absolute inset-0 rounded-xs"
+                        style={{ backgroundColor: half.c, opacity: half.o }}
+                      />
+                      {half.h && (
+                        <span
+                          data-testid="lower-bound-tail"
+                          className="text-ink-faint absolute inset-y-0 -right-2 w-2 rounded-r-xs opacity-70"
+                          style={{ backgroundImage: HATCH_BG }}
+                        />
+                      )}
+                    </span>
                   )}
                   <span className="text-ink-muted font-mono text-[11px] whitespace-nowrap tabular-nums">
                     {half.d ?? (half.v === null ? '—' : formatValue(half.v))}
@@ -241,6 +279,44 @@ export function PairedBars({
         ))}
       </ul>
     </div>
+  );
+}
+
+/**
+ * InlineMeter — a share of a whole (utilisation) as a short track inside a
+ * table cell. `frac` is clamped to [0, 1]; the cell's text carries the figure.
+ */
+export function InlineMeter({
+  frac,
+  label,
+  color = 'var(--color-brand-500)',
+  className,
+}: {
+  frac: number;
+  label: string;
+  color?: string;
+  className?: string;
+}) {
+  if (!Number.isFinite(frac)) return null;
+  const f = Math.min(1, Math.max(0, frac));
+  return (
+    <span
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(f * 1000) / 10}
+      className={cn(
+        'bg-surface-muted relative inline-block h-1.5 w-12 overflow-hidden rounded-xs align-middle',
+        className,
+      )}
+    >
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 rounded-xs"
+        style={{ width: `${f * 100}%`, backgroundColor: color }}
+      />
+    </span>
   );
 }
 

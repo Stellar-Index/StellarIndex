@@ -8,6 +8,7 @@ import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import { poolProtocol } from '../poolMeta';
 import { AuctionsPanel } from './AuctionsPanel';
 import { BackstopPanel } from './BackstopPanel';
+import { EmissionsPanel } from './EmissionsPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
@@ -53,6 +54,7 @@ export function LendingPoolPathView() {
       {pool && <PoolDetails pool={pool} />}
       {pool && <PoolReserves pool={pool} />}
       {pool && <BackstopPanel pool={pool} />}
+      {pool && <EmissionsPanel pool={pool} />}
       {pool && <AuctionsPanel pool={pool} />}
       {pool && <ConfigHistory pool={pool} />}
     </div>

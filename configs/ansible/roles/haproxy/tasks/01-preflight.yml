@@ -26,16 +26,36 @@
       haproxy role assumes a 2-LB-host topology (per ha-plan §3.1);
       detected {{ groups['haproxy_lb'] | length }} hosts
 
+# 06-firewall.yml renders the WHOLE /etc/nftables.conf (`flush ruleset`), as
+# archival-node does: on one host each run would drop the other's ports.
+- name: assert host is not an archival node (this role owns the host firewall)
+  assert:
+    that:
+      - inventory_hostname not in groups['archival_nodes'] | default([])
+    fail_msg: >-
+      {{ inventory_hostname }} is in archival_nodes. The haproxy role replaces
+      the host's entire nftables ruleset, and archival-node rewrites it back
+      without VRRP and the VIP's 80/443. Run it on dedicated haproxy_lb hosts only.
+  tags: [always]
+
 - name: assert keepalived priorities elect the MASTER
+  vars:
+    _lb_priorities: >-
+      {{ groups['haproxy_lb'] | map('extract', hostvars)
+         | map(attribute='keepalived_priority', default=keepalived_priority) | map('int') | list }}
   assert:
     that:
       - keepalived_initial_state is not defined
-      - groups['haproxy_lb'] | map('extract', hostvars)
-        | map(attribute='keepalived_priority', default=keepalived_priority) | unique | length == 2
+      - keepalived_preempt_delay is not defined
+      - _lb_priorities | unique | length == 2
+      - (_lb_priorities | max) - (_lb_priorities | min) < (keepalived_pool_weight | int)
     fail_msg: >-
-      Both LBs start as BACKUP so preempt_delay applies; drop
-      keepalived_initial_state from the inventory and give the LBs distinct
-      keepalived_priority values (the higher one holds the VIP).
+      Both LBs start as BACKUP and priority elects the MASTER: drop
+      keepalived_initial_state and keepalived_preempt_delay (replaced by
+      keepalived_pool_recovery_seconds) from the inventory, and give the LBs
+      distinct keepalived_priority values less than keepalived_pool_weight
+      ({{ keepalived_pool_weight }}) apart, or an empty api_pool on the MASTER
+      never moves the VIP. Got {{ _lb_priorities }}.
 
 - name: assert stellarindex_api inventory group is populated
   assert:

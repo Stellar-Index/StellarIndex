@@ -10,10 +10,13 @@ positions:
 
 clients:
   - url: {{ promtail_target_url }}
+    # 0 = retry until Loki accepts the batch. A finite budget drops the batch
+    # after it (10 retries is ~8.5 min) while the journal position has moved on;
+    # retrying instead blocks the reader, so the journal holds the backlog.
     backoff_config:
       min_period: 500ms
       max_period: 5m
-      max_retries: 10
+      max_retries: 0
     batchsize: 1048576
     batchwait: 1s
     timeout: 10s

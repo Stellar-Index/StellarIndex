@@ -1,4 +1,4 @@
-import { baseUnitsDecimal, formatBaseUnits } from '@/lib/format';
+import { baseUnitsDecimal, formatCompactTokenUnits } from '@/lib/format';
 import type { components } from '@/api/types';
 
 export type ReserveConfig = components['schemas']['LendingReserveConfig'];
@@ -76,13 +76,23 @@ export function fixedDecimal(
   return baseUnitsDecimal(raw, decimals) ?? '—';
 }
 
-/** Supply cap in whole tokens; "—" when the pool has none or the scale is unknown. */
+// The cap is an i128 with no sentinel in the contracts; a value at or above
+// i64::MAX is a "max" placeholder (i64/u64/i128::MAX), not a real limit.
+const UNLIMITED_CAP = 9223372036854775807n;
+
+/** True for a cap set to a max-integer placeholder. */
+export function isUnlimitedCap(cap: string | null | undefined): boolean {
+  return cap != null && /^\d+$/.test(cap) && BigInt(cap) >= UNLIMITED_CAP;
+}
+
+/** Supply cap in whole tokens (compact); "No cap" for a max placeholder; "—" when absent or unscaled. */
 export function supplyCapText(
   cap: string | null | undefined,
   decimals: number | null | undefined,
 ): string {
+  if (isUnlimitedCap(cap)) return 'No cap';
   if (cap == null || decimals == null) return '—';
-  return formatBaseUnits(cap, decimals, 2);
+  return formatCompactTokenUnits(cap, decimals);
 }
 
 export interface ChangeLike {

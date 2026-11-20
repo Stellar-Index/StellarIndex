@@ -249,8 +249,25 @@ function AuctionsList({ pool }: { pool: string }) {
   );
 }
 
-export function AuctionsPanel({ pool }: { pool: string }) {
+/** `total`/`lastSeen` come from the pools listing the header already read; null when unknown. */
+export function AuctionsPanel({
+  pool,
+  total = null,
+  lastSeen = null,
+}: {
+  pool: string;
+  total?: number | null;
+  lastSeen?: string | null;
+}) {
   const [shown, setShown] = useState(false);
+  if (total === 0)
+    return (
+      <Panel headingLevel={2} title="Liquidation auctions">
+        <p className="text-ink-muted text-sm">
+          No liquidation auction has run in this pool.
+        </p>
+      </Panel>
+    );
   return (
     <Panel
       headingLevel={2}
@@ -262,9 +279,25 @@ export function AuctionsPanel({ pool }: { pool: string }) {
       {shown ? (
         <AuctionsList pool={pool} />
       ) : (
-        <Button variant="secondary" size="sm" onClick={() => setShown(true)}>
-          Show auctions
-        </Button>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {total != null && (
+            <p className="text-ink-body text-sm">
+              <span className="text-ink font-mono text-lg tabular-nums">
+                {total.toLocaleString('en-US')}
+              </span>{' '}
+              auction{total === 1 ? '' : 's'}
+              {lastSeen && (
+                <span className="text-ink-muted">
+                  {' '}
+                  · last {formatRelative(lastSeen)}
+                </span>
+              )}
+            </p>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => setShown(true)}>
+            {total != null ? 'List them' : 'Show auctions'}
+          </Button>
+        </div>
       )}
     </Panel>
   );

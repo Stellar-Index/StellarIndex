@@ -67,6 +67,28 @@
     path: "{{ etcd_data_dir }}/member"
   register: _etcd_member_dir
 
+- name: detect the rendered /etc/default/etcd
+  stat:
+    path: /etc/default/etcd
+  register: _etcd_env_file_stat
+  when: _etcd_member_dir.stat.exists
+
+- name: read the initial cluster state this member was started with
+  slurp:
+    src: /etc/default/etcd
+  register: _etcd_env_file
+  when:
+    - _etcd_member_dir.stat.exists
+    - _etcd_env_file_stat.stat.exists
+
+- name: keep the initial cluster state this member was started with
+  set_fact:
+    _etcd_started_state: >-
+      {{ _etcd_env_file.content | b64decode
+         | regex_search('^ETCD_INITIAL_CLUSTER_STATE="(new|existing)"', '\1', multiline=True)
+         | default(['existing'], true) | first }}
+  when: _etcd_env_file.content is defined
+
 # rc 0: a peer has quorum. rc 1: every peer answered (or refused the connection,
 # i.e. runs no etcd yet) without quorum. rc 2: a peer could not be asked (TLS,
 # firewall, timeout), which must not be read as "no cluster".
