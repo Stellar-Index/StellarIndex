@@ -316,10 +316,16 @@ func runSponsorshipProof(ctx context.Context, chAddr string, accounts []string, 
 }
 
 func sponsorshipProofFor(ctx context.Context, rd *clickhouse.ExplorerReader, g string, wm uint32) (entryhistory.SponsorshipProof, error) {
+	// Read before the scan, as the cache refresh does, so the stamp never names a ledger later than the entry.
+	asOf, _, err := rd.LakeWatermark(ctx)
+	if err != nil {
+		return entryhistory.SponsorshipProof{}, err
+	}
 	st, err := rd.AccountState(ctx, g)
 	if err != nil {
 		return entryhistory.SponsorshipProof{}, err
 	}
+	st.AsOfLedger = asOf
 	sponsoring, err := rd.SponsorshipTotals(ctx, g, clickhouse.SponsorshipSideSponsor, wm)
 	if err != nil {
 		return entryhistory.SponsorshipProof{}, err

@@ -440,18 +440,23 @@
 
 - name: heavy-job host-wide lock file (tmpfiles.d)
   # /run/lock is tmpfs, so the wrapper's host-wide lock is recreated at
-  # every boot. root:root 0644 because the wrapper opens it read-only:
-  # neither root nor stellarindex needs write, and a root-owned file in
-  # root-owned sticky /run/lock is one nobody else can delete or replace.
+  # every boot. The wrapper opens it read-only, so nobody needs write, and
+  # a root-owned file in root-owned sticky /run/lock is one nobody else can
+  # delete or replace. Group stellarindex, not world: flock needs only a
+  # read open, so any uid that can open the lock can hold it and starve
+  # every scheduled job. Only root and stellarindex units run the wrapper.
+  # Per-job locks go in /run/lock/stellarindex, which no other uid can
+  # enter; setgid so a lock root creates is still group stellarindex.
   ansible.builtin.copy:
     dest: /etc/tmpfiles.d/stellarindex-heavy-job.conf
     owner: root
     group: root
     mode: "0644"
     content: |
-      f /run/lock/stellarindex-heavy.lock 0644 root root -
-      f /run/lock/stellarindex-heavy-scheduled.lock 0644 root root -
-      d /run/lock/stellarindex-heavy-scheduled.lock.queue 1777 root root -
+      f /run/lock/stellarindex-heavy.lock 0640 root stellarindex -
+      f /run/lock/stellarindex-heavy-scheduled.lock 0640 root stellarindex -
+      d /run/lock/stellarindex-heavy-scheduled.lock.queue 1770 root stellarindex -
+      d /run/lock/stellarindex 3770 root stellarindex -
   tags: [heavy-job-wrapper]
 
 - name: create the heavy-job host-wide lock file now
@@ -572,7 +577,34 @@
       # run this wrapper, and an O_CREAT open (`>`, `<>`) of a lock file
       # another user owns in sticky /run/lock is EACCES under
       # fs.protected_regular.
-      lock_file_prep() { [ -e "$1" ] || (umask 022; : >>"$1") 2>/dev/null || true; }
+      lock_file_prep() { [ -e "$1" ] || [ -L "$1" ] || (umask 027; : >>"$1") 2>/dev/null || true; }
+      # A lock is only a plain file owned by root, stellarindex or the
+      # caller: opening a planted FIFO blocks until TimeoutStartSec, and a
+      # file another uid owns is one that uid can hold forever.
+      lock_owner_ok() {
+        local u
+        [ -O "$1" ] && return 0
+        u="$(stat -c %u -- "$1" 2>/dev/null || stat -f %u -- "$1" 2>/dev/null)" || return 1
+        [ "$u" = 0 ] || [ "$u" = "$(id -u stellarindex 2>/dev/null)" ]
+      }
+      lock_path_ok() { [ -f "$1" ] && [ ! -L "$1" ] && lock_owner_ok "$1"; }
+      lock_ready() { # absent: create it; then it must be a lock of ours
+        lock_file_prep "$1"
+        lock_path_ok "$1" && return 0
+        echo "run-heavy-job: refusing to start ${NAME}: lock ${1} is not a plain file owned by root or stellarindex — remove it (nothing ran, exit 2)" >&2
+        exit 2
+      }
+      # Per-job locks live in a 3770 root:stellarindex directory (tmpfiles
+      # task above): in world-writable /run/lock any uid could hold or
+      # pre-plant one. setgid gives every lock group stellarindex, so a
+      # 0640 lock root created still opens for the stellarindex user.
+      restricted_dir() { # restricted_dir <dir> <mode>
+        if [ -d "$1" ] && [ ! -L "$1" ]; then lock_owner_ok "$1"; return; fi
+        [ ! -e "$1" ] && [ ! -L "$1" ] && [ "$(id -u)" -eq 0 ] || return 1
+        mkdir -m "$2" "$1" 2>/dev/null || return 1
+        chown root:stellarindex "$1" 2>/dev/null && return 0
+        rmdir "$1" 2>/dev/null; return 1
+      }
       #
       # A held lock means a run of this NAME is alive. A skip always
       # exits 75 (EX_TEMPFAIL), never 0: a caller must be able to tell
@@ -591,10 +623,34 @@
       # them silently does not run while the other is long, and for a
       # Type=notify unit an exit before READY=1 is a protocol failure
       # whatever SuccessExitStatus says. A wait that runs out fails loud.
-      LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-${NAME}.lock"
-      lock_file_prep "$LOCK"
+      LOCK_ROOT="${HEAVY_JOB_LOCK_DIR:-/run/lock}"
+      JOB_LOCK_DIR="${LOCK_ROOT}/stellarindex"
+      LOCK="${JOB_LOCK_DIR}/stellarindex-heavy-${NAME}.lock"
+      # A wrapper from before the move may still be running this job under
+      # the old path, so that lock is taken too while a file of ours is there.
+      LEGACY_LOCK="${LOCK_ROOT}/stellarindex-heavy-${NAME}.lock"
+      restricted_dir "$JOB_LOCK_DIR" 3770 || {
+        echo "run-heavy-job: refusing to start ${NAME}: ${JOB_LOCK_DIR} is missing or not a root/stellarindex directory (nothing ran, exit 2). Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
+        exit 2
+      }
+      lock_ready "$LOCK"
       exec 9<"$LOCK" || { echo "run-heavy-job: refusing to start ${NAME}: cannot open its lock ${LOCK}" >&2; exit 2; }
       LOCK_WAIT="${HEAVY_JOB_LOCK_WAIT:-}"
+      lock_left() { local l=$((LOCK_WAIT - ($(date +%s) - WAIT_START))); [ "$l" -ge 1 ] || l=1; echo "$l"; }
+      take_job_lock() { # take_job_lock <fd> <path> [wait seconds]
+        if [ -n "${3:-}" ]; then
+          flock -w "$3" "$1" && return 0
+          echo "run-heavy-job: ${NAME} FAILED to start: lock ${2} was still held after waiting ${LOCK_WAIT}s — another unit or manual run using the job name ${NAME} held it all that time (find it: fuser -v ${2})" >&2
+          exit 1
+        fi
+        flock -n "$1" && return 0
+        if [ -n "${INVOCATION_ID:-}" ]; then
+          echo "run-heavy-job: ${NAME} already running (lock ${2} held) — skipping this fire, exit 75" >&2
+          exit 75
+        fi
+        echo "run-heavy-job: refusing to start ${NAME}: lock ${2} is held, so a previous run of ${NAME} is still alive (find it: fuser -v ${2}). Wait for it or stop it, then re-run under the SAME name." >&2
+        exit 75
+      }
       if [ -n "$LOCK_WAIT" ]; then
         case "$LOCK_WAIT" in
           *[!0-9]*|0*)
@@ -602,17 +658,11 @@
             exit 2 ;;
         esac
         WAIT_START="$(date +%s)"
-        if ! flock -w "$LOCK_WAIT" 9; then
-          echo "run-heavy-job: ${NAME} FAILED to start: lock ${LOCK} was still held after waiting ${LOCK_WAIT}s — another unit or manual run using the job name ${NAME} held it all that time (find it: fuser -v ${LOCK})" >&2
-          exit 1
-        fi
-      elif ! flock -n 9; then
-        if [ -n "${INVOCATION_ID:-}" ]; then
-          echo "run-heavy-job: ${NAME} already running (lock ${LOCK} held) — skipping this fire, exit 75" >&2
-          exit 75
-        fi
-        echo "run-heavy-job: refusing to start ${NAME}: lock ${LOCK} is held, so a previous run of ${NAME} is still alive (find it: fuser -v ${LOCK}). Wait for it or stop it, then re-run under the SAME name." >&2
-        exit 75
+      fi
+      take_job_lock 9 "$LOCK" "$LOCK_WAIT"
+      # Never created, and anything else at the old path is not ours.
+      if lock_path_ok "$LEGACY_LOCK" && exec 4<"$LEGACY_LOCK"; then
+        take_job_lock 4 "$LEGACY_LOCK" "${LOCK_WAIT:+$(lock_left)}"
       fi
 
       # ── Host-wide lock: one heavy job at a time ──────────────────
@@ -629,10 +679,10 @@
       #     job to finish (HEAVY_JOB_LOCK_WAIT), deferring with exit 75 when
       #     there is no wait or it runs out. Scheduled jobs are also serialised against each
       #     other by a second lock taken exclusive, with the same rule.
-      # The files are pre-created root:root 0644 by tmpfiles.d (task
-      # above). If the host-wide one cannot be opened the wrapper cannot
-      # prove the host is free: a scheduled job warns and runs, an
-      # operator job is refused.
+      # The files are pre-created root:stellarindex 0640 by tmpfiles.d
+      # (task above). If one cannot be opened the wrapper cannot prove the
+      # host is free, so either class fails (exit 2, never the 75 a unit
+      # counts as success).
       GLOBAL_LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
       CLASS="${HEAVY_JOB_CLASS:-exclusive}"
       case "$CLASS" in
@@ -642,14 +692,10 @@
           exit 2
           ;;
       esac
-      lock_file_prep "$GLOBAL_LOCK"
+      lock_ready "$GLOBAL_LOCK"
       if ! exec 8<"$GLOBAL_LOCK"; then
-        if [ "$CLASS" = scheduled ]; then
-          echo "run-heavy-job: WARNING ${NAME} (scheduled) could not open the host-wide lock ${GLOBAL_LOCK} — running WITHOUT cross-job exclusion. Recreate it: systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
-        else
-          echo "run-heavy-job: refusing to start ${NAME}: cannot open the host-wide lock ${GLOBAL_LOCK}, so nothing proves no other heavy job is running. Nothing ran (exit 2). Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
-          exit 2
-        fi
+        echo "run-heavy-job: refusing to start ${NAME}: cannot open the host-wide lock ${GLOBAL_LOCK}, so nothing proves no other heavy job is running. Nothing ran (exit 2). Run as root or stellarindex; recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
+        exit 2
       elif [ "$CLASS" = scheduled ]; then
         # A launcher that set HEAVY_JOB_LOCK_WAIT queues here too, so an
         # overlap delays a daily/monthly job instead of dropping the fire.
@@ -659,8 +705,7 @@
         # failure, says when deferral has gone on too long. One deadline
         # covers all three waits.
         SCHED_LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-scheduled.lock"
-        lock_file_prep "$SCHED_LOCK"
-        lock_left() { local l=$((LOCK_WAIT - ($(date +%s) - WAIT_START))); [ "$l" -ge 1 ] || l=1; echo "$l"; }
+        lock_ready "$SCHED_LOCK"
         FLOCK_MODE=(-n)
         [ -n "$LOCK_WAIT" ] && FLOCK_MODE=(-w "$(lock_left)")
         if ! flock "${FLOCK_MODE[@]}" -s 8; then
@@ -674,9 +719,9 @@
         sched_queue_lock() {
           local q="${SCHED_LOCK}.queue" t ticket
           [ -n "$LOCK_WAIT" ] || { flock -n -x 7; return; }
-          if ! { [ -d "$q" ] || (umask 0; mkdir -m 1777 "$q") 2>/dev/null; } \
+          if ! restricted_dir "$q" 1770 \
             || ! (umask 022; set -C; : >"$q/.new-$$") 2>/dev/null || ! exec 6<"$q/.new-$$"; then
-            echo "run-heavy-job: WARNING ${NAME} (scheduled) cannot queue in ${q} — waiting unordered" >&2
+            echo "run-heavy-job: WARNING ${NAME} (scheduled) cannot queue in ${q} (missing, or not a root/stellarindex directory) — waiting unordered. Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
             flock -w "$(lock_left)" -x 7; return
           fi
           flock -n -x 6
@@ -686,6 +731,8 @@
             for t in "$q"/*; do
               [ "$t" = "$ticket" ] && break
               [ -e "$t" ] || continue
+              # Only a plain file is a ticket: a FIFO would block the open below forever.
+              { [ -f "$t" ] && [ ! -L "$t" ]; } || continue
               # A ticket nobody holds is a waiter that died: skip it (rm may fail on another user's file).
               if (exec 5<"$t" && flock -n -s 5) 2>/dev/null; then rm -f "$t" 2>/dev/null; continue; fi
               t=""; break
@@ -708,7 +755,8 @@
             exit 75
           fi
         else
-          echo "run-heavy-job: WARNING ${NAME} (scheduled) could not open the scheduled lock ${SCHED_LOCK} — running WITHOUT scheduled-job serialisation. Recreate it: systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
+          echo "run-heavy-job: refusing to start ${NAME} (scheduled): cannot open the scheduled lock ${SCHED_LOCK}, so nothing proves no other scheduled job is running. Nothing ran (exit 2). Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
+          exit 2
         fi
       elif ! flock -n -x 8; then
         echo "run-heavy-job: refusing to start ${NAME}: another heavy job holds the host-wide lock ${GLOBAL_LOCK} — one heavy job at a time. Nothing ran (exit 75). See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
@@ -842,8 +890,8 @@
       if ! df --output=avail -k "$POOL_PATH" >/dev/null 2>&1; then
         echo "run-heavy-job: WARNING POOL_PATH '${POOL_PATH}' is not statable — the DATA-POOL watchdog is INACTIVE for this job (root-FS guard still active). Set HEAVY_JOB_POOL_PATH to a path on the data pool." >&2
       fi
-      # 7>&- 8>&- 9>&-: the watchdog (and its `sleep`, which a kill of the
-      # subshell orphans) must not hold either lock past the job, or a
+      # 4>&- 7>&- 8>&- 9>&-: the watchdog (and its `sleep`, which a kill of the
+      # subshell orphans) must not hold any lock past the job, or a
       # prompt relaunch, or the next window of a runbook loop, finds it held.
       (
         # This subshell MUST NOT inherit errexit/pipefail: a single
@@ -872,7 +920,7 @@
             *) [ "$pool_kb" -lt "$POOL_MIN_KB" ] && stop_job "data pool ${POOL_PATH} below $((POOL_MIN_KB / 1048576)) GiB (${pool_kb} KiB avail)" ;;
           esac
         done
-      ) 7>&- 8>&- 9>&- &
+      ) 4>&- 7>&- 8>&- 9>&- &
       WATCHDOG=$!
       publish_hold
       trap 'kill "$WATCHDOG" 2>/dev/null || true; rm -f "$HELD_PROM"' EXIT

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -92,7 +93,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_holdings_staging (rel, root, asset, holders, balance)
 	 SELECT c.rel, c.root, e.asset,
 	        toUInt64(count()) AS holders,
-	        sum(toInt128(e.balance)) AS balance
+	        sum(toInt128(e.balance)) AS balance -- i128sum:ok account and trustline balances are Int64 stroops
 	 FROM (
 	     SELECT account_id, if(entry_type = 'account', 'native', asset) AS asset, balance
 	     FROM stellar.ledger_entries_current FINAL
@@ -144,8 +145,8 @@ var cohortRollupStatements = []rollupStep{
 	        toStartOfMonth(m.closed_at) AS month,
 	        m.asset,
 	        if(startsWith(m.counterparty, 'C'), m.counterparty, '') AS contract,
-	        sumIf(toInt128(m.amount), m.direction = '` + string(AccountMovementReceived) + `') AS inflow,
-	        sumIf(toInt128(m.amount), m.direction = '` + string(AccountMovementSent) + `') AS outflow,
+	        sumIf(toInt256(m.amount), m.direction = '` + string(AccountMovementReceived) + `') AS inflow,
+	        sumIf(toInt256(m.amount), m.direction = '` + string(AccountMovementSent) + `') AS outflow,
 	        toUInt64(count()) AS movements,
 	        uniqCombinedState(m.address) AS actives,
 	        min(m.closed_at) AS first_at,
@@ -164,7 +165,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_flows_staging
 	     (rel, root, month, asset, inflow, outflow, movements, active_accounts)
 	 SELECT rel, root, month, asset,
-	        sum(toInt128(inflow)), sum(toInt128(outflow)),
+	        sum(toInt256(inflow)), sum(toInt256(outflow)),
 	        toUInt64(sum(movements)), toUInt64(uniqCombinedMerge(actives))
 	 FROM stellar.account_cohort_parts_staging
 	 GROUP BY rel, root, month, asset
@@ -174,7 +175,7 @@ var cohortRollupStatements = []rollupStep{
 	{sql: `INSERT INTO stellar.account_cohort_flows_staging
 	     (rel, root, month, asset, inflow, outflow, movements, active_accounts)
 	 SELECT rel, root, month, '` + CohortAllAssets + `',
-	        toInt128(0), toInt128(0),
+	        toInt256(0), toInt256(0),
 	        toUInt64(sum(movements)), toUInt64(uniqCombinedMerge(actives))
 	 FROM stellar.account_cohort_parts_staging
 	 GROUP BY rel, root, month
@@ -230,6 +231,9 @@ func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiP
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+	if err := checkCohortSumColumns(ctx, conn); err != nil {
+		return err
+	}
 	tip, err := lakeTipLedger(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("clickhouse: cohort rollup: %w", err)
@@ -243,6 +247,56 @@ func RunCohortRollup(ctx context.Context, addr string, holders []timescale.DeFiP
 	}
 	logf("monthly usd prices: %d rows staged", len(prices))
 	return runRollupSteps(ctx, conn, tip, "cohort rollup", cohortRollupStatements, logf)
+}
+
+// cohortSumColumns are the Int256 sums the cycle writes or swaps. ClickHouse narrows an Int256 insert into a narrower
+// column without an overflow check, so a deployment the operator file has not retyped would serve wrapped totals.
+var cohortSumColumns = []struct{ table, column string }{
+	{"account_cohort_parts_staging", "inflow"},
+	{"account_cohort_parts_staging", "outflow"},
+	{"account_cohort_flows", "inflow"},
+	{"account_cohort_flows", "outflow"},
+	{"account_cohort_flows_staging", "inflow"},
+	{"account_cohort_flows_staging", "outflow"},
+	{"account_cohort_positions", "amount"},
+	{"account_cohort_positions_staging", "amount"},
+}
+
+// checkCohortSumColumns fails the cycle before anything is truncated, leaving the live snapshot in place, unless every
+// cohortSumColumns entry is Int256.
+func checkCohortSumColumns(ctx context.Context, conn driver.Conn) error {
+	rows, err := conn.Query(ctx, `SELECT table, name, type FROM system.columns
+		WHERE database = 'stellar' AND name IN ('inflow', 'outflow', 'amount') AND startsWith(table, 'account_cohort_')`)
+	if err != nil {
+		return fmt.Errorf("clickhouse: cohort rollup: read column types: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	have := make(map[string]string)
+	for rows.Next() {
+		var table, name, typ string
+		if err := rows.Scan(&table, &name, &typ); err != nil {
+			return fmt.Errorf("clickhouse: cohort rollup: scan column types: %w", err)
+		}
+		have[table+"."+name] = typ
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("clickhouse: cohort rollup: read column types: %w", err)
+	}
+	var bad []string
+	for _, c := range cohortSumColumns {
+		typ, ok := have[c.table+"."+c.column]
+		if !ok {
+			typ = "absent"
+		}
+		if typ != "Int256" {
+			bad = append(bad, fmt.Sprintf("stellar.%s.%s is %s", c.table, c.column, typ))
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("clickhouse: cohort rollup: %s, want Int256 (apply deploy/clickhouse/account_cohort_rollup.sql); the previous snapshot stays live",
+			strings.Join(bad, ", "))
+	}
+	return nil
 }
 
 // positionHolderAmount is h.Amount as a canonical base-10 integer; a fractional or empty amount fails the cycle (prior snapshot stays

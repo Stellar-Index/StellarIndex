@@ -22,7 +22,7 @@
 #                            lint-git-fixture-isolation scoped; shellcheck -x
 #                            (0.5 s/file). A *-test.sh is also RUN, last.
 #   *.go                     gofumpt -l, goimports -l (0.1 s/file); then
-#                            lint-lexicon, check-deprecations, lint-i128,
+#                            lint-lexicon, check-deprecations, lint-i128, lint-i128-sum,
 #                            lint-imports (whole tree, ~1 s each — they
 #                            take no file list),
 #                            lint-go-typographic-quotes (whole tree, 0.55 s),
@@ -464,6 +464,7 @@ if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "lint-test-patterns" "whole tree (takes no file list)" "$ci_dir/lint-test-patterns.sh"
     add_step "check-deprecations" "whole tree (takes no file list)" "$ci_dir/check-deprecations.sh"
     add_step "lint-i128" "whole tree (takes no file list)" "$ci_dir/lint-i128.sh"
+    add_step "lint-i128-sum" "whole tree (takes no file list)" "$ci_dir/lint-i128-sum.sh"
     add_step "lint-decimals-default" "whole tree (takes no file list)" "$ci_dir/lint-decimals-default.sh"
     add_step "lint-imports" "whole tree (takes no file list)" "$ci_dir/lint-imports.sh"
     add_step "lint-comments" "whole tree (takes no file list)" "$ci_dir/lint-comments.sh"
@@ -561,6 +562,7 @@ fi
 #     run on a fresh test-net provision.
 if [ "${#ch_files[@]}" -gt 0 ]; then
     add_step "lint-ch-apply-scope" "whole tree; ${#ch_files[@]} changed file(s) sit on the fresh-host/operator boundary" "$ci_dir/lint-ch-apply-scope.sh"
+    [ "${#go_files[@]}" -gt 0 ] || add_step "lint-i128-sum" "ClickHouse SQL changed" "$ci_dir/lint-i128-sum.sh"
 fi
 
 # 9. A changed self-test is run. Last: these are the only steps whose cost

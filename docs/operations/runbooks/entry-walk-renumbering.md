@@ -25,7 +25,7 @@ Deploy-time procedure, not a paging condition. Run once per `dispatcher.EntryWal
 | `stellar.ledger_entry_changes` (append log) | `ReplacingMergeTree(ingested_at)` | `PARTITION BY intDiv(ledger_seq, 1000000)` |
 | `stellar.ledger_entries_current` (projection) | `ReplacingMergeTree(version)`, `version = (ledger_seq << 32) \| intra_ledger_seq` | none, `ORDER BY (entry_type, key_xdr)` |
 
-- The append log needs no drop: a later replay wins on `ingested_at`.
+- In the append log a later replay wins on `ingested_at` only where the key `(ledger_seq, tx_hash, op_index, change_index)` is unchanged. The renumbering moved `change_index` on P23+ ledgers, so the old row at its former index is an orphan that survives `FINAL`; it is deleted in step 5 of section 1.
 - The projection is unpartitioned (`DROP PARTITION` does not reach it), and a reproject alone does NOT repair it: the corrected row has a lower version and loses under `FINAL`. Its stale rows must be deleted, not out-written.
 
 **Do step 2 (seed) only after step 1 has verified. Seeding a stale balance at `MaxUint32` is strictly worse than the original corruption.**

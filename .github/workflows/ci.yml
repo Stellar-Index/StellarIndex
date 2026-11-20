@@ -1161,6 +1161,11 @@ jobs:
         # the deep go/types guard is TestI128TruncationGuard in
         # internal/canonical, which runs in the test job).
         run: ./scripts/ci/lint-i128.sh
+      - name: lint-i128-sum
+        # A ClickHouse sum over an Int128 value wraps past 2^127; i128 amounts sum through toInt256 (i128sum:ok).
+        run: ./scripts/ci/lint-i128-sum.sh
+      - name: lint-i128-sum self-test
+        run: ./scripts/ci/lint-i128-sum-test.sh
       - name: lint-decimals-default
         # An undeclared or unread Soroban token scale is served absent, never
         # as 7; every remaining 7 carries a decimals-7 reason marker.

@@ -250,6 +250,7 @@ echo "=== Test patterns self-test ===" && ./scripts/ci/lint-test-patterns-test.s
 echo "=== Deprecation removal versions ===" && ./scripts/ci/check-deprecations.sh
 echo "=== Deprecation removal versions self-test ===" && bash scripts/ci/check-deprecations-test.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
+echo "=== Int128 sums ===" && ./scripts/ci/lint-i128-sum.sh
 echo "=== Token scale never defaulted to 7 ===" && ./scripts/ci/lint-decimals-default.sh
 # gofumpt's doc-comment reformatter rewrites a doubled apostrophe to U+201D,
 # so a comment quoting `entry_xdr != ''` stops saying what the filter is. The
@@ -583,6 +584,7 @@ lane_d() { # everything else
     echo "=== Lake dedup (aggregating reads of duplicate-bearing archives) ===" && ./scripts/ci/lint-lake-dedup.sh
     echo "=== Lake dedup self-test ===" && ./scripts/ci/lint-lake-dedup-test.sh
     echo "=== i128 lint self-test ===" && ./scripts/ci/lint-i128-test.sh
+    echo "=== Int128 sums self-test ===" && ./scripts/ci/lint-i128-sum-test.sh
     echo "=== Decimals-default lint self-test ===" && ./scripts/ci/lint-decimals-default-test.sh
     echo "=== ClickHouse apply scope (deploy/clickhouse is not a bootstrap manifest) ===" && ./scripts/ci/lint-ch-apply-scope.sh
     echo "=== ClickHouse apply scope self-test ===" && ./scripts/ci/lint-ch-apply-scope-test.sh

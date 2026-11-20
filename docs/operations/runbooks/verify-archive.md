@@ -24,7 +24,7 @@ A missing-file gap is the most common cause of failure; [`stellarindex_archive_f
 Shared lock: Tier A, Tier B and manual runs share the `verify-archive` heavy-job lock, keyed on the first argument to `run-heavy-job.sh`. A manual run is refused (exit 75) while a timer run holds it; a timer fire queues up to 20h (`HEAVY_JOB_LOCK_WAIT`, unit shows `activating`) and fails with "still held after waiting". Find the holder:
 
 ```sh
-fuser -v /run/lock/stellarindex-heavy-verify-archive.lock
+fuser -v /run/lock/stellarindex/stellarindex-heavy-verify-archive.lock
 ```
 
 Do not start manual runs while a timer is active; wrap manual Tier A/B runs as `/usr/local/sbin/run-heavy-job.sh verify-archive ...` (the name must match the unit; `scripts/ci/lint-verify-archive-lock-name.sh` enforces it). Tier D uses its own lock, `verify-archive-tier-d`.
@@ -152,7 +152,7 @@ ls /srv/history-archive/ledger | head; df -h /srv/history-archive
 
 P3 ticket, `for: 10m`: `tier="checkpoint"` has no clean completion for 36h+ or the series is absent (timer disabled, or every run failed). Diagnose as [tier_b_unit_failed](#stellarindex_verify_archive_tier_b_unit_failed): `systemctl status verify-archive-tier-b.timer`, `journalctl -u verify-archive-tier-b.service`, is the `/srv/history-archive` mirror synced to the range?
 
-Fix: `systemctl enable --now verify-archive-tier-b.timer`. During a long Tier A run a Tier B fire queues behind the shared lock (find the holder with `fuser -v /run/lock/stellarindex-heavy-verify-archive.lock`). Failing runs: use the unit_failed section.
+Fix: `systemctl enable --now verify-archive-tier-b.timer`. During a long Tier A run a Tier B fire queues behind the shared lock (find the holder with `fuser -v /run/lock/stellarindex/stellarindex-heavy-verify-archive.lock`). Failing runs: use the unit_failed section.
 
 ## stellarindex_verify_archive_tier_d_run_stale
 
