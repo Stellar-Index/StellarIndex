@@ -481,12 +481,16 @@ export function RWAView() {
         {assets.length === 0 ? (
           <EmptyState
             headingLevel={3}
-            title="No asset currently meets the definition"
-            {...(unavailable && {
-              title: 'The set could not be established',
-              description: summary.basis,
-            })}
-            description="An asset qualifies only when its issuer both declares the real-world anchor in its own SEP-1 file and is independently recognised. Nothing on this network clears both today — which is a statement about the evidence available, not about what issuers claim."
+            {...(unavailable
+              ? {
+                  title: 'The set could not be established',
+                  description: summary.basis,
+                }
+              : {
+                  title: 'No asset currently meets the definition',
+                  description:
+                    'An asset qualifies only when its issuer both declares the real-world anchor in its own SEP-1 file and is independently recognised. Nothing on this network clears both today — which is a statement about the evidence available, not about what issuers claim.',
+                })}
           />
         ) : (
           <div className="overflow-x-auto">

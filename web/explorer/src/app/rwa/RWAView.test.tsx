@@ -317,7 +317,12 @@ describe('RWAView', () => {
       'The set of real-world assets could not be established',
     );
     present('The set could not be established');
-    absent('No asset currently meets the definition');
+    // Once in the page's basis line, once as the empty panel's own reason.
+    atLeast('Membership could not be established: no set is published.', 2);
+    absent(
+      'No asset currently meets the definition',
+      /Nothing on this network clears both today/,
+    );
   });
 
   it('shows no notice for a clean answer', async () => {
