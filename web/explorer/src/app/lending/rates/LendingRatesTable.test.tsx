@@ -74,6 +74,38 @@ describe('LendingRatesTable', () => {
     expect(screen.getByText('7.00%')).toBeInTheDocument();
   });
 
+  it('drives the scatter from the protocol filter and notes unpriced reserves', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        rates: [
+          rate({}),
+          rate({
+            protocol: 'blnt',
+            pool: BLNT,
+            asset: 'CX',
+            asset_id: 'native',
+          }),
+          rate({
+            protocol: 'blnt',
+            pool: BLNT,
+            asset: 'CY',
+            supplied_usd: null,
+          }),
+        ],
+        omitted_pools: [],
+        partial: false,
+      },
+    });
+    renderIt();
+    await waitFor(() =>
+      expect(screen.getAllByTestId('scatter-dot')).toHaveLength(2),
+    );
+    expect(screen.getByText(/1 not priced, not shown/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Blend/ }));
+    expect(screen.getAllByTestId('scatter-dot')).toHaveLength(1);
+    expect(screen.queryByText(/not priced/)).toBeNull();
+  });
+
   it('says a partial list is partial', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {

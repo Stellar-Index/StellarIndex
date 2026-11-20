@@ -24,6 +24,7 @@ import { SortableTh, useTableSort } from '@/lib/useTableSort';
 
 import { LENDING_POOL_META, lendingProtocol } from '../poolMeta';
 import { UsdFigure } from '../lendingUsd';
+import { RatesCharts } from './RatesCharts';
 
 type RatesData = NonNullable<
   paths['/lending/rates']['get']['responses'][200]['content']['application/json']['data']
@@ -152,6 +153,7 @@ export function LendingRatesTable() {
           , so their reserves are missing below.
         </p>
       )}
+      {q.data && <RatesCharts rows={rows} asset={asset} />}
       <div className="overflow-x-auto">
         <Table>
           <THead>
