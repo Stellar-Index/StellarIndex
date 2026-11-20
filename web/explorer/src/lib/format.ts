@@ -512,6 +512,19 @@ export function sumDecimalStrings(
   return `${neg ? '-' : ''}${whole}${frac}`;
 }
 
+/** Exact `a − b` over decimal strings; null when either is absent or not a decimal. */
+export function subtractDecimalStrings(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): string | null {
+  if (a == null || b == null) return null;
+  const db = parseDecimal(b);
+  if (!parseDecimal(a) || !db) return null;
+  const t = b.trim();
+  const negB = db.units === 0n ? t : t.startsWith('-') ? t.slice(1) : `-${t}`;
+  return sumDecimalStrings([a, negB]);
+}
+
 /**
  * sumUsdVolumes — exact sum of rows' `volume_24h_usd`; `lowerBound` is true
  * when any row flags `volume_lower_bound` (it excluded unpriced trades), so

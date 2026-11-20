@@ -1282,12 +1282,14 @@ describe('RWAView — curated arm', () => {
     expect(screen.queryByText('$4B', headline)).not.toBeInTheDocument();
   });
 
-  it('marks the verified figure a floor and the gap a ceiling when the reference total is a floor', async () => {
+  // The served gap is taken against the history's EXACT month-end total, so
+  // today's floor neither qualifies it nor is the operand shown beside it.
+  it('pairs the exact gap with the month-end verified total it was taken from, not today’s floor', async () => {
     const v = view({
       curated: curated({
         status: 'published_totals',
         verified_value_usd: '345599978.73',
-        published: { ...PUBLISHED, gap_vs_verified_usd: '3659195881.27' },
+        published: { ...PUBLISHED, gap_vs_verified_usd: '3704795860.00' },
       }),
     });
     v.summary.reference_valuation = {
@@ -1298,9 +1300,50 @@ describe('RWAView — curated arm', () => {
     show(v);
 
     await screen.findByText(/As a third-party curator counts it/);
-    expect(screen.getByText('≤ +$3.66B')).toBeInTheDocument();
-    expect(screen.getAllByText('≥ $345.6M').length).toBeGreaterThan(0);
-    present(/including members this index holds but could not value/);
+    // published $4,004,795,860.00 − gap $3,704,795,860.00 = $300M on 2025-08-31.
+    present('Verified by this index on 2025-08-31', '$300M', '+$3.7B');
+    absent(
+      '≤ +$3.7B',
+      /including members this index holds but could not value/,
+    );
+  });
+
+  it('derives the month-end verified total exactly above 2^53', async () => {
+    show(
+      view({
+        curated: curated({
+          status: 'published_totals',
+          published: {
+            ...PUBLISHED,
+            total_usd: '9007199254740993.00',
+            gap_vs_verified_usd: '9007199254740980.50',
+          },
+        }),
+      }),
+    );
+
+    await screen.findByText(/As a third-party curator counts it/);
+    // In float both operands round to even integers: 12, never 12.50.
+    present('$12.50');
+  });
+
+  it('gives the reason, not a figure, when no exact month-end total exists', async () => {
+    show(
+      view({
+        curated: curated({
+          status: 'published_totals',
+          verified_value_usd: '345599978.73',
+          published: { ...PUBLISHED },
+        }),
+      }),
+    );
+
+    await screen.findByText(/As a third-party curator counts it/);
+    present(
+      /^this index holds no exact verified total for that month-end$/,
+      /^not drawn: this index holds no exact verified total/,
+    );
+    absent('$345.6M');
   });
 
   it('renders no curated panel when the deployment has no curated reader', async () => {
