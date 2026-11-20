@@ -406,6 +406,11 @@ type BespokeKPI struct {
 	Value string `json:"value"`
 	Unit  string `json:"unit,omitempty"`
 	Hint  string `json:"hint,omitempty"`
+	// ValueUSD is a token-amount KPI at its token's current PriceUSD; absent on count KPIs, and USDReason says why when withheld.
+	ValueUSD   *string `json:"value_usd,omitempty"`
+	PriceUSD   *string `json:"price_usd,omitempty"`
+	PriceStale bool    `json:"price_stale,omitempty"`
+	USDReason  string  `json:"usd_reason,omitempty"`
 }
 
 // BespokeSeries is a named time-series for a chart.
@@ -731,6 +736,7 @@ func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *Pro
 		return false, false, time.Time{}
 	}
 	view.Bespoke = bespokeFromStore(blk)
+	s.valueBespokeKPIs(ctx, blk, view.Bespoke)
 	if e, has := s.protocolBespokeCache.get(protocolBespokeCacheKey(meta.Name, meta.Category, windowDays)); has {
 		builtAt = e.at
 	}

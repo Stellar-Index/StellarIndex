@@ -834,7 +834,7 @@ func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, sinc
 		return fmt.Errorf("timescale: bespokeLending backstop KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: blndUnits(backstopVol), Unit: "BLND:USDC LP", Hint: "summed deposit+withdraw backstop-token (Comet BLND:USDC LP, 7 decimals) amounts; excludes share/emission kinds; not USD"},
+		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: blndUnits(backstopVol), Unit: "BLND:USDC LP", Hint: "summed deposit+withdraw backstop-token (Comet BLND:USDC LP, 7 decimals) amounts; excludes share/emission kinds; not USD", Amount: backstopVol.BigInt(), Token: "BLND:USDC LP"},
 		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
 	)
 	return nil

@@ -8970,6 +8970,17 @@ export interface components {
             value: string;
             unit?: string;
             hint?: string;
+            /** @description USD value of a token-amount KPI (emissions claimed, backstop volume): its exact base-unit amount at the token's CURRENT price_usd and decimals, 2-dp decimal string. Absent on count KPIs; absent with usd_reason when the token amount cannot be valued. */
+            value_usd?: string;
+            /** @description The token's current USD price value_usd used, as /v1/assets/{id} serves it. */
+            price_usd?: string;
+            /** @description True when price_usd is the newest price but past its freshness window. */
+            price_stale?: boolean;
+            /**
+             * @description Why a token-amount KPI has no value_usd: the token has no price, its decimals are unknown, or the unit (a Comet BLND:USDC LP share) has no valuation here.
+             * @enum {string}
+             */
+            usd_reason?: "unpriced" | "decimals_unknown" | "unit_not_priceable";
         };
         /** @description A named time-series for a chart. */
         BespokeSeries: {
