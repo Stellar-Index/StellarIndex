@@ -439,23 +439,30 @@ export function AssetSwap({
       : null;
   // An unpriced leg shows a dash and says why; an empty input shows nothing.
   const counterText =
-    counter != null ? fmtAmount(counter) : input != null ? '—' : '';
-  const missing = [
-    { token: fromToken, rate: fromRate },
-    { token: toToken, rate: toRate },
-  ].find((l) => l.rate.price == null);
-  const missingReason =
-    missing == null
-      ? null
-      : missing.token.key === pageToken.key && resolved.withheld
-        ? `${missing.token.symbol} has no USD price: withheld by the server${
-            (resolved.poll.withheldDetail ?? resolved.poll.withheldTitle)
-              ? ` (${resolved.poll.withheldDetail ?? resolved.poll.withheldTitle})`
-              : ''
-          }`
-        : `${missing.token.symbol} has no USD price${
-            missing.rate.withheld ? ': withheld by the server' : ' available'
-          }`;
+    counter == null
+      ? input != null
+        ? '—'
+        : ''
+      : counter.kind === 'below'
+        ? `< ${counter.unit}`
+        : fmtAmount(counter.value);
+  const missingReason = missingPriceNote(
+    [
+      { token: fromToken, rate: fromRate },
+      { token: toToken, rate: toRate },
+    ]
+      .filter((l) => l.rate.price == null)
+      .map(({ token, rate }) =>
+        token.key === pageToken.key && resolved.withheld
+          ? {
+              symbol: token.symbol,
+              withheld: true,
+              detail:
+                resolved.poll.withheldDetail ?? resolved.poll.withheldTitle,
+            }
+          : { symbol: token.symbol, withheld: Boolean(rate.withheld) },
+      ),
+  );
 
   const fromValue = edited === 'from' ? amount : counterText;
   const toValue = edited === 'to' ? amount : counterText;
@@ -1045,21 +1052,50 @@ function onChainDecimals(
   return decimals != null && isStellarAssetId(key) ? decimals : null;
 }
 
+/** A converted amount, or a bound when it is below the leg's smallest unit. */
+type Converted =
+  | { kind: 'amount'; value: string }
+  | { kind: 'below'; unit: string };
+
 function convertLeg(
   amount: string,
   priceIn: string | null,
   priceOut: string | null,
   out: SwapToken,
-): string | null {
+): Converted | null {
   if (priceIn == null || priceOut == null) return null;
-  return out.kind === 'fiat'
-    ? convertDecimalAmount(amount, priceIn, priceOut, 2, 4)
-    : convertDecimalAmount(
-        amount,
-        priceIn,
-        priceOut,
-        out.decimals ?? DEFAULT_CRYPTO_DECIMALS,
-      );
+  if (out.kind === 'fiat') {
+    const value = convertDecimalAmount(amount, priceIn, priceOut, 2, 4);
+    return value == null ? null : { kind: 'amount', value };
+  }
+  // A crypto leg never shows more places than the asset can hold, so a
+  // non-zero amount below its smallest unit reads as "< unit", never "0".
+  const places = out.decimals ?? DEFAULT_CRYPTO_DECIMALS;
+  const value = convertDecimalAmount(amount, priceIn, priceOut, places);
+  if (value == null) return null;
+  const nonZero = /[1-9]/;
+  if (!nonZero.test(value) && nonZero.test(amount) && nonZero.test(priceIn)) {
+    const unit = places > 0 ? `0.${'0'.repeat(places - 1)}1` : '1';
+    return { kind: 'below', unit };
+  }
+  return { kind: 'amount', value };
+}
+
+/** The converter's note naming every leg with no USD price, each with its reason. */
+export function missingPriceNote(
+  legs: { symbol: string; withheld: boolean; detail?: string | null }[],
+): string | null {
+  if (legs.length === 0) return null;
+  return legs
+    .map(
+      (l) =>
+        `${l.symbol} has no USD price${
+          l.withheld
+            ? `: withheld by the server${l.detail ? ` (${l.detail})` : ''}`
+            : ' available'
+        }`,
+    )
+    .join('. ');
 }
 
 /** A rounded decimal string, whole part grouped, trailing fraction zeros trimmed. */

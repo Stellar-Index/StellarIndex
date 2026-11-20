@@ -17,6 +17,7 @@ import { apiGet } from '@/api/client';
 import {
   AssetSwap,
   assetIssuer,
+  missingPriceNote,
   rankSwapTokens,
   type SwapToken,
 } from './AssetSwap';
@@ -760,6 +761,17 @@ describe('AssetSwap amounts', () => {
   const field = (i: number) =>
     screen.getAllByRole('textbox')[i] as HTMLInputElement;
 
+  it('never shows a non-zero conversion as zero', async () => {
+    renderAt('97000');
+    await vi.waitFor(() => expect(field(1).value).toBe('97,000'));
+    fireEvent.change(field(1), { target: { value: '0.003' } });
+    // 0.003 ÷ 97000 = 3.09e-8: below the 7-decimal leg's smallest unit.
+    expect(field(0).value).toBe('< 0.0000001');
+    fireEvent.change(field(1), { target: { value: '0.0097' } });
+    expect(field(0).value).toBe('0.0000001');
+    vi.unstubAllGlobals();
+  });
+
   it("rounds the page asset's leg to the asset's own decimals", async () => {
     renderAt('3', {
       assetId: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
@@ -769,5 +781,19 @@ describe('AssetSwap amounts', () => {
     fireEvent.change(field(1), { target: { value: '1' } });
     expect(field(0).value).toBe('0.33');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('missingPriceNote', () => {
+  it('names every leg without a price, each with its reason', () => {
+    expect(
+      missingPriceNote([
+        { symbol: 'AAA', withheld: true, detail: 'thin market' },
+        { symbol: 'BBB', withheld: false },
+      ]),
+    ).toBe(
+      'AAA has no USD price: withheld by the server (thin market). BBB has no USD price available',
+    );
+    expect(missingPriceNote([])).toBeNull();
   });
 });
