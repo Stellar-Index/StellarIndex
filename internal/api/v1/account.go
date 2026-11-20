@@ -722,9 +722,37 @@ func refuseSecretAsKeyID(w http.ResponseWriter, r *http.Request, keyID string) b
 	return true
 }
 
-// handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. Missing key returns 204
-// too, so another account's keyIDs do not leak; revoking the key the request used is 409. Operator audit row only when a key
-// was actually revoked.
+// mayRevokeAccountKey answers 403 unless subject may revoke keyID ([auth.MayRevoke]). The answer does not depend on
+// whether keyID exists, so it is no enumeration oracle.
+func (s *Server) mayRevokeAccountKey(w http.ResponseWriter, r *http.Request, subject auth.Subject, keyID string) bool {
+	actor := auth.RevokeActorOf(subject)
+	var owned []auth.APIKeyRecord
+	if !actor.AnyKey {
+		recs, err := s.Accounts.ListKeysForIdentifier(r.Context(), subject.Identifier)
+		if err != nil {
+			s.logger.Error("account keys revoke: list keys", "err", err, "identifier", subject.Identifier)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/account-revoke-failed",
+				"Could not revoke key", http.StatusInternalServerError,
+				"see X-Request-ID in server logs")
+			return false
+		}
+		owned = recs
+	}
+	if auth.MayRevoke(actor, keyID, owned) {
+		return true
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/key-not-delegated",
+		"This key can't revoke that key", http.StatusForbidden,
+		"an API key may revoke only keys minted from it, directly or through keys it minted. Nothing was revoked. "+
+			"Revoke the account's other keys from the dashboard")
+	return false
+}
+
+// handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. An API key may revoke
+// only keys delegated from it (403 otherwise, whether or not the id exists); revoking the key the request used is 409.
+// Operator audit row only when a key was actually revoked.
 func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -761,6 +789,9 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	}
 	reason, ok := s.operatorReasonOK(w, r, subject)
 	if !ok {
+		return
+	}
+	if !s.mayRevokeAccountKey(w, r, subject, keyID) {
 		return
 	}
 	// revokeKeyEverywhere (admin_keys.go) also clears the

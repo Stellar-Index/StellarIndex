@@ -4238,9 +4238,18 @@ export interface paths {
         /**
          * Revoke an API key by KeyID.
          * @description Revokes the API key whose KeyID matches the path parameter,
-         *     scoped to the authenticated caller's Identifier so accounts
-         *     can only revoke their own keys. "Not found" and "not yours"
-         *     collapse to 204 to prevent cross-account enumeration probes.
+         *     with every key delegated from it.
+         *
+         *     An API key may revoke only keys minted from it, directly or
+         *     through keys it minted: never the key that minted it, a
+         *     sibling, or another account key that was not minted under it
+         *     (dashboard and `/v1/register` keys are each their own root).
+         *     Any other key id gets 403 `key-not-delegated` and nothing is
+         *     revoked; the answer does not depend on whether the id exists,
+         *     so it cannot be used to probe for key ids. Revoke the account's
+         *     other keys from the dashboard, which applies the user's role.
+         *     A SEP-10 session and an operator-tier caller may revoke any key
+         *     on their own identifier.
          *
          *     The caller cannot revoke the key they're authenticated with —
          *     that would orphan the connection mid-request. 409 in that
@@ -24301,7 +24310,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Revoked (or no-op when the key didn't belong to the caller). */
+            /** @description Revoked (or already gone, for a key the caller may revoke). */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -24322,8 +24331,24 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The key is not delegated from the calling key (`key-not-delegated`); nothing was revoked. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Caller tried to revoke the key they're using. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The revoke, or the read of the caller's keys it is checked against, failed (`account-revoke-failed`). */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

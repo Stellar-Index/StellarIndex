@@ -82,7 +82,10 @@ func TestAccountKeysRevoke_OperatorRequiresReasonAndAudits(t *testing.T) {
 // user-actor key.revoke row.
 func TestAccountKeysRevoke_CustomerNeedsNoReason(t *testing.T) {
 	sink := &recordingAuditSink{}
-	ts := newAdminTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, &fakeAccountStore{}, sink)
+	store := &fakeAccountStore{listed: map[string][]auth.APIKeyRecord{
+		"owner-42": {{KeyID: "kid_other", Identifier: "owner-42", ParentKeyID: "kid_owner"}},
+	}}
+	ts := newAdminTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, store, sink)
 	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_other", "", "")
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204", resp.StatusCode)
@@ -103,26 +106,25 @@ func TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive(t *testing.T) {
 	ts := newAdminTestServerWithPlatformKeys(t, attacker, &fakeAccountStore{}, platformKeys, accts)
 
 	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_victim01", "", "")
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204 (a non-owner revoke is a silent no-op)", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (another account's key is not delegated from the caller)", resp.StatusCode)
 	}
 	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
 }
 
-// TestAccountKeysRevoke_OwnerRevokesPostgresRow is the positive
-// self-service case: the owner's revoke clears the management row.
-func TestAccountKeysRevoke_OwnerRevokesPostgresRow(t *testing.T) {
+// TestAccountKeysRevoke_RootKeyCannotRevokeAnotherRootsRow: a management row (register or dashboard key) is a root, so
+// no other API key on the account can revoke it here; a member's key would otherwise revoke the owner's. The
+// dashboard path, which knows the user's role, revokes it.
+func TestAccountKeysRevoke_RootKeyCannotRevokeAnotherRootsRow(t *testing.T) {
 	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
-	owner := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_other"}
-	ts := newAdminTestServerWithPlatformKeys(t, owner, &fakeAccountStore{}, platformKeys, accts)
+	member := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_other"}
+	ts := newAdminTestServerWithPlatformKeys(t, member, &fakeAccountStore{}, platformKeys, accts)
 
 	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_shared01", "", "")
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
 	}
-	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
-		t.Errorf("owner's postgres management row not revoked: revokedIDs = %v, want [kid_shared01]", platformKeys.revokedIDs)
-	}
+	assertPlatformKeyLive(t, platformKeys, "kid_shared01")
 }
 
 // A plaintext key pasted where a key id belongs is refused on both revoke routes: nothing is looked up, the answer

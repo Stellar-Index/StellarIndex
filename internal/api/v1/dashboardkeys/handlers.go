@@ -534,7 +534,8 @@ func (h *Handlers) revokeDelegated(w http.ResponseWriter, r *http.Request, sc da
 		return
 	}
 	identifier := auth.AccountIdentifier(sc.Account.Slug)
-	if !canManageAnyKey(sc.User.Role) {
+	// A dashboard session presents no key, so a member's role holds no revoke authority over a key with no creator row.
+	if !auth.MayRevoke(auth.RevokeActor{AnyKey: canManageAnyKey(sc.User.Role)}, id, nil) {
 		// A member sees the key in the list, so its refusal names the role; any other id stays a 404.
 		status, detail := http.StatusNotFound, "key not found"
 		if recs, err := h.cfg.Mirror.ListKeysForIdentifier(r.Context(), identifier); err == nil {

@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Stellar Index contributors.
+// SPDX-License-Identifier: Apache-2.0
+
+package v1_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+)
+
+// revokeTree is one account's keys: owner root, a member's root, the owner's child (with a grandchild), a sibling
+// child, and a child narrowed to the account scope; plus a key on another account.
+type revokeTree struct {
+	store     *auth.RedisAPIKeyStore
+	validator *auth.RedisAPIKeyValidator
+	subjects  map[string]auth.Subject
+	plains    map[string]string
+}
+
+func newRevokeTree(t *testing.T) *revokeTree {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	tr := &revokeTree{
+		store:     auth.NewRedisAPIKeyStore(rdb),
+		validator: auth.NewRedisAPIKeyValidator(rdb),
+		subjects:  map[string]auth.Subject{},
+		plains:    map[string]string{},
+	}
+	tr.mint(t, "owner", auth.CreateAPIKeyRequest{Identifier: "acct:co"})
+	tr.mint(t, "member", auth.CreateAPIKeyRequest{Identifier: "acct:co"})
+	tr.mint(t, "child", auth.ChildKeyRequest(tr.subjects["owner"], "child", nil))
+	tr.mint(t, "grandchild", auth.ChildKeyRequest(tr.subjects["child"], "grandchild", nil))
+	tr.mint(t, "sibling", auth.ChildKeyRequest(tr.subjects["owner"], "sibling", nil))
+	tr.mint(t, "restricted", auth.ChildKeyRequest(tr.subjects["owner"], "restricted", []string{"account"}))
+	tr.mint(t, "other", auth.CreateAPIKeyRequest{Identifier: "acct:other-co"})
+	return tr
+}
+
+func (tr *revokeTree) mint(t *testing.T, name string, req auth.CreateAPIKeyRequest) {
+	t.Helper()
+	_, plain, err := tr.store.Create(context.Background(), req)
+	if err != nil {
+		t.Fatalf("mint %s: %v", name, err)
+	}
+	sub, err := tr.validator.Lookup(context.Background(), plain)
+	if err != nil {
+		t.Fatalf("lookup %s: %v", name, err)
+	}
+	tr.subjects[name], tr.plains[name] = sub, plain
+}
+
+func (tr *revokeTree) live(name string) bool {
+	_, err := tr.validator.Lookup(context.Background(), tr.plains[name])
+	return !errors.Is(err, auth.ErrUnauthorized)
+}
+
+// An API key may revoke only keys delegated from it: never its minter, a sibling, or another root on the account (a
+// member's key and the owner's are both roots). A SEP-10 session proved control of the account and may revoke any key.
+func TestAccountKeysRevoke_OnlyTheCallersDelegatedKeys(t *testing.T) {
+	cases := []struct {
+		actor, target string
+		sep10         bool
+		want          int
+		dead          []string
+	}{
+		{actor: "owner", target: "child", want: http.StatusNoContent, dead: []string{"child", "grandchild"}},
+		{actor: "owner", target: "grandchild", want: http.StatusNoContent, dead: []string{"grandchild"}},
+		{actor: "child", target: "grandchild", want: http.StatusNoContent, dead: []string{"grandchild"}},
+		{actor: "child", target: "owner", want: http.StatusForbidden},
+		{actor: "child", target: "sibling", want: http.StatusForbidden},
+		{actor: "restricted", target: "sibling", want: http.StatusForbidden},
+		{actor: "restricted", target: "owner", want: http.StatusForbidden},
+		{actor: "member", target: "owner", want: http.StatusForbidden},
+		{actor: "member", target: "child", want: http.StatusForbidden},
+		{actor: "owner", target: "member", want: http.StatusForbidden},
+		{actor: "other", target: "child", want: http.StatusForbidden},
+		{actor: "owner", target: "absent", want: http.StatusForbidden},
+		{actor: "sep10", target: "member", sep10: true, want: http.StatusNoContent, dead: []string{"member"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.actor+"→"+tc.target, func(t *testing.T) {
+			tr := newRevokeTree(t)
+			subject := tr.subjects[tc.actor]
+			if tc.sep10 {
+				subject = auth.Subject{Identifier: "acct:co", Tier: auth.TierSEP10}
+			}
+			targetID := "kid_0000000000000000"
+			if s, ok := tr.subjects[tc.target]; ok {
+				targetID = s.KeyID
+			}
+			ts := newAdminTestServer(t, subject, tr.store, &recordingAuditSink{})
+			resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+targetID, "", "")
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+			dead := map[string]bool{}
+			for _, n := range tc.dead {
+				dead[n] = true
+			}
+			for name := range tr.plains {
+				if got := tr.live(name); got == dead[name] {
+					t.Errorf("%s live = %v, want %v", name, got, !dead[name])
+				}
+			}
+		})
+	}
+}
