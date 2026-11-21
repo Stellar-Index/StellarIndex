@@ -621,7 +621,7 @@ func (s *Server) contractSupplyReadingChecked(
 	if sup.FlowCount == 0 {
 		return "", "", false, false, false
 	}
-	// The lake's event-flow sum; undecodable storage leaves it unproven complete, so a floor, not a total.
+	// The lake's event-flow sum; storage the reader could not sum leaves it unproven complete, so a floor, not a total.
 	return sup.Total.String(), supply.BasisSEP41LakeFlows, verdict == storageUnchecked, true, false
 }
 

@@ -533,9 +533,7 @@ func TestSupplyEventNetAtOrAboveStorageIsUnchanged(t *testing.T) {
 	}{
 		{"storage equals net", nil, &fakeStorageSupply{out: equal}},
 		{"storage below net", above, &fakeStorageSupply{out: lower}},
-		{"storage declines", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyNoInstance}},
 		{"storage refuses a SAC", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyIsStellarAsset}},
-		{"holder set past the reader's cap", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyTooManyEntries}},
 		{"no storage reader", nil, nil},
 	}
 	for _, tc := range cases {
@@ -636,19 +634,27 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 	}
 }
 
-// Storage holding an entry the reader cannot decode cannot prove the event net short, so the net is served as a floor, not a total.
-func TestSupplyFlagsTheNetALowerBoundWhenStorageIsUndecodable(t *testing.T) {
-	undecodable := fmt.Errorf("%w: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable)
-	rec := serveSupplyWithStorage(t, dealFlows(), &fakeStorageSupply{err: undecodable}, storageDealContractID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
-	}
-	got := decodeSupply(t, rec.Body.Bytes())
-	if got.Source != "mint_burn_flows" || got.TotalSupply != dealFlows().Total.String() {
-		t.Errorf("source = %q total_supply = %q, want the event net", got.Source, got.TotalSupply)
-	}
-	if !got.CirculatingSupplyLowerBound {
-		t.Error("circulating_supply_lower_bound = false: the net is served as exact although storage could not check it")
+// Storage the reader could not sum (an undecodable entry, a holder set past its cap, no instance entry to rule out a SAC) cannot
+// prove the event net short, so the net is served as a floor, not a total.
+func TestSupplyFlagsTheNetALowerBoundWhenTheStorageCheckCannotRun(t *testing.T) {
+	for name, err := range map[string]error{
+		"undecodable entry":          fmt.Errorf("%w: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable),
+		"holder set past its cap":    fmt.Errorf("%w: %s (>25000)", clickhouse.ErrStorageSupplyTooManyEntries, storageDealContractID),
+		"no instance entry captured": fmt.Errorf("%w: %s", clickhouse.ErrStorageSupplyNoInstance, storageDealContractID),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := serveSupplyWithStorage(t, dealFlows(), &fakeStorageSupply{err: err}, storageDealContractID)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
+			}
+			got := decodeSupply(t, rec.Body.Bytes())
+			if got.Source != "mint_burn_flows" || got.TotalSupply != dealFlows().Total.String() {
+				t.Errorf("source = %q total_supply = %q, want the event net", got.Source, got.TotalSupply)
+			}
+			if !got.CirculatingSupplyLowerBound {
+				t.Error("circulating_supply_lower_bound = false: the net is served as exact although storage could not check it")
+			}
+		})
 	}
 }
 

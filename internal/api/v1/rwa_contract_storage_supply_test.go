@@ -235,16 +235,27 @@ func TestContractArmCountsAFailedStorageReadAsACutWhenTheLogIsFlowless(t *testin
 	}
 }
 
-// An entry the reader cannot decode is a fixed lake property, so it is not a cut; but it leaves the storage check that would prove
-// the net short unrun, so the net is served as a floor and the cap and the RWA total over it are lower bounds.
-func TestContractArmValuesTheNetWhenStorageHoldsAnUndecodableEntry(t *testing.T) {
+// An undecodable entry, a holder set past the reader's cap and a missing instance entry are fixed lake properties, so not a cut;
+// but each leaves the storage check that would prove the net short unrun, so the net is served as a floor and the cap and the
+// RWA total over it are lower bounds.
+func TestContractArmValuesTheNetWhenTheStorageCheckCannotRun(t *testing.T) {
 	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	for name, unrun := range map[string]error{
+		"undecodable entry":          fmt.Errorf("%w: %s: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable, contractID),
+		"holder set past its cap":    fmt.Errorf("%w: %s (>25000)", clickhouse.ErrStorageSupplyTooManyEntries, contractID),
+		"no instance entry captured": fmt.Errorf("%w: %s", clickhouse.ErrStorageSupplyNoInstance, contractID),
+	} {
+		t.Run(name, func(t *testing.T) { contractArmValuesAnUncheckedNet(t, contractID, unrun) })
+	}
+}
+
+func contractArmValuesAnUncheckedNet(t *testing.T, contractID string, unrun error) {
+	t.Helper()
 	net := big.NewInt(10_000_0000000)
-	undecodable := fmt.Errorf("%w: %s: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable, contractID)
 	s := &Server{
 		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			contractID: {ContractID: contractID, Total: net, Mint: net, Burn: big.NewInt(0), FlowCount: 12},
-		}}, ContractStorageSupply: &storageSupplyStub{err: undecodable}},
+		}}, ContractStorageSupply: &storageSupplyStub{err: unrun}},
 		logger: discardLogger(),
 	}
 	price := "1.00"
