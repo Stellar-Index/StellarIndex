@@ -979,6 +979,11 @@ func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 				t.Error("evidence carries counts with no instant: the counts can be re-derived " +
 					"from the table afterwards, the moment this set looked cannot")
 			}
+			// A healthy directory answered every read, so nothing it caused may read as an outage.
+			if tc.entries > 0 && (view.Summary.Truncated || view.Summary.LowerBound) {
+				t.Errorf("truncated = %v lower_bound = %v on a healthy directory naming no contract — %s",
+					view.Summary.Truncated, view.Summary.LowerBound, tc.reading)
+			}
 		})
 	}
 }
