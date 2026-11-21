@@ -822,5 +822,16 @@ else
   ok "no runbook or help text prescribes a unique job name per attempt"
 fi
 
+echo "  [lock paths]"
+# Any uid can create or hold a file directly in /run/lock. Only the host-wide
+# locks, pre-created root:stellarindex 0640 by tmpfiles.d, may live there;
+# every other lock goes under /run/lock/stellarindex/.
+if hits=$(git grep -nIoE '/run/lock/[A-Za-z0-9_.-]+' -- configs/ansible/roles scripts/ops deploy/systemd \
+    | grep -vE ':/run/lock/(stellarindex|stellarindex-heavy\.lock|stellarindex-heavy-scheduled\.lock(\.queue)?)$'); then
+  bad "lock file directly in world-writable /run/lock; put it under /run/lock/stellarindex/: $hits"
+else
+  ok "every lock outside the host-wide pair is under /run/lock/stellarindex/"
+fi
+
 echo "run-heavy-job-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

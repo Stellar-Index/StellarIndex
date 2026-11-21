@@ -28,8 +28,15 @@ PARALLEL="${PARALLEL:-8}"
 # a second run would mirror from work lists the first is rewriting. The lock is
 # this script's own file on an auto-allocated fd, so it does not collide with
 # the wrapper's fd-9 lock. 75 = EX_TEMPFAIL, the wrapper's "declined" code.
-LOCK=/run/lock/galexie-archive-fill.lock
-exec {lock_fd}>"$LOCK"
+# A 0600 file of ours in the restricted lock directory, opened read-only: any
+# uid that can open a lock can hold it, and a held lock defers every fire.
+LOCK=/run/lock/stellarindex/galexie-archive-fill.lock
+[ -e "$LOCK" ] || [ -L "$LOCK" ] || (umask 077; : >>"$LOCK") 2>/dev/null || true
+if [ ! -f "$LOCK" ] || [ -L "$LOCK" ] || [ ! -O "$LOCK" ]; then
+  echo "galexie-archive-fill: lock $LOCK is missing or not a plain file owned by $(id -un) — remove it or run systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf; nothing ran, exit 2" >&2
+  exit 2
+fi
+exec {lock_fd}<"$LOCK"
 if ! flock -n "$lock_fd"; then
   echo "galexie-archive-fill: another run holds $LOCK (fuser -v $LOCK); not starting, exit 75" >&2
   exit 75
