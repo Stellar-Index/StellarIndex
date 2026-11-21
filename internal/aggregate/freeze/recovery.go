@@ -26,9 +26,14 @@ type OpenFreezePair struct {
 }
 
 // Recoverer closes a firing freeze row by stamping recovered_at on the open `freeze_events` row (`timescale.FreezeEventSink.MarkRecovered`).
+// With no open row it returns an error wrapping [ErrNoOpenRow].
 type Recoverer interface {
 	MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error
 }
+
+// ErrNoOpenRow reports a close that found the row already closed; the releasing [Writer], the sweep and
+// freeze-unfreeze race to close one row, and the loser has reached the intended end state.
+var ErrNoOpenRow = errors.New("freeze: no open freeze_events row")
 
 // ReleasedBySystemRecovery is the freeze_events.released_by value stamped on auto or lapsed releases, by the recovery worker or the releasing [Writer].
 const ReleasedBySystemRecovery = "system:recovery"
@@ -160,7 +165,12 @@ func (r *Recovery) tick(ctx context.Context) {
 				continue
 			}
 			// Freeze cleared. Close the durable row.
-			if err := r.closer.MarkRecovered(ctx, p.Asset, p.Quote, ReleasedBySystemRecovery); err != nil {
+			err := r.closer.MarkRecovered(ctx, p.Asset, p.Quote, ReleasedBySystemRecovery)
+			if errors.Is(err, ErrNoOpenRow) {
+				r.logger.Debug("freeze row already closed", "asset", p.Asset.String(), "quote", p.Quote.String())
+				continue
+			}
+			if err != nil {
 				r.logger.Warn("MarkRecovered failed",
 					"asset", p.Asset.String(),
 					"quote", p.Quote.String(),

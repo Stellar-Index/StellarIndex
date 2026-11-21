@@ -246,6 +246,12 @@ func TestFreezeWindowLadders_Migration0163(t *testing.T) {
 	if _, _, ok, lerr := sink.LoadWindowLadders(ctx, asset, quote); lerr != nil || ok {
 		t.Fatalf("LoadWindowLadders after MarkRecovered = (ok=%v, err=%v), want (false, nil)", ok, lerr)
 	}
+	// A second close (the sweep and a releasing writer racing) finds no open row: freeze's sentinel for the
+	// writer and sweep, ErrNotFound for freeze-unfreeze.
+	if err := sink.MarkRecovered(ctx, asset, quote, freeze.ReleasedBySystemRecovery); !errors.Is(err, freeze.ErrNoOpenRow) ||
+		!errors.Is(err, timescale.ErrNotFound) {
+		t.Fatalf("second MarkRecovered = %v, want both freeze.ErrNoOpenRow and timescale.ErrNotFound", err)
+	}
 	if err := sink.SaveWindowLadder(ctx, asset, quote, long, extended); !errors.Is(err, timescale.ErrNotFound) {
 		t.Fatalf("SaveWindowLadder against a closed row = %v, want ErrNotFound", err)
 	}

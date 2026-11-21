@@ -423,7 +423,12 @@ func (w *Writer) closeReleasedRow(ctx context.Context, asset, quote canonical.As
 	if !ok {
 		return
 	}
-	if err := closer.MarkRecovered(ctx, asset, quote, ReleasedBySystemRecovery); err != nil {
+	err := closer.MarkRecovered(ctx, asset, quote, ReleasedBySystemRecovery)
+	if errors.Is(err, ErrNoOpenRow) {
+		w.log().Debug("freeze: released freeze row already closed", "asset", asset.String(), "quote", quote.String())
+		return
+	}
+	if err != nil {
 		w.log().Warn("freeze: released freeze row not closed; the recovery sweep closes it",
 			"asset", asset.String(), "quote", quote.String(), "err", err)
 	}
