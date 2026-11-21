@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -92,6 +93,120 @@ func TestPopulateVolume24h_AddsConfirmedDerivedSAC(t *testing.T) {
 	}
 }
 
+// faultyVolumeReader is keyedVolumeReader whose plain or Soroban read errors for the listed keys.
+type faultyVolumeReader struct {
+	keyedVolumeReader
+	plainErr, sorobanErr map[string]bool
+}
+
+func (r faultyVolumeReader) Volume24hUSDForAsset(ctx context.Context, key string) (string, bool, error) {
+	if r.plainErr[key] {
+		return "", false, errors.New("pool timeout")
+	}
+	return r.keyedVolumeReader.Volume24hUSDForAsset(ctx, key)
+}
+
+func (r faultyVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, key string) (string, bool, error) {
+	if r.sorobanErr[key] {
+		return "", false, errors.New("pool timeout")
+	}
+	return r.keyedVolumeReader.SorobanVolume24hUSDForAsset(ctx, key)
+}
+
+func derivedSACFixture(t *testing.T) (canonical.Asset, string) {
+	t.Helper()
+	asset, err := canonical.NewClassicAsset("TWINX", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac, err := asset.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return asset, sac
+}
+
+// A SAC arm that could not be read is a transient floor: flagged a lower bound and reported failed, so the detail is
+// served degraded and not cached as a clean answer.
+func TestPopulateVolume24h_UnreadSACArmReportsFailure(t *testing.T) {
+	t.Parallel()
+	asset, sac := derivedSACFixture(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	confirmed := &sacStubReader{name: asset.Code + ":" + asset.Issuer, found: true}
+	base := keyedVolumeReader{plain: map[string]string{asset.String(): "100.5"}}
+	for name, s := range map[string]*Server{
+		"lake SAC lookup failed": {logger: logger, Options: Options{Volume: base, Explorer: errSACReader{}}},
+		"SAC volume read failed": {logger: logger, Options: Options{
+			Volume:   faultyVolumeReader{keyedVolumeReader: base, plainErr: map[string]bool{sac: true}, sorobanErr: map[string]bool{sac: true}},
+			Explorer: confirmed,
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &AssetDetail{}
+			if !s.populateVolume24h(context.Background(), d, asset) {
+				t.Error("populateVolume24h reported a clean read with the SAC arm unread")
+			}
+			if d.VolumeUSD24h == nil || *d.VolumeUSD24h != "100.5" || !d.VolumeLowerBound {
+				t.Errorf("volume = %v lowerBound=%v, want 100.5 flagged", d.VolumeUSD24h, d.VolumeLowerBound)
+			}
+		})
+	}
+}
+
+// With no lake reader the derived SAC cannot be checked, so the classic figure is a floor, not the total.
+func TestPopulateVolume24h_NoLakeReaderIsALowerBound(t *testing.T) {
+	t.Parallel()
+	asset, _ := derivedSACFixture(t)
+	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Options: Options{Volume: keyedVolumeReader{plain: map[string]string{asset.String(): "100.5"}}}}
+	d := &AssetDetail{}
+	if s.populateVolume24h(context.Background(), d, asset) {
+		t.Error("a missing lake reader is not a failed read")
+	}
+	if d.VolumeUSD24h == nil || *d.VolumeUSD24h != "100.5" || !d.VolumeLowerBound {
+		t.Errorf("volume = %v lowerBound=%v, want 100.5 flagged", d.VolumeUSD24h, d.VolumeLowerBound)
+	}
+}
+
+// A SAC the alias registry already sums into the classic read must not be added a second time.
+func TestPopulateVolume24h_RegisteredSACIsNotCountedTwice(t *testing.T) {
+	installFoldRegistry(t)
+	asset, err := canonical.ParseAsset(foldUSDCClassic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := keyedVolumeReader{plain: map[string]string{foldUSDCClassic: "100.5"}, soroban: map[string]string{foldUSDCSAC: "40.25"}}
+	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Options: Options{
+		Volume: reader, Explorer: &sacStubReader{name: "USDC:" + foldUSDCIssuer, found: true},
+	}}
+	d := &AssetDetail{}
+	if s.populateVolume24h(context.Background(), d, asset) {
+		t.Fatal("populateVolume24h reported failure")
+	}
+	if d.VolumeUSD24h == nil || *d.VolumeUSD24h != "100.5" || d.VolumeLowerBound {
+		t.Errorf("volume = %v lowerBound=%v, want 100.5 exact (the alias read already sums the SAC)", d.VolumeUSD24h, d.VolumeLowerBound)
+	}
+}
+
+// When the SAC's XLM-anchored read fails the plain reader stands in; it omits XLM-legged trades, so the sum is a floor.
+func TestPopulateVolume24h_SACFallsBackToThePlainReader(t *testing.T) {
+	t.Parallel()
+	asset, sac := derivedSACFixture(t)
+	reader := faultyVolumeReader{
+		keyedVolumeReader: keyedVolumeReader{plain: map[string]string{asset.String(): "100.5", sac: "10"}, soroban: map[string]string{sac: "40.25"}},
+		sorobanErr:        map[string]bool{sac: true},
+	}
+	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Options: Options{
+		Volume: reader, Explorer: &sacStubReader{name: asset.Code + ":" + asset.Issuer, found: true},
+	}}
+	d := &AssetDetail{}
+	if s.populateVolume24h(context.Background(), d, asset) {
+		t.Error("a plain-reader fallback is a floor, not a failed read")
+	}
+	if d.VolumeUSD24h == nil || *d.VolumeUSD24h != "110.5" || !d.VolumeLowerBound {
+		t.Errorf("volume = %v lowerBound=%v, want 110.5 flagged", d.VolumeUSD24h, d.VolumeLowerBound)
+	}
+}
+
 // The classic detail page reads the plain reader; its flag must reach the
 // response, or listing and detail disagree about the same asset.
 func TestPopulateVolume24h_ClassicCarriesReaderLowerBound(t *testing.T) {
@@ -101,7 +216,8 @@ func TestPopulateVolume24h_ClassicCarriesReaderLowerBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []bool{true, false} {
-		s := &Server{Volume: lowerBoundVolumeReader{lowerBound: want}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		// The lake confirms no derived SAC, so the reader's flag alone decides.
+		s := &Server{Options: Options{Volume: lowerBoundVolumeReader{lowerBound: want}, Explorer: &sacStubReader{}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 		d := &AssetDetail{}
 		if s.populateVolume24h(context.Background(), d, asset) {
 			t.Fatal("populateVolume24h reported failure")

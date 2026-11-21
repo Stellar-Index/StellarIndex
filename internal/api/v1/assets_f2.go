@@ -172,43 +172,51 @@ func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetai
 }
 
 // populateVolume24h fills detail.VolumeUSD24h with the asset's own volume plus its derived SAC's ([Server.addDerivedSACVolume24h]).
-// Reports whether the plain read failed.
+// Reports whether the plain read or the derived SAC's arm failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if failed = s.populateOwnVolume24h(ctx, detail, asset); !failed {
-		s.addDerivedSACVolume24h(ctx, detail, asset)
+		failed = s.addDerivedSACVolume24h(ctx, detail, asset)
 	}
 	return failed
 }
 
 // addDerivedSACVolume24h adds the volume traded under a classic asset's lake-confirmed derived SAC, which the alias registry sums
-// only for registered pairs. A SAC the lake could not confirm or whose volume could not be read flags the figure a lower bound.
-func (s *Server) addDerivedSACVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
-	if s.Volume == nil || s.Explorer == nil || asset.Type != canonical.AssetClassic {
-		return
+// only for registered pairs. A SAC that could not be checked or whose volume could not be read flags the figure a lower bound;
+// unread reports a failed read, so the floor is served degraded rather than cached as clean.
+func (s *Server) addDerivedSACVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (unread bool) {
+	if s.Volume == nil || asset.Type != canonical.AssetClassic {
+		return false
 	}
 	sac, err := asset.SacContractID()
 	if err != nil || slices.Contains(canonical.AssetAliasStrings(asset), sac) {
-		return
+		return false
+	}
+	if s.Explorer == nil {
+		// No lake reader: the derived SAC's trades are excluded unchecked.
+		detail.VolumeLowerBound = true
+		return false
 	}
 	wrapped, ok, err := s.sacWrappedAssetIDErr(ctx, sac)
 	if err != nil {
 		detail.VolumeLowerBound = true
-		return
+		return true
 	}
 	if !ok || wrapped != asset.String() {
-		return
+		return false
 	}
 	sacAsset, err := canonical.NewSorobanAsset(sac)
 	if err != nil {
 		detail.VolumeLowerBound = true
-		return
+		return false
 	}
 	var twin AssetDetail
-	if s.populateOwnVolume24h(ctx, &twin, sacAsset) || twin.VolumeUSD24h == nil {
+	failed := s.populateOwnVolume24h(ctx, &twin, sacAsset)
+	if failed || twin.VolumeUSD24h == nil {
 		detail.VolumeLowerBound = true
-		return
+		return failed
 	}
 	mergeAliasVolume(detail, twin)
+	return false
 }
 
 // populateOwnVolume24h fills detail.VolumeUSD24h for asset's own key. Pure-Soroban SEP-41 assets use the XLM-anchored
