@@ -394,20 +394,39 @@ func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset
 	if err != nil {
 		return true, err
 	}
-	if label == "" {
-		// No window to scope a retire to: the unscoped release it always was.
-		return false, w.Clear(ctx, asset, quote)
-	}
-	held := ok && marker.Windowed && w.siblingLadderHeld(marker, label)
-	if !held {
-		if held, err = w.durableSiblingHeld(ctx, asset, quote, window); err != nil {
-			return true, err
+	held := false
+	if label != "" {
+		held = ok && marker.Windowed && w.siblingLadderHeld(marker, label)
+		if !held {
+			if held, err = w.durableSiblingHeld(ctx, asset, quote, window); err != nil {
+				return true, err
+			}
 		}
 	}
 	if held {
 		return true, w.RetireWindowLadder(ctx, asset, quote, window)
 	}
-	return false, w.Clear(ctx, asset, quote)
+	if err := w.Clear(ctx, asset, quote); err != nil {
+		return false, err
+	}
+	if ok {
+		w.closeReleasedRow(ctx, asset, quote)
+	}
+	return false, nil
+}
+
+// closeReleasedRow stamps recovered_at on the pair's open freeze_events row once this writer itself ended the freeze, so a
+// re-fire before the next [Recovery] sweep opens a new row (and its anomaly.freeze hook) instead of folding into the old one.
+// An absent marker is skipped: freeze-unfreeze closes its own row and a lapse is the sweep's to judge. Best-effort; the sweep is the backstop.
+func (w *Writer) closeReleasedRow(ctx context.Context, asset, quote canonical.Asset) {
+	closer, ok := w.sink.(Recoverer)
+	if !ok {
+		return
+	}
+	if err := closer.MarkRecovered(ctx, asset, quote, ReleasedBySystemRecovery); err != nil {
+		w.log().Warn("freeze: released freeze row not closed; the recovery sweep closes it",
+			"asset", asset.String(), "quote", quote.String(), "err", err)
+	}
 }
 
 // durableSiblingHeld reports whether the durable record holds a live ([LadderStillLive]) ladder

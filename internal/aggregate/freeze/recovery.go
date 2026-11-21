@@ -30,7 +30,7 @@ type Recoverer interface {
 	MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error
 }
 
-// ReleasedBySystemRecovery is the freeze_events.released_by value the recovery worker stamps on auto or lapsed releases.
+// ReleasedBySystemRecovery is the freeze_events.released_by value stamped on auto or lapsed releases, by the recovery worker or the releasing [Writer].
 const ReleasedBySystemRecovery = "system:recovery"
 
 // Recovery closes durable `freeze_events` rows whose Redis marker has gone. It polls each minute: keyspace expiry notifications are off by default and CPU-costly.
