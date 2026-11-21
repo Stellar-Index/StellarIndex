@@ -15,6 +15,10 @@ import (
 // and it stays nil until restart): the scale is unread, never "declares none".
 var errTokenDecimalsUnwired = errors.New("token decimals: no lake reader wired")
 
+// scaleReadFailed reports a decimals read that errored, for a surface whose amounts are raw base units: there an unwired reader
+// only leaves `decimals` absent and the response flagged stale+degraded, while a failed read stays a retryable 503.
+func scaleReadFailed(err error) bool { return err != nil && !errors.Is(err, errTokenDecimalsUnwired) }
+
 // tokenDecimalsBatchReader is the optional seam a listing page reads all its Soroban scales through in one query.
 type tokenDecimalsBatchReader interface {
 	TokenDecimalsBatch(ctx context.Context, contractIDs []string) (map[string]uint32, error)

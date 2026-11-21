@@ -165,10 +165,11 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	entries := sep41TransferEntries(rows)
 
 	decimals, known, err := s.lakeTokenDecimals(r.Context(), contractID)
-	if err != nil {
+	if scaleReadFailed(err) {
 		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/sep41-transfers-transient")
 		return
 	}
+	unread := err != nil
 	resp := SEP41TransfersResponse{
 		ContractID: contractID,
 		Count:      len(entries),
@@ -183,7 +184,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	if !searchedFrom.IsZero() {
 		resp.SearchedFrom = searchedFrom.UTC().Format(time.RFC3339)
 	}
-	writeJSON(w, resp, Flags{})
+	writeJSON(w, resp, Flags{Stale: unread, Degraded: unread})
 }
 
 // sep41TransferEntries maps storage rows to wire entries.

@@ -352,10 +352,9 @@ type AssetDetail struct {
 	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
 	PriceCredit    string     `json:"price_credit,omitempty"`
 
-	// PriceWithheldReason is set only when PriceUSD is nil because the
-	// price was withheld rather than never observed, in the reason
-	// vocabulary of the `price-withheld` 404: "substance",
-	// "scam_issuer", "upstream_leg" or "unattributed".
+	// PriceWithheldReason is set only when PriceUSD is nil because the price was withheld rather than never
+	// observed: "substance", "scam_issuer", "upstream_leg" or "unattributed" (the `price-withheld` 404's vocabulary),
+	// or "decimals_mismatch" (asset payloads only: a read token scale contradicts the one the price was normalised on).
 	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
 
 	// GlobalMarket is the global-market reference for a classic asset the

@@ -1259,7 +1259,6 @@ func TestHistory_FlippedRowNonstandardDecimals(t *testing.T) {
 	ts := httpTestServer(t, v1.New(v1.Options{
 		History:             &orientedTradeStore{rows: []canonical.Trade{stored}},
 		NonstandardDecimals: cache,
-		TokenDecimals:       &countingDecStub{d: 9, found: true},
 	}))
 
 	page := getHistoryPage(t, ts, orientationQuery(flagged, usd, 50))
@@ -1553,7 +1552,6 @@ func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
 	srv := v1.New(v1.Options{
 		History:             reader,
 		NonstandardDecimals: cache,
-		TokenDecimals:       &countingDecStub{d: 9, found: true},
 	})
 	ts := startHTTPTest(t, srv.Handler())
 

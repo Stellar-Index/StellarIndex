@@ -44,6 +44,11 @@ func TestAssetDetail_PriceWithheldOnlyOnContradictedScale(t *testing.T) {
 			if !tc.wantPrice && strings.Contains(body, `"price_history_`) {
 				t.Errorf("price history outlived the withheld price: %s", body)
 			}
+			for _, f := range []string{`"price_sources"`, `"price_as_of"`, `"price_credit"`, `"price_authority"`} {
+				if !tc.wantPrice && strings.Contains(body, f) {
+					t.Errorf("%s outlived the withheld price: %s", f, body)
+				}
+			}
 		})
 	}
 }

@@ -7646,9 +7646,9 @@ export interface components {
             base_amount: string;
             /** @description Decimal string, raw integer at the quote asset's scale. */
             quote_amount: string;
-            /** @description Divide base_amount by 10^base_decimals for whole units. ABSENT when the asset's scale is unknown. */
+            /** @description Divide base_amount by 10^base_decimals for whole units. ABSENT when the scale was not read (flags.stale true) or is not declared; amounts are then base units. A failed read is a 503. */
             base_decimals?: number;
-            /** @description Divide quote_amount by 10^quote_decimals for whole units. ABSENT when the asset's scale is unknown. */
+            /** @description Divide quote_amount by 10^quote_decimals for whole units. ABSENT when the scale was not read (flags.stale true) or is not declared; amounts are then base units. A failed read is a 503. */
             quote_decimals?: number;
             /**
              * @description USD-equivalent volume as a decimal string, when the
@@ -12329,7 +12329,7 @@ export interface components {
              *     `price_unread`: the direct price could not be read, so a fill cannot stand in for it.
              *     `supply_stale`: the supply observation is older than the serving bound (see supply_as_of).
              *     `decimals_unknown`: the token's scale is not known, so `decimals` is omitted.
-             *     `decimals_mismatch`: as market_cap_decimals_mismatch.
+             *     `decimals_mismatch`: as market_cap_decimals_mismatch. The market price is withheld on the same evidence (price_withheld_reason `decimals_mismatch`), so the price_usd it sits beside is a whole-token fill (see price_basis), never that market price.
              *     `ticker_collision`: the code claims a verified ticker under another issuer.
              *     `low_liquidity`: as market_cap_low_liquidity — the dust floor or the turnover ceiling.
              *     `supply_floor`: the supply is a floor of held balances (supply_basis), which values no cap.
@@ -20733,9 +20733,11 @@ export interface operations {
                              *     from its captured instance metadata — the divisor
                              *     exponent for every `amount` in this response
                              *     (display value = amount / 10^decimals). OMITTED
-                             *     when the contract declares no derivable scale: the
-                             *     amounts are then base units, and a consumer must
-                             *     not substitute a default. A failed read is a 503.
+                             *     when the scale was not read (flags.stale true; the
+                             *     response is not cacheable) or the contract declares
+                             *     no derivable scale: the amounts are then base units,
+                             *     and a consumer must not substitute a default. A
+                             *     failed read is a 503.
                              */
                             decimals?: number;
                             transfers: {

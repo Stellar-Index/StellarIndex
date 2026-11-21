@@ -30,8 +30,6 @@ func (r *stubSEP41TransfersReader) ListSEP41Transfers(
 func serverWithSEP41Reader(reader SEP41TransfersReader) *Server {
 	s := &Server{}
 	s.SEP41Transfers = reader
-	// A wired lake that declares this fixture's scale; an unwired one is a 503 (TestSEP41Transfers_DecimalsReadFailed_Returns503).
-	s.TokenDecimals = &countingScaleReader{declared: map[string]uint32{validContractID: 7}}
 	return s
 }
 

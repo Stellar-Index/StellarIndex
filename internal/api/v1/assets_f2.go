@@ -446,11 +446,19 @@ func withholdContradictedScalePrice(d *AssetDetail) {
 		d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
 		return
 	}
-	d.PriceUSD, d.priceStale, d.PriceBasis = nil, false, ""
-	d.PriceWithheldReason = PriceWithheldDecimalsMismatch
+	d.PriceBasis, d.PriceWithheldReason = "", PriceWithheldDecimalsMismatch
+	d.ThinMarket, d.Substance = false, nil
+	unpublishPrice(d)
+}
+
+// unpublishPrice nulls a withheld price and every figure derived from or crediting it: caps, change pills and provenance (a
+// withheld row credits no vendor and stamps no time), and the price series, whose last bucket IS the price and whose ATH is a
+// USD claim from the same CAGG.
+func unpublishPrice(d *AssetDetail) {
+	d.PriceUSD, d.priceStale = nil, false
 	d.MarketCapUSD, d.MarketCapLowerBound, d.FDVUSD = nil, false, nil
 	d.Change1hPct, d.Change24hPct, d.Change7dPct = nil, nil, nil
-	d.ThinMarket, d.Substance = false, nil
+	d.PriceAuthority, d.PriceSources, d.PriceAsOf, d.PriceCredit = "", nil, nil, ""
 	withholdPriceSeriesWhenUnpriced(d)
 }
 
