@@ -43,6 +43,7 @@ A source is COMPLETE through ledger W if and only if three claims hold contiguou
 - `internal/hashdb` detects drift against itself (the `stellarindex_hashdb_drift_total` counter, off by default). It does not feed the substrate verdict, and neither do `archivecompleteness` or `verify-archive`.
 - Provenance-column anti-joins and a per-source handled-topics list were not built. The recompute-and-count reconcile and `Dispatcher.Recognize` replace them.
 - Re-deriving costs a lake scan per verdict cycle.
+- Status note (2026-11-21): the Invariant's `TestReconciliationCatalogue_OracleSourcesOptOut` no longer exists. The oracle sources' aggregate-only reconcile opt-out it pinned was retired because it let a dropped row in one ledger net against a phantom in another and report complete; oracle sources now reconcile per ledger like every other source. Exempting them again is the regression the Invariant's first sentence names. The catalogue is guarded by `internal/ops/chops/compute_completeness_test.go` and `internal/ops/chops/catalogue_completeness_test.go`.
 
 ## Evidence
 

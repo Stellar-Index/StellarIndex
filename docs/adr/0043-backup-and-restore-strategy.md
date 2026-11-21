@@ -38,6 +38,7 @@ The lake is a deterministic decode of the Galexie ledger archive, so the questio
 - Recovery older than repo2's 7-day window must use repo1; Postgres has no deeper offsite copy.
 - Deep-history re-derive depends on a third-party dataset with no SLA.
 - Operator actions (accounts, credentials, first hand runs) sit outside the repo.
+- Status note (2026-11-21): Redis has no backup leg. Under the Redis validator (r1) the `apikey:` records are the working credentials and `api_keys` rows are only the management record (`internal/api/v1/register.go`). `config-backup.sh` copies `/etc/redis` but not the data dir, and no ops command rebuilds `apikey:` or `apikey-index:` from Postgres, so a lost or corrupted Redis leaves every self-service key failing to authenticate until it is re-issued.
 - Status note: repo2's horizon is not a steady 7 days. The backup script takes a full every Sunday and a diff otherwise (`pgbackrest-backup.sh.j2`, `date +%u`), and repo2 keeps one full (`repo2-retention-full` defaults to 1 in `pgbackrest.conf.j2`). When the Sunday full completes, pgBackRest expires the previous full with its diffs, and WAL older than the oldest retained backup cannot be replayed. So the oldest point repo2 can restore to resets to that Sunday's full and grows to about 6 days by Saturday, averaging about 3.5 days. A guaranteed 7-day offsite window needs `pgbackrest_repo2_retention_full = 2`, which roughly doubles repo2's backup storage.
 
 ## Evidence

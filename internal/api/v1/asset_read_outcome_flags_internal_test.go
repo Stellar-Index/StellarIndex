@@ -302,6 +302,8 @@ func TestFillMarketCapsFromSupply_FailedBroadArmIgnoresSorobanRows(t *testing.T)
 	}
 	s, _ := lakeSupplyServer(t, "")
 	s.Explorer = failingClassicExplorer{}
+	// The SAC's own scale reads fine; only the broad supply arm is down.
+	s.TokenDecimals = &countingScaleReader{declared: map[string]uint32{sac: 7}}
 	s.classicSupplyAttemptAt = time.Now()
 	price := "1.00"
 	rows := []AssetDetail{{Kind: "stellar_asset", AssetID: sac, Type: string(canonical.AssetSoroban), Decimals: 7, PriceUSD: &price}}
