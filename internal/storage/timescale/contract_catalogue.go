@@ -24,9 +24,9 @@ func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string)
 		       d.event_count,
 		       ROUND(aps.price_usd, 10)::text,
 		       vol.vol_usd,
-		       to_char(aps.change_1h_pct,  'FM999999990.00'),
-		       to_char(aps.change_24h_pct, 'FM999999990.00'),
-		       to_char(aps.change_7d_pct,  'FM999999990.00'),
+		       ` + changePctOpen + `aps.change_1h_pct` + changePctClose + `,
+		       ` + changePctOpen + `aps.change_24h_pct` + changePctClose + `,
+		       ` + changePctOpen + `aps.change_7d_pct` + changePctClose + `,
 		       aps.source_count,
 		       avc.character,
 		       COALESCE(vol.unpriced_trades, 0) > 0

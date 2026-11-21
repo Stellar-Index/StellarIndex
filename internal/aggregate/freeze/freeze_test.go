@@ -182,22 +182,21 @@ var (
 	_ = cachekeys.Freeze
 )
 
-// An owned ladder nobody advances is bounded like the unowned one: a window dropped under the USD-volume
-// floor never retires its entry, so its escalated ladder must not outlive hold plus grace or a restart rehydrates it.
+// An owned ordinary ladder nobody advances is bounded like the unowned one, or a restart rehydrates a finished
+// freeze. An escalated one is not: only an operator ends it (escalated_outage_test.go).
 
-// abandonedEscalated is an escalated ladder whose last writer stopped
+// abandonedLadder is an ordinary ladder whose last writer stopped
 // hours ago: well past HoldUntil plus any grace.
-func abandonedEscalated(now time.Time) freeze.State {
+func abandonedLadder(now time.Time) freeze.State {
 	return freeze.State{
 		FiredAt:        now.Add(-9 * time.Hour),
 		HoldUntil:      now.Add(-6 * time.Hour),
-		ExtensionsUsed: freeze.DefaultMaxExtensions,
-		Escalated:      true,
+		ExtensionsUsed: 2,
 	}
 }
 
 // seedShortLadderBeside writes a windowed marker in which the 5m window
-// holds an abandoned escalated ladder and the 1h window holds `long`.
+// holds an abandoned ordinary ladder and the 1h window holds `long`.
 func seedShortLadderBeside(t *testing.T, long freeze.State) (*miniredis.Miniredis, *freeze.Writer, string) {
 	t.Helper()
 	mr, rdb := newRedis(t)
@@ -209,7 +208,7 @@ func seedShortLadderBeside(t *testing.T, long freeze.State) (*miniredis.Miniredi
 	body, err := json.Marshal(freeze.Marker{
 		AssetID: asset.String(), QuoteID: quote.String(), Windowed: true,
 		Ladders: map[string]freeze.State{
-			shortWindow.String(): abandonedEscalated(time.Now().UTC()),
+			shortWindow.String(): abandonedLadder(time.Now().UTC()),
 			longWindow.String():  long,
 		},
 	})

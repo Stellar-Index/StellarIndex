@@ -119,7 +119,7 @@ func listingSync(args []string) error {
 	baseURL := fs.String("base-url", "",
 		"API base URL (https only). Empty selects the host that matches the API key mode: the Pro host when COINGECKO_API_KEY is set, the public host otherwise.")
 	timeout := fs.Duration("timeout", 2*time.Minute, "Wall-clock timeout for the whole run")
-	acceptChurn := fs.Bool("accept-churn", false, "Accept a catalogue that prunes more rows than the churn ceiling allows — only for a known upstream mass delisting")
+	acceptChurn := fs.Bool("accept-churn", false, "Accept a catalogue that prunes, or re-binds to another coin id, more addresses together than the churn ceiling allows — only for a known upstream mass change")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -178,6 +178,9 @@ func listingSync(args []string) error {
 		limit = timescale.DirectoryChurnUnbounded
 	}
 	upserted, pruned, ambiguous, err := store.ReplaceListingDirectoryWithin(ctx, entries, listingSource, limit)
+	if errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		return fmt.Errorf("%w — nothing written; if upstream really changed this much, re-run with -accept-churn", err)
+	}
 	if err != nil {
 		return err
 	}

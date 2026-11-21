@@ -59,6 +59,17 @@ func DirectoryTagsWithoutScamFlags(tags []string) []string {
 	return out
 }
 
+// scamTagsOf returns only the scam-class tags, order kept.
+func scamTagsOf(tags []string) []string {
+	var out []string
+	for _, t := range tags {
+		if isDirectoryScamFlagTag(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // isDirectoryScamFlagTag matches the canonical form, the widest of the consumers' rules (the Go
 // matchers trim, the SQL predicates only fold), so a tag any of them would count is removed.
 func isDirectoryScamFlagTag(tag string) bool {
@@ -160,7 +171,7 @@ func (s *Store) ReplaceDirectoryWithin(ctx context.Context, source string, entri
 	}
 	// Upstream can ship two files declaring one address, and equal addresses in one multi-row
 	// upsert make Postgres abort the sync ("cannot affect row a second time"), so collapse
-	// duplicates last-wins before chunking.
+	// duplicates before chunking: last copy wins, keeping any copy's scam flag.
 	entries = dedupDirectoryEntriesByAddress(entries)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -298,13 +309,16 @@ func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source strin
 	return nil
 }
 
-// dedupDirectoryEntriesByAddress collapses duplicate Addresses (last wins, order kept): an upsert chunk may hold each conflict key once.
+// dedupDirectoryEntriesByAddress collapses duplicate Addresses (order kept): an upsert chunk may hold each conflict key once.
+// The last copy wins, plus the scam-class tags of earlier copies: a later copy cannot clear a scam flag, and an earlier one cannot
+// lend recognition tags (issuer, anchor, ...) to an address the last copy does not vouch for.
 func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 	idx := make(map[string]int, len(entries))
 	out := make([]DirectoryEntry, 0, len(entries))
 	for _, e := range entries {
 		if i, seen := idx[e.Address]; seen {
-			out[i] = e // last-wins: overwrite the earlier row in place
+			e.Tags = CanonicalDirectoryTags(append(slices.Clone(e.Tags), scamTagsOf(out[i].Tags)...))
+			out[i] = e
 			continue
 		}
 		idx[e.Address] = len(out)

@@ -278,6 +278,46 @@ func TestReleaseWindow_ClearsWhenNoSiblingIsRecorded(t *testing.T) {
 	}
 }
 
+// recoveringSink is a freeze-event sink that can also close the open row, as timescale.FreezeEventSink does.
+type recoveringSink struct {
+	recordingSink
+	fakeRecoverer
+}
+
+// TestReleaseWindow_ClosesTheRowItReleases: the last window's auto-release closes the open freeze_events row at once, so a
+// re-fire before the recovery sweep opens a new row; an absent marker (operator override, lapse) is left to its owner.
+func TestReleaseWindow_ClosesTheRowItReleases(t *testing.T) {
+	_, rdb := newRedis(t)
+	sink := &recoveringSink{}
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(newWindowedFakeLadderStore(), 0), freeze.WithEventSink(sink))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.1242",
+		freezeDecision(), freshState(time.Now().UTC()), 14*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(5m): %v", err)
+	}
+
+	if kept, err := w.ReleaseWindow(ctx, asset, quote, shortWindow); err != nil || kept {
+		t.Fatalf("ReleaseWindow = (kept=%v, err=%v), want (false, nil)", kept, err)
+	}
+	if len(sink.fakeRecoverer.calls) != 1 || sink.by[0] != freeze.ReleasedBySystemRecovery {
+		t.Fatalf("MarkRecovered calls = %v by %v, want one by %q", sink.fakeRecoverer.calls, sink.by, freeze.ReleasedBySystemRecovery)
+	}
+	if got := sink.fakeRecoverer.calls[0]; got.Asset != asset || got.Quote != quote {
+		t.Errorf("closed %v/%v, want %v/%v", got.Asset, got.Quote, asset, quote)
+	}
+
+	if _, err := w.ReleaseWindow(ctx, asset, quote, shortWindow); err != nil {
+		t.Fatalf("ReleaseWindow on an absent marker: %v", err)
+	}
+	if n := len(sink.fakeRecoverer.calls); n != 1 {
+		t.Errorf("an absent-marker release closed the row too (%d calls); that row is the operator's or the sweep's", n)
+	}
+}
+
 // getFailingCache fails every Get and records whether anything was deleted.
 type getFailingCache struct {
 	freeze.RedisCache

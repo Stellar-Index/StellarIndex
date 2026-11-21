@@ -91,6 +91,16 @@ const snapshotPriceUSDExpr = `CASE pick.arm
 		      WHEN 'xlm'    THEN vs_xlm.vwap * ax.vwap
 		    END`
 
+// changePctText renders a change percentage as its wire string. to_char with a fixed-width mask prints '#' for a value wider
+// than the mask, so a large change would reach the wire as "#########.##" instead of a decimal.
+// The open/close pair keeps const SQL const; changePctText is the same wrap for built expressions.
+func changePctText(expr string) string { return changePctOpen + expr + changePctClose }
+
+const (
+	changePctOpen  = "ROUND(("
+	changePctClose = ")::numeric, 2)::text"
+)
+
 // priceChangePctExpr is the unrounded change over lookback ("1h", "24h", "7d"), both legs through the arm that priced the asset
 // (mixing arms would compare against a possibly stale "now"); NULL when that arm has no lookback row. Also NULL unless the lookback
 // minute is strictly older than the headline minute: the headline may fall back days to a floored trade, the lookback does not. NULL
