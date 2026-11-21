@@ -983,10 +983,10 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	return s.stampServeStateLocked(rwaMembership{refusals: map[string]int{}})
 }
 
-// serveFlags is the envelope verdict on a served set: past its lifetime is stale, and a failed latest rebuild is degraded.
-// readFailed is not read here: a build that set it is never cached, so no served set carries it.
+// serveFlags is the envelope verdict on a served set: past its lifetime is stale; a failed latest rebuild, or no set ever built
+// (a cold build still running), is degraded. readFailed is not read here: a build that set it is never cached.
 func (m rwaMembership) serveFlags() Flags {
-	return Flags{Stale: m.servedStale, Degraded: m.servedStale || !m.rebuildFailedAt.IsZero()}
+	return Flags{Stale: m.servedStale, Degraded: m.servedStale || !m.rebuildFailedAt.IsZero() || m.builtAt.IsZero()}
 }
 
 // rwaMembershipSetOf dates the served set, or returns nil when there is none. Gated on the build
