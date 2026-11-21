@@ -1,7 +1,9 @@
 // Package holds is the operator "under review" hold list: a TOML file the
 // API polls and swaps in atomically, so a hold can be added or lifted
-// without a restart. A matching hold marks supply, balance and holder
-// responses; it never changes the numbers themselves.
+// without a restart. A matching hold marks the single-subject routes the API
+// wraps with underReview (GET /v1/accounts/{g_strkey} and /v1/assets/{asset_id}
+// with its supply, holder and movement sub-routes); listings and account
+// positions/movements are not marked. It never changes the numbers themselves.
 package holds
 
 import (

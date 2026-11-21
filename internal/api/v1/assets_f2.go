@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -752,20 +753,25 @@ func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.As
 	return raw, true, nil
 }
 
+// sep1PlainDecimal bounds the parse: an i128 amount has at most 39 integer digits.
+var sep1PlainDecimal = regexp.MustCompile(`^[0-9]{1,40}(\.[0-9]{1,40})?$`)
+
 // sep1DisplayToRawUnits converts a SEP-1 display decimal to a raw-unit integer string; ok=false unless the result is a
 // non-negative INTEGER (no negatives, no fractional stroops). Rational and e-notation are rejected because big.Rat.SetString
 // would silently accept both.
 func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
-	if decimals < 0 || strings.ContainsAny(display, "/eE") {
+	// The string is issuer-authored: big.Rat also parses hex and binary exponents ("1p9999999" is 2^9999999), so only a
+	// bounded plain decimal reaches it, and the result must fit the i128 every token amount lives in.
+	if decimals < 0 || !sep1PlainDecimal.MatchString(display) {
 		return "", false
 	}
 	rat, ok := new(big.Rat).SetString(display)
-	if !ok || rat.Sign() < 0 {
+	if !ok {
 		return "", false
 	}
 	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 	rat.Mul(rat, new(big.Rat).SetInt(scale))
-	if !rat.IsInt() {
+	if !rat.IsInt() || rat.Num().BitLen() > 127 {
 		return "", false
 	}
 	return rat.Num().String(), true
