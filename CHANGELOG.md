@@ -20,6 +20,39 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.128.0] - 2026-11-21
+
+Tested against Stellar protocol 27. No migrations, no `pkg/*` change. Behaviour changes for API clients: `/v1/oracle/prices` on a frozen pair returns the single held value, or 503 when nothing is held (#4227); `/v1/assets/{id}/supply` answers 502 when the supply read fails, where a token with no flows got 404 or an empty answer, and serves a supply whose completeness check could not run as a lower bound (#4228). Behaviour change for operators: a bounded ledger walk by the ops tools over a range with a real hole below the datastore tip now exits non-zero where it used to exit 0 (#4229). Host payload changed: job locks move to `/run/lock/stellarindex/`, and the public API unit runs with `ProtectSystem=strict` and no writable paths; both are applied by the next host role run (#4230). On a host that already holds the `movements_by_asset_backfill` marker, run Step 3 of `deploy/clickhouse/movements_by_asset.sql` to verify it, and on a mismatch delete the marker and re-run Step 2 (#4229).
+
+### Added
+
+- **api:** `/v1/oracle/prices` answers carry `frozen_checked`; a frozen pair returns the held value flagged `frozen`, `degraded`, `stale` and `single_source` (#4227).
+- **api:** `circulating_supply_lower_bound` on `/v1/assets/{id}/supply` and the RWA row, `market_cap_lower_bound` on the RWA row and the asset detail, and `lower_bound` on the RWA totals, set when the storage completeness check could not run (#4228).
+- **ci:** `lint-numeric-mask` fails on any `to_char` numeric mask in Go or SQL (#4225).
+
+### Changed
+
+- **api:** `/v1/oracle/prices` goes through the same freeze check as `lastprice`: a frozen pair returns the single held value, or 503 when nothing is held (#4227).
+- **api:** `/v1/assets/{id}/supply` answers 502 on a failed storage read whatever the flow count; the event-net supply is served as a lower bound when the check cannot run (undecodable balance entries, more entries than the cap, no instance entry), and only a Stellar asset contract is a real decline (#4228).
+- **api:** when the contract supply arm refuses, is cut short or applies its own reading, the generic fill's supply, basis, cap and flags are cleared; an observer SEP-41 supply is kept when the arm merely has no reading, and its cap is recomputed through the dust and turnover guards (#4228).
+- **api:** RWA views serve a cut-short curated valuation as lower bounds and say how many rows were not valued; a failed published or directory read, or a membership set that was never built, marks the view degraded (#4228).
+- **api:** fiat-quoted `ohlc`, `vwap` and `twap` carry a `truncated` flag set by whichever read hit the cap, and every book is cut to the capped book's span; `thin_market` is measured over the peg books that put a trade into the answer, and a book that could not be measured never clears it (#4227).
+- **api:** a chart whose grain is as wide as its window, including 1mo, reads back to the last closed bucket and the series is labelled `starts_before_window`; a protocols bespoke block's staleness and `as_of` come from the same cache read as the block (#4227).
+- **api:** the seven change-% expressions render with `ROUND((expr)::numeric, 2)::text`, so a value over nine digits no longer prints as `#########.##`; values that fit the old mask are unchanged (#4225).
+- **aggregate:** an escalated freeze (ADR-0019) ends only by operator action: a ladder whose hold lapsed while the aggregator was down stays live on restart reads, the recovery sweep, the marker rebuild, carry-forward and sibling checks, and a sibling window's release no longer clears it (#4226).
+- **aggregate:** when the last frozen window auto-releases with its marker present, `ReleaseWindow` closes the open `freeze_events` row, so a re-fire opens a new row and sends its webhook; a close with no open row is success (#4226).
+- **ingest:** a bounded ledger walk fails on a ledger missing at or below the datastore tip, on a delivered ledger whose sequence differs from the requested one, and returns the retryable `ErrLedgerArrivedDuringWalk` where it used to exit 0 with the range unread; the trailing-missing tolerance applies only to the distance from `-to`; the live path is unchanged (#4229).
+- **storage:** when two upstream directory files name one address, the last copy's name, domain and tags win and only scam-class tags carry over from earlier copies; a listing directory sync refuses a snapshot whose prunes plus re-binds exceed the churn ceiling (20%, floor 5) unless `-accept-churn` is given (#4225).
+- **lake:** `lake-dedup-driver` aborts when a merge removed fewer rows than the probe counted, sets `optimize_throw_if_noop` and skips partitions with a part written in the last hour; the `movements_by_asset` backfill steps stop on any failed or unmarked partition and insert the completeness marker only after verification (#4229).
+- **deploy:** the restore-drill and galexie-archive-fill locks live in `/run/lock/stellarindex/` as root:root 0600, created at boot by tmpfiles.d, opened read-only and owner-checked; the heavy-job wrapper no longer honours old-path per-job locks (#4230).
+- **deploy:** the public API unit runs with `ProtectSystem=strict` and no `ReadWritePaths`, hides `/run/lock` and `/etc/default/galexie*`, and sets `TasksMax`, `SystemCallFilter` and memory limits in both copies; `lint-systemd-hardening.sh` enforces it (#4230).
+- **deploy:** stellar-core auto-upgrade reads the network tip only from the root-owned textfile and skips when it is missing or foreign; the MinIO scrape token is minted only when the prometheus user and `/etc/prometheus` exist (#4230).
+
+### Fixed
+
+- **aggregate:** a freeze row held open by a ladder logs at INFO once per hold, then DEBUG (#4226).
+- **ingest:** probe errors in a bounded ledger walk name the step that failed (#4229).
+
 ## [v0.127.0] - 2026-11-21
 
 Tested against Stellar protocol 27. No migrations, no `pkg/*` change, no breaking API change. Not run by the deploy: run `stellarindex-ops ch-index-proof -write` once per host to record the proof watermark, which could not be recorded before (#4222); after an earlier `ch-rebuild -write` that failed after writing rows, refresh the price aggregates over that range with `stellarindex-ops trades-cagg-refresh -from L -to H -write` (#4223). Host payload changed: the alert rules in both rule trees (a new ticket alert) and the operator runbooks; run the host role from the tag to install the rules.
@@ -176,26 +209,3 @@ Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client
 - **explorer:** CSV exports defuse spreadsheet formulas in text cells; floor, derived and stale figures are marked on asset and RWA pages.
 - **docs:** 35 operator procedures (rollback, release verification, recovery, credential rotation, privacy requests, runbooks) are corrected against the code they describe.
 - **tests:** two intermittently failing tests are deterministic.
-
-## [v0.123.0] - 2026-11-17
-
-Tested against Stellar protocol 27. Two migrations, both additive on `blnt_events` (0225, an index on the user column; 0226, a nullable `tx_index` column). No `pkg/*` change. The OpenAPI contract gains seven lending paths and breaks none. Host payload: a new ClickHouse table `stellar.lending_state_hourly`, a `lending-state` unit and timer (not enabled by default) and one alert rule. After the deploy an operator rebuilds BLNT so existing rows gain their `tx_index`: `stellarindex-ops projected-rebuild -source blnt -from 65134154 -to <blnt projector cursor> -write`.
-
-### Added
-
-- **api:** BLNT V3 pools, reserves and positions are served as their own protocol on `/v1/lending/pools`, `/v1/lending/pools/{pool}/reserves` and the account positions endpoint.
-- **api:** `/v1/lending/pools/{pool}/reserves` carries each reserve's configuration, the pool configuration, the rate modifier and a USD price; `/v1/lending/pools/{pool}/config-history` lists every configuration change.
-- **api:** `/v1/lending/pools/{pool}/backstop` (size, shares, queued withdrawals, per-tier balances for BLNT) and `/v1/lending/pools/{pool}/auctions` (liquidation, bad-debt and interest auctions with their fills).
-- **api:** `/v1/lending/pools/{pool}/reserves/{asset}/history` and `/v1/lending/pools/{pool}/backstop/history` serve hourly state decoded from the lake. Only hours the lake has fully covered are served, so a served point never changes.
-- **api:** `/v1/lending/pools/{pool}/emissions` serves emission rates and expiry per reserve side and for the backstop, with claim totals. Blend V1 emission storage and Blend V2 per-pool backstop claims are named as unavailable, not estimated.
-- **api:** `/v1/lending/accounts/{account}/earnings` serves interest earned and paid, backstop gain and emissions claimed per account. A figure is exact only when the balance folded from events equals the on-chain balance, no auction moved it, the projection is not behind the chain and the source's history is verified from genesis; otherwise it is withheld with a reason and the raw components are still returned.
-- **lake:** `stellar.lending_state_hourly` keeps the verbatim storage entry of every Blend and BLNT pool and backstop key per hour changed; `ch-entry-history -lending-only` fills it and `-prove` checks it against current state.
-- **explorer:** lending pages are protocol-aware and show pool configuration, the rate model, configuration history, the backstop, auctions and reserve history charts.
-
-### Changed
-
-- **sources:** each BLNT event row stores its transaction's apply position in the ledger, so same-ledger configuration changes are ordered as they were applied.
-
-### Fixed
-
-- **tests:** two ClickHouse test helpers declared twice in one package broke the build of that package's tests on main.
