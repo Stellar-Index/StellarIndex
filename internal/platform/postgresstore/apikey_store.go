@@ -403,13 +403,13 @@ func (r *APIKeyStore) Update(ctx context.Context, accountID uuid.UUID, k platfor
 	return nil
 }
 
-// Revoke soft-deletes id only when accountID owns it; idempotent, an already-revoked key keeps its revoked_at and gets the new reason.
+// Revoke soft-deletes id only when accountID owns it; idempotent, an already-revoked key keeps its first revoker, time and reason.
 func (r *APIKeyStore) Revoke(ctx context.Context, accountID uuid.UUID, id string, byUserID uuid.UUID, reason string) error {
 	const q = `
 		UPDATE api_keys SET
 			revoked_at = COALESCE(revoked_at, now()),
-			revoked_by_user_id = NULLIF($2::text, '')::uuid,
-			revoked_reason = NULLIF($3, '')
+			revoked_by_user_id = CASE WHEN revoked_at IS NULL THEN NULLIF($2::text, '')::uuid ELSE revoked_by_user_id END,
+			revoked_reason = CASE WHEN revoked_at IS NULL THEN NULLIF($3, '') ELSE revoked_reason END
 		WHERE id = $1 AND account_id = $4
 	`
 	res, err := r.s.db.ExecContext(ctx, q, id, uuidOrEmpty(byUserID), reason, accountID)

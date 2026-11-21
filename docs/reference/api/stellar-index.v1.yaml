@@ -16363,7 +16363,7 @@ components:
                 type: "https://api.stellarindex.io/errors/account-store-unavailable"
                 title: "Account store not configured"
                 status: 503
-                detail: "this deployment has no AccountStore wired: Redis is unavailable, or auth_backend=postgres, which disables /v1/account/keys (an operator revokes with DELETE /v1/admin/keys/{keyID}?identifier=; dashboard users manage keys at /v1/dashboard/keys)"
+                detail: "this deployment has no AccountStore wired: Redis is unavailable, or auth_backend=postgres, so listing and minting /v1/account/keys are disabled and a key may revoke only itself (an operator revokes any key with DELETE /v1/admin/keys/{keyID}?identifier=; dashboard users manage keys at /v1/dashboard/keys)"
                 instance: "/v1/account/keys"
                 request_id: "70c8017d79651070fd16c2c9f065d846"
             throttleUnavailable:

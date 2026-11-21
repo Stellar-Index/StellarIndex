@@ -53,20 +53,23 @@ func revokeAccountKey(t *testing.T, ts *httptest.Server, keyID string) *http.Res
 	return doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/"+keyID, "", "")
 }
 
-// TestAccountKeysRevoke_PostgresBackendKeyRevokesItself: a /v1/register key, authenticated by the
-// production Postgres validator with its cache warm, revokes itself and fails authentication on the
-// next lookup, and the revoke leaves a key.revoke audit row naming the key as its own actor.
+// TestAccountKeysRevoke_PostgresBackendKeyRevokesItself: a /v1/register key, minted with its canonical Redis
+// record as production does and authenticated by the Postgres validator (which reads that record first), revokes
+// itself and fails authentication on the next lookup, leaving a key.revoke audit row naming the key as its own actor.
 func TestAccountKeysRevoke_PostgresBackendKeyRevokesItself(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
-	reg := newRegisterTestServer(t, accounts, keys, nil)
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	reg := newRegisterTestServer(t, accounts, keys, nil, auth.NewRedisAPIKeyStore(rdb))
 	resp := postRegister(t, reg.URL, "application/json", `{"name":"agent"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("register status = %d, want 200", resp.StatusCode)
 	}
 	minted := decodeRegisterResult(t, resp)
+	if n := len(rdb.Keys(context.Background(), "apikey:*").Val()); n == 0 {
+		t.Fatal("register wrote no canonical apikey: record; the test would not cover the production key shape")
+	}
 
-	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 	validator, err := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
 		Keys: keys, Accounts: accounts, Cache: rdb, CacheTTL: time.Hour,
 	})
@@ -216,7 +219,80 @@ func TestAccountKeysRevoke_PostgresBackendAlreadyRevokedIs204(t *testing.T) {
 	if len(sink.entries) != 0 {
 		t.Errorf("audit entries = %d, want 0 for a revoke that changed nothing", len(sink.entries))
 	}
+	if len(keys.revokedIDs) != 0 {
+		t.Errorf("store Revoke called for %v: re-revoking a revoked row overwrites its first revoker", keys.revokedIDs)
+	}
 	if len(inv.evicted) != 1 || inv.evicted[0] != hex.EncodeToString([]byte{0xa1}) {
 		t.Errorf("evicted = %v, want only the key's own cache row", inv.evicted)
+	}
+}
+
+// TestKeyRevoke_PartialCommitIsAudited: when the Postgres row is revoked but the Redis mirror leg fails, the key is
+// already dead and a retry cannot repeat the revoke, so the 500 must still leave exactly one key.revoke row marked
+// failed, on the self-revoke route and on the staff kill switch that shares the every-store revoke.
+func TestKeyRevoke_PartialCommitIsAudited(t *testing.T) {
+	boom := errors.New("redis down")
+	for _, tc := range []struct {
+		name string
+		url  func(base string) string
+		who  func(self auth.Subject) auth.Subject
+	}{
+		{
+			name: "self-revoke",
+			url:  func(base string) string { return base + "/v1/account/keys/" + selfKeyID },
+			who:  func(self auth.Subject) auth.Subject { return self },
+		},
+		{
+			name: "admin kill switch",
+			url: func(base string) string {
+				return base + "/v1/admin/keys/" + selfKeyID + "?identifier=" + auth.AccountIdentifier("reg-abc123")
+			},
+			who: func(auth.Subject) auth.Subject { return operatorSubject() },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			keys, accts, subject := seedPostgresBackendKeys()
+			sink := &recordingAuditSink{}
+			ts := newPostgresBackendRevokeServer(t, tc.who(subject), v1.APIKeyBudgetStores{
+				Platform: keys, RedisMirror: &revokingMirror{err: boom}, CacheInvalidator: &recordingKeyCacheInvalidator{},
+			}, accts, sink)
+
+			if got := doWithReason(t, http.MethodDelete, tc.url(ts.URL), "leaked", "").StatusCode; got != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500", got)
+			}
+			if len(keys.revokedIDs) != 1 {
+				t.Fatalf("postgres revokes = %v, want the row revoked", keys.revokedIDs)
+			}
+			if len(sink.entries) != 1 {
+				t.Fatalf("audit entries = %d, want exactly 1 for a revoke that committed its Postgres leg", len(sink.entries))
+			}
+			var meta map[string]any
+			if err := json.Unmarshal(sink.entries[0].Metadata, &meta); err != nil {
+				t.Fatalf("audit metadata: %v", err)
+			}
+			if sink.entries[0].Action != "key.revoke" || meta["outcome"] != "failed" {
+				t.Errorf("audit entry %s with metadata %v, want key.revoke with outcome failed", sink.entries[0].Action, meta)
+			}
+		})
+	}
+}
+
+// TestAccountKeysRevoke_PostgresBackendNoOwnerStoreTouchesNothing: with a Postgres key store but no account store
+// the row's owner cannot be proven, so the self-revoke is refused with 503 before any store is touched.
+func TestAccountKeysRevoke_PostgresBackendNoOwnerStoreTouchesNothing(t *testing.T) {
+	keys, _, subject := seedPostgresBackendKeys()
+	mirror := &revokingMirror{}
+	inv := &recordingKeyCacheInvalidator{}
+	sink := &recordingAuditSink{}
+	ts := newPostgresBackendRevokeServer(t, subject,
+		v1.APIKeyBudgetStores{Platform: keys, RedisMirror: mirror, CacheInvalidator: inv}, nil, sink)
+
+	resp := revokeAccountKey(t, ts, selfKeyID)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+	if len(keys.revokedIDs) != 0 || len(mirror.revoked) != 0 || len(inv.evicted) != 0 || len(sink.entries) != 0 {
+		t.Errorf("revoked rows %v, mirror %v, evicted %v, audit %d: want nothing touched",
+			keys.revokedIDs, mirror.revoked, inv.evicted, len(sink.entries))
 	}
 }
