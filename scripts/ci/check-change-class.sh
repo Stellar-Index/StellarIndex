@@ -25,7 +25,8 @@
 # WHICH internal/ PACKAGES THE integration CLASS NAMES. The suite imports
 # 40+ internal/ packages; a PR runs the shards only for storage, schema,
 # the ops subcommands the suite drives (internal/ops/chops through
-# chops.Run, whose ClickHouse derives have no other real coverage) and the
+# chops.Run, whose ClickHouse derives have no other real coverage), the
+# served API surface (internal/api/v1/**) and the
 # INT_TEST_PKGS directories, whose `//go:build integration` tests nothing
 # else executes. The nightly full run covers the rest.
 # test/controlwiring/integration_class_direct_imports_test.go fails when the
@@ -39,7 +40,8 @@
 # Classes (must stay identical in substance to the `filters:` block in
 # .github/workflows/ci.yml's preflight job):
 #   integration  — internal/storage/**, internal/platform/postgresstore/**,
-#                  internal/ops/{archive,chops}/**, cmd/stellarindex-ops/**, migrations/**,
+#                  internal/ops/{archive,chops}/**, internal/api/v1/**,
+#                  cmd/stellarindex-ops/**, migrations/**,
 #                  scripts/ops/**, test/integration/**, test/harness/**,
 #                  go.mod, go.sum, Makefile, scripts/ci/integration-shard.sh,
 #                  .github/workflows/ci.yml, deploy/clickhouse/*.sql,
@@ -83,7 +85,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
+  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|internal/api/v1/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
 }
 
 class_go() {

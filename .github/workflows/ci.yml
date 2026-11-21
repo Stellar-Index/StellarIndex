@@ -312,6 +312,8 @@ jobs:
               - 'internal/ops/archive/**'
               # The ops subcommands test/integration drives through chops.Run.
               - 'internal/ops/chops/**'
+              # The served API surface, handlers and subpackages.
+              - 'internal/api/v1/**'
               - 'cmd/stellarindex-ops/**'
               - 'migrations/**'
               - 'scripts/ops/**'
