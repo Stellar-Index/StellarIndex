@@ -20,7 +20,9 @@
 #   4. Atomic rename .new → live; the live path is never absent, so a
 #      timer firing mid-deploy cannot fail with 203/EXEC.
 #   5. Write the new sidecar file.
-#   6. systemctl restart <binary>.
+#   6. systemctl restart <binary>. A CLI binary instead try-restarts the
+#      long-running units in cli_daemon_units[binary] and checks none still
+#      runs the replaced build.
 #   7. Health probe (api: api_health_path; other daemons: /readyz on
 #      daemon_ready_ports[binary])
 #      after `health_grace_seconds`.
@@ -179,6 +181,40 @@
         not cli_stat.stat.exists
         or not cli_stat.stat.executable
         or cli_stat.stat.size < 1024
+
+    # try-restart, never start: a stopped or disabled unit stays stopped, and a
+    # unit this region does not have (LoadState other than loaded) is skipped.
+    # A restarted unit must be active with no process still on the replaced
+    # build (moved to .prev-<tag>, or deleted); a failure rolls back.
+    - name: "[{{ binary }}] Restart long-running units that exec this CLI binary"
+      when: (cli_daemon_units[binary] | default([])) | length > 0
+      ansible.builtin.shell: |
+        set -eu
+        live="{{ install_dir }}/{{ binary }}"
+        restarted=""
+        for u in {{ cli_daemon_units[binary] | map('quote') | join(' ') }}; do
+          load=$(systemctl show "$u.service" --property=LoadState --value)
+          if [ "$load" != loaded ]; then echo "skip $u: LoadState=$load"; continue; fi
+          if ! systemctl is-active --quiet "$u.service"; then echo "skip $u: not running"; continue; fi
+          systemctl try-restart "$u.service"
+          restarted="$restarted $u"
+        done
+        [ -n "$restarted" ] || exit 0
+        sleep 5
+        for u in $restarted; do
+          systemctl is-active --quiet "$u.service" || { echo "$u is not active after restart" >&2; exit 1; }
+          cg=$(systemctl show "$u.service" --property=ControlGroup --value)
+          procs=$(cat "/sys/fs/cgroup$cg/cgroup.procs" 2>/dev/null || systemctl show "$u.service" --property=MainPID --value)
+          for pid in $procs; do
+            exe=$(readlink "/proc/$pid/exe" || true)
+            case "$exe" in
+              "$live".* | "$live (deleted)") echo "$u pid $pid still runs '$exe'" >&2; exit 1 ;;
+            esac
+          done
+          echo "restarted $u"
+        done
+      register: cli_daemon_restart
+      changed_when: "'restarted ' in cli_daemon_restart.stdout"
 
     - name: "[{{ binary }}] Restart service"
       when: binary not in cli_binaries
@@ -376,6 +412,15 @@
         state: restarted
       ignore_errors: true
 
+    - name: "[{{ binary }}] Restart its long-running units on the old binary"
+      when:
+        - (cli_daemon_units[binary] | default([])) | length > 0
+        - rollback_self_after.stat.exists | default(false)
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'try-restart'] + (cli_daemon_units[binary] | map('regex_replace', '$', '.service') | list) }}"
+      # si-swallow-ok: already failing; a unit this region lacks must not stop the rest of the rollback
+      ignore_errors: true
+
     # This binary failing its health probe means
     # the whole deploy failed — don't leave EARLIER binaries in this same
     # run stranded on the new version while this one reverts. Roll every
@@ -502,6 +547,18 @@
       when:
         - item.key not in cli_binaries
         - item.key in rollback_restorable
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — restart long-running units of each restored CLI binary"
+      ansible.builtin.command:
+        argv: "{{ ['systemctl', 'try-restart'] + (cli_daemon_units[item.key] | map('regex_replace', '$', '.service') | list) }}"
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - (cli_daemon_units[item.key] | default([])) | length > 0
+        - item.key in rollback_restorable
+      # si-swallow-ok: best-effort whole-deploy rollback, like the restarts above
       ignore_errors: true
 
     # The message must describe what the rescue ACTUALLY did. Listing every

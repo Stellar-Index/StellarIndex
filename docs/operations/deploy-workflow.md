@@ -129,7 +129,14 @@ per binary:
 3. Back up `<binary>` → `<binary>.prev-<previous-tag>`.
 4. Atomic rename `.new` → live.
 5. Write the sidecar.
-6. `systemctl restart <binary>.service` (CLI binaries: `<binary> -version` smoke instead).
+6. `systemctl restart <binary>.service`. CLI binaries get an executable/size smoke check
+   instead, and their long-running units (`cli_daemon_units` in
+   `configs/ansible/playbooks/deploy-binary.yml`; today `cap67-movements` for
+   `stellarindex-ops`) are `systemctl try-restart`ed: a stopped or disabled unit
+   stays stopped, a unit the region lacks is skipped, and a restarted unit still
+   running the replaced build fails the deploy and rolls the binary back.
+   Timer-driven oneshots need no restart; their next start execs the new build.
+   `scripts/ci/lint-daemon-restart-list.sh` fails a role daemon missing from that list.
 7. Wait `health_grace_seconds` (default 15s).
 8. Health probe:
    - `stellarindex-api`: `curl http://127.0.0.1:3000/v1/readyz` → 200 (5 retries × 3s).

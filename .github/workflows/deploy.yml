@@ -66,9 +66,11 @@ on:
         # directory-sync, cap67-movements). A stale gate binary
         # silently validates the lake with retired rules — the
         # failure mode is a gate that PASSES when it should not.
-        # Safe to add: it is already in deploy-binary.yml's
-        # cli_binaries deny-list, so it gets a `-version` smoke test
-        # and no service restart.
+        # It is in deploy-binary.yml's cli_binaries deny-list, so it
+        # gets a smoke test instead of a restart of its own; the
+        # long-running units that exec it (cli_daemon_units there,
+        # e.g. cap67-movements) are try-restarted onto the new build.
+        # Timer-driven oneshots pick it up on their next start.
         #
         # stellarindex-migrate is the SCHEMA MIGRATION runner.
         # deploy-binary.yml executes `stellarindex-migrate up` before any

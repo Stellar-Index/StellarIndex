@@ -43,6 +43,13 @@
       - stellarindex-ops
       - stellarindex-migrate
       - stellarindex-sla-probe
+    # Long-running units that exec a CLI binary: swapping the binary
+    # try-restarts each one, or it keeps running the deleted build. A unit the
+    # host lacks or has stopped is left alone. scripts/ci/lint-daemon-restart-list.sh
+    # fails a role daemon that execs a release binary and is missing here.
+    cli_daemon_units:
+      stellarindex-ops:
+        - cap67-movements
 
   pre_tasks:
     - name: Verify required vars are set
