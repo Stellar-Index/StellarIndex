@@ -259,6 +259,60 @@ func TestContractArmValuesTheNetWhenStorageHoldsAnUndecodableEntry(t *testing.T)
 	}
 }
 
+// The generic listing fill runs first and may stamp an observer supply on a contract row. When the contract reading refuses
+// or is cut, that other basis must not be served, or it would feed the cap and the reference valuation beside a no_supply status.
+func TestContractArmClearsTheGenericSupplyWhenItHasNoReading(t *testing.T) {
+	const a = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	const b = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
+	net := big.NewInt(10_000_0000000)
+	stamped := func(id string) AssetDetail {
+		circ, basis, mc := "5000000000000", supply.BasisSEP41TotalOnly.String(), "500000.00"
+		return AssetDetail{
+			AssetID: id, Kind: "soroban_token", Decimals: 7,
+			CirculatingSupply: &circ, SupplyBasis: &basis, MarketCapUSD: &mc, MarketCapLowLiquidity: true,
+		}
+	}
+	for _, tt := range []struct {
+		name    string
+		supply  map[string]clickhouse.TokenSupply
+		storage *storageSupplyStub
+		cancel  bool
+	}{
+		{"incomplete flow net", map[string]clickhouse.TokenSupply{
+			a: {Total: big.NewInt(-5), Incomplete: true, FlowCount: 3}, b: {Total: big.NewInt(-5), Incomplete: true, FlowCount: 3},
+		}, nil, false},
+		{"failed storage read on a log with flows", map[string]clickhouse.TokenSupply{
+			a: {Total: net, Mint: net, FlowCount: 12}, b: {Total: net, Mint: net, FlowCount: 12},
+		}, &storageSupplyStub{err: errors.New("clickhouse down")}, false},
+		{"budget spent on the first row", map[string]clickhouse.TokenSupply{
+			a: {Total: net, Mint: net, FlowCount: 12}, b: {Total: net, Mint: net, FlowCount: 12},
+		}, &storageSupplyStub{err: context.Canceled}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts := Options{TokenSupply: &lakeSupplyStub{byContract: tt.supply}}
+			if tt.storage != nil {
+				if tt.cancel {
+					tt.storage.onAsk = cancel
+				}
+				opts.ContractStorageSupply = tt.storage
+			}
+			s := &Server{Options: opts, logger: discardLogger()}
+			rows := []AssetDetail{stamped(a), stamped(b)}
+
+			s.fillContractMarketCaps(ctx, rows, nil, map[string]struct{}{a: {}, b: {}})
+
+			for _, r := range rows {
+				if r.CirculatingSupply != nil || r.SupplyBasis != nil || r.MarketCapUSD != nil || r.MarketCapLowLiquidity {
+					t.Errorf("%s: supply = %v basis = %v cap = %v low_liquidity = %v, want none of the generic fill's figures",
+						r.AssetID, r.CirculatingSupply, r.SupplyBasis, r.MarketCapUSD, r.MarketCapLowLiquidity)
+				}
+			}
+		})
+	}
+}
+
 // TestContractArmCountsAStorageDeadlineAsACut: a storage read that ran out of time is unread, so the walk reports a cut and
 // the view degrades instead of caching the member as absent.
 func TestContractArmCountsAStorageDeadlineAsACut(t *testing.T) {

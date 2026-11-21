@@ -325,7 +325,7 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 // (TestSourceShapeRules/rwa_contract_pipeline_matches_assets_listing). The substance gate covers
 // canonical.AssetSoroban, so a thin-market price is withheld here. It then fills:
 //  1. supply and market cap: only the precise supply map reaches a contract row;
-//     fillContractMarketCaps has the last word (drops the generic cap, and every cap on a row whose
+//     fillContractMarketCaps has the last word (drops the generic supply and cap, and every cap on a row whose
 //     scale was not read).
 //  2. scam suppression: tags are re-read at valuation time, not reused from the membership build.
 //     valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read, not
@@ -473,11 +473,14 @@ func (s *Server) fillContractMarketCaps(
 		row := &rows[i]
 		circ, basis, ok, unread := s.contractSupplyReadingChecked(ctx, row.AssetID)
 		if !ok && ctx.Err() != nil {
+			for j := i; j < len(rows); j++ {
+				clearContractSupply(&rows[j])
+			}
 			return true
 		}
 		if !ok {
 			cut = cut || unread
-			row.MarketCapUSD, row.MarketCapLowerBound = nil, false // no reading of this contract's own supply: a cap from another basis does not stand in
+			clearContractSupply(row)
 			continue
 		}
 		_, isScaled := scaled[row.AssetID]
@@ -495,9 +498,7 @@ func (s *Server) fillContractMarketCaps(
 func (s *Server) applyContractMarketCap(
 	row *AssetDetail, circ string, basis supply.Basis, isScaled bool, sources int,
 ) {
-	// This reading owns the cap: a figure the generic fill derived from a different supply must not
-	// survive a refusal below.
-	row.MarketCapUSD, row.MarketCapLowerBound = nil, false
+	clearContractSupply(row)
 	b := basis.String()
 	row.SupplyBasis = &b
 	// Supply is a raw chain fact and is served either way. The CAP divides by 10^decimals, and an
@@ -529,6 +530,13 @@ func (s *Server) applyContractMarketCap(
 	}
 	row.MarketCapUSD = &mc
 	row.MarketCapLowerBound = basis.LowerBound()
+}
+
+// clearContractSupply drops every supply-derived field the generic listing fill stamped: the contract reading owns the row, so a
+// figure from another basis must not survive its refusal or a cut walk.
+func clearContractSupply(row *AssetDetail) {
+	row.CirculatingSupply, row.SupplyBasis = nil, nil
+	row.MarketCapUSD, row.MarketCapLowerBound, row.MarketCapLowLiquidity = nil, false, false
 }
 
 // contractPriceScaleDisagrees reports that a contract row's DEX price (normalised through nonstandard_decimals_assets, else
