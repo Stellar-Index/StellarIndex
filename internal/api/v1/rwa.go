@@ -1610,7 +1610,7 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 		if d.priceUnmeasured {
 			return RWAValuation{Status: RWAValuationUnmeasured}
 		}
-		return RWAValuation{Status: RWAValuationUnpriced}
+		return RWAValuation{Status: unpricedRWAValuationStatus(d.PriceWithheldReason)}
 	}
 	if d.MarketCapUSD == nil {
 		if d.MarketCapLowLiquidity {

@@ -30,6 +30,8 @@ func runLendingWrite(t *testing.T, addr string, from, to uint32) error {
 	t.Helper()
 	return chops.Run([]string{
 		"ch-entry-history", "-lending-only", "-ch-addr", addr, "-write", "-lock-file", filepath.Join(t.TempDir(), "lending.lock"),
+		// A first run starts at from as a host's starts at its -floor-ledger: the shared lake begins at another test's range.
+		"-floor-ledger", strconv.FormatUint(uint64(from), 10),
 		"-from", strconv.FormatUint(uint64(from), 10), "-to", strconv.FormatUint(uint64(to), 10),
 	})
 }

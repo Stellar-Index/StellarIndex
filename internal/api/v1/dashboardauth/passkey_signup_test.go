@@ -1,8 +1,10 @@
 package dashboardauth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -140,6 +143,132 @@ func TestPasskeySignup_BeginCappedPerIP(t *testing.T) {
 	}
 	if c := begin("198.51.100.9:1"); c != http.StatusOK {
 		t.Fatalf("other IP: status = %d, want 200", c)
+	}
+}
+
+type fakeSignupBudget struct {
+	calls int
+	err   error
+}
+
+func (f *fakeSignupBudget) CheckIP(_ context.Context, _ string) error {
+	f.calls++
+	return f.err
+}
+
+// passkeySignupOnce runs begin and finish for a fresh authenticator; credID must be unique within the rig.
+func passkeySignupOnce(t *testing.T, rig *passkeyRig, credID string) *httptest.ResponseRecorder {
+	t.Helper()
+	cookie, challenge, userID := beginSignup(t, rig)
+	a := newSoftAuthenticator(t, userID)
+	a.credID = []byte(credID)
+	return finishSignup(t, rig, cookie, a.attestationBody(t, challenge, "Laptop"))
+}
+
+func (r *testRig) accountCount() int {
+	r.accounts.mu.Lock()
+	defer r.accounts.mu.Unlock()
+	return len(r.accounts.byID)
+}
+
+func (r *passkeyRig) credentialCount() int {
+	r.passkeys.mu.Lock()
+	defer r.passkeys.mu.Unlock()
+	return len(r.passkeys.rows)
+}
+
+// The budget is spent at finish, after the attestation verifies and the ceremony is consumed, immediately before the
+// account it pays for; it fails like /v1/register's: open on a transient error, closed on a sustained outage.
+func TestPasskeySignup_FinishSpendsTheBudget(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{"budget open", nil, http.StatusOK},
+		{"budget spent", auth.ErrSignupRateLimited, http.StatusServiceUnavailable},
+		{"sustained outage fails closed", auth.ErrThrottleUnavailable, http.StatusServiceUnavailable},
+		{"transient error fails open", errors.New("redis blip"), http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rig, _, _ := newLiveClockPasskeyRig(t)
+			budget := &fakeSignupBudget{err: tc.err}
+			rig.h.cfg.SignupBudget = auth.NewRegistrationBudget(budget)
+			cookie, challenge, userID := beginSignup(t, rig)
+			if budget.calls != 0 {
+				t.Fatalf("begin spent %d budget unit(s); it creates nothing", budget.calls)
+			}
+			accounts, creds := rig.accountCount(), rig.credentialCount()
+			a := newSoftAuthenticator(t, userID)
+			a.credID = []byte("EXAMPLE-SIGNUP-CRED-PLACEHOLDER!")
+			body := a.attestationBody(t, challenge, "Laptop")
+
+			w := finishSignup(t, rig, cookie, body)
+			if w.Code != tc.wantStatus || budget.calls != 1 {
+				t.Fatalf("finish: status = %d after %d budget spend(s); want %d after 1 (%s)", w.Code, budget.calls, tc.wantStatus, w.Body.String())
+			}
+			created := 0
+			if tc.wantStatus == http.StatusOK {
+				created = 1
+			}
+			if got := rig.accountCount() - accounts; got != created || rig.credentialCount()-creds != created || sessionCookieSet(w) != (created == 1) {
+				t.Fatalf("finish created %d account(s), %d credential(s), session %v; want %d of each", got, rig.credentialCount()-creds, sessionCookieSet(w), created)
+			}
+			if errors.Is(tc.err, auth.ErrSignupRateLimited) && w.Header().Get("Retry-After") == "" {
+				t.Error("a spent budget answered without Retry-After")
+			}
+			// The refused ceremony is consumed: retrying it cannot slip past the budget later; the visitor begins again.
+			if tc.wantStatus != http.StatusOK {
+				budget.err = nil
+				if w := finishSignup(t, rig, cookie, body); w.Code != http.StatusBadRequest || rig.accountCount() != accounts {
+					t.Fatalf("retried refused ceremony: status = %d, accounts +%d; want 400 and none", w.Code, rig.accountCount()-accounts)
+				}
+			}
+		})
+	}
+}
+
+// A begin the per-IP cap refuses spends nothing, and no begin spends the budget.
+func TestPasskeySignup_PerIPRefusalSpendsNoBudget(t *testing.T) {
+	rig := newPasskeyRig(t)
+	budget := &fakeSignupBudget{}
+	rig.h.cfg.SignupBudget = auth.NewRegistrationBudget(budget)
+	codes := map[int]int{}
+	for range passkeySignupMaxPerIP + 1 {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-signup", nil)
+		req.RemoteAddr = "203.0.113.7:1"
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyBeginSignup(w, req)
+		codes[w.Code]++
+	}
+	if codes[http.StatusTooManyRequests] != 1 || budget.calls != 0 {
+		t.Fatalf("statuses %v with %d budget spend(s); want one 429 and no spend", codes, budget.calls)
+	}
+}
+
+// The registration switch refuses both legs, including the finish of a ceremony begun before it was thrown.
+func TestPasskeySignup_HonoursRegistrationSwitch(t *testing.T) {
+	begin := func(rig *passkeyRig) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-signup", nil)
+		req.RemoteAddr = "203.0.113.7:1"
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyBeginSignup(w, req)
+		return w
+	}
+
+	rig, _, _ := newLiveClockPasskeyRig(t)
+	cookie, challenge, userID := beginSignup(t, rig)
+	a := newSoftAuthenticator(t, userID)
+	a.credID = []byte("EXAMPLE-SIGNUP-CRED-PLACEHOLDER!")
+	accounts := rig.accountCount()
+	rig.h.cfg.SignupDisabled = true
+	if w := begin(rig); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("begin: status = %d, want 503", w.Code)
+	}
+	if w := finishSignup(t, rig, cookie, a.attestationBody(t, challenge, "Laptop")); w.Code != http.StatusServiceUnavailable ||
+		rig.accountCount() != accounts {
+		t.Fatalf("finish of a ceremony begun before the switch: status = %d, accounts +%d; want 503 and none", w.Code, rig.accountCount()-accounts)
 	}
 }
 

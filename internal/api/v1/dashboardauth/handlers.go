@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -63,6 +64,12 @@ type Config struct {
 	// LoginThrottle (optional) caps magic-link sends per IP and per target email; nil leaves only
 	// the global anon rate-limit.
 	LoginThrottle LoginThrottle
+	// SignupDisabled refuses every account-creating sign-up (passkey, and an email's first magic-link or code sign-in) with a 503:
+	// api.register_disabled, one lever for anonymous account creation.
+	SignupDisabled bool
+	// SignupBudget (optional) is the all-caller hourly budget POST /v1/register spends, the same instance; each account those
+	// sign-ups create spends one unit.
+	SignupBudget *auth.RegistrationBudget
 	// Audit (optional) is the durable audit_log sink for staff look-ups, passkey changes, and
 	// passkey sign-ins refused on a clone warning or ceremony replay. nil means log-only.
 	Audit platform.AuditStore
@@ -483,9 +490,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.startSessionForEmail(w, r, tok.Email, SignInMethodMagicLink); err != nil {
-		h.cfg.Logger.Error("start session (callback)", "err", err, "email", maskEmail(tok.Email))
-		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
+	if !h.signInProvenEmail(w, r, tok.Email, SignInMethodMagicLink, "callback") {
 		return
 	}
 	h.clearLoginIntentCookie(w)
@@ -590,9 +595,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.startSessionForEmail(w, r, email, SignInMethodEmailCode); err != nil {
-		h.cfg.Logger.Error("start session (verify-code)", "err", err, "email", maskEmail(email))
-		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
+	if !h.signInProvenEmail(w, r, email, SignInMethodEmailCode, "verify-code") {
 		return
 	}
 
@@ -667,13 +670,34 @@ func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) (pass, 
 	return state.FailedCount <= maxDurableCodeFailures, state.FailedCount == maxDurableCodeFailures
 }
 
-// startSessionForEmail finds-or-creates the user for a just-verified email and mints a session. It writes only Set-Cookie;
-// the caller owns the response body.
+// signInProvenEmail runs startSessionForEmail for /v1/auth/<route>; false means the response is written.
+func (h *Handlers) signInProvenEmail(w http.ResponseWriter, r *http.Request, email, method, route string) bool {
+	err := h.startSessionForEmail(w, r, email, method)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, errSignupRefused):
+		return false
+	}
+	h.cfg.Logger.Error("start session ("+route+")", "err", err, "email", maskEmail(email))
+	writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/"+route)
+	return false
+}
+
+// errSignupRefused: the email has no account and sign-up is switched off or out of budget; the 503 is already written.
+var errSignupRefused = errors.New("sign-up refused")
+
+// startSessionForEmail finds-or-creates the user for a just-verified email and mints a session. It writes only Set-Cookie,
+// except on [errSignupRefused]; otherwise the caller owns the response body.
 func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, email, method string) error {
 	user, err := h.cfg.Users.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		if !errors.Is(err, platform.ErrNotFound) {
 			return fmt.Errorf("get user by email: %w", err)
+		}
+		// Only after the email is proven, so the refusal tells nobody but its owner that it has no account.
+		if !h.signupEnabled(w, r) || !h.signupBudgetOK(w, r) {
+			return errSignupRefused
 		}
 		user, err = h.signupNewUser(r.Context(), email)
 		if err != nil {

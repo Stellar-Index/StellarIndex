@@ -728,7 +728,7 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_registration_budget_exhausted
 
-**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0`, P3. `POST /v1/register` accepts `api.register_max_per_hour` registrations an hour (default 60) across every caller, because the per-IP throttle (5 an hour per IPv4 address or IPv6 /64) cannot bound a registrant that rotates addresses. Past the cap the route answers 503 `registration-unavailable` until the hour rolls over.
+**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0`, P3. `POST /v1/register` accepts `api.register_max_per_hour` registrations an hour (default 60) across every caller, because the per-IP throttle (5 an hour per IPv4 address or IPv6 /64) cannot bound a registrant that rotates addresses. Passkey sign-up (at finish-signup) and an email's first magic-link or code sign-in spend the same budget, one unit per account created. Past the cap all of them answer 503 until the hour rolls over; existing users still sign in.
 
 **Check.** A wave or real demand? `sum by (outcome) (increase(stellarindex_registrations_total[1h]))`, and where the accepted ones came from:
 
@@ -740,7 +740,7 @@ SELECT set_masklen(ip::cidr, CASE family(ip) WHEN 4 THEN 24 ELSE 48 END) AS net,
 SQL
 ```
 
-**Fix.** A wave: set `register_disabled = true` under `[api]` in `/etc/stellarindex.toml` and restart `stellarindex-api`; the route answers 503 and nothing else changes. Revoke the wave's keys from the `account_id`s the query's rows name (`PATCH /v1/admin/accounts/{id}`); an account whose key is never used is erased on its own. Real demand: raise `register_max_per_hour` and restart.
+**Fix.** A wave: set `register_disabled = true` under `[api]` in `/etc/stellarindex.toml` and restart `stellarindex-api`; `/v1/register`, passkey sign-up and an email's first sign-in answer 503, and existing users' sign-in is unaffected. Revoke the wave's keys from the `account_id`s the query's rows name (`PATCH /v1/admin/accounts/{id}`); an account whose key is never used is erased on its own. Real demand: raise `register_max_per_hour` and restart.
 
 ## stellarindex_login_code_lockout_table_growing
 

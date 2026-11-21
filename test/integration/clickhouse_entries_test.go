@@ -361,9 +361,11 @@ func entryHistorySeedLedgers(t *testing.T, ctx context.Context, addr string, seq
 	}
 }
 
+// derive writes pass -floor-ledger from: the shared lake starts at another test's range, so a first run (no watermark)
+// starts at from the way a host's first run starts at its -floor-ledger; with a watermark the floor is ignored.
 func runEntryHistoryWrite(addr string, from, to uint32) error {
 	return chops.Run([]string{
-		"ch-entry-history", "-ch-addr", addr, "-write",
+		"ch-entry-history", "-ch-addr", addr, "-write", "-floor-ledger", strconv.FormatUint(uint64(from), 10),
 		"-from", strconv.FormatUint(uint64(from), 10), "-to", strconv.FormatUint(uint64(to), 10),
 	})
 }
@@ -373,6 +375,7 @@ func runEntryIndexWrite(t *testing.T, addr string, from, to uint32) {
 	t.Helper()
 	err := chops.Run([]string{
 		"ch-entry-index", "-ch-addr", addr, "-write", "-lock-file", filepath.Join(t.TempDir(), "entry-index.lock"),
+		"-floor-ledger", strconv.FormatUint(uint64(from), 10),
 		"-from", strconv.FormatUint(uint64(from), 10), "-to", strconv.FormatUint(uint64(to), 10),
 	})
 	if err != nil {
@@ -543,9 +546,14 @@ func TestChEntryHistory_WatermarkRefusesSkippedPrefix(t *testing.T) {
 		t.Fatalf("watermark = %d (%v), want %d", wm, err, base)
 	}
 
+	// Both layers refuse: the CLI before any row is read, and the watermark advance for any other caller.
 	err := runEntryHistoryWrite(addr, base+2, base+2)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("skips [%d,%d]", base+1, base+1)) {
+		t.Fatalf("ch-entry-history -write skipping %d: err = %v, want the -from refusal naming [%d,%d]", base+1, err, base+1, base+1)
+	}
+	err = chstore.SetSponsorshipWatermark(ctx, addr, base+2, base+2)
 	if !errors.Is(err, chstore.ErrEntryHistorySkippedPrefix) {
-		t.Fatalf("ch-entry-history -write skipping %d: err = %v, want ErrEntryHistorySkippedPrefix", base+1, err)
+		t.Fatalf("SetSponsorshipWatermark [%d,%d] skipping %d: err = %v, want ErrEntryHistorySkippedPrefix", base+2, base+2, base+1, err)
 	}
 	if wm, err := chstore.SponsorshipWatermark(ctx, addr); err != nil || wm != base {
 		t.Fatalf("watermark = %d (%v) after a refused advance, want %d", wm, err, base)
@@ -847,7 +855,7 @@ func TestClickHouseAssetEntryChanges(t *testing.T) {
 	t.Cleanup(func() {
 		bg := context.Background()
 		_ = raw.Exec(bg, `DELETE FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN ? AND ? SETTINGS mutations_sync = 2`, base, base+2)
-		for _, table := range []string{"account_entry_ledgers", "asset_entry_ledgers"} {
+		for _, table := range []string{"account_entry_ledgers", "asset_entry_ledgers", "account_claimables", "claimable_removals"} {
 			_ = raw.Exec(bg, `DELETE FROM stellar.`+table+` WHERE ledger BETWEEN ? AND ? SETTINGS mutations_sync = 2`, base, base+2)
 		}
 		resetWatermark()
@@ -899,7 +907,7 @@ func TestClickHouseAssetEntryChanges(t *testing.T) {
 		t.Fatalf("seed ledger_entry_changes: %v", err)
 	}
 	if err := chops.Run([]string{
-		"ch-entry-index", "-ch-addr", addr,
+		"ch-entry-index", "-ch-addr", addr, "-floor-ledger", strconv.FormatUint(uint64(base), 10),
 		"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10), "-write",
 	}); err != nil {
 		t.Fatalf("ch-entry-index: %v", err)
@@ -2556,7 +2564,7 @@ func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
 	run := func(write bool) {
 		t.Helper()
 		args := []string{
-			"ch-entry-index", "-ch-addr", addr,
+			"ch-entry-index", "-ch-addr", addr, "-floor-ledger", strconv.FormatUint(uint64(base), 10),
 			"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
 		}
 		if write {

@@ -75,11 +75,13 @@ func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) 
 func (s *Server) withContractSupply(
 	ctx context.Context, contractID string, snap supply.Supply, haveSnap, supplyFailed bool,
 ) (out supply.Supply, have, failed, floor bool) {
-	lake, floor, ok, unread := s.contractSupplySnapshot(ctx, contractID)
+	// A last-good reading kept by a failed refresh is a failed supply read: stale, and never cached as the detail.
+	sctx, reads := withReadReport(ctx)
+	lake, floor, ok, unread := s.contractSupplySnapshot(sctx, contractID)
 	if ok {
-		return lake, true, false, floor
+		return lake, true, reads.stale.Load(), floor
 	}
-	return snap, haveSnap, supplyFailed || unread, false
+	return snap, haveSnap, supplyFailed || unread || reads.stale.Load(), false
 }
 
 // applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no
@@ -436,6 +438,45 @@ func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
 		return MarketCapWithheldDecimalsUnknown
 	}
 	return ""
+}
+
+// withholdContradictedScalePrice withholds a market price, and every figure derived from it, only on positive evidence: a
+// successful decimals read contradicting the scale it was normalised on. An unread or undeclared scale is no such evidence.
+// A global-market, declared-peg or whole-token price is quoted per whole token, so no token scale enters it.
+func withholdContradictedScalePrice(d *AssetDetail) {
+	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil || d.priceWholeToken ||
+		d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
+		return
+	}
+	d.PriceBasis, d.PriceWithheldReason = "", PriceWithheldDecimalsMismatch
+	d.ThinMarket, d.Substance = false, nil
+	unpublishPrice(d)
+}
+
+// unpublishPrice nulls a withheld price and every figure derived from or crediting it: caps, change pills and provenance (a
+// withheld row credits no vendor and stamps no time), and the price series, whose last bucket IS the price and whose ATH is a
+// USD claim from the same CAGG.
+func unpublishPrice(d *AssetDetail) {
+	d.PriceUSD, d.priceStale = nil, false
+	d.MarketCapUSD, d.MarketCapLowerBound, d.FDVUSD = nil, false, nil
+	d.Change1hPct, d.Change24hPct, d.Change7dPct = nil, nil, nil
+	d.PriceAuthority, d.PriceSources, d.PriceAsOf, d.PriceCredit = "", nil, nil, ""
+	withholdPriceSeriesWhenUnpriced(d)
+}
+
+// unpricedRWAValuationStatus names a null-price RWA valuation; a decimals_mismatch withholding is a scale gap, not a missing market.
+func unpricedRWAValuationStatus(reason PriceWithheldReason) string {
+	if reason == PriceWithheldDecimalsMismatch {
+		return RWAValuationDecimalsUnknown
+	}
+	return RWAValuationUnpriced
+}
+
+// withholdContradictedScalePrices is [withholdContradictedScalePrice] over a listing page.
+func withholdContradictedScalePrices(rows []AssetDetail) {
+	for i := range rows {
+		withholdContradictedScalePrice(&rows[i])
+	}
 }
 
 // capRefusalReason maps a [Server.marketCapRefused] verdict onto the wire reason.

@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -54,8 +55,8 @@ func newTokenSupplyCache(sr *clickhouse.SupplyReader, upstream func(context.Cont
 	return &TokenSupplyCache{SupplyReader: sr, upstream: upstream, now: time.Now, entries: map[string]tokenSupplyEntry{}}
 }
 
-// TokenSupply serves a fresh entry or joins one detached fill per contract; a failed fill falls back to the last-good reading.
-// Every return is a copy, so no caller can mutate another's amounts.
+// TokenSupply serves a fresh entry or joins one detached fill per contract; a failed fill falls back to the last-good reading,
+// reported stale on ctx's [readReport]. Every return is a copy, so no caller can mutate another's amounts.
 func (c *TokenSupplyCache) TokenSupply(ctx context.Context, contractID string) (clickhouse.TokenSupply, error) {
 	c.mu.Lock()
 	prev, have := c.entries[contractID]
@@ -71,6 +72,8 @@ func (c *TokenSupplyCache) TokenSupply(ctx context.Context, contractID string) (
 	case res := <-ch:
 		if res.Err != nil {
 			if have {
+				obs.APICacheOpsTotal.WithLabelValues("token_supply", "token_supply", "refresh_error").Inc()
+				reportStaleRead(ctx)
 				return copyTokenSupply(prev.sup), nil
 			}
 			return clickhouse.TokenSupply{}, res.Err
@@ -79,6 +82,7 @@ func (c *TokenSupplyCache) TokenSupply(ctx context.Context, contractID string) (
 		return copyTokenSupply(sup), nil
 	case <-ctx.Done():
 		if have {
+			reportStaleRead(ctx)
 			return copyTokenSupply(prev.sup), nil
 		}
 		return clickhouse.TokenSupply{}, ctx.Err()

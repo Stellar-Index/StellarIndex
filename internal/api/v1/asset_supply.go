@@ -100,6 +100,8 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	// connection on a slow scan. 8s fires before the blanket request-timeout middleware.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
+	// The supply caches report a reading their refreshes have not replaced, so it is not served as current.
+	ctx, reads := withReadReport(ctx)
 
 	// XLM supply is the ledger header's total_coins (no SAC mint/burn events); handle every alias.
 	if isNativeSupplyAlias(assetID) {
@@ -159,7 +161,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		}
 		if verdict == storageSupersedes {
 			resp, storageStale := s.storageSupplyResponse(ctx, assetID, contractID, st)
-			writeJSON(w, resp, Flags{Stale: storageStale})
+			writeJSON(w, resp, Flags{Stale: storageStale || reads.stale.Load()})
 			return
 		}
 	}
@@ -177,7 +179,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, stale := s.flowsSupplyResponse(ctx, assetID, contractID, sup, verdict)
-	writeJSON(w, resp, Flags{Stale: stale})
+	writeJSON(w, resp, Flags{Stale: stale || reads.stale.Load()})
 }
 
 // flowsSupplyResponse renders the event net when storage did not supersede it; stale is the lake watermark's verdict.
@@ -219,8 +221,8 @@ const (
 	storageNoVerdict storageVerdict = iota
 	// storageSupersedes: the storage level replaces the net.
 	storageSupersedes
-	// storageUnchecked: the lake state stopped the check that would prove the net short ([storageSupplyUnchecked]),
-	// so a net served beside it is a floor. A fixed lake property, so not unread.
+	// storageUnchecked: the lake state stopped the check that would prove the net short ([storageSupplyUnchecked]), or a level
+	// above the net failed its own cross-check, so a net served beside it is a floor. A fixed lake property, so not unread.
 	storageUnchecked
 )
 
@@ -242,9 +244,14 @@ func (s *Server) storageReadingSupersedes(
 	if !ok {
 		return clickhouse.ContractStorageSupply{}, storageNoVerdict, nil
 	}
-	if sup.FlowCount > 0 && sup.Total != nil &&
-		(st.Total.Cmp(sup.Total) <= 0 || (st.HasSelfChecks() && !st.SelfConsistent())) {
-		return clickhouse.ContractStorageSupply{}, storageNoVerdict, nil
+	if sup.FlowCount > 0 && sup.Total != nil {
+		if st.Total.Cmp(sup.Total) <= 0 {
+			return clickhouse.ContractStorageSupply{}, storageNoVerdict, nil
+		}
+		// A level above the net that fails its own cross-check neither proves the log short nor clears it.
+		if st.HasSelfChecks() && !st.SelfConsistent() {
+			return clickhouse.ContractStorageSupply{}, storageUnchecked, nil
+		}
 	}
 	return st, storageSupersedes, nil
 }

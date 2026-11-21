@@ -30,6 +30,9 @@ func NewCachedContractStorageSupplyReader(upstream ContractStorageSupplyReader) 
 }
 
 // ContractStorageSupply serves the cached reading or decline; every return is a copy, so no caller can mutate another's amounts.
+// A last-good reading (its refresh failed, or has outrun its budget) is reported stale on ctx's [readReport]. The first read of an
+// idle key serves its expired reading unflagged while the refresh it starts runs: no refresh has failed, and a refresh that does
+// fail or overruns flags every read after it.
 func (c *CachedContractStorageSupplyReader) ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error) {
 	res, _, _, err := c.cache.get(ctx, "contract_storage_supply", contractID, func(ctx context.Context) (storageSupplyResult, error) {
 		st, err := c.upstream.ContractStorageSupply(ctx, contractID)
@@ -40,6 +43,9 @@ func (c *CachedContractStorageSupplyReader) ContractStorageSupply(ctx context.Co
 	})
 	if err != nil {
 		return clickhouse.ContractStorageSupply{}, err
+	}
+	if c.cache.lastGood(contractID, cacheFillBudget) {
+		reportStaleRead(ctx)
 	}
 	if res.declined != nil {
 		return clickhouse.ContractStorageSupply{}, res.declined
