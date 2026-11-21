@@ -329,13 +329,22 @@
         path: /etc/prometheus
       register: minio_prom_confdir
 
+    # The write is owner prometheus: without that user it fails after the mint.
+    - name: Check for the prometheus user
+      ansible.builtin.command:
+        argv: [getent, passwd, prometheus]
+      register: minio_prom_user
+      changed_when: false
+      failed_when: minio_prom_user.rc not in [0, 2]
+      check_mode: false
+
     - name: Explain the deferred Prometheus MinIO bearer token
-      when: not minio_prom_confdir.stat.exists
+      when: not minio_prom_confdir.stat.exists or minio_prom_user.rc != 0
       ansible.builtin.debug:
         msg: >-
-          /etc/prometheus does not exist yet, so the MinIO scrape token is not
-          minted on this run. Re-run the role after the local Prometheus is
-          installed and the token is minted then.
+          /etc/prometheus or the prometheus user does not exist yet, so the
+          MinIO scrape token is not minted on this run. Re-run the role after
+          the local Prometheus is installed and the token is minted then.
 
     - name: Generate the Prometheus MinIO bearer token
       # Generated ONCE: each svcacct creation mints a new secret, so re-running
@@ -366,6 +375,7 @@
       # "no file yet" branch and would reference stdout of a task that never ran.
       when:
         - minio_prom_confdir.stat.exists
+        - minio_prom_user.rc == 0
         - not minio_prom_token_file.stat.exists
         - not ansible_check_mode
       changed_when: true
@@ -380,6 +390,7 @@
         content: "{{ (minio_prom_svcacct.stdout | from_json).secretKey }}"
       when:
         - minio_prom_confdir.stat.exists
+        - minio_prom_user.rc == 0
         - not minio_prom_token_file.stat.exists
         - not ansible_check_mode
       no_log: true
