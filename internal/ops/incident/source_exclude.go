@@ -19,8 +19,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const readSideNote = "source-exclude: note: within 15s the API withholds /v1/price (and its batch, tip and SEP-40 reads) and drops the source from the asset headline's VWAP and aggregator tiers;" +
-	" /v1/price/at, history, chart, OHLC, asset listing and RWA values are not yet source-filtered"
+const readSideNote = "source-exclude: note: each API process reads exclusions every 15s (a failed read keeps the last good set up to 60s, then withholds every gated price)." +
+	" Covered: /v1/price, /v1/price/batch, /v1/price/tip and both price streams (withheld, or the tip recomputed without the source; while any source-wide" +
+	" exclusion is in force every cache-served price is withheld), SEP-40, and the asset headline's VWAP and aggregator tiers." +
+	" Then response caches: /v1/price and batch up to 30s client / 5s edge, asset detail up to ~3.5 min." +
+	" NOT covered: the headline's triangulated tier and global-market reference, the frozen-pair held value, /v1/price/at, /changes, /depeg," +
+	" history, chart, OHLC, asset listing, sparkline, ATH, transitive price fill and RWA"
 
 // maxFutureFrom bounds how far ahead -from may start without -allow-future: a guard against year typos.
 const maxFutureFrom = 24 * time.Hour
