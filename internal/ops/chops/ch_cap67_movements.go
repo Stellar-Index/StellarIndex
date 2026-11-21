@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -110,18 +111,30 @@ func newCap67Progress(heartbeatPath string) *cap67Progress {
 	if hb.Enabled() {
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: heartbeat -> %s\n", hb.Path())
 	}
+	// Seed every reason at 0 before Start writes the first sample, so increase() sees the first skip.
+	for _, reason := range cap67SkipReasons {
+		hb.Skipped(reason, 0)
+	}
 	hb.Start()
 	return &cap67Progress{hb: hb}
 }
 
-// record is the per-window progress callback for runCap67CatchUp: rows is the window's derived-row count, cursor the
-// highest ledger reached.
-func (p *cap67Progress) record(rows int64, cursor uint32) {
+// cap67ProgressFunc is the per-window progress callback: the window's derived-row count, its events skipped as
+// undecodable by reason, and the highest ledger reached.
+type cap67ProgressFunc func(rows int64, skips cap67Skips, cursor uint32)
+
+// record is the cap67ProgressFunc behind the heartbeat. The skip count is the only alertable trace of a -follow
+// window whose watermark advanced past undecodable events.
+func (p *cap67Progress) record(rows int64, skips cap67Skips, cursor uint32) {
 	p.mu.Lock()
 	p.total += rows
 	total := p.total
 	p.mu.Unlock()
 	p.hb.Progress(uint64(total), uint64(cursor)) //nolint:gosec // total/cursor are non-negative by construction
+	// Every reason is reported, zero included, so each series exists before its first skip.
+	for _, reason := range cap67SkipReasons {
+		p.hb.Skipped(reason, skips[reason])
+	}
 }
 
 // stop writes the heartbeat's terminal state. Deferred so it runs on every
@@ -149,7 +162,7 @@ var cap67CatchUpOnce = runCap67CatchUp
 type cap67CatchUp struct {
 	start, last uint32
 	rows        int64
-	skipped     uint64 // transfer events dropped as undecodable
+	skipped     uint64 // events dropped as undecodable, excluding not_token_shaped
 }
 
 // idle reports an empty resolved range: the watermark is at or above the contiguous tip, or `start` is not in the lake.
@@ -158,7 +171,7 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 // runCap67CatchUp streams the range into account_movements, advancing the watermark per window; it never steps past a lake hole (Cap67Range
 // clamps, each advance re-proves its window hole-free). progress, when non-nil, runs per window so a long -follow tick shows a stalled
 // watermark.
-func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress func(rows int64, cursor uint32)) (cap67CatchUp, error) {
+func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress cap67ProgressFunc) (cap67CatchUp, error) {
 	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
 	if err != nil {
 		return cap67CatchUp{}, err
@@ -174,12 +187,12 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 		if rem := last - lo; rem >= window {
 			hi = lo + window - 1
 		}
-		n, skipped, err := deriveCap67MovementsWindow(ctx, chAddr, lo, hi, dryRun)
+		n, skips, err := deriveCap67MovementsWindow(ctx, chAddr, lo, hi, dryRun)
 		if err != nil {
 			return res, fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
 		res.rows += n
-		res.skipped += skipped
+		res.skipped += skips.actionable()
 		if !dryRun {
 			// The advance re-proves [lo,hi] hole-free and refuses otherwise (ErrCap67MovementsHole,
 			// ErrCap67MovementsEventShortfall), as the range was resolved once up front. A refusal
@@ -194,7 +207,7 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 			}
 		}
 		if progress != nil {
-			progress(n, hi)
+			progress(n, skips, hi)
 		}
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d] done — %d movement rows (total %d, elapsed %s)\n",
 			lo, hi, n, res.rows, time.Since(runStart).Round(time.Second))
@@ -233,7 +246,7 @@ func followTick(base time.Duration, idle int) time.Duration {
 
 // runCap67Follow is the daemon loop keeping the feed real-time until ctx is cancelled; a transient error is retried
 // next tick without skipping a ledger, as the watermark holds.
-func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32, progress func(rows int64, cursor uint32)) error {
+func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bool, interval time.Duration, floorLedger uint32, progress cap67ProgressFunc) error {
 	fmt.Fprintf(os.Stderr, "ch-cap67-movements: FOLLOW mode — catch-up every %s, gated on the contiguous watermark, on %s\n", interval, chAddr)
 	fill := &cap67SupplyFill{chAddr: chAddr, window: window, floorLedger: floorLedger, progress: progress}
 	return followLoop(ctx, interval, func(ctx context.Context, idle int) (bool, error) {
@@ -369,14 +382,14 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 const cap67InsertBatch = 50_000
 
 // deriveCap67MovementsWindow streams one window's transfer events and writes the fanned-out rows, returning rows
-// written and events skipped as undecodable.
-func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool) (int64, uint64, error) {
+// written and events skipped by reason.
+func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool) (int64, cap67Skips, error) {
 	return deriveCap67Window(ctx, addr, lo, hi, cap67MovementTopics, dryRun)
 }
 
 // deriveCap67Window is deriveCap67MovementsWindow over the given topic[0]
 // symbols only.
-func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics []string, dryRun bool) (int64, uint64, error) {
+func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics []string, dryRun bool) (int64, cap67Skips, error) {
 	// Decoders with an empty watched set: Decode() classifies by topic alone; Matches() (the watched-set gate) is deliberately
 	// NOT consulted — this job's whole point is covering the unwatched contracts (native XLM above all).
 	dec := sep41.NewUngatedDecoder()
@@ -385,7 +398,7 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 	var (
 		batch   []clickhouse.AccountMovement
 		written int64
-		decErrs uint64
+		skips   = cap67Skips{}
 	)
 	flush := func() error {
 		if len(batch) == 0 || dryRun {
@@ -411,7 +424,7 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 		func(ev events.Event) error {
 			m, ok := cap67EventMovement(dec, sup, &ev)
 			if !ok {
-				decErrs++
+				skips[cap67SkipReason(&ev)]++
 				return nil
 			}
 			batch = append(batch, m)
@@ -421,17 +434,49 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 			return nil
 		})
 	if err != nil {
-		return written, decErrs, err
+		return written, skips, err
 	}
 	if err := flush(); err != nil {
-		return written, decErrs, err
+		return written, skips, err
 	}
-	if decErrs > 0 {
+	if n := skips.total(); n > 0 {
 		// Not fatal per window: a deterministically undecodable transfer event re-fails on every retry; the raw event stays in
 		// contract_events for audit. The one-shot run's exit status accounts for it via enforceDecodeBudget.
-		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode)\n", lo, hi, decErrs)
+		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode): %v\n", lo, hi, n, map[string]uint64(skips))
 	}
-	return written, decErrs, nil
+	return written, skips, nil
+}
+
+// cap67Skips counts events a window dropped, by reason.
+type cap67Skips map[string]uint64
+
+func (s cap67Skips) total() uint64 {
+	var n uint64
+	for _, v := range s {
+		n += v
+	}
+	return n
+}
+
+// actionable is the skips that may short a token's movements: not_token_shaped is expected traffic, as topic[0] alone does not identify a
+// token and any contract (an NFT's `transfer` with a u32 id) can emit one.
+func (s cap67Skips) actionable() uint64 {
+	return s.total() - s[clickhouse.SupplySkipNotTokenShaped]
+}
+
+// cap67SkipDecodeFailed is a token-shaped body the decoder still refused (malformed topics, unusable close time).
+const cap67SkipDecodeFailed = "decode_failed"
+
+// cap67SkipReasons is every reason a window can report, for zero-seeding the heartbeat series.
+var cap67SkipReasons = append(slices.Clone(clickhouse.SupplySkipReasons), cap67SkipDecodeFailed)
+
+// cap67SkipReason classifies an undecodable event with the supply-body classifier: a transfer body has the same shape (a bare i128, or a
+// map carrying amount).
+func cap67SkipReason(ev *events.Event) string {
+	if _, skip := clickhouse.ClassifySupplyBodyXDR(ev.Value); skip != "" {
+		return skip
+	}
+	return cap67SkipDecodeFailed
 }
 
 // streamCap67TransferEvents is clickhouse.StreamContractEventsFiltered, a

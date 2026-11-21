@@ -16,8 +16,9 @@ type SorobanDEXTradeRef struct {
 // RecentSorobanDEXTrades returns the DISTINCT (source, Soroban-contract-asset) pairs traded at or after since; only Soroban-contract keys, the only assets that can carry non-7 decimals.
 func (s *Store) RecentSorobanDEXTrades(ctx context.Context, since time.Time) ([]SorobanDEXTradeRef, error) {
 	// pools_per_source_1h holds the same (source, base, quote) keys as trades, one row per hour
-	// instead of per trade, so it answers up to its last materialized bucket and raw trades
-	// answer from there. The watermark is a bound parameter: as a join it defeats chunk exclusion.
+	// instead of per trade, so it answers up to max(bucket) (the current hour when real-time, the
+	// last materialized one when 0232 left it materialized-only) and raw trades answer from there;
+	// DISTINCT absorbs the shared hour. The bound is a parameter: as a join it defeats chunk exclusion.
 	var watermark sql.NullTime
 	if err := s.db.QueryRowContext(ctx, `SELECT max(bucket) FROM pools_per_source_1h`).Scan(&watermark); err != nil {
 		return nil, fmt.Errorf("timescale: RecentSorobanDEXTrades watermark: %w", err)

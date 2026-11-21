@@ -17,8 +17,9 @@
 -- is the truth — their reference time was never recorded. The table is a
 -- compressed hypertable; a nullable column with no default is added to
 -- compressed chunks in place, with no decompression (0119 is the
--- precedent, exercised against a compressed chunk in
--- test/integration/freeze_ladder_durability_test.go).
+-- precedent; TestMigration0186_DivergenceRefObservedAt in
+-- test/integration/pg_ops_health_test.go applies this file over a
+-- compressed divergence_observations chunk).
 
 ALTER TABLE divergence_observations
     ADD COLUMN IF NOT EXISTS ref_observed_at timestamptz;
