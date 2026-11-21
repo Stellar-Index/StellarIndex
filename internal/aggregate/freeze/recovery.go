@@ -197,8 +197,8 @@ func (r *Recovery) tick(ctx context.Context) {
 }
 
 // ladderStillHolds reports whether the durable ladder says the freeze is still running. Fails
-// toward closing (no store, read error, hold lapsed past grace): a wrong close re-freezes on the
-// next signal, a missed one shows a finished freeze firing forever. Shares [LadderStillLive] with [Writer.LoadState].
+// toward closing (no store, read error, a non-escalated hold lapsed past grace): a wrong close re-freezes on the
+// next signal, a missed one shows a finished freeze firing forever. Shares [DurableLadderLive] with [Writer.LoadState].
 func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair) bool {
 	if r.ladder == nil {
 		return false
@@ -209,7 +209,7 @@ func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair) bool 
 			"asset", p.Asset.String(), "quote", p.Quote.String(), "err", err)
 		return false
 	}
-	if !ok || !LadderStillLive(st, r.grace, r.clock()) {
+	if !ok || !DurableLadderLive(st, r.grace, r.clock()) {
 		return false
 	}
 	r.logger.Info("freeze marker missing but the durable hold is still live — leaving the row OPEN for the orchestrator to rehydrate",

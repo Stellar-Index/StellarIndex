@@ -305,6 +305,7 @@ func TestRecovery_ClosesRowsWhoseDurableHoldHasLapsed(t *testing.T) {
 	asset, quote := nativeUSD(t)
 
 	stale := escalatedLadder(time.Now().UTC())
+	stale.Escalated = false
 	stale.HoldUntil = time.Now().UTC().Add(-7 * 24 * time.Hour)
 	ladder := &ladderStub{state: stale}
 	lister := &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}
@@ -320,6 +321,32 @@ func TestRecovery_ClosesRowsWhoseDurableHoldHasLapsed(t *testing.T) {
 
 	if closer.callCount() == 0 {
 		t.Error("a week-lapsed hold was never closed — the recovery worker is now inert")
+	}
+}
+
+// TestRecovery_KeepsAnEscalatedRowOpenPastItsHold: an escalated hold that lapsed during an aggregator outage is still
+// the operator's to end, so the sweep must leave its row open for the restarted owner to rehydrate.
+func TestRecovery_KeepsAnEscalatedRowOpenPastItsHold(t *testing.T) {
+	_, rdb := newRedis(t)
+	asset, quote := nativeUSD(t)
+
+	lapsed := escalatedLadder(time.Now().UTC())
+	lapsed.HoldUntil = time.Now().UTC().Add(-36 * time.Minute)
+	ladder := &ladderStub{state: lapsed}
+	lister := &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}
+	closer := &ladderCloser{ladder: ladder}
+
+	r := freeze.NewRecovery(rdb, lister, closer, freeze.RecoveryOptions{
+		Interval:    10 * time.Millisecond,
+		Ladder:      ladder,
+		LadderGrace: freeze.DefaultLadderGrace,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_ = r.Run(ctx)
+
+	if n := closer.callCount(); n != 0 {
+		t.Errorf("recovery closed an escalated row %d time(s) after an outage outlasted its hold; only an operator ends it", n)
 	}
 }
 
@@ -360,6 +387,16 @@ func TestLadderStillLive_BoundaryIsShared(t *testing.T) {
 	if freeze.LadderStillLive(freeze.State{}, grace, now) {
 		t.Error("an inactive (zero) ladder must never read as live")
 	}
+	if freeze.DurableLadderLive(st, grace, now.Add(5*time.Minute)) || freeze.DurableLadderLive(freeze.State{Escalated: true}, grace, now) {
+		t.Error("a non-escalated or inactive durable ladder must follow the hold+grace rule")
+	}
+	st.Escalated = true
+	if freeze.LadderStillLive(st, grace, now.Add(5*time.Minute)) {
+		t.Error("beside a present marker an escalated ladder past hold+grace is abandoned")
+	}
+	if !freeze.DurableLadderLive(st, grace, now.Add(24*time.Hour)) {
+		t.Error("after a marker miss an escalated durable ladder must stay live until an operator ends it")
+	}
 }
 
 // TestRecovery_LadderGraceBoundaryOnInjectedClock pins the hold+grace boundary on the injected clock, not the wall clock.
@@ -380,6 +417,7 @@ func TestRecovery_LadderGraceBoundaryOnInjectedClock(t *testing.T) {
 			_, rdb := newRedis(t)
 			asset, quote := nativeUSD(t)
 			st := escalatedLadder(holdUntil)
+			st.Escalated = false
 			st.HoldUntil = holdUntil
 			ladder := &ladderStub{state: st}
 			lister := &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}

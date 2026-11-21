@@ -684,8 +684,8 @@ func (w *Writer) loadDurableLadder(ctx context.Context, asset, quote canonical.A
 	if !ok {
 		return State{}, false, nil
 	}
-	if !LadderStillLive(st, w.ladderGrace, w.now()) {
-		// Inactive, or lapsed while the aggregator was down: do not resurrect.
+	if !DurableLadderLive(st, w.ladderGrace, w.now()) {
+		// Inactive, or a non-escalated hold that lapsed while the aggregator was down: do not resurrect.
 		return State{}, false, nil
 	}
 	obs.AnomalyFreezeLadderRehydratedTotal.Inc()
@@ -708,7 +708,7 @@ func (w *Writer) loadDurableWindowLadder(
 		return State{}, false, nil
 	}
 	now := w.now()
-	if own, held := stored[window]; held && LadderStillLive(own, w.ladderGrace, now) {
+	if own, held := stored[window]; held && DurableLadderLive(own, w.ladderGrace, now) {
 		obs.AnomalyFreezeLadderRehydratedTotal.Inc()
 		return own, true, nil
 	}
@@ -717,7 +717,7 @@ func (w *Writer) loadDurableWindowLadder(
 		return unowned, true, nil
 	}
 	for _, sibling := range stored {
-		if LadderStillLive(sibling, w.ladderGrace, now) {
+		if DurableLadderLive(sibling, w.ladderGrace, now) {
 			return State{}, true, nil
 		}
 	}
@@ -725,11 +725,21 @@ func (w *Writer) loadDurableWindowLadder(
 }
 
 // LadderStillLive is the single definition of "Redis lost the marker" vs "the freeze is over" (active, inside hold plus grace); LoadState, Recovery and tools must agree.
+// Beside a present marker a lapse means the window's owner stopped advancing it; with the marker gone, read [DurableLadderLive].
 func LadderStillLive(st State, grace time.Duration, now time.Time) bool {
 	if !st.Active() {
 		return false
 	}
 	return !now.After(st.HoldUntil.Add(grace))
+}
+
+// DurableLadderLive is [LadderStillLive] for a durable ladder read after a marker miss, where a lapse may be an owner outage:
+// an escalated ladder stays live, since only an operator ends it (freeze-unfreeze closes the record).
+func DurableLadderLive(st State, grace time.Duration, now time.Time) bool {
+	if st.Active() && st.Escalated {
+		return true
+	}
+	return LadderStillLive(st, grace, now)
 }
 
 // Clear deletes the marker and retires the durable ladder, so a restart before the recovery sweep cannot re-freeze a cleared pair; idempotent, store write best-effort.
