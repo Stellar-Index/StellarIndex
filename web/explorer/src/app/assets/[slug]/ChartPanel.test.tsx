@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
 
-import { chartQuoteFor, USDC_ASSET_ID } from './ChartPanel';
+import { ChartPanel, chartQuoteFor, USDC_ASSET_ID } from './ChartPanel';
+
+describe('ChartPanel for USDC', () => {
+  it('never prints a constant dollar price that would hide a depeg', () => {
+    const { container } = render(<ChartPanel assetID={USDC_ASSET_ID} />);
+    expect(container.textContent).not.toMatch(/\$1\.00/);
+    expect(container.textContent).toMatch(/depeg/);
+  });
+});
 
 // Operator decision: every price chart is anchored to USDC,
 // never XLM (no quote toggle). USDC itself charts against fiat:USD so

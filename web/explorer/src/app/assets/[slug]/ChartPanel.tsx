@@ -152,9 +152,7 @@ function UsdcReferencePanel() {
   return (
     <Panel headingLevel={2} title="Price chart" hint="USD reference">
       <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
-        <div className="text-ink font-mono text-4xl tracking-tight">
-          ≈ $1.00
-        </div>
+        {/* No constant price here: a fixed $1.00 would hide a depeg. */}
         <p className="text-ink-muted max-w-md text-sm">
           USDC is the dollar reference every other asset is charted against, so
           it has no USDC-denominated chart of its own. To watch for a depeg, see
