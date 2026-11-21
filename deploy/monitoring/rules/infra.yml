@@ -344,12 +344,12 @@ groups:
 
       # The same stopped-timer gap for the oneshots whose output no freshness
       # probe reads (cohort-rollup has one in data-freshness.sh). Daily timers
-      # get 50h (one missed cycle plus run time), hourly listing-sync 3h; the
-      # 2h `for` rides out the longest OnBootSec (90min).
+      # get 50h (one missed cycle plus run time), hourly listing-sync and
+      # 30-min holders-rollup 3h; the 2h `for` rides out the longest OnBootSec (90min).
       - alert: stellarindex_oneshot_timer_stale
         expr: |
           (time() - node_systemd_timer_last_trigger_seconds{name=~"creators-rollup\\.timer|sponsors-rollup\\.timer|issuer-flags\\.timer"} > 180000)
-          or (time() - node_systemd_timer_last_trigger_seconds{name="listing-sync.timer"} > 10800)
+          or (time() - node_systemd_timer_last_trigger_seconds{name=~"listing-sync\\.timer|holders-rollup\\.timer"} > 10800)
         for: 2h
         labels:
           severity: ticket
