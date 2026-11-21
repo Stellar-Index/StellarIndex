@@ -1043,6 +1043,12 @@ jobs:
         # Runs pre-restore: lint-migrations.sh IS in the restore list, so
         # after it this would only re-test the base ref's copy.
         run: ./scripts/ci/lint-migrations-backnumber-test.sh
+      - name: lint-imports self-test
+        # The gate's own fixtures: a banned package's SUBPACKAGE must trip the
+        # ban, an EXACT import still trips it, and a mere name-prefix lookalike
+        # does not. Runs pre-restore: lint-imports.sh IS in the restore list, so
+        # after it this would test the base ref's copy against the PR's cases.
+        run: ./scripts/ci/lint-imports-test.sh
       - name: Restore trusted gate scripts from the base ref
         # Every step below runs from the PR-head checkout, including the
         # SCRIPT FILES themselves — so a single PR could edit e.g.
@@ -1112,12 +1118,6 @@ jobs:
         # violations or on stale baseline entries, forcing the
         # baseline to shrink monotonically.
         run: ./scripts/ci/lint-imports.sh
-      - name: lint-imports self-test
-        # The gate's own fixtures: a banned package's SUBPACKAGE must trip the
-        # ban, an EXACT import still trips it, and a mere name-prefix lookalike
-        # does not. A ban you evade by importing one directory deeper is worse
-        # than none.
-        run: ./scripts/ci/lint-imports-test.sh
       - name: lint-git-fixture-isolation
         # Not only in `make lint-changed` (an opt-in pre-commit hook): a fixture
         # leaking a real .git marker into a test tree must not merge through CI
