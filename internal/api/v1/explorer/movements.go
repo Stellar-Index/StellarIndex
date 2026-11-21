@@ -236,7 +236,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pgRows, tailNote := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
+	pgRows, tailNote, tailFailed := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
 	supply := h.movementsSupplyRange(ctx, wm)
 	coverageNote := movementsCoverageNote(wm, tailNote, supply)
 	if filter.Kind != "" && filter.Kind != "transfer" {
@@ -257,7 +257,8 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// every subsequent page reuses it.
 		out.NextCursor = nextMovementCursor(merged[len(merged)-1], wm, wmFailed && !cur.HasPinnedWatermark)
 	}
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed, time.Time{})
+	// A failed tail read makes next_cursor skip the tail rows above the archive ceiling; degraded is the client's only signal.
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed || tailFailed, time.Time{})
 }
 
 // movementsWatermark resolves the cap67 watermark splitting a page between the CH archive and the PG tail, so arms stay gap- and double-
@@ -323,22 +324,22 @@ func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
 }
 
 // fetchSEP41MovementsTail reads the Postgres recent-tail half of the merge. A non-empty coverageNote (no reader, read failed) degrades
-// rather than fails the request; kind filters that cannot match a PG-tail row (all are "transfer") skip the round-trip.
-func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) ([]clickhouse.AccountMovementRow, string) {
+// rather than fails the request; failed reports a read error. Kind filters that cannot match a PG-tail row (all are "transfer") skip it.
+func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) (rows []clickhouse.AccountMovementRow, coverageNote string, failed bool) {
 	if h.SEP41Movements == nil {
-		return nil, fmt.Sprintf("this deployment has not wired the recent Postgres tail reader; showing only the movement archive, which ends before ledger %d", floorLedger)
+		return nil, fmt.Sprintf("this deployment has not wired the recent Postgres tail reader; showing only the movement archive, which ends before ledger %d", floorLedger), false
 	}
 	if filter.Kind != "" && filter.Kind != "transfer" {
-		return nil, ""
+		return nil, "", false
 	}
 	pgCur := timescale.SEP41TransferCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, EventIndex: cur.LegIndex}
 	scopeContract, _ := sep41AssetScope(filter.Asset)
-	rows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), scopeContract, floorLedger)
+	pgRows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), scopeContract, floorLedger)
 	if err != nil {
 		h.Logger.Error("explorer AccountMovements (Postgres recent tail) failed", "err", err, "account", address)
-		return nil, fmt.Sprintf("the recent tail is temporarily unavailable; showing only the movement archive, which ends before ledger %d", floorLedger)
+		return nil, fmt.Sprintf("the recent tail is temporarily unavailable; showing only the movement archive, which ends before ledger %d", floorLedger), true
 	}
-	return h.mapSEP41RowsToMovements(ctx, address, rows, filter.Asset), ""
+	return h.mapSEP41RowsToMovements(ctx, address, pgRows, filter.Asset), "", false
 }
 
 // movementsCoverageNote is the feed's honest-scope statement by cap67 watermark; tailNote (a tail failure) wins. wm == 0: only the
@@ -540,10 +541,14 @@ func (h *Handler) resolveSEP41AssetUncached(ctx context.Context, contractID stri
 		// across the P23 boundary. An unparseable name passes through verbatim.
 		return canonicalizeSACName(name), false
 	}
-	if name, ok := h.sacAssetViaEvents(ctx, contractID); ok {
+	name, ok, evErr := h.sacAssetViaEventsChecked(ctx, contractID)
+	if ok {
 		return name, false // already canonical — asset.String()
 	}
-	return contractID, err != nil
+	if evErr != nil {
+		h.Logger.Warn("explorer SACAssetFromEvents failed", "err", evErr, "contract", contractID)
+	}
+	return contractID, err != nil || evErr != nil
 }
 
 // sacNameMemoMax bounds the SAC memo; a full memo is emptied, so a flood
