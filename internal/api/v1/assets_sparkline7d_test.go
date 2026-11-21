@@ -147,7 +147,7 @@ func pricedPoints(pts []v1.AssetPricePoint) []string {
 
 func sparklineFor(t *testing.T, stub *sparklineStub, cache *v1.NonstandardDecimalsCache, assetID string) []v1.AssetPricePoint {
 	t.Helper()
-	srv := v1.New(v1.Options{AssetsReader: stub, NonstandardDecimals: cache})
+	srv := v1.New(v1.Options{AssetsReader: stub, NonstandardDecimals: cache, TokenDecimals: lakeAgreeingDecimals{cache}})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets?limit=10&include=sparkline7d")
 	if resp.StatusCode != http.StatusOK {

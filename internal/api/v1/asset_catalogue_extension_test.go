@@ -82,6 +82,16 @@ func sptr(s string) *string { return &s }
 // assetExtensionDetail serves GET /v1/assets/{id} for a Soroban contract
 // whose whole price picture comes from the asset-catalogue overlay (no
 // canonical price reader wired), and returns the decoded detail.
+// lakeAgreeingDecimals is a lake that declares the projection's scale, or the standard 7 where it holds no row.
+type lakeAgreeingDecimals struct{ cache *v1.NonstandardDecimalsCache }
+
+func (l lakeAgreeingDecimals) TokenDecimals(_ context.Context, contractID string) (uint32, bool, error) {
+	if d, ok := l.cache.Lookup(contractID); ok {
+		return uint32(d), true, nil
+	}
+	return 7, true, nil
+}
+
 func assetExtensionDetail(t *testing.T, assetID string, cache *v1.NonstandardDecimalsCache, overlay *stubAssetsReaderExt) v1.AssetDetail {
 	t.Helper()
 	srv := v1.New(v1.Options{
@@ -90,6 +100,7 @@ func assetExtensionDetail(t *testing.T, assetID string, cache *v1.NonstandardDec
 		}},
 		AssetsReader:        overlay,
 		NonstandardDecimals: cache,
+		TokenDecimals:       lakeAgreeingDecimals{cache},
 	})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets/"+assetID)

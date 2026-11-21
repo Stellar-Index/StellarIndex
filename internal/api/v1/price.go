@@ -86,6 +86,10 @@ const (
 	// PriceWithheldFXLeg: a closed-bucket fiat cross found no vendor FX fixing in the lookback.
 	// The live rate is no substitute: the closed answer would depend on when it was read.
 	PriceWithheldFXLeg PriceWithheldReason = "fx_leg_unavailable"
+	// PriceWithheldDecimalsUnknown / PriceWithheldDecimalsMismatch: an asset payload's price was normalised on a token
+	// scale the handler cannot vouch for (unknown, or contradicted by the lake), so it may be off by a power of ten.
+	PriceWithheldDecimalsUnknown  PriceWithheldReason = "decimals_unknown"
+	PriceWithheldDecimalsMismatch PriceWithheldReason = "decimals_mismatch"
 )
 
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
@@ -238,7 +242,8 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 		return "Price withheld — FX leg unavailable",
 			"no FX fixing binds " + pair + " at the bucket's close within the lookback, so no converted price is published" +
 				" — /v1/price/tip converts at the live rate"
-	case PriceWithheldUnattributed:
+	case PriceWithheldUnattributed, PriceWithheldDecimalsUnknown, PriceWithheldDecimalsMismatch:
+		// The decimals reasons are asset-payload verdicts; /v1/price never raises them.
 	}
 	return "Price withheld",
 		"a serving-side gate (thin market or flagged issuer) declined to publish a price for " + pair

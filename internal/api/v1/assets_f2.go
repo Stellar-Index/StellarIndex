@@ -437,6 +437,35 @@ func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
 	return ""
 }
 
+// withholdOffScalePrice withholds a market price normalised on a scale the payload cannot vouch for, with every figure derived
+// from it. A declared-peg, global-market or whole-token price is quoted per whole token, so no token scale enters it.
+func withholdOffScalePrice(d *AssetDetail) {
+	if d.PriceUSD == nil || d.priceWholeToken || d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
+		return
+	}
+	switch d.scaleWithheldReason() {
+	case MarketCapWithheldDecimalsDiffer:
+		d.PriceWithheldReason = PriceWithheldDecimalsMismatch
+	case MarketCapWithheldDecimalsUnknown:
+		d.PriceWithheldReason = PriceWithheldDecimalsUnknown
+	default:
+		return
+	}
+	d.PriceUSD, d.priceStale, d.PriceBasis = nil, false, ""
+	d.MarketCapUSD, d.MarketCapLowerBound, d.FDVUSD = nil, false, nil
+	d.Change1hPct, d.Change24hPct, d.Change7dPct = nil, nil, nil
+	d.ThinMarket, d.Substance = false, nil
+	withholdPriceSeriesWhenUnpriced(d)
+}
+
+// unpricedRWAValuationStatus names a null-price RWA valuation; an off-scale withholding is a scale gap, not a missing market.
+func unpricedRWAValuationStatus(d AssetDetail) string {
+	if d.PriceWithheldReason == PriceWithheldDecimalsUnknown || d.PriceWithheldReason == PriceWithheldDecimalsMismatch {
+		return RWAValuationDecimalsUnknown
+	}
+	return RWAValuationUnpriced
+}
+
 // capRefusalReason maps a [Server.marketCapRefused] verdict onto the wire reason.
 func capRefusalReason(lowLiquidity bool) MarketCapWithheldReason {
 	if lowLiquidity {
@@ -465,8 +494,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		//
 		// Decimals lockstep refusal (applyTokenDecimals): the price was normalised via the
 		// nonstandard_decimals_assets projection but detail.Decimals disagrees, so usdMarketValue
-		// would be off by 10^|difference|. price_usd and supply still serve. Not a liquidity
-		// verdict, hence before the liquidity guards.
+		// would be off by 10^|difference|; withholdOffScalePrice later withholds the price too.
+		// Not a liquidity verdict, hence before the liquidity guards.
 		return
 	}
 	usdPrice := *detail.PriceUSD

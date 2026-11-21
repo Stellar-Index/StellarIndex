@@ -99,8 +99,8 @@ func TestAssetsF2_DecimalsLockstep_ProjectionDisagreesWithLake(t *testing.T) {
 	if !strings.Contains(body, `"decimals":6`) {
 		t.Errorf("decimals must still report the lake reading (6): %s", body)
 	}
-	if !strings.Contains(body, `"price_usd":"4132.0000000000"`) {
-		t.Errorf("price_usd must still serve (projection-normalised 4132): %s", body)
+	if strings.Contains(body, `"price_usd"`) || !strings.Contains(body, `"price_withheld_reason":"decimals_mismatch"`) {
+		t.Errorf("price_usd normalised on the contradicted projection scale must be withheld as decimals_mismatch: %s", body)
 	}
 	if !strings.Contains(body, `"circulating_supply":"1000000000000"`) {
 		t.Errorf("circulating_supply (a raw fact) must still serve: %s", body)
@@ -132,8 +132,8 @@ func TestAssetsF2_DecimalsLockstep_LakeNonstandardProjectionUnseeded(t *testing.
 	if !strings.Contains(body, `"decimals":9`) {
 		t.Errorf("decimals must report the lake reading (9): %s", body)
 	}
-	if !strings.Contains(body, `"price_usd":"41.32"`) {
-		t.Errorf("price_usd is the raw ratio on this path and must still serve as-is: %s", body)
+	if strings.Contains(body, `"price_usd"`) || !strings.Contains(body, `"price_withheld_reason":"decimals_mismatch"`) {
+		t.Errorf("a raw ratio on the assumed 7 scale for a 9-decimal token must be withheld as decimals_mismatch: %s", body)
 	}
 	if got := assetDetailMismatchVal() - before; got != 1 {
 		t.Errorf("asset_detail mismatch counter delta = %v, want 1", got)
@@ -291,5 +291,25 @@ func TestAssetsF2_7dpUnchanged(t *testing.T) {
 	}
 	if !strings.Contains(body, `"market_cap_usd":"3493000000.00"`) {
 		t.Errorf("7dp market_cap_usd must be unchanged: %s", body)
+	}
+}
+
+// The lake read finds no declaration and no projection row vouches for a scale: the price was normalised on an assumed 7, so an
+// 18-decimal token's price would be 10^11 too small. It is withheld, named, and takes its history with it.
+func TestAssetsF2_DecimalsUndeclared_WithholdsPrice(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Prices:        lockstepPrices(),
+		Supply:        lockstepSupply(),
+		TokenDecimals: &lockstepDecStub{found: false},
+	})
+	body := lockstepGet(t, srv)
+	if strings.Contains(body, `"price_usd"`) || strings.Contains(body, `"market_cap_usd"`) || strings.Contains(body, `"fdv_usd"`) {
+		t.Errorf("a price on an unknown scale must not serve: %s", body)
+	}
+	if !strings.Contains(body, `"price_withheld_reason":"decimals_unknown"`) {
+		t.Errorf("price_withheld_reason must name the unknown scale: %s", body)
+	}
+	if strings.Contains(body, `"decimals":`) {
+		t.Errorf("decimals must stay omitted: %s", body)
 	}
 }
