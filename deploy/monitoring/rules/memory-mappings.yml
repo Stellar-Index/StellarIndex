@@ -213,7 +213,6 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          alert_family: "replaced_binary/{{ $labels.unit }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#replaced-binary
           summary: "{{ $labels.unit }} is still running a release binary that was replaced on disk"
