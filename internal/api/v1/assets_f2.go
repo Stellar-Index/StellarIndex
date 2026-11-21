@@ -50,32 +50,35 @@ type SorobanVolumeReader interface {
 // contractSupplySnapshot is the detail's supply for a Soroban token with no fresh observer snapshot, by the
 // one preference order [Server.contractSupplyReadingChecked] owns: the lake's flow sum, or held balances for a
 // contract with no flows. ok=false leaves the supply fields absent: an incomplete flow sum is not negative
-// supply, and "no event seen" is not zero (ADR-0003). unread means the read did not answer.
+// supply, and "no event seen" is not zero (ADR-0003). unread means the read did not answer; floor that the
+// figure is an event net storage could not check.
 //
 // Bounded by tokenMetadataReadTimeout: it runs on the handler goroutine after the parallel reads, so an
 // unbounded slow sum would extend /v1/assets/{id} for a mere null field.
-func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) (snap supply.Supply, ok, unread bool) {
+func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) (snap supply.Supply, floor, ok, unread bool) {
 	sctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
-	figure, basis, _, ok, unread := s.contractSupplyReadingChecked(sctx, contractID)
+	figure, basis, floor, ok, unread := s.contractSupplyReadingChecked(sctx, contractID)
 	if !ok {
-		return supply.Supply{}, false, unread
+		return supply.Supply{}, false, false, unread
 	}
 	total, parsed := new(big.Int).SetString(figure, 10)
 	if !parsed {
-		return supply.Supply{}, false, false
+		return supply.Supply{}, false, false, false
 	}
-	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, true, false
+	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, floor, true, false
 }
 
 // withContractSupply replaces a missing or stale observer snapshot with the contract's own reading when there
-// is one, and counts a reading that did not answer as a failed supply read.
-func (s *Server) withContractSupply(ctx context.Context, contractID string, snap supply.Supply, haveSnap, supplyFailed bool) (supply.Supply, bool, bool) {
-	lake, ok, unread := s.contractSupplySnapshot(ctx, contractID)
+// is one, and counts a reading that did not answer as a failed supply read. floor is the replacement's.
+func (s *Server) withContractSupply(
+	ctx context.Context, contractID string, snap supply.Supply, haveSnap, supplyFailed bool,
+) (out supply.Supply, have, failed, floor bool) {
+	lake, floor, ok, unread := s.contractSupplySnapshot(ctx, contractID)
 	if ok {
-		return lake, true, false
+		return lake, true, false, floor
 	}
-	return snap, haveSnap, supplyFailed || unread
+	return snap, haveSnap, supplyFailed || unread, false
 }
 
 // applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no
@@ -133,7 +136,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// The ClickHouse read is Soroban-only; a stale snapshot yields to the lake reading.
 	now := time.Now()
 	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		snap, haveSnap, supplyFailed = s.withContractSupply(ctx, asset.ContractID, snap, haveSnap, supplyFailed)
+		snap, haveSnap, supplyFailed, detail.supplyFloor = s.withContractSupply(ctx, asset.ContractID, snap, haveSnap, supplyFailed)
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed || detail.priceUnread
 
@@ -161,8 +164,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int, now time.Time) {
 	detail.SupplyStale = supplyObservationStale(snap, now)
 	populateSupplyFields(detail, snap)
-	// Held balances are a floor, and the detail has no lower-bound flag for a cap: the supply serves
-	// under its basis and no cap is built on it.
+	// Held balances are a floor: the supply serves under its basis and no cap is built on it.
 	if snap.Basis != supply.BasisContractStorageBalances {
 		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
 		if detail.PriceUSD == nil {
@@ -451,6 +453,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			detail.MarketCapLowLiquidity = true
 		} else {
 			detail.MarketCapUSD = &mc
+			// The detail has no supply lower-bound field, so a floor supply is carried by the cap's flag.
+			detail.MarketCapLowerBound = detail.supplyFloor
 		}
 	}
 	if snap.MaxSupply != nil {
