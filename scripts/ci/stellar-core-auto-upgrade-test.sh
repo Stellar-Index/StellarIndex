@@ -118,8 +118,11 @@ echo "stellar-core-auto-upgrade-test: upgrade that advances the tip"
 setup "$V28" "$V29" "$V28" "$V29"
 echo secret > "$ST/root-only"; chmod 0600 "$ST/root-only"
 ln -s "$ST/root-only" "$STELLAR_ETC/captive-core-galexie-planted.cfg"
+# Another unit's textfile, sorting first, that would pin the tip at 0.
+echo "galexie_live_tip_ledger 0" > "$TEXTFILE_DIR/00-planted.prom"
 run
 check "reports upgraded, exit 0" '[[ $rc == 0 ]] && result_is upgraded ""'
+check "a tip line in another textfile is ignored" '[[ $rc == 0 ]] && result_is upgraded ""'
 check "installed the candidate" '[[ $(cat "$ST/installed") == "$V29" ]]'
 check "galexie stopped before the install and started after" \
   '[[ $(grep -oE "^(systemctl stop galexie|apt-get install|systemctl start galexie)$|^apt-get install" "$ST/calls" | tr "\n" ,) == "systemctl stop galexie,apt-get install,systemctl start galexie," ]]'
