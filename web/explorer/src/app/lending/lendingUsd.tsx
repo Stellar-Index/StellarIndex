@@ -22,7 +22,7 @@ const REASON_TEXT: Record<Exclusion['reason'], string> = {
   reserves_read_timed_out: 'reserves read timed out',
   pool_lineage_unknown: 'pool version unknown',
   no_decoded_reserve_state: 'no decoded reserve state',
-  reserve_archived: 'reserve state archived',
+  reserve_archived: 'archived on-chain',
   decode_failed: 'reserve state could not be decoded',
   not_captured: 'reserve state not captured',
   no_usd_value: 'no reliable price',
@@ -47,17 +47,23 @@ export function reasonText(reason: string | null | undefined): string {
 }
 
 const PRICE_REASONS = new Set(['no_usd_value', 'unpriced', 'withheld']);
+// An archived entry is the chain's state, read correctly, not a failed read.
+const STATE_REASONS = new Set(['reserve_archived']);
 
 /**
- * One line for a lower bound ("12 reserves have no reliable price, 24 could
- * not be read") and the excluded names grouped by reason for a disclosure.
+ * One line for a lower bound ("12 reserves have no reliable price, 2 are
+ * archived on-chain, 24 could not be read") and the excluded names grouped by
+ * reason for a disclosure.
  */
 export function exclusionGroups(
   excluded: readonly Exclusion[],
   name: (e: Exclusion) => string,
 ): { line: string; groups: { reason: string; names: string[] }[] } {
   const unpriced = excluded.filter((e) => PRICE_REASONS.has(e.reason));
-  const unread = excluded.filter((e) => !PRICE_REASONS.has(e.reason));
+  const archived = excluded.filter((e) => STATE_REASONS.has(e.reason));
+  const unread = excluded.filter(
+    (e) => !PRICE_REASONS.has(e.reason) && !STATE_REASONS.has(e.reason),
+  );
   const noun = (es: Exclusion[]) =>
     es.every((e) => e.asset) ? 'reserve' : 'item';
   const count = (es: Exclusion[], verb: [string, string]) =>
@@ -68,6 +74,7 @@ export function exclusionGroups(
         ];
   const line = [
     ...count(unpriced, ['has no reliable price', 'have no reliable price']),
+    ...count(archived, ['is archived on-chain', 'are archived on-chain']),
     ...count(unread, ['could not be read', 'could not be read']),
   ].join(', ');
   const by = new Map<string, Set<string>>();
