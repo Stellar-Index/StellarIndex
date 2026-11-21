@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -170,10 +171,50 @@ func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetai
 	}
 }
 
-// populateVolume24h fills detail.VolumeUSD24h. Pure-Soroban SEP-41 assets use the XLM-anchored [SorobanVolumeReader] (the plain
-// reader reports a bogus "0"); on its ERROR the plain reader is used but flagged a lower bound, as it omits XLM-legged trades.
+// populateVolume24h fills detail.VolumeUSD24h with the asset's own volume plus its derived SAC's ([Server.addDerivedSACVolume24h]).
 // Reports whether the plain read failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
+	if failed = s.populateOwnVolume24h(ctx, detail, asset); !failed {
+		s.addDerivedSACVolume24h(ctx, detail, asset)
+	}
+	return failed
+}
+
+// addDerivedSACVolume24h adds the volume traded under a classic asset's lake-confirmed derived SAC, which the alias registry sums
+// only for registered pairs. A SAC the lake could not confirm or whose volume could not be read flags the figure a lower bound.
+func (s *Server) addDerivedSACVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+	if s.Volume == nil || s.Explorer == nil || asset.Type != canonical.AssetClassic {
+		return
+	}
+	sac, err := asset.SacContractID()
+	if err != nil || slices.Contains(canonical.AssetAliasStrings(asset), sac) {
+		return
+	}
+	wrapped, ok, err := s.sacWrappedAssetIDErr(ctx, sac)
+	if err != nil {
+		detail.VolumeLowerBound = true
+		return
+	}
+	if !ok || wrapped != asset.String() {
+		return
+	}
+	sacAsset, err := canonical.NewSorobanAsset(sac)
+	if err != nil {
+		detail.VolumeLowerBound = true
+		return
+	}
+	var twin AssetDetail
+	if s.populateOwnVolume24h(ctx, &twin, sacAsset) || twin.VolumeUSD24h == nil {
+		detail.VolumeLowerBound = true
+		return
+	}
+	mergeAliasVolume(detail, twin)
+}
+
+// populateOwnVolume24h fills detail.VolumeUSD24h for asset's own key. Pure-Soroban SEP-41 assets use the XLM-anchored
+// [SorobanVolumeReader] (the plain reader reports a bogus "0"); on its ERROR the plain reader is used but flagged a lower bound,
+// as it omits XLM-legged trades. Reports whether the plain read failed.
+func (s *Server) populateOwnVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.Volume == nil {
 		return false
 	}
