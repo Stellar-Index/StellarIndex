@@ -48,6 +48,9 @@ type Recovery struct {
 	interval time.Duration
 	logger   *slog.Logger
 	clock    func() time.Time
+	// held is the set of pair keys the previous sweep left open on the durable ladder; only a pair new to it logs at
+	// INFO, since an escalated freeze on a removed window stays held until freeze-unfreeze. Touched only by [Recovery.Run].
+	held map[string]bool
 }
 
 // RecoveryOptions tunes a [Recovery] worker.
@@ -148,11 +151,14 @@ func (r *Recovery) tick(ctx context.Context) {
 		return
 	}
 	if len(open) == 0 {
+		r.held = nil
 		obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("ok").Inc()
 		obs.AnomalyFreezeRecoverySweepDurationSeconds.WithLabelValues("ok").Observe(time.Since(start).Seconds())
 		return
 	}
 	var recovered, stillFiring, heldByLadder, errs int
+	held := make(map[string]bool, len(r.held))
+	defer func() { r.held = held }()
 	for _, p := range open {
 		key := cachekeys.Freeze(p.Asset, p.Quote)
 		_, err := r.cache.Get(ctx, key.String()).Bytes()
@@ -160,7 +166,8 @@ func (r *Recovery) tick(ctx context.Context) {
 		case errors.Is(err, redis.Nil):
 			// Marker gone is AMBIGUOUS: the freeze ended (close the row) or Redis lost it (leave it, the orchestrator
 			// rehydrates from this row). Ask the durable ladder before destroying the evidence.
-			if r.ladderStillHolds(ctx, p) {
+			if r.ladderStillHolds(ctx, p, r.held[key.String()]) {
+				held[key.String()] = true
 				heldByLadder++
 				continue
 			}
@@ -209,7 +216,8 @@ func (r *Recovery) tick(ctx context.Context) {
 // ladderStillHolds reports whether the durable ladder says the freeze is still running. Fails
 // toward closing (no store, read error, a non-escalated hold lapsed past grace): a wrong close re-freezes on the
 // next signal, a missed one shows a finished freeze firing forever. Shares [DurableLadderLive] with [Writer.LoadState].
-func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair) bool {
+// announced (the previous sweep already held this pair) drops the hold's log line from INFO to DEBUG.
+func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair, announced bool) bool {
 	if r.ladder == nil {
 		return false
 	}
@@ -222,7 +230,11 @@ func (r *Recovery) ladderStillHolds(ctx context.Context, p OpenFreezePair) bool 
 	if !ok || !DurableLadderLive(st, r.grace, r.clock()) {
 		return false
 	}
-	r.logger.Info("freeze marker missing but the durable hold is still live — leaving the row OPEN for the orchestrator to rehydrate",
+	level := slog.LevelInfo
+	if announced {
+		level = slog.LevelDebug
+	}
+	r.logger.Log(ctx, level, "freeze marker missing but the durable hold is still live — leaving the row OPEN for the orchestrator to rehydrate",
 		"asset", p.Asset.String(),
 		"quote", p.Quote.String(),
 		"hold_until", st.HoldUntil,

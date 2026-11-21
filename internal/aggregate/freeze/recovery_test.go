@@ -1,8 +1,11 @@
 package freeze_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
@@ -347,6 +351,51 @@ func TestRecovery_KeepsAnEscalatedRowOpenPastItsHold(t *testing.T) {
 
 	if n := closer.callCount(); n != 0 {
 		t.Errorf("recovery closed an escalated row %d time(s) after an outage outlasted its hold; only an operator ends it", n)
+	}
+}
+
+// TestRecovery_HeldRowLogsInfoOncePerHold: an escalated row on a removed window stays open until freeze-unfreeze, so the
+// sweep must not log it at INFO every tick; it announces each hold once, then logs at DEBUG, and announces a new hold again.
+func TestRecovery_HeldRowLogsInfoOncePerHold(t *testing.T) {
+	mr, rdb := newRedis(t)
+	asset, quote := nativeUSD(t)
+	lapsed := escalatedLadder(time.Now().UTC())
+	lapsed.HoldUntil = time.Now().UTC().Add(-36 * time.Minute)
+	ladder := &ladderStub{state: lapsed}
+	var buf bytes.Buffer
+	r := freeze.NewRecovery(rdb, &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}},
+		&ladderCloser{ladder: ladder}, freeze.RecoveryOptions{
+			Interval: 10 * time.Millisecond, Ladder: ladder, LadderGrace: freeze.DefaultLadderGrace,
+			Logger: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		})
+	run := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Millisecond)
+		defer cancel()
+		_ = r.Run(ctx)
+	}
+	count := func(level string) int {
+		n := 0
+		for _, line := range strings.Split(buf.String(), "\n") {
+			if strings.Contains(line, "level="+level) && strings.Contains(line, "durable hold is still live") {
+				n++
+			}
+		}
+		return n
+	}
+
+	run()
+	if info, debug := count("INFO"), count("DEBUG"); info != 1 || debug == 0 {
+		t.Fatalf("held row over several sweeps logged INFO %d time(s), DEBUG %d; want INFO once, then DEBUG", info, debug)
+	}
+	// The marker comes back (the hold is no longer only on the durable record), then is lost again: a new hold.
+	if err := mr.Set(cachekeys.Freeze(asset, quote).String(), "{}"); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+	run()
+	mr.Del(cachekeys.Freeze(asset, quote).String())
+	run()
+	if info := count("INFO"); info != 2 {
+		t.Errorf("a second hold after the marker returned logged INFO %d time(s) in total, want 2", info)
 	}
 }
 

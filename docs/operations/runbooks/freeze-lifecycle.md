@@ -40,6 +40,14 @@ Do NOT `redis-cli DEL` an escalated freeze's marker: the aggregator rehydrates t
 
 Verify: `redis-cli EXISTS freeze:<asset>:<quote>` = 0, the row has `recovered_at`, `/v1/price` has no `flags.frozen`. Only `freeze-unfreeze -write` recovers an escalated freeze (`internal/aggregate/freeze/lifecycle.go`); the 60 s `freeze.Recovery` sweep covers non-escalated ones, and such a row open past marker TTL goes to `anomaly.md#stellarindex_anomaly_freeze_recovery_stalled`.
 
+### Escalated freeze on a removed window or pair
+
+Removing a window or pair from config does not end its escalated freeze: no auto-release reaches it, so its `freeze_events` row stays open (and the pair keeps `flags.frozen`) until an operator lifts it. The sweep logs it once at INFO (`freeze marker missing but the durable hold is still live`, `escalated=true`) and at DEBUG after that. Find it with `-list` (above), then lift it:
+
+```sh
+stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -asset <A> -quote <Q> -reason "window removed from config" -write
+```
+
 ## stellarindex_anomaly_freeze_escalated
 
 P1 page. `increase(stellarindex_anomaly_freeze_escalated_total[15m]) > 0`, `for: 0m`. A freeze exhausted the ladder (>= 2 h) and is held until an operator acts: manipulation, a genuine repricing the baseline has not absorbed, no corroborating reference, or Phase-2 thresholds too tight. Price is stuck for the pair; `stellarindex_anomaly_freeze_active > 0`; `freeze_events` has an open row with `escalated = true`.
