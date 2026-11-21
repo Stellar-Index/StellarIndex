@@ -543,7 +543,8 @@ func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canoni
 			asset.String(), quote.String(), err)
 	}
 	if n == 0 {
-		return ErrNotFound
+		// Both sentinels: freeze-unfreeze reads ErrNotFound, the releasing writer and the sweep read freeze.ErrNoOpenRow.
+		return fmt.Errorf("timescale: MarkRecovered %s/%s: %w (%w)", asset.String(), quote.String(), freeze.ErrNoOpenRow, ErrNotFound)
 	}
 	return nil
 }

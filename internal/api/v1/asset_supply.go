@@ -53,7 +53,9 @@ type AssetSupply struct {
 
 	// CirculatingSupplyLowerBound is true when TotalSupply is a PROVABLE FLOOR and must not be
 	// presented as exact. Set for "contract_storage_balances": that reading sees only entries the
-	// current-state projection captured, so one dormant since before coverage is absent.
+	// current-state projection captured, so one dormant since before coverage is absent. Set for
+	// "mint_burn_flows" when storage holds a balance entry the reader cannot decode, so the check
+	// that would prove the event net short could not run.
 	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 
 	// BalanceEntries is how many per-holder entries were summed ("contract_storage_balances" only).
@@ -145,15 +147,17 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A classic asset's SAC keeps balances in trustlines, so its storage is only asked when the log is empty.
+	verdict := storageNoVerdict
 	if sup.FlowCount == 0 || canonical.IsContractID(assetID) {
-		st, ok, err := s.storageReadingSupersedes(ctx, contractID, sup)
+		var st clickhouse.ContractStorageSupply
+		st, verdict, err = s.storageReadingSupersedes(ctx, contractID, sup)
 		if err != nil {
 			writeProblemErr(w, r, err, "https://api.stellarindex.io/errors/supply-error",
 				"Supply read failed", http.StatusBadGateway,
 				"Could not read the token's contract storage, so its event-log total cannot be shown complete.")
 			return
 		}
-		if ok {
+		if verdict == storageSupersedes {
 			resp, storageStale := s.storageSupplyResponse(ctx, assetID, contractID, st)
 			writeJSON(w, resp, Flags{Stale: storageStale})
 			return
@@ -172,13 +176,21 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp, stale := s.flowsSupplyResponse(ctx, assetID, contractID, sup, verdict)
+	writeJSON(w, resp, Flags{Stale: stale})
+}
+
+// flowsSupplyResponse renders the event net when storage did not supersede it; stale is the lake watermark's verdict.
+func (s *Server) flowsSupplyResponse(
+	ctx context.Context, assetID, contractID string, sup clickhouse.TokenSupply, verdict storageVerdict,
+) (AssetSupply, bool) {
 	basis := supply.BasisSEP41LakeFlows
 	if !canonical.IsContractID(assetID) {
 		basis = supply.BasisClassicLakeFlows
 	}
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
-	writeJSON(w, AssetSupply{
+	return AssetSupply{
 		AssetID:       assetID,
 		ContractID:    contractID,
 		TotalSupply:   sup.Total.String(),
@@ -188,8 +200,10 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		FlowCount:     sup.FlowCount,
 		Source:        "mint_burn_flows",
 		SupplyBasis:   basis.String(),
-		AsOfLedger:    wmLedger,
-	}, Flags{Stale: stale})
+		// Storage the reader could not sum cannot prove the net short, so the net is only a floor.
+		CirculatingSupplyLowerBound: verdict == storageUnchecked,
+		AsOfLedger:                  wmLedger,
+	}, stale
 }
 
 // ContractStorageSupplyReader is the seam for the storage-derived supply reading, separate from [TokenSupplyReader] so either can be wired alone.
@@ -197,30 +211,46 @@ type ContractStorageSupplyReader interface {
 	ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error)
 }
 
+// storageVerdict is what a contract's storage says about its event net.
+type storageVerdict int
+
+const (
+	// storageNoVerdict: no storage reading by design, or one that does not exceed the net; the net stands.
+	storageNoVerdict storageVerdict = iota
+	// storageSupersedes: the storage level replaces the net.
+	storageSupersedes
+	// storageUnchecked: the lake state stopped the check that would prove the net short ([storageSupplyUnchecked]),
+	// so a net served beside it is a floor. A fixed lake property, so not unread.
+	storageUnchecked
+)
+
 // storageReadingSupersedes is the one event-vs-storage choice for a contract's supply: the storage level wins for a flowless
 // log (whose zero is unfounded), and otherwise only when it exceeds the event net. Storage is a floor, so a level above the
 // net proves the log partial and is the tighter floor, unless it fails the contract's own cross-check. The two are never
-// summed: they count the same tokens. A failed read is an error only for a log with flows, whose net it may have proved partial;
-// a flowless log has no figure to withhold.
+// summed: they count the same tokens. A failed read is always an error: with flows it may have proved the net partial, and
+// without flows it is the only reading there is, so its absence is unread, not "no figure".
 func (s *Server) storageReadingSupersedes(
 	ctx context.Context, contractID string, sup clickhouse.TokenSupply,
-) (clickhouse.ContractStorageSupply, bool, error) {
+) (clickhouse.ContractStorageSupply, storageVerdict, error) {
 	st, ok, err := s.contractStorageReading(ctx, contractID)
-	if err != nil && sup.FlowCount > 0 {
-		return clickhouse.ContractStorageSupply{}, false, err
+	if storageSupplyUnchecked(err) {
+		return clickhouse.ContractStorageSupply{}, storageUnchecked, nil
+	}
+	if err != nil {
+		return clickhouse.ContractStorageSupply{}, storageNoVerdict, err
 	}
 	if !ok {
-		return clickhouse.ContractStorageSupply{}, false, nil
+		return clickhouse.ContractStorageSupply{}, storageNoVerdict, nil
 	}
 	if sup.FlowCount > 0 && sup.Total != nil &&
 		(st.Total.Cmp(sup.Total) <= 0 || (st.HasSelfChecks() && !st.SelfConsistent())) {
-		return clickhouse.ContractStorageSupply{}, false, nil
+		return clickhouse.ContractStorageSupply{}, storageNoVerdict, nil
 	}
-	return st, true, nil
+	return st, storageSupersedes, nil
 }
 
 // contractStorageReading is the contract's storage level. ok=false with a nil error is a decline by design; an error is a read
-// that did not answer.
+// that did not answer, or a check the lake state left unrun ([storageSupplyUnchecked]), which [Server.storageReadingSupersedes] owns.
 func (s *Server) contractStorageReading(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, bool, error) {
 	if s.ContractStorageSupply == nil {
 		return clickhouse.ContractStorageSupply{}, false, nil
@@ -232,6 +262,11 @@ func (s *Server) contractStorageReading(ctx context.Context, contractID string) 
 			s.logger.Debug("supply: contract storage reading declined",
 				"contract_id", contractID, "err", err)
 			return clickhouse.ContractStorageSupply{}, false, nil
+		}
+		if storageSupplyUnchecked(err) {
+			s.logger.Debug("supply: contract storage check could not run",
+				"contract_id", contractID, "err", err)
+			return clickhouse.ContractStorageSupply{}, false, err
 		}
 		if ctx.Err() == nil {
 			s.logger.Warn("supply: contract storage reading failed", "contract_id", contractID, "err", err)
@@ -245,10 +280,16 @@ func (s *Server) contractStorageReading(ctx context.Context, contractID string) 
 	return st, true, nil
 }
 
-// storageSupplyDeclined reports the reader's deliberate refusals: a SAC, a holder set past its cap, and a missing instance entry
-// that leaves the SAC check unrun. Each is a fixed property of the lake state, not a transient fault.
+// storageSupplyDeclined reports the reader's one verdict-free refusal: a SAC, whose storage holds only the wrapped slice of a
+// classic asset and so has nothing to add to a supply.
 func storageSupplyDeclined(err error) bool {
-	return errors.Is(err, clickhouse.ErrStorageSupplyIsStellarAsset) ||
+	return errors.Is(err, clickhouse.ErrStorageSupplyIsStellarAsset)
+}
+
+// storageSupplyUnchecked reports a storage read the lake state stopped short of a sum: an undecodable entry, a holder set past
+// the reader's cap, or no instance entry to rule out a SAC. Storage could still prove the net short, so a net beside it is a floor.
+func storageSupplyUnchecked(err error) bool {
+	return errors.Is(err, clickhouse.ErrStorageSupplyUndecodable) ||
 		errors.Is(err, clickhouse.ErrStorageSupplyTooManyEntries) ||
 		errors.Is(err, clickhouse.ErrStorageSupplyNoInstance)
 }

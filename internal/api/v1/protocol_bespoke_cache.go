@@ -185,27 +185,29 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 	return fl
 }
 
-// cachedBespoke returns the bespoke block for (source, category, window): a cached block immediately (stale once older than
+// cachedBespokeEntry returns the bespoke entry for (source, category, window): a cached block immediately (stale once older than
 // bespokeStaleAfter) while one detached refresh runs;
 // a first-ever miss waits for that build, bounded by ctx (the build outlives the wait). ok=false means no block could be produced, and
 // the caller drops it.
-func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (blk *timescale.BespokeBlock, stale, ok bool) {
+// It returns the whole entry, so a block and its build time come from one read: a concurrent refresh's put cannot pair an old block
+// with a new timestamp.
+func (s *Server) cachedBespokeEntry(ctx context.Context, source, category string, windowDays int) (e bespokeEntry, stale, ok bool) {
 	if s.ProtocolBespoke == nil {
-		return nil, false, false
+		return bespokeEntry{}, false, false
 	}
 	key := protocolBespokeCacheKey(source, category, windowDays)
 	fl := s.refreshBespoke(key, source, category, windowDays) //nolint:contextcheck // intentional detach — the battery must outlive this build (see refreshBespoke)
 	if e, has := s.protocolBespokeCache.get(key); has {
-		return e.blk, s.protocolBespokeCache.clock().Sub(e.at) > bespokeStaleAfter, true
+		return e, s.protocolBespokeCache.clock().Sub(e.at) > bespokeStaleAfter, true
 	}
 	select {
 	case <-fl.done:
 		if e, has := s.protocolBespokeCache.get(key); has {
-			return e.blk, false, true
+			return e, false, true
 		}
-		return nil, false, false
+		return bespokeEntry{}, false, false
 	case <-ctx.Done():
-		return nil, false, false
+		return bespokeEntry{}, false, false
 	}
 }
 

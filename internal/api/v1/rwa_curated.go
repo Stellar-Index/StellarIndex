@@ -53,7 +53,9 @@ type rwaCurated struct {
 	// answered and something is inside its bound; nil otherwise.
 	published *timescale.CuratedRWAPublished
 	// available says the per-asset directory answered with rows.
-	available  bool
+	available bool
+	// readFailed says either read errored: an outage, which the envelope must flag, not a quiet curator.
+	readFailed bool
 	wired      bool
 	observedAt time.Time
 }
@@ -93,14 +95,15 @@ func (s *Server) readRWACurated(ctx context.Context) rwaCurated {
 	// The two reads fail independently: published totals answering while the per-asset list is
 	// unreadable is a normal state, not a failure of either.
 	published, err := s.RWACurated.LatestCuratedPublished(ctx, rwaCuratorDune)
-	if err != nil {
+	publishedFailed := err != nil
+	if publishedFailed {
 		s.logger.Warn("rwa curated published read failed", "err", err)
 		published = nil
 	}
 	rows, census, err := s.RWACurated.CuratedRWADirectoryByAddress(ctx, rwaCuratorDune)
 	if err != nil {
 		s.logger.Warn("rwa curated directory read failed", "err", err)
-		return rwaCurated{published: published, wired: true, observedAt: time.Now()}
+		return rwaCurated{published: published, readFailed: true, wired: true, observedAt: time.Now()}
 	}
 	if why := census.Check(); why != "" {
 		s.logger.Warn("rwa curated directory: census does not balance", "why", why)
@@ -109,9 +112,12 @@ func (s *Server) readRWACurated(ctx context.Context) rwaCurated {
 		if published == nil {
 			s.logger.Warn("rwa curated directory: no fresh rows and nothing published", "stale", census.Stale)
 		}
-		return rwaCurated{published: published, wired: true, census: census, observedAt: time.Now()}
+		return rwaCurated{published: published, readFailed: publishedFailed, wired: true, census: census, observedAt: time.Now()}
 	}
-	return rwaCurated{byAddress: rows, census: census, published: published, available: true, wired: true, observedAt: time.Now()}
+	return rwaCurated{
+		byAddress: rows, census: census, published: published, available: true, readFailed: publishedFailed,
+		wired: true, observedAt: time.Now(),
+	}
 }
 
 // ─── wire shapes ────────────────────────────────────────────────────
@@ -318,7 +324,7 @@ func sortCuratedMembers(m []rwaCuratedMember) {
 
 // rwaCuratedRows turns members into served rows through the SAME catalogue, supply and decimals path the contract arm uses, so supply is
 // the lake's reading, not the curator's.
-// degraded reports a failed read or a valuation ctx cut short; unanswered a row whose own gate or directory read did not answer,
+// degraded reports a failed read (rows nil) or a valuation ctx cut short (rows served, some unvalued); unanswered a row whose own gate or directory read did not answer,
 // which withholds that row's figures without making the catalogue unreadable.
 func (s *Server) rwaCuratedRows(
 	ctx context.Context, members []rwaCuratedMember, now time.Time,
@@ -416,7 +422,7 @@ func rwaCuratedSummarise(
 	case !snap.available:
 		out.Status = "unavailable"
 		return out
-	case degraded:
+	case degraded && rows == nil:
 		// The snapshot answered but the contract-catalogue read behind the per-asset rows did not:
 		// not "zero curated assets", the same unanswered-read case as above.
 		out.Status = "unavailable"
@@ -424,7 +430,13 @@ func rwaCuratedSummarise(
 	}
 	out.Status = "served"
 	out.Assets = len(rows)
-	additional, anyAdditional, partial := rwaCuratedTally(rows, out)
+	additional, anyAdditional, unvalued, partial := rwaCuratedTally(rows, out)
+	if degraded && unvalued > 0 {
+		partial = true
+		out.Basis += " The valuation read was cut short, so " + strconv.Itoa(unvalued) +
+			" row(s) the verified set does not carry were served without a value because they were not read, not refused," +
+			" and any additional or combined figure is a LOWER BOUND."
+	}
 	if anyAdditional {
 		if excludedClassic > 0 {
 			partial = true
@@ -444,8 +456,8 @@ func rwaCuratedSummarise(
 // rwaCuratedTally counts the served rows into the summary and sums the value of rows the verified set does NOT carry, the only part that
 // adds to the verified total.
 // anyAdditional reports whether any such row carried a value, so an all-verified set serves no "additional" figure rather than zero;
-// partial that the sum leaves one of those rows out or counts one from a floor supply.
-func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.Rat, anyAdditional, partial bool) {
+// unvalued counts those rows the sum leaves out; partial that it leaves one out or counts one from a floor supply.
+func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.Rat, anyAdditional bool, unvalued int, partial bool) {
 	additional = new(big.Rat)
 	for _, r := range rows {
 		alsoVerified := r.Curator != nil && r.Curator.AlsoVerified
@@ -460,6 +472,7 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.R
 			continue
 		}
 		if v == nil {
+			unvalued++
 			partial = true
 			continue
 		}
@@ -467,7 +480,7 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.R
 		anyAdditional = true
 		partial = partial || r.CirculatingSupplyLowerBound
 	}
-	return additional, anyAdditional, partial
+	return additional, anyAdditional, unvalued, partial
 }
 
 // rwaCuratedPublishedBlock renders what the curator last published with the signed gap to the verified total ON THE CURATOR'S
@@ -572,5 +585,5 @@ func (s *Server) attachRWACurated(
 	hist := s.lastRWAValueHistory()
 	verifiedAt := func(day time.Time) *big.Rat { return rwaVerifiedTotalOn(hist, day) }
 	view.Curated = rwaCuratedSummarise(snap, rows, classicSkipped, degraded, ref.ValueUSD, ref.LowerBound, verifiedAt, now)
-	return degraded || unanswered
+	return degraded || unanswered || snap.readFailed
 }

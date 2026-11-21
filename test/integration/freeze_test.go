@@ -246,6 +246,12 @@ func TestFreezeWindowLadders_Migration0163(t *testing.T) {
 	if _, _, ok, lerr := sink.LoadWindowLadders(ctx, asset, quote); lerr != nil || ok {
 		t.Fatalf("LoadWindowLadders after MarkRecovered = (ok=%v, err=%v), want (false, nil)", ok, lerr)
 	}
+	// A second close (the sweep and a releasing writer racing) finds no open row: freeze's sentinel for the
+	// writer and sweep, ErrNotFound for freeze-unfreeze.
+	if err := sink.MarkRecovered(ctx, asset, quote, freeze.ReleasedBySystemRecovery); !errors.Is(err, freeze.ErrNoOpenRow) ||
+		!errors.Is(err, timescale.ErrNotFound) {
+		t.Fatalf("second MarkRecovered = %v, want both freeze.ErrNoOpenRow and timescale.ErrNotFound", err)
+	}
 	if err := sink.SaveWindowLadder(ctx, asset, quote, long, extended); !errors.Is(err, timescale.ErrNotFound) {
 		t.Fatalf("SaveWindowLadder against a closed row = %v, want ErrNotFound", err)
 	}
@@ -1109,5 +1115,53 @@ func TestFreezeReleaseWindow_RedisLossKeepsEscalatedSibling(t *testing.T) {
 	}
 	if _, ok, _ := w.LoadStateForWindow(ctx, asset, quote, long); ok {
 		t.Error("the durable ladder outlived the pair's last release")
+	}
+}
+
+// TestFreezeReleaseWindow_RefireBeforeTheSweepOpensANewRow: an auto-release closes its own row, so a re-fire before the
+// recovery sweep records a second freeze_events row (and its anomaly.freeze hook) instead of folding into the first.
+func TestFreezeReleaseWindow_RefireBeforeTheSweepOpensANewRow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	sink := timescale.NewFreezeEventSink(store)
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithEventSink(sink), freeze.WithLadderStore(sink, 0))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	asset, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	quote, _ := c.NewFiatAsset("USD")
+	decision := anomaly.Decision{Action: anomaly.ActionFreeze, Class: anomaly.ClassStablecoin, Reason: "phase2:3_signal_AND"}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	st := freeze.State{FiredAt: now, HoldUntil: now.Add(30 * time.Minute), Corroborated: true}
+
+	if err := w.MarkHoldForWindow(ctx, asset, quote, time.Hour, "0.874500000000", decision, st, 35*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow (first fire): %v", err)
+	}
+	if kept, err := w.ReleaseWindow(ctx, asset, quote, time.Hour); err != nil || kept {
+		t.Fatalf("ReleaseWindow = (kept=%v, err=%v), want (false, nil)", kept, err)
+	}
+	if n := countOpenFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 0 {
+		t.Fatalf("open rows after the auto-release = %d, want 0", n)
+	}
+	if err := w.MarkHoldForWindow(ctx, asset, quote, time.Hour, "0.912000000000", decision, st, 35*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow (re-fire): %v", err)
+	}
+	if n := countFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 2 {
+		t.Errorf("freeze_events rows after fire, release, re-fire = %d, want 2", n)
+	}
+	if n := countOpenFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 1 {
+		t.Errorf("open rows after the re-fire = %d, want 1", n)
 	}
 }

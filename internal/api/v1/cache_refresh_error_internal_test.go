@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -22,6 +23,22 @@ func refreshErrorDelta(t *testing.T, cache, op string, run func()) float64 {
 	before := testutil.ToFloat64(c)
 	run()
 	return testutil.ToFloat64(c) - before
+}
+
+type failingStreamOracle struct{ streamOracle }
+
+func (*failingStreamOracle) LatestOracleStreams(context.Context) ([]canonical.OracleUpdate, error) {
+	return nil, errors.New("timescale: statement timeout")
+}
+
+func TestRWAReferencesRefresh_FailureCountsRefreshError(t *testing.T) {
+	s := &Server{Options: Options{Oracle: &failingStreamOracle{}}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	got := refreshErrorDelta(t, "rwa_references", "oracle_streams", func() {
+		s.fillRWAReferences(make(chan struct{}))
+	})
+	if got != 1 {
+		t.Fatalf("refresh_error delta = %v, want 1: a failed fill keeps the old snapshot with no other signal", got)
+	}
 }
 
 func TestProtocolRosterRefresh_FailureCountsRefreshError(t *testing.T) {

@@ -934,6 +934,7 @@ func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 		entries   int
 		contracts int
 		stale     int
+		outage    bool
 		reading   string
 	}{
 		{
@@ -961,6 +962,18 @@ func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 			entries: 33,
 			reading: "fresh rows, none of them contracts: nothing to fix",
 		},
+		{
+			// Fresh classic rows prove one source alive, not the one that lists contracts: the stale rows
+			// may be exactly that source's, so the arm's evidence is unread.
+			name: "fresh classic rows beside stale rows",
+			listings: &stubRWAListings{census: &timescale.ListingDirectoryCensus{
+				Entries: 33, Classic: 33, Stale: 5,
+			}},
+			entries: 33,
+			stale:   5,
+			outage:  true,
+			reading: "a source is fresh but some rows aged out: fix the sync that wrote them",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := getRWA(t, rwaEvidenceServer(t, tc.listings))
@@ -978,6 +991,14 @@ func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 			if ev.ObservedAt.IsZero() {
 				t.Error("evidence carries counts with no instant: the counts can be re-derived " +
 					"from the table afterwards, the moment this set looked cannot")
+			}
+			// A healthy directory answered every read, so nothing it caused may read as an outage.
+			if tc.outage && !view.Summary.Truncated {
+				t.Errorf("truncated = false while the contract-listing source may be stale — %s", tc.reading)
+			}
+			if !tc.outage && tc.entries > 0 && (view.Summary.Truncated || view.Summary.LowerBound) {
+				t.Errorf("truncated = %v lower_bound = %v on a healthy directory naming no contract — %s",
+					view.Summary.Truncated, view.Summary.LowerBound, tc.reading)
 			}
 		})
 	}

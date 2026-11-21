@@ -6,7 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// storageSupplyResult is one cached storage reading: a reading, or the reader's decline by design ([storageSupplyDeclined]).
+// storageSupplyResult is one cached storage reading: a reading, or a refusal the lake state fixes ([storageSupplyDeclined],
+// [storageSupplyUnchecked]).
 type storageSupplyResult struct {
 	st       clickhouse.ContractStorageSupply
 	declined error
@@ -32,7 +33,7 @@ func NewCachedContractStorageSupplyReader(upstream ContractStorageSupplyReader) 
 func (c *CachedContractStorageSupplyReader) ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error) {
 	res, _, _, err := c.cache.get(ctx, "contract_storage_supply", contractID, func(ctx context.Context) (storageSupplyResult, error) {
 		st, err := c.upstream.ContractStorageSupply(ctx, contractID)
-		if err != nil && !storageSupplyDeclined(err) {
+		if err != nil && !storageSupplyDeclined(err) && !storageSupplyUnchecked(err) {
 			return storageSupplyResult{}, err
 		}
 		return storageSupplyResult{st: st, declined: err}, nil

@@ -394,23 +394,47 @@ func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset
 	if err != nil {
 		return true, err
 	}
-	if label == "" {
-		// No window to scope a retire to: the unscoped release it always was.
-		return false, w.Clear(ctx, asset, quote)
-	}
-	held := ok && marker.Windowed && w.siblingLadderHeld(marker, label)
-	if !held {
-		if held, err = w.durableSiblingHeld(ctx, asset, quote, window); err != nil {
-			return true, err
+	held := false
+	if label != "" {
+		held = ok && marker.Windowed && w.siblingLadderHeld(marker, label)
+		if !held {
+			if held, err = w.durableSiblingHeld(ctx, asset, quote, window); err != nil {
+				return true, err
+			}
 		}
 	}
 	if held {
 		return true, w.RetireWindowLadder(ctx, asset, quote, window)
 	}
-	return false, w.Clear(ctx, asset, quote)
+	if err := w.Clear(ctx, asset, quote); err != nil {
+		return false, err
+	}
+	if ok {
+		w.closeReleasedRow(ctx, asset, quote)
+	}
+	return false, nil
 }
 
-// durableSiblingHeld reports whether the durable record holds a live ([LadderStillLive]) ladder
+// closeReleasedRow stamps recovered_at on the pair's open freeze_events row once this writer itself ended the freeze, so a
+// re-fire before the next [Recovery] sweep opens a new row (and its anomaly.freeze hook) instead of folding into the old one.
+// An absent marker is skipped: freeze-unfreeze closes its own row and a lapse is the sweep's to judge. Best-effort; the sweep is the backstop.
+func (w *Writer) closeReleasedRow(ctx context.Context, asset, quote canonical.Asset) {
+	closer, ok := w.sink.(Recoverer)
+	if !ok {
+		return
+	}
+	err := closer.MarkRecovered(ctx, asset, quote, ReleasedBySystemRecovery)
+	if errors.Is(err, ErrNoOpenRow) {
+		w.log().Debug("freeze: released freeze row already closed", "asset", asset.String(), "quote", quote.String())
+		return
+	}
+	if err != nil {
+		w.log().Warn("freeze: released freeze row not closed; the recovery sweep closes it",
+			"asset", asset.String(), "quote", quote.String(), "err", err)
+	}
+}
+
+// durableSiblingHeld reports whether the durable record holds a live ([DurableLadderLive]) ladder
 // for another window, or a live unowned one. False without a read for a non-window store (it has
 // nothing to retire per window). A store ERROR is returned: here "absent" destroys the record.
 func (w *Writer) durableSiblingHeld(ctx context.Context, asset, quote canonical.Asset, own time.Duration) (bool, error) {
@@ -426,7 +450,7 @@ func (w *Writer) durableSiblingHeld(ctx context.Context, asset, quote canonical.
 	}
 	now := w.now()
 	for window, st := range stored {
-		if window != own && LadderStillLive(st, w.ladderGrace, now) {
+		if window != own && DurableLadderLive(st, w.ladderGrace, now) {
 			return true, nil
 		}
 	}
@@ -439,7 +463,7 @@ func (w *Writer) durableSiblingHeld(ctx context.Context, asset, quote canonical.
 func (w *Writer) siblingLadderHeld(marker Marker, own string) bool {
 	now := w.now()
 	for label, st := range marker.Ladders {
-		if label != own && LadderStillLive(st, w.ladderGrace, now) {
+		if label != own && DurableLadderLive(st, w.ladderGrace, now) {
 			return true
 		}
 	}
@@ -478,8 +502,8 @@ func (w *Writer) mergeLadders(
 	case marker.Windowed:
 		windowed = true
 		for k, v := range marker.Ladders {
-			// A floor-dropped window never retires its own ladder.
-			if LadderStillLive(v, w.ladderGrace, now) {
+			// An unadvanced ordinary ladder is pruned; an escalated one stays until an operator clears it.
+			if DurableLadderLive(v, w.ladderGrace, now) {
 				ladders[k] = v
 			}
 		}
@@ -578,7 +602,7 @@ func (w *Writer) liveDurableLadders(ctx context.Context, asset, quote canonical.
 	}
 	now := w.now()
 	for window, st := range stored {
-		if label := windowLabel(window); label != "" && LadderStillLive(st, w.ladderGrace, now) {
+		if label := windowLabel(window); label != "" && DurableLadderLive(st, w.ladderGrace, now) {
 			ladders[label] = st
 		}
 	}
@@ -649,7 +673,7 @@ func (w *Writer) loadState(ctx context.Context, asset, quote canonical.Asset, wi
 	}
 	if label != "" && marker.Windowed {
 		// Own live ladder, else the unowned one on its recording tick, else zero.
-		if st, owned := marker.Ladders[label]; owned && LadderStillLive(st, w.ladderGrace, w.now()) {
+		if st, owned := marker.Ladders[label]; owned && DurableLadderLive(st, w.ladderGrace, w.now()) {
 			return st, true, nil
 		}
 		if w.unownedAdoptable(marker, w.now()) {
@@ -684,8 +708,8 @@ func (w *Writer) loadDurableLadder(ctx context.Context, asset, quote canonical.A
 	if !ok {
 		return State{}, false, nil
 	}
-	if !LadderStillLive(st, w.ladderGrace, w.now()) {
-		// Inactive, or lapsed while the aggregator was down: do not resurrect.
+	if !DurableLadderLive(st, w.ladderGrace, w.now()) {
+		// Inactive, or a non-escalated hold that lapsed while the aggregator was down: do not resurrect.
 		return State{}, false, nil
 	}
 	obs.AnomalyFreezeLadderRehydratedTotal.Inc()
@@ -708,7 +732,7 @@ func (w *Writer) loadDurableWindowLadder(
 		return State{}, false, nil
 	}
 	now := w.now()
-	if own, held := stored[window]; held && LadderStillLive(own, w.ladderGrace, now) {
+	if own, held := stored[window]; held && DurableLadderLive(own, w.ladderGrace, now) {
 		obs.AnomalyFreezeLadderRehydratedTotal.Inc()
 		return own, true, nil
 	}
@@ -717,7 +741,7 @@ func (w *Writer) loadDurableWindowLadder(
 		return unowned, true, nil
 	}
 	for _, sibling := range stored {
-		if LadderStillLive(sibling, w.ladderGrace, now) {
+		if DurableLadderLive(sibling, w.ladderGrace, now) {
 			return State{}, true, nil
 		}
 	}
@@ -725,11 +749,21 @@ func (w *Writer) loadDurableWindowLadder(
 }
 
 // LadderStillLive is the single definition of "Redis lost the marker" vs "the freeze is over" (active, inside hold plus grace); LoadState, Recovery and tools must agree.
+// It bounds unowned ladders and TTL math; an OWNED window ladder, in the marker or the durable record, is judged by [DurableLadderLive].
 func LadderStillLive(st State, grace time.Duration, now time.Time) bool {
 	if !st.Active() {
 		return false
 	}
 	return !now.After(st.HoldUntil.Add(grace))
+}
+
+// DurableLadderLive is [LadderStillLive] for an owned ladder, whose lapse may be an owner outage or a window that stopped
+// ticking: an escalated ladder stays live, since only an operator ends it (freeze-unfreeze deletes the marker and closes the record).
+func DurableLadderLive(st State, grace time.Duration, now time.Time) bool {
+	if st.Active() && st.Escalated {
+		return true
+	}
+	return LadderStillLive(st, grace, now)
 }
 
 // Clear deletes the marker and retires the durable ladder, so a restart before the recovery sweep cannot re-freeze a cleared pair; idempotent, store write best-effort.

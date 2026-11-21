@@ -90,7 +90,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	const maxTrades = 10000
-	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
+	window, books, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -107,9 +107,9 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res.Truncated = window.Len() == maxTrades
+	res.Truncated = window.Truncated()
 	res.Clamped = clamped
-	res.Substance = s.thinMarketEvidence(ctx, base, quote, "twap")
+	res.Substance = s.thinMarketEvidence(ctx, base, quote, books, "twap")
 	writeJSON(w, res, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil}, to))
 }
 

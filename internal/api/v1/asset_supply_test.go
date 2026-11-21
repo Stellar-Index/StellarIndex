@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -532,9 +533,7 @@ func TestSupplyEventNetAtOrAboveStorageIsUnchanged(t *testing.T) {
 	}{
 		{"storage equals net", nil, &fakeStorageSupply{out: equal}},
 		{"storage below net", above, &fakeStorageSupply{out: lower}},
-		{"storage declines", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyNoInstance}},
 		{"storage refuses a SAC", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyIsStellarAsset}},
-		{"holder set past the reader's cap", nil, &fakeStorageSupply{err: clickhouse.ErrStorageSupplyTooManyEntries}},
 		{"no storage reader", nil, nil},
 	}
 	for _, tc := range cases {
@@ -618,7 +617,7 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 		{"stellar asset contract", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyIsStellarAsset}},
 		{"too many entries", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyTooManyEntries}},
 		{"no instance entry captured", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyNoInstance}},
-		{"read failed", &fakeStorageSupply{err: errors.New("clickhouse down")}},
+		{"undecodable entry", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyUndecodable}},
 		{"contract holds no balances", &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(0)}}},
 	}
 	for _, tc := range cases {
@@ -632,6 +631,38 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 				t.Errorf("404 body carries a total_supply: %s", rec.Body)
 			}
 		})
+	}
+}
+
+// Storage the reader could not sum (an undecodable entry, a holder set past its cap, no instance entry to rule out a SAC) cannot
+// prove the event net short, so the net is served as a floor, not a total.
+func TestSupplyFlagsTheNetALowerBoundWhenTheStorageCheckCannotRun(t *testing.T) {
+	for name, err := range map[string]error{
+		"undecodable entry":          fmt.Errorf("%w: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable),
+		"holder set past its cap":    fmt.Errorf("%w: %s (>25000)", clickhouse.ErrStorageSupplyTooManyEntries, storageDealContractID),
+		"no instance entry captured": fmt.Errorf("%w: %s", clickhouse.ErrStorageSupplyNoInstance, storageDealContractID),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := serveSupplyWithStorage(t, dealFlows(), &fakeStorageSupply{err: err}, storageDealContractID)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
+			}
+			got := decodeSupply(t, rec.Body.Bytes())
+			if got.Source != "mint_burn_flows" || got.TotalSupply != dealFlows().Total.String() {
+				t.Errorf("source = %q total_supply = %q, want the event net", got.Source, got.TotalSupply)
+			}
+			if !got.CirculatingSupplyLowerBound {
+				t.Error("circulating_supply_lower_bound = false: the net is served as exact although storage could not check it")
+			}
+		})
+	}
+}
+
+// A flowless token's storage is its only reading, so a read that did not answer is a 502, not the 404 a decline earns.
+func TestSupplyIsBadGatewayWhenNoFlowsAndStorageReadFails(t *testing.T) {
+	rec := serveSupplyWithStorage(t, zeroFlows(), &fakeStorageSupply{err: errors.New("clickhouse down")}, storageDealContractID)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body=%s)", rec.Code, rec.Body)
 	}
 }
 
