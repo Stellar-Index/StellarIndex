@@ -629,7 +629,7 @@ Counter, labels `sink` (`persist_events`) and `kind` (`trade` |
 Rows a sink's shutdown drain could not land in budget; the Postgres twin of `stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}`. The cursor is upserted first, so these are gaps it never revisits.
 
 - `sink="persist_events"`: the only emitter today.
-- `kind="trade"`: per row; recover with `stellarindex-ops ch-rebuild -sdex-gaps`.
+- `kind="trade"`: per row; recover with `stellarindex-ops ch-rebuild -sdex -sdex-gaps`.
 - `kind="event"`: non-trade writes; no ledger is carried, so use the source's gap detector.
 
 Pre-seeded at zero; it should be 0 across clean deploys. On-chain rows are re-walked after the exit rewinds the cursor; the journal says which. A scrape can miss it; the journal ERROR line is authoritative. Alert `stellarindex_ingestion_sink_undrained_rows`.
