@@ -177,16 +177,40 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 // thinMarketEvidence is the live substance measurement behind flags.thin_market on /v1/vwap, /v1/twap and /v1/ohlc, or nil when the pair clears the
 // floor.
 // These raw-trade surfaces admit a thin market (ADR-0018) rather than withhold it; the scam half already ran, hence the nil scam gate.
+// A fiat quote is measured over the constituent markets the read combined, since the literal X/fiat pair is empty unless a CEX quotes
+// it: the market is thin only when no constituent clears the floor.
 func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
 	if s.Substance == nil {
 		return nil
 	}
-	admCtx, adm := WithThinAdmission(ctx, base, quote, true)
-	withheldBy(admCtx, s.Substance, nil, base, quote, surface)
-	if !adm.Admitted() {
-		return nil
+	var thin *SubstanceEvidence
+	for _, m := range s.substanceMarkets(base, quote) {
+		admCtx, adm := WithThinAdmission(ctx, m.Base, m.Quote, true)
+		withheldBy(admCtx, s.Substance, nil, m.Base, m.Quote, surface)
+		if !adm.Admitted() {
+			return nil
+		}
+		if thin == nil {
+			thin = substanceEvidenceWire(adm.Evidence())
+		}
 	}
-	return substanceEvidenceWire(adm.Evidence())
+	return thin
+}
+
+// substanceMarkets is the market set a raw-trade read of (base, quote) draws from: the fiat constituents for a fiat quote, else the pair.
+func (s *Server) substanceMarkets(base, quote canonical.Asset) []canonical.Pair {
+	literal := []canonical.Pair{{Base: base, Quote: quote}}
+	if quote.Type != canonical.AssetFiat {
+		return literal
+	}
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		return literal
+	}
+	if c := s.usdPeggedConstituents(pair); len(c) > 0 {
+		return c
+	}
+	return literal
 }
 
 // parseVWAPParams parses ?outlier_sigma= then ?breakdown= / ?interval=.
