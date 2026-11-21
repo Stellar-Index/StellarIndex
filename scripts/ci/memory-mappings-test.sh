@@ -31,6 +31,10 @@
 #   6. The rendered bytes parse as Prometheus exposition, checked with
 #      the repo's own parser (lint_textfile_exposition.py --check-file)
 #      rather than a second copy of the grammar written here.
+#   7. A unit running a release binary replaced on disk (" (deleted)" or
+#      a .prev-<tag> name, in the main process or a child) reports 1;
+#      a healthy unit reports an explicit 0; non-release binaries are
+#      ignored; the unit comes from cgroup v2, else v1, else "unknown".
 #
 # PROVEN-RED (re-run after any edit to the selector):
 #   * change `[ "$count" -gt "$best" ]` to `[ "$count" -lt "$best" ]` in
@@ -38,7 +42,9 @@
 #     watchdog, i.e. the permanently-green failure this probe exists to
 #     avoid;
 #   * delete the `case "$want" in *[!A-Za-z0-9._-]*)` guard and case 5
-#     renders `{process="click"house"}` into the published file.
+#     renders `{process="click"house"}` into the published file;
+#   * delete the `*' (deleted)') replaced=1` arm and case 7 fails six
+#     checks (every replaced-in-place unit reads 0).
 #
 # Run: bash scripts/ci/memory-mappings-test.sh
 set -uo pipefail
@@ -256,6 +262,58 @@ exited0 two "$rc"
 has two 'stellarindex_process_memory_mappings{process="clickhouse"} 47000'
 has two 'stellarindex_process_memory_mappings{process="postgres"} 500'
 has two 'stellarindex_process_memory_mappings_procs{process="postgres"} 1'
+
+# ─── 7. a unit still running a replaced release binary ───────────────
+#
+# A deploy swaps /usr/local/bin/<binary> under a running daemon, which
+# keeps executing the old build until restarted. The exe links below are
+# the kernel's own spellings; they need not resolve, since the probe reads
+# the bare link text.
+make_unit_proc() {  # make_unit_proc <pid> <exe-link-text> <cgroup-file-line|none>
+  mkdir -p "$FAKE/$1"
+  ln -sfn "$2" "$FAKE/$1/exe"
+  if [ "$3" != "none" ]; then
+    printf '%s\n' "$3" > "$FAKE/$1/cgroup"
+  fi
+}
+make_unit_proc 501 '/usr/local/bin/stellarindex-ops (deleted)' '0::/system.slice/cap67-movements.service'
+make_unit_proc 502 '/usr/local/bin/stellarindex-ops.prev-v0.115.1' '0::/system.slice/follow-renamed.service'
+make_unit_proc 503 '/usr/local/bin/stellarindex-api' '0::/system.slice/stellarindex-api.service'
+# Healthy main process, replaced child: the unit reports the worst.
+make_unit_proc 504 '/usr/local/bin/stellarindex-ops' '0::/system.slice/split.service'
+make_unit_proc 505 '/usr/local/bin/stellarindex-ops (deleted)' '0::/system.slice/split.service'
+# A oneshot caught mid-run on a replaced binary: still a stale writer.
+make_unit_proc 506 '/usr/local/bin/stellarindex-ops (deleted)' '0::/system.slice/ch-supply.service'
+# Not release binaries: a replaced tool in the same dir, and a release name elsewhere.
+make_unit_proc 507 '/usr/local/bin/mc (deleted)' '0::/system.slice/minio-mirror.service'
+make_unit_proc 508 '/opt/stellarindex-ops (deleted)' '0::/system.slice/elsewhere.service'
+# cgroup v1 fallback, and galexie (installed by go install into the same dir).
+make_unit_proc 509 '/usr/local/bin/galexie (deleted)' "$(printf '12:name=systemd:/system.slice/galexie.service\n1:cpu:/')"
+# No readable cgroup: reported, not dropped.
+make_unit_proc 510 '/usr/local/bin/stellarindex-ops (deleted)' none
+
+rc="$(run_probe replaced)"
+exited0 replaced "$rc"
+has replaced 'stellarindex_unit_running_replaced_binary{unit="cap67-movements.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="follow-renamed.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="stellarindex-api.service"} 0'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="split.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="ch-supply.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="galexie.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="unknown"} 1'
+hasnt replaced 'unit="minio-mirror.service"' "only stellarindex-* and galexie are release binaries"
+hasnt replaced 'unit="elsewhere.service"' "only /usr/local/bin is the deploy target"
+hasnt replaced 'unit="split.service"} 0' "one replaced child makes the whole unit stale"
+if grep -q '^# TYPE stellarindex_unit_running_replaced_binary gauge$' "$TMP/replaced/memory_mappings.prom"; then
+  ok "replaced: the family declares its TYPE"
+else
+  bad "replaced: no TYPE line for stellarindex_unit_running_replaced_binary"
+fi
+if python3 "$CHECKER" --check-file "$TMP/replaced/memory_mappings.prom" >/dev/null 2>"$TMP/replaced.check"; then
+  ok "replaced: published bytes parse as Prometheus exposition"
+else
+  bad "replaced: published bytes do not parse: $(cat "$TMP/replaced.check")"
+fi
 
 echo "memory-mappings-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

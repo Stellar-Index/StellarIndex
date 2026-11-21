@@ -199,3 +199,35 @@ groups:
               systemctl status memory-mappings.timer memory-mappings.service
               journalctl -u memory-mappings.service --since -1h
               stellarindex_process_memory_mappings_procs   # 0 = matched nothing
+
+      # Same producer and file, so the probe_degraded stamp arm above
+      # already covers it going dark; no absent arm here, because a
+      # host with no release-binary process has no series by design.
+      - alert: stellarindex_unit_running_replaced_binary
+        expr: stellarindex_unit_running_replaced_binary == 1
+        # 30m = six producer runs. A deploy restarts each listed unit in
+        # the same task that swaps its binary (health retries cap at
+        # ~60 s), so a rolling deploy clears well inside this.
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#replaced-binary
+          summary: "{{ $labels.unit }} is still running a release binary that was replaced on disk"
+          description: |
+            A process in {{ $labels.unit }} has run a /usr/local/bin
+            stellarindex-* or galexie binary for 30 min after that file
+            was replaced (exe link "(deleted)" or a .prev-<tag> name).
+            It is executing the OLD build: whatever it writes follows
+            the old code, and a fix that was deployed is not in effect.
+
+              for p in $(systemctl show -p MainPID --value {{ $labels.unit }}) \
+                $(cat /sys/fs/cgroup/system.slice/{{ $labels.unit }}/cgroup.procs); do \
+                readlink /proc/$p/exe; done
+              systemctl try-restart {{ $labels.unit }}
+
+            A oneshot caught mid-run clears on its next start. Then decide
+            whether what the stale writer processed must be re-derived —
+            see the runbook.

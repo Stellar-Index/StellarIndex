@@ -14,6 +14,7 @@ severity: P3
 | `stellarindex_ops_job_heartbeat_stale` | P3 ticket | the process is GONE |
 | `stellarindex_ops_job_no_progress` | P3 ticket | the process is ALIVE and HUNG |
 | `stellarindex_ops_job_run_failed` | P3 ticket | the last run FINISHED with a non-zero exit |
+| `stellarindex_unit_running_replaced_binary` | P3 ticket | a unit still runs a release binary replaced on disk ([Replaced binary](#replaced-binary)) |
 
 Rules: `deploy/monitoring/rules/ingestion.yml` and `configs/prometheus/rules.r1/ingestion.yml`. Source: node_exporter textfile written by `internal/ops/opsutil.JobHeartbeat` at `/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom`. Impact: a backfill/re-derive window is NOT complete. Writes are idempotent so nothing is corrupt, but the lake or served tier has a hole until the window is re-run.
 
@@ -119,6 +120,26 @@ systemctl restart <unit> ...                    # the listed units; or `needrest
 ```
 
 A pending kernel (`NEEDRESTART-KSTA` 2 or 3) needs a reboot in the same window; `Automatic-Reboot` is off.
+
+## Replaced binary
+
+`stellarindex_unit_running_replaced_binary` (ticket, `for: 30m`) fires when a process in `{unit}` runs a `/usr/local/bin/stellarindex-*` or `galexie` binary that was replaced on disk after it started. Source: `memory-mappings.sh` (5-minute timer, `memory_mappings.prom`); `1` = stale, `0` = current, no series = no release binary in that unit. The process is executing the OLD build, so a deployed fix is not in effect for whatever it writes. Usual causes: a deploy that skipped the restart (`cli_daemon_units` in `configs/ansible/playbooks/deploy-binary.yml` does not list the unit), or a binary copied by hand. A oneshot caught mid-run on a replaced binary is reported too; it clears on its next start.
+
+Check:
+
+```sh
+systemctl show -p MainPID,ActiveEnterTimestamp <unit>   # when the stale process started
+cat /sys/fs/cgroup/system.slice/<unit>/cgroup.procs     # every pid in the unit
+readlink /proc/<pid>/exe   # "…/stellarindex-ops (deleted)" or "…stellarindex-ops.prev-<tag>" = stale
+```
+
+Fix:
+
+1. `systemctl try-restart <unit>`; re-read the exe links. The alert clears on the next producer run (≤ 5 min).
+2. Add a long-running unit to `cli_daemon_units` so the next deploy restarts it.
+3. Decide whether to re-derive what the stale writer wrote between `ActiveEnterTimestamp` and the restart: only if a release in that span changed that writer's code (`git log <old-tag>..<new-tag> -- <writer package>`). Re-derive with the domain's own idempotent command, never a bespoke backfill: `cap67-movements` → `stellarindex-ops ch-cap67-movements -write -from <lo> -to <hi>`; a projected domain → `stellarindex-ops projector-replay`; other non-projected domains → `ch-rebuild` ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
+
+Do NOT `kill` the process to clear the alert (a unit with `Restart=` comes back, one without stays down; use `try-restart`), delete `memory_mappings.prom`, or delete the `.prev-<tag>` file (it is the rollback target, and deleting it leaves the process on a ` (deleted)` exe, still stale).
 
 ## Clearing the alert
 
