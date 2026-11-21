@@ -574,7 +574,8 @@ func TestSupplyWithFlowsWithholdsTheNetWhenTheStorageReadFails(t *testing.T) {
 	}
 }
 
-// A storage level that fails the contract's own cross-check cannot prove the event log partial.
+// A storage level that fails the contract's own cross-check cannot prove the event log partial, nor clear it: the level above
+// the net is unverified evidence that the log is short, so the net is served as a floor, never as an exact total.
 func TestSupplySelfInconsistentStorageAboveNetKeepsTheEventNet(t *testing.T) {
 	out := dealStorageSupply()
 	missing := uint32(8)
@@ -582,6 +583,9 @@ func TestSupplySelfInconsistentStorageAboveNetKeepsTheEventNet(t *testing.T) {
 	got := decodeSupply(t, serveSupplyWithStorage(t, dealFlows(), &fakeStorageSupply{out: out}, storageDealContractID).Body.Bytes())
 	if got.Source != "mint_burn_flows" || got.TotalSupply != "28327867109034" {
 		t.Errorf("source = %q total = %q, want the event net on mint_burn_flows", got.Source, got.TotalSupply)
+	}
+	if !got.CirculatingSupplyLowerBound {
+		t.Error("circulating_supply_lower_bound = false: the net is served as exact beside a storage level above it that its own check could not confirm")
 	}
 }
 

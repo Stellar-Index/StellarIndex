@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -30,8 +31,9 @@ func NewCachedContractStorageSupplyReader(upstream ContractStorageSupplyReader) 
 }
 
 // ContractStorageSupply serves the cached reading or decline; every return is a copy, so no caller can mutate another's amounts.
+// An entry older than its TTL plus one refresh budget is reported stale on ctx's [readReport]: its refreshes are failing.
 func (c *CachedContractStorageSupplyReader) ContractStorageSupply(ctx context.Context, contractID string) (clickhouse.ContractStorageSupply, error) {
-	res, _, _, err := c.cache.get(ctx, "contract_storage_supply", contractID, func(ctx context.Context) (storageSupplyResult, error) {
+	res, at, _, err := c.cache.get(ctx, "contract_storage_supply", contractID, func(ctx context.Context) (storageSupplyResult, error) {
 		st, err := c.upstream.ContractStorageSupply(ctx, contractID)
 		if err != nil && !storageSupplyDeclined(err) && !storageSupplyUnchecked(err) {
 			return storageSupplyResult{}, err
@@ -40,6 +42,9 @@ func (c *CachedContractStorageSupplyReader) ContractStorageSupply(ctx context.Co
 	})
 	if err != nil {
 		return clickhouse.ContractStorageSupply{}, err
+	}
+	if !at.IsZero() && time.Since(at) >= tokenSupplyTTL+cacheFillBudget {
+		reportStaleRead(ctx)
 	}
 	if res.declined != nil {
 		return clickhouse.ContractStorageSupply{}, res.declined
