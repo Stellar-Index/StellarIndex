@@ -110,11 +110,10 @@ RestartMaxDelaySec=2min
 MemoryHigh=4G
 MemoryMax=8G
 
-# Hardening, kept in step with the role's stellarindex-api.service.j2. The API
-# writes only its private /tmp (wabt staging), so no persistent path is
-# writable. It never takes a heavy-job lock or uses the galexie, ops or CLI
-# credentials; PID 1 reads EnvironmentFile= outside this namespace, so hiding
-# those paths costs nothing.
+# Hardening, kept in step with the role's stellarindex-api.service.j2. These hide
+# lock and credential paths from the API's own mount namespace only: while it
+# shares uid stellarindex with the writers, a compromised API can still reach
+# them through /proc/<sibling-pid>/root and read sibling environments.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

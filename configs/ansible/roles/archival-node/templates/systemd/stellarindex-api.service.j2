@@ -54,10 +54,10 @@ MemoryHigh=4G
 MemoryMax=8G
 
 # Hardening. Mirrors deploy/systemd/stellarindex-api.service and is pinned by
-# scripts/ci/lint-systemd-hardening.sh. The API writes only its private /tmp
-# (wabt staging), so no persistent path is writable. It never takes a heavy-job
-# lock or uses the galexie, ops or CLI credentials; PID 1 reads EnvironmentFile=
-# outside this namespace, so hiding those paths costs nothing.
+# scripts/ci/lint-systemd-hardening.sh. These hide lock and credential paths from
+# the API's own mount namespace only: while it shares uid stellarindex with the
+# writers, a compromised API can still reach them through /proc/<sibling-pid>/root
+# and read sibling environments.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

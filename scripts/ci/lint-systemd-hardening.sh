@@ -137,8 +137,8 @@ if [ "$ROLE" = "$DEFAULT_ROLE" ] && [ "$verbatim" -eq 0 ]; then
   exit 2
 fi
 
-# The internet-facing API shares its uid with the writers, so both copies of
-# its unit hide what that uid could otherwise reach and grant no write path.
+# Both copies of the API unit hide these paths and grant no write path: defence
+# in depth for its own namespace, not containment from same-uid sibling units.
 API_HIDDEN="/run/lock /etc/default/galexie /etc/default/galexie-backfill /etc/default/stellarindex-ops /etc/clickhouse-client"
 for f in "$DIR/stellarindex-api.service.j2" "$DEPLOY_DIR/stellarindex-api.service"; do
   [ -f "$f" ] || continue
