@@ -19,8 +19,9 @@
 #
 # SAFETY. OPTIMIZE ... FINAL is the engine's own merge, forced: it deletes only
 # RMT-duplicate rows (same ORDER BY key, keeps max ingested_at), is atomic per
-# partition and idempotent. The partitions are write-cold; the live sink writes
-# only near tip. Each merge needs scratch ~ the partition's size (~20-40 GB), so
+# partition and idempotent. Only write-cold partitions are merged: a partition
+# with any active part written in the last hour (the live tip, or one a heal is
+# filling) is skipped and left for a later run. Each merge needs scratch ~ the partition's size (~20-40 GB), so
 # the driver refuses to start a partition without 3x that free, or with the pool
 # below the heavy-job floor (HEAVY_MIN_DATA_KB).
 #
@@ -39,7 +40,9 @@
 # Per-partition rows_before/rows_after/dup_rows_removed land in
 # /var/log/lake-dedup-<table>.log. Each partition's duplicates are counted
 # (one FINAL scan of that partition) before it is touched, and a partition with
-# none is skipped, so a non-shrinking partition should be rare.
+# none is skipped. A merge that removes fewer rows than that count (a no-op
+# OPTIMIZE, or one racing an insert) aborts the run rather than count the
+# partition as done.
 #
 # Progress also lands as node_exporter textfile gauges (stellarindex_lake_dedup_*
 # in <TEXTFILE_DIR>/lake_dedup_<table>.prom), written tmp-then-mv like
@@ -181,6 +184,16 @@ fi
 total=$(echo "$PARTS" | grep -c . || true)
 log "active partitions: $total"
 
+HOT=$($CH -q "
+  SELECT DISTINCT partition_id FROM system.parts
+  WHERE database='stellar' AND table='${T}' AND active
+    AND modification_time > now() - INTERVAL 1 HOUR" < /dev/null)
+hot_rc=$?
+if [ "$hot_rc" -ne 0 ]; then
+  log "ABORT: hot-partition query FAILED rc=$hot_rc — cannot tell the live partition from a cold one"
+  exit 1
+fi
+
 # probe_dups <partition>: rows the engine's own merge would drop from one
 # partition. FINAL collapses on the table's ORDER BY key, the identity OPTIMIZE
 # FINAL dedups on, and streams it in key order; a whole-table uniqExact holds a
@@ -205,6 +218,12 @@ n=0
 for p in $PARTS; do
   [ -f "$STOP" ] && { log "STOP file present — exiting cleanly after $n partitions"; break; }
   [ "$n" -ge "$MAXP" ] && { log "max_partitions reached"; break; }
+  hot=0
+  for h in $HOT; do [ "$h" = "$p" ] && hot=1; done
+  if [ "$hot" -eq 1 ]; then
+    log "skip partition=$p hot (a part was written in the last hour)"
+    continue
+  fi
 
   dup_rows=$(probe_dups "$p")
   probe_rc=$?
@@ -256,7 +275,7 @@ for p in $PARTS; do
   t0=$(date +%s)
   # Backgrounded and waited on so a signal is handled now, not after a merge that
   # can run up to --receive_timeout.
-  $CH --receive_timeout 7200 -q "OPTIMIZE TABLE stellar.${T} PARTITION '${p}' FINAL" < /dev/null 2>>"$OUT" &
+  $CH --receive_timeout 7200 -q "OPTIMIZE TABLE stellar.${T} PARTITION '${p}' FINAL SETTINGS optimize_throw_if_noop = 1" < /dev/null 2>>"$OUT" &
   opt_pid=$!
   wait "$opt_pid"
   rc=$?
@@ -274,7 +293,12 @@ for p in $PARTS; do
     exit 1
   fi
   require_number "rows_after" "$rows_after"
-  log "partition=$p rc=$rc rows_before=$rows_before rows_after=$rows_after dup_removed=$((rows_before - rows_after)) elapsed=$(( $(date +%s) - t0 ))s"
+  removed=$((rows_before - rows_after))
+  log "partition=$p rc=$rc rows_before=$rows_before rows_after=$rows_after dup_removed=$removed elapsed=$(( $(date +%s) - t0 ))s"
+  if [ "$removed" -lt "$dup_rows" ]; then
+    log "ABORT partition=$p: OPTIMIZE removed $removed of $dup_rows duplicate rows — partition NOT deduped"
+    exit 1
+  fi
   write_progress "$n"
 done
 
