@@ -239,6 +239,40 @@ else:
     check(rc == 0 and "restart patroni" in log and not run_patroni_restart.pending,
           "patroni restart handler finishes once the restarted replica streams again, whatever its sampled lag")
 
+# etcd: a member restarts only while every peer is healthy, and waits for its own health.
+def run_etcd_restart(healthy_before, up_after):
+    eenv = jinja2.Environment(trim_blocks=True)
+    eenv.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+    script = eenv.from_string(handlers["restart etcd"]["shell"]).render(
+        etcd_tls_enabled=False, etcd_client_port=2379, ansible_host="10.0.0.12", inventory_hostname="db-02",
+        groups={"postgres_cluster": ["db-01", "db-02", "db-03"]},
+        hostvars={"db-01": {"ansible_host": "10.0.0.11"}, "db-03": {"ansible_host": "10.0.0.13"}})
+    with tempfile.TemporaryDirectory() as d:
+        for ip in healthy_before:
+            open(f"{d}/ok-{ip}", "w").close()
+        stub = {"etcdctl": f'ip=$(printf "%s" "$*" | sed -n "s|.*//\\([0-9.]*\\):.*|\\1|p"); [ -f {d}/ok-$ip ]\n',
+                "systemctl": f'echo "systemctl $*" >> {d}/calls.log\ncase "$*" in restart*) rm -f {d}/ok-10.0.0.12; '
+                             f'{"touch " + d + "/ok-10.0.0.12" if up_after else ":"} ;; esac\n',
+                "sleep": ""}
+        for name, body in stub.items():
+            with open(f"{d}/{name}", "w") as f:
+                f.write("#!/bin/sh\n" + body)
+            os.chmod(f"{d}/{name}", 0o755)
+        env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}"}
+        rc = subprocess.run(["bash", "-c", script], env=env, stdin=subprocess.DEVNULL, capture_output=True).returncode
+        log = open(f"{d}/calls.log").read() if os.path.exists(f"{d}/calls.log") else ""
+    return rc, "restart etcd" in log
+
+
+all_up = ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
+for before, up_after, want, label in (
+        (all_up, True, (0, True), "restarts a healthy member while every peer is healthy"),
+        (["10.0.0.12", "10.0.0.13"], True, (1, False), "refuses while a peer is unhealthy (a failed earlier member)"),
+        (["10.0.0.11"], True, (0, True), "restarts a member that is itself unhealthy"),
+        (all_up, False, (1, True), "fails when the member is not healthy after the restart")):
+    rc, restarted = run_etcd_restart(before, up_after)
+    check((rc == 0) == (want[0] == 0) and restarted == want[1], f"etcd restart handler {label}")
+
 # patroni: only db-01 carries a bootstrap section, so no other member can initdb an empty cluster;
 # initdb's default `trust` lines are replaced; bootstrap.users (dropped in Patroni 4) is not relied on.
 penv = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined)
