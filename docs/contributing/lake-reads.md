@@ -1,6 +1,6 @@
 ---
 title: Checklist — read a duplicate-bearing lake table
-last_verified: 2026-09-07
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -33,15 +33,19 @@ Guard: `scripts/ci/lint-lake-dedup.sh` (+ its self-test), in CI's
       `stddev*`, `varPop`, `varSamp`. If it is not, there is nothing to do:
       a per-entity detail reader legitimately returns what the ledger
       contained, row for row.
-- [ ] If it is, **collapse the table on its full identity first** — any one of:
+- [ ] If it is, **collapse the table on its full identity first** — one of:
 
   | Collapse | Use it when |
   |----------|-------------|
   | `FINAL` on the read | the scanned range is already bounded (a ledger window or a partition) |
-  | `GROUP BY` over the identity | the aggregate is per-key anyway, and other columns come back through `argMax(col, ingested_at)` |
-  | `LIMIT 1 BY` over the identity | a listing that must not serve the same row twice, where `FINAL` would force a merge of the whole scanned range |
-  | `uniqExact((identity))` | the answer IS a count — this is `count()`'s exact twin |
-  | `SELECT DISTINCT` | the projection is a key set rather than rows |
+  | Two levels: an inner `SELECT … argMax(col, ingested_at) … GROUP BY <identity>` with no aggregate from the list above, the aggregate in the outer `SELECT` | `FINAL` would force a merge of the whole scanned range |
+  | `uniqExact((identity))` as the only aggregate | the answer IS a count — this is `count()`'s exact twin |
+
+  Nothing else in the **same** `SELECT` collapses the rows its aggregate
+  reads: a `GROUP BY` over the identity puts every version of a key in its
+  group, so `sum()` there still adds each version, and `LIMIT 1 BY` and
+  `SELECT DISTINCT` run after aggregation. Keep `LIMIT 1 BY` and `DISTINCT`
+  for non-aggregating listings and key sets.
 
 - [ ] The identities are the tables' full `ORDER BY` keys
       (`deploy/clickhouse/tier1_schema.sql`) and **a partial key is not a
