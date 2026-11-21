@@ -5,10 +5,19 @@ package v1
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
+
+// errTokenDecimalsUnwired is [Server.lakeTokenDecimals]'s error when no lake reader is wired (the boot dial missed ClickHouse,
+// and it stays nil until restart): the scale is unread, never "declares none".
+var errTokenDecimalsUnwired = errors.New("token decimals: no lake reader wired")
+
+// scaleReadFailed reports a decimals read that errored, for a surface whose amounts are raw base units: there an unwired reader
+// only leaves `decimals` absent and the response flagged stale+degraded, while a failed read stays a retryable 503.
+func scaleReadFailed(err error) bool { return err != nil && !errors.Is(err, errTokenDecimalsUnwired) }
 
 // tokenDecimalsBatchReader is the optional seam a listing page reads all its Soroban scales through in one query.
 type tokenDecimalsBatchReader interface {
@@ -17,19 +26,39 @@ type tokenDecimalsBatchReader interface {
 
 var _ tokenDecimalsBatchReader = (*clickhouse.ExplorerReader)(nil)
 
-// listingScales is one page's lake token scales from a single batched read. A nil *listingScales reads each row through
-// [Server.lakeTokenDecimals]; a non-nil err means the batch failed and every non-SAC Soroban row is unread, never undeclared.
+// protocolSAC reports a contract known without a lake read to be a Stellar Asset Contract, 7 decimals by protocol: the SAC of
+// native or a verified asset, or a configured wrapper (the alias registry proves each one's derivation at load).
+func (s *Server) protocolSAC(contractID string) bool {
+	if _, ok := s.resolveSACAsset(contractID); ok {
+		return true
+	}
+	a, err := canonical.NewSorobanAsset(contractID)
+	return err == nil && canonical.CanonicalAsset(a).Type != canonical.AssetSoroban
+}
+
+// listingScales is one page's token scales. sacs holds the SAC address derived from each classic row on the page, so an
+// unverified asset's SAC row is 7 by protocol rather than a lake read. Without a batch seam (batched=false) each other row
+// reads through [Server.lakeTokenDecimals]; a non-nil err means the batch failed and those rows are unread, never undeclared.
 type listingScales struct {
 	declared map[string]int
+	sacs     map[string]bool
+	batched  bool
 	err      error
 }
 
-// readListingScales batch-reads the lake scale of every non-SAC Soroban row; nil when the reader has no batch seam.
+// readListingScales derives the page's SACs and batch-reads the lake scale of every other Soroban row when the reader can.
 func (s *Server) readListingScales(ctx context.Context, rows []AssetDetail) *listingScales {
+	ls := &listingScales{declared: map[string]int{}, sacs: map[string]bool{}}
+	for i := range rows {
+		if sac, ok := derivedSAC(rows[i].AssetID); ok {
+			ls.sacs[sac] = true
+		}
+	}
 	br, ok := s.TokenDecimals.(tokenDecimalsBatchReader)
 	if !ok {
-		return nil
+		return ls
 	}
+	ls.batched = true
 	var ids []string
 	seen := make(map[string]bool)
 	for i := range rows {
@@ -38,11 +67,10 @@ func (s *Server) readListingScales(ctx context.Context, rows []AssetDetail) *lis
 			continue
 		}
 		seen[id] = true
-		if _, sac := s.resolveSACAsset(id); !sac {
+		if !ls.sacs[id] && !s.protocolSAC(id) {
 			ids = append(ids, id)
 		}
 	}
-	ls := &listingScales{declared: map[string]int{}}
 	if len(ids) == 0 {
 		return ls
 	}
@@ -60,7 +88,10 @@ func (s *Server) readListingScales(ctx context.Context, rows []AssetDetail) *lis
 
 // lakeScale is [Server.lakeTokenDecimals] answered from the page's batch when there is one.
 func (s *Server) lakeScale(ctx context.Context, ls *listingScales, contractID string) (decimals int, known bool, err error) {
-	if _, sac := s.resolveSACAsset(contractID); sac || ls == nil {
+	if ls != nil && ls.sacs[contractID] {
+		return defaultTokenDecimals, true, nil // the SAC of a classic row on this page: its scale is fixed by the protocol
+	}
+	if ls == nil || !ls.batched || s.protocolSAC(contractID) {
 		return s.lakeTokenDecimals(ctx, contractID)
 	}
 	if ls.err != nil {

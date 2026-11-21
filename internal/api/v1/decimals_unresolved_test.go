@@ -6,6 +6,7 @@ package v1_test
 import (
 	"context"
 	"errors"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -39,7 +41,51 @@ type oneRowSEP41Transfers struct{}
 func (oneRowSEP41Transfers) ListSEP41Transfers(
 	_ context.Context, _, _, _ string, _ int,
 ) ([]timescale.SEP41TransferRow, time.Time, error) {
-	return []timescale.SEP41TransferRow{{Kind: "transfer"}}, time.Time{}, nil
+	return []timescale.SEP41TransferRow{{Kind: "transfer", Amount: big.NewInt(123456789)}}, time.Time{}, nil
+}
+
+// An unwired lake reader leaves the scale unread, not failed: both raw-unit surfaces still answer 200 with their amounts (and
+// history's table-normalised price), omit only the unread `decimals`, and flag the response stale+degraded so no cache keeps it.
+func TestRawUnitSurfaces_UnwiredDecimalsReader_ServesFlaggedWithoutDecimals(t *testing.T) {
+	pair, err := canonical.NewPair(mustParseAsset(t, decTestContract), mustParseAsset(t, "native"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	tr := mkHistTrade(100)
+	tr.Pair = pair
+	ts := httpTestServer(t, v1.New(v1.Options{
+		History:        &stubHistoryReader{trades: []canonical.Trade{tr}},
+		SEP41Transfers: oneRowSEP41Transfers{},
+	}))
+	for _, tc := range []struct {
+		path, absent string
+		present      []string
+	}{
+		{
+			"/v1/history?base=" + decTestContract + "&quote=native&limit=50", `"base_decimals"`,
+			[]string{`"base_amount":"1"`, `"quote_amount":"100"`, `"price":"`, `"quote_decimals":7`},
+		},
+		{"/v1/contracts/" + decTestContract + "/transfers", `"decimals"`, []string{`"amount":"123456789"`}},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+tc.path)
+			body, _ := readAll(resp)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (an unwired scale is not a failed read): %s", resp.StatusCode, body)
+			}
+			if strings.Contains(body, tc.absent) {
+				t.Errorf("unread scale served as a number: %s", body)
+			}
+			for _, want := range append(tc.present, `"stale":true`) {
+				if !strings.Contains(body, want) {
+					t.Errorf("body must contain %s: %s", want, body)
+				}
+			}
+			if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("Cache-Control = %q, want no-store: Degraded is wire-invisible and surfaces only here", cc)
+			}
+		})
+	}
 }
 
 // /v1/contracts/{id}/transfers: `decimals` is the conversion factor for
