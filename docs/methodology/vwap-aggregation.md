@@ -1,6 +1,6 @@
 ---
 title: VWAP & price-aggregation methodology
-last_verified: 2026-09-23
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -211,10 +211,14 @@ The per-request filter on `/v1/vwap?outlier_sigma=` and `/v1/ohlc` is
 still the whole-window form described next — its semantics are part of
 the documented API surface; see `internal/aggregate/outliers.go`.
 Whole-window form: a trade is dropped when its price deviates from the
-window's **median** by more than `σ × 1.4826 × MAD`, where MAD is the
-median absolute deviation and 1.4826 is the standard consistency
-constant that puts MAD on the same scale as a standard deviation for
-normally-distributed data (`robust.go`).
+window's **median** by more than `σ × s`, with
+`s = max(1.4826 × MAD, 0.25 % × |median|)`. MAD is the median absolute
+deviation and 1.4826 is the standard consistency constant that puts MAD
+on the same scale as a standard deviation for normally-distributed data
+(`internal/robuststat/robust.go`). The 0.25 % floor (±1 % at σ = 4) is
+always applied (`internal/aggregate/outliers.go`), so a tight cluster
+with a tiny non-zero MAD does not reject an ordinary move; it is the
+same floor the local layer uses.
 
 - σ ≤ 0 disables it; with fewer than 3 valid prices it is a no-op (a
   degraded signal isn't compounded by dropping half the data).
@@ -236,7 +240,7 @@ reconcile them.
 **Band shape.** The deviation is measured symmetrically in ratio space:
 a price below the centre is mirrored to `centre²/p` before it is
 compared, so the acceptance band is `[centre²/(centre + σ·s), centre + σ·s]`
-with `s = 1.4826·MAD`. Its lower edge is always strictly positive, and a
+with `s` the floored scale above. Its lower edge is always strictly positive, and a
 ½× print is exactly as outlying as a 2× one. The scale `s` is the
 MAD of prices (not of log prices), so the band's width is set in price
 units even though its shape is symmetric (ADR-0046 §1).
