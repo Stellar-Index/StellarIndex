@@ -196,7 +196,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	chartCtx, chartCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer chartCancel()
 	points, walk, err := s.chartSeriesPoints(chartCtx, pair,
-		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
+		chartWindow{from: chartClosedReadFrom(s.now(), from, gran), gran: gran}, s.chartVWAPReader(gran))
 	if errors.Is(err, ErrUnknownGranularity) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-granularity",
