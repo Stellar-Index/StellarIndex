@@ -48,6 +48,12 @@ type LoginThrottle interface {
 	Allow(ctx context.Context, ip, email string) (bool, error)
 }
 
+// SignupBudget is v1.SignupIPThrottle counted under one key: nil, [auth.ErrSignupRateLimited] when spent, or
+// [auth.ErrThrottleUnavailable] once its store has been down past the dwell time.
+type SignupBudget interface {
+	CheckIP(ctx context.Context, ip string) error
+}
+
 // Config wires the auth handlers' dependencies; built once at boot.
 type Config struct {
 	Accounts  platform.AccountStore
@@ -63,6 +69,10 @@ type Config struct {
 	// LoginThrottle (optional) caps magic-link sends per IP and per target email; nil leaves only
 	// the global anon rate-limit.
 	LoginThrottle LoginThrottle
+	// SignupDisabled refuses passkey sign-up with a 503 (api.register_disabled: one lever for anonymous account creation).
+	SignupDisabled bool
+	// SignupBudget (optional) is the all-caller hourly registration budget POST /v1/register spends; passkey sign-up spends it too.
+	SignupBudget SignupBudget
 	// Audit (optional) is the durable audit_log sink for staff look-ups, passkey changes, and
 	// passkey sign-ins refused on a clone warning or ceremony replay. nil means log-only.
 	Audit platform.AuditStore

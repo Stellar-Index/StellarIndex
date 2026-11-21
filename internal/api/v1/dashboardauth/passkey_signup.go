@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -76,24 +78,71 @@ func (h *Handlers) HandlePasskeyBeginSignup(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bool {
+	if !h.passkeySignupEnabled(w, r) {
+		return false
+	}
 	limiter := h.cfg.passkeySignupLimiter
 	if limiter == nil {
 		// Only reachable by bypassing NewHandlers; refuse rather than run uncapped.
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return false
 	}
-	if limiter.Allow(middleware.RemoteIPThrottleKey(r), passkeySignupMaxPerIP) {
+	// Per-IP first: a request it refuses must not spend the budget every other caller shares.
+	if !limiter.Allow(middleware.RemoteIPThrottleKey(r), passkeySignupMaxPerIP) {
+		h.cfg.Logger.Warn("passkey signup throttled", "ip", clientIP(r).String())
+		w.Header().Set("Retry-After", strconv.Itoa(int(passkeySignupWindow/time.Second)))
+		writeProblem(w, http.StatusTooManyRequests, "too many passkey sign-ups; retry later", r.URL.Path)
+		return false
+	}
+	return h.passkeySignupBudgetOK(w, r)
+}
+
+// passkeySignupEnabled answers 503 when the deployment has switched anonymous registration off; false means it is written.
+func (h *Handlers) passkeySignupEnabled(w http.ResponseWriter, r *http.Request) bool {
+	if !h.cfg.SignupDisabled {
 		return true
 	}
-	h.cfg.Logger.Warn("passkey signup throttled", "ip", clientIP(r).String())
-	w.Header().Set("Retry-After", strconv.Itoa(int(passkeySignupWindow/time.Second)))
-	writeProblem(w, http.StatusTooManyRequests, "too many passkey sign-ups; retry later", r.URL.Path)
+	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationDisabled).Inc()
+	writeProblem(w, http.StatusServiceUnavailable, "sign-up is switched off on this deployment", r.URL.Path)
 	return false
+}
+
+// signupBudgetKey is the one key /v1/register's all-caller budget counts under (v1.registerBudgetKey); sharing it is what makes
+// the cap cover both routes.
+const signupBudgetKey = "all"
+
+// passkeySignupBudgetOK spends one unit of the all-caller hourly budget, failing as /v1/register's does: closed once the store
+// has been down past its dwell time, open on a transient error.
+func (h *Handlers) passkeySignupBudgetOK(w http.ResponseWriter, r *http.Request) bool {
+	if h.cfg.SignupBudget == nil {
+		return true
+	}
+	err := h.cfg.SignupBudget.CheckIP(r.Context(), signupBudgetKey)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, auth.ErrSignupRateLimited):
+		obs.RegistrationsTotal.WithLabelValues(obs.RegistrationBudgetExhausted).Inc()
+		w.Header().Set("Retry-After", strconv.FormatInt(3600-h.cfg.Now().Unix()%3600, 10))
+		writeProblem(w, http.StatusServiceUnavailable, "sign-up is at its hourly capacity on this deployment; retry later", r.URL.Path)
+		return false
+	case errors.Is(err, auth.ErrThrottleUnavailable):
+		h.cfg.Logger.Warn("registration budget unavailable; failing closed (sustained Redis errors)", "err", err)
+		obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterRegisterBudget).Inc()
+		w.Header().Set("Retry-After", "30")
+		writeProblem(w, http.StatusServiceUnavailable, "sign-up is temporarily unavailable; retry in a moment", r.URL.Path)
+		return false
+	}
+	h.cfg.Logger.Warn("registration budget check failed; falling open", "err", err)
+	return true
 }
 
 // HandlePasskeyFinishSignup verifies the attestation, creates the account, owner user and credential and mints a session; every
 // verification failure is one generic 400.
 func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Request) {
+	if !h.passkeySignupEnabled(w, r) {
+		return
+	}
 	fail := func() {
 		writeProblem(w, http.StatusBadRequest, "passkey sign-up failed — start again", r.URL.Path)
 	}

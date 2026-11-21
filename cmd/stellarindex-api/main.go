@@ -491,7 +491,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	// An empty dashboard BaseURL leaves the dashboard auth routes unmounted.
-	dashboardBundle, err := buildDashboardBundle(cfg.API.Dashboard, store.DB(), rdb, logger)
+	// One budget for /v1/register and passkey sign-up, so the in-process fallback shares its count too.
+	registerBudget := newRegisterBudget(rdb, cfg.API.RegisterMaxPerHour)
+	dashboardBundle, err := buildDashboardBundle(cfg.API.Dashboard, store.DB(), rdb, logger, cfg.API.RegisterDisabled, registerBudget)
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
@@ -923,7 +925,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		StatusNotices:        statusNoticeStore,
 		Audit:                adminAudit,
 		SignupIPThrottle:     signupIPThrottle,
-		RegisterBudget:       newRegisterBudget(rdb, cfg.API.RegisterMaxPerHour),
+		RegisterBudget:       registerBudget,
 		RegisterDisabled:     cfg.API.RegisterDisabled,
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
 		Divergence:           divergenceLooker,
@@ -1741,7 +1743,11 @@ func dashboardKeyMirror(rdb redis.UniversalClient) dashboardkeys.KeyMirror {
 	return auth.NewRedisAPIKeyStore(rdb)
 }
 
-func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger) (dashboardBundle, error) {
+// signupDisabled and signupBudget are api.register_disabled and /v1/register's all-caller budget, which passkey sign-up obeys too.
+func buildDashboardBundle(
+	cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger,
+	signupDisabled bool, signupBudget dashboardauth.SignupBudget,
+) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
 		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
 		return dashboardBundle{}, nil
@@ -1787,6 +1793,8 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		// DELETE /v1/dashboard/account and GET .../export.
 		AccountEraser:   &accounterasure.Eraser{Store: accounts, Redis: rdb, Logger: logger.With("component", "account-erasure")},
 		AccountExporter: &accounterasure.Exporter{Store: accounts, Redis: rdb},
+		SignupDisabled:  signupDisabled,
+		SignupBudget:    signupBudget,
 	}
 	wireDashboardAuthThrottles(&authCfg, rdb, logger)
 	authH, err := dashboardauth.NewHandlers(&authCfg)

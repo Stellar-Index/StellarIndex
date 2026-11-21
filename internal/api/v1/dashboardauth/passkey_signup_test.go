@@ -1,6 +1,7 @@
 package dashboardauth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -141,6 +143,69 @@ func TestPasskeySignup_BeginCappedPerIP(t *testing.T) {
 	if c := begin("198.51.100.9:1"); c != http.StatusOK {
 		t.Fatalf("other IP: status = %d, want 200", c)
 	}
+}
+
+type fakeSignupBudget struct {
+	calls int
+	err   error
+}
+
+func (f *fakeSignupBudget) CheckIP(_ context.Context, _ string) error {
+	f.calls++
+	return f.err
+}
+
+// The deployment's registration levers cover passkey sign-up too: the switch refuses both legs, and the all-caller budget is
+// spent at begin, before the visitor's authenticator mints a credential.
+func TestPasskeySignup_HonoursRegistrationSwitchAndBudget(t *testing.T) {
+	begin := func(rig *passkeyRig) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-signup", nil)
+		req.RemoteAddr = "203.0.113.7:1"
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyBeginSignup(w, req)
+		return w
+	}
+
+	t.Run("switched off", func(t *testing.T) {
+		rig := newPasskeyRig(t)
+		cookie, body, _ := beginSignup(t, rig)
+		rig.h.cfg.SignupDisabled = true
+		if w := begin(rig); w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("begin: status = %d, want 503", w.Code)
+		}
+		if w := finishSignup(t, rig, cookie, body); w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("finish of a ceremony begun before the switch: status = %d, want 503", w.Code)
+		}
+	})
+
+	t.Run("budget spent", func(t *testing.T) {
+		rig := newPasskeyRig(t)
+		budget := &fakeSignupBudget{err: auth.ErrSignupRateLimited}
+		rig.h.cfg.SignupBudget = budget
+		w := begin(rig)
+		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" {
+			t.Fatalf("begin: status = %d Retry-After = %q, want 503 with Retry-After", w.Code, w.Header().Get("Retry-After"))
+		}
+		if budget.calls != 1 {
+			t.Errorf("budget checks = %d, want 1", budget.calls)
+		}
+	})
+
+	t.Run("budget layer down fails closed", func(t *testing.T) {
+		rig := newPasskeyRig(t)
+		rig.h.cfg.SignupBudget = &fakeSignupBudget{err: auth.ErrThrottleUnavailable}
+		if w := begin(rig); w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("begin: status = %d, want 503", w.Code)
+		}
+	})
+
+	t.Run("budget open", func(t *testing.T) {
+		rig := newPasskeyRig(t)
+		rig.h.cfg.SignupBudget = &fakeSignupBudget{}
+		if w := begin(rig); w.Code != http.StatusOK {
+			t.Fatalf("begin: status = %d, want 200", w.Code)
+		}
+	})
 }
 
 func TestPlaceholderEmail(t *testing.T) {
