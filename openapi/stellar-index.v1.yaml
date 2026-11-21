@@ -4103,6 +4103,7 @@ paths:
                                 supply_apr:      { type: [number, "null"], description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
                                 price_usd:       { type: [string, "null"], description: "USD price per whole token that `supplied_usd` / `borrowed_usd` use, decimal string. Null whenever they are." }
                                 price_stale:     { type: boolean, description: "True when `price_usd` comes from a price the reader marked stale. False when `price_usd` is null." }
+                                price_basis:     { type: string, enum: [transitive], description: "As `/v1/assets/{asset_id}` `price_basis`: present only when `price_usd` is not a direct market observation. `transitive`: derived through one intermediate hop with both legs substance-gated. Absent for a direct market price." }
                                 config:
                                   oneOf:
                                     - { $ref: "#/components/schemas/LendingReserveConfig" }

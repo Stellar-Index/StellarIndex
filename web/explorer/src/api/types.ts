@@ -18687,6 +18687,11 @@ export interface operations {
                                 price_usd?: string | null;
                                 /** @description True when `price_usd` comes from a price the reader marked stale. False when `price_usd` is null. */
                                 price_stale?: boolean;
+                                /**
+                                 * @description As `/v1/assets/{asset_id}` `price_basis`: present only when `price_usd` is not a direct market observation. `transitive`: derived through one intermediate hop with both legs substance-gated. Absent for a direct market price.
+                                 * @enum {string}
+                                 */
+                                price_basis?: "transitive";
                                 /** @description The reserve's applied ReserveConfig. Null when it is not known (no applied queue_set_reserve event). */
                                 config?: components["schemas"]["LendingReserveConfig"] | null;
                                 /** @description Live interest-rate curve modifier (ReserveData.ir_mod), the contract's raw integer as a decimal string at `ir_mod_decimals`. With the config's r_base..r_three and utilisation targets it gives the borrow-rate curve. */

@@ -378,8 +378,10 @@ type ReserveView struct {
 	//floatmoney:ok a yield rate/fraction (like BorrowAPR above), not a principal amount
 	SupplyAPR *float64 `json:"supply_apr"`
 	// PriceUSD is the USD price per whole token the USD values use; null whenever they are.
-	PriceUSD   *string                   `json:"price_usd"`
-	PriceStale bool                      `json:"price_stale"`
+	PriceUSD   *string `json:"price_usd"`
+	PriceStale bool    `json:"price_stale"`
+	// PriceBasis is "transitive" when PriceUSD is a one-hop fill, omitted for a direct market price.
+	PriceBasis string                    `json:"price_basis,omitempty"`
 	Config     *LendingReserveConfigView `json:"config"`
 	IRMod      *string                   `json:"ir_mod"` // raw interest-rate modifier at ir_mod_decimals
 	// IRModDecimals is 9 on a Blend V1 pool, else 7.
@@ -692,7 +694,7 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 	}
 	valued := rv.SuppliedUSD != nil || rv.BorrowedUSD != nil
 	if valued {
-		rv.PriceUSD, rv.PriceStale = &price, stale
+		rv.PriceUSD, rv.PriceStale, rv.PriceBasis = &price, stale, rp.basis
 	}
 	return rv, suppliedContrib, stale && valued
 }

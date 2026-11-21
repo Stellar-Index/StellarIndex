@@ -14,6 +14,8 @@ import (
 // with (nonstandard-decimals projection, else 7): only an amount divided by that same exponent can be multiplied by it.
 type reservePrice struct {
 	price string
+	// basis is the price's [AssetDetail.PriceBasis]: priceBasisTransitive for the one-hop fill, "" for a market price.
+	basis string
 	scale int
 	stale bool
 	// withheld: a gate refused the price, so the token is not unpriced.
@@ -121,7 +123,7 @@ func (s *Server) reserveFallbackPrice(ctx context.Context, asset canonical.Asset
 	case !ok:
 		return reservePrice{withheld: refused}
 	}
-	return reservePrice{price: p, stale: rep.stale.Load()}
+	return reservePrice{price: p, basis: priceBasisTransitive, stale: rep.stale.Load()}
 }
 
 // reserveIssuerFlagged is the page's issuer scam check ([suppressScamIssuerPricing]): the curated list, then the directory's

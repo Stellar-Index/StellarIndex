@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"testing"
@@ -90,6 +91,23 @@ func TestReserveValue_UsesTheAssetPagesCatalogueRowPrice(t *testing.T) {
 	if rv.usdExclusion != "" {
 		t.Errorf("valued reserve carries exclusion %q", rv.usdExclusion)
 	}
+	if got := reserveWirePriceBasis(t, rv); got != "" {
+		t.Errorf("price_basis = %s on a catalogue-row price, want it omitted", got)
+	}
+}
+
+// reserveWirePriceBasis is the reserve's serialised price_basis, "" when omitted.
+func reserveWirePriceBasis(t *testing.T, rv ReserveView) string {
+	t.Helper()
+	b, err := json.Marshal(rv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(b, &wire); err != nil {
+		t.Fatal(err)
+	}
+	return string(wire["price_basis"])
 }
 
 // A reserve token with no feed and no catalogue row is valued at its transitive price when both legs clear the substance gate,
@@ -124,6 +142,9 @@ func TestReserveValue_TransitiveOnlyPriceUnderBothLegGates(t *testing.T) {
 			}
 			if strPtrOr(rv.BorrowedUSD) != "10.00" || supplied == nil || supplied.Cmp(big.NewRat(25, 1)) != 0 {
 				t.Errorf("borrowed_usd = %s TVL contribution = %v, want 10.00 and exactly 25", strPtrOr(rv.BorrowedUSD), supplied)
+			}
+			if got := reserveWirePriceBasis(t, rv); got != `"transitive"` {
+				t.Errorf("price_basis = %s, want \"transitive\" beside a transitive price_usd", got)
 			}
 		})
 	}
