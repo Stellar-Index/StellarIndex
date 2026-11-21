@@ -20,6 +20,8 @@ const (
 	backstopUSDNegativeAmount = "negative_amount"
 	// backstopUSDPriceReadFailed degrades the response: the token may well have a price.
 	backstopUSDPriceReadFailed = exclusionPriceReadFailed
+	// backstopUSDWithheld: a gate refused the token's price, so it is not unpriced.
+	backstopUSDWithheld = exclusionPriceWithheld
 )
 
 // tokenUSD values amount base units of token at its current price exactly as buildReserveView values a reserve: the reserve
@@ -31,8 +33,11 @@ func (s *Server) tokenUSD(ctx context.Context, token string, amount *big.Int) (u
 	}
 	rp := s.reservePriceUSD(ctx, token)
 	if rp.price == "" {
-		if rp.unread {
+		switch {
+		case rp.unread:
 			return nil, "", false, backstopUSDPriceReadFailed
+		case rp.withheld:
+			return nil, "", false, backstopUSDWithheld
 		}
 		return nil, "", false, backstopUSDUnpriced
 	}

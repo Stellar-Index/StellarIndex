@@ -39,6 +39,27 @@ func TestBackstopValue_FailedPriceReadIsAReadFailureNotUnpriced(t *testing.T) {
 	}
 }
 
+// A backstop tier whose price a gate refused is withheld, never "unpriced", and carries no value.
+func TestBackstopValue_WithheldPriceIsWithheldNotUnpriced(t *testing.T) {
+	xlmSAC, ok := xdrjson.SACContractID("native", pubnetPassphrase)
+	if !ok {
+		t.Fatal("native SAC")
+	}
+	s := New(Options{Prices: withheldUSDReader{"native/" + defaultPriceQuote.String(): {err: ErrPriceWithheld}}})
+	view := LendingBackstopView{Protocol: strRef(blnt.SourceName), Tiers: make([]LendingBackstopTierView, 1)}
+	st := clickhouse.LendingBackstopState{Tiers: []clickhouse.BackstopTierState{
+		{Tier: "FirstLoss", Asset: "Xlm", Token: xlmSAC, Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(1), Tokens: big.NewInt(1e7), Q4W: big.NewInt(0)}},
+	}}
+	_, degraded := s.valueBackstopView(context.Background(), &view, st)
+	if tv := view.Tiers[0]; tv.TokensUSD != nil || tv.PriceUSD != nil || strPtrOr(tv.USDReason) != exclusionPriceWithheld {
+		t.Errorf("tier tokens_usd=%s price_usd=%s usd_reason=%s, want null with %s",
+			strPtrOr(tv.TokensUSD), strPtrOr(tv.PriceUSD), strPtrOr(tv.USDReason), exclusionPriceWithheld)
+	}
+	if view.TotalUSD != nil || degraded {
+		t.Errorf("total_usd=%s degraded=%v, want null and not degraded", strPtrOr(view.TotalUSD), degraded)
+	}
+}
+
 // reservePriceToken is a Soroban token with no canonical USD feed: only its catalogue row prices it.
 const reservePriceToken = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 
