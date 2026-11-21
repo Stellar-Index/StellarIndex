@@ -1402,6 +1402,39 @@ func TestRoutedViaCallPathAttribution(t *testing.T) {
 	if routerRow.RoutedTrades != 2 {
 		t.Errorf("soroswap-router RoutedTrades = %d, want 2 (direct + unknown-wrapper fallback)", routerRow.RoutedTrades)
 	}
+
+	// Registering the unknown wrapper later upgrades its fallback tag; the wrapper tag and the
+	// direct call's fallback are then stable across re-runs.
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO routers (contract_id, name, kind, protocol_slug, auto_discovered, notes)
+		VALUES ($1, 'late-wrapper', 'router', 'unattributed', true, 'test')`, unknownAggregator); err != nil {
+		t.Fatalf("register late wrapper: %v", err)
+	}
+	for i, want := range []int64{1, 0} {
+		n, err := store.TagTradesRoutedVia(ctx, "soroswap-router", "soroswap", windowFrom, windowTo)
+		if err != nil || n != want {
+			t.Errorf("re-tag pass %d after registering the wrapper: n=%d err=%v, want %d", i, n, err, want)
+		}
+	}
+	trades, err = store.TradesInRange(ctx, pair, windowFrom, windowTo.Add(time.Hour), 100)
+	if err != nil {
+		t.Fatalf("TradesInRange: %v", err)
+	}
+	for _, tr := range trades {
+		byLedger[tr.Ledger] = tr.RoutedVia
+	}
+	for ledger, want := range map[uint32]string{
+		direct.Ledger: "soroswap-router", viaKnown.Ledger: "soroswap-router-aggregator-exec", viaUnknown.Ledger: "late-wrapper",
+	} {
+		if got := byLedger[ledger]; got != want {
+			t.Errorf("ledger %d routed_via after late registration = %q, want %q", ledger, got, want)
+		}
+	}
 }
 
 // The substance gate's alias union on real prices_1m rows: XLM's SDEX leg (native) and CEX leg (crypto:XLM) trading in

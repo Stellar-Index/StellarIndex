@@ -130,3 +130,13 @@ func TestChAuthFrom(t *testing.T) {
 		}
 	})
 }
+
+func TestAuthOrEnv_RefusesPasswordWithoutUsername(t *testing.T) {
+	if _, err := authOrEnv("", "s3rving"); err == nil || strings.Contains(err.Error(), "s3rving") {
+		t.Fatalf("authOrEnv(\"\", pass) err = %v, want a refusal that does not leak the password", err)
+	}
+	got, err := authOrEnv("api_serving", "s3rving")
+	if err != nil || got != (clickhouse.Auth{Database: "stellar", Username: "api_serving", Password: "s3rving"}) {
+		t.Fatalf("authOrEnv(user, pass) = %+v, %v; want the explicit pair against stellar", got, err)
+	}
+}

@@ -41,10 +41,13 @@ func chAuthFrom(getenv func(string) string) (clickhouse.Auth, error) {
 }
 
 // authOrEnv is the Auth for an explicit username/password, or [chAuth]'s
-// when both are empty.
+// when both are empty. A password without a username is refused, as in [pairAuth].
 func authOrEnv(username, password string) (clickhouse.Auth, error) {
 	if username == "" && password == "" {
 		return chAuth()
+	}
+	if username == "" {
+		return clickhouse.Auth{}, fmt.Errorf("clickhouse: a password was given with an empty username — set both or neither (env identity)")
 	}
 	return clickhouse.Auth{Database: "stellar", Username: username, Password: password}, nil
 }
