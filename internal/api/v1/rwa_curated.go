@@ -430,11 +430,12 @@ func rwaCuratedSummarise(
 	}
 	out.Status = "served"
 	out.Assets = len(rows)
-	additional, anyAdditional, partial := rwaCuratedTally(rows, out)
-	if anyAdditional && degraded {
+	additional, anyAdditional, unvalued, partial := rwaCuratedTally(rows, out)
+	if degraded && unvalued > 0 {
 		partial = true
-		out.Basis += " The valuation read was cut short, so rows served without a value were not read rather than refused," +
-			" and the additional and combined figures are each a LOWER BOUND."
+		out.Basis += " The valuation read was cut short, so " + strconv.Itoa(unvalued) +
+			" row(s) the verified set does not carry were served without a value because they were not read, not refused," +
+			" and any additional or combined figure is a LOWER BOUND."
 	}
 	if anyAdditional {
 		if excludedClassic > 0 {
@@ -455,8 +456,8 @@ func rwaCuratedSummarise(
 // rwaCuratedTally counts the served rows into the summary and sums the value of rows the verified set does NOT carry, the only part that
 // adds to the verified total.
 // anyAdditional reports whether any such row carried a value, so an all-verified set serves no "additional" figure rather than zero;
-// partial that the sum leaves one of those rows out or counts one from a floor supply.
-func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.Rat, anyAdditional, partial bool) {
+// unvalued counts those rows the sum leaves out; partial that it leaves one out or counts one from a floor supply.
+func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.Rat, anyAdditional bool, unvalued int, partial bool) {
 	additional = new(big.Rat)
 	for _, r := range rows {
 		alsoVerified := r.Curator != nil && r.Curator.AlsoVerified
@@ -471,6 +472,7 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.R
 			continue
 		}
 		if v == nil {
+			unvalued++
 			partial = true
 			continue
 		}
@@ -478,7 +480,7 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.R
 		anyAdditional = true
 		partial = partial || r.CirculatingSupplyLowerBound
 	}
-	return additional, anyAdditional, partial
+	return additional, anyAdditional, unvalued, partial
 }
 
 // rwaCuratedPublishedBlock renders what the curator last published with the signed gap to the verified total ON THE CURATOR'S

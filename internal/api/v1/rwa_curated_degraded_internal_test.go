@@ -3,10 +3,12 @@ package v1
 import (
 	"context"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -48,6 +50,48 @@ func TestAttachRWACurated_AFailedReadDegradesTheView(t *testing.T) {
 	}
 }
 
+type curatedEntriesReader struct {
+	rows map[string]timescale.CuratedRWAEntry
+}
+
+func (c curatedEntriesReader) CuratedRWADirectoryByAddress(context.Context, string) (
+	map[string]timescale.CuratedRWAEntry, timescale.CuratedRWACensus, error,
+) {
+	return c.rows, timescale.CuratedRWACensus{Entries: len(c.rows), Contracts: len(c.rows)}, nil
+}
+
+func (curatedEntriesReader) LatestCuratedPublished(context.Context, string) (*timescale.CuratedRWAPublished, error) {
+	return nil, nil
+}
+
+// A budget spent before any curated row was valued serves every row unvalued: the block must still say why and how many,
+// not serve assets_valued=0 with no reason.
+func TestAttachRWACurated_ACutBudgetNamesTheUnvaluedRows(t *testing.T) {
+	const a = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	const b = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	s := rwaCuratedCacheTestServer(curatedEntriesReader{rows: map[string]timescale.CuratedRWAEntry{
+		a: {Address: a, AssetCode: "TBILL"}, b: {Address: b, AssetCode: "BOND"},
+	}})
+	net := big.NewInt(10_000_0000000)
+	s.TokenSupply = &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+		a: {Total: net, Mint: net, FlowCount: 4}, b: {Total: net, Mint: net, FlowCount: 4},
+	}}
+	spent, cancel := context.WithCancel(context.Background())
+	cancel()
+	view := &RWAAssetsView{}
+
+	if degraded := s.attachRWACurated(spent, view, time.Now()); !degraded {
+		t.Error("degraded = false after the valuation budget was spent")
+	}
+	out := view.Curated
+	if out == nil || out.Status != "served" || out.AssetsValued != 0 || len(view.CuratedAssets) != 2 {
+		t.Fatalf("curated = %+v rows = %d, want served with 2 unvalued rows", out, len(view.CuratedAssets))
+	}
+	if !strings.Contains(out.Basis, "cut short, so 2 row(s)") {
+		t.Errorf("basis does not name the 2 unread rows: %q", out.Basis)
+	}
+}
+
 // A valuation cut short leaves rows served beside the block. The block must count them and bound its total, never call the
 // arm unavailable while curated_assets carries its rows.
 func TestRWACuratedSummarise_ACutValuationServesTheRowsAsALowerBound(t *testing.T) {
@@ -72,7 +116,7 @@ func TestRWACuratedSummarise_ACutValuationServesTheRowsAsALowerBound(t *testing.
 	if out.CombinedValueUSD == nil || !out.CombinedValueLowerBound {
 		t.Errorf("combined = %v lower_bound = %v, want a lower bound", out.CombinedValueUSD, out.CombinedValueLowerBound)
 	}
-	if !strings.Contains(out.Basis, "cut short") {
-		t.Errorf("basis does not name the unread rows: %q", out.Basis)
+	if !strings.Contains(out.Basis, "cut short, so 1 row(s)") {
+		t.Errorf("basis does not name the unread row: %q", out.Basis)
 	}
 }

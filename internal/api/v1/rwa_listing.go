@@ -79,9 +79,10 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 		// naming nothing. As available, bindings would be refused under
 		// contract_curated_binding_without_independent_listing (a finding about the world) when our
 		// copy merely expired; as unavailable, under independent_listing_unavailable, which an
-		// operator can fix. Fresh rows of any address form prove the sync alive, so a directory
-		// naming no contract is available and simply lists none.
-		available:  len(rows) > 0 || census.Entries > 0,
+		// operator can fix. Fresh contract rows prove the contract-listing sync alive. Fresh rows of
+		// another form prove it only when nothing is stale: the census does not split Stale by
+		// address form or source, so a stale row may be the contract source's.
+		available:  len(rows) > 0 || (census.Entries > 0 && census.Stale == 0),
 		wired:      true,
 		read:       true,
 		observedAt: time.Now().UTC(),
