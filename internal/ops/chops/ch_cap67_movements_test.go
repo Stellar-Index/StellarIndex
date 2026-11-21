@@ -302,8 +302,8 @@ func TestDeriveCap67MovementsWindow_DryRunCountsFannedOutRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
-	if skipped != 0 {
-		t.Fatalf("skipped = %d, want 0", skipped)
+	if skipped.total() != 0 {
+		t.Fatalf("skipped = %v, want none", skipped)
 	}
 	if rows != 4 {
 		t.Fatalf("dry-run rows = %d, want 4 (two transfers × sent+received)", rows)
@@ -342,8 +342,8 @@ func TestDeriveCap67MovementsWindow_IncludesSupplyKinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
-	if skipped != 0 {
-		t.Fatalf("skipped = %d, want 0", skipped)
+	if skipped.total() != 0 {
+		t.Fatalf("skipped = %v, want none", skipped)
 	}
 	if rows != 8 {
 		t.Fatalf("dry-run rows = %d, want 8 (transfer, mint, burn, clawback × two sides)", rows)
@@ -355,12 +355,12 @@ func TestDeriveCap67MovementsWindow_IncludesSupplyKinds(t *testing.T) {
 func gaugeValue(t *testing.T, body, metric string) string {
 	t.Helper()
 	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, metric+"{") {
+		if strings.HasPrefix(line, metric+"{") || strings.HasPrefix(line, metric) && strings.HasSuffix(metric, " ") {
 			fields := strings.Fields(line)
-			if len(fields) != 2 {
+			if len(fields) < 2 {
 				t.Fatalf("malformed sample line %q", line)
 			}
-			return fields[1]
+			return fields[len(fields)-1]
 		}
 	}
 	t.Fatalf("metric %q is ABSENT from the textfile:\n%s", metric, body)
@@ -380,9 +380,9 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 
 	// Two windows within one catch-up, then a later -follow tick — the
 	// shape runCap67CatchUp / runCap67Follow drive this callback with.
-	prog.record(5, 63_100_000)
-	prog.record(3, 63_150_000)
-	prog.record(2, 63_150_100)
+	prog.record(5, nil, 63_100_000)
+	prog.record(3, cap67Skips{clickhouse.SupplySkipAmountNotI128: 4}, 63_150_000)
+	prog.record(2, cap67Skips{clickhouse.SupplySkipAmountNotI128: 3, clickhouse.SupplySkipNotTokenShaped: 9}, 63_150_100)
 	prog.stop(true)
 
 	raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
@@ -397,6 +397,13 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	if got := gaugeValue(t, body, "stellarindex_ops_job_progress_cursor"); got != "63150100" {
 		t.Errorf("progress_cursor = %s, want the highest ledger reached (63150100)", got)
 	}
+	// -follow advances the watermark past undecodable events and never exits, so this gauge is
+	// the only alertable trace that its movements are missing rows.
+	for reason, want := range map[string]string{"amount_not_i128": "7", "not_token_shaped": "9", "body_unparseable": "0", "decode_failed": "0"} {
+		if got := gaugeValue(t, body, `stellarindex_ops_job_skipped_total{ops_job="ch-cap67-movements",reason="`+reason+`"}`+" "); got != want {
+			t.Errorf("skipped_total{reason=%s} = %s, want %s (cumulative across calls)", reason, got, want)
+		}
+	}
 	if !strings.Contains(body, `{ops_job="ch-cap67-movements"}`) {
 		t.Errorf("series must carry ops_job=\"ch-cap67-movements\":\n%s", body)
 	}
@@ -408,6 +415,24 @@ func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	}
 }
 
+// The first sample written must already carry every reason at 0: increase() cannot see a series' first sample, so a
+// reason first appearing at N loses the skip that produced it.
+func TestCap67Progress_FirstHeartbeatSeedsEveryReasonAtZero(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ops_job_ch_cap67_movements.prom")
+	prog := newCap67Progress(path)
+	defer prog.stop(true)
+
+	raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("heartbeat textfile not written: %v", err)
+	}
+	for _, reason := range []string{"not_token_shaped", "amount_not_i128", "body_unparseable", "decode_failed"} {
+		if got := gaugeValue(t, string(raw), `stellarindex_ops_job_skipped_total{ops_job="ch-cap67-movements",reason="`+reason+`"}`+" "); got != "0" {
+			t.Errorf("first heartbeat skipped_total{reason=%s} = %s, want 0", reason, got)
+		}
+	}
+}
+
 // TestCap67Progress_InertWithoutHeartbeatPath: an empty -heartbeat flag (the default, and every non-r1 environment)
 // makes the heartbeat a safe no-op, with no directory created and no panic on record/stop with an unresolved path.
 func TestCap67Progress_InertWithoutHeartbeatPath(t *testing.T) {
@@ -415,7 +440,7 @@ func TestCap67Progress_InertWithoutHeartbeatPath(t *testing.T) {
 	if prog.hb.Enabled() {
 		t.Fatal("empty path without DefaultTextfileDir present must stay inert")
 	}
-	prog.record(1, 100)
+	prog.record(1, cap67Skips{cap67SkipDecodeFailed: 1}, 100)
 	prog.stop(false)
 }
 
@@ -652,5 +677,41 @@ func TestFollowLoop_IdleAccounting(t *testing.T) {
 		if got[i] != wantIdle[i] {
 			t.Errorf("tick %d saw idle=%d, want %d (sequence %v)", i+1, got[i], wantIdle[i], got)
 		}
+	}
+}
+
+// Any contract can emit a `transfer` or `mint`; an NFT's u32 token id is not a token body. It is meter-only: classified
+// not_token_shaped, so it never counts toward the decode budget nor the alerted reasons.
+func TestDeriveCap67MovementsWindow_ForeignContractU32IsNotTokenShaped(t *testing.T) {
+	canonical.InstallNetworkPassphrase("")
+	orig := streamCap67TransferEvents
+	t.Cleanup(func() { streamCap67TransferEvents = orig })
+	nftTransfer := cap67TransferEvent(t, "")
+	u32 := xdr.Uint32(7)
+	nftTransfer.Value = encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &u32})
+	badAmount := cap67TransferEvent(t, "")
+	u64 := xdr.Uint64(7)
+	key := xdr.ScSymbol("amount")
+	m := xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &key}, Val: xdr.ScVal{Type: xdr.ScValTypeScvU64, U64: &u64}}}
+	mp := &m
+	badAmount.Value = encScVal(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp})
+	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, _, _ []string, _, _, _, _ bool, fn func(events.Event) error) error {
+		for _, ev := range []events.Event{nftTransfer, nftTransfer, badAmount} {
+			if err := fn(ev); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	rows, skips, err := deriveCap67MovementsWindow(context.Background(), "ch", 63_000_000, 63_000_000, true)
+	if err != nil || rows != 0 {
+		t.Fatalf("derive: rows=%d err=%v, want 0 rows and nil", rows, err)
+	}
+	if skips[clickhouse.SupplySkipNotTokenShaped] != 2 || skips.total() != 3 {
+		t.Fatalf("skips = %v, want not_token_shaped=2 plus one other", map[string]uint64(skips))
+	}
+	if got := skips.actionable(); got != 1 {
+		t.Fatalf("actionable = %d, want 1: foreign u32 traffic must not count", got)
 	}
 }

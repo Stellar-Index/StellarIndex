@@ -155,7 +155,7 @@ func registerPricingMetrics() {
 		AggregatorBootstrapCapped,
 		AggregatorBaselineDensityDays,
 
-		ChLiveSinkLedgersTotal, ChLiveSinkReadUndercountTotal,
+		ChLiveSinkLedgersTotal, ChLiveSinkReadUndercountTotal, SupplyFlowSkippedTotal,
 
 		MarketsSkippedRowsTotal,
 	)
@@ -665,6 +665,9 @@ func seedBoundedLabelSeriesTail() {
 		"tx_event_read_errors_census",
 	} {
 		ChLiveSinkReadUndercountTotal.WithLabelValues(kind)
+	}
+	for _, reason := range []string{"not_token_shaped", "amount_not_i128", "body_unparseable"} {
+		SupplyFlowSkippedTotal.WithLabelValues(reason)
 	}
 }
 
@@ -2903,6 +2906,16 @@ var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 		Help: "Transactions/ledgers a read path could not fully decode, labelled by kind (tx_read_errors|tx_event_read_errors|entry_meta_unsupported|soroban_fee_meta_unsupported|evicted_keys_unreadable|tx_read_errors_census|tx_event_read_errors_census).",
 	},
 	[]string{"kind"},
+)
+
+// SupplyFlowSkippedTotal counts mint/burn/clawback events the lake extract wrote to contract_events with no supply_flows row, by reason
+// (not_token_shaped: no supply to lose; amount_not_i128|body_unparseable: a token-shaped body whose amount did not decode).
+var SupplyFlowSkippedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_flow_skipped_total",
+		Help: "Supply events (mint/burn/clawback) written without a supply_flows row, by reason (not_token_shaped|amount_not_i128|body_unparseable).",
+	},
+	[]string{"reason"},
 )
 
 // SinkPersistEvents is the `sink` label value of the Postgres served-tier pipeline sink on [SinkUndrainedRowsTotal], declared here so the zero-seed and the emitter cannot drift apart.

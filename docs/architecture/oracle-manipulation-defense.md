@@ -1,6 +1,6 @@
 ---
 title: Oracles — manipulation defense, SEP-40 and onboarding a generic oracle
-last_verified: 2026-10-05
+last_verified: 2026-11-21
 status: living document — thresholds, metric and alert names checked against code 2026-10-05; the attack catalogue is not re-derived
 ---
 
@@ -245,9 +245,11 @@ which pools every source in `trades` with no source predicate; the Redis
 aggregator VWAP is the fallback only for a pair with no `prices_1m` rows.
 What an operator can do:
 
-1. External venue: set `[external.<venue>] enabled = false` and restart the
-   aggregator. New `prices_1m` buckets no longer contain the venue. An
-   on-chain source has no per-source switch.
+1. External venue: set `[external.<venue>] enabled = false` and restart
+   `stellarindex-indexer`, the binary that runs the off-chain connectors
+   (`startExternalConnectors`, `cmd/stellarindex-indexer/main.go`);
+   restarting the aggregator does not stop them. New `prices_1m` buckets
+   no longer contain the venue. An on-chain source has no per-source switch.
 2. Add the source to `aggregate.excluded_sources` and restart the
    aggregator. This drops its stored trades from the aggregator's VWAP
    windows only; the API binary does not read the setting.

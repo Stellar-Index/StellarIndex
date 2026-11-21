@@ -197,7 +197,7 @@ const (
 // last() with a ROW comparator cannot run as a parallel partial aggregate, so neither stage uses one.
 // The 24h figures cover (now-24h, now]: whole hours from the view, and from trades the hour holding now-24h (the view cannot split it)
 // and the tail from pools_tail, disjoint so nothing counts twice. Real-time, the view serves every hour itself and the split only keeps
-// its rows from tail_start on out; materialized-only (0187 leaves it so until an operator restores real-time), it lacks every hour past
+// its rows from tail_start on out; materialized-only (0232 leaves 0187's state on a view whose watermark is stale), it lacks every hour past
 // its watermark, which the tail covers up to the cap.
 func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
 	return `

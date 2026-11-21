@@ -220,6 +220,29 @@ func TestExtractLoss_EveryUndercountFailsTheRun(t *testing.T) {
 	}
 }
 
+// Any contract can emit a mint/burn/clawback topic, so a skipped supply body (an NFT's u32 mint, or a token-shaped map whose amount is
+// not an i128) is reported in the summary and never fails the run.
+func TestExtractLoss_SupplySkipsNeverFailTheRun(t *testing.T) {
+	var loss extractLoss
+	if loss.record(clickhouse.LedgerExtract{SupplyFlowSkips: map[string]int{clickhouse.SupplySkipNotTokenShaped: 1}}, false) {
+		t.Error("a not-token-shaped supply body was recorded as a read undercount")
+	}
+	if loss.record(clickhouse.LedgerExtract{SupplyFlowSkips: map[string]int{clickhouse.SupplySkipAmountNotI128: 2}}, false) {
+		t.Error("a token-shaped amount decode failure was recorded as a read undercount")
+	}
+	if err := loss.err(); err != nil || loss.ledgers != 0 || len(loss.kinds) != 0 {
+		t.Fatalf("err = %v, ledgers = %d, kinds = %v; want a clean run", err, loss.ledgers, loss.kinds)
+	}
+	want := "amount_not_i128=2 not_token_shaped=1"
+	if got := loss.supplySkipSummary(); !strings.HasSuffix(got, want) {
+		t.Errorf("summary = %q, want it to end %q", got, want)
+	}
+	var clean extractLoss
+	if got := clean.supplySkipSummary(); got != "" {
+		t.Errorf("clean run summary = %q, want empty", got)
+	}
+}
+
 // TestWindowedCHBackfills_RefuseImplicitFullRun: every windowed ClickHouse backfill refuses a bare invocation (no
 // -from/-to/-full) rather than starting the whole ledger-2..tip history outside run-heavy-job.sh. The refusal fires
 // before any connection, so no live lake is needed.
@@ -303,6 +326,40 @@ func TestChops_RequireAStatedMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Skips a backfill records must reach the heartbeat so the ops-job rule covers it; every reason is present at 0 from the first sample.
+func TestBackfillProgress_SupplySkipsReachHeartbeat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ops_job_ch_backfill.prom")
+	prog := newBackfillProgress(path)
+	read := func() string {
+		raw, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+		if err != nil {
+			t.Fatalf("heartbeat textfile not written: %v", err)
+		}
+		return string(raw)
+	}
+	series := func(reason string) string {
+		return `stellarindex_ops_job_skipped_total{ops_job="ch-backfill",reason="` + reason + `"} `
+	}
+	first := read()
+	for _, reason := range clickhouse.SupplySkipReasons {
+		if got := gaugeValue(t, first, series(reason)); got != "0" {
+			t.Errorf("first heartbeat skipped_total{reason=%s} = %s, want 0", reason, got)
+		}
+	}
+
+	prog.record(0, 100, map[string]int{clickhouse.SupplySkipAmountNotI128: 2})
+	prog.record(1, 101, map[string]int{clickhouse.SupplySkipAmountNotI128: 1, clickhouse.SupplySkipNotTokenShaped: 4})
+	prog.markOK()
+	prog.stop()
+
+	body := read()
+	for reason, want := range map[string]string{"amount_not_i128": "3", "not_token_shaped": "4", "body_unparseable": "0"} {
+		if got := gaugeValue(t, body, series(reason)); got != want {
+			t.Errorf("skipped_total{reason=%s} = %s, want %s", reason, got, want)
+		}
 	}
 }
 
