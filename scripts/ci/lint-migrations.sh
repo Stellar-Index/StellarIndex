@@ -475,7 +475,8 @@ sql_stmts() {
         if (q != "") {
           st = st c
           if (q == "e" && c == "\\") { st = st substr(src, i + 1, 1); i += 2; continue }
-          if ((q == "e" && c == "\047") || c == q) q = ""
+          # An E-string closes on a quote only; "c == q" would close it at its first letter e.
+          if (q == "e") { if (c == "\047") q = "" } else if (c == q) q = ""
           i++; continue
         }
         if (c2 == "--") { j = index(substr(src, i), "\n"); i = j ? i + j - 1 : n + 1; continue }

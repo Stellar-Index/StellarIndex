@@ -178,6 +178,38 @@ expect 'dml (TRUNCATE) fires' 1 'dml'
 run 'UPDATE comet_liquidity SET event_index = 0;' ''
 expect 'dml (bare UPDATE) fires' 1 'dml'
 
+run 'UPDATE trades
+   SET usd_volume = NULL
+ WHERE ts < now();' ''
+expect 'dml (UPDATE with SET on the next line) fires' 1 'dml'
+
+run 'UPDATE classic_assets ca SET slug = lower(ca.code);' ''
+expect 'dml (aliased UPDATE) fires' 1 'dml'
+
+run 'UPDATE ONLY trades SET usd_volume = NULL;' ''
+expect 'dml (UPDATE ONLY) fires' 1 'dml'
+
+run 'DELETE
+  FROM trades WHERE ts < now();' ''
+expect 'dml (DELETE with FROM on the next line) fires' 1 'dml'
+
+run 'DELETE FROM trades WHERE ts < now(); -- no RAISE EXCEPTION guard needed' ''
+expect 'a trailing comment naming RAISE EXCEPTION is not a guard' 1 'dml'
+
+run '/* we deliberately do not
+   RAISE EXCEPTION here */
+UPDATE trades SET usd_volume = 0 WHERE ts < now();' ''
+expect 'a block comment naming RAISE EXCEPTION is not a guard' 1 'dml'
+
+# shellcheck disable=SC2016  # $fn$ is SQL dollar quoting, not a shell expansion
+run 'CREATE FUNCTION refuse() RETURNS void LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION '"'"'no'"'"';
+END
+$fn$;
+UPDATE trades SET usd_volume = 0 WHERE ts < now();' ''
+expect 'a RAISE EXCEPTION inside a tag-quoted function body is not a guard' 1 'dml'
+
 run 'DELETE FROM comet_liquidity;  -- migration-compat:ok replay repairs it' ''
 expect 'inline marker alone does not clear dml (needs a RAISE EXCEPTION guard)' 1 'dml'
 

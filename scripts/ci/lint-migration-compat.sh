@@ -147,7 +147,8 @@ MATCH=(
   # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
   # string, a `BEFORE TRUNCATE ON t` trigger). drop_chunks is a call, so it is
   # matched wherever it is called: SELECT, PERFORM (a DO block) or FROM.
-  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET)|(^|[^a-zA-Z0-9_])drop_chunks[[:space:]]*\('
+  # flatten() joins each such statement onto its first line, so `UPDATE t` / `SET …` is one line.
+  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+(ONLY[[:space:]]+)?[a-zA-Z0-9_."]+([[:space:]]+(AS[[:space:]]+)?[a-zA-Z0-9_"]+)?[[:space:]]+SET)|(^|[^a-zA-Z0-9_])drop_chunks[[:space:]]*\('
 )
 EXCLUDE=(
   ''
@@ -233,9 +234,9 @@ fn_body_lines() {
       n = l; sub(/^[ \t]*create (or replace )?function[ \t]+/, "", n); sub(/[ \t(].*$/, "", n); return n
     }
     { l = tolower($0) }
-    infn { body[cur] = body[cur] " " NR; if (gsub(/\$\$/, "&", l) % 2) infn = 0; next }
+    infn { body[cur] = body[cur] " " NR; if (gsub(/\$[a-z0-9_]*\$/, "&", l) % 2) infn = 0; next }
     l ~ /^[ \t]*create (or replace )?function / { pend = 1; cur = fname(l) }
-    pend && (c = gsub(/\$\$/, "&", l)) { pend = 0; if (c % 2) infn = 1; next }
+    pend && (c = gsub(/\$[a-z0-9_]*\$/, "&", l)) { pend = 0; if (c % 2) infn = 1; next }
     pend && l ~ /;/ { pend = 0 }
     l !~ /^[ \t]*--/ && l ~ /(^|[^a-z_])(select|perform|call)[ \t]/ { top[++nt] = l }
     END {
@@ -304,7 +305,8 @@ flatten() {
         if (t ~ /;$/ || held > 80) flush()
         next
       }
-      if (raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ || tolower(raw) ~ /^[ \t]*create[ \t]+(or[ \t]+replace[ \t]+)?(constraint[ \t]+)?trigger[ \t]/) {
+      if (raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ || tolower(raw) ~ /^[ \t]*create[ \t]+(or[ \t]+replace[ \t]+)?(constraint[ \t]+)?trigger[ \t]/ ||
+          tolower(t) ~ /^[ \t]*(update|delete|truncate)([ \t]|$)/) {
         begin(raw, t, m)
         if (t ~ /;$/) flush()
         next
@@ -314,8 +316,24 @@ flatten() {
     END { if (open) flush() }' "$1"
 }
 
+# strip_comments <file>: the file with `--` tails and `/* */` spans blanked, line numbers kept.
+strip_comments() {
+  awk '{
+    l = $0; out = ""
+    while (l != "") {
+      if (inc) { e = index(l, "*/"); if (!e) break; l = substr(l, e + 2); inc = 0; continue }
+      s = index(l, "/*"); d = index(l, "--")
+      if (d && (!s || d < s)) { out = out substr(l, 1, d - 1); break }
+      if (s) { out = out substr(l, 1, s - 1) " "; l = substr(l, s + 2); inc = 1; continue }
+      out = out l; break
+    }
+    print out
+  }' "$1"
+}
+
 FLAT="$(mktemp)"
-trap 'rm -f "$FLAT"' EXIT
+NOCOMMENT="$(mktemp)"
+trap 'rm -f "$FLAT" "$NOCOMMENT"' EXIT
 
 fail=0
 SEEN=()   # `<file>:<class>` actually observed this run
@@ -324,6 +342,7 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
   [ -e "$f" ] || continue
   base="$(basename "$f")"
   flatten "$f" > "$FLAT"
+  strip_comments "$FLAT" > "$NOCOMMENT"
   fnlines="$(fn_body_lines "$FLAT" | tr '\n' ' ')"
   for i in "${!CLASSES[@]}"; do
     class="${CLASSES[$i]}"
@@ -353,7 +372,7 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
       # proof. Only the guard or the baseline clears a hit.
       # The guard must be a statement that runs at migrate time: not prose in
       # a comment, not the body of a function this file only defines.
-      ghits="$(grep_lines -nEi -- "$guard" "$FLAT")"
+      ghits="$(grep_lines -nEi -- "$guard" "$NOCOMMENT")"
       if [ -n "$ghits" ]; then
         ghits="$(printf '%s\n' "$ghits" | grep_lines -vE -- '^[0-9]+:[[:space:]]*--')"
       fi
