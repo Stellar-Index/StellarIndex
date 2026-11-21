@@ -38,6 +38,14 @@ func earningsUSDServer(t *testing.T, pool string, legs []usdLeg, rateLastTime ui
 
 func earningsUSDServerPriced(t *testing.T, pool string, legs []usdLeg, rateLastTime uint64, supplyActivity time.Time, staleXLM bool) *v1.Server {
 	t.Helper()
+	return earningsUSDServerWithPrices(t, pool, legs, rateLastTime, supplyActivity, &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": {Price: "2"}},
+		stale:     map[string]bool{"native/fiat:USD": staleXLM},
+	})
+}
+
+func earningsUSDServerWithPrices(t *testing.T, pool string, legs []usdLeg, rateLastTime uint64, supplyActivity time.Time, prices v1.PriceReader) *v1.Server {
+	t.Helper()
 	ex := &stubEarningsExplorer{stubExplorerReader: &stubExplorerReader{}, positions: clickhouse.LendingAccountPositions{
 		Readable: true, Supply: map[string]*big.Int{}, Borrow: map[string]*big.Int{},
 	}}
@@ -70,10 +78,7 @@ func earningsUSDServerPriced(t *testing.T, pool string, legs []usdLeg, rateLastT
 	}
 	return v1.New(v1.Options{
 		Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: assets}, CompletenessReader: verifiedLendingHistory(),
-		Prices: &stubPriceReader{
-			snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": {Price: "2"}},
-			stale:     map[string]bool{"native/fiat:USD": staleXLM},
-		},
+		Prices: prices,
 	})
 }
 
@@ -132,6 +137,25 @@ func TestLendingEarningsUSD_UnpricedLegIsALowerBound(t *testing.T) {
 		t.Fatalf("legs = %+v", got.Legs)
 	}
 	assertPartial(t, got, "200.00", []v1.LendingStatsExclusion{{Kind: "supply", Pool: &pool, Asset: &other, Reason: "unpriced"}})
+}
+
+// A reserve whose price read failed leaves its leg unvalued and degrades the earnings response (no-store).
+func TestLendingEarningsUSD_ReservePriceReadFailedDegrades(t *testing.T) {
+	pool, sac := mkCStrkey(t, 1), nativeSAC(t)
+	srv := earningsUSDServerWithPrices(t, pool, []usdLeg{{asset: sac, supply: 100 * xlm, supplyNet: 100 * xlm}}, 0, time.Time{},
+		&stubPriceReader{errByPair: map[string]error{"native/fiat:USD": errors.New("price store down")}})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/accounts/"+earningsAccount+"/earnings", nil))
+	var body struct{ Data v1.LendingEarningsView }
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil || len(body.Data.Legs) != 1 || body.Data.Legs[0].ValueUSD != nil {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+	if !body.Data.Totals.LowerBound {
+		t.Errorf("totals = %+v, want a lower bound", body.Data.Totals)
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Error("a failed reserve price read did not degrade the earnings response")
+	}
 }
 
 // TestLendingEarningsUSD_ValuedWhileAccruedWithheld: a rate_behind leg still serves current_value, so it is valued; only

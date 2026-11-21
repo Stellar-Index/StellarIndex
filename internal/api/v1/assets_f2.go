@@ -152,12 +152,20 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// Phase 2 is pure compute, run once the parallel reads have joined; the wg.Wait barrier makes
 	// detail.PriceUSD and the snapshot safely visible to populateMarketCap.
 	if haveSnap {
-		detail.SupplyStale = supplyObservationStale(snap, now)
-		populateSupplyFields(detail, snap)
-		// Held balances are a floor, and the detail has no lower-bound flag for a cap: the supply serves
-		// under its basis and no cap is built on it.
-		if snap.Basis != supply.BasisContractStorageBalances {
-			s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
+		s.applySupplyAndMarketCap(ctx, detail, asset, snap, key, priceSourceCount, now)
+	}
+}
+
+// applySupplyAndMarketCap is applyF2Fields' compute phase: the snapshot's supply fields, then the market cap and FDV valued on them.
+func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int, now time.Time) {
+	detail.SupplyStale = supplyObservationStale(snap, now)
+	populateSupplyFields(detail, snap)
+	// Held balances are a floor, and the detail has no lower-bound flag for a cap: the supply serves
+	// under its basis and no cap is built on it.
+	if snap.Basis != supply.BasisContractStorageBalances {
+		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
+		if detail.PriceUSD == nil {
+			detail.capPending = &pendingMarketCap{snap: snap, key: key, withheld: detail.PriceWithheldReason, unread: detail.priceUnread}
 		}
 	}
 }
@@ -411,6 +419,30 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			detail.FDVUSD = &fdv
 		}
 	}
+}
+
+// pendingMarketCap is the supply applyF2Fields read for an asset it could not price, kept for a later price fill.
+type pendingMarketCap struct {
+	snap supply.Supply
+	key  string
+	// withheld and unread are the direct reader's verdict when F2 ended; a later fill clears the detail's copy, not this one.
+	withheld PriceWithheldReason
+	unread   bool
+}
+
+// capFilledPrice values a catalogue-row or transitive price the extension step filled after applyF2Fields found none, under
+// populateMarketCap's guards. No direct venue backs that price, so the dust floor counts zero sources. A price the direct
+// reader refused or could not read values no cap: the fill only closes a market that does not exist.
+func (s *Server) capFilledPrice(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
+	p := detail.capPending
+	detail.capPending = nil
+	if p == nil || p.withheld != "" || p.unread {
+		return
+	}
+	if detail.PriceUSD == nil || detail.ThinMarket || (detail.PriceBasis != "" && detail.PriceBasis != priceBasisTransitive) {
+		return
+	}
+	s.populateMarketCap(ctx, detail, asset, p.snap, p.key, 0)
 }
 
 // lookupUSDPrice returns the asset's USD price, ("", false) on any failure ("market_cap unavailable"). No on-chain trade quotes

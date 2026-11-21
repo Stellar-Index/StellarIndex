@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
@@ -257,7 +259,7 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	byAsset, bstop, matched, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("scanReserveParts: %v", err)
 	}
@@ -289,7 +291,7 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 		{blendTestResDataKey, resDataEntryFixture(t)},
 		{"resdata-undecodable", "!!!not-base64!!!"},
 	}}
-	byAsset, _, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	byAsset, _, matched, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("scanReserveParts: %v", err)
 	}
@@ -308,12 +310,55 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
+	byAsset, _, _, undecoded, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
 	if len(byAsset) != 0 {
 		t.Errorf("byAsset = %v, want the reserve reported absent", byAsset)
+	}
+	// The counter is the caller's, once the TTL check rules the entry out as archived
+	// (TestBlendPoolReserves_ArchivedUndecodableEntryIsArchived).
+	if !reflect.DeepEqual(undecoded, []string{blendTestResDataKey}) {
+		t.Errorf("undecoded = %v, want the reserve's key named as a decode failure", undecoded)
+	}
+}
+
+// TestBlendPoolReserves_ArchivedUndecodableEntryIsArchived: an entry past its TTL is archived whether or not it decodes, and an
+// archived entry is not a decode failure, so it does not count toward the undecodable alert; a live undecodable entry still does.
+func TestBlendPoolReserves_ArchivedUndecodableEntryIsArchived(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		verdicts  map[string]TTLLiveness
+		want      string
+		wantCount float64
+	}{
+		{"entry archived", map[string]TTLLiveness{blendTestResDataKey: TTLArchived}, ReserveArchived, 0},
+		{"pool instance archived", map[string]TTLLiveness{blendTestInstanceKeyPersistent: TTLArchived}, ReserveArchived, 0},
+		{"entry live", map[string]TTLLiveness{blendTestResDataKey: TTLLive}, ReserveDecodeFailed, 1},
+		{"entry TTL unknown", nil, ReserveDecodeFailed, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &stubConn{respond: func(string) (driver.Rows, error) {
+				return &stubRows{data: [][]any{
+					// Any decodable contract_data entry stands in for the instance: only its TTL verdict matters here.
+					{blendTestInstanceKeyPersistent, resDataEntryFixture(t)},
+					{blendTestResDataKey, "!!!not-base64!!!"},
+				}}, nil
+			}}
+			r := &ExplorerReader{conn: conn, ttlVerdicts: fixedTTLCache(tc.verdicts)}
+			before := testutil.ToFloat64(obs.LendingReserveUndecodableTotal)
+			st, err := r.BlendPoolReserves(t.Context(), blendTestPool, blend.PoolV2, []string{blendTestAssetSAC}, nil)
+			if err != nil {
+				t.Fatalf("BlendPoolReserves: %v", err)
+			}
+			if got := st.Unavailable[blendTestAssetSAC]; got != tc.want {
+				t.Errorf("unavailable reason = %q, want %q", got, tc.want)
+			}
+			if got := testutil.ToFloat64(obs.LendingReserveUndecodableTotal) - before; got != tc.wantCount {
+				t.Errorf("undecodable counter moved by %v, want %v", got, tc.wantCount)
+			}
+		})
 	}
 }
 
@@ -323,7 +368,7 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
+	if _, _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
 	}
 }
@@ -368,7 +413,7 @@ func TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived(t *testing.T) {
 		"resdata-key-b": TTLUnknown, // unresolved — must be KEPT
 		"instance-key":  TTLLive,
 	})
-	if _, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched); err != nil {
+	if _, _, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched, nil); err != nil {
 		t.Fatalf("dropArchivedBlendReserves: %v", err)
 	}
 	if _, present := data["assetA"]; present {
@@ -389,7 +434,7 @@ func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
 		"resdata-key-a": TTLLive, // individually live, but the POOL is dead
 		"resdata-key-b": TTLLive,
 	})
-	archived, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched)
+	archived, _, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched, nil)
 	if err != nil || !archived {
 		t.Fatalf("dropArchivedBlendReserves: archived=%v err=%v, want the instance reported archived", archived, err)
 	}
@@ -403,7 +448,7 @@ func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
 // silently blank every pool. Nil degrades to TTLUnknown, i.e. keep.
 func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
 	data, refs, matched := blendDropFixture()
-	if _, err := dropArchivedBlendReserves(t.Context(), nil, data, refs, matched); err != nil {
+	if _, _, err := dropArchivedBlendReserves(t.Context(), nil, data, refs, matched, nil); err != nil {
 		t.Fatalf("dropArchivedBlendReserves(nil cache): %v", err)
 	}
 	if len(data) != 2 {

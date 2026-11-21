@@ -980,6 +980,14 @@ A deploy during a merge can fail the first load (absorbed by `for: 30m`). **Esca
 
 **Fix.** Only healing the lake: chase the missing `ledger_entry_changes` removal with the completeness tooling. **Escalate:** none.
 
+## stellarindex_lending_reserve_undecodable
+
+**Trigger.** `sum by (instance) (increase(stellarindex_lending_reserve_undecodable_total[3h])) > 0`, ticket, held 1h after the window clears. The Blend pool-state reader got a live reserve's `ResData` entry that would not decode. That reserve is served as `decode_failed` and its supply and borrow are left out of the pool's totals, which then read low.
+
+**Check.** The lending responses' `excluded` lists name the pool and reserve (`kind: reserve`, `reason: decode_failed`). Then check whether the pool contract was upgraded (a new WASM hash) since the reserve last decoded.
+
+**Fix.** A new reserve layout means updating the Blend `ResData` decoder for that WASM version. A corrupt lake row means re-deriving that ledger range. **Escalate:** none.
+
 ## stellarindex_tls_cert_expiring_soon
 
 **Trigger.** `for: 1h`, P2, three arms. An expired cert fails every request; 14 days leaves time to renew by hand.

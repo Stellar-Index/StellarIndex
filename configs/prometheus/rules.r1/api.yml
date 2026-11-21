@@ -1348,6 +1348,29 @@ groups:
             "sdex order book crossed-pair count changed" line; chase the
             missing removal as a ledger_entry_changes coverage gap.
 
+      # Each increment is a live lending reserve served as decode_failed: its
+      # supply and borrow leave the pool's totals. A hit is rare and the next
+      # read may not repeat it, so the 3h window plus keep_firing_for holds the
+      # ticket long enough to be seen.
+      - alert: stellarindex_lending_reserve_undecodable
+        expr: |
+          sum by (instance) (increase(stellarindex_lending_reserve_undecodable_total[3h])) > 0
+        for: 0m
+        keep_firing_for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_lending_reserve_undecodable
+          summary: "Lending reserve state failed to decode on {{ $labels.instance }} in the last 3h"
+          description: |
+            The Blend pool-state reader returned a reserve's ResData entry
+            that would not decode, so that reserve is served as
+            decode_failed and left out of its pool's supplied and
+            borrowed totals. A contract upgrade that changed the reserve
+            layout, or a corrupt lake row, are the likely causes.
+
       # Explorer reader lake-schema probes: an "absent" answer from a process
       # that never saw the object latches until restart, so an API started
       # before the lake DDL serves that surface from the slow fallback (or

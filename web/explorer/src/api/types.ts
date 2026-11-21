@@ -1922,8 +1922,11 @@ export interface paths {
          *     verified-currency catalogue and read through
          *     `/v1/assets/{asset_id}`, so its price, supply and market cap are
          *     that route's; `market_cap_usd` is null, never zero, without a
-         *     price or supply. A token missing from the catalogue is null and
-         *     named in `excluded`.
+         *     price or supply. The token is read as `include_thin=true`: a price
+         *     from a market below the substance floor is served with
+         *     `thin_market: true` and its `substance` evidence, display-only;
+         *     no market cap or emission value derives from it. A token missing
+         *     from the catalogue is null and named in `excluded`.
          *
          *     The USD totals are exact decimal sums over every pool
          *     `/v1/lending/pools` lists (a pool on both the Blend and BLNT
@@ -2321,7 +2324,9 @@ export interface paths {
          *     `*_unvalued` names each (`asset`, `kind`, `reason`: `unpriced`,
          *     `reserve_unread`, `rate_unread`, `lp_share_unvalued`,
          *     `leg_kind_unknown`, `decimals_unknown`, `price_scale_mismatch`,
-         *     `withheld`, `negative_amount`).
+         *     `withheld`, `price_read_failed`, `negative_amount`). A
+         *     `price_read_failed` backstop-token leg, like a reserve whose price
+         *     read failed, marks the response degraded (`Cache-Control: no-store`).
          *
          *     Pagination: pass `pagination.next` back as `cursor`;
          *     `pagination` is omitted on the last page.
@@ -2368,7 +2373,7 @@ export interface paths {
          *     2 dp. A stream past its expiration (`live: false`) has ended:
          *     `tokens_per_day` is `"0"` and `usd_per_day` `"0.00"`, never its last
          *     `eps` annualised. `usd_per_day` is null with `usd_reason` when the
-         *     token is unpriced (`unpriced`), its decimals are unknown
+         *     token is unpriced or priced only thin (`unpriced`), its decimals are unknown
          *     (`decimals_unknown`) or disagree with the lake's
          *     (`price_scale_mismatch`), the pool names no emission token
          *     (`emission_token_unread`), or the pool's emission token is not the
@@ -6839,8 +6844,11 @@ export interface components {
             pool: string | null;
             /** @description Reserve token C-strkey for a `reserve`, `supply` or `borrow` exclusion; the backstop token for an account's `backstop` leg; the ticker for a `token` exclusion. */
             asset: string | null;
-            /** @enum {string} */
-            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "no_usd_value" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
+            /**
+             * @description For a `reserve` with no decoded state: `reserve_archived` when its entry or the pool instance is TTL-archived, `decode_failed` when the lake holds its entry but it did not decode, `not_captured` when the lake holds no entry for it (`no_decoded_reserve_state` is no longer emitted; kept for compatibility). For a decoded reserve: `no_usd_value` when its token has no USD price or established decimals, `withheld` when a price gate (thin market, scam-flagged issuer) refused its price, `price_read_failed` when a read on the price chain failed (the response is also degraded).
+             * @enum {string}
+             */
+            reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "reserve_archived" | "decode_failed" | "not_captured" | "no_usd_value" | "price_read_failed" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
         };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's
@@ -12260,7 +12268,7 @@ export interface components {
             /** @description Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived, or when it is withheld — `price_withheld_reason` then says why. When `price_basis` is present the value is NOT a market observation — see that field. */
             price_usd?: string | null;
             /**
-             * @description Present ONLY when price_usd is not a DIRECT market observation. `global_market`: the asset is a classic issuance the verified catalogue binds, on its exact (code, issuer), to a global ticker, no Stellar market price survived the thin-market substance gate, and price_usd is that ticker's fresh cross-venue aggregator price (see `global_market`) — it takes precedence over a declared peg, so a global depeg reaches price_usd instead of being hidden behind a fixed 1:1; like a peg fill it carries no change pills, sparkline claim or market_cap. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
+             * @description Present ONLY when price_usd is not a DIRECT market observation. `global_market`: the asset is a classic issuance the verified catalogue binds, on its exact (code, issuer), to a global ticker, no Stellar market price survived the thin-market substance gate, and price_usd is that ticker's fresh cross-venue aggregator price (see `global_market`) — it takes precedence over a declared peg, so a global depeg reaches price_usd instead of being hidden behind a fixed 1:1; like a peg fill it carries no change pills, sparkline claim or market_cap. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Unlike a peg or global-market fill, a transitive price values `market_cap_usd` and `fdv_usd` under the same dust-liquidity floor and turnover ceiling as a direct price, with `price_basis: transitive` naming the basis beside them. The market-cap chart has no transitive price, so this detail can show a `market_cap_usd` where the chart shows none. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged).
              * @enum {string}
              */
             price_basis?: "global_market" | "declared_peg" | "transitive";
@@ -18537,12 +18545,21 @@ export interface operations {
                                 decimals?: number;
                                 /** @description USD per whole token, as `/v1/assets/{asset_id}` `price_usd`; null when unpriced. */
                                 price_usd?: string | null;
+                                /**
+                                 * @description As `/v1/assets/{asset_id}` `price_basis`: present only when `price_usd` is not a direct market observation.
+                                 * @enum {string}
+                                 */
+                                price_basis?: "global_market" | "declared_peg" | "transitive";
                                 /** @description Base units; null when no supply snapshot. */
                                 circulating_supply?: string | null;
                                 /** @description Base units; null when no supply snapshot. */
                                 total_supply?: string | null;
-                                /** @description As `/v1/assets/{asset_id}` `market_cap_usd`; null without a price or supply, or when a valuation guard withholds it. */
+                                /** @description As `/v1/assets/{asset_id}` `market_cap_usd`; null without a price or supply, when a valuation guard withholds it, or when the price is thin. */
                                 market_cap_usd?: string | null;
+                                /** @description Present and true when `price_usd` comes from a market below the substance floor; display-only. */
+                                thin_market?: boolean;
+                                /** @description The substance measurement behind a thin `price_usd`; present only with `thin_market`. */
+                                substance?: components["schemas"]["SubstanceEvidence"];
                             } | null;
                             /** @description Pools listed, including any in `excluded`. */
                             pool_count?: number;
@@ -18564,10 +18581,10 @@ export interface operations {
                                 /** @description True when the price behind `tokens_usd` is past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the token is a Comet LP share (Blend's BLND:USDC backstop token, or a BLNT `BlntUsdc`/`BlntXlm` tier's), which has no valuation here. `token_unknown`: the tiers summed in this token name no plain-token asset kind (`Usdc` or `Xlm`), so it is withheld.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the token is a Comet LP share (Blend's BLND:USDC backstop token, or a BLNT `BlntUsdc`/`BlntXlm` tier's), which has no valuation here. `token_unknown`: the tiers summed in this token name no plain-token asset kind (`Usdc` or `Xlm`), so it is withheld. `withheld`: a pricing gate (scam issuer, thin market) refused the token's price. `price_read_failed`: a read on the token's price chain failed, so the response is also degraded.
                                  * @enum {string|null}
                                  */
-                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | null;
+                                usd_reason?: "lp_share_unvalued" | "unpriced" | "withheld" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | "price_read_failed" | null;
                             }[];
                             /** @description True when a `pool_list`, `pool` or `reserve` exclusion leaves something out of the USD totals, which are then floors. */
                             lower_bound?: boolean;
@@ -18676,6 +18693,11 @@ export interface operations {
                                 price_usd?: string | null;
                                 /** @description True when `price_usd` comes from a price the reader marked stale. False when `price_usd` is null. */
                                 price_stale?: boolean;
+                                /**
+                                 * @description As `/v1/assets/{asset_id}` `price_basis`: present only when `price_usd` is not a direct market observation. `transitive`: derived through one intermediate hop with both legs substance-gated. Absent for a direct market price.
+                                 * @enum {string}
+                                 */
+                                price_basis?: "transitive";
                                 /** @description The reserve's applied ReserveConfig. Null when it is not known (no applied queue_set_reserve event). */
                                 config?: components["schemas"]["LendingReserveConfig"] | null;
                                 /** @description Live interest-rate curve modifier (ReserveData.ir_mod), the contract's raw integer as a decimal string at `ir_mod_decimals`. With the config's r_base..r_three and utilisation targets it gives the borrow-rate curve. */
@@ -19054,10 +19076,10 @@ export interface operations {
                                 /** @description True when `price_usd` is the newest price but past its freshness window. */
                                 price_stale?: boolean;
                                 /**
-                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier has a balance but its token is unread, or its `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld.
+                                 * @description Why `tokens_usd` is null. `lp_share_unvalued`: the tier holds Comet LP shares (a Blend backstop's BLND:USDC, or a BLNT `BlntUsdc`/`BlntXlm` tier), which have no valuation here. `token_unknown`: the tier has a balance but its token is unread, or its `backstop_asset` is not a plain token (`Usdc` or `Xlm`) this route values, so it is withheld. `withheld`: a pricing gate (scam issuer, thin market) refused the tier token's price. `price_read_failed`: a read on the tier token's price chain failed, so the response is also degraded.
                                  * @enum {string|null}
                                  */
-                                usd_reason?: "lp_share_unvalued" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | null;
+                                usd_reason?: "lp_share_unvalued" | "unpriced" | "withheld" | "decimals_unknown" | "price_scale_mismatch" | "balance_unavailable" | "token_unknown" | "negative_amount" | "price_read_failed" | null;
                             }[];
                             /** @description Sum of the tiers' `tokens_usd`; null when no tier is valued. */
                             total_usd?: string | null;

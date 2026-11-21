@@ -1,0 +1,68 @@
+# promtool unit tests for the lending reserve decode alert:
+#
+#   stellarindex_lending_reserve_undecodable
+#
+# Both rule trees carry the rule unfiltered by job, so one series fires it once per tree.
+#
+#   promtool test rules deploy/monitoring/rule-tests/lending-reserve-undecodable_test.yml
+
+rule_files:
+  - ../rules/api.yml
+  - ../../../configs/prometheus/rules.r1/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: lending_reserve_undecodable — a counter that never moves stays quiet
+    input_series:
+      - series: 'stellarindex_lending_reserve_undecodable_total{job="stellarindex-api",instance="r1:8080"}'
+        values: '0x300'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: stellarindex_lending_reserve_undecodable
+        exp_alerts: []
+
+  # One undecodable reserve at 10m: tickets at once, holds while the 3h window
+  # still sees it plus keep_firing_for, then clears.
+  - interval: 1m
+    name: lending_reserve_undecodable — a single decode failure tickets, then clears
+    input_series:
+      - series: 'stellarindex_lending_reserve_undecodable_total{job="stellarindex-api",instance="r1:8080"}'
+        values: '0x10 1x290'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_lending_reserve_undecodable
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_lending_reserve_undecodable
+        exp_alerts: &undecodable
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              instance: r1:8080
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_lending_reserve_undecodable"
+              summary: "Lending reserve state failed to decode on r1:8080 in the last 3h"
+              description: &undecodable_description |
+                The Blend pool-state reader returned a reserve's ResData entry
+                that would not decode, so that reserve is served as
+                decode_failed and left out of its pool's supplied and
+                borrowed totals. A contract upgrade that changed the reserve
+                layout, or a corrupt lake row, are the likely causes.
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              instance: r1:8080
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_lending_reserve_undecodable"
+              summary: "Lending reserve state failed to decode on r1:8080 in the last 3h"
+              description: *undecodable_description
+      - eval_time: 3h40m
+        alertname: stellarindex_lending_reserve_undecodable
+        exp_alerts: *undecodable
+      - eval_time: 4h30m
+        alertname: stellarindex_lending_reserve_undecodable
+        exp_alerts: []
