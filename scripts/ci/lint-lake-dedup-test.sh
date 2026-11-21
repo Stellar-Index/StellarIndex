@@ -553,21 +553,68 @@ strquiet="$(mk strquiet)"
 cat > "$strquiet/$GODIR/prose.go" <<'GO'
 package clickhouse
 
-// Help text that quotes a query is prose, not a read.
+// A backtick inside a double-quoted string opens no raw literal, so the
+// query in it is not analysed; like any double-quoted read it is reported.
 const help = "use `SELECT count() FROM stellar.operations` only with FINAL"
 GO
-check "a quoted query inside an interpreted string is not a read" 0 "$strquiet"
+strout="$(bash "$LINT" "$strquiet" 2>&1)"
+if grep -q 'prose.go:#interp' <<<"$strout" && ! grep -q '  .*stellar\.operations$' <<<"$strout"; then
+  echo "  ok   a quoted query inside an interpreted string is reported, not analysed"
+  pass=$((pass + 1))
+else
+  echo "  FAIL a quoted query inside an interpreted string is reported, not analysed"
+  fail=$((fail + 1))
+fi
 
 # ── baseline mechanics ───────────────────────────────────────────────
+# suggest <root>: write the baseline the gate proposes for <root>'s sites.
+suggest() {
+  local out
+  mkdir -p "$1/scripts/ci"
+  out="$(bash "$LINT" "$1" 2>&1)"
+  sed -n 's/^  baseline entry: \(.*\)<reason>$/\1board rewrite lands in the next change/p' <<<"$out" \
+    > "$1/scripts/ci/lint-lake-dedup.baseline"
+}
 based="$(mk based)"
 cp "$naive/$GODIR/sponsors.go" "$based/$GODIR/sponsors.go"
-mkdir -p "$based/scripts/ci"
-cat > "$based/scripts/ci/lint-lake-dedup.baseline" <<'BASE'
-# Grandfathered sites, shrink-only.
-internal/storage/clickhouse/sponsors.go:stellar.operations    board rewrite lands in the next change
-internal/storage/clickhouse/sponsors.go:stellar.transactions  board rewrite lands in the next change
-BASE
+suggest "$based"
 check "a baseline entry with a reason silences the site it names" 0 "$based"
+
+# A baseline entry names its reads by count and fingerprint, so it cannot
+# excuse a second read of the same table in the same file, or a swapped one.
+fpbase="$(mk fpbase)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q = `SELECT sum(amount) FROM stellar.supply_flows WHERE ledger_seq > 1`\n' > "$fpbase/$GODIR/board.go"
+suggest "$fpbase"
+check "a fingerprinted baseline entry silences its read" 0 "$fpbase"
+fpmore="$(mk fpmore)"
+cp -R "$fpbase/." "$fpmore/"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf '\nconst q2 = `SELECT count() FROM stellar.supply_flows WHERE ledger_seq > 2`\n' >> "$fpmore/$GODIR/board.go"
+check "a second read of a baselined table in the same file fails" 1 "$fpmore"
+fpswap="$(mk fpswap)"
+cp -R "$fpbase/." "$fpswap/"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q = `SELECT asset, sum(amount) FROM stellar.supply_flows GROUP BY asset`\n' > "$fpswap/$GODIR/board.go"
+check "a baselined read swapped for another fails" 1 "$fpswap"
+
+ibase="$(mk ibase)"
+printf 'package clickhouse\n\nconst q = "SELECT count() FROM stellar.transactions"\n' > "$ibase/$GODIR/interp.go"
+suggest "$ibase"
+check "a fingerprinted #interp entry silences its read" 0 "$ibase"
+iswap="$(mk iswap)"
+cp -R "$ibase/." "$iswap/"
+printf 'package clickhouse\n\nconst q = "SELECT sum(fee_charged) FROM stellar.transactions"\n' > "$iswap/$GODIR/interp.go"
+check "an #interp read swapped for another fails" 1 "$iswap"
+iline="$(mk iline)"
+cp -R "$ibase/." "$iline/"
+printf 'package clickhouse\n\nconst q, q2 = "SELECT count() FROM stellar.transactions", "SELECT sum(amount) FROM stellar.supply_flows"\n' > "$iline/$GODIR/interp.go"
+check "a second #interp read on an already-excused line fails" 1 "$iline"
+inofp="$(mk inofp)"
+cp "$ibase/$GODIR/interp.go" "$inofp/$GODIR/interp.go"
+mkdir -p "$inofp/scripts/ci"
+printf '%s\n' "$GODIR/interp.go:#interp  1 read: an entry that states no fingerprint" > "$inofp/scripts/ci/lint-lake-dedup.baseline"
+check "a baseline entry without a fingerprint is refused" 1 "$inofp"
 
 noreason="$(mk noreason)"
 cp "$naive/$GODIR/sponsors.go" "$noreason/$GODIR/sponsors.go"
@@ -586,7 +633,7 @@ check "a stale baseline entry fails until it is deleted" 1 "$stale"
 
 unwatched="$(mk unwatched)"
 mkdir -p "$unwatched/scripts/ci"
-printf '%s\n' "$GODIR/detail_reader.go:stellar.not_a_watched_table  the base copy of the gate does not watch this table yet" \
+printf '%s\n' "$GODIR/detail_reader.go:stellar.not_a_watched_table  1 read: #0 the base copy of the gate does not watch this table yet" \
   > "$unwatched/scripts/ci/lint-lake-dedup.baseline"
 check "a baseline entry for a table this copy does not watch is not stale" 0 "$unwatched"
 
@@ -789,8 +836,7 @@ check 'a raw FROM stellar.` + ident + ` splice fails' 1 "$xrawsplice"
 
 xbase="$(mk xbase)"
 printf 'package clickhouse\n\nvar q = "SELECT count() FROM stellar." + t + " WHERE a = 1"\n' > "$xbase/$GODIR/reader.go"
-mkdir -p "$xbase/scripts/ci"
-printf '%s  1 read: census constant, compared against system.parts\n' "$GODIR/reader.go:#interp" > "$xbase/scripts/ci/lint-lake-dedup.baseline"
+suggest "$xbase"
 check "a baselined #interp file is not reported" 0 "$xbase"
 
 # The #interp entry pins how many reads it excuses, so it can neither hide
@@ -922,6 +968,65 @@ check "a ReplicatedReplacingMergeTree missing from LAKE_TABLES fails" 1 "$newrep
 noddl="$(mk noddl)"
 printf -- '-- no tables here\n' > "$noddl/$SQLDIR/tier1_schema.sql"
 check "a real-shaped tree deriving no ReplacingMergeTree fails" 1 "$noddl"
+
+ddlprobe ddl_semi "a ';' in a column comment does not end the CREATE body" "$SQLDIR/f.sql" \
+  'CREATE TABLE IF NOT EXISTS stellar.brand_zeta (
+    amount Int128, -- stroops; signed
+    note String
+) ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY amount;'
+ddlprobe ddl_create "the word create in a column comment does not split the CREATE body" "$SQLDIR/g.sql" \
+  'CREATE TABLE IF NOT EXISTS stellar.brand_eta (
+    note String -- rows we create here
+) ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY note;'
+
+# ── every multiplicity-sensitive aggregate name ──────────────────────
+# SQL-standard underscore spellings and aggregates outside the sum/count
+# families change value when a row repeats, exactly like sum().
+n=0
+for agg in 'array_agg(amount)' 'group_concat(tx_hash)' 'groupConcat(tx_hash)' 'deltaSum(amount)' \
+           'var_pop(amount)' 'var_samp(amount)' 'stddev_pop(amount)' 'stddev_samp(amount)' \
+           'covar_pop(amount, ledger_seq)' 'covar_samp(amount, ledger_seq)' \
+           'exponentialMovingAverage(1)(amount, ledger_seq)' 'histogram(5)(amount)' \
+           'simpleLinearRegression(ledger_seq, amount)' 'groupBitXor(amount)' 'entropy(amount)' \
+           'skewPop(amount)' 'kurtSamp(amount)' 'sequenceCount(1)(ledger_seq, amount > 0)' \
+           'sparkbar(9)(ledger_seq, amount)' 'contingency(asset, amount)'; do
+  n=$((n + 1))
+  probe "agg_$n" "$agg is caught" stellar.supply_flows \
+    "SELECT $agg FROM stellar.supply_flows WHERE ledger_seq > 1;"
+done
+check "groupBitOr(), groupBitAnd() and uniq() stay idempotent" 0 \
+  "$(shape bitor 'SELECT groupBitOr(a), groupBitAnd(a), uniq(a) FROM stellar.supply_flows WHERE ledger_seq > 1')"
+
+# ── every unexaminable Go-built read ─────────────────────────────────
+# A raw literal ending in FROM with the table spliced in LAST.
+tsplice="$(mk tsplice)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst opsTable = "stellar.operations"\n\nfunc q() string {\n\treturn `SELECT sum(fee_charged) FROM ` + opsTable\n}\n' > "$tsplice/$GODIR/tail.go"
+check "a raw read ending in FROM with a trailing splice fails" 1 "$tsplice"
+tsplit="$(mk tsplit)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst opsTable = "stellar.operations"\n\nfunc q() string {\n\treturn `SELECT sum(fee_charged) FROM ` +\n\t\topsTable\n}\n' > "$tsplit/$GODIR/tail.go"
+check "a trailing splice on the next line fails" 1 "$tsplit"
+tstellar="$(mk tstellar)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nfunc q(t string) string {\n\treturn `SELECT count() FROM stellar.` + t\n}\n' > "$tstellar/$GODIR/tail.go"
+check "a trailing splice after stellar. fails" 1 "$tstellar"
+
+# A double-quoted read on a line that also carries a backtick.
+qcomment="$(mk qcomment)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q = "SELECT sum(amount) FROM stellar.supply_flows WHERE ledger_seq > ?" // gross `amount`\n' > "$qcomment/$GODIR/q.go"
+check "a double-quoted read beside a backtick comment fails" 1 "$qcomment"
+qarg="$(mk qarg)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nvar q = fmt.Sprintf("SELECT count() FROM stellar.transactions WHERE %%s", `ledger_seq > 1`)\n' > "$qarg/$GODIR/q.go"
+check "a double-quoted read beside a raw Sprintf argument fails" 1 "$qarg"
+qglue="$(mk qglue)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q = `SELECT sum(amount) FROM ` + "stellar.supply_flows" + ` WHERE ledger_seq > 1`\n' > "$qglue/$GODIR/q.go"
+check "a quoted table spliced between raw literals fails" 1 "$qglue"
 
 empty="$TMP/empty"
 mkdir -p "$empty/$GODIR"
