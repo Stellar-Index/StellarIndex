@@ -1171,11 +1171,12 @@ func TestCap67Movements_ExplicitToIsClampedToTheContiguousTip(t *testing.T) {
 	}
 	cap67SeedLedgers(t, ctx, addr, seqs)
 
-	// The operator's post-incident invocation: an explicit window straight
-	// across the hole.
+	// The operator's post-incident invocation: an explicit window straight across the hole. A first run floored at base,
+	// since the shared lake starts at another test's range and a -from above the floor is refused.
 	if err := chops.Run([]string{
 		"ch-cap67-movements",
 		"-ch-addr", addr,
+		"-floor-ledger", strconv.FormatUint(uint64(base), 10),
 		"-from", strconv.FormatUint(uint64(base), 10),
 		"-to", strconv.FormatUint(uint64(base+12), 10),
 		"-write",
@@ -1248,10 +1249,11 @@ func TestCap67Movements_RefusesToAdvanceOverUnderivedLedgers(t *testing.T) {
 	}
 	cap67SeedLedgers(t, ctx, addr, seqs)
 
-	// A normal run establishes the prefix [base, base+3].
+	// A normal first run, floored at base, establishes the prefix [base, base+3].
 	if err := chops.Run([]string{
 		"ch-cap67-movements",
 		"-ch-addr", addr,
+		"-floor-ledger", strconv.FormatUint(uint64(base), 10),
 		"-from", strconv.FormatUint(uint64(base), 10),
 		"-to", strconv.FormatUint(uint64(base+3), 10),
 		"-write",
@@ -2020,10 +2022,10 @@ func TestCap67Range_StallsAtHole(t *testing.T) {
 		t.Fatalf("flush hole seed: %v", err)
 	}
 
-	// from explicit (skip the watermark read); to=0 → resolve the contiguous tip.
-	// floorLedger is unused on this path (from!=0 skips the first-run seed) —
-	// pass any valid non-zero value.
-	start, last, err := chops.Cap67Range(ctx, addr, from+1, 0, 1)
+	// A first run floored at from+1 (a -from above the floor is refused); to=0 → resolve the contiguous tip.
+	cap67TruncateWatermark(t)
+	t.Cleanup(func() { cap67TruncateWatermark(t) })
+	start, last, err := chops.Cap67Range(ctx, addr, from+1, 0, from+1)
 	if err != nil {
 		t.Fatalf("Cap67Range: %v", err)
 	}
