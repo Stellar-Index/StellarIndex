@@ -220,11 +220,12 @@ func hitTradeCap(batch []canonical.Trade, maxTrades int) bool {
 	return maxTrades > 0 && len(batch) >= maxTrades
 }
 
-// bookRead is one constituent's TradesInRange answer; capped means older rows in the range may be unread.
+// bookRead is one constituent's TradesInRange answer; capped means rows older than readFrom, its earliest returned row, may be unread.
 type bookRead struct {
-	book   canonical.Pair
-	rows   []canonical.Trade
-	capped bool
+	book     canonical.Pair
+	rows     []canonical.Trade
+	capped   bool
+	readFrom time.Time
 }
 
 // readBooks reads each constituent's trades. Read errors propagate, as in [Server.fiatCombinedTrades].
@@ -235,9 +236,26 @@ func (s *Server) readBooks(ctx context.Context, pairs []canonical.Pair, from, to
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, bookRead{book: sp, rows: batch, capped: hitTradeCap(batch, maxTrades)})
+		read := bookRead{book: sp, rows: batch, capped: hitTradeCap(batch, maxTrades)}
+		for i := range batch {
+			if i == 0 || batch[i].Timestamp.Before(read.readFrom) {
+				read.readFrom = batch[i].Timestamp
+			}
+		}
+		out = append(out, read)
 	}
 	return out, nil
+}
+
+// cappedReadFrom is the latest readFrom among capped reads, the earliest instant every book was read through; zero when none capped.
+func cappedReadFrom(reads []bookRead) time.Time {
+	var at time.Time
+	for i := range reads {
+		if reads[i].capped && reads[i].readFrom.After(at) {
+			at = reads[i].readFrom
+		}
+	}
+	return at
 }
 
 // bookRows concatenates the reads' rows.
@@ -249,16 +267,22 @@ func bookRows(reads []bookRead) []canonical.Trade {
 	return out
 }
 
-// mergeBookReads merges the reads chronologically, keeps the newest `maxTrades`, and names the books with a surviving row.
+// mergeBookReads merges the reads chronologically, keeps the newest `maxTrades`, and names the books with a surviving row. When a read
+// was capped every book is cut to [cappedReadFrom]: an uncapped book's older rows beside none of the capped book's would serve a
+// skewed mix, not the newest trades of the combined market.
 func mergeBookReads(reads []bookRead, maxTrades int) (merged []canonical.Trade, books []canonical.Pair, truncated bool) {
 	type sourced struct {
 		trade *canonical.Trade
 		read  int
 	}
+	cut := cappedReadFrom(reads)
 	var all []sourced
 	for i := range reads {
 		truncated = truncated || reads[i].capped
 		for j := range reads[i].rows {
+			if reads[i].rows[j].Timestamp.Before(cut) {
+				continue
+			}
 			all = append(all, sourced{trade: &reads[i].rows[j], read: i})
 		}
 	}
