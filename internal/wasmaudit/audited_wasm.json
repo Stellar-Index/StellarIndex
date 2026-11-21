@@ -610,6 +610,16 @@
     "audited": "2026-10-07",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
+  "25fc306065cbb9b05461db78ec259802cb916053ba5b3ab911b0a72dd1a81439": {
+    "sources": [
+      "reflector-dex",
+      "reflector-cex",
+      "reflector-fx"
+    ],
+    "role": "oracle",
+    "audited": "2026-11-21",
+    "doc": "docs/operations/wasm-audits/reflector.md"
+  },
   "27635b9a4439ac911b2a9b431627ad2e2545faded01da27e405003050ec91887": {
     "sources": [
       "phoenix"

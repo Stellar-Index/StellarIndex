@@ -1,7 +1,7 @@
 ---
 title: Reflector WASM-history audit
 last_verified: 2026-11-21
-status: partial — the two attested hashes emit no events; the three event-emitting hashes are reviewed but unattested (no captured fixture)
+status: partial — the two older attested hashes emit no events; event-emitting 25fc3060… is attested with captured fixtures; 7944a96d… and 8ecd1857… are reviewed but unattested
 sources: reflector-dex, reflector-cex, reflector-fx
 backfill_safe: false
 ---
@@ -23,19 +23,26 @@ See `README.md` for the full procedure.
 > they ran writes no rows, which is correct, and their attestation says
 > nothing about the event wire format. The walk ended at L59,301,651
 > ([WASM timeline](#wasm-timeline)); the captured events from L62.25M
-> came from a later, event-emitting WASM, and it is not in
-> `audited_wasm.json`. The replay gate therefore
-> refuses any Reflector range that holds events until those hashes are
-> string-checked against the decoder below and attested. Their values
-> are not recorded in this repo and are unverified here.
+> came from a later, event-emitting WASM (`7944a96d…`), and it is not in
+> `audited_wasm.json`. The replay gate therefore refuses any Reflector
+> range that ran `7944a96d…` or `8ecd1857…`. The current hash,
+> `25fc3060…`, is attested with captured events (see
+> [below](#25fc306065cbb9b0--v710-all-three-variants)).
 
 ## Status
 
 **Attested 2026-04-29:** `4a64c8c8…` (DEX, CEX) and `df88820e…`
 (DEX, CEX, FX), as event-less builds. Fetched via `stellar contract fetch`
-against mainnet.sorobanrpc.com. `Backfill: BackfillPerWASM` admits only
-ranges where every contract ran one of those two; no event-bearing Reflector
-range is replay-safe yet.
+against mainnet.sorobanrpc.com.
+
+**Attested 2026-11-21:** `25fc3060…` (DEX, CEX, FX), the event-emitting
+v7.1.0 build, with captured events in
+`test/fixtures/reflector/25fc306065cbb9b05461db78ec259802cb916053ba5b3ab911b0a72dd1a81439/`.
+
+`Backfill: BackfillPerWASM` admits only ranges where every contract ran one
+of those three: the event-less early ranges, and L65,079,084 (CEX) /
+L65,079,108 (DEX) / L65,079,132 (FX) onward. Ranges that ran `7944a96d…` or
+`8ecd1857…` are refused.
 
 ## Contracts under audit
 
@@ -184,7 +191,7 @@ by then. Which hash, and when each contract switched, has not been recorded.
 | CEX (pre-v3) | `4a64c8c8502df326` | L50,644,239 → L51,656,688 | maintainer@2026-04-29 | emits no events |
 | DEX, CEX, FX | `7944a96d512f6e51` | L61,602,762–L61,603,662 → L63,690,357–L63,690,399 | maintainer@2026-11-21 | upstream `v6.0.0` pulse build; emits the event the decoder reads; the `v6-2026-04-23` fixtures fall in this range; not attested |
 | DEX, CEX, FX | `8ecd1857496df2c1` | L63,690,358–L63,690,400 → L65,079,083–L65,079,131 | maintainer@2026-11-21 | upstream `v6.0.1` pulse build; event spec byte-identical to v6.0.0; not attested |
-| DEX, CEX, FX | `25fc306065cbb9b0` | L65,079,084 (CEX) / L65,079,108 (DEX) / L65,079,132 (FX) → tip | maintainer@2026-11-21 | upstream `v7.1.0` pulse build; matches current decoder (see below); not attested until a captured event lands under `test/fixtures/reflector/<hash>/` |
+| DEX, CEX, FX | `25fc306065cbb9b0` | L65,079,084 (CEX) / L65,079,108 (DEX) / L65,079,132 (FX) → tip | maintainer@2026-11-21 | upstream `v7.1.0` pulse build; matches current decoder (see below); attested, fixtures under `test/fixtures/reflector/25fc3060…/` |
 
 ### `df88820e231ad8f3` — v3, all three variants
 
@@ -289,27 +296,35 @@ asset slot, `i128` price at 14 decimals, millisecond `u64` topic timestamp,
 the USD (CEX, FX) and USDC SAC (DEX) quotes, and no new event kind all match
 the decoder expectations above. **Matches current decoder.**
 
-**Not attested.** The public API serves no event XDR, so no event from this
-hash is captured under `test/fixtures/reflector/25fc3060…/`, which §3 of the
-procedure requires (`TestManifest_NewHashNeedsFixture`). The hash stays out
-of `audited_wasm.json` until one is. To capture, on a host with a stellar-rpc
-whose retention covers L65,079,084 onward:
+**Attested 2026-11-21.** Nine events (three per contract, L65,595,156–L65,595,280)
+were captured from a public mainnet stellar-rpc with
+`scripts/dev/capture-reflector-fixtures.sh` into
+`test/fixtures/reflector/25fc306065cbb9b05461db78ec259802cb916053ba5b3ab911b0a72dd1a81439/`;
+each file's `wasm_hash`, read from the contract's ledger entry, is this hash.
+Three are the item 3 transactions. Their `.golden` files were generated with
+`go test ./internal/sources/reflector -run TestRealMainnetFixtures -update`,
+then checked against an independent decode of the raw event XDR (`i128` at
+14 decimals): every row of the three item 3 events matches, as an exact
+integer and in order (DEX 25, CEX 12, FX 24), e.g. CEX XLM 0.125399, BTC
+58,078.444805, ETH 1,651.446658; FX EUR 1.097445; DEX XLM SAC 0.125226.
 
-    WASM_HASH=25fc306065cbb9b05461db78ec259802cb916053ba5b3ab911b0a72dd1a81439 \
+To capture events for `7944a96d…` (the `v6-2026-04-23` fixtures are from it:
+L62,251,160–L62,251,319 lies in its range on all three contracts) or
+`8ecd1857…`, on a host with a stellar-rpc whose retention covers its range:
+
+    WASM_HASH=<hash> \
       scripts/dev/capture-reflector-fixtures.sh -e http://127.0.0.1:8000 -c <contract> -n 3
 
 for each of the three contracts, then `go test ./internal/sources/reflector
--run TestRealMainnetFixtures -update`, review the goldens against item 3, and
-add the hash to `audited_wasm.json`. The same applies to `7944a96d…` (the
-`v6-2026-04-23` fixtures are from it: L62,251,160–L62,251,319 lies in its range
-on all three contracts) and `8ecd1857…`.
+-run TestRealMainnetFixtures -update`, review the goldens, and add the hash to
+`audited_wasm.json`.
 
 ## Decision
 
 | source | Backfill | rationale |
 | --- | --- | --- |
-| `reflector-fx` | `BackfillPerWASM` | `df88820e…` attested as event-less; event-bearing ranges refused until the later hash is audited. |
-| `reflector-dex` | `BackfillPerWASM` | `4a64c8c8…` + `df88820e…` attested as event-less; same refusal. |
+| `reflector-fx` | `BackfillPerWASM` | `df88820e…` attested as event-less and `25fc3060…` as event-emitting; ranges that ran `7944a96d…` or `8ecd1857…` refused until those are attested. |
+| `reflector-dex` | `BackfillPerWASM` | `4a64c8c8…` + `df88820e…` attested as event-less and `25fc3060…` as event-emitting; same refusal. |
 | `reflector-cex` | `BackfillPerWASM` | Same as DEX. |
 
 ## References
