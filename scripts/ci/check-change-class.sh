@@ -22,26 +22,20 @@
 # round-trip for zero additional signal — the problem this filter exists
 # to remove per the plan's measured numbers.
 #
-# WHY THE integration CLASS COVERS ALL OF internal/. The Makefile's
-# INT_TEST_PKGS is the list of packages the Docker suite BUILDS AND RUNS;
-# this class decides whether that suite runs AT ALL for a given diff. If a
-# package is in the first list but its directory is in neither classifier,
-# its `//go:build integration` tests compile in the unconditional compile
-# gate and are EXECUTED BY NOTHING for a change confined to that package,
-# money-invariant tests included. `go list -tags
-# integration -test -deps ./test/integration/... ./test/harness/...` shows
-# the suite transitively imports 40+ of the repo's ~53 top-level internal/
-# packages (internal/projector and internal/dispatcher among them); enumerating each one by hand is exactly the
-# pattern that produced that drift and will produce the next one the moment
-# a new internal/ package is added and imported. internal/** is therefore
-# matched as a whole, kept a strict superset of INT_TEST_PKGS, and
+# WHICH internal/ PACKAGES THE integration CLASS NAMES. The suite imports
+# 40+ internal/ packages; a PR runs the shards only for storage, schema,
+# the ops subcommands the suite drives (internal/ops/chops through
+# chops.Run, whose ClickHouse derives have no other real coverage) and the
+# INT_TEST_PKGS directories, whose `//go:build integration` tests nothing
+# else executes. The nightly full run covers the rest.
 # test/controlwiring/integration_pkgs_trigger_evidence_test.go fails if any
 # INT_TEST_PKGS directory or go.mod is missing from this regex, from
 # ci.yml's filter, or from prepush-integration-required.sh.
 #
 # Classes (must stay identical in substance to the `filters:` block in
 # .github/workflows/ci.yml's preflight job):
-#   integration  — internal/**, cmd/stellarindex-ops/**, migrations/**,
+#   integration  — internal/storage/**, internal/platform/postgresstore/**,
+#                  internal/ops/{archive,chops}/**, cmd/stellarindex-ops/**, migrations/**,
 #                  scripts/ops/**, test/integration/**, test/harness/**,
 #                  go.mod, go.sum, Makefile, scripts/ci/integration-shard.sh,
 #                  .github/workflows/ci.yml, deploy/clickhouse/*.sql,
@@ -85,7 +79,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
+  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
 }
 
 class_go() {
