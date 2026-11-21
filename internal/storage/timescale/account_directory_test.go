@@ -50,6 +50,47 @@ func TestBuildDirectoryUpsert_PlaceholderLayout(t *testing.T) {
 	}
 }
 
+// A duplicate file for an address must not clear a scam flag the other copy carries, whichever sorts last.
+func TestDedupDirectoryEntriesByAddress_KeepsScamFlagOfAnyCopy(t *testing.T) {
+	flagged := DirectoryEntry{Address: "GA", Name: "flagged", Tags: []string{"malicious"}, Source: "stellar-expert"}
+	clean := DirectoryEntry{Address: "GA", Name: "clean", Tags: []string{}, Source: "stellar-expert"}
+	for _, in := range [][]DirectoryEntry{{flagged, clean}, {clean, flagged}} {
+		got := dedupDirectoryEntriesByAddress(in)
+		if len(got) != 1 {
+			t.Fatalf("len = %d, want 1", len(got))
+		}
+		if !slices.Contains(got[0].Tags, "malicious") {
+			t.Errorf("order %s,%s: tags = %v, want malicious kept", in[0].Name, in[1].Name, got[0].Tags)
+		}
+	}
+}
+
+// Only scam-class tags carry over from an earlier copy: a recognition tag on one duplicate file must not
+// attach to an address whose last copy does not claim it.
+func TestDedupDirectoryEntriesByAddress_RecognitionTagsAreLastWins(t *testing.T) {
+	recognised := DirectoryEntry{Address: "GA", Name: "recognised", Tags: []string{"issuer", "anchor"}, Source: "stellar-expert"}
+	untagged := DirectoryEntry{Address: "GA", Name: "untagged", Tags: []string{}, Source: "stellar-expert"}
+
+	got := dedupDirectoryEntriesByAddress([]DirectoryEntry{recognised, untagged})
+	if len(got) != 1 || got[0].Name != "untagged" {
+		t.Fatalf("got %+v, want the untagged copy last-wins", got)
+	}
+	if len(got[0].Tags) != 0 {
+		t.Errorf("recognised then untagged: tags = %v, want [] (no recognition tag gained from the earlier copy)", got[0].Tags)
+	}
+
+	got = dedupDirectoryEntriesByAddress([]DirectoryEntry{untagged, recognised})
+	if len(got) != 1 || !slices.Equal(got[0].Tags, []string{"issuer", "anchor"}) {
+		t.Errorf("untagged then recognised: got %+v, want the last copy's tags [issuer anchor]", got)
+	}
+
+	flagged := DirectoryEntry{Address: "GA", Name: "flagged", Tags: []string{"exchange", "Malicious "}, Source: "stellar-expert"}
+	got = dedupDirectoryEntriesByAddress([]DirectoryEntry{flagged, untagged})
+	if len(got) != 1 || !slices.Equal(got[0].Tags, []string{"malicious"}) {
+		t.Errorf("flagged then untagged: got %+v, want only the scam tag carried over", got)
+	}
+}
+
 // TestDedupDirectoryEntriesByAddress: two upstream files declaring one address would put the same conflict
 // key twice in a multi-row upsert, which Postgres rejects; ReplaceDirectory must dedupe addresses (last
 // wins) first.
