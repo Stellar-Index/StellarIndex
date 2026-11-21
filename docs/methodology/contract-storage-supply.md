@@ -271,9 +271,13 @@ meaning.
 The API caches each contract's reading, or the reader's decline, for five
 minutes with one fill in flight per contract, as it does the event net. A
 failed read is never cached. Once a contract has a reading, a failed refresh
-keeps serving it; when the reading is older than five minutes plus one refresh
-budget, or the event net is a last-good copy after a failed refresh, the
-response carries `flags.stale=true`.
+keeps serving it. When the served reading or event net is a last-good copy
+(its latest refresh failed, or one has run longer than its 30-second budget),
+`/v1/assets/{id}/supply`, `/v1/assets/{id}` and `/v1/rwa/assets` carry
+`flags.stale=true`, and the detail and listing are not cached as clean. Age
+alone does not flag a reading: a contract nobody has asked for is refreshed by
+its next request, which is served the previous reading unflagged while that
+refresh runs.
 
 ---
 

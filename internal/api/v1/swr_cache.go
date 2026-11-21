@@ -29,6 +29,9 @@ type swrEntry[V any] struct {
 	val    V
 	// err is set before close(flight) on a failed cold fill; waiters hold the same entry, so they read it after it is deleted.
 	err error
+	// refreshFailed: the latest refresh of a filled value failed, so val is a last-good copy until one succeeds.
+	refreshFailed bool
+	flightAt      time.Time
 }
 
 func newSWRCache[V any](logger *slog.Logger, cache, fillName string, ttl time.Duration, maxEntries int) *swrCache[V] {
@@ -104,6 +107,15 @@ func (c *swrCache[V]) filled(key string) bool {
 	return ok && !e.at.IsZero()
 }
 
+// lastGood reports whether key's value is a last-good copy: its latest refresh failed, or one has run past budget. A value merely
+// past its TTL is not: an idle key refreshes on demand, so expiry alone says nothing about whether its refreshes work.
+func (c *swrCache[V]) lastGood(key string, budget time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	return ok && !e.at.IsZero() && (e.refreshFailed || (e.flight != nil && time.Since(e.flightAt) >= budget))
+}
+
 // lookupResult is a filled value (entry nil) or the cold-fill entry to wait on.
 type lookupResult[V any] struct {
 	val    V
@@ -130,7 +142,7 @@ func (c *swrCache[V]) lookup(op, key string, upstream func(context.Context) (V, 
 	if ok && !e.at.IsZero() {
 		out, at := e.val, e.at
 		if e.flight == nil {
-			e.flight = make(chan struct{})
+			e.flight, e.flightAt = make(chan struct{}), time.Now()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill — see runDetachedFill.
 			go runDetachedFill(c.logger, c.fillName, cacheFillBudget, e.flight, upstream, c.settle(op, key, e))
 		}
@@ -163,7 +175,7 @@ func (c *swrCache[V]) settle(op, key string, entry *swrEntry[V]) func(V, error) 
 		defer c.mu.Unlock()
 		if err != nil {
 			if !entry.at.IsZero() {
-				entry.flight = nil
+				entry.flight, entry.refreshFailed = nil, true
 				c.count(op, "refresh_error")
 				c.logger.Warn("cache refresh failed; serving stale value", "cache", c.cache, "op", op, "key", key, "err", err)
 				return
@@ -176,7 +188,7 @@ func (c *swrCache[V]) settle(op, key string, entry *swrEntry[V]) func(V, error) 
 		}
 		entry.at = time.Now()
 		entry.val = val
-		entry.flight = nil
+		entry.flight, entry.refreshFailed = nil, false
 	}
 }
 
