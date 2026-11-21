@@ -492,7 +492,8 @@ func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyReq
 
 // accountStoreUnavailableDetail names both reasons cmd/stellarindex-api leaves Accounts nil.
 const accountStoreUnavailableDetail = "this deployment has no AccountStore wired: Redis is unavailable, or auth_backend=postgres, " +
-	"which disables /v1/account/keys (an operator revokes with DELETE /v1/admin/keys/{keyID}?identifier=)"
+	"which disables /v1/account/keys (an operator revokes with DELETE /v1/admin/keys/{keyID}?identifier=; " +
+	"dashboard users manage keys at /v1/dashboard/keys)"
 
 // operatorReasonOK enforces the X-Reason contract on self-service key routes for operator-tier callers only; returns false
 // after writing the 400.

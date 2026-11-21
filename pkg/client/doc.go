@@ -103,8 +103,9 @@
 //     request/response shape; consumers use `net/http` with an
 //     eventsource-style reader directly. Only the two price streams
 //     resume: on reconnect, send the last received event `id:` as the
-//     Last-Event-ID request header and they replay what was missed, or
-//     send a `stream_gap` event when the replay buffer no longer holds it.
+//     Last-Event-ID request header and they replay what the buffer still
+//     holds. When the buffer no longer holds everything missed, they send
+//     a `stream_gap` event first and then replay the rest.
 //     `/v1/observations/stream` and `/v1/ledger/stream` ignore it and
 //     start from now, so events published while disconnected are
 //     lost; backfill that window from `/v1/observations` or
