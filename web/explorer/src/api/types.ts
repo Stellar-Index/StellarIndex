@@ -12818,7 +12818,7 @@ export interface components {
              * @enum {string}
              */
             supply_basis?: "sep41_lake_flows" | "classic_lake_flows";
-            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Omitted when false. */
+            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Also set for source=mint_burn_flows when the token's storage holds a balance entry the reader cannot decode: the storage cross-check that would prove the event net short could not run, so the net is a floor. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
             /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */
             balance_entries?: number;

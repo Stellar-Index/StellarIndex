@@ -471,7 +471,7 @@ func (s *Server) fillContractMarketCaps(
 	}
 	for i := range rows {
 		row := &rows[i]
-		circ, basis, ok, unread := s.contractSupplyReadingChecked(ctx, row.AssetID)
+		circ, basis, floor, ok, unread := s.contractSupplyReadingChecked(ctx, row.AssetID)
 		if !ok && ctx.Err() != nil {
 			for j := i; j < len(rows); j++ {
 				clearContractSupply(&rows[j])
@@ -488,19 +488,20 @@ func (s *Server) fillContractMarketCaps(
 		if sc := src[row.AssetID].SourceCount; sc != nil {
 			sources = *sc
 		}
-		s.applyContractMarketCap(row, circ, basis, isScaled, sources)
+		s.applyContractMarketCap(row, circ, basis, floor, isScaled, sources)
 	}
 	return cut
 }
 
 // applyContractMarketCap fills one contract row's supply/cap from a successful supply reading, encoding the refusal rules: unscaled
-// decimals, dust liquidity, scale disagreement and turnover.
+// decimals, dust liquidity, scale disagreement and turnover. floor marks a figure that is a lower bound whatever its basis.
 func (s *Server) applyContractMarketCap(
-	row *AssetDetail, circ string, basis supply.Basis, isScaled bool, sources int,
+	row *AssetDetail, circ string, basis supply.Basis, floor, isScaled bool, sources int,
 ) {
 	clearContractSupply(row)
 	b := basis.String()
 	row.SupplyBasis = &b
+	row.supplyFloor = floor
 	// Supply is a raw chain fact and is served either way. The CAP divides by 10^decimals, and an
 	// unread scale is a convention, so multiplying by it would be off by a power of ten.
 	if !isScaled {
@@ -529,13 +530,13 @@ func (s *Server) applyContractMarketCap(
 		return
 	}
 	row.MarketCapUSD = &mc
-	row.MarketCapLowerBound = basis.LowerBound()
+	row.MarketCapLowerBound = basis.LowerBound() || floor
 }
 
 // clearContractSupply drops every supply-derived field the generic listing fill stamped: the contract reading owns the row, so a
 // figure from another basis must not survive its refusal or a cut walk.
 func clearContractSupply(row *AssetDetail) {
-	row.CirculatingSupply, row.SupplyBasis = nil, nil
+	row.CirculatingSupply, row.SupplyBasis, row.supplyFloor = nil, nil, false
 	row.MarketCapUSD, row.MarketCapLowerBound, row.MarketCapLowLiquidity = nil, false, false
 }
 
@@ -576,32 +577,32 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 // the preference order lives in ONE place, or two surfaces publish different bases under one field name. Readings measure
 // ISSUANCE against DISTRIBUTION and are never summed. ok=false means no defensible figure: an INCOMPLETE flow sum (negative net,
 // never clamped to zero), or no flows and no storage reading. unread means a read did not answer, which is not "no defensible
-// figure" and must not be cached as one.
+// figure" and must not be cached as one. floor means the figure is a lower bound beyond what its basis says.
 func (s *Server) contractSupplyReadingChecked(
 	ctx context.Context, assetID string,
-) (figure string, basis supply.Basis, ok, unread bool) {
+) (figure string, basis supply.Basis, floor, ok, unread bool) {
 	sup, err := s.TokenSupply.TokenSupply(ctx, assetID)
 	if err != nil {
-		return "", "", false, true
+		return "", "", false, false, true
 	}
 	if sup.Total == nil || sup.Incomplete {
-		return "", "", false, false
+		return "", "", false, false, false
 	}
 	// Held balances win for a flowless log or one whose net they exceed, by the same choice as
 	// GET /v1/assets/{id}/supply.
-	st, ok, err := s.storageReadingSupersedes(ctx, assetID, sup)
-	if ok {
-		return st.Total.String(), supply.BasisContractStorageBalances, true, false
+	st, verdict, err := s.storageReadingSupersedes(ctx, assetID, sup)
+	if verdict == storageSupersedes {
+		return st.Total.String(), supply.BasisContractStorageBalances, false, true, false
 	}
 	// A failed storage read or a spent deadline is unread, not "no figure" and not "storage agreed": a SAC declines by design.
 	if err != nil || ctx.Err() != nil {
-		return "", "", false, true
+		return "", "", false, false, true
 	}
 	if sup.FlowCount == 0 {
-		return "", "", false, false
+		return "", "", false, false, false
 	}
-	// The lake's event-flow sum over the contract's own mint/burn/clawback log.
-	return sup.Total.String(), supply.BasisSEP41LakeFlows, true, false
+	// The lake's event-flow sum; undecodable storage leaves it unproven complete, so a floor, not a total.
+	return sup.Total.String(), supply.BasisSEP41LakeFlows, verdict == storageUnchecked, true, false
 }
 
 // fillContractDirectoryTags stamps the curated label from the CONTRACT address and applies scam suppression to it: the classic

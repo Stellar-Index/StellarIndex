@@ -230,12 +230,13 @@ func TestContractArmCountsAFailedStorageReadAsACutWhenTheLogIsFlowless(t *testin
 	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}}); !cut {
 		t.Error("cut = false after the only supply reading failed; the view would cache the row as unmeasured")
 	}
-	if _, ok, err := s.storageReadingSupersedes(context.Background(), contractID, clickhouse.TokenSupply{Total: big.NewInt(0)}); ok || err == nil {
-		t.Errorf("storageReadingSupersedes(flowless, failed read) = ok %v err %v, want the error", ok, err)
+	if _, v, err := s.storageReadingSupersedes(context.Background(), contractID, clickhouse.TokenSupply{Total: big.NewInt(0)}); v != storageNoVerdict || err == nil {
+		t.Errorf("storageReadingSupersedes(flowless, failed read) = verdict %v err %v, want the error", v, err)
 	}
 }
 
-// An entry the reader cannot decode is a fixed lake property: it declines the storage reading, and a log with flows is valued on its net.
+// An entry the reader cannot decode is a fixed lake property, so it is not a cut; but it leaves the storage check that would prove
+// the net short unrun, so the net is served as a floor and the cap and the RWA total over it are lower bounds.
 func TestContractArmValuesTheNetWhenStorageHoldsAnUndecodableEntry(t *testing.T) {
 	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
 	net := big.NewInt(10_000_0000000)
@@ -246,16 +247,33 @@ func TestContractArmValuesTheNetWhenStorageHoldsAnUndecodableEntry(t *testing.T)
 		}}, ContractStorageSupply: &storageSupplyStub{err: undecodable}},
 		logger: discardLogger(),
 	}
-	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
+	price := "1.00"
+	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7, PriceUSD: &price}}
 
 	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}}); cut {
-		t.Error("cut = true for a deterministic decline; the view would stay degraded on every rebuild")
+		t.Error("cut = true for a deterministic lake property; the view would stay degraded on every rebuild")
 	}
 	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != net.String() {
 		t.Fatalf("circulating_supply = %v, want the event net %s", rows[0].CirculatingSupply, net)
 	}
 	if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != supply.BasisSEP41LakeFlows.String() {
 		t.Errorf("supply_basis = %v, want %q", rows[0].SupplyBasis, supply.BasisSEP41LakeFlows)
+	}
+	if rows[0].MarketCapUSD == nil || *rows[0].MarketCapUSD != "10000.00" {
+		t.Fatalf("market_cap_usd = %v, want 10000.00 on the net", rows[0].MarketCapUSD)
+	}
+	if !rows[0].MarketCapLowerBound {
+		t.Error("market_cap_lower_bound = false on a net the storage check could not run against")
+	}
+
+	other := "5000.00"
+	exact := RWAAsset{AssetID: "USTRY", Valuation: RWAValuation{Status: RWAValuationPublished, MarketCapUSD: &other}}
+	served := rwaContractAssetRows([]rwaContractMember{{contractID: contractID}}, map[string]AssetDetail{contractID: rows[0]})
+	if len(served) != 1 || !served[0].CirculatingSupplyLowerBound {
+		t.Fatalf("rwa row = %+v, want circulating_supply_lower_bound", served)
+	}
+	if sum := rwaSummarise(append(served, exact), rwaTruncation{}); !sum.LowerBound {
+		t.Errorf("rwa total = %+v, want lower_bound: it sums a cap over an unchecked net", sum)
 	}
 }
 

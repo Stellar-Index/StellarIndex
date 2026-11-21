@@ -57,7 +57,7 @@ type SorobanVolumeReader interface {
 func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) (snap supply.Supply, ok, unread bool) {
 	sctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
-	figure, basis, ok, unread := s.contractSupplyReadingChecked(sctx, contractID)
+	figure, basis, _, ok, unread := s.contractSupplyReadingChecked(sctx, contractID)
 	if !ok {
 		return supply.Supply{}, false, unread
 	}

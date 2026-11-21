@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -632,6 +633,22 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 				t.Errorf("404 body carries a total_supply: %s", rec.Body)
 			}
 		})
+	}
+}
+
+// Storage holding an entry the reader cannot decode cannot prove the event net short, so the net is served as a floor, not a total.
+func TestSupplyFlagsTheNetALowerBoundWhenStorageIsUndecodable(t *testing.T) {
+	undecodable := fmt.Errorf("%w: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable)
+	rec := serveSupplyWithStorage(t, dealFlows(), &fakeStorageSupply{err: undecodable}, storageDealContractID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
+	}
+	got := decodeSupply(t, rec.Body.Bytes())
+	if got.Source != "mint_burn_flows" || got.TotalSupply != dealFlows().Total.String() {
+		t.Errorf("source = %q total_supply = %q, want the event net", got.Source, got.TotalSupply)
+	}
+	if !got.CirculatingSupplyLowerBound {
+		t.Error("circulating_supply_lower_bound = false: the net is served as exact although storage could not check it")
 	}
 }
 

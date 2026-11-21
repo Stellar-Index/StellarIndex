@@ -332,6 +332,8 @@ type AssetDetail struct {
 	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
+	// supplyFloor: CirculatingSupply is a lower bound although its SupplyBasis is not one (an event net storage could not check).
+	supplyFloor bool
 	// extensionUnread: the catalogue row or one of the six extension reads errored, so an absent field is not "none".
 	extensionUnread bool
 	// extensionStale: the catalogue row or an extension read answered from a cache entry its refresh has not kept up with.

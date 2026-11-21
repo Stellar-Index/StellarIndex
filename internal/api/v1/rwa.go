@@ -1555,7 +1555,7 @@ func rwaWithholdFlaggedIdentity(a *RWAAsset) {
 }
 
 // rwaSupplyProvenance carries the listing row's supply basis onto the RWA row, with whether that figure is a floor
-// ([supply.Basis.LowerBound], so the two cannot disagree).
+// ([supply.Basis.LowerBound], or a net the contract arm could not check).
 // A supply with no basis (dust-suppressed and ticker-collision paths) returns nothing: naming an arm that did not answer is worse than
 // naming none.
 func rwaSupplyProvenance(d AssetDetail) (string, bool) {
@@ -1563,7 +1563,7 @@ func rwaSupplyProvenance(d AssetDetail) (string, bool) {
 		return "", false
 	}
 	b := supply.Basis(*d.SupplyBasis)
-	return b.String(), b.LowerBound()
+	return b.String(), b.LowerBound() || d.supplyFloor
 }
 
 // rwaSortAssets orders by published market cap descending, then observation count, then asset id, once over the combined set
