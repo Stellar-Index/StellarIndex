@@ -159,8 +159,8 @@ type AssetDetail struct {
 	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were refused because the
 	// lake's on-chain decimals() disagrees with the nonstandard_decimals_assets projection that
 	// price paths normalise through. Price and supply would sit on different scales, so their
-	// product is off by a power of ten; a market price is withheld too (decimals_mismatch). The
-	// flag self-clears when the aggregator's lockstep reconcile repairs the projection.
+	// product is off by a power of ten. Each field still serves on its own scale; the flag
+	// self-clears when the aggregator's lockstep reconcile repairs the projection.
 	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
 
 	// MarketCapWithheldReason says why market_cap_usd (and fdv_usd, on the same guard) is null beside a served price_usd and
@@ -1075,7 +1075,6 @@ func (s *Server) fillRowMarketCap(
 ) {
 	// Must precede every return: a Soroban row's scale is read or flagged unknown, never left at the stamped 7.
 	s.applyConfirmedListingDecimals(ctx, row, scales)
-	withholdOffScalePrice(row)
 	if row.MarketCapUSD != nil {
 		return
 	}
@@ -2477,7 +2476,6 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// every price producer (including the peg fill) so nothing can resurrect the value: a flagged
 	// issuer publishes no price_usd / market_cap_usd / fdv_usd / change_*, keeping circulating_supply
 	// and the scam warning. Directory tags are otherwise display-only.
-	withholdOffScalePrice(&detail)
 	suppressScamIssuerPricing(&detail)
 
 	// Same rule for every other reason the headline price is absent (thin-market gate, never

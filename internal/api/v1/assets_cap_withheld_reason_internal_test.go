@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -122,45 +121,6 @@ func TestMarketCapWithheldReason_LateFillsAreNamed(t *testing.T) {
 	}
 }
 
-type undeclaredDecimals struct{}
-
-func (undeclaredDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
-	return 0, false, nil
-}
-
-type lakeDecimals uint32
-
-func (f lakeDecimals) TokenDecimals(context.Context, string) (uint32, bool, error) {
-	return uint32(f), true, nil
-}
-
-// TestFillRowMarketCap_WithholdsOffScalePrice — a listing price normalised on a scale the row cannot vouch for is withheld with
-// its pills and cap; a declared peg is per whole token and stays.
-func TestFillRowMarketCap_WithholdsOffScalePrice(t *testing.T) {
-	const contract = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
-	for _, tc := range []struct {
-		name  string
-		dec   TokenDecimalsReader
-		basis string
-		want  PriceWithheldReason
-	}{
-		{"undeclared", undeclaredDecimals{}, "", PriceWithheldDecimalsUnknown},
-		{"lake 18, no projection row", lakeDecimals(18), "", PriceWithheldDecimalsMismatch},
-		{"declared peg on an unknown scale", undeclaredDecimals{}, priceBasisDeclaredPeg, ""},
-		{"lake agrees", lakeDecimals(7), "", ""},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			price, pct := "1.00", "2.5"
-			row := AssetDetail{AssetID: contract, Type: string(canonical.AssetSoroban), Decimals: 7, PriceUSD: &price, PriceBasis: tc.basis, Change1hPct: &pct}
-			s := &Server{Options: Options{TokenDecimals: tc.dec}}
-			s.fillRowMarketCap(context.Background(), &row, nil, nil, nil, nil, nil)
-			if row.PriceWithheldReason != tc.want || (row.PriceUSD == nil) != (tc.want != "") || (row.Change1hPct == nil) != (tc.want != "") {
-				t.Errorf("price_usd = %q change_1h = %v reason = %q, want reason %q", strOrEmpty(row.PriceUSD), row.Change1hPct, row.PriceWithheldReason, tc.want)
-			}
-		})
-	}
-}
-
 // TestFillRowMarketCap_NamesTheRefusal — a listing row that keeps its price and supply but loses its cap says why.
 func TestFillRowMarketCap_NamesTheRefusal(t *testing.T) {
 	const asset = "FOO-GAFOO"
@@ -174,6 +134,7 @@ func TestFillRowMarketCap_NamesTheRefusal(t *testing.T) {
 		{"dust floor", func(r *AssetDetail) { v := "1"; r.VolumeUSD24h = &v }, &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}, "low_liquidity"},
 		{"turnover ceiling", func(r *AssetDetail) { v := "1"; r.VolumeUSD24h = &v }, &Server{Options: Options{MaxMarketCapVolumeRatio: 10}}, "low_liquidity"},
 		{"ticker collision", func(r *AssetDetail) { r.UnverifiedTickerCollision = true }, &Server{}, "ticker_collision"},
+		{"decimals mismatch", func(r *AssetDetail) { r.MarketCapDecimalsMismatch = true }, &Server{}, "decimals_mismatch"},
 		{"cap served", func(*AssetDetail) {}, &Server{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
