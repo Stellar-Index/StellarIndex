@@ -556,8 +556,12 @@ func filledPriceCapRefusal(p *pendingMarketCap, d *AssetDetail) MarketCapWithhel
 }
 
 // nameLateCapRefusal names the refusal for a price filled after the cap was valued: neither the thin pass nor the declared
-// peg values one.
+// peg or global-market fill values one.
 func nameLateCapRefusal(d *AssetDetail) {
+	if d.MarketCapWithheldReason == MarketCapWithheldThinMarket && !d.ThinMarket {
+		// A peg or global-market fill replaced the thin price the cap was refused on.
+		d.MarketCapWithheldReason = ""
+	}
 	if d.PriceUSD == nil || d.MarketCapUSD != nil || d.MarketCapWithheldReason != "" {
 		return
 	}
@@ -566,6 +570,9 @@ func nameLateCapRefusal(d *AssetDetail) {
 		d.MarketCapWithheldReason = MarketCapWithheldThinMarket
 	case d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket:
 		d.MarketCapWithheldReason = MarketCapWithheldPriceBasis
+	case d.priceUnread:
+		// The thin pass re-read a price the cap pass could not.
+		d.MarketCapWithheldReason = MarketCapWithheldPriceUnread
 	}
 }
 

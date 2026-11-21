@@ -1264,6 +1264,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 	for i := range rows {
 		s.applyGlobalMarket(&rows[i], refs, now)
 		s.fillFixedPegPrice(ctx, &rows[i], memo)
+		nameLateCapRefusal(&rows[i])
 	}
 }
 
@@ -3750,14 +3751,22 @@ func (s *Server) fillTwinCapAtRowPrice(
 	twin[0].PriceUSD, twin[0].priceWholeToken = own, false
 }
 
-// flagTwinSubstanceWithheldCap marks a catalogue row's missing cap as suppressed when its twin's on-chain price failed the
-// substance gate on measured evidence. The row's own price comes from the global tier, so without the flag a null cap beside
-// a price and a supply would read as missing data.
+// flagTwinSubstanceWithheldCap names a catalogue row's missing cap after its twin's withheld on-chain price, and marks it
+// suppressed when that was the substance gate on measured evidence. The row's own price comes from the global tier, so
+// without it a null cap beside a price and a supply would read as missing data.
 func flagTwinSubstanceWithheldCap(dst *AssetDetail, twin AssetDetail) {
-	if twin.PriceWithheldReason == PriceWithheldSubstance &&
-		dst.MarketCapUSD == nil && dst.PriceUSD != nil && dst.CirculatingSupply != nil {
+	if dst.MarketCapUSD != nil || dst.PriceUSD == nil || dst.CirculatingSupply == nil {
+		return
+	}
+	switch twin.PriceWithheldReason {
+	case "":
+	case PriceWithheldScamIssuer, PriceWithheldUnattributed:
+		// Issuer verdicts unprice the row through carryTwinIssuerVerdict; never name one beside a global-tier price.
+	case PriceWithheldSubstance:
 		dst.MarketCapLowLiquidity = true
 		dst.MarketCapWithheldReason = MarketCapWithheldReason(PriceWithheldSubstance)
+	default:
+		dst.MarketCapWithheldReason = MarketCapWithheldReason(twin.PriceWithheldReason)
 	}
 }
 
@@ -3823,7 +3832,10 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	}
 	if dst.MarketCapUSD == nil {
 		dst.MarketCapUSD, dst.MarketCapLowerBound = twin.MarketCapUSD, twin.MarketCapLowerBound
-		dst.MarketCapWithheldReason = twin.MarketCapWithheldReason
+		// The twin's thinness is not the row's: a row priced from the global tier is not a thin price.
+		if twin.MarketCapWithheldReason != MarketCapWithheldThinMarket || dst.ThinMarket {
+			dst.MarketCapWithheldReason = twin.MarketCapWithheldReason
+		}
 	}
 	// The dust-liquidity flag must ride along with the (absent) cap, or the catalogue row would
 	// show nothing where the twin shows market_cap_low_liquidity. When suppressed, null cap and

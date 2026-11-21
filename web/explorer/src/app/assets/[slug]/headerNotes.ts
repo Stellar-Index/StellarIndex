@@ -40,7 +40,7 @@ const CAP_WITHHELD: Record<CapReason, string> = {
   unattributed: 'withheld',
   manipulation_guard: 'withheld · price not validated',
   fx_leg_unavailable: 'withheld · no FX rate',
-  price_unread: 'not valued · price unavailable',
+  price_unread: 'not valued · direct price unread',
   supply_stale: 'not valued · supply out of date',
   decimals_unknown: 'not valued · token decimals unknown',
   decimals_mismatch: 'refused · decimals disagree',
@@ -48,7 +48,7 @@ const CAP_WITHHELD: Record<CapReason, string> = {
   low_liquidity: 'withheld · negligible liquidity',
   supply_floor: 'not valued · supply is a floor',
   thin_market: 'not valued · thin market',
-  price_basis: 'not valued · price not from a market',
+  price_basis: 'not valued · price is a peg or global reference',
 };
 
 export function capWithheldNote(

@@ -53,4 +53,13 @@ describe('marketCapNote', () => {
       }),
     ).toBe('not valued · ticker look-alike');
   });
+
+  it('never contradicts the price shown beside the reason', () => {
+    expect(marketCapNote({ market_cap_withheld_reason: 'price_unread' })).toBe(
+      'not valued · direct price unread',
+    );
+    expect(marketCapNote({ market_cap_withheld_reason: 'price_basis' })).toBe(
+      'not valued · price is a peg or global reference',
+    );
+  });
 });

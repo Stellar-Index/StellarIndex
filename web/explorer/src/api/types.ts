@@ -12317,6 +12317,8 @@ export interface components {
             market_cap_decimals_mismatch?: boolean;
             /**
              * @description Why market_cap_usd is null beside a served price_usd and circulating_supply; fdv_usd is null for the same reason when it is. Present ONLY then: omitted when a cap is served, and when there is no price or no supply to value. The booleans above still serve unchanged.
+             *     It explains market_cap_usd only. fdv_usd can be null beside a served cap (the turnover ceiling tests each figure), which market_cap_low_liquidity flags.
+             *     Absent beside a null cap, a served price and a served supply, it means the figure could not be computed from the served inputs: a data or compute gap, not a guard verdict.
              *     `substance`, `scam_issuer`, `upstream_leg`, `unattributed`, `manipulation_guard`, `fx_leg_unavailable`: the asset's direct market price was withheld for that `price_withheld_reason`, and price_usd is a later fill (see price_basis) that values no cap.
              *     `price_unread`: the direct price could not be read, so a fill cannot stand in for it.
              *     `supply_stale`: the supply observation is older than the serving bound (see supply_as_of).
