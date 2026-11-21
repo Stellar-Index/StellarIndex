@@ -19,7 +19,7 @@ func TestAwaitExternalSink_LogsAWindowOnlyWhenThereIsOne(t *testing.T) {
 		wantWindow bool
 	}{
 		"events only":      {pipeline.ShutdownLoss{Rows: 3}, false},
-		"trades abandoned": {pipeline.ShutdownLoss{Rows: 3, OffChainFrom: at, OffChainTo: at.Add(time.Minute)}, true},
+		"trades abandoned": {pipeline.ShutdownLoss{Rows: 3, OffChainFrom: at, OffChainTo: at.Add(time.Minute), Venues: "kraken"}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -34,8 +34,9 @@ func TestAwaitExternalSink_LogsAWindowOnlyWhenThereIsOne(t *testing.T) {
 			}
 			_, from := rec["from"]
 			_, to := rec["to"]
-			if from != tc.wantWindow || to != tc.wantWindow || rec["rows"] != float64(3) {
-				t.Errorf("log = %s; want rows=3 and window fields present = %v", buf.String(), tc.wantWindow)
+			_, venues := rec["venues"]
+			if from != tc.wantWindow || to != tc.wantWindow || venues != tc.wantWindow || rec["rows"] != float64(3) {
+				t.Errorf("log = %s; want rows=3 and window and venue fields present = %v", buf.String(), tc.wantWindow)
 			}
 		})
 	}

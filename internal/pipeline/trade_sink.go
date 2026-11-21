@@ -317,14 +317,14 @@ func (b *externalRetryBuffer) trimOldestLocked() {
 }
 
 // run drives the background retrier until ctx is cancelled, then does a
-// final bounded drain of whatever remains.
-func (b *externalRetryBuffer) run(ctx context.Context) {
+// final bounded drain of whatever remains, recording what it abandons in lt.
+func (b *externalRetryBuffer) run(ctx context.Context, lt *lossTracker) {
 	ticker := time.NewTicker(externalRetryInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			b.finalDrain()
+			b.finalDrain(lt)
 			return
 		case <-ticker.C:
 			b.drainOnce(ctx)
@@ -385,10 +385,10 @@ func (b *externalRetryBuffer) drainOnce(ctx context.Context) {
 }
 
 // finalDrain makes one last attempt at shutdown under a fresh ctx bounded by drainFinalPassBudget (it runs at the end of ShutdownDeadline).
-// Whatever does not land is counted on SinkUndrainedRowsTotal and logged at ERROR with depth and venues for refetch.
+// Whatever does not land is counted on SinkUndrainedRowsTotal, recorded in lt (the lane's ShutdownLoss) and logged at ERROR with depth and venues for refetch.
 //
 //nolint:contextcheck // intentional fresh context: the parent ctx is cancelled at shutdown, so threading it would fail every insert instantly (same pattern as drainBufferedEvents / flushShutdown).
-func (b *externalRetryBuffer) finalDrain() {
+func (b *externalRetryBuffer) finalDrain(lt *lossTracker) {
 	b.mu.Lock()
 	pending := len(b.ring)
 	b.mu.Unlock()
@@ -398,20 +398,26 @@ func (b *externalRetryBuffer) finalDrain() {
 	fctx, cancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
 	defer cancel()
 	b.drainOnce(fctx)
+	b.abandonRemaining(lt)
+}
 
+// abandonRemaining empties the ring at shutdown, recording every trade left in it in lt, so each is reported once.
+func (b *externalRetryBuffer) abandonRemaining(lt *lossTracker) {
 	b.mu.Lock()
-	remaining := len(b.ring)
-	venues := ringVenues(b.ring)
+	abandoned := b.ring
+	b.ring = nil
+	obs.TradeInsertBufferDepth.Set(0)
 	b.mu.Unlock()
-	if remaining == 0 {
+	if len(abandoned) == 0 {
 		return
 	}
+	lt.trades(abandoned)
 	// Counted by ROW like reportAbandonedTrades: these rows have nowhere
 	// left to go once this pass ends, and the alert's value is the size of
 	// the served-tier gap whatever its recovery path.
-	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "trade").Add(float64(remaining))
+	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "trade").Add(float64(len(abandoned)))
 	b.logger.Error("external trade retry buffer not fully drained at shutdown — remaining entries are vendor-refillable (ADR-0041); record the venues and window",
-		"remaining", remaining, "venues", venues)
+		"remaining", len(abandoned), "venues", ringVenues(abandoned))
 }
 
 // ringVenues lists the distinct trade sources in ring, sorted, for the

@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +42,9 @@ type ShutdownLoss struct {
 	// OffChainFrom and OffChainTo bound the timestamps of the abandoned ledgerless trades, the window to refetch
 	// from the venues; zero when none.
 	OffChainFrom, OffChainTo time.Time
+	// Venues lists the sources of the abandoned ledgerless trades, sorted and comma-separated (a string keeps
+	// ShutdownLoss comparable): with the window, what to refetch.
+	Venues string
 }
 
 // lossTracker accumulates one PersistEvents run's [ShutdownLoss] across
@@ -61,6 +66,7 @@ func (l *lossTracker) trades(abandoned []canonical.Trade) {
 		case t.Ledger == 0: // off-chain trade: no ledger to cap on
 			l.loss.LedgerUnknown = true
 			l.offChain(t.Timestamp)
+			l.venue(t.Source)
 		case l.loss.MinLedger == 0 || t.Ledger < l.loss.MinLedger:
 			l.loss.MinLedger = t.Ledger
 		}
@@ -99,4 +105,17 @@ func (l *lossTracker) snapshot() ShutdownLoss {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.loss
+}
+
+// venue adds source to the sorted venue list. Caller holds l.mu.
+func (l *lossTracker) venue(source string) {
+	var venues []string
+	if l.loss.Venues != "" {
+		venues = strings.Split(l.loss.Venues, ",")
+	}
+	if !slices.Contains(venues, source) {
+		venues = append(venues, source)
+		slices.Sort(venues)
+		l.loss.Venues = strings.Join(venues, ",")
+	}
 }
