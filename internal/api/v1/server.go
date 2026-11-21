@@ -493,16 +493,13 @@ type Options struct {
 	// leaves frozen false and derives single_source from the observation count.
 	Freeze FrozenLooker
 
-	// Substance, when non-nil, is the serving-side thin-market gate ([PriceSubstanceGate]).
-	// The server consults it on price paths that bypass PriceReader (the tip rolling-window
-	// VWAP); reader-backed paths carry the gate inside the readers. Nil disables handler-side
-	// gating only.
+	// Substance, Scam and Exclusions gate the price paths that bypass PriceReader (tip window, VWAP, TWAP, chart, history,
+	// price stream, cache fallbacks); reader-backed paths gate inside the readers. Nil disables handler-side gating only.
 	Substance PriceSubstanceGate
-
-	// Scam, when non-nil, withholds the aggregated price for directory-scam-flagged issuers on the
-	// paths the server gates directly (tip VWAP, VWAP, TWAP, chart, history, price stream);
-	// reader-backed paths gate inside the readers. Production impl is pricingguard.ScamGate.
+	// Scam withholds directory-scam-flagged issuers; production impl is pricingguard.ScamGate.
 	Scam PriceScamGate
+	// Exclusions applies operator source exclusions; production impl is pricingguard.SourceExclusionGate.
+	Exclusions PriceExclusionGate
 
 	// Supply, when non-nil, populates the supply fields (total, circulating, max, market_cap_usd,
 	// fdv_usd, supply_basis) on /v1/assets/{id}; nil leaves them null. It still depends on another

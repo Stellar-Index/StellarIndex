@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // SourceExclusionReader is the store seam the gate reads; *timescale.Store satisfies it.
@@ -74,6 +75,30 @@ func (g *SourceExclusionGate) Withholding(ctx context.Context, base, quote canon
 			if e.CoversSpan(src, b, q, from, to) {
 				return WithheldSourceExcluded
 			}
+		}
+	}
+	return NotWithheld
+}
+
+// UnattributedWithholding is [SourceExclusionGate.Withholding] for a value that carries no source list (a cached or
+// triangulated VWAP): any un-lifted exclusion overlapping [from, to) that is source-wide, covers the pair, or names the base
+// on either side of its own pair withholds it, since the value's legs and sources cannot be checked.
+func (g *SourceExclusionGate) UnattributedWithholding(ctx context.Context, base, quote canonical.Asset, from, to time.Time) Withholding {
+	if g == nil {
+		return NotWithheld
+	}
+	rows, ok := g.snapshot(ctx)
+	if !ok {
+		return WithheldExclusionsUnread
+	}
+	b, q := base.String(), quote.String()
+	for _, e := range rows {
+		if e.Lifted() || !e.From.Before(to) || (!e.Until.IsZero() && !e.Until.After(from)) {
+			continue
+		}
+		// CoversPair(b, e.Quote) holds when e.Base is b's family, CoversPair(e.Base, b) when e.Quote is.
+		if e.CoversPair(b, q) || e.CoversPair(b, e.Quote) || e.CoversPair(e.Base, b) {
+			return WithheldSourceExcluded
 		}
 	}
 	return NotWithheld
@@ -148,9 +173,11 @@ func (g *SourceExclusionGate) refresh(ctx context.Context, done chan struct{}) {
 		rows []timescale.SourceExclusion
 		err  error
 	)
+	// A panic must still release the flight, or every later caller would wait on it.
 	defer func() {
-		if p := recover(); p != nil {
-			err = fmt.Errorf("source exclusions read panicked: %v", p)
+		if r := recover(); r != nil {
+			worker.Report(g.logger, "source-exclusion-refresh", r)
+			err = fmt.Errorf("source exclusions read panicked: %v", r)
 		}
 		g.mu.Lock()
 		defer g.mu.Unlock()

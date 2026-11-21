@@ -928,6 +928,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// One-hop pricing for Soroban-native assets, gated on both legs by the same substanceGate.
 		TransitivePricer:      store,
 		Scam:                  scamGate,
+		Exclusions:            exclusionGate,
 		Confidence:            redisConfidenceLooker{rdb: rdb},
 		Triangulated:          wiring.RedisTriangulatedLooker{RDB: rdb},
 		Freeze:                freezeLooker,

@@ -830,6 +830,10 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	if !found {
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, err
 	}
+	// A withheld cached value ends the fallback chain: no lower layer may answer in its place.
+	if w := s.unattributedWithheld(ctx, asset, quote, v.ObservedAt.Add(-triangulationLookupWindow)); w != pricingguard.NotWithheld {
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, PriceWithheldError(w)
+	}
 	snap = withCoverage(PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),
@@ -1106,6 +1110,9 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	cacheSnap, cacheSrcs, served, triangulated, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
 	if ok {
 		return fallbackResult{snap: cacheSnap, sources: cacheSrcs, served: served, triangulated: triangulated, ok: true, stale: true}
+	}
+	if errors.Is(cacheErr, ErrPriceWithheld) {
+		return fallbackResult{withheld: priceWithheldReason(cacheErr)}
 	}
 	snap, srcs, ok, withheld, err := s.tryStablecoinFiatProxy(ctx, asset, quote)
 	if err != nil {
@@ -1403,6 +1410,9 @@ func (s *Server) resolveUSDLeg(
 	cacheSnap, cacheSrcs, _, _, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, usd)
 	if ok {
 		return cacheSnap, cacheSrcs, canonical.Asset{}, true, true, false, nil
+	}
+	if errors.Is(cacheErr, ErrPriceWithheld) {
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false, cacheErr
 	}
 	if unread != nil {
 		cacheErr = unread
