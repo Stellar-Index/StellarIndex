@@ -12315,6 +12315,21 @@ export interface components {
             market_cap_lower_bound?: boolean;
             /** @description True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex.md#dex-nonstandard-decimals). Omitted when the resolvers agree. */
             market_cap_decimals_mismatch?: boolean;
+            /**
+             * @description Why market_cap_usd is null beside a served price_usd and circulating_supply; fdv_usd is null for the same reason when it is. Present ONLY then: omitted when a cap is served, and when there is no price or no supply to value. The booleans above still serve unchanged.
+             *     `substance`, `scam_issuer`, `upstream_leg`, `unattributed`, `manipulation_guard`, `fx_leg_unavailable`: the asset's direct market price was withheld for that `price_withheld_reason`, and price_usd is a later fill (see price_basis) that values no cap.
+             *     `price_unread`: the direct price could not be read, so a fill cannot stand in for it.
+             *     `supply_stale`: the supply observation is older than the serving bound (see supply_as_of).
+             *     `decimals_unknown`: the token's scale is not known, so `decimals` is omitted.
+             *     `decimals_mismatch`: as market_cap_decimals_mismatch.
+             *     `ticker_collision`: the code claims a verified ticker under another issuer.
+             *     `low_liquidity`: as market_cap_low_liquidity — the dust floor or the turnover ceiling.
+             *     `supply_floor`: the supply is a floor of held balances (supply_basis), which values no cap.
+             *     `thin_market`: price_usd is a thin price, which values nothing.
+             *     `price_basis`: price_usd is a declared_peg or global_market fill, which values no cap here.
+             * @enum {string}
+             */
+            market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
             global_market?: components["schemas"]["AssetGlobalMarket"];
             issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
@@ -18564,6 +18579,11 @@ export interface operations {
                                 total_supply?: string | null;
                                 /** @description As `/v1/assets/{asset_id}` `market_cap_usd`; null without a price or supply, when a valuation guard withholds it, or when the price is thin. */
                                 market_cap_usd?: string | null;
+                                /**
+                                 * @description As `/v1/assets/{asset_id}` `market_cap_withheld_reason`: why market_cap_usd is null beside a price and a circulating supply; omitted otherwise.
+                                 * @enum {string}
+                                 */
+                                market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
                                 /** @description Present and true when `price_usd` comes from a market below the substance floor; display-only. */
                                 thin_market?: boolean;
                                 /** @description The substance measurement behind a thin `price_usd`; present only with `thin_market`. */

@@ -38,4 +38,19 @@ describe('marketCapNote', () => {
     );
     expect(marketCapNote({})).toBeUndefined();
   });
+
+  it('names the served reason beside a price and a supply', () => {
+    expect(marketCapNote({ market_cap_withheld_reason: 'substance' })).toBe(
+      'withheld · thin market',
+    );
+    expect(marketCapNote({ market_cap_withheld_reason: 'supply_stale' })).toBe(
+      'not valued · supply out of date',
+    );
+    expect(
+      marketCapNote({
+        market_cap_withheld_reason: 'ticker_collision',
+        market_cap_low_liquidity: false,
+      }),
+    ).toBe('not valued · ticker look-alike');
+  });
 });
