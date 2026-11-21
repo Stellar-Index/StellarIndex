@@ -43,6 +43,8 @@
 #   migrations/*.sql         lint-migrations, lint-migration-immutability,
 #                            lint-migration-commands, lint-migration-compat
 #                            (whole migrations/ dir; each ~1 s).
+#   docs/operations/*.md +   lint-ops-write-flag (whole docs/operations tree,
+#   write_gate_class_test.go instant): gated ops commands pass -write/-dry-run.
 #   *.go / *.sql naming a    lint-lake-dedup (whole tree; it pre-filters on
 #   duplicate-bearing table  the same two table names this trigger uses).
 #   deploy/clickhouse/*.sql  lint-ch-apply-scope (whole tree, instant). Both
@@ -173,7 +175,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=(); op_corpus=0; budget=0
+rules_files=(); ansible_files=(); ch_files=(); op_corpus=0; budget=0; opsdoc=0
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -204,6 +206,10 @@ for f in "${changed[@]}"; do
     esac
     # lint-migration-commands also reads these for a NULL-start refresh.
     case "$f" in docs/*|deploy/*|configs/*|scripts/ops/*|scripts/dev/*) op_corpus=1 ;; esac
+    case "$f" in
+        docs/operations/*.md|cmd/stellarindex-ops/write_gate_class_test.go|scripts/ci/lint-ops-write-flag.sh)
+            opsdoc=1; hit=1 ;;
+    esac
     case "$f" in
         .github/workflows/*.yml|.github/workflows/*.yaml|*/.github/workflows/*.yml|*/.github/workflows/*.yaml)
             wf_files+=("$f"); hit=1 ;;
@@ -411,6 +417,10 @@ if [ "${#mig_files[@]}" -gt 0 ]; then
     fi
 elif [ "$op_corpus" -eq 1 ]; then
     add_step "lint-migration-commands" "" "$ci_dir/lint-migration-commands.sh"
+fi
+
+if [ "$opsdoc" -eq 1 ]; then
+    add_step "lint-ops-write-flag" "" "$ci_dir/lint-ops-write-flag.sh"
 fi
 
 if [ "$chunkfn" -eq 1 ]; then
