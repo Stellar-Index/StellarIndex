@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -139,7 +140,9 @@ func TestContractArmRefusesAnEmptyStorageRead(t *testing.T) {
 		{"no entries", clickhouse.ContractStorageSupply{Total: big.NewInt(0), BalanceEntries: 0}, nil},
 		{"entries but a nil total", clickhouse.ContractStorageSupply{BalanceEntries: 3}, nil},
 		{"entries summing to zero", clickhouse.ContractStorageSupply{Total: big.NewInt(0), BalanceEntries: 3}, nil},
-		{"the reader refused (a SAC, or a holder set past its cap)", clickhouse.ContractStorageSupply{}, errors.New("declined")},
+		{"the reader refused a SAC", clickhouse.ContractStorageSupply{}, clickhouse.ErrStorageSupplyIsStellarAsset},
+		{"the reader refused a holder set past its cap", clickhouse.ContractStorageSupply{}, clickhouse.ErrStorageSupplyTooManyEntries},
+		{"the reader refused an undecodable entry", clickhouse.ContractStorageSupply{}, clickhouse.ErrStorageSupplyUndecodable},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Server{
@@ -210,6 +213,49 @@ func TestContractArmCountsAFailedStorageReadAsACutWhenTheLogHasFlows(t *testing.
 	}
 	if rows[0].CirculatingSupply != nil {
 		t.Errorf("supply = %v, want none: the net is unproven", *rows[0].CirculatingSupply)
+	}
+}
+
+// A flowless log's only reading is storage, so a storage read that failed leaves the member unread, not "no figure".
+func TestContractArmCountsAFailedStorageReadAsACutWhenTheLogIsFlowless(t *testing.T) {
+	const contractID = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+			contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
+		}}, ContractStorageSupply: &storageSupplyStub{err: errors.New("clickhouse: memory limit exceeded")}},
+		logger: discardLogger(),
+	}
+	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
+
+	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}}); !cut {
+		t.Error("cut = false after the only supply reading failed; the view would cache the row as unmeasured")
+	}
+	if _, ok, err := s.storageReadingSupersedes(context.Background(), contractID, clickhouse.TokenSupply{Total: big.NewInt(0)}); ok || err == nil {
+		t.Errorf("storageReadingSupersedes(flowless, failed read) = ok %v err %v, want the error", ok, err)
+	}
+}
+
+// An entry the reader cannot decode is a fixed lake property: it declines the storage reading, and a log with flows is valued on its net.
+func TestContractArmValuesTheNetWhenStorageHoldsAnUndecodableEntry(t *testing.T) {
+	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	net := big.NewInt(10_000_0000000)
+	undecodable := fmt.Errorf("%w: %s: balance entry carries no decodable amount", clickhouse.ErrStorageSupplyUndecodable, contractID)
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+			contractID: {ContractID: contractID, Total: net, Mint: net, Burn: big.NewInt(0), FlowCount: 12},
+		}}, ContractStorageSupply: &storageSupplyStub{err: undecodable}},
+		logger: discardLogger(),
+	}
+	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
+
+	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}}); cut {
+		t.Error("cut = true for a deterministic decline; the view would stay degraded on every rebuild")
+	}
+	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != net.String() {
+		t.Fatalf("circulating_supply = %v, want the event net %s", rows[0].CirculatingSupply, net)
+	}
+	if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != supply.BasisSEP41LakeFlows.String() {
+		t.Errorf("supply_basis = %v, want %q", rows[0].SupplyBasis, supply.BasisSEP41LakeFlows)
 	}
 }
 

@@ -200,13 +200,13 @@ type ContractStorageSupplyReader interface {
 // storageReadingSupersedes is the one event-vs-storage choice for a contract's supply: the storage level wins for a flowless
 // log (whose zero is unfounded), and otherwise only when it exceeds the event net. Storage is a floor, so a level above the
 // net proves the log partial and is the tighter floor, unless it fails the contract's own cross-check. The two are never
-// summed: they count the same tokens. A failed read is an error only for a log with flows, whose net it may have proved partial;
-// a flowless log has no figure to withhold.
+// summed: they count the same tokens. A failed read is always an error: with flows it may have proved the net partial, and
+// without flows it is the only reading there is, so its absence is unread, not "no figure".
 func (s *Server) storageReadingSupersedes(
 	ctx context.Context, contractID string, sup clickhouse.TokenSupply,
 ) (clickhouse.ContractStorageSupply, bool, error) {
 	st, ok, err := s.contractStorageReading(ctx, contractID)
-	if err != nil && sup.FlowCount > 0 {
+	if err != nil {
 		return clickhouse.ContractStorageSupply{}, false, err
 	}
 	if !ok {
@@ -245,12 +245,13 @@ func (s *Server) contractStorageReading(ctx context.Context, contractID string) 
 	return st, true, nil
 }
 
-// storageSupplyDeclined reports the reader's deliberate refusals: a SAC, a holder set past its cap, and a missing instance entry
-// that leaves the SAC check unrun. Each is a fixed property of the lake state, not a transient fault.
+// storageSupplyDeclined reports the reader's deliberate refusals: a SAC, a holder set past its cap, a missing instance entry
+// that leaves the SAC check unrun, and an entry it cannot decode. Each is a fixed property of the lake state, not a transient fault.
 func storageSupplyDeclined(err error) bool {
 	return errors.Is(err, clickhouse.ErrStorageSupplyIsStellarAsset) ||
 		errors.Is(err, clickhouse.ErrStorageSupplyTooManyEntries) ||
-		errors.Is(err, clickhouse.ErrStorageSupplyNoInstance)
+		errors.Is(err, clickhouse.ErrStorageSupplyNoInstance) ||
+		errors.Is(err, clickhouse.ErrStorageSupplyUndecodable)
 }
 
 // storageSupplyResponse renders a storage reading [Server.storageReadingSupersedes] chose; stale is the lake watermark's verdict.

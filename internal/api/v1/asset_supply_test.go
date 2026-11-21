@@ -618,7 +618,7 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 		{"stellar asset contract", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyIsStellarAsset}},
 		{"too many entries", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyTooManyEntries}},
 		{"no instance entry captured", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyNoInstance}},
-		{"read failed", &fakeStorageSupply{err: errors.New("clickhouse down")}},
+		{"undecodable entry", &fakeStorageSupply{err: clickhouse.ErrStorageSupplyUndecodable}},
 		{"contract holds no balances", &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(0)}}},
 	}
 	for _, tc := range cases {
@@ -632,6 +632,14 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 				t.Errorf("404 body carries a total_supply: %s", rec.Body)
 			}
 		})
+	}
+}
+
+// A flowless token's storage is its only reading, so a read that did not answer is a 502, not the 404 a decline earns.
+func TestSupplyIsBadGatewayWhenNoFlowsAndStorageReadFails(t *testing.T) {
+	rec := serveSupplyWithStorage(t, zeroFlows(), &fakeStorageSupply{err: errors.New("clickhouse down")}, storageDealContractID)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 (body=%s)", rec.Code, rec.Body)
 	}
 }
 
