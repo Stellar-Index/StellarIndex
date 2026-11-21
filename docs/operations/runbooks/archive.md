@@ -89,7 +89,9 @@ ssh r1 'curl -s localhost:9100/metrics | grep -E "^archive_files_missing|^archiv
 # 2. Which fallback sources are degraded (per-source counters, label `source`)
 ssh r1 'curl -s localhost:9100/metrics | grep -E "^archive_completeness_repair_(attempts|failures)_total"'
 
-# 3. The current gap report (post-fix state of the last run)
+# 3. The current gap report (post-fix state of the last run). The path is the TOML's
+#    api.archive_report_path as the role sets it; the binary default is
+#    /var/lib/galexie/last-completeness-report.json (a host the role has not run on).
 ssh r1 'jq ".range, (.cross_anchor.missing_count), (.cross_anchor.missing[0:5])" /var/lib/archive-completeness/last-completeness-report.json'
 
 # 4. Is the fallback chain reachable from r1? These nine ARE the chain
