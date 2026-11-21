@@ -383,7 +383,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
-			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+			accountStoreUnavailableDetail)
 		return
 	}
 	reason, ok := s.operatorReasonOK(w, r, subject)
@@ -489,6 +489,10 @@ func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyReq
 	}
 	return req, true
 }
+
+// accountStoreUnavailableDetail names both reasons cmd/stellarindex-api leaves Accounts nil.
+const accountStoreUnavailableDetail = "this deployment has no AccountStore wired: Redis is unavailable, or auth_backend=postgres, " +
+	"which disables /v1/account/keys (an operator revokes with DELETE /v1/admin/keys/{keyID}?identifier=)"
 
 // operatorReasonOK enforces the X-Reason contract on self-service key routes for operator-tier callers only; returns false
 // after writing the 400.
@@ -675,7 +679,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
-			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+			accountStoreUnavailableDetail)
 		return
 	}
 
@@ -806,7 +810,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
-			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+			accountStoreUnavailableDetail)
 		return
 	}
 	reason, ok := s.operatorReasonOK(w, r, subject)
