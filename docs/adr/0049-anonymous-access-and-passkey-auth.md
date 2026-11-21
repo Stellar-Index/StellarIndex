@@ -37,6 +37,8 @@ The model shipped without a record, so open registration and the missing billing
 - Open key minting is an abuse surface, bounded by the content-type gate, the IP throttle and free-tier quota; response is rate limits and key revocation, not chargebacks.
 - Accounts, keys, sessions and passkeys in Postgres cannot be re-derived from the chain, so their durability rests on the Postgres backup of ADR-0043.
 - Invite-gated registration, a dormant payment integration and passwords were rejected for v1; revisit gating if abuse exceeds the rate-limit envelope.
+- Status note (2026-11-21): minting is also bounded by a deployment-wide budget, `api.register_max_per_hour` (default 60, 0 removes it). It is one counter shared by every caller and spent before the account is created, so a burst from a few addresses can exhaust it and every `POST /v1/register` then answers 503 `registration-unavailable` with `Retry-After` until the hour rolls over: availability traded for a bound on address-rotating minters. `api.register_disabled` switches registration off (503). Neither covers passkey sign-up or magic-link first sign-in.
+- Status note (2026-11-21): the signup-reaper Invariant names a test that does not exist. The rule is `ruleSignupReaperBindsToPostgresStore`, run as `TestMainWiringRules/signup_reaper_binds_to_postgres_store` in `cmd/stellarindex-api/main_wiring_rules_test.go`; `go test -run` with the Invariant's name runs zero tests.
 
 ## Evidence
 

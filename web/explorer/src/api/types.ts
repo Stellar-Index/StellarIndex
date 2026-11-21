@@ -4273,8 +4273,9 @@ export interface paths {
          *     new key. There is no rotate endpoint. To replace a key, mint the
          *     replacement with its parent (a sibling), deploy it, then revoke
          *     the old key. A root key has no parent: replace it with an
-         *     independent key from the dashboard (`POST /v1/dashboard/keys`),
-         *     or by operator-assisted mint for a `/v1/register`-only account.
+         *     independent key from the dashboard (`POST /v1/dashboard/keys`).
+         *     A `/v1/register`-only account cannot mint one: register a new
+         *     account, move to its key, then revoke the old root.
          *
          *     An **operator-tier** caller minting for its own identifier here is
          *     held to the admin-write contract: the `X-Reason` header is
