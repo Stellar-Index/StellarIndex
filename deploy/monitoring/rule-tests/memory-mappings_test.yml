@@ -35,6 +35,71 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # ── a unit still running a replaced release binary ─────────────────
+  # cap67-movements ran a 37-day-old stellarindex-ops this way.
+  - interval: 1m
+    name: a unit on a replaced binary tickets after 30m, not before
+    input_series:
+      - series: 'stellarindex_unit_running_replaced_binary{unit="cap67-movements.service"}'
+        values: '1x45'
+      - series: 'stellarindex_unit_running_replaced_binary{unit="stellarindex-api.service"}'
+        values: '0x45'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_unit_running_replaced_binary
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_unit_running_replaced_binary
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+              alert_family: "replaced_binary/cap67-movements.service"
+              unit: cap67-movements.service
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#replaced-binary
+              summary: "cap67-movements.service is still running a release binary that was replaced on disk"
+              description: |
+                A process in cap67-movements.service has run a /usr/local/bin
+                stellarindex-* or galexie binary for 30 min after that file
+                was replaced (exe link "(deleted)" or a .prev-<tag> name).
+                It is executing the OLD build: whatever it writes follows
+                the old code, and a fix that was deployed is not in effect.
+
+                  for p in $(systemctl show -p MainPID --value cap67-movements.service) \
+                    $(cat /sys/fs/cgroup/system.slice/cap67-movements.service/cgroup.procs); do \
+                    readlink /proc/$p/exe; done
+                  systemctl try-restart cap67-movements.service
+
+                A oneshot caught mid-run clears on its next start. Then decide
+                whether what the stale writer processed must be re-derived —
+                see the runbook.
+
+  # A deploy swaps the binary, then restarts the unit: the flag clears
+  # well inside the `for:`.
+  - interval: 1m
+    name: a replaced binary that a deploy restarts within 20m stays silent
+    input_series:
+      - series: 'stellarindex_unit_running_replaced_binary{unit="cap67-movements.service"}'
+        values: '1x20 0x25'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_unit_running_replaced_binary
+        exp_alerts: []
+
+  # Absent: no release-binary process on the host. Producer liveness is
+  # probe_degraded's job (same file, same stamp), not this rule's.
+  - interval: 1m
+    name: no replaced-binary series fires nothing
+    input_series:
+      - series: 'stellarindex_process_memory_mappings_updated_unix'
+        values: '0+60x45'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_unit_running_replaced_binary
+        exp_alerts: []
+
   # ── r1's measured steady state: ~4.5 % of the limit, silent ────────
   - interval: 1m
     name: 47000 of 1048576 mappings fires nothing

@@ -2022,6 +2022,10 @@ Gauge, label `process`. `1` when a process matched but its headroom could not be
 
 Gauge, no label. Unix time of the last successful run. node_exporter re-serves a stale textfile verbatim, so a stopped timer freezes the gauges above at their last value; only this series sees that.
 
+### `stellarindex_unit_running_replaced_binary`
+
+Gauge, label `unit` (systemd unit from the process's cgroup; `unknown` if unreadable). `1` when a process in the unit runs a `/usr/local/bin/stellarindex-*` or `galexie` binary that was replaced on disk after it started (exe link ends ` (deleted)` or names a `.prev-<tag>` file); `0` when all its release-binary processes run the installed file. Units running no release binary have no series. Same file and `..._updated_unix` stamp as the family above. Alert: `stellarindex_unit_running_replaced_binary`.
+
 ## Galexie mirror vs upstream dataset (textfile collector, Go-emitted)
 
 Emitted by `stellarindex-ops galexie-mirror-verify` via the weekly `galexie-mirror-verify.timer`. The file is rewritten only when a comparison completes, so a failing run leaves the previous verdict in place.

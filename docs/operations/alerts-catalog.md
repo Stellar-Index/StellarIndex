@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 318 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 319 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -585,6 +585,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_process_mappings_critical` | same | > 0.50, 2 min | page | [memory-mappings](runbooks/infra.md#process-mappings) |
 | `stellarindex_process_mappings_exhaustion_projected` | `predict_linear(process_memory_mappings[30m], 3600)` vs limit, when ratio > 0.10 | hits limit within 1 h, 5 min | page | [memory-mappings](runbooks/infra.md#process-mappings) |
 | `stellarindex_process_mappings_probe_degraded` | `process_memory_mappings_updated_unix`, `_unreadable`, `_procs` | stamp > 30 min, absent 45 min, unreadable == 1, or procs == 0; 10 min | ticket | [memory-mappings](runbooks/infra.md#process-mappings) |
+| `stellarindex_unit_running_replaced_binary` | `unit_running_replaced_binary{unit}` (`memory-mappings.sh`: a unit's process runs a `/usr/local/bin` `stellarindex-*`/`galexie` exe that is ` (deleted)` or `.prev-<tag>`) | == 1 for 30 min | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#replaced-binary) |
 | `stellarindex_pg_compressed_chunks_unreadable` | `pg_compressed_chunks_unreadable` (nightly decode of every compressed column) | > 0, `for: 0m` | page | [timescale](runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable) |
 | `stellarindex_pg_compressed_chunk_index_bloat` | `pg_compressed_chunks_index_bloated` (fully compressed chunks with > 1 GiB of indexes, nightly) | > 0, `for: 0m` | ticket | [timescale](runbooks/timescale.md#stellarindex_pg_compressed_chunk_index_bloat) |
 | `stellarindex_pg_chunk_scan_stale` | `pg_chunk_scan_last_success_timestamp_seconds` | > 36 h or absent, 1 h | ticket | [timescale](runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable) |
