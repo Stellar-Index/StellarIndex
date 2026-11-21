@@ -626,9 +626,8 @@
       LOCK_ROOT="${HEAVY_JOB_LOCK_DIR:-/run/lock}"
       JOB_LOCK_DIR="${LOCK_ROOT}/stellarindex"
       LOCK="${JOB_LOCK_DIR}/stellarindex-heavy-${NAME}.lock"
-      # A wrapper from before the move may still be running this job under
-      # the old path, so that lock is taken too while a file of ours is there.
-      LEGACY_LOCK="${LOCK_ROOT}/stellarindex-heavy-${NAME}.lock"
+      # A per-job lock at the old ${LOCK_ROOT}/stellarindex-heavy-<name>.lock
+      # path is never read: any uid can open a file there and hold it.
       restricted_dir "$JOB_LOCK_DIR" 3770 || {
         echo "run-heavy-job: refusing to start ${NAME}: ${JOB_LOCK_DIR} is missing or not a root/stellarindex directory (nothing ran, exit 2). Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
         exit 2
@@ -660,10 +659,6 @@
         WAIT_START="$(date +%s)"
       fi
       take_job_lock 9 "$LOCK" "$LOCK_WAIT"
-      # Never created, and anything else at the old path is not ours.
-      if lock_path_ok "$LEGACY_LOCK" && exec 4<"$LEGACY_LOCK"; then
-        take_job_lock 4 "$LEGACY_LOCK" "${LOCK_WAIT:+$(lock_left)}"
-      fi
 
       # ── Host-wide lock: one heavy job at a time ──────────────────
       # The per-job lock never excludes a DIFFERENT name, so two

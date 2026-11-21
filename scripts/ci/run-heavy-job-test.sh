@@ -618,16 +618,17 @@ if [ "$REAL_UID" -eq 0 ]; then
 else
   echo "  note: not real root, so a lock owned by another uid cannot be planted; foreign-owner case skipped"
 fi
-# A run of the previous wrapper still holds the old-path lock: no double run.
+# Any uid can open a file at the old per-job path, so a holder there must not
+# defer the job: the old path is never read.
 LEG="$TMP/lock/stellarindex-heavy-leg-job.lock"
 : > "$LEG"; rm -f "$TMP/leg.held" "$TMP/leg.release"
 ( exec 3<"$LEG"; flock -x 3 && : > "$TMP/leg.held"; while [ ! -e "$TMP/leg.release" ]; do /bin/sleep 0.1; done ) & LEG_HOLDER=$!
 i=0; while [ ! -e "$TMP/leg.held" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.1; i=$((i + 1)); done
-lrun leg-job ""
-if [ "$rc" -eq 75 ] && ! ran && err_has "lock ${LEG} is held"; then ok "a job still holding the old-path lock excludes the new wrapper (exit 75)"; else bad "old-path lock holder did not exclude the new wrapper (rc=$rc, err='$(errs)')"; fi
+for cls in "" scheduled; do
+  lrun leg-job "$cls"
+  if [ "$rc" -eq 0 ] && ran; then ok "a held old-path lock does not defer a ${cls:-operator} job"; else bad "a held old-path lock deferred a ${cls:-operator} job (rc=$rc, err='$(errs)')"; fi
+done
 : > "$TMP/leg.release"; wait "$LEG_HOLDER"
-lrun leg-job ""
-if [ "$rc" -eq 0 ] && ran; then ok "a released old-path lock admits the job"; else bad "released old-path lock still blocks (rc=$rc, err='$(errs)')"; fi
 rm -f "$LEG"
 # Anything else at the old path is not ours: ignored, never opened.
 mkfifo "$TMP/lock/stellarindex-heavy-legfifo-job.lock"
