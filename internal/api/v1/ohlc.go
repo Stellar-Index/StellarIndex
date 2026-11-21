@@ -158,7 +158,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// /v1/twap — one implementation, so a fiat quote can't be resolved
 	// against a different constituent set here than there.
 	const maxTradesForOHLC = 10000
-	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
+	window, books, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -187,7 +187,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	substance := s.thinMarketEvidence(ctx, pair.Base, pair.Quote, "ohlc")
+	substance := s.thinMarketEvidence(ctx, pair.Base, pair.Quote, books, "ohlc")
 
 	writeJSON(w, OHLCBar{
 		From:                WireTime(from),
