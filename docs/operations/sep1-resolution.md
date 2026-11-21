@@ -16,7 +16,7 @@ resolves issuers in the background; the API serves what was persisted.
 
 ```
 sep1-refresh.timer →
-  stellarindex-ops sep1-refresh (internal/ops/ingest/sep1_refresh.go)
+  stellarindex-ops sep1-refresh -write (internal/ops/ingest/sep1_refresh.go)
     for each due issuer, sequentially:
       metadata.Resolver.Resolve(home_domain)
         ↓ HTTP GET https://<home_domain>/.well-known/stellar.toml

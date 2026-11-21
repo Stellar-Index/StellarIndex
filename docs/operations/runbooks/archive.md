@@ -36,7 +36,7 @@ ssh r1 'journalctl -u archive-completeness.service --since="48 hours ago" | tail
 
 # 4. Is the binary working? Take -from/-to from the unit's Environment (-to is required):
 ssh r1 'systemctl show -p Environment archive-completeness.service; cat /run/archive-completeness.env'
-ssh r1 'stellarindex-ops archive-completeness verify -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 8'
+ssh r1 'stellarindex-ops archive-completeness verify -dry-run -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 8'
 ```
 
 **Likely causes**
@@ -57,13 +57,13 @@ ssh r1 'stellarindex-ops archive-completeness verify -from <ARCHIVE_FROM> -to <A
 3. If that fails, run verify by hand and bisect the range (`verify` is a single cross-anchor structural check; no `-checks` modes):
    ```sh
    # ARCHIVE_FROM / ARCHIVE_TO from the unit's Environment (see step 4 above); -to is required.
-   ssh r1 'stellarindex-ops archive-completeness verify \
+   ssh r1 'stellarindex-ops archive-completeness verify -dry-run \
      -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 8 \
      -output-file /tmp/completeness-report.json'
 
    # Inspect the missing-file list, then re-run scoped to a narrow range (LO/HI from the report).
    ssh r1 'jq ".missing" /tmp/completeness-report.json | head'
-   ssh r1 'stellarindex-ops archive-completeness verify -from LO -to HI -workers 8'
+   ssh r1 'stellarindex-ops archive-completeness verify -dry-run -from LO -to HI -workers 8'
    ```
    For missing checkpoints see [archive-completeness.md](../archive-completeness.md).
 4. Verify `archive_completeness_last_success_timestamp` updates; the alert clears within 1 min.

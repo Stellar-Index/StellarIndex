@@ -116,7 +116,7 @@ Without `-write` the command only prints (the default). Before enabling the time
 
 ```sh
 sudo -u stellarindex /usr/local/bin/stellarindex-ops supply snapshot \
-  -config /etc/stellarindex.toml
+  -config /etc/stellarindex.toml -dry-run
 ```
 
 Prints `total_supply` / `circulating_supply` / `max_supply` / `basis` /

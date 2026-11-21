@@ -222,7 +222,8 @@ change as this audit. **Safe-from ledger: genesis (61,620,822)**. Replay:
 
 ```sh
 /usr/local/sbin/run-heavy-job.sh sorocredit-replay \
-  stellarindex-ops projector-replay -source sorocredit -from 61620822
+  stellarindex-ops projector-replay -config /etc/stellarindex.toml \
+    -source sorocredit -from 61620822 -write
 ```
 
 (heavy-job wrapper per AGENTS.md; never a bespoke `sorocredit-backfill` subcommand).

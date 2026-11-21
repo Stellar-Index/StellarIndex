@@ -13,7 +13,7 @@ events, hours, risks a latency incident). The SEP-41 analogue of SDEX's
 affected contracts.
 
 `sep41_*` is a **projected** domain (AGENTS.md invariant [7]). Its normal
-catch-up is `stellarindex-ops projector-replay -config PATH -source sep41_supply -from <ledger>`.
+catch-up is `stellarindex-ops projector-replay -config PATH -source sep41_supply -from <ledger> -write`.
 This page's lake re-derive is a second writer, used only because it can
 scope to a contract subset; `ch-rebuild -write` therefore refuses any window
 the live projector's cursor is still inside. Lower `-to` if refused; never

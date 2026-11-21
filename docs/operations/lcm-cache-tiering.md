@@ -132,7 +132,7 @@ One-shot, not on a timer. Reclaims ~3-4 TB.
          -config /etc/stellarindex.toml \
          -older-than-ledger "$CHUNK_END" \
          -max-files 100000 \
-         -commit 2>&1 | tee /dev/stderr)
+         -write 2>&1 | tee /dev/stderr)
        echo "$OUT" | grep -q '"enumeration_complete":true' && break
      done
      zpool list -H data   # stop if %CAP climbs unexpectedly

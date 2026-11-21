@@ -14,7 +14,7 @@ dispatcher -> decoder -> sink path. Use for: a newly enabled source, a gap in
 in [`internal/sources/external/registry.go`](../../internal/sources/external/registry.go).
 
 Projected sources (soroswap, phoenix, aquarius, ...) are refused here:
-re-derive with `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>`.
+re-derive with `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write`.
 Non-projected sources use `backfill` / `ch-rebuild`.
 
 ## Behaviour
@@ -212,7 +212,7 @@ Finished one-shot shards leave permanent `ingestion_cursors` rows that bury `lis
    A shard with real remaining work is resumed, not reaped.
 2. **Reap** (previews by default):
    ```sh
-   stellarindex-ops reap-cursors -config /etc/stellarindex.toml
+   stellarindex-ops reap-cursors -config /etc/stellarindex.toml -dry-run
    stellarindex-ops reap-cursors -config /etc/stellarindex.toml -write
    ```
    `-older-than` (default `168h`, floor `24h`), `-source` narrows. `ledgerstream` and `projector` are never reaped: an old row there is [cursor-stuck](runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck). Reaping deletes the resume record, never data.
@@ -259,7 +259,7 @@ stop the heavy walker first.
 #### Stop a running fill walk
 
 ```sh
-# On r1. The fill is a manual invocation (`stellarindex-ops backfill -source
+# On r1. The fill is a manual invocation (`stellarindex-ops backfill -write -source
 # soroban-events`, normally under run-heavy-job.sh), NOT a systemd unit.
 ps -eo pid,args | grep '[s]tellarindex-ops backfill'
 # Graceful: drains in-flight rows then exits. Kill by EXPLICIT PID; a

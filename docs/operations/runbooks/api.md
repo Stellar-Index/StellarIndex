@@ -1063,7 +1063,7 @@ journalctl -u stellarindex-api --since -30min | grep -i "usage rollup"
    ```sh
    # Size the recovery first (dry run, no writes):
    stellarindex-ops usage-rollup-backfill -config /etc/stellarindex.toml \
-     -from 2026-07-19 -to 2026-07-21
+     -from 2026-07-19 -to 2026-07-21 -dry-run
    # Then apply it:
    stellarindex-ops usage-rollup-backfill -config /etc/stellarindex.toml \
      -from 2026-07-19 -to 2026-07-21 -write

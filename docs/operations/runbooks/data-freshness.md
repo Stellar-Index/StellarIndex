@@ -111,7 +111,7 @@ Fix:
 2. `missing_baseline`: the aggregator auto-seeds on first refresh (retry 10 min; failures log `genesis baseline auto-seed failed`, usually an unreachable lake). Otherwise preview, then seed by hand (idempotent; nothing written without `-write`); on r1 run as the service user (`systemd-run --wait --pipe -p User=stellarindex -p EnvironmentFile=/etc/default/stellarindex …`):
 
    ```sh
-   stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml
+   stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -dry-run
    stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
    ```
 
