@@ -588,6 +588,10 @@ func walkDataStore(
 			}
 			return fmt.Errorf("ledgerstream: get ledger %d: %w", seq, err)
 		}
+		// The SDK indexes a batch by its header range and never reads each ledger's own sequence.
+		if got := lcm.LedgerSequence(); got != seq {
+			return fmt.Errorf("ledgerstream: get ledger %d: the store returned ledger %d under that key", seq, got)
+		}
 		if err := callback(lcm); err != nil {
 			return fmt.Errorf("ledgerstream: callback %d: %w", seq, err)
 		}

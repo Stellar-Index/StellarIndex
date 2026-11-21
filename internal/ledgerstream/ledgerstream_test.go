@@ -1286,6 +1286,43 @@ func TestStream_TolerateTrailingMissing_ChunkedWalkRefusesHoleBelowTip(t *testin
 	}
 }
 
+// An object whose batch header claims ledger 6 but holds ledger 7 must fail the walk, not be
+// delivered as 6 (and 7 again after it).
+func TestStream_RefusesLedgerStoredUnderAnotherSequence(t *testing.T) {
+	tmp := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg, store := tolerateTrailingEdgeStore(t, tmp)
+	t.Cleanup(func() { _ = store.Close() })
+	if _, _, err := datastore.PublishConfig(ctx, store, cfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	for _, seq := range []uint32{5, 7} {
+		writeLedgerFixture(t, ctx, store, cfg.Schema, seq)
+	}
+	buf := encodeBatch(t, xdr.LedgerCloseMetaBatch{
+		StartSequence:    6,
+		EndSequence:      6,
+		LedgerCloseMetas: []xdr.LedgerCloseMeta{minimalLedgerCloseMeta(7)},
+	})
+	if err := store.PutFile(ctx, cfg.Schema.GetObjectKeyFromSequenceNumber(6), bufferWriterTo(buf), nil); err != nil {
+		t.Fatalf("put mislabelled ledger 6: %v", err)
+	}
+
+	var got []uint32
+	err := ledgerstream.Stream(ctx, ledgerstream.Config{DataStore: cfg}, 5, 7, func(lcm xdr.LedgerCloseMeta) error {
+		got = append(got, lcm.LedgerSequence())
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "returned ledger 7") {
+		t.Fatalf("Stream [5,7] with ledger 7 stored under 6's key: err = %v, want a sequence-mismatch error", err)
+	}
+	if len(got) != 1 || got[0] != 5 {
+		t.Errorf("delivered %v before the mismatch, want [5]", got)
+	}
+}
+
 // A hole in both tiers must surface as ErrBothTiersMissing through the SDK's wrap.
 func TestStream_TieredHoleBelowTipIsErrBothTiersMissing(t *testing.T) {
 	hotDir, coldDir := t.TempDir(), t.TempDir()
