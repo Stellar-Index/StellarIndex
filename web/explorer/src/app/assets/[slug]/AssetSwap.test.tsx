@@ -408,6 +408,45 @@ describe('AssetSwap catalogue leg', () => {
     expect(legIds()).not.toContain('usdc');
   });
 
+  it("rounds a picked catalogue row to the issuance's precision, not its supply exponent", async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string, params) => {
+      const ids = (params as { asset_ids?: string } | undefined)?.asset_ids;
+      if (path === '/v1/price/batch' && ids === USDC)
+        return {
+          data: [{ asset_id: USDC, quote: 'fiat:USD', price: '1.0001' }],
+        };
+      if (path === '/v1/assets/verified')
+        return { data: [{ slug: 'usdc', asset_id: USDC }] };
+      // A catalogue row whose twin merge missed: decimals is the supply
+      // exponent the server sends for non-fiat entries.
+      if (path.startsWith('/v1/assets'))
+        return {
+          data: [
+            {
+              asset_id: 'usdc',
+              slug: 'usdc',
+              code: 'USDC',
+              type: 'global',
+              price_usd: '1.0001',
+              decimals: 0,
+            },
+          ],
+          pagination: { next: '' },
+        };
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /USDC/ }));
+
+    const field = (i: number) =>
+      screen.getAllByRole('textbox')[i] as HTMLInputElement;
+    // 1 XLM × 0.195 ÷ 1.0001, at Stellar's 7 places.
+    await vi.waitFor(() => expect(field(1).value).toBe('0.1949805'));
+  });
+
   it('keeps a crypto row with no issuance here and prices it as crypto:<TICKER>', async () => {
     stubApi();
     const base = vi.mocked(apiGet).getMockImplementation()!;
@@ -550,26 +589,8 @@ describe('AssetSwap catalogue leg basis', () => {
     ],
     ['transitive', /AUDD price: derived two-hop DEX route · observed 3h ago/],
   ] as const)('labels a picked %s row in the note', async (basis, note) => {
-    stubApi();
-    const base = vi.mocked(apiGet).getMockImplementation()!;
-    vi.mocked(apiGet).mockImplementation(async (path: string, params) => {
-      const ids = (params as { asset_ids?: string } | undefined)?.asset_ids;
-      if (path === '/v1/price/batch' && ids === AUDD)
-        throw new Error('offline');
-      if (path.startsWith('/v1/assets'))
-        return {
-          data: [
-            {
-              asset_id: AUDD,
-              code: 'AUDD',
-              price_usd: '0.655',
-              price_basis: basis,
-              price_as_of: hoursAgo(3),
-            },
-          ],
-          pagination: { next: '' },
-        };
-      return base(path);
+    stubDerivedRow(basis, () => {
+      throw new Error('offline');
     });
     renderSwap();
     fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
@@ -578,6 +599,52 @@ describe('AssetSwap catalogue leg basis', () => {
       expect(screen.getByText(/AUDD price:/).textContent).toMatch(note),
     );
   });
+
+  // The batch has no derived arm: in production it answers 200 with no row
+  // (or lists the id as withheld) for a global-market price.
+  it.each([
+    ['no row', { data: [] }],
+    ['withheld', { data: [], withheld: [AUDD] }],
+  ])(
+    'keeps a picked global_market price when the batch answers with %s',
+    async (_label, batch) => {
+      stubDerivedRow('global_market', () => batch);
+      renderSwap();
+      fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+      fireEvent.click(await screen.findByRole('button', { name: /AUDD/ }));
+      // The picker snapshot paints first; let the leg's live reads settle.
+      await act(() => new Promise((r) => setTimeout(r, 50)));
+      expect(screen.getByText(/AUDD price:/).textContent).toMatch(
+        /AUDD price: global aggregator price, not a Stellar market · observed 3h ago/,
+      );
+      expect(screen.queryByText(/no USD price|withheld by the server/)).toBe(
+        null,
+      );
+    },
+  );
+
+  function stubDerivedRow(
+    basis: 'declared_peg' | 'transitive' | 'global_market',
+    batch: () => unknown,
+  ) {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    const row = {
+      asset_id: AUDD,
+      code: 'AUDD',
+      price_usd: '0.655',
+      price_basis: basis,
+      price_as_of: hoursAgo(3),
+    };
+    vi.mocked(apiGet).mockImplementation(async (path: string, params) => {
+      const ids = (params as { asset_ids?: string } | undefined)?.asset_ids;
+      if (path === '/v1/price/batch' && ids === AUDD) return batch();
+      if (path === `/v1/assets/${AUDD}`) return { data: row };
+      if (path.startsWith('/v1/assets'))
+        return { data: [row], pagination: { next: '' } };
+      return base(path);
+    });
+  }
 });
 
 describe('AssetSwap token picker crypto rows', () => {

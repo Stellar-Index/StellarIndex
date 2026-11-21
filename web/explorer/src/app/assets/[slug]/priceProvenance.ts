@@ -32,6 +32,14 @@ export function provenanceFromBasis(
 }
 
 /**
+ * A price /v1/price and /v1/price/batch cannot answer for: it is re-read
+ * from /v1/assets, and a withheld or absent market verdict leaves it standing.
+ */
+export function isDerivedProvenance(p: PriceProvenance): boolean {
+  return p === 'global_market' || p === 'declared_peg' || p === 'transitive';
+}
+
+/**
  * What a non-market or non-live price IS, in a few words; null for a live
  * market price. Shared by the converter so it names what the headline names.
  */

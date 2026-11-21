@@ -23,9 +23,9 @@ export { USDC_ASSET_ID };
 // market rather than a synthetic blend.
 //
 // Three cases:
-//   - USDC itself charts against fiat:USD — its actual dollar price,
-//     which is the surface where a depeg becomes visible (a USDC/USDC
-//     chart would be a flat 1.0 by definition).
+//   - USDC itself maps to fiat:USD so the function never answers a
+//     USDC/USDC quote (flat 1.0 by definition). ChartPanel renders a
+//     reference panel for USDC and never calls this for it.
 //   - Native XLM + fiat assets chart against fiat:USD (the CEX-fed
 //     combined USD series — deeper than any single on-chain pair, and
 //     "never XLM" trivially holds).
@@ -152,9 +152,7 @@ function UsdcReferencePanel() {
   return (
     <Panel headingLevel={2} title="Price chart" hint="USD reference">
       <div className="flex flex-col items-center justify-center gap-3 py-14 text-center">
-        <div className="text-ink font-mono text-4xl tracking-tight">
-          ≈ $1.00
-        </div>
+        {/* No constant price here: a fixed $1.00 would hide a depeg. */}
         <p className="text-ink-muted max-w-md text-sm">
           USDC is the dollar reference every other asset is charted against, so
           it has no USDC-denominated chart of its own. To watch for a depeg, see

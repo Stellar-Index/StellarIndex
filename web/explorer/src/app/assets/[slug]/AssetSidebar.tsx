@@ -165,9 +165,11 @@ export function AssetSidebar({
   homeDomain?: string | null;
 }) {
   const seed = positiveDecimal(priceUSD);
-  // The live row replaces the baked figures whole, so a USD figure it
-  // serves null (a withheld price, a refused cap) stays blank.
-  const live = useAsset(coin.asset_id).data?.data ?? null;
+  // A fresh live row replaces the baked figures whole, so a USD figure it
+  // serves null (a withheld price, a refused cap) stays blank. A stale one
+  // may be a numbers-free degraded body: keep the labelled baked figures.
+  const envelope = useAsset(coin.asset_id).data;
+  const live = envelope?.flags?.stale ? null : (envelope?.data ?? null);
   const detail: SidebarDetail | null = live ?? bakedDetail;
   const activity = live ?? coin;
   const bakedHint = live ? undefined : bakedAtDeploy();

@@ -57,4 +57,47 @@ describe('PriceSparklines', () => {
       expect(screen.queryByText('Price')).not.toBeInTheDocument(),
     );
   });
+
+  it('hides when a derived price is no longer served', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/v1/assets/')) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({ data: { asset_id: 'native', price_usd: null } }),
+        };
+      }
+      return {
+        status: 404,
+        ok: false,
+        json: async () => ({
+          type: 'https://stellarindex.io/problems/price-withheld',
+        }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <PriceSparklines
+          assetId="native"
+          priceUSD="1.00"
+          priceProvenance="declared_peg"
+          points24h={series}
+          points7d={series}
+        />
+      </QueryClientProvider>,
+    );
+    await vi.waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some((c) => String(c[0]).includes('/v1/assets/')),
+      ).toBe(true),
+    );
+    await vi.waitFor(() =>
+      expect(screen.queryByText('Price')).not.toBeInTheDocument(),
+    );
+  });
 });

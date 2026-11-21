@@ -239,6 +239,24 @@ describe('SupplyTabPanel marks floor and derived figures', () => {
     expect(screen.getByText('≥ 100')).toBeInTheDocument();
   });
 
+  it('marks the total with the same bound as circulating', () => {
+    assetExtra.fields = {
+      supply_basis: 'classic_trustline_sum',
+      total_supply: '1000000000',
+    };
+    renderPanel();
+    expect(screen.getAllByText('≥ 100')).toHaveLength(2);
+  });
+
+  it('marks a lake-flows total as an upper reading', () => {
+    assetExtra.fields = {
+      supply_basis: 'classic_lake_flows',
+      total_supply: '1000000000',
+    };
+    renderPanel();
+    expect(screen.getAllByText('≤ 100')).toHaveLength(2);
+  });
+
   it('leaves an exact supply unmarked', () => {
     assetExtra.fields = {
       supply_basis: 'issuer_exclusion',

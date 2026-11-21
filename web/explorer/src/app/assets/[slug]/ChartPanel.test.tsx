@@ -1,10 +1,19 @@
 import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
 
-import { chartQuoteFor, USDC_ASSET_ID } from './ChartPanel';
+import { ChartPanel, chartQuoteFor, USDC_ASSET_ID } from './ChartPanel';
+
+describe('ChartPanel for USDC', () => {
+  it('never prints a constant dollar price that would hide a depeg', () => {
+    const { container } = render(<ChartPanel assetID={USDC_ASSET_ID} />);
+    expect(container.textContent).not.toMatch(/\$1\.00/);
+    expect(container.textContent).toMatch(/depeg/);
+  });
+});
 
 // Operator decision: every price chart is anchored to USDC,
-// never XLM (no quote toggle). USDC itself charts against fiat:USD so
-// a depeg is visible instead of a definitional flat 1.0.
+// never XLM (no quote toggle). USDC itself maps to fiat:USD rather than a
+// definitional flat USDC/USDC; ChartPanel shows it a reference panel.
 describe('chartQuoteFor', () => {
   it('quotes ordinary assets in USDC', () => {
     const q = chartQuoteFor(
@@ -14,7 +23,7 @@ describe('chartQuoteFor', () => {
     expect(q.label).toBe('USDC');
   });
 
-  it('quotes USDC itself in fiat USD (depeg surface)', () => {
+  it('quotes USDC itself in fiat USD, never USDC/USDC', () => {
     const q = chartQuoteFor(USDC_ASSET_ID);
     expect(q.quote).toBe('fiat:USD');
   });
