@@ -13,9 +13,9 @@
 # Configuration:
 #   /etc/stellarindex.toml — [api] section + [api.sep10] when auth
 #                            is wired
-#   /etc/default/stellarindex-ops — STELLARINDEX_SEP10_SEED + JWT
-#                                  secret env vars when SEP-10 is
-#                                  configured
+#   /etc/default/stellarindex-api — the API's secrets, plus
+#                                  STELLARINDEX_SEP10_SEED + JWT secret
+#                                  env vars when SEP-10 is configured
 #
 # Ordering only (After=, no Requires=), as the deployed templates: a
 # Requires= on a unit the host does not have (Postgres in a container
@@ -59,37 +59,21 @@ StartLimitBurst=100
 
 [Service]
 Type=simple
-User=stellarindex
-Group=stellarindex
-WorkingDirectory=/var/lib/stellarindex
-# The ops-batch ClickHouse identity must never reach this daemon. This
-# reference unit sources the SAME env file the interactive and
-# timer-driven stellarindex-ops jobs source, and
-# docs/operations/clickhouse-ops-batch-profile.md prescribes writing
-# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD (the low-priority
-# `ops_batch` identity) into exactly that file. Those two vars demote
-# every ClickHouse connection this binary opens
-# (internal/storage/clickhouse/ops_auth.go) to the batch tier — today
-# this binary opens its explorer/supply readers with ADR-0048 D4's
-# explicit `api_serving` credentials and so reaches none of them, but
-# one future no-credential reader here would inherit the pair from the
-# shared file — i.e. the exact inverse of the 2026-08-28 r1 incident
-# the profile exists to prevent. A comment can only ask;
-# UnsetEnvironment= enforces it: systemd applies it AFTER every
-# Environment=/EnvironmentFile=, so the pair cannot reach this daemon
-# whatever the operator puts in the file (needs systemd >= 235 — the
-# Ubuntu 22.04/24.04 deploy targets ship 249/255, and an older systemd
-# ignores an unknown key with a warning rather than failing the unit).
-# The batch one-shots that share the file (verify-archive-tier-*,
-# ch-live-catchup) deliberately do NOT strip it — that is where the
-# identity belongs. Both halves are pinned by
-# TestOpsBatchIdentityNeverReachesLiveDaemons
-# (internal/storage/clickhouse/ops_auth_systemd_test.go).
-EnvironmentFile=-/etc/default/stellarindex-ops
-# Optional, read after the ops file so it wins: put the least-privilege
-# stellarindex_api role's DSN (migration 0213) here as STELLARINDEX_POSTGRES_DSN.
-# Without it the internet-facing API connects with the owner DSN from the ops file.
-EnvironmentFile=-/etc/default/stellarindex-api
+# Its own uid, never the ingest daemons': create it with
+#   useradd --system --user-group --no-create-home --home-dir /nonexistent \
+#     --shell /usr/sbin/nologin stellarindex-api
+User=stellarindex-api
+Group=stellarindex-api
+WorkingDirectory=/
+# The API's only env file, 0640 root:stellarindex-api, holding just the names it
+# reads (STELLARINDEX_POSTGRES_DSN — the stellarindex_api role's, migration 0213 —
+# Redis, ClickHouse serving/live, dashboard and forex keys). Required: a missing
+# file is a misconfiguration, not a default.
+EnvironmentFile=/etc/default/stellarindex-api
+# The ops-batch ClickHouse identity (docs/operations/clickhouse-ops-batch-profile.md)
+# would demote every connection this binary opens without explicit credentials;
+# systemd applies UnsetEnvironment= after every EnvironmentFile=, so it cannot reach
+# the API whatever the file holds (TestOpsBatchIdentityNeverReachesLiveDaemons).
 UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 
 ExecStart=/usr/local/bin/stellarindex-api -config /etc/stellarindex.toml
@@ -110,17 +94,18 @@ RestartMaxDelaySec=2min
 MemoryHigh=4G
 MemoryMax=8G
 
-# Hardening, kept in step with the role's stellarindex-api.service.j2. These hide
-# lock and credential paths from the API's own mount namespace only: while it
-# shares uid stellarindex with the writers, a compromised API can still reach
-# them through /proc/<sibling-pid>/root and read sibling environments.
+# Hardening, kept in step with the role's stellarindex-api.service.j2. Its own uid
+# plus ProtectProc=invisible keep sibling daemons' /proc entries out of reach.
+# ProcSubset=pid is not set: it hides /proc/sys/net/core/somaxconn, cutting Go's
+# listen backlog to 128.
+ProtectProc=invisible
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-InaccessiblePaths=-/run/lock -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
 # Caps the wabt children it runs on uploaded WASM; EPERM, not SIGSYS, on a miss.
 TasksMax=4096
 SystemCallArchitectures=native

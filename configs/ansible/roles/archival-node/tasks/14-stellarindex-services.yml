@@ -268,24 +268,23 @@
       PERFORM public.apply_api_role_grants(); END $$
   changed_when: false
 
-- name: Template /etc/default/stellarindex-api (API's own Postgres DSN)
-  # Read after /etc/default/stellarindex by the api unit, so its DSN wins
-  # for the API only; indexer, aggregator and ops keep the owner role.
-  when: postgres_pass_stellarindex_api | default('') | length > 0
-  ansible.builtin.copy:
-    content: "STELLARINDEX_POSTGRES_DSN={{ postgres_dsn_stellarindex_api }}\n"
+- name: Look up the API OS group
+  ansible.builtin.getent:
+    database: group
+    key: "{{ stellarindex_api_os_user }}"
+    fail_key: false
+
+- name: Template /etc/default/stellarindex-api (the API's only env file)
+  # Group-readable by the API user only. In --check on a first run that
+  # group does not exist yet, so the preview must not resolve it.
+  ansible.builtin.template:
+    src: stellarindex-api.env.j2
     dest: /etc/default/stellarindex-api
     owner: root
-    group: stellarindex
+    group: "{{ 'root' if (ansible_check_mode and not (ansible_facts.getent_group | default({})).get(stellarindex_api_os_user)) else stellarindex_api_os_user }}"
     mode: "0640"
   no_log: true
-  notify: Restart stellarindex-api
-
-- name: Remove /etc/default/stellarindex-api when no API role password is set
-  when: postgres_pass_stellarindex_api | default('') | length == 0
-  ansible.builtin.file:
-    path: /etc/default/stellarindex-api
-    state: absent
+  diff: false
   notify: Restart stellarindex-api
 
 - name: Template /etc/stellarindex.toml
@@ -395,22 +394,60 @@
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and stellarindex_api_unit is changed)
 
+# The API restarts under its new user HERE, before any old access is removed,
+# so a failed start fails the play with the galexie grant still in place.
+- name: Apply pending API restarts before verifying it
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the API answers readiness after the restart
+  when: not ansible_check_mode
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ stellarindex_api_listen_addr.split(':') | last }}/v1/readyz"
+    status_code: 200
+  register: stellarindex_api_ready
+  until: stellarindex_api_ready.status == 200
+  retries: 30
+  delay: 2
+
+- name: Read the API's MainPID owner
+  when: not ansible_check_mode
+  ansible.builtin.shell: |
+    set -euo pipefail
+    pid="$(systemctl show -p MainPID --value stellarindex-api)"
+    [ "$pid" != 0 ]
+    ps -o user= -p "$pid"
+  args:
+    executable: /bin/bash
+  register: stellarindex_api_pid_user
+  changed_when: false
+
+- name: Fail unless the API runs as stellarindex_api_os_user
+  when: not ansible_check_mode
+  ansible.builtin.assert:
+    that:
+      - stellarindex_api_pid_user.stdout | trim == stellarindex_api_os_user
+    fail_msg: >-
+      stellarindex-api MainPID runs as '{{ stellarindex_api_pid_user.stdout | trim }}',
+      expected '{{ stellarindex_api_os_user }}'.
+
+- name: Drop stellarindex from group galexie (the archive report moved out of /var/lib/galexie)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if id -nG stellarindex | tr ' ' '\n' | grep -qx galexie; then
+      gpasswd -d stellarindex galexie >/dev/null
+      echo removed
+    fi
+  args:
+    executable: /bin/bash
+  register: stellarindex_galexie_group
+  changed_when: stellarindex_galexie_group.stdout == 'removed'
+
 # ──── Timer-driven oneshot units ──────────────────────────────────────
 # verify-archive Tier A (nightly chain-link integrity, ADR-0016),
 # archive-completeness (daily completeness verify, ADR-0017) and
 # supply-snapshot (daily supply writer, ADR-0011). Each is a oneshot
 # service fired by a systemd timer. R1 is the integrity leader; R2/R3
 # run verify-archive on a slower cadence (separate units, TBD).
-
-- name: stellarindex user reads the galexie report dir (diagnostics/archive endpoint)
-  # /var/lib/galexie is 750 galexie:galexie; the api's
-  # /v1/diagnostics/archive reads last-completeness-report.json from
-  # inside it. Group membership is the narrowest grant (vs 755 on a
-  # dir that also holds captive-core state).
-  ansible.builtin.user:
-    name: stellarindex
-    groups: galexie
-    append: true
 
 - name: galexie drop-in directory
   ansible.builtin.file:
