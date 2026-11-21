@@ -53,17 +53,23 @@ RestartMaxDelaySec=2min
 MemoryHigh=4G
 MemoryMax=8G
 
-# Hardening — read-only most of the filesystem, write only the
-# working dir. Mirrors deploy/systemd/stellarindex-api.service.
-# strict, not full: under full all of /var stays writable, so ReadWritePaths
-# confined nothing and the internet-facing API could rewrite alert textfiles.
+# Hardening. Mirrors deploy/systemd/stellarindex-api.service and is pinned by
+# scripts/ci/lint-systemd-hardening.sh. The API writes only its private /tmp
+# (wabt staging), so no persistent path is writable. It never takes a heavy-job
+# lock or uses the galexie, ops or CLI credentials; PID 1 reads EnvironmentFile=
+# outside this namespace, so hiding those paths costs nothing.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/lib/stellarindex
+InaccessiblePaths=-/run/lock -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+# Caps the wabt children it runs on uploaded WASM; EPERM, not SIGSYS, on a miss.
+TasksMax=4096
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

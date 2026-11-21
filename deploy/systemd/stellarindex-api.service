@@ -106,15 +106,27 @@ RestartSec=5s
 RestartSteps=10
 RestartMaxDelaySec=2min
 
-# strict, not full: under full all of /var stays writable, so ReadWritePaths
-# confined nothing and the internet-facing API could rewrite alert textfiles.
+# Same ceiling as the role's template: bounds a leak on a shared host.
+MemoryHigh=4G
+MemoryMax=8G
+
+# Hardening, kept in step with the role's stellarindex-api.service.j2. The API
+# writes only its private /tmp (wabt staging), so no persistent path is
+# writable. It never takes a heavy-job lock or uses the galexie, ops or CLI
+# credentials; PID 1 reads EnvironmentFile= outside this namespace, so hiding
+# those paths costs nothing.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/lib/stellarindex
+InaccessiblePaths=-/run/lock -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+# Caps the wabt children it runs on uploaded WASM; EPERM, not SIGSYS, on a miss.
+TasksMax=4096
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 # Bind to a privileged port (80/443) only via reverse proxy. For
 # direct binding on 3000 (the default) no AmbientCapabilities are
