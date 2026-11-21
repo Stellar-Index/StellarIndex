@@ -1,5 +1,6 @@
 # promtool unit tests for the deadman heartbeat's silence gate: a silence held
-# for 24h stops stellarindex_deadmansswitch so the external check pages.
+# at 90% of the last day's 5-minute samples stops stellarindex_deadmansswitch
+# so the external check pages, however often the silence is rotated.
 #
 #   promtool test rules deploy/monitoring/rule-tests/meta-silence-deadman_test.yml
 
@@ -39,17 +40,17 @@ tests:
                 us via a separate channel — which catches Prometheus or
                 AlertManager being down.
 
-  # A silence held from t=0: the heartbeat still beats at 23h, stops past 24h.
+  # A silence held from t=0: 259 of 288 samples is reached at 21h30m.
   - interval: 5m
-    name: deadmansswitch — stops once a silence is held for a day
+    name: deadmansswitch — stops once a silence is held for most of a day
     input_series:
       - series: 'alertmanager_silences{state="active"}'
         values: '1x300'
     alert_rule_test:
-      - eval_time: 23h
+      - eval_time: 21h
         alertname: stellarindex_deadmansswitch
         exp_alerts: *beat
-      - eval_time: 24h5m
+      - eval_time: 22h
         alertname: stellarindex_deadmansswitch
         exp_alerts: []
 
@@ -64,12 +65,35 @@ tests:
         alertname: stellarindex_deadmansswitch
         exp_alerts: *beat
 
-  # Silenced for 20h, a gap, silenced again: never held a full day, keeps beating.
+  # Silenced for 20h, a short gap, silenced again: rotating a silence must
+  # not reset the gate, so the heartbeat stops.
   - interval: 5m
-    name: deadmansswitch — a broken run of silences does not stop it
+    name: deadmansswitch — a silence rotated with a short gap still stops it
     input_series:
       - series: 'alertmanager_silences{state="active"}'
         values: '1x240 0x5 1x60'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: []
+
+  # One sample at zero on a 5-minute boundary each day is not a gap.
+  - interval: 5m
+    name: deadmansswitch — a one-sample daily gap still stops it
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '1x275 0 1x60'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: []
+
+  # Silenced for 12h of the day: well under 90%, keeps beating.
+  - interval: 5m
+    name: deadmansswitch — a half-day of silences does not stop it
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '0x144 1x144 0x12'
     alert_rule_test:
       - eval_time: 25h
         alertname: stellarindex_deadmansswitch

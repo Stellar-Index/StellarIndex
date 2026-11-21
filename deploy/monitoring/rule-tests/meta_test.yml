@@ -453,7 +453,7 @@ tests:
       - series: 'alertmanager_silences{job="alertmanager_pair",state="active"}'
         values: '1x300 0x2000'
     alert_rule_test:
-      - eval_time: 23h
+      - eval_time: 21h
         alertname: stellarindex_alertmanager_silence_active
         exp_alerts: []
       - eval_time: 26h
@@ -463,10 +463,27 @@ tests:
               severity: ticket
               team: stellarindex
               component: meta
-            exp_annotations:
+            exp_annotations: &silence_annotations
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_silence_active
-              summary: "An Alertmanager silence has been active for 24h"
+              summary: "An Alertmanager silence has been held for most of a day"
               description: |
-                At least one silence has been continuously active for a day.
+                A silence was active at 90% or more of the 5-minute samples
+                in the last 24h, however often it was expired and recreated.
                 List them with `amtool silence query` and expire any that no
                 operator can account for.
+
+  # Expiring the silence briefly once a day must not reset the clock.
+  - interval: 5m
+    name: a silence rotated with a short daily gap still tickets
+    input_series:
+      - series: 'alertmanager_silences{job="alertmanager",state="active"}'
+        values: '1x275 0 1x60'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: stellarindex_alertmanager_silence_active
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations: *silence_annotations

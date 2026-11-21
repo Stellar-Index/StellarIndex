@@ -242,11 +242,11 @@ As [redis_exporter_down](#stellarindex_redis_exporter_down) with `up{job="minio"
 
 ## stellarindex_alertmanager_silence_active
 
-**Backstop.** A silence can mute this ticket with every page. So once a silence has been active at every 5-minute sample for 24h, `stellarindex_deadmansswitch` stops beating and the external heartbeat check pages as "alerting dead". If that page arrives while Prometheus and Alertmanager are both up, run `amtool silence query`: a held silence is the cause. A maintenance silence meant to last more than a day trips it too; split it into silences of under 24h.
+**Backstop.** A silence can mute this ticket with every page. So once some silence has been active at 259 of the last 288 5-minute samples (90% of a day), `stellarindex_deadmansswitch` stops beating and the external heartbeat check pages as "alerting dead". If that page arrives while Prometheus and Alertmanager are both up, run `amtool silence query`: a held silence is the cause. The gate counts every active silence, whatever it matches, and it counts the share of the day, so splitting a long silence into back-to-back or briefly-gapped silences still trips it. Only a day with more than about 2.5h and no silence active avoids it. While the heartbeat is stopped the external check cannot page again, so Prometheus-down and Alertmanager-down go undetected until the silences end.
 
-**Trigger.** `max(alertmanager_silences{state="active"}) > 0` for 24h, P3. A silence leaves no trace in Prometheus and can mute every page while the deadman heartbeat stays green. Alertmanager's API on r1 has no authentication.
+**Trigger.** A silence active at 90% or more of the last day's 5-minute samples (`sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[24h:5m]) >= 259`), P3. A silence leaves no trace in Prometheus and can mute every page while the deadman heartbeat stays green. Alertmanager's API on r1 has no authentication.
 
-**Check.** `amtool --alertmanager.url=http://localhost:9093 silence query` for matchers, creator and expiry. **Fix.** Expire any silence nobody can account for (`amtool silence expire <id>`); if the creator is not an operator, treat the host as compromised. A planned long silence needs an expiry inside 24h or an explicit ticket.
+**Check.** `amtool --alertmanager.url=http://localhost:9093 silence query` for matchers, creator and expiry. **Fix.** Expire any silence nobody can account for (`amtool silence expire <id>`); if the creator is not an operator, treat the host as compromised. A planned silence of more than about 21h trips the deadman however it is split; open an explicit ticket for it first.
 
 ## stellarindex_deadmansswitch
 
