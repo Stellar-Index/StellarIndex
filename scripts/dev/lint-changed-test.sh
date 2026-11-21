@@ -192,6 +192,14 @@ git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
 expect_has "go-only: gofumpt selected" "plan  gofumpt:" "$out"
 expect_has "go-only: go vet on ./internal/x" "go vet ./internal/x" "$out"
+expect_not "go-only: no systemd hardening lint" "lint-systemd-hardening" "$out"
+
+R="$TMP/sysd"; new_repo "$R"
+put "$R" deploy/systemd/x.service $'[Service]\nExecStart=/bin/true\n'
+git -C "$R" add -A
+out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
+expect_has "systemd unit: hardening lint selected" "plan  lint-systemd-hardening:" "$out"
+expect_has "systemd unit: its self-test selected" "plan  lint-systemd-hardening-test:" "$out"
 
 R="$TMP/gotagged"; new_repo "$R"
 put "$R" go.mod $'module example.com/t\n\ngo 1.22'

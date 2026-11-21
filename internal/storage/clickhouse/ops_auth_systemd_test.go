@@ -83,7 +83,7 @@ func TestOpsBatchIdentityNeverReachesLiveDaemons(t *testing.T) {
 				t.Fatalf("%s: chAuthFrom on the resolved unit environment: %v", u.rel, err)
 			}
 			liveWant := clickhouse.Auth{Database: "stellar"}
-			if live != nil && u.sourcesEnvFile(liveEnvFileBase) {
+			if live != nil && (u.sourcesEnvFile(liveEnvFileBase) || u.sourcesEnvFile(apiEnvFileBase)) {
 				liveWant = clickhouse.Auth{Database: "stellar", Username: live[LiveUserEnv], Password: live[LivePasswordEnv]}
 			}
 			arm, violation := identityViolation(u, auth, liveWant, serving, scripts)
@@ -136,6 +136,9 @@ var liveEnvPair = map[string]string{LiveUserEnv: "live_daemon", LivePasswordEnv:
 
 // liveEnvFileBase is the env file the live-daemon pair is templated into.
 const liveEnvFileBase = "stellarindex"
+
+// apiEnvFileBase is the API's own env file; stellarindex-api.env.j2 renders the same live pair into it.
+const apiEnvFileBase = "stellarindex-api"
 
 const (
 	armLive  = "live"
@@ -278,7 +281,7 @@ func (u systemdUnit) reachesOpsViaScript(scripts map[string]opsScript) bool {
 func (u systemdUnit) resolveEnv(contents, live map[string]string, scripts map[string]opsScript) map[string]string {
 	env := map[string]string{}
 	for _, f := range u.envFile {
-		src := map[string]map[string]string{opsEnvFileBase: contents, liveEnvFileBase: live}[filepath.Base(f)]
+		src := map[string]map[string]string{opsEnvFileBase: contents, liveEnvFileBase: live, apiEnvFileBase: live}[filepath.Base(f)]
 		for k, v := range src {
 			env[k] = v
 		}
