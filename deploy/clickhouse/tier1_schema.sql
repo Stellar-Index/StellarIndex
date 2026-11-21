@@ -326,7 +326,8 @@ FROM stellar.ledger_entry_changes;
 -- change can never fabricate an "archived" verdict. tryBase64Decode, not
 -- base64Decode: inside an MV a decode throw would fail the whole source
 -- INSERT and block ingest. removals ('' entry_xdr) are likewise skipped; the
--- last parseable live_until (already lapsed for a removed TTL) is retained.
+-- last parseable live_until is retained. After an explicit delete it can still
+-- be in the future, so deletion is read from the data entry, not from here.
 --
 -- Existing deployments (r1): table + MV + windowed backfill are operator-run
 -- via deploy/clickhouse/ttl_live_until.sql — the MV here only covers ingest
@@ -817,7 +818,7 @@ ORDER BY (covered_from, covered_to);
 --
 -- CORRECTNESS INVARIANT (data-hiding — read before touching the MV set): the
 -- watermark must be >= the ledger_seq of every row the account-history
--- queries can return for the account. The three MVs below fire on inserts to
+-- queries can return for the account. The four MVs below fire on inserts to
 -- the SAME tables that feed those queries' key sources (stellar.operations →
 -- ops_by_source's ops arm, stellar.operation_participants, and
 -- stellar.transactions → ops_by_source's tx-sentinel arm), so any row that
@@ -1275,7 +1276,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
 ENGINE = MergeTree
 ORDER BY (rel, root, month, asset, contract);
 
--- Monthly value moved into and out of the cohort, per asset, in the
+-- Monthly value the members received (inflow) and sent (outflow), gross —
+-- a transfer between two members counts in both — per asset, in the
 -- asset's smallest unit (stroops for classic assets; a Soroban token's
 -- own scale when `asset` is a C… id). `movements` counts legs,
 -- `active_accounts` distinct members that moved something that month

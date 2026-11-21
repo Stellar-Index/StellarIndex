@@ -62,6 +62,13 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$(printf '%s' "$sql" | tr '\n\t' '  ' | tr -s ' ')" >> "$CH_LOG"
 case "$sql" in
+  *"modification_time"*)
+    if [ -n "${HOT_FAIL:-}" ]; then
+      echo "Code: 210. DB::NetException: Connection refused." >&2
+      exit 1
+    fi
+    printf '%b' "${HOT_PARTS:-}"
+    ;;
   *"partition_id FROM system.parts"*)
     if [ -n "${ENUM_FAIL:-}" ]; then
       echo "Code: 210. DB::NetException: Connection refused." >&2
@@ -138,10 +145,10 @@ run() {
   LOG_STMT="$TMP/stmt.$name.log"; : > "$LOG_STMT"
   LOG="$TMP/log.$name"; : > "$LOG"
   env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u PROBE_FAIL \
-      -u ZERO_DUP_PARTS -u DUP_ROWS \
+      -u ZERO_DUP_PARTS -u DUP_ROWS -u HOT_PARTS -u HOT_FAIL \
       PATH="$TMP/bin:$PATH" CH="$TMP/bin/fake-ch" CH_LOG="$LOG_STMT" \
       OUT="$LOG" STOP="$TMP/stop.$name" TEXTFILE_DIR=/dev/null \
-      STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=50 DF_AVAIL=1000000000000 \
+      STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=40 DF_AVAIL=1000000000000 \
       ENUM_PARTS='' \
       ${envs[@]+"${envs[@]}"} bash "$DRIVER" "$@" >> "$LOG" 2>&1
   RC=$?
@@ -272,6 +279,43 @@ if grep -q 'dup_removed=60' "$LOG"; then
   ok "two clean candidate partitions ⇒ dup_removed is computed correctly (100-40)"
 else
   bad "two clean candidate partitions ⇒ dup_removed not as expected"
+  sed 's/^/       /' "$LOG"
+fi
+
+if grep -q "PARTITION '0000000001' FINAL SETTINGS optimize_throw_if_noop = 1" "$LOG_STMT"; then
+  ok "OPTIMIZE asks ClickHouse to throw when it merges nothing"
+else
+  bad "OPTIMIZE is issued without optimize_throw_if_noop = 1"
+  sed 's/^/       /' "$LOG_STMT"
+fi
+
+# ── 5a. an OPTIMIZE that returns success but removes nothing aborts ──
+run noop_merge ENUM_PARTS=$'0000000001\n' ROWS_AFTER=100 -- operations
+if [ "$RC" -ne 0 ] \
+   && grep -q 'ABORT partition=0000000001: OPTIMIZE removed 0 of 60 duplicate rows' "$LOG" \
+   && ! grep -q '=== done' "$LOG"; then
+  ok "no-op OPTIMIZE ⇒ ABORT, non-zero exit, no done summary"
+else
+  bad "no-op OPTIMIZE ⇒ rc=$RC; counted as processed"
+  sed 's/^/       /' "$LOG"
+fi
+
+# ── 5a'. a partition written in the last hour (the live tip) is never merged ──
+run hot_skip ENUM_PARTS=$'0000000001\n0000000002\n' HOT_PARTS=$'0000000002\n' -- operations
+if [ "$RC" -eq 0 ] && grep -q 'skip partition=0000000002 hot' "$LOG" \
+   && [ "$(grep -c 'OPTIMIZE TABLE' "$LOG_STMT")" -eq 1 ] \
+   && ! grep -q "PARTITION '0000000002'" "$LOG_STMT" \
+   && ! grep -q "_partition_id = '0000000002'" "$LOG_STMT"; then
+  ok "hot partition ⇒ skipped before the probe; only the cold one is merged"
+else
+  bad "hot partition ⇒ rc=$RC; the live partition was probed or merged"
+  sed 's/^/       /' "$LOG_STMT"
+fi
+run hot_fail ENUM_PARTS=$'0000000001\n' HOT_FAIL=1 -- operations
+if [ "$RC" -ne 0 ] && grep -q 'ABORT: hot-partition query FAILED' "$LOG"; then
+  no_optimize hot_fail "hot-partition query failure"
+else
+  bad "hot-partition query failure ⇒ rc=$RC; did not abort"
   sed 's/^/       /' "$LOG"
 fi
 

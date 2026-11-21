@@ -110,8 +110,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
 ENGINE = MergeTree
 ORDER BY (rel, root, month, asset, contract);
 
--- Monthly value moved in and out of the cohort, in the asset's smallest unit
--- (stroops for classic; a Soroban token's own scale for a C… id).
+-- Monthly value the members received (inflow) and sent (outflow), in the asset's
+-- smallest unit (stroops for classic; a Soroban token's own scale for a C… id).
+-- Gross: a transfer between two members counts in both.
 -- `active_accounts` is uniqCombined — a close estimate, not exact.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows
 (

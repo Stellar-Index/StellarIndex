@@ -608,15 +608,18 @@ func TestMaybeTolerateTrailingMissing_CountsOnlyTolerated(t *testing.T) {
 	missing := func(seq string) error {
 		return errors.New("ledger object containing sequence " + seq + " is missing: file does not exist")
 	}
-	tipAt := func(tip uint32) func() (uint32, error) {
-		return func() (uint32, error) { return tip, nil }
+	tipAt := func(tip uint32) func(uint32) (uint32, bool, error) {
+		return func(uint32) (uint32, bool, error) { return tip, false, nil }
+	}
+	landedBelow := func(tip uint32) func(uint32) (uint32, bool, error) {
+		return func(uint32) (uint32, bool, error) { return tip, true, nil }
 	}
 	tol := Config{TolerateTrailingMissing: true, TrailingMissingWindow: 10}
 	cases := []struct {
 		name      string
 		cfg       Config
 		err       error
-		tip       func() (uint32, error)
+		tip       func(uint32) (uint32, bool, error)
 		wantNil   bool
 		wantDelta float64
 	}{
@@ -625,8 +628,9 @@ func TestMaybeTolerateTrailingMissing_CountsOnlyTolerated(t *testing.T) {
 		{"flag off", Config{}, missing("195"), tipAt(194), false, 0},
 		{"unrelated error", Config{TolerateTrailingMissing: true}, errors.New("boom"), tipAt(194), false, 0},
 		{"miss near a chunk's To but far below the store tip", tol, missing("195"), tipAt(5_000), false, 0},
-		{"miss within the window of the store tip", tol, missing("195"), tipAt(205), true, 1},
-		{"store tip unresolvable", tol, missing("195"), func() (uint32, error) { return 0, errors.New("list denied") }, false, 0},
+		{"miss just below the store tip, object still absent", tol, missing("195"), tipAt(196), false, 0},
+		{"miss below the store tip, object landed since", tol, missing("195"), landedBelow(205), false, 0},
+		{"store tip unresolvable", tol, missing("195"), func(uint32) (uint32, bool, error) { return 0, false, errors.New("list denied") }, false, 0},
 	}
 	for _, tc := range cases {
 		before := testutil.ToFloat64(obs.LedgerstreamTrailingMissingToleratedTotal)
