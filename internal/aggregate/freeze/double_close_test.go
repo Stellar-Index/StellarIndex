@@ -64,6 +64,23 @@ func releaseFiveMinute(t *testing.T, sink *onceRecoverer, store *windowedFakeLad
 
 // sweepOnce runs the recovery worker over the pair's (already listed) open row and returns its WARN output and the
 // sweep's "partial" delta.
+// oneSweepLister hands the sweep its rows once, then stops the run from the second sweep's first call. The one sweep
+// under test finishes on a live context whatever the runner's load; a deadline could cut it mid-read and log a warning.
+type oneSweepLister struct {
+	pairs []freeze.OpenFreezePair
+	stop  context.CancelFunc
+	calls int
+}
+
+func (l *oneSweepLister) ListOpen(context.Context) ([]freeze.OpenFreezePair, error) {
+	l.calls++
+	if l.calls > 1 {
+		l.stop()
+		return nil, nil
+	}
+	return l.pairs, nil
+}
+
 func sweepOnce(t *testing.T, closer freeze.Recoverer, store *windowedFakeLadderStore) (string, float64) {
 	t.Helper()
 	_, rdb := newRedis(t)
@@ -71,10 +88,11 @@ func sweepOnce(t *testing.T, closer freeze.Recoverer, store *windowedFakeLadderS
 	var buf bytes.Buffer
 	partial := obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("partial")
 	before := testutil.ToFloat64(partial)
-	r := freeze.NewRecovery(rdb, &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}, closer,
-		freeze.RecoveryOptions{Interval: 10 * time.Millisecond, Ladder: store, Logger: slog.New(slog.NewTextHandler(&buf, nil))})
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	lister := &oneSweepLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}, stop: cancel}
+	r := freeze.NewRecovery(rdb, lister, closer,
+		freeze.RecoveryOptions{Interval: 10 * time.Millisecond, Ladder: store, Logger: slog.New(slog.NewTextHandler(&buf, nil))})
 	_ = r.Run(ctx)
 	return buf.String(), testutil.ToFloat64(partial) - before
 }
