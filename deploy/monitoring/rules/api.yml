@@ -1047,9 +1047,13 @@ groups:
       # the table size: the reaper erases unused rows and a restart
       # zeroes the gauge, either of which hides paced farming. 50 in 6h
       # sits below the default hourly cap (60/h = 360/6h) and far above
-      # today's rate (single digits a month).
+      # today's rate (single digits a month). The 7d arm catches farming
+      # paced just under the 6h threshold (8/h is 48 per 6h).
       - alert: stellarindex_registration_table_growing
-        expr: sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50
+        expr: |
+          sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50
+          or
+          sum(increase(stellarindex_registrations_total{outcome="created"}[7d])) > 100
         for: 30m
         labels:
           severity: ticket
@@ -1057,9 +1061,10 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
-          summary: "{{ $value | humanize }} registrations in 6 hours"
+          summary: "{{ $value | humanize }} registrations (over 50 in 6h or over 100 in 7d)"
           description: |
-            POST /v1/register created more than 50 accounts in six hours.
+            POST /v1/register created more than 50 accounts in six hours
+            or more than 100 in seven days.
             Each one is permanent and carries a live
             free-tier key with its own quota, so sustained growth
             outside expected sign-ups is abuse of the open registration

@@ -332,19 +332,22 @@ groups:
       # A silence leaves no trace in Prometheus and can mute every page
       # while the deadman heartbeat stays green. Routine maintenance
       # silences expire within hours, so one held for a day is forgotten
-      # or hostile; Alertmanager's API on r1 is unauthenticated.
+      # or hostile; Alertmanager's API on r1 is unauthenticated. Counted as a
+      # share of the day (259 of 288 samples), not an unbroken run, so
+      # expiring and recreating a silence does not reset it.
       - alert: stellarindex_alertmanager_silence_active
-        expr: max(alertmanager_silences{state="active"}) > 0
-        for: 24h
+        expr: sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[24h:5m]) >= 259
+        for: 0m
         labels:
           severity: ticket
           team: stellarindex
           component: meta
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_silence_active
-          summary: "An Alertmanager silence has been active for 24h"
+          summary: "An Alertmanager silence has been held for most of a day"
           description: |
-            At least one silence has been continuously active for a day.
+            A silence was active at 90% or more of the 5-minute samples
+            in the last 24h, however often it was expired and recreated.
             List them with `amtool silence query` and expire any that no
             operator can account for.
 
@@ -355,15 +358,14 @@ groups:
       # channels being broken).
       #
       # A silence mutes the silence_active ticket along with every page while
-      # sparing this heartbeat, so the heartbeat itself stops once a silence
-      # has been held at every sample for 24h: the external check then pages
+      # sparing this heartbeat, so the heartbeat itself stops on the same
+      # held-share test as silence_active: the external check then pages
       # through a path no silence can reach.
       - alert: stellarindex_deadmansswitch
         expr: |
           vector(1)
             unless on() (
-              min_over_time(max(alertmanager_silences{state="active"})[24h:5m]) > 0
-                and on() count_over_time(max(alertmanager_silences{state="active"})[24h:5m]) >= 288
+              sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[24h:5m]) >= 259
             )
         for: 0s
         labels:
