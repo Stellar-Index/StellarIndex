@@ -154,7 +154,7 @@
     owner: postgres
     group: postgres
     mode: "0640"
-  notify: Restart postgres
+  notify: Reload postgres
 
 - name: Ensure Postgres is running
   ansible.builtin.systemd:
