@@ -20,10 +20,6 @@ type txIndexBackfillPlan struct {
 	write  bool // -write; without it the run previews the range and fills nothing
 }
 
-// genesisLedger is the first ledger a lake holds; a run starting here and
-// ending at the resolved tip proves the index covers all history.
-const genesisLedger = 2
-
 // coversHistory reports whether a completed run spans genesis→tip, which is
 // what the reader's coverage marker asserts.
 func (p txIndexBackfillPlan) coversHistory() bool {

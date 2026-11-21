@@ -56,10 +56,6 @@ func chInstanceBackfill(args []string) error {
 		})
 }
 
-// instanceGenesisFrom is the highest -from still counted as a genesis start (ledger 1 is never in a lake). A resumed
-// -from N run never marks: nothing proves an earlier run filled [2, N).
-const instanceGenesisFrom = 2
-
 // instanceMVSettle is how long the view must have existed: Sink writes stellar.ledgers last, so a view born mid-flush
 // can miss a ledger the backfill's tip does not yet include.
 const instanceMVSettle = 10 * time.Minute
@@ -98,7 +94,7 @@ func runGenesisBackfill(ctx context.Context, addr, table string, fill genesisFil
 	}
 	end, endErr := readInstanceStart(ctx, addr, table)
 	switch {
-	case from > instanceGenesisFrom:
+	case from > genesisLedger: // a resumed run cannot prove an earlier one filled [genesis, from)
 		logf("no genesis watermark: run started at %d, not genesis", from)
 	case toFlag != 0:
 		logf("no genesis watermark: explicit -to %d", toFlag)
