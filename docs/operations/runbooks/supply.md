@@ -699,6 +699,14 @@ stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
 
 Code: `internal/ops/supply/supply_verify_rollup.go`; units `configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.{service,timer}.j2`. A failed run is never promoted to clean.
 
+## stellarindex_supply_write_band_breach
+
+Ticket. `increase(stellarindex_supply_write_band_breach_total[1h]) > 0` by `asset_key, direction`, `keep_firing_for: 1h`. A refresh wrote a `total_supply` more than `supply.WriteBandFactor` (10x) up or down from the previous write for that asset. The row is still written to `asset_supply_history` and served as supply and market cap.
+
+1. Find the write: `journalctl -u stellarindex-aggregator --since -2h | grep -i band` names the asset and both totals.
+2. Real mint or burn: the issuer's or contract's own transactions in that window account for the move (an issuance, a large burn, a SEP-41 `mint`/`burn` event). Nothing to do.
+3. Artefact: no on-chain event explains it, or the new total is a power of two or near 2^63 (an i128 read through an int64), or a decoder changed in the last release. Treat it as a wrong served number: freeze or correct the asset's supply and file the decode bug.
+
 ## CS-102: quiet is not stale
 
 The stale-supply anchor for a quiet asset must be the observer watermark, not the asset's own last activity. A quiet asset has an old last-activity ledger and is still fresh. Regression tests for both storage paths were run with a full red/green proof on 2026-07-29: with the defect re-introduced they fail with `quiet asset anchor = 1000, want 5000 (the observer watermark)`, and they pass with the fix. PHO's +157% divergence is a separate cause (archived SAC entries seeded as live; see `docs/architecture/domain-traps.md`).
