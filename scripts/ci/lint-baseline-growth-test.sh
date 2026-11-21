@@ -665,6 +665,13 @@ change_commit "chore: new key" \
 runGate
 expect "a new counted key is undeclared growth" 1 "+ d.yml|unannotated-swallow|1"
 
+# --- 25b. a metric waiver entry carrying its reason comment is still growth
+mkrepo 0
+change_commit "chore: waive a metric" \
+  scripts/ci/lint-metric-refs.sh 'X=(' "$(printf 'X=(\n  stellarindex_x_dropped_total  # dashboard only\n)')"
+runGate
+expect "a commented metric waiver fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-metric-refs.sh"
+
 # --- 26. every marker a lint honours is registered as watched or unwatched
 reg() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$GATE" | tr '|' '\n'; }
 registered="$(reg WATCHED_MARKERS; reg UNWATCHED_MARKERS)"

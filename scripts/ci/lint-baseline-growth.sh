@@ -153,8 +153,9 @@ detect_growth() {
     done <<<"$added"
   done < <(git diff --name-only "${base}...${head}" -- 'scripts/ci/*.baseline' 2>/dev/null)
 
-  # 2) KNOWN_INERT in lint-metric-refs.sh: match the stellarindex_* name shape, not the array.
-  added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*$')"
+  # 2) The waiver arrays in lint-metric-refs.sh: match the stellarindex_* name shape, not the
+  #    array, with or without the trailing `# reason` the arrays ask for.
+  added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*(#.*)?$')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-metric-refs.sh "$line"
   done <<<"$added"
