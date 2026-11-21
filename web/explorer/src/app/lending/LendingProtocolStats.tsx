@@ -7,6 +7,7 @@ import { Button, Skeleton, Stat, StatCell, StatGrid } from '@/components/ui';
 import { apiGet, type Envelope } from '@/api/client';
 import type { paths } from '@/api/types';
 import { formatCompactTokenUnits } from '@/lib/format';
+import { capWithheldNote } from '@/app/assets/[slug]/headerNotes';
 
 import { LENDING_POOL_META } from './poolMeta';
 import { UsdFigure, exclusionGroups, useAssetText } from './lendingUsd';
@@ -141,7 +142,8 @@ export function LendingProtocolStats({
                 reason={
                   t?.price_usd == null
                     ? 'no reliable market price yet'
-                    : 'not served yet'
+                    : (capWithheldNote(t.market_cap_withheld_reason) ??
+                      'not served yet')
                 }
                 showReason
               />

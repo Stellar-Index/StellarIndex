@@ -165,11 +165,13 @@ func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetai
 	detail.SupplyStale = supplyObservationStale(snap, now)
 	populateSupplyFields(detail, snap)
 	// Held balances are a floor: the supply serves under its basis and no cap is built on it.
-	if snap.Basis != supply.BasisContractStorageBalances {
-		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
-		if detail.PriceUSD == nil {
-			detail.capPending = &pendingMarketCap{snap: snap, key: key, withheld: detail.PriceWithheldReason, unread: detail.priceUnread}
-		}
+	if snap.Basis == supply.BasisContractStorageBalances {
+		detail.MarketCapWithheldReason = MarketCapWithheldSupplyFloor
+		return
+	}
+	s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
+	if detail.PriceUSD == nil {
+		detail.capPending = &pendingMarketCap{snap: snap, key: key, withheld: detail.PriceWithheldReason, unread: detail.priceUnread}
 	}
 }
 
@@ -408,6 +410,41 @@ func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, v
 	return false, false
 }
 
+// MarketCapWithheldReason says why market_cap_usd is null beside a served price_usd and circulating_supply. A direct-price
+// verdict reuses its [PriceWithheldReason] value: the cap is withheld because that price was.
+type MarketCapWithheldReason string
+
+const (
+	MarketCapWithheldPriceUnread     MarketCapWithheldReason = "price_unread"
+	MarketCapWithheldSupplyStale     MarketCapWithheldReason = "supply_stale"
+	MarketCapWithheldDecimalsUnknown MarketCapWithheldReason = "decimals_unknown"
+	MarketCapWithheldDecimalsDiffer  MarketCapWithheldReason = "decimals_mismatch"
+	MarketCapWithheldTickerCollision MarketCapWithheldReason = "ticker_collision"
+	MarketCapWithheldLowLiquidity    MarketCapWithheldReason = "low_liquidity"
+	MarketCapWithheldSupplyFloor     MarketCapWithheldReason = "supply_floor"
+	MarketCapWithheldThinMarket      MarketCapWithheldReason = "thin_market"
+	MarketCapWithheldPriceBasis      MarketCapWithheldReason = "price_basis"
+)
+
+// scaleWithheldReason names a refused cross-scale product, "" when supply and price share a known scale.
+func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
+	switch {
+	case d.MarketCapDecimalsMismatch:
+		return MarketCapWithheldDecimalsDiffer
+	case d.scaleUnknown():
+		return MarketCapWithheldDecimalsUnknown
+	}
+	return ""
+}
+
+// capRefusalReason maps a [Server.marketCapRefused] verdict onto the wire reason.
+func capRefusalReason(lowLiquidity bool) MarketCapWithheldReason {
+	if lowLiquidity {
+		return MarketCapWithheldLowLiquidity
+	}
+	return MarketCapWithheldTickerCollision
+}
+
 // populateMarketCap fills market_cap_usd and fdv_usd from the supply snapshot and the already-populated detail.PriceUSD (no
 // second prices_1m lookup); failures log at WARN and leave the field nil.
 func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int) {
@@ -418,9 +455,11 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	if detail.SupplyStale {
 		// Today's price times a supply unobserved for longer than preciseSupplyMaxAge is not a
 		// market cap; supply_as_of says how old it is and flags.stale marks the body.
+		detail.MarketCapWithheldReason = MarketCapWithheldSupplyStale
 		return
 	}
-	if detail.MarketCapDecimalsMismatch || detail.scaleUnknown() {
+	if r := detail.scaleWithheldReason(); r != "" {
+		detail.MarketCapWithheldReason = r
 		// scaleUnknown: the lake read failed or found no declaration and no projection row vouches
 		// for the scale, so detail.Decimals is a placeholder.
 		//
@@ -441,6 +480,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 	// disagree; detail is deliberately the STRICTER and must not be weakened.
 	if refused, lowLiquidity := s.marketCapRefused(asset, priceSourceCount, detail.VolumeUSD24h); refused {
 		detail.MarketCapLowLiquidity = lowLiquidity
+		detail.MarketCapWithheldReason = capRefusalReason(lowLiquidity)
 		return
 	}
 	if snap.CirculatingSupply != nil {
@@ -451,6 +491,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			// The ceiling tests the computed FIGURE, so unlike the floor it can only run here;
 			// detail and listing must agree on the verdict.
 			detail.MarketCapLowLiquidity = true
+			detail.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		} else {
 			detail.MarketCapUSD = &mc
 			// The detail has no supply lower-bound field, so a floor supply is carried by the cap's flag.
@@ -489,13 +530,50 @@ type pendingMarketCap struct {
 func (s *Server) capFilledPrice(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	p := detail.capPending
 	detail.capPending = nil
-	if p == nil || p.withheld != "" || p.unread {
+	if p == nil || detail.PriceUSD == nil {
 		return
 	}
-	if detail.PriceUSD == nil || detail.ThinMarket || (detail.PriceBasis != "" && detail.PriceBasis != priceBasisTransitive) {
+	if r := filledPriceCapRefusal(p, detail); r != "" {
+		detail.MarketCapWithheldReason = r
 		return
 	}
 	s.populateMarketCap(ctx, detail, asset, p.snap, p.key, 0)
+}
+
+// filledPriceCapRefusal names why a filled price values no cap, "" when [Server.populateMarketCap]'s guards decide.
+func filledPriceCapRefusal(p *pendingMarketCap, d *AssetDetail) MarketCapWithheldReason {
+	switch {
+	case p.withheld != "":
+		return MarketCapWithheldReason(p.withheld)
+	case p.unread:
+		return MarketCapWithheldPriceUnread
+	case d.ThinMarket:
+		return MarketCapWithheldThinMarket
+	case d.PriceBasis != "" && d.PriceBasis != priceBasisTransitive:
+		return MarketCapWithheldPriceBasis
+	}
+	return ""
+}
+
+// nameLateCapRefusal names the refusal for a price filled after the cap was valued: neither the thin pass nor the declared
+// peg or global-market fill values one.
+func nameLateCapRefusal(d *AssetDetail) {
+	if d.MarketCapWithheldReason == MarketCapWithheldThinMarket && !d.ThinMarket {
+		// A peg or global-market fill replaced the thin price the cap was refused on.
+		d.MarketCapWithheldReason = ""
+	}
+	if d.PriceUSD == nil || d.MarketCapUSD != nil || d.MarketCapWithheldReason != "" {
+		return
+	}
+	switch {
+	case d.ThinMarket:
+		d.MarketCapWithheldReason = MarketCapWithheldThinMarket
+	case d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket:
+		d.MarketCapWithheldReason = MarketCapWithheldPriceBasis
+	case d.priceUnread:
+		// The thin pass re-read a price the cap pass could not.
+		d.MarketCapWithheldReason = MarketCapWithheldPriceUnread
+	}
 }
 
 // lookupUSDPrice returns the asset's USD price, ("", false) on any failure ("market_cap unavailable"). No on-chain trade quotes
