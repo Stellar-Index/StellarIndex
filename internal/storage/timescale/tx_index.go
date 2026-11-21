@@ -75,7 +75,8 @@ func (s *Store) UntaggedTxIndexTradeExists(ctx context.Context, from, to time.Ti
 	return exists, nil
 }
 
-// TagTradesTxIndex back-fills trades.tx_index for the supplied tags across every on-chain source, FIRST-WINS (tx_index IS NULL); tx_index is absent from the trades upsert so a re-derive preserves it.
+// TagTradesTxIndex back-fills trades.tx_index for the supplied tags across every on-chain source. tx_index is a pure function of (ledger, tx_hash) in the lake, so a differing value is corrected in place and an equal one is
+// skipped; tx_index is absent from the trades upsert so a re-derive preserves it.
 func (s *Store) TagTradesTxIndex(ctx context.Context, from, to time.Time, tags []TxIndexTag) (int64, error) {
 	if len(tags) == 0 {
 		return 0, nil
@@ -101,7 +102,7 @@ func (s *Store) TagTradesTxIndex(ctx context.Context, from, to time.Time, tags [
            AND t.ledger  = s.ledger
            AND t.tx_hash = s.tx_hash
            AND t.ledger  > 0
-           AND t.tx_index IS NULL
+           AND t.tx_index IS DISTINCT FROM s.tx_index::integer
     `
 	res, err := s.db.ExecContext(ctx, q, ledgers, txHashes, idx, from.UTC(), to.UTC())
 	if err != nil {

@@ -10,8 +10,9 @@ import (
 
 // Router attribution: joins persisted router invocations (soroswap_router_swaps) to the `trades`
 // rows they drove and stamps trades.routed_via with the router's registry name.
-//   - FIRST-WINS: only rows with routed_via IS NULL are updated, so a tag is never overwritten and
-//     re-running a window is idempotent.
+//   - FIRST-WINS except over the fallback: a NULL is tagged, and a bare routerName fallback is upgraded
+//     once a wrapper attribution resolves (a wrapper registered or a call_path filled later); a wrapper
+//     tag is never overwritten, so re-running a window is idempotent.
 //   - SOURCE-SCOPED: a composed tx can carry unrelated trades (Phoenix AND the Soroswap router), so
 //     only trades whose `source` matches the router's underlying venue are tagged.
 //   - TIME-BOUNDED: both join sides carry a time predicate so TimescaleDB prunes chunks; the trades
@@ -52,7 +53,8 @@ func (s *Store) TagTradesRoutedVia(ctx context.Context, routerName, tradeSource 
            AND t.ledger  = r.ledger
            AND t.tx_hash = r.tx_hash
            AND t.source  = $2
-           AND t.routed_via IS NULL
+           AND (t.routed_via IS NULL
+                OR (t.routed_via = $1 AND wrapper.name IS NOT NULL AND wrapper.name <> $1))
     `
 	res, err := s.db.ExecContext(ctx, q,
 		routerName, tradeSource,
