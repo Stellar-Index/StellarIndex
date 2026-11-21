@@ -245,7 +245,7 @@ put "$R" CHANGELOG.md '# changelog'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"; rc=$?
 expect_exit "md-only: plans cleanly" 0 "$rc"
-expect_has "md-only: lint-doc-links, doc-pinned-tests, lint-migration-commands and lint-repo-budget, one deferral — never reads as fully linted" "lint-changed: plan — 4 lint(s) over 2 changed file(s), 1 deferred" "$out"
+expect_has "md-only: lint-conflict-markers, lint-doc-links, doc-pinned-tests, lint-migration-commands and lint-repo-budget, one deferral — never reads as fully linted" "lint-changed: plan — 5 lint(s) over 2 changed file(s), 1 deferred" "$out"
 expect_has "md-only: a docs/ runbook selects lint-migration-commands (it scans runbooks for a NULL-start refresh)" "plan  lint-migration-commands:" "$out"
 expect_has "md-only: lint-doc-links scoped to both changed files" "lint-doc-links.sh CHANGELOG.md docs/a.md" "$out"
 expect_has "md-only: doc-pinned-tests scoped to both changed files" "doc-pinned-tests.sh --files CHANGELOG.md docs/a.md" "$out"
@@ -322,7 +322,7 @@ expect_exit "the run FAILS" 1 "$rc"
 expect_has "the failure names lint-shell-sigpipe" "lint-changed: FAIL lint-shell-sigpipe" "$out"
 expect_has "the gate's own diagnosis is shown" "tools/offender.sh:3 pipes into an EARLY-EXIT consumer" "$out"
 expect_has "bash -n still passed (the failure is the sigpipe class, not syntax)" "lint-changed: ok   bash -n" "$out"
-redcount=3; [ "$HAVE_SHELLCHECK" -eq 1 ] && redcount=4
+redcount=4; [ "$HAVE_SHELLCHECK" -eq 1 ] && redcount=5
 expect_has "the summary counts one failure and names it" "of ${redcount} lint(s) failed over 1 changed file(s)" "$out"
 
 R="$TMP/green"; new_repo "$R"
@@ -330,7 +330,7 @@ put "$R" tools/fixed.sh $'#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged 2>&1)"; rc=$?
 expect_exit "the write-then-slice rewrite passes" 0 "$rc"
-greencount=3; [ "$HAVE_SHELLCHECK" -eq 1 ] && greencount=4
+greencount=4; [ "$HAVE_SHELLCHECK" -eq 1 ] && greencount=5
 expect_has "the summary accounts for every lint that ran" "lint-changed: OK — ${greencount} lint(s) over 1 changed file(s)" "$out"
 
 R="$TMP/loose"; new_repo "$R"
@@ -395,6 +395,15 @@ put "$R" data.json '{}'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged 2>&1)"; rc=$?
 expect_exit "an uncovered type alone exits 0" 0 "$rc"
+expect_has "only the conflict-marker lint ran (it applies to every type)" "lint-changed: OK — 1 lint(s) over 1 changed file(s)" "$out"
+expect_has "and the type is still named as uncovered by any other lint" "skip  data.json: no changed-file lint applies to this type" "$out"
+
+R="$TMP/deleted"; new_repo "$R"
+put "$R" gone.json '{}'
+git -C "$R" add -A
+rm "$R/gone.json"
+out="$(cd "$R" && "$DISPATCH" --staged 2>&1)"; rc=$?
+expect_exit "a staged file gone from the work tree exits 0 (the conflict lint is not called with an empty list)" 0 "$rc"
 expect_has "and says that no lint applied rather than claiming a pass" "lint-changed: OK — 0 lint(s) over 1 changed file(s): no changed-file lint applies" "$out"
 
 # ── The hook installer ─────────────────────────────────────────────────────
@@ -486,8 +495,8 @@ if [ -x "$TMP/customhooks/pre-commit" ]; then ok "the hook was written there"; e
 echo "lint-changed-test: the dispatcher and the installer pass their own lints"
 out="$("$DISPATCH" -- scripts/dev/lint-changed.sh scripts/dev/install-hooks.sh 2>&1)"; rc=$?
 expect_exit "lint-changed over its own two scripts passes" 0 "$rc"
-selfcount=6; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=7
-expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, migration-commands, chunk-functions, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
+selfcount=7; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=8
+expect_has "and accounts for what it ran (conflict-markers, bash -n twice, sigpipe, fixture-isolation, migration-commands, chunk-functions, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
 
 echo "lint-changed-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

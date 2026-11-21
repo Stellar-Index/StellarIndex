@@ -13,12 +13,14 @@
 #
 # Exit 0 clean, 1 on a marker, 2 when there was nothing to scan.
 set -euo pipefail
-cd "$(dirname "$0")/../.."
 
+# Explicit paths resolve against the caller's work tree (lint-changed.sh runs
+# from the changed files' repo); only the whole-tree mode needs the repo root.
 files=()
 if [ "$#" -gt 0 ]; then
   files=("$@")
 else
+  cd "$(dirname "$0")/../.."
   while IFS= read -r f; do files+=("$f"); done < <(git ls-files)
 fi
 
