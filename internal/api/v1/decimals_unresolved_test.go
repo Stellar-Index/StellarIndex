@@ -43,8 +43,8 @@ func (oneRowSEP41Transfers) ListSEP41Transfers(
 }
 
 // /v1/contracts/{id}/transfers: `decimals` is the conversion factor for
-// every amount, so a failed read is a retryable 503, not decimals: 7. An
-// undeclared scale (found=false) or an unwired reader omits the field.
+// every amount, so a failed read or an unwired reader is a retryable 503, not decimals: 7. Only a read that found no
+// declaration (found=false) omits the field.
 func TestSEP41Transfers_DecimalsReadFailed_Returns503(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -54,7 +54,7 @@ func TestSEP41Transfers_DecimalsReadFailed_Returns503(t *testing.T) {
 	}{
 		{"read failed", &countingDecStub{err: errDecimalsRead}, http.StatusServiceUnavailable, "decimals"},
 		{"not declared", &countingDecStub{}, http.StatusOK, ""},
-		{"no reader", nil, http.StatusOK, ""},
+		{"no reader", nil, http.StatusServiceUnavailable, "decimals"},
 		{"read", &countingDecStub{d: 18, found: true}, http.StatusOK, `"decimals":18`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

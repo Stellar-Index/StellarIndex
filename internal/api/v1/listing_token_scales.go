@@ -5,10 +5,15 @@ package v1
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
+
+// errTokenDecimalsUnwired is [Server.lakeTokenDecimals]'s error when no lake reader is wired (the boot dial missed ClickHouse,
+// and it stays nil until restart): the scale is unread, never "declares none".
+var errTokenDecimalsUnwired = errors.New("token decimals: no lake reader wired")
 
 // tokenDecimalsBatchReader is the optional seam a listing page reads all its Soroban scales through in one query.
 type tokenDecimalsBatchReader interface {

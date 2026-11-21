@@ -2604,14 +2604,14 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 }
 
 // lakeTokenDecimals is every v1 surface's Soroban token scale: 7 for a known SAC (fixed by the protocol), else the bounded lake
-// read. known=false means no declaration was read (serve the scale absent, never a default); err is non-nil only when the read
-// FAILED (error or tokenMetadataReadTimeout), and callers must then not publish a scale-dependent figure.
+// read. known=false with a nil err means a read succeeded and found no declaration; err is non-nil when the scale was NOT read
+// (error, tokenMetadataReadTimeout, or errTokenDecimalsUnwired), and callers must then not publish a scale-dependent figure.
 func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool, err error) {
 	if _, sac := s.resolveSACAsset(contractID); sac {
 		return defaultTokenDecimals, true, nil // decimals-7: known SAC, fixed by the protocol
 	}
 	if s.TokenDecimals == nil {
-		return 0, false, nil
+		return 0, false, errTokenDecimalsUnwired
 	}
 	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()

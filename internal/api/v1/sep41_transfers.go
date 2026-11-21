@@ -63,7 +63,7 @@ const tokenMetadataReadTimeout = 2 * time.Second
 const sep41TransfersReadTimeout = 8 * time.Second
 
 // resolveAssetDecimals returns the smallest-unit scale for a canonical asset: 7 for native and classic (fixed by the protocol),
-// the contract's declaration for Soroban tokens, 0 when undeclared, err when the read failed ([Server.lakeTokenDecimals]).
+// the contract's declaration for Soroban tokens, 0 when undeclared, err when the scale was not read ([Server.lakeTokenDecimals]).
 // Callers resolve once per side per request, never per row.
 func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) (int, error) {
 	if a.Type == canonical.AssetSoroban && a.ContractID != "" {
