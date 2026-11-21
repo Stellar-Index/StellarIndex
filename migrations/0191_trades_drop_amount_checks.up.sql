@@ -12,7 +12,8 @@
 --
 -- DROP CONSTRAINT is catalog-only and does not decompress: 0174's down
 -- runs a DROP CONSTRAINT against recompressed chunks at 2.26.4 and
--- test/integration/migration_0191_trades_amount_checks_test.go asserts
+-- TestMigration0191_DropsTradesAmountChecksOverCompressedChunks
+-- (test/integration/pg_migrations_test.go) asserts
 -- every trades chunk is still compressed after this file. 0004's header
 -- claim that DROP is rejected on a compressed hypertable predates 2.26.4.
 --
