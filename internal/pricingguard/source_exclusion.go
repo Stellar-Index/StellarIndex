@@ -9,6 +9,7 @@ package pricingguard
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -25,6 +26,9 @@ type SourceExclusionReader interface {
 const (
 	exclusionCacheTTL = 15 * time.Second
 	exclusionMaxStale = time.Minute
+	// exclusionRetryInterval spaces read attempts after a failure; exclusionReadTimeout bounds one attempt.
+	exclusionRetryInterval = 5 * time.Second
+	exclusionReadTimeout   = 2 * time.Second
 )
 
 // SourceExclusionGate answers whether a served value depends on an excluded source. A nil gate withholds nothing.
@@ -33,9 +37,11 @@ type SourceExclusionGate struct {
 	logger *slog.Logger
 	now    func() time.Time
 
-	mu     sync.Mutex
-	rows   []timescale.SourceExclusion
-	readAt time.Time // zero until the first successful read
+	mu       sync.Mutex
+	rows     []timescale.SourceExclusion
+	readAt   time.Time     // zero until the first successful read
+	triedAt  time.Time     // last read attempt, successful or not
+	inflight chan struct{} // non-nil while a read runs; closed when it ends
 }
 
 // SourceExclusionGateOptions configures [NewSourceExclusionGate].
@@ -101,22 +107,66 @@ func (g *SourceExclusionGate) CleanBuckets(ctx context.Context, base, quote cano
 	return out, NotWithheld
 }
 
+// snapshot holds g.mu only to read or replace state. One refresh runs at a time: its caller waits for it, as does any caller
+// with no usable last read; everyone else serves the last good read. Attempts are spaced by exclusionRetryInterval, so a
+// down store costs one query (and one log line) per interval rather than one per request.
 func (g *SourceExclusionGate) snapshot(ctx context.Context) ([]timescale.SourceExclusion, bool) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	now := g.now()
 	if !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionCacheTTL {
-		return g.rows, true
-	}
-	rows, err := g.r.UnliftedSourceExclusions(ctx)
-	if err == nil {
-		g.rows, g.readAt = rows, now
+		rows := g.rows
+		g.mu.Unlock()
 		return rows, true
 	}
-	if !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionMaxStale {
-		g.logger.Warn("source exclusions unreadable; serving under the last good read", "err", err, "read_at", g.readAt)
+	done := g.inflight
+	lead := done == nil && (g.triedAt.IsZero() || now.Sub(g.triedAt) >= exclusionRetryInterval)
+	if lead {
+		done = make(chan struct{})
+		g.inflight, g.triedAt = done, now
+		go g.refresh(context.WithoutCancel(ctx), done)
+	}
+	usable := !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionMaxStale
+	g.mu.Unlock()
+	if done != nil && (lead || !usable) {
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.readAt.IsZero() && g.now().Sub(g.readAt) < exclusionMaxStale {
 		return g.rows, true
 	}
-	g.logger.Error("source exclusions unreadable; withholding prices until they can be read", "err", err)
 	return nil, false
+}
+
+// refresh runs one read on a context detached from the request that started it, so that request leaving does not fail
+// the read every other caller is waiting on.
+func (g *SourceExclusionGate) refresh(ctx context.Context, done chan struct{}) {
+	var (
+		rows []timescale.SourceExclusion
+		err  error
+	)
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("source exclusions read panicked: %v", p)
+		}
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		now := g.now()
+		g.inflight = nil
+		close(done)
+		switch {
+		case err == nil:
+			g.rows, g.readAt = rows, now
+		case !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionMaxStale:
+			g.logger.Warn("source exclusions unreadable; serving under the last good read", "err", err, "read_at", g.readAt)
+		default:
+			g.logger.Error("source exclusions unreadable; withholding prices until they can be read", "err", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, exclusionReadTimeout)
+	defer cancel()
+	rows, err = g.r.UnliftedSourceExclusions(ctx)
 }

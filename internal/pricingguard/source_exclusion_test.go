@@ -92,6 +92,7 @@ func TestSourceExclusionGate_UnreadableFailsClosed(t *testing.T) {
 	}
 
 	f.err = nil
+	now = now.Add(exclusionRetryInterval)
 	if got := g.BucketWithholding(context.Background(), base, quote, row); got != NotWithheld {
 		t.Fatalf("readable: %q", got)
 	}
