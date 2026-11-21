@@ -10618,7 +10618,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                    "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                     "type": "text/plain"
                   },
                   "key": "outlier_sigma",
@@ -10706,7 +10706,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -10804,7 +10804,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -10902,7 +10902,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11000,7 +11000,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11098,7 +11098,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11250,7 +11250,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11348,7 +11348,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11395,7 +11395,7 @@
           "request": {
             "name": "Volume-weighted average price over a window.",
             "description": {
-              "content": "Returns VWAP = Σ(quote) / Σ(base) for every trade in\n[from, to) for the given pair. Optional outlier filter\ndrops prices > N σ from the window mean. When the window\nhits the server's per-request cap (10000 trades) the\nresponse carries `truncated: true` — the price reflects\nonly the chronologically **last** N trades of the window,\nnot the full window: the reader drops the OLDEST rows\nunder the limit so a truncated result always runs up to\nthe window end. Narrow the window and retry for an exact\nVWAP.\n\nRate-limit cost: one token per 7 days of window (rounded up),\nso a wide window spends more of the minute's budget.\n\n`flags.divergence_checked` / `flags.divergence_warning` are\nalways `false` here: the cross-reference verdict compares the\naggregator's shortest-window VWAP now, never this value computed\nover the requested `[from, to)`, so it is not consulted.\n",
+              "content": "Returns VWAP = Σ(quote) / Σ(base) for every trade in\n[from, to) for the given pair. Optional outlier filter\ndrops prices more than N robust σ from the window median\n(σ = max(1.4826 × MAD, 0.25 % of the median)). When the window\nhits the server's per-request cap (10000 trades) the\nresponse carries `truncated: true` — the price reflects\nonly the chronologically **last** N trades of the window,\nnot the full window: the reader drops the OLDEST rows\nunder the limit so a truncated result always runs up to\nthe window end. Narrow the window and retry for an exact\nVWAP.\n\nRate-limit cost: one token per 7 days of window (rounded up),\nso a wide window spends more of the minute's budget.\n\n`flags.divergence_checked` / `flags.divergence_warning` are\nalways `false` here: the cross-reference verdict compares the\naggregator's shortest-window VWAP now, never this value computed\nover the requested `[from, to)`, so it is not consulted.\n",
               "type": "text/plain"
             },
             "url": {
@@ -11445,7 +11445,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                    "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                     "type": "text/plain"
                   },
                   "key": "outlier_sigma",
@@ -11533,7 +11533,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11631,7 +11631,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11729,7 +11729,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11827,7 +11827,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11925,7 +11925,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -12077,7 +12077,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -12175,7 +12175,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -31011,7 +31011,7 @@
               "request": {
                 "name": "Create a new API key.",
                 "description": {
-                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nA SEP-10-authenticated caller gets 403 `key-mint-not-available`:\nan `auth_mode = \"sep10\"` deployment honours only SEP-10 tokens,\nso a minted key would have no use there.\n\nThe new key inherits the caller's identifier and tier and is a\nchild of the calling key: revoking the caller also revokes the\nnew key. There is no rotate endpoint. To replace a key, mint the\nreplacement with its parent (a sibling), deploy it, then revoke\nthe old key. A root key has no parent: replace it with an\nindependent key from the dashboard (`POST /v1/dashboard/keys`),\nor by operator-assisted mint for a `/v1/register`-only account.\n\nAn **operator-tier** caller minting for its own identifier here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A key minted by the retired\n`/v1/signup` carries its email-verification stamp over to the\nchild, so replacement keys keep working under\n`signup_require_email_verification`.\nOnly `apikey` and `operator` callers may mint; a SEP-10 token\ngets 403.\n",
+                  "content": "Issues a new API key for the authenticated caller and returns\nthe plaintext exactly once.\n\n`scopes` (optional) confines the new key to route families:\n`read` (public data surfaces), `account` (`/v1/account/*`),\n`dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).\nOmitted/empty mints a full-access key — the posture every key\nminted before scopes shipped keeps. Scopes only narrow; they\nnever grant anything the key's tier wouldn't already reach.\n\nOne caller identifier may hold a bounded number of un-revoked\nkeys (25 by default, operator-tunable). A mint that would cross\nthe ceiling returns 409 — revoke a key via\n`DELETE /v1/account/keys/{keyID}` and retry.\n\nA SEP-10-authenticated caller gets 403 `key-mint-not-available`:\nan `auth_mode = \"sep10\"` deployment honours only SEP-10 tokens,\nso a minted key would have no use there.\n\nThe new key inherits the caller's identifier and tier and is a\nchild of the calling key: revoking the caller also revokes the\nnew key. There is no rotate endpoint. To replace a key, mint the\nreplacement with its parent (a sibling), deploy it, then revoke\nthe old key. A root key has no parent: replace it with an\nindependent key from the dashboard (`POST /v1/dashboard/keys`).\nA `/v1/register`-only account cannot mint one: register a new\naccount, move to its key, then revoke the old root.\n\nAn **operator-tier** caller minting for its own identifier here is\nheld to the admin-write contract: the `X-Reason` header is\nrequired (400 without it) and the mint is recorded as a\n`key.mint` audit row, exactly as `POST /v1/admin/keys`.\nCustomer-tier callers need no header. A key minted by the retired\n`/v1/signup` carries its email-verification stamp over to the\nchild, so replacement keys keep working under\n`signup_require_email_verification`.\nOnly `apikey` and `operator` callers may mint; a SEP-10 token\ngets 403.\n",
                   "type": "text/plain"
                 },
                 "url": {

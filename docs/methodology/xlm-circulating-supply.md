@@ -1,6 +1,6 @@
 ---
 title: XLM circulating-supply methodology
-last_verified: 2026-09-28
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -44,10 +44,20 @@ the aggregator's σ-filtered VWAP. In order, it is:
 `market_cap_usd` is absent, never zero, when there is no price or no
 supply reading, or when a valuation guard refuses it.
 
-`supply_basis` on the response is `xlm_sdf_reserve_exclusion` when the
-exclusion is applied (the production state), or `xlm_total_only` if no
-reserve accounts are configured (an honest self-evident misconfig
-signal — we never label a non-exclusion as an exclusion).
+`supply_basis` on the response is one of:
+
+- `xlm_sdf_reserve_exclusion`: the exclusion is applied with live reserve
+  balances from `account_observations` (the production state).
+- `xlm_sdf_reserve_exclusion_static`: the exclusion is applied with the
+  operator's static `reserve_balances_stroops` map, because the observer
+  does not yet cover the reserves. The map is served only while
+  `reserve_balances_as_of` is set and no older than
+  `reserve_balances_max_age` (default 168h); past that the XLM supply
+  tick fails instead of republishing old balances, so the figure is up
+  to that age old.
+- `xlm_total_only`: no reserve accounts are configured (an honest
+  self-evident misconfig signal — we never label a non-exclusion as an
+  exclusion).
 
 ### `total_supply` is the frozen post-2019 figure, NOT on-chain `total_coins`
 

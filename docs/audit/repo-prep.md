@@ -121,8 +121,17 @@ Run/heed these locally before pushing so PRs are green on first push:
 4. **Spectral lint** on `openapi/*.yaml` (CI-only; keep spec lint-clean).
 5. **gitleaks history vs worktree:** CI scans full git history
    (`gitleaks detect`, fetch-depth 0); local verify scans only the working
-   tree (`--no-git`). A committed-then-removed secret/fixture still reds CI —
-   allowlist via `.gitleaks.toml` in the same PR that adds a hot fixture.
+   tree (`--no-git`). A committed-then-removed secret or fixture still reds
+   CI. The two cases are handled differently:
+   - **A real credential** (any value that ever authenticated anything):
+     treat it as an incident. Revoke and rotate it first and follow
+     `SECURITY.md`; the repo is public, so deleting it does not undo the
+     disclosure. Never clear the hit with a `.gitleaks.toml` entry or a
+     `.gitleaksignore` fingerprint, and re-cut the branch so the flagged
+     commit is on no pushed ref.
+   - **A fabricated fixture:** allowlist it with a `regexes` entry that
+     matches the literal fake value (not a `paths` entry), with a
+     `Baseline-Growth:` trailer, in the same PR that adds the fixture.
 6. **actions-pinning lint** — only when touching `.github/workflows/`: any
    NEW third-party action must be SHA-pinned, not tag-pinned.
 7. **ansible syntax + ansible-lint** — when touching `configs/ansible/`.

@@ -1,6 +1,6 @@
 ---
 title: High-Availability and Infrastructure Plan
-last_verified: 2026-10-06
+last_verified: 2026-11-21
 status: current — the one HA/infra page. What runs today is checked against configs/, deploy/ and test/load/; the multi-region plan is ratified by ADR-0050 and deferred post-v1.0.
 ---
 
@@ -79,7 +79,7 @@ r1 is a Hetzner dedicated server in FSN1 (Falkenstein, DE) with a ZFS pool
                                          │
              ┌───────────────────────────┼──────────────────────────┐
      Redis (single node,         Postgres 15 + Timescale      ClickHouse lake
-     internal bind, no AUTH)     (postgresql@15-main,         (one instance,
+     loopback, requirepass)      (postgresql@15-main,         (one instance,
                                   no replicas)                 non-replicated)
              └───────────────────────────┼──────────────────────────┘
                          stellarindex-aggregator (one, instance lock)
@@ -253,7 +253,14 @@ traffic fails over cleanly.
 
 ### 3.4 Redis
 
-**Today:** a single `redis-server` on r1, internal bind, no AUTH.
+**Today:** a single Debian-packaged `redis-server` on r1, bound to
+loopback (`127.0.0.1 -::1`), with AUTH via `requirepass` from the vaulted
+`redis_password` (`archival-node/tasks/08-redis.yml` fails the play when it
+is empty). No task sets `appendonly`, so the packaged `appendonly no`
+stands, and nothing copies the RDB file off the host. That instance is the
+store of record for `apikey:` credentials (ADR-0007), so an unclean Redis
+death loses key writes made since the last snapshot, revocations included,
+and a lost host loses the working credentials (ADR-0043 has no Redis leg).
 `internal/storage/redisclient` builds a `go-redis` `FailoverClient` when
 `[storage] redis_sentinel_addrs` and `redis_master_name` are set, and a
 plain client otherwise. r1 sets neither, so the Sentinel branch is shipped
@@ -268,9 +275,11 @@ but dormant.
 - Failover takes 15–30 s; affected responses carry `stale: true` and fall
   back to Timescale. Replicas serve pre-failover data during the window
   (`replica-serve-stale-data yes`).
-- Persistence is AOF every second plus RDB. Correctness never depends on
-  it: a wiped Redis is re-warmed by the aggregator from Postgres within
-  minutes. Rate-limit counters reset on a wipe.
+- Persistence is AOF every second plus RDB. Cache correctness never
+  depends on it: a wiped cache is re-warmed by the aggregator from
+  Postgres within minutes. Rate-limit counters reset on a wipe. The
+  `apikey:` and `apikey-index:` families are the exception: they are the
+  store of record, and nothing re-derives them.
 - Auth: the role templates `requirepass` + `masterauth`, a Sentinel
   password, and an optional ACL lockdown (`redis_acl_lockdown`). A password
   change needs all three nodes rolled before Sentinel re-converges. Use
