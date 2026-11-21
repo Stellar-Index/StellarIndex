@@ -753,12 +753,12 @@ func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.As
 	return raw, true, nil
 }
 
-// sep1DisplayToRawUnits converts a SEP-1 display decimal to a raw-unit integer string; ok=false unless the result is a
-// non-negative INTEGER (no negatives, no fractional stroops). Rational and e-notation are rejected because big.Rat.SetString
-// would silently accept both.
 // sep1PlainDecimal bounds the parse: an i128 amount has at most 39 integer digits.
 var sep1PlainDecimal = regexp.MustCompile(`^[0-9]{1,40}(\.[0-9]{1,40})?$`)
 
+// sep1DisplayToRawUnits converts a SEP-1 display decimal to a raw-unit integer string; ok=false unless the result is a
+// non-negative INTEGER (no negatives, no fractional stroops). Rational and e-notation are rejected because big.Rat.SetString
+// would silently accept both.
 func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 	// The string is issuer-authored: big.Rat also parses hex and binary exponents ("1p9999999" is 2^9999999), so only a
 	// bounded plain decimal reaches it, and the result must fit the i128 every token amount lives in.
