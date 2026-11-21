@@ -808,10 +808,7 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if s.Accounts == nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/account-store-unavailable",
-			"Account store not configured", http.StatusServiceUnavailable,
-			accountStoreUnavailableDetail)
+		s.revokeOwnKeyWithoutAccountStore(w, r, subject, keyID)
 		return
 	}
 	reason, ok := s.operatorReasonOK(w, r, subject)
@@ -850,5 +847,41 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 		s.logger.Warn("account keys revoke: retry note not written", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// revokeOwnKeyWithoutAccountStore serves the revoke when Accounts is nil (auth_backend=postgres): with no delegation tree to
+// read, a key may revoke only itself, through the staff kill switch's every-store revoke. Anything else is the 503 it was.
+func (s *Server) revokeOwnKeyWithoutAccountStore(w http.ResponseWriter, r *http.Request, subject auth.Subject, keyID string) {
+	self := subject.KeyID != "" && keyID == subject.KeyID
+	noStore := s.redisKeyRevoker() == nil && s.APIKeyBudgets.Platform == nil
+	// Without PlatformAccounts the row's owner cannot be proven, so revokeOwnedPlatformKey would leave a live row behind a 204.
+	ownerUnprovable := s.APIKeyBudgets.Platform != nil && s.PlatformAccounts == nil
+	if !self || noStore || ownerUnprovable {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-store-unavailable",
+			"Account store not configured", http.StatusServiceUnavailable,
+			accountStoreUnavailableDetail+"; without it a key can revoke only itself")
+		return
+	}
+	reason, ok := s.operatorReasonOK(w, r, subject)
+	if !ok {
+		return
+	}
+	descendants, err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason, true)
+	if errors.Is(err, auth.ErrKeyNotFound) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		s.logger.Error("account keys self-revoke failed", "err", err,
+			"identifier", subject.Identifier, "key_id", keyID)
+		if len(descendants) > 0 {
+			s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, true)
+		}
+		writeRevokeFailed(w, r)
+		return
+	}
+	s.recordAccountKeyRevokeAudit(r, subject, keyID, reason, descendants, false)
 	w.WriteHeader(http.StatusNoContent)
 }
