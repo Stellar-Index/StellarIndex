@@ -4,6 +4,8 @@
 # ({{ stellarindex_api_os_user }}, 04-users.yml), never the ingest daemons'
 # uid. Its env file /etc/default/stellarindex-api is 0640
 # root:{{ stellarindex_api_os_user }} and holds only the names it reads.
+# Not covered yet: the Postgres, ClickHouse and Redis credentials it holds stay
+# as strong as the daemons' until each host sets least-privilege ones for the API.
 # Caddy terminates TLS and proxies to :3000, so no privileged port bind.
 
 [Unit]

@@ -51,6 +51,9 @@
 #   duplicate-bearing table  the same two table names this trigger uses).
 #   deploy/clickhouse/*.sql  lint-ch-apply-scope (whole tree, instant). Both
 #   + 08-clickhouse.yml      sides of the fresh-host/operator boundary.
+#   deploy/systemd/, role    lint-systemd-hardening + its self-test (whole
+#   unit templates, API env, tree, instant): the API's own uid, env file
+#   defaults/main.yml        and /proc isolation.
 #   scripts/ci/*.baseline    lint-baseline-growth over the commit range. It
 #                            reads commit trailers, so it has nothing to say
 #                            about STAGED edits and is deferred there.
@@ -177,7 +180,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=(); op_corpus=0; budget=0; opsdoc=0; nummask=0
+rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); op_corpus=0; budget=0; opsdoc=0; nummask=0
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -248,6 +251,16 @@ for f in "${changed[@]}"; do
         configs/ansible/roles/archival-node/tasks/08-clickhouse.yml| \
         */configs/ansible/roles/archival-node/tasks/08-clickhouse.yml)
             ch_files+=("$f"); hit=1 ;;
+    esac
+    # The unit hardening contract: both unit copies, the API's env file and
+    # its user default. Whole-tree and instant, so the trigger is the path.
+    case "$f" in
+        deploy/systemd/*|*/deploy/systemd/*| \
+        configs/ansible/roles/archival-node/templates/systemd/*|*/configs/ansible/roles/archival-node/templates/systemd/*| \
+        configs/ansible/roles/archival-node/templates/stellarindex-api.env.j2|*/configs/ansible/roles/archival-node/templates/stellarindex-api.env.j2| \
+        configs/ansible/roles/archival-node/defaults/main.yml|*/configs/ansible/roles/archival-node/defaults/main.yml| \
+        scripts/ci/lint-systemd-hardening.sh|*/scripts/ci/lint-systemd-hardening.sh)
+            sysd_files+=("$f"); hit=1 ;;
     esac
     case "$f" in
         *.go|*.sql|*.sh|*.j2|*.yml|*.yaml|*.py)
@@ -583,6 +596,12 @@ fi
 if [ "${#ch_files[@]}" -gt 0 ]; then
     add_step "lint-ch-apply-scope" "whole tree; ${#ch_files[@]} changed file(s) sit on the fresh-host/operator boundary" "$ci_dir/lint-ch-apply-scope.sh"
     [ "${#go_files[@]}" -gt 0 ] || add_step "lint-i128-sum" "ClickHouse SQL changed" "$ci_dir/lint-i128-sum.sh"
+fi
+
+# 8c. systemd unit hardening (the API's own uid, env file and /proc isolation).
+if [ "${#sysd_files[@]}" -gt 0 ]; then
+    add_step "lint-systemd-hardening" "whole tree; ${#sysd_files[@]} unit/env/default file(s) changed" "$ci_dir/lint-systemd-hardening.sh"
+    add_step "lint-systemd-hardening-test" "" bash "$ci_dir/lint-systemd-hardening-test.sh"
 fi
 
 # 9. A changed self-test is run. Last: these are the only steps whose cost

@@ -17,6 +17,9 @@
 #                                  STELLARINDEX_SEP10_SEED + JWT secret
 #                                  env vars when SEP-10 is configured
 #
+# Its own uid does not cover the Postgres, ClickHouse and Redis credentials it
+# holds: they stay as strong as the daemons' until the host sets least-privilege ones.
+#
 # Ordering only (After=, no Requires=), as the deployed templates: a
 # Requires= on a unit the host does not have (Postgres in a container
 # or managed) refuses to start, and a datastore stop leaves this unit
