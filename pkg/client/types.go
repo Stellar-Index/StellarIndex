@@ -396,12 +396,11 @@ type AssetDetail struct {
 	// MarketCapLowerBound is true on a listing row whose market_cap_usd rests on a floor supply.
 	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
 
-	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd) were refused (served
-	// null) because the server's two decimals resolvers disagreed for this Soroban token, so supply
-	// and price sat on different scales. Not a liquidity verdict; PriceUSD, CirculatingSupply and
-	// Decimals still serve. Self-clearing once the server reconciles. Omitted (false) on
-	// agreement.
+	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd) were refused because the server's two decimals
+	// resolvers disagreed for this Soroban token, so supply and price sat on different scales. Self-clearing.
 	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
+	// MarketCapWithheldReason says why market_cap_usd is null beside a served PriceUSD and CirculatingSupply.
+	MarketCapWithheldReason string `json:"market_cap_withheld_reason,omitempty"`
 
 	// ListingReference and ListingValuation carry an independent listing
 	// platform's price for this exact address, and the supply valued at

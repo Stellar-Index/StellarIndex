@@ -163,6 +163,10 @@ type AssetDetail struct {
 	// self-clears when the aggregator's lockstep reconcile repairs the projection.
 	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
 
+	// MarketCapWithheldReason says why market_cap_usd (and fdv_usd, on the same guard) is null beside a served price_usd and
+	// circulating_supply; [AssetDetail.MarshalJSON] omits it otherwise.
+	MarketCapWithheldReason MarketCapWithheldReason `json:"market_cap_withheld_reason,omitempty"`
+
 	// ListingReference / ListingValuation are a listing-sourced second opinion for a verified asset
 	// whose market cap this index declines to publish (asset_listing_valuation.go). They are NOT a
 	// market cap and must never be summed into one: value_usd is supply times a third party's
@@ -446,6 +450,10 @@ func (d *AssetDetail) scaleUnknown() bool {
 // MarshalJSON omits `decimals` when the scale is unknown: the struct's placeholder must never reach the wire as the token's scale.
 func (d AssetDetail) MarshalJSON() ([]byte, error) {
 	type wire AssetDetail
+	if d.PriceUSD == nil || d.CirculatingSupply == nil || d.MarketCapUSD != nil {
+		// A later suppressor can unprice a row after its cap was refused; the reason explains only a missing cap.
+		d.MarketCapWithheldReason = ""
+	}
 	if !d.scaleUnknown() {
 		return json.Marshal(wire(d))
 	}
@@ -1067,7 +1075,11 @@ func (s *Server) fillRowMarketCap(
 ) {
 	// Must precede every return: a Soroban row's scale is read or flagged unknown, never left at the stamped 7.
 	s.applyConfirmedListingDecimals(ctx, row, scales)
-	if row.MarketCapUSD != nil || row.ThinMarket {
+	if row.MarketCapUSD != nil {
+		return
+	}
+	if row.ThinMarket {
+		row.MarketCapWithheldReason = MarketCapWithheldThinMarket
 		return
 	}
 	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
@@ -1079,7 +1091,8 @@ func (s *Server) fillRowMarketCap(
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
-	if row.MarketCapDecimalsMismatch || row.scaleUnknown() {
+	if r := row.scaleWithheldReason(); r != "" {
+		row.MarketCapWithheldReason = r
 		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised
 		// through the nonstandard_decimals_assets projection while row.Decimals now holds a
 		// disagreeing lake reading, so supply over price would be off by a power of ten. Null
@@ -1091,6 +1104,7 @@ func (s *Server) fillRowMarketCap(
 	// manipulable market while its ticker borrows a real asset's standing. The
 	// unverified_ticker_collision flag is the reason; circulating_supply still surfaces.
 	if row.UnverifiedTickerCollision {
+		row.MarketCapWithheldReason = MarketCapWithheldTickerCollision
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
@@ -1099,6 +1113,7 @@ func (s *Server) fillRowMarketCap(
 	if row.AssetID != "native" &&
 		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
+		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
@@ -1111,6 +1126,7 @@ func (s *Server) fillRowMarketCap(
 	if row.AssetID != "native" &&
 		capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		row.MarketCapLowLiquidity = true
+		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		stampCirculatingSupply(row, circ, basis)
 		return
 	}
@@ -1248,6 +1264,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 	for i := range rows {
 		s.applyGlobalMarket(&rows[i], refs, now)
 		s.fillFixedPegPrice(ctx, &rows[i], memo)
+		nameLateCapRefusal(&rows[i])
 	}
 }
 
@@ -2466,6 +2483,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// suppressor so nothing re-publishes the series.
 	withholdPriceSeriesWhenUnpriced(&detail)
 	clearThinWhenUnpriced(&detail)
+	nameLateCapRefusal(&detail)
 
 	// Listing-priced valuation, LAST: it reads what every producer and suppressor left to decide
 	// whether a hole needs filling. The figure lands in `listing_valuation` under its own
@@ -3733,13 +3751,22 @@ func (s *Server) fillTwinCapAtRowPrice(
 	twin[0].PriceUSD, twin[0].priceWholeToken = own, false
 }
 
-// flagTwinSubstanceWithheldCap marks a catalogue row's missing cap as suppressed when its twin's on-chain price failed the
-// substance gate on measured evidence. The row's own price comes from the global tier, so without the flag a null cap beside
-// a price and a supply would read as missing data.
+// flagTwinSubstanceWithheldCap names a catalogue row's missing cap after its twin's withheld on-chain price, and marks it
+// suppressed when that was the substance gate on measured evidence. The row's own price comes from the global tier, so
+// without it a null cap beside a price and a supply would read as missing data.
 func flagTwinSubstanceWithheldCap(dst *AssetDetail, twin AssetDetail) {
-	if twin.PriceWithheldReason == PriceWithheldSubstance &&
-		dst.MarketCapUSD == nil && dst.PriceUSD != nil && dst.CirculatingSupply != nil {
+	if dst.MarketCapUSD != nil || dst.PriceUSD == nil || dst.CirculatingSupply == nil {
+		return
+	}
+	switch twin.PriceWithheldReason {
+	case "":
+	case PriceWithheldScamIssuer, PriceWithheldUnattributed:
+		// Issuer verdicts unprice the row through carryTwinIssuerVerdict; never name one beside a global-tier price.
+	case PriceWithheldSubstance:
 		dst.MarketCapLowLiquidity = true
+		dst.MarketCapWithheldReason = MarketCapWithheldReason(PriceWithheldSubstance)
+	default:
+		dst.MarketCapWithheldReason = MarketCapWithheldReason(twin.PriceWithheldReason)
 	}
 }
 
@@ -3805,12 +3832,17 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	}
 	if dst.MarketCapUSD == nil {
 		dst.MarketCapUSD, dst.MarketCapLowerBound = twin.MarketCapUSD, twin.MarketCapLowerBound
+		// The twin's thinness is not the row's: a row priced from the global tier is not a thin price.
+		if twin.MarketCapWithheldReason != MarketCapWithheldThinMarket || dst.ThinMarket {
+			dst.MarketCapWithheldReason = twin.MarketCapWithheldReason
+		}
 	}
 	// The dust-liquidity flag must ride along with the (absent) cap, or the catalogue row would
 	// show nothing where the twin shows market_cap_low_liquidity. When suppressed, null cap and
 	// FDV too so a stale value never coexists with the flag, as in populateMarketCap.
 	if twin.MarketCapLowLiquidity {
 		dst.MarketCapLowLiquidity = true
+		dst.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		dst.MarketCapUSD, dst.MarketCapLowerBound = nil, false
 		dst.FDVUSD = nil
 	}

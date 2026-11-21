@@ -68,6 +68,8 @@ type LendingProtocolToken struct {
 	CirculatingSupply *string `json:"circulating_supply"`
 	TotalSupply       *string `json:"total_supply"`
 	MarketCapUSD      *string `json:"market_cap_usd"`
+	// MarketCapWithheldReason is the asset route's reason for a null market_cap_usd beside a price and a supply.
+	MarketCapWithheldReason MarketCapWithheldReason `json:"market_cap_withheld_reason,omitempty"`
 	// ThinMarket marks a price_usd from a market below the substance floor: display-only, never valued.
 	ThinMarket bool               `json:"thin_market,omitempty"`
 	Substance  *SubstanceEvidence `json:"substance,omitempty"`
@@ -347,14 +349,15 @@ func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Fl
 	s.handleAssetGet(rec, req)
 	var body struct {
 		Data struct {
-			Decimals          int                `json:"decimals"`
-			PriceUSD          *string            `json:"price_usd"`
-			PriceBasis        string             `json:"price_basis"`
-			CirculatingSupply *string            `json:"circulating_supply"`
-			TotalSupply       *string            `json:"total_supply"`
-			MarketCapUSD      *string            `json:"market_cap_usd"`
-			ThinMarket        bool               `json:"thin_market"`
-			Substance         *SubstanceEvidence `json:"substance"`
+			Decimals          int                     `json:"decimals"`
+			PriceUSD          *string                 `json:"price_usd"`
+			PriceBasis        string                  `json:"price_basis"`
+			CirculatingSupply *string                 `json:"circulating_supply"`
+			TotalSupply       *string                 `json:"total_supply"`
+			MarketCapUSD      *string                 `json:"market_cap_usd"`
+			CapReason         MarketCapWithheldReason `json:"market_cap_withheld_reason"`
+			ThinMarket        bool                    `json:"thin_market"`
+			Substance         *SubstanceEvidence      `json:"substance"`
 		} `json:"data"`
 		Flags Flags `json:"flags"`
 	}
@@ -367,10 +370,11 @@ func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Fl
 	tok := &LendingProtocolToken{
 		AssetID: a.String(), Code: a.Code, Issuer: a.Issuer, Decimals: d.Decimals,
 		PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis, CirculatingSupply: d.CirculatingSupply, TotalSupply: d.TotalSupply, MarketCapUSD: d.MarketCapUSD,
-		ThinMarket: d.ThinMarket, Substance: d.Substance,
+		MarketCapWithheldReason: d.CapReason, ThinMarket: d.ThinMarket, Substance: d.Substance,
 	}
-	if tok.ThinMarket {
+	if tok.ThinMarket && tok.MarketCapUSD != nil {
 		tok.MarketCapUSD = nil // the asset route derives none from a thin price; held here too so no later change can
+		tok.MarketCapWithheldReason = MarketCapWithheldThinMarket
 	}
 	flags.Stale = flags.Stale || body.Flags.Stale
 	// The asset body is degraded by reads this route does not serve too; only a missing served figure counts as a failure.
