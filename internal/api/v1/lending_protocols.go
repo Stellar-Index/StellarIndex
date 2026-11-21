@@ -248,28 +248,7 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 		flags.Degraded = flags.Degraded || pr.res.flags.Degraded
 		v := pr.res.view
 		st.ReserveCount += len(v.Reserves) + len(v.OmittedReserves)
-		for _, a := range v.OmittedReserves {
-			reason, ok := v.omittedWhy[a]
-			if !ok {
-				reason = exclusionNotCaptured
-			}
-			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(a), Reason: reason})
-		}
-		for _, rv := range v.Reserves {
-			sup, supOK := parseUSD(rv.SuppliedUSD)
-			bor, borOK := parseUSD(rv.BorrowedUSD)
-			if !supOK || !borOK {
-				reason := exclusionNoUSDValue
-				if rv.usdExclusion != "" {
-					reason = rv.usdExclusion
-				}
-				st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(rv.Asset), Reason: reason})
-				continue
-			}
-			supplied.Add(supplied, sup)
-			borrowed.Add(borrowed, bor)
-			priced++
-		}
+		priced += addProtocolReserves(st, &pool, &v, supplied, borrowed)
 		tokens = addProtocolBackstop(st, pr, backstop, assets, tokens)
 	}
 	if priced > 0 {
@@ -279,6 +258,35 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 	for _, t := range tokens {
 		st.Backstop = append(st.Backstop, LendingProtocolBackstop{BackstopToken: t, Tokens: backstop[t].String(), asset: assets[t]})
 	}
+}
+
+// addProtocolReserves records one pool's omitted and unpriced reserves as exclusions and adds each fully priced reserve to the
+// running sums, returning how many it priced.
+func addProtocolReserves(st *LendingProtocolStats, pool *string, v *LendingPoolReservesView, supplied, borrowed *big.Rat) int {
+	priced := 0
+	for _, a := range v.OmittedReserves {
+		reason, ok := v.omittedWhy[a]
+		if !ok {
+			reason = exclusionNotCaptured
+		}
+		st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: pool, Asset: strRef(a), Reason: reason})
+	}
+	for _, rv := range v.Reserves {
+		sup, supOK := parseUSD(rv.SuppliedUSD)
+		bor, borOK := parseUSD(rv.BorrowedUSD)
+		if !supOK || !borOK {
+			reason := exclusionNoUSDValue
+			if rv.usdExclusion != "" {
+				reason = rv.usdExclusion
+			}
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: pool, Asset: strRef(rv.Asset), Reason: reason})
+			continue
+		}
+		supplied.Add(supplied, sup)
+		borrowed.Add(borrowed, bor)
+		priced++
+	}
+	return priced
 }
 
 // addProtocolBackstop adds one pool's backstop tiers to the per-token sums; a Blend tier is denominated in the backstop's own

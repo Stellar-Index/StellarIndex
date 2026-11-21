@@ -152,15 +152,20 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// Phase 2 is pure compute, run once the parallel reads have joined; the wg.Wait barrier makes
 	// detail.PriceUSD and the snapshot safely visible to populateMarketCap.
 	if haveSnap {
-		detail.SupplyStale = supplyObservationStale(snap, now)
-		populateSupplyFields(detail, snap)
-		// Held balances are a floor, and the detail has no lower-bound flag for a cap: the supply serves
-		// under its basis and no cap is built on it.
-		if snap.Basis != supply.BasisContractStorageBalances {
-			s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
-			if detail.PriceUSD == nil {
-				detail.capPending = &pendingMarketCap{snap: snap, key: key, withheld: detail.PriceWithheldReason, unread: detail.priceUnread}
-			}
+		s.applySupplyAndMarketCap(ctx, detail, asset, snap, key, priceSourceCount, now)
+	}
+}
+
+// applySupplyAndMarketCap is applyF2Fields' compute phase: the snapshot's supply fields, then the market cap and FDV valued on them.
+func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int, now time.Time) {
+	detail.SupplyStale = supplyObservationStale(snap, now)
+	populateSupplyFields(detail, snap)
+	// Held balances are a floor, and the detail has no lower-bound flag for a cap: the supply serves
+	// under its basis and no cap is built on it.
+	if snap.Basis != supply.BasisContractStorageBalances {
+		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
+		if detail.PriceUSD == nil {
+			detail.capPending = &pendingMarketCap{snap: snap, key: key, withheld: detail.PriceWithheldReason, unread: detail.priceUnread}
 		}
 	}
 }
