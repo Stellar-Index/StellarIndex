@@ -20,6 +20,37 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.127.0] - 2026-11-21
+
+Tested against Stellar protocol 27. No migrations, no `pkg/*` change, no breaking API change. Not run by the deploy: run `stellarindex-ops ch-index-proof -write` once per host to record the proof watermark, which could not be recorded before (#4222); after an earlier `ch-rebuild -write` that failed after writing rows, refresh the price aggregates over that range with `stellarindex-ops trades-cagg-refresh -from L -to H -write` (#4223). Host payload changed: the alert rules in both rule trees (a new ticket alert) and the operator runbooks; run the host role from the tag to install the rules.
+
+### Added
+
+- **api:** `/v1/stablecoins` per-peg subtotals carry `assets_valued` and `lower_bound`, set when a member is unvalued, a supplied total is a floor, or the member list was truncated (#4218).
+- **api:** `/v1/lending/protocols` serves a thin-market protocol-token price with `thin_market`, its substance evidence and `price_basis`; no market cap, emission value, APR or protocol KPI is computed from a thin price (#4221).
+- **api:** lending reserve state reasons `reserve_archived`, `decode_failed` and `not_captured`; `no_decoded_reserve_state` stays in the enum but is no longer sent (#4221).
+- **monitoring:** ticket alert `stellarindex_api_degraded_responses_high`, for a route where more than half of responses stayed degraded for 30 minutes above a floor rate (#4220).
+- **monitoring:** `stellarindex_lending_reserve_undecodable_total` counts reserve decode failures, with a ticket alert (#4221).
+- **ci:** `lint-ops-write-flag` requires every gated `stellarindex-ops` command in `docs/operations` to state `-write` or `-dry-run` (#4219).
+
+### Changed
+
+- **api:** lending reserve USD pricing follows the asset page's steps in order; a gated price reports `withheld`, a failed read reports `price_read_failed` and marks the response degraded, and a one-hop price carries `price_basis: transitive`. Backstop, auction, earnings and emissions routes do the same and are not cached when degraded; a degraded pools build is cached for 10 seconds, not a minute (#4221).
+- **api:** asset detail gets a market cap for a price filled after the direct read, through the same guards as a direct price, and none when the direct read refused or failed (#4221).
+- **api:** the catalogue market cap is the row's own price times its supply, and supply is stamped on an unpriced row; a twin the substance gate refused or could not measure gets no cap (#4223).
+- **api:** asset detail 24h volume adds a lake-confirmed derived SAC the alias registry does not list, without counting a registered alias twice; a failed SAC lookup or read sets `volume_lower_bound` and marks the read degraded, and a classic asset's volume is a lower bound when no lake reader is configured (#4223).
+- **explorer:** archived lending reserves are shown as a state with their own count (#4221).
+- **ops:** `ch-index-proof` starts at ledger 2, the lake's first ledger (`-from` below 2 reads as 2), and a run without `-to` refuses when the lake has a hole below its highest ledger instead of recording a partial proof (#4222).
+- **ops:** a `ch-rebuild -write` run that fails after writing rows makes the same aggregate-refresh decision as a successful run, or prints `FOLLOW-UP OWED` with the command, and still exits non-zero; a cancelled run prints the owed command and starts no refresh (#4223).
+- **ops:** `cut-release.sh` refuses any SLA proof verdict except `PROVEN`; an override needs `SLA_PROOF_OVERRIDE_REASON`, which is echoed (#4219).
+- **ci:** `lint-openapi-compat` also catches properties removed by dropping the `properties` block, loosening to a free-form object or moving fields into an `allOf` base, a removed 2xx response code, media type or body schema, and a request body re-pointed at a schema with a new required field (#4220).
+- **docs:** wrong-row recovery runbooks name `projected-rebuild` followed by the aggregate refresh; backfill, credential-exposure, privacy-request, credential-rotation, corrupt-chunk recovery and test-net reset procedures give the real commands, with 37 runbook lines corrected; the durability, backup, pricing and TVL documents and ADR-0041 and ADR-0043 match the code (#4218, #4219).
+
+### Fixed
+
+- **pipeline:** trades the external retry buffer abandons at shutdown, or that are enqueued after its final pass, are counted once in the sink lane's shutdown loss, which names the venues of abandoned off-chain trades; the indexer's error line gives the refetch command. Nothing is written or acknowledged differently (#4220).
+- **ops:** `ch-index-proof` no longer refuses a default run with "missing ledger 1", so its probe alert can clear (#4222).
+
 ## [v0.126.0] - 2026-11-21
 
 Tested against Stellar protocol 27. Migrations 0231-0232: 0231 creates the empty `source_exclusions` control table, and 0232 switches `pools_per_source_1h` back to real-time when the view's watermark is within six hours (or `trades` is empty), otherwise leaves it as it is; it takes a five second lock timeout and rewrites no data. Breaking for API clients: `DELETE /v1/account/keys/{id}` changes its status codes, and `decimals` is no longer always present on three response types (details under Changed). Breaking for the Go SDK: `pkg/client` `AssetDetail.Decimals` changes from `int` to `*int`; there is no separate `pkg/client` tag, so this section is the notice. The OpenAPI contract carries `OpenAPI-Break:` trailers on #4193 only. Host payload changed: ClickHouse `account_cohort_rollup.sql`, `tier1_schema.sql`, `ops_by_source.sql` and `contract_instance_changes.sql`; the indexer, API and aggregator units; alert rules in both rule trees; the ansible HA roles and node-healthcheck. Not run by the deploy: stop `cohort-rollup.timer`, apply `deploy/clickhouse/account_cohort_rollup.sql`, check `system.columns` shows `Int256`, then restart the timer, before or right after rolling the binary (until then the cohort cycle refuses and the previous snapshot stays served); run the host role from the tag to install the alert rules and unit changes (rules otherwise reach hosts on the next rules sync); on a host where `pools_per_source_1h` stays materialized-only after 0232, refresh it and set `materialized_only=false` per `docs/operations/cagg-broad-recompute.md`; ranges rebuilt with `projected-rebuild` before this release keep stale price aggregates until `stellarindex-ops trades-cagg-refresh -from L -to H -oracle -write` covers them (#4194).
@@ -168,23 +199,3 @@ Tested against Stellar protocol 27. Two migrations, both additive on `blnt_event
 ### Fixed
 
 - **tests:** two ClickHouse test helpers declared twice in one package broke the build of that package's tests on main.
-
-## [v0.122.0] - 2026-11-16
-
-Tested against Stellar protocol 27. One migration (0224, a new table; nothing existing is altered). No `pkg/*` change, no OpenAPI change. Host payload: the default source list gains `blnt`, and the supply observers and asset map gain the BLNT asset and its SAC, so apply the role after the binary. After deploying, replay two sources: `projector-replay -source comet -from 65134000` (two newly gated Comet V1.1 pools) and `projector-replay -source blnt -from 65134154`.
-
-### Added
-
-- **protocols:** BLNT V3, a Blend-derived lending protocol, is listed as its own protocol (`blnt`) with its factory, pools, backstop, emitter and two backfill contracts. Contributed by @levinson.
-- **sources:** a `blnt` source decodes every BLNT V3 event into typed columns in a new `blnt_events` table: pool, user, asset, backstop tier and i128 amounts, with the rest of each payload under the contract's own field names. The 52-event ABI is declared as data and checked against one real event of every kind seen on chain.
-- **sources:** the BLNT/USDC and BLNT/XLM Comet V1.1 pools are in the Comet identity gate and WASM audit, with real-event fixtures.
-- **assets:** the BLNT classic asset and its SAC are in the verified currency list and the supply observers.
-
-### Fixed
-
-- **ops:** `ch-entry-history -totals-only` starts a first run at the lake's first ledger. It asked for ledger 1, which no lake holds, so the sponsorship totals could never begin.
-- **ops:** the restore drill counts distinct ledgers in its lake window. It counted rows, so a freshly re-derived window read as twice its size and failed a sound restore.
-
-### Changed
-
-- **ops:** the test-net KVM host accepts SSH keys only.
