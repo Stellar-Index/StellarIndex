@@ -73,14 +73,14 @@ func runSinkLane(ctx context.Context, logger *slog.Logger, ep eventPersister, tw
 	var bufWG sync.WaitGroup
 	var bufCancel context.CancelFunc
 	if extBuf != nil {
-		// Derived ctx tied to worker lifetime, not ctx: a backfill's ctx is never canceled, so run() would spin and bufWG.Wait() hang.
-		// Cancelling it after the workers drain lets run() exit via its fresh-context finalDrain without losing buffered trades.
+		// Its own cancel as well as ctx's: a backfill's ctx is never cancelled, so run() would spin and bufWG.Wait() hang.
+		// On a live shutdown the final pass runs alongside the workers' drain, so both fit ShutdownDeadline.
 		var bufCtx context.Context
 		bufCtx, bufCancel = context.WithCancel(ctx)
 		bufWG.Add(1)
 		go func() {
 			defer bufWG.Done()
-			extBuf.run(bufCtx)
+			extBuf.run(bufCtx, lt)
 		}()
 	}
 
@@ -93,11 +93,13 @@ func runSinkLane(ctx context.Context, logger *slog.Logger, ep eventPersister, tw
 		}(i)
 	}
 	wg.Wait()
-	// Workers have drained + block-retried their buffers; signal the external
-	// buffer to finish its final drain and exit (see bufCtx above), then wait.
 	if bufCancel != nil {
 		bufCancel()
 	}
 	bufWG.Wait()
+	if extBuf != nil {
+		// A worker still flushing after the cancel can enqueue once the final pass has run; nothing drains the ring now.
+		extBuf.abandonRemaining(lt)
+	}
 	return lt.snapshot()
 }
