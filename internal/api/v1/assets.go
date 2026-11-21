@@ -159,8 +159,8 @@ type AssetDetail struct {
 	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were refused because the
 	// lake's on-chain decimals() disagrees with the nonstandard_decimals_assets projection that
 	// price paths normalise through. Price and supply would sit on different scales, so their
-	// product is off by a power of ten. Each field still serves on its own scale; the flag
-	// self-clears when the aggregator's lockstep reconcile repairs the projection.
+	// product is off by a power of ten; a market price is withheld too (decimals_mismatch). The
+	// flag self-clears when the aggregator's lockstep reconcile repairs the projection.
 	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
 
 	// MarketCapWithheldReason says why market_cap_usd (and fdv_usd, on the same guard) is null beside a served price_usd and
@@ -1255,6 +1255,7 @@ const declaredPegFXMaxAge = 7 * 24 * time.Hour
 // load-bearing: after applySubstanceGateToListing (which nils PriceUSD and would strip the fill) and after
 // fillMarketCapsFromSupply, so a peg-filled row keeps market_cap null.
 func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []AssetDetail) {
+	withholdContradictedScalePrices(rows) // before the whole-token fills, as on the detail path
 	refs := s.globalMarketRefs(ctx, rows)
 	if len(s.FiatPeggedClassics) == 0 && refs == nil {
 		return
@@ -1272,6 +1273,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 // survived, stamping PriceBasis="declared_peg". memo caches fiat ticker to price per request (nil value = unavailable); nil on single-row
 // paths. A vetted global ticker's market price ([Server.applyGlobalMarket]) fills first: a fixed peg would hide a depeg.
 func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
+	withholdContradictedScalePrice(row) // after every market producer, before the whole-token fills and their divergence
 	s.applyGlobalMarket(row, s.globalMarketRefs(ctx, []AssetDetail{*row}), time.Now())
 	s.fillFixedPegPrice(ctx, row, memo)
 }

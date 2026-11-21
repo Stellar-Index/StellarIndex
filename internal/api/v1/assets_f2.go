@@ -438,6 +438,37 @@ func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
 	return ""
 }
 
+// withholdContradictedScalePrice withholds a market price, and every figure derived from it, only on positive evidence: a
+// successful decimals read contradicting the scale it was normalised on. An unread or undeclared scale is no such evidence.
+// A global-market, declared-peg or whole-token price is quoted per whole token, so no token scale enters it.
+func withholdContradictedScalePrice(d *AssetDetail) {
+	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil || d.priceWholeToken ||
+		d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
+		return
+	}
+	d.PriceUSD, d.priceStale, d.PriceBasis = nil, false, ""
+	d.PriceWithheldReason = PriceWithheldDecimalsMismatch
+	d.MarketCapUSD, d.MarketCapLowerBound, d.FDVUSD = nil, false, nil
+	d.Change1hPct, d.Change24hPct, d.Change7dPct = nil, nil, nil
+	d.ThinMarket, d.Substance = false, nil
+	withholdPriceSeriesWhenUnpriced(d)
+}
+
+// unpricedRWAValuationStatus names a null-price RWA valuation; a decimals_mismatch withholding is a scale gap, not a missing market.
+func unpricedRWAValuationStatus(reason PriceWithheldReason) string {
+	if reason == PriceWithheldDecimalsMismatch {
+		return RWAValuationDecimalsUnknown
+	}
+	return RWAValuationUnpriced
+}
+
+// withholdContradictedScalePrices is [withholdContradictedScalePrice] over a listing page.
+func withholdContradictedScalePrices(rows []AssetDetail) {
+	for i := range rows {
+		withholdContradictedScalePrice(&rows[i])
+	}
+}
+
 // capRefusalReason maps a [Server.marketCapRefused] verdict onto the wire reason.
 func capRefusalReason(lowLiquidity bool) MarketCapWithheldReason {
 	if lowLiquidity {

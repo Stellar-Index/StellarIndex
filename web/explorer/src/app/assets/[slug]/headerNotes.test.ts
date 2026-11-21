@@ -7,6 +7,9 @@ describe('withheldNote', () => {
     expect(withheldNote('scam_issuer')).toBe('withheld · flagged issuer');
     expect(withheldNote('upstream_leg')).toBe('withheld · USD leg withheld');
     expect(withheldNote('unattributed')).toBe('withheld');
+    expect(withheldNote('decimals_mismatch')).toBe(
+      'withheld · decimals disagree',
+    );
   });
 
   it('is silent when nothing was withheld', () => {
