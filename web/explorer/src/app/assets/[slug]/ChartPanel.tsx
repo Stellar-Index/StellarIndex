@@ -23,9 +23,9 @@ export { USDC_ASSET_ID };
 // market rather than a synthetic blend.
 //
 // Three cases:
-//   - USDC itself charts against fiat:USD — its actual dollar price,
-//     which is the surface where a depeg becomes visible (a USDC/USDC
-//     chart would be a flat 1.0 by definition).
+//   - USDC itself maps to fiat:USD so the function never answers a
+//     USDC/USDC quote (flat 1.0 by definition). ChartPanel renders a
+//     reference panel for USDC and never calls this for it.
 //   - Native XLM + fiat assets chart against fiat:USD (the CEX-fed
 //     combined USD series — deeper than any single on-chain pair, and
 //     "never XLM" trivially holds).
