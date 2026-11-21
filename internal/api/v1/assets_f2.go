@@ -75,11 +75,13 @@ func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) 
 func (s *Server) withContractSupply(
 	ctx context.Context, contractID string, snap supply.Supply, haveSnap, supplyFailed bool,
 ) (out supply.Supply, have, failed, floor bool) {
-	lake, floor, ok, unread := s.contractSupplySnapshot(ctx, contractID)
+	// A last-good reading kept by a failed refresh is a failed supply read: stale, and never cached as the detail.
+	sctx, reads := withReadReport(ctx)
+	lake, floor, ok, unread := s.contractSupplySnapshot(sctx, contractID)
 	if ok {
-		return lake, true, false, floor
+		return lake, true, reads.stale.Load(), floor
 	}
-	return snap, haveSnap, supplyFailed || unread, false
+	return snap, haveSnap, supplyFailed || unread || reads.stale.Load(), false
 }
 
 // applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no

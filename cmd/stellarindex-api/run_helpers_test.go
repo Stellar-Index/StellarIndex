@@ -242,7 +242,7 @@ func TestBuildAuthMiddleware_UnknownModeIsNotSilent(t *testing.T) {
 func TestBuildDashboardBundle_UnconfiguredIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	bundle, err := buildDashboardBundle(config.DashboardConfig{}, nil, nil, discardLogger())
+	bundle, err := buildDashboardBundle(config.DashboardConfig{}, nil, nil, discardLogger(), false, nil)
 	if err != nil {
 		t.Fatalf("buildDashboardBundle with an empty base_url errored: %v — an unconfigured "+
 			"dashboard must degrade, not refuse to start", err)
@@ -302,7 +302,7 @@ func TestBuildDashboardBundle_ConfiguredWithoutPostgresFailsClosed(t *testing.T)
 
 	_, err := buildDashboardBundle(
 		config.DashboardConfig{BaseURL: "https://dashboard.example.test"},
-		nil, nil, discardLogger(),
+		nil, nil, discardLogger(), false, nil,
 	)
 	if err == nil {
 		t.Fatal("buildDashboardBundle accepted base_url with a nil *sql.DB — the handlers it " +
@@ -327,7 +327,7 @@ func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) 
 	cfg := config.Default().API.Dashboard
 	cfg.BaseURL = "https://dashboard.example.test"
 	cfg.CodeSecretEnv = secretEnv
-	bundle, err := buildDashboardBundle(cfg, db, nil, discardLogger())
+	bundle, err := buildDashboardBundle(cfg, db, nil, discardLogger(), false, nil)
 	if err != nil {
 		t.Fatalf("buildDashboardBundle: %v", err)
 	}

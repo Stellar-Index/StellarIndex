@@ -93,3 +93,40 @@ const RWAAssetsDegradedTTL = rwaAssetsDegradedTTL
 
 // RWAHistoryTTL is the production /v1/rwa/history cache TTL.
 const RWAHistoryTTL = rwaHistoryTTL
+
+// StorageSupplyIdleAge is an age past the storage cache's TTL and one refresh budget: a key nobody has asked for in that long.
+const StorageSupplyIdleAge = tokenSupplyTTL + cacheFillBudget + time.Minute
+
+// StorageSupplyTTL is the storage supply cache's TTL.
+const StorageSupplyTTL = tokenSupplyTTL
+
+// ExpireForTest backdates key's fill time by age, as a key nobody has read for that long leaves it.
+func (c *CachedContractStorageSupplyReader) ExpireForTest(key string, age time.Duration) {
+	c.cache.mu.Lock()
+	defer c.cache.mu.Unlock()
+	if e, ok := c.cache.entries[key]; ok {
+		e.at = time.Now().Add(-age)
+	}
+}
+
+// AwaitRefreshForTest waits for key's refresh in flight, if any, to settle.
+func (c *CachedContractStorageSupplyReader) AwaitRefreshForTest(key string) {
+	c.cache.mu.Lock()
+	var ch chan struct{}
+	if e, ok := c.cache.entries[key]; ok {
+		ch = e.flight
+	}
+	c.cache.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+}
+
+// BackdateRefreshForTest moves the start of key's refresh in flight d into the past.
+func (c *CachedContractStorageSupplyReader) BackdateRefreshForTest(key string, d time.Duration) {
+	c.cache.mu.Lock()
+	defer c.cache.mu.Unlock()
+	if e, ok := c.cache.entries[key]; ok && e.flight != nil {
+		e.flightAt = e.flightAt.Add(-d)
+	}
+}

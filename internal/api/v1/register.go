@@ -141,16 +141,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}, Flags{})
 }
 
-// registerBudgetKey is the one key the all-caller registration budget counts under.
-const registerBudgetKey = "all"
-
 // registerBudgetOK spends one unit of the hourly all-caller budget; false means the response is written. It fails
 // like the per-IP throttle: open on a Redis blip, closed once the outage outlasts the dwell time.
 func (s *Server) registerBudgetOK(w http.ResponseWriter, r *http.Request) bool {
-	if s.RegisterBudget == nil {
-		return true
-	}
-	err := s.RegisterBudget.CheckIP(r.Context(), registerBudgetKey)
+	err := s.RegisterBudget.Spend(r.Context())
 	switch {
 	case err == nil:
 		return true

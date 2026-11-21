@@ -78,8 +78,8 @@ use:
   level above the net proves the log missed issuance (it starts partway
   through the token's life). The storage level is served as a floor, unless it
   disagrees with the contract's own declared total or holder count
-  (`supply_consistent: false`); then it proves nothing and the event net
-  stands. How each route marks the floor:
+  (`supply_consistent: false`); then it neither proves nor clears the log, and
+  the event net is served flagged as a floor. How each route marks the floor:
   - `/v1/assets/{id}/supply`: `source: contract_storage_balances` with
     `circulating_supply_lower_bound: true`.
   - RWA rows: `supply_basis: contract_storage_balances` with
@@ -90,10 +90,11 @@ use:
     lower-bound flag for either.
 - **Storage level at or below the event net, or storage declines by design:**
   the event net is served (`source: mint_burn_flows`), unflagged. The reader
-  declines a Stellar Asset Contract, a contract with no captured instance entry
-  (the SAC check cannot run), a contract with no balances, and a holder set
-  above its 25,000-entry cap; for those the event net is not checked against
-  storage at all.
+  declines a Stellar Asset Contract and a contract with no balances.
+- **Storage could not be summed** (an undecodable entry, no captured instance
+  entry so the SAC check cannot run, or a holder set above its 25,000-entry
+  cap): the event net is served with `circulating_supply_lower_bound: true`,
+  since storage might have proved it short.
 - **Storage read failed** (any other error, or the request budget ran out) on a
   token with flows: the event net is withheld, not served as a total.
   `/v1/assets/{id}/supply` returns a `supply-error` problem (502, or the 503
@@ -267,18 +268,16 @@ The markers are a **pre-filter only**. Every surviving row is decoded and
 re-checked in Go, because the marker proves the key's shape and not the value's
 meaning.
 
-The API caches each contract's reading, or the reader's decline, with one
-fill in flight per contract, as it does the event net. A reading is fresh
-for five minutes. After that the cached reading is still served at once
-while one refresh runs. A failed fill or refresh stores nothing, but a
-refresh that fails leaves the previous reading in place, so it keeps being
-served.
-
-Known limitation: a served reading carries no age. If refreshes keep
-failing, the last good reading is served with no upper bound on its age,
-and the response's `as_of_ledger` and `flags.stale` come from the lake
-watermark, not from when that reading was taken. A frozen reading can
-therefore be stamped as current.
+The API caches each contract's reading, or the reader's decline, for five
+minutes with one fill in flight per contract, as it does the event net. A
+failed read is never cached. Once a contract has a reading, a failed refresh
+keeps serving it. When the served reading or event net is a last-good copy
+(its latest refresh failed, or one has run longer than its 30-second budget),
+`/v1/assets/{id}/supply`, `/v1/assets/{id}` and `/v1/rwa/assets` carry
+`flags.stale=true`, and the detail and listing are not cached as clean. Age
+alone does not flag a reading: a contract nobody has asked for is refreshed by
+its next request, which is served the previous reading unflagged while that
+refresh runs.
 
 ---
 

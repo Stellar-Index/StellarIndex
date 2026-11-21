@@ -328,9 +328,9 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 //     fillContractMarketCaps has the last word (drops the generic supply and cap, and every cap on a row whose
 //     scale was not read).
 //  2. scam suppression: tags are re-read at valuation time, not reused from the membership build.
-//     valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read, not
+//     valuationCut reports ctx ended mid-fill (rows lacking a valuation were never read, not
 //
-// refused.
+// refused) or a supply figure is a last-good reading a failed refresh left.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
 ) (byID map[string]AssetDetail, valuationCut bool, err error) {
@@ -379,14 +379,19 @@ func (s *Server) rwaContractListingRows(
 	// suppression LAST so it can empty a figure the fill just produced. The fills run on the
 	// caller's budget; request paths bound them with rwaContractValuationBudget.
 	scaled, decimalsCut := s.fillContractDecimals(ctx, details, rows)
-	capsCut := s.fillContractMarketCaps(ctx, details, rows, scaled)
+	// The supply caches report a last-good reading on this report; the view built on it is degraded, so it is not kept as clean.
+	capsCtx, capsReads := withReadReport(ctx)
+	capsCut := s.fillContractMarketCaps(capsCtx, details, rows, scaled)
+	if capsReads.stale.Load() {
+		reportStaleRead(ctx)
+	}
 	s.fillContractDirectoryTags(ctx, details)
 
 	out := make(map[string]AssetDetail, len(details))
 	for i, d := range details {
 		out[ids[i]] = d
 	}
-	return out, decimalsCut || capsCut || supplyUnread, nil
+	return out, decimalsCut || capsCut || supplyUnread || capsReads.stale.Load(), nil
 }
 
 // rwaRowsUnanswered reports a row whose price gate or issuer-directory read did not answer: its figures are withheld, not refused.

@@ -520,11 +520,14 @@ trusted_proxy_cidrs      = []
 # active when auth_mode != none. 0 disables.
 # failed_auth_rate_limit_per_min = 20
 
-# register_max_per_hour caps the registrations POST /v1/register
-# accepts per hour across ALL callers; past it the route answers 503
-# until the hour rolls over. The per-IP throttle cannot bound a
-# registrant that rotates addresses. 0 removes the cap.
-# register_disabled = true switches the route off (503) on restart.
+# register_max_per_hour caps the accounts anonymous sign-up creates per
+# hour across ALL callers: POST /v1/register, passkey sign-up and an
+# email's first magic-link or code sign-in each spend one unit per account
+# created. Past it they answer 503 until the hour rolls over. The per-IP
+# throttles cannot bound a registrant that rotates addresses. 0 removes
+# the cap.
+# register_disabled = true switches all of them off (503) on restart;
+# existing users still sign in.
 # register_max_per_hour = 60
 # register_disabled = false
 

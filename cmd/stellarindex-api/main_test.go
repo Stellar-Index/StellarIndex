@@ -870,11 +870,11 @@ func TestNewRegisterBudget_InProcess(t *testing.T) {
 	}
 	budget := newRegisterBudget(nil, 2)
 	for i := 0; i < 2; i++ {
-		if err := budget.CheckIP(context.Background(), "all"); err != nil {
+		if err := budget.Spend(context.Background()); err != nil {
 			t.Fatalf("registration %d refused under a cap of 2: %v", i+1, err)
 		}
 	}
-	if err := budget.CheckIP(context.Background(), "all"); !errors.Is(err, auth.ErrSignupRateLimited) {
+	if err := budget.Spend(context.Background()); !errors.Is(err, auth.ErrSignupRateLimited) {
 		t.Fatalf("third registration = %v, want ErrSignupRateLimited", err)
 	}
 }

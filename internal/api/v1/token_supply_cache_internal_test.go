@@ -71,6 +71,37 @@ func TestTokenSupplyCache_RefillsAfterTTLAndKeepsLastGoodOnError(t *testing.T) {
 	}
 }
 
+// The last-good fallback answers for a read that failed, so it is reported stale; a fresh hit is not.
+func TestTokenSupplyCache_LastGoodFallbackIsReportedStale(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	up := &scriptedTokenSupply{mint: 100}
+	c := newTokenSupplyCache(nil, up.read)
+	c.now = func() time.Time { return now }
+
+	freshCtx, fresh := withReadReport(context.Background())
+	if _, err := c.TokenSupply(freshCtx, "CTOKEN"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.TokenSupply(freshCtx, "CTOKEN"); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.stale.Load() {
+		t.Fatal("a fill and a fresh hit were reported stale")
+	}
+
+	now = now.Add(tokenSupplyTTL)
+	up.err = errors.New("lake down")
+	ctx, rep := withReadReport(context.Background())
+	sup, err := c.TokenSupply(ctx, "CTOKEN")
+	if err != nil || sup.Total.Int64() != 100 {
+		t.Fatalf("got %v, %v; want last-good 100", sup.Total, err)
+	}
+	if !rep.stale.Load() {
+		t.Error("the last-good reading served after a failed refresh was not reported stale")
+	}
+}
+
 func TestTokenSupplyCache_ReturnsCopies(t *testing.T) {
 	t.Parallel()
 	c := newTokenSupplyCache(nil, (&scriptedTokenSupply{mint: 7}).read)
