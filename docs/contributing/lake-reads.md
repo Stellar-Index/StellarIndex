@@ -30,7 +30,9 @@ Guard: `scripts/ci/lint-lake-dedup.sh` (+ its self-test), in CI's
       applies an aggregate whose value changes when a row is repeated —
       `count`, `countIf`, `sum`, `sumIf`, `avg`, `avgIf`, `groupArray`,
       `groupArrayIf`, `topK`, `sumMap`, `avgWeighted`, `quantile*`, `median*`,
-      `stddev*`, `varPop`, `varSamp`. If it is not, there is nothing to do:
+      `stddev*`, `varPop`, `varSamp`, and the rest of that family (`var_pop`,
+      `array_agg`, `group_concat`, `deltaSum`, `histogram`, `entropy`,
+      `groupBitXor`, …; the gate's header lists them all). If it is not, there is nothing to do:
       a per-entity detail reader legitimately returns what the ledger
       contained, row for row.
 - [ ] If it is, **collapse the table on its full identity first** — any one of:
