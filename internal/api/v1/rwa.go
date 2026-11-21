@@ -459,6 +459,7 @@ type RWABothBases struct {
 	// MarketCapUSD and ReferenceValueUSD are the two totals over those rows only; absent at zero.
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
 	ReferenceValueUSD *string `json:"reference_value_usd,omitempty"`
+	LowerBound        bool    `json:"lower_bound"` // a summed row's supply is only a floor, so both totals are floors
 }
 
 // RWAValuationStatus values. Every row carries exactly one; a row not published has no market cap.
@@ -1609,7 +1610,7 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 		if d.priceUnmeasured {
 			return RWAValuation{Status: RWAValuationUnmeasured}
 		}
-		return RWAValuation{Status: RWAValuationUnpriced}
+		return RWAValuation{Status: unpricedRWAValuationStatus(d.PriceWithheldReason)}
 	}
 	if d.MarketCapUSD == nil {
 		if d.MarketCapLowLiquidity {
@@ -1685,9 +1686,8 @@ func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
 
 // rwaBothBases totals, per basis, only rows with a PUBLISHED premium, so the aggregate gap holds no refused comparison.
 func rwaBothBases(assets []RWAAsset) RWABothBases {
-	market := new(big.Rat)
-	reference := new(big.Rat)
-	n := 0
+	market, reference := new(big.Rat), new(big.Rat)
+	n, floor := 0, false
 	for _, a := range assets {
 		mc := ratFromOptionalString(a.Valuation.MarketCapUSD)
 		rv := ratFromOptionalString(a.ReferenceValuation.ValueUSD)
@@ -1696,14 +1696,13 @@ func rwaBothBases(assets []RWAAsset) RWABothBases {
 		}
 		market.Add(market, mc)
 		reference.Add(reference, rv)
-		n++
+		n, floor = n+1, floor || a.CirculatingSupplyLowerBound
 	}
 	if n == 0 {
 		return RWABothBases{}
 	}
-	m := market.FloatString(2)
-	r := reference.FloatString(2)
-	return RWABothBases{Assets: n, MarketCapUSD: &m, ReferenceValueUSD: &r}
+	m, r := market.FloatString(2), reference.FloatString(2)
+	return RWABothBases{Assets: n, MarketCapUSD: &m, ReferenceValueUSD: &r, LowerBound: floor}
 }
 
 // rwaReferenceSources lists the distinct oracles behind the published reference valuations, sorted, from contributing rows only: naming a

@@ -1,39 +1,39 @@
 # Aggregating reads of a duplicate-bearing lake table that are exempt
 # from scripts/ci/lint-lake-dedup.sh.
 #
-# Format: `<file>:<stellar.table>  <reason>`, one per line. The key is
-# printed by the gate on failure, so an entry is copied rather than
-# hand-derived. The reason field is REQUIRED.
+# Format: `<file>:<key>  <N> read(s): #<fingerprint> <reason>`, one per
+# line. <key> is `stellar.<table>` for an aggregating read, or `#interp`
+# for a read the gate cannot examine (a double-quoted or spliced string).
+# N and the fingerprint pin the entry to the sites it was granted for: a
+# further read, a missing one or a swapped one fails. The gate prints the
+# entry on failure, so it is copied rather than hand-derived. The reason
+# field is REQUIRED.
 #
-# `<file>:#interp  <N> read(s): <reason>` excuses the N reads in that file
-# the gate cannot examine (a double-quoted or spliced string); an N+1th
-# fails as unbaselined and fewer than N fails as stale.
-#
-# SHRINK-ONLY. Adding a line needs a `Baseline-Growth:` commit trailer
-# naming this file (scripts/ci/lint-baseline-growth.sh), and a line
-# whose site no longer violates is STALE and fails the gate until it is
-# deleted.
+# SHRINK-ONLY. Adding or changing a line needs a `Baseline-Growth:`
+# commit trailer naming this file (scripts/ci/lint-baseline-growth.sh),
+# and a line whose site no longer violates is STALE and fails the gate
+# until it is deleted.
 #
 # Every entry below counts physical rows on purpose, tests only for
 # emptiness, or reads a table that is not a ReplacingMergeTree; the
 # reason says which.
-test/integration/clickhouse_accounts_test.go:stellar.transactions  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
-test/integration/clickhouse_accounts_test.go:stellar.operations  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
-test/integration/clickhouse_lake_test.go:stellar.account_movements  asserts the physical rows one fixture insert wrote; FINAL would hide a writer that emits a row twice
-test/integration/clickhouse_rollups_test.go:stellar.movements_by_asset  asserts the catch-up wrote no physical row for a stale key
-deploy/clickhouse/contract_event_shapes.sql:stellar.contract_events  the shape table's cnt is a discovery weight, stated in the file as only ever raised by overlap; a materialized view cannot read FINAL
-deploy/clickhouse/tier1_schema.sql:stellar.contract_events  the same contract_event_shapes view as contract_event_shapes.sql
-internal/storage/clickhouse/recognition.go:stellar.contract_events  cnt only orders shapes for recognition and is never served as a count; FINAL over the whole window would more than double a bounded discovery scan
-test/integration/clickhouse_reads_test.go:stellar.contract_events  an EXPLAIN of the planner's granule pruning, not a count that is read
-internal/storage/clickhouse/contiguity_reader.go:stellar.ledgers  count() is the physical row total on purpose: DuplicateRows() = count() - uniqExact(ledger_seq) is the duplicate surplus the contiguity check reports
-internal/storage/clickhouse/contracts_census.go:stellar.%s  the %s is the census's private staging copy of stellar.contracts_census_daily, a plain MergeTree filled by one INSERT
-internal/storage/clickhouse/participant_backfill.go:stellar.operation_participants  count() only tests emptiness (cnt == 0), which a duplicate cannot change; an unfiltered count() is answered from part metadata, FINAL would merge the table
-internal/storage/clickhouse/sponsorship_totals.go:stellar.sponsorship_events  count() only tests emptiness (n > 0), which a duplicate cannot change; an unfiltered count() is answered from part metadata
-test/integration/clickhouse_accounts_test.go:stellar.ledger_entry_changes  the fixture purge counts physical rows before and after DELETE; FINAL would hide a surviving version
-test/integration/clickhouse_entries_test.go:stellar.ledger_entry_changes  count() only tests whether the lake is empty, which a duplicate cannot change
-test/integration/clickhouse_reads_test.go:stellar.ledger_entry_changes  counts the physical versions of one key: the precondition that the stale twin exists unmerged
-test/integration/clickhouse_reads_test.go:stellar.entry_history_watermark  asserts a lower mark wrote no physical row; FINAL would hide the extra version under test
-internal/storage/clickhouse/account_op_type_counts.go:#interp  6 reads: table is the rollup's own source or staging table, spliced from a closed set; the aggregating read carries FINAL and the count()s compare staging against live rollups
-internal/storage/clickhouse/asset_holders_rollup.go:#interp  2 reads: shrink guard counts rows of the staging and live rollup tables on the same basis; not a lake read
-internal/storage/clickhouse/entry_changes_read.go:#interp  1 read: non-aggregating per-key LIMIT arm over ledger_entry_changes; table is a closed constant
-internal/storage/clickhouse/raw_census.go:#interp  1 read: census compares count() with system.parts, which counts un-merged duplicates too; FINAL would break the comparison
+test/integration/clickhouse_accounts_test.go:stellar.transactions  1 read: #3397272211 counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
+test/integration/clickhouse_accounts_test.go:stellar.operations  1 read: #1525283195 counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
+test/integration/clickhouse_lake_test.go:stellar.account_movements  2 reads: #608100112 asserts the physical rows one fixture insert wrote; FINAL would hide a writer that emits a row twice
+test/integration/clickhouse_rollups_test.go:stellar.movements_by_asset  1 read: #3789421051 asserts the catch-up wrote no physical row for a stale key
+deploy/clickhouse/contract_event_shapes.sql:stellar.contract_events  2 reads: #2519669609 the shape table's cnt is a discovery weight, stated in the file as only ever raised by overlap; a materialized view cannot read FINAL
+deploy/clickhouse/tier1_schema.sql:stellar.contract_events  1 read: #1973409101 the same contract_event_shapes view as contract_event_shapes.sql
+internal/storage/clickhouse/recognition.go:stellar.contract_events  2 reads: #499891761 cnt only orders shapes for recognition and is never served as a count; FINAL over the whole window would more than double a bounded discovery scan
+test/integration/clickhouse_reads_test.go:stellar.contract_events  1 read: #455781215 an EXPLAIN of the planner's granule pruning, not a count that is read
+internal/storage/clickhouse/contiguity_reader.go:stellar.ledgers  1 read: #3510307822 count() is the physical row total on purpose: DuplicateRows() = count() - uniqExact(ledger_seq) is the duplicate surplus the contiguity check reports
+internal/storage/clickhouse/contracts_census.go:stellar.%s  2 reads: #3097863473 the %s is the census's private staging copy of stellar.contracts_census_daily, a plain MergeTree filled by one INSERT
+internal/storage/clickhouse/participant_backfill.go:stellar.operation_participants  1 read: #2964964958 count() only tests emptiness (cnt == 0), which a duplicate cannot change; an unfiltered count() is answered from part metadata, FINAL would merge the table
+internal/storage/clickhouse/sponsorship_totals.go:stellar.sponsorship_events  1 read: #734647453 count() only tests emptiness (n > 0), which a duplicate cannot change; an unfiltered count() is answered from part metadata
+test/integration/clickhouse_accounts_test.go:stellar.ledger_entry_changes  1 read: #3726362212 the fixture purge counts physical rows before and after DELETE; FINAL would hide a surviving version
+test/integration/clickhouse_entries_test.go:stellar.ledger_entry_changes  1 read: #3978072410 count() only tests whether the lake is empty, which a duplicate cannot change
+test/integration/clickhouse_reads_test.go:stellar.ledger_entry_changes  1 read: #1324793229 counts the physical versions of one key: the precondition that the stale twin exists unmerged
+test/integration/clickhouse_reads_test.go:stellar.entry_history_watermark  1 read: #1607824007 asserts a lower mark wrote no physical row; FINAL would hide the extra version under test
+internal/storage/clickhouse/account_op_type_counts.go:#interp  6 reads: #592162455 table is the rollup's own source or staging table, spliced from a closed set; the aggregating read carries FINAL and the count()s compare staging against live rollups
+internal/storage/clickhouse/asset_holders_rollup.go:#interp  2 reads: #3505179232 shrink guard counts rows of the staging and live rollup tables on the same basis; not a lake read
+internal/storage/clickhouse/entry_changes_read.go:#interp  1 read: #1604612876 non-aggregating per-key LIMIT arm over ledger_entry_changes; table is a closed constant
+internal/storage/clickhouse/raw_census.go:#interp  1 read: #4285288506 census compares count() with system.parts, which counts un-merged duplicates too; FINAL would break the comparison

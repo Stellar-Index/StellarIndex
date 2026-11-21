@@ -1235,7 +1235,7 @@ func TestAssetDetail_SorobanDecimalsOverlay(t *testing.T) {
 }
 
 // TestAssetDetail_SorobanDecimalsNotDerivable: a token whose scale was not read (no derivable declaration, or the read failed)
-// serves no `decimals` and no cap, never a guessed 7; only the failed read marks the body stale.
+// serves no `decimals` and no cap, never a guessed 7; a failed read or an unwired reader marks the body stale.
 func TestAssetDetail_SorobanDecimalsNotDerivable(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -1243,7 +1243,7 @@ func TestAssetDetail_SorobanDecimalsNotDerivable(t *testing.T) {
 		wantStale bool
 	}{
 		{"not declared", &countingDecStub{}, false},
-		{"no reader", nil, false},
+		{"no reader", nil, true},
 		{"read failed", &countingDecStub{err: errDecimalsRead}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

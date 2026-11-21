@@ -150,16 +150,20 @@ it. Replace a key like this:
   access, create one with `POST /v1/dashboard/keys` (signed-in session,
   or the dashboard's Keys page); deploy it, then revoke the old root
   with itself. A SEP-10 session cannot mint keys (`403`). An account
-  that holds only its `/v1/register` key has no self-service way to
-  replace it today: ask for operator-assisted replacement at
-  `security@stellarindex.io`, quoting the key id (`kid_...`, never the
-  secret). An operator mints the independent key for your identifier
-  (`POST /v1/admin/keys`, or `stellarindex-ops mint-key`), and you then
-  revoke the old root.
+  that holds only its `/v1/register` key cannot mint an independent
+  key for itself: register a new account with `POST /v1/register`,
+  deploy its key, then revoke the old root with itself. The new key
+  belongs to the new account, with its own quota and usage history.
+  A key id (`kid_...`) is public and proves nothing about who holds the
+  key, so it is never grounds for minting a replacement.
 - **A leaked key:** revoke it now. It may revoke itself:
   `DELETE /v1/account/keys/{its keyID}` sent with the leaked key answers
   204, and the key and everything minted from it stop working. Then
-  replace it as above.
+  replace it as above. Known limitation: a key minted with a scope list
+  that leaves out `account` cannot reach `/v1/account/*`, so its
+  self-revoke answers `403` (`scope-denied`) and the key stays live.
+  Revoke such a key with the key that minted it, or from the dashboard
+  if it is a dashboard key.
 
 ## Rate limits
 

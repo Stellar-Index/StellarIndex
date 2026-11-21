@@ -57,7 +57,7 @@ run-heavy-job.sh sdex-hist \
     -sources sdex -sdex -sdex-gaps -from <lo> -to <hi> -write
 ```
 
-- `-sdex-gaps` only narrows the SDEX op pass, which does not run without `-sdex`; both flags are load-bearing.
+- `-sdex-gaps` only narrows the SDEX op pass, which does not run without `-sdex`; `ch-rebuild` refuses `-sdex-gaps` or `-sdex-reconcile` without `-sdex`, and the two together.
 - `-sources sdex` is required under `-write`: with no `-sources` the run selects the whole catalogue, which `ch-rebuild -write` refuses because it contains decoders that are not `BackfillSafe` (`checkCHRebuildBackfillSafe`, the F050 gate). `internal/ops/chops/ch_rebuild_backfillsafe_test.go` pins this block.
 - **Windows of at most 50,000 ledgers** (the SDEX op read OOMs the 10 GiB client pin above that): 61,609,955 ledgers is 1,233 windows.
 - **One job name for every window and attempt.** `run-heavy-job.sh` locks per name and host-wide; a held lock refuses with exit 75 (`fuser -v` on the lock names the holder).
@@ -151,7 +151,7 @@ run-heavy-job.sh xlm-usd-<q> \
 | 2 | Kraken `-raw-trades` over **2021-02-01 to 2026-05-04**, 21 quarterly slices, refresh after each | ~6 h + refresh | closes the 1,919-day hole |
 | 3 | Kraken `-raw-trades` over **2017-01-17 to 2018-06-30** | under 1 h + refresh | moves the CEX floor 530 days (see §9.1 on Kraken's terms) |
 | 4 | Batch the `insertBackfilledTrades` loop onto `BatchInsertTrades` | small change | removes the long pole |
-| 5 | **Project A chunk 1**: `ch-rebuild -sdex-gaps` over one 50k-ledger window in **2022**, timed (r1, under `run-heavy-job.sh`; record wall time and rows written) | ~1 h | the only honest input to §2.3 |
+| 5 | **Project A chunk 1**: `ch-rebuild -sdex -sdex-gaps` over one 50k-ledger window in **2022**, timed (r1, under `run-heavy-job.sh`; record wall time and rows written) | ~1 h | the only honest input to §2.3 |
 | 6 | Project A, reverse-chronological: 2024 to 2026-03, then 2021 to 2024, then genesis to 2021 | 9-108 days, unresolved | full on-chain history; pins the on-chain XLM/USD floor |
 | 7 | Provenance work (§8) before any vendor data lands | n/a | a vendor bar is never indistinguishable from a VWAP |
 | 8 | Pre-2017 span (475 days): `backfill-external -source poloniex_via_btc -pair XLM/USD -granularity 24h` (Poloniex `XLM_BTC` daily x Bitstamp `BTC/USD` daily, stamped `poloniex_via_btc`, `IncludeInVWAP: false`, named per point in `sources`; refuses a window outside the span). **Code ready, run blocked**: Poloniex terms unread and the Bitstamp BTC leg needs a signed DLA to redistribute ([data-licensing-register.md](data-licensing-register.md)). Unblock = a recorded owner decision in the register | n/a | the last gap |

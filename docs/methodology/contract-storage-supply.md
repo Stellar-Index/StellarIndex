@@ -1,6 +1,6 @@
 ---
 title: Contract-storage supply
-last_verified: 2026-09-28
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -267,9 +267,18 @@ The markers are a **pre-filter only**. Every surviving row is decoded and
 re-checked in Go, because the marker proves the key's shape and not the value's
 meaning.
 
-The API caches each contract's reading, or the reader's decline, for five
-minutes with one fill in flight per contract, as it does the event net. A
-failed read is never cached.
+The API caches each contract's reading, or the reader's decline, with one
+fill in flight per contract, as it does the event net. A reading is fresh
+for five minutes. After that the cached reading is still served at once
+while one refresh runs. A failed fill or refresh stores nothing, but a
+refresh that fails leaves the previous reading in place, so it keeps being
+served.
+
+Known limitation: a served reading carries no age. If refreshes keep
+failing, the last good reading is served with no upper bound on its age,
+and the response's `as_of_ledger` and `flags.stale` come from the lake
+watermark, not from when that reading was taken. A frozen reading can
+therefore be stamped as current.
 
 ---
 

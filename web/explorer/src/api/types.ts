@@ -1604,7 +1604,8 @@ export interface paths {
          * Volume-weighted average price over a window.
          * @description Returns VWAP = Σ(quote) / Σ(base) for every trade in
          *     [from, to) for the given pair. Optional outlier filter
-         *     drops prices > N σ from the window mean. When the window
+         *     drops prices more than N robust σ from the window median
+         *     (σ = max(1.4826 × MAD, 0.25 % of the median)). When the window
          *     hits the server's per-request cap (10000 trades) the
          *     response carries `truncated: true` — the price reflects
          *     only the chronologically **last** N trades of the window,
@@ -4273,8 +4274,9 @@ export interface paths {
          *     new key. There is no rotate endpoint. To replace a key, mint the
          *     replacement with its parent (a sibling), deploy it, then revoke
          *     the old key. A root key has no parent: replace it with an
-         *     independent key from the dashboard (`POST /v1/dashboard/keys`),
-         *     or by operator-assisted mint for a `/v1/register`-only account.
+         *     independent key from the dashboard (`POST /v1/dashboard/keys`).
+         *     A `/v1/register`-only account cannot mint one: register a new
+         *     account, move to its key, then revoke the old root.
          *
          *     An **operator-tier** caller minting for its own identifier here is
          *     held to the admin-write contract: the `X-Reason` header is
@@ -7646,9 +7648,9 @@ export interface components {
             base_amount: string;
             /** @description Decimal string, raw integer at the quote asset's scale. */
             quote_amount: string;
-            /** @description Divide base_amount by 10^base_decimals for whole units. ABSENT when the asset's scale is unknown. */
+            /** @description Divide base_amount by 10^base_decimals for whole units. ABSENT when the scale was not read (flags.stale true) or is not declared; amounts are then base units. A failed read is a 503. */
             base_decimals?: number;
-            /** @description Divide quote_amount by 10^quote_decimals for whole units. ABSENT when the asset's scale is unknown. */
+            /** @description Divide quote_amount by 10^quote_decimals for whole units. ABSENT when the scale was not read (flags.stale true) or is not declared; amounts are then base units. A failed read is a 503. */
             quote_decimals?: number;
             /**
              * @description USD-equivalent volume as a decimal string, when the
@@ -10270,6 +10272,13 @@ export interface components {
         RWABothBases: {
             /** @description Members carrying both figures and a published premium. */
             assets: number;
+            /**
+             * @description True when any summed row's circulating supply is only a provable
+             *     floor (`circulating_supply_lower_bound`). Both totals scale with
+             *     that supply, so both are then lower bounds; the per-row premium
+             *     is unaffected because the supply cancels out of the ratio.
+             */
+            lower_bound: boolean;
             /** @description Market-basis total over those rows only. Absent when `assets` is 0. */
             market_cap_usd?: string;
             /** @description Reference-basis total over the same rows. Absent when `assets` is 0. */
@@ -12301,10 +12310,10 @@ export interface components {
             /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor. */
             price_credit?: string;
             /**
-             * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (an issuer flagged in the directory or the curated scam list; for a Stellar Asset Contract row, the issuer of the asset it wraps counts too), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
+             * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. For every value but `decimals_mismatch`, `/v1/price` answers the same pair with a `price-withheld` 404 and the value is in the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event. `decimals_mismatch` is the asset payload's own: a successful read of the token's on-chain decimals contradicts the scale its market price was normalised on, so that price, its change pills and price history are withheld (an unread or undeclared scale withholds nothing; market_cap_usd is refused as `decimals_unknown`), while a global-market or declared-peg price, quoted per whole token, may still fill price_usd. `substance` (trailing market activity below the serve floor), `scam_issuer` (an issuer flagged in the directory or the curated scam list; for a Stellar Asset Contract row, the issuer of the asset it wraps counts too), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
              * @enum {string}
              */
-            price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed";
+            price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "decimals_mismatch";
             /** @description True when `price_usd` was served under `include_thin=true` from a market below the substance floor. No market cap, FDV, change pill, price history or ATH derives from it. */
             thin_market?: boolean;
             /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
@@ -12329,7 +12338,7 @@ export interface components {
              *     `price_unread`: the direct price could not be read, so a fill cannot stand in for it.
              *     `supply_stale`: the supply observation is older than the serving bound (see supply_as_of).
              *     `decimals_unknown`: the token's scale is not known, so `decimals` is omitted.
-             *     `decimals_mismatch`: as market_cap_decimals_mismatch.
+             *     `decimals_mismatch`: as market_cap_decimals_mismatch. The market price is withheld on the same evidence (price_withheld_reason `decimals_mismatch`), so the price_usd it sits beside is a whole-token fill (see price_basis), never that market price.
              *     `ticker_collision`: the code claims a verified ticker under another issuer.
              *     `low_liquidity`: as market_cap_low_liquidity — the dust floor or the turnover ceiling.
              *     `supply_floor`: the supply is a floor of held balances (supply_basis), which values no cap.
@@ -14495,7 +14504,7 @@ export interface components {
             /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
             substance?: components["schemas"]["SubstanceEvidence"];
             /**
-             * @description Extension member on every `price-withheld` 404: why the price was withheld; a superset of the `price_withheld_reason` values on asset rows (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
+             * @description Extension member on every `price-withheld` 404: why the price was withheld; a superset of the `price_withheld_reason` values on asset rows except `decimals_mismatch`, which only asset payloads carry (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
              * @enum {string}
              */
             reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable";
@@ -17493,7 +17502,7 @@ export interface operations {
                  *     flagged `truncated: true`.
                  */
                 limit?: number;
-                /** @description Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable. */
+                /** @description Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable. */
                 outlier_sigma?: number;
             };
             header?: never;
@@ -17625,7 +17634,7 @@ export interface operations {
                  *     `to` is excluded.
                  */
                 to?: components["parameters"]["To"];
-                /** @description Drop trades > N σ from window mean. 0 disables (default). */
+                /** @description Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default). */
                 outlier_sigma?: number;
                 /**
                  * @description Opt in to a per-source, per-bucket breakdown (`data.breakdown`):
@@ -20733,9 +20742,11 @@ export interface operations {
                              *     from its captured instance metadata — the divisor
                              *     exponent for every `amount` in this response
                              *     (display value = amount / 10^decimals). OMITTED
-                             *     when the contract declares no derivable scale: the
-                             *     amounts are then base units, and a consumer must
-                             *     not substitute a default. A failed read is a 503.
+                             *     when the scale was not read (flags.stale true; the
+                             *     response is not cacheable) or the contract declares
+                             *     no derivable scale: the amounts are then base units,
+                             *     and a consumer must not substitute a default. A
+                             *     failed read is a 503.
                              */
                             decimals?: number;
                             transfers: {
@@ -23258,7 +23269,8 @@ export interface operations {
                      *           "both_bases": {
                      *             "assets": 3,
                      *             "market_cap_usd": "17128565.34",
-                     *             "reference_value_usd": "17128272.13"
+                     *             "reference_value_usd": "17128272.13",
+                     *             "lower_bound": false
                      *           },
                      *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement. Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name."
                      *         },

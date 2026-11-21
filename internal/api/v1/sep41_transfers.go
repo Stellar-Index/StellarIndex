@@ -63,7 +63,7 @@ const tokenMetadataReadTimeout = 2 * time.Second
 const sep41TransfersReadTimeout = 8 * time.Second
 
 // resolveAssetDecimals returns the smallest-unit scale for a canonical asset: 7 for native and classic (fixed by the protocol),
-// the contract's declaration for Soroban tokens, 0 when undeclared, err when the read failed ([Server.lakeTokenDecimals]).
+// the contract's declaration for Soroban tokens, 0 when undeclared, err when the scale was not read ([Server.lakeTokenDecimals]).
 // Callers resolve once per side per request, never per row.
 func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) (int, error) {
 	if a.Type == canonical.AssetSoroban && a.ContractID != "" {
@@ -165,10 +165,11 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	entries := sep41TransferEntries(rows)
 
 	decimals, known, err := s.lakeTokenDecimals(r.Context(), contractID)
-	if err != nil {
+	if scaleReadFailed(err) {
 		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/sep41-transfers-transient")
 		return
 	}
+	unread := err != nil
 	resp := SEP41TransfersResponse{
 		ContractID: contractID,
 		Count:      len(entries),
@@ -183,7 +184,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	if !searchedFrom.IsZero() {
 		resp.SearchedFrom = searchedFrom.UTC().Format(time.RFC3339)
 	}
-	writeJSON(w, resp, Flags{})
+	writeJSON(w, resp, Flags{Stale: unread, Degraded: unread})
 }
 
 // sep41TransferEntries maps storage rows to wire entries.

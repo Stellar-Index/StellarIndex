@@ -73,7 +73,7 @@ func assetDetailMismatchVal() float64 {
 }
 
 // Projection says 9 decimals (price normalised x100) but the lake says 6, so supply at 6 dp times price at 9 dp is 1000x the
-// truth. The cap must be refused with the reason flag; decimals still reports the lake and price_usd still serves.
+// truth. The cap must be refused with the reason flag and the price withheld; decimals still reports the lake.
 func TestAssetsF2_DecimalsLockstep_ProjectionDisagreesWithLake(t *testing.T) {
 	before := assetDetailMismatchVal()
 	srv := v1.New(v1.Options{
@@ -99,8 +99,8 @@ func TestAssetsF2_DecimalsLockstep_ProjectionDisagreesWithLake(t *testing.T) {
 	if !strings.Contains(body, `"decimals":6`) {
 		t.Errorf("decimals must still report the lake reading (6): %s", body)
 	}
-	if !strings.Contains(body, `"price_usd":"4132.0000000000"`) {
-		t.Errorf("price_usd must still serve (projection-normalised 4132): %s", body)
+	if strings.Contains(body, `"price_usd"`) || !strings.Contains(body, `"price_withheld_reason":"decimals_mismatch"`) {
+		t.Errorf("price_usd normalised on the contradicted projection scale must be withheld as decimals_mismatch: %s", body)
 	}
 	if !strings.Contains(body, `"circulating_supply":"1000000000000"`) {
 		t.Errorf("circulating_supply (a raw fact) must still serve: %s", body)
@@ -111,7 +111,7 @@ func TestAssetsF2_DecimalsLockstep_ProjectionDisagreesWithLake(t *testing.T) {
 }
 
 // The lake says 9 decimals but the projection has no row yet (dormant token or guard lag), so the price is the raw ratio while
-// supply is divided by 10^9, giving a hundredth of the truth. The cap must be refused.
+// supply is divided by 10^9, giving a hundredth of the truth. The cap must be refused and the price withheld.
 func TestAssetsF2_DecimalsLockstep_LakeNonstandardProjectionUnseeded(t *testing.T) {
 	before := assetDetailMismatchVal()
 	const otherAsset = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
@@ -132,8 +132,8 @@ func TestAssetsF2_DecimalsLockstep_LakeNonstandardProjectionUnseeded(t *testing.
 	if !strings.Contains(body, `"decimals":9`) {
 		t.Errorf("decimals must report the lake reading (9): %s", body)
 	}
-	if !strings.Contains(body, `"price_usd":"41.32"`) {
-		t.Errorf("price_usd is the raw ratio on this path and must still serve as-is: %s", body)
+	if strings.Contains(body, `"price_usd"`) || !strings.Contains(body, `"price_withheld_reason":"decimals_mismatch"`) {
+		t.Errorf("price_usd normalised at 7 against a lake reading of 9 must be withheld as decimals_mismatch: %s", body)
 	}
 	if got := assetDetailMismatchVal() - before; got != 1 {
 		t.Errorf("asset_detail mismatch counter delta = %v, want 1", got)

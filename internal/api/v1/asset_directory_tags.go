@@ -221,21 +221,7 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	case d.PriceUSD != nil:
 		d.PriceWithheldReason = PriceWithheldUnattributed
 	}
-	d.PriceUSD, d.priceStale = nil, false
-	d.MarketCapUSD, d.MarketCapLowerBound = nil, false
-	d.FDVUSD = nil
-	d.Change1hPct = nil
-	d.Change24hPct = nil
-	d.Change7dPct = nil
-	// Provenance belongs to the price: a withheld row credits no vendor and stamps no time for a number it refuses.
-	d.PriceAuthority = ""
-	d.PriceSources = nil
-	d.PriceAsOf = nil
-	d.PriceCredit = ""
-	// The last bucket of price_history_* IS the withheld price, and an all-time high is a USD
-	// price claim from the same CAGG, so both go with it; otherwise a null price_usd would
-	// sit beside a priced sparkline or an "ath" figure.
-	withholdPriceSeriesWhenUnpriced(d)
+	unpublishPrice(d)
 	// listing_reference and listing_valuation are the same dollar claims under other names.
 	// The arm that fills them reads IssuerDirectoryTags, which only this function's caller
 	// populates, so the tag must be enforced here whatever the call order. The pair is

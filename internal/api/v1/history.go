@@ -329,9 +329,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// per-asset value is wrong for off-chain rows (CEX 1e8, FX 1e6) and one page can mix them;
 	// the scale-invariant `price` would not reveal a 10x overstatement.
 	// An undeclared scale stays 0, which omits the field: amounts are then base units with no stated scale.
-	baseDec, baseErr := s.resolveAssetDecimals(hCtx, base)
-	quoteDec, quoteErr := s.resolveAssetDecimals(hCtx, quote)
-	if baseErr != nil || quoteErr != nil {
+	baseDec, quoteDec, unread, ok := s.historyScales(hCtx, base, quote)
+	if !ok {
 		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/history-unavailable")
 		return
 	}
@@ -343,7 +342,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 
 	// Pagination: next comes from the read itself, not from len(trades) == limit, because the
 	// two-direction merge can cut a page short with rows still behind it.
-	env := Envelope{Data: rows, Flags: Flags{}}
+	env := Envelope{Data: rows, Flags: Flags{Stale: unread, Degraded: unread}}
 	// The coverage probe spans both legs' alias families and both stored directions, exactly
 	// what the page read spans (see historyCoverageSet), so the floor describes returnable rows.
 	coverageFrom, outsideCoverage := s.coverageAnnotationIfEmpty(
@@ -355,6 +354,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 	writeEnvelope(w, env)
+}
+
+// historyScales resolves both sides' scales once per request; ok=false means a read FAILED (answer 503). unread means an
+// unwired lake reader left a side unread: its decimals is omitted and the page flagged, as amounts and price need no scale.
+func (s *Server) historyScales(ctx context.Context, base, quote canonical.Asset) (baseDec, quoteDec int, unread, ok bool) {
+	baseDec, baseErr := s.resolveAssetDecimals(ctx, base)
+	quoteDec, quoteErr := s.resolveAssetDecimals(ctx, quote)
+	if scaleReadFailed(baseErr) || scaleReadFailed(quoteErr) {
+		return 0, 0, false, false
+	}
+	return baseDec, quoteDec, baseErr != nil || quoteErr != nil, true
 }
 
 // historyNextCursor renders the next-cursor, or nil when the window is drained. The resume point

@@ -9,6 +9,7 @@ const WITHHELD: Record<Reason, string> = {
   scam_issuer: 'withheld · flagged issuer',
   upstream_leg: 'withheld · USD leg withheld',
   unattributed: 'withheld',
+  decimals_mismatch: 'withheld · decimals disagree',
 };
 
 // A null market cap reads as "unknown"; when the server withheld the price

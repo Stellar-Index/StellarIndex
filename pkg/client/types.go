@@ -352,10 +352,9 @@ type AssetDetail struct {
 	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
 	PriceCredit    string     `json:"price_credit,omitempty"`
 
-	// PriceWithheldReason is set only when PriceUSD is nil because the
-	// price was withheld rather than never observed, in the reason
-	// vocabulary of the `price-withheld` 404: "substance",
-	// "scam_issuer", "upstream_leg" or "unattributed".
+	// PriceWithheldReason is set only when PriceUSD is nil because the price was withheld rather than never
+	// observed: "substance", "scam_issuer", "upstream_leg" or "unattributed" (the `price-withheld` 404's vocabulary),
+	// or "decimals_mismatch" (asset payloads only: a read token scale contradicts the one the price was normalised on).
 	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
 
 	// GlobalMarket is the global-market reference for a classic asset the
@@ -1785,10 +1784,8 @@ type RWASummary struct {
 	// reference prices rather than at observed market prices. Never a
 	// component of MarketCapUSD and never added to it.
 	ReferenceValuation RWAReferenceSummary `json:"reference_valuation"`
-	// BothBases totals only the members carrying BOTH figures. The two
-	// totals above are sums over different rows, so subtracting one from
-	// the other measures nothing; these two are taken over the same rows
-	// and their difference is the aggregate gap.
+	// BothBases totals only the members carrying BOTH figures. The totals above sum different rows, so
+	// subtracting them measures nothing; these share rows and their difference is the aggregate gap.
 	BothBases RWABothBases `json:"both_bases"`
 	Basis     string       `json:"basis"`
 	Truncated bool         `json:"truncated,omitempty"`
@@ -1814,6 +1811,7 @@ type RWABothBases struct {
 	Assets            int     `json:"assets"`
 	MarketCapUSD      *string `json:"market_cap_usd,omitempty"`
 	ReferenceValueUSD *string `json:"reference_value_usd,omitempty"`
+	LowerBound        bool    `json:"lower_bound"` // a summed row's supply is only a floor, so both totals are floors
 }
 
 // RWAValuation carries a row valuation or the reason there is none; money fields are populated only when Status is "published".

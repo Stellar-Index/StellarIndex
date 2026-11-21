@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -437,6 +438,45 @@ func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
 	return ""
 }
 
+// withholdContradictedScalePrice withholds a market price, and every figure derived from it, only on positive evidence: a
+// successful decimals read contradicting the scale it was normalised on. An unread or undeclared scale is no such evidence.
+// A global-market, declared-peg or whole-token price is quoted per whole token, so no token scale enters it.
+func withholdContradictedScalePrice(d *AssetDetail) {
+	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil || d.priceWholeToken ||
+		d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
+		return
+	}
+	d.PriceBasis, d.PriceWithheldReason = "", PriceWithheldDecimalsMismatch
+	d.ThinMarket, d.Substance = false, nil
+	unpublishPrice(d)
+}
+
+// unpublishPrice nulls a withheld price and every figure derived from or crediting it: caps, change pills and provenance (a
+// withheld row credits no vendor and stamps no time), and the price series, whose last bucket IS the price and whose ATH is a
+// USD claim from the same CAGG.
+func unpublishPrice(d *AssetDetail) {
+	d.PriceUSD, d.priceStale = nil, false
+	d.MarketCapUSD, d.MarketCapLowerBound, d.FDVUSD = nil, false, nil
+	d.Change1hPct, d.Change24hPct, d.Change7dPct = nil, nil, nil
+	d.PriceAuthority, d.PriceSources, d.PriceAsOf, d.PriceCredit = "", nil, nil, ""
+	withholdPriceSeriesWhenUnpriced(d)
+}
+
+// unpricedRWAValuationStatus names a null-price RWA valuation; a decimals_mismatch withholding is a scale gap, not a missing market.
+func unpricedRWAValuationStatus(reason PriceWithheldReason) string {
+	if reason == PriceWithheldDecimalsMismatch {
+		return RWAValuationDecimalsUnknown
+	}
+	return RWAValuationUnpriced
+}
+
+// withholdContradictedScalePrices is [withholdContradictedScalePrice] over a listing page.
+func withholdContradictedScalePrices(rows []AssetDetail) {
+	for i := range rows {
+		withholdContradictedScalePrice(&rows[i])
+	}
+}
+
 // capRefusalReason maps a [Server.marketCapRefused] verdict onto the wire reason.
 func capRefusalReason(lowLiquidity bool) MarketCapWithheldReason {
 	if lowLiquidity {
@@ -752,20 +792,25 @@ func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.As
 	return raw, true, nil
 }
 
+// sep1PlainDecimal bounds the parse: an i128 amount has at most 39 integer digits.
+var sep1PlainDecimal = regexp.MustCompile(`^[0-9]{1,40}(\.[0-9]{1,40})?$`)
+
 // sep1DisplayToRawUnits converts a SEP-1 display decimal to a raw-unit integer string; ok=false unless the result is a
 // non-negative INTEGER (no negatives, no fractional stroops). Rational and e-notation are rejected because big.Rat.SetString
 // would silently accept both.
 func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
-	if decimals < 0 || strings.ContainsAny(display, "/eE") {
+	// The string is issuer-authored: big.Rat also parses hex and binary exponents ("1p9999999" is 2^9999999), so only a
+	// bounded plain decimal reaches it, and the result must fit the i128 every token amount lives in.
+	if decimals < 0 || !sep1PlainDecimal.MatchString(display) {
 		return "", false
 	}
 	rat, ok := new(big.Rat).SetString(display)
-	if !ok || rat.Sign() < 0 {
+	if !ok {
 		return "", false
 	}
 	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 	rat.Mul(rat, new(big.Rat).SetInt(scale))
-	if !rat.IsInt() {
+	if !rat.IsInt() || rat.Num().BitLen() > 127 {
 		return "", false
 	}
 	return rat.Num().String(), true
