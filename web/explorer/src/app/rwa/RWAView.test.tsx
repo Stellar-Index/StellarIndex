@@ -1623,3 +1623,49 @@ describe('a lower bound is stated, never implied', () => {
     expect(where.textContent).not.toMatch(/≥|at least|Both are floors/);
   });
 });
+
+describe('a derived price or a contested ISIN is labelled as such', () => {
+  it('marks a two-hop price and the cap it values, in the table and the CSV', async () => {
+    const derived = {
+      valuation: { ...asset().valuation, price_basis: 'transitive' as const },
+    };
+    show(one(derived));
+    expect(await screen.findAllByText('two-hop')).toHaveLength(2);
+    present('Market cap (traded prices)', /1 through a derived price/);
+    absent('Market cap (observed trades)');
+    expect(rwaCsvRow(asset(derived)).price_basis).toBe('transitive');
+    expect(rwaCsvRow(asset()).price_basis).toBe('');
+  });
+
+  it('keeps a direct market price bare', async () => {
+    show(view());
+    await screen.findAllByText('$1.28M');
+    absent('two-hop', 'pegged', 'global');
+    present('Market cap (observed trades)');
+  });
+
+  it('names a shared ISIN and an overdue hand-vetted review', async () => {
+    const contested = {
+      basis: 'sep1_isin_vetted',
+      isin_collision: { isin: 'US1234567890', declared_by_issuers: 2 },
+      vetted_isin: {
+        isin: 'US1234567890',
+        instrument: 'Fund A',
+        source: 'https://example.test/kid.pdf',
+        verified_on: '2026-08-01',
+        review_by: '2026-11-01',
+        review_due: true,
+      },
+    } as Partial<Asset>;
+    show(one(contested));
+    await screen.findByText('Shared ISIN: declared by 2 issuers');
+    present(
+      'Review overdue: verified 2026-08-01, due 2026-11-01',
+      /its review is overdue/,
+    );
+    absent(/transcribed and reviewed by hand/);
+    const row = rwaCsvRow(asset(contested));
+    expect(row.isin_declared_by_issuers).toBe('2');
+    expect(row.vetted_isin_review_due).toBe('true');
+  });
+});
