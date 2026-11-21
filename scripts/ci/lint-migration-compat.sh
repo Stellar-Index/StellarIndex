@@ -366,6 +366,7 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
     fi
     [ -z "$hits" ] && continue
     SEEN+=("${base}:${class}")
+    [ "$class" = dml ] && SEEN+=("${base}:dml-joined")
     guard="${GUARD[$i]}"
     if [ -n "$guard" ]; then
       # Guarded classes (`dml`) get no inline-marker escape: a comment is not
@@ -383,7 +384,7 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
       if [ -n "$ghits" ]; then
         continue
       fi
-      if ! in_baseline "${base}:${class}"; then
+      if ! in_baseline "${base}:${class}" && ! { [ "$class" = dml ] && in_baseline "${base}:dml-joined"; }; then
         echo "lint-migration-compat ❌ ${f}: ${class} — not old-binary-safe (migrations/README.md rule 9):" >&2
         printf '%s\n' "$hits" | sed 's/^/  /' >&2
         fail=1
@@ -436,6 +437,9 @@ if [ "$STAGED" -eq 0 ]; then
     # PR with the base copy of this gate, and the PR's baseline may already
     # name a class the PR adds.
     known=0
+    # `dml-joined` keys a `dml` hit only visible once statements are joined
+    # across lines; the key differs so a copy without that join skips it.
+    [ "${e##*:}" = dml-joined ] && known=1
     for c in "${CLASSES[@]}"; do
       [ "${e##*:}" = "$c" ] && known=1 && break
     done
