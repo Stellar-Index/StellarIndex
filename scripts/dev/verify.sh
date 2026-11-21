@@ -404,6 +404,7 @@ echo "=== ClickHouse client auth ===" && python3 ./scripts/ci/lint-ch-client-aut
 # check-verify-parity fails.
 echo "=== Metric refs self-test ===" && ./scripts/ci/lint-metric-refs-test.sh
 echo "=== Unit-failed baseline self-test ===" && ./scripts/ci/lint-unit-failed-baseline-test.sh
+echo "=== Timer staleness coverage ===" && ./scripts/ci/lint-timer-staleness.sh && ./scripts/ci/lint-timer-staleness-test.sh
 echo "=== ClickHouse ops-user contract self-test ===" && ./scripts/ops/ch-ops-user-test.sh
 # lint-changed.sh is a dispatcher OVER the scripts/ci gates with no caller of its
 # own, and check-verify-parity.sh enforces only the CI->verify direction, so run

@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 317 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 318 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -552,6 +552,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error share of `aggregator_supply_refresh_total` | > 50% for 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply.md#stellarindex_aggregator_supply_refresh_error_dominant) |
 | `stellarindex_aggregator_supply_refresh_withheld` | per asset, `increase(aggregator_supply_refresh_total{outcome="missing_baseline"}[1h])` with no `ok` in the same hour | > 0 for 6 h (a withheld supply that no seed or replay cleared) | ticket | [supply-refresh-withheld](runbooks/supply.md#stellarindex_aggregator_supply_refresh_withheld) |
 | `stellarindex_aggregator_supply_refresh_dormant_fleet` | assets with non-zero `outcome="dormant"` rate | > 1 for 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply.md#stellarindex_aggregator_supply_refresh_dormant_fleet) |
+| `stellarindex_supply_write_band_breach` | `increase(stellarindex_supply_write_band_breach_total[1h])` by asset, direction | > 0, keep 1 h | ticket | [supply](runbooks/supply.md#stellarindex_supply_write_band_breach) |
 | `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | ticket | [supply-refresh](runbooks/supply.md#stellarindex_aggregator_supply_refresh_never_initialized) |
 | `stellarindex_sep41_supply_rollup_no_cursor` | `increase(sep41_supply_rollup_advances_total{outcome="no_cursor"}[15m])` per contract | > 0 for 30 min | ticket | [sep41-supply-rollup-no-cursor](runbooks/supply.md#stellarindex_sep41_supply_rollup_no_cursor) |
 | `stellarindex_ch_supply_gapfill_failed` | `node_systemd_unit_state{name="ch-supply.service",state="failed"}` | == 1 for ≥ 10 min | ticket | [ch-supply-gapfill-failed](runbooks/supply.md#stellarindex_ch_supply_gapfill_failed) |
@@ -562,8 +563,8 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_host_down` | `up` for any host | == 0 for > 2 min | ticket | [infra](runbooks/infra.md#stellarindex_host_down) |
 | `stellarindex_keepalived_textfile_stale` | `node_textfile_mtime_seconds{file="keepalived.prom"}` age | > 10 min, 5 min | ticket | [infra](runbooks/infra.md#stellarindex_keepalived_textfile_stale) |
-| `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age | > 2 h, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
-| `stellarindex_oneshot_timer_stale` | `node_systemd_timer_last_trigger_seconds` age (creators/sponsors-rollup, issuer-flags; listing-sync) | > 50 h daily, > 3 h listing-sync; 2 h | ticket | [infra](runbooks/infra.md#stellarindex_oneshot_timer_stale) |
+| `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age or absence | > 2 h or absent, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
+| `stellarindex_oneshot_timer_stale` | `node_systemd_timer_last_trigger_seconds` age or absence (creators/sponsors-rollup, issuer-flags, asset-registry-backfill; listing-sync, holders/optype-rollup) | > 50 h daily, > 3 h half-hourly/hourly, absent; 2 h | ticket | [infra](runbooks/infra.md#stellarindex_oneshot_timer_stale) |
 | `stellarindex_host_cpu_high` | 100 - avg idle CPU `[5m]` | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_cpu_high) |
 | `stellarindex_host_memory_high` | used / total memory | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_memory_high) |
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_degraded) |

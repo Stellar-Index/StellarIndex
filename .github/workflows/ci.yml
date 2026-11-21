@@ -1550,6 +1550,12 @@ jobs:
         run: ./scripts/ci/lint-metric-refs-test.sh
       - name: lint-unit-failed-baseline self-test
         run: ./scripts/ci/lint-unit-failed-baseline-test.sh
+      - name: timer staleness coverage
+        # A role timer that no alert rule names stops firing in silence: no
+        # failed unit, so only a staleness rule notices.
+        run: ./scripts/ci/lint-timer-staleness.sh
+      - name: lint-timer-staleness self-test
+        run: ./scripts/ci/lint-timer-staleness-test.sh
       - name: deploy/systemd authority
         # deploy/systemd/ is MIXED authority: ansible installs
         # config-assertions.{service,timer} straight out of it, while

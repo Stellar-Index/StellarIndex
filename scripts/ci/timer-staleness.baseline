@@ -1,0 +1,24 @@
+# Role-installed systemd timers that no alert rule names, so a timer that stops
+# firing goes unseen by name. scripts/ci/lint-timer-staleness.sh fails any
+# timer not named by a rule and not listed here, and any entry here that a rule
+# now names or no role installs: this list only shrinks.
+#
+# Format: <timer>  # <what covers it today, or why nothing does>
+archive-completeness.timer       # job metrics alerted in archive-completeness.yml
+catchup-lanes.timer              # job metrics alerted in ops-safety.yml
+ch-lake-backup.timer             # backup age alerted in storage.yml
+ch-supply.timer                  # gap-fill outcome alerted in supply-refresh.yml
+cohort-rollup.timer              # table age probed by data-freshness.sh ch-rollup-age
+compute-completeness-sdex.timer  # completeness age alerted in data-freshness.yml
+compute-completeness-sep41.timer # completeness age alerted in data-freshness.yml
+compute-completeness.timer       # completeness age alerted in data-freshness.yml
+directory-sync.timer             # failed runs only (stellarindex_systemd_unit_failed); no staleness rule yet
+galexie-archive-mirror.timer     # mirror lag alerted in storage.yml
+galexie-archive-trim.timer       # enabled by hand after ADR-0027 bulk trim; monthly and destructive
+node-healthcheck.timer           # failed runs only (stellarindex_systemd_unit_failed); no staleness rule yet
+page-latency-sweep.timer         # failed runs only (stellarindex_systemd_unit_failed); no staleness rule yet
+pg-chunk-scan.timer              # job metrics alerted in ops-safety.yml
+pgbackrest-backup.timer          # backup age alerted in storage.yml and backup-offsite.yml
+pgbackrest-wal-drop-probe.timer  # failed runs only (stellarindex_systemd_unit_failed); no staleness rule yet
+sep1-refresh.timer               # refresh age alerted in sep1-refresh.yml
+trades-by-account.timer          # table age probed by data-freshness.sh ch-rollup-age

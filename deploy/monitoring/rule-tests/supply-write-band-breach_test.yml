@@ -1,0 +1,39 @@
+# A >10x served-supply jump tickets; the pre-seeded zero series never does.
+#
+#   promtool test rules deploy/monitoring/rule-tests/supply-write-band-breach_test.yml
+
+rule_files:
+  - ../rules/supply-refresh.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a band breach tickets for its asset and direction; a seeded zero does not
+    input_series:
+      - series: 'stellarindex_supply_write_band_breach_total{asset_key="USDC-GA5Z",direction="up",instance="agg"}'
+        values: '0x10 1x120'
+      - series: 'stellarindex_supply_write_band_breach_total{asset_key="USDC-GA5Z",direction="down",instance="agg"}'
+        values: '0x130'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_supply_write_band_breach
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_supply_write_band_breach
+        exp_alerts:
+          - exp_labels:
+              asset_key: USDC-GA5Z
+              direction: up
+              severity: ticket
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_write_band_breach
+              summary: "Served total_supply of USDC-GA5Z jumped more than 10x (up)"
+              description: |
+                A supply refresh wrote a total_supply for USDC-GA5Z
+                more than 10x up from the previous write. The
+                row is stored and served as supply and market cap. Decide whether
+                it is a real mint or burn, or a decode or exploit artefact, before
+                it is trusted; see the runbook.

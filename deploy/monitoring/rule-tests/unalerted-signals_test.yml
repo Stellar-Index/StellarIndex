@@ -147,6 +147,10 @@ tests:
         values: '0x3200'
       - series: 'node_systemd_timer_last_trigger_seconds{name="holders-rollup.timer",instance="stale"}'
         values: '0x3200'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="issuer-flags.timer",instance="fresh"}'
+        values: '0+60x3200'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="asset-registry-backfill.timer",instance="fresh"}'
+        values: '0+60x3200'
     alert_rule_test:
       - eval_time: 4h
         alertname: stellarindex_oneshot_timer_stale

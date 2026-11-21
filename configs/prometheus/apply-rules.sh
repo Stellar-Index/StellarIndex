@@ -192,7 +192,7 @@ fi
 
 [ -d "$DEST" ] || die "destination not found: $DEST"
 
-# ─── 2. Atomic install, with a backup we can restore ───
+# ─── 2. Install by directory swap, with a backup we can restore ───
 # Two callers (release deploy, main-push workflow) run in different concurrency
 # groups, so serialise on the host: an interleaved apply would back up, delete
 # and restore each other's files.
@@ -200,35 +200,51 @@ command -v flock >/dev/null 2>&1 || die "flock not on PATH — refusing an unser
 exec 9>"${DEST}.lock"
 flock -w 120 9 || die "another apply holds ${DEST}.lock"
 
+[ -L "$DEST" ] && die "destination is a symlink: $DEST — refusing to swap it"
+
 STAMP="$(date +%Y%m%d-%H%M%S)-$$"
 BACKUP="${DEST}.bak-${STAMP}"
-cp -a "$DEST" "$BACKUP"
-echo "apply-rules: backup at $BACKUP"
 
 CHANGED_FILES=""
 for f in "${src_files[@]}"; do
-  cmp -s "$f" "$DEST/$(basename "$f")" || CHANGED_FILES+="$(basename "$f")"$'\n'
+  d="$DEST/$(basename "$f")"
+  # Only a regular file is compared: a FIFO planted in the old directory would block cmp forever.
+  if [ -f "$d" ] && [ ! -L "$d" ] && cmp -s "$f" "$d"; then continue; fi
+  CHANGED_FILES+="$(basename "$f")"$'\n'
 done
 reload_before="$(prom_reload_ts)"
 
-for f in "${src_files[@]}"; do
-  install -m 0644 "$f" "$DEST/$(basename "$f")"
-done
-chown -R prometheus:prometheus "$DEST" 2>/dev/null || true
-
-# Rule files deleted from the repo must disappear from the host too, or a
-# removed rule keeps firing.
-for existing in "$DEST"/*.yml; do
-  base="$(basename "$existing")"
-  [ -f "$SRC/$base" ] || { echo "apply-rules: removing $base (no longer in the repo)"; rm -f "$existing"; }
-done
-
+# Build the new set in a fresh root-only directory and swap it in by rename: a
+# failure leaves the live directory untouched, and root never writes inside a
+# directory the shared prometheus uid can modify. Rule files deleted from the
+# repo disappear because the new directory holds only the repo's files.
+STAGE="$(mktemp -d "${DEST}.new.XXXXXX")"
+swapped=0
 restore() {
   echo "apply-rules: restoring $BACKUP" >&2
   rm -rf "$DEST"
   cp -a "$BACKUP" "$DEST"
   reload_prometheus || true
 }
+on_abort() {
+  trap - ERR HUP INT TERM
+  rm -rf "$STAGE"
+  if [ "$swapped" = 1 ]; then restore; fi
+  die "aborted — live rules left as they were before this apply"
+}
+trap on_abort ERR HUP INT TERM
+
+for f in "${src_files[@]}"; do
+  install -m 0640 "$f" "$STAGE/$(basename "$f")"
+done
+# Read-only for the daemon, as roles/prometheus installs its rule files.
+chown -R root:prometheus "$STAGE"
+chmod 0750 "$STAGE"
+
+mv "$DEST" "$BACKUP"
+swapped=1
+mv "$STAGE" "$DEST"
+echo "apply-rules: installed; previous set kept at $BACKUP"
 
 # ─── 3. Reload ───
 # The HTTP lifecycle API is DISABLED on r1 (--web.enable-lifecycle unset), so
@@ -302,6 +318,7 @@ while :; do
   fi
   sleep 3
 done
+trap - ERR HUP INT TERM
 
 # ─── 5. Prune old backups ───
 # One backup per apply, every deploy; unpruned they fill the disk whose pressure

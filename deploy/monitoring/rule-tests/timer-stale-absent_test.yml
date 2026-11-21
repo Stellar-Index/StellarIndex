@@ -1,0 +1,83 @@
+# A timer taken out with `systemctl disable --now` is unloaded, so
+# node_exporter stops reporting it: the staleness arm sees nothing and only
+# the absent arm can fire. optype-rollup is enabled by hand, so it has a
+# staleness arm but no absent arm.
+#
+#   promtool test rules deploy/monitoring/rule-tests/timer-stale-absent_test.yml
+
+rule_files:
+  - ../rules/infra.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a disabled (unloaded) timer tickets; a stale optype-rollup tickets
+    input_series:
+      - series: 'node_systemd_timer_last_trigger_seconds{name="creators-rollup.timer",instance="h"}'
+        values: '0+60x400'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="issuer-flags.timer",instance="h"}'
+        values: '0+60x400'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="asset-registry-backfill.timer",instance="h"}'
+        values: '0+60x400'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="holders-rollup.timer",instance="h"}'
+        values: '0+60x400'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="optype-rollup.timer",instance="h"}'
+        values: '0x400'
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: stellarindex_oneshot_timer_stale
+        exp_alerts: []
+      - eval_time: 6h
+        alertname: stellarindex_oneshot_timer_stale
+        exp_alerts:
+          - exp_labels:
+              name: sponsors-rollup.timer
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "sponsors-rollup.timer has stopped firing on "
+              description: |
+                sponsors-rollup.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status sponsors-rollup.timer`.
+          - exp_labels:
+              name: optype-rollup.timer
+              instance: h
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "optype-rollup.timer has stopped firing on h"
+              description: |
+                optype-rollup.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status optype-rollup.timer`.
+
+  - interval: 1m
+    name: a disabled census-rollup timer tickets
+    input_series:
+      - series: 'up{job="node"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_census_rollup_timer_stale
+        exp_alerts:
+          - exp_labels:
+              name: census-rollup.timer
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_census_rollup_timer_stale
+              summary: "census-rollup.timer has not fired for 2h on "
+              description: |
+                The contracts-census rollup is scheduled every 30 minutes and
+                has not been triggered for 2+ hours, so /v1/contracts/stats
+                serves a stale active_90d lower bound. `systemctl status
+                census-rollup.timer census-rollup.service`.
