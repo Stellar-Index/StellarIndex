@@ -225,6 +225,30 @@ groups:
             upstream store (Postgres / ClickHouse) for that op.
             See the cache-miss-rate-high runbook, "Refresh failures".
 
+      # A degraded body is a 200, so the 5xx SLO never sees a backend read
+      # failing on every request. Most of a route's responses degraded for
+      # 30 min is that; the rate floor keeps a handful of requests quiet.
+      - alert: stellarindex_api_degraded_responses_high
+        expr: |
+          (
+            sum by (route) (rate(stellarindex_api_flagged_responses_total{flag="degraded"}[15m]))
+              / sum by (route) (rate(http_requests_total[15m]))
+          ) > 0.5
+          and sum by (route) (rate(stellarindex_api_flagged_responses_total{flag="degraded"}[15m])) > 0.01
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_degraded_responses_high
+          summary: "API route {{ $labels.route }} serving mostly degraded responses"
+          description: |
+            More than half of {{ $labels.route }}'s responses for 30 min
+            carried flags.degraded: a backend read behind the route is
+            failing and the route is serving a carried-forward or partial
+            body as a 200. Check the API logs for that route's read error.
+
       # Customer-webhook delivery failures (5xx, network_error, exhausted) by
       # attempt outcome.
       #

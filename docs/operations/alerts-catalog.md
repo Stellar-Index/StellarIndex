@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 315 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 316 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -224,6 +224,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_api_price_stale` | `price_staleness_seconds` per (asset, quote) | > 120 s for 5 min | ticket | [price-stale](runbooks/api.md#stellarindex_api_price_stale) |
 | `stellarindex_api_cache_miss_rate_high` | cache `miss` share of ops per (cache, op) | > 50% for 10 min on ops >= 0.1 req/s | ticket | [cache-miss-rate-high](runbooks/api.md#stellarindex_api_cache_miss_rate_high) |
 | `stellarindex_api_cache_refresh_failing` | `increase(api_cache_ops_total{result="refresh_error"}[15m])` per (cache, op) | > 0 for 30 min (callers get `flags.stale`) | ticket | [cache-miss-rate-high](runbooks/api.md#stellarindex_api_cache_refresh_failing) |
+| `stellarindex_api_degraded_responses_high` | `rate(api_flagged_responses_total{flag="degraded"}[15m]) / rate(http_requests_total[15m])` per route | > 0.5 and > 0.01/s for 30 min (200s with `flags.degraded`) | ticket | [degraded-responses-high](runbooks/api.md#stellarindex_api_degraded_responses_high) |
 
 ## Notify (transactional-email) alerts
 
