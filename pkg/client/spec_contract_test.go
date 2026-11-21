@@ -88,7 +88,8 @@ var coveredOperations = []coveredOperation{
 	{"Keys", "GET", "/account/keys", Account{}, ""},
 	{"CreateKey", "POST", "/account/keys", KeyCreated{}, ""},
 	{"AdminCreateKey", "POST", "/admin/keys", KeyCreated{}, ""},
-	{"RevokeKey", "DELETE", "/account/keys/{keyID}", nil, ""}, // 204, no body
+	{"RevokeKey", "DELETE", "/account/keys/{keyID}", nil, ""},           // 204, no body
+	{"RevokeKeyWithReason", "DELETE", "/account/keys/{keyID}", nil, ""}, // RevokeKey plus X-Reason
 	{"Status", "GET", "/status", Status{}, ""},
 	{"Healthz", "GET", "/healthz", Health{}, ""},
 	{"Readyz", "GET", "/readyz", Health{}, ""},

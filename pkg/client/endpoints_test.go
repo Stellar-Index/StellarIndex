@@ -854,6 +854,30 @@ func TestRevokeKey_HappyPath(t *testing.T) {
 	}
 }
 
+// The fake answers as the server does for an operator-tier caller: 400 without X-Reason, 204 with it.
+func TestRevokeKeyWithReason_SendsXReason(t *testing.T) {
+	var got []string
+	_, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("X-Reason"))
+		if r.Header.Get("X-Reason") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	const kid = "kid_0123456789abcdef"
+	if err := c.RevokeKeyWithReason(context.Background(), kid, "leaked in a public repo"); err != nil {
+		t.Fatalf("RevokeKeyWithReason: %v", err)
+	}
+	var apiErr *client.APIError
+	if err := c.RevokeKey(context.Background(), kid); !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest {
+		t.Fatalf("RevokeKey without a reason: err = %v, want the server's 400", err)
+	}
+	if len(got) != 2 || got[0] != "leaked in a public repo" || got[1] != "" {
+		t.Fatalf("X-Reason sent = %q, want [reason, none]", got)
+	}
+}
+
 // TestRevokeKey_404 — the SDK maps an error status to *APIError so
 // callers can branch on the status without parsing the message.
 func TestRevokeKey_404(t *testing.T) {
