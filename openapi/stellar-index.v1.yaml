@@ -2728,10 +2728,12 @@ paths:
         over an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted
         compute from raw trades).
 
-        A window shorter than one bucket of the served grain (TWAP's
-        `1h`, the daily `market_cap` and fiat series) is read back to the
-        last CLOSED bucket, so it is never an empty answer for a priced
-        asset. That bucket starts before the window; when it also ENDS at
+        A window no longer than one bucket of the served grain (any
+        `granularity` as wide as the `timeframe`, including `1mo`;
+        TWAP's `1h`; the daily `market_cap` and fiat series) is read
+        back to the last CLOSED bucket, so the series starts there and
+        is never an empty answer for a priced asset. That bucket starts
+        before the window; when it also ENDS at
         or before the window start (`timeframe=1h` on a daily series
         serves yesterday's point) the response sets
         `data.starts_before_window=true` and `data.requested_from`.

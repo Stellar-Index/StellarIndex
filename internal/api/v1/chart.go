@@ -464,11 +464,19 @@ func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
 // chartClosedReadFrom widens a window shorter than one served bucket back to the last CLOSED bucket's start, so a forced coarse
 // grain (TWAP 1h, market-cap 1d) never reads an empty range and answers a quiet 200 with no points. A zero `from` stays zero.
 func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
-	d, ok := chartFixedBucketWidth(gran)
-	if from.IsZero() || !ok {
+	if from.IsZero() {
 		return from
 	}
-	if last := now.UTC().Truncate(d).Add(-d); last.Before(from) {
+	var last time.Time
+	u := now.UTC()
+	if d, ok := chartFixedBucketWidth(gran); ok {
+		last = u.Truncate(d).Add(-d)
+	} else if gran == "1mo" {
+		last = time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+	} else {
+		return from
+	}
+	if last.Before(from) {
 		return last
 	}
 	return from
