@@ -17,6 +17,25 @@
     create_home: false
     state: present
 
+- name: Service group — public API
+  ansible.builtin.group:
+    name: "{{ stellarindex_api_os_user }}"
+    system: true
+    state: present
+
+- name: Service user — public API
+  # No home and no supplementary groups: the API reads only its own env file,
+  # /etc/stellarindex.toml and the world-readable archive report.
+  ansible.builtin.user:
+    name: "{{ stellarindex_api_os_user }}"
+    group: "{{ stellarindex_api_os_user }}"
+    groups: ""
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+    state: present
+
 - name: Service user — stellar
   ansible.builtin.user:
     name: stellar
@@ -75,6 +94,15 @@
     - { name: ch-schema-snapshot, mode: "0750" }
   loop_control:
     label: "{{ item.name }}"
+
+- name: Ownership — archive-completeness report dir
+  # Outside /var/lib/galexie so the API can read the report without the galexie group.
+  ansible.builtin.file:
+    path: /var/lib/archive-completeness
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: Ownership — stellar-core data dir
   ansible.builtin.file:

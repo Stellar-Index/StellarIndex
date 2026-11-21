@@ -802,7 +802,7 @@ type APIConfig struct {
 	// ("api" is always reported). Test nets run no aggregator; listing it would pin overall at
 	// "degraded". The default (indexer + aggregator) is pubnet's set.
 	StatusServices    []string        `toml:"status_services" doc:"Background services whose heartbeats /v1/status reports and rolls up (subset of: indexer, aggregator). Drop one only on a deployment that genuinely does not run it — a service omitted here can never be reported down." default:"[\"indexer\",\"aggregator\"]"`
-	ArchiveReportPath string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
+	ArchiveReportPath string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/archive-completeness/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/archive-completeness/last-completeness-report.json"`
 	Dashboard         DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
 }
 
@@ -1265,7 +1265,7 @@ func defaultAPIConfig() APIConfig {
 		SignupRequireEmailVerification: true,
 		// Matches archive-completeness.service REPORT_OUTPUT; the handler 404s while the file is
 		// absent, so this is harmless on hosts without the daemon.
-		ArchiveReportPath: "/var/lib/galexie/last-completeness-report.json",
+		ArchiveReportPath: "/var/lib/archive-completeness/last-completeness-report.json",
 		// Pubnet runs both; the lean test-net inventories drop
 		// "aggregator".
 		StatusServices: []string{"indexer", "aggregator"},

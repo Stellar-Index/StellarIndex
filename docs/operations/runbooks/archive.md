@@ -90,7 +90,7 @@ ssh r1 'curl -s localhost:9100/metrics | grep -E "^archive_files_missing|^archiv
 ssh r1 'curl -s localhost:9100/metrics | grep -E "^archive_completeness_repair_(attempts|failures)_total"'
 
 # 3. The current gap report (post-fix state of the last run)
-ssh r1 'jq ".range, (.cross_anchor.missing_count), (.cross_anchor.missing[0:5])" /var/lib/galexie/last-completeness-report.json'
+ssh r1 'jq ".range, (.cross_anchor.missing_count), (.cross_anchor.missing[0:5])" /var/lib/archive-completeness/last-completeness-report.json'
 
 # 4. Is the fallback chain reachable from r1? These nine ARE the chain
 #    (internal/archivecompleteness/cross_anchor_fill.go::DefaultCrossAnchorSources); no AWS source.
@@ -131,13 +131,13 @@ done'
 
    ssh r1 'stellarindex-ops archive-completeness fix \
      -write -from <ARCHIVE_FROM> -to <ARCHIVE_TO> -workers 16 \
-     -output-file /var/lib/galexie/last-completeness-report.json'
+     -output-file /var/lib/archive-completeness/last-completeness-report.json'
    ```
    Exit 0 = no residual; 1 = chain exhausted on some.
 3. Residual files are unrecoverable from any public archive: log a known incident and escalate.
 4. Verify `archive_files_missing` drops to 0 (the gauge is rewritten only by `verify`/the timer tick; `flags.reduced_redundancy` clears ~60 s later).
 
-**Escalate** Attach `/var/lib/galexie/last-completeness-report.json`, the per-`source` repair counters and the last 3 runs' journal. Related: [archive-divergence](archive.md#stellarindex_stellar_archive_divergence) (hash mismatch; this alert is presence only).
+**Escalate** Attach `/var/lib/archive-completeness/last-completeness-report.json`, the per-`source` repair counters and the last 3 runs' journal. Related: [archive-divergence](archive.md#stellarindex_stellar_archive_divergence) (hash mismatch; this alert is presence only).
 
 ## stellarindex_archive_repair_source_degraded
 

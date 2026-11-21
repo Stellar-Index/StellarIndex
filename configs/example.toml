@@ -470,7 +470,7 @@ status_services          = ["indexer", "aggregator"]
 # path; the endpoint 404s while the file doesn't exist yet, so the
 # default is harmless on hosts without the daemon. Empty disables
 # the endpoint (503).
-archive_report_path      = "/var/lib/galexie/last-completeness-report.json"
+archive_report_path      = "/var/lib/archive-completeness/last-completeness-report.json"
 # allowed_origins — CORS allow-list for browser clients.
 #
 # Default [] = same-origin only: no cross-origin browser client can

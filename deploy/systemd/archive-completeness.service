@@ -65,7 +65,7 @@ EnvironmentFile=-/run/archive-completeness.env
 Environment=ARCHIVE_FROM=2
 Environment=STELLAR_NETWORK=pubnet
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_completeness.prom
-Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
+Environment=REPORT_OUTPUT=/var/lib/archive-completeness/last-completeness-report.json
 Environment=WORKERS=8
 
 ExecStartPre=/usr/local/sbin/compute-archive-to.sh
@@ -92,7 +92,7 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/srv/history-archive /var/lib/galexie -/var/lib/node_exporter
+ReadWritePaths=/srv/history-archive /var/lib/galexie /var/lib/archive-completeness -/var/lib/node_exporter
 
 # A clean run is fast; a worst-case (lots of fallback chain
 # fetches) shouldn't exceed 30 min. Hard-cap so a hung HTTP source

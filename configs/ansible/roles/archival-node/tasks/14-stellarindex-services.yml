@@ -1458,6 +1458,30 @@
 - name: Install + enable archive-completeness (networks with a correct cross-anchor)
   when: archive_completeness_enabled | bool
   block:
+    - name: Look for the report at its old path under /var/lib/galexie
+      ansible.builtin.stat:
+        path: /var/lib/galexie/last-completeness-report.json
+      register: archive_completeness_old_report
+
+    - name: Look for the archive-completeness report dir
+      ansible.builtin.stat:
+        path: /var/lib/archive-completeness
+      register: archive_completeness_report_dir
+
+    - name: Seed the report at its new path once, so the API serves it before the next daily run
+      # The dir may not exist yet in --check on a first run (04-users only previews it).
+      when:
+        - archive_completeness_old_report.stat.exists
+        - archive_completeness_report_dir.stat.exists
+      ansible.builtin.copy:
+        src: /var/lib/galexie/last-completeness-report.json
+        dest: /var/lib/archive-completeness/last-completeness-report.json
+        remote_src: true
+        force: false
+        owner: root
+        group: root
+        mode: "0644"
+
     - name: Install archive-completeness unit + timer
       ansible.builtin.template:
         src: "systemd/{{ item }}.j2"
