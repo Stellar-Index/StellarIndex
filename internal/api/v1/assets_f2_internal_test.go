@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -419,6 +420,15 @@ func TestSep1DisplayToRawUnits(t *testing.T) {
 		{"e-notation rejected", "5e8", 7, "", false},
 		{"negative decimals rejected", "100", -1, "", false},
 		{"empty rejected", "", 7, "", false},
+		{"binary exponent rejected", "1p9999999", 7, "", false},
+		{"small binary exponent rejected", "1p64", 7, "", false},
+		{"hex rejected", "0x10", 7, "", false},
+		{"binary literal rejected", "0b1", 7, "", false},
+		{"signed rejected", "+5", 7, "", false},
+		{"bare fraction rejected", ".5", 7, "", false},
+		{"overlong rejected", strings.Repeat("9", 81), 0, "", false},
+		{"beyond i128 rejected", "170141183460469231731687303715884105728", 0, "", false},
+		{"i128 max accepted", "170141183460469231731687303715884105727", 0, "170141183460469231731687303715884105727", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
