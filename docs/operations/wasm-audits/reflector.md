@@ -1,7 +1,7 @@
 ---
 title: Reflector WASM-history audit
-last_verified: 2026-10-21
-status: partial — the two attested hashes emit no events; the event-emitting hash is unaudited
+last_verified: 2026-11-21
+status: partial — the two attested hashes emit no events; the three event-emitting hashes are reviewed but unattested (no captured fixture)
 sources: reflector-dex, reflector-cex, reflector-fx
 backfill_safe: false
 ---
@@ -182,7 +182,9 @@ by then. Which hash, and when each contract switched, has not been recorded.
 | CEX (post-v3) | `df88820e231ad8f3` | L51,656,689 → at least L59,301,651 (walk-end) | maintainer@2026-04-29 | emits no events |
 | DEX (pre-v3) | `4a64c8c8502df326` | L50,644,229 → L51,656,691 | maintainer@2026-04-29 | emits no events |
 | CEX (pre-v3) | `4a64c8c8502df326` | L50,644,239 → L51,656,688 | maintainer@2026-04-29 | emits no events |
-| DEX, CEX, FX (post-walk) | unrecorded | after L59,301,651 → tip | — | not audited; the replay gate refuses these ranges |
+| DEX, CEX, FX | `7944a96d512f6e51` | L61,602,762–L61,603,662 → L63,690,357–L63,690,399 | maintainer@2026-11-21 | upstream `v6.0.0` pulse build; emits the event the decoder reads; the `v6-2026-04-23` fixtures fall in this range; not attested |
+| DEX, CEX, FX | `8ecd1857496df2c1` | L63,690,358–L63,690,400 → L65,079,083–L65,079,131 | maintainer@2026-11-21 | upstream `v6.0.1` pulse build; event spec byte-identical to v6.0.0; not attested |
+| DEX, CEX, FX | `25fc306065cbb9b0` | L65,079,084 (CEX) / L65,079,108 (DEX) / L65,079,132 (FX) → tip | maintainer@2026-11-21 | upstream `v7.1.0` pulse build; matches current decoder (see below); not attested until a captured event lands under `test/fixtures/reflector/<hash>/` |
 
 ### `df88820e231ad8f3` — v3, all three variants
 
@@ -229,6 +231,78 @@ interface` + data-section string analysis:
 **Conclusion**: v2 and v3 emit no events, so replays of their ranges are
 admitted and correctly write no rows. Items 1-3 do not bear on the event
 wire format.
+
+### Post-walk timeline (2026-11-21)
+
+From `GET /v1/contracts/<id>/code-history` on the public API (lake-derived),
+not a `wasm-history` walk:
+
+| contract | `7944a96d…` from | `8ecd1857…` from | `25fc3060…` from |
+| --- | --- | --- | --- |
+| CEX `CAFJZQWS…` | L61,603,662 (2026-03-11) | L63,690,358 (2026-07-28) | L65,079,084 (2026-10-22) |
+| DEX `CALI2BYU…` | L61,603,345 | L63,690,379 | L65,079,108 |
+| FX `CBKGPWGK…` | L61,602,762 | L63,690,400 | L65,079,132 |
+
+Each hash is byte-identical (sha256) to the `reflector-pulse-contract`
+asset of an upstream release in `reflector-network/reflector-contract`:
+`7944a96d…` = `v6.0.0` (cli 25.1.0), `8ecd1857…` = `v6.0.1` (cli 27.0.0),
+`25fc3060…` = `v7.1.0` (cli 28.1.0, 20,417 bytes, the size the API serves).
+The release source is therefore the source of the deployed bytes.
+
+### `25fc306065cbb9b0` — v7.1.0, all three variants
+
+Evidence, and where it came from:
+
+1. **Source.** `oracle/src/events.rs` is unchanged from `v6.0.1` to `v7.1.0`
+   (GitHub compare). `UpdateEvent` is `#[contractevent(topics = ["REFLECTOR",
+   "update"])]` with `#[topic] timestamp: u64` and `update_data: Vec<(Val,
+   i128)>`; it publishes one `(asset, price)` per asset with a non-zero price,
+   in `assets()` order, `Asset::Stellar` as an Address and `Asset::Other` as a
+   Symbol. `set_price` still calls `publish_update_event` with the same
+   arguments. The release's other changes are read-side or admin-side: the
+   base asset is quoted as exactly `10^decimals` by `price`/`lastprice`/`prices`
+   and cannot be added as a feed; `lastprice` no longer returns `None` when
+   the last update is older than two periods; `load_prices` walks back at most
+   256 periods; `version()` moved; soroban-sdk 27.0.2 → 28.0.0. None touches
+   the event, `decimals` or `base`.
+2. **Bytes.** The v7.1.0 WASM imports `x.1` (`contract_event`) and its data
+   section carries `update_data`. Its `contractspecv0` section has no
+   `UpdateEvent` entry, unlike v6.0.0/v6.0.1 (whose entries are
+   byte-identical); the spec is metadata and does not change what is
+   published.
+3. **Served rows against the contract's own input.** For the 11:55:00Z update
+   on 2026-11-21, the served rows (`/v1/oracle/streams`, the live decoder's
+   output on events from this hash) equal, as exact raw integers, the
+   non-zero `prices` of that update's `set_price` call (`/v1/tx/<hash>`
+   `args_xdr`), with one row per price: DEX 25 of 25 (tx `86aef038…`, L65,595,216),
+   CEX 12 of 12 (`4e6dfb7a…`, L65,595,220), FX 24 of 24 (`072d062a…`,
+   L65,595,216). Row timestamps equal the call's millisecond timestamp. No
+   row is `raw:`; every slot maps.
+4. **Scale against independent oracles** (decimals 14, same minute):
+   CEX XLM 0.125399 vs `/v1/price/at` 0.125362 and RedStone 0.125290; CEX BTC
+   58,078.44 vs 58,039.63 and RedStone 58,075.26; CEX ETH 1,651.45 vs
+   1,648.17; FX EUR 1.097445 vs CEX EURC 1.095716 (no aggregated EUR/USD is
+   served). A 10^N scale change would be obvious; there is none.
+
+Field-by-field: topics, body Map, `update_data` Vec of 2-tuples, Address/Symbol
+asset slot, `i128` price at 14 decimals, millisecond `u64` topic timestamp,
+the USD (CEX, FX) and USDC SAC (DEX) quotes, and no new event kind all match
+the decoder expectations above. **Matches current decoder.**
+
+**Not attested.** The public API serves no event XDR, so no event from this
+hash is captured under `test/fixtures/reflector/25fc3060…/`, which §3 of the
+procedure requires (`TestManifest_NewHashNeedsFixture`). The hash stays out
+of `audited_wasm.json` until one is. To capture, on a host with a stellar-rpc
+whose retention covers L65,079,084 onward:
+
+    WASM_HASH=25fc306065cbb9b05461db78ec259802cb916053ba5b3ab911b0a72dd1a81439 \
+      scripts/dev/capture-reflector-fixtures.sh -e http://127.0.0.1:8000 -c <contract> -n 3
+
+for each of the three contracts, then `go test ./internal/sources/reflector
+-run TestRealMainnetFixtures -update`, review the goldens against item 3, and
+add the hash to `audited_wasm.json`. The same applies to `7944a96d…` (the
+`v6-2026-04-23` fixtures are from it: L62,251,160–L62,251,319 lies in its range
+on all three contracts) and `8ecd1857…`.
 
 ## Decision
 
