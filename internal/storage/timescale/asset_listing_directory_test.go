@@ -467,6 +467,22 @@ func boundValue(t *testing.T, arg any) any {
 	return got
 }
 
+func TestCheckListingPrune_BoundsRebinds(t *testing.T) {
+	if err := checkListingPrune(DefaultListingChurnLimit, 50, 0, 50); !errors.Is(err, ErrDirectoryChurnExceeded) {
+		t.Errorf("50 of 50 re-bound: err = %v, want exceeded", err)
+	}
+	if err := checkListingPrune(DefaultListingChurnLimit, 50, 0, 10); err != nil {
+		t.Errorf("10 of 50 re-bound is at the 20%% ceiling: %v", err)
+	}
+	if err := checkListingPrune(DirectoryChurnUnbounded, 50, 0, 50); err != nil {
+		t.Errorf("operator opt-in: %v", err)
+	}
+	held := map[string]string{"A": "x", "B": "y"}
+	if n := countListingRebinds(held, []ListingEntry{{Address: "A", ListingID: "x"}, {Address: "B", ListingID: "z"}, {Address: "C", ListingID: "w"}}); n != 1 {
+		t.Errorf("rebinds = %d, want 1 (only B moved; C is new)", n)
+	}
+}
+
 // TestCheckListingPrune: a listing sync may prune at most the listing ceiling of the rows it held, sized for a ~50-row table.
 func TestCheckListingPrune(t *testing.T) {
 	cases := []struct {
@@ -485,7 +501,7 @@ func TestCheckListingPrune(t *testing.T) {
 		{"operator opt-in", DirectoryChurnUnbounded, 50, 49, false},
 	}
 	for _, tc := range cases {
-		err := checkListingPrune(tc.limit, tc.held, tc.pruned)
+		err := checkListingPrune(tc.limit, tc.held, tc.pruned, 0)
 		if got := errors.Is(err, ErrDirectoryChurnExceeded); got != tc.wantExceeded {
 			t.Errorf("%s: err = %v, want exceeded=%v", tc.name, err, tc.wantExceeded)
 		}

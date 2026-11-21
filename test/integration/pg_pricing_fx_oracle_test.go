@@ -2442,6 +2442,56 @@ func TestListingDirectory_RefusesMassPrune(t *testing.T) {
 	}
 }
 
+// A catalogue that keeps every address but pairs them with other coin ids moves every price to another coin; it is bounded by
+// the same ceiling as a prune, and nothing is written when refused.
+func TestListingDirectory_RefusesMassRebind(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	at := time.Now().UTC().Add(-time.Hour)
+	const b32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+	entries := func(shift int) []timescale.ListingEntry {
+		out := make([]timescale.ListingEntry, 0, 50)
+		for i := range 50 {
+			id := i
+			if i < shift {
+				id = (i + 1) % shift // rotate the first `shift` ids among themselves
+			}
+			out = append(out, timescale.ListingEntry{
+				Address: "C" + strings.Repeat("A", 53) + string(b32[i/32]) + string(b32[i%32]), ListingID: fmt.Sprintf("coin-%d", id), Symbol: "c", PriceUSD: "1.00", PricedAt: at,
+			})
+		}
+		return out
+	}
+	full := entries(0)
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, full, "coingecko"); err != nil {
+		t.Fatalf("full sync: %v", err)
+	}
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, entries(50), "coingecko"); !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		t.Fatalf("permuted sync: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
+	byAddr, _, err := store.ListingDirectoryByAddress(ctx)
+	if err != nil {
+		t.Fatalf("ListingDirectoryByAddress: %v", err)
+	}
+	for _, e := range full {
+		if got := byAddr[e.Address].ListingID; got != e.ListingID {
+			t.Fatalf("%s listing_id after refused sync = %q, want %q", e.Address, got, e.ListingID)
+		}
+	}
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, entries(5), "coingecko"); err != nil {
+		t.Fatalf("five re-binds of 50 are inside the ceiling: %v", err)
+	}
+}
+
 // TestListingDirectory_ContestedAddressStaysListedUnpriced: once a second coin id claims an address, a resync must keep its
 // row (a pruned row reads as not listed, which is false) with no price either claimant could have supplied.
 func TestListingDirectory_ContestedAddressStaysListedUnpriced(t *testing.T) {

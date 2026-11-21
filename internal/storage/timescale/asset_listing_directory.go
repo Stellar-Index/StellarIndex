@@ -163,12 +163,11 @@ func (s *Store) ReplaceListingDirectoryWithin(
 		}
 	}()
 
-	var held int64
-	if err = tx.QueryRowContext(ctx,
-		`SELECT count(*) FROM asset_listing_directory WHERE source = $1`, source).Scan(&held); err != nil {
-		err = fmt.Errorf("listing directory: count held rows: %w", err)
+	heldIDs, err := heldListingIDs(ctx, tx, source)
+	if err != nil {
 		return 0, 0, 0, err
 	}
+	held, rebound := int64(len(heldIDs)), countListingRebinds(heldIDs, entries)
 
 	for start := 0; start < len(entries); start += listingUpsertChunk {
 		end := min(start+listingUpsertChunk, len(entries))
@@ -192,7 +191,7 @@ func (s *Store) ReplaceListingDirectoryWithin(
 	}
 	pruned, _ = res.RowsAffected()
 	// A parseable but shrunken upstream catalogue would otherwise delist most of the source in one hourly run.
-	if err = checkListingPrune(limit, held, pruned); err != nil {
+	if err = checkListingPrune(limit, held, pruned, rebound); err != nil {
 		return 0, 0, 0, err
 	}
 
@@ -202,10 +201,49 @@ func (s *Store) ReplaceListingDirectoryWithin(
 	return upserted, pruned, ambiguous, nil
 }
 
-// checkListingPrune applies `limit` to a listing sync that held `held` rows.
-func checkListingPrune(limit DirectoryChurnLimit, held, pruned int64) error {
+// checkListingPrune applies `limit` to a listing sync that held `held` rows. A re-bind moves an address's price to another coin id,
+// so a permuted catalogue (nothing pruned) is bounded by the same ceiling as a shrunken one.
+func checkListingPrune(limit DirectoryChurnLimit, held, pruned, rebound int64) error {
 	c := directoryChurn{rows: held}
-	return c.check(limit, DirectorySyncResult{Pruned: pruned})
+	if err := c.check(limit, DirectorySyncResult{Pruned: pruned}); err != nil {
+		return err
+	}
+	if maxRows, bounded := limit.ceiling(held); bounded && rebound > maxRows {
+		return fmt.Errorf("%w: re-binds %d of %d addresses to another listing id (ceiling %d)", ErrDirectoryChurnExceeded, rebound, held, maxRows)
+	}
+	return nil
+}
+
+// heldListingIDs maps each address `source` holds to its stored listing id.
+func heldListingIDs(ctx context.Context, tx *sql.Tx, source string) (map[string]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT address, listing_id FROM asset_listing_directory WHERE source = $1`, source)
+	if err != nil {
+		return nil, fmt.Errorf("listing directory: read held rows: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var addr, id string
+		if err := rows.Scan(&addr, &id); err != nil {
+			return nil, fmt.Errorf("listing directory: scan held row: %w", err)
+		}
+		out[addr] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing directory: held rows: %w", err)
+	}
+	return out, nil
+}
+
+// countListingRebinds counts held addresses the new entries pair with a different listing id.
+func countListingRebinds(held map[string]string, entries []ListingEntry) int64 {
+	var n int64
+	for _, e := range entries {
+		if id, ok := held[e.Address]; ok && id != e.ListingID {
+			n++
+		}
+	}
+	return n
 }
 
 // dedupListingEntriesByAddress collapses repeats of one claim, keeping first-appearance order; an upsert chunk may hold each conflict
