@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -416,6 +417,8 @@ func (s *Server) fillRWAReferences(done chan struct{}) {
 	var built rwaReferences
 	updates, err := s.Oracle.LatestOracleStreams(ctx)
 	if err != nil {
+		// The last good snapshot keeps serving, so only this counter's alert can tell a frozen reference block from a live one.
+		obs.APICacheOpsTotal.WithLabelValues("rwa_references", "oracle_streams", "refresh_error").Inc()
 		s.logger.Warn("rwa references: oracle stream read failed", "err", err)
 	} else {
 		built = rwaReferenceSnapshotFrom(updates)
