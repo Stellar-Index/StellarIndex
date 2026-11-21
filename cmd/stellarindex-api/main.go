@@ -437,7 +437,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// at the reader seam; handlers that compute their own price (vwap, twap, chart, price/tip)
 	// consult it themselves, see scam.go. Nil when the directory reader is absent.
 	scamGate := pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{Logger: logger})
-	priceReader := wiring.StorePriceReader{S: store, Logger: logger, Substance: substanceGate, Scam: scamGate}
+	// The read side of `stellarindex-ops source-exclude`, shared so every reader agrees on one snapshot.
+	exclusionGate := pricingguard.NewSourceExclusionGate(store, pricingguard.SourceExclusionGateOptions{Logger: logger})
+	priceReader := wiring.StorePriceReader{S: store, Logger: logger, Substance: substanceGate, Scam: scamGate, Exclusions: exclusionGate}
 
 	// The latest-oracle query is expensive; a Redis read-through cache inside the oracle push
 	// interval absorbs polling fan-out. Without Redis it reads the store directly.
@@ -1048,9 +1050,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			PKPairFor: func(base, quote canonical.Asset) (canonical.Pair, error) {
 				return canonical.NewPair(base, quote)
 			},
-			Logger:    logger,
-			Substance: substanceGate,
-			Scam:      scamGate,
+			Logger:     logger,
+			Substance:  substanceGate,
+			Scam:       scamGate,
+			Exclusions: exclusionGate,
 		},
 		GlobalPriceOpts: aggregate.GlobalPriceOptions{
 			AggregatorSources: external.AggregatorSources(),

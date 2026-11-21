@@ -63,6 +63,12 @@ func (e SourceExclusion) Covers(source, base, quote string, ts time.Time) bool {
 		(e.Until.IsZero() || ts.Before(e.Until)) && e.CoversPair(base, quote)
 }
 
+// CoversSpan is [SourceExclusion.Covers] for a value pooled over [from, to): true when the two windows overlap.
+func (e SourceExclusion) CoversSpan(source, base, quote string, from, to time.Time) bool {
+	return !e.Lifted() && e.Source == source && e.From.Before(to) &&
+		(e.Until.IsZero() || e.Until.After(from)) && e.CoversPair(base, quote)
+}
+
 // CoversPair reports whether the row's pair scope includes base/quote, ignoring source, window and lift.
 func (e SourceExclusion) CoversPair(base, quote string) bool {
 	if e.Base == "" {

@@ -10,6 +10,7 @@ const WITHHELD: Record<Reason, string> = {
   upstream_leg: 'withheld · USD leg withheld',
   unattributed: 'withheld',
   decimals_mismatch: 'withheld · decimals disagree',
+  source_excluded: 'withheld · price source excluded',
 };
 
 // A null market cap reads as "unknown"; when the server withheld the price
@@ -41,6 +42,7 @@ const CAP_WITHHELD: Record<CapReason, string> = {
   unattributed: 'withheld',
   manipulation_guard: 'withheld · price not validated',
   fx_leg_unavailable: 'withheld · no FX rate',
+  source_excluded: 'withheld · price source excluded',
   price_unread: 'not valued · direct price unread',
   supply_stale: 'not valued · supply out of date',
   decimals_unknown: 'not valued · token decimals unknown',

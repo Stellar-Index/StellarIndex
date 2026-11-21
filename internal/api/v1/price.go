@@ -89,6 +89,9 @@ const (
 	// PriceWithheldDecimalsMismatch: asset payloads only. A successful decimals read contradicts the scale the market
 	// price was normalised on, so the per-whole-token figure would be off by a power of ten.
 	PriceWithheldDecimalsMismatch PriceWithheldReason = "decimals_mismatch"
+	// PriceWithheldSourceExcluded: a source an operator excluded (`stellarindex-ops source-exclude`) contributed to the
+	// served bucket, which pools every source and cannot be recomputed without it.
+	PriceWithheldSourceExcluded PriceWithheldReason = "source_excluded"
 )
 
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
@@ -116,7 +119,9 @@ func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
 		return PriceWithheldScamIssuer
 	case pricingguard.WithheldThinMarket:
 		return PriceWithheldSubstance
-	case pricingguard.NotWithheld:
+	case pricingguard.WithheldSourceExcluded:
+		return PriceWithheldSourceExcluded
+	case pricingguard.WithheldExclusionsUnread, pricingguard.NotWithheld:
 	}
 	return PriceWithheldUnattributed
 }
@@ -241,6 +246,10 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 		return "Price withheld — FX leg unavailable",
 			"no FX fixing binds " + pair + " at the bucket's close within the lookback, so no converted price is published" +
 				" — /v1/price/tip converts at the live rate"
+	case PriceWithheldSourceExcluded:
+		return "Price withheld — contributing source excluded",
+			"the latest price for " + pair + " includes trades from a source an operator has excluded," +
+				" and a pooled bucket cannot be recomputed without one of its sources, so no price is published"
 	case PriceWithheldUnattributed, PriceWithheldDecimalsMismatch: // decimals_mismatch is asset payloads' own; /v1/price never sets it
 	}
 	return "Price withheld",

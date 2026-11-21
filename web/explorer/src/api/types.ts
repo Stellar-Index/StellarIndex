@@ -12310,10 +12310,10 @@ export interface components {
             /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor. */
             price_credit?: string;
             /**
-             * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. For every value but `decimals_mismatch`, `/v1/price` answers the same pair with a `price-withheld` 404 and the value is in the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event. `decimals_mismatch` is the asset payload's own: a successful read of the token's on-chain decimals contradicts the scale its market price was normalised on, so that price, its change pills and price history are withheld (an unread or undeclared scale withholds nothing; market_cap_usd is refused as `decimals_unknown`), while a global-market or declared-peg price, quoted per whole token, may still fill price_usd. `substance` (trailing market activity below the serve floor), `scam_issuer` (an issuer flagged in the directory or the curated scam list; for a Stellar Asset Contract row, the issuer of the asset it wraps counts too), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
+             * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. For every value but `decimals_mismatch`, `/v1/price` answers the same pair with a `price-withheld` 404 and the value is in the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event. `decimals_mismatch` is the asset payload's own: a successful read of the token's on-chain decimals contradicts the scale its market price was normalised on, so that price, its change pills and price history are withheld (an unread or undeclared scale withholds nothing; market_cap_usd is refused as `decimals_unknown`), while a global-market or declared-peg price, quoted per whole token, may still fill price_usd. `substance` (trailing market activity below the serve floor), `scam_issuer` (an issuer flagged in the directory or the curated scam list; for a Stellar Asset Contract row, the issuer of the asset it wraps counts too), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check or the source-exclusion read did not complete), `source_excluded` (a source an operator excluded contributed to the latest bucket, which cannot be recomputed without it). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
              * @enum {string}
              */
-            price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "decimals_mismatch";
+            price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "decimals_mismatch" | "source_excluded";
             /** @description True when `price_usd` was served under `include_thin=true` from a market below the substance floor. No market cap, FDV, change pill, price history or ATH derives from it. */
             thin_market?: boolean;
             /** @description The substance measurement behind a thin price (detail only). `substance` without `thin_market`: a declared peg or the global price won; see `price_basis`. */
@@ -12334,7 +12334,7 @@ export interface components {
              * @description Why market_cap_usd is null beside a served price_usd and circulating_supply; fdv_usd is null for the same reason when it is. Present ONLY then: omitted when a cap is served, and when there is no price or no supply to value. The booleans above still serve unchanged.
              *     It explains market_cap_usd only. fdv_usd can be null beside a served cap (the turnover ceiling tests each figure), which market_cap_low_liquidity flags.
              *     Absent beside a null cap, a served price and a served supply, it means the figure could not be computed from the served inputs: a data or compute gap, not a guard verdict.
-             *     `substance`, `scam_issuer`, `upstream_leg`, `unattributed`, `manipulation_guard`, `fx_leg_unavailable`: the asset's direct market price was withheld for that `price_withheld_reason`, and price_usd is a later fill (see price_basis) that values no cap.
+             *     `substance`, `scam_issuer`, `upstream_leg`, `unattributed`, `manipulation_guard`, `fx_leg_unavailable`, `source_excluded`: the asset's direct market price was withheld for that `price_withheld_reason`, and price_usd is a later fill (see price_basis) that values no cap.
              *     `price_unread`: the direct price could not be read, so a fill cannot stand in for it.
              *     `supply_stale`: the supply observation is older than the serving bound (see supply_as_of).
              *     `decimals_unknown`: the token's scale is not known, so `decimals` is omitted.
@@ -12346,7 +12346,7 @@ export interface components {
              *     `price_basis`: price_usd is a declared_peg or global_market fill, which values no cap here.
              * @enum {string}
              */
-            market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
+            market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "source_excluded" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
             global_market?: components["schemas"]["AssetGlobalMarket"];
             issuer_behaviour?: components["schemas"]["AssetIssuerBehaviour"];
             listing_reference?: components["schemas"]["AssetListingReference"];
@@ -14504,10 +14504,10 @@ export interface components {
             /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
             substance?: components["schemas"]["SubstanceEvidence"];
             /**
-             * @description Extension member on every `price-withheld` 404: why the price was withheld; a superset of the `price_withheld_reason` values on asset rows except `decimals_mismatch`, which only asset payloads carry (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
+             * @description Extension member on every `price-withheld` 404: why the price was withheld (`source_excluded`: a source an operator excluded contributed to the latest bucket or trade, which cannot be recomputed without it; when the exclusions cannot be read the price is withheld as `unattributed`); a superset of the `price_withheld_reason` values on asset rows except `decimals_mismatch`, which only asset payloads carry (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
              * @enum {string}
              */
-            reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable";
+            reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "source_excluded";
         };
     };
     responses: {
@@ -18600,7 +18600,7 @@ export interface operations {
                                  * @description As `/v1/assets/{asset_id}` `market_cap_withheld_reason`: why market_cap_usd is null beside a price and a circulating supply; omitted otherwise.
                                  * @enum {string}
                                  */
-                                market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
+                                market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "source_excluded" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
                                 /** @description Present and true when `price_usd` comes from a market below the substance floor; display-only. */
                                 thin_market?: boolean;
                                 /** @description The substance measurement behind a thin `price_usd`; present only with `thin_market`. */

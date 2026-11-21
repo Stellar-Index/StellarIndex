@@ -19,7 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const readSideNote = "source-exclude: note: served prices do not read source_exclusions yet; this row takes effect when the read side ships"
+const readSideNote = "source-exclude: note: within 15s the API withholds /v1/price (and its batch, tip and SEP-40 reads) and drops the source from the asset headline's VWAP and aggregator tiers;" +
+	" /v1/price/at, history, chart, OHLC, asset listing and RWA values are not yet source-filtered"
 
 // maxFutureFrom bounds how far ahead -from may start without -allow-future: a guard against year typos.
 const maxFutureFrom = 24 * time.Hour

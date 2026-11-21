@@ -189,6 +189,10 @@ const (
 	WithheldThinMarket Withholding = "thin_market"
 	// WithheldFlaggedIssuer: either leg's issuer is directory-scam-flagged.
 	WithheldFlaggedIssuer Withholding = "flagged_issuer"
+	// WithheldSourceExcluded: a source an operator excluded contributed to the value.
+	WithheldSourceExcluded Withholding = "source_excluded"
+	// WithheldExclusionsUnread: the source exclusions could not be read, so no value is known clean.
+	WithheldExclusionsUnread Withholding = "source_exclusions_unread"
 )
 
 // PriceWithholding is [Gate.PriceWithheld] reporting WHICH gate fired.
