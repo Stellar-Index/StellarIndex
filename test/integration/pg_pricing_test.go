@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1200,15 +1201,33 @@ func TestContractCatalogueRows_LargeChangePctStaysDecimal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := rows[id]
+	assertLargeChangePcts(t, "contract catalogue", rows[id])
+
+	// The /v1/assets listing renders the same snapshot columns through its own SQL; a contract joins its spine once it has volume.
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO asset_volume_24h (asset_id, vol_usd, computed_at) VALUES ($1, 10, now())`, id); err != nil {
+		t.Fatalf("seed asset_volume_24h: %v", err)
+	}
+	listed, err := store.ListAssets(ctx, 100, "", "")
+	if err != nil {
+		t.Fatalf("ListAssets: %v", err)
+	}
+	i := slices.IndexFunc(listed, func(r timescale.AssetRow) bool { return r.AssetID == id })
+	if i < 0 {
+		t.Fatalf("ListAssets: %s not listed among %d rows", id, len(listed))
+	}
+	assertLargeChangePcts(t, "listing", listed[i])
+}
+
+func assertLargeChangePcts(t *testing.T, site string, r timescale.AssetRow) {
+	t.Helper()
 	for name, c := range map[string]struct {
 		got  *string
 		want string
 	}{"1h": {r.Change1hPct, "-0.13"}, "24h": {r.Change24hPct, "12345678901.50"}, "7d": {r.Change7dPct, "999999999.99"}} {
 		if c.got == nil {
-			t.Errorf("change_%s_pct = nil, want %s", name, c.want)
+			t.Errorf("%s: change_%s_pct = nil, want %s", site, name, c.want)
 		} else if *c.got != c.want {
-			t.Errorf("change_%s_pct = %q, want %s", name, *c.got, c.want)
+			t.Errorf("%s: change_%s_pct = %q, want %s", site, name, *c.got, c.want)
 		}
 	}
 }
