@@ -303,13 +303,17 @@ jobs:
             # 54 internal/ directories): only storage, schema and the
             # suite's own code run the shards on a PR. The nightly full run
             # catches the rest within a day, and release.yml refuses a tag
-            # without a green full run.
+            # without a green full run. Each package the suite imports
+            # directly is either here or recorded as nightly-only in
+            # test/controlwiring/integration_class_direct_imports_test.go.
             integration:
               - 'internal/storage/**'
               - 'internal/platform/postgresstore/**'
               - 'internal/ops/archive/**'
               # The ops subcommands test/integration drives through chops.Run.
               - 'internal/ops/chops/**'
+              # The served API surface, handlers and subpackages.
+              - 'internal/api/v1/**'
               - 'cmd/stellarindex-ops/**'
               - 'migrations/**'
               - 'scripts/ops/**'
@@ -753,6 +757,12 @@ jobs:
         # discipline, generated-file banner integrity, ADR status
         # + superseded-by validity.
         run: ./scripts/ci/lint-docs.sh
+      - name: lint-conflict-markers self-test
+        run: ./scripts/ci/lint-conflict-markers-test.sh
+      # Every tracked file, not only the diff: no step-level `if:`, so a
+      # docs-only PR is scanned too.
+      - name: lint-conflict-markers
+        run: ./scripts/ci/lint-conflict-markers.sh
       - name: lint-agents-file
         # AGENTS.md is read cold and has to be retained, so it is capped
         # and required to stay operative: a length ceiling, no reference

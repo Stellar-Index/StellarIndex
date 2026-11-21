@@ -275,10 +275,14 @@ without ever reporting a `skipped` job conclusion itself:
 
 | diff touches | jobs that do real work |
 |---|---|
-| `internal/storage/**`, `internal/platform/postgresstore/**`, `internal/ops/archive/**`, `internal/ops/chops/**`, `cmd/stellarindex-ops/**`, `migrations/**`, `scripts/ops/**`, `test/integration/**`, `test/harness/**`, `go.mod` | `integration-test-shard` (Docker) |
+| `internal/storage/**`, `internal/platform/postgresstore/**`, `internal/ops/archive/**`, `internal/ops/chops/**`, `internal/api/v1/**`, `cmd/stellarindex-ops/**`, `migrations/**`, `scripts/ops/**`, `test/integration/**`, `test/harness/**`, `go.mod` | `integration-test-shard` (Docker) |
 | any `*.go`, `go.mod`, `go.sum` | `lint`, `test`, `build`, `toolchain-gates`' `govulncheck` and fuzz-smoke steps |
 | `web/**`, `openapi/**`, plus the files the explorer reads from outside them: `CHANGELOG.md`, top-level `docs/{adr,architecture,blog,operations}/*`, `internal/incidents/data/**`, `internal/storage/timescale/cursors.go`, the explorer postbuild scripts, `scripts/ci/check-redirects-cap.sh`, `.github/workflows/ci.yml` | `toolchain-gates`' web/explorer steps |
 | `configs/ansible/**` | `toolchain-gates`' ansible steps |
+
+The integration row is deliberately narrower than what the suite imports; every other package it imports
+directly is recorded as nightly-only, with a reason, in
+`test/controlwiring/integration_class_direct_imports_test.go`, which fails on an unrecorded one.
 
 Each gated job still runs to completion — the filtering is a STEP-level
 `if:` on the work inside it, not a job-level skip — so its conclusion is

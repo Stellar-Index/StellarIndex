@@ -65,8 +65,27 @@ expect "internal/pipeline/** does not trigger integration (nightly covers it)" 1
 run integration "internal/sources/kraken/decode.go"
 expect "internal/sources/** does not trigger integration (nightly covers it)" 1
 
+# The served API surface runs the shards, subpackages included.
 run integration "internal/api/v1/handlers.go"
-expect "internal/api/** does not trigger integration (nightly covers it)" 1
+expect "API handler change triggers integration" 0
+run integration "internal/api/v1/middleware/cors.go"
+expect "internal/api/v1 subpackage change triggers integration" 0
+run go "internal/api/v1/handlers.go"
+expect "API handler change runs the go class" 0
+
+run integration "internal/api/streaming/redispub/publisher.go"
+expect "internal/api outside v1 does not trigger integration (nightly covers it)" 1
+
+# A test-only change to a nightly-only package runs its unit tests, not Docker.
+run integration "internal/auth/keys_test.go"
+expect "test-only change outside the class does not trigger integration" 1
+run go "internal/auth/keys_test.go"
+expect "test-only change runs the go class" 0
+
+run integration "docs/contributing/local-verification.md"
+expect "docs-only change does not trigger integration" 1
+run go "docs/contributing/local-verification.md"
+expect "docs-only change does not run the go class" 1
 
 run integration "migrations/0160_add_column.up.sql"
 expect "migrations/** triggers integration" 0
@@ -264,7 +283,7 @@ expect "empty diff (zero files) → usage error, never read as 'nothing changed,
 
 echo
 echo "check-change-class-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 58 ]; then
+if [ "$asserts" -lt 96 ]; then
   echo "check-change-class-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi
