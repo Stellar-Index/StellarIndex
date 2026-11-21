@@ -9427,8 +9427,8 @@ paths:
                     lower_bound: true
                     basis: "Circulating supply of the catalogue's hand-vetted Stellar stablecoins, valued at the served USD price; only USD-pegged, non-yield-bearing members are summed"
                   by_peg:
-                    - { peg: EUR, supply_usd: "108.00", assets: 1 }
-                    - { peg: USD, supply_usd: "118059162072207.18", assets: 4 }
+                    - { peg: EUR, supply_usd: "108.00", assets: 1, assets_valued: 1, lower_bound: false }
+                    - { peg: USD, supply_usd: "118059162072207.18", assets: 4, assets_valued: 3, lower_bound: true }
                   excluded:
                     - { ticker: USDT, reason: no_stellar_issuer }
                   assets:

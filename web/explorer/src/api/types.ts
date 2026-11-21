@@ -23672,12 +23672,16 @@ export interface operations {
                      *           {
                      *             "peg": "EUR",
                      *             "supply_usd": "108.00",
-                     *             "assets": 1
+                     *             "assets": 1,
+                     *             "assets_valued": 1,
+                     *             "lower_bound": false
                      *           },
                      *           {
                      *             "peg": "USD",
                      *             "supply_usd": "118059162072207.18",
-                     *             "assets": 4
+                     *             "assets": 4,
+                     *             "assets_valued": 3,
+                     *             "lower_bound": true
                      *           }
                      *         ],
                      *         "excluded": [
