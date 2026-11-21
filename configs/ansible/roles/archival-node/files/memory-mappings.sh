@@ -26,7 +26,12 @@
 # Runtime: one readlink per pid plus one maps read per match (~47k lines steady, ~1M in the
 # incident). The kernel exposes only the map, not a count, so the cost is accepted and the
 # timer is spaced at 5 minutes; systemd will not start a second run while one is in flight.
-# one is in flight.
+#
+# The same /proc/<pid>/exe walk also reports, per systemd unit, whether a release binary
+# (/usr/local/bin/stellarindex-* or galexie) is still running after it was replaced on disk:
+# a deploy swaps the file under a running daemon, which keeps executing the old build until
+# restarted (cap67-movements ran a 37-day-old stellarindex-ops this way). This is the host-side
+# check, independent of whether the deploy remembered the restart.
 
 set -euo pipefail
 
@@ -107,7 +112,35 @@ exe_basename() {
   echo '# TYPE stellarindex_process_memory_mappings_unreadable gauge'
   echo '# HELP stellarindex_process_memory_mappings_updated_unix Unix time of the last successful run. node_exporter re-serves a stale textfile verbatim on every scrape, so a stopped timer FREEZES these gauges at their last value instead of making them absent — this is the only series that can see that.'
   echo '# TYPE stellarindex_process_memory_mappings_updated_unix gauge'
+  echo '# HELP stellarindex_unit_running_replaced_binary 1 when a process in this systemd unit runs a release binary (/usr/local/bin/stellarindex-* or galexie) that was replaced on disk after it started: its exe link ends in " (deleted)" or names a .prev-<tag> backup. 0 for a unit whose release-binary processes all run the installed file. Units running no release binary have no series.'
+  echo '# TYPE stellarindex_unit_running_replaced_binary gauge'
 } > "$TMP"
+
+# unit_of PID: the systemd unit owning the process — the deepest `.service` component of its
+# cgroup path, else the deepest `.scope` (a manual or heavy-job run). cgroup v2's `0::` line
+# first, the v1 `name=systemd` hierarchy as fallback; prints nothing when neither resolves.
+unit_of() {
+  local path seg svc="" scope=""
+  path="$(awk '/^0::/ { sub(/^0::/, ""); print; exit }' "$PROC_ROOT/$1/cgroup" 2>/dev/null)" || path=""
+  if [ -z "$path" ]; then
+    path="$(awk '/^[0-9]+:name=systemd:/ { sub(/^[0-9]+:name=systemd:/, ""); print; exit }' "$PROC_ROOT/$1/cgroup" 2>/dev/null)" || path=""
+  fi
+  # Early return also keeps bash 3.2 off an empty "${parts[@]}" under set -u.
+  [ -n "$path" ] || return 0
+  local -a parts=()
+  IFS='/' read -r -a parts <<< "$path"
+  for seg in "${parts[@]}"; do
+    case "$seg" in
+      *.service) svc="$seg" ;;
+      *.scope) scope="$seg" ;;
+    esac
+  done
+  if [ -n "$svc" ]; then
+    printf '%s\n' "$svc"
+  elif [ -n "$scope" ]; then
+    printf '%s\n' "$scope"
+  fi
+}
 
 # One pass per watched executable: re-walking /proc per name is cheaper than an associative
 # array (bash 3.2 has none).
@@ -166,6 +199,50 @@ for want in "${WATCHED[@]}"; do
     printf 'stellarindex_process_memory_mappings_ratio{process="%s"} %s\n' "$want" "$ratio" >> "$TMP"
   fi
 done
+
+# ── Release binaries replaced under a running process ────────────────
+#
+# The BARE readlink is the kernel's own text: "<path> (deleted)" once the file was unlinked,
+# or the .prev-<tag> name when a deploy renamed it aside. Every pid is a thread-group leader,
+# so a unit's main process and its children are each checked; the unit reports the worst.
+rows=""
+for entry in "$PROC_ROOT"/[0-9]*; do
+  [ -d "$entry" ] || continue
+  link="$(readlink "$entry/exe" 2>/dev/null)" || continue
+  case "$link" in
+    /usr/local/bin/*) ;;
+    *) continue ;;
+  esac
+  file="${link#/usr/local/bin/}"
+  file="${file% (deleted)}"
+  case "$file" in
+    */*) continue ;;
+  esac
+  case "${file%%.prev-*}" in
+    stellarindex-* | galexie) ;;
+    *) continue ;;
+  esac
+  replaced=0
+  case "$link" in
+    *' (deleted)') replaced=1 ;;
+  esac
+  case "$file" in
+    *.prev-*) replaced=1 ;;
+  esac
+  unit="$(unit_of "${entry##*/}")" || unit=""
+  [ -n "$unit" ] || unit="unknown"
+  # A unit name lands in a label value; systemd's \x escapes would break the quoting.
+  unit="${unit//[!A-Za-z0-9._@:-]/_}"
+  rows="${rows}${unit} ${replaced}"$'\n'
+done
+if [ -n "$rows" ]; then
+  printf '%s' "$rows" \
+    | awk '!($1 in v) || $2 > v[$1] { v[$1] = $2 } END { for (u in v) print u, v[u] }' \
+    | sort \
+    | while read -r unit replaced; do
+      printf 'stellarindex_unit_running_replaced_binary{unit="%s"} %s\n' "$unit" "$replaced"
+    done >> "$TMP"
+fi
 
 if [ -n "$LIMIT" ]; then
   printf 'stellarindex_process_memory_mappings_limit %s\n' "$LIMIT" >> "$TMP"
