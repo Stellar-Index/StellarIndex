@@ -39,6 +39,24 @@ func TestRWABothBases_CountsOnlyPublishedPremiums(t *testing.T) {
 	if m, r := optStr(got.MarketCapUSD), optStr(got.ReferenceValueUSD); m != "100000.00" || r != "100000.00" {
 		t.Errorf("both_bases = %s / %s, want 100000.00 / 100000.00", m, r)
 	}
+	if got.LowerBound {
+		t.Error("both_bases.lower_bound = true, want false: no summed row has a floor supply")
+	}
+}
+
+// TestRWABothBases_FloorSupplyMakesBothTotalsFloors: both figures scale with the row's supply, so a
+// floor supply makes both sums floors; a floor on a row left out of the sum must not.
+func TestRWABothBases_FloorSupplyMakesBothTotalsFloors(t *testing.T) {
+	floored := rwaBothBasesRow(RWAPremiumPublished, "40000000", "41000000")
+	floored.CirculatingSupplyLowerBound = true
+	excluded := rwaBothBasesRow(RWAPremiumReferenceNotOracle, "1", "2")
+	excluded.CirculatingSupplyLowerBound = true
+	if got := rwaBothBases([]RWAAsset{rwaBothBasesRow(RWAPremiumPublished, "100", "100"), floored}); !got.LowerBound {
+		t.Errorf("both_bases = %+v, want lower_bound=true over a floor-supply row", got)
+	}
+	if got := rwaBothBases([]RWAAsset{rwaBothBasesRow(RWAPremiumPublished, "100", "100"), excluded}); got.LowerBound {
+		t.Errorf("both_bases = %+v, want lower_bound=false: the floor row is not summed", got)
+	}
 }
 
 // TestRWAHistory_StatesTheMembershipItWasBuiltOn: a fresh series assembled on an old set whose rebuilds keep failing must

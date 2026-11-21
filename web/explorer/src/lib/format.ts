@@ -306,6 +306,19 @@ export function formatOraclePrice(p: string): string {
 // Percentage fields (change_24h_pct, ChangeBadge's `pct`, …) already arrive
 // as percentage points: render with `.toFixed(2)}%`, never a fraction→% helper.
 
+/**
+ * A premium in percent, widened below 0.01 so a real basis-point premium
+ * never reads "0.00" — which would claim the token trades at par.
+ */
+export function formatPremiumPct(pct: number): string {
+  const abs = Math.abs(pct);
+  if (abs === 0) return '0.00';
+  if (abs >= 0.01) return pct.toFixed(2);
+  if (abs >= 0.001) return pct.toFixed(3);
+  if (abs >= 0.0001) return pct.toFixed(4);
+  return `${pct < 0 ? '-' : ''}<0.0001`;
+}
+
 // Relative "time ago" label for an ISO timestamp. Returns '—' for a
 // missing/unparseable value and 'now' for a (near-)future one — so a
 // null/empty/garbage timestamp can never render as the literal

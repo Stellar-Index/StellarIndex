@@ -1,6 +1,6 @@
 ---
 title: Supply pipeline and asset identity
-last_verified: 2026-10-05
+last_verified: 2026-11-21
 status: binding
 ---
 
@@ -94,7 +94,11 @@ wraps `supply.LCMReserveBalanceReader` (live) with
 reserves the live reader wins and the static map may go stale.
 
 Bootstrap caveat: the live observer writes only when an account CHANGES, so a
-dormant reserve account would keep the chain on the static map forever.
+dormant reserve account would keep the chain on the static map, published
+as `xlm_sdf_reserve_exclusion_static`, until `reserve_balances_max_age`
+(default 168h) past `reserve_balances_as_of`; after that, or with no
+`reserve_balances_as_of`, the static map refuses and the XLM supply tick
+fails.
 `stellarindex-ops supply seed-observations` fixes that: a one-shot, idempotent
 seed of each `[supply] sdf_reserve_accounts` entry's latest AccountEntry from
 the lake's `ledger_entries_current` (ADR-0034), at the account's true

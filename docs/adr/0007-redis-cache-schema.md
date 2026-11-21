@@ -62,6 +62,13 @@ Status note: the rate-limit row of the key table is not the shipped schema. Keys
 shared by every key it holds, and no raw API key appears in a key name (`RateLimitKey`,
 `internal/cachekeys/keys.go`; `RateLimitCallerKey`, `internal/api/v1/middleware/ratelimit.go`).
 
+Status note (2026-11-21): the persistence the Decision names is not deployed. AOF and RDB are set
+only by the redis-sentinel role, which archival nodes do not run. r1 runs the Debian-packaged
+`redis-server`; `archival-node` sets its password, bind and memory cap but not `appendonly`, and
+nothing ships the RDB to MinIO or anywhere off the host. A revoke is a Redis-only write
+(`RevokeKeyTree`, `internal/auth/list_keys.go`) and the Redis validator reads only `apikey:<hash>`,
+so an unclean Redis death can bring back a key whose revoke already answered 204.
+
 ## Evidence
 
 HA topology: [ha-plan.md](../architecture/ha-plan.md); the redis-sentinel role applies the eviction policy.

@@ -11,6 +11,7 @@ import type { components } from '@/api/types';
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { hueByIdentity, toDailyLine } from '@/components/charts/dailyGaps';
 import { truncateMiddle } from '@/components/ui/Mono';
+import { formatPremiumPct } from '@/lib/format';
 import { StaleSeriesNotice } from './RWAHistoryPanel';
 import { Callout, EmptyState, Segmented, Skeleton } from '@/components/ui';
 import type { NamedLineSeries } from '@/components/charts/LineChart';
@@ -65,8 +66,8 @@ function useRWAPremium(timeframe: string) {
   });
 }
 
-function pct(n: number): string {
-  return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+export function pct(n: number): string {
+  return `${n >= 0 ? '+' : ''}${formatPremiumPct(n)}%`;
 }
 
 /**

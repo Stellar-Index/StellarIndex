@@ -1604,7 +1604,8 @@ export interface paths {
          * Volume-weighted average price over a window.
          * @description Returns VWAP = Σ(quote) / Σ(base) for every trade in
          *     [from, to) for the given pair. Optional outlier filter
-         *     drops prices > N σ from the window mean. When the window
+         *     drops prices more than N robust σ from the window median
+         *     (σ = max(1.4826 × MAD, 0.25 % of the median)). When the window
          *     hits the server's per-request cap (10000 trades) the
          *     response carries `truncated: true` — the price reflects
          *     only the chronologically **last** N trades of the window,
@@ -4273,8 +4274,9 @@ export interface paths {
          *     new key. There is no rotate endpoint. To replace a key, mint the
          *     replacement with its parent (a sibling), deploy it, then revoke
          *     the old key. A root key has no parent: replace it with an
-         *     independent key from the dashboard (`POST /v1/dashboard/keys`),
-         *     or by operator-assisted mint for a `/v1/register`-only account.
+         *     independent key from the dashboard (`POST /v1/dashboard/keys`).
+         *     A `/v1/register`-only account cannot mint one: register a new
+         *     account, move to its key, then revoke the old root.
          *
          *     An **operator-tier** caller minting for its own identifier here is
          *     held to the admin-write contract: the `X-Reason` header is
@@ -10270,6 +10272,13 @@ export interface components {
         RWABothBases: {
             /** @description Members carrying both figures and a published premium. */
             assets: number;
+            /**
+             * @description True when any summed row's circulating supply is only a provable
+             *     floor (`circulating_supply_lower_bound`). Both totals scale with
+             *     that supply, so both are then lower bounds; the per-row premium
+             *     is unaffected because the supply cancels out of the ratio.
+             */
+            lower_bound: boolean;
             /** @description Market-basis total over those rows only. Absent when `assets` is 0. */
             market_cap_usd?: string;
             /** @description Reference-basis total over the same rows. Absent when `assets` is 0. */
@@ -17493,7 +17502,7 @@ export interface operations {
                  *     flagged `truncated: true`.
                  */
                 limit?: number;
-                /** @description Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable. */
+                /** @description Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable. */
                 outlier_sigma?: number;
             };
             header?: never;
@@ -17625,7 +17634,7 @@ export interface operations {
                  *     `to` is excluded.
                  */
                 to?: components["parameters"]["To"];
-                /** @description Drop trades > N σ from window mean. 0 disables (default). */
+                /** @description Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default). */
                 outlier_sigma?: number;
                 /**
                  * @description Opt in to a per-source, per-bucket breakdown (`data.breakdown`):
@@ -23258,7 +23267,8 @@ export interface operations {
                      *           "both_bases": {
                      *             "assets": 3,
                      *             "market_cap_usd": "17128565.34",
-                     *             "reference_value_usd": "17128272.13"
+                     *             "reference_value_usd": "17128272.13",
+                     *             "lower_bound": false
                      *           },
                      *           "basis": "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement. Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name."
                      *         },
