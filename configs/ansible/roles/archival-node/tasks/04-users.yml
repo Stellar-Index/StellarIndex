@@ -19,7 +19,10 @@
 
 - name: Service group — public API
   # Skipped on rollback (the var set to "stellarindex") so the shared user keeps its groups.
+  # Also tagged stellarindex: 14-stellarindex-services needs this group, user and
+  # report dir, so a --tags stellarindex run must create them.
   when: stellarindex_api_os_user != 'stellarindex'
+  tags: [stellarindex]
   ansible.builtin.group:
     name: "{{ stellarindex_api_os_user }}"
     system: true
@@ -29,6 +32,7 @@
   # No home and no supplementary groups: the API reads only its own env file,
   # /etc/stellarindex.toml and the world-readable archive report.
   when: stellarindex_api_os_user != 'stellarindex'
+  tags: [stellarindex]
   ansible.builtin.user:
     name: "{{ stellarindex_api_os_user }}"
     group: "{{ stellarindex_api_os_user }}"
@@ -100,6 +104,8 @@
 
 - name: Ownership — archive-completeness report dir
   # Outside /var/lib/galexie so the API can read the report without the galexie group.
+  # The unit's ReadWritePaths= requires it: a missing dir fails the run loudly at 226/NAMESPACE.
+  tags: [stellarindex]
   ansible.builtin.file:
     path: /var/lib/archive-completeness
     state: directory

@@ -286,6 +286,33 @@
   no_log: true
   diff: false
   notify: Restart stellarindex-api
+  register: stellarindex_api_env
+
+# Seeded before the TOML points the API at the new path, so
+# /v1/diagnostics/archive never 404s between the restart and the next daily run.
+- name: Look for the archive report at its old path under /var/lib/galexie
+  ansible.builtin.stat:
+    path: /var/lib/galexie/last-completeness-report.json
+  register: archive_completeness_old_report
+
+- name: Look for the archive-completeness report dir
+  ansible.builtin.stat:
+    path: /var/lib/archive-completeness
+  register: archive_completeness_report_dir
+
+- name: Seed the archive report at its new path once
+  # The dir may not exist yet in --check on a first run (04-users only previews it).
+  when:
+    - archive_completeness_old_report.stat.exists
+    - archive_completeness_report_dir.stat.exists
+  ansible.builtin.copy:
+    src: /var/lib/galexie/last-completeness-report.json
+    dest: /var/lib/archive-completeness/last-completeness-report.json
+    remote_src: true
+    force: false
+    owner: root
+    group: root
+    mode: "0644"
 
 - name: Template /etc/stellarindex.toml
   # The on-disk config carries everything except secrets. Secrets
@@ -394,10 +421,20 @@
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and stellarindex_api_unit is changed)
 
-# The API restarts under its new user HERE, before any old access is removed,
-# so a failed start fails the play with the galexie grant still in place.
-- name: Apply pending API restarts before verifying it
-  ansible.builtin.meta: flush_handlers
+# The API restarts onto a changed unit (its OS user) or env file HERE, before
+# any old access is removed, so a failed start fails the play with the galexie
+# grant still in place. Only the API: a global flush would restart the other
+# daemons before later task files create the ClickHouse logins they read.
+# The notified handler still fires at the end of the play, a second restart
+# that rewires a ClickHouse login created after this point.
+- name: Restart stellarindex-api now when its unit or env file changed
+  when:
+    - not ansible_check_mode
+    - stellarindex_api_unit is changed or stellarindex_api_env is changed
+  ansible.builtin.systemd:
+    name: stellarindex-api
+    state: restarted
+    daemon_reload: "{{ stellarindex_api_unit is changed }}"
 
 - name: Verify the API answers readiness after the restart
   when: not ansible_check_mode
@@ -411,11 +448,12 @@
 
 - name: Read the API's MainPID owner
   when: not ansible_check_mode
+  # stat, not ps: ps pads or truncates a name past 8 characters to fit its column.
   ansible.builtin.shell: |
     set -euo pipefail
     pid="$(systemctl show -p MainPID --value stellarindex-api)"
     [ "$pid" != 0 ]
-    ps -o user= -p "$pid"
+    stat -c %U "/proc/$pid"
   args:
     executable: /bin/bash
   register: stellarindex_api_pid_user
@@ -1495,30 +1533,6 @@
 - name: Install + enable archive-completeness (networks with a correct cross-anchor)
   when: archive_completeness_enabled | bool
   block:
-    - name: Look for the report at its old path under /var/lib/galexie
-      ansible.builtin.stat:
-        path: /var/lib/galexie/last-completeness-report.json
-      register: archive_completeness_old_report
-
-    - name: Look for the archive-completeness report dir
-      ansible.builtin.stat:
-        path: /var/lib/archive-completeness
-      register: archive_completeness_report_dir
-
-    - name: Seed the report at its new path once, so the API serves it before the next daily run
-      # The dir may not exist yet in --check on a first run (04-users only previews it).
-      when:
-        - archive_completeness_old_report.stat.exists
-        - archive_completeness_report_dir.stat.exists
-      ansible.builtin.copy:
-        src: /var/lib/galexie/last-completeness-report.json
-        dest: /var/lib/archive-completeness/last-completeness-report.json
-        remote_src: true
-        force: false
-        owner: root
-        group: root
-        mode: "0644"
-
     - name: Install archive-completeness unit + timer
       ansible.builtin.template:
         src: "systemd/{{ item }}.j2"
