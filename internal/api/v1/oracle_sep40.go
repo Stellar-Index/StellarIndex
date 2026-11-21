@@ -263,7 +263,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	snapshots, viaPeg, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
+	snapshots, served, viaPeg, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -292,6 +292,11 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote)
+	if writeFrozenOraclePrices(w, r, asset, held) {
+		return
+	}
+
 	out := make([]SEP40Price, len(snapshots))
 	for i, snap := range snapshots {
 		// Snapshots are the raw prices_1m ratio, so apply the same decimals normalization as
@@ -307,7 +312,30 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	// A peg-proxied series is not a print of the fiat:USD pair and sits
 	// below the surface's baseline: stale as well as triangulated, the
 	// rule lastprice/x_last_price follow.
-	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg})
+	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg, FrozenChecked: held.checked})
+}
+
+// writeFrozenOraclePrices answers prices() for a frozen pair and reports whether it wrote. The freeze cannot say which closed buckets
+// it refused, so a frozen pair serves only the held value lastprice serves, or lastprice's 503 when nothing is held.
+func writeFrozenOraclePrices(w http.ResponseWriter, r *http.Request, asset canonical.Asset, held frozenResolution) bool {
+	switch held.outcome {
+	case frozenServeNothingHeld:
+		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
+		return true
+	case frozenServeHeld:
+		writeJSON(w, []SEP40Price{{
+			Asset:     asset.String(),
+			Price:     held.snapshot.Price,
+			Timestamp: held.snapshot.ObservedAt,
+			Credit:    creditForSources(held.sources),
+		}}, Flags{
+			Stale: true, Triangulated: held.triangulated, Frozen: true, Degraded: true,
+			FrozenChecked: held.checked, SingleSource: true,
+		})
+		return true
+	case frozenServeNotFrozen:
+	}
+	return false
 }
 
 // oracleLiveWindow: a series whose newest closed bucket is this recent is served without reading
@@ -319,15 +347,16 @@ const oracleLiveWindow = 10 * time.Minute
 // (viaPeg=true marks the envelope stale and triangulated). A dormant book is non-empty forever, so
 // "first non-empty" would serve months-old records beside a live series.
 // With nothing to serve, a withheld verdict wins, then the first read error: neither is 200 [].
+// served is the spelling of asset whose series was chosen (it governs the freeze check).
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
-) (snapshots []PriceSnapshot, viaPeg bool, err error) {
-	best, bestAt, err := s.recentClosedForAliases(ctx, asset, quote, n)
+) (snapshots []PriceSnapshot, served canonical.Asset, viaPeg bool, err error) {
+	best, bestAt, served, err := s.recentClosedForAliases(ctx, asset, quote, n)
 	if err != nil {
-		return nil, false, err
+		return nil, canonical.Asset{}, false, err
 	}
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" || s.oracleSeriesLive(best, bestAt) {
-		return best, false, nil
+		return best, served, false, nil
 	}
 	var failed oracleLegErrors
 	for _, peg := range s.usdPegProxyQuotes() {
@@ -336,22 +365,22 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		if sameAsset(peg, asset) {
 			continue
 		}
-		pegSnapshots, pegAt, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
+		pegSnapshots, pegAt, pegServed, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
 		if pegErr != nil || len(pegSnapshots) == 0 {
 			failed.note(pegErr)
 			continue
 		}
 		if s.oracleSeriesSupersedes(best, bestAt, pegSnapshots, pegAt) {
-			best, bestAt, viaPeg = pegSnapshots, pegAt, true
+			best, bestAt, served, viaPeg = pegSnapshots, pegAt, pegServed, true
 		}
 		if s.oracleSeriesLive(pegSnapshots, pegAt) {
 			break
 		}
 	}
 	if len(best) > 0 {
-		return best, viaPeg, nil
+		return best, served, viaPeg, nil
 	}
-	return nil, false, failed.err()
+	return nil, canonical.Asset{}, false, failed.err()
 }
 
 // oracleLegErrors keeps what the peg walk's failed legs said: a withheld verdict outranks the
@@ -391,12 +420,13 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 
 // recentClosedForAliases reads asset under each of its spellings (see [assetAliases]) against
 // quote and returns the series with the newest bucket and that bucket's time; a live one ends the
-// walk. An error is returned only when no spelling served.
-func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, error) {
+// walk, plus the spelling that served it. An error is returned only when no spelling served.
+func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
 		firstErr error
 		best     []PriceSnapshot
 		bestAt   time.Time
+		served   canonical.Asset
 	)
 	for _, a := range assetAliases(asset) {
 		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
@@ -411,16 +441,16 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 		}
 		at := newestSnapshotTime(snapshots)
 		if s.oracleSeriesSupersedes(best, bestAt, snapshots, at) {
-			best, bestAt = snapshots, at
+			best, bestAt, served = snapshots, at, a
 		}
 		if s.oracleSeriesLive(snapshots, at) {
 			break
 		}
 	}
 	if len(best) > 0 {
-		return best, bestAt, nil
+		return best, bestAt, served, nil
 	}
-	return nil, time.Time{}, firstErr
+	return nil, time.Time{}, canonical.Asset{}, firstErr
 }
 
 // newestSnapshotTime is the latest observed_at in a series, whatever its order.
