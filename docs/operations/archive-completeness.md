@@ -35,7 +35,7 @@ Per [ADR-0016](../adr/0016-per-region-storage-strategy.md). R2/R3 are deferred; 
 (Frankfurt) is the only host and holds both archives:
 
 ```
-stellarindex-ops archive-completeness verify -from <floor> -to <tip> -workers 8
+stellarindex-ops archive-completeness verify -write -from <floor> -to <tip> -workers 8
 ```
 
 > **`-to 0` does NOT resolve the tip**: the binary refuses it. The unit's

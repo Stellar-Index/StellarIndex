@@ -1,6 +1,6 @@
 ---
 title: Runbook — dex
-last_verified: 2026-10-06
+last_verified: 2026-11-20
 status: living
 severity: P2
 ---
@@ -112,10 +112,11 @@ stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <ledger> -to <l
 stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <ledger> -to <ledger> -sources <name> -contract-calls -write
 ```
 
-   Projected sources:
+   Projected sources: `projected-rebuild` stamps a newer `derive_generation`, so it overwrites wrong rows in place (including `usd_volume`); `projector-replay` writes at generation 0 and is only for rows that are missing. Refresh the trades rollups over the range afterwards:
 
 ```sh
-stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -write
+stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source <name> -from <ledger> -to <ledger> -resume=false -write
+stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -from <ledger> -to <ledger> -write
 ```
 
    Which side a source is on: [the replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule). Do not merge fixed and corrupted rows for the same range.

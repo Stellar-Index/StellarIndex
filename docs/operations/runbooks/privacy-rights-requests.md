@@ -1,6 +1,6 @@
 ---
 title: Runbook — privacy rights requests
-last_verified: 2026-10-02
+last_verified: 2026-11-20
 status: draft
 severity: P3
 ---
@@ -17,7 +17,7 @@ Retention is decided: account data and audit-log entries are kept indefinitely; 
 
 ## 1. Who is asking
 
-Never ask for an API key, sign-in link or code, session cookie or passkey. If one is sent, revoke it (`DELETE /v1/admin/keys/{keyID}`) and tell them.
+Never ask for an API key, sign-in link or code, session cookie or passkey. If one is sent, revoke it and tell them. A plaintext key's id is `SELECT id, account_id FROM api_keys WHERE key_hash = sha256(convert_to('<key>', 'UTF8'))` (run it in the interactive session); then revoke it with the operator key: `curl -X DELETE 'https://api.stellarindex.io/v1/admin/keys/<key_id>?identifier=acct:<account slug>' -H "Authorization: Bearer $OPERATOR_KEY" -H 'X-Reason: rights request: credential sent by email'` (400 without `identifier` or `X-Reason`, 404 if the identifier is not the key's owner).
 
 - **Dashboard account (has a `users` row).** The From header alone proves nothing. Look the row up, then send a random one-time string to that row's `email` (never to the From or Reply-To address of the request) and act only on a reply from that address that returns the string. A request whose headers show no DKIM, SPF or DMARC pass is unverified until the challenge is returned. Otherwise one reply asking them to write from the account's address, confirming nothing. This challenge precedes every disclosure, correction, restriction, closure and erasure below.
   ```sql
@@ -76,7 +76,7 @@ Every key and dashboard session is refused until the same call sets `active`; te
 Objection covers only the legitimate-interests processing in `/privacy` §3:
 
 - Audit log, request logs, rate-limit and invalid-key counters, sign-in request records, CDN edge logs: keep, on compelling security grounds, citing the retention in `/privacy` §6.
-- `/v1/signup` hash: `DEL signup:email:<hash>` and revoke the key it names with `DELETE /v1/admin/keys/{keyID}`.
+- `/v1/signup` hash: `DEL signup:email:<hash>` and revoke the key it names with the `DELETE /v1/admin/keys/<key_id>?identifier=…` call in section 1, with `identifier` set to the key's owner (a signup key's owner is `signup-…`, not `acct:`).
 - Sign-in device cookie: they can clear it in their browser.
 
 ## 5. Closure and erasure

@@ -161,7 +161,7 @@ the insert path reads, so there is no hand-kept `IN (…)` list.
 # dry run: per-day candidate counts, nothing written
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -tier exact -fill-null -sources aquarius,soroswap,phoenix,comet \
-  -from <first-day> -to <last-day>
+  -from <first-day> -to <last-day> -dry-run
 # apply on r1 under the heavy wrapper; add -chunks for any window older
 # than the trades compression policy's 15 days
 set -a; . /etc/default/stellarindex; set +a

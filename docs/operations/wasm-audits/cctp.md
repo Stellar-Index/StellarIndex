@@ -164,7 +164,8 @@ first and refuses a range in which any of the 3 contracts ran an unattested hash
 
 ```sh
 /usr/local/sbin/run-heavy-job.sh cctp-replay \
-  stellarindex-ops projector-replay -source cctp -from <first ledger to replay>
+  stellarindex-ops projector-replay -config /etc/stellarindex.toml \
+    -source cctp -from <first ledger to replay> -write
 ```
 
 Never write `cctp_events` with ad-hoc SQL: it bypasses the WASM gate and the
@@ -203,7 +204,8 @@ raw `destination_domain` against `counterparty_domain`.
 As `ClassBridge` with `DefaultWeight: 0` and `IncludeInVWAP: false` in
 [`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go),
 the source contributes nothing to VWAP regardless of `BackfillSafe`, which gates
-only `stellarindex-ops backfill --source=cctp`.
+only historical replay: `stellarindex-ops projector-replay` refuses `cctp` while
+it is false (`backfill` refuses every projected source, `cctp` included).
 
 ## References
 

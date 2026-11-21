@@ -34,7 +34,7 @@ After the commit the eraser deletes the account's Redis API-key records, the val
 For an emailed request, or a dashboard erasure that answered 409:
 
 ```sh
-stellarindex-ops account-erase -config /etc/stellarindex.toml -account-id <uuid>
+stellarindex-ops account-erase -config /etc/stellarindex.toml -account-id <uuid> -dry-run
 stellarindex-ops account-erase -config /etc/stellarindex.toml -account-id <uuid> -write
 ```
 

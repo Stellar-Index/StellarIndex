@@ -68,9 +68,12 @@ type StablecoinTotal struct {
 
 // StablecoinPegTotal is the per-peg subtotal over the valued members.
 type StablecoinPegTotal struct {
-	Peg       string  `json:"peg"`
-	SupplyUSD *string `json:"supply_usd,omitempty"`
-	Assets    int     `json:"assets"`
+	Peg          string  `json:"peg"`
+	SupplyUSD    *string `json:"supply_usd,omitempty"`
+	Assets       int     `json:"assets"`
+	AssetsValued int     `json:"assets_valued"`
+	// LowerBound: a member is unvalued, a summed supply is a floor, or the member list was truncated.
+	LowerBound bool `json:"lower_bound"`
 }
 
 // StablecoinExclusion names a ticker and the reason it is left out.
@@ -225,10 +228,13 @@ func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusio
 	summed := false
 	pegSum := map[string]*big.Rat{}
 	pegN := map[string]int{}
+	pegValued := map[string]int{}
+	pegFloor := map[string]bool{}
 	floor := false
 	for _, a := range assets {
 		pegN[a.Peg]++
 		if a.SupplyUSD == nil {
+			pegFloor[a.Peg] = true
 			t.AssetsUnvalued++
 			if a.ValuationStatus == stablecoinWithheld {
 				t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: stablecoinReasonMCapNull})
@@ -236,6 +242,8 @@ func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusio
 			continue
 		}
 		t.AssetsValued++
+		pegValued[a.Peg]++
+		pegFloor[a.Peg] = pegFloor[a.Peg] || a.CirculatingSupplyLowerBound
 		v, _ := new(big.Rat).SetString(*a.SupplyUSD)
 		if pegSum[a.Peg] == nil {
 			pegSum[a.Peg] = new(big.Rat)
@@ -262,7 +270,7 @@ func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusio
 	t.LowerBound = len(excluded) > 0 || t.AssetsUnvalued > 0 || len(t.NotSummed) > 0 || floor || truncated
 	pegs := make([]StablecoinPegTotal, 0, len(pegN))
 	for peg, n := range pegN {
-		p := StablecoinPegTotal{Peg: peg, Assets: n}
+		p := StablecoinPegTotal{Peg: peg, Assets: n, AssetsValued: pegValued[peg], LowerBound: pegFloor[peg] || truncated}
 		if r := pegSum[peg]; r != nil {
 			s := r.FloatString(2)
 			p.SupplyUSD = &s
