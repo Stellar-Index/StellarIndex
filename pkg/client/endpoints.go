@@ -522,7 +522,7 @@ func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 	return &env, nil
 }
 
-// CreateKeyRequest is the body for [Client.CreateKey]; empty Scopes mints a full-access key, non-empty Scopes only narrow (unknown values 400), IdempotencyKey is sent as `Idempotency-Key` (reuse it when retrying an unseen outcome; 409 while the original runs), and Reason is sent as `X-Reason` (required, else 400, from an OPERATOR-tier caller).
+// CreateKeyRequest is the body for [Client.CreateKey]; empty Scopes inherits every scope of the calling key, non-empty Scopes only narrow (unknown values 400), IdempotencyKey is sent as `Idempotency-Key` (reuse it when retrying an unseen outcome; 409 while the original runs), and Reason is sent as `X-Reason` (required, else 400, from an OPERATOR-tier caller).
 type CreateKeyRequest struct {
 	Label          string   `json:"label"`
 	Scopes         []string `json:"scopes,omitempty"`
@@ -532,6 +532,7 @@ type CreateKeyRequest struct {
 
 // CreateKey issues a new API key, a child of the calling key, inheriting its identifier and tier; the plaintext secret appears in the response exactly once and is unrecoverable.
 // To replace a key, mint from its parent, not from the key being replaced: revoking a key also revokes its children (see [Client.RevokeKey]).
+// The replacement takes the parent's tier, expiry and, unless Scopes narrows them, all its scopes; set Scopes to the replaced key's.
 func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*Envelope[KeyCreated], error) {
 	if req.Label == "" {
 		return nil, &APIError{Status: 400, Title: "label required"}
@@ -586,8 +587,15 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 	return &env, nil
 }
 
-// RevokeKey permanently deletes keyID (the public KeyID, not the secret) with every key minted from it, so a replacement minted from keyID dies too; a key may revoke itself and its descendants. nil on 204, a 403 *APIError for a key the caller may not revoke (including unknown ids), a 400 for a value not shaped like a key id.
+// RevokeKey permanently deletes keyID (the public KeyID, not the secret) with every key minted from it, so a replacement minted from keyID dies too; a key may revoke itself and its descendants.
+// nil on 204; an API-key caller gets a 403 *APIError for a key outside its own subtree, including an unknown id, but a SEP-10 session or operator gets nil for an unknown or already-revoked id, so nil does not prove keyID existed.
+// A 400 for a value not shaped like a key id. An operator-tier caller must use [Client.RevokeKeyWithReason]; without X-Reason the server answers 400 and revokes nothing.
 func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
+	return c.RevokeKeyWithReason(ctx, keyID, "")
+}
+
+// RevokeKeyWithReason is [Client.RevokeKey] with reason sent as `X-Reason`, which an operator-tier caller must supply (400 without it) and which lands in the key.revoke audit row; an empty reason sends no header.
+func (c *Client) RevokeKeyWithReason(ctx context.Context, keyID, reason string) error {
 	if keyID == "" {
 		return &APIError{Status: 400, Title: "keyID required"}
 	}
@@ -600,7 +608,11 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	// JSON-decode step. PathEscape the keyID so a value containing
 	// reserved characters can't break out of the path segment (other
 	// path-param endpoints already do this — Asset / Issuer / Changes).
-	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil)
+	var headers map[string]string
+	if reason != "" {
+		headers = map[string]string{"X-Reason": reason}
+	}
+	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil, headers)
 }
 
 // IssuersOptions sizes the issuer directory page; Limit defaults to 100 and a value outside [1, 500] is REJECTED with a 400.

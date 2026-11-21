@@ -598,9 +598,9 @@ type TradeRow struct {
 	//     native/classic, the token contract's declared decimals() for Soroban tokens;
 	//   - CEX rows (binance, kraken, bitstamp, coinbase) carry 8 regardless of the pair.
 	//
-	// Never substitute a constant: Price is quote/base and scale-invariant, so a wrong assumed scale is undetectable
-	// from the payload. Populated by [Client.History]; omitted (zero) on /v1/observations rows, which carry no
-	// per-side scale.
+	// Never substitute a constant: Price is quote/base and scale-invariant, so a wrong scale is undetectable. Zero means
+	// absent: /v1/observations rows carry no scale, and a History row omits it when the token declares none (amounts are
+	// then base units of unknown scale; do not divide). A token whose declared decimals() is 0 also reads as 0.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-transaction
