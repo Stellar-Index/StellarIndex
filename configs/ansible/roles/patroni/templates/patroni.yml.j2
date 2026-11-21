@@ -27,6 +27,9 @@ etcd3:
     - "{{ hostvars[host].ansible_host }}:{{ etcd_client_port }}"
 {% endfor %}
 
+{# Patroni initializes a cluster only when 'bootstrap' is in its config (ha.py), so
+   only db-01 can ever run initdb; a replica with an empty DCS waits for a leader. #}
+{% if inventory_hostname == groups['postgres_cluster'][0] %}
 bootstrap:
   dcs:
     ttl: 30
@@ -53,22 +56,20 @@ bootstrap:
         # extension to install on a fresh primary.
         shared_preload_libraries: 'timescaledb,pg_stat_statements'
 
+  # Patroni appends bootstrap.pg_hba to initdb's file, whose default lines are
+  # `trust`; peer/scram replace them (Patroni passes the superuser password via --pwfile).
   initdb:
     - encoding: UTF8
     - data-checksums
+    - auth-local: peer
+    - auth-host: scram-sha-256
 
   pg_hba:
 {% for cidr in patroni_internal_cidrs %}
     - host  replication  replicator  {{ cidr }}  md5
     - host  all          all         {{ cidr }}  md5
 {% endfor %}
-
-  users:
-    admin:
-      password: '{{ patroni_postgres_password }}'
-      options:
-        - createrole
-        - createdb
+{% endif %}
 
 postgresql:
   listen: "{{ patroni_postgres_listen_addr }}:{{ patroni_postgres_port }}"

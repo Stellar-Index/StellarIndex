@@ -12,8 +12,8 @@
     fail_msg: >-
       patroni_adopt_existing_data_dir=true only lets a pgBackRest restore
       overwrite the data dir. With initdb, Patroni would take over the foreign
-      cluster without running bootstrap, so pg_hba and the replicator/admin
-      roles would never be created.
+      cluster without running bootstrap, so pg_hba and the replicator role
+      would never be created.
 
 # PG_VERSION says nothing about Patroni. patroni.dynamic.json is written only
 # once Patroni has bootstrapped or joined the data dir.

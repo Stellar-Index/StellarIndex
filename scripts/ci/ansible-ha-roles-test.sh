@@ -229,6 +229,36 @@ else:
     rc, log = run_patroni_restart(healthy, me="db-01")
     check(rc != 0 and "restart patroni" not in log,
           "patroni restart handler does not restart a leader that still holds the lock after the switchover")
+    # /cluster lag is sampled per loop_wait: a streaming replica that reads as lagging is live, not down.
+    self_lagging = {"members": [member("db-01", "leader", "running"), member("db-02", "sync_standby", "streaming", lag=1 << 30)]}
+    rc, log = run_patroni_restart(self_lagging, after=healthy)
+    check(rc != 0 and "restart" not in log,
+          "patroni restart handler does not restart a streaming-but-lagging member while another member is missing")
+    rc, log = run_patroni_restart({"members": healthy["members"][:1] + self_lagging["members"][1:] + healthy["members"][2:]},
+                                  after=self_lagging | {"members": self_lagging["members"] + healthy["members"][2:]})
+    check(rc == 0 and "restart patroni" in log and not run_patroni_restart.pending,
+          "patroni restart handler finishes once the restarted replica streams again, whatever its sampled lag")
+
+# patroni: only db-01 carries a bootstrap section, so no other member can initdb an empty cluster;
+# initdb's default `trust` lines are replaced; bootstrap.users (dropped in Patroni 4) is not relied on.
+penv = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined)
+pgroups = {"postgres_cluster": ["db-01", "db-02", "db-03"]}
+for host, want in (("db-01", True), ("db-02", False)):
+    conf = yaml.safe_load(penv.from_string(text("patroni/templates/patroni.yml.j2")).render(
+        inventory_hostname=host, groups=pgroups, hostvars={h: {"ansible_host": "10.0.0.1"} for h in pgroups["postgres_cluster"]},
+        patroni_internal_cidrs=["10.0.0.0/24"], patroni_synchronous_node_count=1, etcd_tls_enabled=False))
+    check(("bootstrap" in conf) == want, f"patroni.yml for {host} has a bootstrap section: {want}")
+    if want:
+        initdb = conf["bootstrap"]["initdb"]
+        check({"auth-local": "peer"} in initdb and {"auth-host": "scram-sha-256"} in initdb,
+              "patroni bootstrap initdb replaces the default trust pg_hba lines")
+        check("users" not in conf["bootstrap"], "patroni bootstrap does not rely on bootstrap.users")
+join = tasks("patroni/tasks/09-patroni-join.yml")
+names = [t.get("name", "") for t in join]
+wait_i = next((i for i, t in enumerate(join) if "/initialize" in str(t.get("command", ""))), None)
+check(wait_i is not None and wait_i < names.index("start Patroni (replica — Patroni handles pg_basebackup)")
+      and "stdout" in str(join[wait_i].get("until")),
+      "a replica waits for an initialized DCS before it starts Patroni")
 
 # redis: credentials live here, so eviction and failover loss are bounded.
 rd = yaml.safe_load(text("redis-sentinel/defaults/main.yml"))
