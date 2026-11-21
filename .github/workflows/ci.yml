@@ -1289,6 +1289,12 @@ jobs:
         run: ./scripts/ci/lint-ops-write-flag.sh
       - name: lint-ops-write-flag self-test
         run: ./scripts/ci/lint-ops-write-flag-test.sh
+      - name: lint-numeric-mask
+        # Postgres renders a value wider than a fixed-width to_char numeric
+        # mask as '#', so a served number silently becomes "#####.##".
+        run: ./scripts/ci/lint-numeric-mask.sh
+      - name: lint-numeric-mask self-test
+        run: ./scripts/ci/lint-numeric-mask-test.sh
       - name: lint-lake-dedup
         # stellar.transactions and stellar.operations are ReplacingMergeTree
         # archives whose duplicates are not merged away: on r1 every distinct

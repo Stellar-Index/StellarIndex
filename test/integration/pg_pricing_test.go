@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1169,6 +1170,65 @@ func TestDeleteChangeSummary_ClearsRatchetedExtremes(t *testing.T) {
 	}
 	if got.ATHValue == nil || *got.ATHValue != "0.12" {
 		t.Fatalf("ath after reset = %v, want 0.12", got.ATHValue)
+	}
+}
+
+// A change wider than nine integer digits is served as its decimal, not as a to_char overflow of '#'.
+func TestContractCatalogueRows_LargeChangePctStaysDecimal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	const id = armFlippedUSDCContract
+	if _, err := store.DB().ExecContext(ctx, `
+		INSERT INTO discovered_assets
+		    (contract_id, first_seen_at, first_seen_ledger, first_seen_event, last_seen_at, last_seen_ledger, event_count)
+		VALUES ($1, now(), 1, 'transfer', now(), 2, 5)`, id); err != nil {
+		t.Fatalf("seed discovered_assets: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO asset_price_snapshot
+		(asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct, computed_at) VALUES
+		($1, 0.5, -0.125, 12345678901.5, 999999999.994, now())`, id); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+	rows, err := store.ContractCatalogueRows(ctx, []string{id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLargeChangePcts(t, "contract catalogue", rows[id])
+
+	// The /v1/assets listing renders the same snapshot columns through its own SQL; a contract joins its spine once it has volume.
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO asset_volume_24h (asset_id, vol_usd, computed_at) VALUES ($1, 10, now())`, id); err != nil {
+		t.Fatalf("seed asset_volume_24h: %v", err)
+	}
+	listed, err := store.ListAssets(ctx, 100, "", "")
+	if err != nil {
+		t.Fatalf("ListAssets: %v", err)
+	}
+	i := slices.IndexFunc(listed, func(r timescale.AssetRow) bool { return r.AssetID == id })
+	if i < 0 {
+		t.Fatalf("ListAssets: %s not listed among %d rows", id, len(listed))
+	}
+	assertLargeChangePcts(t, "listing", listed[i])
+}
+
+func assertLargeChangePcts(t *testing.T, site string, r timescale.AssetRow) {
+	t.Helper()
+	for name, c := range map[string]struct {
+		got  *string
+		want string
+	}{"1h": {r.Change1hPct, "-0.13"}, "24h": {r.Change24hPct, "12345678901.50"}, "7d": {r.Change7dPct, "999999999.99"}} {
+		if c.got == nil {
+			t.Errorf("%s: change_%s_pct = nil, want %s", site, name, c.want)
+		} else if *c.got != c.want {
+			t.Errorf("%s: change_%s_pct = %q, want %s", site, name, *c.got, c.want)
+		}
 	}
 }
 

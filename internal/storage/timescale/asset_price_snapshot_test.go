@@ -285,14 +285,9 @@ func TestAssetPriceSnapshot_MoneyStaysNumeric(t *testing.T) {
 			"string has to be byte-identical to the pre-rollup form")
 	}
 	for _, col := range []string{"change_1h_pct", "change_24h_pct", "change_7d_pct"} {
-		want := "to_char(aps." + col
-		if !strings.Contains(listAssetsBaseSelect, want) {
-			t.Errorf("listing must render %s via to_char on the stored NUMERIC ratio", col)
+		if !strings.Contains(listAssetsBaseSelect, changePctText("aps."+col)) {
+			t.Errorf("listing must render %s via changePctText on the stored NUMERIC ratio", col)
 		}
-	}
-	if got := strings.Count(listAssetsBaseSelect, "'FM999999990.00'"); got != 3 {
-		t.Errorf("listing uses the change format string %d times, want 3 (1h/24h/7d) — "+
-			"a changed format changes the wire value", got)
 	}
 
 	// And the one derivation the tier, the ORDER BY and the keyset WHERE

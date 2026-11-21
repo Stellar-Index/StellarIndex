@@ -467,6 +467,41 @@ func boundValue(t *testing.T, arg any) any {
 	return got
 }
 
+func TestCheckListingPrune_BoundsRebinds(t *testing.T) {
+	if err := checkListingPrune(DefaultListingChurnLimit, 50, 0, 50); !errors.Is(err, ErrDirectoryChurnExceeded) {
+		t.Errorf("50 of 50 re-bound: err = %v, want exceeded", err)
+	}
+	if err := checkListingPrune(DefaultListingChurnLimit, 50, 0, 10); err != nil {
+		t.Errorf("10 of 50 re-bound is at the 20%% ceiling: %v", err)
+	}
+	if err := checkListingPrune(DirectoryChurnUnbounded, 50, 0, 50); err != nil {
+		t.Errorf("operator opt-in: %v", err)
+	}
+	held := map[string]string{"A": "x", "B": "y"}
+	if n := countListingRebinds(held, []ListingEntry{{Address: "A", ListingID: "x"}, {Address: "B", ListingID: "z"}, {Address: "C", ListingID: "w"}}, nil); n != 1 {
+		t.Errorf("rebinds = %d, want 1 (only B moved; C is new)", n)
+	}
+}
+
+// Prunes and re-binds both move prices off coin ids, so they share one ceiling: 10 + 10 of 50 is twice the 20% allowance.
+func TestCheckListingPrune_PruneAndRebindShareOneCeiling(t *testing.T) {
+	if err := checkListingPrune(DefaultListingChurnLimit, 50, 10, 10); !errors.Is(err, ErrDirectoryChurnExceeded) {
+		t.Errorf("prune 10 + re-bind 10 of 50: err = %v, want exceeded", err)
+	}
+	if err := checkListingPrune(DefaultListingChurnLimit, 50, 5, 5); err != nil {
+		t.Errorf("prune 5 + re-bind 5 of 50 is at the ceiling: %v", err)
+	}
+}
+
+// A contested address is kept unpriced whichever id it lands on, so it moves no price and is not a re-bind.
+func TestCountListingRebinds_SkipsContestedAddresses(t *testing.T) {
+	held := map[string]string{"A": "y", "B": "y"}
+	entries := []ListingEntry{{Address: "A", ListingID: "x"}, {Address: "B", ListingID: "z"}}
+	if n := countListingRebinds(held, entries, []string{"A"}); n != 1 {
+		t.Errorf("rebinds = %d, want 1 (A is contested; only B moved)", n)
+	}
+}
+
 // TestCheckListingPrune: a listing sync may prune at most the listing ceiling of the rows it held, sized for a ~50-row table.
 func TestCheckListingPrune(t *testing.T) {
 	cases := []struct {
@@ -485,7 +520,7 @@ func TestCheckListingPrune(t *testing.T) {
 		{"operator opt-in", DirectoryChurnUnbounded, 50, 49, false},
 	}
 	for _, tc := range cases {
-		err := checkListingPrune(tc.limit, tc.held, tc.pruned)
+		err := checkListingPrune(tc.limit, tc.held, tc.pruned, 0)
 		if got := errors.Is(err, ErrDirectoryChurnExceeded); got != tc.wantExceeded {
 			t.Errorf("%s: err = %v, want exceeded=%v", tc.name, err, tc.wantExceeded)
 		}

@@ -239,6 +239,8 @@ systemctl list-timers <unit>.timer            # is the timer even enabled?
 | `cap67-movements` | classic movement rows | supply divergence |
 | `asset-registry-backfill` | `classic_assets` + `issuers` | held-but-never-traded assets absent from `/v1/assets`; a run that stopped early printed `RESUME:` and is not a failure |
 
+`listing-sync` failing with `snapshot exceeds the churn ceiling` refused a catalogue that prunes plus re-binds to another coin id more `asset_listing_directory` addresses than 20% of its rows (floor 5) and wrote nothing; compare the logged counts with upstream, and only for a confirmed upstream change run `stellarindex-ops listing-sync -config <path> -accept-churn -write` once.
+
 Fix: fix the cause, then `systemctl start <unit>`; do not just `reset-failed`. Confirm it wrote something (row count / `max(synced_at)` moved). Add an exclusion only for a unit with a better dedicated alert, in `scripts/ci/unit-failed-dedicated.baseline` naming the owning alert.
 
 ## stellarindex_textfile_scrape_error
