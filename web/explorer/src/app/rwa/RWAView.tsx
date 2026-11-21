@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -348,6 +349,67 @@ function Availability({
  */
 function usd(value: string | null | undefined): string | null {
   return formatReadable(value, true);
+}
+
+/** The floor marker: a glyph for the eye and words for a screen reader. */
+function FloorMark() {
+  return (
+    <>
+      <span className="text-ink-muted" aria-hidden="true">
+        ≥{' '}
+      </span>
+      <span className="sr-only">at least </span>
+    </>
+  );
+}
+
+/** How many contributing rows scaled `figure` from a supply that is only a floor. */
+function floorSupplies(
+  assets: RWAAsset[],
+  figure: (a: RWAAsset) => string | null | undefined,
+): number {
+  return assets.filter(
+    (a) => a.circulating_supply_lower_bound && figure(a) != null,
+  ).length;
+}
+
+/**
+ * Why a served lower bound is one, for every cause the server ORs into the
+ * flag; a "≥" with no stated reason reads as an exact total.
+ */
+function FloorReasons({
+  unvalued,
+  truncated,
+  floors,
+  unvaluedProse,
+}: {
+  unvalued: number;
+  truncated: boolean;
+  floors: number;
+  unvaluedProse: ReactNode;
+}) {
+  return (
+    <>
+      {unvalued > 0 && unvaluedProse}
+      {truncated && (
+        <>
+          {' '}
+          The set itself may be missing members: a rebuild cap or an unanswered
+          read bound it, as the basis below names.
+        </>
+      )}
+      {floors > 0 && (
+        <>
+          {' '}
+          {floors} contributing asset{floors === 1 ? '’s' : 's’'} circulating
+          supply is only a floor — {SUPPLY_FLOOR_HINT}
+        </>
+      )}
+      {unvalued === 0 && !truncated && floors === 0 && (
+        <> The server marks this figure a lower bound.</>
+      )}
+    </>
+  );
 }
 
 /**
@@ -1248,9 +1310,11 @@ function BasisDisclosure({ label, text }: { label: string; text: string }) {
  */
 function ReferenceHeadline({
   summary,
+  assets,
   referenceTotal,
 }: {
   summary: Schemas['RWASummary'];
+  assets: RWAAsset[];
   referenceTotal: string | null;
 }) {
   const reference = summary.reference_valuation;
@@ -1268,11 +1332,7 @@ function ReferenceHeadline({
           </span>
         ) : (
           <>
-            {reference?.lower_bound && (
-              <span className="text-ink-muted" aria-hidden>
-                ≥{' '}
-              </span>
-            )}
+            {reference?.lower_bound && <FloorMark />}
             {referenceTotal}
           </>
         )}
@@ -1285,17 +1345,31 @@ function ReferenceHeadline({
       {/* The floor, stated rather than implied by the "≥". A reader who
           reads past the glyph still has to be told the total is short
           of the sector, and by how many assets. */}
-      {reference?.lower_bound && unvalued > 0 && (
+      {referenceTotal != null && reference?.lower_bound && (
         <details className="text-ink-muted mt-2 text-xs">
           <summary className="cursor-pointer">
-            <strong className="text-ink">A floor, not a total.</strong>{' '}
-            {unvalued} unvalued
-          </summary>{' '}
-          of {summary.assets} asset{summary.assets === 1 ? '' : 's'} in the set
-          carr{unvalued === 1 ? 'ies' : 'y'} no reference valuation — no bound
-          and current oracle feed, or no circulating-supply reading — and
-          contribute{unvalued === 1 ? 's' : ''} nothing to this figure. The
-          sector is worth at least this much, not exactly this much.
+            <strong className="text-ink">A floor, not a total.</strong>
+            {unvalued > 0 && <> {unvalued} unvalued</>}
+          </summary>
+          <FloorReasons
+            unvalued={unvalued}
+            truncated={summary.truncated === true}
+            floors={floorSupplies(
+              assets,
+              (a) => a.reference_valuation.value_usd,
+            )}
+            unvaluedProse={
+              <>
+                {' '}
+                {unvalued} of {summary.assets} asset
+                {summary.assets === 1 ? '' : 's'} in the set carr
+                {unvalued === 1 ? 'ies' : 'y'} no reference valuation — no bound
+                and current oracle feed, or no circulating-supply reading — and
+                contribute{unvalued === 1 ? 's' : ''} nothing to this figure.
+              </>
+            }
+          />{' '}
+          The sector is worth at least this much, not exactly this much.
         </details>
       )}
       {lead && (
@@ -1316,9 +1390,11 @@ function ReferenceHeadline({
  */
 function MarketCapHeadline({
   summary,
+  assets,
   total,
 }: {
   summary: Schemas['RWASummary'];
+  assets: RWAAsset[];
   total: string | null;
 }) {
   const { lead, rest } = splitBasis(summary.basis);
@@ -1332,11 +1408,7 @@ function MarketCapHeadline({
             <span className="text-ink-muted">Not published</span>
           ) : (
             <>
-              {summary.lower_bound && (
-                <span className="text-ink-muted" aria-hidden>
-                  ≥{' '}
-                </span>
-              )}
+              {summary.lower_bound && <FloorMark />}
               {total}
             </>
           )
@@ -1347,17 +1419,30 @@ function MarketCapHeadline({
             : `${summary.assets_valued} of ${summary.assets} valued at traded prices`
         }
       />
-      {summary.lower_bound && summary.assets_unvalued > 0 && (
+      {total != null && summary.lower_bound && (
         <details className="text-ink-muted mt-2 text-xs">
           <summary className="cursor-pointer">
-            <strong className="text-ink">Also a floor.</strong>{' '}
-            {summary.assets_unvalued} unvalued
-          </summary>{' '}
-          {summary.assets_unvalued} asset
-          {summary.assets_unvalued === 1 ? '' : 's'} publish
-          {summary.assets_unvalued === 1 ? 'es' : ''} no market valuation and
-          contribute{summary.assets_unvalued === 1 ? 's' : ''} nothing here —
-          mostly because a tokenized instrument is bought and held, not traded.
+            <strong className="text-ink">Also a floor.</strong>
+            {summary.assets_unvalued > 0 && (
+              <> {summary.assets_unvalued} unvalued</>
+            )}
+          </summary>
+          <FloorReasons
+            unvalued={summary.assets_unvalued}
+            truncated={summary.truncated === true}
+            floors={floorSupplies(assets, (a) => a.valuation.market_cap_usd)}
+            unvaluedProse={
+              <>
+                {' '}
+                {summary.assets_unvalued} asset
+                {summary.assets_unvalued === 1 ? '' : 's'} publish
+                {summary.assets_unvalued === 1 ? 'es' : ''} no market valuation
+                and contribute{summary.assets_unvalued === 1 ? 's' : ''} nothing
+                here — mostly because a tokenized instrument is bought and held,
+                not traded.
+              </>
+            }
+          />
         </details>
       )}
       {lead && (
@@ -1467,11 +1552,7 @@ function SectorTotals({
                 </span>
               ) : (
                 <>
-                  {(stable.unvalued > 0 || stable.floor) && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
+                  {(stable.unvalued > 0 || stable.floor) && <FloorMark />}
                   {usd(stableTotal)}
                 </>
               )
@@ -1518,11 +1599,7 @@ function SectorTotals({
                 <span className="text-ink-muted">Not published</span>
               ) : (
                 <>
-                  {combinedFloor && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
+                  {combinedFloor && <FloorMark />}
                   {usd(combined)}
                 </>
               )
@@ -1589,8 +1666,12 @@ function HeadlineStats({
       {/* The two bases, in the order a reader should meet them, and
           never added together. */}
       <div className="rounded-card border-line bg-line grid grid-cols-1 gap-px overflow-hidden border lg:grid-cols-3">
-        <ReferenceHeadline summary={summary} referenceTotal={referenceTotal} />
-        <MarketCapHeadline summary={summary} total={total} />
+        <ReferenceHeadline
+          summary={summary}
+          assets={assets}
+          referenceTotal={referenceTotal}
+        />
+        <MarketCapHeadline summary={summary} assets={assets} total={total} />
       </div>
       <StatGrid cols={3}>
         <StatCell>
@@ -1639,9 +1720,12 @@ function HeadlineStats({
           <>
             <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
             carry both figures and a published premium:{' '}
+            {both.lower_bound && <FloorMark />}
             {usd(both.reference_value_usd)} at the reference against{' '}
+            {both.lower_bound && <FloorMark />}
             {usd(both.market_cap_usd)} at traded prices. That gap, per asset, is
             the premium or discount column below.{' '}
+            {both.lower_bound && <>Both are floors: {SUPPLY_FLOOR_HINT} </>}
           </>
         )}
         {summary.assets_with_reference > 0 && (

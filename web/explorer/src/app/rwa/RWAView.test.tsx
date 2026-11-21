@@ -151,7 +151,12 @@ function view(over: Partial<View> = {}): View {
         basis:
           'Sum of circulating supply times an independent oracle valuation of the instrument.',
       },
-      both_bases: { assets: 1, market_cap_usd: CAP, reference_value_usd: REF },
+      both_bases: {
+        assets: 1,
+        market_cap_usd: CAP,
+        reference_value_usd: REF,
+        lower_bound: false,
+      },
       basis:
         'Sum of the published market caps of the assets meeting the four-requirement definition.',
     },
@@ -187,7 +192,7 @@ function partlyValued(
             assets_compared: 0,
             reference_valuation: NO_REFERENCE,
           }),
-      both_bases: { assets: 0 },
+      both_bases: { assets: 0, lower_bound: false },
     },
     ...rollups(market, reference),
   });
@@ -544,7 +549,7 @@ describe('RWAView', () => {
             lower_bound: false,
             basis,
           },
-          both_bases: { assets: 0 },
+          both_bases: { assets: 0, lower_bound: false },
           basis,
         },
         by_class: [],
@@ -1564,5 +1569,57 @@ describe('RWA row identity, reference caption and CSV floor', () => {
     expect(await screen.findByText(/^\$9[\d.,]*[KMBTQ]$/)).toBeInTheDocument();
     absent(/^≥ \$9/);
     expect(rwaCsvRow(asset(big)).volume_24h_usd).toBe('9007199254740993.01');
+  });
+});
+
+describe('a lower bound is stated, never implied', () => {
+  // Every member valued on both bases, but its supply read is only a floor:
+  // the server flags every total a lower bound with nothing unvalued.
+  const floored = () =>
+    view({
+      assets: [asset({ circulating_supply_lower_bound: true })],
+      summary: {
+        ...view().summary,
+        lower_bound: true,
+        reference_valuation: {
+          ...view().summary.reference_valuation!,
+          lower_bound: true,
+        },
+        both_bases: {
+          assets: 1,
+          market_cap_usd: CAP,
+          reference_value_usd: REF,
+          lower_bound: true,
+        },
+      },
+    });
+
+  it('names a floor supply as the reason when nothing is unvalued', async () => {
+    show(floored());
+    await screen.findAllByText('$1.28M');
+    present(/A floor, not a total\./, /Also a floor\./);
+    atLeast(/1 contributing asset’s circulating supply is only a floor/, 2);
+  });
+
+  it('gives every floor glyph words a screen reader speaks', async () => {
+    show(floored());
+    await screen.findAllByText('$1.28M');
+    // Value of the backing, market cap, Combined, and both both-bases figures.
+    atLeast('at least', 5);
+  });
+
+  it('marks the both-bases totals as floors when the server does', async () => {
+    show(floored());
+    const where = (await screen.findByText('Where both exist.')).parentElement!;
+    expect(where.textContent).toMatch(
+      /published premium: ≥ at least \$1\.32M at the reference against ≥ at least \$1\.28M/,
+    );
+    expect(where.textContent).toMatch(/Both are floors: At least/);
+  });
+
+  it('prints exact both-bases totals when no summed supply is a floor', async () => {
+    show(view());
+    const where = (await screen.findByText('Where both exist.')).parentElement!;
+    expect(where.textContent).not.toMatch(/≥|at least|Both are floors/);
   });
 });
