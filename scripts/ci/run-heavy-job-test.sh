@@ -664,7 +664,9 @@ for want in \
   "f /run/lock/stellarindex-heavy.lock 0640 root stellarindex -" \
   "f /run/lock/stellarindex-heavy-scheduled.lock 0640 root stellarindex -" \
   "d /run/lock/stellarindex-heavy-scheduled.lock.queue 1770 root stellarindex -" \
-  "d /run/lock/stellarindex 3770 root stellarindex -"; do
+  "d /run/lock/stellarindex 3770 root stellarindex -" \
+  "f /run/lock/stellarindex/galexie-archive-fill.lock 0600 root root -" \
+  "f /run/lock/stellarindex/restore-drill.lock 0600 root root -"; do
   if grep -qxF -- "$want" "$TMP/tmpfiles.conf"; then ok "tmpfiles.d: $want"; else bad "tmpfiles.d entry missing or changed: $want"; fi
 done
 # shellcheck disable=SC2016 # the wrapper's literal source text, not an expansion

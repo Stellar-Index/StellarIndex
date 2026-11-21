@@ -85,9 +85,10 @@ WAL_DRAIN_STALL_TIMEOUT="${WAL_DRAIN_STALL_TIMEOUT:-1800}"
 # RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.
 LOG_DIR="${RESTORE_DRILL_LOG_DIR:-/var/lib/stellarindex/restore-drills}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
-# Held for the life of the run (one-drill-at-a-time precondition). Under /run,
-# which PrivateTmp does not shadow and ProtectSystem=full leaves writable; NOT
-# under DRILL_ROOT, so a refusal leaves the drill volume as it found it.
+# Held for the life of the run (one-drill-at-a-time precondition). In
+# /run/lock/stellarindex, which only root and group stellarindex can enter and
+# PrivateTmp does not shadow; NOT under DRILL_ROOT, so a refusal leaves the
+# drill volume as it found it.
 DRILL_LOCK="${DRILL_LOCK:-/run/lock/stellarindex/restore-drill.lock}"
 # The nightly backup's unit, and how long to wait for it. A drill that starts
 # while it is still writing restores the PREVIOUS night's backup and must then

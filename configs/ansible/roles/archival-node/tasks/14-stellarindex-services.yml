@@ -446,7 +446,9 @@
   # read open, so any uid that can open the lock can hold it and starve
   # every scheduled job. Only root and stellarindex units run the wrapper.
   # Per-job locks go in /run/lock/stellarindex, which no other uid can
-  # enter; setgid so a lock root creates is still group stellarindex.
+  # enter; setgid so a lock root creates is still group stellarindex. The
+  # root-run fill and drill locks are laid down at boot so no group member
+  # can plant them before root's first run.
   ansible.builtin.copy:
     dest: /etc/tmpfiles.d/stellarindex-heavy-job.conf
     owner: root
@@ -457,6 +459,8 @@
       f /run/lock/stellarindex-heavy-scheduled.lock 0640 root stellarindex -
       d /run/lock/stellarindex-heavy-scheduled.lock.queue 1770 root stellarindex -
       d /run/lock/stellarindex 3770 root stellarindex -
+      f /run/lock/stellarindex/galexie-archive-fill.lock 0600 root root -
+      f /run/lock/stellarindex/restore-drill.lock 0600 root root -
   tags: [heavy-job-wrapper]
 
 - name: create the heavy-job host-wide lock file now
