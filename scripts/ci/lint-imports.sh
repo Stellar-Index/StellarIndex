@@ -65,8 +65,7 @@ RULES = [
             "internal/ops/ingest/detect_gaps.go",
             "internal/ops/ingest/seed_soroswap_pairs.go",  # insert-only bootstrap; never rewrites a registered pair
             "scripts/dev/",                     # fixture-capture
-            "/decode.go",                       # source decode.go — uses Event type only
-            "/factory_seed.go",                 # cold-start factory state via simulateTransaction (PR 14) — not a runtime decoder
+            "internal/sources/soroswap/factory_seed.go",  # cold-start factory state via simulateTransaction — not a runtime decoder
             "_test.go",                         # tests
         ],
         "why": (
@@ -228,7 +227,7 @@ LAYERING_RULES = [
 
 # ─── Walker ──────────────────────────────────────────────────────
 
-IMPORT_RE = re.compile(r'^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*\s+)?"([^"]+)"')
+IMPORT_RE = re.compile(r'^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*\s+|\.\s+)?"([^"]+)"')
 
 
 def file_allowed(rule, rel_path):
