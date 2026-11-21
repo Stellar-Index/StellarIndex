@@ -315,7 +315,8 @@ export function formatPremiumPct(pct: number): string {
   if (abs === 0) return '0.00';
   if (abs >= 0.01) return pct.toFixed(2);
   if (abs >= 0.001) return pct.toFixed(3);
-  return pct.toFixed(4);
+  if (abs >= 0.0001) return pct.toFixed(4);
+  return `${pct < 0 ? '-' : ''}<0.0001`;
 }
 
 // Relative "time ago" label for an ISO timestamp. Returns '—' for a
