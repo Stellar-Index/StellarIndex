@@ -194,6 +194,7 @@ func TestWriter_LapsedDurableHoldIsNotResurrected(t *testing.T) {
 	asset, quote := nativeUSD(t)
 
 	stale := escalatedState(time.Now().UTC())
+	stale.Escalated = false
 	stale.HoldUntil = time.Now().UTC().Add(-7 * 24 * time.Hour) // a week past its hold
 	if err := ladder.SaveLadder(context.Background(), asset, quote, stale); err != nil {
 		t.Fatalf("SaveLadder: %v", err)
@@ -206,12 +207,55 @@ func TestWriter_LapsedDurableHoldIsNotResurrected(t *testing.T) {
 	// ...and the boundary case: a hold that expired only just now is still
 	// inside the grace, so a flush during the tail of a hold is covered.
 	fresh := escalatedState(time.Now().UTC())
+	fresh.Escalated = false
 	fresh.HoldUntil = time.Now().UTC().Add(-10 * time.Second)
 	if err := ladder.SaveLadder(context.Background(), asset, quote, fresh); err != nil {
 		t.Fatalf("SaveLadder: %v", err)
 	}
 	if _, present, err := w.LoadState(context.Background(), asset, quote); err != nil || !present {
 		t.Fatalf("LoadState 10s past a hold with a 1m grace = (present=%v, err=%v), want (true, nil)", present, err)
+	}
+}
+
+// TestWriter_EscalatedDurableHoldOutlivesAnOwnerOutage: an escalated ladder whose hold lapsed while the
+// aggregator was down still reads PRESENT on both the pair and the window path; only an operator ends it.
+func TestWriter_EscalatedDurableHoldOutlivesAnOwnerOutage(t *testing.T) {
+	ctx := context.Background()
+	asset, quote := nativeUSD(t)
+	lapsed := escalatedState(time.Now().UTC())
+	lapsed.HoldUntil = time.Now().UTC().Add(-36 * time.Minute) // past hold + the default 5m grace
+
+	_, rdb := newRedis(t)
+	ladder := newFakeLadderStore()
+	w, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(ladder, freeze.DefaultLadderGrace))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := ladder.SaveLadder(ctx, asset, quote, lapsed); err != nil {
+		t.Fatalf("SaveLadder: %v", err)
+	}
+	st, present, err := w.LoadState(ctx, asset, quote)
+	if err != nil || !present || !st.Escalated {
+		t.Fatalf("LoadState on an escalated hold lapsed by an outage = (%+v, present=%v, err=%v), want escalated and present", st, present, err)
+	}
+
+	ladder.close(asset, quote)
+	if _, present, err := w.LoadState(ctx, asset, quote); err != nil || present {
+		t.Fatalf("LoadState after freeze-unfreeze closed the row = (present=%v, err=%v), want (false, nil)", present, err)
+	}
+
+	_, wrdb := newRedis(t)
+	windowed := newWindowedFakeLadderStore()
+	ww, err := freeze.NewWriter(wrdb, 0, freeze.WithLadderStore(windowed, freeze.DefaultLadderGrace))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := windowed.SaveWindowLadder(ctx, asset, quote, time.Hour, lapsed); err != nil {
+		t.Fatalf("SaveWindowLadder: %v", err)
+	}
+	st, present, err = ww.LoadStateForWindow(ctx, asset, quote, time.Hour)
+	if err != nil || !present || !st.Escalated {
+		t.Fatalf("LoadStateForWindow on an escalated hold lapsed by an outage = (%+v, present=%v, err=%v), want escalated and present", st, present, err)
 	}
 }
 

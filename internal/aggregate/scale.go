@@ -8,8 +8,18 @@ import (
 
 // ScaledWindow is a trade window with all amounts at one smallest-unit scale; [NormalizeAmountScale] is its only constructor and [VWAP] accepts nothing else.
 type ScaledWindow struct {
-	trades   []canonical.Trade
-	decimals int
+	trades    []canonical.Trade
+	decimals  int
+	truncated bool
+}
+
+// Truncated reports that a read behind the window hit its row cap, so trades in the requested range were left unread.
+func (w ScaledWindow) Truncated() bool { return w.truncated }
+
+// WithTruncated returns w carrying the given row-cap signal; the reader that applied the cap is the only one that can know it.
+func (w ScaledWindow) WithTruncated(truncated bool) ScaledWindow {
+	w.truncated = truncated
+	return w
 }
 
 // Trades returns the lifted trades; never pass them back to [NormalizeAmountScale], which keys off Source and would lift them again.
@@ -23,7 +33,7 @@ func (w ScaledWindow) Len() int { return len(w.trades) }
 
 // FilterOutliers applies [FilterOutliers] and keeps the window's scale, since dropping trades does not un-lift survivors.
 func (w ScaledWindow) FilterOutliers(sigma float64) ScaledWindow {
-	return ScaledWindow{trades: FilterOutliers(w.trades, sigma), decimals: w.decimals}
+	return ScaledWindow{trades: FilterOutliers(w.trades, sigma), decimals: w.decimals, truncated: w.truncated}
 }
 
 // NormalizeAmountScale lifts every trade's amounts to the LARGEST per-source scale by exact integer multiply (ADR-0003) so VWAP weights reflect real volume; input is never mutated and decimalsFor resolves scale from Source.

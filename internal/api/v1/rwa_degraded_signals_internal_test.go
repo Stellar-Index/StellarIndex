@@ -216,7 +216,7 @@ func TestRWACuratedTally_PartialSumIsALowerBound(t *testing.T) {
 		{"only a verified row is unvalued", []RWAAsset{row(true, false, false), row(false, false, true)}, false},
 	}
 	for _, c := range cases {
-		if _, _, partial := rwaCuratedTally(c.rows, &RWACuratedSummary{}); partial != c.want {
+		if _, _, _, partial := rwaCuratedTally(c.rows, &RWACuratedSummary{}); partial != c.want {
 			t.Errorf("%s: partial = %v, want %v", c.name, partial, c.want)
 		}
 	}

@@ -36,3 +36,23 @@ func TestChartClosedReadFrom_EveryTimeframeAddressesAClosedBucket(t *testing.T) 
 		}
 	}
 }
+
+// The calendar-month grain has no fixed width, yet a window shorter than a month (timeframe=1mo on a 31-day month, 1w, 24h, 1h)
+// must still read back to the last closed month, or `granularity=1mo` serves no points.
+func TestChartClosedReadFrom_MonthGrainAddressesTheLastClosedMonth(t *testing.T) {
+	now := time.Date(2026, 7, 16, 9, 30, 0, 0, time.UTC)
+	lastClosed := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	for tf, spec := range chartTimeframes {
+		if spec.Duration == 0 {
+			continue
+		}
+		from := now.Add(-spec.Duration)
+		readFrom := chartClosedReadFrom(now, from, "1mo")
+		if lastClosed.Before(readFrom) {
+			t.Errorf("timeframe=%s: read from %s misses the last closed month %s", tf, readFrom, lastClosed)
+		}
+		if readFrom.After(from) {
+			t.Errorf("timeframe=%s: read from %s is later than the window start %s", tf, readFrom, from)
+		}
+	}
+}

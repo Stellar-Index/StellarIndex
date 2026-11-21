@@ -99,7 +99,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	const maxTrades = 10000
-	window, triangulated, ok := s.fetchVWAPTrades(ctx, w, r, pair, from, to, maxTrades)
+	window, books, triangulated, ok := s.fetchVWAPTrades(ctx, w, r, pair, from, to, maxTrades)
 	if !ok {
 		return
 	}
@@ -131,7 +131,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 
 	// No cross-reference verdict: the worker's verdict covers the aggregator's shortest-window VWAP,
 	// not this caller-chosen [from, to) (same as /v1/price/at).
-	substance := s.thinMarketEvidence(ctx, base, quote, "vwap")
+	substance := s.thinMarketEvidence(ctx, base, quote, books, "vwap")
 	writeJSON(w, VWAPResult{
 		From:                WireTime(from),
 		To:                  WireTime(to),
@@ -142,9 +142,9 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		QuoteVolumeDecimals: wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, quote, volumeDecimals, sources)),
 		TradeCount:          len(trades),
 		OutliersFiltered:    outliersFiltered,
-		Truncated:           pre == maxTrades,
+		Truncated:           window.Truncated(),
 		Clamped:             clamped,
-		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, pre == maxTrades),
+		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, window.Truncated()),
 		Substance:           substance,
 	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
 }
@@ -174,19 +174,28 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 			" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
 }
 
-// thinMarketEvidence is the live substance measurement behind flags.thin_market on /v1/vwap, /v1/twap and /v1/ohlc, or nil when the pair clears the
-// floor.
+// thinMarketEvidence is the live substance measurement behind flags.thin_market on /v1/vwap, /v1/twap and /v1/ohlc, or nil when the
+// answer clears the floor or none of its books could be measured (as for an unmeasurable single pair).
 // These raw-trade surfaces admit a thin market (ADR-0018) rather than withhold it; the scam half already ran, hence the nil scam gate.
-func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
+// `books` are the markets whose rows the answer holds (a fiat quote's contributing constituents; empty means the literal pair). Any
+// measured thin book makes the answer thin: its rows move the combined price whatever a deep neighbour reads. An unmeasured book is
+// skipped, never counted as clearing.
+func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, books []canonical.Pair, surface string) *SubstanceEvidence {
 	if s.Substance == nil {
 		return nil
 	}
-	admCtx, adm := WithThinAdmission(ctx, base, quote, true)
-	withheldBy(admCtx, s.Substance, nil, base, quote, surface)
-	if !adm.Admitted() {
-		return nil
+	if len(books) == 0 {
+		books = []canonical.Pair{{Base: base, Quote: quote}}
 	}
-	return substanceEvidenceWire(adm.Evidence())
+	for _, m := range books {
+		// Admission is requested, so a measured thin book is admitted; a clearing or unmeasured one is not.
+		admCtx, adm := WithThinAdmission(ctx, m.Base, m.Quote, true)
+		withheldBy(admCtx, s.Substance, nil, m.Base, m.Quote, surface)
+		if adm.Admitted() {
+			return substanceEvidenceWire(adm.Evidence())
+		}
+	}
+	return nil
 }
 
 // parseVWAPParams parses ?outlier_sigma= then ?breakdown= / ?interval=.
@@ -224,19 +233,19 @@ func parseVWAPOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 func (s *Server) fetchVWAPTrades(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time, maxTrades int,
-) (aggregate.ScaledWindow, bool, bool) {
-	window, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
+) (aggregate.ScaledWindow, []canonical.Pair, bool, bool) {
+	window, books, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
 	if err == nil {
-		return window, triangulated, true
+		return window, books, triangulated, true
 	}
 	if clientAborted(r, err) {
-		return aggregate.ScaledWindow{}, false, false
+		return aggregate.ScaledWindow{}, nil, false, false
 	}
 	if IsCacheUnavailable(err) {
 		s.logger.Warn("TradesInRange cache unavailable for VWAP",
 			"err", err, "base", pair.Base.String(), "quote", pair.Quote.String())
 		writeCacheUnavailableProblem(w, r)
-		return aggregate.ScaledWindow{}, false, false
+		return aggregate.ScaledWindow{}, nil, false, false
 	}
 	s.logger.Error("TradesInRange failed for VWAP",
 		"err", err, "base", pair.Base.String(), "quote", pair.Quote.String(),
@@ -244,7 +253,7 @@ func (s *Server) fetchVWAPTrades(
 	writeProblemErr(w, r, err,
 		"https://api.stellarindex.io/errors/internal",
 		"Internal error", http.StatusInternalServerError, "")
-	return aggregate.ScaledWindow{}, false, false
+	return aggregate.ScaledWindow{}, nil, false, false
 }
 
 // tradeScanCostSpan is one `trades` chunk. A raw-trade window probes every chunk it spans, on up to nine alias pairs, so it is
@@ -265,10 +274,11 @@ func tradeScanCost(from, to time.Time) int {
 // by close time and lifted to one amount scale.
 // A fiat quote COMBINES every [Server.usdPeggedConstituents] as the series path does (the first non-empty peg would answer differently
 // for a point than a series);
-// a non-fiat quote takes the FIRST alias form with trades, as [Server.ohlcSeriesWithAliases] does.
+// a non-fiat quote takes the FIRST alias form with trades, as [Server.ohlcSeriesWithAliases] does. The books are the fiat constituents
+// that contributed rows, nil off the fiat path (the literal pair, measured over its alias union).
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
-) (aggregate.ScaledWindow, bool, error) {
+) (aggregate.ScaledWindow, []canonical.Pair, bool, error) {
 	if pair.Quote.Type == canonical.AssetFiat {
 		return s.fiatCombinedTrades(ctx, pair, from, to, maxTrades)
 	}
@@ -283,12 +293,12 @@ func (s *Server) tradesInRangeWithStablecoinFallback(
 			}
 			trades, err := s.History.TradesInRange(ctx, ap, from, to, maxTrades)
 			if err != nil {
-				return aggregate.ScaledWindow{}, false, err
+				return aggregate.ScaledWindow{}, nil, false, err
 			}
 			if len(trades) > 0 {
-				return aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor), false, nil
+				return aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor).WithTruncated(hitTradeCap(trades, maxTrades)), nil, false, nil
 			}
 		}
 	}
-	return aggregate.ScaledWindow{}, false, nil
+	return aggregate.ScaledWindow{}, nil, false, nil
 }

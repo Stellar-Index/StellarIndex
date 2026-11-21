@@ -731,16 +731,13 @@ func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
 // ok=false: no reader, or the FIRST-EVER build failed (absence means degradation); stale: older than bespokeStaleAfter, surfaced as
 // analytics.status "stale".
 func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) (ok, stale bool, builtAt time.Time) {
-	blk, stale, ok := s.cachedBespoke(ctx, meta.Name, meta.Category, windowDays)
+	e, stale, ok := s.cachedBespokeEntry(ctx, meta.Name, meta.Category, windowDays)
 	if !ok {
 		return false, false, time.Time{}
 	}
-	view.Bespoke = bespokeFromStore(blk)
-	s.valueBespokeKPIs(ctx, blk, view.Bespoke)
-	if e, has := s.protocolBespokeCache.get(protocolBespokeCacheKey(meta.Name, meta.Category, windowDays)); has {
-		builtAt = e.at
-	}
-	return true, stale, builtAt
+	view.Bespoke = bespokeFromStore(e.blk)
+	s.valueBespokeKPIs(ctx, e.blk, view.Bespoke)
+	return true, stale, e.at
 }
 
 // classifyContractKinds tags each roster contract "factory" (a verified trust-root) or "instance";

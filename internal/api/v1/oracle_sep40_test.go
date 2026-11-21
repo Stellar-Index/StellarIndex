@@ -931,16 +931,19 @@ const (
 )
 
 func movedUSDBucketReader() *stubPriceReader {
+	moved := v1.PriceSnapshot{AssetID: "crypto:XLM", Quote: "fiat:USD", Price: movedUSD, PriceType: "vwap", WindowSeconds: 60}
 	return &stubPriceReader{
-		snapshots: map[string]v1.PriceSnapshot{
-			xlmUSD: {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: movedUSD, PriceType: "vwap", WindowSeconds: 60},
-		},
-		sources: map[string][]string{xlmUSD: {"kraken", "coinbase"}},
+		snapshots: map[string]v1.PriceSnapshot{xlmUSD: moved},
+		recent:    map[string][]v1.PriceSnapshot{xlmUSD: {moved}},
+		sources:   map[string][]string{xlmUSD: {"kraken", "coinbase"}},
 	}
 }
 
+// pricesURL is SEP-40 prices(): the closed-bucket series must honour the freeze exactly as the single-price reads do.
+const pricesURL = "/v1/oracle/prices?asset=crypto:XLM&records=1"
+
 func TestOracleSEP40_FrozenPairServesLastKnownGood(t *testing.T) {
-	for _, path := range []string{lastPriceURL, xLastURL} {
+	for _, path := range []string{lastPriceURL, xLastURL, pricesURL} {
 		t.Run(path, func(t *testing.T) {
 			srv := v1.New(v1.Options{
 				Prices:       movedUSDBucketReader(),
@@ -969,7 +972,7 @@ func TestOracleSEP40_FrozenPairServesLastKnownGood(t *testing.T) {
 }
 
 func TestOracleSEP40_FrozenPairWithNothingHeldRefuses(t *testing.T) {
-	for _, path := range []string{lastPriceURL, xLastURL} {
+	for _, path := range []string{lastPriceURL, xLastURL, pricesURL} {
 		t.Run(path, func(t *testing.T) {
 			srv := v1.New(v1.Options{
 				Prices:       movedUSDBucketReader(),
@@ -991,7 +994,7 @@ func TestOracleSEP40_FrozenPairWithNothingHeldRefuses(t *testing.T) {
 
 // The substitution discards the bucket, so pin where it must not fire.
 func TestOracleSEP40_UnfrozenPairServesTheBucketUntouched(t *testing.T) {
-	for _, path := range []string{lastPriceURL, xLastURL} {
+	for _, path := range []string{lastPriceURL, xLastURL, pricesURL} {
 		t.Run(path, func(t *testing.T) {
 			srv := v1.New(v1.Options{
 				Prices:       movedUSDBucketReader(),

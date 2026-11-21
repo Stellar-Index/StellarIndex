@@ -325,7 +325,7 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 // (TestSourceShapeRules/rwa_contract_pipeline_matches_assets_listing). The substance gate covers
 // canonical.AssetSoroban, so a thin-market price is withheld here. It then fills:
 //  1. supply and market cap: only the precise supply map reaches a contract row;
-//     fillContractMarketCaps has the last word (drops the generic cap, and every cap on a row whose
+//     fillContractMarketCaps has the last word (drops the generic supply and cap, and every cap on a row whose
 //     scale was not read).
 //  2. scam suppression: tags are re-read at valuation time, not reused from the membership build.
 //     valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read, not
@@ -471,35 +471,57 @@ func (s *Server) fillContractMarketCaps(
 	}
 	for i := range rows {
 		row := &rows[i]
-		circ, basis, ok, unread := s.contractSupplyReadingChecked(ctx, row.AssetID)
+		circ, basis, floor, ok, unread := s.contractSupplyReadingChecked(ctx, row.AssetID)
 		if !ok && ctx.Err() != nil {
+			for j := i; j < len(rows); j++ {
+				clearContractSupply(&rows[j])
+			}
 			return true
-		}
-		if !ok {
-			cut = cut || unread
-			row.MarketCapUSD, row.MarketCapLowerBound = nil, false // no reading of this contract's own supply: a cap from another basis does not stand in
-			continue
 		}
 		_, isScaled := scaled[row.AssetID]
 		var sources int
 		if sc := src[row.AssetID].SourceCount; sc != nil {
 			sources = *sc
 		}
-		s.applyContractMarketCap(row, circ, basis, isScaled, sources)
+		if !ok {
+			cut = cut || unread
+			// A deterministic no-reading leaves the SEP-41 observer's own figure for this contract standing; its cap is re-derived
+			// under this arm's guards rather than kept from the generic fill.
+			if obsBasis, kept := observerSEP41Supply(row); kept && !unread {
+				s.applyContractMarketCap(row, *row.CirculatingSupply, obsBasis, false, isScaled, sources)
+				continue
+			}
+			clearContractSupply(row)
+			continue
+		}
+		s.applyContractMarketCap(row, circ, basis, floor, isScaled, sources)
 	}
 	return cut
 }
 
+// observerSEP41Supply reports a supply the generic fill stamped from the SEP-41 supply observer, which keys a Soroban token
+// by its contract id ([supply.AssetKey]), so the figure is this contract's and no other identity's.
+func observerSEP41Supply(row *AssetDetail) (supply.Basis, bool) {
+	if row.CirculatingSupply == nil || row.SupplyBasis == nil {
+		return "", false
+	}
+	switch b := supply.Basis(*row.SupplyBasis); b {
+	case supply.BasisSEP41TotalOnly, supply.BasisAdminExclusion, supply.BasisOverride:
+		return b, true
+	default:
+		return "", false
+	}
+}
+
 // applyContractMarketCap fills one contract row's supply/cap from a successful supply reading, encoding the refusal rules: unscaled
-// decimals, dust liquidity, scale disagreement and turnover.
+// decimals, dust liquidity, scale disagreement and turnover. floor marks a figure that is a lower bound whatever its basis.
 func (s *Server) applyContractMarketCap(
-	row *AssetDetail, circ string, basis supply.Basis, isScaled bool, sources int,
+	row *AssetDetail, circ string, basis supply.Basis, floor, isScaled bool, sources int,
 ) {
-	// This reading owns the cap: a figure the generic fill derived from a different supply must not
-	// survive a refusal below.
-	row.MarketCapUSD, row.MarketCapLowerBound = nil, false
+	clearContractSupply(row)
 	b := basis.String()
 	row.SupplyBasis = &b
+	row.supplyFloor = floor
 	// Supply is a raw chain fact and is served either way. The CAP divides by 10^decimals, and an
 	// unread scale is a convention, so multiplying by it would be off by a power of ten.
 	if !isScaled {
@@ -528,7 +550,14 @@ func (s *Server) applyContractMarketCap(
 		return
 	}
 	row.MarketCapUSD = &mc
-	row.MarketCapLowerBound = basis.LowerBound()
+	row.MarketCapLowerBound = basis.LowerBound() || floor
+}
+
+// clearContractSupply drops every supply-derived field the generic listing fill stamped: the contract reading owns the row, so a
+// figure from another basis must not survive its refusal or a cut walk.
+func clearContractSupply(row *AssetDetail) {
+	row.CirculatingSupply, row.SupplyBasis, row.supplyFloor = nil, nil, false
+	row.MarketCapUSD, row.MarketCapLowerBound, row.MarketCapLowLiquidity = nil, false, false
 }
 
 // contractPriceScaleDisagrees reports that a contract row's DEX price (normalised through nonstandard_decimals_assets, else
@@ -568,32 +597,32 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 // the preference order lives in ONE place, or two surfaces publish different bases under one field name. Readings measure
 // ISSUANCE against DISTRIBUTION and are never summed. ok=false means no defensible figure: an INCOMPLETE flow sum (negative net,
 // never clamped to zero), or no flows and no storage reading. unread means a read did not answer, which is not "no defensible
-// figure" and must not be cached as one.
+// figure" and must not be cached as one. floor means the figure is a lower bound beyond what its basis says.
 func (s *Server) contractSupplyReadingChecked(
 	ctx context.Context, assetID string,
-) (figure string, basis supply.Basis, ok, unread bool) {
+) (figure string, basis supply.Basis, floor, ok, unread bool) {
 	sup, err := s.TokenSupply.TokenSupply(ctx, assetID)
 	if err != nil {
-		return "", "", false, true
+		return "", "", false, false, true
 	}
 	if sup.Total == nil || sup.Incomplete {
-		return "", "", false, false
+		return "", "", false, false, false
 	}
 	// Held balances win for a flowless log or one whose net they exceed, by the same choice as
 	// GET /v1/assets/{id}/supply.
-	st, ok, err := s.storageReadingSupersedes(ctx, assetID, sup)
-	if ok {
-		return st.Total.String(), supply.BasisContractStorageBalances, true, false
+	st, verdict, err := s.storageReadingSupersedes(ctx, assetID, sup)
+	if verdict == storageSupersedes {
+		return st.Total.String(), supply.BasisContractStorageBalances, false, true, false
 	}
 	// A failed storage read or a spent deadline is unread, not "no figure" and not "storage agreed": a SAC declines by design.
 	if err != nil || ctx.Err() != nil {
-		return "", "", false, true
+		return "", "", false, false, true
 	}
 	if sup.FlowCount == 0 {
-		return "", "", false, false
+		return "", "", false, false, false
 	}
-	// The lake's event-flow sum over the contract's own mint/burn/clawback log.
-	return sup.Total.String(), supply.BasisSEP41LakeFlows, true, false
+	// The lake's event-flow sum; storage the reader could not sum leaves it unproven complete, so a floor, not a total.
+	return sup.Total.String(), supply.BasisSEP41LakeFlows, verdict == storageUnchecked, true, false
 }
 
 // fillContractDirectoryTags stamps the curated label from the CONTRACT address and applies scam suppression to it: the classic

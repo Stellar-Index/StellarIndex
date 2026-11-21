@@ -1040,6 +1040,53 @@ func TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling(t *testing.
 	}
 }
 
+// TestFreezeLifecycle_RestartAfterOutageKeepsLapsedEscalatedWindow: the aggregator was down longer than the 1h
+// escalated hold plus grace, so the marker expired; on restart the 5m window re-marks first and later auto-releases.
+// Neither may end the escalation: only an operator does.
+func TestFreezeLifecycle_RestartAfterOutageKeepsLapsedEscalatedWindow(t *testing.T) {
+	f := newProductionWiredFixture(t)
+	ctx := context.Background()
+	_, recovering := f.freezeBoth(f.newOrch())
+	lapsed := f.store.windows[f.long]
+	lapsed.HoldUntil = time.Now().UTC().Add(-36 * time.Minute)
+	f.store.windows[f.long] = lapsed
+	f.flushRedis()
+
+	o := f.newOrch()
+	frozen := freeze.State{FiredAt: time.Now().UTC().Add(-time.Minute), HoldUntil: time.Now().UTC().Add(9 * time.Minute)}
+	o.freezeStates[f.key(f.short)] = frozen
+	if refused := o.stepFreezeLifecycle(ctx, f.pair, f.short, f.key(f.short), freeze.Signal{Now: time.Now().UTC()},
+		coldSiblingDecision()); !refused {
+		t.Fatal("setup: an unscored tick must keep the 5m window frozen and re-mark the pair")
+	}
+	assertEscalatedHeld := func(when string) {
+		t.Helper()
+		st, overridden, err := o.loadFreezeState(ctx, f.pair, f.long, f.key(f.long))
+		if err != nil {
+			t.Fatalf("loadFreezeState(1h) %s: %v", when, err)
+		}
+		out := o.cfg.Phase2Thresholds.Lifecycle.Evaluate(st, healthySignal())
+		if overridden || !st.Escalated || !out.Frozen {
+			t.Fatalf("1h window %s: state=%+v overridden=%v Frozen=%v, want escalated and FROZEN", when, st, overridden, out.Frozen)
+		}
+	}
+	assertEscalatedHeld("after the 5m window rebuilt the marker")
+
+	o.freezeStates[f.key(f.short)] = recovering
+	if refused := o.stepFreezeLifecycle(ctx, f.pair, f.short, f.key(f.short), healthySignal(),
+		coldSiblingDecision()); refused {
+		t.Fatal("setup: the 5m window was expected to earn its release on this tick")
+	}
+	if f.store.retired {
+		t.Error("the 5m release retired the whole durable record while the 1h window was escalated")
+	}
+	if got := f.store.windows[f.long]; !got.Escalated {
+		t.Errorf("1h durable ladder after the 5m release = %+v, want it escalated", got)
+	}
+	delete(o.freezeStates, f.key(f.long))
+	assertEscalatedHeld("after the 5m window released")
+}
+
 // TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord: consulting the durable record before a clear must not defeat freeze-unfreeze; every window sees the absent marker, releases, and nothing re-freezes.
 func TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord(t *testing.T) {
 	f := newProductionWiredFixture(t)

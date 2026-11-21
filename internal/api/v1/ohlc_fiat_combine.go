@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"math/big"
+	"slices"
 	"sort"
 	"time"
 
@@ -22,13 +23,13 @@ func (s *Server) ohlcSeriesFiatCombined(
 	interval ohlcInterval,
 	from, to time.Time,
 	limit int,
-) ([]OHLCSeriesBar, bool, error) {
+) ([]OHLCSeriesBar, bucketBooks, bool, error) {
 	established, heldBack := s.usdPeggedConstituentSets(pair)
 
 	c := newFiatCombine()
 	estProxied, err := s.combineConstituentBars(ctx, c, established, pair, interval, from, to, limit, nil)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	// Snapshot the answered buckets BEFORE the held-back pass so two held-back constituents
 	// sharing an unanswered bucket still merge with each other. A dust-only bar answers nothing.
@@ -44,11 +45,11 @@ func (s *Server) ohlcSeriesFiatCombined(
 	}
 	heldBackProxied, err := s.combineConstituentBars(ctx, c, heldBack, pair, interval, from, to, limit, unanswered)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	acc := c.acc
 	if len(acc) == 0 {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 
 	out := make([]OHLCSeriesBar, 0, len(acc))
@@ -62,7 +63,29 @@ func (s *Server) ohlcSeriesFiatCombined(
 		out = append(out, bar)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Time().Before(out[j].T.Time()) })
-	return newestCombinedBars(out, limit), estProxied || heldBackProxied, nil
+	return newestCombinedBars(out, limit), c.books, estProxied || heldBackProxied, nil
+}
+
+// bucketBooks names, per bucket start, the constituent markets whose bars a combined bucket holds.
+type bucketBooks map[time.Time][]canonical.Pair
+
+// of is the distinct markets behind the served bars, so a book that only fed a trimmed bucket does not speak for the answer.
+func (b bucketBooks) of(bars []OHLCSeriesBar) []canonical.Pair {
+	var out []canonical.Pair
+	for i := range bars {
+		out = appendBook(out, b[bars[i].T.Time()]...)
+	}
+	return out
+}
+
+// appendBook appends each market not already in dst (in either direction).
+func appendBook(dst []canonical.Pair, books ...canonical.Pair) []canonical.Pair {
+	for _, p := range books {
+		if !slices.ContainsFunc(dst, p.EqualEitherWay) {
+			dst = append(dst, p)
+		}
+	}
+	return dst
 }
 
 // newestCombinedBars keeps the NEWEST `limit` of an ascending merged series. Each constituent read is capped to its own newest
@@ -151,70 +174,129 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // fiatCombinedTrades is the point-path twin of [Server.ohlcSeriesFiatCombined]: it merges the raw trades of EVERY constituent
 // into one chronological population at one amount scale, so /v1/vwap and /v1/ohlc with quote=fiat:USD agree; `proxied` drives
 // flags.triangulated. The gate uses [fiatPointGateInterval]. Read errors propagate (a quietly narrower money answer is worse than
-// a 500); each read uses the caller's `maxTrades` and the merge is trimmed to the newest `maxTrades`, preserving the callers'
-// `len(trades) == maxTrades` truncation signal.
+// a 500); each read uses the caller's `maxTrades` and the merge is trimmed to the newest `maxTrades`. The window is marked
+// truncated when any constituent read hit the cap or the merge was trimmed, measured before the held-back gate drops rows. The books
+// are the constituents with a row in the result, the markets [Server.thinMarketEvidence] must measure.
 func (s *Server) fiatCombinedTrades(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
-) (aggregate.ScaledWindow, bool, error) {
+) (aggregate.ScaledWindow, []canonical.Pair, bool, error) {
 	established, heldBack := s.usdPeggedConstituentSets(pair)
-	merged, proxied, err := s.mergeConstituentTrades(ctx, established, pair, from, to, maxTrades)
+	reads, err := s.readBooks(ctx, established, from, to, maxTrades)
 	if err != nil {
-		return aggregate.ScaledWindow{}, false, err
+		return aggregate.ScaledWindow{}, nil, false, err
 	}
 	// Held-back spellings answer only the sub-windows the established ones left empty. Gating on the
 	// whole window would make the point window its own bucket and diverge from the series.
 	if len(heldBack) > 0 {
-		answered := tradeGateBuckets(merged)
-		for _, sp := range heldBack {
-			batch, berr := s.History.TradesInRange(ctx, sp, from, to, maxTrades)
-			if berr != nil {
-				return aggregate.ScaledWindow{}, false, berr
-			}
-			// `answered` is snapshotted from the established rows before any held-back row joins,
-			// so two held-back constituents sharing an empty bucket still merge, as in the series.
-			batch = dropTradesInAnsweredBuckets(batch, answered)
-			if len(batch) == 0 {
-				continue
-			}
-			if !sp.Quote.Equal(pair.Quote) {
-				proxied = true
-			}
-			merged = append(merged, batch...)
+		held, herr := s.readBooks(ctx, heldBack, from, to, maxTrades)
+		if herr != nil {
+			return aggregate.ScaledWindow{}, nil, false, herr
+		}
+		// `answered` is snapshotted from the established rows before any held-back row joins,
+		// so two held-back constituents sharing an empty bucket still merge, as in the series.
+		answered := tradeGateBuckets(bookRows(reads))
+		for i := range held {
+			held[i].rows = dropTradesInAnsweredBuckets(held[i].rows, answered)
+		}
+		reads = append(reads, held...)
+	}
+	proxied := false
+	for i := range reads {
+		// Triangulated means the QUOTE leg was proxied (X/fiat:USD served from X/USDC). A base-alias
+		// constituent (`crypto:XLM/fiat:USD` for `?base=native`) is the same asset, not a proxy.
+		if len(reads[i].rows) > 0 && !reads[i].book.Quote.Equal(pair.Quote) {
+			proxied = true
 		}
 	}
-	sortTradesChronological(merged)
-	if maxTrades > 0 && len(merged) > maxTrades {
-		merged = merged[len(merged)-maxTrades:]
-	}
+	merged, books, truncated := mergeBookReads(reads, maxTrades)
 	// Lift every trade to a common smallest-unit scale: constituents mix on-chain (7dp) and CEX (8dp)
 	// legs, and sum(quote)/sum(base) over-weights the finer source ~10x per decimal of difference.
 	// Uniform windows come back byte-identical; TWAP is scale-invariant, so this is a no-op there.
-	return aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor), proxied, nil
+	return aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor).WithTruncated(truncated), books, proxied, nil
 }
 
-// mergeConstituentTrades reads one constituent set into a single population and reports whether any quote leg proxied the requested one.
-// Read errors propagate, as in [Server.fiatCombinedTrades].
-func (s *Server) mergeConstituentTrades(
-	ctx context.Context, pairs []canonical.Pair, pair canonical.Pair, from, to time.Time, maxTrades int,
-) ([]canonical.Trade, bool, error) {
-	var merged []canonical.Trade
-	proxied := false
+// hitTradeCap reports that a TradesInRange read returned its full limit, so older trades in the range may be unread.
+func hitTradeCap(batch []canonical.Trade, maxTrades int) bool {
+	return maxTrades > 0 && len(batch) >= maxTrades
+}
+
+// bookRead is one constituent's TradesInRange answer; capped means rows older than readFrom, its earliest returned row, may be unread.
+type bookRead struct {
+	book     canonical.Pair
+	rows     []canonical.Trade
+	capped   bool
+	readFrom time.Time
+}
+
+// readBooks reads each constituent's trades. Read errors propagate, as in [Server.fiatCombinedTrades].
+func (s *Server) readBooks(ctx context.Context, pairs []canonical.Pair, from, to time.Time, maxTrades int) ([]bookRead, error) {
+	out := make([]bookRead, 0, len(pairs))
 	for _, sp := range pairs {
 		batch, err := s.History.TradesInRange(ctx, sp, from, to, maxTrades)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
-		if len(batch) == 0 {
-			continue
+		read := bookRead{book: sp, rows: batch, capped: hitTradeCap(batch, maxTrades)}
+		for i := range batch {
+			if i == 0 || batch[i].Timestamp.Before(read.readFrom) {
+				read.readFrom = batch[i].Timestamp
+			}
 		}
-		// Triangulated means the QUOTE leg was proxied (X/fiat:USD served from X/USDC). A base-alias
-		// constituent (`crypto:XLM/fiat:USD` for `?base=native`) is the same asset, not a proxy.
-		if !sp.Quote.Equal(pair.Quote) {
-			proxied = true
-		}
-		merged = append(merged, batch...)
+		out = append(out, read)
 	}
-	return merged, proxied, nil
+	return out, nil
+}
+
+// cappedReadFrom is the latest readFrom among capped reads, the earliest instant every book was read through; zero when none capped.
+func cappedReadFrom(reads []bookRead) time.Time {
+	var at time.Time
+	for i := range reads {
+		if reads[i].capped && reads[i].readFrom.After(at) {
+			at = reads[i].readFrom
+		}
+	}
+	return at
+}
+
+// bookRows concatenates the reads' rows.
+func bookRows(reads []bookRead) []canonical.Trade {
+	var out []canonical.Trade
+	for i := range reads {
+		out = append(out, reads[i].rows...)
+	}
+	return out
+}
+
+// mergeBookReads merges the reads chronologically, keeps the newest `maxTrades`, and names the books with a surviving row. When a read
+// was capped every book is cut to [cappedReadFrom]: an uncapped book's older rows beside none of the capped book's would serve a
+// skewed mix, not the newest trades of the combined market.
+func mergeBookReads(reads []bookRead, maxTrades int) (merged []canonical.Trade, books []canonical.Pair, truncated bool) {
+	type sourced struct {
+		trade *canonical.Trade
+		read  int
+	}
+	cut := cappedReadFrom(reads)
+	var all []sourced
+	for i := range reads {
+		truncated = truncated || reads[i].capped
+		for j := range reads[i].rows {
+			if reads[i].rows[j].Timestamp.Before(cut) {
+				continue
+			}
+			all = append(all, sourced{trade: &reads[i].rows[j], read: i})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return aggregate.TradeOrderLess(all[i].trade, all[j].trade) })
+	if maxTrades > 0 && len(all) > maxTrades {
+		all = all[len(all)-maxTrades:]
+		truncated = true
+	}
+	merged = make([]canonical.Trade, 0, len(all))
+	for _, st := range all {
+		merged = append(merged, *st.trade)
+		books = appendBook(books, reads[st.read].book)
+	}
+	return merged, books, truncated
 }
 
 // fiatPointGateInterval is the bucket grain the point path gates held-back constituents at: the
@@ -340,20 +422,23 @@ func ohlcScaleFactor(scale, common int) *big.Rat {
 // fiatCombine is the running state of one fiat-combined response: one accumulator per bucket, each with its own scale. The lift target is
 // per bucket, not per response, or the same day would render in different units by window width.
 type fiatCombine struct {
-	acc map[time.Time]*ohlcBucketAcc
+	acc   map[time.Time]*ohlcBucketAcc
+	books bucketBooks
 }
 
 func newFiatCombine() *fiatCombine {
-	return &fiatCombine{acc: make(map[time.Time]*ohlcBucketAcc, 256)}
+	return &fiatCombine{acc: make(map[time.Time]*ohlcBucketAcc, 256), books: make(bucketBooks, 256)}
 }
 
-func (c *fiatCombine) add(b *OHLCSeriesBar) {
-	a := c.acc[b.T.Time()]
+func (c *fiatCombine) add(b *OHLCSeriesBar, book canonical.Pair) {
+	t := b.T.Time()
+	a := c.acc[t]
 	if a == nil {
 		a = newOHLCBucketAcc()
-		c.acc[b.T.Time()] = a
+		c.acc[t] = a
 	}
 	a.add(b, barScaleDecimals(b.Sources))
+	c.books[t] = appendBook(c.books[t], book)
 }
 
 // combineConstituentBars reads each pair's bars and folds them into `c`; a non-nil `admit` decides per bucket whether a bar may
@@ -379,7 +464,7 @@ func (s *Server) combineConstituentBars(
 			if admit != nil && !admit(bars[i].T.Time()) {
 				continue
 			}
-			c.add(&bars[i])
+			c.add(&bars[i], sp)
 			if !sp.Quote.Equal(pair.Quote) {
 				proxied = true
 			}

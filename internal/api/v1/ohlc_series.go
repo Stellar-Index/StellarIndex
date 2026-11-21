@@ -171,7 +171,7 @@ func (s *Server) handleOHLCSeries(
 	// One row past the cap: the only way to KNOW the window held more
 	// than `limit` buckets. See [capOHLCSeriesNewest].
 	// One closed-through bound for every pair this request reads, so merged constituents agree on which buckets exist.
-	bars, proxied, err := s.ohlcSeriesWithAliases(timescale.WithFoldBounds(hCtx), pair, interval, from, to, limit+1)
+	bars, books, proxied, err := s.ohlcSeriesWithAliases(timescale.WithFoldBounds(hCtx), pair, interval, from, to, limit+1)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// Shouldn't fire — handler validated the interval — but guard
 		// against a future code path that wires the storage layer
@@ -236,7 +236,7 @@ func (s *Server) handleOHLCSeries(
 	// not triangulated just because the quote is fiat.
 	flags := Flags{Triangulated: proxied}
 	if len(bars) > 0 {
-		resp.Substance = s.thinMarketEvidence(r.Context(), pair.Base, pair.Quote, "ohlc")
+		resp.Substance = s.thinMarketEvidence(r.Context(), pair.Base, pair.Quote, books.of(bars), "ohlc")
 		flags.ThinMarket = resp.Substance != nil
 	}
 	// An empty series is ambiguous ("quiet market" and "before anything held" are the same bytes),
@@ -376,7 +376,7 @@ func (s *Server) ohlcSeriesWithAliases(
 	interval ohlcInterval,
 	from, to time.Time,
 	limit int,
-) ([]OHLCSeriesBar, bool, error) {
+) ([]OHLCSeriesBar, bucketBooks, bool, error) {
 	// Fiat quotes have no deep trade stream; the history lives under the pegged stablecoin pairs.
 	// Combine those constituents per bucket (the live aggregator's source set) instead of first-hit,
 	// which would serve only the recent direct CEX feed.
@@ -393,11 +393,11 @@ func (s *Server) ohlcSeriesWithAliases(
 			if err != nil || len(bars) > 0 {
 				annotateOHLCSeriesBarScale(bars, s.NonstandardDecimals, ap)
 				normalizeOHLCSeriesVolumes(bars)
-				return bars, false, err
+				return bars, nil, false, err
 			}
 		}
 	}
-	return nil, false, nil
+	return nil, nil, false, nil
 }
 
 // annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via [barScaleDecimals]. It must not share

@@ -83,6 +83,9 @@ var ErrStorageSupplyTooManyEntries = fmt.Errorf("clickhouse: contract holds more
 // ErrStorageSupplyNoInstance means balances exist but no instance entry was captured, so the SAC refusal could not be evaluated (see ErrStorageSupplyIsStellarAsset).
 var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance entry captured, so the Stellar-Asset-Contract check could not be run")
 
+// ErrStorageSupplyUndecodable refuses a holder set with an entry this reader cannot decode into a balance; the lake state, not the read, is the cause.
+var ErrStorageSupplyUndecodable = fmt.Errorf("clickhouse: contract storage holds a balance entry this reader cannot decode")
+
 // maxContractStorageBalanceEntries bounds one storage-supply read, which pays a full decode per entry inside a request budget. 25,000 is
 // far above the closed holder sets this basis serves (1 to 12) and below the largest pubnet sets (~62k), answered by the flow-derived
 // reading first.
@@ -275,7 +278,7 @@ func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) er
 	if xdr.SafeUnmarshalBase64(keyB64, &key) != nil {
 		// An undecodable key is a decode gap, not an empty holder; skipping it would silently drop
 		// a balance, so refuse the reading.
-		return fmt.Errorf("clickhouse: contract storage supply %s: undecodable key_xdr", s.ContractID)
+		return fmt.Errorf("%w: %s: undecodable key_xdr", ErrStorageSupplyUndecodable, s.ContractID)
 	}
 	cd, ok := key.GetContractData()
 	if !ok {
@@ -283,7 +286,7 @@ func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) er
 	}
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(entryB64, &entry) != nil {
-		return fmt.Errorf("clickhouse: contract storage supply %s: undecodable entry_xdr", s.ContractID)
+		return fmt.Errorf("%w: %s: undecodable entry_xdr", ErrStorageSupplyUndecodable, s.ContractID)
 	}
 	ed, ok := entry.Data.GetContractData()
 	if !ok {
@@ -310,12 +313,12 @@ func (s *ContractStorageSupply) apply(keyB64, entryB64 string, ledger uint32) er
 	amount, ok := balanceAmount(ed.Val)
 	if !ok {
 		// Key says balance, value unrecognised: refuse rather than treat as zero.
-		return fmt.Errorf("clickhouse: contract storage supply %s: balance entry carries no decodable amount", s.ContractID)
+		return fmt.Errorf("%w: %s: balance entry carries no decodable amount", ErrStorageSupplyUndecodable, s.ContractID)
 	}
 	if amount.Sign() < 0 {
 		// A negative balance is impossible; we decoded the wrong field, so the sum is
 		// untrustworthy.
-		return fmt.Errorf("clickhouse: contract storage supply %s: negative balance entry %s", s.ContractID, amount)
+		return fmt.Errorf("%w: %s: negative balance entry %s", ErrStorageSupplyUndecodable, s.ContractID, amount)
 	}
 	s.Total.Add(s.Total, amount)
 	s.BalanceEntries++
