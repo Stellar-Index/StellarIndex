@@ -163,6 +163,9 @@ it. Replace a key like this:
   minted without `account` still reaches this one call for its own id,
   and nothing else under `/v1/account/*`. Its IP and Referer
   allowlists still apply, so send the revoke from an allowed client.
+  A key minted with a permission list that does not allow this route
+  still cannot revoke itself; revoke it from the dashboard or with a
+  key that may.
 
 ## Rate limits
 
