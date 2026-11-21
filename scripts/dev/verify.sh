@@ -595,6 +595,8 @@ lane_d() { # everything else
     echo "=== ClickHouse apply scope (deploy/clickhouse is not a bootstrap manifest) ===" && ./scripts/ci/lint-ch-apply-scope.sh
     echo "=== ClickHouse apply scope self-test ===" && ./scripts/ci/lint-ch-apply-scope-test.sh
     echo "=== Shell SIGPIPE self-test ===" && ./scripts/ci/lint-shell-sigpipe-test.sh
+    echo "=== Merge-conflict markers ===" && ./scripts/ci/lint-conflict-markers.sh
+    echo "=== Merge-conflict markers self-test ===" && ./scripts/ci/lint-conflict-markers-test.sh
     echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
     echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh

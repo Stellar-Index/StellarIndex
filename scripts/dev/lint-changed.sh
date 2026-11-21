@@ -181,6 +181,7 @@ fi
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
 rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); op_corpus=0; budget=0; opsdoc=0; nummask=0
+present=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
     local v="$1" d
@@ -192,6 +193,7 @@ for f in "${changed[@]}"; do
     # A path staged but gone from the work tree cannot be linted; verify.sh
     # judges the deletion.
     [ -e "$f" ] || { echo "lint-changed: skipping ${f} (not in the work tree)"; continue; }
+    present+=("$f")
     hit=0
     case "$f" in
         *.sh)
@@ -370,6 +372,11 @@ fi
 if [ "${#go_files[@]}" -gt 0 ]; then
     add_step "gofumpt" "" format_clean gofumpt "$go_bin/gofumpt" -l "${go_files[@]}"
     add_step "goimports" "" format_clean goimports "$go_bin/goimports" -l -local "$go_module" "${go_files[@]}"
+fi
+
+# 2a. Every changed file, whatever its type: a merge-conflict marker.
+if [ "${#present[@]}" -gt 0 ]; then
+    add_step "lint-conflict-markers" "scoped to ${#present[@]} file(s)" "$ci_dir/lint-conflict-markers.sh" "${present[@]}"
 fi
 
 # 2b. Markdown: lint-doc-links takes a file list (a full rescan costs ~22 s).

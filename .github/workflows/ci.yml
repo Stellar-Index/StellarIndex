@@ -755,6 +755,12 @@ jobs:
         # discipline, generated-file banner integrity, ADR status
         # + superseded-by validity.
         run: ./scripts/ci/lint-docs.sh
+      - name: lint-conflict-markers self-test
+        run: ./scripts/ci/lint-conflict-markers-test.sh
+      # Every tracked file, not only the diff: no step-level `if:`, so a
+      # docs-only PR is scanned too.
+      - name: lint-conflict-markers
+        run: ./scripts/ci/lint-conflict-markers.sh
       - name: lint-agents-file
         # AGENTS.md is read cold and has to be retained, so it is capped
         # and required to stay operative: a length ceiling, no reference
