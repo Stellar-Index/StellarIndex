@@ -257,11 +257,11 @@ Fix: partial write: remove the file, the next run regenerates it; bad syntax: fi
 
 ## stellarindex_census_rollup_timer_stale
 
-Ticket. `time() - node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"} > 7200`, `for: 15m`. The 30-minute contracts-census rollup stopped being triggered, so `/v1/contracts/stats` serves `active_90d` as a stale lower bound. A failing run is caught by `stellarindex_systemd_unit_failed`, not this alert. Check `systemctl status census-rollup.timer census-rollup.service` and `systemctl list-timers census-rollup.timer`; re-enable with `systemctl enable --now census-rollup.timer` if it is inactive.
+Ticket. `time() - node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"} > 7200`, or no such series (the timer was disabled and unloaded), `for: 15m`. The 30-minute contracts-census rollup stopped being triggered, so `/v1/contracts/stats` serves `active_90d` as a stale lower bound. A failing run is caught by `stellarindex_systemd_unit_failed`, not this alert. Check `systemctl status census-rollup.timer census-rollup.service` and `systemctl list-timers census-rollup.timer`; re-enable with `systemctl enable --now census-rollup.timer` if it is inactive.
 
 ## stellarindex_oneshot_timer_stale
 
-Ticket. `time() - node_systemd_timer_last_trigger_seconds` above 50h for `creators-rollup.timer`, `sponsors-rollup.timer` and `issuer-flags.timer`, or 3h for `listing-sync.timer` and `holders-rollup.timer` (the asset holder boards and counts), `for: 2h`. The timer stopped being triggered, so its table freezes with no failed unit. A failing run is `stellarindex_systemd_unit_failed`'s job. Check `systemctl list-timers <name>`; re-enable with `systemctl enable --now <name>` if it is inactive.
+Ticket. `time() - node_systemd_timer_last_trigger_seconds` above 50h for `creators-rollup.timer`, `sponsors-rollup.timer`, `issuer-flags.timer` and `asset-registry-backfill.timer`, or 3h for `listing-sync.timer`, `holders-rollup.timer` (the asset holder boards and counts) and `optype-rollup.timer`, `for: 2h`. It also fires when a timer the role always enables has no series at all: `systemctl disable --now` unloads the timer and node_exporter stops reporting it (the alert then has no `instance` label). The timer stopped being triggered, so its table freezes with no failed unit. A failing run is `stellarindex_systemd_unit_failed`'s job. Check `systemctl list-timers <name>`; re-enable with `systemctl enable --now <name>` if it is inactive.
 
 ## stellarindex_keepalived_textfile_stale
 

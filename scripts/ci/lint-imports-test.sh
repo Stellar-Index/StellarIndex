@@ -127,6 +127,28 @@ addgo "internal/fine/ok.go" "fmt"
 runGate
 expect "clean tree passes" 0
 
+RPC=github.com/Stellar-Index/StellarIndex/internal/stellarrpc
+reset
+addgo internal/sources/foo/decode.go "$RPC"
+runGate
+expect "a source decode.go importing stellarrpc fails rule A" 1 "internal/sources/foo/decode.go"
+
+reset
+addgo internal/sources/foo/factory_seed.go "$RPC"
+runGate
+expect "only the named factory_seed.go may import stellarrpc" 1 "internal/sources/foo/factory_seed.go"
+
+reset
+addgo internal/sources/soroswap/factory_seed.go "$RPC"
+runGate
+expect "the allowlisted soroswap factory_seed.go passes" 0
+
+reset
+mkdir -p "$TMP/repo/internal/sources/foo"
+printf 'package p\n\nimport (\n\t. "%s"\n)\n' "$RPC" > "$TMP/repo/internal/sources/foo/adapter.go"
+runGate
+expect "a dot import of stellarrpc fails rule A" 1 "internal/sources/foo/adapter.go"
+
 echo
 echo "lint-imports-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

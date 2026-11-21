@@ -13,14 +13,19 @@
 # `0113:drop-table` and `0115:drop-view` are genuine destructive
 # migrations that shipped under the old, unenforced policy.
 #
-# The four `dml` entries are unconditional DELETE/UPDATE
-# statements that shipped before that class existed and have no
+# The `dml` entries are DELETE/UPDATE statements that shipped without a
 # RAISE EXCEPTION row-count guard — the only escape `dml` accepts (see
 # lint-migration-compat.sh). They cannot be retrofitted with one without
 # rewriting an already-released migration, so they are grandfathered
 # here instead: 0135 (UPDATE, one-time slug backfill), 0137/0164
 # (DELETE, replay-disarm double-count fixes — re-derivable from the
-# lake), 0185 (DELETE, one-time bad-row prune).
+# lake), 0185 (DELETE, one-time bad-row prune). The eleven `dml-joined`
+# entries are
+# multi-line or aliased UPDATEs the class could not see until it joined
+# statements across lines; each is a one-time backfill of a column the
+# same migration adds or a provenance/default fill on operator tables
+# (cursors, routers, classic_assets slugs and provenance, issuers,
+# account_directory, price_alerts, completeness_snapshots).
 #
 # SHRINK-ONLY: a stale entry fails the lint, and
 # scripts/ci/lint-baseline-growth.sh requires an explicit
@@ -51,10 +56,21 @@
 0112_cctp_rozo_event_index.up.sql:add-constraint
 0113_drop_classic_movements.up.sql:drop-table
 0115_ohlc_extremes_notional_floor.up.sql:drop-view
+0046_cursors_add_first_ledger.up.sql:dml-joined
+0072_align_router_registry_name.up.sql:dml-joined
+0134_populate_classic_asset_slugs.up.sql:dml-joined
 0135_full_issuer_slugs.up.sql:dml
 0137_disarm_comet_replay_doublecount.up.sql:dml
+0153_issuers_auth_flags_provenance.up.sql:dml-joined
+0158_classic_assets_holding_provenance.up.sql:dml-joined
+0159_issuers_sep1_retry_backoff.up.sql:dml-joined
 0164_disarm_cctp_rozo_replay_doublecount.up.sql:dml
+0170_account_directory_override_reason.up.sql:dml-joined
+0177_account_directory_override_by.up.sql:dml-joined
+0178_issuers_sep1_payload_fetched_at.up.sql:dml-joined
+0181_price_alerts_cooldown_floor.up.sql:dml-joined
 0185_mev_drop_unproven_direction_sandwiches.up.sql:dml
+0201_completeness_projection_evidence.up.sql:dml-joined
 
 # `add-unique` joined the gate after these shipped. Each is applied on every
 # host; 0180 is the one that tightened a table a released binary wrote to.

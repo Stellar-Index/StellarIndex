@@ -577,6 +577,117 @@ expect "an added //floatmoney:ok fails undeclared" 1 "UNDECLARED GROWTH: interna
 expect "an added upper-case LINT-MONEY:OK fails undeclared" 1 "UNDECLARED GROWTH: migrations/0002_a.up.sql"
 expect "an added lint-priceable:ok fails undeclared" 1 "UNDECLARED GROWTH: migrations/0003_b.up.sql"
 
+# change_commit <message> <path> <before> <after> [<path> <before> <after> ...] — commit each
+# <before> (empty = absent), record BASE, then commit each <after> with <message>.
+change_commit() {
+  local msg="$1"
+  shift
+  (
+    cd "$TMP/repo" || exit 1
+    local args=("$@") i seed="chore: seed"$'\n'
+    for ((i = 0; i < ${#args[@]}; i += 3)); do
+      mkdir -p "$(dirname "${args[i]}")"
+      [[ -n "${args[i + 1]}" ]] && printf '%s\n' "${args[i + 1]}" > "${args[i]}"
+      seed="$seed"$'\n'"Baseline-Growth: ${args[i]} — fixture seed"
+    done
+    git add -A && git commit -qm "$seed" --allow-empty
+    git rev-parse HEAD > "$TMP/base"
+    for ((i = 0; i < ${#args[@]}; i += 3)); do
+      printf '%s\n' "${args[i + 2]}" > "${args[i]}"
+    done
+    git add -A
+    printf '%s\n' "$msg" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+  BASE="$(cat "$TMP/base")"
+}
+
+# --- 23. every escape marker a lint honours, in whatever file type that lint scans
+mkrepo 0
+change_commit "chore: waive inline" \
+  internal/m/sum.go 'var q = 1' 'var q = 1 // i128sum:ok bounded' \
+  internal/m/dec.go 'var d = 1' 'var d = 7 // decimals-7: classic' \
+  internal/m/cap.go 'var c = 1' 'var c = 1 // cap-ok: fine' \
+  internal/m/ident.go 'var i = 1' 'var i = 1 // asset-identity: single-form ok (x)' \
+  internal/m/latest.go 'var l = 1' 'var l = 1 // unbounded-latest-ok: x' \
+  internal/m/apikey.go 'var a = 1' 'var a = 1 // apikey-scan-ok: x' \
+  internal/m/http.go 'var h = 1' 'var h = 1 // http-timeout-ok: x' \
+  configs/ansible/t.yml '- name: x' '- name: x  # si-swallow-ok: probe'
+runGate
+for f in sum dec cap ident latest apikey http; do
+  expect "an added marker in internal/m/$f.go fails undeclared" 1 "UNDECLARED GROWTH: internal/m/$f.go"
+done
+expect "an added si-swallow-ok: in a playbook fails undeclared" 1 "UNDECLARED GROWTH: configs/ansible/t.yml"
+
+mkrepo 0
+# shellcheck disable=SC2016  # the backticks are markdown, not a substitution
+change_commit "chore: teach a lint a marker" \
+  scripts/ci/lint-foo.sh '# lint' '# lint; honours // cap-ok: <reason>' \
+  scripts/ci/lint-foo-test.sh '# t' 'printf "x // cap-ok: y"' \
+  docs/x.md 'doc' 'Mark the line `i128sum:ok <reason>`.'
+runGate
+expect "a marker in a lint, its self-test or a doc is not growth" 0 "no undeclared"
+
+# --- 24. a trailer excuses only the file in its path slot, never one named in a reason
+mkrepo 0
+change_commit "$(printf 'chore: two\n\nBaseline-Growth: scripts/ci/demo.baseline — until internal/x/a.go moves')" \
+  scripts/ci/demo.baseline 'existing-entry' "$(printf 'existing-entry\nnew-entry')" \
+  internal/x/a.go 'var v = 1' 'var v = 1 //i128:ok display only'
+runGate
+expect "a file named only in another trailer's reason is undeclared" 1 "UNDECLARED GROWTH: internal/x/a.go"
+
+mkrepo 0
+change_commit "$(printf 'chore: one\n\nBaseline-Growth: internal/x/a.go.orig — not this file')" \
+  internal/x/a.go 'var v = 1' 'var v = 1 //i128:ok display only'
+runGate
+expect "a trailer path that merely contains the file is undeclared" 1 "UNDECLARED GROWTH: internal/x/a.go"
+
+# --- 25. count-format baselines: a lowered count is a shrink, a raised or new key is growth
+count_seed="$(printf 'a.yml|unannotated-swallow|5\nb.yml|unannotated-swallow|6\nc.go:#interp  3 reads: why')"
+mkrepo 0
+change_commit "chore: fix swallows" \
+  scripts/ci/demo-count.baseline "$count_seed" \
+  "$(printf 'a.yml|unannotated-swallow|4\nb.yml|unannotated-swallow|6\nc.go:#interp  2 reads: why, now fewer')"
+runGate
+expect "lowering counts needs no trailer" 0 "no undeclared"
+
+mkrepo 0
+change_commit "chore: raise one" \
+  scripts/ci/demo-count.baseline "$count_seed" \
+  "$(printf 'a.yml|unannotated-swallow|4\nb.yml|unannotated-swallow|7\nc.go:#interp  3 reads: why')"
+runGate
+expect "raising a count is undeclared growth" 1 "+ b.yml|unannotated-swallow|7"
+
+mkrepo 0
+change_commit "chore: new key" \
+  scripts/ci/demo-count.baseline "$count_seed" \
+  "$(printf '%s\nd.yml|unannotated-swallow|1' "$count_seed")"
+runGate
+expect "a new counted key is undeclared growth" 1 "+ d.yml|unannotated-swallow|1"
+
+# --- 25b. a metric waiver entry carrying its reason comment is still growth
+mkrepo 0
+change_commit "chore: waive a metric" \
+  scripts/ci/lint-metric-refs.sh 'X=(' "$(printf 'X=(\n  stellarindex_x_dropped_total  # dashboard only\n)')"
+runGate
+expect "a commented metric waiver fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-metric-refs.sh"
+
+# --- 26. every marker a lint honours is registered as watched or unwatched
+reg() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$GATE" | tr '|' '\n'; }
+registered="$(reg WATCHED_MARKERS; reg UNWATCHED_MARKERS)"
+unregistered=""
+while IFS= read -r m; do
+  [[ -n "$m" ]] || continue
+  grep -Fxq -- "$m" <<<"$registered" || unregistered="$unregistered $m"
+done <<<"$(grep -hoE '[a-z0-9][a-z0-9-]*(:ok|-ok:)' scripts/ci/lint-*.sh scripts/ci/lint-*.py | sort -u)"
+if [[ -n "$registered" && -z "$unregistered" ]]; then
+  echo "ok: every lint escape marker is registered"
+  pass=$((pass + 1))
+else
+  echo "FAIL: escape markers missing from WATCHED_MARKERS/UNWATCHED_MARKERS:${unregistered:- (registry empty)}"
+  fail=$((fail + 1))
+fi
+
 echo
 echo "lint-baseline-growth-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

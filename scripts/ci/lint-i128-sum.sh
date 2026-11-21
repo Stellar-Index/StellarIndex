@@ -7,10 +7,11 @@
 # (a classic Int64 stroop balance) is allowed with `i128sum:ok <reason>` in a
 # comment on the same line or alone on the line above (`--` inside SQL).
 #
-# Flagged: sum / sumIf / sumState / sumMerge whose first argument
-#   - is cast to Int128: toInt128(…), CAST(… AS Int128) / CAST(…, 'Int128'), …::Int128
+# Flagged: sum in any case with any combinator chain (sumIf, sumOrNull, sumMap's value
+# arrays, …) whose summed expression, outside a toInt256 / toDecimal256 widening, contains
+#   - an Int128 cast: toInt128…(…), CAST(… AS Int128) / CAST(…, 'Int128'), …::Int128
 #     (every Go file under internal/ and cmd/, and deploy/clickhouse/*.sql), or
-#   - is a bare column whose name is Int128 somewhere in deploy/clickhouse/tier1_schema.sql
+#   - a column whose name is Int128 somewhere in deploy/clickhouse/tier1_schema.sql
 #     (ClickHouse sources only: internal/storage/clickhouse, Go files importing
 #     clickhouse-go, and deploy/clickhouse/*.sql). The list is read at lint time.
 # One line at a time: a sum whose first argument spans lines is not seen.
@@ -58,12 +59,29 @@ scan() {
       }
       return s
     }
-    function int128(a) {
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", a)
-      if (a ~ /^toInt128\(/) return 1
-      if (a ~ /^CAST\(/ && a ~ /[[:space:],'"'"'"]Int128['"'"'")]/) return 1
-      if (a ~ /::Int128$/) return 1
-      if (colre != "" && a ~ ("^([A-Za-z_][A-Za-z0-9_]*\\.)?(" colre ")$")) return 1
+    # callargs: everything up to the paren closing the call (s starts just after its open paren).
+    function callargs(s,   i, c, d) {
+      d = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (c == "(") d++
+        else if (c == ")") { if (d == 0) return substr(s, 1, i - 1); d-- }
+      }
+      return s
+    }
+    # An Int128 cast or column anywhere in the summed expression wraps, unless it sits inside a
+    # toInt256 / toDecimal256 widening, which is removed first.
+    function int128(a,   pre, post, inner) {
+      while (match(a, /to(Int|Decimal)256\(/)) {
+        pre = substr(a, 1, RSTART - 1)
+        post = substr(a, RSTART + RLENGTH)
+        inner = callargs(post)
+        a = pre "w256" substr(post, length(inner) + 2)
+      }
+      if (a ~ /(^|[^A-Za-z0-9_])toInt128[A-Za-z]*\(/) return 1
+      if (a ~ /CAST\(/ && a ~ /[[:space:],'"'"'"]Int128['"'"'")]/) return 1
+      if (a ~ /::Int128([^A-Za-z0-9_]|$)/) return 1
+      if (colre != "" && a ~ ("(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*\\.)?(" colre ")([^A-Za-z0-9_]|$)")) return 1
       return 0
     }
     FNR == 1 { prev = "" }
@@ -74,9 +92,11 @@ scan() {
       if (line ~ /^[[:space:]]*(\/\/|--)/) next
       rest = line
       hit = 0
-      while (match(rest, /(^|[^A-Za-z0-9_])sum(If|State|Merge)?\(/)) {
+      # Any case, any combinator chain (If, OrNull, Map, WithOverflow, …); sumMap sums its later args.
+      while (match(rest, /(^|[^A-Za-z0-9_])[sS][uU][mM]([A-Z][A-Za-z]*)?\(/)) {
+        fn = substr(rest, RSTART, RLENGTH)
         rest = substr(rest, RSTART + RLENGTH)
-        if (int128(firstarg(rest))) hit = 1
+        if (int128(fn ~ /[mM][aA][pP]/ ? callargs(rest) : firstarg(rest))) hit = 1
       }
       if (!hit) next
       sites++

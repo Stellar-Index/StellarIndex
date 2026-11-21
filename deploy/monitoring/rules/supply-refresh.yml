@@ -285,3 +285,25 @@ groups:
             live-writer gap would go unhealed. Diagnose with
             `journalctl -u ch-supply` (chunk-level FAILED lines, ClickHouse
             memory-guard stalls, or a Postgres tip-resolution error).
+
+      # The refresher still writes (and the API serves) a total_supply that
+      # moved more than supply.WriteBandFactor (10x) against the previous
+      # write; this counter is the only signal. Both directions are pre-seeded
+      # at 0, so increase() sees the first breach.
+      - alert: stellarindex_supply_write_band_breach
+        expr: sum by (asset_key, direction) (increase(stellarindex_supply_write_band_breach_total[1h])) > 0
+        for: 0m
+        keep_firing_for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_supply_write_band_breach
+          summary: "Served total_supply of {{ $labels.asset_key }} jumped more than 10x ({{ $labels.direction }})"
+          description: |
+            A supply refresh wrote a total_supply for {{ $labels.asset_key }}
+            more than 10x {{ $labels.direction }} from the previous write. The
+            row is stored and served as supply and market cap. Decide whether
+            it is a real mint or burn, or a decode or exploit artefact, before
+            it is trusted; see the runbook.

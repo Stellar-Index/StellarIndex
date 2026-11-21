@@ -147,7 +147,21 @@ fi
 BIN="$TMP/bin"
 mkdir -p "$BIN"
 printf '#!/bin/sh\nexit 0\n' >"$BIN/flock"
-printf '#!/bin/sh\nexit 0\n' >"$BIN/chown"
+cat >"$BIN/chown" <<'EOF'
+#!/bin/sh
+echo "$*" >>"$CHOWN_LOG"
+EOF
+CHOWN_LOG="$TMP/chown.log"; export CHOWN_LOG
+# Fails the install of $INSTALL_FAIL only; on PATH only for the interrupted-install case.
+FAILBIN="$TMP/failbin"
+mkdir -p "$FAILBIN"
+cat >"$FAILBIN/install" <<'EOF'
+#!/bin/sh
+for a in "$@"; do last="$a"; done
+[ "$(basename "$last")" = "$INSTALL_FAIL" ] && { echo "install: simulated ENOSPC" >&2; exit 1; }
+exec /usr/bin/install "$@"
+EOF
+chmod +x "$FAILBIN/install"
 printf '#!/bin/sh\nexit 0\n' >"$BIN/find" # backup pruning uses GNU find -printf
 cat >"$BIN/systemctl" <<'EOF'
 #!/bin/sh
@@ -212,7 +226,7 @@ EOF
 }
 
 run_install() {
-  OUT="$(PATH="$BIN:$PATH" STATE="$STATE" RULES_DEST="$TMP/dest" VERIFY_TIMEOUT_S=4 \
+  OUT="$(PATH="${EXTRA_PATH:-}$BIN:$PATH" STATE="$STATE" RULES_DEST="$TMP/dest" VERIFY_TIMEOUT_S=4 \
     PROM_URL="http://127.0.0.1:$MOCK_PORT" bash "$SCRIPT" "$TMP/src2" 2>&1)"; RC=$?
 }
 
@@ -262,6 +276,37 @@ if [ "$(cat "$TMP/dest/alerts.yml")" = "groups: []" ]; then
   echo "ok: destination restored after the failed reload"; pass=$((pass + 1))
 else
   echo "FAIL: destination not restored after the failed reload" >&2; fail=$((fail + 1))
+fi
+
+# (d) An install that fails partway (disk full) must leave the live set exactly as it was.
+new_install_fixture
+rules_json ok ok >"$STATE/rules.json"; ts_body 100 >"$STATE/query.json"
+start_state_mock
+EXTRA_PATH="$FAILBIN:" INSTALL_FAIL=other.yml run_install
+stop_mock
+expect 'install that fails on the second file → aborts' 1
+if [ "$(cat "$TMP/dest/alerts.yml")" = "groups: []" ] && ! ls -d "$TMP"/dest.new.* >/dev/null 2>&1; then
+  echo "ok: live set untouched and staging removed after a failed install"; pass=$((pass + 1))
+else
+  echo "FAIL: a failed install left a mixed live set or a staging directory" >&2; fail=$((fail + 1))
+fi
+
+# (e) Installed rules are root-owned and read-only to the shared prometheus uid.
+new_install_fixture
+: >"$CHOWN_LOG"
+rules_json ok ok >"$STATE/rules.json"; ts_body 100 >"$STATE/query.json"
+rules_json ok ok >"$STATE/rules.after.json"; ts_body 200 >"$STATE/query.after.json"
+start_state_mock
+run_install
+stop_mock
+expect 'healthy apply → succeeds' 0
+dmode="$(find "$TMP/dest" -maxdepth 0 -perm 0750)"
+fmode="$(find "$TMP/dest/alerts.yml" -maxdepth 0 -perm 0640)"
+if [ -n "$dmode" ] && [ -n "$fmode" ] \
+  && grep -q '^-R root:prometheus ' "$CHOWN_LOG" && ! grep -q 'prometheus:prometheus' "$CHOWN_LOG"; then
+  echo "ok: rule directory 0750 and files 0640, owned root:prometheus"; pass=$((pass + 1))
+else
+  echo "FAIL: rule ownership/mode not root:prometheus 0750/0640 chown=[$(tr '\n' ';' <"$CHOWN_LOG")]" >&2; fail=$((fail + 1))
 fi
 
 echo "---"
