@@ -4324,9 +4324,11 @@ export interface paths {
          *     it answers 204 and the key, with every key minted from it,
          *     stops working from the next request. This is how a leaked
          *     `/v1/register` root key, which has no dashboard, is killed.
-         *     A deployment running `auth_backend=postgres` disables the whole
-         *     `/v1/account/keys` surface (503): there, only an operator can
-         *     revoke such a key, with `DELETE /v1/admin/keys/{keyID}?identifier=`.
+         *     A deployment running `auth_backend=postgres` has no self-service
+         *     key store: there a key may revoke only itself (any other key id
+         *     gets 503 `account-store-unavailable`, whether or not it exists),
+         *     and an operator revokes other keys with
+         *     `DELETE /v1/admin/keys/{keyID}?identifier=`.
          *
          *     An **operator-tier** caller must send `X-Reason` (400 without
          *     it); the revoke is recorded as a `key.revoke` audit row, as
@@ -24543,7 +24545,14 @@ export interface operations {
     deleteAccountKey: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /**
+                 * @description Required from an operator-tier caller (400 `missing-reason`
+                 *     without it) and captured into the `key.revoke` audit row;
+                 *     ignored for customer tiers.
+                 */
+                "X-Reason"?: string;
+            };
             path: {
                 /** @description Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing. */
                 keyID: string;
@@ -24589,7 +24598,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Account store not configured (`account-store-unavailable`) — Redis is unavailable, or the deployment runs `auth_backend=postgres`. */
+            /** @description Account store not configured (`account-store-unavailable`) — no self-service key store is wired (Redis is unavailable, or the deployment runs `auth_backend=postgres`) and the key id is not the calling key's own, or no store that holds keys is wired at all. */
             503: {
                 headers: {
                     [name: string]: unknown;
