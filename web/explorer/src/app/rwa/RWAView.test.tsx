@@ -151,7 +151,12 @@ function view(over: Partial<View> = {}): View {
         basis:
           'Sum of circulating supply times an independent oracle valuation of the instrument.',
       },
-      both_bases: { assets: 1, market_cap_usd: CAP, reference_value_usd: REF },
+      both_bases: {
+        assets: 1,
+        market_cap_usd: CAP,
+        reference_value_usd: REF,
+        lower_bound: false,
+      },
       basis:
         'Sum of the published market caps of the assets meeting the four-requirement definition.',
     },
@@ -187,7 +192,7 @@ function partlyValued(
             assets_compared: 0,
             reference_valuation: NO_REFERENCE,
           }),
-      both_bases: { assets: 0 },
+      both_bases: { assets: 0, lower_bound: false },
     },
     ...rollups(market, reference),
   });
@@ -544,7 +549,7 @@ describe('RWAView', () => {
             lower_bound: false,
             basis,
           },
-          both_bases: { assets: 0 },
+          both_bases: { assets: 0, lower_bound: false },
           basis,
         },
         by_class: [],
@@ -1471,11 +1476,46 @@ describe('sumStablecoins', () => {
         { listing_valuation: { status: 'not_listed' } },
         {},
       ],
-      { total: '3.50', valued: 2, unvalued: 2, listingPriced: 1, floor: false },
+      {
+        total: '3.50',
+        valued: 2,
+        unvalued: 2,
+        listingPriced: 1,
+        floor: false,
+        wrappers: 0,
+      },
     ],
     [
       [{ listing_valuation: { status: 'no_supply' } }],
-      { total: null, valued: 0, unvalued: 1, listingPriced: 0, floor: false },
+      {
+        total: null,
+        valued: 0,
+        unvalued: 1,
+        listingPriced: 0,
+        floor: false,
+        wrappers: 0,
+      },
+    ],
+    // yUSDC wraps USDC already in the total; a same-code token from another
+    // issuer is not the wrapper and is summed.
+    [
+      [
+        { asset_id: 'USDC-GA5Z', market_cap_usd: '10.00' },
+        {
+          asset_id:
+            'yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF',
+          market_cap_usd: '2.00',
+        },
+        { asset_id: 'yUSDC-GBOTHER', market_cap_usd: '1.00' },
+      ],
+      {
+        total: '11.00',
+        valued: 2,
+        unvalued: 0,
+        listingPriced: 0,
+        floor: false,
+        wrappers: 1,
+      },
     ],
   ])('totals %j', (rows, expected) => {
     expect(sumStablecoins(rows)).toEqual(expected);
@@ -1564,5 +1604,103 @@ describe('RWA row identity, reference caption and CSV floor', () => {
     expect(await screen.findByText(/^\$9[\d.,]*[KMBTQ]$/)).toBeInTheDocument();
     absent(/^≥ \$9/);
     expect(rwaCsvRow(asset(big)).volume_24h_usd).toBe('9007199254740993.01');
+  });
+});
+
+describe('a lower bound is stated, never implied', () => {
+  // Every member valued on both bases, but its supply read is only a floor:
+  // the server flags every total a lower bound with nothing unvalued.
+  const floored = () =>
+    view({
+      assets: [asset({ circulating_supply_lower_bound: true })],
+      summary: {
+        ...view().summary,
+        lower_bound: true,
+        reference_valuation: {
+          ...view().summary.reference_valuation!,
+          lower_bound: true,
+        },
+        both_bases: {
+          assets: 1,
+          market_cap_usd: CAP,
+          reference_value_usd: REF,
+          lower_bound: true,
+        },
+      },
+    });
+
+  it('names a floor supply as the reason when nothing is unvalued', async () => {
+    show(floored());
+    await screen.findAllByText('$1.28M');
+    present(/A floor, not a total\./, /Also a floor\./);
+    atLeast(/1 contributing asset’s circulating supply is only a floor/, 2);
+  });
+
+  it('gives every floor glyph words a screen reader speaks', async () => {
+    show(floored());
+    await screen.findAllByText('$1.28M');
+    // Value of the backing, market cap, Combined, and both both-bases figures.
+    atLeast('at least', 5);
+  });
+
+  it('marks the both-bases totals as floors when the server does', async () => {
+    show(floored());
+    const where = (await screen.findByText('Where both exist.')).parentElement!;
+    expect(where.textContent).toMatch(
+      /published premium: ≥ at least \$1\.32M at the reference against ≥ at least \$1\.28M/,
+    );
+    expect(where.textContent).toMatch(/Both are floors: At least/);
+  });
+
+  it('prints exact both-bases totals when no summed supply is a floor', async () => {
+    show(view());
+    const where = (await screen.findByText('Where both exist.')).parentElement!;
+    expect(where.textContent).not.toMatch(/≥|at least|Both are floors/);
+  });
+});
+
+describe('a derived price or a contested ISIN is labelled as such', () => {
+  it('marks a two-hop price and the cap it values, in the table and the CSV', async () => {
+    const derived = {
+      valuation: { ...asset().valuation, price_basis: 'transitive' as const },
+    };
+    show(one(derived));
+    expect(await screen.findAllByText('two-hop')).toHaveLength(2);
+    present('Market cap (traded prices)', /1 through a derived price/);
+    absent('Market cap (observed trades)');
+    expect(rwaCsvRow(asset(derived)).price_basis).toBe('transitive');
+    expect(rwaCsvRow(asset()).price_basis).toBe('');
+  });
+
+  it('keeps a direct market price bare', async () => {
+    show(view());
+    await screen.findAllByText('$1.28M');
+    absent('two-hop', 'pegged', 'global');
+    present('Market cap (observed trades)');
+  });
+
+  it('names a shared ISIN and an overdue hand-vetted review', async () => {
+    const contested = {
+      basis: 'sep1_isin_vetted',
+      isin_collision: { isin: 'US1234567890', declared_by_issuers: 2 },
+      vetted_isin: {
+        isin: 'US1234567890',
+        instrument: 'Fund A',
+        source: 'https://example.test/kid.pdf',
+        verified_on: '2026-08-01',
+        review_by: '2026-11-01',
+        review_due: true,
+      },
+    } as Partial<Asset>;
+    show(one(contested));
+    await screen.findByText('Shared ISIN: declared by 2 issuers');
+    present(
+      'Review overdue: verified 2026-08-01, due 2026-11-01',
+      /its review is overdue/,
+    );
+    absent(/transcribed and reviewed by hand/);
+    const row = rwaCsvRow(asset(contested));
+    expect(row.isin_declared_by_issuers).toBe('2');
+    expect(row.vetted_isin_review_due).toBe('true');
   });
 });

@@ -451,3 +451,13 @@ describe('convertDecimalAmount', () => {
     expect(out).toBe(`0.${'0'.repeat(20_000)}1000`);
   });
 });
+
+describe('formatPremiumPct', () => {
+  it('never renders a non-zero premium as zero', () => {
+    expect(format.formatPremiumPct(0)).toBe('0.00');
+    expect(format.formatPremiumPct(0.004)).toBe('0.004');
+    expect(format.formatPremiumPct(0.0004)).toBe('0.0004');
+    expect(format.formatPremiumPct(0.00004)).toBe('<0.0001');
+    expect(format.formatPremiumPct(-0.00004)).toBe('-<0.0001');
+  });
+});
