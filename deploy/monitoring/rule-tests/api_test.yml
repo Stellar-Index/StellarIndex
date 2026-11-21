@@ -1138,12 +1138,37 @@ tests:
   - interval: 1m
     name: a persistently failing cache refresh tickets
     input_series:
+      - series: 'stellarindex_api_flagged_responses_total{job="stellarindex_api",instance="r1:8080",route="/v1/assets",flag="degraded"}'
+        values: '0+9x60'
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",method="GET",route="/v1/assets",status="200"}'
+        values: '0+10x60'
+      # The control: a route degrading one response in ten stays quiet.
+      - series: 'stellarindex_api_flagged_responses_total{job="stellarindex_api",instance="r1:8080",route="/v1/pools",flag="degraded"}'
+        values: '0+1x60'
+      - series: 'http_requests_total{job="stellarindex_api",instance="r1:8080",method="GET",route="/v1/pools",status="200"}'
+        values: '0+10x60'
       - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="refresh_error"}'
         values: '0+1x60'
       - series: 'stellarindex_api_cache_ops_total{job="stellarindex_api",instance="r1:8080",cache="markets",op="all_pools",result="hit"}'
         values: '0+100x60'
 
     alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_api_degraded_responses_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              route: /v1/assets
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_degraded_responses_high
+              summary: "API route /v1/assets serving mostly degraded responses"
+              description: |
+                More than half of /v1/assets's responses for 30 min
+                carried flags.degraded: a backend read behind the route is
+                failing and the route is serving a carried-forward or partial
+                body as a 200. Check the API logs for that route's read error.
       - eval_time: 50m
         alertname: stellarindex_api_cache_refresh_failing
         exp_alerts:

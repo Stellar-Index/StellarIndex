@@ -114,6 +114,31 @@ check "a nested field removed under a new \$ref is rejected" red 'lost `level`' 
 check "reordered oneOf variants pass" ok "" "S['Quote']['oneOf'].reverse()"
 check "an inserted oneOf variant passes" ok "" "S['Quote']['oneOf'].insert(0, {'\$ref': '#/components/schemas/Scope'})"
 check "a field made nullable passes" ok "" "S['Price']['properties']['price']['type'] = ['string', 'null']"
+check "a schema loosened to a free-form object is rejected" red 'removed-property: components/schemas/Price lost `price`' \
+  "S['Price'] = {'type': 'object', 'additionalProperties': True}"
+check "a schema stripped of its properties block is rejected" red 'removed-property: components/schemas/Price lost `basis`' \
+  "del S['Price']['properties']"
+check "a schema emptied to {} is rejected" red 'removed-property: components/schemas/Price lost `price`' "S['Price'] = {}"
+check "fields moved into an allOf base with one dropped are rejected" red 'removed-property: components/schemas/Price lost `price`' \
+  "S['PriceBase'] = {'type': 'object', 'properties': {'basis': {'type': 'string', 'enum': ['market', 'peg']}}}; S['Price'] = {'type': 'object', 'allOf': [{'\$ref': '#/components/schemas/PriceBase'}]}"
+check "fields moved into an allOf base intact pass" ok "" \
+  "S['PriceBase'] = {'type': 'object', 'properties': S['Price'].pop('properties')}; S['Price']['allOf'] = [{'\$ref': '#/components/schemas/PriceBase'}]"
+check "a response that loses its body is rejected" red 'removed-response: paths//price/get/responses/200/content' \
+  "d['paths']['/price']['get']['responses']['200'] = {'description': 'x'}"
+check "a response that loses its media type is rejected" red 'removed-response: paths//price/get/responses/200/content/application/json' \
+  "c = d['paths']['/price']['get']['responses']['200']['content']; c['text/plain'] = c.pop('application/json')"
+check "a response that loses its schema is rejected" red 'removed-response: paths//price/get/responses/200/content/application/json/schema' \
+  "d['paths']['/price']['get']['responses']['200']['content']['application/json'] = {}"
+check "a renamed response code is rejected" red 'removed-response: paths//keys/post/responses/201' \
+  "r = d['paths']['/keys']['post']['responses']; r['202'] = r.pop('201')"
+check "a dropped request media type is rejected" red 'removed-response: paths//keys/post/requestBody/content/application/json' \
+  "c = d['paths']['/keys']['post']['requestBody']['content']; c['text/plain'] = c.pop('application/json')"
+check "a response moved to a components response passes" ok "" \
+  "d.setdefault('components', {})['responses'] = {'P': d['paths']['/price']['get']['responses']['200']}; d['paths']['/price']['get']['responses']['200'] = {'\$ref': '#/components/responses/P'}"
+check "a new response code and media type pass" ok "" \
+  "r = d['paths']['/price']['get']['responses']; r['404'] = {'description': 'none'}; r['200']['content']['text/csv'] = {'schema': {'type': 'string'}}"
+check "a request body re-pointed to a schema with a new required field is rejected" red 'now requires `scope`' \
+  "S['KR2'] = {'type': 'object', 'required': ['name', 'scope'], 'properties': {'name': {'type': 'string'}, 'scope': {'\$ref': '#/components/schemas/Scope'}}}; d['paths']['/keys']['post']['requestBody']['content']['application/json']['schema'] = {'\$ref': '#/components/schemas/KR2'}"
 check "a removed optional parameter is rejected" red "removed-parameter: GET /price no longer takes parameter mode (in query)" \
   "del d['paths']['/price']['get']['parameters'][1]"
 

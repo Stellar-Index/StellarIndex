@@ -7,7 +7,8 @@ enum value regenerated cleanly and shipped. This compares base against head and 
 
   removed-operation   a path or method that existed is gone
   removed-schema      a named component schema is gone
-  removed-property    a property an existing schema declared is gone
+  removed-property    a property an existing schema declared (itself or through allOf) is gone
+  removed-response    a response code, a response or request media type, or its schema is gone
   removed-enum-value  an enum lost a value
   new-required-input  an existing operation gained a required parameter or request field
 
@@ -133,28 +134,31 @@ def type_change(b_node, h_node):
 
 
 def request_schemas(doc, op):
-    """Maps a stable name to every schema reachable from the operation's request body."""
+    """Maps each schema reachable from the operation's request body to its position in the body, so a body re-pointed
+    to another $ref is still compared with the schema it replaced."""
     out = {}
     body = resolve(doc, op.get("requestBody") or {})
     stack = [
-        (f"body[{ctype}]", (media or {}).get("schema") or {})
+        (f"body[{ctype}]", (media or {}).get("schema") or {}, frozenset())
         for ctype, media in (body.get("content") or {}).items()
     ]
     while stack:
-        name, schema = stack.pop()
+        name, schema, refs = stack.pop()
         if isinstance(schema, dict) and "$ref" in schema:
-            name = schema["$ref"]
+            if schema["$ref"] in refs:  # a recursive schema: its cycle adds no new position
+                continue
+            refs = refs | {schema["$ref"]}
         schema = resolve(doc, schema)
         if not schema or name in out:
             continue
         out[name] = schema
         for prop, child in (schema.get("properties") or {}).items():
-            stack.append((f"{name}.{prop}", child))
+            stack.append((f"{name}.{prop}", child, refs))
         if isinstance(schema.get("items"), dict):
-            stack.append((f"{name}[]", schema["items"]))
+            stack.append((f"{name}[]", schema["items"], refs))
         for key in ("allOf", "oneOf", "anyOf"):
             for i, child in enumerate(schema.get(key) or []):
-                stack.append((f"{name}.{key}[{i}]", child))
+                stack.append((f"{name}.{key}[{list_key(i, child)}]", child, refs))
     return out
 
 
@@ -193,23 +197,60 @@ def compare(base, head):
     for path, b_node in walk(base):
         h_node = at(head, path)
         if not isinstance(h_node, dict):
+            # Reported once, at the outermost missing slot whose head parent (through a $ref) survives.
+            parent = at(head, path[:-1])
+            if removed_slot(path) and isinstance(parent, dict) and path[-1] not in resolve(head, parent):
+                problems.append(f"removed-response: {show(path)}")
             continue
         # A node swapped for, or re-pointed to, another $ref is compared in depth as the schema each side resolves
         # to; the walk cannot follow it, since the two sides no longer share paths below it.
         if ref_changed(b_node, h_node):
             compare_resolved(base, head, b_node, h_node, path, problems, set())
         else:
-            compare_node(b_node, h_node, path, problems)
-    return problems
+            compare_node(base, head, b_node, h_node, path, problems)
+    return list(dict.fromkeys(problems))
 
 
 def ref_changed(b_node, h_node):
     return ("$ref" in b_node or "$ref" in h_node) and b_node.get("$ref") != h_node.get("$ref")
 
 
-def compare_node(b_node, h_node, path, problems):
-    if isinstance(b_node.get("properties"), dict) and isinstance(h_node.get("properties"), dict):
-        for prop in sorted(set(b_node["properties"]) - set(h_node["properties"])):
+def own_properties(doc, node, seen=None):
+    """The property names a schema declares itself or through allOf (which composes, unlike oneOf/anyOf)."""
+    seen = set() if seen is None else seen
+    out = set(node.get("properties") or {}) if isinstance(node.get("properties"), dict) else set()
+    for member in node.get("allOf") or []:
+        if not isinstance(member, dict) or id(member) in seen:
+            continue
+        seen.add(id(member))
+        out |= own_properties(doc, resolve(doc, member), seen)
+    return out
+
+
+def removed_slot(path):
+    """True for a success response, a response or request media type, or its schema: the places a client reads a body
+    shape from, whose disappearance the property walk cannot see. A dropped error code is not a break."""
+    if path[:1] == ("paths",) and len(path) >= 4 and path[2] in METHODS:
+        rest = path[3:]
+        if rest[0] == "responses" and len(rest) >= 2 and not rest[1].startswith("2"):
+            return False
+    elif path[:2] == ("components", "responses") and len(path) >= 4:
+        rest = ("responses",) + path[2:]
+    else:
+        return False
+    if rest[0] == "responses":
+        tail = rest[2:]
+    elif rest[0] == "requestBody" and len(rest) >= 2:
+        tail = rest[1:]
+    else:
+        return False
+    return tail in ((), ("content",)) or (tail[0] == "content" and (len(tail) == 2 or tail[2:] == ("schema",)))
+
+
+def compare_node(base, head, b_node, h_node, path, problems):
+    b_props = own_properties(base, b_node)
+    if b_props:
+        for prop in sorted(b_props - own_properties(head, h_node)):
             problems.append(f"removed-property: {show(path)} lost `{prop}`")
     if isinstance(b_node.get("enum"), list) and isinstance(h_node.get("enum"), list):
         for value in [v for v in b_node["enum"] if v not in h_node["enum"]]:
@@ -238,7 +279,7 @@ def compare_resolved(base, head, b_node, h_node, path, problems, seen):
     if (id(b_node), id(h_node)) in seen:
         return
     seen.add((id(b_node), id(h_node)))
-    compare_node(b_node, h_node, path, problems)
+    compare_node(base, head, b_node, h_node, path, problems)
     h_children = dict(schema_children(h_node))
     for key, b_child in schema_children(b_node):
         h_child = h_children.get(key)

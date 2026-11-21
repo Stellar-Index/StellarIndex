@@ -7,6 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
+// genesisLedger is the first ledger a lake holds: the ledger export starts at 2 because the network's genesis ledger 1
+// has no close meta. A genesis-to-tip claim is a run from here to the contiguous tip.
+const genesisLedger = 2
+
 // contiguousLakeTip is clickhouse.ContiguousWatermark, a var so the bound
 // resolution is testable without a live lake.
 var contiguousLakeTip = clickhouse.ContiguousWatermark
