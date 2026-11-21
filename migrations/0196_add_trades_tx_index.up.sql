@@ -10,7 +10,8 @@
 -- timescale.Store.TagTradesTxIndex. No reader keys on it yet.
 --
 -- Nullable + no default = catalog-only, including on compressed chunks:
--- test/integration/migration_0196_trades_tx_index_test.go asserts every
+-- TestMigration0196_AddsNullableTxIndexOverCompressedChunks
+-- (test/integration/migrations_test.go) asserts every
 -- chunk is still compressed after this file. No index and no CHECK (a
 -- CHECK would validate against compressed chunks).
 --

@@ -70,6 +70,22 @@ If pool capacity climbs faster than expected, abort and redo that grain in 1-wee
 CALL refresh_continuous_aggregate('prices_1m', '2026-01-01'::timestamptz, '2026-01-08'::timestamptz);
 ```
 
+## After migration 0232: `pools_per_source_1h` real-time
+
+0232 restores real-time aggregation on `pools_per_source_1h` only when its watermark is within 6 hours of now (or `trades` is empty); otherwise it raises a NOTICE and leaves the view `materialized_only`. The migrate binary does not print NOTICEs, so check the view:
+
+```sql
+SELECT materialized_only FROM timescaledb_information.continuous_aggregates
+ WHERE view_name = 'pools_per_source_1h';
+```
+
+If it is still `true`, refresh it, then flip it:
+
+```sql
+CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL);
+ALTER MATERIALIZED VIEW pools_per_source_1h SET (timescaledb.materialized_only = false);
+```
+
 ## Done when
 
 Each CAGG's oldest bucket is within one chunk width of the raw table's oldest row:

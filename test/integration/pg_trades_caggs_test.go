@@ -238,9 +238,8 @@ func seedDetectorTrade(t *testing.T, ctx context.Context, db *sql.DB, nonce int,
 }
 
 // wantRealtimeCAGGs: the exact sorted set of views the migrations leave real-time (0069), each also allowed by
-// timescale.RealTimeCAGGAllowed. 0187 made pools_per_source_1h materialized-only; the operator restores its real-time tail
-// after a refresh.
-var wantRealtimeCAGGs = []string{"source_volume_1h"}
+// timescale.RealTimeCAGGAllowed. 0187 made pools_per_source_1h materialized-only and 0232 restores its real-time tail.
+var wantRealtimeCAGGs = []string{"pools_per_source_1h", "source_volume_1h"}
 
 // pinnedCAGGs: served views whose unguarded readers depend on CLOSED buckets only. Listed so a rename fails the test.
 var pinnedCAGGs = []string{
@@ -821,7 +820,8 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	assertPriceableSchema(t, ctx, db, true)
+	// A fresh install migrated to head: trades is empty, so 0232 restores the real-time tail 0187 dropped.
+	assertPriceableSchema(t, ctx, db, true, false)
 
 	for _, stmt := range []string{
 		`ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_base_amount_check`,
@@ -949,13 +949,14 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 		t.Fatalf("migrate down 0187: %v", err)
 	}
 	quiesceCAGGRefreshPolicies(t, ctx, db)
-	assertPriceableSchema(t, ctx, db, false)
+	assertPriceableSchema(t, ctx, db, false, false)
 	refreshAll(t)
 	if err := m.Up(); err != nil {
 		t.Fatalf("migrate up 0187 again: %v", err)
 	}
 	quiesceCAGGRefreshPolicies(t, ctx, db)
-	assertPriceableSchema(t, ctx, db, true)
+	// 0187 recreated the view empty over seeded trades: 0232 must hold it materialized_only, or every read scans raw trades.
+	assertPriceableSchema(t, ctx, db, true, true)
 	seed(t, db, ctx, mixed, []seedTrade{
 		{off: 5 * time.Second, base: "0", quote: "7000", usd: "5"},
 		{off: 50 * time.Second, base: "3000000", quote: "0", usd: "5"},
@@ -1015,7 +1016,7 @@ func assertExact(t *testing.T, col string, got sql.NullString, want string) {
 // assertPriceableSchema checks the 0187 shape (up) or the restored
 // pre-0187 shape (down): the new columns, pools_per_source_1h's
 // real-time flag, and 0156's retention policy re-attached disarmed.
-func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up bool) {
+func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up, poolsMaterializedOnly bool) {
 	t.Helper()
 	for _, grain := range priceableGrains {
 		var n int
@@ -1035,8 +1036,8 @@ func assertPriceableSchema(t *testing.T, ctx context.Context, db *sql.DB, up boo
 			t.Errorf("%s: materialized_only = false (up=%v)", v, up)
 		}
 	}
-	if mo["pools_per_source_1h"] != up {
-		t.Errorf("pools_per_source_1h materialized_only = %v, want %v", mo["pools_per_source_1h"], up)
+	if mo["pools_per_source_1h"] != poolsMaterializedOnly {
+		t.Errorf("pools_per_source_1h materialized_only = %v, want %v (up=%v)", mo["pools_per_source_1h"], poolsMaterializedOnly, up)
 	}
 	var total, active int
 	if err := db.QueryRowContext(ctx, `
@@ -2292,4 +2293,83 @@ func assertReadersSkipUnpricedBucket(t *testing.T, ctx context.Context, dsn stri
 	empty("TimedVWAPsForPair1m", len(timed), err)
 	vw, err := store.VWAPsForPair1m(ctx, p, from, to)
 	empty("VWAPsForPair1m", len(vw), err)
+}
+
+// TestMigration0232FlipsOnlyAFreshView: 0232 restores pools_per_source_1h's real-time tail only when its watermark is within 6 hours
+// of now (or trades is empty); a view holding rows but refreshed long ago stays materialized-only, or every read scans raw trades.
+func TestMigration0232FlipsOnlyAFreshView(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	quiesceCAGGRefreshPolicies(t, ctx, db)
+
+	materializedOnly := func() bool {
+		t.Helper()
+		var mo bool
+		if err := db.QueryRowContext(ctx, `SELECT materialized_only FROM timescaledb_information.continuous_aggregates
+			 WHERE view_name = 'pools_per_source_1h'`).Scan(&mo); err != nil {
+			t.Fatalf("read materialized_only: %v", err)
+		}
+		return mo
+	}
+	if materializedOnly() {
+		t.Fatal("empty trades at head: 0232 left the view materialized-only")
+	}
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	m, err := migrate.New("file://"+filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations"), dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	t.Cleanup(func() { _, _ = m.Close() })
+	rerun0232 := func() {
+		t.Helper()
+		if err := m.Migrate(231); err != nil {
+			t.Fatalf("migrate down 0232: %v", err)
+		}
+		if !materializedOnly() {
+			t.Fatal("0232 down did not restore materialized_only")
+		}
+		if err := m.Migrate(232); err != nil {
+			t.Fatalf("migrate up 0232: %v", err)
+		}
+	}
+	refreshUntil := func(until string) {
+		t.Helper()
+		q := `CALL refresh_continuous_aggregate('pools_per_source_1h', now() - interval '4 days', ` + until + `)`
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+
+	t0 := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour)
+	seed(t, db, ctx, ohlcDustPair{base: "FRSH-" + priceableIssuer, quote: "native"}, []seedTrade{
+		{off: 5 * time.Second, base: "10000000", quote: "50000000", usd: "10"},
+	}, t0)
+
+	refreshUntil(`now() - interval '24 hours'`)
+	var rows int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pools_per_source_1h`).Scan(&rows); err != nil || rows == 0 {
+		t.Fatalf("stale refresh materialized %d row(s) (err %v), want > 0", rows, err)
+	}
+	rerun0232()
+	if !materializedOnly() {
+		t.Error("a view with rows but a watermark 24h behind was flipped to real-time")
+	}
+
+	// The watermark is the end of the last materialized bucket holding data, so freshness needs a recent trade as well as a refresh.
+	seed(t, db, ctx, ohlcDustPair{base: "FRSH-" + priceableIssuer, quote: "native"}, []seedTrade{
+		{off: 5 * time.Second, base: "10000000", quote: "50000000", usd: "10"},
+	}, time.Now().UTC().Add(-2*time.Hour).Truncate(time.Hour))
+	refreshUntil(`date_trunc('hour', now())`)
+	rerun0232()
+	if materializedOnly() {
+		t.Error("a view refreshed to the current hour was left materialized-only")
+	}
 }

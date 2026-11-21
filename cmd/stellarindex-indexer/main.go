@@ -1545,8 +1545,11 @@ func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
 }
 
 // recordCHLiveSinkUndercount meters and logs a LedgerExtract's read-undercount; the ledger is still written, so this counter is the only
-// alertable trace.
+// alertable trace. Supply-flow skips are metered separately: any contract can emit them, so they are not an undercount.
 func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logger) {
+	for reason, n := range ext.SupplyFlowSkips {
+		obs.SupplyFlowSkippedTotal.WithLabelValues(reason).Add(float64(n))
+	}
 	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 &&
 		ext.SorobanFeeMetaUnsupported == 0 && ext.EvictedKeysUnreadable == 0 && ext.EntryChangesUnencodable == 0 {
 		return

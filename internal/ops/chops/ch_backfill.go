@@ -98,6 +98,9 @@ func chBackfill(args []string) error {
 	if cerr := backfillCoverage(uint32(*from), uint32(*to), total, streamBucket, ctx.Err() != nil); cerr != nil {
 		return fmt.Errorf("ch-backfill: %w", cerr)
 	}
+	if s := loss.supplySkipSummary(); s != "" {
+		fmt.Fprintf(os.Stderr, "ch-backfill: %s\n", s)
+	}
 	if lerr := loss.err(); lerr != nil {
 		return fmt.Errorf("ch-backfill: %w", lerr)
 	}
@@ -128,13 +131,17 @@ func newBackfillProgress(heartbeatPath string) *backfillProgress {
 	if hb.Enabled() {
 		fmt.Fprintf(os.Stderr, "ch-backfill: heartbeat -> %s\n", hb.Path())
 	}
+	// Seed every reason at 0 before Start writes the first sample, so increase() sees a run's first skip.
+	for _, reason := range clickhouse.SupplySkipReasons {
+		hb.Skipped(reason, 0)
+	}
 	hb.Start()
 	now := time.Now()
 	return &backfillProgress{hb: hb, start: now, lastLog: now}
 }
 
 // record is the per-ledger callback handed to every chunk worker.
-func (p *backfillProgress) record(workerIdx int, seq uint32) {
+func (p *backfillProgress) record(workerIdx int, seq uint32, supplySkips map[string]int) {
 	p.mu.Lock()
 	p.done++
 	t := p.done
@@ -146,6 +153,9 @@ func (p *backfillProgress) record(workerIdx int, seq uint32) {
 	}
 	p.mu.Unlock()
 	p.hb.Progress(uint64(t), uint64(seq)) //nolint:gosec // t is a non-negative running count; seq is a ledger sequence
+	for reason, n := range supplySkips {
+		p.hb.Skipped(reason, uint64(n)) //nolint:gosec // n is a non-negative skip count
+	}
 }
 
 // total is the number of ledgers walked so far.
@@ -227,7 +237,7 @@ func chBackfillChunk(
 	flushEvery int,
 	dryRun, changesOnly bool,
 	loss *extractLoss,
-	logProgress func(workerIdx int, seq uint32),
+	logProgress func(workerIdx int, seq uint32, supplySkips map[string]int),
 ) error {
 	var sink *clickhouse.Sink
 	if !dryRun {
@@ -259,7 +269,7 @@ func chBackfillChunk(
 					return aerr // a ClickHouse write failure is fatal; retry the range
 				}
 			}
-			logProgress(idx, lcm.LedgerSequence())
+			logProgress(idx, lcm.LedgerSequence(), ext.SupplyFlowSkips)
 			return nil
 		},
 	)
@@ -280,6 +290,25 @@ type extractLoss struct {
 	mu      sync.Mutex
 	ledgers int64
 	kinds   map[string]int64
+	// supplySkips is reported, never failed on: any contract can emit a mint/burn/clawback topic, so failing would let one
+	// transaction wedge every re-derive over its ledger.
+	supplySkips map[string]int64
+}
+
+// supplySkipSummary is the one-line skip tally for the run summary, "" when nothing was skipped.
+func (l *extractLoss) supplySkipSummary() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.supplySkips) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(l.supplySkips))
+	for k, n := range l.supplySkips {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, n))
+	}
+	sort.Strings(parts)
+	return "supply events with no supply_flows row (raw events kept in contract_events; only non-" + clickhouse.SupplySkipNotTokenShaped +
+		" reasons short a token's supply): " + strings.Join(parts, " ")
 }
 
 // record adds one ledger's undercounts and reports whether it had any. Changes-only writes no txs or events, so it
@@ -297,6 +326,14 @@ func (l *extractLoss) record(ext clickhouse.LedgerExtract, changesOnly bool) boo
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if !changesOnly {
+		for reason, n := range ext.SupplyFlowSkips {
+			if l.supplySkips == nil {
+				l.supplySkips = map[string]int64{}
+			}
+			l.supplySkips[reason] += int64(n)
+		}
+	}
 	short := false
 	for k, n := range kinds {
 		if n == 0 {

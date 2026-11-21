@@ -43,6 +43,54 @@ func DecodeSupplyAmount(sv xdr.ScVal) (*big.Int, string, bool) {
 	return nil, sv.Type.String(), false
 }
 
+// Supply-flow skip reasons. Only SupplySkipNotTokenShaped is expected traffic: topic[0] alone does not identify a token, so any contract
+// (an NFT's `mint` with a u32 id, say) can emit one, and a contract with no supply loses nothing.
+const (
+	SupplySkipNotTokenShaped  = "not_token_shaped"
+	SupplySkipAmountNotI128   = "amount_not_i128"
+	SupplySkipBodyUnparseable = "body_unparseable"
+)
+
+// SupplySkipReasons lists every reason ClassifySupplyBodyXDR returns, for metric zero-seeding.
+var SupplySkipReasons = []string{SupplySkipNotTokenShaped, SupplySkipAmountNotI128, SupplySkipBodyUnparseable}
+
+// ClassifySupplyBodyXDR type-tests a mint/burn/clawback body before reading its amount: a bare i128 or a map carrying `amount` is
+// token-shaped; skip is "" when the amount decoded, else a SupplySkip* reason.
+func ClassifySupplyBodyXDR(dataXDR string) (amount *big.Int, skip string) {
+	sv, err := scval.Parse(dataXDR)
+	if err != nil {
+		return nil, SupplySkipBodyUnparseable
+	}
+	if sv.Type == xdr.ScValTypeScvI128 {
+		amt, aerr := scval.AsAmountFromI128(sv)
+		if aerr != nil {
+			return nil, SupplySkipAmountNotI128
+		}
+		return amt.BigInt(), ""
+	}
+	switch sv.Type {
+	case xdr.ScValTypeScvU128, xdr.ScValTypeScvI256, xdr.ScValTypeScvU256:
+		// An amount-shaped value we cannot decode: a token's supply would be short, so it is not foreign traffic.
+		return nil, SupplySkipAmountNotI128
+	case xdr.ScValTypeScvMap:
+	default:
+		return nil, SupplySkipNotTokenShaped
+	}
+	entries, merr := scval.AsMap(sv)
+	if merr != nil {
+		return nil, SupplySkipNotTokenShaped
+	}
+	amtVal, ok := scval.MapField(entries, "amount")
+	if !ok {
+		return nil, SupplySkipNotTokenShaped
+	}
+	amt, aerr := scval.AsAmountFromI128(amtVal)
+	if aerr != nil {
+		return nil, SupplySkipAmountNotI128
+	}
+	return amt.BigInt(), ""
+}
+
 // DecodeSupplyAmountXDR is DecodeSupplyAmount for a base64 scval data body, the form the CH-reading supply tools use.
 func DecodeSupplyAmountXDR(dataXDR string) (*big.Int, string, bool) {
 	sv, err := scval.Parse(dataXDR)

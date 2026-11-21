@@ -112,6 +112,11 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 		SorobanFeeMetaUnsupported: 4,
 		EvictedKeysUnreadable:     1,
 		EntryChangesUnencodable:   5,
+		SupplyFlowSkips:           map[string]int{"not_token_shaped": 6, "amount_not_i128": 7},
+	}
+	skipBefore := map[string]float64{}
+	for _, r := range []string{"not_token_shaped", "amount_not_i128"} {
+		skipBefore[r] = testutil.ToFloat64(obs.SupplyFlowSkippedTotal.WithLabelValues(r))
 	}
 	recordCHLiveSinkUndercount(ext, logger)
 
@@ -126,6 +131,13 @@ func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {
 	for kind, w := range want {
 		if got := testutil.ToFloat64(obs.ChLiveSinkReadUndercountTotal.WithLabelValues(kind)); got != w {
 			t.Fatalf("kind %s: counter = %v, want %v", kind, got, w)
+		}
+	}
+	// Supply skips go to their own reason-labelled counter, never the undercount one, and are metered on an otherwise clean ledger.
+	recordCHLiveSinkUndercount(clickhouse.LedgerExtract{SupplyFlowSkips: map[string]int{"not_token_shaped": 1}}, logger)
+	for r, add := range map[string]float64{"not_token_shaped": 7, "amount_not_i128": 7} {
+		if got := testutil.ToFloat64(obs.SupplyFlowSkippedTotal.WithLabelValues(r)); got != skipBefore[r]+add {
+			t.Errorf("supply skip %s: counter = %v, want %v", r, got, skipBefore[r]+add)
 		}
 	}
 }

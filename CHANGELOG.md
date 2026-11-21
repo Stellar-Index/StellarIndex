@@ -20,6 +20,50 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.126.0] - 2026-11-21
+
+Tested against Stellar protocol 27. Migrations 0231-0232: 0231 creates the empty `source_exclusions` control table, and 0232 switches `pools_per_source_1h` back to real-time when the view's watermark is within six hours (or `trades` is empty), otherwise leaves it as it is; it takes a five second lock timeout and rewrites no data. Breaking for API clients: `DELETE /v1/account/keys/{id}` changes its status codes, and `decimals` is no longer always present on three response types (details under Changed). Breaking for the Go SDK: `pkg/client` `AssetDetail.Decimals` changes from `int` to `*int`; there is no separate `pkg/client` tag, so this section is the notice. The OpenAPI contract carries `OpenAPI-Break:` trailers on #4193 only. Host payload changed: ClickHouse `account_cohort_rollup.sql`, `tier1_schema.sql`, `ops_by_source.sql` and `contract_instance_changes.sql`; the indexer, API and aggregator units; alert rules in both rule trees; the ansible HA roles and node-healthcheck. Not run by the deploy: stop `cohort-rollup.timer`, apply `deploy/clickhouse/account_cohort_rollup.sql`, check `system.columns` shows `Int256`, then restart the timer, before or right after rolling the binary (until then the cohort cycle refuses and the previous snapshot stays served); run the host role from the tag to install the alert rules and unit changes (rules otherwise reach hosts on the next rules sync); on a host where `pools_per_source_1h` stays materialized-only after 0232, refresh it and set `materialized_only=false` per `docs/operations/cagg-broad-recompute.md`; ranges rebuilt with `projected-rebuild` before this release keep stale price aggregates until `stellarindex-ops trades-cagg-refresh -from L -to H -oracle -write` covers them (#4194).
+
+### Added
+
+- **api:** BLNT protocol block, and USD values on lending protocol stats, backstops, emissions, auctions and account accrued interest (#4202, #4206).
+- **api:** the listing valuation status `scale_unknown`, for a token whose scale could not be read (#4193).
+- **api:** `flags.truncated` on `/v1/admin/status-notices` when more notices exist than were served (#4190).
+- **explorer:** lending pages show dollar values, charts and names for Blend and BLNT (#4203).
+- **ops:** `source_exclusions` control table and the `source-exclude` command (#4189).
+- **monitoring:** alerts for five previously unread failure signals, a dropped pgBackRest WAL, a stalled cohort rollup or trades-by-account window, a stalled webhook worker, and an old directory snapshot (#4207, #4180, #4214, #4188).
+
+### Changed
+
+- **api (breaking):** `DELETE /v1/account/keys/{id}` answers 403 `key-not-delegated` for a key the caller may not revoke, including unknown ids (was 204); a key revoking itself answers 204 (was 409 `cannot-revoke-self`); a malformed id answers 400 `invalid-key-id`. A key may revoke itself and the keys minted from it, never its minter, a sibling or another root; account-wide revoke is for a SEP-10 session. Clients that treated 204 as "gone" must treat 403 as "not yours" (#4209).
+- **api (breaking):** `decimals` is omitted, not served as 7, when a token's scale was not read, on the transfers response, `AssetDetail` and `PoolReserveToken`. Market cap, FDV, RWA valuation and stablecoin figures are refused for such a token. Clients must treat `decimals` as optional. Native XLM, classic assets and their SACs stay 7 (#4193).
+- **sdk (breaking):** `pkg/client` `AssetDetail.Decimals` is `*int`; nil means the server omitted it (#4193).
+- **api:** under `auth_mode=sep10`, callers behind one IPv4 address or one IPv6 /64 share one per-minute budget; API-key callers and a single SEP-10 user are unchanged (#4195).
+- **api:** the 1h, 24h and 7d change figures compare against the last closed price at or before the target time (within 5 min, 30 min and 2 h), where they used a band around it; an asset with no such reference shows no change. `/v1/pools` and `/v1/markets?source=` 24h figures cover (now-24h, now] and are flagged a lower bound when the view lags more than six hours (#4197).
+- **api:** a capped read is never served as the whole set: protocol `contract_count` counts every rostered contract, and a detail page whose analytics covered only part of the contracts reports the status `unavailable` (#4190).
+- **api:** asset reads match every identity of an asset, and divergence `our_price` stays exact (#4191).
+- **api:** RWA summaries and series, charts, depeg and divergence state what they cover and what they could not check (#4198, #4199).
+- **api:** the listing market cap is exact and equal to the asset detail value; `org_name` is served only when the issuer's own `stellar.toml` lists that issuer; the storage floor is served when the event log is partial; Soroswap TVL counts pairs a read missed (#4212, #4188, #4185).
+- **explorer:** the asset page keeps safety warnings, labels every price and converts exactly; RWA totals reconcile and floors are marked; a failed read shows an error and a partial list says so; the exchange and venue 24h totals show a lower bound with "≥"; the pair page shows the server's 24h volume (#4208, #4210, #4196, #4190, #4197).
+- **auth:** key revocation is bounded to the key and its descendants, a retried revoke answers 204 for 24 hours, and a key id must be `kid_` plus 12-64 lowercase hex (#4209).
+- **ops:** an external backfill never mixes fills and candles in one bucket, the gap finder sees range edges, and overrides are audited; a rebuild refreshes the price aggregates; `wasm-drift` checks every per-WASM source; `ch-backfill -changes-only` fails on an unreadable transaction (#4187, #4194, #4186, #4212).
+- **ops:** the indexer restarts with backoff, the API unit runs with `ProtectSystem=strict`, node-healthcheck uses the read-only MinIO reader key, and heavy-job locks have tighter permissions and refuse unsafe lock files; the API and aggregator keep retrying through a long Postgres outage (#4201, #4180).
+- **ansible:** the HA roles fail closed on re-run, restart one node at a time and refuse unsafe hosts; tasks that retire a timer or service fail on a real stop failure (#4205, #4195).
+- **lending:** the state proof bounds its lake reads and reports what it did not compare (#4184).
+- **monitoring:** the rules-sync self-tests run in CI and the deadman no longer fires under a day-long silence (#4214).
+- **ci:** the lake-dedup, migration and baseline-growth lints close blind spots; new lints for unflagged `LIMIT`, rolling-window grain, Int128 sums, a defaulted `decimals` and swallowed ansible failures (#4215, #4190, #4197, #4200, #4193, #4195).
+- **docs:** methodology, security, rollback, recovery and credential runbooks match what the tools do; key replacement is described for cascading revoke (#4185, #4183, #4213).
+- **deps:** `next` and `eslint-config-next` 16.4.5 in the explorer (#4204).
+
+### Fixed
+
+- **supply:** account-cohort flow sums are 256-bit; three 2^126 receipts were served as -2^126. The rollup refuses a cycle against narrower columns and keeps the previous snapshot (#4200).
+- **lake:** a claimable balance created and claimed in the same ledger is no longer seeded as live; undecodable supply and movement event bodies are classified, and non-token bodies no longer fail a run (#4216).
+- **api:** `/v1/pools` is real-time again (migration 0232) (#4216).
+- **api:** account movement pages keep their pinned boundary when the watermark read fails, and a failed first page writes no zero boundary into `next_cursor`; backups diagnostics serve the kept snapshot as unknown and stale when every Prometheus query fails (#4212).
+- **ops:** a failed parallelism reset in the volume-character rollup no longer returns a capped connection to the pool; a rebuild's `-sep41-supply-only` refusal runs before `-preflight`; the sponsorship proof reports "not comparable" for a stale read instead of "disagree" (#4195, #4212, #4200).
+- **ci:** a test-fixture key id no longer trips the secret scan; the doc-walking supply test tolerates a fixture that vanishes mid-walk (#4211, #4182).
+
 ## [v0.125.0] - 2026-11-17
 
 Tested against Stellar protocol 27. Migrations 0227-0230: 0227 corrects the stored comment on `nonstandard_decimals_assets` (its rows drive a price correction and must not be deleted), 0228 sets 7-day chunks on the thirteen trades-derived continuous aggregates (new chunks only), 0229 adds `issuers.sep1_payload_previous` so a home-domain change leaves an identity-history row, and 0230 makes account erasure also strip the audit `reason`, a staff `actor_email`, and the erased account's own ip and user agent; the 0191 down migration is also made safer over compressed chunks. No `pkg/*` break; `pkg/client` gains `below_floor`, `substance` and `volume_lower_bound` fields. The OpenAPI contract gains `/v1/lending/protocols` and additive flags and fields; nothing is removed and no commit carries an `OpenAPI-Break:` trailer. Host payload changed: ClickHouse `lending_state.sql`, `contract_event_shapes.sql` and `tier1_schema.sql`, the lake dedup driver, the indexer, `verify-archive-tier-b` and `pg-logrotate` units, alert rules in both rule trees and `apply-rules.sh`, and the archival-node, haproxy, loki, patroni, prometheus and redis-sentinel roles. Not run by the deploy: apply `deploy/clickhouse/lending_state.sql`; run the host role from the tag before deploying; re-derive sponsorship history with `ch-entry-history -write -from 32747293`; backfill the ancestor chain of every legacy API key once.
@@ -144,11 +188,3 @@ Tested against Stellar protocol 27. One migration (0224, a new table; nothing ex
 ### Changed
 
 - **ops:** the test-net KVM host accepts SSH keys only.
-
-## [v0.121.1] - 2026-11-16
-
-Tested against Stellar protocol 27. No migrations, no config keys, no host payload, no `pkg/*` change.
-
-### Fixed
-
-- **api:** `/v1/status` answered 200 with an empty body on a host whose price routes had no successful request in five minutes (seen on testnet and futurenet at v0.121.0). A latency quantile with no observations is now treated as no measurement. A response body that cannot be encoded is a 500 problem document, never an empty 200.

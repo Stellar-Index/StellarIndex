@@ -88,10 +88,12 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 }
 
 // scanClaimableSeedWindow reduces one ledger window server-side to at most one row per storage key. A SINGLE argMax over a TUPLE of every
-// projected column keyed on (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index): per-column argMax could stitch a live
-// entry_xdr to a later 'removed' change_type, resurrecting a claimed balance. PREWHERE on entry_type skips wide columns; aliases must not
-// shadow source columns (ILLEGAL_AGGREGATION), hence win_. SETTINGS: a memory ceiling so an oversized window bisects; group-by spill OFF
-// (its threshold compares against the whole query's tracker).
+// projected column: per-column argMax could stitch a live entry_xdr to a later 'removed' change_type, resurrecting a claimed balance.
+// Within a ledger a removal outranks every other change, so legacy rows without apply order (intra_ledger_seq 0) still settle: an id is
+// never reused, and no operation alters a live entry's asset or amount (an 'updated' row only moves sponsorship), so any removal in the
+// key's latest ledger is its final state. FINAL drops the superseded versions a re-derive leaves until a merge; PREWHERE on entry_type
+// (constant per identity) skips wide columns; aliases must not shadow source columns (ILLEGAL_AGGREGATION), hence win_. SETTINGS: a
+// memory ceiling so an oversized window bisects; group-by spill OFF (its threshold compares against the whole query's tracker).
 func scanClaimableSeedWindow(ctx context.Context, conn driver.Conn, from, to uint32, red *claimableSeedReducer) error {
 	const q = `SELECT key_xdr,
 		       tupleElement(win, 1) AS win_ledger_seq,
@@ -106,13 +108,14 @@ func scanClaimableSeedWindow(ctx context.Context, conn driver.Conn, from, to uin
 		    SELECT key_xdr,
 		           argMax((ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index,
 		                   entry_xdr, toString(change_type), close_time),
-		                  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win
-		    FROM stellar.ledger_entry_changes
+		                  (ledger_seq, change_type = 'removed', intra_ledger_seq, tx_hash, op_index, change_index)) AS win
+		    FROM stellar.ledger_entry_changes FINAL
 		    PREWHERE entry_type = 'claimable_balance'
 		    WHERE ledger_seq BETWEEN ? AND ?
 		    GROUP BY key_xdr
 		)
-		SETTINGS max_memory_usage = 4000000000,
+		SETTINGS do_not_merge_across_partitions_select_final = 1,
+		         max_memory_usage = 4000000000,
 		         max_bytes_before_external_group_by = 0,
 		         max_threads = 4`
 	rows, err := conn.Query(ctx, q, from, to)
