@@ -10618,7 +10618,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                    "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                     "type": "text/plain"
                   },
                   "key": "outlier_sigma",
@@ -10706,7 +10706,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -10804,7 +10804,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -10902,7 +10902,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11000,7 +11000,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11098,7 +11098,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11250,7 +11250,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11348,7 +11348,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "content": "Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable.",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11395,7 +11395,7 @@
           "request": {
             "name": "Volume-weighted average price over a window.",
             "description": {
-              "content": "Returns VWAP = Σ(quote) / Σ(base) for every trade in\n[from, to) for the given pair. Optional outlier filter\ndrops prices > N σ from the window mean. When the window\nhits the server's per-request cap (10000 trades) the\nresponse carries `truncated: true` — the price reflects\nonly the chronologically **last** N trades of the window,\nnot the full window: the reader drops the OLDEST rows\nunder the limit so a truncated result always runs up to\nthe window end. Narrow the window and retry for an exact\nVWAP.\n\nRate-limit cost: one token per 7 days of window (rounded up),\nso a wide window spends more of the minute's budget.\n\n`flags.divergence_checked` / `flags.divergence_warning` are\nalways `false` here: the cross-reference verdict compares the\naggregator's shortest-window VWAP now, never this value computed\nover the requested `[from, to)`, so it is not consulted.\n",
+              "content": "Returns VWAP = Σ(quote) / Σ(base) for every trade in\n[from, to) for the given pair. Optional outlier filter\ndrops prices more than N robust σ from the window median\n(σ = max(1.4826 × MAD, 0.25 % of the median)). When the window\nhits the server's per-request cap (10000 trades) the\nresponse carries `truncated: true` — the price reflects\nonly the chronologically **last** N trades of the window,\nnot the full window: the reader drops the OLDEST rows\nunder the limit so a truncated result always runs up to\nthe window end. Narrow the window and retry for an exact\nVWAP.\n\nRate-limit cost: one token per 7 days of window (rounded up),\nso a wide window spends more of the minute's budget.\n\n`flags.divergence_checked` / `flags.divergence_warning` are\nalways `false` here: the cross-reference verdict compares the\naggregator's shortest-window VWAP now, never this value computed\nover the requested `[from, to)`, so it is not consulted.\n",
               "type": "text/plain"
             },
             "url": {
@@ -11445,7 +11445,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                    "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                     "type": "text/plain"
                   },
                   "key": "outlier_sigma",
@@ -11533,7 +11533,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11631,7 +11631,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11729,7 +11729,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11827,7 +11827,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -11925,7 +11925,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -12077,7 +12077,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",
@@ -12175,7 +12175,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Drop trades > N σ from window mean. 0 disables (default).",
+                        "content": "Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default).",
                         "type": "text/plain"
                       },
                       "key": "outlier_sigma",

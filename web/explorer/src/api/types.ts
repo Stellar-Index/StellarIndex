@@ -1604,7 +1604,8 @@ export interface paths {
          * Volume-weighted average price over a window.
          * @description Returns VWAP = Σ(quote) / Σ(base) for every trade in
          *     [from, to) for the given pair. Optional outlier filter
-         *     drops prices > N σ from the window mean. When the window
+         *     drops prices more than N robust σ from the window median
+         *     (σ = max(1.4826 × MAD, 0.25 % of the median)). When the window
          *     hits the server's per-request cap (10000 trades) the
          *     response carries `truncated: true` — the price reflects
          *     only the chronologically **last** N trades of the window,
@@ -17494,7 +17495,7 @@ export interface operations {
                  *     flagged `truncated: true`.
                  */
                 limit?: number;
-                /** @description Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable. */
+                /** @description Drop trades more than N robust σ from the window median before computing the bar (single-bar mode only); σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. Default 4σ. Pass 0 to disable. */
                 outlier_sigma?: number;
             };
             header?: never;
@@ -17626,7 +17627,7 @@ export interface operations {
                  *     `to` is excluded.
                  */
                 to?: components["parameters"]["To"];
-                /** @description Drop trades > N σ from window mean. 0 disables (default). */
+                /** @description Drop trades more than N robust σ from the window median; σ = max(1.4826 × MAD, 0.25 % of the median), 0.5 % of the median when MAD is 0. 0 disables (default). */
                 outlier_sigma?: number;
                 /**
                  * @description Opt in to a per-source, per-bucket breakdown (`data.breakdown`):
