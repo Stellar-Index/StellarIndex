@@ -81,7 +81,7 @@ func (r lendingRun) run() error {
 // exec derives from the watermark (the Blend factory genesis on first run) to the contiguous tip in windows that end
 // on partition boundaries; hb is nil in a dry run.
 func (r lendingRun) exec(ctx context.Context, hb *opsutil.JobHeartbeat) error {
-	start, last, err := resolveDeriveRange(ctx, r.chAddr, lendingJob, r.from, r.to, max(r.floor, blend.FactoryGenesisLedger), clickhouse.LendingStateWatermark)
+	start, last, err := resolveDeriveRange(ctx, r.chAddr, lendingJob, r.from, r.to, max(r.floor, blend.FactoryGenesisLedger), clickhouse.LendingStateWatermark, r.dryRun)
 	if err != nil {
 		return err
 	}

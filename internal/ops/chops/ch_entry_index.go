@@ -133,7 +133,7 @@ func (r *entryIndexRun) exec() error {
 		return r.execRole(ctx, "claimable index", claimableIndexWatermark)
 	}
 
-	start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, clickhouse.EntryIndexWatermark)
+	start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, clickhouse.EntryIndexWatermark, r.dryRun)
 	if err != nil {
 		return err
 	}
@@ -156,7 +156,7 @@ func (r *entryIndexRun) execRole(ctx context.Context, what string, watermark fun
 	st := &entryIndexStats{}
 	var first, through uint32
 	for {
-		start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, watermark)
+		start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, watermark, r.dryRun)
 		if err != nil {
 			return err
 		}
