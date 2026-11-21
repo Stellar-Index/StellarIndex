@@ -118,6 +118,8 @@ echo "stellar-core-auto-upgrade-test: upgrade that advances the tip"
 setup "$V28" "$V29" "$V28" "$V29"
 echo secret > "$ST/root-only"; chmod 0600 "$ST/root-only"
 ln -s "$ST/root-only" "$STELLAR_ETC/captive-core-galexie-planted.cfg"
+# Another unit's textfile, sorting first, that would pin the tip at 0.
+echo "galexie_live_tip_ledger 0" > "$TEXTFILE_DIR/00-planted.prom"
 run
 check "reports upgraded, exit 0" '[[ $rc == 0 ]] && result_is upgraded ""'
 check "installed the candidate" '[[ $(cat "$ST/installed") == "$V29" ]]'
@@ -157,6 +159,11 @@ check "archive fill in flight skips without stopping galexie" \
 setup "$V28" "$V29" "$V29"; touch "$ST/no_tip"; rm -f "$TEXTFILE_DIR/galexie_archive_tip_lag.prom"; run
 check "no tip skips without installing, galexie restarted" \
   '[[ $rc == 0 ]] && result_is skipped no_tip_metric && ! grep -q "apt-get install" "$ST/calls" && [[ -e "$ST/galexie_running" ]]'
+setup "$V28" "$V29" "$V29"; touch "$ST/no_tip"
+echo "galexie_live_tip_ledger 1000" > "$TEXTFILE_DIR/00-planted.prom"
+ln -sf "$TEXTFILE_DIR/00-planted.prom" "$TEXTFILE_DIR/galexie_archive_tip_lag.prom"; run
+check "a planted tip (other textfile, or a link at the tip-lag path) is not read" \
+  '[[ $rc == 0 ]] && result_is skipped no_tip_metric && ! grep -q "apt-get install" "$ST/calls"'
 setup "$V28" "$V29" "$V29"; APT_UPDATE_RC=100 run
 check "apt update failure reports failed" '[[ $rc != 0 ]] && result_is failed apt_update'
 setup "$V28" "$V29" "$V29"; run

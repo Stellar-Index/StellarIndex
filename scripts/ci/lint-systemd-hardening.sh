@@ -137,6 +137,29 @@ if [ "$ROLE" = "$DEFAULT_ROLE" ] && [ "$verbatim" -eq 0 ]; then
   exit 2
 fi
 
+# Both copies of the API unit hide these paths and grant no write path: defence
+# in depth for its own namespace, not containment from same-uid sibling units.
+API_HIDDEN="/run/lock /etc/default/galexie /etc/default/galexie-backfill /etc/default/stellarindex-ops /etc/clickhouse-client"
+for f in "$DIR/stellarindex-api.service.j2" "$DEPLOY_DIR/stellarindex-api.service"; do
+  [ -f "$f" ] || continue
+  if [ -n "$(value_of "$f" ReadWritePaths)" ]; then
+    echo "  API-WRITABLE: $f sets ReadWritePaths=; the API writes only its private /tmp"
+    fail=$((fail + 1))
+  fi
+  hidden=" $(grep -E '^[[:space:]]*InaccessiblePaths[[:space:]]*=' "$f" | sed -E 's/^[^=]*=//; s/(^|[[:space:]])-/\1/g' | tr '\n' ' ') "
+  for p in $API_HIDDEN; do
+    case "$hidden" in *" $p "*) ;; *)
+      echo "  API-EXPOSED: $f does not list $p in InaccessiblePaths="
+      fail=$((fail + 1)) ;;
+    esac
+  done
+  for d in SystemCallFilter TasksMax MemoryMax; do
+    [ -n "$(value_of "$f" "$d")" ] && continue
+    echo "  API-UNBOUNDED: $f does not set $d (it runs wabt on uploaded WASM)"
+    fail=$((fail + 1))
+  done
+done
+
 if [ "$units" -eq 0 ] || [ "$timers" -eq 0 ]; then
   echo "lint-systemd-hardening: FAIL — found $units service and $timers timer template(s); the scan is broken"
   exit 2

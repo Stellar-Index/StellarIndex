@@ -34,11 +34,11 @@ OLD=FC43F1FF--62656000-62719999
 # dropped (fd-variable redirection needs bash 4.1; the lock is not under test).
 # shellcheck disable=SC2016  # $LOCK and $lock_fd are literal script text
 sed -e "s#/var/log/galexie-mirror.log#$TMP/mirror.log#" \
-    -e "s#/run/lock/galexie-archive-fill.lock#$TMP/fill.lock#" \
+    -e "s#/run/lock/stellarindex/galexie-archive-fill.lock#$TMP/fill.lock#" \
     -e "s#/etc/default/galexie-archive-fill#$TMP/default#g" \
     -e "s#/var/lib/galexie-archive/hot-floor#$TMP/hot-floor#" \
     -e "s#/var/lib/galexie-archive/fill-pending#$TMP/fill-pending#" \
-    -e 's#^exec {lock_fd}>"\$LOCK"$#:#' \
+    -e 's#^exec {lock_fd}<"\$LOCK"$#:#' \
     -e 's#^if ! flock -n "\$lock_fd"; then$#if false; then#' \
     "$SCRIPT" > "$TMP/fill.sh"
 for want in "$TMP/mirror.log" "$TMP/fill.lock" "$TMP/default" "$TMP/hot-floor" "$TMP/fill-pending" '^:$' '^if false; then$'; do

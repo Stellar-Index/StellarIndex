@@ -618,16 +618,17 @@ if [ "$REAL_UID" -eq 0 ]; then
 else
   echo "  note: not real root, so a lock owned by another uid cannot be planted; foreign-owner case skipped"
 fi
-# A run of the previous wrapper still holds the old-path lock: no double run.
+# Any uid can open a file at the old per-job path, so a holder there must not
+# defer the job: the old path is never read.
 LEG="$TMP/lock/stellarindex-heavy-leg-job.lock"
 : > "$LEG"; rm -f "$TMP/leg.held" "$TMP/leg.release"
 ( exec 3<"$LEG"; flock -x 3 && : > "$TMP/leg.held"; while [ ! -e "$TMP/leg.release" ]; do /bin/sleep 0.1; done ) & LEG_HOLDER=$!
 i=0; while [ ! -e "$TMP/leg.held" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.1; i=$((i + 1)); done
-lrun leg-job ""
-if [ "$rc" -eq 75 ] && ! ran && err_has "lock ${LEG} is held"; then ok "a job still holding the old-path lock excludes the new wrapper (exit 75)"; else bad "old-path lock holder did not exclude the new wrapper (rc=$rc, err='$(errs)')"; fi
+for cls in "" scheduled; do
+  lrun leg-job "$cls"
+  if [ "$rc" -eq 0 ] && ran; then ok "a held old-path lock does not defer a ${cls:-operator} job"; else bad "a held old-path lock deferred a ${cls:-operator} job (rc=$rc, err='$(errs)')"; fi
+done
 : > "$TMP/leg.release"; wait "$LEG_HOLDER"
-lrun leg-job ""
-if [ "$rc" -eq 0 ] && ran; then ok "a released old-path lock admits the job"; else bad "released old-path lock still blocks (rc=$rc, err='$(errs)')"; fi
 rm -f "$LEG"
 # Anything else at the old path is not ours: ignored, never opened.
 mkfifo "$TMP/lock/stellarindex-heavy-legfifo-job.lock"
@@ -663,7 +664,9 @@ for want in \
   "f /run/lock/stellarindex-heavy.lock 0640 root stellarindex -" \
   "f /run/lock/stellarindex-heavy-scheduled.lock 0640 root stellarindex -" \
   "d /run/lock/stellarindex-heavy-scheduled.lock.queue 1770 root stellarindex -" \
-  "d /run/lock/stellarindex 3770 root stellarindex -"; do
+  "d /run/lock/stellarindex 3770 root stellarindex -" \
+  "f /run/lock/stellarindex/galexie-archive-fill.lock 0600 root root -" \
+  "f /run/lock/stellarindex/restore-drill.lock 0600 root root -"; do
   if grep -qxF -- "$want" "$TMP/tmpfiles.conf"; then ok "tmpfiles.d: $want"; else bad "tmpfiles.d entry missing or changed: $want"; fi
 done
 # shellcheck disable=SC2016 # the wrapper's literal source text, not an expansion
@@ -819,6 +822,17 @@ if hits=$(git grep -nIiE 'unique (job )?name per attempt|with a unique job name|
   bad "per-attempt job names defeat the per-name lock; use ONE name per job: $hits"
 else
   ok "no runbook or help text prescribes a unique job name per attempt"
+fi
+
+echo "  [lock paths]"
+# Any uid can create or hold a file directly in /run/lock. Only the host-wide
+# locks, pre-created root:stellarindex 0640 by tmpfiles.d, may live there;
+# every other lock goes under /run/lock/stellarindex/.
+if hits=$(git grep -nIoE '/run/lock/[A-Za-z0-9_.-]+' -- configs/ansible/roles scripts/ops deploy/systemd \
+    | grep -vE ':/run/lock/(stellarindex|stellarindex-heavy\.lock|stellarindex-heavy-scheduled\.lock(\.queue)?)$'); then
+  bad "lock file directly in world-writable /run/lock; put it under /run/lock/stellarindex/: $hits"
+else
+  ok "every lock outside the host-wide pair is under /run/lock/stellarindex/"
 fi
 
 echo "run-heavy-job-test: $pass passed, $fail failed"

@@ -81,6 +81,9 @@ func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...str
 	// G204: tool is one of two fixed wabt binary names ("wasm2wat" /
 	// "wasm-decompile"), never user input; args are temp paths we created.
 	cmd := exec.CommandContext(ctx, tool, args...) //nolint:gosec // see note above
+	// The module is attacker-uploaded: the tool gets PATH only, never the API's secrets.
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+	cmd.Dir = os.TempDir()
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

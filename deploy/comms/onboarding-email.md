@@ -18,7 +18,11 @@ Your API key:
 ```
 
 (Treat as a credential — store in a secret manager, not in
-code. Rotate any time via `POST /v1/account/keys`.)
+code. To replace it, mint an independent key from the dashboard
+(`POST /v1/dashboard/keys`) or ask us for one, deploy the new key,
+then revoke this one with `DELETE /v1/account/keys/{keyID}`. Do not
+use `POST /v1/account/keys` for this: it mints a child of the calling
+key, and revoking this key revokes its children too.)
 
 ## First request
 

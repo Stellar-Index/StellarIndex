@@ -85,10 +85,11 @@ WAL_DRAIN_STALL_TIMEOUT="${WAL_DRAIN_STALL_TIMEOUT:-1800}"
 # RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.
 LOG_DIR="${RESTORE_DRILL_LOG_DIR:-/var/lib/stellarindex/restore-drills}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
-# Held for the life of the run (one-drill-at-a-time precondition). Under /run,
-# which PrivateTmp does not shadow and ProtectSystem=full leaves writable; NOT
-# under DRILL_ROOT, so a refusal leaves the drill volume as it found it.
-DRILL_LOCK="${DRILL_LOCK:-/run/lock/restore-drill.lock}"
+# Held for the life of the run (one-drill-at-a-time precondition). In
+# /run/lock/stellarindex, which only root and group stellarindex can enter and
+# PrivateTmp does not shadow; NOT under DRILL_ROOT, so a refusal leaves the
+# drill volume as it found it.
+DRILL_LOCK="${DRILL_LOCK:-/run/lock/stellarindex/restore-drill.lock}"
 # The nightly backup's unit, and how long to wait for it. A drill that starts
 # while it is still writing restores the PREVIOUS night's backup and must then
 # drain a day of WAL, which overran WAL_DRAIN_TIMEOUT on r1 (2026-10-15).
@@ -165,7 +166,13 @@ command -v flock >/dev/null || { note "flock not installed (needed to run one dr
 # 9>` exits 1, this script's code for ONE FAILED CHECK, so an unwritable /run/lock
 # (read-only mount, stray directory, hidden namespace) would read as "the backup
 # failed a check". Nothing is written yet, so exit 2 like every refusal.
-exec 9>"$DRILL_LOCK" || { note "could not open the lock file $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
+# Only a 0600 plain file of ours, opened read-only: any uid that can open the
+# lock can hold it and refuse every drill.
+[ -e "$DRILL_LOCK" ] || [ -L "$DRILL_LOCK" ] || (umask 077; : >>"$DRILL_LOCK") 2>/dev/null || true
+if [ ! -f "$DRILL_LOCK" ] || [ -L "$DRILL_LOCK" ] || [ ! -O "$DRILL_LOCK" ]; then
+  note "could not open the lock file $DRILL_LOCK: missing, or not a plain file owned by $(id -un) — refusing (one drill at a time)"; exit 2
+fi
+exec 9<"$DRILL_LOCK" || { note "could not open the lock file $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
 flock -n 9 || { note "another restore drill holds $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
 
 # The scratch port, which the lock does NOT cover: the lock guards a CONCURRENT

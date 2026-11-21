@@ -59,11 +59,13 @@ finish() { result="$1"; reason="${2:-}"; publish; echo "stellar-core-auto-upgrad
 
 # The tip gauge is refreshed by a 5-minute timer; start its oneshot so the
 # reading reflects the bucket now, not a pre-stop write.
+# Only the tip-lag job's own file, and only if root (this script's user) wrote
+# it: other units can write into the textfile dir and would pin the reading.
 live_tip() {
   systemctl start galexie-archive-tip-lag.service >/dev/null 2>&1
-  local lines
-  lines=$(grep -h '^galexie_live_tip_ledger ' "$TEXTFILE_DIR"/*.prom 2>/dev/null)
-  awk 'NR == 1 {print $2}' <<<"$lines"
+  local f="$TEXTFILE_DIR/galexie_archive_tip_lag.prom"
+  [[ -f "$f" && ! -L "$f" && -O "$f" ]] || return 0
+  awk '$1 == "galexie_live_tip_ledger" {print $2; exit}' "$f"
 }
 
 fix_perms() {
