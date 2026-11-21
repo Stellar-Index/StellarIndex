@@ -50,8 +50,9 @@
 -- ingest; try* yields '' and the length guards drop the row. The guards also
 -- skip change_type='removed' ttl rows (the extractor stores only the key for
 -- removals — extract_entry_changes.go — so entry_xdr is ''): the table then
--- retains the last parseable live_until, which for a removed TTL has lapsed
--- anyway, so the verdict stays conservative.
+-- retains the last parseable live_until. After an explicit delete that can
+-- still be in the future, so the verdict stays LIVE (conservative: the entry
+-- is kept); deletion is read from the data entry, not from here.
 --
 -- Reader shape (internal/storage/clickhouse/ttl_liveness.go):
 --   SELECT lower(hex(key_hash)), argMax(live_until, version)

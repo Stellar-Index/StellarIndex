@@ -8049,8 +8049,10 @@ export interface components {
             basis: "live_vwap_current";
         };
         /**
-         * @description Value moved into and out of the cohort by calendar month (UTC),
-         *     derived from the movements archive. A quiet month emits no point.
+         * @description What the cohort's members received (`inflow`) and sent (`outflow`)
+         *     by calendar month (UTC), derived from the movements archive. This is
+         *     gross activity: a transfer between two members counts in both. A
+         *     quiet month emits no point.
          */
         AccountCohortFlows: {
             /** @enum {string} */
