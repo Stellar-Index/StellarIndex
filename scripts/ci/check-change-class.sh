@@ -28,6 +28,10 @@
 # chops.Run, whose ClickHouse derives have no other real coverage) and the
 # INT_TEST_PKGS directories, whose `//go:build integration` tests nothing
 # else executes. The nightly full run covers the rest.
+# test/controlwiring/integration_class_direct_imports_test.go fails when the
+# suite directly imports a package that is neither in this class nor listed
+# there as nightly-only with a reason, and when this regex and ci.yml's
+# filter disagree on any tracked path.
 # test/controlwiring/integration_pkgs_trigger_evidence_test.go fails if any
 # INT_TEST_PKGS directory or go.mod is missing from this regex, from
 # ci.yml's filter, or from prepush-integration-required.sh.

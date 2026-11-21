@@ -280,6 +280,10 @@ without ever reporting a `skipped` job conclusion itself:
 | `web/**`, `openapi/**`, plus the files the explorer reads from outside them: `CHANGELOG.md`, top-level `docs/{adr,architecture,blog,operations}/*`, `internal/incidents/data/**`, `internal/storage/timescale/cursors.go`, the explorer postbuild scripts, `scripts/ci/check-redirects-cap.sh`, `.github/workflows/ci.yml` | `toolchain-gates`' web/explorer steps |
 | `configs/ansible/**` | `toolchain-gates`' ansible steps |
 
+The integration row is deliberately narrower than what the suite imports; every other package it imports
+directly is recorded as nightly-only, with a reason, in
+`test/controlwiring/integration_class_direct_imports_test.go`, which fails on an unrecorded one.
+
 Each gated job still runs to completion — the filtering is a STEP-level
 `if:` on the work inside it, not a job-level skip — so its conclusion is
 always `success` or `failure`, never `skipped`. `toolchain-gates`' `gitleaks` step is

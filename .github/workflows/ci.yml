@@ -303,7 +303,9 @@ jobs:
             # 54 internal/ directories): only storage, schema and the
             # suite's own code run the shards on a PR. The nightly full run
             # catches the rest within a day, and release.yml refuses a tag
-            # without a green full run.
+            # without a green full run. Each package the suite imports
+            # directly is either here or recorded as nightly-only in
+            # test/controlwiring/integration_class_direct_imports_test.go.
             integration:
               - 'internal/storage/**'
               - 'internal/platform/postgresstore/**'
