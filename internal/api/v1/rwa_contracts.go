@@ -478,19 +478,39 @@ func (s *Server) fillContractMarketCaps(
 			}
 			return true
 		}
-		if !ok {
-			cut = cut || unread
-			clearContractSupply(row)
-			continue
-		}
 		_, isScaled := scaled[row.AssetID]
 		var sources int
 		if sc := src[row.AssetID].SourceCount; sc != nil {
 			sources = *sc
 		}
+		if !ok {
+			cut = cut || unread
+			// A deterministic no-reading leaves the SEP-41 observer's own figure for this contract standing; its cap is re-derived
+			// under this arm's guards rather than kept from the generic fill.
+			if obsBasis, kept := observerSEP41Supply(row); kept && !unread {
+				s.applyContractMarketCap(row, *row.CirculatingSupply, obsBasis, false, isScaled, sources)
+				continue
+			}
+			clearContractSupply(row)
+			continue
+		}
 		s.applyContractMarketCap(row, circ, basis, floor, isScaled, sources)
 	}
 	return cut
+}
+
+// observerSEP41Supply reports a supply the generic fill stamped from the SEP-41 supply observer, which keys a Soroban token
+// by its contract id ([supply.AssetKey]), so the figure is this contract's and no other identity's.
+func observerSEP41Supply(row *AssetDetail) (supply.Basis, bool) {
+	if row.CirculatingSupply == nil || row.SupplyBasis == nil {
+		return "", false
+	}
+	switch b := supply.Basis(*row.SupplyBasis); b {
+	case supply.BasisSEP41TotalOnly, supply.BasisAdminExclusion, supply.BasisOverride:
+		return b, true
+	default:
+		return "", false
+	}
 }
 
 // applyContractMarketCap fills one contract row's supply/cap from a successful supply reading, encoding the refusal rules: unscaled

@@ -277,8 +277,44 @@ func TestContractArmValuesTheNetWhenStorageHoldsAnUndecodableEntry(t *testing.T)
 	}
 }
 
-// The generic listing fill runs first and may stamp an observer supply on a contract row. When the contract reading refuses
-// or is cut, that other basis must not be served, or it would feed the cap and the reference valuation beside a no_supply status.
+// The SEP-41 observer keys a Soroban token by its contract id, so its figure belongs to the row. When the contract arm has no
+// reading for a fixed lake reason, that figure stays, with its cap re-derived under this arm's guards, as /v1/assets serves it;
+// a supply from any other basis is dropped.
+func TestContractArmKeepsTheObserverSupplyWhenItHasNoReading(t *testing.T) {
+	const a = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	const b = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
+	stamped := func(id string, basis supply.Basis) AssetDetail {
+		circ, bs, mc, price := "5000000000000", basis.String(), "500000.00", "0.10"
+		return AssetDetail{
+			AssetID: id, Kind: "soroban_token", Decimals: 7, PriceUSD: &price,
+			CirculatingSupply: &circ, SupplyBasis: &bs, MarketCapUSD: &mc, MarketCapLowLiquidity: true,
+		}
+	}
+	incomplete := clickhouse.TokenSupply{Total: big.NewInt(-5), Incomplete: true, FlowCount: 3}
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{a: incomplete, b: incomplete}}},
+		logger:  discardLogger(),
+	}
+	rows := []AssetDetail{stamped(a, supply.BasisSEP41TotalOnly), stamped(b, supply.BasisClassicTrustlineSum)}
+
+	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{a: {}, b: {}}); cut {
+		t.Error("cut = true for an incomplete flow net, a fixed lake property")
+	}
+	kept := rows[0]
+	if kept.CirculatingSupply == nil || *kept.CirculatingSupply != "5000000000000" ||
+		kept.SupplyBasis == nil || *kept.SupplyBasis != supply.BasisSEP41TotalOnly.String() {
+		t.Fatalf("observer supply = %v basis = %v, want it kept", kept.CirculatingSupply, kept.SupplyBasis)
+	}
+	if kept.MarketCapUSD == nil || *kept.MarketCapUSD != "50000.00" || kept.MarketCapLowLiquidity {
+		t.Errorf("cap = %v low_liquidity = %v, want 50000.00 re-derived, not the generic fill's", kept.MarketCapUSD, kept.MarketCapLowLiquidity)
+	}
+	if other := rows[1]; other.CirculatingSupply != nil || other.SupplyBasis != nil || other.MarketCapUSD != nil {
+		t.Errorf("non-observer supply = %v basis = %v cap = %v, want dropped", other.CirculatingSupply, other.SupplyBasis, other.MarketCapUSD)
+	}
+}
+
+// The generic listing fill runs first and may stamp an observer supply on a contract row. When the contract reading is cut,
+// that figure must not be served, or it would feed the cap and the reference valuation beside a no_supply status.
 func TestContractArmClearsTheGenericSupplyWhenItHasNoReading(t *testing.T) {
 	const a = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
 	const b = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
@@ -296,9 +332,6 @@ func TestContractArmClearsTheGenericSupplyWhenItHasNoReading(t *testing.T) {
 		storage *storageSupplyStub
 		cancel  bool
 	}{
-		{"incomplete flow net", map[string]clickhouse.TokenSupply{
-			a: {Total: big.NewInt(-5), Incomplete: true, FlowCount: 3}, b: {Total: big.NewInt(-5), Incomplete: true, FlowCount: 3},
-		}, nil, false},
 		{"failed storage read on a log with flows", map[string]clickhouse.TokenSupply{
 			a: {Total: net, Mint: net, FlowCount: 12}, b: {Total: net, Mint: net, FlowCount: 12},
 		}, &storageSupplyStub{err: errors.New("clickhouse down")}, false},
