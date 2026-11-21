@@ -149,3 +149,71 @@ func TestReleaseWindow_SiblingReleaseKeepsALapsedEscalatedWindow(t *testing.T) {
 		})
 	}
 }
+
+// TestReleaseWindow_EachSiblingCheckAloneKeepsALapsedEscalatedWindow: the marker check and the durable check each
+// have to see the lapsed escalated 1h ladder on their own, since the other store may have lost it.
+func TestReleaseWindow_EachSiblingCheckAloneKeepsALapsedEscalatedWindow(t *testing.T) {
+	asset, quote := nativeUSD(t)
+	key := cachekeys.Freeze(asset, quote).String()
+	for _, tc := range []struct {
+		name        string
+		inMarker    bool
+		inDurable   bool
+		assertAlive func(t *testing.T, w *freeze.Writer, store *windowedFakeLadderStore)
+	}{
+		{name: "marker_only", inMarker: true, assertAlive: func(t *testing.T, w *freeze.Writer, _ *windowedFakeLadderStore) {
+			if st, present, err := w.LoadStateForWindow(context.Background(), asset, quote, longWindow); err != nil || !present || !st.Escalated {
+				t.Errorf("1h marker ladder after the 5m release = (%+v, present=%v, err=%v), want escalated", st, present, err)
+			}
+		}},
+		{name: "durable_only", inDurable: true, assertAlive: func(t *testing.T, _ *freeze.Writer, store *windowedFakeLadderStore) {
+			if got := store.windows[store.key(asset, quote)][longWindow]; !got.Escalated {
+				t.Errorf("1h durable ladder after the 5m release = %+v, want it escalated: Clear NULLed the record", got)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			mr, rdb := newRedis(t)
+			store := newWindowedFakeLadderStore()
+			sink := &recoveringSink{}
+			w, err := freeze.NewWriter(rdb, 0,
+				freeze.WithLadderStore(store, freeze.DefaultLadderGrace), freeze.WithEventSink(sink))
+			if err != nil {
+				t.Fatalf("NewWriter: %v", err)
+			}
+			now := time.Now().UTC()
+			lapsed := lapsedBy(escalatedState(now), 36*time.Minute)
+			if err := store.SaveWindowLadder(ctx, asset, quote, shortWindow, freshState(now)); err != nil {
+				t.Fatalf("seed durable 5m: %v", err)
+			}
+			if tc.inDurable {
+				if err := store.SaveWindowLadder(ctx, asset, quote, longWindow, lapsed); err != nil {
+					t.Fatalf("seed durable 1h: %v", err)
+				}
+			}
+			ladders := map[string]freeze.State{shortWindow.String(): freshState(now)}
+			if tc.inMarker {
+				ladders[longWindow.String()] = lapsed
+			}
+			body, err := json.Marshal(freeze.Marker{
+				AssetID: asset.String(), QuoteID: quote.String(), Windowed: true, Ladders: ladders,
+			})
+			if err != nil {
+				t.Fatalf("marshal marker: %v", err)
+			}
+			if err := mr.Set(key, string(body)); err != nil {
+				t.Fatalf("seed marker: %v", err)
+			}
+
+			kept, err := w.ReleaseWindow(ctx, asset, quote, shortWindow)
+			if err != nil || !kept {
+				t.Fatalf("ReleaseWindow(5m) = (kept=%v, err=%v), want (true, nil): the escalated 1h window is still frozen", kept, err)
+			}
+			tc.assertAlive(t, w, store)
+			if n := len(sink.fakeRecoverer.calls); n != 0 {
+				t.Errorf("the 5m release closed the open freeze_events row (%d calls): an escalation ended with no operator", n)
+			}
+		})
+	}
+}

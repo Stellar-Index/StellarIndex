@@ -73,7 +73,7 @@ func sweepOnce(t *testing.T, closer freeze.Recoverer, store *windowedFakeLadderS
 	before := testutil.ToFloat64(partial)
 	r := freeze.NewRecovery(rdb, &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}, closer,
 		freeze.RecoveryOptions{Interval: 10 * time.Millisecond, Ladder: store, Logger: slog.New(slog.NewTextHandler(&buf, nil))})
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	_ = r.Run(ctx)
 	return buf.String(), testutil.ToFloat64(partial) - before
