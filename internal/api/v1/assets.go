@@ -271,6 +271,8 @@ type AssetDetail struct {
 	// thinFloor is the floor a listing thin row failed, for its counter.
 	thinFloor pricingguard.SubstanceFloor
 
+	capPending *pendingMarketCap
+
 	// Change1hPct / Change7dPct round out the trailing-window set
 	// alongside Change24hPct. Same shape — signed percentage with
 	// two fractional digits, null when no past-bucket snapshot
@@ -1950,8 +1952,8 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 		if err != nil {
 			return nil
 		}
-		if allowed, measured, _ := s.listingSubstanceVerdict(ctx, asset, false); !allowed {
-			if !measured {
+		if allowed, unread := s.catalogueRowPriceAllowed(ctx, asset); !allowed {
+			if unread {
 				reportUnreadRead(ctx)
 			}
 			return nil

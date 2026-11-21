@@ -111,10 +111,13 @@ func (s *Server) handleLendingPoolBackstop(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	fillBackstopView(&view, st)
-	priceStale := view.Available && s.valueBackstopView(ctx, &view, st)
+	var priceStale, priceUnread bool
+	if view.Available {
+		priceStale, priceUnread = s.valueBackstopView(ctx, &view, st)
+	}
 	wm, stale, _ := s.lakeWatermark(ctx)
 	view.AsOfLedger = wm
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale || priceStale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale || priceStale, Degraded: priceUnread}})
 }
 
 // backstopLineage names the pool's protocol, or the unavailable reason: V1 backstop storage keys are not verified, so never guessed.

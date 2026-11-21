@@ -2,11 +2,14 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
@@ -27,6 +30,8 @@ type BlendReserveState struct {
 type BlendPoolState struct {
 	Instance *PoolInstance // nil when the instance entry is missing, undecodable or archived
 	Reserves []BlendReserveState
+	// Unavailable maps a requested reserve with no state to why; a requested reserve in neither field was not captured.
+	Unavailable map[string]string
 }
 
 // PoolInstance is a lending pool's decoded instance storage: its PoolConfig, admin and backstop ("" when absent).
@@ -95,22 +100,52 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, inst, matched, err := scanReserveParts(rows, refByKey, model.decode)
+	dataByAsset, inst, matched, undecoded, err := scanReserveParts(rows, refByKey, model.decode)
 	if err != nil {
 		return BlendPoolState{}, err
+	}
+	decoded := make([]string, 0, len(dataByAsset))
+	for a := range dataByAsset {
+		decoded = append(decoded, a)
 	}
 	// Drop archived entries before anything is reported: the projection keeps a lapsed
 	// entry's last value. Verdicts come from the shared SWR cache, so no per-request scan;
 	// only a cold cache waits, on the caller's deadline (handler maps it to a 503).
-	instArchived, err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, dataByAsset, refByKey, matched)
+	instArchived, archivedUndecoded, err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, dataByAsset, refByKey, matched, undecoded)
 	if err != nil {
 		return BlendPoolState{}, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
 	if instArchived {
 		inst = nil
 	}
-	return BlendPoolState{Instance: inst, Reserves: assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics)}, nil
+	unavailable := make(map[string]string, len(undecoded))
+	for _, k := range undecoded {
+		a := refByKey[k].asset
+		if archivedUndecoded[a] {
+			// Past its TTL the entry is archived whatever its bytes; it is not a decode failure.
+			unavailable[a] = ReserveArchived
+			continue
+		}
+		obs.LendingReserveUndecodableTotal.Inc()
+		unavailable[a] = ReserveDecodeFailed
+	}
+	for _, a := range decoded {
+		if _, live := dataByAsset[a]; !live {
+			unavailable[a] = ReserveArchived
+		}
+	}
+	return BlendPoolState{
+		Instance: inst, Reserves: assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics), Unavailable: unavailable,
+	}, nil
 }
+
+var errUndecodableEntry = errors.New("contract data entry did not decode")
+
+// Reasons a requested reserve has no state in [BlendPoolState.Unavailable].
+const (
+	ReserveArchived     = "reserve_archived" // its entry, or the pool instance, is TTL-archived
+	ReserveDecodeFailed = "decode_failed"    // the lake holds its entry but it did not decode
+)
 
 // assembleBlendReserveStates builds states in the caller's asset order. Without the config: config-free metrics and placeholder decimals 7
 // (DecimalsFound=false). A nil inst withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
@@ -202,59 +237,73 @@ type reserveRows interface {
 }
 
 // scanReserveParts decodes rows into per-asset ResData and the pool instance, and reports the keys that produced a row (matched). The
-// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
+// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served. undecoded lists
+// the keys of ResData rows that were returned but did not decode; the caller TTL-checks them before counting a decode failure.
 func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
-) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched []string, err error) {
+) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched, undecoded []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
 		var keyXDR, b64 string
 		if err := rows.Scan(&keyXDR, &b64); err != nil {
-			return nil, nil, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("clickhouse: scan blend reserve: %w", err)
 		}
 		ref, ok := refByKey[keyXDR]
 		if !ok {
 			continue
 		}
-		val, ok := contractDataValue(b64)
-		if !ok {
-			continue
-		}
+		val, valOK := contractDataValue(b64)
 		switch ref.kind {
 		case "Instance":
+			if !valOK {
+				continue
+			}
 			if pi, ok := poolInstanceFromStorage(val); ok {
 				inst = &pi
 			}
 			matched = append(matched, keyXDR)
 		case "ResData":
-			if rd, err := decode(val); err == nil {
-				rdCopy := rd
-				dataByAsset[ref.asset] = &rdCopy
-				matched = append(matched, keyXDR)
+			var rd blend.ReserveData
+			decErr := errUndecodableEntry
+			if valOK {
+				rd, decErr = decode(val)
 			}
+			if decErr != nil {
+				undecoded = append(undecoded, keyXDR)
+				continue
+			}
+			dataByAsset[ref.asset] = &rd
+			matched = append(matched, keyXDR)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
 	}
-	return dataByAsset, inst, matched, nil
+	return dataByAsset, inst, matched, undecoded, nil
 }
 
 // dropArchivedBlendReserves removes reserve state whose entry is TTL-archived: ledger_entries_current keeps the last value after Soroban
 // evicts, which would price phantom liquidity into tvl_usd. FAIL-OPEN: only a positively lapsed liveUntilLedgerSeq drops; TTLUnknown KEEPS
-// the reserve. An archived pool INSTANCE drops every reserve under it and is reported (instArchived).
+// the reserve. An archived pool INSTANCE drops every reserve under it and is reported (instArchived). archivedUndecoded names the
+// assets of the undecoded keys that are archived, by their own TTL or the instance's, in the same verdict read.
 func dropArchivedBlendReserves(
 	ctx context.Context,
 	verdicts *ttlLivenessCache,
 	dataByAsset map[string]*blend.ReserveData,
 	refByKey map[string]keyRef,
-	matched []string,
-) (instArchived bool, err error) {
-	if len(matched) == 0 {
-		return false, nil
+	matched, undecoded []string,
+) (instArchived bool, archivedUndecoded map[string]bool, err error) {
+	if len(matched)+len(undecoded) == 0 {
+		return false, nil, nil
 	}
-	liveness, err := verdicts.resolve(ctx, matched)
+	liveness, err := verdicts.resolve(ctx, slices.Concat(matched, undecoded))
 	if err != nil {
-		return false, err
+		return false, nil, err
+	}
+	archivedUndecoded = make(map[string]bool, len(undecoded))
+	for _, k := range undecoded {
+		if liveness[k] == TTLArchived {
+			archivedUndecoded[refByKey[k].asset] = true
+		}
 	}
 	for _, k := range matched {
 		if liveness[k] != TTLArchived {
@@ -263,12 +312,15 @@ func dropArchivedBlendReserves(
 		switch refByKey[k].kind {
 		case "Instance":
 			clear(dataByAsset)
-			return true, nil
+			for _, u := range undecoded {
+				archivedUndecoded[refByKey[u].asset] = true
+			}
+			return true, archivedUndecoded, nil
 		case "ResData":
 			delete(dataByAsset, refByKey[k].asset)
 		}
 	}
-	return false, nil
+	return false, archivedUndecoded, nil
 }
 
 // contractDataValue returns the ContractData value ScVal of a base64 LedgerEntry.

@@ -165,13 +165,14 @@ func (s *Server) valueAuctions(ctx context.Context, pool string, auctions []Lend
 	var states map[string]clickhouse.BlendReserveState
 	var views map[string]ReserveView
 	if s.Explorer != nil { // without the lake reader no reserve is read: every reserve leg is reserve_unread
-		var stale bool
-		states, views, stale, err = s.earningsReserveStates(ctx, pool)
+		var stale, degraded bool
+		states, views, stale, degraded, err = s.earningsReserveStates(ctx, pool)
 		if err != nil {
 			s.logger.Warn("lending auctions: reserve read failed", "pool", pool, "err", err)
 			flags.Degraded = true
 		}
 		flags.Stale = flags.Stale || stale
+		flags.Degraded = flags.Degraded || degraded
 	}
 	av := auctionValuer{protocol: protocol, states: states, views: views, backstop: s.auctionBackstopValuer(ctx, protocol, pool, flags)}
 	for i := range auctions {
@@ -201,6 +202,7 @@ func (s *Server) auctionBackstopValuer(ctx context.Context, protocol, pool strin
 			reason = auctionUSDKindUnknown
 		}
 		flags.Stale = flags.Stale || (usd != nil && st)
+		flags.Degraded = flags.Degraded || reason == backstopUSDPriceReadFailed
 		return usd, reason
 	}
 }

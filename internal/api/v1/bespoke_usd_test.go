@@ -79,6 +79,20 @@ func TestEnrichBespoke_BLNTEmissionsUSD(t *testing.T) {
 	}
 }
 
+// TestValueBespokeKPIs_ThinBLNTIsUnpriced: a thin-market price is display-only, so it values no KPI.
+func TestValueBespokeKPIs_ThinBLNTIsUnpriced(t *testing.T) {
+	srv := newProtocolsServer(t, protocolsCase{clean: true, thinBLNT: true}).srv // BLNT 0.01, below the substance floor
+	blk := bespokeUSDBlock()
+	out := v1.BespokeFromStoreForTest(blk)
+	srv.ValueBespokeKPIsForTest(context.Background(), blk, out)
+	if got := out.KPIs[2]; got.ValueUSD != nil || got.PriceUSD != nil || got.USDReason != "unpriced" {
+		t.Errorf("thin BLNT emissions = %+v, want null value_usd + price_usd and usd_reason unpriced", got)
+	}
+	if got := out.KPIs[1]; strOrNil(got.ValueUSD) != "92233720368.55" || got.USDReason != "" {
+		t.Errorf("BLND emissions = %+v, want value_usd 92233720368.55 (BLND clears the floor)", got)
+	}
+}
+
 // TestValueBespokeKPIs_BLNTPriced values BLNT emissions once BLNT has a price.
 func TestValueBespokeKPIs_BLNTPriced(t *testing.T) {
 	srv := newProtocolsServer(t, protocolsCase{clean: true}).srv // BLNT 0.01

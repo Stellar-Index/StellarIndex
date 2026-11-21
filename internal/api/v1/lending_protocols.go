@@ -24,8 +24,10 @@ var lendingProtocols = []struct{ protocol, ticker string }{
 const (
 	exclusionPoolListFailed     = "pool_list_read_failed"
 	exclusionPoolReadFailed     = "pool_read_failed"
-	exclusionNoDecodedState     = "no_decoded_reserve_state"
+	exclusionNotCaptured        = "not_captured" // a reserve the lake holds no state entry for; see clickhouse.BlendPoolState.Unavailable
 	exclusionNoUSDValue         = "no_usd_value"
+	exclusionPriceWithheld      = "withheld"
+	exclusionPriceReadFailed    = "price_read_failed"
 	exclusionBackstopNoReader   = "backstop_reader_unavailable"
 	exclusionBackstopReadFailed = "backstop_read_failed"
 	exclusionBackstopNoBalance  = "backstop_balance_unavailable"
@@ -62,9 +64,13 @@ type LendingProtocolToken struct {
 	Issuer            string  `json:"issuer"`
 	Decimals          int     `json:"decimals"`
 	PriceUSD          *string `json:"price_usd"`
+	PriceBasis        string  `json:"price_basis,omitempty"`
 	CirculatingSupply *string `json:"circulating_supply"`
 	TotalSupply       *string `json:"total_supply"`
 	MarketCapUSD      *string `json:"market_cap_usd"`
+	// ThinMarket marks a price_usd from a market below the substance floor: display-only, never valued.
+	ThinMarket bool               `json:"thin_market,omitempty"`
+	Substance  *SubstanceEvidence `json:"substance,omitempty"`
 }
 
 // LendingProtocolBackstop is the backstop deposits across the protocol's pools in one backstop token, in its base units.
@@ -179,7 +185,9 @@ func (s *Server) buildLendingProtocols(ctx context.Context) (lendingProtocolsBui
 			st.BackstopLowerBound = st.BackstopLowerBound || e.Kind == "backstop"
 			flags.Degraded = flags.Degraded || e.readFailed()
 		}
-		flags.Stale = s.valueProtocolBackstop(ctx, &st) || flags.Stale
+		backstopStale, backstopUnread := s.valueProtocolBackstop(ctx, &st)
+		flags.Stale = backstopStale || flags.Stale
+		flags.Degraded = backstopUnread || flags.Degraded
 		lowerBound = lowerBound || st.LowerBound
 		out = append(out, st)
 	}
@@ -240,20 +248,7 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 		flags.Degraded = flags.Degraded || pr.res.flags.Degraded
 		v := pr.res.view
 		st.ReserveCount += len(v.Reserves) + len(v.OmittedReserves)
-		for _, a := range v.OmittedReserves {
-			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(a), Reason: exclusionNoDecodedState})
-		}
-		for _, rv := range v.Reserves {
-			sup, supOK := parseUSD(rv.SuppliedUSD)
-			bor, borOK := parseUSD(rv.BorrowedUSD)
-			if !supOK || !borOK {
-				st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: &pool, Asset: strRef(rv.Asset), Reason: exclusionNoUSDValue})
-				continue
-			}
-			supplied.Add(supplied, sup)
-			borrowed.Add(borrowed, bor)
-			priced++
-		}
+		priced += addProtocolReserves(st, &pool, &v, supplied, borrowed)
 		tokens = addProtocolBackstop(st, pr, backstop, assets, tokens)
 	}
 	if priced > 0 {
@@ -263,6 +258,35 @@ func sumProtocolPools(st *LendingProtocolStats, reads []protocolPoolRead, vintag
 	for _, t := range tokens {
 		st.Backstop = append(st.Backstop, LendingProtocolBackstop{BackstopToken: t, Tokens: backstop[t].String(), asset: assets[t]})
 	}
+}
+
+// addProtocolReserves records one pool's omitted and unpriced reserves as exclusions and adds each fully priced reserve to the
+// running sums, returning how many it priced.
+func addProtocolReserves(st *LendingProtocolStats, pool *string, v *LendingPoolReservesView, supplied, borrowed *big.Rat) int {
+	priced := 0
+	for _, a := range v.OmittedReserves {
+		reason, ok := v.omittedWhy[a]
+		if !ok {
+			reason = exclusionNotCaptured
+		}
+		st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: pool, Asset: strRef(a), Reason: reason})
+	}
+	for _, rv := range v.Reserves {
+		sup, supOK := parseUSD(rv.SuppliedUSD)
+		bor, borOK := parseUSD(rv.BorrowedUSD)
+		if !supOK || !borOK {
+			reason := exclusionNoUSDValue
+			if rv.usdExclusion != "" {
+				reason = rv.usdExclusion
+			}
+			st.Excluded = append(st.Excluded, LendingStatsExclusion{Kind: "reserve", Pool: pool, Asset: strRef(rv.Asset), Reason: reason})
+			continue
+		}
+		supplied.Add(supplied, sup)
+		borrowed.Add(borrowed, bor)
+		priced++
+	}
+	return priced
 }
 
 // addProtocolBackstop adds one pool's backstop tiers to the per-token sums; a Blend tier is denominated in the backstop's own
@@ -317,17 +341,20 @@ func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Fl
 	if !found {
 		return nil, exclusionTokenNotVerified
 	}
-	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/assets/"+a.String(), nil)
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/assets/"+a.String()+"?include_thin=true", nil)
 	req.SetPathValue("asset_id", a.String())
 	rec := httptest.NewRecorder()
 	s.handleAssetGet(rec, req)
 	var body struct {
 		Data struct {
-			Decimals          int     `json:"decimals"`
-			PriceUSD          *string `json:"price_usd"`
-			CirculatingSupply *string `json:"circulating_supply"`
-			TotalSupply       *string `json:"total_supply"`
-			MarketCapUSD      *string `json:"market_cap_usd"`
+			Decimals          int                `json:"decimals"`
+			PriceUSD          *string            `json:"price_usd"`
+			PriceBasis        string             `json:"price_basis"`
+			CirculatingSupply *string            `json:"circulating_supply"`
+			TotalSupply       *string            `json:"total_supply"`
+			MarketCapUSD      *string            `json:"market_cap_usd"`
+			ThinMarket        bool               `json:"thin_market"`
+			Substance         *SubstanceEvidence `json:"substance"`
 		} `json:"data"`
 		Flags Flags `json:"flags"`
 	}
@@ -339,7 +366,11 @@ func (s *Server) readProtocolToken(ctx context.Context, ticker string, flags *Fl
 	d := body.Data
 	tok := &LendingProtocolToken{
 		AssetID: a.String(), Code: a.Code, Issuer: a.Issuer, Decimals: d.Decimals,
-		PriceUSD: d.PriceUSD, CirculatingSupply: d.CirculatingSupply, TotalSupply: d.TotalSupply, MarketCapUSD: d.MarketCapUSD,
+		PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis, CirculatingSupply: d.CirculatingSupply, TotalSupply: d.TotalSupply, MarketCapUSD: d.MarketCapUSD,
+		ThinMarket: d.ThinMarket, Substance: d.Substance,
+	}
+	if tok.ThinMarket {
+		tok.MarketCapUSD = nil // the asset route derives none from a thin price; held here too so no later change can
 	}
 	flags.Stale = flags.Stale || body.Flags.Stale
 	// The asset body is degraded by reads this route does not serve too; only a missing served figure counts as a failure.

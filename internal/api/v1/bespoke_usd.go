@@ -67,7 +67,7 @@ func (s *Server) kpiTokenPrice(ctx context.Context, ticker string) kpiTokenPrice
 	var flags Flags
 	tok, _ := s.readProtocolToken(ctx, ticker, &flags)
 	switch {
-	case tok == nil || tok.PriceUSD == nil:
+	case tok == nil || tok.PriceUSD == nil, tok.ThinMarket: // a thin price is display-only and values no KPI
 		return kpiTokenPrice{reason: kpiUSDUnpriced}
 	case tok.Decimals <= 0:
 		return kpiTokenPrice{reason: kpiUSDDecimalsUnknown}

@@ -366,11 +366,12 @@ func (s *Server) earningsJobLegs(ctx context.Context, sr lendingAccountStateRead
 // and returns the reserve views that price them; stale reports a cached reserve state past its TTL or built from a stale lake.
 func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string,
 ) (out []LendingEarningsLeg, views map[string]ReserveView, failed, stale bool) {
-	reserves, views, stale, err := s.earningsReserveStates(ctx, job.pool)
+	reserves, views, stale, degraded, err := s.earningsReserveStates(ctx, job.pool)
 	if err != nil {
 		s.logger.Warn("lending earnings: reserve read failed", "err", err, "pool", job.pool)
 		failed = true
 	}
+	failed = failed || degraded
 	pos, err := sr.LendingAccountPositions(ctx, job.pool, account)
 	if err != nil {
 		s.logger.Warn("lending earnings: positions read failed", "err", err, "pool", job.pool)
@@ -394,24 +395,25 @@ func newestFoldedLedger(folds []timescale.BlendPositionFold) uint32 {
 }
 
 // earningsReserveStates reads a pool's reserve states and their served views through the reserves endpoint's cache, by asset;
-// a pool of unknown lineage has none.
-func (s *Server) earningsReserveStates(ctx context.Context, pool string) (map[string]clickhouse.BlendReserveState, map[string]ReserveView, bool, error) {
+// a pool of unknown lineage has none. degraded is the reserves build's own flag, e.g. a reserve whose price read failed.
+func (s *Server) earningsReserveStates(ctx context.Context, pool string,
+) (states map[string]clickhouse.BlendReserveState, views map[string]ReserveView, stale, degraded bool, err error) {
 	res, _, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
 	if errors.Is(err, errPoolLineageUnknown) {
-		return map[string]clickhouse.BlendReserveState{}, map[string]ReserveView{}, false, nil
+		return map[string]clickhouse.BlendReserveState{}, map[string]ReserveView{}, false, false, nil
 	}
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, false, err
 	}
-	out := make(map[string]clickhouse.BlendReserveState, len(res.states))
+	states = make(map[string]clickhouse.BlendReserveState, len(res.states))
 	for _, st := range res.states {
-		out[st.Asset] = st
+		states[st.Asset] = st
 	}
-	views := make(map[string]ReserveView, len(res.view.Reserves))
+	views = make(map[string]ReserveView, len(res.view.Reserves))
 	for _, rv := range res.view.Reserves {
 		views[rv.Asset] = rv
 	}
-	return out, views, cacheStale || res.flags.Stale, nil
+	return states, views, cacheStale || res.flags.Stale, res.flags.Degraded, nil
 }
 
 // poolFoldLegs turns one (pool, asset) fold into its supply and borrow legs.

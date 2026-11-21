@@ -18,6 +18,10 @@ const (
 	backstopUSDNoBalance      = "balance_unavailable"
 	backstopUSDTokenUnknown   = "token_unknown"
 	backstopUSDNegativeAmount = "negative_amount"
+	// backstopUSDPriceReadFailed degrades the response: the token may well have a price.
+	backstopUSDPriceReadFailed = exclusionPriceReadFailed
+	// backstopUSDWithheld: a gate refused the token's price, so it is not unpriced.
+	backstopUSDWithheld = exclusionPriceWithheld
 )
 
 // tokenUSD values amount base units of token at its current price exactly as buildReserveView values a reserve: the reserve
@@ -27,11 +31,18 @@ func (s *Server) tokenUSD(ctx context.Context, token string, amount *big.Int) (u
 	if !ok {
 		return nil, "", false, backstopUSDDecimals
 	}
-	price, scale, stale, ok := s.reservePriceUSD(ctx, token)
-	if !ok {
+	rp := s.reservePriceUSD(ctx, token)
+	if rp.price == "" {
+		switch {
+		case rp.unread:
+			return nil, "", false, backstopUSDPriceReadFailed
+		case rp.withheld:
+			return nil, "", false, backstopUSDWithheld
+		}
 		return nil, "", false, backstopUSDUnpriced
 	}
-	if scale != dec {
+	price, stale = rp.price, rp.stale
+	if rp.scale != dec {
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_backstop", "").Inc()
 		return nil, "", false, backstopUSDScaleMismatch
 	}
@@ -62,13 +73,13 @@ func (s *Server) backstopUnitUSD(ctx context.Context, protocol, asset, token str
 }
 
 // valueBackstopView sets each tier's tokens_usd and the view's total_usd; the total is a lower bound when a tier is unvalued.
-func (s *Server) valueBackstopView(ctx context.Context, view *LendingBackstopView, st clickhouse.LendingBackstopState) bool {
+// degraded reports a tier left unvalued by a failed price read.
+func (s *Server) valueBackstopView(ctx context.Context, view *LendingBackstopView, st clickhouse.LendingBackstopState) (anyStale, degraded bool) {
 	protocol := ""
 	if view.Protocol != nil {
 		protocol = *view.Protocol
 	}
 	var vals []*big.Rat
-	anyStale := false
 	for i, t := range st.Tiers {
 		tv := &view.Tiers[i]
 		token := t.Token
@@ -87,20 +98,20 @@ func (s *Server) valueBackstopView(ctx context.Context, view *LendingBackstopVie
 		vals = append(vals, usd)
 		if usd == nil {
 			tv.USDReason = strRef(reason)
+			degraded = degraded || reason == backstopUSDPriceReadFailed
 			continue
 		}
 		tv.TokensUSD, tv.PriceUSD, tv.PriceStale = strRef(usd.FloatString(2)), strRef(price), stale
 		anyStale = anyStale || stale
 	}
 	view.TotalUSD, view.LowerBound = reservesTVLUSD(vals)
-	return anyStale
+	return anyStale, degraded
 }
 
 // valueProtocolBackstop sets tokens_usd on each per-token backstop sum and the protocol's backstop_total_usd; the total is a lower
-// bound when a token is unvalued or a pool's backstop was left out.
-func (s *Server) valueProtocolBackstop(ctx context.Context, st *LendingProtocolStats) bool {
+// bound when a token is unvalued or a pool's backstop was left out. degraded reports a token left unvalued by a failed price read.
+func (s *Server) valueProtocolBackstop(ctx context.Context, st *LendingProtocolStats) (anyStale, degraded bool) {
 	var vals []*big.Rat
-	anyStale := false
 	for i := range st.Backstop {
 		b := &st.Backstop[i]
 		amt, ok := new(big.Int).SetString(b.Tokens, 10)
@@ -113,6 +124,7 @@ func (s *Server) valueProtocolBackstop(ctx context.Context, st *LendingProtocolS
 		vals = append(vals, usd)
 		if usd == nil {
 			b.USDReason = strRef(reason)
+			degraded = degraded || reason == backstopUSDPriceReadFailed
 			continue
 		}
 		b.TokensUSD, b.PriceStale = strRef(usd.FloatString(2)), stale
@@ -121,5 +133,5 @@ func (s *Server) valueProtocolBackstop(ctx context.Context, st *LendingProtocolS
 	total, lower := reservesTVLUSD(vals)
 	st.BackstopTotalUSD = total
 	st.BackstopUSDLowerBound = total != nil && (lower || st.BackstopLowerBound)
-	return anyStale
+	return anyStale, degraded
 }

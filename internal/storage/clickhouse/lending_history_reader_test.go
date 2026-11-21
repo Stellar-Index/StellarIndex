@@ -274,7 +274,7 @@ func TestReserveHistory_SameModelAsLiveOnSameInputs(t *testing.T) {
 		const dataKey, instKey = "k-data", "k-inst"
 		refByKey := map[string]keyRef{dataKey: {asset: blendTestAssetSAC, kind: "ResData"}, instKey: {kind: "Instance"}}
 		rows := &stubRows{data: [][]any{{dataKey, data}, {instKey, instEntry}}}
-		dataByAsset, inst, _, err := scanReserveParts(rows, refByKey, model.decode)
+		dataByAsset, inst, _, _, err := scanReserveParts(rows, refByKey, model.decode)
 		if err != nil {
 			t.Fatal(err)
 		}

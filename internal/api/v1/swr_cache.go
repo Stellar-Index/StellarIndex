@@ -16,7 +16,8 @@ type swrCache[V any] struct {
 	cache      string       // APICacheOpsTotal cache label
 	fillName   string
 	ttl        time.Duration
-	maxEntries int // 0 = unbounded; set it whenever keys carry client-controlled parts
+	ttlOf      func(V) time.Duration // per-value TTL; nil = ttl
+	maxEntries int                   // 0 = unbounded; set it whenever keys carry client-controlled parts
 
 	mu      sync.Mutex
 	entries map[string]*swrEntry[V]
@@ -38,6 +39,19 @@ func newSWRCache[V any](logger *slog.Logger, cache, fillName string, ttl time.Du
 		logger: logger, cache: cache, fillName: fillName, ttl: ttl, maxEntries: maxEntries,
 		entries: map[string]*swrEntry[V]{},
 	}
+}
+
+// withTTLOf sets a per-value TTL, so a value worth refreshing sooner does not live the full ttl.
+func (c *swrCache[V]) withTTLOf(f func(V) time.Duration) *swrCache[V] {
+	c.ttlOf = f
+	return c
+}
+
+func (c *swrCache[V]) entryTTL(v V) time.Duration {
+	if c.ttlOf == nil {
+		return c.ttl
+	}
+	return c.ttlOf(v)
 }
 
 func (c *swrCache[V]) count(op, result string) {
@@ -106,7 +120,7 @@ func (c *swrCache[V]) lookup(op, key string, upstream func(context.Context) (V, 
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
-	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
+	if ok && e.flight == nil && time.Since(e.at) < c.entryTTL(e.val) {
 		out, at := e.val, e.at
 		c.mu.Unlock()
 		c.count(op, "hit")

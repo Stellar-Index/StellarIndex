@@ -3,6 +3,8 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,5 +73,74 @@ func TestLendingPoolAuctions_BLNTShareBidWithheld(t *testing.T) {
 	}
 	if len(got) != 2 || got[share] != "backstop_token/lp_share_unvalued" || got[stray] != "backstop_token/leg_kind_unknown" {
 		t.Errorf("bid_unvalued = %+v, want the share as lp_share_unvalued and the stray token as leg_kind_unknown", a.BidUnvalued)
+	}
+}
+
+// stubBLNTReserveBackstopExplorer serves a BLNT pool's backstop and its reserve states as stored.
+type stubBLNTReserveBackstopExplorer struct {
+	*stubBackstopExplorer
+	reserves []clickhouse.BlendReserveState
+}
+
+func (e *stubBLNTReserveBackstopExplorer) BLNTPoolReserves(context.Context, string, []string, map[string]blnt.ReserveConfig) (clickhouse.BlendPoolState, error) {
+	return clickhouse.BlendPoolState{Reserves: e.reserves}, nil
+}
+
+// failedXLMPriceAuction serves one BLNT interest auction on the mainnet fixed pool while every XLM price read fails;
+// reserves are the pool's reserve states. It returns the auction and whether the response was served no-store (degraded).
+func failedXLMPriceAuction(t *testing.T, reserves []clickhouse.BlendReserveState, blntAssets []string, bid, lot map[string]string) (v1.LendingAuctionView, bool) {
+	t.Helper()
+	unknown := blend.PoolVersionUnknown
+	ex := &stubBLNTReserveBackstopExplorer{reserves: reserves, stubBackstopExplorer: &stubBackstopExplorer{
+		stubExplorerReader: &stubExplorerReader{}, state: clickhouse.LendingBackstopState{
+			Instance: &clickhouse.PoolInstance{Backstop: blnt.MainnetBackstop},
+			Tiers:    []clickhouse.BackstopTierState{{Tier: "FirstLoss", Asset: "Xlm", Token: nativeSAC(t)}},
+		},
+	}}
+	lr := &stubBLNTAuctionReader{
+		stubBLNTLendingReader: stubBLNTLendingReader{stubLendingReader: stubLendingReader{version: &unknown}, blntAssets: blntAssets},
+		auctions: []timescale.LendingAuction{{
+			LendingEventPos: timescale.LendingEventPos{Ts: time.Unix(1_700_000_000, 0).UTC(), Ledger: 10, TxHash: "aa"}, AuctionType: 2,
+			User: mkCStrkey(t, 6), Bid: bid, Lot: lot,
+		}},
+	}
+	srv := v1.New(v1.Options{
+		Explorer: ex, Lending: lr,
+		Prices: &stubPriceReader{errByPair: map[string]error{"native/fiat:USD": errors.New("price store down")}},
+	})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+blnt.MainnetFixedPool+"/auctions", nil))
+	var body struct{ Data v1.LendingAuctionsView }
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil || len(body.Data.Auctions) != 1 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+	return body.Data.Auctions[0], rec.Header().Get("Cache-Control") == "no-store"
+}
+
+// A backstop-token leg whose price read failed is price_read_failed, not unpriced, and degrades the response.
+func TestLendingPoolAuctions_BackstopPriceReadFailedDegrades(t *testing.T) {
+	sac := nativeSAC(t)
+	a, degraded := failedXLMPriceAuction(t, nil, []string{mkCStrkey(t, 3)}, map[string]string{sac: "10000000"}, map[string]string{})
+	if a.BidUSD != nil || len(a.BidUnvalued) != 1 || a.BidUnvalued[0].Reason != "price_read_failed" {
+		t.Fatalf("bid_usd = %v bid_unvalued = %+v, want null with the XLM leg price_read_failed", strOrNil(a.BidUSD), a.BidUnvalued)
+	}
+	if !degraded {
+		t.Error("a failed backstop price read did not degrade the auctions response")
+	}
+}
+
+// A reserve leg whose reserve price read failed leaves the leg unvalued and degrades the response.
+func TestLendingPoolAuctions_ReservePriceReadFailedDegrades(t *testing.T) {
+	sac := nativeSAC(t)
+	reserves := []clickhouse.BlendReserveState{{
+		Pool: blnt.MainnetFixedPool, Asset: sac, Decimals: 7, DecimalsFound: true,
+		Metrics: blend.ReserveMetrics{SuppliedUnderlying: big.NewInt(1_000 * xlm), BorrowedUnderlying: big.NewInt(0)},
+	}}
+	a, degraded := failedXLMPriceAuction(t, reserves, []string{sac}, map[string]string{}, map[string]string{sac: "10000000"})
+	if a.LotUSD != nil || len(a.LotUnvalued) != 1 || a.LotUnvalued[0].Asset != sac || a.LotUnvalued[0].Reason != "unpriced" {
+		t.Fatalf("lot_usd = %v lot_unvalued = %+v, want null with the read XLM reserve's leg unpriced", strOrNil(a.LotUSD), a.LotUnvalued)
+	}
+	if !degraded {
+		t.Error("a failed reserve price read did not degrade the auctions response")
 	}
 }
