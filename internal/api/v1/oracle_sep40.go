@@ -292,24 +292,9 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The freeze cannot say which closed buckets it refused, so a frozen pair serves only the held value lastprice serves.
 	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote)
-	switch held.outcome {
-	case frozenServeNothingHeld:
-		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
+	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
-	case frozenServeHeld:
-		writeJSON(w, []SEP40Price{{
-			Asset:     asset.String(),
-			Price:     held.snapshot.Price,
-			Timestamp: held.snapshot.ObservedAt,
-			Credit:    creditForSources(held.sources),
-		}}, Flags{
-			Stale: true, Triangulated: held.triangulated, Frozen: true, Degraded: true,
-			FrozenChecked: held.checked, SingleSource: true,
-		})
-		return
-	case frozenServeNotFrozen:
 	}
 
 	out := make([]SEP40Price, len(snapshots))
@@ -328,6 +313,29 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	// below the surface's baseline: stale as well as triangulated, the
 	// rule lastprice/x_last_price follow.
 	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg, FrozenChecked: held.checked})
+}
+
+// writeFrozenOraclePrices answers prices() for a frozen pair and reports whether it wrote. The freeze cannot say which closed buckets
+// it refused, so a frozen pair serves only the held value lastprice serves, or lastprice's 503 when nothing is held.
+func writeFrozenOraclePrices(w http.ResponseWriter, r *http.Request, asset canonical.Asset, held frozenResolution) bool {
+	switch held.outcome {
+	case frozenServeNothingHeld:
+		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
+		return true
+	case frozenServeHeld:
+		writeJSON(w, []SEP40Price{{
+			Asset:     asset.String(),
+			Price:     held.snapshot.Price,
+			Timestamp: held.snapshot.ObservedAt,
+			Credit:    creditForSources(held.sources),
+		}}, Flags{
+			Stale: true, Triangulated: held.triangulated, Frozen: true, Degraded: true,
+			FrozenChecked: held.checked, SingleSource: true,
+		})
+		return true
+	case frozenServeNotFrozen:
+	}
+	return false
 }
 
 // oracleLiveWindow: a series whose newest closed bucket is this recent is served without reading

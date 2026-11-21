@@ -10,6 +10,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// cachedBespoke is cachedBespokeEntry's block, staleness and ok, the shape the cache tests assert on.
+func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (*timescale.BespokeBlock, bool, bool) {
+	e, stale, ok := s.cachedBespokeEntry(ctx, source, category, windowDays)
+	return e.blk, stale, ok
+}
+
 // A refresh that lands while the detail view is being built must not lend its build time to the older block being served.
 func TestEnrichBespoke_BuiltAtIsTheServedBlocksTime(t *testing.T) {
 	stub := &bespokeStub{block: make(chan struct{})}

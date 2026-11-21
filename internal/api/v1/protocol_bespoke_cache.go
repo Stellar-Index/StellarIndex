@@ -185,17 +185,12 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 	return fl
 }
 
-// cachedBespoke returns the bespoke block for (source, category, window): a cached block immediately (stale once older than
+// cachedBespokeEntry returns the bespoke entry for (source, category, window): a cached block immediately (stale once older than
 // bespokeStaleAfter) while one detached refresh runs;
 // a first-ever miss waits for that build, bounded by ctx (the build outlives the wait). ok=false means no block could be produced, and
 // the caller drops it.
-func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (blk *timescale.BespokeBlock, stale, ok bool) {
-	e, stale, ok := s.cachedBespokeEntry(ctx, source, category, windowDays)
-	return e.blk, stale, ok
-}
-
-// cachedBespokeEntry is cachedBespoke returning the whole entry, so a block and its build time come from one read: a concurrent
-// refresh's put cannot pair an old block with a new timestamp.
+// It returns the whole entry, so a block and its build time come from one read: a concurrent refresh's put cannot pair an old block
+// with a new timestamp.
 func (s *Server) cachedBespokeEntry(ctx context.Context, source, category string, windowDays int) (e bespokeEntry, stale, ok bool) {
 	if s.ProtocolBespoke == nil {
 		return bespokeEntry{}, false, false
