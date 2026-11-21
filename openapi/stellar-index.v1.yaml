@@ -9042,6 +9042,7 @@ paths:
                       assets: 3
                       market_cap_usd: "17128565.34"
                       reference_value_usd: "17128272.13"
+                      lower_bound: false
                     basis: "Sum of the published market caps of the assets meeting the four-requirement definition. Market cap is circulating supply times the served USD price, both as /v1/assets serves them, under the same substance, dust-liquidity and scam-issuer gates. Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set. Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement. Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name."
                   assets:
                     -
@@ -20102,11 +20103,18 @@ components:
         aggregate gap between what the market pays for that overlap and
         what the reference says it is worth. Per asset, the same gap in
         percentage terms is `premium.pct`.
-      required: [assets]
+      required: [assets, lower_bound]
       properties:
         assets:
           type: integer
           description: Members carrying both figures and a published premium.
+        lower_bound:
+          type: boolean
+          description: |
+            True when any summed row's circulating supply is only a provable
+            floor (`circulating_supply_lower_bound`). Both totals scale with
+            that supply, so both are then lower bounds; the per-row premium
+            is unaffected because the supply cancels out of the ratio.
         market_cap_usd:
           type: string
           description: Market-basis total over those rows only. Absent when `assets` is 0.
