@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// The lake seams are captured by value, so a dial that gives up leaves them nil until restart. The window runs before the listener is up
-// and must stay inside the first deploy health probe (health_grace_seconds); both readers dial concurrently.
+// The window runs before the listener is up and must stay inside the first deploy health probe (health_grace_seconds); both readers
+// dial concurrently.
 var (
 	clickhouseBootDialBudget     = 7 * time.Second
 	clickhouseBootDialBackoffMin = time.Second
@@ -25,6 +27,30 @@ var (
 	errDialAbandoned = errors.New("clickhouse dial abandoned at the boot window")
 	errDialPanicked  = errors.New("clickhouse dial panicked")
 )
+
+// openLakeReaders waits up to deadline for ClickHouse, then builds any reader whose dial gave up over the driver's lazy pool anyway.
+// The lake seams are captured by value, so a nil reader would stay nil until restart; a pooled one re-dials on its next query.
+// An error is left only when the reader cannot be built at all (its configuration).
+func openLakeReaders(ctx context.Context, logger *slog.Logger, addr, user, pass string, deadline time.Time) (
+	supply *clickhouse.SupplyReader, supplyErr error, explorer *clickhouse.ExplorerReader, explorerErr error,
+) {
+	supply, supplyErr, explorer, explorerErr = dialLakeReadersAtBoot(ctx, logger, addr, deadline,
+		func(ctx context.Context) (*clickhouse.SupplyReader, error) {
+			return clickhouse.NewSupplyReaderAuth(ctx, addr, user, pass)
+		},
+		func(ctx context.Context) (*clickhouse.ExplorerReader, error) {
+			return clickhouse.NewExplorerReaderAuth(ctx, addr, user, pass)
+		})
+	if supplyErr != nil {
+		logger.Warn("clickhouse unreachable through the boot window; supply reader re-dials per query", "addr", addr, "err", supplyErr)
+		supply, supplyErr = clickhouse.OpenSupplyReaderAuth(addr, user, pass)
+	}
+	if explorerErr != nil {
+		logger.Warn("clickhouse unreachable through the boot window; explorer reader re-dials per query", "addr", addr, "err", explorerErr)
+		explorer, explorerErr = clickhouse.OpenExplorerReaderAuth(addr, user, pass)
+	}
+	return supply, supplyErr, explorer, explorerErr
+}
 
 // dialLakeReadersAtBoot dials the supply and explorer readers concurrently,
 // each with the whole window.

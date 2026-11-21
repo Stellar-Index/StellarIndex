@@ -664,12 +664,11 @@ func primeAppendedToChecks(a *ast.AssignStmt) token.Pos {
 	return token.NoPos
 }
 
-// Every lake reader dial in main.go must go through the boot retry:
-// a bare one-shot dial is the cold-boot race that latches the checker down.
+// main.go must build its lake readers through openLakeReaders: a bare dial leaves its seams nil
+// (and the readiness gauge at 0) until restart when ClickHouse is down at boot.
 func ruleLakeReaderDialsUseBootRetry(t *testing.T) {
 	_, file := astguard.ParseFile(t, "main.go")
-	var retryRanges [][2]token.Pos
-	var dials []*ast.CallExpr
+	opened := false
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -677,31 +676,21 @@ func ruleLakeReaderDialsUseBootRetry(t *testing.T) {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.Ident:
-			if fn.Name == "dialClickHouseAtBoot" || fn.Name == "dialLakeReadersAtBoot" {
-				retryRanges = append(retryRanges, [2]token.Pos{call.Pos(), call.End()})
+			if fn.Name == "openLakeReaders" {
+				opened = true
 			}
 		case *ast.SelectorExpr:
-			if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "clickhouse" &&
-				(fn.Sel.Name == "NewExplorerReaderAuth" || fn.Sel.Name == "NewSupplyReaderAuth") {
-				dials = append(dials, call)
+			if pkg, ok := fn.X.(*ast.Ident); ok && pkg.Name == "clickhouse" {
+				switch fn.Sel.Name {
+				case "NewExplorerReaderAuth", "NewSupplyReaderAuth", "OpenExplorerReaderAuth", "OpenSupplyReaderAuth":
+					t.Errorf("main.go calls clickhouse.%s directly; build the lake readers through openLakeReaders, which keeps a reader whose boot dial failed and lets it re-dial", fn.Sel.Name)
+				}
 			}
 		}
 		return true
 	})
-	if len(dials) == 0 {
-		t.Fatal("main.go dials no lake reader; this guard is looking at the wrong names")
-	}
-	for _, d := range dials {
-		inside := false
-		for _, r := range retryRanges {
-			if d.Pos() >= r[0] && d.End() <= r[1] {
-				inside = true
-			}
-		}
-		if !inside {
-			sel, _ := d.Fun.(*ast.SelectorExpr)
-			t.Errorf("clickhouse.%s is dialled once outside dialLakeReadersAtBoot/dialClickHouseAtBoot — a ClickHouse a few seconds late at boot leaves its seams nil and the readiness gauge at 0 until restart", sel.Sel.Name)
-		}
+	if !opened {
+		t.Fatal("main.go never calls openLakeReaders; this guard is looking at the wrong names")
 	}
 }
 

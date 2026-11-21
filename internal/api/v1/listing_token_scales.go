@@ -11,8 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// errTokenDecimalsUnwired is [Server.lakeTokenDecimals]'s error when no lake reader is wired (the boot dial missed ClickHouse,
-// and it stays nil until restart): the scale is unread, never "declares none".
+// errTokenDecimalsUnwired is [Server.lakeTokenDecimals]'s error when no lake reader is wired (no ClickHouse configured, or its
+// reader could not be built): the scale is unread, never "declares none".
 var errTokenDecimalsUnwired = errors.New("token decimals: no lake reader wired")
 
 // scaleReadFailed reports a decimals read that errored, for a surface whose amounts are raw base units: there an unwired reader

@@ -87,8 +87,8 @@ func TestServingProfileReadonlyAllowsQuerySettings(t *testing.T) {
 // test says so, rather than the profile silently keeping a looser permission than it needs.
 func TestServingReadersStillSendQuerySettings(t *testing.T) {
 	for _, tc := range []struct{ file, ctor string }{
-		{"internal/storage/clickhouse/explorer_reader.go", "func NewExplorerReaderAuth("},
-		{"internal/storage/clickhouse/supply_flows.go", "func NewSupplyReaderAuth("},
+		{"internal/storage/clickhouse/explorer_reader.go", "func OpenExplorerReaderAuth("},
+		{"internal/storage/clickhouse/supply_flows.go", "func OpenSupplyReaderAuth("},
 	} {
 		src := readRepoFile(t, tc.file)
 		i := strings.Index(src, tc.ctor)

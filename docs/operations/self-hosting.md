@@ -181,8 +181,9 @@ The indexer dials the **native protocol** port (`storage.clickhouse_addr`,
 default `127.0.0.1:9300`, not 8123 HTTP); if you pick another `<tcp_port>`,
 set `storage.clickhouse_addr` to match
 ([`storage-considerations.md`](../architecture/storage-considerations.md)).
-The API retries ClickHouse for ~seven seconds at start; if it has not
-answered, lake-backed endpoints stay 503 until you restart the API.
+The API waits up to ~seven seconds for ClickHouse at start; if it has not
+answered, lake-backed endpoints degrade until it does, then recover without
+a restart.
 
 Without ClickHouse set `storage.clickhouse_live_sink = false` and
 `storage.clickhouse_projector_source = false`. Pricing is unaffected; you lose
