@@ -141,7 +141,7 @@ func (h *fillHarness) run(t *testing.T, script string, extra ...string) (string,
 		{"/etc/default/galexie-archive-fill", filepath.Join(h.dir, "no-such-defaults"), script == fillScript},
 		{"/var/lib/galexie-archive/hot-floor", h.floorFile, false},
 		{"/var/lib/galexie-archive/fill-pending", filepath.Join(h.dir, "state", "fill-pending"), script == fillScript},
-		{"/run/lock/galexie-archive-fill.lock", h.lock, false},
+		{"/run/lock/stellarindex/galexie-archive-fill.lock", h.lock, script == fillScript},
 	} {
 		if p.required && !strings.Contains(body, p.host) {
 			t.Fatalf("%s no longer names %s; update the sandbox", script, p.host)
@@ -258,6 +258,26 @@ func TestFillRefusesConcurrentRun(t *testing.T) {
 	}
 	if calls := readLines(t, h.mcCalls); len(calls) != 0 {
 		t.Fatalf("fill touched mc while another run held the lock: %v", calls)
+	}
+}
+
+// TestFillRefusesPlantedLock: a symlink at the lock path is someone else's file; holding it would let them defer every fire.
+func TestFillRefusesPlantedLock(t *testing.T) {
+	t.Parallel()
+	h := newFillHarness(t)
+	if err := os.Symlink(filepath.Join(h.dir, "elsewhere"), h.lock); err != nil {
+		t.Fatal(err)
+	}
+
+	aws := h.writeList(t, "aws.list", "FFD5FFFF--2688000-2751999")
+	local := h.writeList(t, "local.list")
+	out, err := h.run(t, fillScript, "STUB_AWS_LIST="+aws, "STUB_LOCAL_LIST="+local)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("fill with a symlinked lock: err=%v, want exit 2\n%s", err, out)
+	}
+	if calls := readLines(t, h.mcCalls); len(calls) != 0 {
+		t.Fatalf("fill touched mc behind a planted lock: %v", calls)
 	}
 }
 
