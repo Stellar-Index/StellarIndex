@@ -138,7 +138,7 @@ Reasons: `not_token_shaped` (a foreign contract's event whose body is neither a 
 
 1. `journalctl -u <unit> | grep 'events skipped (decode)'` names each window `[lo,hi]` and its counts by reason.
 2. Read those events from `stellar.contract_events` and find why the decoder refused them. A foreign contract emitting a malformed `transfer` is noise; a real token whose body shape changed is a decoder bug.
-3. After a decoder fix, re-derive the windows: `stellarindex-ops ch-cap67-movements -write -from <lo> -to <hi>` (idempotent). The one-shot run exits non-zero if anything is still skipped.
+3. After a decoder fix, re-derive the windows: `stellarindex-ops ch-cap67-movements -write -from <lo> -to <hi>` (idempotent; a `<lo>` above watermark+1, or above the floor before any watermark exists, is refused). The one-shot run exits non-zero if anything is still skipped.
 
 ## Entry index lagging
 
