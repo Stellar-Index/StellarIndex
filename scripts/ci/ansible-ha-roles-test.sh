@@ -492,6 +492,17 @@ promtail = yaml.safe_load(jinja2.Environment(undefined=jinja2.ChainableUndefined
 check(all(c.get("backoff_config", {}).get("max_retries") == 0 for c in promtail["clients"]),
       "promtail retries a batch until Loki accepts it (max_retries 0)")
 
+# haproxy: every X-Forwarded-* header the API middleware reads is set by the TLS front.
+mw = "internal/api/v1/middleware"
+read_hdrs = sorted({h for f in os.listdir(mw) if f.endswith(".go") and not f.endswith("_test.go")
+                    for h in re.findall(r'Header\.Get\("(X-Forwarded-[A-Za-z-]+)"\)', open(f"{mw}/{f}").read())})
+front = text("haproxy/templates/haproxy.cfg.j2").split("frontend api_https", 1)[-1].split("\nbackend ", 1)[0]
+check(read_hdrs != [], "the API middleware's X-Forwarded-* reads were found")
+for hdr in read_hdrs:
+    sets = (f"http-request set-header {hdr} " in front
+            or (hdr == "X-Forwarded-For" and "option forwardfor" in text("haproxy/templates/haproxy.cfg.j2")))
+    check(sets, f"haproxy api_https sets {hdr}, which the API middleware reads")
+
 # firewalls: every role that renders the whole /etc/nftables.conf refuses an archival node,
 # whose own role renders the same file.
 for role in sorted(os.listdir(roles)):
