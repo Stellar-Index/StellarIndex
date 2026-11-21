@@ -13,15 +13,12 @@
     owner: root
     group: "{{ prometheus_user }}"
     mode: "0640"
+    validate: "promtool check web-config %s"
   when: prometheus_basic_auth_password_hash | length > 0
   notify: "prometheus config changed"
 
-- name: remove /etc/prometheus/web-config.yml when basic auth is unset
-  file:
-    path: /etc/prometheus/web-config.yml
-    state: absent
-  when: prometheus_basic_auth_password_hash | length == 0
-  notify: "prometheus config changed"
+# With basic auth unset the file stays until "restart prometheus" has dropped
+# --web.config.file: the running process re-reads it on every request.
 
 # The client side of the basic auth above: prometheus.yml reads these
 # via password_file, so the plaintext never lands in the config.

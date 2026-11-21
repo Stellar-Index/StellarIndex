@@ -14,6 +14,22 @@
     group: postgres
     mode: '0755'
 
+# Only db-01 may initialize the cluster. If 08 failed there the play goes on
+# here, so a replica must not start until the DCS holds an initialized cluster.
+- name: wait until the DCS holds an initialized cluster
+  command: >
+    etcdctl --endpoints={{ 'https' if etcd_tls_enabled else 'http' }}://{{ ansible_host }}:{{ etcd_client_port }}
+    {% if etcd_tls_enabled %}--cacert={{ etcd_tls_dir }}/ca.pem
+    --cert={{ etcd_tls_dir }}/server.pem
+    --key={{ etcd_tls_dir }}/server-key.pem{% endif %}
+    get --print-value-only /service/{{ patroni_cluster_name }}/initialize
+  register: _dcs_initialize
+  changed_when: false
+  check_mode: false
+  retries: 24
+  delay: 5
+  until: _dcs_initialize.rc == 0 and (_dcs_initialize.stdout | trim | length) > 0
+
 - name: start Patroni (replica — Patroni handles pg_basebackup)
   systemd:
     name: patroni

@@ -41,7 +41,8 @@ alertmanager_listen: "0.0.0.0:{{ alertmanager_port }}"
 # ONLY control on 9090/9093 — anything inside prometheus_internal_cidrs
 # reached both with no credentials. Optional basic auth, layered on top
 # of (not instead of) the firewall. Vault-supplied bcrypt hash, e.g.
-# `htpasswd -nBC 10 operator`. Empty = preflight WARN, unauthenticated
+# `htpasswd -nBC 10 "" | tr -d ':\n'` (the hash alone; plain `-n` output
+# starts with `user:`, which Prometheus rejects). Empty = preflight WARN, unauthenticated
 # (today's behaviour, unchanged) — matches the alertmanager_pagerduty_key
 # / discord webhook pattern below: a missing credential degrades, it
 # doesn't block the apply.

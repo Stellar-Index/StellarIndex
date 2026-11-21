@@ -39,6 +39,10 @@ frontend api_https
     bind *:443 ssl crt {{ haproxy_tls_cert_dir }}/{{ haproxy_tls_cert_filename }}
     bind *:80
     redirect scheme https code 301 if !{ ssl_fc }
+    # TLS ends here, so the API rebuilds its own origin from this header for the
+    # same-site write check. set-header drops any client-supplied value first.
+    http-request set-header X-Forwarded-Proto https if { ssl_fc }
+    http-request set-header X-Forwarded-Proto http if !{ ssl_fc }
     # Strict-Transport-Security: 1 year, include subdomains.
     http-response set-header Strict-Transport-Security "max-age=31536000; includeSubDomains"
     default_backend api_pool

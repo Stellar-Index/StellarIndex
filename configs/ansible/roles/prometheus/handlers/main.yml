@@ -9,20 +9,44 @@
 
 # SIGHUP re-reads prometheus.yml and rules only. Command-line flags
 # (retention, --web.config.file) live in the unit and need a restart.
-# One replica at a time, and the next waits until this one serves again
-# (TSDB WAL replay takes minutes): both down at once is a gap in every series
-# and no rule evaluation. Type=simple returns before Prometheus is ready.
+# throttle serialises the hosts but still runs the next one after a failure,
+# so a ready replica restarts only while its peer is ready too: a bad unit
+# change then stops at the first replica instead of taking both down.
+# A replica that is not ready is restarted regardless (that costs nothing).
+# The web config is deleted only once the restarted process no longer reads it,
+# and a refused or failed restart leaves the pending marker that 05 re-notifies from.
 - name: restart prometheus
   shell: |
     set -eu
+    pending=/etc/prometheus/.restart-pending
+    touch "$pending"
+    ready() {
+      curl -fsS --max-time 5 -o /dev/null -K - <<EOF
+    url = "http://$1:{{ prometheus_port }}/-/ready"
+    {% if prometheus_basic_auth_password_hash %}
+    user = "{{ prometheus_basic_auth_username }}:$(cat /etc/prometheus/prometheus-client-password)"
+    {% endif %}
+    EOF
+    }
+    self={{ '127.0.0.1' if prometheus_listen.startswith('0.0.0.0:') else ansible_host }}
+    if ready "$self"; then
+      for peer in {% for h in groups['prometheus_pair'] | difference([inventory_hostname]) %}{{ hostvars[h].ansible_host }} {% endfor %}; do
+        if ! ready "$peer"; then
+          echo "refusing to restart prometheus on {{ inventory_hostname }}: peer $peer is not ready" >&2
+          exit 1
+        fi
+      done
+    fi
     systemctl daemon-reload
     systemctl restart prometheus
     for _ in $(seq 120); do
-      if curl -fsS --max-time 5 -o /dev/null -K - <<EOF
-    url = "http://{{ '127.0.0.1' if prometheus_listen.startswith('0.0.0.0:') else ansible_host }}:{{ prometheus_port }}/-/ready"
-    {% if prometheus_basic_auth_password_hash %}user = "{{ prometheus_basic_auth_username }}:$(cat /etc/prometheus/prometheus-client-password)"{% endif %}
-    EOF
-      then exit 0; fi
+      if ready "$self"; then
+    {% if not prometheus_basic_auth_password_hash %}
+        rm -f /etc/prometheus/web-config.yml
+    {% endif %}
+        rm -f "$pending"
+        exit 0
+      fi
       sleep 5
     done
     echo "prometheus not ready 600s after restart on {{ inventory_hostname }}" >&2
@@ -40,18 +64,39 @@
   listen: "alertmanager config changed"
 
 # Flags (--web.config.file, cluster peers) live in the unit; SIGHUP skips them.
-# One peer at a time, each ready before the next, as for prometheus above.
+# Same peer guard, cleanup and pending marker as restart prometheus above.
 - name: restart alertmanager
   shell: |
     set -eu
+    pending=/etc/alertmanager/.restart-pending
+    touch "$pending"
+    ready() {
+      curl -fsS --max-time 5 -o /dev/null -K - <<EOF
+    url = "http://$1:{{ alertmanager_port }}/-/ready"
+    {% if alertmanager_basic_auth_password_hash %}
+    user = "{{ alertmanager_basic_auth_username }}:$(cat /etc/prometheus/alertmanager-client-password)"
+    {% endif %}
+    EOF
+    }
+    self={{ '127.0.0.1' if alertmanager_listen.startswith('0.0.0.0:') else ansible_host }}
+    if ready "$self"; then
+      for peer in {% for h in groups['prometheus_pair'] | difference([inventory_hostname]) %}{{ hostvars[h].ansible_host }} {% endfor %}; do
+        if ! ready "$peer"; then
+          echo "refusing to restart alertmanager on {{ inventory_hostname }}: peer $peer is not ready" >&2
+          exit 1
+        fi
+      done
+    fi
     systemctl daemon-reload
     systemctl restart alertmanager
     for _ in $(seq 60); do
-      if curl -fsS --max-time 5 -o /dev/null -K - <<EOF
-    url = "http://{{ '127.0.0.1' if alertmanager_listen.startswith('0.0.0.0:') else ansible_host }}:{{ alertmanager_port }}/-/ready"
-    {% if alertmanager_basic_auth_password_hash %}user = "{{ alertmanager_basic_auth_username }}:$(cat /etc/prometheus/alertmanager-client-password)"{% endif %}
-    EOF
-      then exit 0; fi
+      if ready "$self"; then
+    {% if not alertmanager_basic_auth_password_hash %}
+        rm -f /etc/alertmanager/web-config.yml
+    {% endif %}
+        rm -f "$pending"
+        exit 0
+      fi
       sleep 5
     done
     echo "alertmanager not ready 300s after restart on {{ inventory_hostname }}" >&2

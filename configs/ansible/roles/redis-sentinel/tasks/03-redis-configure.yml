@@ -151,6 +151,9 @@
     executable: /bin/bash
   register: redis_policy_enforce
   changed_when: redis_policy_enforce.stdout == 'changed'
+  # CONFIG SET applied it and CONFIG REWRITE persisted it; without this the
+  # import's "redis config changed" restarts every node, primary included.
+  notify: []
   when:
     - not (redis_render_configs | bool)
     - redis_sentinel_answered | bool

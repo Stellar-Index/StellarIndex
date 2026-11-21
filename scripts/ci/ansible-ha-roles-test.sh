@@ -229,6 +229,70 @@ else:
     rc, log = run_patroni_restart(healthy, me="db-01")
     check(rc != 0 and "restart patroni" not in log,
           "patroni restart handler does not restart a leader that still holds the lock after the switchover")
+    # /cluster lag is sampled per loop_wait: a streaming replica that reads as lagging is live, not down.
+    self_lagging = {"members": [member("db-01", "leader", "running"), member("db-02", "sync_standby", "streaming", lag=1 << 30)]}
+    rc, log = run_patroni_restart(self_lagging, after=healthy)
+    check(rc != 0 and "restart" not in log,
+          "patroni restart handler does not restart a streaming-but-lagging member while another member is missing")
+    rc, log = run_patroni_restart({"members": healthy["members"][:1] + self_lagging["members"][1:] + healthy["members"][2:]},
+                                  after=self_lagging | {"members": self_lagging["members"] + healthy["members"][2:]})
+    check(rc == 0 and "restart patroni" in log and not run_patroni_restart.pending,
+          "patroni restart handler finishes once the restarted replica streams again, whatever its sampled lag")
+
+# etcd: a member restarts only while every peer is healthy, and waits for its own health.
+def run_etcd_restart(healthy_before, up_after):
+    eenv = jinja2.Environment(trim_blocks=True)
+    eenv.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+    script = eenv.from_string(handlers["restart etcd"]["shell"]).render(
+        etcd_tls_enabled=False, etcd_client_port=2379, ansible_host="10.0.0.12", inventory_hostname="db-02",
+        groups={"postgres_cluster": ["db-01", "db-02", "db-03"]},
+        hostvars={"db-01": {"ansible_host": "10.0.0.11"}, "db-03": {"ansible_host": "10.0.0.13"}})
+    with tempfile.TemporaryDirectory() as d:
+        for ip in healthy_before:
+            open(f"{d}/ok-{ip}", "w").close()
+        stub = {"etcdctl": f'ip=$(printf "%s" "$*" | sed -n "s|.*//\\([0-9.]*\\):.*|\\1|p"); [ -f {d}/ok-$ip ]\n',
+                "systemctl": f'echo "systemctl $*" >> {d}/calls.log\ncase "$*" in restart*) rm -f {d}/ok-10.0.0.12; '
+                             f'{"touch " + d + "/ok-10.0.0.12" if up_after else ":"} ;; esac\n',
+                "sleep": ""}
+        for name, body in stub.items():
+            with open(f"{d}/{name}", "w") as f:
+                f.write("#!/bin/sh\n" + body)
+            os.chmod(f"{d}/{name}", 0o755)
+        env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}"}
+        rc = subprocess.run(["bash", "-c", script], env=env, stdin=subprocess.DEVNULL, capture_output=True).returncode
+        log = open(f"{d}/calls.log").read() if os.path.exists(f"{d}/calls.log") else ""
+    return rc, "restart etcd" in log
+
+
+all_up = ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
+for before, up_after, want, label in (
+        (all_up, True, (0, True), "restarts a healthy member while every peer is healthy"),
+        (["10.0.0.12", "10.0.0.13"], True, (1, False), "refuses while a peer is unhealthy (a failed earlier member)"),
+        (["10.0.0.11"], True, (0, True), "restarts a member that is itself unhealthy"),
+        (all_up, False, (1, True), "fails when the member is not healthy after the restart")):
+    rc, restarted = run_etcd_restart(before, up_after)
+    check((rc == 0) == (want[0] == 0) and restarted == want[1], f"etcd restart handler {label}")
+
+# patroni: only db-01 carries a bootstrap section, so no other member can initdb an empty cluster;
+# initdb's default `trust` lines are replaced; bootstrap.users (dropped in Patroni 4) is not relied on.
+penv = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined)
+pgroups = {"postgres_cluster": ["db-01", "db-02", "db-03"]}
+for host, want in (("db-01", True), ("db-02", False)):
+    conf = yaml.safe_load(penv.from_string(text("patroni/templates/patroni.yml.j2")).render(
+        inventory_hostname=host, groups=pgroups, hostvars={h: {"ansible_host": "10.0.0.1"} for h in pgroups["postgres_cluster"]},
+        patroni_internal_cidrs=["10.0.0.0/24"], patroni_synchronous_node_count=1, etcd_tls_enabled=False))
+    check(("bootstrap" in conf) == want, f"patroni.yml for {host} has a bootstrap section: {want}")
+    if want:
+        initdb = conf["bootstrap"]["initdb"]
+        check({"auth-local": "peer"} in initdb and {"auth-host": "scram-sha-256"} in initdb,
+              "patroni bootstrap initdb replaces the default trust pg_hba lines")
+        check("users" not in conf["bootstrap"], "patroni bootstrap does not rely on bootstrap.users")
+join = tasks("patroni/tasks/09-patroni-join.yml")
+names = [t.get("name", "") for t in join]
+wait_i = next((i for i, t in enumerate(join) if "/initialize" in str(t.get("command", ""))), None)
+check(wait_i is not None and wait_i < names.index("start Patroni (replica — Patroni handles pg_basebackup)")
+      and "stdout" in str(join[wait_i].get("until")),
+      "a replica waits for an initialized DCS before it starts Patroni")
 
 # redis: credentials live here, so eviction and failover loss are bounded.
 rd = yaml.safe_load(text("redis-sentinel/defaults/main.yml"))
@@ -458,6 +522,8 @@ for managed, answered, render, want in ((False, False, True, False), (True, True
              redis_sentinel_answered=answered, redis_render_configs=render)
     check(fires(enforce["when"], **v) == want,
           f"redis policy enforce (managed={managed} answered={answered} render={render}) runs={want}")
+check(enforce.get("notify", "unset") == [],
+      "redis policy enforce opts out of the import's restart notify (the policy is applied live)")
 
 # patroni: a refused or failed restart is re-notified from the handler's marker on the next run.
 requeue = next((t for t in tasks("patroni/tasks/06-patroni-configure.yml") if t.get("notify") == "patroni config changed"
@@ -489,6 +555,17 @@ promtail = yaml.safe_load(jinja2.Environment(undefined=jinja2.ChainableUndefined
     text("loki/templates/promtail-config.yaml.j2")).render(promtail_target_url="http://10.0.2.5:3100/loki/api/v1/push"))
 check(all(c.get("backoff_config", {}).get("max_retries") == 0 for c in promtail["clients"]),
       "promtail retries a batch until Loki accepts it (max_retries 0)")
+
+# haproxy: every X-Forwarded-* header the API middleware reads is set by the TLS front.
+mw = "internal/api/v1/middleware"
+read_hdrs = sorted({h for f in os.listdir(mw) if f.endswith(".go") and not f.endswith("_test.go")
+                    for h in re.findall(r'Header\.Get\("(X-Forwarded-[A-Za-z-]+)"\)', open(f"{mw}/{f}").read())})
+front = text("haproxy/templates/haproxy.cfg.j2").split("frontend api_https", 1)[-1].split("\nbackend ", 1)[0]
+check(read_hdrs != [], "the API middleware's X-Forwarded-* reads were found")
+for hdr in read_hdrs:
+    sets = (f"http-request set-header {hdr} " in front
+            or (hdr == "X-Forwarded-For" and "option forwardfor" in text("haproxy/templates/haproxy.cfg.j2")))
+    check(sets, f"haproxy api_https sets {hdr}, which the API middleware reads")
 
 # firewalls: every role that renders the whole /etc/nftables.conf refuses an archival node,
 # whose own role renders the same file.
