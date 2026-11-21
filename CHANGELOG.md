@@ -20,6 +20,34 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.129.0] - 2026-11-21
+
+Tested against Stellar protocol 27. Migrations 0233-0234 (schema version 234): 0233 makes `fx_fixings` append-only in the database, 0234 corrects a table comment; neither reads or rewrites rows. `pkg/client` gains `RevokeKeyWithReason`; `RevokeKey` is unchanged. Behaviour changes for API clients: asset detail, listing rows and the lending token block carry `market_cap_withheld_reason` (#4232); `DELETE /v1/account/keys/{id}` now revokes the calling key under the postgres auth backend, where it answered 503 (#4240); the staff account look-up answers 400 when both `email` and `slug` are given (#4235). Behaviour change for operators: the public API runs as its own OS user, `stellarindex-api`; apply the host role before deploying this release, which is phase 1 of the split (#4233). Alert change: a silence held for most of a day now raises a ticket and stops the dead-man heartbeat even if split or rotated; run `amtool silence query` before deploying (#4234).
+
+### Added
+
+- **api:** `market_cap_withheld_reason` on the asset detail, listing rows and the lending token block, set whenever `price_usd` and a supply are served and `market_cap_usd` is not. Values: the direct price verdict (`substance`, `upstream_leg`, `manipulation_guard`, `fx_leg_unavailable`), `price_unread`, `thin_market`, `price_basis`, `supply_stale`, `decimals_mismatch`, `decimals_unknown`, `supply_floor`, `ticker_collision`, `low_liquidity`. No guard changed: no cap is served that was refused before, and none is withheld that was served. An absent reason beside a null cap, a price and a supply means a data or compute gap, and the field explains `market_cap_usd` only (#4232).
+- **client:** `RevokeKeyWithReason` sends `X-Reason`, which operator callers must send; `X-Reason` is now declared on the operation in the OpenAPI spec (#4235, #4240).
+- **deploy:** system user `stellarindex-api` (role variable `stellarindex_api_os_user`; setting it to `stellarindex` is the rollback) and `/etc/default/stellarindex-api` (root:stellarindex-api 0640), which holds only the names the API reads (#4233).
+- **monitoring:** `stellarindex_registration_table_growing` also fires on more than 100 sign-ups in 7 days, counted from sign-ups so row reaping or a restart cannot hide it (#4234).
+- **storage:** migration 0233, a BEFORE UPDATE/DELETE/TRUNCATE trigger that makes `fx_fixings` refuse mutation; its one writer is `INSERT ... ON CONFLICT DO NOTHING`. Migration 0234 corrects the `aquarius_rewards_events` table comment to 12 event kinds (#4238).
+
+### Changed
+
+- **api:** `DELETE /v1/account/keys/{id}` revokes exactly the calling key when no account store is configured, so a `/v1/register` key can be killed by its owner; any other target gets the same 503 whether or not it exists. An already-revoked key is not revoked again and keeps its first reason and actor. A revoke that committed in one store and failed in the other writes a failed `key.revoke` audit row on the self-service and staff routes (#4240).
+- **api:** the staff account look-up returns 400 when both `email` and `slug` are given; it used to resolve one and return that account. The key-store 503 names its real causes (no Redis, or `auth_backend=postgres`). Godoc, reference text and the spec example state what the server does (#4235).
+- **monitoring:** `stellarindex_config_assertions_stale` also fires when the assertions textfile was deleted or never written. `stellarindex_alertmanager_silence_active` and the dead-man's silence check share one test, a silence active at 90% of a day's five-minute samples, so expiring and recreating a silence no longer resets either. The alert count is unchanged at 400 (#4234).
+- **audit:** Reflector WASM `25fc3060` is registered as audited against nine real mainnet fixtures, three per oracle contract; the deployed bytes match upstream `reflector-pulse-contract` v7.1.0. The two earlier hashes stay unregistered until they have fixtures (#4239).
+- **storage:** a bare soroswap-router routing tag is upgraded once a registered wrapper resolves, and a wrapper tag is never overwritten; `tx_index` is updated whenever the stored value differs, not only when it is NULL; the ClickHouse ops auth refuses a password with an empty username (#4238).
+- **deploy:** the API unit runs as `stellarindex-api` with `WorkingDirectory=/`, loads only its own env file, hides `/etc/default/stellarindex` and sets `ProtectProc=invisible`. The completeness report moves to `/var/lib/archive-completeness`, seeded once from the old path. `stellarindex` leaves group `galexie` after the API is verified. A `pg_hba.conf` change reloads Postgres instead of restarting it. `lint-systemd-hardening.sh` fails an API unit that shares the indexer's user or env file (#4233).
+- **ansible:** only the first Patroni host renders a bootstrap section and replicas wait for the cluster's initialize key; initdb uses peer and `scram-sha-256`, never trust; restart handlers restart a member only while every peer is healthy, for etcd too. Prometheus and Alertmanager rolling restarts stop at an unhealthy peer and basic-auth hashes are validated with promtool. A Redis Sentinel policy change no longer restarts every node, and the HAProxy API frontend sets `X-Forwarded-Proto` from the TLS state. These roles are not applied to any host (#4237).
+- **explorer:** the asset page shows a live value, a value labelled as what it is, or nothing. The sidebar keeps its baked figures and caption when the live row is stale; a failed issuer-directory lookup reads "check unavailable"; the Supply tab marks Total as a bound; the Price card renders the live price; a `price_withheld` event clears the live figure; the Markets tab matches the page asset by identity, never by ticker; the USDC chart tab no longer prints a constant "about $1.00". Where a market cap is missing the page says why in words (#4236, #4232).
+
+### Fixed
+
+- **api:** a key can revoke itself under the postgres auth backend (#4240).
+- **docs:** the migrations README records why there is no CHECK on `trades` amounts: on a hypertable with compressed chunks `ADD CONSTRAINT ... NOT VALID` still decompresses every compressed row under ACCESS EXCLUSIVE, so it is a planned maintenance operation; the rule stays in `canonical.Trade.Validate` (#4238).
+
 ## [v0.128.0] - 2026-11-21
 
 Tested against Stellar protocol 27. No migrations, no `pkg/*` change. Behaviour changes for API clients: `/v1/oracle/prices` on a frozen pair returns the single held value, or 503 when nothing is held (#4227); `/v1/assets/{id}/supply` answers 502 when the supply read fails, where a token with no flows got 404 or an empty answer, and serves a supply whose completeness check could not run as a lower bound (#4228). Behaviour change for operators: a bounded ledger walk by the ops tools over a range with a real hole below the datastore tip now exits non-zero where it used to exit 0 (#4229). Host payload changed: job locks move to `/run/lock/stellarindex/`, and the public API unit runs with `ProtectSystem=strict` and no writable paths; both are applied by the next host role run (#4230). On a host that already holds the `movements_by_asset_backfill` marker, run Step 3 of `deploy/clickhouse/movements_by_asset.sql` to verify it, and on a mismatch delete the marker and re-run Step 2 (#4229).
@@ -167,45 +195,3 @@ Tested against Stellar protocol 27. Migrations 0227-0230: 0227 corrects the stor
 - **lake:** the `contract_event_shapes` backfill includes the first ledger.
 - **ops:** `ch-census-rollup` exits non-zero when a lake hole stops it short of yesterday.
 - **docs:** the API design doc matches the code.
-
-## [v0.124.0] - 2026-11-17
-
-Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains response flags and fields. The OpenAPI contract gains `/v1/lending/rates` and additive flags and fields; nothing is removed. Host payload changed: ClickHouse view definitions (`ops_by_source`, `account_activity`, `ttl_live_until`, `contract_instance_changes`), the API and aggregator unit restart limits, the firewall and Caddy templates (rendered output unchanged unless `http_origin_lock_enabled` is set), and the patroni, redis-sentinel and loki roles. Run the role before deploying. After deploying, `stellar.lending_state_hourly` must be emptied and refilled from lending genesis, then proved (`ch-entry-history -lending-only`, `-prove`).
-
-### Added
-
-- **api:** `/v1/lending/rates` lists every Blend and BLNT reserve with supply and borrow APR, utilisation, supplied and borrowed amounts, factors and caps, filterable by asset and protocol.
-- **api:** `stellarindex_api_flagged_responses_total{route,flag}` counts degraded and stale responses; a gauge reports the newest day of the contract census.
-- **api:** `/v1/contracts/stats` carries `active_90d_through` and is a lower bound when the census is behind.
-- **explorer:** protocol tables show asset codes, asset pairs and curated pool names with the address on hover, and amounts in human units.
-- **ansible:** an opt-in origin lock restricts ports 80 and 443 to the CDN ranges, listed extra CIDRs and internal addresses. It is off by default.
-- **monitoring:** five new ticket alerts, including a stale baseline refresh and an ingestion sink fault drop.
-- **ci:** the lake-dedup lint watches all 31 ReplacingMergeTree lake tables and reads whose table name is spliced in; the docs lint rejects a partial-set rollback command and an any-branch release signer.
-
-### Changed
-
-- **api:** `/v1/ohlc`, `/v1/chart` and `/v1/history/since-inception` are cached on the short band, and `/v1/ohlc` returns the price-withheld 404 for a scam-flagged issuer.
-- **api:** folded OHLC intervals serve the buckets that start inside the requested window, as the native intervals do.
-- **api:** a published token `decimals` is always a scale read on-chain; an unknown scale is absent.
-- **api:** the API refuses to start, and `-dry-run` fails, on an unreadable or invalid holds file.
-- **ops:** `listing-sync` refuses a run that would prune more than 20% of the listing directory (floor 5) unless `-accept-churn` is passed.
-- **ops:** an external trades backfill refreshes the trades aggregates over the span it wrote.
-- **ops:** the API and aggregator units keep restarting through a 15-minute Postgres outage.
-
-### Fixed
-
-- **lending:** hourly lending state is derived from the lake's current rows only; superseded row versions stopped the fill and could have produced wrong hours. The fill runs in 100k-ledger windows.
-- **pricing:** a stale headline price, a dust-only market set and a single outlier bar no longer reach asset prices, markets and OHLC unflagged.
-- **rwa:** the premium is bounded by the published value on both surfaces, and the reference basis names the read that did not answer.
-- **assets:** failed, stale and partial reads reach the response flags on the asset listing, detail and verified routes.
-- **api:** account positions disclose a capped venue fold, and a DeFindex row is not closed on a zero net flow; lending earnings serves a capped read as a lower bound instead of a 500.
-- **api:** an unchecked peg is flagged rather than served as holding; lending pools, markets and issuers flag a failed or truncated read; a history cursor older than the defaulted `from` is not skipped.
-- **auth:** a minted key is bounded by its minter, key validation fails closed when the key store is down, and an interrupted account erasure is finished.
-- **lake:** the ops-by-source proof sees fee payers, and the backfill runbooks fail closed.
-- **ops:** `data-freshness.sh` fails a probe on a SQL error; `pg-chunk-scan.sh` samples correctly; a balance diagnostic no longer counts superseded row versions.
-- **ansible:** the patroni, redis-sentinel and loki roles fail safe on a bad bootstrap, an unauthenticated Redis and an unbounded Loki.
-- **monitoring:** five alerts that could not fire now can.
-- **ci:** bypasses in the migration gates are closed, and four lints are tightened.
-- **explorer:** CSV exports defuse spreadsheet formulas in text cells; floor, derived and stale figures are marked on asset and RWA pages.
-- **docs:** 35 operator procedures (rollback, release verification, recovery, credential rotation, privacy requests, runbooks) are corrected against the code they describe.
-- **tests:** two intermittently failing tests are deterministic.
