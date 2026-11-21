@@ -1356,10 +1356,10 @@ func TestMigration0196_AddsNullableTxIndexOverCompressedChunks(t *testing.T) {
 	}
 }
 
-// TestTagTradesTxIndex_FillsOnChainRowsFirstWins drives the production walk (pipeline.TagTxIndexWindow to
+// TestTagTradesTxIndex_FillsAndCorrectsOnChainRows drives the production walk (pipeline.TagTxIndexWindow to
 // timescale.Store). The two same-ledger SDEX txs are applied in the reverse of tx_hash order, so ORDER BY ledger,
 // tx_index must disagree with the tx_hash tie key.
-func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
+func TestTagTradesTxIndex_FillsAndCorrectsOnChainRows(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -1456,13 +1456,21 @@ func TestTagTradesTxIndex_FillsOnChainRowsFirstWins(t *testing.T) {
 		}
 	}
 
-	// First-wins: swapped values change nothing.
-	n, err := store.TagTradesTxIndex(ctx, from, to, []timescale.TxIndexTag{
+	// A corrected tag overwrites a wrong one; the same tags again change nothing.
+	swapped := []timescale.TxIndexTag{
 		{Ledger: 61_000_000, TxHash: txIndexHash("aa"), TxIndex: 0},
 		{Ledger: 61_000_000, TxHash: txIndexHash("ff"), TxIndex: 1},
-	})
-	if err != nil || n != 0 {
-		t.Errorf("re-tag with swapped values: n=%d err=%v, want 0, nil", n, err)
+	}
+	n, err := store.TagTradesTxIndex(ctx, from, to, swapped)
+	if err != nil || n != 2 {
+		t.Errorf("re-tag with corrected values: n=%d err=%v, want 2, nil", n, err)
+	}
+	var aaIdx int
+	if err := db.QueryRowContext(ctx, `SELECT tx_index FROM trades WHERE tx_hash = $1`, txIndexHash("aa")).Scan(&aaIdx); err != nil || aaIdx != 0 {
+		t.Errorf("aa tx_index after correction = %d (err %v), want 0", aaIdx, err)
+	}
+	if n, err = store.TagTradesTxIndex(ctx, from, to, swapped); err != nil || n != 0 {
+		t.Errorf("repeat of the same tags: n=%d err=%v, want 0, nil", n, err)
 	}
 	if rest, err := store.UntaggedTxIndexTrades(ctx, from, to, 0, "", 10); err != nil || len(rest) != 0 {
 		t.Errorf("untagged after the walk = %s (err %v), want none", keyHashes(rest), err)
