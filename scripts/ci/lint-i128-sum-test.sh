@@ -74,6 +74,16 @@ run_case "marker without a reason does not exempt" 1 "$CH" 'q := `SELECT sum(toI
 run_case "marker trailing a code line does not exempt the next line" 1 "$CH" 'q := `SELECT sum(toInt128(x)), -- i128sum:ok Int64 stroops
     sum(toInt128(y)) FROM t`'
 run_case "a comment line mentioning the pattern is not flagged" 0 "$CH" '// never sum(toInt128(x)) an i128 amount'
+run_case "an Int128 cast inside if() is flagged" 1 "$CH" "q := \`SELECT sum(if(kind = 'mint', amount, toInt128(0))) FROM t\`"
+run_case "a negated Int128 column is flagged" 1 "$CH" 'q := `SELECT sum(-amount) FROM t`'
+run_case "Int128 column arithmetic is flagged" 1 "$CH" 'q := `SELECT sum(amount * sign) FROM t`'
+run_case "upper-case SUM is flagged" 1 "$CH" 'q := `SELECT SUM(amount) FROM t`'
+run_case "sumOrNull is flagged" 1 "$CH" 'q := `SELECT sumOrNull(amount) FROM t`'
+run_case "sumMap over Int128 values is flagged" 1 "$CH" 'q := `SELECT sumMap([k], [amount]) FROM t`'
+run_case "toInt128OrZero is flagged" 1 "internal/ops/y.go" 'q := `SELECT sum(toInt128OrZero(s)) FROM t`'
+run_case "a conditional sum wrapped whole in toInt256 passes" 0 "$CH" "q := \`SELECT toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) FROM t\`"
+run_case "an Int128 column only in a sumIf condition is not flagged" 0 "$CH" 'q := `SELECT sumIf(holders, amount > 0) FROM t`'
+run_case "a column whose name only contains an Int128 name is not flagged" 0 "$CH" 'q := `SELECT sum(amount_usd) FROM t`'
 run_case "a schema with no Int128 column fails the instrument check" 1 "$CH" 'q := 1' 'CREATE TABLE t (a UInt64)'
 
 echo "lint-i128-sum-test: $pass passed, $fail failed"

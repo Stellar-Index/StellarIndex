@@ -5,10 +5,10 @@
 #   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, the waiver maps in
 #   lint-pk-discriminators and lint-derive-generation-guard, the inline migration baselines in
 #   lint-migrations.sh, and (mutations only,
-#   since new migrations append freely) scripts/ci/migration-immutability.sha256, and the
-#   inline escape markers `i128:ok`, `lint-money:ok` and `migration-compat:ok` in .go/.sql
+#   since new migrations append freely) scripts/ci/migration-immutability.sha256, the inline
+#   escape markers in WATCHED_MARKERS in any file outside the lints, their self-tests and docs
 #   (the trailer names the file the marker was added to), and the secret scan's inline allow
-#   marker in any file.
+#   marker in any file. A lowered count in a counted baseline is a shrink, not growth.
 #
 # Linters fail on stale entries, but nothing stopped one commit from growing an allowlist while
 # introducing the violation it hides. Any range that ADDS entries fails unless a commit message
@@ -17,7 +17,7 @@
 #     Baseline-Growth: <watched-path> — <reason>
 #
 # Properties:
-#   1. Per-file scoping: a trailer excuses growth only in the file it names.
+#   1. Per-file scoping: a trailer excuses growth only in the file in its path slot.
 #   2. No self-heal on direct push: BASE_SHA (github.event.before) can be a failed tip, which
 #      would hide its growth from the next run. So the base is re-derived by walking first-parent
 #      history back past tips that add undeclared growth. A durable last-green base from the
@@ -33,6 +33,13 @@ cd "$(dirname "$0")/../.."
 
 BASE_SHA="${BASE_SHA:-}"
 ZERO_SHA="0000000000000000000000000000000000000000"
+
+# Every inline escape marker a lint honours is listed in exactly one of these (lowercase EREs);
+# lint-baseline-growth-test.sh fails on a `<name>:ok` / `<name>-ok:` marker in neither.
+# UNWATCHED: style and shell-robustness lints whose waiver cannot hide a data or security defect.
+WATCHED_MARKERS='i128:ok|i128sum:ok|lint-money:ok|migration-compat:ok|lint-priceable:ok|lint-down-delete:ok|floatmoney:ok|decimals-7:|cap-ok:|asset-identity: single-form ok|si-swallow-ok:|unbounded-latest-ok:|apikey-scan-ok:|http-timeout-ok:'
+# shellcheck disable=SC2034  # read by the self-test's registry check
+UNWATCHED_MARKERS='sigpipe-ok:|lint-quotes:ok'
 
 if [[ -z "$BASE_SHA" || "$BASE_SHA" == "$ZERO_SHA" ]]; then
   echo "lint-baseline-growth: no BASE_SHA — skipping (nothing to diff against)."
@@ -52,6 +59,36 @@ added_entries() {
     | sed 's/^+//' \
     | grep -vE '^\s*(#|$)' \
     | grep -E "$pattern" || true
+}
+
+# baseline_added_entries <base> <head> <file>: like added_entries, but a counted entry
+# (`<key>|<n>` or `<key> <n> read(s)…`) whose key was removed with a count >= the new one is a
+# shrink, not growth: the owning lints fail on a stale count, so lowering one must not need a trailer.
+baseline_added_entries() {
+  local base="$1" head="$2" file="$3"
+  git diff "${base}...${head}" -- "$file" | awk '
+    function counted(s) {
+      if (match(s, /[|[:space:]][0-9]+$/) || match(s, /[|[:space:]][0-9]+[[:space:]]+read/)) {
+        key = substr(s, 1, RSTART)
+        n = substr(s, RSTART + 1)
+        sub(/[^0-9].*$/, "", n)
+        return 1
+      }
+      return 0
+    }
+    /^(\+\+\+|---) / { next }
+    { body = substr($0, 2) }
+    body ~ /^[[:space:]]*(#|$)/ { next }
+    /^-/ { if (counted(body) && (!(key in old) || n + 0 > old[key])) old[key] = n + 0; next }
+    /^\+/ { plus[++np] = body }
+    END {
+      for (i = 1; i <= np; i++) {
+        s = plus[i]
+        if (counted(s) && (key in old) && n + 0 <= old[key]) continue
+        print s
+      }
+    }
+  ' || true
 }
 
 # golangci_exclusions_block <rev>: the `linters.exclusions:` block only, so unrelated
@@ -110,14 +147,15 @@ detect_growth() {
   #    since this runs against arbitrary base/head pairs.
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
-    added="$(added_entries "$base" "$head" "$f" '.')"
+    added="$(baseline_added_entries "$base" "$head" "$f")"
     while IFS= read -r line; do
       [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
     done <<<"$added"
   done < <(git diff --name-only "${base}...${head}" -- 'scripts/ci/*.baseline' 2>/dev/null)
 
-  # 2) KNOWN_INERT in lint-metric-refs.sh: match the stellarindex_* name shape, not the array.
-  added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*$')"
+  # 2) The waiver arrays in lint-metric-refs.sh: match the stellarindex_* name shape, not the
+  #    array, with or without the trailing `# reason` the arrays ask for.
+  added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*(#.*)?$')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-metric-refs.sh "$line"
   done <<<"$added"
@@ -181,10 +219,14 @@ detect_growth() {
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-migrations.sh "$line"
   done <<<"$added"
 
-  # 11) Inline escape markers on the money and migration lints: each added marker exempts one line.
-  git diff -U0 "${base}...${head}" -- '*.go' '*.sql' 2>/dev/null | awk '
+  # 11) Inline escape markers (WATCHED_MARKERS): each added marker exempts one line. The lints
+  #     that honour them, their self-tests, the workflows that run them and the docs only name a
+  #     marker, so they are skipped.
+  git diff -U0 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \
+      ':(exclude)scripts/ci/*-test.sh' ':(exclude).github/workflows/*' 2>/dev/null \
+      | awk -v re="$WATCHED_MARKERS" '
     /^\+\+\+ / { f = substr($0, 7); next }
-    /^\+/ && tolower($0) ~ /(i128|lint-money|migration-compat|lint-priceable|lint-down-delete|floatmoney):ok/ { print f "\t" substr($0, 2) }
+    /^\+/ && tolower($0) ~ re { print f "\t" substr($0, 2) }
   '
 
   # 13) The secret scan's inline allow marker: gitleaks skips any line carrying it, in any file
@@ -199,10 +241,13 @@ detect_growth() {
 # Greps read here-strings, not pipes: grep -q closing early would SIGPIPE a writer under pipefail
 # (pinned in lint-baseline-growth-test.sh).
 has_scoped_trailer() {
-  local file="$1" body="$2" trailers
-  trailers="$(grep -iE '^Baseline-Growth:[[:space:]]*\S' <<<"$body" || true)"
-  [[ -n "$trailers" ]] || return 1
-  grep -Fq -- "$file" <<<"$trailers"
+  local file="$1" body="$2" paths
+  # Only the path slot scopes a trailer: a file named in some other trailer's reason is not declared.
+  paths="$(awk 'tolower($0) ~ /^baseline-growth:[[:space:]]*[^[:space:]]/ {
+    sub(/^[^:]*:[[:space:]]*/, ""); sub(/[[:space:]].*$/, ""); print
+  }' <<<"$body")"
+  [[ -n "$paths" ]] || return 1
+  grep -Fxq -- "$file" <<<"$paths"
 }
 
 # commit_has_undeclared_growth <commit>: true iff the commit added a watched entry its own message

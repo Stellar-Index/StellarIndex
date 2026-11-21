@@ -854,6 +854,20 @@ SQL
 )"
 clean_mig "a TRUNCATE inside a string literal is not a statement" "$d"
 
+d="$(mig lex-e-string 0002_reset.up.sql <<'SQL'
+COMMENT ON TABLE trades IS E'recreated; it''s empty, see c:\\tmp';
+TRUNCATE trades;
+SQL
+)"
+mcatches "a TRUNCATE after an E-string holding e, ; and an escape is caught" "$d" \
+  "0002_reset.up.sql: blanks data and declares no"
+
+d="$(mig lex-e-string-verb 0002_note.up.sql <<'SQL'
+COMMENT ON TABLE trades IS E'never TRUNCATE trades; replay instead';
+SQL
+)"
+clean_mig "a TRUNCATE inside an E-string is not a statement" "$d"
+
 echo "lint-migrations-test: blanking DML in any statement position"
 
 d="$(mig fu-cte-delete 0002_reset.up.sql <<'SQL'
