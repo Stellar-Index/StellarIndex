@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -82,7 +83,7 @@ func TestRegister_DisabledIssuesNothing(t *testing.T) {
 func TestRegister_AllCallerBudget(t *testing.T) {
 	t.Run("spent budget issues nothing", func(t *testing.T) {
 		budget := &fakeRegisterIPThrottle{err: auth.ErrSignupRateLimited}
-		ts, accounts := registerControlsServer(t, v1.Options{SignupIPThrottle: &fakeRegisterIPThrottle{}, RegisterBudget: budget})
+		ts, accounts := registerControlsServer(t, v1.Options{SignupIPThrottle: &fakeRegisterIPThrottle{}, RegisterBudget: auth.NewRegistrationBudget(budget)})
 		before := registrationOutcome(obs.RegistrationBudgetExhausted)
 
 		resp := postRegister(t, ts.URL, "application/json", "")
@@ -107,7 +108,7 @@ func TestRegister_AllCallerBudget(t *testing.T) {
 	t.Run("a per-IP refusal does not spend it", func(t *testing.T) {
 		budget := &fakeRegisterIPThrottle{}
 		ts, _ := registerControlsServer(t, v1.Options{
-			SignupIPThrottle: &fakeRegisterIPThrottle{err: auth.ErrSignupRateLimited}, RegisterBudget: budget,
+			SignupIPThrottle: &fakeRegisterIPThrottle{err: auth.ErrSignupRateLimited}, RegisterBudget: auth.NewRegistrationBudget(budget),
 		})
 		if resp := postRegister(t, ts.URL, "application/json", ""); resp.StatusCode != http.StatusTooManyRequests {
 			t.Fatalf("status = %d, want the per-IP 429", resp.StatusCode)
@@ -118,7 +119,9 @@ func TestRegister_AllCallerBudget(t *testing.T) {
 	})
 
 	t.Run("a sustained throttle outage fails closed", func(t *testing.T) {
-		ts, accounts := registerControlsServer(t, v1.Options{RegisterBudget: &fakeRegisterIPThrottle{err: auth.ErrThrottleUnavailable}})
+		ts, accounts := registerControlsServer(t, v1.Options{
+			RegisterBudget: auth.NewRegistrationBudget(&fakeRegisterIPThrottle{err: auth.ErrThrottleUnavailable}),
+		})
 		closed := obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterRegisterBudget)
 		before := testutil.ToFloat64(closed)
 		resp := postRegister(t, ts.URL, "application/json", "")
@@ -129,13 +132,22 @@ func TestRegister_AllCallerBudget(t *testing.T) {
 			t.Errorf("fail-closed counter for the budget moved by %v, want 1", got)
 		}
 	})
+
+	t.Run("a transient throttle error fails open", func(t *testing.T) {
+		ts, accounts := registerControlsServer(t, v1.Options{
+			RegisterBudget: auth.NewRegistrationBudget(&fakeRegisterIPThrottle{err: errors.New("redis blip")}),
+		})
+		if resp := postRegister(t, ts.URL, "application/json", ""); resp.StatusCode != http.StatusOK || len(accounts.created) != 1 {
+			t.Fatalf("status = %d with %d account(s) created; want 200 and one", resp.StatusCode, len(accounts.created))
+		}
+	})
 }
 
 // A registration leaves a counted, attributable record: the created counter and an audit row naming the account, the
 // key and the caller's address.
 func TestRegister_SuccessIsCountedAndAudited(t *testing.T) {
 	audit := &recordingRegisterAudit{}
-	ts, _ := registerControlsServer(t, v1.Options{Audit: audit, RegisterBudget: &fakeRegisterIPThrottle{}})
+	ts, _ := registerControlsServer(t, v1.Options{Audit: audit, RegisterBudget: auth.NewRegistrationBudget(&fakeRegisterIPThrottle{})})
 	before := registrationOutcome(obs.RegistrationCreated)
 
 	resp := postRegister(t, ts.URL, "application/json", "")

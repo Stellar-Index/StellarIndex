@@ -227,6 +227,7 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "v1_vwap_cache_seams_are_gated", check: ruleV1VWAPCacheSeamsAreGated},
 		{name: "thin_admission_is_read_only_at_the_chokepoint", check: ruleThinAdmissionIsReadOnlyAtTheChokepoint},
 		{name: "thin_admission_guard_catches_planted_sites", check: ruleThinAdmissionGuardCatchesPlantedSites},
+		{name: "one_registration_budget_for_every_signup_route", check: func(t *testing.T) { ruleOneRegistrationBudget(t, m) }},
 		{name: "holds_file_checked_before_dry_run_exits", check: func(t *testing.T) {
 			checks := m.callsTo("Check")
 			var holdsCheck token.Pos
@@ -251,6 +252,68 @@ func TestMainWiringRules(t *testing.T) {
 	for _, r := range rules {
 		t.Run(r.name, r.check)
 	}
+}
+
+// ruleOneRegistrationBudget: /v1/register and the dashboard's sign-ups spend the one budget newRegisterBudget builds, so
+// a second instance (a second counter) or a route left unfed re-opens the uncapped sign-up path.
+func ruleOneRegistrationBudget(t *testing.T, m mainFile) {
+	builds := m.callsTo("newRegisterBudget")
+	if len(builds) != 1 {
+		t.Fatalf("main.go calls newRegisterBudget %d times, want exactly 1", len(builds))
+	}
+	var budget string
+	ast.Inspect(m.file, func(n ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok && len(as.Rhs) == 1 && as.Rhs[0] == builds[0] && len(as.Lhs) == 1 {
+			budget = exprText(as.Lhs[0])
+		}
+		return true
+	})
+	if budget == "" {
+		t.Fatal("newRegisterBudget's result is not assigned to a variable the routes can share")
+	}
+	for _, call := range m.callsTo("NewRegistrationBudget") {
+		if pos := m.fset.Position(call.Pos()); !withinFunc(m, "newRegisterBudget", call.Pos()) {
+			t.Errorf("auth.NewRegistrationBudget called at %s outside newRegisterBudget: a second budget is a second counter", pos)
+		}
+	}
+	dash := m.callsTo("buildDashboardBundle")
+	if len(dash) != 1 || exprText(dash[0].Args[len(dash[0].Args)-1]) != budget {
+		t.Errorf("buildDashboardBundle must be called once with %s as its sign-up budget", budget)
+	}
+	fed := map[string]string{"RegisterBudget": budget, "SignupBudget": "signupBudget"}
+	seen := map[string]bool{}
+	ast.Inspect(m.file, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if want, tracked := fed[key.Name]; tracked {
+			seen[key.Name] = true
+			if got := exprText(kv.Value); got != want {
+				t.Errorf("%s is set to %q at %s, want %s", key.Name, got, m.fset.Position(kv.Pos()), want)
+			}
+		}
+		return true
+	})
+	for field := range fed {
+		if !seen[field] {
+			t.Errorf("main.go never sets %s: that route would run with no budget", field)
+		}
+	}
+}
+
+// withinFunc reports whether pos lies inside the body of the top-level function named name.
+func withinFunc(m mainFile, name string, pos token.Pos) bool {
+	for _, d := range m.file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == name && fn.Body != nil {
+			return fn.Body.Pos() <= pos && pos <= fn.Body.End()
+		}
+	}
+	return false
 }
 
 // TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo: the ClickHouse readiness checker must register even when

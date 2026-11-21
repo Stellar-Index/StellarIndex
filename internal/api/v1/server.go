@@ -472,9 +472,9 @@ type Options struct {
 	// bucket (60/min) would let one IP mint ~3,600 keys an hour. Typically 5/hour per IP in Redis.
 	SignupIPThrottle SignupIPThrottle
 
-	// RegisterBudget, when non-nil, caps /v1/register across every caller: the same throttle counted under one
-	// key. The per-IP cap cannot bound a registrant that rotates addresses, and each account gets a full budget.
-	RegisterBudget SignupIPThrottle
+	// RegisterBudget, when non-nil, caps /v1/register across every caller; the dashboard's account-creating sign-ups spend the
+	// same instance. The per-IP cap cannot bound a registrant that rotates addresses, and each account gets a full budget.
+	RegisterBudget *auth.RegistrationBudget
 
 	// RegisterDisabled switches /v1/register off (503); the operator's lever during an abuse wave.
 	RegisterDisabled bool

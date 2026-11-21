@@ -78,7 +78,7 @@ func (h *Handlers) HandlePasskeyBeginSignup(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bool {
-	if !h.passkeySignupEnabled(w, r) {
+	if !h.signupEnabled(w, r) {
 		return false
 	}
 	limiter := h.cfg.passkeySignupLimiter
@@ -87,18 +87,18 @@ func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bo
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return false
 	}
-	// Per-IP first: a request it refuses must not spend the budget every other caller shares.
 	if !limiter.Allow(middleware.RemoteIPThrottleKey(r), passkeySignupMaxPerIP) {
 		h.cfg.Logger.Warn("passkey signup throttled", "ip", clientIP(r).String())
 		w.Header().Set("Retry-After", strconv.Itoa(int(passkeySignupWindow/time.Second)))
 		writeProblem(w, http.StatusTooManyRequests, "too many passkey sign-ups; retry later", r.URL.Path)
 		return false
 	}
-	return h.passkeySignupBudgetOK(w, r)
+	// Begin creates nothing, so it spends no budget unit: finish spends one, immediately before the account it creates.
+	return true
 }
 
-// passkeySignupEnabled answers 503 when the deployment has switched anonymous registration off; false means it is written.
-func (h *Handlers) passkeySignupEnabled(w http.ResponseWriter, r *http.Request) bool {
+// signupEnabled answers 503 when the deployment has switched anonymous registration off; false means it is written.
+func (h *Handlers) signupEnabled(w http.ResponseWriter, r *http.Request) bool {
 	if !h.cfg.SignupDisabled {
 		return true
 	}
@@ -107,17 +107,11 @@ func (h *Handlers) passkeySignupEnabled(w http.ResponseWriter, r *http.Request) 
 	return false
 }
 
-// signupBudgetKey is the one key /v1/register's all-caller budget counts under (v1.registerBudgetKey); sharing it is what makes
-// the cap cover both routes.
-const signupBudgetKey = "all"
-
-// passkeySignupBudgetOK spends one unit of the all-caller hourly budget, failing as /v1/register's does: closed once the store
-// has been down past its dwell time, open on a transient error.
-func (h *Handlers) passkeySignupBudgetOK(w http.ResponseWriter, r *http.Request) bool {
-	if h.cfg.SignupBudget == nil {
-		return true
-	}
-	err := h.cfg.SignupBudget.CheckIP(r.Context(), signupBudgetKey)
+// signupBudgetOK spends one unit of the all-caller hourly budget for an account about to be created, failing as /v1/register's
+// does: closed once the store has been down past its dwell time, open on a transient error. A spent unit is not refunded when
+// creation then fails, as /v1/register does not.
+func (h *Handlers) signupBudgetOK(w http.ResponseWriter, r *http.Request) bool {
+	err := h.cfg.SignupBudget.Spend(r.Context())
 	switch {
 	case err == nil:
 		return true
@@ -140,7 +134,7 @@ func (h *Handlers) passkeySignupBudgetOK(w http.ResponseWriter, r *http.Request)
 // HandlePasskeyFinishSignup verifies the attestation, creates the account, owner user and credential and mints a session; every
 // verification failure is one generic 400.
 func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Request) {
-	if !h.passkeySignupEnabled(w, r) {
+	if !h.signupEnabled(w, r) {
 		return
 	}
 	fail := func() {
@@ -193,6 +187,9 @@ func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Requ
 		}
 		h.cfg.Logger.Error("consume passkey ceremony", "err", err)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
+	if !h.signupBudgetOK(w, r) {
 		return
 	}
 	user, row, err := h.createPasskeyAccount(r, userID, req.Name, cred)
