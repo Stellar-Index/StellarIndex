@@ -105,6 +105,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
   const derived = supplyIsDerived(a);
   const mark = supplyMark(floor, derived);
   const hint = supplyHint(floor, derived);
+  // Both bases set total == circulating, so the total carries the same
+  // bound; the on-chain floor flag qualifies circulating only.
+  const totalFloor = supplyIsFloor(a);
+  const totalMark = supplyMark(totalFloor, derived);
+  const totalHint = supplyHint(totalFloor, derived);
 
   return (
     <Panel
@@ -142,7 +147,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
             />
             <Metric
               label="Total"
-              value={formatCompactTokenUnits(a.total_supply, decimals)}
+              value={withMark(
+                totalMark,
+                formatCompactTokenUnits(a.total_supply, decimals),
+              )}
+              title={totalHint}
               sublabel={a.is_unlimited ? 'Issuer asserts unbounded' : ''}
             />
             <Metric
