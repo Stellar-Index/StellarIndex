@@ -89,14 +89,13 @@ EOF
 ## [v0.0.1] — 2026-01-01
 - initial cut
 EOF
-  # A fresh, non-FAIL SLA proof report so this fixture clears the
-  # SLA-proof gate (added by C04) and actually reaches `make prepush`,
-  # which is what this test exercises.
+  # A fresh PROVEN SLA proof report so this fixture clears the SLA-proof
+  # gate and actually reaches `make prepush`, which is what this test exercises.
   mkdir -p "$REPO/docs/operations"
   {
     echo "# SLA proof report — $(date -u +%Y-%m-%d)"
     echo ""
-    echo "**Verdict: NOT PROVEN.**"
+    echo "**Verdict: PROVEN.**"
   } > "$REPO/docs/operations/sla-proof-$(date -u +%Y-%m-%d).md"
   git -C "$REPO" add CHANGELOG.md docs/operations
   git -C "$REPO" commit --quiet -m "seed"
@@ -321,7 +320,7 @@ test_sla_proof_fail_verdict_blocks_cut() {
     bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
   status=$?
 
-  if [[ "$status" -eq 0 ]] || ! grep -q 'records Verdict: FAIL' <<<"$out"; then
+  if [[ "$status" -eq 0 ]] || ! grep -q 'records Verdict: FAIL, not PROVEN' <<<"$out"; then
     echo "FAIL: a fresh Verdict: FAIL SLA proof did not refuse the cut (status=$status)" >&2
     echo "--- output ---" >&2
     echo "$out" >&2
@@ -330,37 +329,76 @@ test_sla_proof_fail_verdict_blocks_cut() {
   echo "PASS: cut-release.sh refuses on a fresh Verdict: FAIL SLA proof"
 }
 
-# test_sla_proof_not_proven_fresh_passes pins the C04 must_fix's other
-# half: NOT PROVEN is a real report about a real measurement gap, not a
-# breach, and a fresh one must let the cut proceed to the prepush gate.
-test_sla_proof_not_proven_fresh_passes() {
-  local TMP out status today
+# _sla_not_proven_run <tmp> <override-reason> — commit a fresh NOT PROVEN
+# report and dry-run the cut with SLA_PROOF_OVERRIDE_REASON set to the reason
+# (unset when the reason is the literal "-"); sets $out and $status.
+_sla_not_proven_run() {
+  local tmp="$1" reason="$2" today
+  _sla_fixture_setup "$tmp"
+  today="$(date -u +%Y-%m-%d)"
+  printf '# SLA proof report — %s\n\n**Verdict: NOT PROVEN.**\n' "$today" > "$tmp/repo/docs/operations/sla-proof-${today}.md"
+  git -C "$tmp/repo" add docs/operations
+  git -C "$tmp/repo" commit --quiet -m "not proven proof"
+  git -C "$tmp/repo" push --quiet origin main
+  if [[ "$reason" == "-" ]]; then
+    out="$(cd "$tmp/repo" && env -u SLA_PROOF_OVERRIDE_REASON PATH="$tmp/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+      bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  else
+    out="$(cd "$tmp/repo" && SLA_PROOF_OVERRIDE_REASON="$reason" PATH="$tmp/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+      bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  fi
+  status=$?
+}
+
+# test_sla_proof_not_proven_blocks_cut: the weekly probe generator writes NOT
+# PROVEN for a breach as well as for a gap, so only PROVEN clears the gate.
+test_sla_proof_not_proven_blocks_cut() {
+  local TMP out status
   TMP="$(mktemp -d)"
   TMP="$(cd "$TMP" && pwd -P)"
   trap 'rm -rf "$TMP"' RETURN
-  _sla_fixture_setup "$TMP"
-
-  today="$(date -u +%Y-%m-%d)"
-  {
-    echo "# SLA proof report — ${today}"
-    echo ""
-    echo "**Verdict: NOT PROVEN.**"
-  } > "$TMP/repo/docs/operations/sla-proof-${today}.md"
-  git -C "$TMP/repo" add docs/operations
-  git -C "$TMP/repo" commit --quiet -m "not proven proof"
-  git -C "$TMP/repo" push --quiet origin main
-
-  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
-    bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
-  status=$?
-
-  if [[ "$status" -ne 0 ]] || ! grep -q '\[--dry-run\] would run:' <<<"$out"; then
-    echo "FAIL: a fresh Verdict: NOT PROVEN SLA proof wrongly refused the cut (status=$status)" >&2
+  _sla_not_proven_run "$TMP" -
+  if [[ "$status" -eq 0 ]] || ! grep -q 'records Verdict: NOT PROVEN, not PROVEN' <<<"$out"; then
+    echo "FAIL: a fresh Verdict: NOT PROVEN SLA proof did not refuse the cut (status=$status)" >&2
     echo "--- output ---" >&2
     echo "$out" >&2
     return 1
   fi
-  echo "PASS: cut-release.sh proceeds past a fresh Verdict: NOT PROVEN SLA proof"
+  echo "PASS: cut-release.sh refuses on a fresh Verdict: NOT PROVEN SLA proof"
+}
+
+# test_sla_proof_blank_override_blocks_cut: a whitespace-only reason is no reason.
+test_sla_proof_blank_override_blocks_cut() {
+  local TMP out status
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_not_proven_run "$TMP" "   "
+  if [[ "$status" -eq 0 ]] || ! grep -q 'records Verdict: NOT PROVEN, not PROVEN' <<<"$out"; then
+    echo "FAIL: a blank SLA_PROOF_OVERRIDE_REASON let a NOT PROVEN proof through (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh ignores a blank SLA_PROOF_OVERRIDE_REASON"
+}
+
+# test_sla_proof_override_with_reason_passes: an explicit reason lets the cut
+# proceed and is echoed into the output.
+test_sla_proof_override_with_reason_passes() {
+  local TMP out status
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_not_proven_run "$TMP" "probe host rebuilt mid-week"
+  if [[ "$status" -ne 0 ]] || ! grep -q '\[--dry-run\] would run:' <<<"$out" \
+    || ! grep -q 'SLA_PROOF_OVERRIDE_REASON: probe host rebuilt mid-week' <<<"$out"; then
+    echo "FAIL: SLA_PROOF_OVERRIDE_REASON did not let the cut proceed with the reason echoed (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh proceeds past NOT PROVEN with an echoed override reason"
 }
 
 # test_full_ci_dispatched_beside_prepush: a real cut starts the full ci.yml run
@@ -377,7 +415,7 @@ echo "\$*" >> "$TMP/gh.log"
 [[ "\$1 \$2" == "workflow run" ]]
 EOF
   today="$(_sla_days_ago 0)"
-  printf '# SLA proof report — %s\n\n**Verdict: PASS.**\n' "$today" > "$TMP/repo/docs/operations/sla-proof-${today}.md"
+  printf '# SLA proof report — %s\n\n**Verdict: PROVEN.**\n' "$today" > "$TMP/repo/docs/operations/sla-proof-${today}.md"
   git -C "$TMP/repo" add docs/operations
   git -C "$TMP/repo" commit --quiet -m "proof"
   git -C "$TMP/repo" push --quiet origin main
@@ -405,7 +443,9 @@ test_tags_verified_commit || overall_fail=1
 test_sla_proof_missing_blocks_cut || overall_fail=1
 test_sla_proof_stale_blocks_cut || overall_fail=1
 test_sla_proof_fail_verdict_blocks_cut || overall_fail=1
-test_sla_proof_not_proven_fresh_passes || overall_fail=1
+test_sla_proof_not_proven_blocks_cut || overall_fail=1
+test_sla_proof_blank_override_blocks_cut || overall_fail=1
+test_sla_proof_override_with_reason_passes || overall_fail=1
 test_mktemp_template_is_portable || overall_fail=1
 test_full_ci_dispatched_beside_prepush || overall_fail=1
 exit "$overall_fail"

@@ -14,7 +14,7 @@ ClickHouse identity.
 
 ## Why
 
-A `stellarindex-ops ch-rebuild -sep41` dry-run over 2M ledgers under
+A `stellarindex-ops ch-rebuild -sep41 -dry-run` over 2M ledgers under
 `run-heavy-job.sh` (`CPUWeight=50`, `IOWeight=50`, `MemoryMax=20G`) drove r1
 load to 12.9 and starved the supply refresher;
 `stellarindex_aggregator_supply_refresh_error_dominant` fired for all 39

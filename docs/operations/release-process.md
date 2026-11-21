@@ -1,6 +1,6 @@
 ---
 title: Release process — cutting a Stellar Index binary release
-last_verified: 2026-11-17
+last_verified: 2026-11-20
 status: living doc
 ---
 
@@ -68,7 +68,9 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    `origin/main`; the tag does not exist locally or on origin; a
    **non-empty** `## [vX.Y.Z] - YYYY-MM-DD` section exists; the newest
    `docs/operations/sla-proof-YYYY-MM-DD.md` is within
-   `SLA_PROOF_MAX_AGE_DAYS` (default 45) and not `Verdict: FAIL`; and
+   `SLA_PROOF_MAX_AGE_DAYS` (default 45) and records `Verdict: PROVEN`
+   (any other verdict refuses unless `SLA_PROOF_OVERRIDE_REASON` carries a
+   non-empty reason, which the script echoes); and
    `make prepush` prints `ALL REQUIRED CHECKS PASSED` (~20 min) with `main`
    unmoved. Non-TTY runs must pass `--yes` or `--dry-run` (exit 2 otherwise).
    Before prepush it dispatches the full `ci.yml` run that `release.yml`

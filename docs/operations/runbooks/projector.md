@@ -1,6 +1,6 @@
 ---
 title: Runbook — projector
-last_verified: 2026-10-06
+last_verified: 2026-11-20
 status: living
 severity: P3
 ---
@@ -80,7 +80,7 @@ Fix:
    ```sh
    # Dry run is the DEFAULT: prints the intended rewind, writes nothing.
    stellarindex-ops projector-replay -config /etc/stellarindex.toml \
-     -source <name> -from <ledger>
+     -source <name> -from <ledger> -dry-run
 
    # -write is REQUIRED to actually rewind the cursor.
    stellarindex-ops projector-replay -config /etc/stellarindex.toml \
@@ -157,7 +157,7 @@ Replayed trades land in a historical range that no aggregate refresh policy revi
 Both opt-outs exit 0. Non-zero after `projector cursor rewound` means the rewind IS durable and the refresh did NOT complete: cursor short of its pre-rewind ledger after `-wait-timeout` (projector slow or wedged; no view refreshed), or `post-replay CAGG refresh ... failed` (the error names the views not materialized). Do NOT re-run with the same `-from` (it re-walks from the partially advanced cursor and never refreshes the gap). Once the projector has caught up:
 
 ```sh
-stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -refresh-only -refresh-to <ledger>
+stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -refresh-only -refresh-to <ledger> -write
 stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger> -write
 ```
 
@@ -227,7 +227,7 @@ Trips on `outcome="sink_i128_overflow"`, `for: 0m`, **`severity: page` (SEV-1)**
 Response:
 
 1. Find the conversion (`git log` the decoder and sink for the source; look for `int64(parts.Lo)`-style narrowing; use `canonical.FromInt128Parts` / `FromUInt128Parts`).
-2. Fix it, then re-drive the WHOLE affected range with `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger> -write` (or `projected-rebuild` over ~1M ledgers).
+2. Fix it, then re-derive the WHOLE affected range with `stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source <X> -from <from> -to <to> -resume=false -write` at any range size, then `stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -from <from> -to <to> -write` for a trades source. The rows that landed are wrong, not missing: `projector-replay` writes at generation 0, the generation the broken path wrote, so it cannot correct a row a re-derive stamped higher and keeps a stored `usd_volume` the replay cannot price. Use `projector-replay` only for rows that were skipped or quarantined.
 
 ## stellarindex_projector_decode_error_rate_high
 
@@ -252,7 +252,7 @@ Fix:
 
 1. Identify the decoder from the panic/error (`internal/sources/<protocol>/decode.go`); diff it against the previous release if the spike began at a deploy.
 2. Fix or roll back; re-driving without a fix re-drops the same class.
-3. Re-drive: `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger>` (add `-write`).
+3. Re-drive: `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <X> -from <ledger> -write`.
 4. Verify `decode_error` ~0, no new `decode_degraded` cycles, `complete=true` after the next `compute-completeness`.
 
 A burst on a genuinely novel contract deployment still deserves a ticket; the fix is a decoder addition, not a rollback.

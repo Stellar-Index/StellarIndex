@@ -1,6 +1,6 @@
 ---
 title: Runbook — data freshness alerts
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: draft
 ---
 # Runbook — data freshness
@@ -111,7 +111,7 @@ Fix:
 2. `missing_baseline`: the aggregator auto-seeds on first refresh (retry 10 min; failures log `genesis baseline auto-seed failed`, usually an unreachable lake). Otherwise preview, then seed by hand (idempotent; nothing written without `-write`); on r1 run as the service user (`systemd-run --wait --pipe -p User=stellarindex -p EnvironmentFile=/etc/default/stellarindex …`):
 
    ```sh
-   stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml
+   stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -dry-run
    stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
    ```
 
@@ -167,7 +167,7 @@ sudo systemctl start compute-completeness-sdex.service   # or compute-completene
 # equivalent: run-compute-completeness.sh -source <X> -timeout 360m
 ```
 
-A window within a day of ledgers is cleared by the next nightly run. Exception: after `backfill -write [F,T]` on a projected source (not sdex, band or soroswap-router), raw events landed behind the projector cursor and nothing re-projects them; run `stellarindex-ops projector-replay -config PATH -source <X> -from F`.
+A window within a day of ledgers is cleared by the next nightly run. Exception: after `backfill -write [F,T]` on a projected source (not sdex, band or soroswap-router), raw events landed behind the projector cursor and nothing re-projects them; run `stellarindex-ops projector-replay -config PATH -source <X> -from F -write`.
 
 ### Stale: projection evidence older than 10 d 6 h, or unknown
 

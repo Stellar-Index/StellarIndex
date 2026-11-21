@@ -1,6 +1,6 @@
 ---
 title: Runbook — anomaly alerts
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: draft
 ---
 
@@ -174,7 +174,7 @@ ssh root@136.243.90.96 "runuser -u postgres -- psql -d stellarindex -c \
 ```sh
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -list
 stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
-  -asset <asset_id> -quote <quote_id> -reason "recovery worker down; verified marker gone by hand"
+  -asset <asset_id> -quote <quote_id> -reason "recovery worker down; verified marker gone by hand" -write
 ```
 
 5. Bulk SQL is a last resort and MUST be gated on the durable hold: blanket-closing drops the ladder's Redis-flush protection. `recovered_at_ledger` stays NULL (0 violates the CHECK). `hold_until IS NULL` rows predate migration 0119:

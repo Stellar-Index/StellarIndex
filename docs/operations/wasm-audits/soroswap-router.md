@@ -101,4 +101,4 @@ Walk evidence: `evidence/r1-walk-2026-05-01/` + the recovered canonical
 **Conclusion:** single immutable WASM over the contract's whole life, both
 decoded functions present, no event schema to drift. `BackfillSafe` flipped
 `true` in `internal/sources/external/registry.go` (2026-05-19).
-`stellarindex-ops backfill --source=soroswap-router` is now unblocked.
+`stellarindex-ops backfill -source soroswap-router -write` is now unblocked.

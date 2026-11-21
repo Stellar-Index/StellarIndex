@@ -1,6 +1,6 @@
 ---
 title: ADR-0033 data-recovery runbook
-last_verified: 2026-09-02
+last_verified: 2026-11-20
 status: current
 ---
 
@@ -55,7 +55,7 @@ stellarindex-indexer + ops redeploy + indexer restart.
 ```
 GOMAXPROCS=2 nice -n 19 stellarindex-ops census-backfill \
   -config /etc/stellarindex.toml -from 50457424 -to <tip> \
-  -bucket galexie-archive -resume
+  -bucket galexie-archive -resume -write
 ```
 
 Soroban era `[50457424, tip]` first; pre-Soroban `[2, 50457424]` (sdex only)

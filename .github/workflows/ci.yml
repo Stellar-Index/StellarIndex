@@ -1281,6 +1281,14 @@ jobs:
         # "DROP TABLE removes the hypertable …; CASCADE is not needed" —
         # stays unflagged.
         run: ./scripts/ci/lint-migration-commands-test.sh
+      - name: lint-ops-write-flag
+        # A write-gated stellarindex-ops command previews unless passed
+        # -write, so a runbook step that omits it silently does nothing.
+        # Every gated command in docs/operations must pass -write, or
+        # -dry-run when the step is a deliberate preview.
+        run: ./scripts/ci/lint-ops-write-flag.sh
+      - name: lint-ops-write-flag self-test
+        run: ./scripts/ci/lint-ops-write-flag-test.sh
       - name: lint-lake-dedup
         # stellar.transactions and stellar.operations are ReplacingMergeTree
         # archives whose duplicates are not merged away: on r1 every distinct

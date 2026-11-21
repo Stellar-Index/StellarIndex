@@ -1,6 +1,6 @@
 ---
 title: History completeness — SDEX trade backfill and XLM/USD price depth
-last_verified: 2026-10-05
+last_verified: 2026-11-20
 status: DESIGN — Project A (steps 5-6) not started, open as INV-1214; steps 2-3 may be partly run (see §3), verify before repeating; the pre-2017 span (step 8) is blocked on a licensing decision (INV-1215).
 ---
 
@@ -84,7 +84,7 @@ Every trades-rooted CAGG must be re-materialised over the new days; the policies
 
 `prices_1m`, `prices_15m`, `prices_1h`, `prices_4h`, `prices_1d`, `prices_1w`, `prices_1mo`, `dex_volume_by_pair_1d`, `source_volume_1h`, `pools_per_source_1h`, `twap_1h`, `twap_1d`
 
-The Go allow-list (`allowedCAGGViews`) covers all twelve trades views plus the oracle and supply CAGGs; this refresh still runs as psql under a heavy-job scope. [cagg-broad-recompute.md](cagg-broad-recompute.md) covers eight of the twelve and omits `dex_volume_by_pair_1d`, `source_volume_1h`, `twap_1h`, `twap_1d`; add them before using it here. Its 4-8 h estimate is for today's volume and will not hold after a 4.7x increase in `trades` (§7).
+Run it as `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger> -write` under a heavy-job scope, not hand `CALL`s: it refreshes all twelve in order and refuses a TWAP window below `prices_1m`'s earliest bucket. Days older than that bucket while migration 0156's `prices_1m` retention is armed need its Recovery section (disarm and confirm) first; otherwise the TWAP refresh deletes the stored bars. [cagg-broad-recompute.md](cagg-broad-recompute.md) covers eight of the twelve and omits `dex_volume_by_pair_1d`, `source_volume_1h`, `twap_1h`, `twap_1d`; add them before using it here. Its 4-8 h estimate is for today's volume and will not hold after a 4.7x increase in `trades` (§7).
 
 ## 3. Project B — what exists
 

@@ -19,8 +19,8 @@
 #   5. CHANGELOG.md has a non-empty `## [vX.Y.Z] - YYYY-MM-DD` section
 #      (release.yml's auto-notes read it; empty means an empty release page).
 #   5b. Newest docs/operations/sla-proof-YYYY-MM-DD.md exists, is within
-#      SLA_PROOF_MAX_AGE_DAYS (default 45) and did not record `Verdict: FAIL`
-#      (`NOT PROVEN` passes).
+#      SLA_PROOF_MAX_AGE_DAYS (default 45) and records `Verdict: PROVEN`, unless
+#      SLA_PROOF_OVERRIDE_REASON gives a non-empty reason (echoed to the output).
 #   5c. Dispatch the full ci.yml run release.yml requires on this commit, so it
 #      runs beside prepush rather than after the tag push (skipped by --dry-run).
 #   6. `make prepush` (the push clearance; container profile with Docker,
@@ -163,8 +163,8 @@ fi
 
 # Step 5b — SLA-proof freshness and verdict. Refuses the cut if the newest
 # dated report (not sla-proof-procedure.md, the recipe) is missing, older than
-# the window, or recorded a breach. `NOT PROVEN` is a measurement gap and
-# passes; `FAIL` is a measured breach that must not ship silently. Same glob
+# the window, or records any verdict but PROVEN: the probe generator never
+# writes FAIL, so its breach reads NOT PROVEN. Same glob
 # and date idiom as scripts/ci/check-sla-evidence.sh, deliberately not called:
 # its K6/prom readiness gating is a CI-scheduling question, not a cut-safety one.
 sla_proof_max_age_days="${SLA_PROOF_MAX_AGE_DAYS:-45}"
@@ -201,9 +201,15 @@ if (( sla_proof_age_days > sla_proof_max_age_days )); then
   echo "ERR: newest SLA proof ${newest_sla_proof} is ${sla_proof_age_days} day(s) old (max ${sla_proof_max_age_days}) — cut a fresh one first." >&2
   exit 1
 fi
-if grep -q '^\*\*Verdict: FAIL\.\*\*' "$newest_sla_proof"; then
-  echo "ERR: newest SLA proof ${newest_sla_proof} records Verdict: FAIL — the SLA was measured and breached; do not cut a release on a known breach." >&2
-  exit 1
+sla_verdict="$(sed -n 's/^\*\*Verdict: \(.*\)\.\*\*$/\1/p' "$newest_sla_proof")"
+sla_verdict="${sla_verdict%%$'\n'*}"
+if [[ "$sla_verdict" != "PROVEN" ]]; then
+  sla_override="${SLA_PROOF_OVERRIDE_REASON:-}"
+  if [[ -z "${sla_override//[[:space:]]/}" ]]; then
+    echo "ERR: newest SLA proof ${newest_sla_proof} records Verdict: ${sla_verdict:-<none>}, not PROVEN — the SLA was not shown to hold (the weekly probe writes NOT PROVEN for a breach too). Fix it and cut a fresh proof, or set SLA_PROOF_OVERRIDE_REASON='<why this release ships anyway>'." >&2
+    exit 1
+  fi
+  echo "WARN: newest SLA proof ${newest_sla_proof} records Verdict: ${sla_verdict:-<none>}; cutting anyway under SLA_PROOF_OVERRIDE_REASON: ${sla_override}" >&2
 fi
 echo "  OK (${newest_sla_proof}, ${sla_proof_age_days}d old)"
 

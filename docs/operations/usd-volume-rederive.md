@@ -70,7 +70,7 @@ It rewrites only rows where stored `IS DISTINCT FROM` `round(leg / 10^d, 8)` (a 
 
 ```sh
 stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml -day <LAST_DAY> -days <N>
-stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -from <D0> -to <D1>   # dry run
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml -from <D0> -to <D1> -dry-run
 set -a; . /etc/default/stellarindex; set +a
 /usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
@@ -86,7 +86,7 @@ Population: DEX trades with an XLM (`native` or SAC) BASE leg and a non-USD quot
 
 ```sh
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
-  -tier xlm-base -from <D> -to <D> -report -fill-null     # read-only decision input
+  -tier xlm-base -from <D> -to <D> -report -fill-null -dry-run     # read-only decision input
 /usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier xlm-base -from <D0> -to <D1> -write
@@ -103,7 +103,7 @@ In-place DML on compressed chunks crawls (~1,574 rows/min). The UPDATE must carr
 
 ```sh
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
-  -tier exact -chunks -from <D0> -to <D1>                # dry run: chunk plan
+  -tier exact -chunks -from <D0> -to <D1> -dry-run       # chunk plan
 HEAVY_JOB_STOP_TIMEOUT=2h /usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier xlm-base -chunks -from <D0> -to <D1> -fill-null -write

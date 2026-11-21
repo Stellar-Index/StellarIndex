@@ -230,7 +230,7 @@ Resolution A: re-derive from the ClickHouse lake (ADR-0034). `-sdex-gaps` restri
 
 ```sh
 stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
-  -from <ledger_from> -to <ledger_to> -sdex -sdex-gaps
+  -from <ledger_from> -to <ledger_to> -sdex -sdex-gaps -dry-run
 stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
   -from <ledger_from> -to <ledger_to> -sdex -sdex-gaps -write
 stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-recognition -source sdex -from <ledger_from> -write
@@ -238,7 +238,7 @@ stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-r
 
 For wide ranges see [sdex-gap-detected](ingest-gap.md#sdex-gap-detected).
 
-Resolution B: take the window from the `ledger` on each `served-tier event abandoned on shutdown` line (0 for an off-chain event: use the cursor at the restart minus a margin). Oracle / ContractCall sources (band, soroswap-router): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <from> -to <to> -contract-calls -sources <source>` (dry-run, then `-write`; see [oracle-unknown-symbols](ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols)). Event-based sources: the same without `-contract-calls`. Confirm with the per-source [gap detector](ingest-gap.md#stellarindex_ingest_gap_detected) and the completeness verdict.
+Resolution B: take the window from the `ledger` on each `served-tier event abandoned on shutdown` line (0 for an off-chain event: use the cursor at the restart minus a margin). Oracle / ContractCall sources (band, soroswap-router): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <from> -to <to> -contract-calls -sources <source> -dry-run`, then the same with `-write` (see [oracle-unknown-symbols](ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols)). Event-based sources: the same without `-contract-calls`. Confirm with the per-source [gap detector](ingest-gap.md#stellarindex_ingest_gap_detected) and the completeness verdict.
 
 Resolution C: external trades have no ledger and no lake copy; record venue and window in the incident record. The next poll refills the feed.
 
