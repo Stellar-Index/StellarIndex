@@ -1062,15 +1062,14 @@ func (s *Server) fillRowMarketCap(
 ) {
 	// Must precede every return: a Soroban row's scale is read or flagged unknown, never left at the stamped 7.
 	s.applyConfirmedListingDecimals(ctx, row, scales)
-	// The substance gate rules on the market behind the price, not on the supply, so a gated row keeps its supply fact.
-	gated := row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
-	if row.MarketCapUSD != nil || (row.PriceUSD == nil && !gated) || row.ThinMarket {
+	if row.MarketCapUSD != nil || row.ThinMarket {
 		return
 	}
 	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
 	if circ == "" {
 		return
 	}
+	// Supply is a fact about the token, not its market: an unpriced or gated row keeps it, as the detail page does.
 	if row.PriceUSD == nil {
 		stampCirculatingSupply(row, circ, basis)
 		return
@@ -3700,7 +3699,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// Same supply-derived market-cap fill as the classic phase. The twin populates
 		// source_count, so the dust-liquidity guard can fire here exactly as for a classic row;
 		// mergeTwinStats carries market_cap_low_liquidity onto the catalogue row.
-		s.fillMarketCapsWith(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}), precise)
+		s.fillTwinCapAtRowPrice(statsCtx, twin, page[i].PriceUSD, assetRowSourceCounts([]timescale.AssetRow{*twinRow}), precise)
 		// Only the twin carries the G-issuer the directory is keyed on (fillIssuerDirectoryTags
 		// skips a catalogue row). Without this the valuation arm below would publish a valuation
 		// for a flagged issuer that the listing spine already refused.
@@ -3712,6 +3711,20 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		flagTwinSubstanceWithheldCap(&page[i], twin[0])
 	})
 	return anyUnmeasured.Load()
+}
+
+// fillTwinCapAtRowPrice values the twin's supply at the catalogue row's own served price, so the cap mergeTwinStats carries is
+// that row's price times its own Stellar issuance; with no row price no cap is built. The twin's on-chain price is restored for
+// the valuations that rule on it, and a withheld twin keeps its refusal.
+func (s *Server) fillTwinCapAtRowPrice(
+	ctx context.Context, twin []AssetDetail, rowPrice *string, sourceCounts map[string]int, precise map[string]timescale.SupplyObservation,
+) {
+	own := twin[0].PriceUSD
+	if twin[0].PriceWithheldReason == "" {
+		twin[0].PriceUSD = rowPrice
+	}
+	s.fillMarketCapsWith(ctx, twin, sourceCounts, precise)
+	twin[0].PriceUSD = own
 }
 
 // flagTwinSubstanceWithheldCap marks a catalogue row's missing cap as suppressed when its twin's on-chain price failed the

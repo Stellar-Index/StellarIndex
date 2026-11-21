@@ -57,7 +57,9 @@ func TestCatalogueTwinDustFlagPropagates(t *testing.T) {
 	s := &Server{
 		Options: Options{AssetsReader: &dustTwinAssets{}, VerifiedCurrencies: cat, MinMarketCapVolumeUSD: 1000},
 	}
-	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
+	// The row carries the price fillCataloguePricesForPage gives it first: its cap is valued at the row's own price.
+	rowPrice := "0.50"
+	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc", PriceUSD: &rowPrice}}
 
 	s.fillCatalogueStatsForPage(context.Background(), page, assetListFilters{})
 
