@@ -167,7 +167,7 @@ func (s *Store) ReplaceListingDirectoryWithin(
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	held, rebound := int64(len(heldIDs)), countListingRebinds(heldIDs, entries)
+	held, rebound := int64(len(heldIDs)), countListingRebinds(heldIDs, entries, contested)
 
 	for start := 0; start < len(entries); start += listingUpsertChunk {
 		end := min(start+listingUpsertChunk, len(entries))
@@ -201,15 +201,12 @@ func (s *Store) ReplaceListingDirectoryWithin(
 	return upserted, pruned, ambiguous, nil
 }
 
-// checkListingPrune applies `limit` to a listing sync that held `held` rows. A re-bind moves an address's price to another coin id,
-// so a permuted catalogue (nothing pruned) is bounded by the same ceiling as a shrunken one.
+// checkListingPrune applies `limit` to a listing sync that held `held` rows. A re-bind moves an address's price to another coin id
+// just as a prune drops one, so the two are judged together against one ceiling.
 func checkListingPrune(limit DirectoryChurnLimit, held, pruned, rebound int64) error {
-	c := directoryChurn{rows: held}
-	if err := c.check(limit, DirectorySyncResult{Pruned: pruned}); err != nil {
-		return err
-	}
-	if maxRows, bounded := limit.ceiling(held); bounded && rebound > maxRows {
-		return fmt.Errorf("%w: re-binds %d of %d addresses to another listing id (ceiling %d)", ErrDirectoryChurnExceeded, rebound, held, maxRows)
+	if maxRows, bounded := limit.ceiling(held); bounded && pruned+rebound > maxRows {
+		return fmt.Errorf("%w: prunes %d and re-binds %d of %d addresses to another listing id (ceiling %d on the two together)",
+			ErrDirectoryChurnExceeded, pruned, rebound, held, maxRows)
 	}
 	return nil
 }
@@ -235,11 +232,12 @@ func heldListingIDs(ctx context.Context, tx *sql.Tx, source string) (map[string]
 	return out, nil
 }
 
-// countListingRebinds counts held addresses the new entries pair with a different listing id.
-func countListingRebinds(held map[string]string, entries []ListingEntry) int64 {
+// countListingRebinds counts held addresses the new entries pair with a different listing id. A contested address is skipped: it
+// is kept unpriced whichever id it lands on, so it moves no price.
+func countListingRebinds(held map[string]string, entries []ListingEntry, contested []string) int64 {
 	var n int64
 	for _, e := range entries {
-		if id, ok := held[e.Address]; ok && id != e.ListingID {
+		if id, ok := held[e.Address]; ok && id != e.ListingID && !slices.Contains(contested, e.Address) {
 			n++
 		}
 	}

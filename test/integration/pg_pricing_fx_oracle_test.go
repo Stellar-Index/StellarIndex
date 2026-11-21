@@ -2487,6 +2487,10 @@ func TestListingDirectory_RefusesMassRebind(t *testing.T) {
 			t.Fatalf("%s listing_id after refused sync = %q, want %q", e.Address, got, e.ListingID)
 		}
 	}
+	// Drops the first 10 addresses and rotates the next 10: each count is at the ceiling alone, twice it together.
+	if _, _, _, err := store.ReplaceListingDirectory(ctx, entries(20)[10:], "coingecko"); !errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		t.Fatalf("prune 10 + re-bind 10 of 50: err = %v, want ErrDirectoryChurnExceeded", err)
+	}
 	if _, _, _, err := store.ReplaceListingDirectory(ctx, entries(5), "coingecko"); err != nil {
 		t.Fatalf("five re-binds of 50 are inside the ceiling: %v", err)
 	}
