@@ -1556,6 +1556,12 @@ jobs:
         run: ./scripts/ci/lint-timer-staleness.sh
       - name: lint-timer-staleness self-test
         run: ./scripts/ci/lint-timer-staleness-test.sh
+      - name: daemon restart list
+        # A long-running unit that execs a release binary keeps the replaced
+        # build after a deploy unless deploy-binary.yml restarts it.
+        run: ./scripts/ci/lint-daemon-restart-list.sh
+      - name: lint-daemon-restart-list self-test
+        run: ./scripts/ci/lint-daemon-restart-list-test.sh
       - name: deploy/systemd authority
         # deploy/systemd/ is MIXED authority: ansible installs
         # config-assertions.{service,timer} straight out of it, while

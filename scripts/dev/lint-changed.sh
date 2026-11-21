@@ -573,6 +573,7 @@ if [ "${#ansible_files[@]}" -gt 0 ]; then
     add_step "lint-ansible-tasks" "whole tree; ${#ansible_files[@]} ansible/alertmanager file(s) changed" "$ci_dir/lint-ansible-tasks.sh"
     add_step "lint-jinja-templates" "" "$ci_dir/lint-jinja-templates.sh"
     add_step "lint-timer-staleness" "" "$ci_dir/lint-timer-staleness.sh"
+    add_step "lint-daemon-restart-list" "" "$ci_dir/lint-daemon-restart-list.sh"
     # Duplicate mapping keys. Cheap (<1 s whole-tree) and catches a class no other
     # gate here sees: YAML keeps the LAST occurrence of a key, so a second
     # `pre_tasks:` reads in review as an added block while silently deleting the
