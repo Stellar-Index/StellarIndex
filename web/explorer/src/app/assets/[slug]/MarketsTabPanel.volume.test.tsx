@@ -23,6 +23,7 @@ vi.mock('@/api/hooks', async () => {
       isLoading: false,
       data: { markets: rows },
     }),
+    useVerifiedIndex: () => ({ data: { issuanceBySlug: new Map() } }),
   };
 });
 vi.mock('@/lib/live/hooks', async () => {

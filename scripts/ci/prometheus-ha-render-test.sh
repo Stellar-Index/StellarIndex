@@ -159,28 +159,59 @@ for svc in ("prometheus", "alertmanager"):
     h = hs[f"restart {svc}"]
     v = {f"{svc}_listen": "0.0.0.0:9", f"{svc}_port": 9, f"{svc}_basic_auth_password_hash": "h",
          f"{svc}_basic_auth_username": "operator", "ansible_host": "10.0.0.5", "inventory_hostname": "prom1"}
-    script = jinja2.Environment().from_string(h["shell"]).render(**v)
+    # Ansible renders module args with trim_blocks; a plain Environment hides a heredoc
+    # whose terminator is glued to the line before it.
+    jenv = jinja2.Environment(trim_blocks=True)
+    jenv.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+    v.update(groups={"prometheus_pair": ["prom1", "prom2"]},
+             hostvars={"prom1": {"ansible_host": "10.0.0.5"}, "prom2": {"ansible_host": "10.0.0.6"}})
+    script = jenv.from_string(h["shell"]).render(**v)
+    noauth = jenv.from_string(h["shell"]).render(**{**v, f"{svc}_basic_auth_password_hash": ""})
     # The credential is read from the client password file on the host, never rendered into the script.
     if "s3cret-fake" in script or f"/etc/prometheus/{svc}-client-password" not in script:
         bad += 1
-    for ready_after, want_rc in ((2, 0), (10**6, 1)):
+    for s in (script, noauth):
+        if subprocess.run(["bash", "-n", "-c", s], capture_output=True).returncode != 0:
+            print(f"  FAIL — restart {svc} does not parse as rendered by Ansible")
+            bad += 1
+    # (self ready before, peer ready, self ready after restart, auth on) -> (rc, restarted, marker left, web config left)
+    cases = (
+        ((True, True, True, True), (0, True, False, True), "restarts while its peer is ready and waits for /-/ready"),
+        ((True, False, True, True), (1, False, True, True), "refuses to restart while its peer is not ready"),
+        ((False, False, True, True), (0, True, False, True), "restarts a replica that is itself not ready"),
+        ((True, True, False, True), (1, True, True, True), "fails and keeps the pending marker when never ready"),
+        ((True, True, True, False), (0, True, False, False), "deletes the web config only after the restart drops auth"),
+        ((True, True, False, False), (1, True, True, True), "keeps the web config while the old process may still read it"),
+    )
+    for (self_before, peer, self_after, auth), (want_rc, want_restart, want_marker, want_wc), label in cases:
         with tempfile.TemporaryDirectory() as d:
             open(f"{d}/{svc}-client-password", "w").write("s3cret-fake")
-            run = script.replace("/etc/prometheus/", f"{d}/")
-            stubs = {"systemctl": f'echo "systemctl $*" >> {d}/calls\n',
+            open(f"{d}/web-config.yml", "w").write("basic_auth_users: {}\n")
+            open(f"{d}/stdin", "w").close()
+            for host, up in (("127.0.0.1", self_before), ("10.0.0.6", peer)):
+                if up:
+                    open(f"{d}/ready-{host}", "w").close()
+            if self_after:
+                open(f"{d}/up-after", "w").close()
+            run = (script if auth else noauth).replace("/etc/prometheus/", f"{d}/").replace("/etc/alertmanager/", f"{d}/")
+            stubs = {"systemctl": f'echo "systemctl $*" >> {d}/calls\n'
+                                  f'case "$*" in restart*) rm -f {d}/ready-127.0.0.1; [ -f {d}/up-after ] && touch {d}/ready-127.0.0.1 ;; esac\nexit 0\n',
                      "sleep": "",
-                     "curl": f'echo "curl $*" >> {d}/calls; cat >> {d}/stdin; n=$(grep -c ^curl {d}/calls); [ "$n" -gt {ready_after} ]\n'}
+                     "curl": f'cfg=$(cat); printf "%s\\n" "$cfg" >> {d}/stdin\n'
+                             f'h=$(printf "%s" "$cfg" | sed -n "s|.*http://\\([^:]*\\):.*|\\1|p")\n'
+                             f'echo "curl $h" >> {d}/calls; [ -f {d}/ready-$h ]\n'}
             for n, body in stubs.items():
                 open(f"{d}/{n}", "w").write("#!/bin/sh\n" + body)
                 os.chmod(f"{d}/{n}", 0o755)
             env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}"}
             rc = subprocess.run(["bash", "-c", run], env=env, stdin=subprocess.DEVNULL, capture_output=True).returncode
             calls, stdin = open(f"{d}/calls").read(), open(f"{d}/stdin").read()
-        good = (h.get("throttle") == 1 and rc == want_rc
-                and f"systemctl restart {svc}" in calls and "s3cret-fake" not in calls
-                and 'user = "operator:s3cret-fake"' in stdin and "http://127.0.0.1:9/-/ready" in stdin)
-        label = "waits for /-/ready" if want_rc == 0 else "fails when never ready"
-        print(("  ok — " if good else "  FAIL — ") + f"restart {svc} is throttled to one host and {label}")
+            marker, wc = os.path.exists(f"{d}/.restart-pending"), os.path.exists(f"{d}/web-config.yml")
+        good = (h.get("throttle") == 1 and (rc == 0) == (want_rc == 0)
+                and (f"systemctl restart {svc}" in calls) == want_restart
+                and marker == want_marker and wc == want_wc and "s3cret-fake" not in calls
+                and ('user = "operator:s3cret-fake"' in stdin) == auth and "http://127.0.0.1:9/-/ready" in stdin)
+        print(("  ok — " if good else "  FAIL — ") + f"restart {svc} {label}")
         bad += not good
 sys.exit(1 if bad else 0)
 PYEOF
@@ -189,8 +220,9 @@ then :; else failed=1; fi
 # Run the real preflight assert task, alone, against each hash/plaintext combination.
 "$PY" -I -c '
 import sys, yaml
-t = next(t for t in yaml.safe_load(open(sys.argv[1])) if t.get("name", "").startswith("assert a basic-auth hash comes with"))
-yaml.safe_dump([{"hosts": "localhost", "connection": "local", "gather_facts": False, "tasks": [t]}], open(sys.argv[2], "w"))
+ts = [t for t in yaml.safe_load(open(sys.argv[1])) if t.get("name", "").startswith(("assert a basic-auth hash comes with", "assert the basic-auth hashes are bare"))]
+assert len(ts) == 2, ts
+yaml.safe_dump([{"hosts": "localhost", "connection": "local", "gather_facts": False, "tasks": ts}], open(sys.argv[2], "w"))
 ' "$ROLE/tasks/01-preflight.yml" "$TMPD/preflight.yml"
 preflight() { # <expected rc 0|1> <label> <extra vars...>
   local want="$1" label="$2" rc=0
@@ -198,10 +230,20 @@ preflight() { # <expected rc 0|1> <label> <extra vars...>
   ansible-playbook -i localhost, "$TMPD/preflight.yml" "$@" >"$TMPD/preflight.log" 2>&1 || rc=1
   if [ "$rc" = "$want" ]; then ok "preflight $label"; else bad "preflight $label (rc=$rc, want $want)"; fi
 }
-preflight 1 "refuses a hash without its plaintext" -e prometheus_basic_auth_password_hash=h -e alertmanager_basic_auth_password_hash=h -e prometheus_basic_auth_password=p
-preflight 1 "refuses an alertmanager hash without its plaintext" -e alertmanager_basic_auth_password_hash=h
-preflight 0 "accepts a hash with its plaintext" -e prometheus_basic_auth_password_hash=h -e alertmanager_basic_auth_password_hash=h -e prometheus_basic_auth_password=p -e alertmanager_basic_auth_password=p
+preflight 1 "refuses a hash without its plaintext" -e "prometheus_basic_auth_password_hash=$HASH" -e "alertmanager_basic_auth_password_hash=$HASH" -e prometheus_basic_auth_password=p
+preflight 1 "refuses an alertmanager hash without its plaintext" -e "alertmanager_basic_auth_password_hash=$HASH"
+preflight 0 "accepts a hash with its plaintext" -e "prometheus_basic_auth_password_hash=$HASH" -e "alertmanager_basic_auth_password_hash=$HASH" -e prometheus_basic_auth_password=p -e alertmanager_basic_auth_password=p
+preflight 1 "refuses htpasswd -n output (user:hash) as the hash" -e "prometheus_basic_auth_password_hash=operator:$HASH" -e prometheus_basic_auth_password=p
 preflight 0 "accepts unset hashes" -e prometheus_basic_auth_password_hash=
+for f in prometheus-web-config alertmanager-web-config; do
+  t=${f%-web-config}
+  task=$(grep -A8 "src: $f.yml.j2" "$ROLE/tasks/0"*"-$t-configure.yml")
+  if [[ "$task" == *'validate: "promtool check web-config %s"'* ]]; then
+    ok "$f is validated with promtool check web-config before it lands"
+  else
+    bad "$f lands without promtool check web-config"
+  fi
+done
 
 [ "$failed" -eq 0 ] || exit 1
 echo "prometheus-ha-render-test: PASS"

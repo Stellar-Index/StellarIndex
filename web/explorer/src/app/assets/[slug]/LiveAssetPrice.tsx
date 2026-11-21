@@ -15,7 +15,7 @@ import { cn } from '@/lib/cn';
 import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 
 import { unwrapChangeSummary } from './ChangeSummaryStrip';
-import { provenanceFromBasis } from './priceProvenance';
+import { isDerivedProvenance, provenanceFromBasis } from './priceProvenance';
 
 export type PriceProvenance =
   | 'vwap1m'
@@ -283,10 +283,7 @@ export function useResolvedAssetPrice(
   // ungated one was correctly refused.
   // 'global_market' is filled exactly when the Stellar market was refused,
   // so the withheld verdict is expected there too.
-  const derived =
-    initialProvenance === 'global_market' ||
-    initialProvenance === 'declared_peg' ||
-    initialProvenance === 'transitive';
+  const derived = isDerivedProvenance(initialProvenance);
   // A thin market price must not displace a derived one either: the derived
   // price exists because that market was refused.
   const refused = poll.withheld || (poll.thin && derived);

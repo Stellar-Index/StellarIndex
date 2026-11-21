@@ -283,6 +283,25 @@ describe('AssetSidebar live market figures', () => {
     expect(queryByText('$8M')).toBeNull();
   });
 
+  it('keeps the labelled baked figures when the live row is stale', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === `/v1/assets/${encodeURIComponent(coin.asset_id)}`)
+        return {
+          data: { ...coin, market_cap_usd: null, volume_24h_usd: '3000' },
+          flags: { stale: true },
+        };
+      throw new Error('offline');
+    });
+    const { getAllByText, getByText, queryByText } = renderWithQuery(
+      <AssetSidebar coin={bakedCoin} detail={baked} priceUSD="0.9998" />,
+    );
+    await waitFor(() => expect(apiGet).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getByText('$5M')).toBeTruthy();
+    expect(queryByText('$3K')).toBeNull();
+    expect(getAllByText('as baked at deploy')).toHaveLength(2);
+  });
+
   it('labels the baked figures when the live read fails', async () => {
     liveRow(null);
     const { getAllByText, getByText } = renderWithQuery(

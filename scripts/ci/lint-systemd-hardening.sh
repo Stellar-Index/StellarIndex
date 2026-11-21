@@ -137,11 +137,43 @@ if [ "$ROLE" = "$DEFAULT_ROLE" ] && [ "$verbatim" -eq 0 ]; then
   exit 2
 fi
 
-# Both copies of the API unit hide these paths and grant no write path: defence
-# in depth for its own namespace, not containment from same-uid sibling units.
-API_HIDDEN="/run/lock /etc/default/galexie /etc/default/galexie-backfill /etc/default/stellarindex-ops /etc/clickhouse-client"
+# Both copies of the API unit run as their own uid (a shared uid reads the ingest
+# daemons' /proc/<pid>/environ and root), see no other process, hide these paths
+# and grant no write path. Not pinned here: the Postgres, ClickHouse and Redis
+# credentials the API holds stay shared-strength until hosts set least-privilege ones.
+API_HIDDEN="/run/lock /etc/default/stellarindex /etc/default/galexie /etc/default/galexie-backfill /etc/default/stellarindex-ops /etc/clickhouse-client"
+api_user_default=$(sed -nE 's/^stellarindex_api_os_user:[[:space:]]*"?([^"[:space:]]*)"?.*/\1/p' "$ROLE/defaults/main.yml" 2>/dev/null)
+daemon_users=" "
+for d in stellarindex-indexer stellarindex-aggregator; do
+  for g in "$DIR/$d.service.j2" "$DEPLOY_DIR/$d.service"; do
+    [ -f "$g" ] && daemon_users+="$(value_of "$g" User) "
+  done
+done
 for f in "$DIR/stellarindex-api.service.j2" "$DEPLOY_DIR/stellarindex-api.service"; do
   [ -f "$f" ] || continue
+  u=$(value_of "$f" User)
+  u=${u//"{{ stellarindex_api_os_user }}"/$api_user_default}
+  case "$u" in
+    "" | root | *"{{"* | *" "*)
+      echo "  API-SHARED-UID: $f User='$u' is not a resolvable dedicated user"
+      fail=$((fail + 1)) ;;
+  esac
+  case "$daemon_users" in *" $u "*)
+    echo "  API-SHARED-UID: $f runs as '$u', the indexer's/aggregator's user"
+    fail=$((fail + 1)) ;;
+  esac
+  if [ -n "$(value_of "$f" SupplementaryGroups)" ]; then
+    echo "  API-SHARED-UID: $f sets SupplementaryGroups=; the API needs no other group's files"
+    fail=$((fail + 1))
+  fi
+  if grep -qE '^[[:space:]]*EnvironmentFile[[:space:]]*=[[:space:]]*-?/etc/default/stellarindex[[:space:]]*$' "$f"; then
+    echo "  API-SHARED-ENV: $f reads /etc/default/stellarindex; it carries the ingest daemons' secrets"
+    fail=$((fail + 1))
+  fi
+  if [ "$(value_of "$f" ProtectProc)" != invisible ]; then
+    echo "  API-PROC: $f does not set ProtectProc=invisible"
+    fail=$((fail + 1))
+  fi
   if [ -n "$(value_of "$f" ReadWritePaths)" ]; then
     echo "  API-WRITABLE: $f sets ReadWritePaths=; the API writes only its private /tmp"
     fail=$((fail + 1))
@@ -159,6 +191,31 @@ for f in "$DIR/stellarindex-api.service.j2" "$DEPLOY_DIR/stellarindex-api.servic
     fail=$((fail + 1))
   done
 done
+
+# The API's env file carries only the names the API reads.
+API_ENV="$ROLE/templates/stellarindex-api.env.j2"
+API_ENV_ALLOW=" STELLARINDEX_POSTGRES_DSN STELLARINDEX_REDIS_PASSWORD STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD STELLARINDEX_CLICKHOUSE_LIVE_USER STELLARINDEX_CLICKHOUSE_LIVE_PASSWORD MASSIVE_API_KEY OPENEXCHANGERATES_APP_ID STELLARINDEX_RESEND_API_KEY STELLARINDEX_DASHBOARD_CODE_SECRET STELLARINDEX_WEBHOOK_SEAL_KEY "
+if [ -f "$API_ENV" ]; then
+  names=$(sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\1/p' "$API_ENV" | sort -u)
+  if [ -z "$names" ]; then
+    echo "  API-ENV: $API_ENV defines no variable; the scan is broken"
+    fail=$((fail + 1))
+  fi
+  for n in $names; do
+    case "$n" in *S3* | *AWS* | *COINGECKO* | *TIINGO* | *EXCHANGERATESAPI* | *CLICKHOUSE_OPS*)
+      echo "  API-ENV-FORBIDDEN: $API_ENV sets $n, a credential the API never uses"
+      fail=$((fail + 1))
+      continue ;;
+    esac
+    case "$API_ENV_ALLOW" in *" $n "*) ;; *)
+      echo "  API-ENV-UNLISTED: $API_ENV sets $n, outside the API allow-list in $0"
+      fail=$((fail + 1)) ;;
+    esac
+  done
+elif [ -f "$DIR/stellarindex-api.service.j2" ]; then
+  echo "  API-ENV: $API_ENV is missing but the role installs the API unit"
+  fail=$((fail + 1))
+fi
 
 if [ "$units" -eq 0 ] || [ "$timers" -eq 0 ]; then
   echo "lint-systemd-hardening: FAIL — found $units service and $timers timer template(s); the scan is broken"

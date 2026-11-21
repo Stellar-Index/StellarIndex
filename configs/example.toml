@@ -466,10 +466,12 @@ cdn_enabled              = true
 status_services          = ["indexer", "aggregator"]
 # archive_report_path — where GET /v1/diagnostics/archive reads the
 # archive-completeness daemon's latest JSON report (ADR-0017). The
-# default matches the archive-completeness.service REPORT_OUTPUT
-# path; the endpoint 404s while the file doesn't exist yet, so the
-# default is harmless on hosts without the daemon. Empty disables
-# the endpoint (503).
+# role-installed archive-completeness.service writes
+# /var/lib/archive-completeness/last-completeness-report.json and the
+# role's TOML sets that path; the default is the older units' path.
+# The endpoint 404s while the file doesn't exist yet, so the default
+# is harmless on hosts without the daemon. Empty disables the
+# endpoint (503).
 archive_report_path      = "/var/lib/galexie/last-completeness-report.json"
 # allowed_origins — CORS allow-list for browser clients.
 #

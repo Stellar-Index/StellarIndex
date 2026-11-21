@@ -17,7 +17,8 @@ import {
 } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
-import { useMarkets, type Market } from '@/api/hooks';
+import { useMarkets, useVerifiedIndex, type Market } from '@/api/hooks';
+import { isNativeXlmSac } from '@/lib/asset-label';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   formatCompact,
@@ -180,19 +181,18 @@ function Row({
   const vol = Number(m.volume_24h_usd);
   const barPct =
     barMax > 0 && Number.isFinite(vol) && vol > 0 ? (vol / barMax) * 100 : 0;
-  // The server expands a catalogue slug ("usdc") into its
-  // asset_ids, so strict equality against the slug never matched and
-  // rows where the asset IS the base rendered "quote · vs itself".
-  // Match by expanded-form prefix: the asset's code appears at the
-  // start of its expanded ids ("USDC-GA5Z…"), CEX/FX ids carry it after
-  // a crypto:/fiat: namespace, and "native"/"XLM" alias each other.
+  const { data: verified } = useVerifiedIndex();
+  // The server expands a catalogue slug ("usdc") into its asset_ids. A
+  // classic leg is the asset only as its verified issuance: anyone can
+  // issue a "USDC-G…" or "XLM-G…", so a code prefix is no identity.
   const want = sideTicker(assetID);
+  const issuance = isCatalogueSlug(assetID)
+    ? verified?.issuanceBySlug?.get(assetID.toLowerCase())
+    : undefined;
   const matches = (side: string) => {
-    if (side === assetID) return true;
-    const got = sideTicker(side);
-    return (
-      got === want || got.startsWith(`${want}-`) || got.startsWith(`${want}:`)
-    );
+    if (side === assetID || side === issuance) return true;
+    if (want === 'XLM' && isXlmIdentity(assetID)) return isXlmIdentity(side);
+    return /^(crypto|fiat):/i.test(side) && sideTicker(side) === want;
   };
   const isBase = matches(m.base ?? '');
   const counterparty = isBase ? m.quote : m.base;
@@ -261,6 +261,23 @@ function Row({
         </span>
       </Td>
     </LinkRow>
+  );
+}
+
+// A bare catalogue slug such as "usdc", not an asset id of any form.
+function isCatalogueSlug(id: string): boolean {
+  return /^[a-z0-9]+$/i.test(id) && !/^\d+$/.test(id) && id !== 'native';
+}
+
+// XLM's disjoint identities: native, its CEX ticker, its SAC, the slug.
+function isXlmIdentity(id: string): boolean {
+  const up = id.toUpperCase();
+  return (
+    up === 'NATIVE' ||
+    up === 'XLM' ||
+    up === 'CRYPTO:XLM' ||
+    /^\d+$/.test(up) ||
+    isNativeXlmSac(id)
   );
 }
 

@@ -1,12 +1,12 @@
 # Rendered by Ansible (archival-node role).
 #
-# The INTERNET-FACING API does not run as root — it runs de-privileged
-# as the stellarindex service user with the hardening block from the
-# in-repo unit at deploy/systemd/stellarindex-api.service. The
-# stellarindex user is created by 04-users.yml. EnvironmentFile is read by
-# systemd (PID 1), not the service user; it stays 0640
-# root:stellarindex. Caddy terminates TLS and proxies to :3000, so
-# no privileged port bind is needed.
+# The INTERNET-FACING API runs as its own service user
+# ({{ stellarindex_api_os_user }}, 04-users.yml), never the ingest daemons'
+# uid. Its env file /etc/default/stellarindex-api is 0640
+# root:{{ stellarindex_api_os_user }} and holds only the names it reads.
+# Not covered yet: the Postgres, ClickHouse and Redis credentials it holds stay
+# as strong as the daemons' until each host sets least-privilege ones for the API.
+# Caddy terminates TLS and proxies to :3000, so no privileged port bind.
 
 [Unit]
 Description=Stellar Index — REST + SSE API server
@@ -29,12 +29,11 @@ StartLimitBurst=100
 
 [Service]
 Type=simple
-User=stellarindex
-Group=stellarindex
-WorkingDirectory=/var/lib/stellarindex
-EnvironmentFile=/etc/default/stellarindex
-# Optional; carries the stellarindex_api role's DSN (migration 0213).
-EnvironmentFile=-/etc/default/stellarindex-api
+User={{ stellarindex_api_os_user }}
+Group={{ stellarindex_api_os_user }}
+WorkingDirectory=/
+EnvironmentFile=/etc/default/stellarindex-api
+UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 ExecStart=/usr/local/bin/stellarindex-api -config /etc/stellarindex.toml
 
 LimitNOFILE=1048576
@@ -54,17 +53,17 @@ MemoryHigh=4G
 MemoryMax=8G
 
 # Hardening. Mirrors deploy/systemd/stellarindex-api.service and is pinned by
-# scripts/ci/lint-systemd-hardening.sh. These hide lock and credential paths from
-# the API's own mount namespace only: while it shares uid stellarindex with the
-# writers, a compromised API can still reach them through /proc/<sibling-pid>/root
-# and read sibling environments.
+# scripts/ci/lint-systemd-hardening.sh. Its own uid plus ProtectProc=invisible
+# keep sibling daemons' /proc entries (environ, root) out of reach. ProcSubset=pid
+# is not set: it hides /proc/sys/net/core/somaxconn, cutting Go's listen backlog to 128.
+ProtectProc=invisible
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-InaccessiblePaths=-/run/lock -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
 # Caps the wabt children it runs on uploaded WASM; EPERM, not SIGSYS, on a miss.
 TasksMax=4096
 SystemCallArchitectures=native

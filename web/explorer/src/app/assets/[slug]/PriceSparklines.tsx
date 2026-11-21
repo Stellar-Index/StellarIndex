@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 import { Segmented } from '@/components/ui';
+import { positiveDecimal } from '@/lib/format';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 import { useResolvedAssetPrice, type PriceProvenance } from './LiveAssetPrice';
@@ -42,7 +43,9 @@ export function PriceSparklines({
   const has24 = points24h.filter((p) => p.p != null).length >= 2;
   const has7 = points7d.filter((p) => p.p != null).length >= 2;
   const [pref, setPref] = useState<'24h' | '7d'>('24h');
-  if (resolved.withheld || (!has24 && !has7)) return null;
+  // Gate on the resolved price too: a derived price that vanished is not withheld.
+  if (resolved.withheld || positiveDecimal(resolved.price) == null) return null;
+  if (!has24 && !has7) return null;
   const active = !has24 ? '7d' : !has7 ? '24h' : pref;
   const points = active === '24h' ? points24h : points7d;
 

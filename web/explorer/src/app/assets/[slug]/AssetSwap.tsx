@@ -9,6 +9,7 @@ import { thinMarketNote } from '@/components/ThinMarketBadge';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
+  useAsset,
   useCoins,
   useVerifiedIndex,
   coinSlug,
@@ -33,7 +34,11 @@ import {
   useResolvedAssetPrice,
   type PriceProvenance,
 } from './LiveAssetPrice';
-import { provenanceFromBasis, provenanceQualifier } from './priceProvenance';
+import {
+  isDerivedProvenance,
+  provenanceFromBasis,
+  provenanceQualifier,
+} from './priceProvenance';
 
 /**
  * AssetSwap — the asset page's swap/convert widget. Two stacked amount
@@ -92,6 +97,8 @@ export interface SwapToken {
   thin?: boolean;
   /** The page leg's headline qualifiers (derived basis, stale, baked). */
   qualifiers?: string[];
+  /** The listing price is derived (see isDerivedProvenance), not a market price. */
+  derived?: boolean;
 }
 
 /** assetIssuer — the G…/C… address in a canonical asset id, if it has one. */
@@ -733,9 +740,8 @@ function TokenPicker({
           // The page asset is offered only at its live price (pageMatch): its
           // listing snapshot must not stand in once the headline withdraws it.
           if (!key || key === pageToken.key) return [];
-          const qualifier = provenanceQualifier(
-            provenanceFromBasis(c.price_basis, 'listing'),
-          );
+          const provenance = provenanceFromBasis(c.price_basis, 'listing');
+          const qualifier = provenanceQualifier(provenance);
           return [
             {
               key,
@@ -743,9 +749,12 @@ function TokenPicker({
               name: c.name,
               image: c.image,
               usdPrice: positiveDecimal(c.price_usd),
-              decimals: onChainDecimals(key, c.decimals),
+              // The row's own id decides: a catalogue row's decimals are its
+              // supply exponent even when its key is remapped to an issuance.
+              decimals: onChainDecimals(c.asset_id ?? '', c.decimals),
               observedAt: c.price_as_of ?? null,
               qualifiers: qualifier != null ? [qualifier] : undefined,
+              derived: isDerivedProvenance(provenance),
               kind: 'crypto',
               collision: c.unverified_ticker_collision ?? false,
               verified: isVerifiedCoin(c, verified),
@@ -928,7 +937,12 @@ function useLegRate(
 ): LegRate {
   const isPageLeg = token.key === pageKey;
   const isUsd = token.key === USD_TOKEN.key;
-  const fetchable = !isPageLeg && !isUsd && isPriceableAssetId(token.key);
+  // The batch answers for direct markets only; a derived leg is re-read from
+  // /v1/assets, as the page leg's useResolvedAssetPrice does.
+  const derived = !isPageLeg && !isUsd && Boolean(token.derived);
+  const detailRow = useAsset(derived ? token.key : undefined).data?.data;
+  const fetchable =
+    !isPageLeg && !isUsd && !derived && isPriceableAssetId(token.key);
   const q = useQuery<LegRate>({
     queryKey: ['/v1/price/batch', token.key, 'swapLeg'],
     enabled: fetchable && CURRENT_NETWORK.pricing,
@@ -969,6 +983,18 @@ function useLegRate(
 
   if (isPageLeg) return { price: pagePriceUSD, basis: null, observedAt: null };
   if (isUsd) return { price: '1', basis: null, observedAt: null };
+  if (derived && detailRow != null) {
+    const qualifier = provenanceQualifier(
+      provenanceFromBasis(detailRow.price_basis, 'listing'),
+    );
+    return {
+      price: positiveDecimal(detailRow.price_usd),
+      basis: null,
+      observedAt: detailRow.price_as_of ?? null,
+      qualifiers: qualifier != null ? [qualifier] : undefined,
+      withheld: detailRow.price_withheld_reason != null,
+    };
+  }
   return q.data ?? { price: null, basis: null, observedAt: null };
 }
 

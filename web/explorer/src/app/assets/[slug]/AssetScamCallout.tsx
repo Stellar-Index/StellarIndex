@@ -57,8 +57,20 @@ export function useIssuerScamFlags(
     directoryTags: tags,
     scamReason: live?.issuer_scam_reason?.trim() || baked.scamReason,
     directoryDomain: live?.issuer_directory_domain || baked.directoryDomain,
-    liveUnchecked: q.isError || !!q.data?.flags?.stale,
+    liveUnchecked:
+      q.isError || !!q.data?.flags?.stale || issuerLookupFailed(live),
   };
+}
+
+// A failed directory read leaves flags.stale false; the trust factor is
+// its only mark on the wire.
+function issuerLookupFailed(
+  live:
+    { trust?: { factors?: { id: string; observed: string }[] } } | undefined,
+): boolean {
+  return !!live?.trust?.factors?.some(
+    (f) => f.id === 'issuer_reputation' && f.observed === 'lookup_failed',
+  );
 }
 
 /** The banner on a pre-rendered page, seeded by the baked flags. */

@@ -152,6 +152,52 @@ run
 expect 'a hardened verbatim-installed unit passes' 0 'OK'
 rm -rf "$ROLE_DIR/tasks" "$DEPLOY"
 
+# ── 10. The API unit runs as its own uid with only its own env file ──
+mkdir -p "$ROLE_DIR/defaults"
+printf 'stellarindex_api_os_user: "stellarindex-api"\n' > "$ROLE_DIR/defaults/main.yml"
+hardened > "$UNITS/stellarindex-indexer.service.j2"
+api_unit() {
+  hardened | sed 's/^User=stellarindex$/User={{ stellarindex_api_os_user }}/'
+  cat <<'EOF'
+EnvironmentFile=/etc/default/stellarindex-api
+ProtectProc=invisible
+InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+SystemCallFilter=@system-service
+TasksMax=4096
+MemoryMax=8G
+EOF
+}
+printf 'STELLARINDEX_POSTGRES_DSN={{ x }}\n{%% if y %%}\nMASSIVE_API_KEY={{ z }}\n{%% endif %%}\n' > "$UNITS/../stellarindex-api.env.j2"
+api_unit > "$UNITS/stellarindex-api.service.j2"
+run
+expect 'an API on its own uid with an allow-listed env file passes' 0 'OK'
+api_unit | sed 's/^User=.*/User=stellarindex/' > "$UNITS/stellarindex-api.service.j2"
+run
+expect "an API on the indexer's uid fails" 1 "API-SHARED-UID: $UNITS/stellarindex-api.service.j2 runs as 'stellarindex'"
+{ api_unit; echo 'SupplementaryGroups=galexie'; } > "$UNITS/stellarindex-api.service.j2"
+run
+expect 'an API with supplementary groups fails' 1 'sets SupplementaryGroups='
+{ api_unit; echo 'EnvironmentFile=-/etc/default/stellarindex'; } > "$UNITS/stellarindex-api.service.j2"
+run
+expect 'an API reading the shared env file fails' 1 'API-SHARED-ENV'
+api_unit | grep -v '^ProtectProc=' > "$UNITS/stellarindex-api.service.j2"
+run
+expect 'an API without ProtectProc=invisible fails' 1 'API-PROC'
+api_unit | sed 's# -/etc/default/stellarindex # #' > "$UNITS/stellarindex-api.service.j2"
+run
+expect 'an API that can see the shared env file fails' 1 'does not list /etc/default/stellarindex in InaccessiblePaths='
+api_unit > "$UNITS/stellarindex-api.service.j2"
+printf 'STELLARINDEX_POSTGRES_DSN={{ x }}\nCOINGECKO_API_KEY={{ y }}\n' > "$UNITS/../stellarindex-api.env.j2"
+run
+expect 'an ingest-only credential in the API env file fails' 1 'API-ENV-FORBIDDEN'
+printf 'STELLARINDEX_POSTGRES_DSN={{ x }}\nSOME_NEW_SECRET={{ y }}\n' > "$UNITS/../stellarindex-api.env.j2"
+run
+expect 'a name outside the allow-list fails' 1 'API-ENV-UNLISTED'
+rm "$UNITS/../stellarindex-api.env.j2"
+run
+expect 'a role with the API unit and no API env file fails' 1 'API-ENV:'
+rm -rf "$ROLE_DIR/defaults" "$UNITS/stellarindex-api.service.j2" "$UNITS/stellarindex-indexer.service.j2"
+
 # ── 8. An empty scan is a broken scan, not a pass ───────────────────
 rm -f "$UNITS"/*.j2
 run

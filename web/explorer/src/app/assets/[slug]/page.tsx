@@ -59,6 +59,7 @@ import { AssetAbout } from './AssetAbout';
 import { homeDomainLabel, lookAlikeMeta } from './identityClaims';
 import { assetFaqFor } from './AssetFAQ';
 import { ChartPanel } from './ChartPanel';
+import { LiveAssetPrice } from './LiveAssetPrice';
 import { PriceSparklines } from './PriceSparklines';
 import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
@@ -1177,7 +1178,7 @@ function OverviewBody({
   detail: AssetDetail | null;
   price: PriceResp | null;
 }) {
-  const priceNum = parsePrice(price?.price);
+  const peg = pegBadgeCurrency(assetSymbol(coin), detail?.unverified_warning);
   const hasSupply =
     detail?.circulating_supply != null ||
     detail?.total_supply != null ||
@@ -1190,11 +1191,7 @@ function OverviewBody({
         <Panel
           headingLevel={2}
           title="Price"
-          hint={
-            price?.flags?.triangulated
-              ? 'last closed 1-min VWAP · USD · triangulated via XLM'
-              : 'last closed 1-min VWAP · USD'
-          }
+          hint="USD"
           source={asExample('/v1/price', {
             asset: coin.asset_id,
             quote: 'fiat:USD',
@@ -1203,43 +1200,18 @@ function OverviewBody({
           className="lg:col-span-2"
           bodyClassName="space-y-4"
         >
-          <div className="flex flex-wrap items-baseline gap-4">
-            <span className="font-mono text-3xl tabular-nums">
-              {priceNum != null ? `$${formatPriceSmall(priceNum)}` : '—'}
-            </span>
-            {(() => {
-              const peg = pegBadgeCurrency(
-                assetSymbol(coin),
-                detail?.unverified_warning,
-              );
-              if (peg) {
-                return <PeggedBadge currency={peg} />;
-              }
-              return (
-                <>
-                  {coin.change_1h_pct != null && (
-                    <ChangePctLabel raw={coin.change_1h_pct} window="1h" />
-                  )}
-                  {coin.change_24h_pct != null && (
-                    <ChangePctLabel raw={coin.change_24h_pct} window="24h" />
-                  )}
-                  {coin.change_7d_pct != null && (
-                    <ChangePctLabel raw={coin.change_7d_pct} window="7d" />
-                  )}
-                </>
-              );
-            })()}
-            {price?.flags?.stale && (
-              <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
-                Stale
-              </span>
-            )}
-            {price?.flags?.triangulated && (
-              <span className="bg-brand-50 text-brand-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
-                Triangulated via XLM
-              </span>
-            )}
-          </div>
+          {peg && <PeggedBadge currency={peg} />}
+          {/* The same live resolution as the identity card: the baked value
+              paints first and is captioned as baked until the poll answers. */}
+          <LiveAssetPrice
+            assetID={coin.asset_id}
+            initialPrice={headlinePrice}
+            initialProvenance={headlinePriceProvenance(price, coin)}
+            initialStale={Boolean(price?.flags?.stale)}
+            initialChangePct={
+              coin.change_24h_pct ? Number(coin.change_24h_pct) : null
+            }
+          />
           <PriceSparklines
             assetId={coin.asset_id}
             priceUSD={headlinePrice}
@@ -1483,12 +1455,6 @@ function OverviewBody({
 
 // (CURATED_ASSET_ABOUT lives in ./AssetAbout.)
 
-function parsePrice(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
 function fmtUsd(raw: string | null | undefined): string {
   const s = formatCompactUnits(raw || null);
   return s === '—' ? s : `$${s}`;
@@ -1524,15 +1490,11 @@ function athDrawdown(
   return { label, tone };
 }
 
-// ChangePctLabel renders a signed percentage with emerald-up /
-// rose-down / slate-zero colour. Accepts the wire-format string
-// (e.g. "+1.27", "-0.05", "0.00") and the window label.
 // peggedTo returns the fiat a verified-catalogue stablecoin is pegged to,
-// used to suppress the meaningless change pills (a 0.05% pill on USDC
-// tells the reader nothing). Only codes whose issuer the catalogue
+// badged beside the price. Only codes whose issuer the catalogue
 // vouches for (internal/currency/data/seed.yaml) belong here: for any
 // other code nothing proves the issuer, and a badge on a bare code would
-// hide an impersonator's real price movement.
+// vouch for an impersonator's peg.
 function peggedTo(code: string): string | null {
   switch (code) {
     case 'USDC':
@@ -1552,8 +1514,7 @@ function peggedTo(code: string): string | null {
 // a verified currency's ticker but the issuer doesn't, i.e. a
 // look-alike. It stays null both for the genuine verified asset and for
 // codes no verified currency claims, so gating on it keeps the badge
-// (and the pill suppression) for the real thing while a collision falls
-// through to the ordinary change-pct pills.
+// for the real thing and never shows it on a collision.
 export function pegBadgeCurrency(
   code: string,
   unverifiedWarning: components['schemas']['Asset']['unverified_warning'],
@@ -1567,27 +1528,6 @@ function PeggedBadge({ currency }: { currency: string }) {
     <Badge tone="brand" className="font-mono uppercase">
       <span className="opacity-70">PEG</span>
       {currency}
-    </Badge>
-  );
-}
-
-function ChangePctLabel({
-  raw,
-  window,
-}: {
-  raw: string | null | undefined;
-  window: '1h' | '24h' | '7d';
-}) {
-  if (raw == null) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return null;
-  const tone = n > 0 ? 'up' : n < 0 ? 'down' : 'neutral';
-  const sign = n > 0 ? '+' : '';
-  return (
-    <Badge tone={tone} className="font-mono tabular-nums">
-      {sign}
-      {n.toFixed(2)}%
-      <span className="tracking-wider uppercase opacity-70">{window}</span>
     </Badge>
   );
 }

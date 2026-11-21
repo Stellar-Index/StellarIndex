@@ -13,6 +13,32 @@
     mode: "0644"
   notify: "alertmanager unit changed"
 
+# Ansible drops a notification once its handler has run, so a refused or
+# failed restart is re-queued from the handler's marker on the next run.
+- name: read the prometheus restart-pending marker
+  stat:
+    path: /etc/prometheus/.restart-pending
+  register: _prometheus_restart_pending
+
+- name: re-notify a prometheus restart left pending by an earlier run
+  debug:
+    msg: "prometheus restart is still pending from an earlier run"
+  when: _prometheus_restart_pending.stat.exists
+  changed_when: true
+  notify: "prometheus unit changed"
+
+- name: read the alertmanager restart-pending marker
+  stat:
+    path: /etc/alertmanager/.restart-pending
+  register: _alertmanager_restart_pending
+
+- name: re-notify an alertmanager restart left pending by an earlier run
+  debug:
+    msg: "alertmanager restart is still pending from an earlier run"
+  when: _alertmanager_restart_pending.stat.exists
+  changed_when: true
+  notify: "alertmanager unit changed"
+
 - name: daemon-reload systemd
   systemd:
     daemon_reload: yes

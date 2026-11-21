@@ -581,9 +581,12 @@ authenticated caller on a row above still carries `public`, and
 `api.cdn_enabled=false` removes only `s-maxage`, not `public, max-age`. Do not
 front such a deployment with a shared cache.
 
-The current stack does **not** emit `ETag`, `Server-Timing`,
-`X-Correlation-ID`, or conditional-GET 304 responses in this
-snapshot.
+Every 200 `GET`/`HEAD` body that can be buffered carries a strong `ETag`, and
+a matching `If-None-Match` answers 304 with an empty body
+(`internal/api/v1/middleware/etag.go`). SSE streams, `no-store` responses and
+bodies over 8 MiB are not tagged, and neither are responses that already
+carry `Content-Encoding` or an `ETag` set by the handler. The stack does **not** emit `Server-Timing`
+or `X-Correlation-ID`.
 
 ---
 

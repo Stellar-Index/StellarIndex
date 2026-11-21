@@ -320,6 +320,20 @@ func TestAdminLookup_NoAuditRowWhenAccessDenied(t *testing.T) {
 	}
 }
 
+// Both fields set is ambiguous: answering by one would silently show a different customer than the other names.
+func TestAdminLookup_EmailAndSlugTogetherIs400(t *testing.T) {
+	sink := &fakeAuditSink{}
+	f := newAdminLookupFixture(t, sink)
+
+	rec := f.post(f.staffSC, "/v1/account/admin/lookup", []byte(`{"email":"ops@stellarindex.io","slug":"acme"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	if n := len(sink.all()); n != 0 {
+		t.Errorf("audit rows = %d, want 0 for a refused lookup", n)
+	}
+}
+
 // TestAdminLookup_NoAuditRowWhenNotFound — a miss disclosed no PII.
 func TestAdminLookup_NoAuditRowWhenNotFound(t *testing.T) {
 	sink := &fakeAuditSink{}

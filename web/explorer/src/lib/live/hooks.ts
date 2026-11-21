@@ -199,7 +199,9 @@ export function priceIntegrityCaveats(
  * disable (e.g. while the pair is unknown). Quote defaults to USD.
  * Pairs the server withholds (404/withheld pre-flight) hard-close the
  * stream; the multiplexer's slow-reopen keeps the retry cost near
- * zero and the hook simply stays null.
+ * zero and the hook simply stays null. A pair withheld after connect
+ * sends `price_withheld` instead of ticks: the hook is null from then
+ * until a newer `tip_update`, and the pair's price polls refetch.
  */
 export function useTipStream(
   asset: string | null,
@@ -212,7 +214,19 @@ export function useTipStream(
     asset && CURRENT_NETWORK.pricing
       ? `${API_BASE_URL}/v1/price/tip/stream?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`
       : null;
-  return useStreamJSON<LiveTip>(url, 'tip_update');
+  const tip = useStreamJSON<LiveTip>(url, 'tip_update');
+  const withheld = useStreamJSON<unknown>(url, 'price_withheld');
+  const queryClient = useQueryClient();
+  const withheldAt = withheld?.receivedAt;
+  useEffect(() => {
+    // The last poll still holds the price the server now refuses.
+    if (withheldAt != null && asset)
+      void queryClient.invalidateQueries({
+        queryKey: ['/v1/price', asset, quote],
+      });
+  }, [withheldAt, asset, quote, queryClient]);
+  if (withheld && (!tip || withheld.receivedAt >= tip.receivedAt)) return null;
+  return tip;
 }
 
 /** How long a tick flash stays visible. */

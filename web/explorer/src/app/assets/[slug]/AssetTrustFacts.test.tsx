@@ -108,6 +108,38 @@ describe('AssetTrustFacts', () => {
     expect(screen.queryByText('no scam flag recorded')).toBeNull();
   });
 
+  it('does not call a failed directory lookup clean', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path === `/v1/assets/USDC-${G}`) {
+        return {
+          data: {
+            asset_id: `USDC-${G}`,
+            issuer_directory_domain: 'live.example',
+            trust: {
+              factors: [
+                {
+                  id: 'issuer_reputation',
+                  band: 'unknown',
+                  points: null,
+                  weight: 35,
+                  source: 'account_directory',
+                  observed: 'lookup_failed',
+                },
+              ],
+            },
+          },
+        } as never;
+      }
+      throw new Error('boom');
+    });
+    renderFacts({});
+    await waitFor(() =>
+      expect(screen.getByText(/issuer domain: live\.example/)).toBeTruthy(),
+    );
+    expect(screen.getByText(/live directory check unavailable/)).toBeTruthy();
+    expect(screen.queryByText(/no scam flag recorded/)).toBeNull();
+  });
+
   it('keeps a baked flag when the live read carries no tags', async () => {
     vi.mocked(apiGet).mockImplementation(async (path: string) => {
       if (path === `/v1/assets/USDC-${G}`) {

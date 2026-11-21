@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 
 import { MarketsTabPanel } from './MarketsTabPanel';
@@ -23,10 +23,19 @@ vi.mock('@/api/hooks', async () => {
     useMarkets: () => ({
       isError: false,
       isLoading: false,
-      data: { markets: rows, nextCursor, flags: { truncated: truncatedFlag } },
+      data: {
+        markets: extraRows ?? rows,
+        nextCursor,
+        flags: { truncated: truncatedFlag },
+      },
+    }),
+    useVerifiedIndex: () => ({
+      data: { issuanceBySlug: new Map([['usdc', USDC]]) },
     }),
   };
 });
+
+let extraRows: Market[] | undefined;
 
 vi.mock('@/lib/live/hooks', async () => {
   const actual =
@@ -56,6 +65,29 @@ describe('MarketsTabPanel side label', () => {
       expect(sideOf(/^USDC \(/)).toBe('base');
     },
   );
+});
+
+describe('MarketsTabPanel side identity', () => {
+  const SCAM = 'GBSCAMXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+  afterEach(() => {
+    extraRows = undefined;
+  });
+
+  it('never takes a look-alike XLM code for native XLM', () => {
+    extraRows = [
+      { base: `XLM-${SCAM}`, quote: 'native', trade_count_24h: 5 },
+    ] as Market[];
+    render(<MarketsTabPanel assetID="native" />);
+    expect(sideOf(/^XLM \(/)).toBe('quote');
+  });
+
+  it('takes only the verified issuance as the catalogue asset', () => {
+    extraRows = [
+      { base: `USDC-${SCAM}`, quote: USDC, trade_count_24h: 5 },
+    ] as Market[];
+    render(<MarketsTabPanel assetID="usdc" />);
+    expect(sideOf(/^USDC \(GBSC/)).toBe('quote');
+  });
 });
 
 describe('MarketsTabPanel title', () => {

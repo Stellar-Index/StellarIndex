@@ -25,7 +25,6 @@ verify-archive-tier-b.service:ExecStart
 # Which one matches what's actually on r1 has not been confirmed.
 archive-completeness.service:EnvironmentFile
 stellarindex-aggregator.service:EnvironmentFile
-stellarindex-api.service:EnvironmentFile
 stellarindex-indexer.service:EnvironmentFile
 supply-snapshot.service:EnvironmentFile
 
