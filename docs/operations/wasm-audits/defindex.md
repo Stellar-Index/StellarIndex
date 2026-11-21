@@ -275,7 +275,8 @@ payloads are unmodelled (below; discriminator read by `DecodeRebalanceMethod`).
   after-the-fact record, so historical recovery needs a re-backfill, not SQL).
 
 `BackfillSafe: true` flipped in `internal/sources/external/registry.go`.
-`stellarindex-ops backfill --source=defindex` is now unblocked. Per
+Historical replay through `stellarindex-ops projector-replay` is now unblocked
+(`defindex` is projected, so `backfill` refuses it). Per
 AGENTS.md's "Soroban DeFi contracts upgrade in place" rule, any future
 `update_contract` on the strategy contracts must trigger a new audit
 (re-check the new hash's data section).

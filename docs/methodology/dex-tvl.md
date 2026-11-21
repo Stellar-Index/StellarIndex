@@ -1,6 +1,6 @@
 ---
 title: DEX TVL methodology
-last_verified: 2026-09-23
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -76,7 +76,7 @@ be checked against the reserves rather than taken on trust. Per leg:
 | `token` | The token contract id exactly as the pool's storage carries it. Absent when the position's address never resolved |
 | `reserve` | The captured reserve in base units (i128 decimal string). Absent when nothing was captured |
 | `asset` | The **canonical** identity the served price path values the leg under — the same id `/v1/assets/{id}` answers for. A configured classic↔SAC wrapper collapses to its classic twin here, exactly as the trust gates were asked about it |
-| `basis` + `usd` | Present when the leg was valued. `declared_usd_peg`: $1 per whole unit at the token's declared decimals, applied only after the trust gates. `served_usd_price`: reserve × the same served USD rate `/v1/assets/{asset}` publishes. `empty_reserve`: the reserve is zero, so the leg is worth exactly $0 and no price was consulted |
+| `basis` + `usd` | Present when the leg was valued. `declared_usd_peg`: $1 per whole unit at the token's declared decimals, applied only after the trust gates. `served_usd_price`: reserve × the USD rate of the `usd_volume` tiers (`timescale.VWAPUSDFXResolver.USDPriceAt`): a declared USD peg, else a direct peg-quoted `prices_1m` leg no older than 1h that clears the minimum quote volume and the leg guard, else the XLM bridge no older than 24h. `empty_reserve`: the reserve is zero, so the leg is worth exactly $0 and no price was consulted |
 | `excluded` | Present when the leg was **not** valued, naming the rule below that excluded it: `withheld` (rule 1), `unverified_asset` (rule 2), `no_served_price` (rule 3), `unresolved_token` (rule 6), `malformed_token`, `invalid_reserve` |
 
 Exactly one of `basis`/`usd` or `excluded` is present on a leg: a leg
@@ -244,10 +244,13 @@ checkable:
   against the pool storage entries the drill-down cites instead.
 - The headline `tvl_total.tvl_usd` is the sum of the `tvl_usd` values on
   the `protocols` rows of the same response.
-- A leg's valuation uses the same price `/v1/assets/{id}` serves for the
-  leg's `asset`. If an asset shows `price_usd: null` there, the leg is
-  `excluded` here — the two surfaces cannot disagree, because they
-  consult the same gates and the same price tiers.
+- A leg's valuation uses the `usd_volume` tiers above, not the price
+  `/v1/assets/{id}` serves, so the two can differ. `/v1/assets/{id}` can
+  also publish a stale proxy price (flagged `stale`), a global-market
+  fill or a non-USD declared-peg fill, none of which TVL uses; an asset
+  with a `price_usd` there can therefore be `no_served_price` here, and
+  the two rates can differ when both exist. One direction does hold: a
+  leg the trust gates withhold is never valued, on either surface.
 
 `TestDEXTVLTotal_ReconcilesAgainstPoolReserves` in
 `internal/api/v1/dex_tvl_total_internal_test.go` asserts the protocol

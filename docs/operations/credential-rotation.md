@@ -1,6 +1,6 @@
 ---
 title: Credential rotation runbook
-last_verified: 2026-11-17
+last_verified: 2026-11-20
 status: current
 ---
 
@@ -167,6 +167,13 @@ tracked in the private inventory.
    the incident-comms path ([sev-playbook.md §5.3](sev-playbook.md)), and keep the
    rotation open until each has rotated or been told. Restoring the old value makes the keys
    readable again for new deliveries.
+   **Operator-tier API keys** live in the key store, not the vault, and unlock every
+   `/v1/admin/*` route (suspend accounts, mint keys). List the live ones:
+   `SELECT id, account_id, name, created_at, last_used_at FROM api_keys WHERE tier = 'operator' AND revoked_at IS NULL;`.
+   Mint each holder a replacement (`stellarindex-ops mint-key -config /etc/stellarindex.toml -tier operator -confirm-operator -identifier <id> -label <label> -reason "<why>" -write`),
+   then revoke every old one with the new key:
+   `curl -X DELETE 'https://api.stellarindex.io/v1/admin/keys/<key_id>?identifier=<owner>' -H "Authorization: Bearer $OPERATOR_KEY" -H 'X-Reason: credential rotation'`
+   (404 if `<owner>` is not the key's owner). Re-run the `SELECT`: only the new keys remain.
 8. **GitHub Actions secrets.** `DEPLOY_SSH_PRIVATE_KEY` with the matching `authorized_keys`
    entry on every host, `CLOUDFLARE_API_TOKEN`, `DEPLOY_PROTECTION_TOKEN`,
    `STELLARINDEX_LOAD_API_KEY`. Write each credential-bearing one as an **environment**

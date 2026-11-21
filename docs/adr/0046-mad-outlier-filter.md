@@ -34,6 +34,7 @@ Median and MAD have a 50% breakdown point.
 - Thin buckets are specified, not emergent.
 - Two outlier surfaces exist (published local layer, per-request whole-window); `docs/methodology/vwap-aggregation.md` describes both.
 - Per-source trust weighting and the freeze/anomaly machinery stay separate decisions.
+- Status note: the whole-window `FilterOutliers` raises the scale of Decision 1 to at least 0.25% of the centre (`localScaleRelFloor`, shared with the local layer; `internal/aggregate/outliers.go`), so the scale is `max(1.4826·MAD, 0.25%·|centre|)`, and 0.5% when MAD is 0 (Decision 2). The robust statistics live in `internal/robuststat/robust.go`, not `internal/aggregate/robust.go`.
 
 ## Evidence
 

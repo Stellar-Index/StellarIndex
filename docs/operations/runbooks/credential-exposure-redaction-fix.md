@@ -1,6 +1,6 @@
 ---
 title: Runbook — credential-exposure redaction fix
-last_verified: 2026-11-21
+last_verified: 2026-11-20
 status: ratified
 severity: P2
 ---
@@ -20,7 +20,7 @@ Manual trigger (no metric exists) whenever a redaction-class fix ships: a change
 3. File the incident record under `internal/incidents/data/` per the template, with the scan result in the timeline. Required even when the scan is clean.
 4. Classify and rotate/notify:
    - API key: identify every subject authenticated in the window (usage rollup / access logs, scoped to the route or header). Tell each what to do and why; a revoke takes every key minted from the revoked one with it, so a replacement minted from the exposed key (`POST /v1/account/keys`) dies with it. An exposed child key: revoke it with `DELETE /v1/account/keys/{key_id}`, authenticated with its minter or itself. An exposed root key: first get an independent root (a dashboard user mints one with `POST /v1/dashboard/keys` or on the Keys page; a `/v1/register`-only account has no self-service way, so an operator mints one for the same identifier with `POST /v1/admin/keys` or `stellarindex-ops mint-key`, with a reason, and re-applies any staff limit override), move clients over, then revoke the exposed root with itself (`DELETE /v1/account/keys/{key_id}` sent with that key, 204). Do not force-revoke without notice unless misuse shows.
-   - Session token: revoking an API key does not touch sessions. Revoke the affected users' sessions now, without waiting for misuse: a replayed cookie stays valid up to 30 days (7 idle) and active use keeps it alive. No operator route does this short of closing the account, so run the same statement the store's `RevokeAllUserSessions` runs, for each user id found in the window, in a transaction and check the row count:
+   - Session token: revoking an API key does not touch sessions. Revoke the affected users' sessions now, without waiting for misuse: a replayed cookie stays valid up to 30 days (7 idle) and active use keeps it alive. Suspending the account (below) refuses them all at once but also locks the user out; to revoke just the sessions, run the same statement the store's `RevokeAllUserSessions` runs, for each user id found in the window, in a transaction and check the row count:
 
      ```sql
      BEGIN;
@@ -41,7 +41,11 @@ Manual trigger (no metric exists) whenever a redaction-class fix ships: a change
       ORDER BY ts;
      ```
 
-     The audit write is best-effort, so also list the user's `webauthn_credentials` and the account's `customer_webhooks` and keys created since the window start. Tell the user, with that list. Every row they do not recognise must be removed by them, signed in fresh: `DELETE /v1/dashboard/keys/{id}`, `DELETE /v1/dashboard/webhooks/{id}`, `DELETE /v1/auth/passkey/credentials/{id}` (or the dashboard). There is no operator command that revokes another user's keys, webhooks or passkeys; if the user cannot act promptly and the list is not empty, escalate rather than editing those tables by hand. Do not close the record while an unrecognised row remains.
+     The audit write is best-effort, so also list the user's `webauthn_credentials` and the account's `customer_webhooks` and keys created since the window start. Tell the user, with that list. Every row they do not recognise must be removed by them, signed in fresh: `DELETE /v1/dashboard/keys/{id}`, `DELETE /v1/dashboard/webhooks/{id}`, `DELETE /v1/auth/passkey/credentials/{id}` (or the dashboard). Operator paths, each with the operator key and an `X-Reason` header:
+     - Revoke an unrecognised key yourself: `DELETE /v1/admin/keys/{key_id}?identifier=acct:<account slug>` (404 if the identifier is not the key's owner).
+     - If misuse shows, or the user cannot act promptly and the list is not empty, suspend the account: `PATCH /v1/admin/accounts/{account_id}` with `{"status":"suspended","suspended_reason":"credential exposure"}`. Every key and dashboard session is then refused, so a planted passkey cannot use a fresh session. Suspension does not delete a passkey or a webhook (no operator route does): the user removes them before the same call sets `active`.
+
+     Never edit those tables by hand. Do not close the record while an unrecognised row remains.
    - DSN password or other internal secret: rotate it in this cycle, before the record is closed, following [credential-rotation.md](../credential-rotation.md) (e.g. `postgres_pass_stellarindex` and `postgres_pass_stellarindex_api` under step 4 of the full batch). There is no notice-and-offer path: the credential is internal and valid until rotated.
    - PII: notify affected customers via the incident-comms path (sev-playbook §5.3): what was written to an internal log store, which staff can read it, for how long. Regulator notification is decided by [`sev-playbook.md` §6.6](../sev-playbook.md#66-personal-data-breach-notification-assessment); its 72-hour clock started when the exposure was found.
 5. Update the record's timeline with the completion time and who/what was notified (aggregate count only, never identities in the customer-facing post).

@@ -1,6 +1,6 @@
 ---
 title: Runbook — TimescaleDB jobs, caggs and compression
-last_verified: 2026-10-06
+last_verified: 2026-11-20
 status: living
 severity: P3
 ---
@@ -310,9 +310,28 @@ The floor is `prices_1m`'s earliest materialised bucket. Below it, or on the fir
 
 The known cause is `merge_chunks()` on a compressed chunk (r1, TimescaleDB 2.26.4). `scripts/ci/lint-chunk-functions.sh` keeps it and `drop_chunks()` out of the tree.
 
-1. Do not merge, drop, decompress or recompress the chunk. Each rewrites it and can lose the evidence or the rows.
+1. Do not merge, decompress or recompress the chunk, and do not drop it before step 3 has its rows staged and counted. Each rewrites it and can lose the evidence or the rows.
 2. Find which rows it held: `SELECT range_start, range_end FROM timescaledb_information.chunks WHERE chunk_name = '<chunk>';`.
-3. Restore those rows. A derived table (a cagg, a projection) re-derives from its source for that range. A primary table restores from a pgBackRest PITR copy on another host; r1 has no room for a full restore (plan §5.1). Copy the range back with `COPY`, then drop the broken chunk only after the copy verifies, with Ash's yes.
+3. Restore those rows. While the broken chunk exists, every write to its range is routed into it and the unique check decodes its segments, so nothing can be written around it. `detach_chunk()` refuses a compressed chunk ("Decompress the chunk first"), so stage the rows first and swap them in one transaction:
+
+   ```sql
+   -- evidence: the raw compressed segments, copied without decoding (skip if this read errors)
+   SELECT cc.schema_name, cc.table_name FROM _timescaledb_catalog.chunk c
+     JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id WHERE c.table_name = '<chunk>';
+   CREATE TABLE public.<chunk>_evidence AS SELECT * FROM <compressed schema>.<compressed table>;
+   -- stage the range, from a pgBackRest PITR copy on another host (r1 has no room for a full restore, plan §5.1)
+   CREATE TABLE public.<chunk>_restore (LIKE <hypertable> INCLUDING ALL);
+   \copy public.<chunk>_restore FROM '<range>.copy'
+   SELECT count(*) FROM public.<chunk>_restore;   -- must equal the PITR copy's count for [range_start, range_end)
+   -- swap, with Ash's yes; ROLLBACK instead of COMMIT if the count differs
+   BEGIN;
+   DROP TABLE _timescaledb_internal.<chunk>;
+   INSERT INTO <hypertable> SELECT * FROM public.<chunk>_restore;
+   SELECT count(*) FROM <hypertable> WHERE <time column> >= '<range_start>' AND <time column> < '<range_end>';
+   COMMIT;
+   ```
+
+   A derived table (a cagg, a projection) has no PITR step: its source still holds the rows. Take the evidence copy, drop the chunk with Ash's yes, re-derive the range with that table's writer, and check its count against the source. Leave the new chunk to the compression policy; never `compress_chunk()` it by hand.
 4. Re-run the scan: `systemctl start pg-chunk-scan.service`. It keeps a list of verified chunks in `/var/lib/pg-chunk-scan/verified` and re-scans only new or rewritten ones; delete that file to force a full scan.
 
 `stellarindex_pg_chunk_scan_stale` means no scan has completed for 36 h, so corruption would go unseen. Read `journalctl -u pg-chunk-scan -n 50`; the probe prints the psql ERROR line. A chunk that ends its backend when decoded is retried once, then listed as unreadable; the journal names it (`ends its backend when decoded`). A chunk dropped or locked mid-run is logged as `undecided` and decoded again the next night.

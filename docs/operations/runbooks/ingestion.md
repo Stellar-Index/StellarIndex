@@ -164,7 +164,7 @@ Immediately after a deploy a restart shows zero events briefly; every tier's sus
 
 P3: per source, `increase(stellarindex_source_decode_errors_total[1h]) / increase(stellarindex_source_matched_events_total[1h]) > 0.005` with at least 10 failures in the hour, for 15 min. It catches what the rate alert below cannot: a decoder rejecting one shape of input on a busy source (SDEX claim atoms after a protocol upgrade) or everything on a quiet one. For `sdex`, `band` and `soroswap-router` no projector alert covers the loss, and the SDEX reconcile mirrors the same reject, so it reads zero.
 
-Check, causes and fix are those of [`stellarindex_ingestion_decode_error`](#stellarindex_ingestion_decode_error). After the decoder is fixed, re-drive the affected range per the [replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <l> -to <l> -sdex -write` for `sdex`, `ch-rebuild ... -contract-calls -sources band` (or `soroswap-router`) `-write` for the two contract-call sources (dry run first; without `-contract-calls` the run re-derives neither), `stellarindex-ops projector-replay -source <source>` for a projected one.
+Check, causes and fix are those of [`stellarindex_ingestion_decode_error`](#stellarindex_ingestion_decode_error). After the decoder is fixed, re-drive the affected range per the [replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <l> -to <l> -sdex -write` for `sdex`, `ch-rebuild ... -contract-calls -sources band` (or `soroswap-router`) `-write` for the two contract-call sources (dry run first; without `-contract-calls` the run re-derives neither), `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <source> -from <l> -write` for a projected one.
 
 ## stellarindex_ingestion_decode_error
 
@@ -259,7 +259,7 @@ Fix (a deterministic panic needs a code fix):
      -source <name> -from <ledger> -write   # without -write this is a DRY RUN that exits 0
 
    # Non-projected sources (sdex, band, supply observers):
-   stellarindex-ops ch-rebuild ...   # see docs/operations/backfill-procedure.md
+   stellarindex-ops ch-rebuild ... -write   # see docs/operations/backfill-procedure.md
 
    # Then re-run the verdict for the window and confirm it goes green:
    stellarindex-ops compute-completeness -write ...
@@ -305,7 +305,7 @@ stellarindex-ops backfill -write -config /etc/stellarindex.toml \
     -source <SOURCE_NAME> -resume
 ```
 
-For projected Soroban sources (soroswap, blend, phoenix, comet, cctp, rozo, defindex, sep41, reflector/redstone, ...) catch-up is `stellarindex-ops projector-replay -source <name> -from <ledger>`, NOT `backfill` (ADR-0032); `backfill` refuses Soroban sources whose `BackfillSafe` flag is false. On r1 either runs under `/usr/local/sbin/run-heavy-job.sh <name> <cmd…>`. Verify lag under 100 ledgers sustained 15 min.
+For projected Soroban sources (soroswap, blend, phoenix, comet, cctp, rozo, defindex, sep41, reflector/redstone, ...) catch-up is `stellarindex-ops projector-replay -config /etc/stellarindex.toml -source <name> -from <ledger> -write`, NOT `backfill` (ADR-0032); `backfill` refuses Soroban sources whose `BackfillSafe` flag is false. On r1 either runs under `/usr/local/sbin/run-heavy-job.sh <name> <cmd…>`. Verify lag under 100 ledgers sustained 15 min.
 
 ## stellarindex_ledgerstream_tier_both_missing
 
@@ -355,7 +355,7 @@ Fix:
    ```sh
    # 1. Preview (also what you get if you forget -write):
    stellarindex-ops rehydrate-galexie-archive \
-     -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END>
+     -config /etc/stellarindex.toml -from <SEQ> -to <SEQ_END> -dry-run
    # 2. Commit — heavy one-shots on r1 go through the wrapper:
    sudo /usr/local/sbin/run-heavy-job.sh rehydrate \
      /usr/local/bin/stellarindex-ops rehydrate-galexie-archive \

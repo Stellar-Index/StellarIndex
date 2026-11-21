@@ -60,7 +60,7 @@ curl -sS http://127.0.0.1:3000/v1/diagnostics/archive | jq '.data | {scanned_at,
 # → scanned_at recent + cross_anchor.missing_count == 0
 
 # … or force a fresh run (archive-completeness.service runs
-# `stellarindex-ops archive-completeness verify -from $ARCHIVE_FROM -to $ARCHIVE_TO
+# `stellarindex-ops archive-completeness verify -write -from $ARCHIVE_FROM -to $ARCHIVE_TO
 #  -workers 8 -network pubnet -textfile-output … -output-file
 #  /var/lib/galexie/last-completeness-report.json` under run-heavy-job.sh)
 sudo systemctl start archive-completeness.service && journalctl -u archive-completeness.service -n 30 --no-pager

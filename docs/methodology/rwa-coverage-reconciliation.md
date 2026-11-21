@@ -1,6 +1,6 @@
 ---
 title: RWA coverage — reconciliation against the public Stellar RWA dashboard
-last_verified: 2026-09-28
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -280,8 +280,14 @@ serves them under a **third arm**, apart from the two verified ones:
   market-cap total (`total_usd`, for the month ending `as_of`, last
   computed at `executed_at`), that month's split by the curator's own
   subclass labels, the full monthly series, and `gap_vs_verified_usd` —
-  the published total minus this index's verified reference total,
-  signed. The curator's arithmetic over inputs this index cannot see:
+  the published total minus this index's verified whole-set total on the
+  same UTC day as `as_of` (the `/v1/rwa/history` total for that day),
+  signed. It is never measured against today's total, which would count
+  the set's growth since the month-end as a gap. It is left out when the
+  history has no point for that day or that day's total is a lower bound
+  (`rwaVerifiedTotalOn`, `internal/api/v1/rwa_curated.go`): subtracting a
+  floor would report this index's own undercount as curator-only value.
+  The curator's arithmetic over inputs this index cannot see:
   no per-asset breakdown reaches it, so no row in it can be checked.
   `executed_at` is the curator's clock, not this index's sync: past 48
   hours the block carries `stale: true`, and past 7 days it is not
@@ -302,9 +308,10 @@ and was proven red by merging them. The arm exists so that "why does
 your number differ from that dashboard's" is answered by a row on the
 page rather than by this document — not because this index vouches for
 any figure in it. The gap is the worked example: the curator publishes
-$4,004,795,860 for the month ending 2025-08-31; this index's verified
-reference total sits beside it, and `gap_vs_verified_usd` is the
-difference — a number on the page, signed, not a paragraph here.
+$4,004,795,860 for the month ending 2025-08-31, and `gap_vs_verified_usd`
+is that figure minus this index's verified total for 2025-08-31 — signed,
+and absent rather than guessed when that day's verified total is missing
+or a lower bound, which is common for a set with contract members.
 
 ## The bar, restated
 

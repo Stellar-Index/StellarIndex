@@ -1,6 +1,6 @@
 ---
 title: Stablecoin supply methodology
-last_verified: 2026-10-05
+last_verified: 2026-11-21
 status: current
 ---
 
@@ -44,7 +44,9 @@ non-yield-bearing members. It is absent when none is valued.
 is itself a floor, or `excluded` is non-empty.
 
 - Non-USD pegs (EURC) are not summed into the USD total; `by_peg` keeps them
-  apart.
+  apart. Each `by_peg` row carries `assets_valued` and its own `lower_bound`,
+  true when one of its members is unvalued, a summed supply is a floor, or the
+  member list was truncated.
 - Yield-bearing wrappers (yUSDC) are listed with their own market price but
   not summed, since their price is not meant to sit at the peg.
 - The peg of each ticker is a table in `stablecoins.go`; a ticker missing from

@@ -197,8 +197,9 @@ real usage starts.
 `ClassBridge` with `DefaultWeight: 0` and
 `IncludeInVWAP: false` in
 [`internal/sources/external/registry.go`](../../../internal/sources/external/registry.go):
-no VWAP contribution regardless of `BackfillSafe`, which gates the operator-triggered
-`stellarindex-ops backfill --source=rozo` path only.
+no VWAP contribution regardless of `BackfillSafe`, which gates historical replay
+only: `stellarindex-ops projector-replay` refuses `rozo` while it is false
+(`rozo` is projected, so `backfill` refuses it outright).
 
 ## 2026-07-09 addendum — 4th contract admitted + topic-shape correction
 
