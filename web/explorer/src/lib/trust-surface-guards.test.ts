@@ -362,6 +362,16 @@ describe('trust-surface guards', () => {
     expect(offenders).toEqual([]);
   });
 
+  it("the asset page's Overview price card shows the live resolved price, not the build's", () => {
+    // OverviewBody is a server component of the static export: a price it
+    // formats itself is the build's, whatever its caption says.
+    const body = new Map(sourceFiles()).get('app/assets/[slug]/page.tsx');
+    const overview = body?.match(/\nfunction OverviewBody\([\s\S]*?\n}\n/)?.[0];
+    expect(overview).toBeDefined();
+    expect(overview).toContain('<LiveAssetPrice');
+    expect(overview).not.toMatch(/formatPriceSmall\(|1-min VWAP/);
+  });
+
   it('every ranked /v1/assets panel badges and demotes a flagged issuer (#773)', () => {
     // The flagged badge and demoteFlaggedLast lived in AssetsTable only;
     // the two home panels rendered the same rows unbadged, and HomeTopMovers'
