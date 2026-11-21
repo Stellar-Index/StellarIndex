@@ -562,8 +562,8 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_host_down` | `up` for any host | == 0 for > 2 min | ticket | [infra](runbooks/infra.md#stellarindex_host_down) |
 | `stellarindex_keepalived_textfile_stale` | `node_textfile_mtime_seconds{file="keepalived.prom"}` age | > 10 min, 5 min | ticket | [infra](runbooks/infra.md#stellarindex_keepalived_textfile_stale) |
-| `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age | > 2 h, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
-| `stellarindex_oneshot_timer_stale` | `node_systemd_timer_last_trigger_seconds` age (creators/sponsors-rollup, issuer-flags; listing-sync) | > 50 h daily, > 3 h listing-sync; 2 h | ticket | [infra](runbooks/infra.md#stellarindex_oneshot_timer_stale) |
+| `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age or absence | > 2 h or absent, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
+| `stellarindex_oneshot_timer_stale` | `node_systemd_timer_last_trigger_seconds` age or absence (creators/sponsors-rollup, issuer-flags, asset-registry-backfill; listing-sync, holders/optype-rollup) | > 50 h daily, > 3 h half-hourly/hourly, absent; 2 h | ticket | [infra](runbooks/infra.md#stellarindex_oneshot_timer_stale) |
 | `stellarindex_host_cpu_high` | 100 - avg idle CPU `[5m]` | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_cpu_high) |
 | `stellarindex_host_memory_high` | used / total memory | > 90 % for 10 min | informational | [infra](runbooks/infra.md#stellarindex_host_memory_high) |
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_degraded) |

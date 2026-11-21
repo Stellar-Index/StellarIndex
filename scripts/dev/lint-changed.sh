@@ -557,6 +557,7 @@ if [ "${#rules_files[@]}" -gt 0 ]; then
     add_step "lint-alerts-catalog" "" python3 "$ci_dir/lint-alerts-catalog.py"
     add_step "lint-runbook-annotations" "" python3 "$ci_dir/lint-runbook-annotations.py"
     add_step "lint-rule-structure" "" python3 "$ci_dir/lint-rule-structure.py"
+    add_step "lint-timer-staleness" "" "$ci_dir/lint-timer-staleness.sh"
     # Deferred on measured cost. Both are relevant to every rule change and
     # both run in verify.sh; neither belongs in a pre-commit hook.
     defer "lint-metric-refs" "${#rules_files[@]} rule file(s) changed; lint-metric-refs (90 s, whole tree) runs in scripts/dev/verify.sh"
@@ -571,6 +572,7 @@ fi
 if [ "${#ansible_files[@]}" -gt 0 ]; then
     add_step "lint-ansible-tasks" "whole tree; ${#ansible_files[@]} ansible/alertmanager file(s) changed" "$ci_dir/lint-ansible-tasks.sh"
     add_step "lint-jinja-templates" "" "$ci_dir/lint-jinja-templates.sh"
+    add_step "lint-timer-staleness" "" "$ci_dir/lint-timer-staleness.sh"
     # Duplicate mapping keys. Cheap (<1 s whole-tree) and catches a class no other
     # gate here sees: YAML keeps the LAST occurrence of a key, so a second
     # `pre_tasks:` reads in review as an added block while silently deleting the
