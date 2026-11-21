@@ -321,6 +321,22 @@
         path: /etc/prometheus/minio.token
       register: minio_prom_token_file
 
+    # The local Prometheus (23-local-prometheus.yml) installs after this file,
+    # so on a fresh host /etc/prometheus is absent: minting then would abort
+    # the play at the write and leave a service account whose secret is lost.
+    - name: Check for the local Prometheus config dir
+      ansible.builtin.stat:
+        path: /etc/prometheus
+      register: minio_prom_confdir
+
+    - name: Explain the deferred Prometheus MinIO bearer token
+      when: not minio_prom_confdir.stat.exists
+      ansible.builtin.debug:
+        msg: >-
+          /etc/prometheus does not exist yet, so the MinIO scrape token is not
+          minted on this run. Re-run the role after the local Prometheus is
+          installed and the token is minted then.
+
     - name: Generate the Prometheus MinIO bearer token
       # Generated ONCE: each svcacct creation mints a new secret, so re-running
       # would invalidate the token and break scraping. Rotation
@@ -349,6 +365,7 @@
       # `minio_prom_svcacct is not skipped`: on a fresh host --check always takes the
       # "no file yet" branch and would reference stdout of a task that never ran.
       when:
+        - minio_prom_confdir.stat.exists
         - not minio_prom_token_file.stat.exists
         - not ansible_check_mode
       changed_when: true
@@ -362,6 +379,7 @@
         mode: "0400"
         content: "{{ (minio_prom_svcacct.stdout | from_json).secretKey }}"
       when:
+        - minio_prom_confdir.stat.exists
         - not minio_prom_token_file.stat.exists
         - not ansible_check_mode
       no_log: true
