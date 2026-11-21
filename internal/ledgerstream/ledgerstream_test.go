@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1358,6 +1359,84 @@ func TestStream_TieredHoleBelowTipIsErrBothTiersMissing(t *testing.T) {
 	err := ledgerstream.Stream(ctx, lsCfg, 5, 10, func(_ xdr.LedgerCloseMeta) error { return nil })
 	if !errors.Is(err, ledgerstream.ErrBothTiersMissing) {
 		t.Fatalf("Stream over a hole missing from both tiers: err = %v, want errors.Is ErrBothTiersMissing", err)
+	}
+}
+
+// landOnColdReadStore is a cold tier whose first read of key writes the ledger into the hot tier, so
+// the walk sees it missing in both tiers while the post-walk probe finds it present.
+type landOnColdReadStore struct {
+	datastore.DataStore
+	key  string
+	land func() error
+	once sync.Once
+	err  error
+	hit  bool
+}
+
+func (s *landOnColdReadStore) GetFile(ctx context.Context, path string) (io.ReadCloser, int64, error) {
+	if path == s.key {
+		s.once.Do(func() { s.hit, s.err = true, s.land() })
+	}
+	return s.DataStore.GetFile(ctx, path)
+}
+
+// A ledger read as missing that has landed by the time the walk is probed was never delivered,
+// nor was anything after it: the walk must fail retryably, never return nil.
+func TestStream_TolerateTrailingMissing_LedgerLandedDuringWalkIsRetryable(t *testing.T) {
+	hotDir, coldDir := t.TempDir(), t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	hotCfg, hot := tolerateTrailingEdgeStore(t, hotDir)
+	t.Cleanup(func() { _ = hot.Close() })
+	coldCfg, cold := tolerateTrailingEdgeStore(t, coldDir)
+	for _, p := range []struct {
+		store datastore.DataStore
+		cfg   datastore.DataStoreConfig
+	}{{hot, hotCfg}, {cold, coldCfg}} {
+		if _, _, err := datastore.PublishConfig(ctx, p.store, p.cfg); err != nil {
+			t.Fatalf("publish config: %v", err)
+		}
+	}
+	for seq := uint32(5); seq <= 40; seq++ {
+		if seq != 8 {
+			writeLedgerFixture(t, ctx, hot, hotCfg.Schema, seq)
+		}
+	}
+	writeLedgerFixture(t, ctx, cold, coldCfg.Schema, 7)
+
+	key8 := hotCfg.Schema.GetObjectKeyFromSequenceNumber(8)
+	buf8 := encodeBatch(t, xdr.LedgerCloseMetaBatch{
+		StartSequence:    8,
+		EndSequence:      8,
+		LedgerCloseMetas: []xdr.LedgerCloseMeta{minimalLedgerCloseMeta(8)},
+	})
+	lander := &landOnColdReadStore{
+		DataStore: cold,
+		key:       key8,
+		land:      func() error { return hot.PutFile(ctx, key8, bufferWriterTo(buf8), nil) },
+	}
+	lsCfg := ledgerstream.Config{
+		DataStore:               hotCfg,
+		ColdDataStore:           coldCfg,
+		ColdDataStoreFactory:    func(context.Context) (datastore.DataStore, error) { return lander, nil },
+		TolerateTrailingMissing: true,
+		TrailingMissingWindow:   16,
+	}
+	before := testutil.ToFloat64(obs.LedgerstreamTrailingMissingToleratedTotal)
+	err := ledgerstream.Stream(ctx, lsCfg, 5, 10, func(_ xdr.LedgerCloseMeta) error { return nil })
+	if !lander.hit || lander.err != nil {
+		t.Fatalf("ledger 8 was not landed mid-walk (hit=%v err=%v); the scenario did not run", lander.hit, lander.err)
+	}
+	if !errors.Is(err, ledgerstream.ErrLedgerArrivedDuringWalk) {
+		t.Fatalf("Stream [5,10] whose ledger 8 landed after the walk read it as missing: err = %v, "+
+			"want errors.Is ErrLedgerArrivedDuringWalk (a nil here skips 8..10)", err)
+	}
+	if !strings.Contains(err.Error(), "ledger 8") {
+		t.Errorf("err = %v; want it to name ledger 8", err)
+	}
+	if d := testutil.ToFloat64(obs.LedgerstreamTrailingMissingToleratedTotal) - before; d != 0 {
+		t.Errorf("tolerated counter moved by %v; an un-delivered range must not count as tolerated", d)
 	}
 }
 

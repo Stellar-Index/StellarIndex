@@ -11,6 +11,7 @@ package ledgerstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -180,15 +181,21 @@ func probeStore(ctx context.Context, dsCfg datastore.DataStoreConfig, seq uint32
 	defer func() { _ = ds.Close() }()
 	store := withReadDeadline(ds, storeReadTimeout)
 	tip, err = datastore.FindLatestLedgerSequence(ctx, store)
-	if err != nil || seq > tip {
-		return tip, false, err
+	if err != nil {
+		return 0, false, fmt.Errorf("resolve datastore tip: %w", err)
+	}
+	if seq > tip {
+		return tip, false, nil
 	}
 	schema, err := datastore.LoadSchema(ctx, store, dsCfg)
 	if err != nil {
 		return tip, false, fmt.Errorf("load datastore schema: %w", err)
 	}
 	present, err = store.Exists(ctx, schema.GetObjectKeyFromSequenceNumber(seq))
-	return tip, present, err
+	if err != nil {
+		return tip, false, fmt.Errorf("check object for ledger %d: %w", seq, err)
+	}
+	return tip, present, nil
 }
 
 // retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A LEDGER, until Config.LiveRetryBudget is
@@ -315,7 +322,8 @@ func validateRange(r ledgerbackend.Range) error {
 // Config.TolerateTrailingMissing is set AND the missing sequence is within the trailing window of To; other errors pass through.
 // A single-ledger range requires delivered > 0 (else nil with ZERO callbacks looks like an empty walk); a wider range is not held
 // to it, as the prefetch buffer can race-cancel on a trailing-edge miss. probe is consulted last: only the store's latest
-// ledger tells a not-yet-written object from a hole, so a miss at or below it is tolerated only if the object has since landed.
+// ledger tells a not-yet-written object from a hole, so a miss at or below it is never tolerated: a hole errors, and an object
+// that has since landed returns [ErrLedgerArrivedDuringWalk] so the caller re-runs the range.
 func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error, probe func(seq uint32) (tip uint32, present bool, err error)) error {
 	if err == nil {
 		return nil
@@ -339,11 +347,15 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 	}
 	tip, present, probeErr := probe(seq)
 	if probeErr != nil {
-		return fmt.Errorf("%w (trailing-missing tolerance refused: datastore tip unresolved: %w)", err, probeErr)
+		return fmt.Errorf("%w (trailing-missing tolerance refused: datastore probe failed: %w)", err, probeErr)
 	}
 	if seq <= tip && !present {
 		return fmt.Errorf("%w (trailing-missing tolerance refused: ledger %d is absent below the datastore tip %d "+
 			"— a hole, not the tip)", err, seq, tip)
+	}
+	if seq <= tip {
+		return fmt.Errorf("ledgerstream: ledger %d (range [%d,%d], datastore tip %d): %w: %w",
+			seq, from, to, tip, ErrLedgerArrivedDuringWalk, err)
 	}
 	obs.LedgerstreamTrailingMissingToleratedTotal.Inc()
 	if cfg.Logger != nil {
@@ -358,6 +370,11 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 	}
 	return nil
 }
+
+// ErrLedgerArrivedDuringWalk marks a bounded walk that stopped at a ledger read as missing whose object is in the
+// datastore now: the walk did not deliver its whole range, and re-running it will.
+var ErrLedgerArrivedDuringWalk = errors.New("ledger object landed in the datastore after the walk read it as missing; " +
+	"the walk did not deliver its whole range — retry it")
 
 // defaultTrailingMissingWindow is one Galexie 64k-ledger partition plus 1536 ledgers of slack,
 // covering a tip race between the chosen -to and a partition Galexie has not finished writing.
