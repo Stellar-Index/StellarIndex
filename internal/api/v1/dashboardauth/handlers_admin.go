@@ -89,6 +89,10 @@ func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.TrimSpace(req.Email)
 	slug := strings.TrimSpace(req.Slug)
+	if email != "" && slug != "" {
+		writeProblem(w, http.StatusBadRequest, "provide email or slug in the request body, not both", adminLookupInstance)
+		return
+	}
 
 	acct, err := h.resolveLookupAccount(r, email, slug)
 	if errors.Is(err, errLookupNoQuery) {

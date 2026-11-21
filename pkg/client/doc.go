@@ -88,7 +88,7 @@
 // aggregate snapshots (NetworkStats, Sources, Aggregators, Methodology,
 // ChangeSummary), incidents + status surfaces (Incidents, Status,
 // Cursors, Healthz, Readyz, Version), and account/auth (Me, Usage,
-// Keys, CreateKey, RevokeKey, AdminCreateKey). Browse the godoc for
+// Keys, CreateKey, RevokeKey, RevokeKeyWithReason, AdminCreateKey). Browse the godoc for
 // runnable examples on each.
 //
 // NOT every server endpoint has a method. The exclusions are
@@ -101,10 +101,15 @@
 //   - SSE streams (`/v1/price/{,tip/}stream`, `/v1/observations/stream`,
 //     `/v1/ledger/stream`) — architecturally outside the
 //     request/response shape; consumers use `net/http` with an
-//     eventsource-style reader directly. On reconnect, send the last
-//     received event `id:` as the Last-Event-ID request header (the
-//     stream routes accept it) so the stream resumes rather than
-//     silently skipping the events missed while disconnected.
+//     eventsource-style reader directly. Only the two price streams
+//     resume: on reconnect, send the last received event `id:` as the
+//     Last-Event-ID request header and they replay what the buffer still
+//     holds. When the buffer no longer holds everything missed, they send
+//     a `stream_gap` event first and then replay the rest.
+//     `/v1/observations/stream` and `/v1/ledger/stream` ignore it and
+//     start from now, so events published while disconnected are
+//     lost; backfill that window from `/v1/observations` or
+//     `/v1/ledgers` after reconnecting.
 //   - The network-explorer read surface (ADR-0038:
 //     `/v1/ledgers*`, `/v1/tx/{hash}`, `/v1/operations`,
 //     `/v1/contracts*`, `/v1/accounts*`, `/v1/search`, …) — serves

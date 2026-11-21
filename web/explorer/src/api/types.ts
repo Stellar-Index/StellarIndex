@@ -4324,6 +4324,9 @@ export interface paths {
          *     it answers 204 and the key, with every key minted from it,
          *     stops working from the next request. This is how a leaked
          *     `/v1/register` root key, which has no dashboard, is killed.
+         *     A deployment running `auth_backend=postgres` disables the whole
+         *     `/v1/account/keys` surface (503): there, only an operator can
+         *     revoke such a key, with `DELETE /v1/admin/keys/{keyID}?identifier=`.
          *
          *     An **operator-tier** caller must send `X-Reason` (400 without
          *     it); the revoke is recorded as a `key.revoke` audit row, as
@@ -4371,7 +4374,8 @@ export interface paths {
          *     audit row.
          *
          *     Supply EXACTLY ONE of `email` or `slug` in the body. Supplying
-         *     neither is a 400 (`provide email or slug in the request body`).
+         *     neither is a 400 (`provide email or slug in the request body`),
+         *     and so is supplying both.
          *     The response carries `Cache-Control: no-store` because the body is
          *     staff-only customer PII.
          */
@@ -24585,7 +24589,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Account store not configured. */
+            /** @description Account store not configured (`account-store-unavailable`) — Redis is unavailable, or the deployment runs `auth_backend=postgres`. */
             503: {
                 headers: {
                     [name: string]: unknown;

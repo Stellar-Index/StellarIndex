@@ -77,7 +77,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
-			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+			accountStoreUnavailableDetail)
 		return
 	}
 	reason, ok := s.requireReason(w, r)

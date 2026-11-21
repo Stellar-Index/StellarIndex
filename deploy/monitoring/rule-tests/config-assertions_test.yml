@@ -52,7 +52,7 @@ tests:
               component: storage
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
-              summary: "config-assertions has not run for 2h on r1:9100"
+              summary: "config-assertions output is stale or missing on r1:9100"
               description: |
                 The hourly config-assertions.timer is not producing fresh
                 textfile output — a silent checker is the same class of
@@ -73,3 +73,55 @@ tests:
       - eval_time: 215m
         alertname: stellarindex_config_assertions_stale
         exp_alerts: []
+
+  # ── the .prom was deleted: node_exporter stops exporting its mtime ──
+  # The age arm sees an empty vector; the vanish arm keeps the host's
+  # last series and fires once the 30m `for` elapses.
+  - interval: 1m
+    name: a deleted config-assertions textfile trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: stellarindex_config_assertions_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/config_assertions.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
+              summary: "config-assertions output is stale or missing on r1:9100"
+              description: |
+                The hourly config-assertions.timer is not producing fresh
+                textfile output — a silent checker is the same class of
+                failure the checker exists to catch. systemctl status
+                config-assertions.timer.
+
+  # ── the timer was never installed: no series has ever existed ──
+  - interval: 1m
+    name: a never-written config-assertions textfile trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/other.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x240'
+    alert_rule_test:
+      - eval_time: 180m
+        alertname: stellarindex_config_assertions_stale
+        exp_alerts:
+          - exp_labels:
+              file: /var/lib/node_exporter/textfile_collector/config_assertions.prom
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
+              summary: "config-assertions output is stale or missing on "
+              description: |
+                The hourly config-assertions.timer is not producing fresh
+                textfile output — a silent checker is the same class of
+                failure the checker exists to catch. systemctl status
+                config-assertions.timer.

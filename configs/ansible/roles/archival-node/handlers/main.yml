@@ -31,6 +31,12 @@
     name: "postgresql@{{ postgres_version }}-main"
     state: restarted
 
+- name: Reload postgres
+  # pg_hba.conf is re-read on SIGHUP; a restart would drop every live session.
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgres_version }}-main"
+    state: reloaded
+
 - name: Restart stellar-core
   ansible.builtin.systemd:
     name: stellar-core

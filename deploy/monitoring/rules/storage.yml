@@ -295,8 +295,15 @@ groups:
       - alert: stellarindex_config_assertions_stale
         # Watches the textfile mtime, not timestamp(): a dead checker's stale
         # .prom is still re-scraped, so the sample timestamp stays ~now and a
-        # timestamp()-based form never fires.
-        expr: time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom"} > 7200
+        # timestamp()-based form never fires. A deleted or never-written file
+        # exports no mtime at all, so the vanish and absent arms cover those.
+        expr: |
+          time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom"} > 7200
+          or
+          last_over_time(node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom"}[1d])
+            unless node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom"}
+          or
+          absent_over_time(node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/config_assertions.prom"}[2h])
         for: 30m
         labels:
           severity: ticket
@@ -304,7 +311,7 @@ groups:
           component: storage
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
-          summary: "config-assertions has not run for 2h on {{ $labels.instance }}"
+          summary: "config-assertions output is stale or missing on {{ $labels.instance }}"
           description: |
             The hourly config-assertions.timer is not producing fresh
             textfile output — a silent checker is the same class of
