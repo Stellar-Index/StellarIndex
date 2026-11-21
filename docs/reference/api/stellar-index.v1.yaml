@@ -19526,13 +19526,17 @@ components:
         basis: { type: string }
     StablecoinPegTotal:
       type: object
-      required: [peg, assets]
+      required: [peg, assets, assets_valued, lower_bound]
       properties:
         peg: { type: string, description: "ISO currency the asset tracks, or `unknown`." }
         supply_usd:
           type: string
           description: Decimal string over the peg's valued members; absent when none is valued.
         assets: { type: integer }
+        assets_valued: { type: integer, description: "Members of this peg summed into `supply_usd`." }
+        lower_bound:
+          type: boolean
+          description: True when `supply_usd` is a floor, not a total — a member of this peg is unvalued, a summed supply is itself a floor, or the member list was truncated.
     StablecoinExclusion:
       type: object
       required: [ticker, reason]

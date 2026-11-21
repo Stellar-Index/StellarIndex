@@ -9786,6 +9786,10 @@ export interface components {
             /** @description Decimal string over the peg's valued members; absent when none is valued. */
             supply_usd?: string;
             assets: number;
+            /** @description Members of this peg summed into `supply_usd`. */
+            assets_valued: number;
+            /** @description True when `supply_usd` is a floor, not a total — a member of this peg is unvalued, a summed supply is itself a floor, or the member list was truncated. */
+            lower_bound: boolean;
         };
         StablecoinExclusion: {
             ticker: string;

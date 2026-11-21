@@ -22,6 +22,38 @@ func TestStablecoinSummarise_TotalEqualsReAddedRows(t *testing.T) {
 	}
 }
 
+func TestStablecoinSummarise_PegSubtotalMarksItsFloor(t *testing.T) {
+	one, two := "1.00", "2.00"
+	assets := []StablecoinAsset{
+		{Ticker: "A", Peg: "USD", SupplyUSD: &one},
+		{Ticker: "B", Peg: "USD"},
+		{Ticker: "E", Peg: "EUR", SupplyUSD: &two, CirculatingSupplyLowerBound: true},
+		{Ticker: "F", Peg: "GBP", SupplyUSD: &two},
+	}
+	got := func(pegs []StablecoinPegTotal) map[string]StablecoinPegTotal {
+		m := map[string]StablecoinPegTotal{}
+		for _, p := range pegs {
+			m[p.Peg] = p
+		}
+		return m
+	}
+	_, pegs := stablecoinSummarise(assets, nil, false)
+	m := got(pegs)
+	if p := m["USD"]; !p.LowerBound || p.Assets != 2 || p.AssetsValued != 1 || p.SupplyUSD == nil || *p.SupplyUSD != "1.00" {
+		t.Fatalf("USD with an unvalued member = %+v, want lower_bound, 1 of 2 valued", p)
+	}
+	if p := m["EUR"]; !p.LowerBound || p.AssetsValued != 1 {
+		t.Fatalf("EUR summing a floor supply = %+v, want lower_bound", p)
+	}
+	if p := m["GBP"]; p.LowerBound || p.AssetsValued != 1 {
+		t.Fatalf("GBP fully valued = %+v, want exact", p)
+	}
+	_, pegs = stablecoinSummarise(assets, nil, true)
+	if p := got(pegs)["GBP"]; !p.LowerBound {
+		t.Fatalf("GBP over a truncated member list = %+v, want lower_bound", p)
+	}
+}
+
 func TestStablecoinAliasSupply_FindsReadingUnderAnAliasForm(t *testing.T) {
 	// native's alias set includes crypto:XLM; a reading keyed there must be found.
 	circ, _ := stablecoinAliasSupply("native", nil, map[string]string{"crypto:XLM": "5"}, nil)
