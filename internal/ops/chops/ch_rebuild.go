@@ -357,7 +357,7 @@ func checkCHRebuildRangeFlags(cfgPath string, from, to uint, toHorizon, tradesBy
 	return nil
 }
 
-func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: seed, event pass, optional op pass, report; splitting hurts clarity.
+func chRebuild(args []string) (retErr error) { //nolint:gocognit,gocyclo,funlen // linear: seed, event pass, optional op pass, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
@@ -750,6 +750,16 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 	}
 	sink := &chRebuildSink{ctx: ctx, logger: logger, w: w, write: write, written: map[string]int{}, failed: map[string]int{}}
+	refreshPlan := func() rebuildRefresh {
+		return rebuildRefresh{verb: "ch-rebuild", cfgPath: *cfgPath, write: write, refresh: *refreshCAGGs, feeds: chRebuildFeedsAggregates(sink.written), lo: lo, hi: hi}
+	}
+	refreshRun := func(rctx context.Context) error { return ingest.RefreshCAGGsForRange(rctx, logger, store, lo, hi) }
+	reported := false
+	defer func() {
+		if !reported {
+			retErr = refreshAfterFailedRebuild(ctx, os.Stderr, retErr, refreshPlan(), refreshRun)
+		}
+	}()
 	if *creditRefusals {
 		sink.charge = func(evs []consumer.Event) error { return chargeCreditRefusals(ctx, store, evs) }
 	}
@@ -932,9 +942,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if !write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
-	return errors.Join(rerr, serr, refreshAfterRebuild(ctx, os.Stderr,
-		rebuildRefresh{verb: "ch-rebuild", cfgPath: *cfgPath, write: write, refresh: *refreshCAGGs, feeds: chRebuildFeedsAggregates(written), lo: lo, hi: hi},
-		func(rctx context.Context) error { return ingest.RefreshCAGGsForRange(rctx, logger, store, lo, hi) }))
+	reported = true
+	return errors.Join(rerr, serr, refreshAfterRebuild(ctx, os.Stderr, refreshPlan(), refreshRun))
 }
 
 // chRebuildFeedsAggregates reports whether the run wrote a row that a continuous aggregate is built on.
@@ -988,6 +997,16 @@ func refreshAfterRebuild(ctx context.Context, w io.Writer, r rebuildRefresh, run
 		return fmt.Errorf("%s: rows are written but the aggregates over [%d,%d] are not refreshed (served OHLC, VWAP and volume are stale); run: %s: %w", r.verb, r.lo, r.hi, r.followUp(), err)
 	}
 	return nil
+}
+
+// refreshAfterFailedRebuild gives a run that failed after writing rows the same refresh decision as a finished one: a re-run's
+// ON CONFLICT no-ops write nothing, so it would never owe the refresh again. The run's error is kept, so the command still fails.
+func refreshAfterFailedRebuild(ctx context.Context, w io.Writer, runErr error, r rebuildRefresh, run func(context.Context) error) error {
+	if runErr == nil || !r.write || !r.feeds {
+		return runErr
+	}
+	_, _ = fmt.Fprintf(w, "%s: the run failed after writing rows over [%d,%d]; the aggregates over that range are still owed a refresh\n", r.verb, r.lo, r.hi)
+	return errors.Join(runErr, refreshAfterRebuild(ctx, w, r, run))
 }
 
 // rebuildRefreshViews names every view [ingest.RefreshCAGGsForRange] may refresh.
