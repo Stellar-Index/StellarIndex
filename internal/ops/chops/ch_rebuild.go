@@ -1001,8 +1001,13 @@ func refreshAfterRebuild(ctx context.Context, w io.Writer, r rebuildRefresh, run
 
 // refreshAfterFailedRebuild gives a run that failed after writing rows the same refresh decision as a finished one: a re-run's
 // ON CONFLICT no-ops write nothing, so it would never owe the refresh again. The run's error is kept, so the command still fails.
+// A cancelled run only names the follow-up: the refresh ignores cancellation and would outlive the operator's stop.
 func refreshAfterFailedRebuild(ctx context.Context, w io.Writer, runErr error, r rebuildRefresh, run func(context.Context) error) error {
 	if runErr == nil || !r.write || !r.feeds {
+		return runErr
+	}
+	if errors.Is(runErr, context.Canceled) {
+		_, _ = fmt.Fprintf(w, "%s: FOLLOW-UP OWED: the run was cancelled after writing rows over [%d,%d]; the trade and oracle aggregates are NOT refreshed and served OHLC, VWAP and volume keep the old figures until you run: %s\n", r.verb, r.lo, r.hi, r.followUp())
 		return runErr
 	}
 	_, _ = fmt.Fprintf(w, "%s: the run failed after writing rows over [%d,%d]; the aggregates over that range are still owed a refresh\n", r.verb, r.lo, r.hi)

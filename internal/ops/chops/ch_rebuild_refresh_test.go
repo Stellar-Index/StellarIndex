@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -107,5 +108,26 @@ func TestRefreshAfterFailedCHRebuild(t *testing.T) {
 	}
 	if err := refreshAfterFailedRebuild(context.Background(), &out, nil, chRebuildRefresh(true, true, map[string]int{"sdex": 3}), run); err != nil || ran != 0 {
 		t.Errorf("a finished run is reported by the success path: err = %v, ran %d", err, ran)
+	}
+}
+
+// A cancelled pass must not start the uncancellable refresh the operator just tried to stop: it names the owed follow-up
+// instead and still fails with the cancellation.
+func TestRefreshAfterCancelledCHRebuild(t *testing.T) {
+	passErr := fmt.Errorf("sdex reconcile stream [150,160]: %w", context.Canceled)
+	var out bytes.Buffer
+	ran := 0
+	run := func(context.Context) error { ran++; return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := refreshAfterFailedRebuild(ctx, &out, passErr, chRebuildRefresh(true, true, map[string]int{"sdex": 3}), run)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want the cancellation kept", err)
+	}
+	if ran != 0 {
+		t.Errorf("refresh ran %d time(s) after a cancel, want none", ran)
+	}
+	if !strings.Contains(out.String(), "FOLLOW-UP OWED") || !strings.Contains(out.String(), wantRefreshFollowUp) {
+		t.Errorf("output %q, want the owed follow-up %q", out.String(), wantRefreshFollowUp)
 	}
 }
