@@ -29,7 +29,7 @@ import (
 func chCap67Movements(args []string) error {
 	fs := flag.NewFlagSet("ch-cap67-movements", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
-	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or the P23 boundary on first run)")
+	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or the P23 boundary on first run). A non-zero -from may re-derive at or below that resume point, never start above it: the watermark would cover the skipped ledgers")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current contiguous lake tip). Always CLAMPED DOWN to the contiguous tip: a -to above a near-tip lake hole would derive past it and stamp the watermark beyond it, losing those ledgers' movements permanently.")
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
@@ -328,8 +328,11 @@ func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32
 	return resolveDeriveRange(ctx, chAddr, "ch-cap67-movements", from, to, floorLedger, clickhouse.Cap67MovementsWatermark)
 }
 
+// deriveLakeMinLedger is clickhouse.LakeMinLedger, a var so the first-run resume point is testable without a live lake.
+var deriveLakeMinLedger = clickhouse.LakeMinLedger
+
 // resolveDeriveRange is Cap67Range for any watermark-resumed lake derive:
-// readWM is the derive's own watermark and verb names it in the log.
+// readWM is the derive's own watermark and verb names it in the log. An explicit from above the resume point is refused.
 func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floorLedger uint32, readWM func(context.Context, string) (uint32, error)) (uint32, uint32, error) {
 	if floorLedger == 0 {
 		// Defensive: a first run starts AT the floor, and genesis is ledger
@@ -337,22 +340,29 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 		// -floor-ledger 0; this guards other callers.
 		floorLedger = 1
 	}
-	start := from
-	if start == 0 {
-		wm, err := readWM(ctx, chAddr)
+	wm, err := readWM(ctx, chAddr)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read watermark: %w", err)
+	}
+	var lakeMin uint32
+	if wm == 0 && (from == 0 || from > floorLedger) {
+		// First run only: the one time the floor, rather than the
+		// watermark, picks the resume point.
+		lakeMin, err = deriveLakeMinLedger(ctx, chAddr)
 		if err != nil {
-			return 0, 0, fmt.Errorf("read watermark: %w", err)
+			return 0, 0, fmt.Errorf("read lake min ledger: %w", err)
 		}
-		var lakeMin uint32
-		if wm == 0 {
-			// First run only: the one time the floor, rather than the
-			// watermark, picks the resume point.
-			lakeMin, err = clickhouse.LakeMinLedger(ctx, chAddr)
-			if err != nil {
-				return 0, 0, fmt.Errorf("read lake min ledger: %w", err)
-			}
-		}
-		start = resolveStart(wm, floorLedger, lakeMin)
+	}
+	resume := resolveStart(wm, floorLedger, lakeMin)
+	// The derive records its watermark as the top of a fully-derived prefix, so an explicit -from above the resume point
+	// (wm+1, or the floor on a first run, where the advance has no prefix to check) would stamp it over ledgers never derived.
+	if from > resume {
+		return 0, 0, fmt.Errorf("%s: -from %d skips [%d,%d], which this derive has not covered (watermark %d): omit -from to resume at %d",
+			verb, from, resume, from-1, wm, resume)
+	}
+	start := resume
+	if from != 0 {
+		start = from
 	}
 	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can have holes near the tip, and
 	// deriving past one would advance the watermark over it and lose that ledger's movements permanently. Clamp to the
