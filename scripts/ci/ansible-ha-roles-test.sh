@@ -458,6 +458,8 @@ for managed, answered, render, want in ((False, False, True, False), (True, True
              redis_sentinel_answered=answered, redis_render_configs=render)
     check(fires(enforce["when"], **v) == want,
           f"redis policy enforce (managed={managed} answered={answered} render={render}) runs={want}")
+check(enforce.get("notify", "unset") == [],
+      "redis policy enforce opts out of the import's restart notify (the policy is applied live)")
 
 # patroni: a refused or failed restart is re-notified from the handler's marker on the next run.
 requeue = next((t for t in tasks("patroni/tasks/06-patroni-configure.yml") if t.get("notify") == "patroni config changed"
