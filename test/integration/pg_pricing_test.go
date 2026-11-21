@@ -1172,6 +1172,47 @@ func TestDeleteChangeSummary_ClearsRatchetedExtremes(t *testing.T) {
 	}
 }
 
+// A change wider than nine integer digits is served as its decimal, not as a to_char overflow of '#'.
+func TestContractCatalogueRows_LargeChangePctStaysDecimal(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	const id = armFlippedUSDCContract
+	if _, err := store.DB().ExecContext(ctx, `
+		INSERT INTO discovered_assets
+		    (contract_id, first_seen_at, first_seen_ledger, first_seen_event, last_seen_at, last_seen_ledger, event_count)
+		VALUES ($1, now(), 1, 'transfer', now(), 2, 5)`, id); err != nil {
+		t.Fatalf("seed discovered_assets: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO asset_price_snapshot
+		(asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct, computed_at) VALUES
+		($1, 0.5, -0.125, 12345678901.5, 999999999.994, now())`, id); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+	rows, err := store.ContractCatalogueRows(ctx, []string{id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := rows[id]
+	for name, c := range map[string]struct {
+		got  *string
+		want string
+	}{"1h": {r.Change1hPct, "-0.13"}, "24h": {r.Change24hPct, "12345678901.50"}, "7d": {r.Change7dPct, "999999999.99"}} {
+		if c.got == nil {
+			t.Errorf("change_%s_pct = nil, want %s", name, c.want)
+		} else if *c.got != c.want {
+			t.Errorf("change_%s_pct = %q, want %s", name, *c.got, c.want)
+		}
+	}
+}
+
 // AssetChangeFromSnapshot serves a fresh snapshot row's price and changes, with absent changes left nil, and treats a row past the
 // listing's age ceiling as missing.
 func TestAssetChangeFromSnapshot_FreshRowsOnly(t *testing.T) {

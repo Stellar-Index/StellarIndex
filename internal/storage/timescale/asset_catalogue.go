@@ -493,16 +493,11 @@ const listAssetsBaseSelect = `
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply,
-		    -- 1h / 24h / 7d change, rendered from the rollup's stored
-		    -- NUMERIC ratio with the SAME to_char format the inline
-		    -- three-arm CASE used (native-XLM arm, direct-USD arm,
-		    -- XLM-triangulated arm — all three now resolved once per
-		    -- refresh pass in refreshAssetPriceSnapshotUpsert). NULL in,
-		    -- NULL out: an asset with no comparable lookback renders no
-		    -- change, exactly as before.
-		    to_char(aps.change_1h_pct,  'FM999999990.00') AS change_1h_pct,
-		    to_char(aps.change_24h_pct, 'FM999999990.00') AS change_24h_pct,
-		    to_char(aps.change_7d_pct,  'FM999999990.00') AS change_7d_pct,
+		    -- 1h / 24h / 7d change from the rollup's stored NUMERIC ratio.
+		    -- NULL in, NULL out: no comparable lookback renders no change.
+		    ` + changePctOpen + `aps.change_1h_pct` + changePctClose + ` AS change_1h_pct,
+		    ` + changePctOpen + `aps.change_24h_pct` + changePctClose + ` AS change_24h_pct,
+		    ` + changePctOpen + `aps.change_7d_pct` + changePctClose + ` AS change_7d_pct,
 		    -- Distinct venues backing price_usd (the latest per-asset bucket's
 		    -- prices_1m.sources) — the liquidity signal the API's market-cap
 		    -- valuation guard reads. NULL for native XLM (triangulated price,
@@ -1345,9 +1340,9 @@ var getAssetBySlugSQL = `
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply,
-		    to_char(` + priceChangePctExpr("1h") + `, 'FM999999990.00') AS change_1h_pct,
-		    to_char(` + priceChangePctExpr("24h") + `, 'FM999999990.00') AS change_24h_pct,
-		    to_char(` + priceChangePctExpr("7d") + `, 'FM999999990.00') AS change_7d_pct,
+		    ` + changePctText(priceChangePctExpr("1h")) + ` AS change_1h_pct,
+		    ` + changePctText(priceChangePctExpr("24h")) + ` AS change_24h_pct,
+		    ` + changePctText(priceChangePctExpr("7d")) + ` AS change_7d_pct,
 		    -- Single-row slug lookup serves catalogue-verified currencies,
 		    -- which are never dust — leave source_count unmeasured so the
 		    -- valuation guard never suppresses here (shared scanAssetRow shape).
@@ -1445,27 +1440,24 @@ var getNativeAssetSQL = `
 		      WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL
 		           AND (SELECT vwap FROM xlm_usd_1h) IS NOT NULL
 		           AND (SELECT vwap FROM xlm_usd_1h) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_1h) - 1) * 100,
-		                  'FM999999990.00')
+		      THEN ` + changePctOpen + `((SELECT vwap FROM xlm_usd)
+		                  / (SELECT vwap FROM xlm_usd_1h) - 1) * 100` + changePctClose + `
 		      ELSE NULL
 		    END                                    AS change_1h_pct,
 		    CASE
 		      WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL
 		           AND (SELECT vwap FROM xlm_usd_24h) IS NOT NULL
 		           AND (SELECT vwap FROM xlm_usd_24h) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_24h) - 1) * 100,
-		                  'FM999999990.00')
+		      THEN ` + changePctOpen + `((SELECT vwap FROM xlm_usd)
+		                  / (SELECT vwap FROM xlm_usd_24h) - 1) * 100` + changePctClose + `
 		      ELSE NULL
 		    END                                    AS change_24h_pct,
 		    CASE
 		      WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL
 		           AND (SELECT vwap FROM xlm_usd_7d) IS NOT NULL
 		           AND (SELECT vwap FROM xlm_usd_7d) > 0
-		      THEN to_char(((SELECT vwap FROM xlm_usd)
-		                  / (SELECT vwap FROM xlm_usd_7d) - 1) * 100,
-		                  'FM999999990.00')
+		      THEN ` + changePctOpen + `((SELECT vwap FROM xlm_usd)
+		                  / (SELECT vwap FROM xlm_usd_7d) - 1) * 100` + changePctClose + `
 		      ELSE NULL
 		    END                                    AS change_7d_pct,
 		    -- Native XLM is always deep-liquidity — leave source_count
