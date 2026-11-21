@@ -26,8 +26,12 @@
 # repeated), matched in any letter case and with any combinator suffix
 # (`COUNT(*)`, `sumIf`, `countState`, `sumKahan`):
 #
-#     count* sum* avg* groupArray* topK* corr* covarPop* covarSamp*
-#     quantile* median* stddev* varPop* varSamp*
+#     count* sum* avg* groupArray* array_agg group_concat topK* corr*
+#     covar[_]pop* covar[_]samp* var[_]pop* var[_]samp* quantile* median*
+#     stddev* deltaSum* exponential* histogram simpleLinearRegression
+#     stochastic* groupBitXor entropy skew* kurt* sequenceCount sparkbar
+#     contingency cramersV theilsU rankCorr maxIntersections *TTest
+#     mannWhitneyUTest
 #
 # NOT in that set (idempotent under an exact duplicate, and the tree's own
 # collapse vocabulary): `min`, `max`, `any`, `anyIf`, `argMax`, `argMin`,
@@ -85,10 +89,13 @@
 #
 # ── ESCAPE HATCH ─────────────────────────────────────────────────────
 #
-# scripts/ci/lint-lake-dedup.baseline: one `<file>:<table>  <reason>` entry per
-# grandfathered site, reason REQUIRED. Growing it needs a `Baseline-Growth:`
-# commit trailer (lint-baseline-growth.sh), and a stale entry (a site that no
-# longer violates) fails the gate until deleted. It shrinks monotonically.
+# scripts/ci/lint-lake-dedup.baseline: one
+# `<file>:<key>  <N> read(s): #<fingerprint> <reason>` entry per grandfathered
+# file and table (or `#interp`), reason REQUIRED. The count and fingerprint
+# name the excused statements, so a further, missing or swapped read fails;
+# the gate prints the entry to copy. Growing or changing it needs a
+# `Baseline-Growth:` commit trailer (lint-baseline-growth.sh), and a stale
+# entry (a site that no longer violates) fails the gate until deleted.
 #
 # Usage: lint-lake-dedup.sh [repo-root]
 #   The optional root is for scripts/ci/lint-lake-dedup-test.sh (fixture trees).
@@ -144,7 +151,11 @@ if [ -d deploy/clickhouse ] || [ -d internal/storage/clickhouse ]; then
         }
       }
       FNR == 1 && NR > 1 { scan(t); t = "" }
-      { l = tolower($0); gsub(/[`"\t\r]/, " ", l)
+      # Comments go first: a ";" or "create " in a column comment would
+      # otherwise end or split the CREATE body before its ENGINE clause.
+      { l = tolower($0); sub(/--.*$/, "", l)
+        if (FILENAME ~ /\.go$/) sub(/\/\/.*$/, "", l)
+        gsub(/[`"\t\r]/, " ", l)
         while (l ~ /  /) gsub(/  /, " ", l)
         sub(/^ /, "", l); sub(/ $/, "", l); if (l != "") t = t " " l }
       END { scan(t) }
@@ -234,10 +245,12 @@ violations="$(
     # Takes lowercased text. The suffix admits combinators and variants
     # (sumIf, countState, sumKahan); countDistinct is the one idempotent
     # name the prefix would otherwise catch.
+    # The underscore forms (var_pop, stddev_samp, array_agg) are the SQL
+    # standard spellings ClickHouse accepts beside the camel-case ones.
     function mult_agg(s) {
       gsub(/countdistinct[ ]*\(/, "", s)
       gsub(/count[ ]*\([ ]*distinct[ ]/, "", s)
-      return s ~ /(^|[^a-z0-9_])(count|sum|avg|grouparray|topk|corr|covarpop|covarsamp|quantile|median|stddev|varpop|varsamp)[a-z0-9]*[ ]*\(/
+      return s ~ /(^|[^a-z0-9_])(count|sum|avg|grouparray|array_agg|group_?concat|topk|corr|covar_?pop|covar_?samp|var_?pop|var_?samp|quantile|median|stddev|deltasum|exponential|histogram|simplelinearregression|stochastic|groupbitxor|entropy|skew|kurt|sequencecount|sparkbar|contingency|cramersv|theilsu|rankcorr|maxintersections|[a-z]*ttest|mannwhitneyutest)[a-z0-9_]*[ ]*\(/
     }
     # block_of — the query block owning a read: from its own SELECT to
     # the closing paren of its subquery, its terminating semicolon, or
@@ -401,7 +414,7 @@ violations="$(
 
     # ── the read-by-read verdict ─────────────────────────────────────
     function analyse(raw, line, file,    N, L, from, s, pos, len, tbl, i,
-                     owner, clause, blk, tail, snip, depth, ch) {
+                     owner, clause, blk, tail, snip, full, depth, ch) {
       N = raw
       gsub(/[\n\t]/, " ", N)
       while (N ~ /  /) gsub(/  /, " ", N)
@@ -445,9 +458,10 @@ violations="$(
         if (tail ~ /^[ ]*(as[ ]+[a-z_][a-z0-9_]*[ ]+|[a-z_][a-z0-9_]*[ ]+)?final([^a-z0-9_]|$)/) continue
 
         blk = block_of(L, owner)
-        snip = substr(N, owner, length(blk))
+        full = substr(N, owner, length(blk))
+        snip = full
         if (length(snip) > 220) snip = substr(snip, 1, 220) " …"
-        printf "%s\t%d\t%s\t%s\n", file, line, tbl, snip
+        printf "%s\t%d\t%s\t%s\t%s\n", file, line, tbl, snip, full
       }
     }
 
@@ -460,45 +474,53 @@ violations="$(
     # // comment, so every backtick left delimits a raw literal. A lone
     # backtick in "`" or in a rune would otherwise invert the raw state for
     # the rest of the file. raw is the state at the start of the line.
+    # An interpreted string becomes the token _s_, so a quoted table
+    # spliced between raw literals still reads as a splice. Q collects the
+    # line outside raw literals with its strings intact, for interp().
     function go_mask(l, raw,    out, i, n, c, j) {
-      out = ""; n = length(l); i = 1
+      out = ""; Q = ""; n = length(l); i = 1
       while (i <= n) {
         if (raw) {
           j = index(substr(l, i), "`")
           if (j == 0) return out substr(l, i)
-          out = out substr(l, i, j); i += j; raw = 0
+          out = out substr(l, i, j); Q = Q " "; i += j; raw = 0
           continue
         }
         c = substr(l, i, 1)
-        if (c == "`") { raw = 1; out = out c; i++; continue }
+        if (c == "`") { raw = 1; out = out c; Q = Q " "; i++; continue }
         if (c == "/" && substr(l, i, 2) == "//") return out
         if (c == "\"" || c == "\047") {
           j = i + 1
           while (j <= n && substr(l, j, 1) != c) { if (substr(l, j, 1) == "\\") j++; j++ }
-          out = out " "; i = j + 1
+          out = out " _s_ "; Q = Q substr(l, i, j - i + 1); i = j + 1
           continue
         }
-        out = out c; i++
+        out = out c; Q = Q c; i++
       }
       return out
     }
 
-    function go_line(l,    n, p, i, inside, part, cut) {
+    # interp - report an unexaminable read: SQL that is not one raw literal.
+    function interp() {
+      if (FILENAME ~ /_test\.go$/) return
+      printf "#interp\t%s:%d\t%s\n", FILENAME, FNR, norm($0)
+      ireported = 1
+    }
+    function norm(s) {
+      gsub(/[\t\r]/, " ", s); while (s ~ /  /) gsub(/  /, " ", s)
+      sub(/^ /, "", s); sub(/ $/, "", s)
+      return s
+    }
+
+    function go_line(l,    n, p, i, inside, part) {
+      l = go_mask(l, in_raw)
       # Only raw literals are analysed. A read in a double-quoted string in
       # production Go would never be examined, so it is reported instead.
-      if (!in_raw && index(l, "`") == 0 && FILENAME !~ /_test\.go$/) {
-        part = l; cut = index(part, "//"); if (cut > 0) part = substr(part, 1, cut - 1)
-        # A file naming no watched table is judged on upper-case SQL only:
-        # its lower-case "from" strings are log and error prose.
-        if (part ~ /(FROM|JOIN)[ ]+%(\[[0-9]+\])?[sqv]|(FROM|JOIN)[ ]*"[ ]*\+/ || tolower(part) ~ /(from|join)[ ]+stellar\.[ ]*"[ ]*\+/) printf "#interp\t%s:%d\n", FILENAME, FNR
-        else if (!verb_file && (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/)) printf "#interp\t%s:%d\n", FILENAME, FNR
-      }
-      if (index(l, "`") > 0) {
-        l = go_mask(l, in_raw)
-      } else if (!in_raw) {
-        cut = index(l, "//")
-        if (cut > 0) l = substr(l, 1, cut - 1)
-      }
+      part = Q
+      # A file naming no watched table is judged on upper-case SQL only:
+      # its lower-case "from" strings are log and error prose.
+      if (part ~ /(FROM|JOIN)[ ]+%(\[[0-9]+\])?[sqv]|(FROM|JOIN)[ ]*"[ ]*\+/ || tolower(part) ~ /(from|join)[ ]+stellar\.[ ]*"[ ]*\+/) interp()
+      else if (!verb_file && (tolower(part) ~ INTERP_RE || tolower(part) ~ /(from|join)[ ]*"[ ]*\+[ ]*"?[ ]*(stellar|$)/)) interp()
       n = split(l, p, "`")
       inside = in_raw
       for (i = 1; i <= n; i++) {
@@ -516,7 +538,11 @@ violations="$(
           if (match(part, /--([ \t]|$)/) > 0) part = substr(part, 1, RSTART - 1)
           add(part)
           lastraw = tolower(part)
-          if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]+%(\[[0-9]+\])?[sqv]/) printf "#interp\t%s:%d\n", FILENAME, FNR
+          if (lastraw ~ /(from|join)[ ]+%(\[[0-9]+\])?[sqv]/) interp()
+          # A literal ending in FROM/JOIN takes its table from the next
+          # operand, whether or not another literal follows it.
+          ireported = 0
+          tailfrom = lastraw ~ /(from|join)[ ]*(stellar\.)?[ ]*$/
         } else {
           glue = glue part
           if (i < n) {
@@ -526,7 +552,8 @@ violations="$(
             # consumer, a HAVING) is still judged with the read.
             identglue = glue ~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/
             splice = identglue || glue ~ /^[ \t]*\+.*\+[ \t]*$/
-            if (FILENAME !~ /_test\.go$/ && lastraw ~ /(from|join)[ ]*(stellar\.)?[ ]*$/ && splice && glue ~ /[A-Za-z_]/) printf "#interp\t%s:%d\n", FILENAME, FNR
+            if (tailfrom && !ireported && splice && glue ~ /[A-Za-z_]/) interp()
+            tailfrom = 0
             if (U != "" && !splice) flush()
             else if (U != "" && !identglue) add("?")
             glue = ""
@@ -538,6 +565,7 @@ violations="$(
         # literal (n == 1 flipped the state on a line with no backtick).
         if (i < n) inside = !inside
       }
+      if (!inside && tailfrom && !ireported && glue ~ /^[ \t]*\+[ \t]*[A-Za-z_(]/) { interp(); tailfrom = 0 }
       if (!inside) glue = glue " "
       in_raw = inside
     }
@@ -585,7 +613,7 @@ violations="$(
       add(rest)
     }
 
-    FNR == 1 { flush(); in_raw = 0; in_comment = 0; glue = ""
+    FNR == 1 { flush(); in_raw = 0; in_comment = 0; glue = ""; tailfrom = 0; ireported = 0
                is_sql = (FILENAME ~ /\.sql$/)
                verb_file = index(VERB_FILES, "|" FILENAME "|") > 0 }
     { if (is_sql) sql_line($0); else go_line($0) }
@@ -595,7 +623,7 @@ violations="$(
 
 examined="$(printf '%s\n' "$violations" | awk '/^#counts /{print $2}')"
 aggregating="$(printf '%s\n' "$violations" | awk '/^#counts /{print $3}')"
-interpreted="$(printf '%s\n' "$violations" | sed -n 's/^#interp\t/  /p')"
+interpreted="$(printf '%s\n' "$violations" | awk -F'\t' '$1 == "#interp"')"
 violations="$(printf '%s\n' "$violations" | grep -v '^#counts \|^#interp' || true)"
 
 if [ -z "${examined:-}" ] || [ -z "${aggregating:-}" ]; then
@@ -626,9 +654,15 @@ fi
 
 # ── baseline ─────────────────────────────────────────────────────────
 #
-# `<file>:<table>  <reason>`; the reason is required: an unexplained exemption
-# is what baselines exist to stop.
-declare -a base_keys=() base_reasons=()
+# `<file>:<key>  <N> read(s): #<fingerprint> <reason>`, where <key> is
+# `stellar.<table>` or `#interp` (a read in a double-quoted or spliced string).
+# N and the fingerprint (cksum of the sorted, whitespace-normalised text of
+# the excused sites: the owning SELECT for a table, the source line for
+# #interp) pin the entry to the reads it was granted for, so one more, one
+# fewer or one swapped fails. The gate prints the entry to copy; the reason
+# is required, as an unexplained exemption is what baselines exist to stop.
+ENTRY_RE='^([0-9]+) reads?: #([0-9]+) +(.{10,})$'
+declare -a base_keys=() base_counts=() base_fps=()
 if [ -f "$BASELINE" ]; then
   lineno=0
   while IFS= read -r raw; do
@@ -637,107 +671,85 @@ if [ -f "$BASELINE" ]; then
     key="${raw%%[[:space:]]*}"
     reason="${raw#"$key"}"
     reason="${reason#"${reason%%[![:space:]]*}"}"
-    if [ -z "$key" ] || [ "${#reason}" -lt 10 ]; then
-      die "$BASELINE:$lineno has no reason:
-    $raw
-  Format is \`<file>:<table>  <reason>\`. An exemption without a stated
-  reason is the failure mode a baseline exists to prevent."
-    fi
     case "$key" in
-      *:stellar.*) : ;;
-      *:#interp)
-        # The count is what stops one entry excusing the file's next read.
-        [[ "$reason" =~ ^[0-9]+\ reads?[:\;] ]] || die "$BASELINE:$lineno does not state its read count:
-    $raw
-  Format is \`<file>:#interp  <N> read(s): <reason>\`; N is how many unexaminable
-  reads the gate reports in that file." ;;
+      *:stellar.*|*:#interp) : ;;
       *) die "$BASELINE:$lineno has a key of no known kind (\`<file>:stellar.<table>\` or \`<file>:#interp\`):
     $raw" ;;
     esac
+    [[ "$reason" =~ $ENTRY_RE ]] || die "$BASELINE:$lineno is not \`<file>:<key>  <N> read(s): #<fingerprint> <reason>\`:
+    $raw
+  N and the fingerprint name the reads the entry excuses and the reason says
+  why; copy the entry the gate prints for the site and write its reason."
     base_keys+=("$key")
-    base_reasons+=("$reason")
+    base_counts+=("${BASH_REMATCH[1]}")
+    base_fps+=("${BASH_REMATCH[2]}")
   done < "$BASELINE"
 fi
 
-in_baseline() {
-  local k="$1" b
-  for b in ${base_keys+"${base_keys[@]}"}; do
-    [ "$b" = "$k" ] && return 0
-  done
-  return 1
-}
-
-# baseline_count <key>: the read count an `#interp` entry states, or nothing.
-baseline_count() {
+# base_index <key>: the index of its baseline entry, or status 1.
+base_index() {
   local i=0
   while [ "$i" -lt "${#base_keys[@]}" ]; do
-    if [ "${base_keys[$i]}" = "$1" ]; then
-      printf '%s' "${base_reasons[$i]%% *}"
-      return 0
-    fi
+    [ "${base_keys[$i]}" = "$1" ] && { printf '%s' "$i"; return 0; }
     i=$((i + 1))
   done
   return 1
 }
+fp_of() { LC_ALL=C sort | cksum | awk '{print $1}'; }
 
-# An unexaminable read (double-quoted or spliced string) is grandfathered per
-# file as `<file>:#interp` with the count of such reads it excuses; one more
-# fails as unbaselined, one fewer as stale.
-interp_files="$(printf '%s\n' "$interpreted" | sed -n 's/^  //p' | sort -u |
-  sed 's/:[0-9]*$//' | sort | uniq -c | awk '{print $2 "\t" $1}')"
-unbaselined_interp=""
-interp_stale=0
-while IFS=$'\t' read -r ifile icount; do
-  [ -n "$ifile" ] || continue
-  if want="$(baseline_count "${ifile}:#interp")"; then
-    if [ "$icount" -lt "$want" ]; then
-      echo "lint-lake-dedup: baseline stale: ${ifile}:#interp states $want read(s), the gate finds $icount — lower the count in $BASELINE." >&2
-      interp_stale=1
-    fi
-    [ "$icount" -gt "$want" ] || continue
-  fi
-  unbaselined_interp="${unbaselined_interp}$(printf '%s\n' "$interpreted" | grep -F "  ${ifile}:" | sort -u)"$'\n'
-done <<<"$interp_files"
-if [ -n "$unbaselined_interp" ]; then
-  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted or spliced Go string is not examined by this gate; write the SQL as one raw (backtick) literal naming the table after FROM/JOIN:" >&2
-  printf '%s' "$unbaselined_interp" >&2
-  exit 1
-fi
+# One TAB record per site: key, fingerprinted text, location, snippet.
+sites="$(
+  printf '%s\n' "$violations" | awk -F'\t' 'NF >= 5 { print $1 ":" $3 "\t" $5 "\t" $1 ":" $2 "  " $3 "\t" $4 }'
+  printf '%s\n' "$interpreted" | awk -F'\t' 'NF >= 3 && !seen[$2]++ {
+    f = $2; sub(/:[0-9]+$/, "", f); print f ":#interp\t" $3 "\t" $2 "\t" }'
+)"
+keys="$({ cut -f1 <<<"$sites"; printf '%s\n' ${base_keys+"${base_keys[@]}"}; } | { grep -v '^$' || true; } | LC_ALL=C sort -u)"
 
 fail=0
-observed=""
-while IFS=$'\t' read -r file line tbl snip; do
-  [ -n "$file" ] || continue
-  key="${file}:${tbl}"
-  observed="${observed}|${key}|"
-  in_baseline "$key" && continue
-  if [ "$fail" -eq 0 ]; then
-    echo "lint-lake-dedup: FAIL — aggregating read(s) of a duplicate-bearing lake table with no collapse:" >&2
+interp_fail=0
+stale=0
+while IFS= read -r key; do
+  [ -n "$key" ] || continue
+  ksites="$(awk -F'\t' -v k="$key" '$1 == k' <<<"$sites")"
+  got_n=0
+  got_fp=""
+  if [ -n "$ksites" ]; then
+    got_n="$(grep -c . <<<"$ksites")"
+    got_fp="$(cut -f2 <<<"$ksites" | fp_of)"
   fi
-  fail=1
-  echo "  $file:$line  $tbl" >&2
-  echo "    $snip" >&2
-done <<<"$violations"
-
-stale=$interp_stale
-for b in ${base_keys+"${base_keys[@]}"}; do
-  case "$b" in
-    *:#interp)
-      grep -qF "${b%:#interp}"$'\t' <<<"$interp_files" ||
-        { echo "lint-lake-dedup: baseline stale: $b — the file has no unexaminable read; remove it from $BASELINE." >&2; stale=1; }
-      continue ;;
+  if idx="$(base_index "$key")"; then
+    [ "$got_n" = "${base_counts[$idx]}" ] && [ "$got_fp" = "${base_fps[$idx]}" ] && continue
+    if [ "$got_n" -eq 0 ]; then
+      # An entry for a table this copy does not watch is not stale: CI judges
+      # a PR with the base branch's copy, which must accept the entries of the
+      # PR that adds the table.
+      case "$key" in
+        *:stellar.*) [[ "${key##*:stellar.}" =~ ^(${READ_TABLES})$ ]] || continue ;;
+      esac
+      echo "lint-lake-dedup: baseline stale: $key no longer has a violating read — remove it from $BASELINE." >&2
+      stale=1
+      continue
+    fi
+    why="its entry states ${base_counts[$idx]} read(s) #${base_fps[$idx]}, the gate finds $got_n #$got_fp"
+  else
+    why="not in $BASELINE"
+  fi
+  case "$key" in
+    *:#interp) interp_fail=1
+       echo "lint-lake-dedup: FAIL — $key: a lake-table read in a double-quoted or spliced Go string is not examined by this gate ($why):" >&2 ;;
+    *) fail=1
+       echo "lint-lake-dedup: FAIL — $key: aggregating read(s) of a duplicate-bearing lake table with no collapse ($why):" >&2 ;;
   esac
-  # An entry for a table this copy does not watch is not stale: CI judges a PR
-  # with the base branch's copy, which must accept the entries of the PR that
-  # adds the table.
-  [[ "${b##*:stellar.}" =~ ^(${READ_TABLES})$ ]] || continue
-  case "$observed" in
-    *"|$b|"*) : ;;
-    *) echo "lint-lake-dedup: baseline stale: $b no longer violates — remove it from $BASELINE." >&2
-       stale=1 ;;
-  esac
-done
+  while IFS=$'\t' read -r _ _ loc snip; do
+    echo "  $loc" >&2
+    [ -z "$snip" ] || echo "    $snip" >&2
+  done <<<"$ksites"
+  echo "  baseline entry: $key  $got_n read$([ "$got_n" -eq 1 ] || echo s): #$got_fp <reason>" >&2
+done <<<"$keys"
 
+if [ "$interp_fail" -ne 0 ]; then
+  echo "Write the SQL as one raw (backtick) literal naming the table after FROM/JOIN." >&2
+fi
 if [ "$fail" -ne 0 ]; then
   cat >&2 <<'EOF'
 
@@ -753,12 +765,12 @@ Over ledgers 63,000,000-63,099,999 on r1, EVERY distinct
 row and stellar.operations runs at 2.0x, so an uncollapsed count() is a
 multiple of the truth — and the totals still look plausible.
 
-If the read is genuinely exempt, add it to scripts/ci/lint-lake-dedup.baseline
-with a reason and a `Baseline-Growth:` commit trailer naming that file.
+If the read is genuinely exempt, add the printed entry to
+scripts/ci/lint-lake-dedup.baseline with a reason and a `Baseline-Growth:`
+commit trailer naming that file.
 EOF
-  exit 1
 fi
-[ "$stale" -eq 0 ] || exit 1
+[ "$fail" -eq 0 ] && [ "$interp_fail" -eq 0 ] && [ "$stale" -eq 0 ] || exit 1
 
 echo "lint-lake-dedup: OK — ${examined} lake-table read(s) across ${#subjects[@]} file(s)," \
      "${aggregating} of them aggregating; every aggregating one reads through FINAL" \

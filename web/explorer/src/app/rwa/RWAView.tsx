@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -15,6 +16,7 @@ import {
   formatCompactUnits,
   formatReadable,
   formatOraclePrice,
+  formatPremiumPct,
   formatRelative,
   formatRelativeLong,
   subtractDecimalStrings,
@@ -23,6 +25,11 @@ import { hasDirectoryScamFlag } from '@/lib/directory-tags';
 import { assetHref } from '@/lib/fiat-slugs';
 import { truncateMiddle } from '@/components/ui/Mono';
 import { SUPPLY_FLOOR_HINT, VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
+import {
+  provenanceFromBasis,
+  provenanceQualifier,
+  type PriceBasis,
+} from '@/app/assets/[slug]/priceProvenance';
 import {
   Badge,
   Callout,
@@ -348,6 +355,67 @@ function Availability({
  */
 function usd(value: string | null | undefined): string | null {
   return formatReadable(value, true);
+}
+
+/** The floor marker: a glyph for the eye and words for a screen reader. */
+function FloorMark() {
+  return (
+    <>
+      <span className="text-ink-muted" aria-hidden="true">
+        ≥{' '}
+      </span>
+      <span className="sr-only">at least </span>
+    </>
+  );
+}
+
+/** How many contributing rows scaled `figure` from a supply that is only a floor. */
+function floorSupplies(
+  assets: RWAAsset[],
+  figure: (a: RWAAsset) => string | null | undefined,
+): number {
+  return assets.filter(
+    (a) => a.circulating_supply_lower_bound && figure(a) != null,
+  ).length;
+}
+
+/**
+ * Why a served lower bound is one, for every cause the server ORs into the
+ * flag; a "≥" with no stated reason reads as an exact total.
+ */
+function FloorReasons({
+  unvalued,
+  truncated,
+  floors,
+  unvaluedProse,
+}: {
+  unvalued: number;
+  truncated: boolean;
+  floors: number;
+  unvaluedProse: ReactNode;
+}) {
+  return (
+    <>
+      {unvalued > 0 && unvaluedProse}
+      {truncated && (
+        <>
+          {' '}
+          The set itself may be missing members: a rebuild cap or an unanswered
+          read bound it, as the basis below names.
+        </>
+      )}
+      {floors > 0 && (
+        <>
+          {' '}
+          {floors} contributing asset{floors === 1 ? '’s' : 's’'} circulating
+          supply is only a floor — {SUPPLY_FLOOR_HINT}
+        </>
+      )}
+      {unvalued === 0 && !truncated && floors === 0 && (
+        <> The server marks this figure a lower bound.</>
+      )}
+    </>
+  );
 }
 
 /**
@@ -1075,8 +1143,15 @@ export function sumUsd(values: (string | null | undefined)[]): {
  * 2.58M tokens the lake can see. Omitting it made the tile a floor with
  * an invisible hole in it.
  */
+// A yield-bearing wrapper is backed by a stablecoin already counted, so
+// summing it counts that backing twice; /v1/stablecoins leaves it out too.
+const YIELD_BEARING_WRAPPERS = new Set([
+  'yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF',
+]);
+
 export function sumStablecoins(
   rows: {
+    asset_id?: string;
     market_cap_usd?: string | null;
     market_cap_lower_bound?: boolean;
     listing_valuation?: {
@@ -1091,10 +1166,17 @@ export function sumStablecoins(
   unvalued: number;
   listingPriced: number;
   floor: boolean;
+  wrappers: number;
 } {
   let listingPriced = 0;
   let floor = false;
-  const values = rows.map((r) => {
+  const wrappers = rows.filter(
+    (r) => r.asset_id != null && YIELD_BEARING_WRAPPERS.has(r.asset_id),
+  ).length;
+  const summed = rows.filter(
+    (r) => r.asset_id == null || !YIELD_BEARING_WRAPPERS.has(r.asset_id),
+  );
+  const values = summed.map((r) => {
     if (r.market_cap_usd != null) {
       if (r.market_cap_lower_bound === true) floor = true;
       return r.market_cap_usd;
@@ -1107,7 +1189,7 @@ export function sumStablecoins(
     }
     return null;
   });
-  return { ...sumUsd(values), listingPriced, floor };
+  return { ...sumUsd(values), listingPriced, floor, wrappers };
 }
 
 /**
@@ -1248,9 +1330,11 @@ function BasisDisclosure({ label, text }: { label: string; text: string }) {
  */
 function ReferenceHeadline({
   summary,
+  assets,
   referenceTotal,
 }: {
   summary: Schemas['RWASummary'];
+  assets: RWAAsset[];
   referenceTotal: string | null;
 }) {
   const reference = summary.reference_valuation;
@@ -1268,11 +1352,7 @@ function ReferenceHeadline({
           </span>
         ) : (
           <>
-            {reference?.lower_bound && (
-              <span className="text-ink-muted" aria-hidden>
-                ≥{' '}
-              </span>
-            )}
+            {reference?.lower_bound && <FloorMark />}
             {referenceTotal}
           </>
         )}
@@ -1285,17 +1365,31 @@ function ReferenceHeadline({
       {/* The floor, stated rather than implied by the "≥". A reader who
           reads past the glyph still has to be told the total is short
           of the sector, and by how many assets. */}
-      {reference?.lower_bound && unvalued > 0 && (
+      {referenceTotal != null && reference?.lower_bound && (
         <details className="text-ink-muted mt-2 text-xs">
           <summary className="cursor-pointer">
-            <strong className="text-ink">A floor, not a total.</strong>{' '}
-            {unvalued} unvalued
-          </summary>{' '}
-          of {summary.assets} asset{summary.assets === 1 ? '' : 's'} in the set
-          carr{unvalued === 1 ? 'ies' : 'y'} no reference valuation — no bound
-          and current oracle feed, or no circulating-supply reading — and
-          contribute{unvalued === 1 ? 's' : ''} nothing to this figure. The
-          sector is worth at least this much, not exactly this much.
+            <strong className="text-ink">A floor, not a total.</strong>
+            {unvalued > 0 && <> {unvalued} unvalued</>}
+          </summary>
+          <FloorReasons
+            unvalued={unvalued}
+            truncated={summary.truncated === true}
+            floors={floorSupplies(
+              assets,
+              (a) => a.reference_valuation.value_usd,
+            )}
+            unvaluedProse={
+              <>
+                {' '}
+                {unvalued} of {summary.assets} asset
+                {summary.assets === 1 ? '' : 's'} in the set carr
+                {unvalued === 1 ? 'ies' : 'y'} no reference valuation — no bound
+                and current oracle feed, or no circulating-supply reading — and
+                contribute{unvalued === 1 ? 's' : ''} nothing to this figure.
+              </>
+            }
+          />{' '}
+          The sector is worth at least this much, not exactly this much.
         </details>
       )}
       {lead && (
@@ -1316,27 +1410,33 @@ function ReferenceHeadline({
  */
 function MarketCapHeadline({
   summary,
+  assets,
   total,
 }: {
   summary: Schemas['RWASummary'];
+  assets: RWAAsset[];
   total: string | null;
 }) {
   const { lead, rest } = splitBasis(summary.basis);
+  const derived = assets.filter(
+    (a) =>
+      a.valuation.market_cap_usd != null && a.valuation.price_basis != null,
+  ).length;
   return (
     <StatCell>
       <Stat
-        label="Market cap (observed trades)"
+        label={
+          derived > 0
+            ? 'Market cap (traded prices)'
+            : 'Market cap (observed trades)'
+        }
         size="lg"
         value={
           total == null ? (
             <span className="text-ink-muted">Not published</span>
           ) : (
             <>
-              {summary.lower_bound && (
-                <span className="text-ink-muted" aria-hidden>
-                  ≥{' '}
-                </span>
-              )}
+              {summary.lower_bound && <FloorMark />}
               {total}
             </>
           )
@@ -1344,20 +1444,36 @@ function MarketCapHeadline({
         sub={
           total == null
             ? 'No asset in the set publishes a market valuation'
-            : `${summary.assets_valued} of ${summary.assets} valued at traded prices`
+            : `${summary.assets_valued} of ${summary.assets} valued at traded prices` +
+              (derived > 0
+                ? `, ${derived} through a derived price, not a direct market`
+                : '')
         }
       />
-      {summary.lower_bound && summary.assets_unvalued > 0 && (
+      {total != null && summary.lower_bound && (
         <details className="text-ink-muted mt-2 text-xs">
           <summary className="cursor-pointer">
-            <strong className="text-ink">Also a floor.</strong>{' '}
-            {summary.assets_unvalued} unvalued
-          </summary>{' '}
-          {summary.assets_unvalued} asset
-          {summary.assets_unvalued === 1 ? '' : 's'} publish
-          {summary.assets_unvalued === 1 ? 'es' : ''} no market valuation and
-          contribute{summary.assets_unvalued === 1 ? 's' : ''} nothing here —
-          mostly because a tokenized instrument is bought and held, not traded.
+            <strong className="text-ink">Also a floor.</strong>
+            {summary.assets_unvalued > 0 && (
+              <> {summary.assets_unvalued} unvalued</>
+            )}
+          </summary>
+          <FloorReasons
+            unvalued={summary.assets_unvalued}
+            truncated={summary.truncated === true}
+            floors={floorSupplies(assets, (a) => a.valuation.market_cap_usd)}
+            unvaluedProse={
+              <>
+                {' '}
+                {summary.assets_unvalued} asset
+                {summary.assets_unvalued === 1 ? '' : 's'} publish
+                {summary.assets_unvalued === 1 ? 'es' : ''} no market valuation
+                and contribute{summary.assets_unvalued === 1 ? 's' : ''} nothing
+                here — mostly because a tokenized instrument is bought and held,
+                not traded.
+              </>
+            }
+          />
         </details>
       )}
       {lead && (
@@ -1393,6 +1509,8 @@ export type StablecoinTotals = {
    * combined tile was built to avoid.
    */
   listingPriced: number;
+  /** Yield-bearing wrappers left out of the total. */
+  wrappers: number;
   /** The listing envelope flagged a read past its freshness limit. */
   stale?: boolean;
 };
@@ -1467,11 +1585,7 @@ function SectorTotals({
                 </span>
               ) : (
                 <>
-                  {(stable.unvalued > 0 || stable.floor) && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
+                  {(stable.unvalued > 0 || stable.floor) && <FloorMark />}
                   {usd(stableTotal)}
                 </>
               )
@@ -1482,6 +1596,9 @@ function SectorTotals({
                 : `${stable.valued} fiat-backed token${stable.valued === 1 ? '' : 's'} issued on Stellar` +
                   (stable.listingPriced > 0
                     ? `, ${stable.listingPriced} of them listing-priced`
+                    : '') +
+                  (stable.wrappers > 0
+                    ? `; ${stable.wrappers} yield-bearing wrapper${stable.wrappers === 1 ? '' : 's'} left out, ${stable.wrappers === 1 ? 'its' : 'their'} backing already counted`
                     : '')
             }
           />
@@ -1518,11 +1635,7 @@ function SectorTotals({
                 <span className="text-ink-muted">Not published</span>
               ) : (
                 <>
-                  {combinedFloor && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
-                  )}
+                  {combinedFloor && <FloorMark />}
                   {usd(combined)}
                 </>
               )
@@ -1589,8 +1702,12 @@ function HeadlineStats({
       {/* The two bases, in the order a reader should meet them, and
           never added together. */}
       <div className="rounded-card border-line bg-line grid grid-cols-1 gap-px overflow-hidden border lg:grid-cols-3">
-        <ReferenceHeadline summary={summary} referenceTotal={referenceTotal} />
-        <MarketCapHeadline summary={summary} total={total} />
+        <ReferenceHeadline
+          summary={summary}
+          assets={assets}
+          referenceTotal={referenceTotal}
+        />
+        <MarketCapHeadline summary={summary} assets={assets} total={total} />
       </div>
       <StatGrid cols={3}>
         <StatCell>
@@ -1639,9 +1756,12 @@ function HeadlineStats({
           <>
             <strong>Where both exist.</strong> {both.assets} of {summary.assets}{' '}
             carry both figures and a published premium:{' '}
+            {both.lower_bound && <FloorMark />}
             {usd(both.reference_value_usd)} at the reference against{' '}
+            {both.lower_bound && <FloorMark />}
             {usd(both.market_cap_usd)} at traded prices. That gap, per asset, is
             the premium or discount column below.{' '}
+            {both.lower_bound && <>Both are floors: {SUPPLY_FLOOR_HINT} </>}
           </>
         )}
         {summary.assets_with_reference > 0 && (
@@ -1704,6 +1824,7 @@ const RWA_CSV_COLUMNS = [
   'market_cap_usd',
   'market_cap_status',
   'price_usd',
+  'price_basis',
   'reference_value_usd',
   'reference_value_status',
   'reference_price_usd',
@@ -1714,6 +1835,8 @@ const RWA_CSV_COLUMNS = [
   'premium_status',
   'volume_24h_usd',
   'volume_lower_bound',
+  'isin_declared_by_issuers',
+  'vetted_isin_review_due',
 ] as const;
 
 /** One CSV row per asset, statuses beside each value so a withheld figure stays explained. */
@@ -1732,6 +1855,7 @@ export function rwaCsvRow(a: RWAAsset): Record<string, string> {
     market_cap_usd: a.valuation.market_cap_usd ?? '',
     market_cap_status: a.valuation.status,
     price_usd: a.valuation.price_usd ?? '',
+    price_basis: a.valuation.price_basis ?? '',
     reference_value_usd: a.reference_valuation.value_usd ?? '',
     reference_value_status: a.reference_valuation.status,
     reference_price_usd: a.reference?.price_usd ?? '',
@@ -1742,6 +1866,11 @@ export function rwaCsvRow(a: RWAAsset): Record<string, string> {
     premium_status: a.premium.status,
     volume_24h_usd: a.volume_24h_usd ?? '',
     volume_lower_bound: a.volume_lower_bound ? 'true' : 'false',
+    isin_declared_by_issuers: a.isin_collision
+      ? String(a.isin_collision.declared_by_issuers)
+      : '',
+    vetted_isin_review_due:
+      a.vetted_isin == null ? '' : a.vetted_isin.review_due ? 'true' : 'false',
   };
 }
 
@@ -1822,8 +1951,13 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
         <div className="text-ink-muted text-xs">
           {asset.basis === 'sep1_anchor_declaration'
             ? `declared by the issuer${asset.anchor_class ? ` as ${asset.anchor_class}` : ''}`
-            : (asset.basis && BASIS_PROSE[asset.basis]) || BASIS_PROSE_FALLBACK}
+            : asset.basis === 'sep1_isin_vetted' &&
+                asset.vetted_isin?.review_due
+              ? 'named by the issuer under a registered ISIN, transcribed by hand; its review is overdue'
+              : (asset.basis && BASIS_PROSE[asset.basis]) ||
+                BASIS_PROSE_FALLBACK}
         </div>
+        <IsinCaveats asset={asset} />
       </Td>
       <Td align="right">
         <ReferenceValueCell asset={asset} />
@@ -1832,10 +1966,22 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
         {cap == null ? (
           <Withheld reason={reason} />
         ) : (
-          <SupplyScaled value={cap} asset={asset} />
+          <>
+            <PriceBasisMark basis={asset.valuation.price_basis} />
+            <SupplyScaled value={cap} asset={asset} />
+          </>
         )}
       </Td>
-      <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
+      <Td align="right">
+        {price == null ? (
+          <Withheld reason={reason} />
+        ) : (
+          <>
+            <PriceBasisMark basis={asset.valuation.price_basis} />
+            {price}
+          </>
+        )}
+      </Td>
       <Td align="right">
         <ReferenceCell asset={asset} />
       </Td>
@@ -1872,6 +2018,52 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
  * dash and never a number: a dash in a money column beside real figures
  * is read as zero, and zero is the one reading that is certainly wrong.
  */
+const PRICE_BASIS_LABEL: Record<NonNullable<PriceBasis>, string> = {
+  declared_peg: 'pegged',
+  global_market: 'global',
+  transitive: 'two-hop',
+};
+
+/** Names a price that is not a direct Stellar market observation, and anything valued from it. */
+function PriceBasisMark({ basis }: { basis: PriceBasis }) {
+  if (basis == null) return null;
+  return (
+    <span
+      className="text-ink-muted mr-1.5 text-[11px]"
+      title={`${provenanceQualifier(provenanceFromBasis(basis, 'listing'))} — not a price observed in a direct Stellar market`}
+    >
+      {PRICE_BASIS_LABEL[basis]}
+    </span>
+  );
+}
+
+/**
+ * A declared ISIN is a claim: say so when other issuers declare the same
+ * one, or when a hand-vetted binding is past its review date.
+ */
+function IsinCaveats({ asset }: { asset: RWAAsset }) {
+  const collision = asset.isin_collision;
+  const vetted = asset.vetted_isin;
+  return (
+    <>
+      {collision != null && (
+        <div
+          className="text-warn-500 text-xs"
+          title="At most one issuer can hold this security; a declared ISIN is a claim, not proof of holding it."
+        >
+          Shared ISIN: declared by {collision.declared_by_issuers} issuers
+        </div>
+      )}
+      {vetted?.review_due && (
+        <div className="text-warn-500 text-xs">
+          Review overdue: verified {vetted.verified_on.slice(0, 10)}, due{' '}
+          {vetted.review_by.slice(0, 10)}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** A row figure scaled by its circulating supply: "≥" when that supply is a floor. */
 function SupplyScaled({ value, asset }: { value: string; asset: RWAAsset }) {
   if (!asset.circulating_supply_lower_bound) return <>{value}</>;
@@ -2046,14 +2238,6 @@ function PremiumCell({ premium }: { premium: RWAAsset['premium'] }) {
  * An exact zero keeps two decimals. It IS par, and saying so plainly is
  * the honest rendering of that case.
  */
-function formatPremiumPct(pct: number): string {
-  const abs = Math.abs(pct);
-  if (abs === 0) return '0.00';
-  if (abs >= 0.01) return pct.toFixed(2);
-  if (abs >= 0.001) return pct.toFixed(3);
-  return pct.toFixed(4);
-}
-
 function GroupTable({
   rows,
   firstHeading,

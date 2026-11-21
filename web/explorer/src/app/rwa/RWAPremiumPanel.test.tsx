@@ -4,7 +4,17 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { components } from '@/api/types';
 
-import { RWAPremiumPanel, premiumLines } from './RWAPremiumPanel';
+import { RWAPremiumPanel, pct, premiumLines } from './RWAPremiumPanel';
+
+describe('the premium legend', () => {
+  it('never rounds a basis-point premium to par', () => {
+    expect(pct(0.004)).toBe('+0.004%');
+    expect(pct(-0.004)).toBe('-0.004%');
+    expect(pct(0.0004)).toBe('+0.0004%');
+    expect(pct(1.5)).toBe('+1.50%');
+    expect(pct(0)).toBe('+0.00%');
+  });
+});
 
 type Schemas = components['schemas'];
 type View = Schemas['RWAPremiumHistoryView'];
