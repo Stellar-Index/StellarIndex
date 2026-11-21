@@ -323,6 +323,9 @@ type AssetDetail struct {
 	// priceUnmeasured: the substance gate could not measure this row, so its
 	// missing price is an unanswered read, not a market that produced none.
 	priceUnmeasured bool
+	// priceWholeToken: PriceUSD is a global per-whole-token price standing in for none of the row's own, so it was never
+	// normalised on the nonstandard-decimals projection's scale and a lake scale cannot drift from it.
+	priceWholeToken bool
 	// scaleSettled: the listing fill already answered this Soroban row's scale (read, vouched by the projection, or
 	// declared none), so a later overlay need not read it again.
 	scaleSettled bool
@@ -1142,7 +1145,7 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	row.Decimals = lake
 	row.scaleSettled = true
 	// Only a price can have been normalised on the projection's scale: an unpriced row's lake scale is a fact, not drift.
-	valued := row.PriceUSD != nil || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
+	valued := (row.PriceUSD != nil && !row.priceWholeToken) || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
 	if valued && ((hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals)) {
 		row.MarketCapDecimalsMismatch = true
 		// Request-driven, so labelled by site and outcome only: a per-asset label here would be
@@ -3715,16 +3718,17 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 
 // fillTwinCapAtRowPrice values the twin's supply at the catalogue row's own served price, so the cap mergeTwinStats carries is
 // that row's price times its own Stellar issuance; with no row price no cap is built. The twin's on-chain price is restored for
-// the valuations that rule on it, and a withheld twin keeps its refusal.
+// the valuations that rule on it, and a withheld or unmeasured twin backs no cap.
 func (s *Server) fillTwinCapAtRowPrice(
 	ctx context.Context, twin []AssetDetail, rowPrice *string, sourceCounts map[string]int, precise map[string]timescale.SupplyObservation,
 ) {
 	own := twin[0].PriceUSD
-	if twin[0].PriceWithheldReason == "" {
+	if twin[0].PriceWithheldReason == "" && !twin[0].priceUnmeasured {
 		twin[0].PriceUSD = rowPrice
+		twin[0].priceWholeToken = own == nil
 	}
 	s.fillMarketCapsWith(ctx, twin, sourceCounts, precise)
-	twin[0].PriceUSD = own
+	twin[0].PriceUSD, twin[0].priceWholeToken = own, false
 }
 
 // flagTwinSubstanceWithheldCap marks a catalogue row's missing cap as suppressed when its twin's on-chain price failed the

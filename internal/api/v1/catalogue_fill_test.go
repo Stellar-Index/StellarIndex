@@ -123,6 +123,126 @@ func TestCatalogueStats_CapIsTheRowsOwnPriceTimesSupply(t *testing.T) {
 	}
 }
 
+// The twin's gate outcome rules the catalogue row's cap: a refused or unmeasured on-chain price backs no cap at the row's price.
+func TestCatalogueStats_TwinGateOutcomeRulesTheCap(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	onChain, rowPrice := "0.5", "2"
+	cases := map[string]struct {
+		gate           PriceSubstanceGate
+		wantUnmeasured bool
+		wantLowLiq     bool
+	}{
+		"unmeasured twin":        {gate: &unmeasuredGate{}, wantUnmeasured: true},
+		"measured-withheld twin": {gate: &stubListingGate{}, wantLowLiq: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := &Server{Options: Options{AssetsReader: &pricedTwinAssets{price: &onChain}, VerifiedCurrencies: cat, Substance: tc.gate}}
+			page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc", PriceUSD: &rowPrice}}
+			unmeasured := s.fillCatalogueStatsForPage(context.Background(), page, assetListFilters{typ: "classic"})
+			if page[0].MarketCapUSD != nil {
+				t.Errorf("market_cap_usd = %s, want null: the twin's price did not clear the gate", *page[0].MarketCapUSD)
+			}
+			if page[0].CirculatingSupply == nil || *page[0].CirculatingSupply != "1000000000" {
+				t.Errorf("circulating_supply = %v, want the twin's 1000000000", page[0].CirculatingSupply)
+			}
+			if unmeasured != tc.wantUnmeasured {
+				t.Errorf("page unmeasured = %v, want %v", unmeasured, tc.wantUnmeasured)
+			}
+			if page[0].MarketCapLowLiquidity != tc.wantLowLiq {
+				t.Errorf("market_cap_low_liquidity = %v, want %v", page[0].MarketCapLowLiquidity, tc.wantLowLiq)
+			}
+			if page[0].PriceUSD == nil || *page[0].PriceUSD != rowPrice {
+				t.Errorf("row price changed to %v", page[0].PriceUSD)
+			}
+		})
+	}
+}
+
+// With no row price the twin's on-chain price must not stand in: no cap, the supply still lands.
+func TestCatalogueStats_NoRowPriceNoCap(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	onChain := "0.5"
+	s := &Server{Options: Options{AssetsReader: &pricedTwinAssets{price: &onChain}, VerifiedCurrencies: cat}}
+	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
+	s.fillCatalogueStatsForPage(context.Background(), page, assetListFilters{typ: "classic"})
+	if page[0].MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %s, want null with no row price", *page[0].MarketCapUSD)
+	}
+	if page[0].CirculatingSupply == nil || *page[0].CirculatingSupply != "1000000000" {
+		t.Errorf("circulating_supply = %v, want 1000000000", page[0].CirculatingSupply)
+	}
+}
+
+// The valuations after the cap fill rule on the twin's own on-chain price, so it must be back on the twin.
+func TestFillTwinCapAtRowPrice_RestoresTheTwinsOwnPrice(t *testing.T) {
+	onChain, rowPrice := "0.5", "2"
+	reader := &pricedTwinAssets{price: &onChain}
+	s := &Server{Options: Options{AssetsReader: reader}}
+	precise, _ := reader.LatestSupplyObservations(context.Background(), 0)
+	twin := []AssetDetail{{AssetID: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", Type: "classic", Decimals: 7, PriceUSD: &onChain}}
+	s.fillTwinCapAtRowPrice(context.Background(), twin, &rowPrice, nil, precise)
+	if twin[0].PriceUSD == nil || *twin[0].PriceUSD != onChain {
+		t.Errorf("twin price = %v after the cap fill, want its own %s", twin[0].PriceUSD, onChain)
+	}
+	if twin[0].MarketCapUSD == nil || !decimalEqual(*twin[0].MarketCapUSD, "200") {
+		t.Errorf("market_cap_usd = %v, want 200 at the row's price", twin[0].MarketCapUSD)
+	}
+}
+
+// An unpriced, ungated row on the main listing path still gets its supply: supply is a fact about the token.
+func TestFillMarketCapsFromSupply_UnpricedRowGetsSupply(t *testing.T) {
+	s := &Server{Options: Options{AssetsReader: &pricedTwinAssets{}}}
+	rows := []AssetDetail{{AssetID: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", Type: "classic", Decimals: 7}}
+	s.fillMarketCapsFromSupply(context.Background(), rows, nil)
+	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != "1000000000" {
+		t.Errorf("circulating_supply = %v, want 1000000000", rows[0].CirculatingSupply)
+	}
+	if rows[0].MarketCapUSD != nil {
+		t.Errorf("market_cap_usd = %s, want null with no price", *rows[0].MarketCapUSD)
+	}
+}
+
+// A twin with no on-chain price is valued at the row's per-whole-token price, which was never normalised on the projection's
+// scale, so a lake scale that disagrees with the default is not drift; a twin with its own price keeps the lockstep refusal.
+func TestFillTwinCapAtRowPrice_DecimalsDriftNeedsTheTwinsOwnPrice(t *testing.T) {
+	const contract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	onChain, rowPrice := "0.5", "2"
+	precise := map[string]timescale.SupplyObservation{contract: {CirculatingSupply: "100000000", Basis: "issuer_exclusion"}}
+	for name, tc := range map[string]struct {
+		own          *string
+		wantMismatch bool
+		wantCap      string
+	}{
+		"twin unpriced": {own: nil, wantCap: "200"},
+		"twin priced":   {own: &onChain, wantMismatch: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &Server{Options: Options{AssetsReader: &listingOnlyAssets{}, TokenDecimals: fixedTokenDecimals(6)}}
+			twin := []AssetDetail{{AssetID: contract, Type: "soroban", Decimals: 7, PriceUSD: tc.own}}
+			s.fillTwinCapAtRowPrice(context.Background(), twin, &rowPrice, nil, precise)
+			if twin[0].MarketCapDecimalsMismatch != tc.wantMismatch {
+				t.Errorf("market_cap_decimals_mismatch = %v, want %v", twin[0].MarketCapDecimalsMismatch, tc.wantMismatch)
+			}
+			got := twin[0].MarketCapUSD
+			if tc.wantCap == "" {
+				if got != nil {
+					t.Errorf("market_cap_usd = %s, want null", *got)
+				}
+			} else if got == nil || !decimalEqual(*got, tc.wantCap) {
+				// 100000000 at 6 decimals = 100 tokens at the row's $2.
+				t.Errorf("market_cap_usd = %v, want %s", got, tc.wantCap)
+			}
+		})
+	}
+}
+
 // decimalEqual compares two decimal strings by value.
 func decimalEqual(a, b string) bool {
 	ar, ok1 := new(big.Rat).SetString(a)
