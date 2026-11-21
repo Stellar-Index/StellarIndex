@@ -98,7 +98,7 @@
       alertmanager_basic_auth_password_hash are empty — 9090/9093 are
       reachable, unauthenticated, from anything in
       prometheus_internal_cidrs (the firewall is the only control).
-      Set a vault-supplied bcrypt hash (`htpasswd -nBC 10 operator`)
+      Set a vault-supplied bcrypt hash (`htpasswd -nBC 10 "" | tr -d ':\n'`)
       before production.
   when:
     - prometheus_basic_auth_password_hash | default('') | length == 0
@@ -118,6 +118,22 @@
       (prometheus_basic_auth_password / alertmanager_basic_auth_password).
       Prometheus would get 401 from its peers and from Alertmanager, so
       every alert delivery and self-scrape would fail silently.
+
+# The web config takes the bare bcrypt hash; `user:$2y$...` (htpasswd -n output)
+# makes both servers refuse to start.
+- name: assert the basic-auth hashes are bare bcrypt hashes
+  assert:
+    that:
+      - item | length == 0 or item is match('^\$2[aby]\$[0-9]{2}\$')
+    fail_msg: >-
+      A basic-auth hash is not a bare bcrypt hash (it must start with $2y$ /
+      $2a$ / $2b$, not with a user name). Generate it with
+      `htpasswd -nBC 10 "" | tr -d ':\n'`.
+  loop:
+    - "{{ prometheus_basic_auth_password_hash | default('') }}"
+    - "{{ alertmanager_basic_auth_password_hash | default('') }}"
+  loop_control:
+    label: "basic-auth hash"
 
 - name: warn when no Discord chat-fanout webhook is set
   debug:

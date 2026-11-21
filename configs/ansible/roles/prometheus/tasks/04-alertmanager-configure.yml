@@ -9,15 +9,13 @@
     owner: root
     group: "{{ alertmanager_user }}"
     mode: "0640"
+    # Same exporter-toolkit web config format as Prometheus.
+    validate: "promtool check web-config %s"
   when: alertmanager_basic_auth_password_hash | length > 0
   notify: "alertmanager config changed"
 
-- name: remove /etc/alertmanager/web-config.yml when basic auth is unset
-  file:
-    path: /etc/alertmanager/web-config.yml
-    state: absent
-  when: alertmanager_basic_auth_password_hash | length == 0
-  notify: "alertmanager config changed"
+# With basic auth unset the file stays until "restart alertmanager" has dropped
+# --web.config.file: the running process re-reads it on every request.
 
 - name: render /etc/alertmanager/alertmanager.yml
   template:
