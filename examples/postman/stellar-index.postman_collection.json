@@ -14046,7 +14046,7 @@
               "request": {
                 "name": "SEP-40 prices-equivalent passthrough (N historical).",
                 "description": {
-                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`prices(asset, records) -> Option<Vec<PriceData>>` — \"the\nlast N price records\". Returns up to `records` most-recent\nCLOSED 1-minute VWAP snapshots for the asset/USD pair,\nnewest first; the in-progress bucket is excluded\n(ADR-0015). 200 with an empty array when the asset has no\nclosed buckets yet.\n",
+                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`prices(asset, records) -> Option<Vec<PriceData>>` — \"the\nlast N price records\". Returns up to `records` most-recent\nCLOSED 1-minute VWAP snapshots for the asset/USD pair,\nnewest first; the in-progress bucket is excluded\n(ADR-0015). 200 with an empty array when the asset has no\nclosed buckets yet. A pair frozen by the anomaly checker\n(ADR-0019) serves one record, the held last-known-good value\n`lastprice` serves, with `flags.frozen` and `flags.degraded`;\nthe closed buckets are not served while the freeze holds, and\na freeze with no held value answers 503.\n",
                   "type": "text/plain"
                 },
                 "url": {

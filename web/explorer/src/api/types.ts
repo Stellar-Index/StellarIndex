@@ -4095,7 +4095,11 @@ export interface paths {
          *     CLOSED 1-minute VWAP snapshots for the asset/USD pair,
          *     newest first; the in-progress bucket is excluded
          *     (ADR-0015). 200 with an empty array when the asset has no
-         *     closed buckets yet.
+         *     closed buckets yet. A pair frozen by the anomaly checker
+         *     (ADR-0019) serves one record, the held last-known-good value
+         *     `lastprice` serves, with `flags.frozen` and `flags.degraded`;
+         *     the closed buckets are not served while the freeze holds, and
+         *     a freeze with no held value answers 503.
          */
         get: operations["getOraclePrices"];
         put?: never;
