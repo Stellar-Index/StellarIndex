@@ -142,9 +142,9 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		QuoteVolumeDecimals: wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, quote, volumeDecimals, sources)),
 		TradeCount:          len(trades),
 		OutliersFiltered:    outliersFiltered,
-		Truncated:           pre == maxTrades,
+		Truncated:           window.Truncated(),
 		Clamped:             clamped,
-		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, pre == maxTrades),
+		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, window.Truncated()),
 		Substance:           substance,
 	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
 }
@@ -286,7 +286,7 @@ func (s *Server) tradesInRangeWithStablecoinFallback(
 				return aggregate.ScaledWindow{}, false, err
 			}
 			if len(trades) > 0 {
-				return aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor), false, nil
+				return aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor).WithTruncated(hitTradeCap(trades, maxTrades)), false, nil
 			}
 		}
 	}

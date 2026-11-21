@@ -151,13 +151,13 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // fiatCombinedTrades is the point-path twin of [Server.ohlcSeriesFiatCombined]: it merges the raw trades of EVERY constituent
 // into one chronological population at one amount scale, so /v1/vwap and /v1/ohlc with quote=fiat:USD agree; `proxied` drives
 // flags.triangulated. The gate uses [fiatPointGateInterval]. Read errors propagate (a quietly narrower money answer is worse than
-// a 500); each read uses the caller's `maxTrades` and the merge is trimmed to the newest `maxTrades`, preserving the callers'
-// `len(trades) == maxTrades` truncation signal.
+// a 500); each read uses the caller's `maxTrades` and the merge is trimmed to the newest `maxTrades`. The window is marked
+// truncated when any constituent read hit the cap or the merge was trimmed, measured before the held-back gate drops rows.
 func (s *Server) fiatCombinedTrades(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) (aggregate.ScaledWindow, bool, error) {
 	established, heldBack := s.usdPeggedConstituentSets(pair)
-	merged, proxied, err := s.mergeConstituentTrades(ctx, established, pair, from, to, maxTrades)
+	merged, proxied, truncated, err := s.mergeConstituentTrades(ctx, established, pair, from, to, maxTrades)
 	if err != nil {
 		return aggregate.ScaledWindow{}, false, err
 	}
@@ -170,6 +170,7 @@ func (s *Server) fiatCombinedTrades(
 			if berr != nil {
 				return aggregate.ScaledWindow{}, false, berr
 			}
+			truncated = truncated || hitTradeCap(batch, maxTrades)
 			// `answered` is snapshotted from the established rows before any held-back row joins,
 			// so two held-back constituents sharing an empty bucket still merge, as in the series.
 			batch = dropTradesInAnsweredBuckets(batch, answered)
@@ -185,25 +186,30 @@ func (s *Server) fiatCombinedTrades(
 	sortTradesChronological(merged)
 	if maxTrades > 0 && len(merged) > maxTrades {
 		merged = merged[len(merged)-maxTrades:]
+		truncated = true
 	}
 	// Lift every trade to a common smallest-unit scale: constituents mix on-chain (7dp) and CEX (8dp)
 	// legs, and sum(quote)/sum(base) over-weights the finer source ~10x per decimal of difference.
 	// Uniform windows come back byte-identical; TWAP is scale-invariant, so this is a no-op there.
-	return aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor), proxied, nil
+	return aggregate.NormalizeAmountScale(merged, amountScaleDecimalsFor).WithTruncated(truncated), proxied, nil
 }
 
-// mergeConstituentTrades reads one constituent set into a single population and reports whether any quote leg proxied the requested one.
-// Read errors propagate, as in [Server.fiatCombinedTrades].
+// hitTradeCap reports that a TradesInRange read returned its full limit, so older trades in the range may be unread.
+func hitTradeCap(batch []canonical.Trade, maxTrades int) bool {
+	return maxTrades > 0 && len(batch) >= maxTrades
+}
+
+// mergeConstituentTrades reads one constituent set into a single population and reports whether any quote leg proxied the requested one
+// and whether any read hit the cap. Read errors propagate, as in [Server.fiatCombinedTrades].
 func (s *Server) mergeConstituentTrades(
 	ctx context.Context, pairs []canonical.Pair, pair canonical.Pair, from, to time.Time, maxTrades int,
-) ([]canonical.Trade, bool, error) {
-	var merged []canonical.Trade
-	proxied := false
+) (merged []canonical.Trade, proxied, truncated bool, err error) {
 	for _, sp := range pairs {
 		batch, err := s.History.TradesInRange(ctx, sp, from, to, maxTrades)
 		if err != nil {
-			return nil, false, err
+			return nil, false, false, err
 		}
+		truncated = truncated || hitTradeCap(batch, maxTrades)
 		if len(batch) == 0 {
 			continue
 		}
@@ -214,7 +220,7 @@ func (s *Server) mergeConstituentTrades(
 		}
 		merged = append(merged, batch...)
 	}
-	return merged, proxied, nil
+	return merged, proxied, truncated, nil
 }
 
 // fiatPointGateInterval is the bucket grain the point path gates held-back constituents at: the

@@ -107,7 +107,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res.Truncated = window.Len() == maxTrades
+	res.Truncated = window.Truncated()
 	res.Clamped = clamped
 	res.Substance = s.thinMarketEvidence(ctx, base, quote, "twap")
 	writeJSON(w, res, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil}, to))
