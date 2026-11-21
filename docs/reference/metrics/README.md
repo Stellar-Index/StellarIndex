@@ -144,7 +144,7 @@ The non-5xx twin of `http_request_duration_seconds`, recorded only for status < 
 
 Counter, labels `route`, `flag` (`degraded` / `stale`).
 
-Responses served with `flags.degraded` (a carried-forward or partial body, sent with `Cache-Control: no-store`) or `flags.stale`, counted by `obs.HTTPMetrics` from the envelope writer and the cached asset detail and listing replays. These are 200s, so the 5xx availability SLO never sees a backend read that fails on every request; divide by `http_requests_total` for the route's degraded share. `route` is the route pattern, as in `http_requests_total`. Synthetic probes are excluded. Not alerted.
+Responses served with `flags.degraded` (a carried-forward or partial body, sent with `Cache-Control: no-store`) or `flags.stale`, counted by `obs.HTTPMetrics` from the envelope writer and the cached asset detail and listing replays. These are 200s, so the 5xx availability SLO never sees a backend read that fails on every request; divide by `http_requests_total` for the route's degraded share. `route` is the route pattern, as in `http_requests_total`. Synthetic probes are excluded. Alerted by `stellarindex_api_degraded_responses_high` (more than half of a route's responses degraded for 30 min); `stale` is left to `stellarindex_api_cache_refresh_failing`.
 
 ### `stellarindex_contracts_census_latest_day_timestamp_seconds`
 

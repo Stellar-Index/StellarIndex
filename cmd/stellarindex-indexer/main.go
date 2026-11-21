@@ -893,9 +893,9 @@ func awaitExternalSink(ctx context.Context, done <-chan struct{}, loss *pipeline
 			attrs := []any{"rows", loss.Rows}
 			// Only abandoned trades carry a window; zero times would read as a window to refetch.
 			if !loss.OffChainFrom.IsZero() {
-				attrs = append(attrs, "from", loss.OffChainFrom, "to", loss.OffChainTo)
+				attrs = append(attrs, "from", loss.OffChainFrom, "to", loss.OffChainTo, "venues", loss.Venues)
 			}
-			logger.Error("external sink abandoned rows on exit — off-chain rows have no cursor, refetch the window from the venues",
+			logger.Error("external sink abandoned rows on exit — off-chain rows have no cursor, refetch the window from the venues with stellarindex-ops backfill-external",
 				attrs...)
 		}
 		return true

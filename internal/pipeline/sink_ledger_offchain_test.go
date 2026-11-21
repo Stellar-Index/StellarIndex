@@ -25,7 +25,7 @@ func TestShutdownLossBoundsTheOffChainWindow(t *testing.T) {
 		at("sdex", 800, t0.Add(time.Hour)), // on-chain: covered by MinLedger, not the window
 		at("binance", 0, t0.Add(9*time.Minute)),
 	})
-	want := ShutdownLoss{Rows: 4, MinLedger: 800, LedgerUnknown: true, OffChainFrom: t0, OffChainTo: t0.Add(9 * time.Minute)}
+	want := ShutdownLoss{Rows: 4, MinLedger: 800, LedgerUnknown: true, OffChainFrom: t0, OffChainTo: t0.Add(9 * time.Minute), Venues: "binance,kraken"}
 	if got := lt.snapshot(); got != want {
 		t.Errorf("ShutdownLoss = %+v; want %+v", got, want)
 	}

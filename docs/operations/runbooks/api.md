@@ -290,6 +290,22 @@ Each line carries `cache`, `op`, `key` and `err`.
 
 **Fix.** Fix the upstream read, not the cache; the next good refresh clears the alert. **Escalate:** none.
 
+## stellarindex_api_degraded_responses_high
+
+**Trigger.** `sum by (route) (rate(stellarindex_api_flagged_responses_total{flag="degraded"}[15m])) / sum by (route) (rate(http_requests_total[15m])) > 0.5`, with the degraded rate above 0.01/s, `for: 30m`, ticket. The route answers 200 with `flags.degraded` (a carried-forward or partial body), so the 5xx SLO stays green.
+
+**Check.** `route` names the handler. Its read error is in the API log:
+
+```sh
+journalctl -u stellarindex-api --since -1h | grep -E 'WARN|ERROR' | grep -i -- '<route or its read>'
+```
+
+A cache-backed field that degrades (for example the classic supply map behind `market_cap`) logs `refresh failed (serving last good)` and degrades once the last good value ages out.
+
+**Likely causes.** The backing read failing or timing out (Postgres/ClickHouse load, a missing relation after a migration), or a cache refresh that keeps failing.
+
+**Fix.** Fix the backing read; the degraded share falls as soon as it answers. **Escalate:** none.
+
 ## stellarindex_api_price_stale
 
 **Trigger.** `stellarindex_price_staleness_seconds{asset,quote} > 120` for 5m, OR the series absent for 10m (`absent_over_time(stellarindex_price_staleness_seconds[10m])`). The absent branch has no `asset` label (aggregator tick wedged): go to `aggregator.md#stellarindex_aggregator_silent`. P2. `asset` is an aggregator pair base (`native`, `crypto:XLM`, `crypto:BTC`, `crypto:ETH`). `/v1/price` still answers 200 with an old `observed_at`.
