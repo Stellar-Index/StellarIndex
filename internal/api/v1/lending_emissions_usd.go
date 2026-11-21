@@ -87,13 +87,14 @@ func (s *Server) valueEmissions(ctx context.Context, view *LendingEmissionsView,
 	}
 	var reserves map[string]ReserveView
 	if len(view.Reserves) > 0 {
-		_, rvs, stale, err := s.earningsReserveStates(ctx, view.Pool)
+		_, rvs, stale, degraded, err := s.earningsReserveStates(ctx, view.Pool)
 		if err != nil {
 			s.logger.Warn("lending emissions: reserve read failed", "pool", view.Pool, "err", err)
 			flags.Degraded = true
 		} else {
 			reserves = rvs
 			flags.Stale = flags.Stale || stale
+			flags.Degraded = flags.Degraded || degraded
 		}
 	}
 	for i := range view.Reserves {

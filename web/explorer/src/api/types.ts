@@ -2324,7 +2324,9 @@ export interface paths {
          *     `*_unvalued` names each (`asset`, `kind`, `reason`: `unpriced`,
          *     `reserve_unread`, `rate_unread`, `lp_share_unvalued`,
          *     `leg_kind_unknown`, `decimals_unknown`, `price_scale_mismatch`,
-         *     `withheld`, `negative_amount`).
+         *     `withheld`, `price_read_failed`, `negative_amount`). A
+         *     `price_read_failed` backstop-token leg, like a reserve whose price
+         *     read failed, marks the response degraded (`Cache-Control: no-store`).
          *
          *     Pagination: pass `pagination.next` back as `cursor`;
          *     `pagination` is omitted on the last page.
