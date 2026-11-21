@@ -55,7 +55,6 @@ tests:
               severity: ticket
               team: stellarindex
               component: infra
-              alert_family: "replaced_binary/cap67-movements.service"
               unit: cap67-movements.service
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#replaced-binary
