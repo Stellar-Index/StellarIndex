@@ -1476,11 +1476,46 @@ describe('sumStablecoins', () => {
         { listing_valuation: { status: 'not_listed' } },
         {},
       ],
-      { total: '3.50', valued: 2, unvalued: 2, listingPriced: 1, floor: false },
+      {
+        total: '3.50',
+        valued: 2,
+        unvalued: 2,
+        listingPriced: 1,
+        floor: false,
+        wrappers: 0,
+      },
     ],
     [
       [{ listing_valuation: { status: 'no_supply' } }],
-      { total: null, valued: 0, unvalued: 1, listingPriced: 0, floor: false },
+      {
+        total: null,
+        valued: 0,
+        unvalued: 1,
+        listingPriced: 0,
+        floor: false,
+        wrappers: 0,
+      },
+    ],
+    // yUSDC wraps USDC already in the total; a same-code token from another
+    // issuer is not the wrapper and is summed.
+    [
+      [
+        { asset_id: 'USDC-GA5Z', market_cap_usd: '10.00' },
+        {
+          asset_id:
+            'yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF',
+          market_cap_usd: '2.00',
+        },
+        { asset_id: 'yUSDC-GBOTHER', market_cap_usd: '1.00' },
+      ],
+      {
+        total: '11.00',
+        valued: 2,
+        unvalued: 0,
+        listingPriced: 0,
+        floor: false,
+        wrappers: 1,
+      },
     ],
   ])('totals %j', (rows, expected) => {
     expect(sumStablecoins(rows)).toEqual(expected);

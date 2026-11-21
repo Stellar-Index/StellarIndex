@@ -1143,8 +1143,15 @@ export function sumUsd(values: (string | null | undefined)[]): {
  * 2.58M tokens the lake can see. Omitting it made the tile a floor with
  * an invisible hole in it.
  */
+// A yield-bearing wrapper is backed by a stablecoin already counted, so
+// summing it counts that backing twice; /v1/stablecoins leaves it out too.
+const YIELD_BEARING_WRAPPERS = new Set([
+  'yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF',
+]);
+
 export function sumStablecoins(
   rows: {
+    asset_id?: string;
     market_cap_usd?: string | null;
     market_cap_lower_bound?: boolean;
     listing_valuation?: {
@@ -1159,10 +1166,17 @@ export function sumStablecoins(
   unvalued: number;
   listingPriced: number;
   floor: boolean;
+  wrappers: number;
 } {
   let listingPriced = 0;
   let floor = false;
-  const values = rows.map((r) => {
+  const wrappers = rows.filter(
+    (r) => r.asset_id != null && YIELD_BEARING_WRAPPERS.has(r.asset_id),
+  ).length;
+  const summed = rows.filter(
+    (r) => r.asset_id == null || !YIELD_BEARING_WRAPPERS.has(r.asset_id),
+  );
+  const values = summed.map((r) => {
     if (r.market_cap_usd != null) {
       if (r.market_cap_lower_bound === true) floor = true;
       return r.market_cap_usd;
@@ -1175,7 +1189,7 @@ export function sumStablecoins(
     }
     return null;
   });
-  return { ...sumUsd(values), listingPriced, floor };
+  return { ...sumUsd(values), listingPriced, floor, wrappers };
 }
 
 /**
@@ -1495,6 +1509,8 @@ export type StablecoinTotals = {
    * combined tile was built to avoid.
    */
   listingPriced: number;
+  /** Yield-bearing wrappers left out of the total. */
+  wrappers: number;
   /** The listing envelope flagged a read past its freshness limit. */
   stale?: boolean;
 };
@@ -1580,6 +1596,9 @@ function SectorTotals({
                 : `${stable.valued} fiat-backed token${stable.valued === 1 ? '' : 's'} issued on Stellar` +
                   (stable.listingPriced > 0
                     ? `, ${stable.listingPriced} of them listing-priced`
+                    : '') +
+                  (stable.wrappers > 0
+                    ? `; ${stable.wrappers} yield-bearing wrapper${stable.wrappers === 1 ? '' : 's'} left out, ${stable.wrappers === 1 ? 'its' : 'their'} backing already counted`
                     : '')
             }
           />
