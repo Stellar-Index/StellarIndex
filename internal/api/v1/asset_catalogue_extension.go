@@ -126,6 +126,9 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	if gateUnread {
 		detail.extensionUnread = true
 	}
+	// The gate above re-judges only the asset's own markets, so it may overrule a substance verdict but no other: an upstream
+	// leg or unattributed refusal lies beyond those markets, and the row's price derives through it.
+	priceAllowed = priceAllowed && (detail.PriceWithheldReason == "" || detail.PriceWithheldReason == PriceWithheldSubstance)
 	// Fill PriceUSD from the row only when the canonical price path left it nil, so
 	// /v1/assets/native agrees with /v1/price. The row price is a raw prices_1m ratio, so it is
 	// decimals-normalised first (normalizeCatalogueReadUSD); a withheld price leaves PriceUSD nil
