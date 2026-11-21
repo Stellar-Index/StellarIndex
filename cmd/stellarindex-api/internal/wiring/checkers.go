@@ -80,28 +80,27 @@ func (k nonstandardDecimalsChecker) Ping(context.Context) error {
 
 // ClickhouseChecker adapts *clickhouse.ExplorerReader to v1.ReadyChecker; non-critical (outage reads "degraded"), and a nil reader (all boot dials failed) still reports down.
 type ClickhouseChecker struct {
-	R          *clickhouse.ExplorerReader
-	DialErr    error
-	DialBudget time.Duration
+	R       *clickhouse.ExplorerReader
+	OpenErr error
 }
 
 func (c ClickhouseChecker) Name() string   { return "clickhouse" }
 func (c ClickhouseChecker) Critical() bool { return false }
 func (c ClickhouseChecker) Ping(ctx context.Context) error {
 	if c.R == nil {
-		return fmt.Errorf("clickhouse stayed unreachable for this process's whole boot retry window (%s) and is not re-dialled after it; every lake-backed endpoint is 503ing and a restart is required to re-wire them: %w", c.DialBudget, c.DialErr)
+		return fmt.Errorf("clickhouse lake reader could not be built, so every lake-backed endpoint is 503ing; fix the ClickHouse configuration and restart: %w", c.OpenErr)
 	}
 	_, err := c.R.LakeTipLedger(ctx)
 	return err
 }
 
-// ClickhouseReadyChecks returns the readiness checkers for ClickHouse: none when no address is configured, exactly one otherwise, wired or not, so a ClickHouse down at startup still reports down.
-func ClickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr error, dialBudget time.Duration) []v1.ReadyChecker {
+// ClickhouseReadyChecks returns the readiness checkers for ClickHouse: none when no address is configured, exactly one otherwise, built or not, so a ClickHouse down at startup still reports down.
+func ClickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, openErr error) []v1.ReadyChecker {
 	if addr == "" {
 		return nil
 	}
-	if dialErr != nil {
-		return []v1.ReadyChecker{ClickhouseChecker{DialErr: dialErr, DialBudget: dialBudget}}
+	if openErr != nil {
+		return []v1.ReadyChecker{ClickhouseChecker{OpenErr: openErr}}
 	}
-	return []v1.ReadyChecker{ClickhouseChecker{R: er, DialBudget: dialBudget}}
+	return []v1.ReadyChecker{ClickhouseChecker{R: er}}
 }

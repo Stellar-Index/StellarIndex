@@ -698,9 +698,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			wiring.NonstandardDecimalsRefreshTimeout, logger, "nonstandard-decimals cache periodic refresh")
 	}()
 
-	// Token supply reads the lake (ADR-0034) and is optional: without ClickHouse, or after a
-	// failed dial, the reader stays nil and the endpoint 503s while the rest serves.
-	// dialLakeReadersAtBoot dials both lake readers concurrently.
+	// Token supply reads the lake (ADR-0034) and is optional: without ClickHouse, or with a
+	// reader that cannot be built, the reader stays nil and the endpoint 503s while the rest serves.
 	var (
 		lakeSupply      *clickhouse.SupplyReader
 		lakeSupplyErr   error
@@ -708,14 +707,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		lakeExplorerErr error
 	)
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		user, pass := cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword
-		lakeSupply, lakeSupplyErr, lakeExplorer, lakeExplorerErr = dialLakeReadersAtBoot(rootCtx, logger, addr, time.Now().Add(clickhouseBootDialBudget),
-			func(ctx context.Context) (*clickhouse.SupplyReader, error) {
-				return clickhouse.NewSupplyReaderAuth(ctx, addr, user, pass)
-			},
-			func(ctx context.Context) (*clickhouse.ExplorerReader, error) {
-				return clickhouse.NewExplorerReaderAuth(ctx, addr, user, pass)
-			})
+		lakeSupply, lakeSupplyErr, lakeExplorer, lakeExplorerErr = openLakeReaders(rootCtx, logger, addr,
+			cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword, time.Now().Add(clickhouseBootDialBudget))
 	}
 	var tokenSupplyReader v1.TokenSupplyReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
@@ -750,7 +743,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		er, err := lakeExplorer, lakeExplorerErr
 		// The ready check registers for a configured ClickHouse even when this dial failed.
-		checks = append(checks, wiring.ClickhouseReadyChecks(addr, er, err, clickhouseBootDialBudget)...)
+		checks = append(checks, wiring.ClickhouseReadyChecks(addr, er, err)...)
 		if err != nil {
 			logger.Warn("explorer reader unavailable; /v1/ledgers etc. will 503", "addr", addr, "err", err)
 		} else {
@@ -1927,7 +1920,7 @@ func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.Un
 	return v, nil
 }
 
-// lakeAccountSigners serves SEP-10 signer lookup from the lake's current account state; until bound (or if the dial failed) every lookup
+// lakeAccountSigners serves SEP-10 signer lookup from the lake's current account state; until bound (or if the reader was not built) every lookup
 // errors, so verification fails closed.
 type lakeAccountSigners struct {
 	er atomic.Pointer[clickhouse.ExplorerReader]

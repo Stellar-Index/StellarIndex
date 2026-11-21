@@ -823,17 +823,17 @@ func TestStatusIdentity_PlumbedFromConfig(t *testing.T) {
 	}
 }
 
-// TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes: the "ClickHouse was
-// already down when the API started" state must still publish the
+// TestClickhouseReadyChecks_ConfiguredButUnbuiltStillPublishes: a configured ClickHouse whose
+// reader could not be built must still publish the
 // `stellarindex_dependency_up{dependency="clickhouse"}` series; registering the checker only
-// in the success branch of the boot dial would leave it absent. The alert is
+// in the success branch would leave it absent. The alert is
 // `stellarindex_dependency_up == 0`, deliberately not absent(), so an absent series means
 // every lake-backed endpoint 503s and nothing pages.
-func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing.T) {
-	dialErr := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
-	checks := wiring.ClickhouseReadyChecks("localhost:9000", nil, dialErr, clickhouseBootDialBudget)
+func TestClickhouseReadyChecks_ConfiguredButUnbuiltStillPublishes(t *testing.T) {
+	dialErr := errors.New("clickhouse: a password was given with an empty username")
+	checks := wiring.ClickhouseReadyChecks("localhost:9000", nil, dialErr)
 	if len(checks) != 1 {
-		t.Fatalf("a configured but unreachable ClickHouse registered %d readiness check(s), want 1 — with none, the gauge is never published and the == 0 alert has nothing to match", len(checks))
+		t.Fatalf("a configured but unbuilt ClickHouse reader registered %d readiness check(s), want 1 — with none, the gauge is never published and the == 0 alert has nothing to match", len(checks))
 	}
 	c := checks[0]
 	if got := c.Name(); got != "clickhouse" {
@@ -844,13 +844,13 @@ func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing
 	}
 	err := c.Ping(context.Background())
 	if err == nil {
-		t.Fatal("Ping on a ClickHouse that never dialled returned success — the gauge would publish 1 for a dependency that is gone")
+		t.Fatal("Ping on a ClickHouse reader that was never built returned success — the gauge would publish 1 for a dependency that is gone")
 	}
 	if !errors.Is(err, dialErr) {
-		t.Errorf("Ping error does not wrap the boot dial failure: %v", err)
+		t.Errorf("Ping error does not wrap the build failure: %v", err)
 	}
 	if !strings.Contains(err.Error(), "restart") {
-		t.Errorf("Ping error does not say a restart is required, which is what recovers the ten un-re-dialled lake seams: %v", err)
+		t.Errorf("Ping error does not say a restart is required, which is what applies a configuration fix: %v", err)
 	}
 }
 
@@ -858,7 +858,7 @@ func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing
 // publish nothing rather than a 0 — a 0 there pages for a component the
 // host does not run.
 func TestClickhouseReadyChecks_UnconfiguredPublishesNothing(t *testing.T) {
-	if got := wiring.ClickhouseReadyChecks("", nil, nil, clickhouseBootDialBudget); len(got) != 0 {
+	if got := wiring.ClickhouseReadyChecks("", nil, nil); len(got) != 0 {
 		t.Fatalf("an unconfigured ClickHouse registered %d readiness check(s), want 0", len(got))
 	}
 }

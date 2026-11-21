@@ -145,6 +145,19 @@ func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
 
 // NewSupplyReaderAuth is NewSupplyReader with an explicit CH username/password (ADR-0048 D4 serving isolation); both empty resolves the environment's identity.
 func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (*SupplyReader, error) {
+	r, err := OpenSupplyReaderAuth(addr, username, password)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.conn.Ping(ctx); err != nil {
+		_ = r.Close()
+		return nil, fmt.Errorf("clickhouse: ping supply reader %s: %w", addr, err)
+	}
+	return r, nil
+}
+
+// OpenSupplyReaderAuth is NewSupplyReaderAuth without the ping; the pool dials on each acquire (see [OpenExplorerReaderAuth]).
+func OpenSupplyReaderAuth(addr, username, password string) (*SupplyReader, error) {
 	auth, err := authOrEnv(username, password)
 	if err != nil {
 		return nil, err
@@ -161,10 +174,6 @@ func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (
 	})
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: open supply reader %s: %w", addr, err)
-	}
-	if err := conn.Ping(ctx); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("clickhouse: ping supply reader %s: %w", addr, err)
 	}
 	return &SupplyReader{conn: conn}, nil
 }

@@ -58,11 +58,11 @@ func TestDialClickHouseAtBoot_LateClickHouseIsWiredAndReadsHealthy(t *testing.T)
 		t.Fatalf("got (%p, %d calls), want (%p, 3)", got, calls, want)
 	}
 
-	checks := wiring.ClickhouseReadyChecks("127.0.0.1:9300", nil, err, clickhouseBootDialBudget)
+	checks := wiring.ClickhouseReadyChecks("127.0.0.1:9300", nil, err)
 	if len(checks) != 1 {
 		t.Fatalf("registered %d checks, want 1", len(checks))
 	}
-	if c, ok := checks[0].(wiring.ClickhouseChecker); !ok || c.DialErr != nil {
+	if c, ok := checks[0].(wiring.ClickhouseChecker); !ok || c.OpenErr != nil {
 		t.Fatalf("a dial that recovered inside the window registered the failed-dial checker: %#v", checks[0])
 	}
 }
@@ -210,6 +210,68 @@ func TestDialClickHouseAtBoot_RealDriverSilentServerEndsAtTheDeadline(t *testing
 	if elapsed > 2*time.Second {
 		t.Fatalf("real clickhouse-go dial held boot for %s past a 300ms window: %v", elapsed, err)
 	}
+}
+
+// ClickHouse refused through the whole boot window: both readers must still be built, readiness must say down, and once
+// something listens at the address the same readers must dial it on their next query, with no restart.
+func TestOpenLakeReaders_DownAtBootRedialsOnceClickHouseListens(t *testing.T) {
+	fastClickHouseBootBackoff(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	supply, supplyErr, explorer, explorerErr := openLakeReaders(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)), addr, "", "", time.Now().Add(50*time.Millisecond))
+	if supplyErr != nil || supply == nil || explorerErr != nil || explorer == nil {
+		t.Fatalf("readers left unbuilt by a boot-window outage (supply %v: %v, explorer %v: %v) — their seams stay nil until restart", supply != nil, supplyErr, explorer != nil, explorerErr)
+	}
+	t.Cleanup(func() { _ = supply.Close(); _ = explorer.Close() })
+	checks := wiring.ClickhouseReadyChecks(addr, explorer, explorerErr)
+	if len(checks) != 1 {
+		t.Fatalf("registered %d checks, want 1", len(checks))
+	}
+	if err := checks[0].Ping(context.Background()); err == nil {
+		t.Fatal("readiness reported a refused ClickHouse up")
+	}
+
+	ln, err = net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("re-listen on %s: %v", addr, err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	accepted := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- c
+		}
+	}()
+	expectRedial := func(what string, query func(context.Context) error) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- query(ctx) }()
+		select {
+		case c := <-accepted:
+			_ = c.Close() // a silent peer: the handshake fails fast once it hangs up
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s reader built while ClickHouse was down never dialled it after it came up", what)
+		}
+		if err := <-done; err == nil {
+			t.Fatalf("%s query against a peer that hung up mid-handshake succeeded", what)
+		}
+	}
+	expectRedial("explorer", checks[0].Ping)
+	expectRedial("supply", func(ctx context.Context) error {
+		_, err := supply.TokenSupply(ctx, "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
+		return err
+	})
 }
 
 // Refused until 60% of the window: both readers must still wire, so the

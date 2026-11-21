@@ -331,6 +331,20 @@ func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error
 
 // NewExplorerReaderAuth is NewExplorerReader with an explicit username/password for the API's serving-isolation profile (ADR-0048 D4); both empty resolves the environment's identity.
 func NewExplorerReaderAuth(ctx context.Context, addr, username, password string) (*ExplorerReader, error) {
+	r, err := OpenExplorerReaderAuth(addr, username, password)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.conn.Ping(ctx); err != nil {
+		_ = r.Close()
+		return nil, fmt.Errorf("clickhouse: ping explorer reader %s: %w", addr, err)
+	}
+	return r, nil
+}
+
+// OpenExplorerReaderAuth is NewExplorerReaderAuth without the ping: clickhouse-go's pool dials on each acquire, so the reader
+// serves as soon as ClickHouse answers, whether or not it did at open.
+func OpenExplorerReaderAuth(addr, username, password string) (*ExplorerReader, error) {
 	auth, err := authOrEnv(username, password)
 	if err != nil {
 		return nil, err
@@ -349,10 +363,6 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: open explorer reader %s: %w", addr, err)
-	}
-	if err := conn.Ping(ctx); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("clickhouse: ping explorer reader %s: %w", addr, err)
 	}
 	return newExplorerReader(conn), nil
 }

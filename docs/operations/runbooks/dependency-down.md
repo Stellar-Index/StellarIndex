@@ -55,7 +55,7 @@ journalctl -u clickhouse-server --since "30 min ago" --no-pager | tail -40
    systemctl restart clickhouse-server
    curl -s localhost:3000/v1/readyz | python3 -m json.tool | grep -A2 clickhouse
    ```
-2. `SELECT 1` works but readyz says down with "boot retry window": the API never wired its lake readers. `systemctl restart stellarindex-api`.
+2. The API re-dials on its next lake read, so no API restart is needed once `SELECT 1` works. If readyz says "could not be built", the API's ClickHouse settings are wrong: fix them, then `systemctl restart stellarindex-api`.
 3. Ingest resumes from its cursor. For a longer gap verify with the gap detector and catch up projected sources with `projector-replay` (not `backfill`, which writes nothing on gated sources and exits 0); see [adr-0033-data-recovery.md](../adr-0033-data-recovery.md).
 
 **Escalate:** page per [sev-playbook](../sev-playbook.md).
