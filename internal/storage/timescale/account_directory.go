@@ -298,13 +298,15 @@ func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source strin
 	return nil
 }
 
-// dedupDirectoryEntriesByAddress collapses duplicate Addresses (last wins, order kept): an upsert chunk may hold each conflict key once.
+// dedupDirectoryEntriesByAddress collapses duplicate Addresses (order kept): an upsert chunk may hold each conflict key once.
+// Name and domain are last-wins; tags are the union of every copy, so a later copy cannot clear a scam flag an earlier one carries.
 func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 	idx := make(map[string]int, len(entries))
 	out := make([]DirectoryEntry, 0, len(entries))
 	for _, e := range entries {
 		if i, seen := idx[e.Address]; seen {
-			out[i] = e // last-wins: overwrite the earlier row in place
+			e.Tags = CanonicalDirectoryTags(append(slices.Clone(out[i].Tags), e.Tags...))
+			out[i] = e
 			continue
 		}
 		idx[e.Address] = len(out)

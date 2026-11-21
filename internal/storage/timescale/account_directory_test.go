@@ -50,6 +50,21 @@ func TestBuildDirectoryUpsert_PlaceholderLayout(t *testing.T) {
 	}
 }
 
+// A duplicate file for an address must not clear a scam flag the other copy carries, whichever sorts last.
+func TestDedupDirectoryEntriesByAddress_KeepsScamFlagOfAnyCopy(t *testing.T) {
+	flagged := DirectoryEntry{Address: "GA", Name: "real", Tags: []string{"malicious", "exchange"}, Source: "stellar-expert"}
+	clean := DirectoryEntry{Address: "GA", Name: "spoof", Tags: []string{}, Source: "stellar-expert"}
+	for _, in := range [][]DirectoryEntry{{flagged, clean}, {clean, flagged}} {
+		got := dedupDirectoryEntriesByAddress(in)
+		if len(got) != 1 {
+			t.Fatalf("len = %d, want 1", len(got))
+		}
+		if !slices.Contains(got[0].Tags, "malicious") || !slices.Contains(got[0].Tags, "exchange") {
+			t.Errorf("order %s,%s: tags = %v, want the union keeping malicious", in[0].Name, in[1].Name, got[0].Tags)
+		}
+	}
+}
+
 // TestDedupDirectoryEntriesByAddress: two upstream files declaring one address would put the same conflict
 // key twice in a multi-row upsert, which Postgres rejects; ReplaceDirectory must dedupe addresses (last
 // wins) first.
