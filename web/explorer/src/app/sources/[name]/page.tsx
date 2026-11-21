@@ -33,7 +33,7 @@ import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
-import { shortAssetText } from '@/lib/asset-label';
+import { assetIdentityLabel } from '@/lib/asset-label';
 import { cn } from '@/lib/cn';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -425,7 +425,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
                             href={href}
                             className="text-ink hover:text-brand-600"
                           >
-                            {shortAssetText(m.base)}
+                            {assetIdentityLabel(m.base)}
                           </Link>
                         </Td>
                         <Td>
@@ -433,7 +433,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
                             href={href}
                             className="text-ink-muted hover:text-brand-600"
                           >
-                            {shortAssetText(m.quote)}
+                            {assetIdentityLabel(m.quote)}
                           </Link>
                         </Td>
                         <Td align="right" className="font-mono">
