@@ -31736,7 +31736,7 @@
                   "request": {
                     "name": "Revoke an API key by KeyID.",
                     "description": {
-                      "content": "Revokes the API key whose KeyID matches the path parameter,\nwith every key delegated from it.\n\nAn API key may revoke itself and the keys minted from it,\ndirectly or through keys it minted: never the key that minted\nit, a sibling, or another account key that was not minted under\nit (dashboard and `/v1/register` keys are each their own root).\nAny other key id gets 403 `key-not-delegated` and nothing is\nrevoked; the answer does not depend on whether the id exists,\nso it cannot be used to probe for key ids. A dashboard user can\nrevoke the account's other keys from the dashboard, which\napplies the user's role. A SEP-10 session and an operator-tier\ncaller may revoke any key on their own identifier.\n\nRevoking the key the request is authenticated with is allowed:\nit answers 204 and the key, with every key minted from it,\nstops working from the next request. This is how a leaked\n`/v1/register` root key, which has no dashboard, is killed.\nA deployment running `auth_backend=postgres` disables the whole\n`/v1/account/keys` surface (503): there, only an operator can\nrevoke such a key, with `DELETE /v1/admin/keys/{keyID}?identifier=`.\n\nAn **operator-tier** caller must send `X-Reason` (400 without\nit); the revoke is recorded as a `key.revoke` audit row, as\n`DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers\nneed no header.\n",
+                      "content": "Revokes the API key whose KeyID matches the path parameter,\nwith every key delegated from it.\n\nAn API key may revoke itself and the keys minted from it,\ndirectly or through keys it minted: never the key that minted\nit, a sibling, or another account key that was not minted under\nit (dashboard and `/v1/register` keys are each their own root).\nAny other key id gets 403 `key-not-delegated` and nothing is\nrevoked; the answer does not depend on whether the id exists,\nso it cannot be used to probe for key ids. A dashboard user can\nrevoke the account's other keys from the dashboard, which\napplies the user's role. A SEP-10 session and an operator-tier\ncaller may revoke any key on their own identifier.\n\nRevoking the key the request is authenticated with is allowed:\nit answers 204 and the key, with every key minted from it,\nstops working from the next request. This is how a leaked\n`/v1/register` root key, which has no dashboard, is killed.\nA deployment running `auth_backend=postgres` has no self-service\nkey store: there a key may revoke only itself (any other key id\ngets 503 `account-store-unavailable`, whether or not it exists),\nand an operator revokes other keys with\n`DELETE /v1/admin/keys/{keyID}?identifier=`.\n\nAn **operator-tier** caller must send `X-Reason` (400 without\nit); the revoke is recorded as a `key.revoke` audit row, as\n`DELETE /v1/admin/keys/{keyID}` does. Customer-tier callers\nneed no header.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -31763,6 +31763,15 @@
                       ]
                     },
                     "header": [
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                          "type": "text/plain"
+                        },
+                        "key": "X-Reason",
+                        "value": "<string>"
+                      },
                       {
                         "key": "Accept",
                         "value": "application/problem+json"
@@ -31809,6 +31818,15 @@
                         },
                         "header": [
                           {
+                            "disabled": false,
+                            "description": {
+                              "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
+                          {
                             "description": {
                               "content": "Added as a part of security scheme: bearer",
                               "type": "text/plain"
@@ -31853,6 +31871,15 @@
                           ]
                         },
                         "header": [
+                          {
+                            "disabled": false,
+                            "description": {
+                              "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
                           {
                             "description": {
                               "content": "Added as a part of security scheme: bearer",
@@ -31899,6 +31926,15 @@
                         },
                         "header": [
                           {
+                            "disabled": false,
+                            "description": {
+                              "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
+                          {
                             "description": {
                               "content": "Added as a part of security scheme: bearer",
                               "type": "text/plain"
@@ -31943,6 +31979,15 @@
                           ]
                         },
                         "header": [
+                          {
+                            "disabled": false,
+                            "description": {
+                              "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
                           {
                             "key": "Accept",
                             "value": "application/problem+json"
@@ -31999,6 +32044,15 @@
                         },
                         "header": [
                           {
+                            "disabled": false,
+                            "description": {
+                              "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
+                          {
                             "description": {
                               "content": "Added as a part of security scheme: bearer",
                               "type": "text/plain"
@@ -32017,7 +32071,7 @@
                       "_postman_previewlanguage": "text"
                     },
                     {
-                      "name": "Account store not configured (`account-store-unavailable`) — Redis is unavailable, or the deployment runs `auth_backend=postgres`.",
+                      "name": "Account store not configured (`account-store-unavailable`) — no self-service key store is wired (Redis is unavailable, or the deployment runs `auth_backend=postgres`) and the key id is not the calling key's own, or no store that holds keys is wired at all.",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -32043,6 +32097,15 @@
                           ]
                         },
                         "header": [
+                          {
+                            "disabled": false,
+                            "description": {
+                              "content": "Required from an operator-tier caller (400 `missing-reason`\nwithout it) and captured into the `key.revoke` audit row;\nignored for customer tiers.\n",
+                              "type": "text/plain"
+                            },
+                            "key": "X-Reason",
+                            "value": "<string>"
+                          },
                           {
                             "description": {
                               "content": "Added as a part of security scheme: bearer",

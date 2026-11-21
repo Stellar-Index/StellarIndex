@@ -830,8 +830,16 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if got.IsActive(time.Now()) {
 			t.Errorf("IsActive returned true on revoked key")
 		}
-		if err := keys.Revoke(ctx, byID.AccountID, byID.ID, owner.ID, "still rotated"); err != nil {
+		if err := keys.Revoke(ctx, byID.AccountID, byID.ID, uuid.Nil, "still rotated"); err != nil {
 			t.Errorf("re-revoke: %v", err)
+		}
+		again, err := keys.Get(ctx, byID.ID)
+		if err != nil {
+			t.Fatalf("get after re-revoke: %v", err)
+		}
+		if !again.RevokedAt.Equal(got.RevokedAt) || again.RevokedReason != "rotated" || again.RevokedByUserID != owner.ID {
+			t.Errorf("re-revoke rewrote the first revoke: at %v→%v, reason %q, by %v; want the first revoker kept",
+				got.RevokedAt, again.RevokedAt, again.RevokedReason, again.RevokedByUserID)
 		}
 
 		// Hash-collision (re-Create same hash) → ErrConflict.

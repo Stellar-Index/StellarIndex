@@ -4,8 +4,12 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"sort"
@@ -1086,13 +1090,45 @@ func TestProblemJSONMatchesSpec(t *testing.T) {
 // sdkRequestHeaders maps "SDKMethod Header-Name" to the request field carrying it; every `in: header` parameter of a
 // covered operation needs an entry, since a header the SDK cannot send is a server requirement no caller can meet
 // (X-Reason on CreateKey 400'd).
+// send makes the call with the header's value v, so the guard proves it reaches the wire; sentBy instead names the
+// sibling method of the same operation that sends it, for a convenience method that deliberately does not.
 var sdkRequestHeaders = map[string]struct {
-	req   any
-	field string
+	req    any
+	field  string
+	send   func(ctx context.Context, c *Client, v string) error
+	sentBy string
 }{
-	"CreateKey Idempotency-Key": {CreateKeyRequest{}, "IdempotencyKey"},
-	"CreateKey X-Reason":        {CreateKeyRequest{}, "Reason"},
-	"AdminCreateKey X-Reason":   {AdminCreateKeyRequest{}, "Reason"},
+	"CreateKey Idempotency-Key": {req: CreateKeyRequest{}, field: "IdempotencyKey", send: func(ctx context.Context, c *Client, v string) error {
+		_, err := c.CreateKey(ctx, CreateKeyRequest{Label: "l", IdempotencyKey: v})
+		return err
+	}},
+	"CreateKey X-Reason": {req: CreateKeyRequest{}, field: "Reason", send: func(ctx context.Context, c *Client, v string) error {
+		_, err := c.CreateKey(ctx, CreateKeyRequest{Label: "l", Reason: v})
+		return err
+	}},
+	"AdminCreateKey X-Reason": {req: AdminCreateKeyRequest{}, field: "Reason", send: func(ctx context.Context, c *Client, v string) error {
+		_, err := c.AdminCreateKey(ctx, AdminCreateKeyRequest{Identifier: "acct:x", Account: "x", Label: "l", Reason: v})
+		return err
+	}},
+	"RevokeKeyWithReason X-Reason": {send: func(ctx context.Context, c *Client, v string) error {
+		return c.RevokeKeyWithReason(ctx, "kid_00000000000000a1", v)
+	}},
+	"RevokeKey X-Reason": {sentBy: "RevokeKeyWithReason"},
+}
+
+// sentHeader runs send against a capturing server and returns the named request header and the request body.
+func sentHeader(t *testing.T, send func(context.Context, *Client, string) error, header, value string) (string, string) {
+	t.Helper()
+	var got, body string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(header)
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+	_ = send(context.Background(), New(Options{BaseURL: ts.URL}), value) // the reply is not the subject here
+	return got, body
 }
 
 // specHeaderParams returns the header parameter names of one operation,
@@ -1130,6 +1166,23 @@ func TestSDKSendsEverySpecRequestHeader(t *testing.T) {
 			if !ok {
 				t.Errorf("spec declares header %q on %s %s but Client.%s has no way to send it — "+
 					"add a request field and an sdkRequestHeaders entry", header, c.method, c.path, c.sdkMethod)
+				continue
+			}
+			if entry.sentBy != "" {
+				if sib := sdkRequestHeaders[entry.sentBy+" "+header]; sib.send == nil {
+					t.Errorf("%s: sentBy %s, which has no sending entry for %s", key, entry.sentBy, header)
+				}
+				continue
+			}
+			if entry.send == nil {
+				t.Errorf("%s: no send func, so nothing proves the header reaches the wire", key)
+				continue
+			}
+			const probe = "probe-value-7f3a"
+			if got, body := sentHeader(t, entry.send, header, probe); got != probe || strings.Contains(body, probe) {
+				t.Errorf("%s: sent %s = %q (body %q), want %q in the header only", key, header, got, body, probe)
+			}
+			if entry.req == nil {
 				continue
 			}
 			f, ok := reflect.TypeOf(entry.req).FieldByName(entry.field)

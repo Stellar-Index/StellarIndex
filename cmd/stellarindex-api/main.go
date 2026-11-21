@@ -337,16 +337,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Built after the dashboard bundle so the Postgres backend can share its platform stores.
 	var authMW middleware.Middleware
 
-	// The /v1/account/keys store needs Redis; without it the route returns 503. Under
-	// auth_backend=postgres it stays nil, because the validator reads platform.api_keys: a Redis
-	// DELETE would leave the live Postgres key authenticating, a revocation that silently no-ops.
-	// /v1/dashboard/keys is the single source of truth there.
+	// The /v1/account/keys store needs Redis; without it list and mint return 503 and a key may
+	// revoke only itself. Under auth_backend=postgres it stays nil, because the validator reads
+	// platform.api_keys and a Redis-only revoke would leave the live Postgres key authenticating;
+	// the self-revoke there goes through the every-store revoke. /v1/dashboard/keys manages keys.
 	var accountStore v1.AccountStore
 	switch {
 	case rdb == nil:
 		// no store
 	case cfg.API.AuthBackend == "postgres":
-		logger.Warn("auth_backend=postgres: /v1/account/keys self-service surface DISABLED to avoid a split-brain with the Postgres validator (revocation would silently no-op); use the Postgres-backed /v1/dashboard/keys instead",
+		logger.Warn("auth_backend=postgres: /v1/account/keys list and mint DISABLED to avoid a split-brain with the Postgres validator; a key may revoke only itself; use the Postgres-backed /v1/dashboard/keys to manage keys",
 			"reason", "AccountStore writer (redis) != APIKeyValidator reader (postgres)")
 	default:
 		accountStore = auth.NewRedisAPIKeyStore(rdb)

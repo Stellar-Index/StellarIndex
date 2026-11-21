@@ -180,8 +180,13 @@ func (f *fakeRegisterKeyStore) Revoke(_ context.Context, accountID uuid.UUID, id
 		return f.revokeErr
 	}
 	k, ok := f.byID[id]
-	if !ok || k.AccountID != accountID || !k.RevokedAt.IsZero() {
+	if !ok || k.AccountID != accountID {
 		return platform.ErrNotFound
+	}
+	if !k.RevokedAt.IsZero() {
+		// The real store's contract: re-revoking is an idempotent no-op.
+		f.revokedIDs = append(f.revokedIDs, id)
+		return nil
 	}
 	k.RevokedAt = time.Now().UTC()
 	f.byID[id] = k

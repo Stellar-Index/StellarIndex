@@ -214,55 +214,52 @@ func writeMintRefused(w http.ResponseWriter, r *http.Request, err error) {
 // revokeKeyEverywhere revokes in every store that may hold the key (Redis and the Postgres api_keys row, else revoked_at stays
 // NULL and the row keeps counting toward the cap). Both legs are scoped to identifier and treat "no such key" and "another
 // owner's key" alike. Returns [auth.ErrKeyNotFound] only when NEITHER leg revoked anything.
-// It also returns the delegated KeyIDs the Redis cascade removed, for the audit row.
+// It also returns the delegated KeyIDs the Redis cascade removed and whether any leg committed, for the audit row:
+// an error with committed set is a partial revoke that a retry may not be able to repeat, so it is still audited.
 // Redis goes first so the credential dies even when Postgres is down, and the caller's own key survives to retry a
 // failed row. self (the request's key revoking itself) reverses that: the Redis leg ends the caller's authentication,
 // so the row goes first and a failure there leaves the key alive to retry both.
-func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string, self bool) ([]string, error) {
-	rowRevoked := false
+func (s *Server) revokeKeyEverywhere(
+	ctx context.Context, identifier, keyID, reason string, self bool,
+) (descendants []string, committed bool, err error) {
 	if self {
 		switch pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason); {
 		case pgErr == nil:
-			rowRevoked = true
+			committed = true
 		case !errors.Is(pgErr, platform.ErrNotFound):
-			return nil, pgErr
+			return nil, false, pgErr
 		}
 	}
-	err := auth.ErrKeyNotFound
-	var descendants []string
+	err = auth.ErrKeyNotFound
 	if redisKeys := s.redisKeyRevoker(); redisKeys != nil {
 		descendants, err = auth.RevokeKeyTree(ctx, redisKeys, identifier, keyID)
 	}
-	revoked := err == nil || rowRevoked
+	committed = committed || err == nil || len(descendants) > 0
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		err = nil
 	}
-	if self {
-		if err == nil && !revoked {
-			return nil, auth.ErrKeyNotFound
+	if !self {
+		pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason)
+		switch {
+		case pgErr == nil:
+			committed = true
+		case errors.Is(pgErr, platform.ErrNotFound):
+		case err == nil:
+			err = pgErr
+		default:
+			s.logger.Error("revoke: postgres management row also failed",
+				"err", pgErr, "identifier", identifier, "key_id", keyID)
 		}
-		return descendants, err
 	}
-	pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason)
-	switch {
-	case pgErr == nil:
-		revoked = true
-	case errors.Is(pgErr, platform.ErrNotFound):
-	case err == nil:
-		err = pgErr
-	default:
-		s.logger.Error("revoke: postgres management row also failed",
-			"err", pgErr, "identifier", identifier, "key_id", keyID)
+	if err == nil && !committed {
+		return nil, false, auth.ErrKeyNotFound
 	}
-	if err == nil && !revoked {
-		return nil, auth.ErrKeyNotFound
-	}
-	return descendants, err
+	return descendants, committed, err
 }
 
 // withRevokedDescendants lists the delegated keys a revoke's cascade removed on its key.revoke
 // row, which is their only audit trail; KeyIDs only, never key material. failed marks a revoke
-// that errored after its cascade had already removed them.
+// that errored after one of its legs had already committed.
 func withRevokedDescendants(meta map[string]any, descendants []string, failed bool) map[string]any {
 	if len(descendants) > 0 {
 		meta["revoked_descendant_key_ids"] = descendants
@@ -278,8 +275,8 @@ type keyRevoker interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// redisKeyRevoker is the Redis credential store a revoke reaches. Accounts is nil under auth_backend=postgres (the
-// self-service surface is off there), but that validator still serves Redis `apikey:` records first, operator keys
+// redisKeyRevoker is the Redis credential store a revoke reaches. Accounts is nil under auth_backend=postgres (listing
+// and minting are off there, and a key may revoke only itself), but that validator still serves Redis `apikey:` records first, operator keys
 // among them, so the kill switch falls back to the mirror store, which is wired whenever Redis is.
 func (s *Server) redisKeyRevoker() keyRevoker {
 	if s.Accounts != nil {
@@ -293,7 +290,8 @@ func (s *Server) redisKeyRevoker() keyRevoker {
 
 // revokeOwnedPlatformKey revokes keyID's Postgres row only if its account is the one identifier names (the store scopes by
 // account UUID, so ownership is resolved here). Missing, foreign or already-revoked rows, or no store, return
-// [platform.ErrNotFound]: fail closed, no enumeration oracle.
+// [platform.ErrNotFound]: fail closed, no enumeration oracle. The store's Revoke is an idempotent nil on a revoked
+// row, so revoked_at is checked here; an already-revoked row still has its cache row evicted.
 func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, reason string) error {
 	keys := s.APIKeyBudgets.Platform
 	if keys == nil {
@@ -323,6 +321,9 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 		if err := inv.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
 			return fmt.Errorf("revoke: evict auth cache for key %s: %w", keyID, err)
 		}
+	}
+	if !k.RevokedAt.IsZero() {
+		return platform.ErrNotFound
 	}
 	return keys.Revoke(ctx, k.AccountID, keyID, uuid.Nil, reason)
 }
@@ -369,9 +370,9 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	descendants, err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason, subject.KeyID == keyID)
+	descendants, committed, err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason, subject.KeyID == keyID)
 	if err != nil {
-		if len(descendants) > 0 {
+		if committed {
 			s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason, descendants, true)
 		}
 		if clientAborted(r, err) {
