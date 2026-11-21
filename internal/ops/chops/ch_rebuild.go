@@ -179,10 +179,29 @@ func reDerivedSourcesInRun(cat, sep41Cat []reconSource, passes chRebuildPasses, 
 	return out
 }
 
-// gateCHRebuildLake is a -write run's per-WASM lake gate over [lo, hi].
+// checkCHRebuildSDEXModeFlags refuses an SDEX mode flag the SDEX pass would ignore: without -sdex the run re-derives nothing and exits 0,
+// and with both the gaps pass runs alone.
+func checkCHRebuildSDEXModeFlags(sdex, gaps, reconcile bool) error {
+	if (gaps || reconcile) && !sdex {
+		return fmt.Errorf("-sdex-gaps and -sdex-reconcile require -sdex: without it the SDEX pass does not run and nothing is re-derived")
+	}
+	if gaps && reconcile {
+		return fmt.Errorf("-sdex-gaps and -sdex-reconcile are separate passes: run them as two invocations (gaps first, then reconcile)")
+	}
+	return nil
+}
+
+// gateCHRebuildLake is a -write run's lake gate over [lo, hi]: the per-WASM decoder audit, then the lake must hold every ledger in the
+// range (a re-derive across a hole drops that ledger's served rows and still exits 0).
 // chAddr is the lake the run reads (-ch-addr), not the config's.
 func gateCHRebuildLake(ctx context.Context, cfg config.Config, chAddr string, store *timescale.Store, sources []string, lo, hi uint32) error {
-	return wasmaudit.GateReplay(ctx, chAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi)
+	if err := wasmaudit.GateReplay(ctx, chAddr, cfg.Oracle, store.LoadProtocolContracts, sources, lo, hi); err != nil {
+		return err
+	}
+	if _, err := resolveBackfillTop(ctx, chAddr, lo, hi); err != nil {
+		return fmt.Errorf("ch-rebuild: %w", err)
+	}
+	return nil
 }
 
 // checkCHRebuildBackfillSafe refuses a -write run over a source whose decoder was not audited against every WASM generation in its history
@@ -409,6 +428,9 @@ func chRebuild(args []string) (retErr error) { //nolint:gocognit,gocyclo,funlen 
 	contractsOverride := parseCSVList(*contractsCSV)
 	if *sep41SupplyOnly && !*includeSEP41 {
 		return fmt.Errorf("-sep41-supply-only requires -sep41")
+	}
+	if err := checkCHRebuildSDEXModeFlags(*includeSDEX, *sdexGaps, *sdexReconcile); err != nil {
+		return err
 	}
 	// BackfillSafe gate, first leg: sources the operator NAMED. Asked before the config load so the refusal needs no reachable
 	// database; the default-all case is asked again once the catalogue exists — see checkCHRebuildBackfillSafe.

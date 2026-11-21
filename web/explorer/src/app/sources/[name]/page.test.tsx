@@ -121,6 +121,30 @@ describe('SourceDetailPage top markets', () => {
     const exact = screen.getByText('$3.4K');
     expect(exact).not.toHaveAttribute('title');
   });
+
+  // No issuer column: a look-alike USDC must not read the same as the real one.
+  it('labels classic assets with their issuer so an impersonator row is distinct', async () => {
+    const row = {
+      base: 'native',
+      last_trade_at: '2026-11-17T00:00:00Z',
+      bucket_close_at: '2026-11-17T00:00:00Z',
+      trade_count_24h: 12,
+      volume_24h_usd: '1200',
+    };
+    mockFetches([
+      {
+        ...row,
+        quote: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      },
+      {
+        ...row,
+        quote: 'USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA',
+      },
+    ]);
+    await renderPage();
+    expect(screen.getByText('USDC (GA5ZSE…KZVN)')).toBeInTheDocument();
+    expect(screen.getByText('USDC (GBNZIL…AQUA)')).toBeInTheDocument();
+  });
 });
 
 // /v1/markets?source= answers 400 for a data vendor: its prices are served

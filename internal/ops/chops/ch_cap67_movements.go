@@ -29,7 +29,7 @@ import (
 func chCap67Movements(args []string) error {
 	fs := flag.NewFlagSet("ch-cap67-movements", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
-	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or the P23 boundary on first run)")
+	from := fs.Uint("from", 0, "first ledger (0 = resume from the watermark, or the P23 boundary on first run). A non-zero -from may re-derive at or below that resume point; a -write run never starts above it, since the watermark would cover the skipped ledgers (a dry run measures any window)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current contiguous lake tip). Always CLAMPED DOWN to the contiguous tip: a -to above a near-tip lake hole would derive past it and stamp the watermark beyond it, losing those ledgers' movements permanently.")
 	window := fs.Uint("window", 50_000, "ledgers per derive window")
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
@@ -172,7 +172,7 @@ func (c cap67CatchUp) idle() bool { return c.last < c.start }
 // clamps, each advance re-proves its window hole-free). progress, when non-nil, runs per window so a long -follow tick shows a stalled
 // watermark.
 func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32, dryRun bool, floorLedger uint32, progress cap67ProgressFunc) (cap67CatchUp, error) {
-	start, last, err := Cap67Range(ctx, chAddr, from, to, floorLedger)
+	start, last, err := cap67Range(ctx, chAddr, from, to, floorLedger, dryRun)
 	if err != nil {
 		return cap67CatchUp{}, err
 	}
@@ -325,34 +325,52 @@ func resolveStart(wm, floor, lakeMin uint32) uint32 {
 
 // Cap67Range resolves the derive range: from=0 resumes from the watermark (see resolveStart), and the upper bound is the contiguous lake tip, with a non-zero `to` clamped to it.
 func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32) (uint32, uint32, error) {
-	return resolveDeriveRange(ctx, chAddr, "ch-cap67-movements", from, to, floorLedger, clickhouse.Cap67MovementsWatermark)
+	return cap67Range(ctx, chAddr, from, to, floorLedger, false)
 }
 
+func cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32, dryRun bool) (uint32, uint32, error) {
+	return resolveDeriveRange(ctx, chAddr, "ch-cap67-movements", from, to, floorLedger, clickhouse.Cap67MovementsWatermark, dryRun)
+}
+
+// deriveLakeMinLedger is clickhouse.LakeMinLedger, a var so the first-run resume point is testable without a live lake.
+var deriveLakeMinLedger = clickhouse.LakeMinLedger
+
 // resolveDeriveRange is Cap67Range for any watermark-resumed lake derive:
-// readWM is the derive's own watermark and verb names it in the log.
-func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floorLedger uint32, readWM func(context.Context, string) (uint32, error)) (uint32, uint32, error) {
+// readWM is the derive's own watermark and verb names it in the log. A write run refuses an explicit from above the resume
+// point; a dry run stamps nothing, so it measures any explicit window and only reports that a write would be refused.
+func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floorLedger uint32, readWM func(context.Context, string) (uint32, error), dryRun bool) (uint32, uint32, error) {
 	if floorLedger == 0 {
 		// Defensive: a first run starts AT the floor, and genesis is ledger
 		// 1 — a floor of 0 is not a ledger. The CLI already rejects
 		// -floor-ledger 0; this guards other callers.
 		floorLedger = 1
 	}
-	start := from
-	if start == 0 {
-		wm, err := readWM(ctx, chAddr)
+	var start uint32
+	if dryRun && from != 0 {
+		start = from
+		resume, wm, err := deriveResumePoint(ctx, chAddr, from, floorLedger, readWM)
+		switch {
+		case err != nil:
+			fmt.Fprintf(os.Stderr, "%s: dry run from %d: %v — cannot tell whether a -write over this window would be refused\n", verb, from, err)
+		case from > resume:
+			fmt.Fprintf(os.Stderr, "%s: dry run from %d: a -write over this window would be refused, it skips [%d,%d] which this derive has not covered (watermark %d)\n",
+				verb, from, resume, from-1, wm)
+		}
+	} else {
+		resume, wm, err := deriveResumePoint(ctx, chAddr, from, floorLedger, readWM)
 		if err != nil {
-			return 0, 0, fmt.Errorf("read watermark: %w", err)
+			return 0, 0, err
 		}
-		var lakeMin uint32
-		if wm == 0 {
-			// First run only: the one time the floor, rather than the
-			// watermark, picks the resume point.
-			lakeMin, err = clickhouse.LakeMinLedger(ctx, chAddr)
-			if err != nil {
-				return 0, 0, fmt.Errorf("read lake min ledger: %w", err)
-			}
+		// The derive records its watermark as the top of a fully-derived prefix, so an explicit -from above the resume point
+		// (wm+1, or the floor on a first run, where the advance has no prefix to check) would stamp it over ledgers never derived.
+		if from > resume {
+			return 0, 0, fmt.Errorf("%s: -from %d skips [%d,%d], which this derive has not covered (watermark %d): omit -from to resume at %d",
+				verb, from, resume, from-1, wm, resume)
 		}
-		start = resolveStart(wm, floorLedger, lakeMin)
+		start = resume
+		if from != 0 {
+			start = from
+		}
 	}
 	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can have holes near the tip, and
 	// deriving past one would advance the watermark over it and lose that ledger's movements permanently. Clamp to the
@@ -376,6 +394,24 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 			verb, to, tip, last, to)
 	}
 	return start, last, nil
+}
+
+// deriveResumePoint returns the first ledger a resumed run derives (see resolveStart) and the watermark it read.
+func deriveResumePoint(ctx context.Context, chAddr string, from, floorLedger uint32, readWM func(context.Context, string) (uint32, error)) (uint32, uint32, error) {
+	wm, err := readWM(ctx, chAddr)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read watermark: %w", err)
+	}
+	var lakeMin uint32
+	if wm == 0 && (from == 0 || from > floorLedger) {
+		// First run only: the one time the floor, rather than the
+		// watermark, picks the resume point.
+		lakeMin, err = deriveLakeMinLedger(ctx, chAddr)
+		if err != nil {
+			return 0, 0, fmt.Errorf("read lake min ledger: %w", err)
+		}
+	}
+	return resolveStart(wm, floorLedger, lakeMin), wm, nil
 }
 
 // cap67InsertBatch bounds one InsertAccountMovements flush.

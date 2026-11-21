@@ -674,7 +674,7 @@ groups:
       # within seconds), so a `for:` could only let it resolve before firing. 1h keeps
       # the ticket readable after a deploy and increase() carries the pre-restart value
       # across the counter reset. Ticket, not page: rows are recoverable (ch-rebuild
-      # -sdex-gaps, the source's gap detector) but only if someone acts.
+      # -sdex -sdex-gaps, the source's gap detector) but only if someone acts.
       - alert: stellarindex_ingestion_sink_undrained_rows
         expr: |
           increase(stellarindex_sink_undrained_rows_total[1h]) > 0

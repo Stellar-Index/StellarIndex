@@ -62,7 +62,7 @@ func chEntryHistory(args []string) error {
 		return runTotalsOnly(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun) //nolint:gosec // ledger numbers fit uint32
 	}
 
-	start, last, err := resolveDeriveRange(ctx, *chAddr, "ch-entry-history", uint32(*from), uint32(*to), uint32(*floorLedger), clickhouse.SponsorshipWatermark) //nolint:gosec // ledger numbers fit uint32
+	start, last, err := resolveDeriveRange(ctx, *chAddr, "ch-entry-history", uint32(*from), uint32(*to), uint32(*floorLedger), clickhouse.SponsorshipWatermark, dryRun) //nolint:gosec // ledger numbers fit uint32
 	if err != nil {
 		return err
 	}

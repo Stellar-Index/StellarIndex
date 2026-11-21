@@ -261,7 +261,7 @@ Ticket. `time() - node_systemd_timer_last_trigger_seconds{name="census-rollup.ti
 
 ## stellarindex_oneshot_timer_stale
 
-Ticket. `time() - node_systemd_timer_last_trigger_seconds` above 50h for `creators-rollup.timer`, `sponsors-rollup.timer` and `issuer-flags.timer`, or 3h for `listing-sync.timer`, `for: 2h`. The timer stopped being triggered, so its table freezes with no failed unit. A failing run is `stellarindex_systemd_unit_failed`'s job. Check `systemctl list-timers <name>`; re-enable with `systemctl enable --now <name>` if it is inactive.
+Ticket. `time() - node_systemd_timer_last_trigger_seconds` above 50h for `creators-rollup.timer`, `sponsors-rollup.timer` and `issuer-flags.timer`, or 3h for `listing-sync.timer` and `holders-rollup.timer` (the asset holder boards and counts), `for: 2h`. The timer stopped being triggered, so its table freezes with no failed unit. A failing run is `stellarindex_systemd_unit_failed`'s job. Check `systemctl list-timers <name>`; re-enable with `systemctl enable --now <name>` if it is inactive.
 
 ## stellarindex_keepalived_textfile_stale
 

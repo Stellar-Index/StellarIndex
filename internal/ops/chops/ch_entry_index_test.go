@@ -335,7 +335,7 @@ func eiSignersOnly(t *testing.T, got *eiCapture, entryWMs ...uint32) {
 		}
 		return got.signerWM[len(got.signerWM)-1][1], nil
 	}
-	resolveEntryIndexRange = func(ctx context.Context, addr, _ string, from, _, floor uint32, readWM func(context.Context, string) (uint32, error)) (uint32, uint32, error) {
+	resolveEntryIndexRange = func(ctx context.Context, addr, _ string, from, _, floor uint32, readWM func(context.Context, string) (uint32, error), _ bool) (uint32, uint32, error) {
 		if from != 0 {
 			return from, ehLedger + 100, nil
 		}

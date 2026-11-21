@@ -145,6 +145,8 @@ tests:
         values: '0x3200'
       - series: 'node_systemd_timer_last_trigger_seconds{name="other.timer",instance="stale"}'
         values: '0x3200'
+      - series: 'node_systemd_timer_last_trigger_seconds{name="holders-rollup.timer",instance="stale"}'
+        values: '0x3200'
     alert_rule_test:
       - eval_time: 4h
         alertname: stellarindex_oneshot_timer_stale
@@ -152,6 +154,20 @@ tests:
       - eval_time: 6h
         alertname: stellarindex_oneshot_timer_stale
         exp_alerts:
+          - exp_labels:
+              name: holders-rollup.timer
+              instance: stale
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "holders-rollup.timer has stopped firing on stale"
+              description: |
+                holders-rollup.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status holders-rollup.timer`.
           - exp_labels:
               name: listing-sync.timer
               instance: stale
@@ -169,6 +185,20 @@ tests:
       - eval_time: 53h
         alertname: stellarindex_oneshot_timer_stale
         exp_alerts:
+          - exp_labels:
+              name: holders-rollup.timer
+              instance: stale
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_oneshot_timer_stale
+              summary: "holders-rollup.timer has stopped firing on stale"
+              description: |
+                holders-rollup.timer has not been triggered for longer than its
+                schedule allows. A stopped timer leaves no failed unit, so the
+                table it writes freezes with no other alert.
+                `systemctl status holders-rollup.timer`.
           - exp_labels:
               name: creators-rollup.timer
               instance: stale

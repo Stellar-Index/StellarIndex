@@ -178,13 +178,19 @@ func nonNilStrings(s []string) []string {
 // sacAssetViaEvents resolves an uncaptured-instance contract to the classic asset whose SAC it is, via the event-topic hint plus the
 // deterministic-derivation cross-check (never trust the topic alone). Returns canonical CODE-GISSUER (or "native").
 func (h *Handler) sacAssetViaEvents(ctx context.Context, contractID string) (string, bool) {
+	name, found, _ := h.sacAssetViaEventsChecked(ctx, contractID)
+	return name, found
+}
+
+// sacAssetViaEventsChecked is sacAssetViaEvents that also returns the probe's read error, so a failed read is not taken for "not a SAC".
+func (h *Handler) sacAssetViaEventsChecked(ctx context.Context, contractID string) (string, bool, error) {
 	name, found, err := h.Reader.SACAssetFromEvents(ctx, contractID)
 	if err != nil || !found {
-		return "", false
+		return "", false, err
 	}
 	asset, ok := canonical.SEP11SACAsset(name, contractID)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
-	return asset.String(), true
+	return asset.String(), true, nil
 }
