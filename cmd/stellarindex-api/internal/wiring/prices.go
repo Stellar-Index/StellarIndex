@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -96,6 +97,8 @@ type GlobalPriceReader struct {
 	Logger    *slog.Logger                // nil → no guard logging
 	Substance *pricingguard.SubstanceGate // nil → no thin-market gate
 	Scam      *pricingguard.ScamGate      // nil → no scam gate
+	// Exclusions: nil → no source-exclusion check.
+	Exclusions *pricingguard.SourceExclusionGate
 }
 
 func (g GlobalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
@@ -124,17 +127,63 @@ func (g GlobalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	if lowConfidence || substituted {
 		return "", time.Time{}, 0, nil, false, nil
 	}
+	if w := g.Exclusions.BucketWithholding(ctx, base, quote, served); w != pricingguard.NotWithheld {
+		return "", time.Time{}, 0, nil, false, tierWithheld(w)
+	}
 	// row.Bucket is the bucket's start; the closed-bucket contract (ADR-0015) serves its end.
 	asOf := served.Bucket.Add(time.Minute)
 	return served.VWAP, asOf, served.TradeCount, served.Sources, true, nil
 }
 
+// LatestAggregatorPrices is [GlobalPriceReader.LatestAggregatorPricesTrimmed] judged without a freshness filter; the headline
+// tier calls the trimmed form so it judges fresh rows only.
 func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
+	kept, excluded, err := g.LatestAggregatorPricesTrimmed(ctx, base, quote, sources)
+	if err != nil {
+		return nil, err
+	}
+	if len(excluded) > 0 && !aggregate.ExcludedSurvivorsAgree(append(append([]canonical.OracleUpdate(nil), kept...), excluded...), kept) {
+		return nil, tierWithheld(pricingguard.WithheldSourceExcluded)
+	}
+	return kept, nil
+}
+
+var _ aggregate.ExclusionTrimmingReader = GlobalPriceReader{}
+
+// LatestAggregatorPricesTrimmed splits the latest aggregator rows into survivors and operator-excluded rows; the aggregator tier
+// checks the survivors against the full set after its freshness filter ([aggregate.ExclusionTrimmingReader]).
+func (g GlobalPriceReader) LatestAggregatorPricesTrimmed(
+	ctx context.Context, base, quote canonical.Asset, sources []string,
+) (kept, excluded []canonical.OracleUpdate, err error) {
 	// Scam gate: without it a flagged issuer's headline, withheld by tier 1, resurfaces here.
 	if PriceWithheld(ctx, nil, g.Scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return g.S.LatestAggregatorPricesForPair(ctx, base, quote, sources)
+	rows, err := g.S.LatestAggregatorPricesForPair(ctx, base, quote, sources)
+	if err != nil || g.Exclusions == nil {
+		return rows, nil, err
+	}
+	// Each row is one source's own observation, so the tier is recomputed from the survivors.
+	kept = rows[:0:0]
+	for _, u := range rows {
+		switch w := g.Exclusions.InstantWithholding(ctx, base, quote, u.Source, u.Timestamp); w {
+		case pricingguard.NotWithheld:
+			kept = append(kept, u)
+		case pricingguard.WithheldSourceExcluded:
+			excluded = append(excluded, u)
+		default:
+			return nil, nil, tierWithheld(w)
+		}
+	}
+	if len(kept) == 0 && len(rows) > 0 {
+		return nil, excluded, tierWithheld(pricingguard.WithheldSourceExcluded)
+	}
+	return kept, excluded, nil
+}
+
+// tierWithheld is the headline tiers' refusal under an exclusion: distinct from "no data", so no ungated fallback fills it.
+func tierWithheld(w pricingguard.Withholding) error {
+	return &aggregate.TierWithheldError{Unread: w == pricingguard.WithheldExclusionsUnread}
 }
 
 func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote canonical.Asset, window time.Duration) (string, time.Time, bool, error) {
@@ -152,6 +201,10 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 	if err != nil || !found || !v.Triangulated {
 		// found && !Triangulated is a direct value, which must not be served as this tier.
 		return "", time.Time{}, false, err
+	}
+	// A triangulated value records neither sources nor legs; the last tier fails closed like the cache layer of /v1/price.
+	if w := g.Exclusions.MultiHopWithholding(ctx, v.ObservedAt.Add(-window), time.Now().Add(time.Nanosecond)); w != pricingguard.NotWithheld {
+		return "", time.Time{}, false, tierWithheld(w)
 	}
 	return v.Value, v.ObservedAt, true, nil
 }
@@ -217,13 +270,25 @@ func ForSharedRead() WithholdingOption {
 	return func(q *withholdingQuery) { q.shared = true }
 }
 
+// PriceStore is the storage seam [StorePriceReader] reads; *timescale.Store satisfies it.
+type PriceStore interface {
+	pricingguard.TrailingReader
+	LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (timescale.Vwap1mRow, error)
+	RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
+	RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) (bool, error)
+	LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error)
+	FreezeWindowsForPair(ctx context.Context, assetIDs []string, quoteID string, since time.Time) ([]timescale.FreezeWindow, error)
+}
+
 type StorePriceReader struct {
-	S             *timescale.Store
+	S             PriceStore
 	VWAPFreshness time.Duration               // 0 → defaultVWAPFreshness
 	Now           func() time.Time            // nil → time.Now
 	Logger        *slog.Logger                // nil → no guard logging
 	Substance     *pricingguard.SubstanceGate // nil → no thin-market gate
 	Scam          *pricingguard.ScamGate      // nil → no scam-issuer gate
+	// Exclusions: nil → no source-exclusion check.
+	Exclusions *pricingguard.SourceExclusionGate
 }
 
 func (r StorePriceReader) freshnessWindow() time.Duration {
@@ -293,6 +358,9 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 			return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 		}
 		served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(ctx, r.S, r.Logger, pair, row)
+		if w := r.Exclusions.BucketWithholding(ctx, asset, quote, served); w != pricingguard.NotWithheld {
+			return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(w)
+		}
 		snap, stale := r.guardedSnapshot(asset, quote, served, lowConfidence, substituted)
 		return snap, served.Sources, stale, nil
 	}
@@ -326,6 +394,9 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	if withheld := PriceWithheld(ctx, r.Substance, r.Scam, asset, quote, "price_read"); withheld != pricingguard.NotWithheld {
 		return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 	}
+	if w := r.Exclusions.InstantWithholding(ctx, asset, quote, trades[0].Source, trades[0].Timestamp); w != pricingguard.NotWithheld {
+		return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(w)
+	}
 	// decimals=7 is Stellar's default stroop scale.
 	snap, ok := v1.LastTradeToSnapshot(trades[0], 7)
 	if !ok {
@@ -354,6 +425,11 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	if withheld := PriceWithheld(ctx, r.Substance, r.Scam, asset, quote, "oracle"); withheld != pricingguard.NotWithheld {
 		return nil, v1.PriceWithheldError(withheld)
 	}
+	// An excluded source's minutes are dropped before the guard so they neither serve nor set the baseline.
+	rows, w := r.Exclusions.CleanBuckets(ctx, asset, quote, rows)
+	if w != pricingguard.NotWithheld {
+		return nil, v1.PriceWithheldError(w)
+	}
 	// Each bucket is the same bare CAGG ratio /v1/price guards; a manipulated minute is dropped.
 	rows = pricingguard.GuardServedVWAP1mSeries(r.Logger, pair, rows, n)
 	out := make([]v1.PriceSnapshot, len(rows))
@@ -361,6 +437,15 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 		out[i] = v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket)
 	}
 	return out, nil
+}
+
+// FreezeWindows is the optional [v1.FreezeWindowReader]: the recorded freezes of any of assets against quote still open at since.
+func (r StorePriceReader) FreezeWindows(ctx context.Context, assets []canonical.Asset, quote canonical.Asset, since time.Time) ([]timescale.FreezeWindow, error) {
+	ids := make([]string, len(assets))
+	for i, a := range assets {
+		ids[i] = a.String()
+	}
+	return r.S.FreezeWindowsForPair(ctx, ids, quote.String(), since)
 }
 
 // RecentClosedVWAP1mExists is the optional gate the /v1/price stablecoin-proxy fallback uses to skip empty proxy pairs before the unbounded last-trade walk.

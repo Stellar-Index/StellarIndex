@@ -28,6 +28,7 @@ export function SupplyComposition({
   maxDeclared,
   unlimited,
   floor,
+  totalFloor,
   derived,
 }: {
   circulating: string | null | undefined;
@@ -37,6 +38,8 @@ export function SupplyComposition({
   maxDeclared?: boolean;
   unlimited?: boolean;
   floor?: boolean;
+  /** The total is a floor too; headroom over a floor base is a ceiling. */
+  totalFloor?: boolean;
   /** The supply is a replayed-flows reading, not a certified total. */
   derived?: boolean;
 }) {
@@ -45,6 +48,7 @@ export function SupplyComposition({
   const m = unlimited ? null : big(max);
   const base = t ?? c;
   if (base == null || base <= 0n) return null;
+  const baseFloor = t != null ? totalFloor === true : floor === true;
 
   const segs: Seg[] = [];
   if (c != null && c > 0n) {
@@ -108,6 +112,7 @@ export function SupplyComposition({
             <span className="text-ink font-mono tabular-nums">
               {floor && s.key === 'circ' ? '≥ ' : ''}
               {floor && s.key === 'locked' ? '≤ ' : ''}
+              {baseFloor && s.key === 'headroom' ? '≤ ' : ''}
               {ratioPct(s.units.toString(), denom.toString(), 1)}%
             </span>
           </li>

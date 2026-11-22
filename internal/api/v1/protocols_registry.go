@@ -57,6 +57,12 @@ type ProtocolMeta struct {
 	ExtraEventSources []string
 }
 
+// Sources is every source name the protocol row covers: Name then ExtraEventSources. Every
+// per-source join (events, verdict) folds over it.
+func (m ProtocolMeta) Sources() []string {
+	return append([]string{m.Name}, m.ExtraEventSources...)
+}
+
 // StaticProtocolContract is one verified, non-factory protocol instance carried in the static
 // directory until a decoder-backed protocol_contracts row supersedes it. FirstLedger is the
 // contract-creation ledger; FactoryID records its verified deployment anchor.

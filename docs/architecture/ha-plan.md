@@ -221,8 +221,8 @@ chain genesis.
 **Planned (Patroni, role `configs/ansible/roles/patroni/`):**
 
 - Primary + 2 synchronous replicas (`db-01..03`),
-  `synchronous_commit=remote_apply`,
-  `synchronous_standby_names='ANY 1 (db-02, db-03)'`. Failover RTO 60 s.
+  `synchronous_commit=remote_apply`; Patroni's `synchronous_mode`
+  writes `synchronous_standby_names`. Failover RTO 60 s.
 - etcd, 3 nodes, one cluster per region; `patroni_cluster_name` and
   `etcd_cluster_token` differ per region so clusters cannot join across
   regions. etcd traffic uses TLS with client-cert auth by default

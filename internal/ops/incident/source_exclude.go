@@ -19,7 +19,22 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const readSideNote = "source-exclude: note: served prices do not read source_exclusions yet; this row takes effect when the read side ships"
+const readSideNote = "source-exclude: note:\n" +
+	"  WITHHELD (404 reason source_excluded; tip, /v1/vwap, /v1/twap and the headline aggregator tier recompute without the source):\n" +
+	"    /v1/price (closed, swapped-in, last-trade, cached, stablecoin proxy, USD-leg cross, frozen held, FX conversions), /v1/price/batch,\n" +
+	"    /v1/price/tip + stream, closed-bucket price stream, SEP-40, /v1/vwap, /v1/twap, asset headline (three tiers, global-market\n" +
+	"    reference; never falls back to the listing price; a declared USD peg does not replace it).\n" +
+	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
+	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
+	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +
+	"  DELAY: re-read every 15s; an unreadable table keeps the last good set up to 60s, then withholds everything gated.\n" +
+	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset detail ~225s.\n" +
+	"  NOT COVERED (may still include the source until lifted or aged out): /v1/price/at, /changes, /depeg, history, since-inception,\n" +
+	"    chart, /v1/ohlc, asset listing price_usd, sparkline, ATH, transitive fill, RWA assets/history/premium, fiat-asset headline and\n" +
+	"    non-USD declared-peg FX, /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
+	"    /v1/protocols + tvl USD, /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
+	"    /v1/divergence, /v1/mev, /v1/assets/verified. No USD price: /v1/pools/reserves, /v1/liquidity-pools, positions, /v1/search.\n" +
+	"  Check: curl /v1/price for an affected pair, expect 404 reason source_excluded. Lift: source-exclude -lift -id N -reason ... -write"
 
 // maxFutureFrom bounds how far ahead -from may start without -allow-future: a guard against year typos.
 const maxFutureFrom = 24 * time.Hour

@@ -108,7 +108,7 @@ check(probe is not None and probe.get("check_mode") is False and probe.get("chan
 # alertmanager: the unit carries the flags, so a unit change restarts it (SIGHUP does not re-read flags).
 am_unit = next(t for t in tasks("prometheus/tasks/05-systemd.yml") if t.get("name") == "render alertmanager systemd unit")
 am_handler = next((h for h in yaml.safe_load(text("prometheus/handlers/main.yml"))
-                   if h.get("listen") == am_unit.get("notify")), None)
+                   if h.get("listen") == am_unit.get("notify") and "shell" in h), None)
 check(am_handler is not None and "systemctl restart alertmanager" in am_handler.get("shell", ""),
       "alertmanager unit change notifies a restarting handler")
 
@@ -151,11 +151,12 @@ for name in ("restart etcd", "restart patroni"):
     check(handlers[name].get("throttle") == 1, f"patroni handler '{name}' is throttled to one host")
 
 
-def run_patroni_restart(before, after=None, switched=None, me="db-02"):
+def run_patroni_restart(before, after=None, switched=None, me="db-02", active=False):
     """Run the rendered restart handler with curl/systemctl/patronictl stubbed.
 
     `after` replaces the /cluster answer once systemctl restarts, `switched` once
-    patronictl switches over; None for `before` means this host's API is down.
+    patronictl switches over; None for `before` means this host's API is down;
+    `active` is what `systemctl is-active patroni` answers.
     Returns (rc, log of systemctl and patronictl calls)."""
     jenv = jinja2.Environment()
     jenv.filters["quote"] = shlex.quote
@@ -164,8 +165,11 @@ def run_patroni_restart(before, after=None, switched=None, me="db-02"):
         patroni_restart_max_lag_bytes=16777216, groups={"postgres_cluster": ["db-01", "db-02", "db-03"]})
     with tempfile.TemporaryDirectory() as d:
         script = script.replace("/etc/patroni/.restart-pending", f"{d}/restart-pending")
+        if active:
+            open(f"{d}/active", "w").close()
         stub = {"curl": f'case "$*" in *"/cluster"*) cat {d}/cluster.json 2>/dev/null || exit 7 ;; esac\n',
-                "systemctl": f'echo "systemctl $*" >> {d}/calls.log\n'
+                "systemctl": f'case "$*" in is-active*) [ -f {d}/active ]; exit $? ;; esac\n'
+                             f'echo "systemctl $*" >> {d}/calls.log\n'
                              f'case "$*" in restart*) [ -f {d}/after.json ] && cp {d}/after.json {d}/cluster.json ;; esac\nexit 0\n',
                 "patronictl": f'echo "patronictl $*" >> {d}/calls.log\n'
                               f'[ -f {d}/switched.json ] && cp {d}/switched.json {d}/cluster.json\nexit 0\n',
@@ -219,7 +223,16 @@ else:
     rc, log = run_patroni_restart(self_down, after=healthy)
     check(rc == 0 and "restart patroni" in log, "patroni restart handler restarts a member that is itself down")
     rc, log = run_patroni_restart(None, after=healthy)
-    check(rc == 0 and "restart patroni" in log, "patroni restart handler restarts a member whose own API does not answer")
+    check(rc == 0 and "restart patroni" in log, "patroni restart handler restarts a member whose unit is down")
+    rc, log = run_patroni_restart(None, after=healthy, active=True)
+    check(rc != 0 and "restart" not in log and run_patroni_restart.pending,
+          "patroni restart handler refuses a running member whose API does not answer (the probe may be wrong)")
+    for state in ("creating replica", "starting", "running custom bootstrap script", "creating_replica"):
+        busy = {"members": [member("db-01", "leader", "running"), member("db-02", "replica", state),
+                            member("db-03", "replica", "streaming")]}
+        rc, log = run_patroni_restart(busy, after=healthy, active=True)
+        check(rc != 0 and "restart" not in log and run_patroni_restart.pending,
+              f"patroni restart handler never restarts a member in '{state}' (it would cancel pg_basebackup)")
     switched = {"members": [member("db-01", "sync_standby", "streaming"), member("db-02", "leader", "running"),
                             member("db-03", "replica", "streaming")]}
     rc, log = run_patroni_restart(healthy, after=switched, switched=switched, me="db-01")
@@ -240,7 +253,7 @@ else:
           "patroni restart handler finishes once the restarted replica streams again, whatever its sampled lag")
 
 # etcd: a member restarts only while every peer is healthy, and waits for its own health.
-def run_etcd_restart(healthy_before, up_after):
+def run_etcd_restart(healthy_before, up_after, active=False):
     eenv = jinja2.Environment(trim_blocks=True)
     eenv.filters["difference"] = lambda a, b: [x for x in a if x not in b]
     script = eenv.from_string(handlers["restart etcd"]["shell"]).render(
@@ -248,10 +261,12 @@ def run_etcd_restart(healthy_before, up_after):
         groups={"postgres_cluster": ["db-01", "db-02", "db-03"]},
         hostvars={"db-01": {"ansible_host": "10.0.0.11"}, "db-03": {"ansible_host": "10.0.0.13"}})
     with tempfile.TemporaryDirectory() as d:
+        script = script.replace("/etc/default/.etcd-restart-pending", f"{d}/restart-pending")
         for ip in healthy_before:
             open(f"{d}/ok-{ip}", "w").close()
         stub = {"etcdctl": f'ip=$(printf "%s" "$*" | sed -n "s|.*//\\([0-9.]*\\):.*|\\1|p"); [ -f {d}/ok-$ip ]\n',
-                "systemctl": f'echo "systemctl $*" >> {d}/calls.log\ncase "$*" in restart*) rm -f {d}/ok-10.0.0.12; '
+                "systemctl": f'case "$*" in is-active*) exit {0 if active else 3} ;; esac\n'
+                             f'echo "systemctl $*" >> {d}/calls.log\ncase "$*" in restart*) rm -f {d}/ok-10.0.0.12; '
                              f'{"touch " + d + "/ok-10.0.0.12" if up_after else ":"} ;; esac\n',
                 "sleep": ""}
         for name, body in stub.items():
@@ -261,17 +276,24 @@ def run_etcd_restart(healthy_before, up_after):
         env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}"}
         rc = subprocess.run(["bash", "-c", script], env=env, stdin=subprocess.DEVNULL, capture_output=True).returncode
         log = open(f"{d}/calls.log").read() if os.path.exists(f"{d}/calls.log") else ""
+        run_etcd_restart.pending = os.path.exists(f"{d}/restart-pending")
     return rc, "restart etcd" in log
 
 
 all_up = ["10.0.0.11", "10.0.0.12", "10.0.0.13"]
-for before, up_after, want, label in (
-        (all_up, True, (0, True), "restarts a healthy member while every peer is healthy"),
-        (["10.0.0.12", "10.0.0.13"], True, (1, False), "refuses while a peer is unhealthy (a failed earlier member)"),
-        (["10.0.0.11"], True, (0, True), "restarts a member that is itself unhealthy"),
-        (all_up, False, (1, True), "fails when the member is not healthy after the restart")):
-    rc, restarted = run_etcd_restart(before, up_after)
-    check((rc == 0) == (want[0] == 0) and restarted == want[1], f"etcd restart handler {label}")
+# (healthy before, up after restart, unit active) -> (rc, restarted, marker left)
+for before, up_after, active, want, label in (
+        (all_up, True, True, (0, True, False), "restarts a healthy member while every peer is healthy and clears the marker"),
+        (["10.0.0.12", "10.0.0.13"], True, True, (1, False, True),
+         "refuses while a peer is unhealthy (a failed earlier member) and keeps the marker"),
+        (["10.0.0.11"], True, False, (0, True, False), "restarts a member whose unit is down"),
+        (["10.0.0.11"], True, True, (1, False, True),
+         "refuses a running member whose probe fails (new TLS material or port suspect)"),
+        ([], True, True, (1, False, True), "refuses when the probe fails for every member"),
+        (all_up, False, True, (1, True, True), "fails and keeps the marker when the member is not healthy after the restart")):
+    rc, restarted = run_etcd_restart(before, up_after, active)
+    check((rc == 0) == (want[0] == 0) and restarted == want[1] and run_etcd_restart.pending == want[2],
+          f"etcd restart handler {label}")
 
 # patroni: only db-01 carries a bootstrap section, so no other member can initdb an empty cluster;
 # initdb's default `trust` lines are replaced; bootstrap.users (dropped in Patroni 4) is not relied on.
@@ -287,6 +309,32 @@ for host, want in (("db-01", True), ("db-02", False)):
         check({"auth-local": "peer"} in initdb and {"auth-host": "scram-sha-256"} in initdb,
               "patroni bootstrap initdb replaces the default trust pg_hba lines")
         check("users" not in conf["bootstrap"], "patroni bootstrap does not rely on bootstrap.users")
+        # Unquoted db-0N names do not parse, and Postgres refuses to start on it once synchronous_mode is off.
+        check("synchronous_standby_names" not in conf["bootstrap"]["dcs"]["postgresql"]["parameters"],
+              "patroni bootstrap leaves synchronous_standby_names to Patroni")
+        dcs_pg = conf["bootstrap"]["dcs"]["postgresql"]["parameters"]
+        check(dcs_pg.get("archive_mode") != "on" or any(
+                  "_pgbackrest_present.results[0].stat.exists" in str(t.get("assert", {}).get("that"))
+                  and "patroni_archive_command | trim | length > 0" in str(t.get("assert", {}).get("that"))
+                  for t in tasks("patroni/tasks/01-preflight.yml")),
+              "archive_mode on is paired with a preflight proving archive_command can run")
+boot = tasks("patroni/tasks/08-patroni-bootstrap.yml")
+bnames = [t.get("name", "") for t in boot]
+hi = next((i for i, t in enumerate(boot) if str(t.get("uri", {}).get("url", "")).endswith("/health")), None)
+check(hi is not None and hi > bnames.index("confirm primary elected") and boot[hi].get("until"),
+      "db-01 waits for its own Postgres (not just any Leader) before handlers can restart it")
+check(any("stanza-create" in str(t.get("loop")) and "check" in str(t.get("loop")) for t in boot),
+      "bootstrap proves WAL archiving with pgbackrest check")
+# TLS material is verified (chain + key match) before each copy that notifies a restart.
+for f, copy_name in (("03-etcd-configure.yml", "install etcd TLS material"),
+                     ("06-patroni-configure.yml", "install Patroni etcd client TLS material")):
+    ts = tasks(f"patroni/tasks/{f}")
+    ns = [t.get("name", "") for t in ts]
+    vi = next((i for i, t in enumerate(ts) if t.get("import_tasks") == "verify-tls.yml"), None)
+    check(vi is not None and vi < ns.index(copy_name), f"{f} verifies TLS material before '{copy_name}'")
+vt = code("patroni/tasks/verify-tls.yml")
+check("openssl verify -CAfile" in vt and "-pubkey" in vt and "-pubout" in vt and "stdin:" in vt,
+      "verify-tls checks the chain and the key match, with the PEMs on stdin, not argv")
 join = tasks("patroni/tasks/09-patroni-join.yml")
 names = [t.get("name", "") for t in join]
 wait_i = next((i for i, t in enumerate(join) if "/initialize" in str(t.get("command", ""))), None)
@@ -579,6 +627,68 @@ for role in sorted(os.listdir(roles)):
     guarded = any("archival_nodes" in str(t.get("assert", {}))
                   for f in files for t in (yaml.safe_load(open(f"{tdir}/{f}")) or []) if isinstance(t, dict))
     check(guarded, f"{role} renders /etc/nftables.conf and refuses hosts in archival_nodes")
+
+# keepalived: auth_pass is cleartext in every advert, so with unicast peers set only they may send VRRP.
+ka = text("haproxy/templates/keepalived.conf.j2")
+ublock = ka[ka.find("{% if keepalived_unicast_src_ip and keepalived_unicast_peer_ips %}"):]
+check("check_unicast_src" in ublock[:ublock.find("{% endif %}")], "keepalived checks the unicast advert source")
+fw = next(t for t in tasks("haproxy/tasks/06-firewall.yml") if "copy" in t)["copy"]["content"]
+fwr = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined).from_string(fw).render(
+    keepalived_unicast_src_ip="10.0.0.21", keepalived_unicast_peer_ips=["10.0.0.22", "fd00::22"],
+    haproxy_internal_cidrs=["10.0.0.0/8", "fd00::/8"], haproxy_allowed_ssh_cidrs=["10.0.0.0/8"])
+vrrp = [ln.strip() for ln in fwr.splitlines() if "vrrp" in ln and "accept" in ln]
+check(vrrp == ['ip protocol vrrp ip saddr 10.0.0.22 accept comment "vrrp-peer"',
+               'ip6 nexthdr vrrp ip6 saddr fd00::22 accept comment "vrrp-peer"'],
+      f"haproxy firewall accepts VRRP from the unicast peers only: {vrrp}")
+
+# alertmanager: gossip is unauthenticated, so only the other prometheus_pair host may reach it.
+pfw = next(t for t in tasks("prometheus/tasks/06-firewall.yml") if "copy" in t)["copy"]["content"]
+pfwr = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined).from_string(pfw).render(
+    groups={"prometheus_pair": ["prom1", "prom2"]}, inventory_hostname="prom1",
+    hostvars={"prom1": {"ansible_host": "10.0.0.5"}, "prom2": {"ansible_host": "10.0.0.6"}},
+    prometheus_port=9090, alertmanager_port=9093, alertmanager_cluster_listen_port=9094,
+    prometheus_internal_cidrs=["10.0.0.0/8"], prometheus_allowed_ssh_cidrs=["10.0.0.0/8"])
+gossip = [ln.strip() for ln in pfwr.splitlines() if "9094" in ln]
+check(gossip == ['tcp dport 9094 ip saddr 10.0.0.6 accept comment "alertmanager-cluster-tcp"',
+                 'udp dport 9094 ip saddr 10.0.0.6 accept comment "alertmanager-cluster-udp"'],
+      f"prometheus firewall opens alertmanager gossip to the peer only: {gossip}")
+
+# guarded restarts: a handler that can refuse fails the host and cancels every handler after it,
+# and Ansible forgets a notification once the play ends. So each one has a marker handler on its
+# topic defined before it, clears the marker only on success, is re-notified from the marker by a
+# role task, and no unguarded handler sits after the first guarded one.
+for role in sorted(os.listdir(roles)):
+    hf = f"{roles}/{role}/handlers/main.yml"
+    if not os.path.isfile(hf):
+        continue
+    hs = yaml.safe_load(open(hf)) or []
+    tdir = f"{roles}/{role}/tasks"
+    rtasks = [t for f in sorted(os.listdir(tdir)) if f.endswith(".yml")
+              for t in (yaml.safe_load(open(f"{tdir}/{f}")) or []) if isinstance(t, dict)]
+    first = None
+    for i, h in enumerate(hs):
+        sh = str(h.get("shell", ""))
+        if not re.search(r'refusing[^\n]*\n\s*exit 1', sh):
+            check(first is None, f"{role} handler '{h['name']}' cannot be cancelled by a refused restart before it")
+            continue
+        first = i if first is None else first
+        m = re.search(r'^\s*pending=(\S+)$', sh, re.M)
+        path, topic = (m.group(1) if m else None), h.get("listen")
+        check(any(j < i and isinstance(hs[j].get("file"), dict) and hs[j]["file"].get("path") == path
+                  and hs[j]["file"].get("state") == "touch" and hs[j].get("listen") == topic for j in range(len(hs))),
+              f"{role} handler '{h['name']}' has a marker handler on '{topic}' that runs before it")
+        check(path is not None and 'rm -f "$pending"' in sh, f"{role} handler '{h['name']}' clears its marker only in the script")
+        stat_regs = [t.get("register") for t in rtasks if isinstance(t.get("stat"), dict) and t["stat"].get("path") == path]
+        check(any(t.get("notify") == topic and any(r and r in str(t.get("when")) for r in stat_regs) for t in rtasks),
+              f"{role} re-notifies '{topic}' from {path} on the next run")
+
+# A task failure before the handler flush drops every queued notification unless the play forces handlers.
+pdir = os.path.join(roles, "..", "playbooks")
+for pb in sorted(os.listdir(pdir)):
+    for play in (yaml.safe_load(open(f"{pdir}/{pb}")) or []):
+        names = [r if isinstance(r, str) else r.get("role") for r in play.get("roles", [])]
+        if any(os.path.isdir(f"{roles}/{n}/handlers") for n in names):
+            check(play.get("force_handlers") is True, f"playbook {pb} play '{play.get('name')}' sets force_handlers")
 
 if failed:
     sys.exit(1)

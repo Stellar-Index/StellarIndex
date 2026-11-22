@@ -1,3 +1,5 @@
+import { compareDecimalStrings } from '@/lib/format';
+
 /**
  * True when a served supply is a provable floor (trustline or storage
  * balances only), so the supply and any value built on it are "at least".
@@ -12,6 +14,27 @@ export function supplyIsFloor(a: {
     a.market_cap_lower_bound === true ||
     a.supply_basis === 'classic_trustline_sum' ||
     a.supply_basis === 'contract_storage_balances'
+  );
+}
+
+/**
+ * True when the served total is a floor: its own basis says so, or it is the
+ * same reading as a circulating figure /v1/assets/{id}/supply calls a floor
+ * (a lake-net reading sets total == circulating).
+ */
+export function totalSupplyIsFloor(
+  a: Parameters<typeof supplyIsFloor>[0] & {
+    total_supply?: string | null;
+    circulating_supply?: string | null;
+  },
+  onchainCirculatingFloor: boolean,
+): boolean {
+  return (
+    supplyIsFloor(a) ||
+    (onchainCirculatingFloor &&
+      a.total_supply != null &&
+      a.circulating_supply != null &&
+      compareDecimalStrings(a.total_supply, a.circulating_supply) === 0)
   );
 }
 

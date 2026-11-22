@@ -1,6 +1,6 @@
 'use client';
 
-import { useAsset, useChangeSummary } from '@/api/hooks';
+import { LIVE_PRICE_POLL_MS, useAsset, useChangeSummary } from '@/api/hooks';
 import {
   isFrameStale,
   tipCaveat,
@@ -12,9 +12,16 @@ import {
 import { ThinMarketBadge, thinMarketNote } from '@/components/ThinMarketBadge';
 import { DirectionPill } from '@/components/primitives';
 import { cn } from '@/lib/cn';
-import { formatPriceSmall, positiveDecimal } from '@/lib/format';
+import {
+  formatPriceSmall,
+  formatRelative,
+  positiveDecimal,
+} from '@/lib/format';
 
-import { unwrapChangeSummary } from './ChangeSummaryStrip';
+import {
+  isPriceWithheldError,
+  unwrapChangeSummary,
+} from './ChangeSummaryStrip';
 import { isDerivedProvenance, provenanceFromBasis } from './priceProvenance';
 
 export type PriceProvenance =
@@ -103,6 +110,7 @@ export function LiveAssetPrice({
     provenance,
     bakedDerived,
     fromAssets,
+    detailAsOf,
   } = useResolvedAssetPrice(
     assetID,
     initialPrice,
@@ -116,9 +124,17 @@ export function LiveAssetPrice({
   // stays on it if the worker never computes one (sparse/new listing),
   // exactly like usePricePoll falls back to `initialPrice`.
   const changeSummary = useChangeSummary('coin', assetID);
-  const liveChangePct =
-    unwrapChangeSummary(changeSummary.data)?.h24_delta_pct ?? null;
-  const changePct = liveChangePct ?? initialChangePct ?? null;
+  // A failed refetch keeps the last good `data`; an errored read is no live figure.
+  const liveChangePct = changeSummary.isError
+    ? null
+    : (unwrapChangeSummary(changeSummary.data)?.h24_delta_pct ?? null);
+  // The server withholds the change summary under the price's own verdict,
+  // so neither a live nor a baked move may sit beside a refused price.
+  const changeWithheld = withheld || isPriceWithheldError(changeSummary.error);
+  const changeBaked = liveChangePct == null;
+  const changePct = changeWithheld
+    ? null
+    : (liveChangePct ?? initialChangePct ?? null);
 
   // Tip stream. Disabled once the server says withheld (its own pre-flight
   // would keep 404ing anyway). We ALSO hold it closed at mount for assets whose
@@ -169,7 +185,9 @@ export function LiveAssetPrice({
         {changePct != null && (
           <span className="flex items-center gap-1.5 self-center">
             <DirectionPill deltaPct={changePct} />
-            <span className="text-ink-faint text-xs">24h</span>
+            <span className="text-ink-faint text-xs">
+              24h{changeBaked && ' · as baked at deploy'}
+            </span>
           </span>
         )}
         {tipActive && (
@@ -218,6 +236,11 @@ export function LiveAssetPrice({
           shown != null &&
           provenance === 'transitive' &&
           'derived · two-hop DEX route · both legs substance-gated'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          detailAsOf != null &&
+          ` · as of ${formatRelative(detailAsOf)}`}
         {!withheld && !tipActive && shown != null && stale && (
           <span className="text-warn-500"> · stale</span>
         )}
@@ -292,13 +315,17 @@ export function useResolvedAssetPrice(
   const seed = positiveDecimal(initialPrice);
   // /v1/price has nothing to say about a derived price, so the baked one is
   // re-read from /v1/assets/{id}; until that answers it is captioned as baked.
-  const detail = useAsset(derived ? assetID : undefined);
+  // Polled like the headline it replaces, or a derived price freezes at mount.
+  const detail = useAsset(derived ? assetID : undefined, {
+    refetchInterval: LIVE_PRICE_POLL_MS,
+  });
   const detailRow = detail.data?.data;
   const fromAssets = derived && (!poll.polled || refused);
   const reread = fromAssets && detailRow != null;
   const bakedDerived = fromAssets && detailRow == null;
   const detailPrice = positiveDecimal(detailRow?.price_usd);
   const price = reread ? detailPrice : fromAssets ? seed : poll.price;
+  const detailAsOf = reread ? (detailRow.price_as_of ?? null) : null;
   const live = poll.polled;
   const stale = reread
     ? Boolean(detail.data?.flags?.stale)
@@ -326,5 +353,6 @@ export function useResolvedAssetPrice(
     provenance,
     bakedDerived,
     fromAssets,
+    detailAsOf,
   };
 }

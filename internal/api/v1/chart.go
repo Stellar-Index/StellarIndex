@@ -75,6 +75,7 @@ func (c *ChartSeries) markWindowStart(from time.Time) {
 	if from.IsZero() || len(c.Points) == 0 {
 		return
 	}
+	c.dropPointsBeforeWindowStart(from)
 	first := c.Points[0].T
 	switch end := chartBucketStep(first.Time(), c.Granularity); {
 	case first.Time().Sub(from) > chartGranularityGrace(c.Granularity):
@@ -444,25 +445,28 @@ func (s *Server) handleChartTWAP(
 	}
 	series.markWindowStart(from)
 	series.markRowCap(walk)
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
+	writeChartJSON(w, series, Flags{
+		Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded, ThinMarket: s.chartThin(ctx, pair, walk),
+	})
 }
 
 // fxClosedDayWindow is the fx_quotes read window for a chart: closed UTC days only, because the
 // forex worker rewrites today's row on every refresh and a served bucket is final. `from` is
-// floored to its day so a 24h window holds yesterday's bucket; a zero `from` (timeframe=all) reads
-// 25 years, back to ECB inception. The bounds are inclusive, as ListFXHistory reads them.
+// floored to its day and stepped back over [fxNoSessionMaxRun] (fx_quotes has no weekend or
+// holiday rows), so the session in force at `from` is read and markWindowStart keeps only it; a
+// zero `from` (timeframe=all) reads 25 years, back to ECB inception. The bounds are inclusive.
 func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
 	today := now.UTC().Truncate(24 * time.Hour)
 	to = today.Add(-time.Nanosecond)
 	if from.IsZero() {
 		return today.AddDate(-25, 0, 0), to
 	}
-	// A window inside today (timeframe=1h) still holds yesterday's closed day.
-	return chartClosedReadFrom(now, from.UTC().Truncate(24*time.Hour), "1d"), to
+	return chartClosedReadFrom(now, from.UTC().Truncate(24*time.Hour), "1d").Add(-fxNoSessionMaxRun), to
 }
 
-// chartClosedReadFrom widens a window shorter than one served bucket back to the last CLOSED bucket's start, so a forced coarse
-// grain (TWAP 1h, market-cap 1d) never reads an empty range and answers a quiet 200 with no points. A zero `from` stays zero.
+// chartClosedReadFrom widens a window shorter than one served bucket back to the start of the bucket BEFORE the last closed one:
+// a CAGG materializes a closed bucket only on a refresh after its end_offset, so the last closed bucket alone can be an empty
+// read for hours. markWindowStart then keeps only the newest bucket at or before `from`. A zero `from` stays zero.
 func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
 	if from.IsZero() {
 		return from
@@ -470,9 +474,9 @@ func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
 	var last time.Time
 	u := now.UTC()
 	if d, ok := chartFixedBucketWidth(gran); ok {
-		last = u.Truncate(d).Add(-d)
+		last = u.Truncate(d).Add(-2 * d)
 	} else if gran == "1mo" {
-		last = time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+		last = time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -2, 0)
 	} else {
 		return from
 	}
@@ -560,7 +564,8 @@ func (s *Server) handleChartFiat(
 	series.Credit = fxSeriesCredit(points)
 
 	series.markWindowStart(from)
-	writeChartJSON(w, series, Flags{})
+	outlived := series.windowStartOutlived(from)
+	writeChartJSON(w, series, Flags{Stale: outlived, Degraded: outlived})
 }
 
 // handleChartFiatCross serves non-USD fiat crosses as rate_usd[quote] / rate_usd[base] (as /v1/price's tryFiatCrossRate). A day
@@ -610,7 +615,8 @@ func (s *Server) handleChartFiatCross(
 	series.Credit = fxSeriesCredit(append(append([]FXQuotePoint{}, basePts...), quotePts...))
 
 	series.markWindowStart(from)
-	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0})
+	outlived := series.windowStartOutlived(from)
+	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0, Stale: outlived, Degraded: outlived})
 }
 
 // crossFiatChartPoints merges two ascending daily USD-leg series on equal buckets and emits
@@ -685,8 +691,8 @@ func newChartBucketMerge() *chartBucketMerge {
 // empty reports whether no bucket is held. Buckets are keyed in UTC because [time.Time] compares location as well as instant.
 func (m *chartBucketMerge) empty() bool { return len(m.byBucket) == 0 }
 
-func (m *chartBucketMerge) add(points []HistoryPoint) int {
-	claimed := 0
+// add claims every bucket of points not already owned and returns how many it claimed and the newest of them.
+func (m *chartBucketMerge) add(points []HistoryPoint) (claimed int, newest time.Time) {
 	for _, p := range points {
 		k := p.Bucket.UTC()
 		if _, taken := m.byBucket[k]; taken {
@@ -694,8 +700,11 @@ func (m *chartBucketMerge) add(points []HistoryPoint) int {
 		}
 		m.byBucket[k] = p
 		claimed++
+		if k.After(newest) {
+			newest = k
+		}
 	}
-	return claimed
+	return claimed, newest
 }
 
 // earliest is the oldest claimed bucket (zero when none); [chartWindow.covered] anchors its grid walk on it. Merged series must
@@ -817,6 +826,11 @@ type chartWalkResult struct {
 	// historyMaxPoints; the served series is incomplete after it. Zero
 	// when no read was capped.
 	cappedAt time.Time
+	// books are the source pairs that claimed a served bucket, which the substance measurement covers.
+	books []canonical.Pair
+	// latestBook owns latestAt, the newest served bucket: the price a headline valuation stands on.
+	latestBook canonical.Pair
+	latestAt   time.Time
 }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
@@ -1046,7 +1060,12 @@ func (w *chartWalk) readSpan(
 // to the merge, recording whether the source's quote leg was a proxy.
 func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 	points = w.s.adjustSourcePoints(sp, points)
-	if w.merge.add(points) > 0 && !sp.Quote.Equal(w.pair.Quote) {
+	claimed, newest := w.merge.add(points)
+	if claimed == 0 {
+		return
+	}
+	w.res.noteBook(sp, newest)
+	if !sp.Quote.Equal(w.pair.Quote) {
 		w.res.proxied = true
 	}
 }
@@ -1082,6 +1101,8 @@ func (s *Server) chartSeriesPoints(
 	}
 	if len(derived) > 0 {
 		derived = crossRes.trimToCap(derived)
+		// A failed observed read means an observed market may have existed, so the derived series must not read as complete.
+		crossRes.degraded = crossRes.degraded || res.degraded
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
@@ -1292,6 +1313,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	}
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
 	res.proxied = len(crossed) > 0
+	res.books = append(append(res.books, assetRes.books...), xlmRes.books...)
 	return crossed, res, nil
 }
 
@@ -1701,7 +1723,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
-	refused, lowLiquidity, guardUnread := s.marketCapSeriesRefused(ctx, base, wire)
+	refused, lowLiquidity, guardUnread := s.marketCapSeriesRefused(ctx, base, pair, walk, wire)
 	if refused {
 		wire = []HistoryPointWire{}
 	}
@@ -1724,14 +1746,17 @@ func (s *Server) handleChartMarketCapCrypto(
 	})
 }
 
-// marketCapSeriesRefused applies the detail page's valuation guards ([Server.marketCapRefused], then the turnover ceiling on
-// the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers the whole series (inputs
-// are current readings); unmeasured inputs never refuse.
+// marketCapSeriesRefused applies the detail page's valuation guards (a thin book under the latest price values nothing,
+// [Server.marketCapRefused], then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers
+// the whole series (inputs are current readings); unmeasured inputs never refuse.
 func (s *Server) marketCapSeriesRefused(
-	ctx context.Context, base canonical.Asset, wire []HistoryPointWire,
+	ctx context.Context, base canonical.Asset, pair canonical.Pair, walk chartWalkResult, wire []HistoryPointWire,
 ) (refused, lowLiquidity, unread bool) {
 	if len(wire) == 0 {
 		return false, false, false
+	}
+	if s.chartLatestThin(ctx, pair, walk) {
+		return true, true, false
 	}
 	var probe AssetDetail
 	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {

@@ -259,9 +259,9 @@ What an operator can do:
    `GuardServedVWAP1mConfidence` substitutes last-known-good only for a
    bucket grossly off its trailing buckets, so a sustained mis-scale passes.
 
-Missing: a read-side source exclusion on the `prices_1m` path, and a
-command to quarantine a source's stored trades (a second writer to
-`trades` under invariant 7).
+Missing: a command to quarantine a source's stored trades (a second
+writer to `trades` under invariant 7). The read-side exclusion below
+covers the surfaces it lists, not all of them.
 
 The control plane for that exclusion exists: `stellarindex-ops
 source-exclude` records a registered source, optionally one pair, over a
@@ -270,8 +270,57 @@ lifted rather than deleted (an append-only trigger refuses every other
 change), and never writes `trades`. A pair is stored in canonical
 orientation; a reader MUST match it in both directions and across every
 `canonical.AssetAliases` form of each leg, as
-`timescale.SourceExclusion.Covers` does. Nothing reads the table yet, so
-it has no effect on served prices or the aggregator.
+`timescale.SourceExclusion.Covers` does.
+
+What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`):
+
+- **Withheld** (404 `price-withheld`, `reason: source_excluded`; the tip,
+  `/v1/vwap`, `/v1/twap` and the headline aggregator tier are recomputed
+  without the source where per-trade or per-source rows allow):
+  `/v1/price` (closed, swapped-in and last-trade values, cached VWAP /
+  triangulated values, stablecoin-proxy, USD-leg cross, frozen held value,
+  FX conversions at a bound fixing or live rate), `/v1/price/batch`,
+  `/v1/price/tip` and its stream, the closed-bucket price stream, SEP-40
+  (a frozen pair's withheld held value is the same 404), `/v1/vwap`,
+  `/v1/twap`, and the asset headline price (VWAP, aggregator and
+  triangulated tiers, global-market reference). A withheld headline never
+  falls back to the listing price, and the declared USD-peg fill does not
+  replace a `source_excluded` withholding.
+- **Exclusions are blunt on cached values**, which record no sources: ANY
+  in-force exclusion, pair-scoped too, withholds every cached multi-hop
+  (triangulated) price and every closed-bucket stream frame; a pair-scoped
+  exclusion also withholds every cached direct price whose base is either of
+  its legs, whatever the quote; a source-wide one withholds every
+  cache-served price. Prefer the narrowest exclusion, and expect wide
+  withholding of default-quote prices regardless. A cached value with no
+  provenance marker is judged as direct; production Redis pins
+  `maxmemory-policy noeviction`, so memory pressure never evicts a marker,
+  but the dev stack's `volatile-lru` can, and there a triangulated value may
+  be judged as direct.
+- **Delay**: each API process re-reads the table every 15 s; a failed read
+  keeps the last good set for up to 60 s, then withholds every gated price.
+  Worst case, healthy: `/v1/price`, batch, SEP-40, `/v1/vwap` and `/v1/twap`
+  45 s (15 s gate plus `max-age=30`); 90 s while the table is unreadable;
+  tip 15 s; tip stream one tick more; closed-bucket stream until the next
+  closed bucket; asset detail about 225 s (120 s in-process cache, 60 s edge,
+  30 s client). A detail read while the table is unreadable is not cached.
+- **Not covered** (keep serving values that may include the excluded source
+  until it is lifted or the data ages out): `/v1/price/at`, `/v1/price/changes`,
+  `/v1/depeg`, history, since-inception, chart, `/v1/ohlc`, asset listing
+  `price_usd`, sparkline, ATH, transitive price fill, RWA
+  assets/history/premium; a fiat asset's headline and a non-USD declared peg
+  (FX via `fiatUSDPriceFor`, ungated); `/v1/observations` and its stream
+  (raw trades), `/v1/oracle/latest`, `/v1/oracle/streams`, `/v1/markets`,
+  `/v1/pairs`, `/v1/protocols` and per-protocol TVL USD, `/v1/lending/*` USD
+  (gated reader first, ungated catalogue price as fallback),
+  `/v1/stablecoins`, `/v1/external/assets`, `/v1/aggregators`,
+  `/v1/divergence`, `/v1/mev`, `/v1/assets/verified`. `/v1/pools/reserves`,
+  `/v1/liquidity-pools`, account positions and `/v1/search` serve no USD
+  price.
+- **Check**: `curl` `/v1/price?asset=...&quote=...` for an affected pair and
+  expect 404 with `reason: source_excluded` once the delay has passed.
+- **Lift**: `stellarindex-ops source-exclude -lift -id N -reason ... -write`
+  (`-list` shows ids and state); the row is kept, and the same delay applies.
 
 ## SEP-40: what we serve and why there is no generic reader
 

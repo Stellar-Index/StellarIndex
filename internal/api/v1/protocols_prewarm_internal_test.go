@@ -220,6 +220,35 @@ func TestHandleProtocolDetail_StaleServeIsNoStore(t *testing.T) {
 	waitProtoDetailIdle(t, srv, key)
 }
 
+// TestHandleProtocolDetail_BespokeAgeJudgedAtServeTime: a detail built while its bespoke block was 44m old caches
+// status ok, but once the block passes bespokeStaleAfter the still-fresh detail entry must serve it as stale.
+func TestHandleProtocolDetail_BespokeAgeJudgedAtServeTime(t *testing.T) {
+	stub := &bespokeStub{block: make(chan struct{})}
+	t.Cleanup(func() { close(stub.block) })
+	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
+	meta, _ := protocolByName("cctp")
+	key := protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays)
+	clk := &bespokeFakeClock{t: time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)}
+	srv.protocolBespokeCache.now = clk.Now
+	srv.protocolBespokeCache.put(key, &timescale.BespokeBlock{
+		Category: meta.Category,
+		KPIs:     []timescale.BespokeKPI{{Label: "probe", Value: "1"}},
+	})
+	clk.Advance(bespokeStaleAfter - time.Minute)
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	if _, env := getProtoDetail(t, ts.URL, "cctp"); env.Data.Analytics == nil || env.Data.Analytics.Status != protocolAnalyticsOK {
+		t.Fatalf("44m-old block: analytics = %+v, want status ok (precondition)", env.Data.Analytics)
+	}
+	clk.Advance(2 * time.Minute)
+	_, env := getProtoDetail(t, ts.URL, "cctp")
+	if env.Data.Analytics == nil || env.Data.Analytics.Status != protocolAnalyticsStale || !env.Flags.Stale {
+		t.Errorf("46m-old block from a fresh detail entry: analytics = %+v, flags.stale = %v; want stale and true",
+			env.Data.Analytics, env.Flags.Stale)
+	}
+}
+
 // TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag pins that analytics.status "stale"
 // always travels with flags.stale, even when the DETAIL entry is fresh: the age lives in the
 // bespoke block, and a client must not read a last-good suite as live.

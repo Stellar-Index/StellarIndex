@@ -480,7 +480,7 @@ const (
 	RWAValuationUnmeasured = "price_unmeasured"
 	// RWAValuationLowLiquidity: a price exists but the dust guard refused a market cap.
 	RWAValuationLowLiquidity = "withheld_low_liquidity"
-	// RWAValuationNoSupply: a price exists but no circulating-supply reading does.
+	// RWAValuationNoSupply: a price exists but no circulating-supply reading does ([RWAValuationCapWithheld] when one does).
 	RWAValuationNoSupply = "supply_unavailable"
 	// RWAValuationDecimalsUnknown: a price and a supply exist but the token's scale does not.
 	// Contract rows only (classic and SAC are 7 by protocol): defaulting a SEP-41 token to 7
@@ -496,8 +496,9 @@ type RWAValuation struct {
 	// PriceBasis names a price that is NOT a direct market observation, verbatim from the
 	// listing row (declared_peg or transitive). Absent means the price came from a market.
 	// It is served so the figure is never shown with its derivation hidden.
-	PriceBasis   string  `json:"price_basis,omitempty"`
-	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
+	PriceBasis              string                  `json:"price_basis,omitempty"`
+	MarketCapUSD            *string                 `json:"market_cap_usd,omitempty"`
+	MarketCapWithheldReason MarketCapWithheldReason `json:"market_cap_withheld_reason,omitempty"`
 }
 
 // RWAAsset is one member of the set.
@@ -1613,14 +1614,7 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 		return RWAValuation{Status: unpricedRWAValuationStatus(d.PriceWithheldReason)}
 	}
 	if d.MarketCapUSD == nil {
-		if d.MarketCapLowLiquidity {
-			return RWAValuation{Status: RWAValuationLowLiquidity, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
-		}
-		// Reported before the supply reason: the row has a supply but lacks the exponent.
-		if d.scaleUnknown() || d.MarketCapDecimalsMismatch {
-			return RWAValuation{Status: RWAValuationDecimalsUnknown, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
-		}
-		return RWAValuation{Status: RWAValuationNoSupply, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
+		return rwaCapWithheldValuation(d)
 	}
 	return RWAValuation{
 		Status:       RWAValuationPublished,

@@ -1262,9 +1262,7 @@ type GlobalAssetView struct {
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
 	CMCID          string `json:"coinmarketcap_id,omitempty"`
 
-	// Headline price block — all nil/empty together when no tier of
-	// the fallback chain produced a price (typically a Stellar-only
-	// token whose price isn't aggregated at the global level).
+	// Headline price block — all nil/empty together when no tier of the fallback chain produced a price.
 	PriceUSD       *string    `json:"price_usd,omitempty"`
 	PriceAuthority string     `json:"price_authority,omitempty"` // "vwap_native" | "aggregator_avg" | "triangulated" | "reference_rate" | "identity" | "onchain_listing"
 	PriceSources   []string   `json:"price_sources,omitempty"`
@@ -1272,6 +1270,8 @@ type GlobalAssetView struct {
 	// PriceCredit names the vendor when PriceSources is exactly one
 	// licensed off-chain feed; a composite or on-chain price carries none.
 	PriceCredit string `json:"price_credit,omitempty"`
+	// PriceWithheldReason is set when PriceUSD is absent because a price gate refused it, not because no tier had data.
+	PriceWithheldReason string `json:"price_withheld_reason,omitempty"`
 
 	// Supply + market cap. Populated for fiat (M2 × FX rate).
 	// Crypto/stablecoin market cap stays on /v1/assets/{asset_id}'s
@@ -1822,6 +1822,8 @@ type RWAValuation struct {
 	// ("declared_peg" or "transitive"). Absent means market-derived.
 	PriceBasis   string  `json:"price_basis,omitempty"`
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
+	// MarketCapWithheldReason names why a priced row with a supply serves no market cap, verbatim from /v1/assets.
+	MarketCapWithheldReason string `json:"market_cap_withheld_reason,omitempty"`
 }
 
 // RWAReferenceValuation is supply valued at the oracle REFERENCE price, never folded into MarketCapUSD; ValueUSD is set if and only if Status is "published", beside an RWAAsset.Reference naming its provenance.

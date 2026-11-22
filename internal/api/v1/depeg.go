@@ -27,63 +27,116 @@ func outsideDepegBand(price string) bool {
 	return dev.Abs(dev).Cmp(depegBand) > 0
 }
 
-// pegUSDObservationPairs lists the directly observed `crypto:<STABLE>/fiat:USD` market of each declared USD peg; the proxy
-// serves asset/<peg> as asset/USD, so this is the only check on that assumption.
-func (s *Server) pegUSDObservationPairs() []canonical.Pair {
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		return nil
-	}
-	var out []canonical.Pair
-	seen := make(map[string]struct{}, len(s.USDPeggedClassics))
+// pegObservationMarkets lists, per peg a triangulated answer in quote may have been served through, the alias forms of that
+// peg's directly observed `crypto:<STABLE>/fiat:<CODE>` market: every declared USD peg (a non-USD answer can ride a USD
+// anchor), plus each stablecoin backer of a non-USD fiat quote. unbound counts declared pegs with no such market.
+func (s *Server) pegObservationMarkets(quote canonical.Asset) (markets [][]canonical.Pair, unbound int) {
+	seen := map[string]struct{}{}
 	for _, peg := range s.USDPeggedClassics {
-		ticker, err := canonical.NewCryptoAsset(peg.Code)
-		if err != nil || !aggregate.IsFiatProxyFor(ticker, "USD") {
+		ticker, ok := s.verifiedPegTicker(peg)
+		if !ok {
+			unbound++
 			continue
 		}
-		if _, dup := seen[ticker.Code]; dup {
-			continue
-		}
-		pair, err := canonical.NewPair(ticker, usd)
-		if err != nil {
-			continue
-		}
-		seen[ticker.Code] = struct{}{}
-		out = append(out, pair)
+		markets = appendPegMarket(markets, seen, ticker, "USD")
 	}
-	return out
+	if quote.Type == canonical.AssetFiat && quote.Code != "USD" {
+		for _, code := range aggregate.FiatBackers(quote.Code) {
+			if ticker, err := canonical.NewCryptoAsset(code); err == nil {
+				markets = appendPegMarket(markets, seen, ticker, quote.Code)
+			}
+		}
+	}
+	return markets, unbound
 }
 
-// proxyDeviationChecked reports whether any declared USD peg's observed price at `at` is outside the [depegBand]. When none is
-// seen outside it, unchecked says some peg had no usable observation (missed or withheld) and failed says some read errored;
-// either way false is not a "peg holds" verdict.
-func (s *Server) proxyDeviationChecked(ctx context.Context, at time.Time) (deviated, unchecked, failed bool) {
+// verifiedPegTicker binds a declared classic peg to the crypto:<STABLE> ticker the verified catalogue issues under that exact
+// identity (any alias form). A peg sharing only the code is not that ticker, so its own peg is not observed by that market.
+func (s *Server) verifiedPegTicker(peg canonical.Asset) (canonical.Asset, bool) {
+	for _, alias := range canonical.AssetAliasStrings(peg) {
+		vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(alias)
+		if !ok {
+			continue
+		}
+		ticker, err := canonical.NewCryptoAsset(vc.Ticker)
+		if err != nil || !aggregate.IsFiatProxyFor(ticker, "USD") {
+			return canonical.Asset{}, false
+		}
+		return ticker, true
+	}
+	return canonical.Asset{}, false
+}
+
+// appendPegMarket adds ticker's observed market against fiat once per alias class, with every alias form of the ticker.
+func appendPegMarket(markets [][]canonical.Pair, seen map[string]struct{}, ticker canonical.Asset, fiat string) [][]canonical.Pair {
+	quote, err := canonical.NewFiatAsset(fiat)
+	if err != nil {
+		return markets
+	}
+	var forms []canonical.Pair
+	for _, alias := range canonical.AssetAliases(ticker) {
+		if _, dup := seen[alias.String()+"/"+fiat]; dup {
+			return markets
+		}
+		if pair, err := canonical.NewPair(alias, quote); err == nil {
+			forms = append(forms, pair)
+		}
+	}
+	for _, pair := range forms {
+		seen[pair.Base.String()+"/"+fiat] = struct{}{}
+	}
+	if len(forms) == 0 {
+		return markets
+	}
+	return append(markets, forms)
+}
+
+// proxyDeviationChecked reports whether any peg a triangulated answer in quote may rely on has an observed price at `at`
+// outside the [depegBand]. When none is seen outside it, unchecked says some peg had no usable observation (unbound, missed or
+// withheld) and failed says some read errored; either way false is not a "peg holds" verdict.
+func (s *Server) proxyDeviationChecked(ctx context.Context, quote canonical.Asset, at time.Time) (deviated, unchecked, failed bool) {
 	if s.PriceAt == nil {
 		return false, false, false
 	}
-	for _, pair := range s.pegUSDObservationPairs() {
-		value, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
+	markets, unbound := s.pegObservationMarkets(quote)
+	unchecked = unbound > 0
+	for _, forms := range markets {
+		value, observed, readFailed := s.observePeg(ctx, forms, at)
 		switch {
-		case err == nil:
+		case observed:
 			if outsideDepegBand(value) {
 				return true, false, false
 			}
-		case isPriceAtMiss(err):
-			unchecked = true
-		default:
+		case readFailed:
 			unchecked, failed = true, true
+		default:
+			unchecked = true
 		}
 	}
 	return false, unchecked, failed
 }
 
+// observePeg reads one peg's observed price under the first alias form that answers.
+func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time.Time) (value string, observed, readFailed bool) {
+	for _, pair := range forms {
+		v, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
+		switch {
+		case err == nil:
+			return v, true, false
+		case !isPriceAtMiss(err):
+			readFailed = true
+		}
+	}
+	return "", false, readFailed
+}
+
 // withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire; a failed
 // read is also degraded (no-store), while a miss is a standing state the cache may hold.
-func (s *Server) withProxyDeviation(ctx context.Context, f Flags, at time.Time) Flags {
+func (s *Server) withProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, at time.Time) Flags {
 	if !f.Triangulated {
 		return f
 	}
-	deviated, unchecked, failed := s.proxyDeviationChecked(ctx, at)
+	deviated, unchecked, failed := s.proxyDeviationChecked(ctx, quote, at)
 	f.ProxyDeviation = deviated
 	f.ProxyDeviationUnchecked = unchecked
 	f.Degraded = f.Degraded || failed
