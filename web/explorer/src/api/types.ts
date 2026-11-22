@@ -8976,12 +8976,12 @@ export interface components {
              */
             pivot_unverified: boolean;
             /**
-             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false. Meaningful only when `proxy_deviation_unchecked` is absent.
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. A declared peg is observed through the stablecoin ticker the verified catalogue issues under that exact asset id; one sharing only the code has no observed market. A non-USD fiat answer (served through that fiat's stablecoins, e.g. crypto:EURC, or a USD anchor) also checks each of that fiat's stablecoins against the fiat. Omitted when false. Meaningful only when `proxy_deviation_unchecked` is absent.
              * @default false
              */
             proxy_deviation: boolean;
             /**
-             * @description Set beside a TRIANGULATED price when a declared USD peg had no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
+             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
              * @default false
              */
             proxy_deviation_unchecked: boolean;

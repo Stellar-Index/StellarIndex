@@ -204,7 +204,7 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 		Degraded:      frozen,
 		FrozenChecked: held.checked,
 		SingleSource:  frozen,
-	}, time.Now().UTC())
+	}, quote, time.Now().UTC())
 	return out, flags, rd.sources
 }
 
