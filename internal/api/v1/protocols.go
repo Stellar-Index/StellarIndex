@@ -510,6 +510,8 @@ type ProtocolDetailView struct {
 
 	// verdictsStale is the /v1/coverage freshness gate for the embedded verdict; it raises flags.stale.
 	verdictsStale bool
+	// bespokeAt is when the embedded bespoke block was computed; its age is judged at serve time.
+	bespokeAt time.Time
 
 	// ─── Lake analytics (populated when the activity reader is wired) ──
 
@@ -640,7 +642,8 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 			"the protocol analytics are being recomputed; retry in a few seconds")
 		return
 	}
-	if stale {
+	// A detail entry outlives the bespoke horizon by up to its TTL, so the block's age is judged now, not at build.
+	if stale || (!view.bespokeAt.IsZero() && s.protocolBespokeCache.clock().Sub(view.bespokeAt) > bespokeStaleAfter) {
 		view = staleProtocolDetail(view)
 	}
 	// The cached view predates a later failed reserve read or lake stall, so the figure and its
@@ -709,6 +712,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 		asOf = bespokeAt.UTC()
 	}
 	v.Analytics = &ProtocolAnalyticsStatus{Status: status, AsOf: asOf.Format(time.RFC3339)}
+	v.bespokeAt = bespokeAt
 	return v
 }
 
