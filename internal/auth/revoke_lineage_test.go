@@ -233,6 +233,32 @@ func TestRevoke_RetryAfterMidwayFailureRemovesEveryDescendant(t *testing.T) {
 	}
 }
 
+// TestRevoke_SelfRevokeFailingMidSweepLeavesTheRootAbleToRetry: a key holder revoking its own key
+// whose cascade fails part-way can still authenticate with that key and finish the revoke.
+func TestRevoke_SelfRevokeFailingMidSweepLeavesTheRootAbleToRetry(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	root, rootPlain, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	_, midPlain, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+	_, leafPlain, _ := f.mint(t, ChildKeyRequest(midSub, "leaf", nil))
+
+	f.fail.armed = true
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err == nil {
+		t.Fatal("RevokeKeyByID with an injected failure returned nil")
+	}
+	sub, err := f.validator.Lookup(ctx, rootPlain)
+	if err != nil {
+		t.Fatalf("root after a failed sweep: Lookup = %v, want live so its holder can retry", err)
+	}
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(sub, "after", nil)); err == nil {
+		t.Fatal("root minted while its revoke is in progress, want refused")
+	}
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", sub.KeyID); err != nil {
+		t.Fatalf("retry RevokeKeyByID: %v", err)
+	}
+	f.assertDead(t, map[string]string{"root": rootPlain, "mid": midPlain, "leaf": leafPlain})
+}
+
 // TestRevoke_SweepsWhenTheRootHasNoRecord: a key whose record here is gone (a Postgres-backed key
 // whose mirror lapsed) still takes its delegated keys with it.
 func TestRevoke_SweepsWhenTheRootHasNoRecord(t *testing.T) {

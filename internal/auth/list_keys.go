@@ -490,16 +490,17 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 	if err := s.markRevoking(ctx, identifier, keyID); err != nil {
 		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	if owned {
-		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
-			return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
-		}
-	}
-	// The sweep runs even without the root's own record (a Postgres-backed key with no mirror here,
-	// or a retry after a failure below), so its delegated keys still die with it.
+	// The sweep runs even without the root's own record (a Postgres-backed key with no mirror here),
+	// so its delegated keys still die with it.
 	removed, err := s.revokeDescendants(ctx, identifier, keyID)
 	if err != nil {
 		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	// The root goes last: a sweep that fails part-way leaves it live, so a key revoking itself can retry.
+	if owned {
+		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
+			return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		}
 	}
 	if !owned && len(removed) == 0 {
 		return nil, ErrKeyNotFound
