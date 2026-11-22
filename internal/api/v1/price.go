@@ -250,8 +250,9 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 				" — /v1/price/tip converts at the live rate"
 	case PriceWithheldSourceExcluded:
 		return "Price withheld — contributing source excluded",
-			"the latest price for " + pair + " includes trades from a source an operator has excluded," +
-				" and the served value (a pooled bucket or a single trade) cannot be recomputed without that source, so no price is published"
+			"the latest price for " + pair + " includes, or may include, a source an operator has excluded" +
+				" (a pooled bucket or trade from it, or a cached or multi-hop value that records no sources)" +
+				" and cannot be recomputed without it, so no price is published"
 	case PriceWithheldUnattributed, PriceWithheldDecimalsMismatch: // decimals_mismatch is asset payloads' own; /v1/price never sets it
 	}
 	return "Price withheld",
