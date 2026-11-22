@@ -57,8 +57,8 @@ func TestListingsNeverServeAnUngatedPageAfterTheDeadline(t *testing.T) {
 			defer cancel()
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx))
-			if rec.Code == http.StatusOK {
-				t.Fatalf("GET %s after the deadline = 200 (%s); want a retryable 503, the scam gate never ran", path, rec.Body.String())
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("GET %s after the deadline = %d (%s); want the retryable 503, the scam gate never ran", path, rec.Code, rec.Body.String())
 			}
 		})
 	}
