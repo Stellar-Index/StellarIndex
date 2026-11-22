@@ -628,6 +628,19 @@ for role in sorted(os.listdir(roles)):
                   for f in files for t in (yaml.safe_load(open(f"{tdir}/{f}")) or []) if isinstance(t, dict))
     check(guarded, f"{role} renders /etc/nftables.conf and refuses hosts in archival_nodes")
 
+# keepalived: auth_pass is cleartext in every advert, so with unicast peers set only they may send VRRP.
+ka = text("haproxy/templates/keepalived.conf.j2")
+ublock = ka[ka.find("{% if keepalived_unicast_src_ip and keepalived_unicast_peer_ips %}"):]
+check("check_unicast_src" in ublock[:ublock.find("{% endif %}")], "keepalived checks the unicast advert source")
+fw = next(t for t in tasks("haproxy/tasks/06-firewall.yml") if "copy" in t)["copy"]["content"]
+fwr = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined).from_string(fw).render(
+    keepalived_unicast_src_ip="10.0.0.21", keepalived_unicast_peer_ips=["10.0.0.22", "fd00::22"],
+    haproxy_internal_cidrs=["10.0.0.0/8", "fd00::/8"], haproxy_allowed_ssh_cidrs=["10.0.0.0/8"])
+vrrp = [ln.strip() for ln in fwr.splitlines() if "vrrp" in ln and "accept" in ln]
+check(vrrp == ['ip protocol vrrp ip saddr 10.0.0.22 accept comment "vrrp-peer"',
+               'ip6 nexthdr vrrp ip6 saddr fd00::22 accept comment "vrrp-peer"'],
+      f"haproxy firewall accepts VRRP from the unicast peers only: {vrrp}")
+
 # guarded restarts: a handler that can refuse fails the host and cancels every handler after it,
 # and Ansible forgets a notification once the play ends. So each one has a marker handler on its
 # topic defined before it, clears the marker only on success, is re-notified from the marker by a
