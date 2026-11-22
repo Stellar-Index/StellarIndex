@@ -208,7 +208,11 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	}
 	// Fiat-vs-fiat cross-rate via the forex snapshot (see tryFiatCrossRate); no on-chain pair
 	// carries fiat-vs-fiat trades.
-	if fxSnap, fxSources, ok := s.tryFiatCrossRate(asset, quote); ok {
+	fxSnap, fxSources, ok, err := s.tryFiatCrossRate(ctx, asset, quote)
+	if err != nil {
+		return PriceSnapshot{}, nil, false, err
+	}
+	if ok {
 		return fxSnap, fxSources, true, nil
 	}
 	// USD-anchored cross for a non-fiat asset in a fiat with no market (ADR-0051, the

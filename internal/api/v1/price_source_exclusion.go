@@ -7,10 +7,12 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // PriceExclusionGate is the operator source-exclusion seam for values the server computes or reads itself.
 type PriceExclusionGate interface {
+	Withholding(ctx context.Context, base, quote canonical.Asset, sources []string, from, to time.Time) pricingguard.Withholding
 	InstantWithholding(ctx context.Context, base, quote canonical.Asset, source string, ts time.Time) pricingguard.Withholding
 	UnattributedWithholding(ctx context.Context, base, quote canonical.Asset, from, to time.Time) pricingguard.Withholding
 	MultiHopWithholding(ctx context.Context, from, to time.Time) pricingguard.Withholding
@@ -33,6 +35,36 @@ func (s *Server) exclusionCleanTrades(ctx context.Context, asset, quote canonica
 		}
 	}
 	return kept, nil
+}
+
+// fxRateWithheld judges one FX rate, source's own reading of ticker per USD over [from, to); nil when no exclusion covers it.
+func (s *Server) fxRateWithheld(ctx context.Context, ticker, source string, from, to time.Time) error {
+	if s.Exclusions == nil || ticker == "USD" {
+		return nil
+	}
+	fiat := canonical.Asset{Type: canonical.AssetFiat, Code: ticker}
+	if w := s.Exclusions.Withholding(ctx, fiat, defaultPriceQuote, []string{source}, from, to); w != pricingguard.NotWithheld {
+		return PriceWithheldError(w)
+	}
+	return nil
+}
+
+// fixingWithheld is [Server.fxRateWithheld] over a bound fixing's bar, which pools the source's readings across it.
+func (s *Server) fixingWithheld(ctx context.Context, ticker string, b timescale.FXFixingBinding) error {
+	from, to := b.BarStart, b.BarEnd
+	if !from.Before(to) {
+		from, to = b.BarEnd, b.BarEnd.Add(time.Nanosecond)
+	}
+	return s.fxRateWithheld(ctx, ticker, b.Source, from, to)
+}
+
+// liveRateWithheld is [Server.fxRateWithheld] for a forex snapshot entry at its own update time.
+func (s *Server) liveRateWithheld(ctx context.Context, c CurrencyEntry, publishedAt time.Time) error {
+	at := c.UpdatedAt
+	if at.IsZero() {
+		at = publishedAt
+	}
+	return s.fxRateWithheld(ctx, c.Ticker, fxSourceOf(c), at, at.Add(time.Nanosecond))
 }
 
 // priceWithheldUnread reports whether err withholds because the exclusion set could not be read: a transient refusal that a

@@ -192,12 +192,24 @@ func fxResolutionOf(grain string) string {
 }
 
 // bindFXFixings binds tickers at closed bucket end e. Absent a reader the
-// closed surfaces have no FX leg: they never fall back to the live snapshot.
+// closed surfaces have no FX leg: they never fall back to the live snapshot. A fixing an exclusion covers fails the bind
+// with its withheld error.
 func (s *Server) bindFXFixings(ctx context.Context, tickers []string, e time.Time) (map[string]timescale.FXFixingBinding, error) {
 	if s.fxFixings == nil {
 		return nil, errFXLegMissing
 	}
-	return s.fxFixings.bind(ctx, tickers, e)
+	bound, err := s.fxFixings.bind(ctx, tickers, e)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range tickers {
+		if b, ok := bound[t]; ok {
+			if err := s.fixingWithheld(ctx, t, b); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return bound, nil
 }
 
 // fixingRate parses a bound fixing's NUMERIC text exactly.

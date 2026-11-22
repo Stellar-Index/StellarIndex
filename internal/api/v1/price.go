@@ -1191,13 +1191,17 @@ func (s *Server) writeFallbackMiss(w http.ResponseWriter, r *http.Request, asset
 }
 
 // fxBindFailure maps a failed [Server.bindFXFixings] to its fallback
-// outcome: a lookback miss withholds, anything else is a store failure.
+// outcome: a lookback miss or an excluded fixing withholds; anything else, an unread exclusion set included, is a read failure.
 func fxBindFailure(err error) (fallbackResult, bool) {
 	switch {
 	case err == nil:
 		return fallbackResult{}, false
 	case errors.Is(err, errFXLegMissing):
 		return fallbackResult{withheld: PriceWithheldFXLeg}, true
+	case errors.Is(err, ErrPriceWithheld) && !priceWithheldUnread(err):
+		return fallbackResult{withheld: priceWithheldReason(err)}, true
+	case errors.Is(err, ErrPriceWithheld):
+		return fallbackResult{err: fmt.Errorf("fx fixing: source exclusions unread: %w", err)}, true
 	}
 	return fallbackResult{err: err}, true
 }
@@ -1320,11 +1324,13 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	var rate float64
 	var rateUpdatedAt time.Time
 	var rateSource string
+	var rateEntry CurrencyEntry
 	for _, c := range fx.Currencies {
 		if c.Ticker == quote.Code {
 			rate = c.RateUSD
 			rateUpdatedAt = c.UpdatedAt
 			rateSource = fxSourceOf(c)
+			rateEntry = c
 			break
 		}
 	}
@@ -1348,6 +1354,9 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	// A declared peg is 1:1 against USD only; times a rate it is neither declaration nor observation.
 	if !ok || isDeclaredPeg(usdSnap) {
 		return PriceSnapshot{}, nil, false, false, nil
+	}
+	if err := s.liveRateWithheld(ctx, rateEntry, fx.PublishedAt); err != nil {
+		return PriceSnapshot{}, nil, false, false, err
 	}
 
 	// Exact rationals (ADR-0003); the float64 rate goes via its shortest round-trip decimal.
@@ -1810,23 +1819,24 @@ func (s *Server) declaredPegSnapshot(asset, quote canonical.Asset) PriceSnapshot
 // tryFiatCrossRate synthesises a fiat-vs-fiat price from the CurrenciesReader's USD-base snapshot, the last resort (rate_usd[X] is "1 USD
 // = N X", so 1 X in Y = rate_usd[Y] / rate_usd[X]).
 // PriceType is "vwap" (the forex feed is volume-weighted); ok=false when a side isn't fiat, the reader is cold, or a rate is missing or
-// zero.
-func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, []string, bool) {
+// zero. A rate an exclusion covers withholds the cross (err).
+func (s *Server) tryFiatCrossRate(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	if asset.Type != canonical.AssetFiat || quote.Type != canonical.AssetFiat {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	if s.Currencies == nil {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	snap := s.Currencies.Latest()
 	if snap == nil {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 
 	// Linear scan: the slice is small (~110) and this is a last-resort fallback.
 	var rateAsset, rateQuote float64
 	var foundAsset, foundQuote bool
 	var sources []string
+	var legs []CurrencyEntry
 	// observedAt is pulled BACK to the older leg's UpdatedAt: the forex worker may be HOLDING a
 	// leg's last guarded rate, and the publication time would claim freshness it lacks.
 	observedAt := snap.PublishedAt
@@ -1836,37 +1846,44 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 			foundAsset = true
 			observedAt = olderNonZero(observedAt, c.UpdatedAt)
 			sources = appendFXSource(sources, fxSourceOf(c))
+			legs = append(legs, c)
 		}
 		if c.Ticker == quote.Code {
 			rateQuote = c.RateUSD
 			foundQuote = true
 			observedAt = olderNonZero(observedAt, c.UpdatedAt)
 			sources = appendFXSource(sources, fxSourceOf(c))
+			legs = append(legs, c)
 		}
 		if foundAsset && foundQuote {
 			break
 		}
 	}
 	if !foundAsset || rateAsset <= 0 {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	// rate_usd[USD] is implicitly 1; the snapshot needn't carry a USD entry.
 	if !foundQuote {
 		if quote.Code != "USD" {
-			return PriceSnapshot{}, nil, false
+			return PriceSnapshot{}, nil, false, nil
 		}
 		rateQuote = 1
 	}
 	// [Cache.Latest] never expires, so without this bound a forex outage would serve the last fetch
 	// forever. observedAt is the older leg's, so one check covers a dead worker and a held ticker.
 	if fxCrossStale(observedAt, s.fxCrossMaxAge) {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	// Exact big.Rat, not float64 (ADR-0003); each float64 rate goes via its shortest round-trip decimal.
 	rateQuoteRat, okQ := new(big.Rat).SetString(strconv.FormatFloat(rateQuote, 'f', -1, 64))
 	rateAssetRat, okA := new(big.Rat).SetString(strconv.FormatFloat(rateAsset, 'f', -1, 64))
 	if !okQ || !okA || rateAssetRat.Sign() == 0 {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
+	}
+	for _, c := range legs {
+		if err := s.liveRateWithheld(ctx, c, snap.PublishedAt); err != nil {
+			return PriceSnapshot{}, nil, false, err
+		}
 	}
 	priceStr := formatCrossRate(new(big.Rat).Quo(rateQuoteRat, rateAssetRat))
 	return PriceSnapshot{
@@ -1875,7 +1892,7 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		Price:      priceStr,
 		PriceType:  "vwap",
 		ObservedAt: WireTime(observedAt),
-	}, sources, true
+	}, sources, true, nil
 }
 
 // olderNonZero returns the earlier of a and b, ignoring a zero b.
@@ -2112,6 +2129,9 @@ func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requ
 	}
 	// Converting at the fixing bound to its own bucket end keeps the hold one answer.
 	bound, err := s.bindFXFixings(r.Context(), []string{quote.Code}, time.Time(held.snapshot.ObservedAt))
+	if errors.Is(err, ErrPriceWithheld) {
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: held.checked, withheld: err}
+	}
 	if err != nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: held.checked}
 	}
