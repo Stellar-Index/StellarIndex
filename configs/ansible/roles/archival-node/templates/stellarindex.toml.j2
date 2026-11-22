@@ -71,10 +71,10 @@ clickhouse_projector_source = {{ stellarindex_clickhouse_projector_source | defa
 # `api_serving` user (a separate, coordinated apply — see that task
 # file's header) — flipping this on first would point the API at a
 # CH user that doesn't exist yet and 503 every serving read.
-# clickhouse_serving_password (the secret half) is injected via
-# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD in stellarindex.env.j2,
-# never written here.
-clickhouse_serving_user = "{{ clickhouse_serving_user if (stellarindex_clickhouse_serving_enabled | default(false)) else '' }}"
+# The secret half is injected via STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD
+# in the env files, never written here; both halves come from the one
+# gated pair in defaults/main.yml.
+clickhouse_serving_user = "{{ stellarindex_clickhouse_serving_api_user }}"
 
 [ingestion]
 # The oracle sources (reflector-dex/cex/fx, redstone, chainlink-stellar, band) are consumed

@@ -95,7 +95,7 @@ func checkRefererAllowlist(r *http.Request, allow []string) error {
 // checkScopes enforces the coarse route-family scopes; an empty list passes (opt-in at mint). It runs before permissions,
 // so scopes bound the family and permissions bound endpoints inside it.
 func checkScopes(r *http.Request, subject auth.Subject) error {
-	if len(subject.Scopes) == 0 {
+	if len(subject.Scopes) == 0 || isSelfRevoke(r, subject) {
 		return nil
 	}
 	need := auth.RequiredScope(r.URL.Path)
@@ -104,6 +104,18 @@ func checkScopes(r *http.Request, subject auth.Subject) error {
 	}
 	return fmt.Errorf("this key's scopes (%s) do not include %q, required for %s %s",
 		strings.Join(subject.Scopes, ", "), need, r.Method, RedactedPath(r))
+}
+
+// SelfRevokeRoute is the pattern server.go registers for the self-service key revoke, the one route a key may reach
+// outside its scopes; the v1 scoped self-revoke tests fail if the two drift.
+const SelfRevokeRoute = "DELETE /v1/account/keys/{keyID}"
+
+// isSelfRevoke reports whether r is the authenticated key revoking itself: the holder of a leaked scoped key must be able
+// to kill it with the key alone. The route comes from the mux match [ResolveRoute] recorded, the target from the exact path.
+func isSelfRevoke(r *http.Request, subject auth.Subject) bool {
+	pattern, _ := r.Context().Value(resolvedRouteKey{}).(string)
+	return subject.KeyID != "" && r.Method == http.MethodDelete && pattern == SelfRevokeRoute &&
+		r.URL.Path == "/v1/account/keys/"+subject.KeyID
 }
 
 // ClampMintScopes is the scope half of [auth.ClampToMinter] as a problem string for handlers; not the enforcement point,

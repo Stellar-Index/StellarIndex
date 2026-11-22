@@ -161,7 +161,7 @@ api_unit() {
   cat <<'EOF'
 EnvironmentFile=/etc/default/stellarindex-api
 ProtectProc=invisible
-InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/stellarindex-api -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
 SystemCallFilter=@system-service
 TasksMax=4096
 MemoryMax=8G
@@ -186,6 +186,9 @@ expect 'an API without ProtectProc=invisible fails' 1 'API-PROC'
 api_unit | sed 's# -/etc/default/stellarindex # #' > "$UNITS/stellarindex-api.service.j2"
 run
 expect 'an API that can see the shared env file fails' 1 'does not list /etc/default/stellarindex in InaccessiblePaths='
+api_unit | sed 's# -/etc/default/stellarindex-api # #' > "$UNITS/stellarindex-api.service.j2"
+run
+expect 'an API whose children can read its own env file fails' 1 'does not list /etc/default/stellarindex-api in InaccessiblePaths='
 api_unit > "$UNITS/stellarindex-api.service.j2"
 printf 'STELLARINDEX_POSTGRES_DSN={{ x }}\nCOINGECKO_API_KEY={{ y }}\n' > "$UNITS/../stellarindex-api.env.j2"
 run

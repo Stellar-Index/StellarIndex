@@ -433,15 +433,21 @@ clickhouse_serving_max_memory_usage_bytes: 2147483648   # 2 GiB
 clickhouse_serving_max_execution_time_s: 10
 clickhouse_serving_max_concurrent_queries: 20
 # clickhouse_serving_password ← vault_clickhouse_serving_password (see
-# inventory/r1.example.yml). Hashed (SHA-256) into the users.d drop-in and also
-# injected as STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD in stellarindex.env.j2 for
-# the API; it never lands on disk outside the vault and those two root-only files.
+# inventory/r1.example.yml). Hashed (SHA-256) into the users.d drop-in; the API
+# receives it only through stellarindex_clickhouse_serving_api_password below.
 clickhouse_serving_password: "{{ vault_clickhouse_serving_password | default('') }}"
 
 # The API-side activation flip (stellarindex.toml.j2's clickhouse_serving_user),
 # SEPARATE from clickhouse_serving_profile_enabled above. false until the CH-side
 # profile+user is confirmed live (see 20-clickhouse-serving-profile.yml's header).
 stellarindex_clickhouse_serving_enabled: false
+
+# The serving pair the API authenticates as, gated ONCE on the flip. Every
+# template renders these, never the raw pair: a password without its user is
+# refused (internal/storage/clickhouse/ops_auth.go) and every lake read 503s.
+# Pinned by scripts/ci/ansible-api-env-test.sh.
+stellarindex_clickhouse_serving_api_user: "{{ clickhouse_serving_user if (stellarindex_clickhouse_serving_enabled | bool) else '' }}"
+stellarindex_clickhouse_serving_api_password: "{{ (clickhouse_serving_password | default('')) if (stellarindex_clickhouse_serving_enabled | bool) else '' }}"
 
 # ───── ClickHouse ops-batch isolation ──────────────────────────────────
 # The LOW-priority counterpart of api_serving: a settings profile + user that
