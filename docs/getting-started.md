@@ -159,11 +159,13 @@ it. Replace a key like this:
 - **A leaked key:** revoke it now. It may revoke itself:
   `DELETE /v1/account/keys/{its keyID}` sent with the leaked key answers
   204, and the key and everything minted from it stop working. Then
-  replace it as above. Known limitation: a key minted with a scope list
-  that leaves out `account` cannot reach `/v1/account/*`, so its
-  self-revoke answers `403` (`scope-denied`) and the key stays live.
-  Revoke such a key with the key that minted it, or from the dashboard
-  if it is a dashboard key.
+  replace it as above. This works whatever the key's scopes: a key
+  minted without `account` still reaches this one call for its own id,
+  and nothing else under `/v1/account/*`. Its IP and Referer
+  allowlists still apply, so send the revoke from an allowed client.
+  A key minted with a permission list that does not allow this route
+  still cannot revoke itself; revoke it from the dashboard or with a
+  key that may.
 
 ## Rate limits
 

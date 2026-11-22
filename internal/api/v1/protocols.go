@@ -510,6 +510,8 @@ type ProtocolDetailView struct {
 
 	// verdictsStale is the /v1/coverage freshness gate for the embedded verdict; it raises flags.stale.
 	verdictsStale bool
+	// bespokeAt is when the embedded bespoke block was computed; its age is judged at serve time.
+	bespokeAt time.Time
 
 	// ─── Lake analytics (populated when the activity reader is wired) ──
 
@@ -640,7 +642,8 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 			"the protocol analytics are being recomputed; retry in a few seconds")
 		return
 	}
-	if stale {
+	// A detail entry outlives the bespoke horizon by up to its TTL, so the block's age is judged now, not at build.
+	if stale || (!view.bespokeAt.IsZero() && s.protocolBespokeCache.clock().Sub(view.bespokeAt) > bespokeStaleAfter) {
 		view = staleProtocolDetail(view)
 	}
 	// The cached view predates a later failed reserve read or lake stall, so the figure and its
@@ -709,6 +712,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 		asOf = bespokeAt.UTC()
 	}
 	v.Analytics = &ProtocolAnalyticsStatus{Status: status, AsOf: asOf.Format(time.RFC3339)}
+	v.bespokeAt = bespokeAt
 	return v
 }
 
@@ -1084,10 +1088,8 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]int64, verdicts map[string]timescale.CompletenessSnapshot) ProtocolView {
 	var events24h *int64
 	if events != nil {
-		n := events[meta.Name]
-		// Fold in any sub-module source's 24h count (e.g. blend_backstop into blend) so the
-		// headline covers the whole surface the page shows.
-		for _, src := range meta.ExtraEventSources {
+		var n int64
+		for _, src := range meta.Sources() {
 			n += events[src]
 		}
 		events24h = &n
@@ -1101,14 +1103,34 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 		ContractCount: contractCount,
 		Events24h:     events24h,
 	}
-	if sn, ok := verdicts[meta.Name]; ok {
-		v.Completeness = &ProtocolCompletenessView{
-			Complete:               sn.Complete,
-			WatermarkLedger:        sn.Watermark,
-			ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
-		}
-	}
+	v.Completeness = foldProtocolVerdicts(meta, verdicts)
 	return v
+}
+
+// foldProtocolVerdicts joins the verdict of every source the row covers: complete only when all are,
+// watermark the lowest, floor the highest. A folded sub-source with no snapshot is unverified, so
+// the composite is incomplete; nil when the primary source has no snapshot.
+func foldProtocolVerdicts(meta ProtocolMeta, verdicts map[string]timescale.CompletenessSnapshot) *ProtocolCompletenessView {
+	sn, ok := verdicts[meta.Name]
+	if !ok {
+		return nil
+	}
+	out := &ProtocolCompletenessView{
+		Complete:               sn.Complete,
+		WatermarkLedger:        sn.Watermark,
+		ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
+	}
+	for _, src := range meta.ExtraEventSources {
+		sub, ok := verdicts[src]
+		if !ok {
+			out.Complete = false
+			continue
+		}
+		out.Complete = out.Complete && sub.Complete
+		out.WatermarkLedger = min(out.WatermarkLedger, sub.Watermark)
+		out.ProjectionVerifiedFrom = max(out.ProjectionVerifiedFrom, sub.ProjectionVerifiedFrom)
+	}
+	return out
 }
 
 // dexTVLLakeDerived names the protocols whose reserves come from the lake, read directly or (aquarius) through the

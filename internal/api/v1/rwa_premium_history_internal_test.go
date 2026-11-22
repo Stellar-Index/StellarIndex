@@ -22,7 +22,7 @@ func premDay(n int) time.Time { return time.Date(2026, 9, n, 0, 0, 0, 0, time.UT
 
 // premDefaultFloor is the pricingguard-default day floor, for rwaPremiumJoin tests that ignore the configured-vs-default
 // distinction (see TestRWAPremiumDayFloorTracksServingDefaults).
-func premDefaultFloor() pricingguard.SubstancePolicy {
+func premDefaultFloor() rwaPremiumDayFloor {
 	return (&Server{}).rwaPremiumDayFloorFor()
 }
 
@@ -97,7 +97,8 @@ func TestRWAPremiumCandidates_ReadsNoSupply(t *testing.T) {
 // ─── the floor ──────────────────────────────────────────────────────
 
 // TestRWAPremiumDayFloorTracksServingDefaults: the dollar-volume and span legs of the day floor must equal the serving
-// gate's, so history never publishes a claim the live surface refuses. Compares against a configured policy that differs
+// gate's. Hour grain still admits days the minute gate refuses; the trade leg narrows that (TestRWAPremiumJoin_TwoTradeDayIsRefused).
+// Compares against a configured policy that differs
 // from the defaults, else it would pass without [Server.rwaPremiumDayFloorFor] reading the config.
 func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
 	configured := pricingguard.SubstancePolicy{
@@ -138,6 +139,24 @@ func TestRWAPremiumDayFloorFor_FallsBackToDefaultsWhenUnconfigured(t *testing.T)
 	}
 	if got.MinSpan != pricingguard.DefaultSubstanceMinSpan {
 		t.Errorf("MinSpan = %v, want the pricingguard default %v", got.MinSpan, pricingguard.DefaultSubstanceMinSpan)
+	}
+}
+
+// Two self-crossed fills six hours apart clear every hour-grain leg but are fewer trades than the live gate's minute buckets,
+// so the day publishes no premium; the same day with that many trades does.
+func TestRWAPremiumJoin_TwoTradeDayIsRefused(t *testing.T) {
+	wash := timescale.MarketDay{Day: premDay(3), VWAP: "2.95", VolumeUSD: "2950", Hours: 2, SpanSeconds: 6 * 3600, Trades: 2}
+	if rwaPremiumDayClears(wash, premDefaultFloor()) {
+		t.Errorf("a 2-trade day cleared the floor; the live gate needs %d minute buckets", pricingguard.DefaultSubstanceMinBuckets)
+	}
+	traded := wash
+	traded.Trades = pricingguard.DefaultSubstanceMinBuckets
+	if !rwaPremiumDayClears(traded, premDefaultFloor()) {
+		t.Error("a day with the live minimum of trades was refused")
+	}
+	configured := &Server{Options: Options{RWAPremiumSubstance: pricingguard.SubstancePolicy{MinBuckets: 50}}}
+	if rwaPremiumDayClears(traded, configured.rwaPremiumDayFloorFor()) {
+		t.Error("the trade floor ignored the configured live minute-bucket count")
 	}
 }
 

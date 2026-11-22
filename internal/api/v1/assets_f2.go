@@ -163,12 +163,29 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 }
 
+// capRefusedOnSupplyBasis is the one cap-refusal rule by supply basis for the detail and the RWA contract arm: held balances
+// are a floor, so the supply serves under its basis and no cap is built on it.
+func capRefusedOnSupplyBasis(b supply.Basis) bool { return b == supply.BasisContractStorageBalances }
+
+// capRefusedOnPriceBasis names why the row's price values no cap ("" when it may): a thin market, a whole-token fill (declared
+// peg, global market) that is no market in this token, or a ticker-collision look-alike's manipulable market.
+func capRefusedOnPriceBasis(d *AssetDetail) MarketCapWithheldReason {
+	switch {
+	case d.ThinMarket:
+		return MarketCapWithheldThinMarket
+	case d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket:
+		return MarketCapWithheldPriceBasis
+	case d.UnverifiedTickerCollision:
+		return MarketCapWithheldTickerCollision
+	}
+	return ""
+}
+
 // applySupplyAndMarketCap is applyF2Fields' compute phase: the snapshot's supply fields, then the market cap and FDV valued on them.
 func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int, now time.Time) {
 	detail.SupplyStale = supplyObservationStale(snap, now)
 	populateSupplyFields(detail, snap)
-	// Held balances are a floor: the supply serves under its basis and no cap is built on it.
-	if snap.Basis == supply.BasisContractStorageBalances {
+	if capRefusedOnSupplyBasis(snap.Basis) {
 		detail.MarketCapWithheldReason = MarketCapWithheldSupplyFloor
 		return
 	}
@@ -607,11 +624,9 @@ func nameLateCapRefusal(d *AssetDetail) {
 	if d.PriceUSD == nil || d.MarketCapUSD != nil || d.MarketCapWithheldReason != "" {
 		return
 	}
-	switch {
-	case d.ThinMarket:
-		d.MarketCapWithheldReason = MarketCapWithheldThinMarket
-	case d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket:
-		d.MarketCapWithheldReason = MarketCapWithheldPriceBasis
+	switch r := capRefusedOnPriceBasis(d); {
+	case r != "":
+		d.MarketCapWithheldReason = r
 	case d.priceUnread:
 		// The thin pass re-read a price the cap pass could not.
 		d.MarketCapWithheldReason = MarketCapWithheldPriceUnread

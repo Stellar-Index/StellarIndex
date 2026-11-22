@@ -139,9 +139,11 @@ fi
 
 # Both copies of the API unit run as their own uid (a shared uid reads the ingest
 # daemons' /proc/<pid>/environ and root), see no other process, hide these paths
-# and grant no write path. Not pinned here: the Postgres, ClickHouse and Redis
-# credentials the API holds stay shared-strength until hosts set least-privilege ones.
-API_HIDDEN="/run/lock /etc/default/stellarindex /etc/default/galexie /etc/default/galexie-backfill /etc/default/stellarindex-ops /etc/clickhouse-client"
+# and grant no write path. Its own env file is hidden too: systemd reads it before
+# the sandbox, so only a same-uid child (wabt on uploaded WASM) could reach it.
+# Not pinned here: the Postgres, ClickHouse and Redis credentials the API holds
+# stay shared-strength until hosts set least-privilege ones.
+API_HIDDEN="/run/lock /etc/default/stellarindex /etc/default/stellarindex-api /etc/default/galexie /etc/default/galexie-backfill /etc/default/stellarindex-ops /etc/clickhouse-client"
 api_user_default=$(sed -nE 's/^stellarindex_api_os_user:[[:space:]]*"?([^"[:space:]]*)"?.*/\1/p' "$ROLE/defaults/main.yml" 2>/dev/null)
 daemon_users=" "
 for d in stellarindex-indexer stellarindex-aggregator; do

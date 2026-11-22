@@ -200,6 +200,13 @@ git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
 expect_has "systemd unit: hardening lint selected" "plan  lint-systemd-hardening:" "$out"
 expect_has "systemd unit: its self-test selected" "plan  lint-systemd-hardening-test:" "$out"
+expect_not "systemd unit: no API env render test" "ansible-api-env-test" "$out"
+
+R="$TMP/apienv"; new_repo "$R"
+put "$R" configs/ansible/roles/archival-node/templates/stellarindex.env.j2 $'X=1\n'
+git -C "$R" add -A
+out="$(cd "$R" && "$DISPATCH" --staged --plan 2>&1)"
+expect_has "shared env template: API env render test selected" "plan  ansible-api-env-test:" "$out"
 
 R="$TMP/gotagged"; new_repo "$R"
 put "$R" go.mod $'module example.com/t\n\ngo 1.22'
