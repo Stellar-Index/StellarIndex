@@ -123,6 +123,46 @@ func TestPriceSourceExclusion_RedisLayer(t *testing.T) {
 	}
 }
 
+// TestPriceSourceExclusion_FrozenHeldValue: a frozen pair replaces its clean closed bucket with the held VWAP-cache value,
+// which carries no source list, so an exclusion touching the pair withholds the held value instead of serving it.
+func TestPriceSourceExclusion_FrozenHeldValue(t *testing.T) {
+	const key = "crypto:XLM/fiat:USD"
+	heldAt := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second)
+	newSrv := func(g v1.PriceExclusionGate) *v1.Server {
+		return v1.New(v1.Options{
+			Prices: &stubPriceReader{
+				snapshots: map[string]v1.PriceSnapshot{key: {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: movedBucket, PriceType: "vwap", WindowSeconds: 60}},
+				sources:   map[string][]string{key: {"kraken", "coinbase", "bitstamp"}},
+			},
+			Freeze:       frozenPairs{key: true},
+			Triangulated: heldSincePairs{values: lkgPairs{key + "/300": heldLKG}, at: heldAt},
+			Exclusions:   g,
+		})
+	}
+	for _, path := range []string{"/v1/price?asset=crypto:XLM&quote=fiat:USD", "/v1/price/batch?asset_ids=crypto:XLM&quote=fiat:USD"} {
+		_, baseline := exclGet(t, newSrv(nil), path)
+		if !strings.Contains(baseline, heldLKG) {
+			t.Fatalf("%s: ungated frozen pair %s, want the held value %s", path, baseline, heldLKG)
+		}
+		for _, tc := range exclCases() {
+			status, body := exclGet(t, newSrv(tc.gate), path)
+			if strings.Contains(body, movedBucket) {
+				t.Fatalf("%s %s: served the refused bucket: %s", tc.name, path, body)
+			}
+			if strings.HasPrefix(path, "/v1/price/batch") && tc.withheld != "" {
+				if !strings.Contains(body, `"withheld":["crypto:XLM"]`) || strings.Contains(body, heldLKG) {
+					t.Fatalf("%s %s: %d %s, want crypto:XLM withheld", tc.name, path, status, body)
+				}
+				continue
+			}
+			if !strings.HasPrefix(path, "/v1/price/batch") && tc.withheld != "" && status != http.StatusNotFound {
+				t.Fatalf("%s %s: status %d %s, want a 404 withholding", tc.name, path, status, body)
+			}
+			wantExclVerdict(t, tc, status, body, heldLKG, baseline)
+		}
+	}
+}
+
 // TestPriceSourceExclusion_TipWindow: the tip's rolling window drops an excluded source's trades and recomputes from the
 // survivors; when none survive, the cache fallback is withheld rather than served; an unread set withholds outright.
 func TestPriceSourceExclusion_TipWindow(t *testing.T) {

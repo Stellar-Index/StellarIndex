@@ -634,6 +634,10 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// comes from the VWAP cache, so it is viaFallback: already normalized, and stale.
 	held := s.resolveFrozenServeFor(r, snapshot, asset, served, market)
 	if held.outcome == frozenServeNothingHeld {
+		if held.withheld != nil {
+			writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(held.withheld))
+			return
+		}
 		writeFrozenNothingHeldProblem(w, r, asset, quote)
 		return
 	}
@@ -2031,6 +2035,8 @@ type frozenResolution struct {
 	triangulated bool
 	// pairBase is the spelling whose marker fired; composite-meta must ask for the same pair.
 	pairBase canonical.Asset
+	// withheld, beside frozenServeNothingHeld, is why the held value was refused; a caller that ignores it still serves nothing.
+	withheld error
 }
 
 // frozenHeldWindows are the aggregator windows a freeze can hold a value for, smallest first: the marker is per pair (ADR-0019) and can't
@@ -2061,6 +2067,10 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		}
 		if !found {
 			continue
+		}
+		// A held value carries no source list; withheld ends the chain (no longer window may answer).
+		if w := s.unattributedWithheld(r.Context(), pairBase, quote, v.ObservedAt.Add(-window)); w != pricingguard.NotWithheld {
+			return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: PriceWithheldError(w)}
 		}
 		return frozenResolution{
 			outcome:      frozenServeHeld,
