@@ -67,6 +67,67 @@ func TestChart_DerivedSeriesKeepsObservedReadFailure(t *testing.T) {
 	}
 }
 
+// legHistory answers each source pair's own points.
+type legHistory struct {
+	*stubHistoryReader
+	legs map[string][]v1.HistoryPoint
+}
+
+func (h legHistory) HistoryPointsInRange(_ context.Context, p canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.HistoryPoint, error) {
+	return h.legs[p.String()], nil
+}
+
+// TestChartMarketCap_MeasuresTheBookUnderTheLatestPrice: the market-cap chart withholds exactly when /v1/assets/{id} would,
+// on the book that owns the newest bucket. A dust book that filled one older bucket does not withhold the series; a thin
+// book under the latest price does.
+func TestChartMarketCap_MeasuresTheBookUnderTheLatestPrice(t *testing.T) {
+	asset, err := canonical.ParseAsset(clearedAssetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	direct := canonical.Pair{Base: asset, Quote: canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}}.String()
+	dust := canonical.Pair{Base: asset, Quote: canonical.Asset{Type: canonical.AssetCrypto, Code: "USDT"}}.String()
+	for _, tc := range []struct {
+		name     string
+		legs     map[string][]v1.HistoryPoint
+		withheld bool
+	}{
+		{"dust book filled an older bucket", map[string][]v1.HistoryPoint{
+			direct: {{Bucket: d(2), VWAP: "0.20"}},
+			dust:   {{Bucket: d(1), VWAP: "0.10"}},
+		}, false},
+		{"dust book owns the latest bucket", map[string][]v1.HistoryPoint{
+			direct: {{Bucket: d(1), VWAP: "0.10"}},
+			dust:   {{Bucket: d(2), VWAP: "0.20"}},
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: tc.legs},
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: big.NewInt(1_000_0000000)},
+				}},
+				VerifiedCurrencies: newTestCatalogue(t),
+				Substance: pricingguard.NewSubstanceGate(thinStore{pairs: map[string]bool{clearedAssetID + "/crypto:USDT": true}},
+					pricingguard.SubstanceGateOptions{}),
+			}).Handler())
+			status, body := fetch(t, ts.URL+"/v1/chart?asset="+clearedAssetID+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			if status != http.StatusOK {
+				t.Fatalf("status %d: %s", status, body)
+			}
+			data, _ := decodeMap(t, body)["data"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if withheld := len(points) == 0 && data["market_cap_low_liquidity"] == true; withheld != tc.withheld {
+				t.Errorf("points=%v low_liquidity=%v, want withheld=%v", points, data["market_cap_low_liquidity"], tc.withheld)
+			}
+			if !tc.withheld && len(points) != 2 {
+				t.Errorf("served %d points, want both buckets", len(points))
+			}
+		})
+	}
+}
+
 // TestChartFamily_ThinMarketIsNeverServedClean: every /v1/chart price type must treat a sub-floor market the way its
 // siblings do. A price series (vwap, twap) is served but flagged thin_market as /v1/vwap, /v1/twap and /v1/ohlc are; a
 // market-cap series is withheld, because /v1/assets/{id} never derives a valuation from a thin price. A new price type

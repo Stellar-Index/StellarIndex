@@ -689,8 +689,8 @@ func newChartBucketMerge() *chartBucketMerge {
 // empty reports whether no bucket is held. Buckets are keyed in UTC because [time.Time] compares location as well as instant.
 func (m *chartBucketMerge) empty() bool { return len(m.byBucket) == 0 }
 
-func (m *chartBucketMerge) add(points []HistoryPoint) int {
-	claimed := 0
+// add claims every bucket of points not already owned and returns how many it claimed and the newest of them.
+func (m *chartBucketMerge) add(points []HistoryPoint) (claimed int, newest time.Time) {
 	for _, p := range points {
 		k := p.Bucket.UTC()
 		if _, taken := m.byBucket[k]; taken {
@@ -698,8 +698,11 @@ func (m *chartBucketMerge) add(points []HistoryPoint) int {
 		}
 		m.byBucket[k] = p
 		claimed++
+		if k.After(newest) {
+			newest = k
+		}
 	}
-	return claimed
+	return claimed, newest
 }
 
 // earliest is the oldest claimed bucket (zero when none); [chartWindow.covered] anchors its grid walk on it. Merged series must
@@ -823,6 +826,9 @@ type chartWalkResult struct {
 	cappedAt time.Time
 	// books are the source pairs that claimed a served bucket, which the substance measurement covers.
 	books []canonical.Pair
+	// latestBook owns latestAt, the newest served bucket: the price a headline valuation stands on.
+	latestBook canonical.Pair
+	latestAt   time.Time
 }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
@@ -1052,10 +1058,11 @@ func (w *chartWalk) readSpan(
 // to the merge, recording whether the source's quote leg was a proxy.
 func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 	points = w.s.adjustSourcePoints(sp, points)
-	if w.merge.add(points) == 0 {
+	claimed, newest := w.merge.add(points)
+	if claimed == 0 {
 		return
 	}
-	w.res.noteBook(sp)
+	w.res.noteBook(sp, newest)
 	if !sp.Quote.Equal(w.pair.Quote) {
 		w.res.proxied = true
 	}
@@ -1737,8 +1744,8 @@ func (s *Server) handleChartMarketCapCrypto(
 	})
 }
 
-// marketCapSeriesRefused applies the detail page's valuation guards (a thin price leg values nothing, [Server.marketCapRefused],
-// then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers
+// marketCapSeriesRefused applies the detail page's valuation guards (a thin book under the latest price values nothing,
+// [Server.marketCapRefused], then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers
 // the whole series (inputs are current readings); unmeasured inputs never refuse.
 func (s *Server) marketCapSeriesRefused(
 	ctx context.Context, base canonical.Asset, pair canonical.Pair, walk chartWalkResult, wire []HistoryPointWire,
@@ -1746,7 +1753,7 @@ func (s *Server) marketCapSeriesRefused(
 	if len(wire) == 0 {
 		return false, false, false
 	}
-	if s.chartThin(ctx, pair, walk) {
+	if s.chartLatestThin(ctx, pair, walk) {
 		return true, true, false
 	}
 	var probe AssetDetail
