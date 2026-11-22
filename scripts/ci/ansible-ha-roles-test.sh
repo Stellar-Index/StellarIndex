@@ -697,6 +697,24 @@ for role in sorted(os.listdir(roles)):
         check(any(t.get("notify") == topic and any(r and r in str(t.get("when")) for r in stat_regs) for t in rtasks),
               f"{role} re-notifies '{topic}' from {path} on the next run")
 
+# haproxy: VIP ownership is a whole-address match; a host address that extends the VIP's digits is not the VIP.
+scraper = next(t for t in tasks("haproxy/tasks/07-monitoring.yml") if "keepalived.prom" in str(t.get("copy", {}).get("content", "")))
+for vip, addrs, want in (("10.0.0.10", ["10.0.0.101/24"], "0"), ("10.0.0.10", ["10.0.0.101/24", "10.0.0.10/32"], "1"),
+                         ("10.0.0.10", ["10.0.0.110/24"], "0"), ("fd00::10", ["fd00::100/64"], "0"), ("fd00::10", ["fd00::10/128"], "1")):
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f"{d}/bin")
+        lines = "".join(f"2: eth0    {'inet6' if ':' in a else 'inet'} {a} scope global eth0\\       valid_lft forever\n" for a in addrs)
+        stubs = {"ip": f"#!/bin/sh\nprintf '%s' '{lines}'\n", "systemctl": "#!/bin/sh\nexit 0\n"}
+        for n, body in stubs.items():
+            with open(f"{d}/bin/{n}", "w") as fh:
+                fh.write(body)
+            os.chmod(f"{d}/bin/{n}", 0o755)
+        script = jinja2.Environment().from_string(scraper["copy"]["content"]).render(
+            haproxy_node_exporter_textfile_dir=d, keepalived_iface="eth0", haproxy_vip=vip)
+        subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}"}, check=False)
+        prom = open(f"{d}/keepalived.prom").read() if os.path.exists(f"{d}/keepalived.prom") else ""
+        check(f"stellarindex_haproxy_vip_owner {want}\n" in prom, f"keepalived scraper reports owner={want} for VIP {vip} on {addrs}")
+
 # A task failure before the handler flush drops every queued notification unless the play forces handlers.
 pdir = os.path.join(roles, "..", "playbooks")
 for pb in sorted(os.listdir(pdir)):

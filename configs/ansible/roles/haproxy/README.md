@@ -158,10 +158,12 @@ scope here.
 
 1. Update the password in `inventory/<region>.secrets.yml`.
 2. Re-apply this role to ONE LB host first (`--limit lb-02`).
-3. Run `ip a | grep <vip>` on lb-01 to confirm it still owns
-   the VIP (i.e. the rotation hasn't disrupted membership).
+3. Run `ip -o addr show | awk '{print $4}' | cut -d/ -f1 | grep -xF <vip>`
+   on lb-01 to confirm it still owns the VIP (i.e. the rotation hasn't
+   disrupted membership). A plain `grep <vip>` also matches a host
+   address that starts with the VIP's digits.
 4. Re-apply to lb-01.
-5. `ip a | grep <vip>` on both — should sum to 1 owner.
+5. The same check on both — should sum to 1 owner.
 
 Until both hosts have the new password, VRRP authentication will
 fail between them and they may briefly both think they're MASTER
