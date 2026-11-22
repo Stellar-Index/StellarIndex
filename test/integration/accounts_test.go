@@ -549,6 +549,19 @@ func TestAccountErasure(t *testing.T) {
 	t.Run("ExportSeesOnlyTheRequestersPersonalData", func(t *testing.T) {
 		mustExec(t, ctx, db, `INSERT INTO usage_daily (day, subject, endpoint, ok_count)
 			VALUES (current_date, $1, '/v1/price', 4)`, "key:"+y.redisKeyID)
+		// y's member is staff and looks up another customer: that work is
+		// about the other account and must not reach y's export.
+		var otherCustomer uuid.UUID
+		if err := db.QueryRowContext(ctx, `INSERT INTO accounts (name, slug, billing_email)
+			VALUES ('Customer Z', 'customer-z', 'z@z.example') RETURNING id`).Scan(&otherCustomer); err != nil {
+			t.Fatal(err)
+		}
+		mustExec(t, ctx, db, `UPDATE users SET is_staff = true WHERE id = $1`, y.memberID)
+		mustExec(t, ctx, db, `INSERT INTO audit_log (account_id, actor_user_id, actor_kind, action, target_kind, target_id, metadata)
+			VALUES ($1::uuid, $2, 'staff', 'staff.customer.lookup', 'account', $3, '{"account_status":"suspended"}'),
+			       (NULL, $2, 'staff', 'key.mint', 'account', $3, '{"label":"z-staff-mint"}'),
+			       (NULL, $2, 'user', 'session.login', NULL, NULL, '{"note":"member-unscoped"}')`,
+			otherCustomer, y.memberID, otherCustomer.String())
 		exp, err := (&accounterasure.Exporter{Store: accounts, Redis: rdb}).Export(ctx, y.accountID, y.ownerID, time.Now())
 		if err != nil {
 			t.Fatalf("ExportAccount: %v", err)
@@ -575,6 +588,12 @@ func TestAccountErasure(t *testing.T) {
 		if len(exp.Webhooks) != 1 || len(exp.Webhooks[0].Deliveries) != 1 ||
 			!strings.Contains(string(exp.Webhooks[0].Deliveries[0].Payload), "123456789012345678901234567890") {
 			t.Errorf("delivery payload lost precision: %+v", exp.Webhooks)
+		}
+		if strings.Contains(doc, otherCustomer.String()) || strings.Contains(doc, "z-staff-mint") {
+			t.Error("export carries a member's staff work on another customer's account")
+		}
+		if !strings.Contains(doc, "member-unscoped") {
+			t.Error("export dropped a member's own unscoped audit row")
 		}
 		for _, a := range exp.AuditLog {
 			if a.ActorKind == "staff" && (a.IP != "" || strings.Contains(string(a.Metadata), "actor_email")) {

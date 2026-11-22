@@ -368,7 +368,10 @@ func (r *AccountStore) exportAudit(ctx context.Context, accountID, requester uui
 		  FROM audit_log
 		 WHERE account_id = $1
 		    OR (target_kind = 'account' AND target_id = $1::text)
-		    OR actor_user_id IN (SELECT id FROM users WHERE account_id = $1)
+		    -- a member's unscoped rows only: rows scoped to another account, and
+		    -- a staff member's staff work, belong to the accounts acted on
+		    OR (actor_user_id IN (SELECT id FROM users WHERE account_id = $1)
+		        AND account_id IS NULL AND actor_kind <> 'staff')
 		 ORDER BY ts`, accountID, requester, staffExportRedactedKeys)
 	if err != nil {
 		return nil, err
