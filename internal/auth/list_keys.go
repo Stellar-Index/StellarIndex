@@ -400,6 +400,14 @@ func (o ownedRecord) lineage() []string {
 	return append(slices.Clone(o.rec.AncestorKeyIDs), o.rec.KeyID)
 }
 
+// lineageHashes is lineage's record hashes, index for index.
+func (o ownedRecord) lineageHashes() []string {
+	if o.hash == "" {
+		return nil
+	}
+	return append(slices.Clone(o.rec.AncestorHashes), o.hash)
+}
+
 // recordsForIdentifier resolves identifier's records through the index when
 // it is usable and by walking otherwise; see [RedisAPIKeyStore.ListKeysForIdentifier].
 func (s *RedisAPIKeyStore) recordsForIdentifier(ctx context.Context, identifier string) ([]ownedRecord, error) {
