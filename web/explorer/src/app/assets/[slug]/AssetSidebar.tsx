@@ -3,7 +3,7 @@
 import Link from 'next/link';
 
 import { asExample } from '@/api/client';
-import { useAsset } from '@/api/hooks';
+import { useAsset, useAssetSupply } from '@/api/hooks';
 import { Panel } from '@/components/reveal';
 import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -23,6 +23,7 @@ import {
   supplyIsDerived,
   supplyIsFloor,
   supplyMark,
+  totalSupplyIsFloor,
 } from '@/lib/supplyFloor';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
@@ -200,9 +201,13 @@ export function AssetSidebar({
     vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
   // Floors come from the same payload as the figure they qualify.
   const volFloor = (detail ?? coin).volume_lower_bound === true;
-  const capFloor = supplyIsFloor(detail ?? coin);
+  // Same query key as the Supply tab, so both panels mark one verdict.
+  const onchainFloor =
+    useAssetSupply(coin.asset_id).data?.data?.circulating_supply_lower_bound ===
+    true;
+  const capFloor = totalSupplyIsFloor(detail ?? coin, onchainFloor);
   const circSrc = detail?.circulating_supply != null ? detail : coin;
-  const circFloor = supplyIsFloor(circSrc);
+  const circFloor = supplyIsFloor(circSrc) || onchainFloor;
   const circDerived = !circFloor && supplyIsDerived(circSrc);
   // A floor over an exact cap is "at least", an exact volume over a floor
   // cap is "at most"; with both floors the ratio is bounded on neither side.

@@ -20,6 +20,7 @@ import {
   supplyIsDerived,
   supplyIsFloor,
   supplyMark,
+  totalSupplyIsFloor,
 } from '@/lib/supplyFloor';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
@@ -99,15 +100,13 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
     a.circulating_supply == null &&
     a.total_supply == null &&
     a.max_supply == null;
-  const floor =
-    supplyIsFloor(a) ||
+  const onchainFloor =
     onchain.data?.data?.circulating_supply_lower_bound === true;
+  const floor = supplyIsFloor(a) || onchainFloor;
   const derived = supplyIsDerived(a);
   const mark = supplyMark(floor, derived);
   const hint = supplyHint(floor, derived);
-  // Both bases set total == circulating, so the total carries the same
-  // bound; the on-chain floor flag qualifies circulating only.
-  const totalFloor = supplyIsFloor(a);
+  const totalFloor = totalSupplyIsFloor(a, onchainFloor);
   const totalMark = supplyMark(totalFloor, derived);
   const totalHint = supplyHint(totalFloor, derived);
 
@@ -175,6 +174,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
             maxDeclared={a.max_supply_basis === 'sep1_declared_max'}
             unlimited={a.is_unlimited === true}
             floor={floor}
+            totalFloor={totalFloor}
             derived={derived}
           />
 

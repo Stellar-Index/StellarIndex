@@ -126,6 +126,29 @@ describe('AssetSidebar floor marks', () => {
     expect(getAllByText('—').length).toBeGreaterThan(0);
   });
 
+  it('marks a lake-net supply the on-chain read calls a floor', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.endsWith('/supply'))
+        return { data: { circulating_supply_lower_bound: true } };
+      throw new Error('offline');
+    });
+    const { findAllByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{
+          decimals: 7,
+          supply_basis: 'sep41_lake_flows',
+          circulating_supply: '50000000000000',
+          total_supply: '50000000000000',
+        }}
+        priceUSD="0.9998"
+      />,
+    );
+    // Total supply and circulating supply, the same reading.
+    expect(await findAllByText('≥ 5M USDC')).toHaveLength(2);
+    vi.mocked(apiGet).mockReset();
+  });
+
   it('marks total supply and honours the server market-cap flag', () => {
     const { getAllByText, getByText } = renderWithQuery(
       <AssetSidebar
