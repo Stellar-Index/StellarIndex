@@ -1496,17 +1496,13 @@ describe('sumStablecoins', () => {
         wrappers: 0,
       },
     ],
-    // yUSDC wraps USDC already in the total; a same-code token from another
-    // issuer is not the wrapper and is summed.
+    // yUSDC wraps USDC already in the total. Rows carry the catalogue slug
+    // as asset_id, as /v1/assets?asset_class=stablecoin serves them.
     [
       [
-        { asset_id: 'USDC-GA5Z', market_cap_usd: '10.00' },
-        {
-          asset_id:
-            'yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF',
-          market_cap_usd: '2.00',
-        },
-        { asset_id: 'yUSDC-GBOTHER', market_cap_usd: '1.00' },
+        { asset_id: 'usdc', market_cap_usd: '10.00' },
+        { asset_id: 'yusdc', market_cap_usd: '2.00' },
+        { asset_id: 'pyusd', market_cap_usd: '1.00' },
       ],
       {
         total: '11.00',
