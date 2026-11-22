@@ -18,6 +18,11 @@ import (
 // a weak key.
 func buildWebhookKeySealer(cfg config.DashboardConfig, logger *slog.Logger) (*platform.WebhookKeySealer, error) {
 	secret := os.Getenv(cfg.WebhookSealKeyEnv)
+	if secret == "" && cfg.WebhookSealPreviousKeyEnv != "" && os.Getenv(cfg.WebhookSealPreviousKeyEnv) != "" {
+		// A rotation with its new secret missing would store new keys raw and leave sealed ones unopenable.
+		return nil, fmt.Errorf("%s is set but %s is empty; set the new seal secret, or clear the previous one",
+			cfg.WebhookSealPreviousKeyEnv, cfg.WebhookSealKeyEnv)
+	}
 	if secret == "" {
 		logger.Warn("webhook seal key env unset — new customer-webhook signing keys are stored unsealed, "+
 			"and deliveries to webhooks whose key is already sealed wait until it is set",

@@ -169,7 +169,7 @@ tracked in the private inventory.
    has logged that Info line: an older binary reads only `vault_webhook_seal_key`. Replacing
    the key without step (1) makes every sealed key unreadable and their deliveries fail
    terminally (`no_secret`); restoring the old value makes them readable again.
-   **If `vault_webhook_seal_key` was exposed**, run the two deploys above at once, then treat
+   **If `vault_webhook_seal_key` was exposed**, run the two deploys above without delay, then treat
    every customer signing key as leaked: re-sealing protects nothing already sealed under the
    leaked secret for anyone holding a copy of the database (a backup, a dump, a replica), who
    can open every key with it and forge signed deliveries. Every customer must call
