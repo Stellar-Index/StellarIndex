@@ -1375,7 +1375,11 @@ func (a supplyAggregatorInserter) InsertSupply(ctx context.Context, snap supply.
 
 // LatestWrittenTotal reads the newest stored total_supply for assetKey.
 func (a supplyAggregatorInserter) LatestWrittenTotal(ctx context.Context, assetKey string) (*big.Int, bool, error) {
-	snap, err := a.s.LatestSupply(ctx, assetKey)
+	return writtenTotal(a.s.LatestSupply(ctx, assetKey))
+}
+
+// writtenTotal maps a LatestSupply result to the band baseline contract: no stored row is (nil, false, nil), not an error.
+func writtenTotal(snap supply.Supply, err error) (*big.Int, bool, error) {
 	if errors.Is(err, timescale.ErrNotFound) {
 		return nil, false, nil
 	}

@@ -694,6 +694,38 @@ func (s *seqComputer) Compute(_ context.Context, ledger uint32, observedAt time.
 	}, nil
 }
 
+// The dormant (frozen MinComponentLedger) write path is its own insert site: its first write after a restart must also be
+// band-checked against the stored total.
+func TestRefresher_WriteBandSeedsOnDormantPathAfterRestart(t *testing.T) {
+	const minComp = 50_000_000
+	ledgers := &mutableLedgers{ledger: minComp + 1017, observedAt: time.Unix(1_770_000_000, 0).UTC()}
+	baseline := &stubBandBaseline{total: big.NewInt(10_000), ok: true}
+	inserter := &stubInserter{}
+	r := NewRefresher(
+		ledgers,
+		dynComputer{assetKey: "XLM", minComponentLedger: minComp},
+		inserter,
+		discardLogger(),
+		WithStaleComponentLedgers(1000),
+		WithWriteBandBaseline(baseline),
+	)
+
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("tick1 kind=%s, want %s (cold-start rejection)", out.Kind, OutcomeKindStaleComponent)
+	}
+	ledgers.ledger = minComp + 1324
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindDormant {
+		t.Fatalf("tick2 kind=%s, want %s; err=%v", out.Kind, OutcomeKindDormant, out.Err)
+	}
+	if out.BandBreach != "up" {
+		t.Errorf("BandBreach=%q, want %q (1_000_000 against stored 10_000)", out.BandBreach, "up")
+	}
+	if len(baseline.keys) != 1 || baseline.keys[0] != "XLM" {
+		t.Errorf("baseline reads=%v, want exactly one for XLM", baseline.keys)
+	}
+}
+
 func TestRefresher_WriteBandFlagsTenfoldMoveButStillWrites(t *testing.T) {
 	cases := []struct {
 		name   string
