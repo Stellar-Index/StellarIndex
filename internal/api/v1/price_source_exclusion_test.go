@@ -133,7 +133,9 @@ func exclRedisLayerCase(t *testing.T, quote, path string, direct bool) {
 			tc = tc.forMultiHop()
 		}
 		if quote == exclUSDC && tc.name == "pair exclusion under the crypto:XLM alias" {
-			continue // scoped to fiat:USD, which a USDC-quoted value is not
+			// A cached value carries no source list, so a pair-scoped exclusion withholds every cached price whose base is either
+			// of its legs, whatever the quote: native/USDC is withheld by an exclusion scoped to crypto:XLM/fiat:USD.
+			tc.withheld = "source_excluded"
 		}
 		status, body := exclGet(t, newSrv(tc.gate), path)
 		if strings.HasPrefix(path, "/v1/price/batch") && tc.withheld != "" {
