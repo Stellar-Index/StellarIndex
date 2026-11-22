@@ -816,12 +816,9 @@ func rwaPremiumDayOf(d timescale.MarketDay, refPrice *big.Rat) (rwaPremiumDay, b
 	if !ok {
 		volume = new(big.Rat)
 	}
-	pct := new(big.Rat).Sub(marketPrice, refPrice)
-	pct.Quo(pct, refPrice)
-	pct.Mul(pct, new(big.Rat).SetInt64(100))
 	return rwaPremiumDay{
 		day:       d.Day,
-		pct:       pct.FloatString(4),
+		pct:       rwaPremiumPct(marketPrice, refPrice),
 		market:    rwaExactDecimal(marketPrice),
 		reference: rwaExactDecimal(refPrice),
 		volumeUSD: volume.FloatString(2),
