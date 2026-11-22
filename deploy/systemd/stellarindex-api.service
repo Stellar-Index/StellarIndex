@@ -6,6 +6,10 @@
 #
 # Operator wiring (after aggregator is running):
 #
+#   sudo useradd --system --user-group --no-create-home --home-dir /nonexistent \
+#     --shell /usr/sbin/nologin stellarindex-api
+#   write /etc/default/stellarindex-api (0640 root:stellarindex-api; the names
+#     are in docs/operations/self-hosting.md §4.7) — the API reads no other env file
 #   sudo cp deploy/systemd/stellarindex-api.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now stellarindex-api.service

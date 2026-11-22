@@ -55,7 +55,8 @@
 #   unit templates, API env, tree, instant): the API's own uid, env file
 #   defaults/main.yml        and /proc isolation.
 #   both env templates, the  ansible-api-env-test (real render, ~5 s): the
-#   toml, defaults/main.yml  API's env file mirrors the shared one.
+#   toml, defaults/main.yml, API's env file mirrors the shared one and
+#   self-hosting.md          the self-host guide's.
 #   scripts/ci/*.baseline    lint-baseline-growth over the commit range. It
 #                            reads commit trailers, so it has nothing to say
 #                            about STAGED edits and is deferred there.
@@ -271,7 +272,8 @@ for f in "${changed[@]}"; do
         configs/ansible/roles/archival-node/templates/stellarindex-api.env.j2|*/configs/ansible/roles/archival-node/templates/stellarindex-api.env.j2| \
         configs/ansible/roles/archival-node/templates/stellarindex.env.j2|*/configs/ansible/roles/archival-node/templates/stellarindex.env.j2| \
         configs/ansible/roles/archival-node/templates/stellarindex.toml.j2|*/configs/ansible/roles/archival-node/templates/stellarindex.toml.j2| \
-        configs/ansible/roles/archival-node/defaults/main.yml|*/configs/ansible/roles/archival-node/defaults/main.yml)
+        configs/ansible/roles/archival-node/defaults/main.yml|*/configs/ansible/roles/archival-node/defaults/main.yml| \
+        docs/operations/self-hosting.md|*/docs/operations/self-hosting.md)
             apienv_files+=("$f"); hit=1 ;;
     esac
     case "$f" in

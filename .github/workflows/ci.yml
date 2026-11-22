@@ -389,6 +389,8 @@ jobs:
               # them.
               - 'configs/prometheus/**'
               - 'deploy/monitoring/**'
+              # ansible-api-env-test.sh checks the self-host guide's API env file.
+              - 'docs/operations/self-hosting.md'
       # dorny/paths-filter's glob matching cannot be exercised offline
       # (no Docker/`act`), so its rule is restated in plain shell at
       # scripts/ci/check-change-class.sh and proven against fixtures

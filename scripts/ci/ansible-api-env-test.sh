@@ -16,6 +16,9 @@
 #      (internal/storage/clickhouse/ops_auth.go refuses a password with no
 #      user, and every lake-backed route then 503s behind a 200 readyz), and
 #      with the flip on both halves reach the API.
+# And, statically: docs/operations/self-hosting.md creates the stellarindex-api
+# user and its /etc/default/stellarindex-api heredoc names every variable the
+# role renders for the API.
 #
 # Needs ansible-playbook (the ci.yml ansible-check job has it).
 # Run: bash scripts/ci/ansible-api-env-test.sh
@@ -76,6 +79,24 @@ for entry in $(printf '%s\n' "$NOT_NEEDED" | sed -n 's/:.*//p'); do
   esac
 done
 [ "$fail" -eq 0 ] && ok "every name in stellarindex.env.j2 is rendered for the API or declared not needed"
+
+# ── 1b. the self-host guide writes the same API env file the role does ───
+GUIDE="${GUIDE:-docs/operations/self-hosting.md}"
+guide_env=$(sed -n '/tee \/etc\/default\/stellarindex-api /,/^EOT$/p' "$GUIDE" 2>/dev/null)
+guide_names=" $(printf '%s\n' "$guide_env" | sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' | tr '\n' ' ') "
+before=$fail
+if [ -z "$guide_env" ]; then
+  bad "$GUIDE has no heredoc writing /etc/default/stellarindex-api; the scan is broken"
+else
+  for n in $api_names; do
+    case "$guide_names" in *" $n "*) ;; *) bad "$GUIDE's /etc/default/stellarindex-api omits $n, which the role renders for the API" ;; esac
+  done
+fi
+# The command may continue onto a second line; the user name ends it.
+if ! grep -qE '^(sudo )?useradd .* stellarindex-api$|^[[:space:]]+--shell [^ ]+ stellarindex-api$' "$GUIDE"; then
+  bad "$GUIDE never creates the stellarindex-api user the API unit runs as"
+fi
+[ "$fail" -eq "$before" ] && ok "$GUIDE creates the API user and writes every name the role renders for the API"
 
 # ── 2/3. real render over the matrix ──────────────────────────────────────
 cat > "$TMP/play.yml" <<YML

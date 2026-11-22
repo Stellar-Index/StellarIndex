@@ -214,9 +214,12 @@ Start in order, each healthy before the next:
 sudo cp bin/stellarindex-indexer bin/stellarindex-aggregator bin/stellarindex-api /usr/local/bin/
 sudo cp deploy/systemd/stellarindex-{indexer,aggregator,api}.service /etc/systemd/system/
 sudo useradd --system --no-create-home stellarindex   # if not already present
+# the API runs as its own user and cannot read the daemons' env files:
+sudo useradd --system --user-group --no-create-home --home-dir /nonexistent \
+  --shell /usr/sbin/nologin stellarindex-api
 sudo install -d -o root -g stellarindex -m 1770 /var/lib/stellarindex
 
-# env file all three units load:
+# env file the indexer and aggregator load (the API unit hides it):
 sudo tee /etc/default/stellarindex-ops >/dev/null <<'EOT'
 STELLARINDEX_POSTGRES_DSN=postgres://stellarindex:<password>@127.0.0.1:5432/stellarindex?sslmode=disable
 STELLARINDEX_S3_ACCESS_KEY=<minio-access-key>
@@ -228,8 +231,8 @@ AWS_REGION=us-east-1
 EOT
 sudo chmod 640 /etc/default/stellarindex-ops
 
-# Optional but recommended: the internet-facing API should not hold the owner
-# DSN. The API unit reads this file after the ops file, so this DSN wins.
+# Required: the API's ONLY env file; the unit will not start without it.
+# Recommended: the internet-facing API should not hold the owner DSN.
 # Migration 0213 defines the grants but creates no role (migrations run
 # without CREATEROLE), so create the role as the superuser, then apply the
 # grants as the owner role (never as a superuser: the owner can redefine the
@@ -238,9 +241,22 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 \
   -c "CREATE ROLE stellarindex_api LOGIN PASSWORD '<password>'"
 psql "postgres://stellarindex:<owner-password>@127.0.0.1:5432/stellarindex" \
   -v ON_ERROR_STOP=1 -c "SELECT apply_api_role_grants()"
+# Every name the API reads; leave a line out only if you do not use it.
+# Set the serving password only together with storage.clickhouse_serving_user
+# (the API refuses a password without its user).
 sudo tee /etc/default/stellarindex-api >/dev/null <<'EOT'
 STELLARINDEX_POSTGRES_DSN=postgres://stellarindex_api:<password>@127.0.0.1:5432/stellarindex?sslmode=disable
+STELLARINDEX_REDIS_PASSWORD=<redis-requirepass>
+STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD=<api_serving-password>
+STELLARINDEX_CLICKHOUSE_LIVE_USER=<live-daemon-user>
+STELLARINDEX_CLICKHOUSE_LIVE_PASSWORD=<live-daemon-password>
+STELLARINDEX_DASHBOARD_CODE_SECRET=<random-secret>
+STELLARINDEX_WEBHOOK_SEAL_KEY=<random-key>
+STELLARINDEX_RESEND_API_KEY=<resend-key>
+MASSIVE_API_KEY=<massive-key>
+OPENEXCHANGERATES_APP_ID=<oxr-app-id>
 EOT
+sudo chown root:stellarindex-api /etc/default/stellarindex-api
 sudo chmod 640 /etc/default/stellarindex-api
 
 sudo systemctl daemon-reload
@@ -263,7 +279,7 @@ are read by the S3 SDK.
   variable holding the secret; `redis_password` and
   `clickhouse_serving_password` hold the value itself, so inject
   `STELLARINDEX_REDIS_PASSWORD` / `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD`
-  instead (§4.7).
+  instead — in `/etc/default/stellarindex-api` for the API (§4.7).
 - New on-chain source: [`add-onchain-source.md`](../contributing/add-onchain-source.md).
   CEX/FX connectors: `[external.<venue>]` blocks, `enabled = false` by default.
 
