@@ -163,12 +163,15 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 }
 
+// capRefusedOnSupplyBasis is the one cap-refusal rule by supply basis for the detail and the RWA contract arm: held balances
+// are a floor, so the supply serves under its basis and no cap is built on it.
+func capRefusedOnSupplyBasis(b supply.Basis) bool { return b == supply.BasisContractStorageBalances }
+
 // applySupplyAndMarketCap is applyF2Fields' compute phase: the snapshot's supply fields, then the market cap and FDV valued on them.
 func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int, now time.Time) {
 	detail.SupplyStale = supplyObservationStale(snap, now)
 	populateSupplyFields(detail, snap)
-	// Held balances are a floor: the supply serves under its basis and no cap is built on it.
-	if snap.Basis == supply.BasisContractStorageBalances {
+	if capRefusedOnSupplyBasis(snap.Basis) {
 		detail.MarketCapWithheldReason = MarketCapWithheldSupplyFloor
 		return
 	}

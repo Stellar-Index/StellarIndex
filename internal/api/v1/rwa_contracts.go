@@ -524,7 +524,7 @@ func observerSEP41Supply(row *AssetDetail) (supply.Basis, bool) {
 }
 
 // applyContractMarketCap fills one contract row's supply/cap from a successful supply reading, encoding the refusal rules: unscaled
-// decimals, dust liquidity, scale disagreement and turnover. floor marks a figure that is a lower bound whatever its basis.
+// decimals, a held-balance supply basis, dust liquidity, scale disagreement and turnover. floor marks a figure that is a lower bound whatever its basis.
 func (s *Server) applyContractMarketCap(
 	row *AssetDetail, circ string, basis supply.Basis, floor, isScaled bool, sources int,
 ) {
@@ -540,6 +540,10 @@ func (s *Server) applyContractMarketCap(
 		return
 	}
 	row.CirculatingSupply = &circ
+	if capRefusedOnSupplyBasis(basis) {
+		row.MarketCapWithheldReason = MarketCapWithheldSupplyFloor
+		return
+	}
 	if row.PriceUSD == nil {
 		return
 	}
