@@ -186,6 +186,47 @@ func TestPriceSourceExclusion_PegWalkJudgedUnderRequestedPair(t *testing.T) {
 	}
 }
 
+// TestPriceSourceExclusion_DeclaredPegCrossJudgedUnderRequestedPair: a declared USD peg with no USD-quoted value is answered
+// as USDC/XLM x XLM/USD; each leg names its own book, so an exclusion stored under USDC/fiat:USD must withhold the composite.
+func TestPriceSourceExclusion_DeclaredPegCrossJudgedUnderRequestedPair(t *testing.T) {
+	usdc, _ := canonical.ParseAsset(exclUSDC)
+	now := time.Now().UTC().Truncate(time.Minute)
+	pegKey, xlmKey := exclUSDC+"/native", "native/fiat:USD"
+	newSrv := func(g v1.PriceExclusionGate) *v1.Server {
+		reader := &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{
+				pegKey: {AssetID: exclUSDC, Quote: "native", Price: "4.0518", PriceType: "vwap", ObservedAt: v1.WireTime(now.Add(-time.Minute)), WindowSeconds: 60},
+				xlmKey: {AssetID: "native", Quote: "fiat:USD", Price: "0.2468", PriceType: "vwap", ObservedAt: v1.WireTime(now), WindowSeconds: 60},
+			},
+			sources: map[string][]string{pegKey: {"sdex"}, xlmKey: {"kraken"}},
+		}
+		return v1.New(v1.Options{Prices: reader, Exclusions: g, USDPeggedClassics: []canonical.Asset{usdc}})
+	}
+	gate := func(rows ...timescale.SourceExclusion) v1.PriceExclusionGate {
+		return pricingguard.NewSourceExclusionGate(exclTable{rows: rows}, pricingguard.SourceExclusionGateOptions{})
+	}
+	from := time.Now().Add(-time.Hour)
+	const path = "/v1/price?asset=" + exclUSDC + "&quote=fiat:USD"
+	_, baseline := exclGet(t, newSrv(nil), path)
+	const served = "0.9999842400" // 4.0518 x 0.2468, the cross rather than the 1.0 declaration
+	if !strings.Contains(baseline, served) || !strings.Contains(baseline, `"sdex"`) {
+		t.Fatalf("ungated %s, want the through-XLM cross %s", baseline, served)
+	}
+	for _, tc := range []exclCase{
+		{name: "no exclusions", gate: gate()},
+		{name: "another source on the fiat pair", gate: gate(timescale.SourceExclusion{ID: 1, Source: "soroswap", Base: exclUSDC, Quote: "fiat:USD", From: from})},
+		{name: "peg leg's source on the fiat pair", withheld: "source_excluded", gate: gate(timescale.SourceExclusion{ID: 1, Source: "sdex", Base: exclUSDC, Quote: "fiat:USD", From: from})},
+		{name: "pivot leg's source on the fiat pair", withheld: "source_excluded", gate: gate(timescale.SourceExclusion{ID: 1, Source: "kraken", Base: exclUSDC, Quote: "fiat:USD", From: from})},
+		{name: "unreadable", withheld: "unattributed", gate: pricingguard.NewSourceExclusionGate(exclTable{err: errors.New("db down")}, pricingguard.SourceExclusionGateOptions{})},
+	} {
+		status, body := exclGet(t, newSrv(tc.gate), path)
+		wantExclVerdict(t, tc, status, body, served, baseline)
+		if tc.withheld != "" && (status != http.StatusNotFound || strings.Contains(body, `"1.0`)) {
+			t.Fatalf("%s: %d %s, want a 404 withholding, not the declaration", tc.name, status, body)
+		}
+	}
+}
+
 // TestPriceSourceExclusion_PivotLegOfTriangulatedValue: a triangulated AQUA/USD cache value can route AQUA/XLM x XLM/USDC, and
 // its legs are not recorded, so an exclusion on the XLM/USDC leg withholds it; a direct AQUA value keeps the pair/base rule.
 func TestPriceSourceExclusion_PivotLegOfTriangulatedValue(t *testing.T) {

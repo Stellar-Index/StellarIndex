@@ -1659,6 +1659,11 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	if xlmLeg.WindowSeconds > windowSeconds {
 		windowSeconds = xlmLeg.WindowSeconds
 	}
+	sources := unionSources(pegSources, xlmSources)
+	// Each leg was judged on its own book; an exclusion stored under the requested pair names neither, so judge the composite.
+	if w := s.pegBucketWithheld(ctx, asset, quote, compositeSpan(pegLeg, xlmLeg), sources); w != pricingguard.NotWithheld {
+		return PriceSnapshot{}, nil, pegXLMLegRefused, withheldReasonFor(w)
+	}
 	return PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),
@@ -1666,7 +1671,28 @@ func (s *Server) crossDeclaredPegThroughXLM(
 		PriceType:     "vwap",
 		ObservedAt:    observedAt,
 		WindowSeconds: windowSeconds,
-	}, unionSources(pegSources, xlmSources), pegXLMLegPriced, ""
+	}, sources, pegXLMLegPriced, ""
+}
+
+// compositeSpan is the span a two-leg cross pooled, for [Server.pegBucketWithheld]: the earlier leg's window start through
+// the later leg's observation, rounded out to whole seconds.
+func compositeSpan(a, b PriceSnapshot) PriceSnapshot {
+	start := func(p PriceSnapshot) time.Time {
+		return p.ObservedAt.Time().Add(-time.Duration(p.WindowSeconds) * time.Second)
+	}
+	from, to := start(a), a.ObservedAt.Time()
+	if s := start(b); s.Before(from) {
+		from = s
+	}
+	if t := b.ObservedAt.Time(); t.After(to) {
+		to = t
+	}
+	span := to.Sub(from)
+	secs := int(span / time.Second)
+	if span%time.Second != 0 {
+		secs++
+	}
+	return PriceSnapshot{ObservedAt: WireTime(to), WindowSeconds: secs}
 }
 
 // readDeclaredPegXLMLeg reads asset/XLM for [Server.crossDeclaredPegThroughXLM]: each peg spelling against each XLM alias; the walk
