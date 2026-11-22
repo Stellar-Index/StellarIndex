@@ -4326,6 +4326,12 @@ export interface paths {
          *     it answers 204 and the key, with every key minted from it,
          *     stops working from the next request. This is how a leaked
          *     `/v1/register` root key, which has no dashboard, is killed.
+         *     It is allowed whatever the key's scopes; a key minted without
+         *     the `account` scope gets 403 `scope-denied` for any other key
+         *     id and on every other `/v1/account/*` route. A key minted with
+         *     a permission list that does not allow this route still cannot
+         *     revoke itself (403 `permission-denied`): revoke it from the
+         *     dashboard or with a key that may.
          *     A deployment running `auth_backend=postgres` has no self-service
          *     key store: there a key may revoke only itself (any other key id
          *     gets 503 `account-store-unavailable`, whether or not it exists),
