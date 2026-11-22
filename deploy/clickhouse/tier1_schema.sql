@@ -1520,7 +1520,7 @@ WHERE entry_type = 'contract_data'
 --
 --   /usr/local/sbin/run-heavy-job.sh census-rollup-backfill \
 --     /usr/local/bin/stellarindex-ops ch-census-rollup \
---     -ch-addr 127.0.0.1:9300 -backfill
+--     -ch-addr 127.0.0.1:9300 -backfill -write
 --
 -- and install the 30-min timer for the incremental cycle.
 

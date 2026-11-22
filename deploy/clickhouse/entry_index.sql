@@ -27,7 +27,7 @@
 --
 -- Runbook:
 --   1. Measure first (no writes; prints row counts per window):
---        stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l>
+--        stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l> -dry-run
 --   2. Apply this file once:
 --        clickhouse-client --multiquery < deploy/clickhouse/entry_index.sql
 --   3. Build from the first ledger whose rows carry account_id (the ec-floor);
