@@ -49,7 +49,7 @@ func (s *Server) exclusionCleanWindow(ctx context.Context, base, quote canonical
 	refused := pricingguard.NotWithheld
 	kept := window.Filter(func(t canonical.Trade) bool {
 		w := s.Exclusions.InstantWithholding(ctx, t.Pair.Base, t.Pair.Quote, t.Source, t.Timestamp)
-		if w == pricingguard.NotWithheld && !(t.Pair.Base.Equal(base) && t.Pair.Quote.Equal(quote)) {
+		if w == pricingguard.NotWithheld && (!t.Pair.Base.Equal(base) || !t.Pair.Quote.Equal(quote)) {
 			w = s.Exclusions.InstantWithholding(ctx, base, quote, t.Source, t.Timestamp)
 		}
 		if w != pricingguard.NotWithheld && w != pricingguard.WithheldSourceExcluded {

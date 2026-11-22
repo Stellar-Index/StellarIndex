@@ -258,7 +258,7 @@ func (g decimalsCorrectedGlobalReader) LatestAggregatorPricesTrimmed(
 	if tr, ok := g.GlobalPriceReader.(aggregate.ExclusionTrimmingReader); ok {
 		return tr.LatestAggregatorPricesTrimmed(ctx, base, quote, sources)
 	}
-	kept, err = g.GlobalPriceReader.LatestAggregatorPrices(ctx, base, quote, sources)
+	kept, err = g.LatestAggregatorPrices(ctx, base, quote, sources)
 	return kept, nil, err
 }
 
