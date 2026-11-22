@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"math/rand"
 	"strings"
 	"testing"
 
@@ -85,11 +86,47 @@ func TestSubstrateProblem_WalksInteriorDespiteHeadTruncation(t *testing.T) {
 	if !hasProblem {
 		t.Fatalf("hasProblem = false, want true (both the head truncation and the interior gap are real problems)")
 	}
-	if problem != 700 {
-		t.Fatalf("problem = %d, want 700 — the interior walk over the present portion [500,1000] must have run and found the real gap; a returned 499 means the walk was skipped (the pre-fix bug)", problem)
+	if problem != from {
+		t.Fatalf("problem = %d, want %d — the earliest missing ledger is the head, not the later interior gap", problem, from)
 	}
 	if !strings.Contains(detail, "700") {
-		t.Fatalf("detail = %q, want it to name the interior gap at 700", detail)
+		t.Fatalf("detail = %q, want it to name the interior gap at 700 as well (the walk must still run)", detail)
+	}
+}
+
+// TestSubstrateProblem_ReportsEarliestMissingLedger: the problem is exactly the first missing ledger in
+// [from,to], for a missing head, a missing tail, interior gaps and their combinations. A later ledger would
+// become a resume watermark covering ledgers the lake does not hold.
+func TestSubstrateProblem_ReportsEarliestMissingLedger(t *testing.T) {
+	rng := rand.New(rand.NewSource(7)) //nolint:gosec // deterministic fixture, not crypto
+	for i := 0; i < 300; i++ {
+		from := uint32(2 + rng.Intn(50))
+		to := from + uint32(rng.Intn(400))
+		conn := substrateProblemFakeConn{to: to, haveMin: uint64(from), missing: map[uint64]bool{}}
+		if rng.Intn(3) == 0 {
+			conn.haveMin = uint64(from) + uint64(rng.Intn(int(to-from)+1))
+		}
+		if rng.Intn(3) == 0 {
+			conn.to = from + uint32(rng.Intn(int(to-from)+1))
+		}
+		for g := rng.Intn(4); g > 0; g-- {
+			conn.missing[uint64(from)+uint64(rng.Intn(int(to-from)+1))] = true
+		}
+		var want uint32
+		for s := uint64(from); s <= uint64(to); s++ {
+			if !conn.present(s) {
+				want = uint32(s)
+				break
+			}
+		}
+		got, has, detail, err := substrateProblemOn(context.Background(), conn, "", from, to)
+		if err != nil {
+			t.Fatalf("case %d [%d,%d] haveMin=%d lakeMax=%d missing=%v: %v", i, from, to, conn.haveMin, conn.to, conn.missing, err)
+		}
+		if has != (want != 0) || got != want {
+			t.Fatalf("case %d [%d,%d] haveMin=%d lakeMax=%d missing=%v: got (%d,%v,%q), want first missing %d",
+				i, from, to, conn.haveMin, conn.to, conn.missing, got, has, detail, want)
+		}
 	}
 }
 
@@ -199,8 +236,8 @@ func TestSubstrateCountIntact(t *testing.T) {
 	}
 }
 
-// TestSubstrateHeadProblem pins that the coverage verdict returns a problem ledger keeping the per-source
-// `problem < genesis => source-OK` test correct: empty => tip, missing head => haveMin-1, covered => none.
+// TestSubstrateHeadProblem pins that an empty range or a missing head reports `from`, the first absent
+// ledger; a covered head reports none.
 func TestSubstrateHeadProblem(t *testing.T) {
 	const from, to = uint32(2), uint32(63_000_000)
 	cases := []struct {
@@ -210,8 +247,8 @@ func TestSubstrateHeadProblem(t *testing.T) {
 		wantProblem uint32
 		wantHas     bool
 	}{
-		{"empty range returns tip so every source fails", false, 0, to, true},
-		{"missing head returns haveMin-1", true, 50_000_000, 49_999_999, true},
+		{"empty range returns from", false, 0, from, true},
+		{"missing head returns from", true, 50_000_000, from, true},
 		{"head present at from is covered", true, 2, 0, false},
 		{"head present above from (from=2, haveMin=2) covered", true, from, 0, false},
 	}
@@ -224,10 +261,11 @@ func TestSubstrateHeadProblem(t *testing.T) {
 			}
 		})
 	}
-	// Regression: an EMPTY lake must not green a high-genesis source. The problem ledger must be >= any source
-	// genesis (soroswap = 50_746_266), else `problem < genesis` holds and the source is greened.
-	if p, has, _ := substrateHeadProblem(from, to, false, 0); !has || p < 50_746_266 {
-		t.Fatalf("empty-lake problem ledger = %d (has=%v); must be ≥ any source genesis so none green (soroswap=50746266)", p, has)
+	// An empty lake must not green a high-genesis source: its scan starts at its genesis, so the problem is
+	// that genesis and `problem < genesis` is false.
+	const soroswapGenesis = uint32(50_746_266)
+	if p, has, _ := substrateHeadProblem(soroswapGenesis, to, false, 0); !has || p < soroswapGenesis {
+		t.Fatalf("empty-lake problem ledger = %d (has=%v); must be ≥ the scanned source's genesis %d", p, has, soroswapGenesis)
 	}
 }
 

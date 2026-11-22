@@ -418,6 +418,8 @@ resend_domain_id   = "{{ stellarindex_dashboard_resend_domain_id | default('') }
 code_secret_env    = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 # Seals customer-webhook signing keys at rest; unset env stores them raw.
 webhook_seal_key_env = "STELLARINDEX_WEBHOOK_SEAL_KEY"
+# The seal secret being rotated out; empty env outside a rotation.
+webhook_seal_previous_key_env = "STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY"
 cookie_secure      = true
 cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('') }}"
 

@@ -11,13 +11,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
+// upgradeOpIndex marks a row from a ledger upgrade's UpgradesProcessing changes. Not -1: a tx-less op_index -1 `state` row is a
+// snapshot seed (isSnapshotSeedRow), and an upgrade's pre-image must not read as one.
+const upgradeOpIndex int32 = -2
+
 // extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange, mirroring
 // dispatcher.walkLedgerEntryChanges. Every tx is walked, failed too (its fee debit is committed), in three ledger-wide phases
 // like ingest.LedgerChangeReader (fees, apply, PostTxApplyFeeChanges), so intra_ledger_seq makes the FINAL-dedup winner the
-// ledger-final balance; upgrade changes are not walked. A fourth phase records EVICTIONS as `removed` rows for temporary
-// entries and TTL keys only; skipped keys keep their walk position. Blocks follow entrywalk.Canonical order. change_index is
-// per-TRANSACTION and stable across re-ingest (idempotent RMT write); an unmarshalable change is skipped, counted, never fatal.
-func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
+// ledger-final balance. A fourth phase records EVICTIONS as `removed` rows for temporary entries and TTL keys only; skipped
+// keys keep their walk position. A fifth records the ledger UPGRADES' entry changes, as the reader's upgradeChangesState does.
+// Blocks follow entrywalk.Canonical order. change_index is per-TRANSACTION and stable across re-ingest (idempotent RMT write);
+// an unmarshalable change is skipped, counted, never fatal.
+func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, upgrades []xdr.UpgradeEntryMeta, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between the two
 	// ledger-wide phases: one slot per tx.
@@ -76,13 +81,37 @@ func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransactio
 	}
 	// ── Phase 4: evictions, last because core evicts at ledger close after
 	// every tx has applied. Appended, so phase 1-3 positions are unchanged.
-	emitEvictions(ext, evicted, seq, closeTime, entryChangeSeq)
+	entryChangeSeq = emitEvictions(ext, evicted, seq, closeTime, entryChangeSeq)
+	// ── Phase 5: ledger upgrades. Core applies them before it seals the evictions, but no
+	// key is both (evictions are temporary/TTL entries), so appending keeps every
+	// earlier position stable and leaves each key's FINAL winner unchanged.
+	emitUpgradeChanges(ext, upgrades, seq, closeTime, entryChangeSeq)
+}
+
+// emitUpgradeChanges appends each upgrade's entry changes, in upgrade order: empty tx_hash, op_index [upgradeOpIndex],
+// change_index counting across the ledger's upgrades.
+func emitUpgradeChanges(ext *LedgerExtract, upgrades []xdr.UpgradeEntryMeta, seq uint32, closeTime time.Time, intraSeq uint32) {
+	var changeIdx uint32
+	for i := range upgrades {
+		emitChangeSet(upgrades[i].Changes, int(upgradeOpIndex), func(opIndex int, c xdr.LedgerEntryChange) {
+			pos := intraSeq
+			intraSeq++
+			row, ok := entryChangeRow(seq, closeTime, "", int32(opIndex), changeIdx, c)
+			if !ok {
+				ext.EntryChangesUnencodable++
+				return
+			}
+			row.IntraLedgerSeq = pos
+			ext.Changes = append(ext.Changes, row)
+			changeIdx++
+		})
+	}
 }
 
 // emitEvictions appends one `removed` row per evicted key: empty tx_hash, op_index -1, change_index counting within the group. A
 // persistent entry or contract code moves to the hot archive and stays restorable, so its last live row stays current. Every key takes its
-// walk position, written or not.
-func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) {
+// walk position, written or not; returns the next free position.
+func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time, intraSeq uint32) uint32 {
 	var changeIdx uint32
 	for i := range evicted {
 		pos := intraSeq
@@ -102,6 +131,7 @@ func emitEvictions(ext *LedgerExtract, evicted []xdr.LedgerKey, seq uint32, clos
 		ext.Changes = append(ext.Changes, row)
 		changeIdx++
 	}
+	return intraSeq
 }
 
 func isArchivedOnEviction(k xdr.LedgerKey) bool {

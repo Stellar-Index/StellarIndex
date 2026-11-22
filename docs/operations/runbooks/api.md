@@ -555,7 +555,7 @@ ssh r1 'curl -s http://localhost:3000/metrics | grep stellarindex_customer_webho
 
 **Check.** `SELECT webhook_id, last_error, COUNT(*) FROM webhook_deliveries WHERE status = 'failed' AND updated_at > now() - interval '2 hours' GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10`.
 
-**Fix.** `no_secret` across many webhooks means the seal key changed: restore the key the secrets were sealed with. For one webhook, ask the customer to rotate its secret or correct its URL. Terminal rows are not retried; re-enqueue only by operator decision. **Escalate:** none.
+**Fix.** `no_secret` across many webhooks means the seal key changed: restore the key the secrets were sealed with, or set it as `vault_webhook_seal_previous_key` beside the new one ([credential-rotation.md §7](../credential-rotation.md)). For one webhook, ask the customer to rotate its secret or correct its URL. Terminal rows are not retried; re-enqueue only by operator decision. **Escalate:** none.
 
 ## stellarindex_customer_webhook_mark_errors
 

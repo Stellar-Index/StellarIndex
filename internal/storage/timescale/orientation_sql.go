@@ -59,13 +59,13 @@ func stablecoinSACArmSQL(col string) string {
 const marketKeySQL = `LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)`
 
 // canonLastPriceSQL is the newest last_price across a market's orientations, the flipped row inverted; ties go to the canonically stored
-// row.
-func canonLastPriceSQL(flipped string) string {
+// row. newest is the column dating last_price.
+func canonLastPriceSQL(flipped, newest string) string {
 	return `(array_agg(
                     CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
                          THEN (1.0 / NULLIF(last_price::numeric, 0))::text
                          ELSE last_price END
-                    ORDER BY last_trade_at DESC NULLS LAST, ` + flipped + `)
+                    ORDER BY ` + newest + ` DESC NULLS LAST, ` + flipped + `)
                   FILTER (WHERE last_price IS NOT NULL))[1]`
 }
 

@@ -109,3 +109,65 @@ func TestStreamIssuerEntryChanges_SameAssetProjectionFewerRows(t *testing.T) {
 		t.Errorf("rows streamed = %d of %d, want 3 of 6 (the native balance and the account dropped)", rows, allRows)
 	}
 }
+
+// A ledger upgrade's entry changes (empty tx_hash, op_index -2) have no transaction to attribute a history row to, so
+// neither entry-history stream passes them to the projector.
+func TestStreamEntryChanges_SkipsLedgerUpgradeRows(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const ledger = uint32(69_160_001)
+	ct := time.Date(2025, 6, 3, 0, 0, 5, 0, time.UTC)
+	marshal := func(v any) string {
+		b64, err := xdr.MarshalBase64(v)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		return b64
+	}
+	acct := xdr.MustAddress(cbsIssuer)
+	key := marshal(xdr.LedgerKey{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.LedgerKeyAccount{AccountId: acct}})
+	entry := marshal(xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{AccountId: acct, Balance: 100}}})
+	row := func(tx string, op int32, ci uint32, change string) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: tx, OpIndex: op, ChangeIndex: ci, IntraLedgerSeq: ci,
+			ChangeType: change, EntryType: "account", KeyXDR: key, EntryXDR: entry,
+		}
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{
+		row("upg1", 0, 1, "state"),
+		row("upg1", 0, 2, "updated"),
+		row("", -2, 3, "state"),
+		row("", -2, 4, "updated"),
+	}, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, cbsIssuer)
+	if err != nil {
+		t.Fatalf("decode issuer: %v", err)
+	}
+	for name, stream := range map[string]func(func(chstore.EntryHistorySourceRow) error) error{
+		"ledger": func(fn func(chstore.EntryHistorySourceRow) error) error {
+			return er.StreamEntryChangesForLedgers(ctx, []uint32{ledger}, fn)
+		},
+		"account": func(fn func(chstore.EntryHistorySourceRow) error) error {
+			return er.StreamAccountEntryChangesForLedgers(ctx, string(raw), []uint32{ledger}, fn)
+		},
+	} {
+		var got []string
+		if err := stream(func(s chstore.EntryHistorySourceRow) error {
+			got = append(got, fmt.Sprintf("%q/%d", s.TxHash, s.OpIndex))
+			return nil
+		}); err != nil {
+			t.Fatalf("%s stream: %v", name, err)
+		}
+		if want := []string{`"upg1"/0`, `"upg1"/0`}; !slices.Equal(got, want) {
+			t.Errorf("%s stream = %v, want %v (the upgrade's rows dropped)", name, got, want)
+		}
+	}
+}
