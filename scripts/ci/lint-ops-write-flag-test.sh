@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # lint-ops-write-flag-test.sh — fixture tests for scripts/ci/lint-ops-write-flag.sh.
 #
-# Each case builds a throwaway root holding a stub subcommandClasses map and one
-# docs/operations page, and asserts the gate's exit code. LINT overrides the gate
+# Each case builds a throwaway root holding a stub subcommandClasses map and a doc
+# page (docs/operations by default), and asserts the gate's exit code. LINT overrides the gate
 # under test (used to prove these cases catch a broken copy).
 #
 # Run: bash scripts/ci/lint-ops-write-flag-test.sh
@@ -28,14 +28,18 @@ var subcommandClasses = map[string]subcommandClass{
 pass=0
 fail=0
 n=0
-# run_case <desc> <want-exit> <markdown> [classes-file-content]
+# run_case <desc> <want-exit> <markdown> [classes-file-content] [page-path] [page-with-a-missing-write]
 run_case() {
-  local desc="$1" want="$2" md="$3" classes="${4-$CLASSES}" root got
+  local desc="$1" want="$2" md="$3" classes="${4-$CLASSES}" page="${5:-docs/operations/page.md}" bad="${6:-}" root got
   n=$((n + 1))
   root="$TMP/case$n"
-  mkdir -p "$root/cmd/stellarindex-ops" "$root/docs/operations"
+  mkdir -p "$root/cmd/stellarindex-ops" "$root/docs/operations" "$root/$(dirname "$page")"
   printf '%s' "$classes" >"$root/cmd/stellarindex-ops/write_gate_class_test.go"
-  printf '%s\n' "$md" >"$root/docs/operations/page.md"
+  printf '%s\n' "$md" >"$root/$page"
+  if [ -n "$bad" ]; then
+    mkdir -p "$root/$(dirname "$bad")"
+    printf '%s\n' 'Run `stellarindex-ops backfill -from 1`.' >"$root/$bad"
+  fi
   LINT_ROOT="$root" bash "$LINT" >"$root/out" 2>&1
   got=$?
   if [ "$got" -eq "$want" ]; then
@@ -53,7 +57,7 @@ if bash "$LINT" >"$TMP/real" 2>&1; then
   pass=$((pass + 1))
 else
   fail=$((fail + 1))
-  echo "FAIL: the repo's own docs/operations must pass" >&2
+  echo "FAIL: the repo's own docs must pass" >&2
   sed 's/^/    /' "$TMP/real" >&2
 fi
 
@@ -89,6 +93,14 @@ run_case "a bare mention passes" 0 \
   'Runbook for `stellarindex-ops backfill`; see `stellarindex-ops backfill -write -from 1`.'
 run_case "a later pipe does not hide a missing -write" 1 \
   "$F"$'sh\nstellarindex-ops backfill -from 1 2>&1 | tee log\n'"$F"
+run_case "a protocol page outside docs/operations without -write fails" 1 \
+  'Catch up with `stellarindex-ops backfill -source sdex -from 1`.' "$CLASSES" docs/protocols/page.md
+run_case "AGENTS.md without -write fails" 1 \
+  'Catch up with `stellarindex-ops backfill -source sdex -from 1`.' "$CLASSES" AGENTS.md
+run_case "ADR and archive text is not scanned" 0 \
+  'Catch up with `stellarindex-ops backfill -source sdex -from 1 -write`.' "$CLASSES" docs/operations/page.md docs/adr/0001-x.md
+run_case "an archived page is not scanned" 0 \
+  'Catch up with `stellarindex-ops backfill -source sdex -from 1 -write`.' "$CLASSES" docs/operations/page.md docs/archive/old.md
 run_case "an unparseable gate map fails closed" 2 \
   "$F"$'sh\nstellarindex-ops backfill -from 1 -write\n'"$F" \
   $'package main\n\nvar subcommandClasses = map[string]subcommandClass{\n\t"backfill": gated(),\n}\n'

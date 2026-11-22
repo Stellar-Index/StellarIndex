@@ -490,16 +490,24 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 	if err := s.markRevoking(ctx, identifier, keyID); err != nil {
 		return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 	}
-	if owned {
-		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
-			return nil, fmt.Errorf("auth: RevokeKeyByID: %w", err)
-		}
-	}
-	// The sweep runs even without the root's own record (a Postgres-backed key with no mirror here,
-	// or a retry after a failure below), so its delegated keys still die with it.
+	// The sweep runs even without the root's own record (a Postgres-backed key with no mirror here),
+	// so its delegated keys still die with it.
 	removed, err := s.revokeDescendants(ctx, identifier, keyID)
 	if err != nil {
 		return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+	}
+	// The root goes last: a sweep that fails part-way leaves it live, so a key revoking itself can retry.
+	if owned {
+		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
+			return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		}
+		// An ACL that denies the marker lets a mint under the live root land during the first sweep;
+		// with the root's record gone no further mint can, so this pass catches every such child.
+		late, err := s.revokeDescendants(ctx, identifier, keyID)
+		removed = append(removed, late...)
+		if err != nil {
+			return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		}
 	}
 	if !owned && len(removed) == 0 {
 		return nil, ErrKeyNotFound
@@ -507,8 +515,8 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 	return removed, nil
 }
 
-// keyRevokeMarkerTTL outlasts any revoke sweep; once it lapses every key it guarded is gone, and a
-// mint under a gone key is refused by the minter-record check.
+// keyRevokeMarkerTTL outlasts any revoke sweep. After a failed sweep the root is still live, and
+// once the marker lapses it can mint again until a retried revoke removes it.
 const keyRevokeMarkerTTL = time.Hour
 
 // keyRevokedTombstoneTTL covers a client retrying a revoke whose 204 it never received.

@@ -219,7 +219,7 @@ warn_wrong_replay_command() {
       grep -qE "(^|[[:space:]=,'\"])${name}([[:space:]=,'\"]|$)" <<<"$line" || continue
       echo "  WARNING: the plan replays projected source '${name}' with backfill/ch-rebuild."
       echo "           Projected sources have ONE writer (invariant 7): use"
-      echo "           'projector-replay -source ${name}' (rewind) or"
+      echo "           'projector-replay -source ${name} ... -write' (rewind) or"
       echo "           'projected-rebuild -source ${name} ... -write' (bulk)."
       echo "           See docs/architecture/ingest-pipeline.md — The replay decision rule."
     done <<<"$names"

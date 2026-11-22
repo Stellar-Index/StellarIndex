@@ -135,7 +135,7 @@ silently attributed.
 
 **Admitting a future pool:** fail-closed by design. A genuinely new
 Comet pool must be operator-admitted before its events attribute —
-`stellarindex-ops seed-protocol-contracts -source comet` (after adding
+`stellarindex-ops seed-protocol-contracts -source comet -write` (after adding
 it to the curated set) or a direct `protocol_contracts` row. Comet is
 curated only (ADR-0040 §1 mechanism 3): no WASM-hash sweep exists, and
 `wasm-drift` alerts on drift but never admits a pool; note the named

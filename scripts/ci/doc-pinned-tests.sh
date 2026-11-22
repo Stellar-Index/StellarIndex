@@ -6,7 +6,7 @@
 # runbooks), so dropping a pinned string from a doc goes green. Putting
 # **/*.md in the `go` filter would make every docs PR pay for the full
 # matrix, so this selects only the packages whose *_test.go mention a
-# changed .md by repo path or basename.
+# changed .md by repo path, basename or parent directory.
 #
 # Usage:
 #   scripts/ci/doc-pinned-tests.sh <base-rev>        select, then go test
@@ -36,8 +36,17 @@ fi
 
 dirs=""
 for f in ${md[@]+"${md[@]}"}; do
+    # A test that walks a directory names the directory, not the file, so an added or renamed
+    # doc must select it too: each parent as a path literal, and a bare "docs" Join segment.
+    pats=(-e "$f" -e "$(basename "$f")")
+    d="$(dirname "$f")"
+    while [ "$d" != "." ] && [ "$d" != "/" ]; do
+        pats+=(-e "$d\"" -e "$d/\"")
+        d="$(dirname "$d")"
+    done
+    case "$f" in docs/*) pats+=(-e '"docs"') ;; esac
     rc=0
-    hits="$(git grep -l -F -e "$f" -e "$(basename "$f")" -- '*_test.go')" || rc=$?
+    hits="$(git grep -l -F "${pats[@]}" -- '*_test.go')" || rc=$?
     [ "$rc" -le 1 ] || { echo "doc-pinned-tests: git grep failed (exit $rc)" >&2; exit "$rc"; }
     while IFS= read -r t; do
         [ -n "$t" ] && dirs="${dirs}$(dirname "$t")"$'\n'

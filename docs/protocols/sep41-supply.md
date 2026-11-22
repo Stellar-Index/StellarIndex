@@ -144,7 +144,7 @@ lake's `stellar.supply_flows` over the same settled range and retries
 every ten minutes until they are equal.
 
 Projected sources (ADR-0031/0032): supply catch-up after a missing window
-is `stellarindex-ops projector-replay -source sep41_supply -from <ledger>`
+is `stellarindex-ops projector-replay -source sep41_supply -from <ledger> -write`
 (and `-source sep41_transfers`), never a bespoke backfill subcommand. The
 projector applies a `{mint, burn, clawback}` (supply) /
 `{transfer, approve, set_admin, set_authorized}` (transfers) SQL

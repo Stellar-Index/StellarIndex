@@ -99,6 +99,6 @@ own `sorocredit.<event_type>` kind.
 - **Substrate:** 100% — every event is in the ClickHouse lake (ADR-0034).
 - **Served tier:** filled from deploy onward by the projector
   (ADR-0031/0032, sole writer). Historical back-window catch-up:
-  `stellarindex-ops projector-replay -source sorocredit -from 61620822`
+  `stellarindex-ops projector-replay -source sorocredit -from 61620822 -write`
   (under `run-heavy-job.sh`).
 - **Decoder / gating / storage:** `internal/sources/sorocredit/README.md`.

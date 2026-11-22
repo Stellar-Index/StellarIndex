@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# lint-ops-write-flag.sh — a write-gated stellarindex-ops command that docs/operations tells an
-# operator to run must carry -write: without it the command only previews, so the step silently
+# lint-ops-write-flag.sh — a write-gated stellarindex-ops command that docs/ (bar docs/adr and
+# docs/archive), AGENTS.md or CONTRIBUTING.md tells an operator to run must carry -write: without it the command only previews, so the step silently
 # does nothing. The gated set is parsed from the gate() entries of subcommandClasses in
 # cmd/stellarindex-ops/write_gate_class_test.go, the map TestSubcommandWriteGateMatchesItsClass
 # holds every command to (it also proves each gated command accepts -write and -dry-run).
@@ -13,7 +13,7 @@ set -euo pipefail
 
 root="${LINT_ROOT:-$(git rev-parse --show-toplevel)}"
 classes="$root/cmd/stellarindex-ops/write_gate_class_test.go"
-docs_dir="$root/docs/operations"
+docs_dir="$root/docs"
 
 fail() {
   echo "lint-ops-write-flag: FAIL — $*" >&2
@@ -31,7 +31,15 @@ n_gated="$(wc -l <"$tmp/gated" | tr -d ' ')"
 files=()
 while IFS= read -r f; do
   files+=("$f")
-done < <(find "$docs_dir" -type f -name '*.md' | LC_ALL=C sort)
+done < <(
+  # ADR text is hash-frozen and archived pages are history; neither is a runbook step.
+  {
+    find "$docs_dir" -type f -name '*.md' -not -path "$docs_dir/adr/*" -not -path "$docs_dir/archive/*"
+    for f in "$root/AGENTS.md" "$root/CONTRIBUTING.md"; do
+      if [ -f "$f" ]; then echo "$f"; fi
+    done
+  } | LC_ALL=C sort
+)
 n_files="${#files[@]}"
 [ "$n_files" -gt 0 ] || fail "no markdown under $docs_dir."
 
@@ -96,4 +104,4 @@ if [ "$bad" -ne 0 ]; then
   echo "lint-ops-write-flag: FAIL — $bad of $checked gated invocation(s) in $n_files file(s) lack -write or -dry-run ($n_gated gated subcommand(s)). Add -write where the step mutates, -dry-run where it previews." >&2
   exit 1
 fi
-echo "lint-ops-write-flag: OK — $checked gated invocation(s) across $n_files docs/operations file(s) carry -write, -dry-run or a read-only mode; $n_gated gated subcommand(s) from subcommandClasses."
+echo "lint-ops-write-flag: OK — $checked gated invocation(s) across $n_files doc file(s) carry -write, -dry-run or a read-only mode; $n_gated gated subcommand(s) from subcommandClasses."

@@ -1300,7 +1300,8 @@ jobs:
       - name: lint-ops-write-flag
         # A write-gated stellarindex-ops command previews unless passed
         # -write, so a runbook step that omits it silently does nothing.
-        # Every gated command in docs/operations must pass -write, or
+        # Every gated command in docs/ (bar adr, archive), AGENTS.md and
+        # CONTRIBUTING.md must pass -write, or
         # -dry-run when the step is a deliberate preview.
         run: ./scripts/ci/lint-ops-write-flag.sh
       - name: lint-ops-write-flag self-test

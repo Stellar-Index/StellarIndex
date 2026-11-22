@@ -228,6 +228,26 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "thin_admission_is_read_only_at_the_chokepoint", check: ruleThinAdmissionIsReadOnlyAtTheChokepoint},
 		{name: "thin_admission_guard_catches_planted_sites", check: ruleThinAdmissionGuardCatchesPlantedSites},
 		{name: "one_registration_budget_for_every_signup_route", check: func(t *testing.T) { ruleOneRegistrationBudget(t, m) }},
+		{
+			// DEX TVL claims the usd_volume tiers; a resolver without the SAC peg forms misses every
+			// pool quoted in the USDC SAC and falls to the 24h XLM bridge.
+			name: "dex_tvl_pricer_sees_the_usd_volume_peg_forms",
+			check: func(t *testing.T) {
+				for _, call := range m.callsTo("NewVWAPUSDFXResolver") {
+					t.Errorf("main.go calls NewVWAPUSDFXResolver at %s; build through timescale.NewUSDVolumeFXResolver", fset.Position(call.Pos()))
+				}
+				calls := m.callsTo("NewUSDVolumeFXResolver")
+				if len(calls) == 0 {
+					t.Fatal("main.go never calls timescale.NewUSDVolumeFXResolver for the DEX TVL pricer")
+				}
+				for _, call := range calls {
+					if len(call.Args) != 3 || exprText(call.Args[1]) != "cfg.Trades.USDPeggedClassicAssets" ||
+						exprText(call.Args[2]) != "cfg.Supply.SACWrappers" {
+						t.Errorf("NewUSDVolumeFXResolver at %s must take cfg.Trades.USDPeggedClassicAssets and cfg.Supply.SACWrappers", fset.Position(call.Pos()))
+					}
+				}
+			},
+		},
 		{name: "holds_file_checked_before_dry_run_exits", check: func(t *testing.T) {
 			checks := m.callsTo("Check")
 			var holdsCheck token.Pos
