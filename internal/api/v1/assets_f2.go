@@ -555,7 +555,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			detail.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		} else {
 			detail.MarketCapUSD = &mc
-			// The detail has no supply lower-bound field, so a floor supply is carried by the cap's flag.
+			// A cap multiplied from a floor supply is itself a floor.
 			detail.MarketCapLowerBound = detail.supplyFloor
 		}
 	}
