@@ -636,11 +636,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// comes from the VWAP cache, so it is viaFallback: already normalized, and stale.
 	held := s.resolveFrozenServeFor(r, snapshot, asset, served, market)
 	if held.outcome == frozenServeNothingHeld {
-		if held.withheld != nil {
-			writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(held.withheld))
-			return
-		}
-		writeFrozenNothingHeldProblem(w, r, asset, quote)
+		writeFrozenNothingHeldProblem(w, r, asset, quote, held)
 		return
 	}
 	frozen := held.outcome == frozenServeHeld
@@ -2180,8 +2176,12 @@ func (s *Server) frozenAnyAlias(r *http.Request, requested, quote canonical.Asse
 
 // writeFrozenNothingHeldProblem is the single-asset refusal for frozenServeNothingHeld: a 503, not a 404 (prices exist and the
 // freeze clears on its own, so retry is right), with its own title and detail since the "market too thin" wording would misstate
-// why.
-func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset) {
+// why. A held value withheld by a gate is that gate's 404 instead.
+func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, held frozenResolution) {
+	if held.withheld != nil {
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(held.withheld))
+		return
+	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/price-unavailable",
 		"Price frozen — no last-known-good value available", http.StatusServiceUnavailable,

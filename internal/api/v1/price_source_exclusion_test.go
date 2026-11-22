@@ -227,6 +227,27 @@ func exclFrozenHeldCase(t *testing.T, triangulated bool) {
 	}
 }
 
+// TestPriceSourceExclusion_SEP40FrozenHeldValue: SEP-40's three reads of a frozen pair whose held value an exclusion withholds
+// answer as /v1/price does, a 404 naming the reason, not the 503 "retry shortly" of a freeze with nothing held.
+func TestPriceSourceExclusion_SEP40FrozenHeldValue(t *testing.T) {
+	sourceWide := pricingguard.NewSourceExclusionGate(exclTable{rows: []timescale.SourceExclusion{{
+		ID: 1, Source: "soroswap", From: time.Now().Add(-time.Hour),
+	}}}, pricingguard.SourceExclusionGateOptions{})
+	unread := pricingguard.NewSourceExclusionGate(exclTable{err: errors.New("db down")}, pricingguard.SourceExclusionGateOptions{})
+	for _, path := range []string{lastPriceURL, xLastURL, pricesURL} {
+		for reason, g := range map[string]v1.PriceExclusionGate{"source_excluded": sourceWide, "unattributed": unread} {
+			srv := v1.New(v1.Options{
+				Prices: movedUSDBucketReader(), Freeze: frozenPairs{xlmUSD: true},
+				Triangulated: lkgPairs{xlmUSD + "/300": heldUSD}, Exclusions: g,
+			})
+			status, body := exclGet(t, srv, path)
+			if status != http.StatusNotFound || !strings.Contains(body, `"`+reason+`"`) || strings.Contains(body, heldUSD) || strings.Contains(body, movedUSD) {
+				t.Errorf("%s %s: %d %s, want a 404 withholding %q with no price", path, reason, status, body, reason)
+			}
+		}
+	}
+}
+
 // TestPriceSourceExclusion_TipWindow: the tip's rolling window drops an excluded source's trades and recomputes from the
 // survivors; when none survive, the cache fallback is withheld rather than served; an unread set withholds outright.
 func TestPriceSourceExclusion_TipWindow(t *testing.T) {
