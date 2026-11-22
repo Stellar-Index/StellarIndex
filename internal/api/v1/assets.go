@@ -2268,26 +2268,21 @@ func (s *Server) fetchClassicUnifiedRows(
 	for _, row := range rows {
 		out = append(out, assetDetailFromAssetRow(row))
 	}
-	// Alias-fold FIRST: collapse a SAC-form row into its canonical classic/native row before
-	// catalogue twin suppression, so "USDC shows twice" cannot happen.
-	//
-	// NOT under type=soroban: the fold drops an alias row whose canonical primary is absent from the
-	// page, and that predicate excludes every canonical classic row, so the contract arm would come
-	// back empty. Skipping loses nothing: the arm it merges into was filtered out.
+	// valReads collects the alias-fold, supply, peg, valuation and sparkline reads' verdicts; it is folded into the flags below.
+	valCtx, valReads := withReadReport(r.Context())
+	// Alias-fold FIRST, before catalogue twin suppression, so "USDC shows twice" cannot happen. NOT under type=soroban: the
+	// fold drops an alias whose canonical primary is off-page, and that filter excludes every canonical classic row.
 	var mergedAliases map[string]struct{}
 	if filters.typ != "soroban" {
-		out, mergedAliases = s.foldAliasTwins(r.Context(), out, !filters.unfiltered())
+		out, mergedAliases = s.foldAliasTwins(valCtx, out, !filters.unfiltered())
 	}
 	out = s.suppressCatalogueTwins(out)
-	// After the catalogue suppression (no read for a row about to be
-	// dropped) and before the gate and cap fill that weigh the volume.
+	// After the catalogue suppression (no read for a row about to be dropped), before the gate and cap fill that weigh volume.
 	if filters.unfiltered() {
 		s.restoreOffPageContractArms(r.Context(), out, mergedAliases)
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	// valReads collects the supply, peg and valuation reads' verdicts; it is folded into the flags below.
-	valCtx, valReads := withReadReport(r.Context())
 	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
@@ -3448,7 +3443,8 @@ func (s *Server) foldAliasTwins(ctx context.Context, rows []AssetDetail, keepLon
 }
 
 // listingCanonicalIDs maps each row to its class's canonical asset_id: the alias registry's, else, for a contract row, the asset it
-// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself.
+// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself
+// and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
 func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []string {
 	ids := make([]string, len(rows))
 	bySAC := make(map[string]string)
@@ -3476,7 +3472,11 @@ func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []
 	defer cancel()
 	forEachBounded(s.logger, len(lookup), readFanoutConcurrency, func(j int) {
 		i := lookup[j]
-		if wrapped, ok := s.sacWrappedAssetID(lookupCtx, rows[i].AssetID); ok {
+		wrapped, ok, err := s.sacWrappedAssetIDErr(lookupCtx, rows[i].AssetID)
+		if err != nil {
+			reportUnreadRead(ctx)
+		}
+		if ok {
 			ids[i] = wrapped
 		}
 	})
