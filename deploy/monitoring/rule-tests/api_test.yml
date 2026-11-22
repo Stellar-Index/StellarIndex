@@ -1411,3 +1411,74 @@ tests:
                 A passkey sign-in finish call replayed an already-consumed
                 ceremony. The sign-in was refused. A replay means a captured
                 request was resent; check the API log for the client address.
+
+  # ── substance gate failing open tickets ──────────────────
+  # The 24h prices_1m scan keeps erroring: single lookups serve unguarded.
+  - interval: 1m
+    name: a sustained substance-gate fail-open tickets
+    input_series:
+      - series: 'stellarindex_price_serve_substance_unmeasured_total{job="stellarindex_api",instance="r1:8080",surface="price_read"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_price_serve_substance_fail_open
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              surface: price_read
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_price_serve_substance_fail_open
+              summary: "Substance gate is FAILING OPEN on price_read (16.67m verdicts/s unmeasured)"
+              description: |
+                The substance gate could not measure market substance (store
+                error or deadline), continuously for the last 5 minutes. On
+                single lookups the price is served unguarded, so a dust-seeded
+                market can be priced; shared and cached reads fail closed and
+                are withheld instead.
+
+                Check Postgres load and prices_1m (cagg refresh, lock
+                contention). A deadline leaves no WARN line, so this counter
+                may be the only trace.
+
+  # ── SSE global cap refusals ticket ───────────────────────
+  # A many-address flood holds every global slot: new streams get 503.
+  - interval: 1m
+    name: SSE streams refused at the global cap ticket
+    input_series:
+      - series: 'stellarindex_api_sse_streams_rejected_total{job="stellarindex_api",instance="r1:8080",reason="global_cap"}'
+        values: '0 0 0 0 0 3 3 3 3 3'
+      - series: 'stellarindex_api_sse_streams_rejected_total{job="stellarindex_api",instance="r1:8080",reason="per_ip_cap"}'
+        values: '0 0 0 0 0 50 50 50 50 50'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: stellarindex_api_sse_streams_rejected
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              reason: global_cap
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_sse_streams_rejected
+              summary: "SSE streams refused at global_cap (3 in the last 10 minutes)"
+              description: |
+                New stream connections were refused because a shared stream
+                budget is full (global_cap: 503 to everyone; topic_cap: 429 on
+                a new topic). Paying customers cannot open or reconnect a
+                stream while it holds. Check how many distinct addresses hold
+                streams and whether one network range dominates.
+
+  # One address over its own per-IP cap is that client's problem, not an outage.
+  - interval: 1m
+    name: per-IP SSE refusals alone do not ticket
+    input_series:
+      - series: 'stellarindex_api_sse_streams_rejected_total{job="stellarindex_api",instance="r1:8080",reason="global_cap"}'
+        values: '0x10'
+      - series: 'stellarindex_api_sse_streams_rejected_total{job="stellarindex_api",instance="r1:8080",reason="per_ip_cap"}'
+        values: '0 0 0 0 0 50 50 50 50 50'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: stellarindex_api_sse_streams_rejected
+        exp_alerts: []

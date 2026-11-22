@@ -933,6 +933,38 @@ ORDER BY ts DESC;
 
 **Escalate:** none; related [directory_sync_unflagged](#stellarindex_directory_sync_unflagged), `stellarindex_price_serve_scam_withheld_total` (dropping to zero while this fires is the same outage), [metrics reference](../../reference/metrics/README.md).
 
+## stellarindex_price_serve_substance_fail_open
+
+**Trigger.** `sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0` for 5m (or the series' first increment), P3. `internal/pricingguard.SubstanceGate` reads 24h of `prices_1m` per pair; on a store error or deadline it has no verdict and single lookups serve the price unguarded, so a dust-seeded market can be priced. Shared and cached reads fail closed (withheld). A deadline writes no WARN line.
+
+**Check.**
+
+1. Postgres reachable: API `/readyz`. If the scam gate alert also fires, it is the database.
+2. Alone: the heavier scan is slow. Look for a `prices_1m` cagg refresh, lock contention or pool exhaustion; `journalctl -u stellarindex-api | grep 'substance gate'` shows non-deadline errors.
+
+**Fix.**
+
+1. Relieve the database load; the gate self-heals on the next good measurement.
+2. Do NOT fail closed: that blanks prices on every database blip.
+
+**Escalate:** none; related [scam_gate_fail_open](#stellarindex_scam_gate_fail_open).
+
+## stellarindex_api_sse_streams_rejected
+
+**Trigger.** `sum by (reason) (increase(stellarindex_api_sse_streams_rejected_total{reason=~"global_cap|topic_cap"}[10m])) > 0`, P3. `internal/api/streaming` refused a new stream because a shared budget is full: `global_cap` (`max_concurrent_streams`, per API process) answers 503 to every new or reconnecting stream; `topic_cap` answers 429 on a new topic. `per_ip_cap` is excluded.
+
+**Check.**
+
+1. `stellarindex_api_sse_streams_active` against the configured cap.
+2. Distinct client addresses holding streams in the Caddy access log; many addresses in one range (an IPv6 /48, a hosting provider) is a flood.
+
+**Fix.**
+
+1. Flood: block the range at the edge; held streams end at their max lifetime.
+2. Real demand: raise `max_concurrent_streams` (memory permitting) or add an API instance.
+
+**Escalate:** none.
+
 ## stellarindex_sdex_orderbook_maintain_failing
 
 **Trigger.** `sum(rate(stellarindex_sdex_orderbook_maintain_total{outcome=~"load_error|advance_error|verify_error"}[15m])) > 0` for 30m, ticket. The four sdex_orderbook alerts share this diagnosis; check which outcome fired. All failures are ClickHouse lake reads. Impact: `load_error` means `/v1/sdex/orderbook` 503s (warming); `advance_error` means stale depth (`as_of_ledger` stops); `verify_error` means the version-tie quarantine stops draining (`ask_offers_withheld` / `bid_offers_withheld`).

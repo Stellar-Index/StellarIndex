@@ -744,6 +744,58 @@ groups:
             look for lock contention from directory-sync or pool
             exhaustion in the gate's WARN line.
 
+      # The substance gate fails OPEN when its 24h prices_1m scan errors or
+      # times out: single lookups then serve a dust-seeded market's price.
+      # A different, heavier read than the scam gate's, so that alert stays
+      # green while this one fails. Unseeded, hence the first-increment arm.
+      # lint-tripwire-window:sustained: a continuing fail-open window is actionable, one slow scan is not
+      - alert: stellarindex_price_serve_substance_fail_open
+        expr: |
+          sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0
+          or sum by (surface) (
+            stellarindex_price_serve_substance_unmeasured_total
+            unless max_over_time(stellarindex_price_serve_substance_unmeasured_total[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_price_serve_substance_fail_open
+          summary: "Substance gate is FAILING OPEN on {{ $labels.surface }} ({{ $value | humanize }} verdicts/s unmeasured)"
+          description: |
+            The substance gate could not measure market substance (store
+            error or deadline), continuously for the last 5 minutes. On
+            single lookups the price is served unguarded, so a dust-seeded
+            market can be priced; shared and cached reads fail closed and
+            are withheld instead.
+
+            Check Postgres load and prices_1m (cagg refresh, lock
+            contention). A deadline leaves no WARN line, so this counter
+            may be the only trace.
+
+      # The global SSE cap is the backstop against many-address stream
+      # floods; while it is full every new or reconnecting stream gets 503.
+      # topic_cap is the same shape for the Hub's topic budget. per_ip_cap is
+      # left out: one address hitting its own cap is that client's problem.
+      - alert: stellarindex_api_sse_streams_rejected
+        expr: sum by (reason) (increase(stellarindex_api_sse_streams_rejected_total{reason=~"global_cap|topic_cap"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_sse_streams_rejected
+          summary: "SSE streams refused at {{ $labels.reason }} ({{ $value | humanize }} in the last 10 minutes)"
+          description: |
+            New stream connections were refused because a shared stream
+            budget is full (global_cap: 503 to everyone; topic_cap: 429 on
+            a new topic). Paying customers cannot open or reconnect a
+            stream while it holds. Check how many distinct addresses hold
+            streams and whether one network range dominates.
+
       # Each scam-class tag directory-sync clears re-publishes that issuer's
       # price, so each un-flag is reviewed; the churn ceiling only bounds how
       # many one run may clear. The textfile gauge holds the last committed
