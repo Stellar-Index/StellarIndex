@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,13 +82,17 @@ func (r *ExplorerReader) entryLedgers(ctx context.Context, table, keyCol, kindCo
 	return out, rows.Err()
 }
 
+var upgradeOpIndexSQL = strconv.Itoa(int(upgradeOpIndex))
+
 // entryChangesByLedgerQuery is the derive's source query over a ledger list instead of a range; the projector needs
-// every tx-scoped classic row of a ledger in sort-key order to pair state pre-images with their changes.
-const entryChangesByLedgerQuery = `SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
+// every classic row of a ledger in sort-key order to pair state pre-images with their changes. Ledger-upgrade rows
+// (op_index -2, empty tx_hash) are excluded: a history row is attributed to a transaction, and an upgrade has none.
+var entryChangesByLedgerQuery = `SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
 		change_type, entry_type, key_xdr, entry_xdr
 	FROM stellar.ledger_entry_changes
 	WHERE ledger_seq IN (?)
 	  AND entry_type IN ('account', 'trustline', 'offer', 'data', 'claimable_balance', 'liquidity_pool')
+	  AND op_index != ` + upgradeOpIndexSQL + `
 	ORDER BY ledger_seq, tx_hash, op_index, change_index` + explorerScanSettings
 
 // StreamEntryChangesForLedgers streams the entry-history source rows of the listed ledgers in the projector's order.
@@ -98,11 +103,12 @@ func (r *ExplorerReader) StreamEntryChangesForLedgers(ctx context.Context, ledge
 // accountEntryChangesByLedgerQuery keeps only the (op, entry key) groups in which some row carries the account's raw
 // key: a row's projected parties come from its key, its entry and its group's state pre-image, so the projection
 // for the account is unchanged while the busiest accounts stream about a tenth of the rows.
-const accountEntryChangesByLedgerQuery = `SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
+var accountEntryChangesByLedgerQuery = `SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
 		change_type, entry_type, key_xdr, entry_xdr
 	FROM stellar.ledger_entry_changes
 	WHERE ledger_seq IN (?)
 	  AND entry_type IN ('account', 'trustline', 'offer', 'data', 'claimable_balance', 'liquidity_pool')
+	  AND op_index != ` + upgradeOpIndexSQL + `
 	  AND (ledger_seq, tx_hash, op_index, key_xdr) IN (
 		SELECT ledger_seq, tx_hash, op_index, key_xdr FROM stellar.ledger_entry_changes
 		WHERE ledger_seq IN (?)
