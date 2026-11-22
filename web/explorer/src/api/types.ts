@@ -937,8 +937,8 @@ export interface paths {
          *       `tip_update`, with data
          *       `{"asset_id","quote","reason","as_of"}`; `reason` is the
          *       vocabulary of the `price-withheld` 404 (`substance`,
-         *       `scam_issuer`, …). `tip_update` resumes when the pair is
-         *       served again. Keepalives alone therefore mean no tick has
+         *       `scam_issuer`, `source_excluded`, …). `tip_update` resumes when
+         *       the pair is served again. Keepalives alone therefore mean no tick has
          *       completed, never that the price is being withheld.
          *     - Heartbeats every 15 s as comment lines (`:keepalive`) so
          *       intermediate proxies don't idle out the connection.
@@ -1196,7 +1196,8 @@ export interface paths {
          *       `/v1/history/since-inception` for chart granularities.
          *     - 503 when the deployment hasn't wired the streaming Hub
          *       (typical pre-aggregator state).
-         *     - 404 means the pair is withheld (scam/substance gate) at
+         *     - 404 means the pair is withheld (scam/substance gate, or an
+         *       operator source exclusion, reason `source_excluded`) at
          *       connect time — the same verdict `/v1/price` would answer
          *       404 for. The gate is re-checked on every closed bucket
          *       too: a pair withheld PARTWAY through an open connection is
@@ -14504,7 +14505,7 @@ export interface components {
             /** @description Extension member on a `price-withheld` 404 from `/v1/price`, `/v1/price/at` and `/v1/price/changes`, for a thin-market reason (`substance`, `upstream_leg`, `unattributed`) only: the measurement the price was withheld on. Absent otherwise. */
             substance?: components["schemas"]["SubstanceEvidence"];
             /**
-             * @description Extension member on every `price-withheld` 404: why the price was withheld (`source_excluded`: a source an operator excluded contributed to the latest bucket or trade, which cannot be recomputed without it; when the exclusions cannot be read the price is withheld as `unattributed`); a superset of the `price_withheld_reason` values on asset rows except `decimals_mismatch`, which only asset payloads carry (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
+             * @description Extension member on every `price-withheld` 404: why the price was withheld (`source_excluded`: a source an operator excluded contributed to the served bucket or trade, which cannot be recomputed without it, or the value is cache-served with no source list while a source-wide exclusion is in force; the same reason applies on `/v1/price/tip`, its stream and the closed-bucket price stream. The tip first drops the excluded source's trades and recomputes; if none remain, its closed-bucket fallback is gated the same way; when the exclusions cannot be read the price is withheld as `unattributed`); a superset of the `price_withheld_reason` values on asset rows except `decimals_mismatch`, which only asset payloads carry (the price SSE stream's withheld event carries it too). Branch on this, not on `title`. Absent on every other problem.
              * @enum {string}
              */
             reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "source_excluded";

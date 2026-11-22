@@ -90,7 +90,7 @@ const (
 	// price was normalised on, so the per-whole-token figure would be off by a power of ten.
 	PriceWithheldDecimalsMismatch PriceWithheldReason = "decimals_mismatch"
 	// PriceWithheldSourceExcluded: a source an operator excluded (`stellarindex-ops source-exclude`) contributed to the
-	// served bucket, which pools every source and cannot be recomputed without it.
+	// served bucket (which pools every source) or trade, and no price can be recomputed without that source.
 	PriceWithheldSourceExcluded PriceWithheldReason = "source_excluded"
 )
 
@@ -251,7 +251,7 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 	case PriceWithheldSourceExcluded:
 		return "Price withheld — contributing source excluded",
 			"the latest price for " + pair + " includes trades from a source an operator has excluded," +
-				" and a pooled bucket cannot be recomputed without one of its sources, so no price is published"
+				" and the served value (a pooled bucket or a single trade) cannot be recomputed without that source, so no price is published"
 	case PriceWithheldUnattributed, PriceWithheldDecimalsMismatch: // decimals_mismatch is asset payloads' own; /v1/price never sets it
 	}
 	return "Price withheld",

@@ -259,9 +259,9 @@ What an operator can do:
    `GuardServedVWAP1mConfidence` substitutes last-known-good only for a
    bucket grossly off its trailing buckets, so a sustained mis-scale passes.
 
-Missing: a read-side source exclusion on the `prices_1m` path, and a
-command to quarantine a source's stored trades (a second writer to
-`trades` under invariant 7).
+Missing: a command to quarantine a source's stored trades (a second
+writer to `trades` under invariant 7). The read-side exclusion below
+covers the surfaces it lists, not all of them.
 
 The control plane for that exclusion exists: `stellarindex-ops
 source-exclude` records a registered source, optionally one pair, over a
@@ -270,8 +270,36 @@ lifted rather than deleted (an append-only trigger refuses every other
 change), and never writes `trades`. A pair is stored in canonical
 orientation; a reader MUST match it in both directions and across every
 `canonical.AssetAliases` form of each leg, as
-`timescale.SourceExclusion.Covers` does. Nothing reads the table yet, so
-it has no effect on served prices or the aggregator.
+`timescale.SourceExclusion.Covers` does.
+
+What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`):
+
+- **Withheld** (404 `price-withheld`, `reason: source_excluded`; the tip is
+  recomputed without the source): `/v1/price` (closed, swapped-in and
+  last-trade values, cached VWAP / triangulated values, stablecoin-proxy,
+  USD-leg cross, frozen held value), `/v1/price/batch`, `/v1/price/tip` and
+  its stream, the closed-bucket price stream, SEP-40, and the asset headline
+  price (VWAP, aggregator, triangulated tiers, global-market reference).
+- **Delay**: each API process re-reads the table every 15 s; a failed read
+  keeps the last good set for up to 60 s, then withholds every gated price.
+  Worst case on top: `/v1/price`, batch and SEP-40 45 s (`max-age=30`, edge
+  5 s); tip 15 s; tip stream one tick (up to 60 s) more; closed-bucket stream
+  until the next closed bucket; asset detail about 225 s (120 s in-process
+  cache, 60 s edge, 30 s client).
+- **Not covered** (keep serving values that may include the excluded source
+  until it is lifted or the data ages out): `/v1/price/at`, `/v1/price/changes`,
+  `/v1/depeg`, history, since-inception, chart, OHLC, asset listing
+  `price_usd`, sparkline, ATH, transitive price fill, RWA
+  assets/history/premium, and the declared USD-peg fill.
+- **Source-wide exclusions are blunt**: while any exclusion without a pair is
+  in force, every cache-served (Redis VWAP / triangulated) price is withheld,
+  including most default-quote `/v1/price` answers and frozen-pair held
+  values, because those values carry no source list. Prefer a pair-scoped
+  exclusion when the incident allows.
+- **Check**: `curl` `/v1/price?asset=...&quote=...` for an affected pair and
+  expect 404 with `reason: source_excluded` once the delay has passed.
+- **Lift**: `stellarindex-ops source-exclude -lift -id N -reason ... -write`
+  (`-list` shows ids and state); the row is kept, and the same delay applies.
 
 ## SEP-40: what we serve and why there is no generic reader
 

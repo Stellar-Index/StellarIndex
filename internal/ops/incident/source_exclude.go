@@ -19,12 +19,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const readSideNote = "source-exclude: note: each API process reads exclusions every 15s (a failed read keeps the last good set up to 60s, then withholds every gated price)." +
-	" Covered: /v1/price, /v1/price/batch, /v1/price/tip and both price streams (withheld, or the tip recomputed without the source; while any source-wide" +
-	" exclusion is in force every cache-served price is withheld), SEP-40, and the asset headline's VWAP and aggregator tiers." +
-	" Then response caches: /v1/price and batch up to 30s client / 5s edge, asset detail up to ~3.5 min." +
-	" NOT covered: the headline's triangulated tier and global-market reference, the frozen-pair held value, /v1/price/at, /changes, /depeg," +
-	" history, chart, OHLC, asset listing, sparkline, ATH, transitive price fill and RWA"
+const readSideNote = "source-exclude: note: each API process re-reads exclusions every 15s; a failed read keeps the last good set up to 60s, then withholds every gated price." +
+	" WITHHELD (404 reason source_excluded, or the tip recomputed without the source): /v1/price (closed, swapped-in and last-trade values, cached, stablecoin-proxy, USD-leg cross and frozen held values)," +
+	" /v1/price/batch, /v1/price/tip and its stream, the closed-bucket price stream, SEP-40, and the asset headline price (VWAP, aggregator, triangulated tiers, global-market reference)." +
+	" DELAY, gate 15s plus caches, worst case: /v1/price, batch, SEP-40 45s (max-age 30s, edge 5s); tip 15s; tip stream 15s plus one tick (up to 60s); closed-bucket stream 15s plus the next closed bucket;" +
+	" asset detail ~225s (120s in-process cache, 60s edge, 30s client)." +
+	" NOT COVERED, still served and may include the excluded source until it is lifted or the data ages out: /v1/price/at, /changes, /depeg, history, since-inception, chart, OHLC, asset listing price_usd, sparkline, ATH," +
+	" transitive price fill, RWA assets/history/premium, and the declared USD-peg fill." +
+	" WARNING: while any SOURCE-WIDE exclusion is in force every cache-served (Redis VWAP / triangulated) price is withheld, including most default-quote /v1/price answers and frozen-pair held values," +
+	" because those values carry no source list; prefer a pair-scoped exclusion when the incident allows." +
+	" Check: curl /v1/price for an affected pair and expect 404 reason source_excluded. Lift: source-exclude -lift -id N -reason ... -write"
 
 // maxFutureFrom bounds how far ahead -from may start without -allow-future: a guard against year typos.
 const maxFutureFrom = 24 * time.Hour
