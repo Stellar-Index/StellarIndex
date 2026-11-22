@@ -444,6 +444,11 @@ func (s *Server) fillContractDecimals(
 		rows[i].DecimalsUnresolved = false
 		rows[i].DecimalsUndeclared = false
 		resolved[rows[i].AssetID] = struct{}{}
+		// The listing's price gate ran before this read settled the scale, so a contradiction found here withholds the price too.
+		if rows[i].PriceUSD != nil && s.contractPriceScaleDisagrees(&rows[i]) {
+			rows[i].MarketCapDecimalsMismatch = true
+			withholdContradictedScalePrice(&rows[i])
+		}
 	}
 	return resolved, cut
 }
@@ -542,7 +547,7 @@ func (s *Server) applyContractMarketCap(
 		row.MarketCapLowLiquidity = true
 		return
 	}
-	if s.contractPriceScaleDisagrees(row) {
+	if row.MarketCapDecimalsMismatch || s.contractPriceScaleDisagrees(row) {
 		row.MarketCapDecimalsMismatch = true
 		return
 	}
