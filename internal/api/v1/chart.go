@@ -444,7 +444,9 @@ func (s *Server) handleChartTWAP(
 	}
 	series.markWindowStart(from)
 	series.markRowCap(walk)
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
+	writeChartJSON(w, series, Flags{
+		Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded, ThinMarket: s.chartThin(ctx, pair, walk),
+	})
 }
 
 // fxClosedDayWindow is the fx_quotes read window for a chart: closed UTC days only, because the
@@ -817,6 +819,8 @@ type chartWalkResult struct {
 	// historyMaxPoints; the served series is incomplete after it. Zero
 	// when no read was capped.
 	cappedAt time.Time
+	// books are the source pairs that claimed a served bucket, which the substance measurement covers.
+	books []canonical.Pair
 }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
@@ -1046,7 +1050,11 @@ func (w *chartWalk) readSpan(
 // to the merge, recording whether the source's quote leg was a proxy.
 func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 	points = w.s.adjustSourcePoints(sp, points)
-	if w.merge.add(points) > 0 && !sp.Quote.Equal(w.pair.Quote) {
+	if w.merge.add(points) == 0 {
+		return
+	}
+	w.res.noteBook(sp)
+	if !sp.Quote.Equal(w.pair.Quote) {
 		w.res.proxied = true
 	}
 }
@@ -1082,6 +1090,8 @@ func (s *Server) chartSeriesPoints(
 	}
 	if len(derived) > 0 {
 		derived = crossRes.trimToCap(derived)
+		// A failed observed read means an observed market may have existed, so the derived series must not read as complete.
+		crossRes.degraded = crossRes.degraded || res.degraded
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
@@ -1292,6 +1302,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	}
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
 	res.proxied = len(crossed) > 0
+	res.books = append(append(res.books, assetRes.books...), xlmRes.books...)
 	return crossed, res, nil
 }
 
@@ -1701,7 +1712,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
-	refused, lowLiquidity, guardUnread := s.marketCapSeriesRefused(ctx, base, wire)
+	refused, lowLiquidity, guardUnread := s.marketCapSeriesRefused(ctx, base, pair, walk, wire)
 	if refused {
 		wire = []HistoryPointWire{}
 	}
@@ -1724,14 +1735,17 @@ func (s *Server) handleChartMarketCapCrypto(
 	})
 }
 
-// marketCapSeriesRefused applies the detail page's valuation guards ([Server.marketCapRefused], then the turnover ceiling on
-// the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers the whole series (inputs
-// are current readings); unmeasured inputs never refuse.
+// marketCapSeriesRefused applies the detail page's valuation guards (a thin price leg values nothing, [Server.marketCapRefused],
+// then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers
+// the whole series (inputs are current readings); unmeasured inputs never refuse.
 func (s *Server) marketCapSeriesRefused(
-	ctx context.Context, base canonical.Asset, wire []HistoryPointWire,
+	ctx context.Context, base canonical.Asset, pair canonical.Pair, walk chartWalkResult, wire []HistoryPointWire,
 ) (refused, lowLiquidity, unread bool) {
 	if len(wire) == 0 {
 		return false, false, false
+	}
+	if s.chartThin(ctx, pair, walk) {
+		return true, true, false
 	}
 	var probe AssetDetail
 	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {
