@@ -66,6 +66,25 @@ func TestMergeTwinStats_CarriesSupplyBasisWithSupply(t *testing.T) {
 	}
 }
 
+// A catalogue row borrowing its twin's floor supply must say it is a floor, or a trustline sum renders as exact.
+func TestMergeTwinStats_CarriesSupplyLowerBoundWithSupply(t *testing.T) {
+	t.Parallel()
+
+	for _, floor := range []bool{true, false} {
+		supply, basis := "342797138733487851", "classic_trustline_sum"
+		if !floor {
+			basis = "issuer_exclusion"
+		}
+		twin := AssetDetail{CirculatingSupply: &supply, Decimals: 7, SupplyBasis: &basis, CirculatingSupplyLowerBound: floor}
+		dst := AssetDetail{Type: "global"}
+		mergeTwinStats(&dst, twin)
+
+		if dst.CirculatingSupplyLowerBound != floor {
+			t.Errorf("basis %s: circulating_supply_lower_bound = %v, want the twin's %v", basis, dst.CirculatingSupplyLowerBound, floor)
+		}
+	}
+}
+
 // A row that already has its own supply keeps its own scale — the merge
 // must not overwrite a self-consistent pair.
 func TestMergeTwinStats_LeavesOwnSupplyAndDecimalsAlone(t *testing.T) {

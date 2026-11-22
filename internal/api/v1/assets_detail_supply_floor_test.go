@@ -62,6 +62,35 @@ func TestAssetDetail_CapOverAnUncheckedEventNetIsALowerBound(t *testing.T) {
 			if got := strings.Contains(body, `"market_cap_lower_bound":true`); got != tc.floor {
 				t.Errorf("market_cap_lower_bound = %v, want %v: %s", got, tc.floor, body)
 			}
+			if got := strings.Contains(body, `"circulating_supply_lower_bound":true`); got != tc.floor {
+				t.Errorf("circulating_supply_lower_bound = %v, want %v: %s", got, tc.floor, body)
+			}
 		})
+	}
+}
+
+// With no price there is no cap to carry the floor, so the supply itself must say it is one.
+func TestAssetDetail_UncheckedEventNetIsAFloorWithoutACap(t *testing.T) {
+	net := new(big.Int).Mul(big.NewInt(1000), big.NewInt(10_000_000))
+	for _, tc := range []struct {
+		err   error
+		floor bool
+	}{
+		{fmt.Errorf("%w: %s (>25000)", clickhouse.ErrStorageSupplyTooManyEntries, flaggedAsset), true},
+		{fmt.Errorf("%w: %s", clickhouse.ErrStorageSupplyIsStellarAsset, flaggedAsset), false},
+	} {
+		srv := v1.New(v1.Options{
+			Prices:                &stubPriceReader{},
+			TokenDecimals:         &lockstepDecStub{d: 7, found: true},
+			TokenSupply:           floorNetSupply{net: net},
+			ContractStorageSupply: floorStorageSupply{err: tc.err},
+		})
+		body := lockstepGet(t, srv)
+		if !strings.Contains(body, `"circulating_supply":"`+net.String()+`"`) || strings.Contains(body, `"market_cap_usd":"`) {
+			t.Fatalf("want the event net served with no cap: %s", body)
+		}
+		if got := strings.Contains(body, `"circulating_supply_lower_bound":true`); got != tc.floor {
+			t.Errorf("%v: circulating_supply_lower_bound = %v, want %v: %s", tc.err, got, tc.floor, body)
+		}
 	}
 }

@@ -333,9 +333,9 @@ func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, a
 	}
 }
 
-// lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to its listing row (native reader for XLM; exact-issuer
-// filter for classic, as Q never matches a full id); nil if not served. The row is the classic arm only; unfiltered, the caller
-// adds the contract arm ([Server.mergeContractArmVolume]).
+// lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to its listing row (native reader for XLM; exact
+// (code, issuer) filter for classic, as Q never matches a full id and an issuer page can omit it); nil if not served. The row
+// is the classic arm only; unfiltered, the caller adds the contract arm ([Server.mergeContractArmVolume]).
 func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *timescale.AssetRow, unread bool) {
 	if assetID == "native" {
 		native, err := s.AssetsReader.GetNativeAssetRow(ctx)
@@ -349,7 +349,8 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *
 		return nil, false
 	}
 	rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
-		Limit:  50,
+		Limit:  1,
+		Code:   assetID[:dashIx],
 		Issuer: assetID[dashIx+1:],
 		Order:  timescale.AssetsOrderVolume24hUSDDesc,
 	})

@@ -1147,9 +1147,8 @@ export function sumUsd(values: (string | null | undefined)[]): {
  */
 // A yield-bearing wrapper is backed by a stablecoin already counted, so
 // summing it counts that backing twice; /v1/stablecoins leaves it out too.
-const YIELD_BEARING_WRAPPERS = new Set([
-  'yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF',
-]);
+// Keyed on the catalogue slug: that is the asset_id a stablecoin listing row carries.
+const YIELD_BEARING_WRAPPERS = new Set(['yusdc']);
 
 export function sumStablecoins(
   rows: {
