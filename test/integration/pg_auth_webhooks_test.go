@@ -99,6 +99,75 @@ const preSealMigration = 203
 // Executes migration 0204 up and down plus its store paths: raw pre-0204 keys keep signing, the startup sweep seals both
 // and clears raw copies, new/rotated keys are sealed-only, a store without the seal key fails closed on a sealed row
 // while key-free lists work, and down refuses to drop a column holding the only copy of a key.
+// TestCustomerWebhooksSealKeyRotation pins a seal-secret rotation A→B: with
+// current=B previous=A every A-sealed key (current and previous slot) still
+// opens, the sweep re-seals it under B, a re-run is a no-op, and B alone then
+// opens it.
+func TestCustomerWebhooksSealKeyRotation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	acct := insertRawAccount(t, ctx, db, "seal-rotation")
+	mk := func(c string, previous ...string) *postgresstore.WebhookStore {
+		s, err := platform.NewWebhookKeySealer([]byte(strings.Repeat(c, platform.MinWebhookSealSecretLen)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range previous {
+			if s, err = s.WithPrevious([]byte(strings.Repeat(p, platform.MinWebhookSealSecretLen))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return postgresstore.NewSealingWebhookStore(postgresstore.New(db), s)
+	}
+	underA, rotating, underB := mk("a"), mk("b", "a"), mk("b")
+
+	key, prevKey := []byte("whsec_rotate_cur_0123456789abcdef"), []byte("whsec_rotate_prev_0123456789abcd")
+	w, err := underA.CreateWebhook(ctx, platform.CustomerWebhook{
+		AccountID: acct, Name: "rot", URL: "https://rotate.example/hook", SigningKey: prevKey,
+		Events: []string{string(platform.WebhookEventIncidentSEV1)}, Enabled: true,
+	}, 10)
+	if err != nil {
+		t.Fatalf("CreateWebhook: %v", err)
+	}
+	if err := underA.RotateWebhookSecret(ctx, w.ID, key, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("RotateWebhookSecret: %v", err)
+	}
+	if _, err := underB.GetWebhook(ctx, w.ID); !errors.Is(err, platform.ErrWebhookKeyUnsealable) ||
+		errors.Is(err, platform.ErrWebhookSealKeyRotating) {
+		t.Fatalf("current=B alone on an A-sealed row: err = %v, want unsealable, not rotating", err)
+	}
+	got, err := rotating.GetWebhook(ctx, w.ID)
+	if err != nil || !bytes.Equal(got.SigningKey, key) || !bytes.Equal(got.PreviousSigningKey, prevKey) {
+		t.Fatalf("current=B previous=A: GetWebhook = (%q, %q, %v), want both keys", got.SigningKey, got.PreviousSigningKey, err)
+	}
+
+	if n, bad, err := rotating.ResealSigningKeys(ctx); err != nil || n != 2 || bad != 0 {
+		t.Fatalf("ResealSigningKeys = (%d, %d, %v), want (2, 0, nil)", n, bad, err)
+	}
+	if n, bad, err := rotating.ResealSigningKeys(ctx); err != nil || n != 0 || bad != 0 {
+		t.Errorf("second ResealSigningKeys = (%d, %d, %v), want (0, 0, nil)", n, bad, err)
+	}
+	got, err = underB.GetWebhook(ctx, w.ID)
+	if err != nil || !bytes.Equal(got.SigningKey, key) || !bytes.Equal(got.PreviousSigningKey, prevKey) {
+		t.Fatalf("current=B alone after the sweep: GetWebhook = (%q, %q, %v), want both keys", got.SigningKey, got.PreviousSigningKey, err)
+	}
+	var clear int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM customer_webhooks
+		WHERE id = $1 AND (secret_hash IS NOT NULL OR previous_secret IS NOT NULL)`, w.ID).Scan(&clear); err != nil || clear != 0 {
+		t.Errorf("clear key columns after the sweep: count = %d, err = %v; want 0", clear, err)
+	}
+	if _, _, err := underB.ResealSigningKeys(ctx); err == nil {
+		t.Error("ResealSigningKeys with no previous seal key succeeded; want a refusal")
+	}
+}
+
 func TestCustomerWebhooksSigningKeySealed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

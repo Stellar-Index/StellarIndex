@@ -1540,26 +1540,11 @@ func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, audit p
 	}
 	if sealer != nil {
 		sealLegacyWebhookKeys(store, logger)
+		if sealer.Rotating() {
+			go resealWebhookKeys(store, logger)
+		}
 	}
 	return store, h, nil
-}
-
-// buildWebhookKeySealer reads the webhook seal secret from the env var
-// cfg names. Unset returns nil (keys stored raw); a too-short value is a
-// startup error rather than a weak key.
-func buildWebhookKeySealer(cfg config.DashboardConfig, logger *slog.Logger) (*platform.WebhookKeySealer, error) {
-	secret := os.Getenv(cfg.WebhookSealKeyEnv)
-	if secret == "" {
-		logger.Warn("webhook seal key env unset — new customer-webhook signing keys are stored unsealed, "+
-			"and deliveries to webhooks whose key is already sealed wait until it is set",
-			"env", cfg.WebhookSealKeyEnv)
-		return nil, nil
-	}
-	sealer, err := platform.NewWebhookKeySealer([]byte(secret))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", cfg.WebhookSealKeyEnv, err)
-	}
-	return sealer, nil
 }
 
 // sealLegacyWebhookKeys seals signing keys written before a seal key was
