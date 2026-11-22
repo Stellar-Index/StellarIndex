@@ -42,7 +42,12 @@ stellarindex-ops mint-key -config /etc/stellarindex.toml -identifier <id> -label
 stellarindex-ops upgrade-key -config /etc/stellarindex.toml -key-id <kid> -rate-limit-per-min <N> -reason "<why>" -write
 ```
 
-Record every delegated key's ancestor chain before deploying a release that enforces lineage. Review the orphaned KeyIDs the dry run lists: enforcement refuses them, and the account owner may need a fresh key.
+Record every delegated key's ancestor chain before deploying a release that enforces lineage. The release that ships `apikey-lineage-backfill` does not enforce lineage yet, and it does not keep ancestors alive: using a child refreshes only the child's idle window. An unused middle key still idles out after 90 days, and the backfill reports its subtree as orphaned. Review the orphaned KeyIDs the dry run lists: enforcement will refuse them, and the account owner may need a fresh key.
+
+Order, per host:
+
+1. Run `-write` only once every host runs the new binary. An older binary rewrites a record without the ancestor hashes, so a backfill written before it is gone loses them again.
+2. Run `-dry-run` again just before deploying the enforcement release. It must report 0 newly resolved records (`would record the chain of 0 keys`); any other count means a record lost its chain since the write, so run `-write` again and repeat this step.
 
 ```sh
 stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -dry-run
