@@ -1044,7 +1044,7 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTime
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", raw),
-				opts...,
+				append(opts, supply.WithWriteBandBaseline(supplyAggregatorInserter{s: store}))...,
 			),
 			assetKey: assetKey,
 		})
@@ -1109,7 +1109,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 				supply.NewGenesisSeedingComputer(bound, contractID, supply.GenesisSeedingOptions{Seed: seeder, Covers: covers, RetryAfter: genesisAutoSeedRetry, Logger: logger.With("asset", contractID)}),
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", contractID),
-				opts...,
+				append(opts, supply.WithWriteBandBaseline(supplyAggregatorInserter{s: store}))...,
 			),
 			assetKey: contractID, // supply.AssetKey form for SEP-41 is the bare contract id
 		})
@@ -1149,7 +1149,7 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes led
 		computer,
 		supplyAggregatorInserter{s: store},
 		logger.With("asset", assetKey),
-		opts...,
+		append(opts, supply.WithWriteBandBaseline(supplyAggregatorInserter{s: store}))...,
 	), assetKey, nil
 }
 
@@ -1366,11 +1366,27 @@ func (a supplyAggregatorStoreLookup) MaxAccountObservationLedger(ctx context.Con
 }
 
 // supplyAggregatorInserter adapts *timescale.Store to
-// supply.SnapshotInserter.
+// supply.SnapshotInserter and supply.WriteBandBaseline.
 type supplyAggregatorInserter struct{ s *timescale.Store }
 
 func (a supplyAggregatorInserter) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	return a.s.InsertSupply(ctx, snap)
+}
+
+// LatestWrittenTotal reads the newest stored total_supply for assetKey.
+func (a supplyAggregatorInserter) LatestWrittenTotal(ctx context.Context, assetKey string) (*big.Int, bool, error) {
+	return writtenTotal(a.s.LatestSupply(ctx, assetKey))
+}
+
+// writtenTotal maps a LatestSupply result to the band baseline contract: no stored row is (nil, false, nil), not an error.
+func writtenTotal(snap supply.Supply, err error) (*big.Int, bool, error) {
+	if errors.Is(err, timescale.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return snap.TotalSupply, snap.TotalSupply != nil, nil
 }
 
 // supplyAggregatorSEP41Store adapts *timescale.Store to supply.SEP41SupplyStore, projecting SEP41KindTotals into the supply package's

@@ -694,6 +694,38 @@ func (s *seqComputer) Compute(_ context.Context, ledger uint32, observedAt time.
 	}, nil
 }
 
+// The dormant (frozen MinComponentLedger) write path is its own insert site: its first write after a restart must also be
+// band-checked against the stored total.
+func TestRefresher_WriteBandSeedsOnDormantPathAfterRestart(t *testing.T) {
+	const minComp = 50_000_000
+	ledgers := &mutableLedgers{ledger: minComp + 1017, observedAt: time.Unix(1_770_000_000, 0).UTC()}
+	baseline := &stubBandBaseline{total: big.NewInt(10_000), ok: true}
+	inserter := &stubInserter{}
+	r := NewRefresher(
+		ledgers,
+		dynComputer{assetKey: "XLM", minComponentLedger: minComp},
+		inserter,
+		discardLogger(),
+		WithStaleComponentLedgers(1000),
+		WithWriteBandBaseline(baseline),
+	)
+
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("tick1 kind=%s, want %s (cold-start rejection)", out.Kind, OutcomeKindStaleComponent)
+	}
+	ledgers.ledger = minComp + 1324
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindDormant {
+		t.Fatalf("tick2 kind=%s, want %s; err=%v", out.Kind, OutcomeKindDormant, out.Err)
+	}
+	if out.BandBreach != "up" {
+		t.Errorf("BandBreach=%q, want %q (1_000_000 against stored 10_000)", out.BandBreach, "up")
+	}
+	if len(baseline.keys) != 1 || baseline.keys[0] != "XLM" {
+		t.Errorf("baseline reads=%v, want exactly one for XLM", baseline.keys)
+	}
+}
+
 func TestRefresher_WriteBandFlagsTenfoldMoveButStillWrites(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -749,6 +781,59 @@ func TestRefresher_WriteBandIgnoresFailedWrite(t *testing.T) {
 	inserter.err = nil
 	if out := r.Tick(context.Background()); out.BandBreach != "up" {
 		t.Fatalf("BandBreach=%q want up: the band compares against the last successful write", out.BandBreach)
+	}
+}
+
+type stubBandBaseline struct {
+	total *big.Int
+	ok    bool
+	err   error
+	keys  []string
+}
+
+func (s *stubBandBaseline) LatestWrittenTotal(_ context.Context, assetKey string) (*big.Int, bool, error) {
+	s.keys = append(s.keys, assetKey)
+	return s.total, s.ok, s.err
+}
+
+// A restarted aggregator's first write must be band-checked against the stored total, not treated as having no previous value.
+func TestRefresher_WriteBandSeedsFromStoredTotalAfterRestart(t *testing.T) {
+	cases := []struct {
+		name     string
+		baseline *stubBandBaseline
+		totals   []int64
+		want     []string
+	}{
+		{"stored total flags a 100x first write", &stubBandBaseline{total: big.NewInt(1_000_000), ok: true}, []int64{100_000_000}, []string{"up"}},
+		{"stored total flags a collapse", &stubBandBaseline{total: big.NewInt(1_000_000), ok: true}, []int64{99_999}, []string{"down"}},
+		{"stored total inside the band is quiet", &stubBandBaseline{total: big.NewInt(1_000_000), ok: true}, []int64{1_000_001}, []string{""}},
+		{"nothing stored never fires", &stubBandBaseline{}, []int64{100_000_000, 100_000_001}, []string{"", ""}},
+		{"read error leaves only that write unchecked", &stubBandBaseline{err: errors.New("db down")}, []int64{1_000_000, 10_000_001}, []string{"", "up"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRefresher(
+				stubLedgers{ledger: 50_000_000, observedAt: time.Unix(1_770_000_000, 0).UTC()},
+				&seqComputer{totals: tc.totals},
+				&stubInserter{},
+				discardLogger(),
+				WithWriteBandBaseline(tc.baseline),
+			)
+			var assetKey string
+			for i, want := range tc.want {
+				out := r.Tick(context.Background())
+				if out.Kind != OutcomeKindOK {
+					t.Fatalf("tick %d: kind=%s, want ok; err=%v", i, out.Kind, out.Err)
+				}
+				assetKey = out.Snapshot.AssetKey
+				if out.BandBreach != want {
+					t.Errorf("tick %d: BandBreach=%q want %q", i, out.BandBreach, want)
+				}
+			}
+			if len(tc.baseline.keys) != 1 || tc.baseline.keys[0] != assetKey {
+				t.Errorf("baseline reads=%v, want exactly one for %q (before the first write only)", tc.baseline.keys, assetKey)
+			}
+		})
 	}
 }
 

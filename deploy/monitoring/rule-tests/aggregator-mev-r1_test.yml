@@ -1,0 +1,101 @@
+# promtool unit test for stellarindex_mev_detect_failing in the r1 overlay
+# copy (aggregator_test.yml proves the multi-host copy; the job label differs).
+#
+# Run: promtool test rules deploy/monitoring/rule-tests/aggregator-mev-r1_test.yml
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/aggregator.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 5m
+    name: an all-failing MEV worker tickets on r1
+    input_series:
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="ok"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="scan_error"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="write_error"}'
+        values: '0+1x24'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_mev_detect_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              job: stellarindex-aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_mev_detect_failing
+              summary: "MEV detection runs are mostly failing — /v1/mev is going stale"
+              description: |
+                Over the last hour, MEV detection runs ending in scan_error or
+                write_error outnumber ok runs, held for 30 minutes. No new
+                arbitrage, wash-trade, cascade or sandwich events are being
+                written, so /v1/mev serves the last good set. Look at the
+                aggregator's mev component logs and
+                stellarindex_mev_detect_runs_total by outcome.
+
+  - interval: 5m
+    name: a hung MEV worker tickets as stalled on r1
+    input_series:
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="ok"}'
+        values: '7x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="scan_error"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="write_error"}'
+        values: '0x24'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_mev_detect_stalled
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_mev_detect_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              job: stellarindex-aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_mev_detect_stalled
+              summary: "MEV detection has completed no run in an hour — /v1/mev is going stale"
+              description: |
+                No MEV detection run finished with any outcome (ok, scan_error
+                or write_error) over the last hour, held for 30 minutes, while
+                the aggregator is up. The worker is hung, most likely inside a
+                database call, so /v1/mev serves the last good set. Take a
+                goroutine dump and check the aggregator's mev component logs.
+      - eval_time: 90m
+        alertname: stellarindex_mev_detect_failing
+        exp_alerts: []
+
+  - interval: 5m
+    name: an all-failing MEV worker does not double as stalled on r1
+    input_series:
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="ok"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="scan_error"}'
+        values: '0+1x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="write_error"}'
+        values: '0x24'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_mev_detect_stalled
+        exp_alerts: []
+
+  - interval: 5m
+    name: a healthy MEV worker is not stalled on r1
+    input_series:
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="ok"}'
+        values: '0+1x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="scan_error"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex-aggregator",outcome="write_error"}'
+        values: '0x24'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_mev_detect_stalled
+        exp_alerts: []
