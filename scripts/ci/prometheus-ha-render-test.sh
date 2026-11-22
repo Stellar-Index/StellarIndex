@@ -152,7 +152,7 @@ fi
 # Restart handlers: one replica at a time, each waits for /-/ready (credential on
 # stdin, not argv) before the next replica restarts.
 if "$PY" -I - "$ROLE/handlers/main.yml" <<'PYEOF'
-import jinja2, os, subprocess, sys, tempfile, yaml
+import jinja2, os, shlex, subprocess, sys, tempfile, yaml
 hs = {h["name"]: h for h in yaml.safe_load(open(sys.argv[1]))}
 bad = 0
 for svc in ("prometheus", "alertmanager"):
@@ -163,6 +163,7 @@ for svc in ("prometheus", "alertmanager"):
     # whose terminator is glued to the line before it.
     jenv = jinja2.Environment(trim_blocks=True)
     jenv.filters["difference"] = lambda a, b: [x for x in a if x not in b]
+    jenv.filters["quote"] = shlex.quote
     v.update(groups={"prometheus_pair": ["prom1", "prom2"]},
              hostvars={"prom1": {"ansible_host": "10.0.0.5"}, "prom2": {"ansible_host": "10.0.0.6"}})
     script = jenv.from_string(h["shell"]).render(**v)
@@ -174,17 +175,22 @@ for svc in ("prometheus", "alertmanager"):
         if subprocess.run(["bash", "-n", "-c", s], capture_output=True).returncode != 0:
             print(f"  FAIL — restart {svc} does not parse as rendered by Ansible")
             bad += 1
-    # (self ready before, peer ready, self ready after restart, auth on) -> (rc, restarted, marker left, web config left)
+    # (self ready before, peer ready, self ready after restart, auth on, unit active)
+    #   -> (rc, restarted, marker left, web config and client password left)
     cases = (
-        ((True, True, True, True), (0, True, False, True), "restarts while its peer is ready and waits for /-/ready"),
-        ((True, False, True, True), (1, False, True, True), "refuses to restart while its peer is not ready"),
-        ((False, False, True, True), (0, True, False, True), "restarts a replica that is itself not ready"),
-        ((True, True, False, True), (1, True, True, True), "fails and keeps the pending marker when never ready"),
-        ((True, True, True, False), (0, True, False, False), "deletes the web config only after the restart drops auth"),
-        ((True, True, False, False), (1, True, True, True), "keeps the web config while the old process may still read it"),
+        ((True, True, True, True, True), (0, True, False, True), "restarts while its peer is ready and waits for /-/ready"),
+        ((True, False, True, True, True), (1, False, True, True), "refuses to restart while its peer is not ready"),
+        ((False, False, True, True, False), (0, True, False, True), "restarts a replica whose unit is down"),
+        ((False, True, True, True, True), (1, False, True, True), "refuses a running replica whose probe fails"),
+        ((True, True, False, True, True), (1, True, True, True), "fails and keeps the pending marker when never ready"),
+        ((True, True, True, False, True), (0, True, False, False),
+         "probes the old process with the client password and deletes both files only after the restart drops auth"),
+        ((True, True, False, False, True), (1, True, True, True), "keeps the web config while the old process may still read it"),
     )
-    for (self_before, peer, self_after, auth), (want_rc, want_restart, want_marker, want_wc), label in cases:
+    for (self_before, peer, self_after, auth, active), (want_rc, want_restart, want_marker, want_wc), label in cases:
         with tempfile.TemporaryDirectory() as d:
+            if active:
+                open(f"{d}/active", "w").close()
             open(f"{d}/{svc}-client-password", "w").write("s3cret-fake")
             open(f"{d}/web-config.yml", "w").write("basic_auth_users: {}\n")
             open(f"{d}/stdin", "w").close()
@@ -194,7 +200,8 @@ for svc in ("prometheus", "alertmanager"):
             if self_after:
                 open(f"{d}/up-after", "w").close()
             run = (script if auth else noauth).replace("/etc/prometheus/", f"{d}/").replace("/etc/alertmanager/", f"{d}/")
-            stubs = {"systemctl": f'echo "systemctl $*" >> {d}/calls\n'
+            stubs = {"systemctl": f'case "$*" in is-active*) [ -f {d}/active ]; exit $? ;; esac\n'
+                                  f'echo "systemctl $*" >> {d}/calls\n'
                                   f'case "$*" in restart*) rm -f {d}/ready-127.0.0.1; [ -f {d}/up-after ] && touch {d}/ready-127.0.0.1 ;; esac\nexit 0\n',
                      "sleep": "",
                      "curl": f'cfg=$(cat); printf "%s\\n" "$cfg" >> {d}/stdin\n'
@@ -207,10 +214,11 @@ for svc in ("prometheus", "alertmanager"):
             rc = subprocess.run(["bash", "-c", run], env=env, stdin=subprocess.DEVNULL, capture_output=True).returncode
             calls, stdin = open(f"{d}/calls").read(), open(f"{d}/stdin").read()
             marker, wc = os.path.exists(f"{d}/.restart-pending"), os.path.exists(f"{d}/web-config.yml")
+            cp = os.path.exists(f"{d}/{svc}-client-password")
         good = (h.get("throttle") == 1 and (rc == 0) == (want_rc == 0)
                 and (f"systemctl restart {svc}" in calls) == want_restart
-                and marker == want_marker and wc == want_wc and "s3cret-fake" not in calls
-                and ('user = "operator:s3cret-fake"' in stdin) == auth and "http://127.0.0.1:9/-/ready" in stdin)
+                and marker == want_marker and wc == want_wc and cp == want_wc and "s3cret-fake" not in calls
+                and 'user = "operator:s3cret-fake"' in stdin and "http://127.0.0.1:9/-/ready" in stdin)
         print(("  ok — " if good else "  FAIL — ") + f"restart {svc} {label}")
         bad += not good
 sys.exit(1 if bad else 0)

@@ -123,12 +123,16 @@
           tcp dport 22 ip6 saddr @ssh_allowed_v6 ct state new update @ssh_ratelimit_v6 { ip6 saddr limit rate over 30/minute burst 10 packets } drop comment "ssh-v6-ratelimit"
           tcp dport 22 ip6 saddr @ssh_allowed_v6 ct state new accept comment "ssh-v6"
 
-          # Prometheus + Alertmanager API + gossip (TCP).
-          tcp dport { {{ prometheus_port }}, {{ alertmanager_port }}, {{ alertmanager_cluster_listen_port }} } ip saddr @internal_v4 accept comment "prometheus-stack-tcp"
-          tcp dport { {{ prometheus_port }}, {{ alertmanager_port }}, {{ alertmanager_cluster_listen_port }} } ip6 saddr @internal_v6 accept comment "prometheus-stack-tcp-v6"
-          # Alertmanager cluster gossip (UDP).
-          udp dport {{ alertmanager_cluster_listen_port }} ip saddr @internal_v4 accept comment "alertmanager-cluster-udp"
-          udp dport {{ alertmanager_cluster_listen_port }} ip6 saddr @internal_v6 accept comment "alertmanager-cluster-udp-v6"
+          # Prometheus + Alertmanager API.
+          tcp dport { {{ prometheus_port }}, {{ alertmanager_port }} } ip saddr @internal_v4 accept comment "prometheus-stack-tcp"
+          tcp dport { {{ prometheus_port }}, {{ alertmanager_port }} } ip6 saddr @internal_v6 accept comment "prometheus-stack-tcp-v6"
+          # Alertmanager gossip has no authentication (a joined node can spread
+          # silences), so only the other prometheus_pair hosts may reach it.
+      {% for peer in (groups | default({})).get('prometheus_pair', []) if peer != inventory_hostname %}
+      {% set addr = hostvars[peer].ansible_host %}
+          tcp dport {{ alertmanager_cluster_listen_port }} {{ 'ip6' if ':' in addr else 'ip' }} saddr {{ addr }} accept comment "alertmanager-cluster-tcp"
+          udp dport {{ alertmanager_cluster_listen_port }} {{ 'ip6' if ':' in addr else 'ip' }} saddr {{ addr }} accept comment "alertmanager-cluster-udp"
+      {% endfor %}
 
           limit rate 1/second log prefix "nft-drop: " flags all
         }

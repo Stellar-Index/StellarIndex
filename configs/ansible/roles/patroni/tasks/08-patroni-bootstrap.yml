@@ -113,3 +113,34 @@
   retries: 15
   delay: 4
   until: _primary_check.stdout.count('Leader') == 1
+
+# On a replaced db-01 that Leader is a survivor and this member may still be in
+# its base backup. /health answers 200 only once this member's Postgres runs
+# (leader or replica), so the handlers never fire into a half-copied data dir.
+- name: wait for this member's Postgres to run
+  uri:
+    url: "http://{{ patroni_rest_connect_address }}/health"
+    status_code: 200
+  register: _bootstrap_health
+  retries: "{{ patroni_join_retries | int }}"
+  delay: 10
+  until: _bootstrap_health.status == 200
+
+- name: read whether this member is the primary
+  uri:
+    url: "http://{{ patroni_rest_connect_address }}/primary"
+    status_code: [200, 503]
+  register: _bootstrap_primary
+  changed_when: false
+
+# Proves archive-push reaches the repository now, not when pg_wal is full.
+# stanza-create is idempotent.
+- name: create the pgBackRest stanza and check WAL archiving
+  command: "pgbackrest --stanza={{ patroni_pgbackrest_stanza }} {{ item }}"
+  loop: [stanza-create, check]
+  become: yes
+  become_user: postgres
+  changed_when: false
+  when:
+    - "'pgbackrest' in patroni_archive_command"
+    - _bootstrap_primary.status == 200

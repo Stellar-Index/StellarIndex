@@ -47,6 +47,29 @@
       patroni role assumes a 3-node cluster (per ha-plan §3.3);
       detected {{ groups['postgres_cluster'] | length }} hosts
 
+# archive_mode is on from bootstrap, and Postgres keeps every segment it cannot
+# archive, so an archive_command that cannot succeed fills the data volume. The
+# role does not install pgBackRest: its binary and config must already be here.
+- name: look for the pgBackRest binary and config archive_command needs
+  stat:
+    path: "{{ item }}"
+  loop: [/usr/bin/pgbackrest, /etc/pgbackrest/pgbackrest.conf, /etc/pgbackrest.conf]
+  register: _pgbackrest_present
+  when: "'pgbackrest' in patroni_archive_command"
+
+- name: assert archive_command can succeed
+  assert:
+    that:
+      - patroni_archive_command | trim | length > 0
+      - "'pgbackrest' not in patroni_archive_command
+        or (_pgbackrest_present.results[0].stat.exists
+            and (_pgbackrest_present.results[1].stat.exists or _pgbackrest_present.results[2].stat.exists))"
+    fail_msg: >-
+      archive_mode is on, so patroni_archive_command must be able to archive
+      WAL or pg_wal grows until the disk is full. It calls pgBackRest, which
+      is not installed or has no /etc/pgbackrest/pgbackrest.conf on
+      {{ inventory_hostname }}: provision pgBackRest and its repository first.
+
 - name: assert vault contents present
   assert:
     that:
