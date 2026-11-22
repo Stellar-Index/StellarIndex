@@ -8,6 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
@@ -113,18 +114,21 @@ func addGlobalMarketRow(into map[string]rwaReference, u canonical.OracleUpdate) 
 
 // applyGlobalMarket attaches the global-market reference to a vetted row, after the substance gate: a surviving Stellar price
 // is measured against it, a missing one is filled from it ahead of any declared peg, so a global depeg shows in price_usd.
-func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReference, now time.Time) {
+func (s *Server) applyGlobalMarket(ctx context.Context, row *AssetDetail, refs map[string]rwaReference, now time.Time) {
 	g, local, ok := s.globalMarketAsset(row.AssetID)
 	if !ok {
 		return
 	}
 	ref, ok := refs[g.String()]
 	if !ok || ref.priceUSD == nil || ref.priceUSD.Sign() <= 0 ||
-		now.Sub(ref.asOf) > globalMarketMaxAge || ref.asOf.After(now.Add(globalMarketMaxSkew)) {
+		now.Sub(ref.asOf) > globalMarketMaxAge || ref.asOf.After(now.Add(globalMarketMaxSkew)) ||
+		s.globalRefWithheld(ctx, ref, g, local) {
 		return
 	}
 	gm := &AssetGlobalMarket{Asset: g.String(), PriceUSD: ref.wire, Source: ref.source, AsOf: WireTime(ref.asOf), Credit: external.Credit(ref.source)}
 	switch {
+	case row.PriceUSD == nil && row.PriceWithheldReason == PriceWithheldSourceExcluded:
+		// The direct price was refused for an excluded source; a reference beside it is not a replacement.
 	case row.PriceUSD == nil:
 		p := ref.wire
 		row.PriceUSD = &p
@@ -144,6 +148,20 @@ func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReferenc
 		}
 	}
 	row.GlobalMarket = gm
+}
+
+// globalRefWithheld reports whether the reference's own source is excluded for the global ticker or the local asset, or the
+// exclusions cannot be read: either way the reference neither fills nor is shown.
+func (s *Server) globalRefWithheld(ctx context.Context, ref rwaReference, g, local canonical.Asset) bool {
+	if s.Exclusions == nil {
+		return false
+	}
+	for _, a := range []canonical.Asset{g, local} {
+		if s.Exclusions.InstantWithholding(ctx, a, defaultPriceQuote, ref.source, ref.asOf) != pricingguard.NotWithheld {
+			return true
+		}
+	}
+	return false
 }
 
 // stampStellarDivergence sets the signed divergence of the Stellar price

@@ -1263,7 +1263,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 	now := time.Now()
 	memo := make(map[string]*string, 1)
 	for i := range rows {
-		s.applyGlobalMarket(&rows[i], refs, now)
+		s.applyGlobalMarket(ctx, &rows[i], refs, now)
 		s.fillFixedPegPrice(ctx, &rows[i], memo)
 		nameLateCapRefusal(&rows[i])
 	}
@@ -1274,7 +1274,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 // paths. A vetted global ticker's market price ([Server.applyGlobalMarket]) fills first: a fixed peg would hide a depeg.
 func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
 	withholdContradictedScalePrice(row) // after every market producer, before the whole-token fills and their divergence
-	s.applyGlobalMarket(row, s.globalMarketRefs(ctx, []AssetDetail{*row}), time.Now())
+	s.applyGlobalMarket(ctx, row, s.globalMarketRefs(ctx, []AssetDetail{*row}), time.Now())
 	s.fillFixedPegPrice(ctx, row, memo)
 }
 

@@ -173,6 +173,10 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 		// found && !Triangulated is a direct value, which must not be served as this tier.
 		return "", time.Time{}, false, err
 	}
+	// A triangulated value carries no source list; the last tier fails closed like the cache layer of /v1/price.
+	if g.Exclusions.UnattributedWithholding(ctx, base, quote, v.ObservedAt.Add(-window), time.Now().Add(time.Nanosecond)) != pricingguard.NotWithheld {
+		return "", time.Time{}, false, nil
+	}
 	return v.Value, v.ObservedAt, true, nil
 }
 
