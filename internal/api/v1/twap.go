@@ -102,6 +102,10 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	window, ok = s.writeExclusionCleanWindow(w, r, base, quote, window)
+	if !ok {
+		return
+	}
 
 	res, ok := s.computeTWAP(w, r, pair, from, to, window, sigma)
 	if !ok {

@@ -493,8 +493,9 @@ type Options struct {
 	// leaves frozen false and derives single_source from the observation count.
 	Freeze FrozenLooker
 
-	// Substance, Scam and Exclusions gate the price paths that bypass PriceReader (tip window, VWAP, TWAP, chart, history,
-	// price stream, cache fallbacks); reader-backed paths gate inside the readers. Nil disables handler-side gating only.
+	// Substance and Scam gate the price paths that bypass PriceReader (tip window, VWAP, TWAP, chart, history, price stream,
+	// cache fallbacks); Exclusions gates the tip window, VWAP, TWAP, price streams, cache fallbacks, FX conversions and the
+	// global-market reference. Reader-backed paths gate inside the readers. Nil disables handler-side gating only.
 	Substance PriceSubstanceGate
 	// Scam withholds directory-scam-flagged issuers; production impl is pricingguard.ScamGate.
 	Scam PriceScamGate

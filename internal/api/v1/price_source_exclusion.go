@@ -3,8 +3,10 @@ package v1
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -35,6 +37,40 @@ func (s *Server) exclusionCleanTrades(ctx context.Context, asset, quote canonica
 		}
 	}
 	return kept, nil
+}
+
+// exclusionCleanWindow is [Server.exclusionCleanTrades] over a lifted raw-trade window, each trade judged on the book it
+// executed on (a fiat-quoted window pools several stablecoin books).
+func (s *Server) exclusionCleanWindow(ctx context.Context, window aggregate.ScaledWindow) (aggregate.ScaledWindow, error) {
+	if s.Exclusions == nil {
+		return window, nil
+	}
+	refused := pricingguard.NotWithheld
+	kept := window.Filter(func(t canonical.Trade) bool {
+		w := s.Exclusions.InstantWithholding(ctx, t.Pair.Base, t.Pair.Quote, t.Source, t.Timestamp)
+		if w != pricingguard.NotWithheld && w != pricingguard.WithheldSourceExcluded {
+			refused = w
+		}
+		return w == pricingguard.NotWithheld
+	})
+	if refused != pricingguard.NotWithheld {
+		return aggregate.ScaledWindow{}, PriceWithheldError(refused)
+	}
+	return kept, nil
+}
+
+// writeExclusionCleanWindow is [Server.exclusionCleanWindow] for a handler: it writes the withheld problem (an emptied window
+// included, which is excluded rather than "no trades") and returns ok=false.
+func (s *Server) writeExclusionCleanWindow(w http.ResponseWriter, r *http.Request, base, quote canonical.Asset, window aggregate.ScaledWindow) (aggregate.ScaledWindow, bool) {
+	kept, err := s.exclusionCleanWindow(r.Context(), window)
+	if err == nil && kept.Len() == 0 && window.Len() > 0 {
+		err = PriceWithheldError(pricingguard.WithheldSourceExcluded)
+	}
+	if err != nil {
+		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(err))
+		return aggregate.ScaledWindow{}, false
+	}
+	return kept, true
 }
 
 // fxRateWithheld judges one FX rate, source's own reading of ticker per USD over [from, to); nil when no exclusion covers it.
