@@ -118,9 +118,8 @@ func TestCreate_RefusesMintBeyondMaxDepth(t *testing.T) {
 	}
 }
 
-// Using a child slides its ancestors' idle windows too, on both validators, so an unused middle key cannot age
-// out from under a child in daily use.
-func TestLookup_ChildUseKeepsAncestorsAlive(t *testing.T) {
+// Using a child refreshes only the child's idle window, on both validators: an ancestor's use is its own.
+func TestLookup_ChildUseDoesNotExtendAncestors(t *testing.T) {
 	const day = 24 * time.Hour
 	for name, use := range map[string]func(f *lineageFixture, plain string) error{
 		"redis validator": func(f *lineageFixture, plain string) error {
@@ -142,18 +141,19 @@ func TestLookup_ChildUseKeepsAncestorsAlive(t *testing.T) {
 			_, midPlain, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
 			_, leafPlain, _ := f.mint(t, ChildKeyRequest(midSub, "leaf", nil))
 
-			f.mr.FastForward(89 * day)
+			ttlOf := func(plain string) time.Duration { return f.mr.TTL(cachekeys.APIKey(hashAPIKey(plain)).String()) }
+			f.mr.FastForward(10 * day)
+			before := map[string]time.Duration{"root": ttlOf(rootPlain), "mid": ttlOf(midPlain)}
 			if err := use(f, leafPlain); err != nil {
 				t.Fatalf("use the leaf: %v", err)
 			}
-			f.mr.FastForward(89 * day)
-			for name, plain := range map[string]string{"root": rootPlain, "mid": midPlain} {
-				if ttl := f.mr.TTL(cachekeys.APIKey(hashAPIKey(plain)).String()); ttl <= 0 {
-					t.Errorf("%s record TTL = %v after its descendant was used, want it still alive", name, ttl)
-				}
+			if got := ttlOf(leafPlain); got != MirroredKeyIdleTTL {
+				t.Errorf("leaf TTL after use = %v, want it refreshed to %v", got, MirroredKeyIdleTTL)
 			}
-			if err := use(f, leafPlain); err != nil {
-				t.Errorf("leaf after 178 days of daily use: %v", err)
+			for name, plain := range map[string]string{"root": rootPlain, "mid": midPlain} {
+				if got := ttlOf(plain); got != before[name] || got != MirroredKeyIdleTTL-10*day {
+					t.Errorf("%s TTL = %v after its descendant was used, want it untouched at %v", name, got, before[name])
+				}
 			}
 		})
 	}

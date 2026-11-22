@@ -201,7 +201,7 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 	if canonical {
 		// Self-service and register-mirrored records have no api_keys row to fall back to: without the
 		// refresh a key in daily use dies when its idle window lapses.
-		refreshIdleTTLs(ctx, v.cache, rec, hexHash, MirroredKeyIdleTTL)
+		refreshIdleTTL(ctx, v.cache, hexHash, MirroredKeyIdleTTL)
 	}
 	return sub, true, nil
 }
