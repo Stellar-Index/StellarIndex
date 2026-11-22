@@ -4197,7 +4197,10 @@ export interface paths {
          *
          *     Reconciling with the quota: sum `billable` over the current
          *     UTC month. That is the `month_to_date` a monthly-quota 429
-         *     reports, on either response shape below. Do not sum
+         *     reports, on either response shape below. The window is the
+         *     trailing 30 days (today included), so on the 31st of a month
+         *     the 1st is outside it and this sum falls short of
+         *     `month_to_date` by that day's units. Do not sum
          *     `requests` for this — it includes 5xx responses on the
          *     per-endpoint shape, and those never consume quota.
          *
@@ -4629,7 +4632,10 @@ export interface paths {
          *     exhaust it for everyone; past it the route answers
          *     `503 registration-unavailable` with `Retry-After`. Operators
          *     can also switch the route off (same 503). Passkey sign-up
-         *     (`/auth/passkey/*-signup`) does not draw on this budget. Sits
+         *     (`/auth/passkey/finish-signup`) spends the same budget, so
+         *     exhausting it refuses both with 503; an email's first
+         *     magic-link or code sign-in draws on a separate budget of the
+         *     same size that this route cannot exhaust. Sits
          *     underneath the global anonymous rate limit. The
          *     `Content-Type: application/json` header is REQUIRED — not
          *     merely validated when present — because a header-less POST is
@@ -14228,8 +14234,10 @@ export interface components {
             /**
              * @description Per-minute limit auth enforces on a key minted at the
              *     dashboard defaults, account override included — not the
-             *     tier ceiling. Limits are per key; an explicitly budgeted
-             *     key can differ.
+             *     tier ceiling. Every key on an account charges ONE shared
+             *     per-minute counter, and each request is checked against
+             *     the presenting key's own limit: a lower limit is not
+             *     isolation, since siblings' traffic counts against it.
              */
             rate_limit_per_min?: number;
             /**
@@ -14347,7 +14355,7 @@ export interface components {
              * @description 0 = inherit the tier default; positive = metered cap applied when a key has no per-key quota.
              */
             monthly_request_quota_override: number;
-            /** @description Per-minute limit auth enforces on a key minted without an explicit limit, override included. Limits are per key; an explicitly budgeted key can differ. */
+            /** @description Per-minute limit auth enforces on a key minted without an explicit limit, override included. Every key on an account charges one shared per-minute counter, checked against the presenting key's own limit, so an explicitly budgeted lower limit does not isolate a key from its siblings' traffic. */
             effective_rate_limit_per_min?: number;
             /**
              * Format: int64
