@@ -641,6 +641,18 @@ check(vrrp == ['ip protocol vrrp ip saddr 10.0.0.22 accept comment "vrrp-peer"',
                'ip6 nexthdr vrrp ip6 saddr fd00::22 accept comment "vrrp-peer"'],
       f"haproxy firewall accepts VRRP from the unicast peers only: {vrrp}")
 
+# alertmanager: gossip is unauthenticated, so only the other prometheus_pair host may reach it.
+pfw = next(t for t in tasks("prometheus/tasks/06-firewall.yml") if "copy" in t)["copy"]["content"]
+pfwr = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined).from_string(pfw).render(
+    groups={"prometheus_pair": ["prom1", "prom2"]}, inventory_hostname="prom1",
+    hostvars={"prom1": {"ansible_host": "10.0.0.5"}, "prom2": {"ansible_host": "10.0.0.6"}},
+    prometheus_port=9090, alertmanager_port=9093, alertmanager_cluster_listen_port=9094,
+    prometheus_internal_cidrs=["10.0.0.0/8"], prometheus_allowed_ssh_cidrs=["10.0.0.0/8"])
+gossip = [ln.strip() for ln in pfwr.splitlines() if "9094" in ln]
+check(gossip == ['tcp dport 9094 ip saddr 10.0.0.6 accept comment "alertmanager-cluster-tcp"',
+                 'udp dport 9094 ip saddr 10.0.0.6 accept comment "alertmanager-cluster-udp"'],
+      f"prometheus firewall opens alertmanager gossip to the peer only: {gossip}")
+
 # guarded restarts: a handler that can refuse fails the host and cancels every handler after it,
 # and Ansible forgets a notification once the play ends. So each one has a marker handler on its
 # topic defined before it, clears the marker only on success, is re-notified from the marker by a
