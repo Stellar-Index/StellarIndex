@@ -124,6 +124,7 @@ func stampCirculatingSupply(row *AssetDetail, circ string, basis supply.Basis) {
 	}
 	c := circ
 	row.CirculatingSupply = &c
+	row.CirculatingSupplyLowerBound = basis.LowerBound()
 	if basis != "" {
 		b := basis.String()
 		row.SupplyBasis = &b

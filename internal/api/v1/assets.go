@@ -152,10 +152,10 @@ type AssetDetail struct {
 	// price failing the substance gate (flagTwinSubstanceWithheldCap). It separates "suppressed on purpose" from "no
 	// data"; price_usd still serves, only the valuation is guarded.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
-
 	// MarketCapLowerBound: on a listing row, market_cap_usd rests on a floor supply, so the cap is a floor too.
 	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
-
+	// CirculatingSupplyLowerBound: circulating_supply is a provable floor, whether or not a cap is built on it.
+	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were refused because the
 	// lake's on-chain decimals() disagrees with the nonstandard_decimals_assets projection that
 	// price paths normalise through. Price and supply would sit on different scales, so their
@@ -379,8 +379,8 @@ type AssetDetail struct {
 	// Conditions is the issuer's declared terms for the asset (SEP-1 conditions), free-form text.
 	Conditions *string `json:"conditions,omitempty"`
 
-	// FixedNumber is the SEP-1-declared fixed total supply as a decimal string in the smallest
-	// unit. It is what the issuer committed to, not the live-ledger total_supply.
+	// FixedNumber is the SEP-1-declared fixed total supply as a decimal string in display units
+	// (whole tokens), as written in stellar.toml. It is what the issuer committed to, not total_supply.
 	FixedNumber *string `json:"fixed_number,omitempty"`
 
 	// MaxNumber is the SEP-1-declared maximum supply as a decimal string: the issuer's own ceiling,
@@ -927,13 +927,12 @@ func (s *Server) buildAssetListPage(
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
+	// valReads collects the supply, peg and valuation reads' verdicts; it is folded into the flags below.
+	valCtx, valReads := withReadReport(r.Context())
+	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// After the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	pegCtx, pegReads := withReadReport(r.Context())
-	s.fillDeclaredPegPricesInListing(pegCtx, out)
-	unmeasured = unmeasured || pegReads.unread.Load()
-	stale = stale || pegReads.stale.Load()
+	s.fillDeclaredPegPricesInListing(valCtx, out)
 	// One batch query (no N+1) for the page's issuer labels. Must run before the listing-valuation
 	// arm: that arm refuses scam-tagged issuers using a field only this call populates, so run
 	// first it would publish a dollar figure under a nulled price_usd. Every price producer runs
@@ -943,16 +942,15 @@ func (s *Server) buildAssetListPage(
 	// Last among the valuation producers: it reads the outcome of all of them (cap, gated price,
 	// dust flag, peg basis, scam tags) to decide whether there is a hole to fill. See
 	// asset_listing_valuation.go.
-	s.applyListingValuations(r.Context(), out)
+	s.applyListingValuations(valCtx, out)
 	s.fillImagesFromSep1(r.Context(), out)
 	suppressFlaggedIssuerIdentities(out)
 	// Last, after every price producer and both gates: the sparkline attaches only to rows that
 	// still publish a price.
-	s.attachSparklinesIfRequested(r, out)
-	// Honest freshness as /v1/markets does for SWR reads: cached rows are stamped with their
-	// actual observation time and, past the TTL, flags.stale, never now() over a boot-seeded or
-	// refresh-starved page set. An uncached read stamps the build time once, so a cached replay
-	// carries the same as_of as the response that built it.
+	s.attachSparklinesIfRequested(valCtx, r, out)
+	unmeasured, stale = unmeasured || valReads.unread.Load(), stale || valReads.stale.Load()
+	// Cached rows carry their observation time and, past the TTL, flags.stale; an uncached read
+	// stamps the build time once, so a cached replay carries the as_of of the response that built it.
 	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured, Degraded: stale || unmeasured || anyDirectoryUnchecked(out)}, AsOf: WireTime(time.Now().UTC())}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
@@ -1078,34 +1076,27 @@ func (s *Server) fillRowMarketCap(
 	if row.MarketCapUSD != nil {
 		return
 	}
+	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
+	// Supply is a fact about the token, not its market: every row with a reading keeps it, whatever the cap's verdict,
+	// as the detail page does. Stamped once here so no refusal branch can drop it.
+	stampCirculatingSupply(row, circ, basis)
 	if row.ThinMarket {
 		row.MarketCapWithheldReason = MarketCapWithheldThinMarket
 		return
 	}
-	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
-	if circ == "" {
-		return
-	}
-	// Supply is a fact about the token, not its market: an unpriced or gated row keeps it, as the detail page does.
-	if row.PriceUSD == nil {
-		stampCirculatingSupply(row, circ, basis)
+	if circ == "" || row.PriceUSD == nil {
 		return
 	}
 	if r := row.scaleWithheldReason(); r != "" {
+		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised through the
+		// nonstandard_decimals_assets projection while row.Decimals holds a disagreeing lake reading.
 		row.MarketCapWithheldReason = r
-		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised
-		// through the nonstandard_decimals_assets projection while row.Decimals now holds a
-		// disagreeing lake reading, so supply over price would be off by a power of ten. Null
-		// with a reason beats that; circulating_supply is a raw fact and still serves.
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	// A ticker-collision look-alike gets no price x supply headline: its price comes from its own
-	// manipulable market while its ticker borrows a real asset's standing. The
-	// unverified_ticker_collision flag is the reason; circulating_supply still surfaces.
+	// manipulable market while its ticker borrows a real asset's standing.
 	if row.UnverifiedTickerCollision {
 		row.MarketCapWithheldReason = MarketCapWithheldTickerCollision
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	// Native carve-out: the listing SQL forces native's source_count to 0, and XLM is
@@ -1114,7 +1105,6 @@ func (s *Server) fillRowMarketCap(
 		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
 		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
@@ -1127,12 +1117,10 @@ func (s *Server) fillRowMarketCap(
 		capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		row.MarketCapLowLiquidity = true
 		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	row.MarketCapUSD = &mc
 	row.MarketCapLowerBound = basis.LowerBound()
-	stampCirculatingSupply(row, circ, basis)
 }
 
 // applyConfirmedListingDecimals puts a row's supply divisor on its price's scale: rows are stamped 7, but asset_price_snapshot
@@ -1849,13 +1837,14 @@ func (s *Server) writeCataloguePage(
 	// this writer and neither applies the row filters (stated on all four
 	// parameters in the spec), so no arm has been selected away and the
 	// cross-arm total is the only figure a row here can honestly carry.
-	unmeasured, stale := s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{})
-	flags.Stale = flags.Stale || unmeasured || stale
-	flags.Degraded = flags.Degraded || unmeasured
+	ctx, reads := withReadReport(r.Context())
+	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, assetListFilters{})
 	end := min(limit, len(rows))
 	page := rows[:end]
-	s.attachSparklinesIfRequested(r, page)
-	flags.Degraded = flags.Degraded || anyDirectoryUnchecked(page)
+	s.attachSparklinesIfRequested(ctx, r, page)
+	unmeasured = unmeasured || reads.unread.Load()
+	flags.Stale = flags.Stale || unmeasured || stale
+	flags.Degraded = flags.Degraded || unmeasured || anyDirectoryUnchecked(page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
 		for _, row := range page {
@@ -2059,9 +2048,9 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 	return f
 }
 
-// handleAssetListUnified serves /v1/assets with no asset_class or issuer filter: catalogue rows by market_cap_usd desc, then
-// classic_assets by 24h volume_usd desc. The cursor is phase-prefixed (empty, "catalogue:<served>", "classic:<inner>",
-// "classic:"); a page never spans phases; `filters` narrows both, as the catalogue suppresses classic twins.
+// handleAssetListUnified serves /v1/assets?asset_class=all: catalogue rows by market_cap_usd desc, then classic_assets by 24h
+// volume_usd desc. The cursor is phase-prefixed (empty, "catalogue:<served>", "classic:<inner>", "classic:"); a short last
+// catalogue page is topped up from the classic phase; `filters` narrows both, as the catalogue suppresses classic twins.
 func (s *Server) handleAssetListUnified(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, cursor string,
@@ -2131,10 +2120,12 @@ func (s *Server) serveCatalogueUnifiedPage(
 	}
 	// Price + twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
-	unmeasured, stale := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
+	ctx, reads := withReadReport(r.Context())
+	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
 	end := min(limit, len(rows))
 	page := rows[:end]
-	s.attachSparklinesIfRequested(r, page)
+	s.attachSparklinesIfRequested(ctx, r, page)
+	unmeasured = unmeasured || reads.unread.Load()
 	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured || stale, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
 	if end < len(rows) {
 		for _, row := range page {
@@ -2277,31 +2268,25 @@ func (s *Server) fetchClassicUnifiedRows(
 	for _, row := range rows {
 		out = append(out, assetDetailFromAssetRow(row))
 	}
-	// Alias-fold FIRST: collapse a SAC-form row into its canonical classic/native row before
-	// catalogue twin suppression, so "USDC shows twice" cannot happen.
-	//
-	// NOT under type=soroban: the fold drops an alias row whose canonical primary is absent from the
-	// page, and that predicate excludes every canonical classic row, so the contract arm would come
-	// back empty. Skipping loses nothing: the arm it merges into was filtered out.
+	// valReads collects the alias-fold, supply, peg, valuation and sparkline reads' verdicts; it is folded into the flags below.
+	valCtx, valReads := withReadReport(r.Context())
+	// Alias-fold FIRST, before catalogue twin suppression, so "USDC shows twice" cannot happen. NOT under type=soroban: the
+	// fold drops an alias whose canonical primary is off-page, and that filter excludes every canonical classic row.
 	var mergedAliases map[string]struct{}
 	if filters.typ != "soroban" {
-		out, mergedAliases = s.foldAliasTwins(r.Context(), out, !filters.unfiltered())
+		out, mergedAliases = s.foldAliasTwins(valCtx, out, !filters.unfiltered())
 	}
 	out = s.suppressCatalogueTwins(out)
-	// After the catalogue suppression (no read for a row about to be
-	// dropped) and before the gate and cap fill that weigh the volume.
+	// After the catalogue suppression (no read for a row about to be dropped), before the gate and cap fill that weigh volume.
 	if filters.unfiltered() {
 		s.restoreOffPageContractArms(r.Context(), out, mergedAliases)
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
+	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	pegCtx, pegReads := withReadReport(r.Context())
-	s.fillDeclaredPegPricesInListing(pegCtx, out)
-	unmeasured = unmeasured || pegReads.unread.Load()
-	cacheStale = cacheStale || pegReads.stale.Load()
+	s.fillDeclaredPegPricesInListing(valCtx, out)
 	// Curated issuer label (account_directory), one batch query per page. Scam-class tags withhold
 	// the row's price and market cap (suppressScamIssuerPricing).
 	//
@@ -2313,10 +2298,11 @@ func (s *Server) fetchClassicUnifiedRows(
 	// LAST among the valuation producers: it reads the outcome of every one above it (served cap,
 	// gated price, dust flag, peg basis, scam tags) to decide whether a hole needs filling. See
 	// asset_listing_valuation.go.
-	s.applyListingValuations(r.Context(), out)
+	s.applyListingValuations(valCtx, out)
 	s.fillImagesFromSep1(r.Context(), out)
 	suppressFlaggedIssuerIdentities(out)
-	s.attachSparklinesIfRequested(r, out)
+	s.attachSparklinesIfRequested(valCtx, r, out)
+	unmeasured, cacheStale = unmeasured || valReads.unread.Load(), cacheStale || valReads.stale.Load()
 	nextInner := ""
 	// `hasMore` alone, NOT `hasMore && len(out) > 0`: `out` shrinks after the query (twin
 	// suppression, alias folding), and gating on it would emit no cursor for a page whose rows all
@@ -3210,17 +3196,18 @@ func (s *Server) sacSearchAsClassic(r *http.Request, q string) string {
 // attachSparklinesIfRequested honours ?include=sparkline24h and ?include=sparkline7d, one batch read each; it runs in every phase, so it must be safe on mixed pages.
 // (1) Key on the row's Stellar asset id, never the wire asset_id (a catalogue slug matches no prices_1m row and reads as "never traded").
 // (2) No published price means no chart: withheld, scam-suppressed and declared-peg rows would republish the number we declined to publish.
-func (s *Server) attachSparklinesIfRequested(r *http.Request, rows []AssetDetail) {
+// (3) A failed batch read is reported unread on ctx's [readReport], so the caller degrades the page.
+func (s *Server) attachSparklinesIfRequested(ctx context.Context, r *http.Request, rows []AssetDetail) {
 	if s.AssetsReader == nil {
 		return
 	}
 	for _, name := range requestedSparklines(r.URL.Query().Get("include")) {
 		switch name {
 		case "sparkline24h":
-			s.attachSparkline(r, rows, name, s.AssetsReader.GetAssetsPriceHistory24hBatch,
+			s.attachSparkline(ctx, rows, name, s.AssetsReader.GetAssetsPriceHistory24hBatch,
 				func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory24h = w })
 		case "sparkline7d":
-			s.attachSparkline(r, rows, name, s.AssetsReader.GetAssetsPriceHistory7dBatch,
+			s.attachSparkline(ctx, rows, name, s.AssetsReader.GetAssetsPriceHistory7dBatch,
 				func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory7d = w })
 		}
 	}
@@ -3238,13 +3225,11 @@ func requestedSparklines(include string) []string {
 }
 
 // attachSparkline fills one listing series; only the 7d series feeds stellarindex_api_sparkline7d_rows_total.
-func (s *Server) attachSparkline(r *http.Request, rows []AssetDetail, name string,
+func (s *Server) attachSparkline(ctx context.Context, rows []AssetDetail, name string,
 	batch func(context.Context, []string) (map[string][]timescale.AssetPricePoint, error),
 	set func(*AssetDetail, []AssetPricePoint),
 ) {
-	// Series asset_id → the page rows that render it. A catalogue row and
-	// (on a mixed page) its classic twin resolve to the same id, so one
-	// lookup can feed several rows.
+	// Series asset_id → the page rows that render it: a catalogue row and its classic twin share an id.
 	rowsByID := make(map[string][]int, len(rows))
 	ids := make([]string, 0, len(rows))
 	eligible := 0
@@ -3265,9 +3250,10 @@ func (s *Server) attachSparkline(r *http.Request, rows []AssetDetail, name strin
 	if len(ids) == 0 {
 		return
 	}
-	hist, err := batch(r.Context(), ids)
+	hist, err := batch(ctx, ids)
 	if err != nil {
 		s.logger.Warn(name+" batch", "err", err)
+		reportUnreadRead(ctx)
 		return
 	}
 	served := 0
@@ -3295,9 +3281,8 @@ func (s *Server) attachSparkline(r *http.Request, rows []AssetDetail, name strin
 		}
 	}
 	if served == 0 {
-		// One line per request, only when every priced row came back without a price point: that
-		// is a broken lookup key, not a quiet market. Per-row detail is on the
-		// stellarindex_api_sparkline7d_rows_total counter.
+		// Every priced row came back without a point: a broken lookup key, not a quiet market.
+		// Per-row detail is on the stellarindex_api_sparkline7d_rows_total counter.
 		s.logger.Warn(name+": no priced row on this page has a series",
 			"requested_ids", len(ids), "priced_rows", eligible)
 	}
@@ -3458,7 +3443,8 @@ func (s *Server) foldAliasTwins(ctx context.Context, rows []AssetDetail, keepLon
 }
 
 // listingCanonicalIDs maps each row to its class's canonical asset_id: the alias registry's, else, for a contract row, the asset it
-// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself.
+// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself
+// and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
 func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []string {
 	ids := make([]string, len(rows))
 	bySAC := make(map[string]string)
@@ -3486,7 +3472,11 @@ func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []
 	defer cancel()
 	forEachBounded(s.logger, len(lookup), readFanoutConcurrency, func(j int) {
 		i := lookup[j]
-		if wrapped, ok := s.sacWrappedAssetID(lookupCtx, rows[i].AssetID); ok {
+		wrapped, ok, err := s.sacWrappedAssetIDErr(lookupCtx, rows[i].AssetID)
+		if err != nil {
+			reportUnreadRead(ctx)
+		}
+		if ok {
 			ids[i] = wrapped
 		}
 	})
@@ -3700,8 +3690,8 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 			return
 		}
 		// ListAssetsExt, not GetAssetByAssetID: only the listing query computes the windowed
-		// change columns. Filter by issuer, not Q: Q substring-matches column values, so a full
-		// asset id matches nothing.
+		// change columns. Filter by (code, issuer), not Q: Q substring-matches column values, so a
+		// full asset id matches nothing.
 		twinRow, twinUnread := s.lookupCatalogueTwin(statsCtx, entry.AssetID)
 		if twinUnread {
 			anyUnmeasured.Store(true)
@@ -3830,7 +3820,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		dst.DecimalsUnresolved, dst.DecimalsUndeclared = twin.DecimalsUnresolved, twin.DecimalsUndeclared
 		// The basis says whether the figure is exact, a floor or a derived upper bound; without it a
 		// lake-flows or trustline-sum reading renders as exact.
-		dst.SupplyBasis = twin.SupplyBasis
+		dst.SupplyBasis, dst.CirculatingSupplyLowerBound = twin.SupplyBasis, twin.CirculatingSupplyLowerBound
 	}
 	if dst.MarketCapUSD == nil {
 		dst.MarketCapUSD, dst.MarketCapLowerBound = twin.MarketCapUSD, twin.MarketCapLowerBound

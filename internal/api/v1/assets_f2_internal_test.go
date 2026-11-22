@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // TestUsdMarketValue covers the F2 market-cap math helper directly (it is unexported); integration coverage via
@@ -369,6 +370,24 @@ func TestApplyF2Fields_UnreadContractSupplyIsAFailedRead(t *testing.T) {
 	flowless.applyF2Fields(context.Background(), answered, asset)
 	if answered.f2ReadFailed {
 		t.Errorf("an answered read with no figure is not a failed read")
+	}
+}
+
+// A failed observer read stays failed when the lake answers: the lake figure is another basis, so the detail must not cache it.
+func TestWithContractSupply_KeepsObserverFailure(t *testing.T) {
+	s := &Server{Options: Options{TokenSupply: &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(100), Mint: big.NewInt(100), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+		FlowCount: 2,
+	}}}, logger: slog.Default()}
+	for _, observerFailed := range []bool{true, false} {
+		out, have, failed, _ := s.withContractSupply(context.Background(), supplyContractID, supply.Supply{}, false, observerFailed)
+		if !have || out.TotalSupply == nil || out.TotalSupply.String() != "100" {
+			t.Fatalf("observerFailed=%v: lake reading not used: have=%v total=%v", observerFailed, have, out.TotalSupply)
+		}
+		if failed != observerFailed {
+			t.Errorf("observerFailed=%v: failed=%v, want %v", observerFailed, failed, observerFailed)
+		}
 	}
 }
 
