@@ -176,6 +176,20 @@ grow_both() {
   )
 }
 
+# grow_toml_lines <commit-message> <line>... — append the given lines to
+# .gitleaks.toml (inline-array and new-block spellings of an allowlist).
+grow_toml_lines() {
+  (
+    cd "$TMP/repo" || exit 1
+    msg="$1"
+    shift
+    printf '%s\n' "$@" >> .gitleaks.toml
+    git add -A
+    printf '%s\n' "$msg" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
 # comment_toml <commit-message> — a NON-widening .gitleaks.toml edit (a
 # comment line): must NOT be flagged as allowlist growth.
 comment_toml() {
@@ -378,11 +392,31 @@ grow_toml "chore: broaden the secret-scan allowlist"
 runGate
 expect "gitleaks.toml allowlist growth fails undeclared" 1 "UNDECLARED GROWTH: .gitleaks.toml"
 
+mkrepo 0
+grow_toml_lines "chore: allowlist one value" "[[allowlists]]" "regexes = ['''SBEXAMPLEVALUE''']"
+runGate
+expect "gitleaks.toml inline regexes in a new block fails undeclared" 1 "UNDECLARED GROWTH: .gitleaks.toml"
+
+mkrepo 0
+grow_toml_lines "chore: exempt a commit" "commits = ['''0123456789abcdef0123456789abcdef01234567''']"
+runGate
+expect "gitleaks.toml inline commits allowlist fails undeclared" 1 "UNDECLARED GROWTH: .gitleaks.toml"
+
+mkrepo 0
+grow_toml_lines "chore: per-rule stopword" "[[rules]]" "id = \"generic-api-key\"" "[[rules.allowlists]]" "stopwords = [\"leak\"]"
+runGate
+expect "gitleaks.toml per-rule inline stopwords fails undeclared" 1 "UNDECLARED GROWTH: .gitleaks.toml"
+
 # --- 9. a non-widening .gitleaks.toml edit (comment) passes ---------
 mkrepo 0
 comment_toml "docs: clarify an allowlist rationale"
 runGate
 expect "gitleaks.toml comment-only edit passes" 0 "no undeclared"
+
+mkrepo 0
+grow_toml_lines "docs: describe the allowlist" "description = \"why the docs archive is skipped\""
+runGate
+expect "gitleaks.toml description-only edit passes" 0 "no undeclared"
 
 # --- 10. PER-FILE SCOPING --------------------------------------------
 # Grow TWO allowlists in one commit but declare only ONE of them. The

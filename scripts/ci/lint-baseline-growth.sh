@@ -208,9 +208,10 @@ detect_growth() {
     [[ -n "$line" ]] && printf '%s\t%s\n' .gitleaksignore "$line"
   done <<<"$added"
 
-  # 4) .gitleaks.toml: allowlists-only file, so each quoted array element widens what is ignored.
-  local gitleaks_toml_entry=$'^[[:space:]]*[\x27"]'
-  added="$(added_entries "$base" "$head" .gitleaks.toml "$gitleaks_toml_entry")"
+  # 4) .gitleaks.toml: allowlists-only file. Any added line but a description, a title or a closing
+  #    bracket counts, so an inline array, a new block or a commit exemption cannot hide by spelling.
+  local gitleaks_toml_inert=$'^[[:space:]]*((description|title)[[:space:]]*=|\\][[:space:]]*,?[[:space:]]*$)'
+  added="$(added_entries "$base" "$head" .gitleaks.toml '.' | grep -vE "$gitleaks_toml_inert" || true)"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .gitleaks.toml "$line"
   done <<<"$added"
