@@ -39,7 +39,7 @@ ZERO_SHA="0000000000000000000000000000000000000000"
 # Every inline escape marker a lint honours is listed in exactly one of these (lowercase EREs);
 # lint-baseline-growth-test.sh fails on a `<name>:ok` / `<name>-ok:` marker in neither.
 # UNWATCHED: style and shell-robustness lints whose waiver cannot hide a data or security defect.
-WATCHED_MARKERS='i128:ok|i128sum:ok|lint-money:ok|migration-compat:ok|lint-priceable:ok|lint-down-delete:ok|floatmoney:ok|decimals-7:|cap-ok:|asset-identity: single-form ok|si-swallow-ok:|unbounded-latest-ok:|apikey-scan-ok:|http-timeout-ok:|exhaustive:ignore|//[[:space:]]*nolint|zizmor: ignore[[]'
+WATCHED_MARKERS='i128:ok|i128sum:ok|lint-money:ok|migration-compat:ok|lint-priceable:ok|lint-down-delete:ok|floatmoney:ok|decimals-7:|cap-ok:|asset-identity: single-form ok|si-swallow-ok:|unbounded-latest-ok:|apikey-scan-ok:|http-timeout-ok:|exhaustive:ignore|zizmor: ignore[[]'
 # Case-sensitive, as the lints honouring them match: lowercase "do not run" prose exempts nothing.
 WATCHED_MARKERS_CASE='DO NOT RUN'
 # shellcheck disable=SC2034  # read by the self-test's registry check

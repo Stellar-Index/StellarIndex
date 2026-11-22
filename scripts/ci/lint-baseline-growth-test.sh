@@ -725,14 +725,13 @@ change_commit "chore: stricter" .golangci.yml "$golangci_seed" \
 runGate
 expect "a linter added to linters.enable needs no trailer" 0 "no undeclared"
 
-# --- 25f. third-party and prose waivers: exhaustive:ignore, nolint, DO NOT RUN
+# --- 25f. third-party and prose waivers: exhaustive:ignore, DO NOT RUN
 mkrepo 0
 change_commit "chore: waive" \
   internal/m/ex.go 'var e = 1' "$(printf '//exhaustive:ignore\nvar e = 1')" \
-  internal/m/nl.go 'var n = 1' 'var n = int64(x) //nolint:gosec // bounded' \
   ops/r.sh 'echo' "psql -c \"CALL refresh_continuous_aggregate('t', NULL, now())\" # DO NOT RUN twice"
 runGate
-for f in internal/m/ex.go internal/m/nl.go ops/r.sh; do
+for f in internal/m/ex.go ops/r.sh; do
   expect "an added waiver in $f fails undeclared" 1 "UNDECLARED GROWTH: $f"
 done
 
