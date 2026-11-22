@@ -63,7 +63,9 @@ ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
+# Its own env file too: systemd reads it before the sandbox, and hiding it keeps
+# a hijacked wabt child from reading the API's secrets off disk.
+InaccessiblePaths=-/run/lock -/etc/default/stellarindex -/etc/default/stellarindex-api -/etc/default/galexie -/etc/default/galexie-backfill -/etc/default/stellarindex-ops -/etc/clickhouse-client
 # Caps the wabt children it runs on uploaded WASM; EPERM, not SIGSYS, on a miss.
 TasksMax=4096
 SystemCallArchitectures=native
