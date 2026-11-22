@@ -57,7 +57,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 			"asset query parameter is required")
 		return
 	}
-	asset, err := canonical.ParseAsset(rawAsset)
+	asset, err := parsePriceLeg(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -229,7 +229,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 			"asset query parameter is required")
 		return
 	}
-	asset, err := canonical.ParseAsset(rawAsset)
+	asset, err := parsePriceLeg(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -592,7 +592,7 @@ func (s *Server) parseXLastPriceBaseQuote(w http.ResponseWriter, r *http.Request
 			"base query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
-	base, err := canonical.ParseAsset(rawBase)
+	base, err := parsePriceLeg(rawBase)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -609,7 +609,7 @@ func (s *Server) parseXLastPriceBaseQuote(w http.ResponseWriter, r *http.Request
 			"quote query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
-	quote, err = canonical.ParseAsset(rawQuote)
+	quote, err = parsePriceLeg(rawQuote)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-quote",
