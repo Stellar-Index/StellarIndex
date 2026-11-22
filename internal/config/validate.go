@@ -227,6 +227,12 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 		return fmt.Errorf("%w: storage.clickhouse_serving_password looks like an env-var NAME (%q), not a secret "+
 			"value — this field holds the password itself (see field doc)", ErrInvalidConfig, s.ClickHouseServingPassword)
 	}
+	// The CH client refuses this pair at dial, so the API would boot with every lake-backed route 503ing
+	// behind a 200 readyz; refuse it here so the deploy's readiness check fails instead.
+	if s.ClickHouseServingPassword != "" && s.ClickHouseServingUser == "" {
+		return fmt.Errorf("%w: storage.clickhouse_serving_password is set but storage.clickhouse_serving_user is "+
+			"empty — set both or neither", ErrInvalidConfig)
+	}
 	if s.S3AccessKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3AccessKeyEnv) {
 		return errEnvNameShape("s3_access_key_env")
 	}

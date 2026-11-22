@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/tiingo"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -49,9 +50,53 @@ func fiatAsset(t *testing.T, code string) canonical.Asset {
 	return a
 }
 
+// fundNAVSnap relabels each NAV onto licensedNAVSource so the arm's mechanics can be exercised: tiingo itself is
+// redistribution-barred and never served (TestRWAFundNAV_BarredSourceNeverServed).
 func fundNAVSnap(t *testing.T, rows ...canonical.OracleUpdate) rwaReferences {
 	t.Helper()
-	return rwaReferenceSnapshotFrom(rows)
+	snap := rwaReferenceSnapshotFrom(rows)
+	for k, v := range snap.fundNAV {
+		v.source = licensedNAVSource
+		snap.fundNAV[k] = v
+	}
+	return snap
+}
+
+// licensedNAVSource is a registered oracle that is not redistribution-barred.
+const licensedNAVSource = "redstone"
+
+// The fund arm serves no figure from a barred source: the row falls through to the listing arm, and the NAV still feeds the
+// internal disagreement check.
+func TestRWAFundNAV_BarredSourceNeverServed(t *testing.T) {
+	if !external.RedistributionBarred(tiingo.SourceName) {
+		t.Fatal("precondition: tiingo is redistribution-barred")
+	}
+	snap := rwaReferenceSnapshotFrom([]canonical.OracleUpdate{tiingoRow(t, "WTTSX", 9_440_000, fundNAVNow.Add(-22*time.Hour))})
+	a := fundNAVAsset("WTTS", wttsIssuer)
+	listed := map[string]timescale.ListingEntry{a.AssetID: {PriceUSD: "9.61", PricedAt: fundNAVNow.Add(-time.Hour), Source: "listing", ListingID: "x"}}
+	rwaApplyReference(a, snap, nil, listingAnswered(listed), fundNAVNow)
+	if a.Reference == nil || a.Reference.Provenance != RWAReferenceListingPrice || a.Reference.Source == tiingo.SourceName {
+		t.Fatalf("barred NAV beside a listing: %+v, want the listing arm", a.Reference)
+	}
+	if v := a.ReferenceValuation.ValueUSD; v != nil && *v == "9440.00" {
+		t.Errorf("valuation %q was built on the barred NAV", *v)
+	}
+
+	b := fundNAVAsset("WTTS", wttsIssuer)
+	rwaApplyReference(b, snap, nil, listingAnswered(nil), fundNAVNow)
+	if b.Reference != nil && b.Reference.Source == tiingo.SourceName {
+		t.Errorf("barred NAV with no lower arm served: %+v", b.Reference)
+	}
+
+	// Barred from the wire, not from the cross-check: the NAV still flags an oracle figure it contradicts.
+	bindFundNAV(t, "BENJI", benjiFTIss, "FTXXX")
+	cross := fundNAVSnap(t, tiingoRow(t, "FTXXX", 1_000_000, fundNAVNow.Add(-22*time.Hour)))
+	cross.byFeed["BENJI"] = rwaReference{priceUSD: big.NewRat(102, 100), wire: "1.020000", source: "redstone", feed: "rwa:BENJI", asOf: fundNAVNow.Add(-time.Hour)}
+	o := fundNAVAsset("BENJI", benjiFTIss)
+	rwaApplyReference(o, cross, nil, listingAnswered(nil), fundNAVNow)
+	if o.Reference == nil || o.Reference.Source == tiingo.SourceName || !o.Reference.NAVDisagreement {
+		t.Errorf("oracle 1.02 beside a barred NAV of 1.00: %+v, want the oracle figure served with nav_disagreement", o.Reference)
+	}
 }
 
 // The fund arm sits below the oracle arm and above the listing and
@@ -68,7 +113,7 @@ func TestRWAFundNAV_ArmOrder(t *testing.T) {
 	if r == nil || r.Provenance != RWAReferenceFundNAV {
 		t.Fatalf("WTTS with a NAV and a listing price: %+v, want the fund_nav arm", r)
 	}
-	if r.PriceUSD != "9.44" || r.Source != tiingo.SourceName || r.Credit != "Tiingo" || r.Feed != "raw:WTTSX" || r.Quote != "fiat:USD" ||
+	if r.PriceUSD != "9.44" || r.Source != licensedNAVSource || r.Credit != external.Credit(licensedNAVSource) || r.Feed != "raw:WTTSX" || r.Quote != "fiat:USD" ||
 		r.DecimalsPublished == nil || *r.DecimalsPublished != 2 || r.Stale || r.NAVDisagreement {
 		t.Errorf("WTTS reference = %+v", r)
 	}
@@ -237,7 +282,7 @@ func TestRWAFundNAV_AllTwelveBindingsResolve(t *testing.T) {
 	for _, tk := range tickers {
 		rows = append(rows, tiingoRow(t, tk, 10_000_000, fundNAVNow.Add(-22*time.Hour)))
 	}
-	snap := rwaReferenceSnapshotFrom(rows)
+	snap := fundNAVSnap(t, rows...)
 	for code, issuer := range pairs {
 		a := fundNAVAsset(code, issuer)
 		rwaApplyReference(a, snap, nil, listingAnswered(nil), fundNAVNow)

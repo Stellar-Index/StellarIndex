@@ -52,6 +52,15 @@
     mode: '0750'
   when: etcd_tls_enabled
 
+- name: verify Patroni etcd client TLS material
+  import_tasks: verify-tls.yml
+  vars:
+    tls_label: Patroni etcd client
+    tls_ca: "{{ etcd_tls_ca_pem | default('') }}"
+    tls_cert: "{{ patroni_etcd_client_cert_pem | default('') }}"
+    tls_key: "{{ patroni_etcd_client_key_pem | default('') }}"
+  when: etcd_tls_enabled
+
 - name: install Patroni etcd client TLS material
   copy:
     content: "{{ item.content }}\n"

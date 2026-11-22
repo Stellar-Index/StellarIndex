@@ -447,7 +447,7 @@ export function useChangeSummary(
     staleTime: 60_000,
     // The pill sits beside a price polled every 60s; without its own poll
     // the arrow could point the wrong way for as long as the tab stays open.
-    refetchInterval: 60_000,
+    refetchInterval: LIVE_PRICE_POLL_MS,
   });
 }
 
@@ -1244,7 +1244,10 @@ export type AssetDetail = Schemas['Asset'];
  * panel that needs SEP-1 metadata for an asset. Returns the envelope so
  * its flags (stale, unverified_ticker_collision) reach the page.
  */
-export function useAsset(assetID: string | undefined) {
+export function useAsset(
+  assetID: string | undefined,
+  opts?: { refetchInterval?: number },
+) {
   return useQuery<Envelope<AssetDetail>>({
     queryKey: ['/v1/assets/{id}', assetID],
     enabled: !!assetID,
@@ -1253,8 +1256,12 @@ export function useAsset(assetID: string | undefined) {
         `/v1/assets/${encodeURIComponent(assetID ?? '')}`,
       ),
     staleTime: 60_000,
+    refetchInterval: opts?.refetchInterval,
   });
 }
+
+/** The cadence of every price-bearing read beside the polled headline price. */
+export const LIVE_PRICE_POLL_MS = 60_000;
 
 /**
  * AssetSupply — live per-token supply from `/v1/assets/{id}/supply`,

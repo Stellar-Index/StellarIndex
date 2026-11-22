@@ -389,6 +389,8 @@ jobs:
               # them.
               - 'configs/prometheus/**'
               - 'deploy/monitoring/**'
+              # ansible-api-env-test.sh checks the self-host guide's API env file.
+              - 'docs/operations/self-hosting.md'
       # dorny/paths-filter's glob matching cannot be exercised offline
       # (no Docker/`act`), so its rule is restated in plain shell at
       # scripts/ci/check-change-class.sh and proven against fixtures
@@ -2208,6 +2210,12 @@ jobs:
         # Renders the shipped env template with hostile credentials.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-postgres-dsn-test.sh
+      - name: API env file render test (local ansible run)
+        # The API loads only its own env file; a guard fixed in the shared
+        # template and not there left a serving password with no user, and
+        # every lake-backed route 503'd behind a 200 readyz.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-api-env-test.sh
       - name: Postgres WAL archiving render test
         # A rebuilt archival node must render archive_mode/archive_command,
         # or pgBackRest silently loses point-in-time recovery; hosts without

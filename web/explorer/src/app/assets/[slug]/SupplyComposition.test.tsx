@@ -51,6 +51,36 @@ describe('SupplyComposition', () => {
     expect(screen.getByText(/≤\s*40/)).toBeInTheDocument();
   });
 
+  it('marks headroom as a ceiling only when its base is a floor', () => {
+    const { unmount } = render(
+      <SupplyComposition
+        circulating="600"
+        total="600"
+        max="1000"
+        decimals={0}
+        maxDeclared
+        floor
+        totalFloor
+      />,
+    );
+    expect(screen.getByText(/≤\s*40/)).toBeInTheDocument();
+    unmount();
+    // An exact total over a floor circulating: headroom is exact.
+    const { container } = render(
+      <SupplyComposition
+        circulating="600"
+        total="800"
+        max="1000"
+        decimals={0}
+        floor
+      />,
+    );
+    const headroom = [...container.querySelectorAll('li')].find((li) =>
+      li.textContent?.startsWith('Headroom'),
+    );
+    expect(headroom?.textContent).toMatch(/^Headroom to max 20(\.0)?%$/);
+  });
+
   it('keeps >2^53 amounts exact', () => {
     render(
       <SupplyComposition

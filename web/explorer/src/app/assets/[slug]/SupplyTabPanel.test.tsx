@@ -248,6 +248,26 @@ describe('SupplyTabPanel marks floor and derived figures', () => {
     expect(screen.getAllByText('≥ 100')).toHaveLength(2);
   });
 
+  it('marks a lake-net total with the on-chain floor, as circulating is', () => {
+    assetExtra.fields = {
+      supply_basis: 'sep41_lake_flows',
+      total_supply: '1000000000',
+    };
+    supplyQuery.data = {
+      data: {
+        asset_id: 'USDC-GA5ZSEJ',
+        total_supply: '5000000000',
+        flow_count: 3,
+        source: 'mint_burn_flows',
+        decimals: 7,
+        circulating_supply_lower_bound: true,
+      },
+    };
+    renderPanel();
+    expect(screen.getAllByText('≥ 100')).toHaveLength(2);
+    expect(screen.queryByText('100')).toBeNull();
+  });
+
   it('marks a lake-flows total as an upper reading', () => {
     assetExtra.fields = {
       supply_basis: 'classic_lake_flows',

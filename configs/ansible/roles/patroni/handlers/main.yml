@@ -1,11 +1,39 @@
 ---
+# Handlers run in this order. A guarded restart that refuses (exit 1) fails the
+# host and cancels every handler after it, so the markers come first and the
+# unguarded firewall reload runs before either restart. A marker is cleared
+# only by its restart succeeding; 03 and 06 re-notify from it on the next run.
+- name: mark the etcd restart pending
+  file:
+    path: /etc/default/.etcd-restart-pending
+    state: touch
+    mode: '0600'
+  listen: "etcd config changed"
+
+- name: mark the patroni restart pending
+  file:
+    path: /etc/patroni/.restart-pending
+    state: touch
+    mode: '0600'
+  listen: "patroni config changed"
+
+- name: reload firewall
+  systemd:
+    name: nftables
+    state: reloaded
+  listen: "firewall rules changed"
+
 # One member at a time, or etcd loses quorum while every member restarts.
 # throttle still runs the next member after one fails, so a healthy member
-# restarts only while every peer is healthy: a config etcd refuses to start
-# with then stops at the first member. An unhealthy one is restarted regardless.
+# restarts only while every peer is healthy. The probe uses the new TLS files,
+# scheme and port, so a member whose probe fails while its unit is active is
+# refused, not restarted: a bad TLS push then fails on every member instead of
+# restarting them all. Only a member whose unit is down is restarted regardless.
 - name: restart etcd
   shell: |
     set -eu
+    pending=/etc/default/.etcd-restart-pending
+    touch "$pending"
     health() {
       etcdctl --endpoints="$1" --dial-timeout=3s --command-timeout=5s \
         {% if etcd_tls_enabled %}--cacert={{ etcd_tls_dir }}/ca.pem --cert={{ etcd_tls_dir }}/server.pem --key={{ etcd_tls_dir }}/server-key.pem{% endif %} \
@@ -19,11 +47,17 @@
           exit 1
         fi
       done
+    elif systemctl is-active --quiet etcd; then
+      echo "refusing to restart etcd on {{ inventory_hostname }}: etcd is running but its health probe fails; check the new TLS material, scheme and port, or restart it by hand" >&2
+      exit 1
     fi
     systemctl daemon-reload
     systemctl restart etcd
     for _ in $(seq 30); do
-      if health "$self"; then exit 0; fi
+      if health "$self"; then
+        rm -f "$pending"
+        exit 0
+      fi
       sleep 2
     done
     echo "etcd on {{ inventory_hostname }} not healthy 60s after restart" >&2
@@ -35,12 +69,12 @@
 
 # Type=simple returns before postgres is back, so the wait lives in the same
 # task: throttle then holds the next member until this one is healthy.
-# A member that is not running (leader) or streaming (replica) is always
-# restarted, since that cannot cost the cluster anything. A live one needs every other member healthy
-# and a leader, and the leader hands the lock over first so a restart never
-# causes an uncontrolled failover.
-# A refused or failed restart leaves the pending marker, and 06 re-notifies from
-# it on the next run: Ansible drops a notification once its handler has run.
+# A live member (leader running, replica streaming) needs every other member
+# healthy and a leader, and the leader hands the lock over first so a restart
+# never causes an uncontrolled failover. A member mid base backup or start is
+# refused (a restart would cancel pg_basebackup), as is one whose API does not
+# answer while its unit is active (the probe address may be the new one).
+# Only a member that is stopped, crashed or whose unit is down is restarted regardless.
 - name: restart patroni
   shell: |
     set -eu
@@ -52,11 +86,15 @@
         --arg me "$me" --argjson lag {{ patroni_restart_max_lag_bytes | int }} '
         def live: if .role == "leader" then .state == "running" else .state == "streaming" end;
         def ok: live and (.role == "leader" or ((.lag | type) == "number" and .lag <= $lag));
+        def busy: (.state // "" | gsub("_"; " ")) as $s
+          | ["creating replica", "starting", "restarting", "stopping",
+             "running custom bootstrap script", "initializing new cluster"] | index([$s]) != null;
         '"$1" >/dev/null 2>&1
     }
     # /cluster lag is sampled once per loop_wait, so under write load a healthy
     # replica reads as lagging: lag gates a restart of the others, never this one.
     self_ok='any(.members[]; .name == $me and live)'
+    self_busy='any(.members[]; .name == $me and busy)'
     others_ok='([.members[] | select(.name != $me)] | length == {{ (groups["postgres_cluster"] | length) - 1 }} and all(ok))
       and any(.members[]; .role == "leader" and .state == "running")'
     self_leader='any(.members[]; .name == $me and .role == "leader")'
@@ -81,6 +119,12 @@
           exit 1
         fi
       fi
+    elif check "$self_busy"; then
+      echo "refusing to restart patroni on $me: a base backup or start is in progress; re-run once it is streaming" >&2
+      exit 1
+    elif ! check 'true' && systemctl is-active --quiet patroni; then
+      echo "refusing to restart patroni on $me: patroni is running but its REST API does not answer at {{ patroni_rest_connect_address }}; restart it by hand if that address changed" >&2
+      exit 1
     else
       echo "patroni on $me is not running or streaming; restarting it" >&2
     fi
@@ -96,9 +140,3 @@
     executable: /bin/bash
   throttle: 1
   listen: "patroni config changed"
-
-- name: reload firewall
-  systemd:
-    name: nftables
-    state: reloaded
-  listen: "firewall rules changed"

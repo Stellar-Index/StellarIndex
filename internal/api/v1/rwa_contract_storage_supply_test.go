@@ -120,11 +120,15 @@ func TestContractArmServesTheStorageFloorWhenTheLogIsProvablyPartial(t *testing.
 	if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != supply.BasisContractStorageBalances.String() {
 		t.Errorf("supply_basis = %v, want %q", rows[0].SupplyBasis, supply.BasisContractStorageBalances)
 	}
-	if rows[0].MarketCapUSD == nil || *rows[0].MarketCapUSD != "1010000.00" {
-		t.Fatalf("market_cap_usd = %v, want 1010000.00", rows[0].MarketCapUSD)
+	// /v1/assets/{id} builds no cap on held balances; the listing must not publish one the detail withholds.
+	if rows[0].MarketCapUSD != nil {
+		t.Fatalf("market_cap_usd = %q on a storage-balance floor the detail refuses", *rows[0].MarketCapUSD)
 	}
-	if !rows[0].MarketCapLowerBound {
-		t.Error("market_cap_lower_bound is false on a cap built from a floor supply")
+	if rows[0].MarketCapWithheldReason != MarketCapWithheldSupplyFloor {
+		t.Errorf("market_cap_withheld_reason = %q, want %q", rows[0].MarketCapWithheldReason, MarketCapWithheldSupplyFloor)
+	}
+	if v := rwaValuationOf(rows[0]); v.Status != RWAValuationCapWithheld || v.MarketCapUSD != nil {
+		t.Errorf("valuation = %+v, want %q with no market cap", v, RWAValuationCapWithheld)
 	}
 }
 

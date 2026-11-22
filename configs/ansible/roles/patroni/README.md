@@ -7,8 +7,8 @@ etcd as the DCS. Implements the topology pinned in
 - 1 primary + 2 synchronous replicas across `db-01` / `db-02` /
   `db-03`.
 - 3-node etcd quorum.
-- `synchronous_commit=remote_apply`,
-  `synchronous_standby_names='ANY 1 (db-02, db-03)'`.
+- `synchronous_commit=remote_apply`; Patroni's `synchronous_mode`
+  writes `synchronous_standby_names` itself.
 - Failover RTO target 60 s.
 
 This role is **stage 1** of a two-stage Postgres front
@@ -196,9 +196,10 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
   recommended productionising step.
 - **TimescaleDB CAGG / hypertable bootstrap** — handled by
   `cmd/stellarindex-migrate`, not this role.
-- **pgBackRest** — already partially in `archival-node` role's
-  postgres tasks; this role only invokes its `restore` mode for
-  DR bring-up.
+- **pgBackRest** — not installed by this role. `archive_command`
+  calls `archive-push` on every WAL segment, so preflight refuses a
+  host without the `pgbackrest` binary and its config, and 08 runs
+  `stanza-create` and `check` on the primary after bootstrap.
 
 ## See also
 

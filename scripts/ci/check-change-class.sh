@@ -71,7 +71,8 @@
 #                  its build or the web steps)
 #   ansible      — configs/ansible/**, configs/prometheus/**,
 #                  deploy/monitoring/** (clickhouse-exporter-test.sh reads
-#                  the latter two and only that job runs it)
+#                  the latter two and only that job runs it),
+#                  docs/operations/self-hosting.md (ansible-api-env-test.sh)
 #
 # Usage:
 #   git diff --name-only "$BASE" "$HEAD" | check-change-class.sh <class>
@@ -109,8 +110,9 @@ class_web() {
 class_ansible() {
   # configs/prometheus/** and deploy/monitoring/** are read by
   # clickhouse-exporter-test.sh, which only the ansible-check job runs —
-  # so a diff confined to either set must set ansible=true.
-  grep -E '^(configs/ansible/|configs/prometheus/|deploy/monitoring/)'
+  # so a diff confined to either set must set ansible=true. The self-host
+  # guide is read by ansible-api-env-test.sh, also run only there.
+  grep -E '^(configs/ansible/|configs/prometheus/|deploy/monitoring/)|^docs/operations/self-hosting\.md$'
 }
 
 usage() {

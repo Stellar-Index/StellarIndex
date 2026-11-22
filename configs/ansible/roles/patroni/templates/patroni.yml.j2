@@ -45,7 +45,9 @@ bootstrap:
         wal_level: replica
         hot_standby: 'on'
         synchronous_commit: remote_apply
-        synchronous_standby_names: 'ANY {{ patroni_synchronous_node_count }} ({% for h in groups['postgres_cluster'] if h != groups['postgres_cluster'][0] %}{{ h }}{% if not loop.last %},{% endif %}{% endfor %})'
+{# synchronous_standby_names is Patroni's to write (synchronous_mode); a
+   hand-written list of unquoted db-0N names does not parse, and Postgres
+   then refuses to start once synchronous_mode is off. #}
         max_connections: {{ patroni_postgres_max_connections }}
         max_replication_slots: 10
         max_wal_senders: 10

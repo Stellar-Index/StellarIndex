@@ -42,6 +42,9 @@ vrrp_instance VI_API {
     # multicast (224.0.0.18), which some cloud/VPC networks drop,
     # risking a dual-MASTER split brain on the shared VIP.
     unicast_src_ip {{ keepalived_unicast_src_ip }}
+    # auth_pass travels in clear in every advert, so it cannot tell a peer from
+    # any host that captured one: accept adverts from the listed peers only.
+    check_unicast_src
     unicast_peer {
 {% for peer in keepalived_unicast_peer_ips %}
         {{ peer }}

@@ -804,7 +804,7 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 **Fix.**
 
 1. Redis down: recovery path; the middleware self-heals on the first good read, alert clears about 10 min later.
-2. AUTH drift: re-sync `STELLARINDEX_REDIS_PASSWORD` in `/etc/default/stellarindex` to Redis's `requirepass` (ansible `redis_password`), then `systemctl restart stellarindex-api`.
+2. AUTH drift: re-sync `STELLARINDEX_REDIS_PASSWORD` in `/etc/default/stellarindex-api` (the API's only env file; it cannot read `/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`; re-running the archival-node role re-renders both files), then `systemctl restart stellarindex-api`.
 3. Eviction: counters must not be in an evictable class (Redis config fix).
 4. After recovery reconcile overage from the usage rollup, not this counter.
 5. Do NOT shorten the dwell time or silence while Redis is down.
@@ -899,7 +899,7 @@ ORDER BY ts DESC;
 **Fix.**
 
 1. Redis down: recovery path; the alert clears about 10 min after the last bypass.
-2. AUTH drift: re-sync `STELLARINDEX_REDIS_PASSWORD` in `/etc/default/stellarindex` to Redis's `requirepass` (ansible `redis_password`), then `systemctl restart stellarindex-api`.
+2. AUTH drift: re-sync `STELLARINDEX_REDIS_PASSWORD` in `/etc/default/stellarindex-api` (the API's only env file; it cannot read `/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`; re-running the archival-node role re-renders both files), then `systemctl restart stellarindex-api`.
 3. Abuse while open: block the source at the edge (see the shed-load step of [error_rate_critical](#stellarindex_api_error_rate_critical)).
 4. Do NOT remove the dwell window or silence while Redis is down.
 

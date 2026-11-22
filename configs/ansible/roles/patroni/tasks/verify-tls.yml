@@ -1,0 +1,19 @@
+---
+# Refuse TLS material that cannot work before it is copied: etcd reloads its
+# certificate files per handshake, so a mismatched key or a cert from another
+# CA breaks every member at once, restart or not. Vars: tls_label, tls_ca,
+# tls_cert, tls_key (PEM contents).
+- name: "verify {{ tls_label }} TLS material chains to the CA and matches its key"
+  shell: |
+    set -euo pipefail
+    umask 077
+    d=$(mktemp -d)
+    trap 'rm -rf "$d"' EXIT
+    awk -v d="$d" '/^--split--$/ { n++; next } { print > (d "/" n) }'
+    openssl verify -CAfile "$d/0" "$d/1" >/dev/null
+    [ "$(openssl x509 -in "$d/1" -noout -pubkey)" = "$(openssl pkey -in "$d/2" -pubout)" ]
+  args:
+    executable: /bin/bash
+    stdin: "{{ tls_ca | trim }}\n--split--\n{{ tls_cert | trim }}\n--split--\n{{ tls_key | trim }}"
+  changed_when: false
+  no_log: true
