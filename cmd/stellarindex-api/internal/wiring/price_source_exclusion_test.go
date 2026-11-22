@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -216,8 +218,10 @@ func TestGlobalPriceReader_SourceExclusion(t *testing.T) {
 	}
 
 	excl := reader(exclGateOver(exclRows{rows: krakenExcluded()}))
-	if v, _, _, _, ok, err := excl.LatestVWAP(ctx, base, quote); ok || err != nil {
-		t.Fatalf("excluded bucket served as headline %q (err %v)", v, err)
+	// Refused, not "no data": the error is what stops the headline's ungated on-chain fallback.
+	var held *aggregate.TierWithheldError
+	if v, _, _, _, ok, err := excl.LatestVWAP(ctx, base, quote); ok || !errors.As(err, &held) || held.Unread {
+		t.Fatalf("excluded bucket served as headline %q (err %v), want a source-excluded TierWithheldError", v, err)
 	}
 	rows, err := excl.LatestAggregatorPrices(ctx, base, quote, nil)
 	if err != nil || len(rows) != 1 || rows[0].Source != "coingecko" {
@@ -236,19 +240,21 @@ func TestGlobalPriceReader_SourceExclusion(t *testing.T) {
 	}{
 		{"survivors disagree", []canonical.OracleUpdate{aggAt("kraken", 1000), aggAt("coingecko", 100), aggAt("cmc", 1000)}, 0},
 		{"survivors agree", []canonical.OracleUpdate{aggAt("kraken", 100), aggAt("coingecko", 1000), aggAt("cmc", 1001)}, 2},
+		{"every source excluded", []canonical.OracleUpdate{aggAt("kraken", 100)}, 0},
 	} {
 		s := exclGlobalStore{exclPriceStore: store.exclPriceStore, agg: tc.agg}
 		g := GlobalPriceReader{S: s, PKPairFor: canonical.NewPair, Exclusions: exclGateOver(exclRows{rows: krakenExcluded()})}
-		if rows, err := g.LatestAggregatorPrices(ctx, base, quote, nil); err != nil || len(rows) != tc.want {
-			t.Errorf("%s: aggregator rows %v (err %v), want %d", tc.name, rows, err, tc.want)
+		rows, err := g.LatestAggregatorPrices(ctx, base, quote, nil)
+		if len(rows) != tc.want || (tc.want == 0) != errors.As(err, &held) || (tc.want > 0 && err != nil) {
+			t.Errorf("%s: aggregator rows %v (err %v), want %d and a TierWithheldError only when none", tc.name, rows, err, tc.want)
 		}
 	}
 
 	unread := reader(exclGateOver(exclRows{err: errors.New("db down")}))
-	if _, _, _, _, ok, _ := unread.LatestVWAP(ctx, base, quote); ok {
-		t.Fatal("unreadable set: headline VWAP served")
+	if _, _, _, _, ok, err := unread.LatestVWAP(ctx, base, quote); ok || !errors.As(err, &held) || !held.Unread {
+		t.Fatalf("unreadable set: headline VWAP served or not marked unread (err %v)", err)
 	}
-	if rows, _ := unread.LatestAggregatorPrices(ctx, base, quote, nil); len(rows) != 0 {
-		t.Fatalf("unreadable set: aggregator rows %v, want none", rows)
+	if rows, err := unread.LatestAggregatorPrices(ctx, base, quote, nil); len(rows) != 0 || !errors.As(err, &held) || !held.Unread {
+		t.Fatalf("unreadable set: aggregator rows %v (err %v), want none and an unread TierWithheldError", rows, err)
 	}
 }

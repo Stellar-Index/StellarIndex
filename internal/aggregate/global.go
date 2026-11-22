@@ -88,6 +88,30 @@ func DefaultGlobalPriceOptions() GlobalPriceOptions {
 // ErrNoPrice indicates none of the three tiers produced a price.
 var ErrNoPrice = errors.New("aggregate: no global price available")
 
+// TierWithheldError is returned by a [GlobalPriceReader] tier holding a price it may not serve under an operator source
+// exclusion (Unread: the exclusion set could not be read). The chain moves on; if no tier serves, [ComputeGlobalPrice] returns
+// it instead of [ErrNoPrice], so a caller cannot mistake a refusal for an absent market and fill from a lower, ungated source.
+type TierWithheldError struct{ Unread bool }
+
+func (e *TierWithheldError) Error() string {
+	if e.Unread {
+		return "aggregate: tier withheld: source exclusions unreadable"
+	}
+	return "aggregate: tier withheld: source excluded"
+}
+
+// absorbWithheld records a tier's [TierWithheldError] in held (unread outranks excluded) and reports whether err was one.
+func absorbWithheld(err error, held **TierWithheldError) bool {
+	var tw *TierWithheldError
+	if !errors.As(err, &tw) {
+		return false
+	}
+	if *held == nil || tw.Unread {
+		*held = tw
+	}
+	return true
+}
+
 // ComputeGlobalPrice walks vwap_native, aggregator_avg, triangulated, then a stale VWAP, returning [ErrNoPrice] if all are empty; reader errors other than not-found propagate.
 func ComputeGlobalPrice(
 	ctx context.Context,
@@ -99,8 +123,10 @@ func ComputeGlobalPrice(
 		return GlobalPriceResult{}, fmt.Errorf("aggregate: nil GlobalPriceReader")
 	}
 
+	var held *TierWithheldError
+
 	// Tier 1 — direct VWAP from prices_1m.
-	res, stale, err := tryVWAPTier(ctx, base, quote, reader, opts)
+	res, stale, err := tryVWAPTier(ctx, base, quote, reader, opts, &held)
 	if err != nil {
 		return GlobalPriceResult{}, err
 	}
@@ -109,14 +135,14 @@ func ComputeGlobalPrice(
 	}
 
 	// Tier 2 — average across aggregator-class sources.
-	if res, hit, err := tryAggregatorTier(ctx, base, quote, reader, opts); err != nil {
+	if res, hit, err := tryAggregatorTier(ctx, base, quote, reader, opts, &held); err != nil {
 		return GlobalPriceResult{}, err
 	} else if hit {
 		return res, nil
 	}
 
 	// Tier 3 — triangulated via bridge currency.
-	if res, hit, err := tryTriangulatedTier(ctx, base, quote, reader, opts); err != nil {
+	if res, hit, err := tryTriangulatedTier(ctx, base, quote, reader, opts, &held); err != nil {
 		return GlobalPriceResult{}, err
 	} else if hit {
 		return res, nil
@@ -124,6 +150,9 @@ func ComputeGlobalPrice(
 
 	if stale != nil {
 		return *stale, nil
+	}
+	if held != nil {
+		return GlobalPriceResult{}, held
 	}
 	return GlobalPriceResult{}, ErrNoPrice
 }
@@ -135,11 +164,15 @@ func tryVWAPTier(
 	base, quote canonical.Asset,
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
+	held **TierWithheldError,
 ) (fresh, stale *GlobalPriceResult, err error) {
 	// Loop the base's canonical aliases (XLM: native, crypto:XLM, SAC); the pair set may be configured under any form.
 	// The FIRST alias whose VWAP clears the trade-count floor wins.
 	for _, b := range assetAliases(base) {
 		vwap, asOf, tradeCount, sources, ok, err := reader.LatestVWAP(ctx, b, quote)
+		if absorbWithheld(err, held) {
+			continue
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("aggregate: VWAP lookup: %w", err)
 		}
@@ -174,6 +207,7 @@ func tryAggregatorTier(
 	base, quote canonical.Asset,
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
+	held **TierWithheldError,
 ) (GlobalPriceResult, bool, error) {
 	if len(opts.AggregatorSources) == 0 {
 		return GlobalPriceResult{}, false, nil
@@ -182,6 +216,9 @@ func tryAggregatorTier(
 	// so a thin Soroban pool can never shadow the deep classic/CEX feeds.
 	for _, b := range assetAliases(base) {
 		rows, err := reader.LatestAggregatorPrices(ctx, b, quote, opts.AggregatorSources)
+		if absorbWithheld(err, held) {
+			continue
+		}
 		if err != nil {
 			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: aggregator-prices lookup: %w", err)
 		}
@@ -218,11 +255,15 @@ func tryTriangulatedTier(
 	base, quote canonical.Asset,
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
+	held **TierWithheldError,
 ) (GlobalPriceResult, bool, error) {
 	// Same alias loop as the other tiers: the worker publishes each implied VWAP under one canonical form.
 	// The FIRST alias with a published path wins; the SAC form is tried last.
 	for _, b := range assetAliases(base) {
 		price, asOf, ok, err := reader.LookupTriangulated(ctx, b, quote, opts.TriangulationWindow)
+		if absorbWithheld(err, held) {
+			continue
+		}
 		if err != nil {
 			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: triangulation lookup: %w", err)
 		}

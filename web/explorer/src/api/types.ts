@@ -12688,6 +12688,11 @@ export interface components {
             /** @description USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead. */
             price_usd?: string | null;
             /**
+             * @description Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`), or the exclusion set could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline.
+             * @enum {string}
+             */
+            price_withheld_reason?: "source_excluded" | "unattributed";
+            /**
              * @description What produced `price_usd`. The first three are the tiers of the
              *     fallback chain, in trust order; each of the first two is held to
              *     a 10-minute freshness ceiling, and a VWAP past it is served (with

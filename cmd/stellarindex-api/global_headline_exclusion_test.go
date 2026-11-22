@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -50,8 +51,9 @@ func TestGlobalHeadlineTriangulatedTierFailsClosedOnExclusions(t *testing.T) {
 		reader, _ := headlineCacheFixture(t, base, quote, window, "0.00723", map[string]bool{})
 		reader.Exclusions = pricingguard.NewSourceExclusionGate(tc.table, pricingguard.SourceExclusionGateOptions{})
 		price, _, ok, err := reader.LookupTriangulated(context.Background(), base, quote, window)
-		if err != nil {
-			t.Fatalf("%s: LookupTriangulated: %v", tc.name, err)
+		var held *aggregate.TierWithheldError
+		if tc.serve == (err != nil) || (err != nil && !errors.As(err, &held)) {
+			t.Fatalf("%s: LookupTriangulated err %v, want a TierWithheldError exactly when withheld", tc.name, err)
 		}
 		if tc.serve != (ok && price == "0.00723") || (!tc.serve && price != "") {
 			t.Errorf("%s: tier 3 returned (%q, ok=%v), want served=%v", tc.name, price, ok, tc.serve)

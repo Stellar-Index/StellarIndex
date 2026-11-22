@@ -127,8 +127,8 @@ func (g GlobalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	if lowConfidence || substituted {
 		return "", time.Time{}, 0, nil, false, nil
 	}
-	if g.Exclusions.BucketWithholding(ctx, base, quote, served) != pricingguard.NotWithheld {
-		return "", time.Time{}, 0, nil, false, nil
+	if w := g.Exclusions.BucketWithholding(ctx, base, quote, served); w != pricingguard.NotWithheld {
+		return "", time.Time{}, 0, nil, false, tierWithheld(w)
 	}
 	// row.Bucket is the bucket's start; the closed-bucket contract (ADR-0015) serves its end.
 	asOf := served.Bucket.Add(time.Minute)
@@ -147,20 +147,28 @@ func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quo
 	// Each row is one source's own observation, so the tier is recomputed from the survivors.
 	kept := rows[:0:0]
 	for _, u := range rows {
-		switch g.Exclusions.InstantWithholding(ctx, base, quote, u.Source, u.Timestamp) {
+		switch w := g.Exclusions.InstantWithholding(ctx, base, quote, u.Source, u.Timestamp); w {
 		case pricingguard.NotWithheld:
 			kept = append(kept, u)
 		case pricingguard.WithheldSourceExcluded:
 		default:
-			return nil, nil
+			return nil, tierWithheld(w)
 		}
+	}
+	if len(kept) == 0 && len(rows) > 0 {
+		return nil, tierWithheld(pricingguard.WithheldSourceExcluded)
 	}
 	// The tier's outlier filter needs three sources; an exclusion that switched it off must not serve survivors the full set's
 	// band would have rejected.
 	if len(kept) < len(rows) && !aggregate.ExcludedSurvivorsAgree(rows, kept) {
-		return nil, nil
+		return nil, tierWithheld(pricingguard.WithheldSourceExcluded)
 	}
 	return kept, nil
+}
+
+// tierWithheld is the headline tiers' refusal under an exclusion: distinct from "no data", so no ungated fallback fills it.
+func tierWithheld(w pricingguard.Withholding) error {
+	return &aggregate.TierWithheldError{Unread: w == pricingguard.WithheldExclusionsUnread}
 }
 
 func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote canonical.Asset, window time.Duration) (string, time.Time, bool, error) {
@@ -180,8 +188,8 @@ func (g GlobalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 		return "", time.Time{}, false, err
 	}
 	// A triangulated value records neither sources nor legs; the last tier fails closed like the cache layer of /v1/price.
-	if g.Exclusions.MultiHopWithholding(ctx, v.ObservedAt.Add(-window), time.Now().Add(time.Nanosecond)) != pricingguard.NotWithheld {
-		return "", time.Time{}, false, nil
+	if w := g.Exclusions.MultiHopWithholding(ctx, v.ObservedAt.Add(-window), time.Now().Add(time.Nanosecond)); w != pricingguard.NotWithheld {
+		return "", time.Time{}, false, tierWithheld(w)
 	}
 	return v.Value, v.ObservedAt, true, nil
 }
