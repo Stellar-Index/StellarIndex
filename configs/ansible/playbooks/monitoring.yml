@@ -57,6 +57,9 @@
   hosts: prometheus_pair
   become: true
   gather_facts: true
+  # A task failure after a render must still run its restart or reload: the next
+  # run sees the file unchanged and never notifies again.
+  force_handlers: true
 
   roles:
     - prometheus

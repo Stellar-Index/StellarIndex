@@ -38,17 +38,8 @@
   no_log: true
   notify: "prometheus config changed"
 
-- name: remove the client password files when basic auth is unset
-  file:
-    path: "/etc/prometheus/{{ item.name }}"
-    state: absent
-  loop:
-    - { name: prometheus-client-password, hash: "{{ prometheus_basic_auth_password_hash }}" }
-    - { name: alertmanager-client-password, hash: "{{ alertmanager_basic_auth_password_hash }}" }
-  loop_control:
-    label: "{{ item.name }}"
-  when: item.hash | length == 0
-  notify: "prometheus config changed"
+# With basic auth unset the client password files stay too: the running process
+# still enforces auth, so the restart handlers' probe needs them until it restarts.
 
 - name: render /etc/prometheus/prometheus.yml
   template:
