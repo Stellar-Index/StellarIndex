@@ -292,7 +292,11 @@ What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`
   exclusion also withholds every cached direct price whose base is either of
   its legs, whatever the quote; a source-wide one withholds every
   cache-served price. Prefer the narrowest exclusion, and expect wide
-  withholding of default-quote prices regardless.
+  withholding of default-quote prices regardless. A cached value with no
+  provenance marker is judged as direct; production Redis pins
+  `maxmemory-policy noeviction`, so memory pressure never evicts a marker,
+  but the dev stack's `volatile-lru` can, and there a triangulated value may
+  be judged as direct.
 - **Delay**: each API process re-reads the table every 15 s; a failed read
   keeps the last good set for up to 60 s, then withholds every gated price.
   Worst case, healthy: `/v1/price`, batch, SEP-40, `/v1/vwap` and `/v1/twap`
