@@ -60,6 +60,10 @@ func (b *bufferedResponse) Header() http.Header         { return b.header }
 func (b *bufferedResponse) WriteHeader(status int)      { b.status = status }
 func (b *bufferedResponse) Write(p []byte) (int, error) { return b.body.Write(p) }
 
+// Flush is a deliberate no-op: http.ResponseController prefers the writer's own Flush over unwrapping, so a flush stops
+// at the buffer and cannot send headers past a hold.
+func (b *bufferedResponse) Flush() {}
+
 // markUnderReview returns the envelope with the hold marker added, or false
 // when the body is not an envelope or no hold covers it.
 func markUnderReview(list []holds.Hold, pathAsset string, body []byte) ([]byte, bool) {
