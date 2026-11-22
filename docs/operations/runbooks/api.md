@@ -802,7 +802,7 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 
 ## stellarindex_monthly_quota_fail_open
 
-**Trigger.** `sum(rate(stellarindex_monthly_quota_fail_open_total[5m])) > 0` for 10m, P3. `internal/api/v1/middleware/monthly_quota.go` fails open when the month-to-date counter read errors, so every metered key is uncapped; metering still records and overage cannot be reclaimed. The rate is requests/sec bypassing the cap (only keys with `monthly_quota > 0`). Write-side twin: [usage_write_failing](#stellarindex_usage_write_failing).
+**Trigger.** `sum(increase(stellarindex_monthly_quota_fail_open_total[1h])) > 10`, P3. `internal/api/v1/middleware/monthly_quota.go` fails open when the month-to-date counter read errors, for at most the 30s dwell per episode before it fails closed, so metered keys are uncapped in those windows; metering still records and overage cannot be reclaimed. The value is requests that bypassed the cap in the last hour (only keys with `monthly_quota > 0`). Write-side twin: [usage_write_failing](#stellarindex_usage_write_failing).
 
 **Check.**
 
@@ -812,7 +812,7 @@ Thousands at `failed_count = 1` is a fill; a few at `>= 10` is a grinder (contro
 
 **Fix.**
 
-1. Redis down: recovery path; the middleware self-heals on the first good read, alert clears about 10 min later.
+1. Redis down: recovery path; the middleware self-heals on the first good read, alert clears once the last bypass leaves the 1h window.
 2. AUTH drift: re-sync `STELLARINDEX_REDIS_PASSWORD` in `/etc/default/stellarindex-api` (the API's only env file; it cannot read `/etc/default/stellarindex`) to Redis's `requirepass` (ansible `redis_password`; re-running the archival-node role re-renders both files), then `systemctl restart stellarindex-api`.
 3. Eviction: counters must not be in an evictable class (Redis config fix).
 4. After recovery reconcile overage from the usage rollup, not this counter.

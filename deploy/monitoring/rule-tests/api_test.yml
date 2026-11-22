@@ -26,14 +26,16 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── sustained fail-open tickets ──────────────────────────
-  # The month-to-date read has been erroring continuously: one bypassed
-  # request per minute for an hour. Every metered key is uncapped.
+  # ── sub-dwell fail-open bursts ticket ────────────────────
+  # The shape the gate actually produces: each Redis error burst fails open
+  # for under the 30s dwell (here 20 bypassed requests), then reads recover,
+  # and the next burst is more than 5m later. A `rate > 0 for: 10m` rule
+  # never sees 10 continuous minutes of this, so it must be a windowed count.
   - interval: 1m
-    name: a sustained monthly-quota fail-open tickets
+    name: spaced sub-dwell monthly-quota fail-open bursts ticket
     input_series:
       - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
-        values: '0+1x60'
+        values: '0 0 0 0 0 20x19 40x19 60x20'
 
     alert_rule_test:
       - eval_time: 30m
@@ -45,14 +47,15 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_monthly_quota_fail_open
-              summary: "Monthly quota ceiling is FAILING OPEN (16.67m req/s bypassing the cap)"
+              summary: "Monthly quota ceiling FAILED OPEN (40 requests bypassed the cap in the last hour)"
               description: |
                 The per-key monthly request quota could not be read from its
-                backing store and the requests were served anyway, continuously
-                for the last 10 minutes. Every metered key is currently
-                uncapped: usage still meters (so the customer is still billed)
-                but the agreed ceiling is not enforced, and any overage served
-                in this window is unrecoverable.
+                backing store and more than 10 requests in the last hour were
+                served anyway. Each episode lasts at most the 30s dwell before
+                the gate fails closed, so repeated short Redis errors add up
+                here. While open, metered keys are uncapped: usage still meters
+                (so the customer is still billed) but the agreed ceiling is not
+                enforced, and any overage served is unrecoverable.
 
                 Normally moves together with the Redis readyz probe and with
                 stellarindex_ratelimit_fail_open — the two share a backing
@@ -76,14 +79,12 @@ tests:
         exp_alerts: []
 
   # ── a single blip is absorbed ────────────────────────────
-  # One bypassed request during a Redis failover, then clean. The 10m
-  # `for:` is what makes this a non-event; without it every failover
-  # would ticket.
+  # One bypassed request during a Redis failover, then clean. The > 10
+  # bar is what makes this a non-event.
   - interval: 1m
     name: a single quota-read blip does not ticket
     input_series:
-      # +1 at minute 5, flat thereafter. rate() decays to 0 well before
-      # the 10m `for:` can be satisfied continuously.
+      # +1 at minute 5, flat thereafter.
       - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
         values: '0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
 

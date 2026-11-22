@@ -607,26 +607,28 @@ groups:
       # The monthly-quota middleware fails OPEN on a backing-store error (the
       # cap is billing fairness, not a security boundary, so a Redis blip must
       # not 429 paying customers). Revenue-side twin of
-      # stellarindex_ratelimit_fail_open, shaped identically, but the exposure
-      # is MONEY: while open, a metered key bills past its cap and the overage
-      # cannot be reclaimed.
+      # stellarindex_ratelimit_fail_open: fail-open is capped at the same 30s
+      # dwell (DefaultMonthlyQuotaDwellTime), so a `rate > 0 for: 10m` form
+      # never fires on spaced sub-dwell bursts. A count instead, over 1h and a
+      # low bar because the exposure is MONEY: overage cannot be reclaimed.
       - alert: stellarindex_monthly_quota_fail_open
-        expr: sum(rate(stellarindex_monthly_quota_fail_open_total[5m])) > 0
-        for: 10m
+        expr: sum(increase(stellarindex_monthly_quota_fail_open_total[1h])) > 10
+        for: 0m
         labels:
           severity: ticket
           team: stellarindex
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_monthly_quota_fail_open
-          summary: "Monthly quota ceiling is FAILING OPEN ({{ $value | humanize }} req/s bypassing the cap)"
+          summary: "Monthly quota ceiling FAILED OPEN ({{ $value | humanize }} requests bypassed the cap in the last hour)"
           description: |
             The per-key monthly request quota could not be read from its
-            backing store and the requests were served anyway, continuously
-            for the last 10 minutes. Every metered key is currently
-            uncapped: usage still meters (so the customer is still billed)
-            but the agreed ceiling is not enforced, and any overage served
-            in this window is unrecoverable.
+            backing store and more than 10 requests in the last hour were
+            served anyway. Each episode lasts at most the 30s dwell before
+            the gate fails closed, so repeated short Redis errors add up
+            here. While open, metered keys are uncapped: usage still meters
+            (so the customer is still billed) but the agreed ceiling is not
+            enforced, and any overage served is unrecoverable.
 
             Normally moves together with the Redis readyz probe and with
             stellarindex_ratelimit_fail_open — the two share a backing
