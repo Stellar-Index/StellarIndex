@@ -49,6 +49,11 @@ export function unwrapChangeSummary(raw: unknown): ChangeSummary | null {
   return maybe.entity_id != null ? (raw as ChangeSummary) : null;
 }
 
+/** True for an apiGet error carrying the price-withheld problem type. */
+export function isPriceWithheldError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes('/price-withheld]');
+}
+
 /**
  * buildChangeWindows — the canonical 1h/24h/7d/30d strip from a
  * change-summary row. Windows the worker hasn't computed stay null so
@@ -84,6 +89,9 @@ export function ChangeSummaryStrip({
   className?: string;
 }) {
   const q = useChangeSummary('coin', assetID);
+  // A failed refetch (a price-withheld 404 included) keeps the last good
+  // `data`; showing it would keep moves and a USD low for a refused price.
+  if (q.isError) return null;
   const summary = unwrapChangeSummary(q.data);
   if (!summary) return null;
 

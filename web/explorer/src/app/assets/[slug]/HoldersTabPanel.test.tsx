@@ -67,7 +67,13 @@ describe('HoldersTabPanel', () => {
     );
     // 9,915,982 holders → shared formatCompact (maximumFractionDigits: 2)
     // renders "9.92M" in the panel title.
-    expect(screen.getByText(/Holders \(9\.92M\)/)).toBeInTheDocument();
+    // An accounts-only board: titled as such, naming what it leaves out.
+    expect(screen.getByText(/^Account holders \(9\.92M\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /top 100 accounts by balance · contract \(SAC\) balances not counted/,
+      ),
+    ).toBeInTheDocument();
   });
 
   it('does NOT blame the trustline backfill for an empty native board', async () => {

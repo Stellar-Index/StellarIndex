@@ -45,6 +45,9 @@ type HoldersResp = NonNullable<
  * window; full once the Phase-C backfill lands.
  */
 
+/** What the board leaves out: it ranks account balances only (types.ts). */
+export const HOLDER_BOARD_EXCLUDES = 'contract (SAC) balances not counted';
+
 /** The asset_id spellings that serve the native XLM (account-balance) board. */
 function isNativeAssetID(assetID: string): boolean {
   return (
@@ -84,10 +87,14 @@ export function HoldersTabPanel({
       headingLevel={2}
       title={
         data && (data.holder_count ?? 0) > 0
-          ? `Holders (${formatCompact(data.holder_count ?? 0)})`
+          ? `Account holders (${formatCompact(data.holder_count ?? 0)})`
           : 'Holders'
       }
-      hint={holders.length > 0 ? 'top 100 by balance' : undefined}
+      hint={
+        holders.length > 0
+          ? `top 100 accounts by balance · ${HOLDER_BOARD_EXCLUDES}`
+          : undefined
+      }
       source={source}
       bodyClassName="-mx-4"
     >

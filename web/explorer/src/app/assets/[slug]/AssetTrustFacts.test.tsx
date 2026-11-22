@@ -65,7 +65,14 @@ describe('AssetTrustFacts', () => {
       } as never;
     });
     renderFacts({ scamReason: 'impersonation' });
-    await waitFor(() => expect(screen.getByText('1,234')).toBeTruthy());
+    // The board counts accounts only and says what it leaves out.
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          '1,234 accounts · contract (SAC) balances not counted',
+        ),
+      ).toBeTruthy(),
+    );
     expect(screen.getByText(/created at ledger #1,000/)).toBeTruthy();
     expect(screen.getByText('on: auth_revocable')).toBeTruthy();
     expect(screen.getByText(/flagged: impersonation/)).toBeTruthy();
