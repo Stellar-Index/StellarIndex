@@ -87,6 +87,16 @@ func TestRWAFundNAV_BarredSourceNeverServed(t *testing.T) {
 	if b.Reference != nil && b.Reference.Source == tiingo.SourceName {
 		t.Errorf("barred NAV with no lower arm served: %+v", b.Reference)
 	}
+
+	// Barred from the wire, not from the cross-check: the NAV still flags an oracle figure it contradicts.
+	bindFundNAV(t, "BENJI", benjiFTIss, "FTXXX")
+	cross := fundNAVSnap(t, tiingoRow(t, "FTXXX", 1_000_000, fundNAVNow.Add(-22*time.Hour)))
+	cross.byFeed["BENJI"] = rwaReference{priceUSD: big.NewRat(102, 100), wire: "1.020000", source: "redstone", feed: "rwa:BENJI", asOf: fundNAVNow.Add(-time.Hour)}
+	o := fundNAVAsset("BENJI", benjiFTIss)
+	rwaApplyReference(o, cross, nil, listingAnswered(nil), fundNAVNow)
+	if o.Reference == nil || o.Reference.Source == tiingo.SourceName || !o.Reference.NAVDisagreement {
+		t.Errorf("oracle 1.02 beside a barred NAV of 1.00: %+v, want the oracle figure served with nav_disagreement", o.Reference)
+	}
 }
 
 // The fund arm sits below the oracle arm and above the listing and

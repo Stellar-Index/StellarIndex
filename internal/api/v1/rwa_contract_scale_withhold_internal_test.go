@@ -9,6 +9,9 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -35,9 +38,13 @@ func TestRWAContractListingRows_LateScaleContradictionWithholdsPrice(t *testing.
 				},
 				logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
+			before := scaleMismatchCount()
 			out, _, err := s.rwaContractListingRows(t.Context(), []rwaContractMember{{contractID: id}})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if n := scaleMismatchCount() - before; n != 1 {
+				t.Errorf("decimals mismatch counted %v times, want exactly once for one contradicted row", n)
 			}
 			got := out[id]
 			if got.Decimals != 6 {
@@ -51,6 +58,12 @@ func TestRWAContractListingRows_LateScaleContradictionWithholdsPrice(t *testing.
 			}
 		})
 	}
+}
+
+// scaleMismatchCount sums the decimals-mismatch counter over the two sites a contract row's contradiction can be counted at.
+func scaleMismatchCount() float64 {
+	return testutil.ToFloat64(obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_listing", "")) +
+		testutil.ToFloat64(obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("rwa_contract", ""))
 }
 
 func ptrStr(p *string) string {
