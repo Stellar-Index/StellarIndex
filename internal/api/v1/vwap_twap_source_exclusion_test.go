@@ -28,7 +28,7 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 		return pricingguard.NewSourceExclusionGate(e, pricingguard.SourceExclusionGateOptions{})
 	}
 	newSrv := func(g v1.PriceExclusionGate, trades ...canonical.Trade) *v1.Server {
-		return v1.New(v1.Options{History: &stubHistoryReader{trades: trades}, Exclusions: g})
+		return v1.New(v1.Options{History: &stubHistoryReader{trades: trades}, Exclusions: g, USDPeggedClassics: []canonical.Asset{usdc}})
 	}
 	strip := func(s string) string { return exclAsOf.ReplaceAllString(s, "") }
 	for _, path := range []string{"/v1/vwap?base=native&quote=" + exclUSDC, "/v1/twap?base=native&quote=" + exclUSDC} {
@@ -51,6 +51,23 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 		unread := gate(exclTable{err: errors.New("db down")})
 		if status, body := exclGet(t, newSrv(unread, soroswap, sdex), path); status != http.StatusNotFound || !strings.Contains(body, `"unattributed"`) {
 			t.Fatalf("%s: exclusions unread %d %s, want a withheld 404 (no-store), never a price", path, status, body)
+		}
+	}
+
+	// A fiat-quoted window pools the stablecoin books, so an exclusion stored under the requested pair drops the source's trades
+	// on every pooled book, not only on a book literally named native/fiat:USD.
+	for _, path := range []string{"/v1/vwap?base=native&quote=fiat:USD", "/v1/twap?base=native&quote=fiat:USD"} {
+		status, baseline := exclGet(t, newSrv(nil, soroswap, sdex), path)
+		if status != http.StatusOK {
+			t.Fatalf("%s: ungated %d %s, want 200", path, status, baseline)
+		}
+		if _, clean := exclGet(t, newSrv(gate(exclTable{}), soroswap, sdex), path); strip(clean) != strip(baseline) {
+			t.Fatalf("%s: no exclusions %s, want the ungated body %s", path, clean, baseline)
+		}
+		_, soroswapOnly := exclGet(t, newSrv(nil, soroswap), path)
+		fiatScoped := gate(exclTable{rows: []timescale.SourceExclusion{{ID: 1, Source: "sdex", Base: "native", Quote: "fiat:USD", From: from}}})
+		if status, body := exclGet(t, newSrv(fiatScoped, soroswap, sdex), path); status != http.StatusOK || strip(body) != strip(soroswapOnly) {
+			t.Fatalf("%s: sdex excluded on the fiat pair %d %s, want exactly the soroswap-only answer %s", path, status, body, soroswapOnly)
 		}
 	}
 }

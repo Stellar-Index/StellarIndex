@@ -152,6 +152,40 @@ func exclRedisLayerCase(t *testing.T, quote, path string, direct bool) {
 	}
 }
 
+// TestPriceSourceExclusion_PegWalkJudgedUnderRequestedPair: native/fiat:USD with no cached value is answered from the
+// native/USDC bucket, so an exclusion stored under native/fiat:USD withholds that bucket's sources too (one stored under the
+// book is the reader's own LatestPrice gate).
+func TestPriceSourceExclusion_PegWalkJudgedUnderRequestedPair(t *testing.T) {
+	usdc, _ := canonical.ParseAsset(exclUSDC)
+	key := "native/" + exclUSDC
+	newSrv := func(g v1.PriceExclusionGate) *v1.Server {
+		reader := &stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{key: {
+				AssetID: "native", Quote: exclUSDC, Price: "0.2468", PriceType: "vwap",
+				ObservedAt: v1.WireTime(time.Now().UTC().Truncate(time.Minute)), WindowSeconds: 60,
+			}},
+			sources: map[string][]string{key: {"sdex"}},
+		}
+		return v1.New(v1.Options{Prices: reader, Exclusions: g, USDPeggedClassics: []canonical.Asset{usdc}})
+	}
+	gate := func(rows ...timescale.SourceExclusion) v1.PriceExclusionGate {
+		return pricingguard.NewSourceExclusionGate(exclTable{rows: rows}, pricingguard.SourceExclusionGateOptions{})
+	}
+	from := time.Now().Add(-time.Hour)
+	const path = "/v1/price?asset=native&quote=fiat:USD"
+	_, baseline := exclGet(t, newSrv(nil), path)
+	for _, tc := range []exclCase{
+		{name: "no exclusions", gate: gate()},
+		{name: "another source on the fiat pair", gate: gate(timescale.SourceExclusion{ID: 1, Source: "soroswap", Base: "native", Quote: "fiat:USD", From: from})},
+		{name: "fiat pair", withheld: "source_excluded", gate: gate(timescale.SourceExclusion{ID: 1, Source: "sdex", Base: "native", Quote: "fiat:USD", From: from})},
+		{name: "fiat pair under the crypto:XLM alias", withheld: "source_excluded", gate: gate(timescale.SourceExclusion{ID: 1, Source: "sdex", Base: "crypto:XLM", Quote: "fiat:USD", From: from})},
+		{name: "unreadable", withheld: "unattributed", gate: pricingguard.NewSourceExclusionGate(exclTable{err: errors.New("db down")}, pricingguard.SourceExclusionGateOptions{})},
+	} {
+		status, body := exclGet(t, newSrv(tc.gate), path)
+		wantExclVerdict(t, tc, status, body, "0.2468", baseline)
+	}
+}
+
 // TestPriceSourceExclusion_PivotLegOfTriangulatedValue: a triangulated AQUA/USD cache value can route AQUA/XLM x XLM/USDC, and
 // its legs are not recorded, so an exclusion on the XLM/USDC leg withholds it; a direct AQUA value keeps the pair/base rule.
 func TestPriceSourceExclusion_PivotLegOfTriangulatedValue(t *testing.T) {

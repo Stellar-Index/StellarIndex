@@ -1573,6 +1573,11 @@ func (s *Server) walkUSDPegs(
 		case lerr != nil:
 			return PriceSnapshot{}, nil, false, "", lerr
 		}
+		// The reader judged the peg book; an exclusion stored under the requested fiat pair names no book.
+		if w := s.pegBucketWithheld(ctx, asset, quote, snap, srcs); w != pricingguard.NotWithheld {
+			withheld = walkWithheldReason(withheld, PriceWithheldError(w))
+			continue
+		}
 		// LatestPrice returns the RAW asset/<peg> ratio; this is the SINGLE place the proxy tier
 		// is decimals-corrected, against the ACTUAL legs (asset, peg), NOT the requested fiat:USD.
 		s.normalizeRawPriceSnapshot(&snap, asset, peg)
