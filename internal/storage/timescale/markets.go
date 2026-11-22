@@ -214,7 +214,9 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
             COALESCE(bool_or(r.sum_base_unpriced IS NOT NULL)
                      FILTER (WHERE ` + pools24hWholeHoursSQL + `), false) AS vol_lower_bound,
             -- One spelling's hourly buckets close in distinct hours, so bucket_last_ts cannot tie here.
-            last(r.bucket_last_price, r.bucket_last_ts) AS last_price
+            -- A bucket of only zero-leg trades has a NULL price but a ts; skip it for the venue's latest price.
+            last(r.bucket_last_price, r.bucket_last_ts)
+              FILTER (WHERE r.bucket_last_price IS NOT NULL) AS last_price
             FROM pools_per_source_1h r
            WHERE r.bucket >= $1` + rawFilter + `
            GROUP BY r.source, r.base_asset, r.quote_asset
@@ -256,7 +258,8 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
             bool_or(p.vol_lower_bound) AS vol_lower_bound,
             -- Two spellings folded into one market can close a bucket in the same ledger, so their
             -- timestamps tie; the higher close breaks it, or the pick would vary per query.
-            (array_agg(p.last_price ORDER BY p.last_trade_at DESC, p.last_price DESC NULLS LAST))[1]::text AS last_price
+            (array_agg(p.last_price ORDER BY p.last_trade_at DESC, p.last_price DESC)
+               FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
           FROM (
             SELECT r.source, r.last_trade_at, r.count_24h, r.vol_24h_usd, r.vol_lower_bound, r.last_price,
                    COALESCE(bf.canon, r.base_asset)  AS base_asset,

@@ -245,8 +245,8 @@ func TestListingLastPrice_TrailingDayOnly(t *testing.T) {
 		if strings.Contains(fold(pools), marketsBound) || strings.Contains(fold(pools), bucketBound) {
 			t.Errorf("order %v: /v1/pools last_price is bounded to 24h; its contract is the venue's most recent price", order)
 		}
-		if !strings.Contains(fold(pools), "last(r.bucket_last_price, r.bucket_last_ts) AS last_price") {
-			t.Errorf("order %v: /v1/pools no longer reads the venue's newest price", order)
+		if !strings.Contains(fold(pools), "last(r.bucket_last_price, r.bucket_last_ts) FILTER (WHERE r.bucket_last_price IS NOT NULL) AS last_price") {
+			t.Errorf("order %v: /v1/pools no longer reads the venue's newest priced close", order)
 		}
 	}
 }

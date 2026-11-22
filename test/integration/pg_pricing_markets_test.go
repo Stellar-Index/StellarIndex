@@ -1859,3 +1859,54 @@ func TestPoolsLastPriceTieIsDeterministic(t *testing.T) {
 		t.Fatalf("saw %d of the 2 folded pools in %d rows", seen, len(pools))
 	}
 }
+
+// TestPoolsLastPriceSkipsZeroLegBucket: a venue's newest hourly bucket holding only zero-leg trades has a
+// NULL price; /v1/pools keeps the venue's latest priced close, for one spelling and across folded spellings.
+func TestPoolsLastPriceSkipsZeroLegBucket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	const (
+		usdc   = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		xlmSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	)
+	hour := time.Now().UTC().Truncate(time.Hour)
+	priced, dust := hour.Add(-2*time.Hour+5*time.Minute), hour.Add(-time.Hour+5*time.Minute)
+	// aquarius: one spelling, priced bucket then a newer dust-only bucket.
+	seedGrainTrade(t, ctx, db, 910, "aquarius", priced, "native", usdc, "10", "2", "2")
+	seedGrainTrade(t, ctx, db, 911, "aquarius", dust, "native", usdc, "10", "0", "0")
+	// phoenix: the SAC spelling's newer bucket is dust-only, the native spelling's older one is priced.
+	seedGrainTrade(t, ctx, db, 912, "phoenix", priced, "native", usdc, "10", "2", "2")
+	seedGrainTrade(t, ctx, db, 913, "phoenix", dust, xlmSAC, usdc, "10", "0", "0")
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh pools_per_source_1h: %v", err)
+	}
+
+	pools, _, err := store.AllPools(ctx, timescale.PoolsFilter{}, "", 100, timescale.MarketsOrderPair)
+	if err != nil {
+		t.Fatalf("AllPools: %v", err)
+	}
+	seen := 0
+	for _, p := range pools {
+		if p.Source != "aquarius" && p.Source != "phoenix" {
+			continue
+		}
+		seen++
+		if p.LastPrice == nil || numeric(t, p.LastPrice) != 0.2 {
+			t.Errorf("%s last_price = %v, want 0.2 (the latest priced close, not the dust bucket's NULL)", p.Source, p.LastPrice)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("saw %d of the 2 pools in %d rows", seen, len(pools))
+	}
+}
