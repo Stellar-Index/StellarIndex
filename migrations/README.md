@@ -542,7 +542,8 @@ rejects a row that is not.
 | 0232 | Restores `pools_per_source_1h` to real-time aggregation (0187 recreated it materialized-only and left the restore to an operator comment, so a fresh install served pools without the current hour). Runs only when the view's watermark is within 6 hours of now or `trades` is empty, so a stale view is never flipped into scanning raw `trades`; otherwise it raises a NOTICE and the operator refreshes first. Catalog-only flag change, no data rewritten; the down sets it back to materialized-only. |
 | 0233 | Makes `fx_fixings` append-only in the database: a BEFORE trigger refuses UPDATE, DELETE and TRUNCATE (corrections are new rows at a higher generation; the writer's `ON CONFLICT DO NOTHING` insert is unaffected). Also comments `ingested_at` as the API cache's delta-load predicate, which 0193's header denied. Catalog-only; compressed chunks stay compressed; the down drops the triggers. |
 | 0234 | Corrects the `aquarius_rewards_events` table comment to the 12 kinds the CHECK admits, noting `config_rewards` rows carry the router, not a pool, as `contract_id`. COMMENT only. |
-
+| 0235 | Adds `customer_webhooks_one_current_key`: the current signing key is raw (`secret_hash`) or sealed (`signing_key_sealed`), never both. First clears `secret_hash` on any row holding both, keeping the sealed key every reader already signs with; idempotent, writes nothing in clear. NOT VALID then VALIDATE on a small table. |
+| 0236 | Adds `nonstandard_decimals_assets_decimals_max` (`decimals <= 38`), the lake reader's ceiling, so a hand-seeded value cannot scale served prices by an arbitrary power of ten. NOT VALID then VALIDATE; a row already above 38 stops the migration for an operator to correct. |
 ## References
 
 - [ADR-0003 i128 no-truncation](../docs/adr/0003-i128-no-truncation.md)
