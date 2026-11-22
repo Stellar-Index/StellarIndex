@@ -27,7 +27,7 @@ func (s *Server) underReview(h http.HandlerFunc) http.HandlerFunc {
 		// The handler writes the live header map, so its Add/Set compose with
 		// what outer middleware already set (CORS's Vary: Origin) exactly as
 		// on the unbuffered path; only the body and status are held back.
-		rec := &bufferedResponse{header: w.Header(), status: http.StatusOK}
+		rec := &bufferedResponse{outer: w, header: w.Header(), status: http.StatusOK}
 		h(rec, r)
 		body := rec.body.Bytes()
 		if rec.status == http.StatusOK {
@@ -48,11 +48,14 @@ func (s *Server) underReview(h http.HandlerFunc) http.HandlerFunc {
 }
 
 type bufferedResponse struct {
+	outer  http.ResponseWriter
 	header http.Header
 	status int
 	body   bytes.Buffer
 }
 
+// Unwrap lets obs.MarkResponseFlags reach the metrics recorder, so a degraded or stale response is still counted.
+func (b *bufferedResponse) Unwrap() http.ResponseWriter { return b.outer }
 func (b *bufferedResponse) Header() http.Header         { return b.header }
 func (b *bufferedResponse) WriteHeader(status int)      { b.status = status }
 func (b *bufferedResponse) Write(p []byte) (int, error) { return b.body.Write(p) }

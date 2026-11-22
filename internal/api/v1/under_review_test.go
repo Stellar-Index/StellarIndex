@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 const holdTestContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
@@ -101,6 +104,27 @@ func TestUnderReviewKeepsHoldOnInvalidFile(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if !marked(holdGet(t, s)) {
 		t.Fatal("invalid file lifted the hold")
+	}
+}
+
+// A loaded hold buffers every response on the wrapped routes; a degraded one must still reach the flagged-response
+// counter that stellarindex_api_degraded_responses_high divides by request volume.
+func TestUnderReviewKeepsDegradedResponsesCounted(t *testing.T) {
+	s := &Server{}
+	s.SetHolds([]holds.Hold{{Asset: "native", Reason: "r"}})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.underReview(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"asset_id": holdTestContract}, Flags{Degraded: true})
+	}))
+	counter := obs.APIFlaggedResponsesTotal.WithLabelValues("/v1/assets/{asset_id}/supply", "degraded")
+	before := testutil.ToFloat64(counter)
+	rec := httptest.NewRecorder()
+	obs.HTTPMetrics(mux).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/"+holdTestContract+"/supply", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 1 {
+		t.Fatalf("degraded responses counted under a hold = %v, want 1", got)
 	}
 }
 
