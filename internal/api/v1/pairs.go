@@ -109,6 +109,9 @@ func (s *Server) pairMarketWithAliases(
 		}
 		// Scam gate and decimals resolve against the spelling that produced the row.
 		market.LastPrice = s.adjustListingPrice(ctx, sp.stored.Base, sp.stored.Quote, market.LastPrice, "pairs")
+		if err := ctx.Err(); err != nil {
+			return Market{}, false, err // the scam gate fails open on a dead context
+		}
 		if !found {
 			out, lead, found = market, sp.folded, true
 			out.Base, out.Quote = sp.folded.Base.String(), sp.folded.Quote.String()

@@ -519,12 +519,21 @@ func rwaApplyReference(
 	case !rwaPremiumWithinReference(market, ref.priceUSD):
 		a.Premium = RWAPremium{Status: RWAPremiumMarketOutsideBand}
 	default:
-		pct := new(big.Rat).Sub(market, ref.priceUSD)
-		pct.Quo(pct, ref.priceUSD)
-		pct.Mul(pct, big.NewRat(100, 1))
-		s := pct.FloatString(4)
+		s := rwaPremiumPct(market, ref.priceUSD)
 		a.Premium = RWAPremium{Status: RWAPremiumPublished, Pct: &s}
 	}
+}
+
+// rwaPremiumPct is (market − ref) / ref × 100 at 4 dp, the one rounding /v1/rwa/assets and /v1/rwa/premium share. ref must be
+// positive. A value that rounds to zero is "0.0000": FloatString keeps the sign of a tiny negative.
+func rwaPremiumPct(market, ref *big.Rat) string {
+	pct := new(big.Rat).Sub(market, ref)
+	pct.Quo(pct, ref)
+	pct.Mul(pct, big.NewRat(100, 1))
+	if s := pct.FloatString(4); s != "-0.0000" {
+		return s
+	}
+	return "0.0000"
 }
 
 // rwaPremiumWithinReference reports whether a market price may carry a premium against the published value `ref`: it must
@@ -708,7 +717,8 @@ func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bo
 		return false
 	}
 	nav, ok := snap.fundNAV[ticker]
-	if !ok {
+	// A barred NAV may still raise the disagreement flag, but its figure never reaches the wire.
+	if !ok || external.RedistributionBarred(nav.source) {
 		return false
 	}
 	if now.Sub(nav.asOf) > rwaFundNAVMaxAge {

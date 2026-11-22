@@ -267,6 +267,9 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
 	}
+	if listingGateExpired(pCtx, w, r, "pools-timeout", "Pools query timed out") {
+		return
+	}
 	env := Envelope{Data: rows, Flags: Flags{Stale: stale, Degraded: stale}}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
@@ -478,6 +481,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// Same dex-nonstandard-decimals normalization as handlePools.
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(mCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "markets")
+	}
+	if listingGateExpired(mCtx, w, r, "markets-timeout", "Markets query timed out") {
+		return
 	}
 
 	// Opt-in enrichment, default off to avoid ~50KB of sparkline per page.
@@ -741,6 +747,22 @@ func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.A
 	}
 	adjusted := ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
 	return &adjusted
+}
+
+// listingGateExpired answers the retryable timeout problem (true) when ctx died while the listing's scam gate ran: the gate
+// fails open on a dead context, so a page it could not finish gating is never served as a clean 200.
+func listingGateExpired(ctx context.Context, w http.ResponseWriter, r *http.Request, problem, title string) bool {
+	err := ctx.Err()
+	if err == nil {
+		return false
+	}
+	if clientAborted(r, err) {
+		return true
+	}
+	handlerTimedOut(ctx, err)
+	writeProblem(w, r, "https://api.stellarindex.io/errors/"+problem, title, http.StatusServiceUnavailable,
+		"the scam-issuer price gate did not finish inside the 8s budget. Retry in a few seconds.")
+	return true
 }
 
 // adjustListingPriceStrings is [Server.adjustListingPrice] for wire-shape base/quote strings; a parse failure fails open (lastPrice
