@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
@@ -113,6 +115,61 @@ func TestCreate_RefusesMintBeyondMaxDepth(t *testing.T) {
 	}
 	if _, _, err := f.store.Create(context.Background(), ChildKeyRequest(sub, "", nil)); !errors.Is(err, ErrMintExceedsCaller) {
 		t.Fatalf("Create beyond depth %d: err = %v, want ErrMintExceedsCaller", MaxDelegationDepth, err)
+	}
+}
+
+// Using a child slides its ancestors' idle windows too, on both validators, so an unused middle key cannot age
+// out from under a child in daily use.
+func TestLookup_ChildUseKeepsAncestorsAlive(t *testing.T) {
+	const day = 24 * time.Hour
+	for name, use := range map[string]func(f *lineageFixture, plain string) error{
+		"redis validator": func(f *lineageFixture, plain string) error {
+			_, err := f.validator.Lookup(context.Background(), plain)
+			return err
+		},
+		"postgres validator canonical hit": func(f *lineageFixture, plain string) error {
+			v := &PostgresAPIKeyValidator{cache: f.rdb, now: time.Now, cacheTTL: time.Hour}
+			_, hit, err := v.cacheLookup(context.Background(), hashAPIKey(plain))
+			if err == nil && !hit {
+				err = errors.New("no cache hit")
+			}
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLineageFixture(t)
+			_, rootPlain, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+			_, midPlain, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+			_, leafPlain, _ := f.mint(t, ChildKeyRequest(midSub, "leaf", nil))
+
+			f.mr.FastForward(89 * day)
+			if err := use(f, leafPlain); err != nil {
+				t.Fatalf("use the leaf: %v", err)
+			}
+			f.mr.FastForward(89 * day)
+			for name, plain := range map[string]string{"root": rootPlain, "mid": midPlain} {
+				if ttl := f.mr.TTL(cachekeys.APIKey(hashAPIKey(plain)).String()); ttl <= 0 {
+					t.Errorf("%s record TTL = %v after its descendant was used, want it still alive", name, ttl)
+				}
+			}
+			if err := use(f, leafPlain); err != nil {
+				t.Errorf("leaf after 178 days of daily use: %v", err)
+			}
+		})
+	}
+}
+
+// A non-delegated key's Lookup costs what it did before lineage was recorded: one GET and one EXPIRE.
+func TestLookup_NonDelegatedKeyIssuesOneGet(t *testing.T) {
+	f := newLineageFixture(t)
+	_, plain, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+	counter := &commandCounter{counts: map[string]int{}}
+	f.rdb.AddHook(counter)
+	if _, err := f.validator.Lookup(context.Background(), plain); err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if got, want := counter.snapshot(), map[string]int{"get": 1, "expire": 1}; !maps.Equal(got, want) {
+		t.Errorf("Lookup issued %v, want %v", got, want)
 	}
 }
 

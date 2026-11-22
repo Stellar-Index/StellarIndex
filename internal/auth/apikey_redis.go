@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -230,7 +231,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	// Refresh-on-use slides a validated TTL-bearing key's idle window. It sits after every rejection
 	// gate so a suspended account's key is not kept alive. Best-effort EXPIRE ... XX: it never touches
 	// persistent records, and a failed refresh never rejects auth.
-	v.refreshIdleTTL(ctx, hash)
+	refreshIdleTTLs(ctx, v.rdb, rec, hash, v.mirroredKeyIdleTTL)
 	return sub, nil
 }
 
@@ -295,19 +296,22 @@ func recordFromSubject(sub Subject) APIKeyRecord {
 	}
 }
 
-// refreshIdleTTL slides a TTL-bearing record's idle window to MirroredKeyIdleTTL with EXPIRE ... XX,
-// a no-op on persistent (operator-seeded) records. Errors are swallowed: the worst case is an idle key
-// expiring on its existing TTL.
-func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) {
-	refreshIdleTTL(ctx, v.rdb, hash, v.mirroredKeyIdleTTL)
-}
-
-// refreshIdleTTL is the one idle-window refresh both validators run after serving a canonical `apikey:` record.
-func refreshIdleTTL(ctx context.Context, rdb redis.Cmdable, hash string, ttl time.Duration) {
+// refreshIdleTTLs is the one idle-window refresh both validators run after serving a canonical `apikey:` record:
+// EXPIRE ... XX over the record and its ancestors' (a no-op on persistent records), so an ancestor never idles out
+// before a descendant in use. Errors are swallowed: the worst case is an idle key expiring on its existing TTL.
+func refreshIdleTTLs(ctx context.Context, rdb redis.Cmdable, rec APIKeyRecord, hash string, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
-	_ = rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), ttl).Err()
+	if len(rec.AncestorHashes) == 0 {
+		_ = rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), ttl).Err()
+		return
+	}
+	pipe := rdb.Pipeline()
+	for _, h := range append(slices.Clone(rec.AncestorHashes), hash) {
+		pipe.ExpireXX(ctx, cachekeys.APIKey(h).String(), ttl)
+	}
+	_, _ = pipe.Exec(ctx)
 }
 
 // check enforces the account kill switch for a record naming a platform account and returns the
