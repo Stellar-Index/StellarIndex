@@ -10,11 +10,12 @@
 -- Compat: the only Go writer takes decimals from the lake reader, which
 -- rejects anything above 38, so v0.129.0 writes no row this rejects. A row
 -- already above 38 fails VALIDATE and stops the migration: correct or delete
--- it (runbooks/dex.md) and re-run; no value is guessed here.
+-- it (pre-check: docs/operations/runbooks/dex.md, dex-nonstandard-decimals,
+-- step 6) and re-run; no value is guessed here.
 --
--- Lock: the table holds one row per nonstandard-decimals asset (tens).
--- NOT VALID takes ACCESS EXCLUSIVE for a catalog change only; VALIDATE takes
--- SHARE UPDATE EXCLUSIVE for a scan of milliseconds.
+-- Lock: ADD CONSTRAINT and VALIDATE run in one transaction, so the ACCESS
+-- EXCLUSIVE lock ADD takes is held until COMMIT; the table holds one row per
+-- nonstandard-decimals asset (tens), a scan of milliseconds.
 
 BEGIN;
 

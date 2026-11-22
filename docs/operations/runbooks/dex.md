@@ -67,6 +67,11 @@ VALUES ('<asset>', <decimals>, '<source>', now());
 
 4. Lockstep: fix the wrong row (hand-seed or guard bug); a `guard_reconcile` hit already repaired itself.
 5. Residual: consumers reading `prices_*` / `trades` via SQL see raw ratios (apply `10^(dec_base - dec_quote)` by hand); `/v1/markets` and `/v1/pools` caches may show a raw `last_price` for up to one TTL (~2 min) after confirmation.
+6. Migration 0236 caps `decimals` at 38 and stops on a row above it. Before deploying it, list such rows and correct each to the token's on-chain `decimals()` (or delete it so the guard re-confirms it):
+
+```sql
+SELECT asset, decimals, source, confirmed_at FROM nonstandard_decimals_assets WHERE decimals > 38;
+```
 
 Escalate: a sustained cache-refresh failure or any decline increment. Related: [`aggregator.md#stellarindex_nonstandard_decimals_correction_failing`](aggregator.md#stellarindex_nonstandard_decimals_correction_failing), [`aggregator.md#stellarindex_decimals_guard_sweep_stale`](aggregator.md#stellarindex_decimals_guard_sweep_stale).
 

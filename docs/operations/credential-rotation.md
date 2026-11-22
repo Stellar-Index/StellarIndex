@@ -188,6 +188,19 @@ tracked in the private inventory.
     `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`), at environment scope as in
     step 8. Check: ansible-drift decrypts.
 
+## Migration pre-checks
+
+Migration 0235 refuses to run while a customer webhook holds both a raw and a sealed current
+signing key, and names those webhook ids in its error. Before deploying it, list them:
+
+```sql
+SELECT id FROM customer_webhooks WHERE secret_hash IS NOT NULL AND signing_key_sealed IS NOT NULL;
+```
+
+No binary since v0.99.0 writes such a row, so each one was written by hand. Find out which key
+the customer was given, NULL the other column for that id, and re-run the migration. Never copy
+either key into a ticket or a log.
+
 ## Related
 
 [ansible-drift.md](ansible-drift.md)

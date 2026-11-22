@@ -3,38 +3,35 @@
 --
 -- 0204's customer_webhooks_signing_key_present only required at least one.
 -- Every reader prefers the sealed form, so a raw key written beside a sealed
--- one (a hand-written restore UPDATE, or a pre-sealing binary's rotation) was
--- ignored with no error, and SealLegacySigningKeys never repairs such a row.
+-- one was ignored with no error, and SealLegacySigningKeys never repairs such
+-- a row.
 --
--- Repair first: a row holding both keeps the sealed key, the one every reader
--- already signs with, and drops the raw copy. Nothing is written in clear and
--- a re-run changes nothing.
+-- No repair: no binary since v0.99.0 writes such a row, so one is hand-written
+-- and its raw key is as likely the intended one as the sealed key. A dual-key
+-- row stops the migration with its id for an operator to resolve by hand
+-- (pre-check: docs/operations/credential-rotation.md, "Migration pre-checks").
 --
 -- Compat: every binary since v0.99.0 writes the two columns exclusively
 -- (CreateWebhook, RotateWebhookSecret and SealLegacySigningKeys each set one
 -- and NULL the other), so v0.129.0 writes no row this rejects.
 --
--- Lock: customer_webhooks is a handful of rows per account. ADD CONSTRAINT
--- NOT VALID takes ACCESS EXCLUSIVE for a catalog change only; VALIDATE takes
--- SHARE UPDATE EXCLUSIVE and scans the table (milliseconds).
+-- Lock: ADD CONSTRAINT and VALIDATE run in one transaction, so the ACCESS
+-- EXCLUSIVE lock ADD takes is held until COMMIT; customer_webhooks is a
+-- handful of rows per account, so that is a scan of milliseconds.
 
 BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 
-UPDATE customer_webhooks  -- migration-compat:ok clears only a raw copy no binary since v0.99.0 reads beside a sealed key
-   SET secret_hash = NULL
- WHERE secret_hash IS NOT NULL
-   AND signing_key_sealed IS NOT NULL;
-
 DO $$
 DECLARE
-    n bigint;
+    ids text;
 BEGIN
-    SELECT count(*) INTO n FROM customer_webhooks
+    SELECT string_agg(id::text, ', ' ORDER BY id) INTO ids FROM customer_webhooks
      WHERE secret_hash IS NOT NULL AND signing_key_sealed IS NOT NULL;
-    IF n > 0 THEN
-        RAISE EXCEPTION '0235: % customer_webhooks rows still hold both key forms after repair', n;
+    IF ids IS NOT NULL THEN
+        RAISE EXCEPTION '0235: customer_webhooks rows hold both a raw and a sealed current key: %', ids
+            USING HINT = 'Decide by hand which key each webhook should sign with, NULL the other column, then re-run.';
     END IF;
 END $$;
 
