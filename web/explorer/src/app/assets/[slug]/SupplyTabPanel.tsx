@@ -238,29 +238,39 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 // CAGG), served by GET /v1/chart?price_type=market_cap. On-chain assets
 // (native / classic / Soroban) chart; off-chain crypto:* reference
 // assets (no on-chain supply) return an empty series → a concise note.
+type MarketCapSeries = {
+  points: { t: string; p: string }[];
+  market_cap_low_liquidity?: boolean;
+};
+
 function MarketCapChart({ assetID }: { assetID: string }) {
-  const q = useQuery<{ points: { t: string; p: string }[] }>({
+  // The whole envelope: a failed or refused series is served as an empty
+  // 200 whose flags say why, and that is not an empty history.
+  const q = useQuery<Envelope<MarketCapSeries>>({
     queryKey: ['/v1/chart', assetID, 'market-cap'],
     retry: false,
-    queryFn: async () => {
-      const env = await apiGet<
-        Envelope<{ points: { t: string; p: string }[] }>
-      >('/v1/chart', {
+    queryFn: () =>
+      apiGet<Envelope<MarketCapSeries>>('/v1/chart', {
         asset: assetID,
         quote: 'fiat:USD',
         price_type: 'market_cap',
         timeframe: '1y',
         granularity: '1d',
-      });
-      return env.data;
-    },
+      }),
     staleTime: 60_000,
   });
 
-  const points = (q.data?.points ?? []).map((pt) => ({
+  const series = q.data?.data;
+  const flags = q.data?.flags;
+  const points = (series?.points ?? []).map((pt) => ({
     time: Math.floor(Date.parse(pt.t) / 1000),
     value: Number(pt.p),
   }));
+  const answered = !q.isLoading && !q.isError;
+  const withheld = answered && series?.market_cap_low_liquidity === true;
+  const unread =
+    q.isError ||
+    (answered && !withheld && points.length < 2 && flags?.stale === true);
 
   return (
     <div className="border-line border-t pt-4">
@@ -274,23 +284,32 @@ function MarketCapChart({ assetID }: { assetID: string }) {
       {/* A failed /v1/chart must not fall into the empty state
           and assert "no market-cap history for this asset". Absent is
           not empty. */}
-      {!q.isLoading && q.isError && (
+      {!q.isLoading && unread && (
         <p className="text-ink-muted text-sm">
           Market-cap history unavailable right now — the series query
           didn&apos;t return. Retry shortly.
         </p>
       )}
-      {!q.isLoading && !q.isError && points.length < 2 && (
+      {withheld && (
+        <p className="text-ink-muted text-sm">
+          Market-cap history withheld: the price behind it comes from negligible
+          liquidity.
+        </p>
+      )}
+      {answered && !withheld && !unread && points.length < 2 && (
         <p className="text-ink-muted text-sm">
           No market-cap history for this asset — it needs both an on-chain
           circulating supply and a USD price track over time.
         </p>
       )}
-      {points.length >= 2 && (
-        <MarketCapLineChart
-          data={points}
-          ariaLabel={`Daily USD market cap for ${assetID} over the last year`}
-        />
+      {!withheld && points.length >= 2 && (
+        <>
+          <FreshnessMarker flags={flags} className="mb-2 block" />
+          <MarketCapLineChart
+            data={points}
+            ariaLabel={`Daily USD market cap for ${assetID} over the last year`}
+          />
+        </>
       )}
     </div>
   );
