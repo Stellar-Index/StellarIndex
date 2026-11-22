@@ -417,7 +417,8 @@ func (s *RedisAPIKeyStore) storedAncestors(ctx context.Context, rec APIKeyRecord
 func resolveLineage(ctx context.Context, rec APIKeyRecord, lookup recordLookup) (ids, hashes []string, err error) {
 	var walkedIDs, walkedHashes []string // nearest first
 	cur := rec
-	for range maxLegacyDelegationWalk {
+	// One round per ancestor walked, plus the round that reaches the root or a stored chain.
+	for range maxLegacyDelegationWalk + 1 {
 		if len(cur.AncestorKeyIDs) > 0 || cur.ParentKeyID == "" {
 			ids, hashes, err := chainHashes(ctx, cur, rec.Identifier, lookup)
 			if err != nil {

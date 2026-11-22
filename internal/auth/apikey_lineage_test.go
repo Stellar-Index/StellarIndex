@@ -118,6 +118,31 @@ func TestCreate_RefusesMintBeyondMaxDepth(t *testing.T) {
 	}
 }
 
+// The ParentKeyID walk over pre-chain records resolves a chain as deep as MaxDelegationDepth and refuses one deeper.
+func TestStoredAncestors_PreChainWalkReachesMaxDepth(t *testing.T) {
+	f := newLineageFixture(t)
+	_, _, sub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	var deepest APIKeyRecord
+	for range MaxDelegationDepth {
+		deepest, _, sub = f.legacyChild(t, sub)
+	}
+	if len(deepest.AncestorKeyIDs) != 0 || deepest.ParentKeyID == "" {
+		t.Fatal("fixture: the deepest key must be a pre-chain record")
+	}
+	ids, hashes, err := f.store.storedAncestors(context.Background(), deepest)
+	if err != nil {
+		t.Fatalf("pre-chain record with %d ancestors: %v", MaxDelegationDepth, err)
+	}
+	if len(ids) != MaxDelegationDepth || len(hashes) != MaxDelegationDepth || ids[len(ids)-1] != deepest.ParentKeyID {
+		t.Fatalf("resolved %d ids, %d hashes, want %d of each ending at the parent", len(ids), len(hashes), MaxDelegationDepth)
+	}
+
+	beyond := APIKeyRecord{KeyID: "kid_beyond", Identifier: deepest.Identifier, ParentKeyID: deepest.KeyID}
+	if _, _, err := f.store.storedAncestors(context.Background(), beyond); !errors.Is(err, ErrMintExceedsCaller) {
+		t.Fatalf("pre-chain record with %d ancestors: err = %v, want ErrMintExceedsCaller", MaxDelegationDepth+1, err)
+	}
+}
+
 // Using a child refreshes only the child's idle window, on both validators: an ancestor's use is its own.
 func TestLookup_ChildUseDoesNotExtendAncestors(t *testing.T) {
 	const day = 24 * time.Hour
