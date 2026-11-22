@@ -46,8 +46,8 @@ func TestGlobalMarket_SourceExclusion(t *testing.T) {
 		if filled := d.PriceBasis == priceBasisGlobalMarket; filled != tc.wantFill {
 			t.Errorf("%s: global-market fill = %v (price_usd=%s), want %v", tc.name, filled, strPtr(d.PriceUSD), tc.wantFill)
 		}
-		// Only the declared peg (a configured declaration, labelled declared_peg) may stand in after the global step.
-		if tc.withheld != "" && d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg {
+		// The server declares globalTestUSDC a USD peg, so this also pins that the declared-peg fill does not stand in.
+		if tc.withheld != "" && (d.PriceUSD != nil || d.PriceWithheldReason != tc.withheld) {
 			t.Errorf("%s: price_usd=%s basis %q replaced the %q withholding", tc.name, strPtr(d.PriceUSD), d.PriceBasis, tc.withheld)
 		}
 		if !tc.wantFill && tc.withheld == "" && d.GlobalMarket != nil {

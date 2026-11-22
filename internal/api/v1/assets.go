@@ -1280,7 +1280,7 @@ func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, mem
 
 // fillFixedPegPrice is the declared fiat peg × FX fill.
 func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
-	if len(s.FiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) {
+	if len(s.FiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) || declaredPegMayNotReplace(row) {
 		return
 	}
 	fiat, ok := s.FiatPeggedClassics[row.AssetID]
