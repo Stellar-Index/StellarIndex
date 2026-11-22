@@ -277,6 +277,7 @@ type PriceStore interface {
 	RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
 	RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) (bool, error)
 	LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error)
+	FreezeWindowsForPair(ctx context.Context, assetIDs []string, quoteID string, since time.Time) ([]timescale.FreezeWindow, error)
 }
 
 type StorePriceReader struct {

@@ -49,6 +49,10 @@ func (exclPriceStore) RecentClosedVWAP1mExists(context.Context, canonical.Pair) 
 	return true, nil
 }
 
+func (exclPriceStore) FreezeWindowsForPair(context.Context, []string, string, time.Time) ([]timescale.FreezeWindow, error) {
+	return nil, nil
+}
+
 func (s exclPriceStore) LatestTradesForPair(context.Context, canonical.Pair, int, time.Time) ([]canonical.Trade, error) {
 	return s.trades, nil
 }
