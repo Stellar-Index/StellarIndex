@@ -20,7 +20,7 @@ its first link must be the rule's `runbook_url` page
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 72 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
+  | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
   | `ticket` | 321 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
@@ -145,6 +145,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_timescale_disk_warning` | same | < 20 % | ticket | [db-disk-full](runbooks/postgres.md#stellarindex_timescale_disk_full) |
 | `stellarindex_config_assertion_failed` | hourly `config-assertions.sh`: guard config (rsyslog, journald cap, CH logs, nft 443, redis cap, supply reserves) reverted | == 0 for 65 min | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_config_assertions_stale` | config-assertions producer silent | textfile older than 2 h, deleted, or never written, for 30 min | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
+| `stellarindex_patroni_leader_count_wrong` | `sum(stellarindex_patroni_role{role="leader"})` | != 1 for 2 min | page | [postgres](runbooks/postgres.md#stellarindex_patroni_leader_count_wrong) |
 | `stellarindex_patroni_textfile_stale` | `time() - node_textfile_mtime_seconds{file="patroni.prom"}` | > 10 min, for 5 min | ticket | [patroni-textfile-stale](runbooks/textfile-stale.md#stellarindex_patroni_textfile_stale) |
 | `stellarindex_textfile_producer_stale` | `time() - node_textfile_mtime_seconds`, any file without its own alert (excl. orphan/one-off `ops_job_*`, `restore_drill*`, `alertmanager_receivers`) | > 24 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-stale.md#stellarindex_textfile_producer_stale) |
 | `stellarindex_node_root_disk_filling_fast` | `predict_linear` 10 min trend: root avail hits 0 in 30 min, and avail < 50% | for 2 min (log floods fill root in ~5 min) | page | [node-root-disk-filling-fast](runbooks/infra.md#stellarindex_node_root_disk_filling_fast) |
@@ -207,6 +208,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_redis_memory_saturated` | `redis_memory_used_bytes / redis_memory_max_bytes` | > 90 % for 5 min | ticket | [redis-memory](runbooks/cache.md#stellarindex_redis_memory_saturated) |
 | `stellarindex_redis_evictions_high` | `rate(redis_evicted_keys_total[5m])` | > 100/s | ticket | [redis-memory](runbooks/cache.md#stellarindex_redis_evictions_high) |
 | `stellarindex_redis_replication_broken` | `redis_connected_slaves` per master | < expected for 2 min | ticket | [redis-replication](runbooks/cache.md#stellarindex_redis_replication_broken) |
+| `stellarindex_redis_sentinel_primary_count_wrong` | `sum(stellarindex_redis_sentinel_primary)` | != 1 for 2 min | page | [cache](runbooks/cache.md#stellarindex_redis_sentinel_primary_count_wrong) |
 | `stellarindex_redis_sentinel_textfile_stale` | `node_textfile_mtime_seconds{file="redis_sentinel.prom"}` age | > 10 min, 5 min | ticket | [redis-sentinel-textfile-stale](runbooks/cache.md#stellarindex_redis_sentinel_textfile_stale) |
 | `stellarindex_redis_writes_blocked` | `redis_rdb_last_bgsave_status` per master (`MISCONF` in client logs) | == 0 for 60 s | page | [redis-write-blocked-disk-full](runbooks/cache.md#stellarindex_redis_writes_blocked) |
 | `stellarindex_redis_write_rejected_oom` | `rate(redis_errors_total{err=~"OOM\|READONLY\|NOREPLICAS"}[5m])` | > 0 for > 2 min | page | [redis-memory](runbooks/cache.md#stellarindex_redis_write_rejected_oom) |
@@ -564,6 +566,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_host_down` | `up` for any host | == 0 for > 2 min | ticket | [infra](runbooks/infra.md#stellarindex_host_down) |
+| `stellarindex_haproxy_vip_owner_count_wrong` | `sum(stellarindex_haproxy_vip_owner)` | != 1 for 2 min | page | [infra](runbooks/infra.md#stellarindex_haproxy_vip_owner_count_wrong) |
 | `stellarindex_keepalived_textfile_stale` | `node_textfile_mtime_seconds{file="keepalived.prom"}` age | > 10 min, 5 min | ticket | [infra](runbooks/infra.md#stellarindex_keepalived_textfile_stale) |
 | `stellarindex_census_rollup_timer_stale` | `node_systemd_timer_last_trigger_seconds{name="census-rollup.timer"}` age or absence | > 2 h or absent, 15 min | ticket | [infra](runbooks/infra.md#stellarindex_census_rollup_timer_stale) |
 | `stellarindex_oneshot_timer_stale` | `node_systemd_timer_last_trigger_seconds` age or absence (creators/sponsors-rollup, issuer-flags, asset-registry-backfill; listing-sync, holders/optype-rollup) | > 50 h daily, > 3 h half-hourly/hourly, absent; 2 h | ticket | [infra](runbooks/infra.md#stellarindex_oneshot_timer_stale) |
