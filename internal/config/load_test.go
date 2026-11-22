@@ -568,7 +568,7 @@ postgres_dsn = "postgres://valid@host/db"
 // the `_env` suffix every other name-holding field carries; the old keys
 // still load, onto the same fields, and setting both is refused.
 func TestLoadReader_PasswordKeysAndDeprecatedAliases(t *testing.T) {
-	const base = "[region]\nid = \"r1\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@h/db\"\n"
+	const base = "[region]\nid = \"r1\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@h/db\"\nclickhouse_serving_user = \"api_serving\"\n"
 	for name, tc := range map[string]struct {
 		keys          string
 		redis, chServ string

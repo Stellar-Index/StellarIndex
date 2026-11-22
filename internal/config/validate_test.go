@@ -298,6 +298,10 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			},
 			"storage.clickhouse_serving_password looks like",
 		},
+		"clickhouse serving password without its user": {
+			func(c *config.Config) { c.Storage.ClickHouseServingPassword = "fixture-serving" }, // gitleaks:allow
+			"storage.clickhouse_serving_user is empty",
+		},
 		"s3 access key env holds a literal secret value": {
 			// A realistic AWS SECRET key shape (lowercase, digits, '/') is definitively not an UPPER_SNAKE_CASE env-var name. An
 			// access-key-ID-shaped string can also look like a valid identifier.
