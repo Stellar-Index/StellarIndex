@@ -78,10 +78,23 @@ type Refresher struct {
 	// lastWrittenTotal is the total_supply of the last snapshot this
 	// Refresher wrote per asset_key; the write band compares against it.
 	lastWrittenTotal map[string]*big.Int
+	bandBaseline     WriteBandBaseline
+}
+
+// WriteBandBaseline returns the newest stored total_supply for an asset (production: its latest asset_supply_history row); ok is false when none is stored.
+type WriteBandBaseline interface {
+	LatestWrittenTotal(ctx context.Context, assetKey string) (total *big.Int, ok bool, err error)
 }
 
 // RefresherOption tunes a [Refresher].
 type RefresherOption func(*Refresher)
+
+// WithWriteBandBaseline seeds the write band from storage on an asset's first write, so a restart does not leave that write unchecked.
+func WithWriteBandBaseline(b WriteBandBaseline) RefresherOption {
+	return func(r *Refresher) {
+		r.bandBaseline = b
+	}
+}
 
 // WithStaleComponentLedgers overrides the freshness threshold: reject when LedgerSequence - MinComponentLedger exceeds it AND MinComponentLedger > 0; zero disables the gate.
 func WithStaleComponentLedgers(maxLag uint32) RefresherOption {
@@ -181,6 +194,7 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		return outcome
 	}
 
+	r.seedWriteBand(ctx, snap.AssetKey)
 	if err := r.inserter.InsertSupply(ctx, snap); err != nil {
 		r.logger.Error("supply refresh: insert failed",
 			"err", err, "asset", snap.AssetKey, "ledger", snap.LedgerSequence)
@@ -275,6 +289,7 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 		"gap", snap.LedgerSequence-snap.MinComponentLedger,
 		"threshold", threshold,
 		"threshold_source", thresholdSource)
+	r.seedWriteBand(ctx, snap.AssetKey)
 	if err := r.inserter.InsertSupply(ctx, snap); err != nil {
 		r.logger.Error("supply refresh: insert failed",
 			"err", err, "asset", snap.AssetKey, "ledger", snap.LedgerSequence)
@@ -283,7 +298,27 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 	return Outcome{Kind: OutcomeKindDormant, Snapshot: snap, BandBreach: r.checkWriteBand(snap)}, true
 }
 
-// checkWriteBand compares a just-written snapshot's total with the previous total this Refresher wrote for the asset and returns "up" or
+// seedWriteBand loads the stored total as the band's previous value before an asset's first write; it must run before the insert,
+// which would otherwise become its own baseline. A failed read leaves that one write unchecked (the band is flag-only).
+func (r *Refresher) seedWriteBand(ctx context.Context, assetKey string) {
+	if r.bandBaseline == nil {
+		return
+	}
+	if _, seeded := r.lastWrittenTotal[assetKey]; seeded {
+		return
+	}
+	total, ok, err := r.bandBaseline.LatestWrittenTotal(ctx, assetKey)
+	if err != nil {
+		r.logger.Warn("supply refresh: write-band baseline read failed; this write is not band-checked",
+			"err", err, "asset", assetKey)
+		return
+	}
+	if ok && total != nil {
+		r.lastWrittenTotal[assetKey] = new(big.Int).Set(total)
+	}
+}
+
+// checkWriteBand compares a just-written snapshot's total with the previous total (this Refresher's last write, else the stored baseline) and returns "up" or
 // "down" when it moved more than [WriteBandFactor]x, else ""; a zero or absent previous total never fires.
 func (r *Refresher) checkWriteBand(snap Supply) string {
 	if snap.TotalSupply == nil {
