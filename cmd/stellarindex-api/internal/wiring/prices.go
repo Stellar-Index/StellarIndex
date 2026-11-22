@@ -135,35 +135,48 @@ func (g GlobalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	return served.VWAP, asOf, served.TradeCount, served.Sources, true, nil
 }
 
+// LatestAggregatorPrices is [GlobalPriceReader.LatestAggregatorPricesTrimmed] judged without a freshness filter; the headline
+// tier calls the trimmed form so it judges fresh rows only.
 func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
+	kept, excluded, err := g.LatestAggregatorPricesTrimmed(ctx, base, quote, sources)
+	if err != nil {
+		return nil, err
+	}
+	if len(excluded) > 0 && !aggregate.ExcludedSurvivorsAgree(append(append([]canonical.OracleUpdate(nil), kept...), excluded...), kept) {
+		return nil, tierWithheld(pricingguard.WithheldSourceExcluded)
+	}
+	return kept, nil
+}
+
+// LatestAggregatorPricesTrimmed splits the latest aggregator rows into survivors and operator-excluded rows; the aggregator tier
+// checks the survivors against the full set after its freshness filter ([aggregate.ExclusionTrimmingReader]).
+func (g GlobalPriceReader) LatestAggregatorPricesTrimmed(
+	ctx context.Context, base, quote canonical.Asset, sources []string,
+) (kept, excluded []canonical.OracleUpdate, err error) {
 	// Scam gate: without it a flagged issuer's headline, withheld by tier 1, resurfaces here.
 	if PriceWithheld(ctx, nil, g.Scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rows, err := g.S.LatestAggregatorPricesForPair(ctx, base, quote, sources)
 	if err != nil || g.Exclusions == nil {
-		return rows, err
+		return rows, nil, err
 	}
 	// Each row is one source's own observation, so the tier is recomputed from the survivors.
-	kept := rows[:0:0]
+	kept = rows[:0:0]
 	for _, u := range rows {
 		switch w := g.Exclusions.InstantWithholding(ctx, base, quote, u.Source, u.Timestamp); w {
 		case pricingguard.NotWithheld:
 			kept = append(kept, u)
 		case pricingguard.WithheldSourceExcluded:
+			excluded = append(excluded, u)
 		default:
-			return nil, tierWithheld(w)
+			return nil, nil, tierWithheld(w)
 		}
 	}
 	if len(kept) == 0 && len(rows) > 0 {
-		return nil, tierWithheld(pricingguard.WithheldSourceExcluded)
+		return nil, excluded, tierWithheld(pricingguard.WithheldSourceExcluded)
 	}
-	// The tier's outlier filter needs three sources; an exclusion that switched it off must not serve survivors the full set's
-	// band would have rejected.
-	if len(kept) < len(rows) && !aggregate.ExcludedSurvivorsAgree(rows, kept) {
-		return nil, tierWithheld(pricingguard.WithheldSourceExcluded)
-	}
-	return kept, nil
+	return kept, excluded, nil
 }
 
 // tierWithheld is the headline tiers' refusal under an exclusion: distinct from "no data", so no ungated fallback fills it.

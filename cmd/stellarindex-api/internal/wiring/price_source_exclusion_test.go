@@ -250,6 +250,24 @@ func TestGlobalPriceReader_SourceExclusion(t *testing.T) {
 		}
 	}
 
+	// A stale row the tier drops anyway must not count towards the three sources its outlier filter needs: with it, the two fresh
+	// survivors (1.00, 1.40) would be averaged to 1.20 although the fresh full set's band rejects 1.40.
+	freshAt := func(source string, price int64, age time.Duration) canonical.OracleUpdate {
+		return canonical.OracleUpdate{Source: source, Timestamp: time.Now().Add(-age), Price: canonical.NewAmount(big.NewInt(price)), Decimals: 8}
+	}
+	staleLift := exclGlobalStore{agg: []canonical.OracleUpdate{
+		freshAt("coingecko", 100_000_000, time.Minute),
+		freshAt("kraken", 100_000_000, time.Minute),
+		freshAt("cmc", 140_000_000, time.Minute),
+		freshAt("bitstamp", 100_000_000, time.Hour),
+	}}
+	g := GlobalPriceReader{S: staleLift, PKPairFor: canonical.NewPair, Exclusions: exclGateOver(exclRows{rows: krakenExcluded()})}
+	opts := aggregate.DefaultGlobalPriceOptions()
+	opts.AggregatorSources = []string{"coingecko", "kraken", "cmc", "bitstamp"}
+	if res, err := aggregate.ComputeGlobalPrice(ctx, base, quote, g, opts); !errors.As(err, &held) || held.Unread {
+		t.Fatalf("stale row lifted the survivors: served %q via %s (err %v), want a source-excluded TierWithheldError", res.Price, res.Authority, err)
+	}
+
 	unread := reader(exclGateOver(exclRows{err: errors.New("db down")}))
 	if _, _, _, _, ok, err := unread.LatestVWAP(ctx, base, quote); ok || !errors.As(err, &held) || !held.Unread {
 		t.Fatalf("unreadable set: headline VWAP served or not marked unread (err %v)", err)

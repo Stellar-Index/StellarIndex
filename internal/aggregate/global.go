@@ -215,17 +215,13 @@ func tryAggregatorTier(
 	// Same alias loop as tryVWAPTier; the FIRST fresh average clearing the tier wins and the SAC form is last,
 	// so a thin Soroban pool can never shadow the deep classic/CEX feeds.
 	for _, b := range assetAliases(base) {
-		rows, err := reader.LatestAggregatorPrices(ctx, b, quote, opts.AggregatorSources)
+		fresh, err := freshAggregatorRows(ctx, reader, b, quote, opts)
 		if absorbWithheld(err, held) {
 			continue
 		}
 		if err != nil {
 			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: aggregator-prices lookup: %w", err)
 		}
-		if len(rows) == 0 {
-			continue
-		}
-		fresh := filterFreshAggregatorRows(rows, opts.MaxAggregatorAge)
 		if len(fresh) == 0 {
 			continue
 		}
