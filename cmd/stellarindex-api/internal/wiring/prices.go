@@ -148,6 +148,8 @@ func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quo
 	return kept, nil
 }
 
+var _ aggregate.ExclusionTrimmingReader = GlobalPriceReader{}
+
 // LatestAggregatorPricesTrimmed splits the latest aggregator rows into survivors and operator-excluded rows; the aggregator tier
 // checks the survivors against the full set after its freshness filter ([aggregate.ExclusionTrimmingReader]).
 func (g GlobalPriceReader) LatestAggregatorPricesTrimmed(

@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +17,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -266,6 +271,23 @@ func TestGlobalPriceReader_SourceExclusion(t *testing.T) {
 	opts.AggregatorSources = []string{"coingecko", "kraken", "cmc", "bitstamp"}
 	if res, err := aggregate.ComputeGlobalPrice(ctx, base, quote, g, opts); !errors.As(err, &held) || held.Unread {
 		t.Fatalf("stale row lifted the survivors: served %q via %s (err %v), want a source-excluded TierWithheldError", res.Price, res.Authority, err)
+	}
+
+	// The same case through the served /v1/assets headline, which wraps the reader before the tier sees it.
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(v1.New(v1.Options{VerifiedCurrencies: cat, GlobalPrice: g, GlobalPriceOpts: opts}).Handler())
+	t.Cleanup(ts.Close)
+	resp, err := http.Get(ts.URL + "/v1/assets/xlm") //nolint:noctx // test-local server
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if strings.Contains(string(body), `"price_usd"`) || !strings.Contains(string(body), `"price_withheld_reason":"source_excluded"`) {
+		t.Fatalf("served headline lifted by a stale row: %s, want no price and reason source_excluded", body)
 	}
 
 	unread := reader(exclGateOver(exclRows{err: errors.New("db down")}))

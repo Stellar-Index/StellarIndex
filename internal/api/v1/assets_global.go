@@ -246,6 +246,22 @@ func newDecimalsCorrectedGlobalReader(r aggregate.GlobalPriceReader, decimals *N
 	return decimalsCorrectedGlobalReader{GlobalPriceReader: r, decimals: decimals}
 }
 
+// The embedded interface hides the inner reader's optional methods, so each one the aggregate package type-asserts is
+// forwarded explicitly.
+var _ aggregate.ExclusionTrimmingReader = decimalsCorrectedGlobalReader{}
+
+// LatestAggregatorPricesTrimmed forwards the inner reader's trimmed rows (aggregator rows are whole-unit, so neither set needs
+// the LatestVWAP correction); an inner reader without it yields its untrimmed rows and nothing excluded.
+func (g decimalsCorrectedGlobalReader) LatestAggregatorPricesTrimmed(
+	ctx context.Context, base, quote canonical.Asset, sources []string,
+) (kept, excluded []canonical.OracleUpdate, err error) {
+	if tr, ok := g.GlobalPriceReader.(aggregate.ExclusionTrimmingReader); ok {
+		return tr.LatestAggregatorPricesTrimmed(ctx, base, quote, sources)
+	}
+	kept, err = g.GlobalPriceReader.LatestAggregatorPrices(ctx, base, quote, sources)
+	return kept, nil, err
+}
+
 // LatestVWAP returns the inner tier-1 VWAP decimals-corrected; a flagged pair whose ratio cannot be parsed reads as a miss rather than serving raw.
 func (g decimalsCorrectedGlobalReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
 	vwap, asOf, tradeCount, sources, ok, err := g.GlobalPriceReader.LatestVWAP(ctx, base, quote)
