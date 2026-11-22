@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,6 +87,25 @@ func TestAssetListPage_ExpiredBroadMapIsStale(t *testing.T) {
 				t.Errorf("stale = %v, cacheable = %v; want stale %v", env.Flags.Stale, assetListPageCacheable(env, rows), tc.stale)
 			}
 		})
+	}
+}
+
+// A thin-admitted listing row keeps its supply, so its thin_market cap reason survives MarshalJSON, as on the detail route.
+func TestFillMarketCapsFromSupply_ThinRowKeepsSupplyAndReason(t *testing.T) {
+	s, _ := lakeSupplyServer(t, "")
+	s.Explorer = failingClassicExplorer{}
+	s.classicSupplyCache = map[string]string{cetesAsset: "400000000"}
+	s.classicSupplyAt, s.classicSupplyAttemptAt = time.Now(), time.Now()
+	rows := cetesRow()
+	rows[0].ThinMarket = true
+	s.fillMarketCapsFromSupply(context.Background(), rows, map[string]int{})
+	body, err := json.Marshal(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].MarketCapUSD != nil || !strings.Contains(string(body), `"circulating_supply":"400000000"`) ||
+		!strings.Contains(string(body), `"market_cap_withheld_reason":"thin_market"`) {
+		t.Errorf("thin row: want supply, no cap and the thin_market reason on the wire: %s", body)
 	}
 }
 

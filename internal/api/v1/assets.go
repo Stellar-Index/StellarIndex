@@ -1078,34 +1078,27 @@ func (s *Server) fillRowMarketCap(
 	if row.MarketCapUSD != nil {
 		return
 	}
+	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
+	// Supply is a fact about the token, not its market: every row with a reading keeps it, whatever the cap's verdict,
+	// as the detail page does. Stamped once here so no refusal branch can drop it.
+	stampCirculatingSupply(row, circ, basis)
 	if row.ThinMarket {
 		row.MarketCapWithheldReason = MarketCapWithheldThinMarket
 		return
 	}
-	circ, basis := classicSupplyReading(row.AssetID, precise, lake, broad)
-	if circ == "" {
-		return
-	}
-	// Supply is a fact about the token, not its market: an unpriced or gated row keeps it, as the detail page does.
-	if row.PriceUSD == nil {
-		stampCirculatingSupply(row, circ, basis)
+	if circ == "" || row.PriceUSD == nil {
 		return
 	}
 	if r := row.scaleWithheldReason(); r != "" {
+		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised through the
+		// nonstandard_decimals_assets projection while row.Decimals holds a disagreeing lake reading.
 		row.MarketCapWithheldReason = r
-		// Lockstep refusal, as populateMarketCap on the detail path: the price was normalised
-		// through the nonstandard_decimals_assets projection while row.Decimals now holds a
-		// disagreeing lake reading, so supply over price would be off by a power of ten. Null
-		// with a reason beats that; circulating_supply is a raw fact and still serves.
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	// A ticker-collision look-alike gets no price x supply headline: its price comes from its own
-	// manipulable market while its ticker borrows a real asset's standing. The
-	// unverified_ticker_collision flag is the reason; circulating_supply still surfaces.
+	// manipulable market while its ticker borrows a real asset's standing.
 	if row.UnverifiedTickerCollision {
 		row.MarketCapWithheldReason = MarketCapWithheldTickerCollision
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	// Native carve-out: the listing SQL forces native's source_count to 0, and XLM is
@@ -1114,7 +1107,6 @@ func (s *Server) fillRowMarketCap(
 		dustLiquiditySuppressed(sourceCounts[row.AssetID], row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
 		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
@@ -1127,12 +1119,10 @@ func (s *Server) fillRowMarketCap(
 		capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		row.MarketCapLowLiquidity = true
 		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
-		stampCirculatingSupply(row, circ, basis)
 		return
 	}
 	row.MarketCapUSD = &mc
 	row.MarketCapLowerBound = basis.LowerBound()
-	stampCirculatingSupply(row, circ, basis)
 }
 
 // applyConfirmedListingDecimals puts a row's supply divisor on its price's scale: rows are stamped 7, but asset_price_snapshot
