@@ -537,6 +537,7 @@ func (s *Server) applyContractMarketCap(
 	if !isScaled {
 		row.CirculatingSupply = &circ
 		row.DecimalsUnresolved = true
+		row.MarketCapWithheldReason = MarketCapWithheldDecimalsUnknown
 		return
 	}
 	row.CirculatingSupply = &circ
@@ -549,10 +550,12 @@ func (s *Server) applyContractMarketCap(
 	}
 	if dustLiquiditySuppressed(sources, row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
 		row.MarketCapLowLiquidity = true
+		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		return
 	}
 	if row.MarketCapDecimalsMismatch || s.contractPriceScaleDisagrees(row) {
 		row.MarketCapDecimalsMismatch = true
+		row.MarketCapWithheldReason = MarketCapWithheldDecimalsDiffer
 		return
 	}
 	mc := computeMarketCapUSD(circ, *row.PriceUSD, row.Decimals)
@@ -561,6 +564,7 @@ func (s *Server) applyContractMarketCap(
 	}
 	if capExceedsObservedTurnover(mc, row.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		row.MarketCapLowLiquidity = true
+		row.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		return
 	}
 	row.MarketCapUSD = &mc
@@ -572,6 +576,7 @@ func (s *Server) applyContractMarketCap(
 func clearContractSupply(row *AssetDetail) {
 	row.CirculatingSupply, row.SupplyBasis, row.supplyFloor = nil, nil, false
 	row.MarketCapUSD, row.MarketCapLowerBound, row.MarketCapLowLiquidity = nil, false, false
+	row.MarketCapWithheldReason = ""
 }
 
 // contractPriceScaleDisagrees reports that a contract row's DEX price (normalised through nonstandard_decimals_assets, else
