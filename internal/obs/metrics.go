@@ -2803,11 +2803,12 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 	[]string{"host", "outcome"},
 )
 
-// RegistrationsTotal counts POST /v1/register by the outcomes an operator acts on.
+// RegistrationsTotal counts every account-creating route (POST /v1/register, passkey sign-up, an email's first sign-in) by
+// the outcomes an operator acts on.
 var RegistrationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_registrations_total",
-		Help: "POST /v1/register outcomes: created (an account and key were issued), budget_exhausted (refused, the hourly all-caller cap is spent), disabled (refused, the route is switched off).",
+		Help: "Account-creating route outcomes (POST /v1/register, passkey sign-up, an email's first sign-in): created (an account was created), budget_exhausted (refused, the route's hourly cap is spent), disabled (refused, sign-up is switched off).",
 	},
 	[]string{"outcome"},
 )

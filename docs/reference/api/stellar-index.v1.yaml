@@ -10997,7 +10997,10 @@ paths:
         exhaust it for everyone; past it the route answers
         `503 registration-unavailable` with `Retry-After`. Operators
         can also switch the route off (same 503). Passkey sign-up
-        (`/auth/passkey/*-signup`) does not draw on this budget. Sits
+        (`/auth/passkey/finish-signup`) spends the same budget, so
+        exhausting it refuses both with 503; an email's first
+        magic-link or code sign-in draws on a separate budget of the
+        same size that this route cannot exhaust. Sits
         underneath the global anonymous rate limit. The
         `Content-Type: application/json` header is REQUIRED — not
         merely validated when present — because a header-less POST is

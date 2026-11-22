@@ -96,7 +96,8 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
               summary: "360 registrations (over 50 in 6h or over 100 in 7d)"
               description: &registration_growth_description |
-                POST /v1/register created more than 50 accounts in six hours
+                Sign-up (POST /v1/register, passkey sign-up and email first
+                sign-ins together) created more than 50 accounts in six hours
                 or more than 100 in seven days.
                 Each one is permanent and carries a live
                 free-tier key with its own quota, so sustained growth

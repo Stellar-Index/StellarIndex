@@ -11,11 +11,13 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -105,14 +107,14 @@ func (registerKeyStub) Create(_ context.Context, k platform.APIKey, _ int) (plat
 	return k, nil
 }
 
-// Invariant: one unit of the hourly budget is one account, on every account-creating route, all drawing from ONE
-// counter. Run against the real Redis-backed budget: three creations across three routes spend it, and then every
-// route refuses a fourth while an existing user still signs in.
-func TestRegistrationBudget_OneCounterAcrossEveryRoute(t *testing.T) {
+// Invariant: one unit of the hourly budget is one account created, on every account-creating route, and each created
+// account counts as registrations_total{created}. Proof-free routes (/v1/register, passkey sign-up) share one counter; an
+// email-proven first sign-in has its own, so draining the proof-free routes cannot refuse it. Real Redis-backed budget.
+func TestRegistrationBudget_ProofFreeRoutesCannotDrainEmailSignUp(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	budget := auth.NewRegistrationBudget(auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{Max: 3}))
+	budget := auth.NewRegistrationBudget(auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{Max: 2}))
 
 	rig, _, _ := newLiveClockPasskeyRig(t)
 	rig.h.cfg.SignupBudget = budget
@@ -132,37 +134,41 @@ func TestRegistrationBudget_OneCounterAcrossEveryRoute(t *testing.T) {
 		_ = resp.Body.Close()
 		return resp.StatusCode
 	}
+	created := func() float64 {
+		return testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated))
+	}
 
-	before := rig.accountCount()
+	before, createdBefore := rig.accountCount(), created()
 	if c := register(); c != http.StatusOK {
-		t.Fatalf("register 1: status = %d, want 200", c)
+		t.Fatalf("register: status = %d, want 200", c)
 	}
 	if w := passkeySignupOnce(t, rig, "EXAMPLE-SIGNUP-CRED-PLACEHOLDER1"); w.Code != http.StatusOK {
-		t.Fatalf("passkey sign-up 2: status = %d, want 200 (%s)", w.Code, w.Body.String())
+		t.Fatalf("passkey sign-up: status = %d, want 200 (%s)", w.Code, w.Body.String())
 	}
-	if w := rig.signInByCode(t, "second@example.com"); w.Code != http.StatusOK {
-		t.Fatalf("first code sign-in 3: status = %d, want 200", w.Code)
-	}
-	if got := rig.accountCount() - before; got != 3 {
-		t.Fatalf("%d account(s) created, want 3", got)
-	}
-
 	if c := register(); c != http.StatusServiceUnavailable {
-		t.Errorf("register past the budget: status = %d, want 503", c)
+		t.Fatalf("register past the proof-free budget: status = %d, want 503", c)
 	}
 	if w := passkeySignupOnce(t, rig, "EXAMPLE-SIGNUP-CRED-PLACEHOLDER2"); w.Code != http.StatusServiceUnavailable {
-		t.Errorf("passkey sign-up past the budget: status = %d, want 503", w.Code)
+		t.Fatalf("passkey sign-up past the proof-free budget: status = %d, want 503", w.Code)
 	}
-	if w := rig.signInByCode(t, "third@example.com"); w.Code != http.StatusServiceUnavailable {
-		t.Errorf("first code sign-in past the budget: status = %d, want 503", w.Code)
+
+	if w := rig.signInByCode(t, "second@example.com"); w.Code != http.StatusOK {
+		t.Fatalf("first code sign-in with the proof-free budget spent: status = %d, want 200", w.Code)
 	}
-	if w := rig.signInByLink(t, "fourth@example.com"); w.Code != http.StatusServiceUnavailable {
-		t.Errorf("first link sign-in past the budget: status = %d, want 503", w.Code)
+	if w := rig.signInByLink(t, "third@example.com"); w.Code != http.StatusSeeOther {
+		t.Fatalf("first link sign-in with the proof-free budget spent: status = %d, want 303", w.Code)
 	}
-	if got := rig.accountCount() - before; got != 3 {
-		t.Errorf("%d account(s) created against a budget of 3", got)
+	if w := rig.signInByCode(t, "fourth@example.com"); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("first code sign-in past the email budget: status = %d, want 503", w.Code)
+	}
+	if got := rig.accountCount() - before; got != 4 {
+		t.Errorf("%d account(s) created, want 4 (2 proof-free + 2 email-proven)", got)
+	}
+	// /v1/register counts its own creation; the dashboard routes must count theirs.
+	if got := created() - createdBefore; got != 4 {
+		t.Errorf("registrations_total{created} grew by %v, want 4", got)
 	}
 	if w := rig.signInByCode(t, rig.user.Email); w.Code != http.StatusOK {
-		t.Errorf("existing user's sign-in with the budget spent: status = %d, want 200", w.Code)
+		t.Errorf("existing user's sign-in with both budgets spent: status = %d, want 200", w.Code)
 	}
 }
