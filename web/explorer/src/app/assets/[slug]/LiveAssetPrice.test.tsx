@@ -251,6 +251,32 @@ describe('LiveAssetPrice', () => {
     hides(/market too thin to aggregate/i, /\$0\.17/);
   });
 
+  // /v1/price normalises on the scale /v1/assets says is contradicted.
+  it('withholds a polled price the asset detail refuses as decimals_mismatch', async () => {
+    const reply = async (input: string | URL) => {
+      const url = String(input);
+      const body = url.includes('/v1/assets/')
+        ? {
+            data: {
+              price_usd: null,
+              price_withheld_reason: 'decimals_mismatch',
+            },
+          }
+        : url.includes('/v1/price')
+          ? { data: { price: '123456.78' } }
+          : null;
+      return {
+        status: body ? 200 : 404,
+        ok: body != null,
+        json: async () => body ?? {},
+      };
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+    renderPrice({ assetID: CAUP7, initialPrice: null });
+    await screen.findByText('withheld · decimals disagree');
+    hides(/123,?456/, /1-min VWAP/i);
+  });
+
   it('a thin-market poll shows the price with a warning badge and the substance note', async () => {
     stubFetch(200, {
       data: {

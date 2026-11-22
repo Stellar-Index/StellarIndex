@@ -22,6 +22,7 @@ import {
   isPriceWithheldError,
   unwrapChangeSummary,
 } from './ChangeSummaryStrip';
+import { withheldNote } from './headerNotes';
 import { isDerivedProvenance, provenanceFromBasis } from './priceProvenance';
 
 export type PriceProvenance =
@@ -102,6 +103,7 @@ export function LiveAssetPrice({
     poll,
     derived,
     withheld,
+    withheldCaption,
     thin,
     seed,
     price,
@@ -199,8 +201,7 @@ export function LiveAssetPrice({
         )}
       </div>
       <p className="text-ink-muted mt-1 text-xs">
-        {withheld &&
-          (poll.withheldDetail ?? poll.withheldTitle ?? 'price withheld')}
+        {withheld && (withheldCaption ?? 'price withheld')}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
         {!withheld && tipActive && caveat && ` · ${caveat}`}
         {thin && shown != null && THIN_MARKET_CAPTION}
@@ -310,21 +311,33 @@ export function useResolvedAssetPrice(
   // A thin market price must not displace a derived one either: the derived
   // price exists because that market was refused.
   const refused = poll.withheld || (poll.thin && derived);
-  const withheld = poll.withheld && !derived;
   const thin = poll.thin && !derived;
   const seed = positiveDecimal(initialPrice);
   // /v1/price has nothing to say about a derived price, so the baked one is
   // re-read from /v1/assets/{id}; until that answers it is captioned as baked.
   // Polled like the headline it replaces, or a derived price freezes at mount.
-  const detail = useAsset(derived ? assetID : undefined, {
-    refetchInterval: LIVE_PRICE_POLL_MS,
+  // Read for every asset: only the asset detail checks a token's read decimals
+  // against the scale its price was normalised on, and /v1/price never does.
+  const detail = useAsset(assetID, {
+    refetchInterval: derived ? LIVE_PRICE_POLL_MS : undefined,
   });
   const detailRow = detail.data?.data;
+  const scaleRefused = detailRow?.price_withheld_reason === 'decimals_mismatch';
+  const withheld = (poll.withheld && !derived) || scaleRefused;
+  const withheldCaption = scaleRefused
+    ? withheldNote('decimals_mismatch')
+    : (poll.withheldDetail ?? poll.withheldTitle);
   const fromAssets = derived && (!poll.polled || refused);
   const reread = fromAssets && detailRow != null;
   const bakedDerived = fromAssets && detailRow == null;
   const detailPrice = positiveDecimal(detailRow?.price_usd);
-  const price = reread ? detailPrice : fromAssets ? seed : poll.price;
+  const price = scaleRefused
+    ? null
+    : reread
+      ? detailPrice
+      : fromAssets
+        ? seed
+        : poll.price;
   const detailAsOf = reread ? (detailRow.price_as_of ?? null) : null;
   const live = poll.polled;
   const stale = reread
@@ -345,12 +358,13 @@ export function useResolvedAssetPrice(
     poll,
     derived,
     withheld,
+    withheldCaption,
     thin,
     seed,
     price,
     live,
     stale,
-    provenance,
+    provenance: scaleRefused ? null : provenance,
     bakedDerived,
     fromAssets,
     detailAsOf,

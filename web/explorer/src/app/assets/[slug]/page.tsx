@@ -955,8 +955,11 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     assetIDParts.length === 2 && assetIDParts[1].startsWith('G')
       ? assetIDParts[1]
       : null;
+  // /v1/price never checks a token's read decimals; the asset row does.
   const headlinePrice =
-    positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd);
+    coin.price_withheld_reason === 'decimals_mismatch'
+      ? null
+      : (positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd));
   return (
     <Container className="space-y-6 py-8">
       <script

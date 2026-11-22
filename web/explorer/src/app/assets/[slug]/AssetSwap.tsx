@@ -468,8 +468,7 @@ export function AssetSwap({
           ? {
               symbol: token.symbol,
               withheld: true,
-              detail:
-                resolved.poll.withheldDetail ?? resolved.poll.withheldTitle,
+              detail: resolved.withheldCaption,
             }
           : { symbol: token.symbol, withheld: Boolean(rate.withheld) },
       ),
