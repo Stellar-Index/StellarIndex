@@ -319,14 +319,17 @@ jobs:
               - 'scripts/ops/**'
               - 'test/integration/**'
               - 'test/harness/**'
+              - 'test/fixtures/**'
               - 'go.mod'
               # Read by the shard script / integration tests themselves.
               - 'go.sum'
               - 'Makefile'
               - 'scripts/ci/integration-shard.sh'
+              - 'scripts/ci/lint-migrations.sh'
               - '.github/workflows/ci.yml'
               - 'deploy/clickhouse/*.sql'
               - 'configs/ansible/roles/redis-sentinel/templates/users.acl.j2'
+              - 'configs/ansible/roles/archival-node/tasks/10-observability.yml'
             go:
               - '**/*.go'
               - 'go.mod'
@@ -481,10 +484,9 @@ jobs:
               integration=false
             fi
           fi
-          go_pkgs=""
-          if [ "${FILTER_GO:-false}" = true ]; then
-            go_pkgs="$(go run ./scripts/ci/affected-go-pkgs "$RESOLVED" | tr '\n' ' ')"
-          fi
+          # Not gated on FILTER_GO: Go tests also read migrations/, configs/,
+          # deploy/ and docs/, and the selector maps those to their readers.
+          go_pkgs="$(go run ./scripts/ci/affected-go-pkgs "$RESOLVED" | tr '\n' ' ')"
           echo "unit tests will run: ${go_pkgs:-(none: no package code changed)}"
           {
             echo "integration=${integration}"
