@@ -80,7 +80,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
+	if !middleware.ChargeRateLimit(w, r, s.tradeReadCost(canonical.Pair{Base: base, Quote: quote}, from, to)) {
 		return
 	}
 

@@ -144,7 +144,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
+	if !middleware.ChargeRateLimit(w, r, s.tradeReadCost(pair, from, to)) {
 		return
 	}
 
