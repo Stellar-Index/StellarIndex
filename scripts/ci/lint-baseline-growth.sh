@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # lint-baseline-growth.sh - anti-self-bypass tripwire for self-editable lint escape hatches:
 #   scripts/ci/*.baseline, the KNOWN_INERT array in lint-metric-refs.sh, .gitleaksignore,
-#   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml exclusions,
-#   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, the waiver maps in
-#   lint-pk-discriminators and lint-derive-generation-guard, the inline migration baselines in
+#   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml (exclusions,
+#   settings, run/issues, and linters removed from enable), configs/ansible/.ansible-lint
+#   skip_list, deploy/systemd/ORPHANS, the waiver maps in lint-pk-discriminators,
+#   lint-derive-generation-guard and the Go guard tests (`*Exempt*|*Allowlist*|*Waiver* = map`),
+#   .github/zizmor.yml and zizmor's floor flags in workflows, the inline migration baselines in
 #   lint-migrations.sh, and (mutations only,
 #   since new migrations append freely) scripts/ci/migration-immutability.sha256, the inline
 #   escape markers in WATCHED_MARKERS in any file outside the lints, their self-tests and docs
@@ -37,7 +39,9 @@ ZERO_SHA="0000000000000000000000000000000000000000"
 # Every inline escape marker a lint honours is listed in exactly one of these (lowercase EREs);
 # lint-baseline-growth-test.sh fails on a `<name>:ok` / `<name>-ok:` marker in neither.
 # UNWATCHED: style and shell-robustness lints whose waiver cannot hide a data or security defect.
-WATCHED_MARKERS='i128:ok|i128sum:ok|lint-money:ok|migration-compat:ok|lint-priceable:ok|lint-down-delete:ok|floatmoney:ok|decimals-7:|cap-ok:|asset-identity: single-form ok|si-swallow-ok:|unbounded-latest-ok:|apikey-scan-ok:|http-timeout-ok:'
+WATCHED_MARKERS='i128:ok|i128sum:ok|lint-money:ok|migration-compat:ok|lint-priceable:ok|lint-down-delete:ok|floatmoney:ok|decimals-7:|cap-ok:|asset-identity: single-form ok|si-swallow-ok:|unbounded-latest-ok:|apikey-scan-ok:|http-timeout-ok:|exhaustive:ignore|//[[:space:]]*nolint|zizmor: ignore[[]'
+# Case-sensitive, as the lints honouring them match: lowercase "do not run" prose exempts nothing.
+WATCHED_MARKERS_CASE='DO NOT RUN'
 # shellcheck disable=SC2034  # read by the self-test's registry check
 UNWATCHED_MARKERS='sigpipe-ok:|lint-quotes:ok'
 
@@ -64,14 +68,19 @@ added_entries() {
 # baseline_added_entries <base> <head> <file>: like added_entries, but a counted entry
 # (`<key>|<n>` or `<key> <n> read(s)…`) whose key was removed with a count >= the new one is a
 # shrink, not growth: the owning lints fail on a stale count, so lowering one must not need a trailer.
+# A `#<digits>` fingerprint after the count names WHICH reads are excused, so a shrink must keep
+# it: a new fingerprint at the same or a lower count is a swapped excused set, i.e. growth.
 baseline_added_entries() {
   local base="$1" head="$2" file="$3"
   git diff "${base}...${head}" -- "$file" | awk '
-    function counted(s) {
+    function counted(s,   rest) {
       if (match(s, /[|[:space:]][0-9]+$/) || match(s, /[|[:space:]][0-9]+[[:space:]]+read/)) {
         key = substr(s, 1, RSTART)
-        n = substr(s, RSTART + 1)
+        rest = substr(s, RSTART + 1)
+        n = rest
         sub(/[^0-9].*$/, "", n)
+        fp = ""
+        if (match(rest, /#[0-9]+/)) fp = substr(rest, RSTART, RLENGTH)
         return 1
       }
       return 0
@@ -79,41 +88,74 @@ baseline_added_entries() {
     /^(\+\+\+|---) / { next }
     { body = substr($0, 2) }
     body ~ /^[[:space:]]*(#|$)/ { next }
-    /^-/ { if (counted(body) && (!(key in old) || n + 0 > old[key])) old[key] = n + 0; next }
+    /^-/ { if (counted(body) && (!(key in old) || n + 0 > old[key])) { old[key] = n + 0; oldfp[key] = fp }; next }
     /^\+/ { plus[++np] = body }
     END {
       for (i = 1; i <= np; i++) {
         s = plus[i]
-        if (counted(s) && (key in old) && n + 0 <= old[key]) continue
+        if (counted(s) && (key in old) && n + 0 <= old[key] && fp == oldfp[key]) continue
         print s
       }
     }
   ' || true
 }
 
-# golangci_exclusions_block <rev>: the `linters.exclusions:` block only, so unrelated
-# .golangci.yml changes are not read as growth.
-golangci_exclusions_block() {
+# golangci_waiver_surface <rev>: every .golangci.yml line that can relax a check (linters.*
+# incl. settings and exclusions, run:, issues:), each `linters.enable` item as `ENABLE <name>`.
+# output:, formatters: and version: cannot hide a finding, so they are not read as growth.
+golangci_waiver_surface() {
   local rev="$1"
   git show "${rev}:.golangci.yml" 2>/dev/null | awk '
-    /^  exclusions:/ { grab=1 }
-    grab && /^[^[:space:]]/ { grab=0 }
-    grab { print }
+    /^[^[:space:]#]/ { top = $0; sub(/:.*/, "", top); sec = "" }
+    /^[[:space:]]*(#|$)/ { next }
+    top == "output" || top == "formatters" || top == "version" { next }
+    top == "linters" && /^  [^[:space:]]/ { sec = $0; sub(/:.*/, "", sec); sub(/^ +/, "", sec) }
+    top == "linters" && sec == "enable" && /^[[:space:]]+-/ {
+      l = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", l); sub(/[[:space:]]*#.*$/, "", l)
+      print "ENABLE " l; next
+    }
+    { l = $0; sub(/^[[:space:]]+/, "", l); print top ": " l }
   '
 }
 
-# golangci_exclusions_added_lines <base> <head>: non-comment lines added to that block.
-golangci_exclusions_added_lines() {
+# golangci_waiver_added_lines <base> <head>: waiver-surface lines added, plus enabled linters removed.
+golangci_waiver_added_lines() {
   local base="$1" head="$2" b h result
   b="$(mktemp)"; h="$(mktemp)"
-  golangci_exclusions_block "$base" > "$b"
-  golangci_exclusions_block "$head" > "$h"
-  result="$(diff "$b" "$h" 2>/dev/null \
-    | grep -E '^>' \
-    | sed 's/^>[[:space:]]*//' \
-    | grep -vE '^\s*(#|$)' || true)"
+  golangci_waiver_surface "$base" > "$b"
+  golangci_waiver_surface "$head" > "$h"
+  result="$(diff "$b" "$h" 2>/dev/null | awk '
+    /^> / && $2 != "ENABLE" { print substr($0, 3) }
+    /^< ENABLE / { print "removed from linters.enable: " $3 }
+  ' || true)"
   rm -f "$b" "$h"
   printf '%s' "$result"
+}
+
+# go_waiver_map_keys <rev> <file>: the keys of every `<x>Exempt…|<x>Allowlist…|<x>Waiver… = map[…]{`
+# literal in a Go file; each key exempts one site from a guard test.
+go_waiver_map_keys() {
+  git show "${1}:${2}" 2>/dev/null | awk '
+    !depth && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow[Ll]ist|[Ww]aiver)[A-Za-z0-9_]*[[:space:]]*=[[:space:]]*map\[/ { inmap = 1 }
+    inmap {
+      if (depth == 1 && match($0, /^[[:space:]]*"[^"]*"[[:space:]]*:/)) {
+        k = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]+/, "", k); print k
+      }
+      line = $0; o = gsub(/[{]/, "", line); c = gsub(/[}]/, "", line)
+      depth += o - c
+      if (depth <= 0) { inmap = 0; depth = 0 }
+    }
+  '
+}
+
+# go_waiver_map_added_keys <base> <head> <file>: waiver-map keys in <head> absent from <base>.
+go_waiver_map_added_keys() {
+  local b
+  b="$(go_waiver_map_keys "$1" "$3")"
+  go_waiver_map_keys "$2" "$3" | awk -v old="$b" '
+    BEGIN { n = split(old, o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
+    !($0 in seen) { print }
+  '
 }
 
 # mutated_migration_hash_entries <base> <head>: new lines in migration-immutability.sha256
@@ -179,8 +221,8 @@ detect_growth() {
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/govulncheck-allow.txt "$line"
   done <<<"$added"
 
-  # 6) .golangci.yml exclusions; see golangci_exclusions_added_lines().
-  added="$(golangci_exclusions_added_lines "$base" "$head")"
+  # 6) .golangci.yml; see golangci_waiver_added_lines().
+  added="$(golangci_waiver_added_lines "$base" "$head")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .golangci.yml "$line"
   done <<<"$added"
@@ -211,6 +253,29 @@ detect_growth() {
     done <<<"$added"
   done
 
+  # 10b) Go guard tests' waiver maps (closedVWAPSeamExempt, directionExempt, …): a new key exempts
+  #      a site from a money or API guard, found by the map's name, not a hand-kept file list.
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    added="$(go_waiver_map_added_keys "$base" "$head" "$f")"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
+    done <<<"$added"
+  done < <(git diff --name-only "${base}...${head}" -- '*.go' 2>/dev/null)
+
+  # 14) zizmor: its config file waives audits repo-wide, and the workflow step sets its floor.
+  added="$(added_entries "$base" "$head" .github/zizmor.yml '.')"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' .github/zizmor.yml "$line"
+  done <<<"$added"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    added="$(added_entries "$base" "$head" "$f" 'min-(confidence|severity)|persona')"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
+    done <<<"$added"
+  done < <(git diff --name-only "${base}...${head}" -- '.github/workflows/*' 2>/dev/null)
+
   # 12) The inline baselines in lint-migrations.sh: each line naming a shipped migration
   #     (`NNNN_x.up.sql[:name]`, opening `list='` or closing `'` included) exempts it from a pass.
   added="$(added_entries "$base" "$head" scripts/ci/lint-migrations.sh \
@@ -219,14 +284,22 @@ detect_growth() {
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-migrations.sh "$line"
   done <<<"$added"
 
-  # 11) Inline escape markers (WATCHED_MARKERS): each added marker exempts one line. The lints
-  #     that honour them, their self-tests, the workflows that run them and the docs only name a
-  #     marker, so they are skipped.
-  git diff -U0 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \
-      ':(exclude)scripts/ci/*-test.sh' ':(exclude).github/workflows/*' 2>/dev/null \
-      | awk -v re="$WATCHED_MARKERS" '
-    /^\+\+\+ / { f = substr($0, 7); next }
-    /^\+/ && tolower($0) ~ re { print f "\t" substr($0, 2) }
+  # 11) Inline escape markers (WATCHED_MARKERS): each added marker exempts one line. A marker on
+  #     its own comment line governs the line below, so a rewrite of that line is growth too.
+  #     The lints that honour them, their self-tests and the docs only name a marker, so they are
+  #     skipped.
+  git diff -U1 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \
+      ':(exclude)scripts/ci/*-test.sh' 2>/dev/null \
+      | awk -v re="$WATCHED_MARKERS" -v cre="$WATCHED_MARKERS_CASE" '
+    function marked(s) { return tolower(s) ~ re || s ~ cre }
+    /^\+\+\+ / { f = substr($0, 7); prev = ""; next }
+    /^(diff --git|index) / || /^@@/ { prev = ""; next }
+    /^-/ { next }
+    {
+      body = substr($0, 2)
+      if (/^\+/ && (marked(body) || (marked(prev) && prev ~ /^[[:space:]]*(\/\/|#|--)/))) print f "\t" body
+      prev = body
+    }
   '
 
   # 13) The secret scan's inline allow marker: gitleaks skips any line carrying it, in any file
