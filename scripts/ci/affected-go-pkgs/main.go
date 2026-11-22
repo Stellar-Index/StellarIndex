@@ -196,8 +196,8 @@ func run(base string, filesMode, worktree bool) error {
 	if err := addCitationReaders(base, worktree, dirs); err != nil {
 		return err
 	}
-	// Guards read comments too (//floatmoney:ok markers, godoc links), so a
-	// comment-only production edit still runs them.
+	// Guards read comments too (the float-money exemption marker, godoc
+	// links), so a comment-only production edit still runs them.
 	return printPackages(dirs, touchesProductionGo(changed))
 }
 

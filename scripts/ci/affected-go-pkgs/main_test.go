@@ -109,9 +109,9 @@ func TestGuardDirsReadsTestFilesOnly(t *testing.T) {
 	}
 }
 
-// TestRunCommentOnlyProductionEditRunsGuards: deleting a //floatmoney:ok
-// marker changes no token, but the money guard reads it, so the guard
-// package must still be selected.
+// TestRunCommentOnlyProductionEditRunsGuards: deleting a comment changes no
+// token, but guards read comments (the float-money exemption marker), so
+// the guard package must still be selected.
 func TestRunCommentOnlyProductionEditRunsGuards(t *testing.T) {
 	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"} {
 		if v, ok := os.LookupEnv(k); ok {
@@ -139,7 +139,7 @@ func TestRunCommentOnlyProductionEditRunsGuards(t *testing.T) {
 		}
 	}
 	write("go.mod", "module example.com/m\n\ngo 1.27.0\n")
-	write("internal/a/a.go", "package a\n\ntype P struct {\n\t//floatmoney:ok fixture\n\tPrice float64\n}\n")
+	write("internal/a/a.go", "package a\n\ntype P struct {\n\t// Price is in stroops.\n\tPrice float64\n}\n")
 	write("internal/g/g.go", "package g\n")
 	write("internal/g/g_test.go", "package g\n\nimport (\n\t\"go/parser\"\n\t\"testing\"\n)\n\nfunc TestG(t *testing.T) { _ = parser.ParseComments }\n")
 	git("init", "-q", ".")
