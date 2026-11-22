@@ -1010,6 +1010,11 @@ jobs:
         run: |
           bash scripts/ops/restore-drill-test.sh
           bash scripts/ops/restore-drill-run-test.sh
+      - name: lake-dedup driver fail-closed self-test
+        # The driver runs OPTIMIZE FINAL on the lake; its guards (disk floor,
+        # no-op merge abort, link-safe metrics) are pinned only by this test,
+        # which lint-changed runs only when the test file itself changes.
+        run: bash deploy/clickhouse/lake-dedup-driver-test.sh
       - name: ClickHouse ops-credential contract
         # Pins that every scripts/ops script passing credentials to
         # clickhouse-client does so via its environment, never argv
