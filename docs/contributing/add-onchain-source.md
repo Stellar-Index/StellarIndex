@@ -72,7 +72,7 @@ of this you owe depends on the gate mechanism:
 - [ ] **Factory-anchored** (`Factories` non-empty — blend, aquarius, defindex,
       phoenix, sushiswap_v3): the children are discovered from the factory's
       creation events, so there is nothing in code to seed them with.
-      `stellarindex-ops seed-protocol-contracts -source <name>` is a **deploy
+      `stellarindex-ops seed-protocol-contracts -source <name> -write` is a **deploy
       precondition** (ADR-0040 §2) — run it once the lake covers the factory
       genesis. Until it runs the warm logs a WARN naming the source and the
       remedy; a fresh host legitimately sits there for a while, which is why the

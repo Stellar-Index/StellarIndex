@@ -43,7 +43,7 @@
 #   migrations/*.sql         lint-migrations, lint-migration-immutability,
 #                            lint-migration-commands, lint-migration-compat
 #                            (whole migrations/ dir; each ~1 s).
-#   docs/operations/*.md +   lint-ops-write-flag (whole docs/operations tree,
+#   docs/*.md, AGENTS.md +   lint-ops-write-flag (whole docs tree bar adr/archive,
 #   write_gate_class_test.go instant): gated ops commands pass -write/-dry-run.
 #   .go/.sql under internal/ lint-numeric-mask (whole scope, instant): no
 #   cmd/ pkg/ deploy/ migr.  to_char with a fixed-width numeric mask.
@@ -217,7 +217,7 @@ for f in "${changed[@]}"; do
     # lint-migration-commands also reads these for a NULL-start refresh.
     case "$f" in docs/*|deploy/*|configs/*|scripts/ops/*|scripts/dev/*) op_corpus=1 ;; esac
     case "$f" in
-        docs/operations/*.md|cmd/stellarindex-ops/write_gate_class_test.go|scripts/ci/lint-ops-write-flag.sh)
+        docs/*.md|AGENTS.md|CONTRIBUTING.md|cmd/stellarindex-ops/write_gate_class_test.go|scripts/ci/lint-ops-write-flag.sh)
             opsdoc=1; hit=1 ;;
     esac
     case "$f" in

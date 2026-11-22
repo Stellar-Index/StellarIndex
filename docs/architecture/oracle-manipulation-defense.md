@@ -180,7 +180,7 @@ Gate state is in aggregator memory, so a restart re-applies the 28.5 gate.
 - Durability: Redis is a cache. `freeze_events` (migrations 0119, 0163 `window_ladders`) is the
   record; a missing marker is rehydrated from an open row, bounded by `hold_until` + 5 minutes grace.
   The aggregator runs one ladder per (pair, window) for 5m, 1h and 24h; the last window to release
-  deletes the marker. The override is `stellarindex-ops freeze-unfreeze -reason ...`; a bare
+  deletes the marker. The override is `stellarindex-ops freeze-unfreeze -reason ... -write`; a bare
   `redis-cli DEL` is not one, because the next tick rehydrates.
 
 ### Engineering observability

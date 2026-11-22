@@ -185,7 +185,7 @@ The earliest stake WASMs publish an unbond's token and amount under the
 buffer folds those into the open unbond rather than a new bond.
 
 **Rollout of 0195.** Existing ledgers need a replay, not just the deploy:
-`stellarindex-ops projector-replay -config PATH -source phoenix -from 51572016 -refresh-caggs=false`
+`stellarindex-ops projector-replay -config PATH -source phoenix -from 51572016 -refresh-caggs=false -write`
 after decompressing the affected chunks, then `compute-completeness`.
 Expected deltas: `unbond` 6,574 → 7,188, `create_distribution_flow` 13,
 `migration_*` 1,068, `phoenix_admin_events` +5, `phoenix_liquidity` +28.
