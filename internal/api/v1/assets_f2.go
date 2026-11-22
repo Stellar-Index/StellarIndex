@@ -186,6 +186,7 @@ func capRefusedOnPriceBasis(d *AssetDetail) MarketCapWithheldReason {
 func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int, now time.Time) {
 	detail.SupplyStale = supplyObservationStale(snap, now)
 	populateSupplyFields(detail, snap)
+	detail.CirculatingSupplyLowerBound = detail.CirculatingSupply != nil && (detail.supplyFloor || snap.Basis.LowerBound())
 	if capRefusedOnSupplyBasis(snap.Basis) {
 		detail.MarketCapWithheldReason = MarketCapWithheldSupplyFloor
 		return

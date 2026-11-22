@@ -152,10 +152,10 @@ type AssetDetail struct {
 	// price failing the substance gate (flagTwinSubstanceWithheldCap). It separates "suppressed on purpose" from "no
 	// data"; price_usd still serves, only the valuation is guarded.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
-
 	// MarketCapLowerBound: on a listing row, market_cap_usd rests on a floor supply, so the cap is a floor too.
 	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
-
+	// CirculatingSupplyLowerBound: circulating_supply is a provable floor, whether or not a cap is built on it.
+	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were refused because the
 	// lake's on-chain decimals() disagrees with the nonstandard_decimals_assets projection that
 	// price paths normalise through. Price and supply would sit on different scales, so their
@@ -3830,7 +3830,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		dst.DecimalsUnresolved, dst.DecimalsUndeclared = twin.DecimalsUnresolved, twin.DecimalsUndeclared
 		// The basis says whether the figure is exact, a floor or a derived upper bound; without it a
 		// lake-flows or trustline-sum reading renders as exact.
-		dst.SupplyBasis = twin.SupplyBasis
+		dst.SupplyBasis, dst.CirculatingSupplyLowerBound = twin.SupplyBasis, twin.CirculatingSupplyLowerBound
 	}
 	if dst.MarketCapUSD == nil {
 		dst.MarketCapUSD, dst.MarketCapLowerBound = twin.MarketCapUSD, twin.MarketCapLowerBound

@@ -393,7 +393,8 @@ type AssetDetail struct {
 	// Distinguishes "suppressed on purpose" from "no supply/price data"; price_usd still serves.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 	// MarketCapLowerBound is true on a listing row whose market_cap_usd rests on a floor supply.
-	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
+	MarketCapLowerBound         bool `json:"market_cap_lower_bound,omitempty"`
+	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"` // circulating_supply is a floor, cap or no cap
 
 	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd) were refused because the server's two decimals
 	// resolvers disagreed for this Soroban token, so supply and price sat on different scales. Self-clearing.
