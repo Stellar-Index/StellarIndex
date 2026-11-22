@@ -216,6 +216,22 @@ func TestFXFixings(t *testing.T) {
 		}
 	})
 
+	t.Run("PreFixingsDailyHonoursMaxAge", func(t *testing.T) {
+		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{
+			{Bucket: t0, Ticker: "KES", RateUSD: 129, InverseUSD: 1.0 / 129, Source: "massive"},
+		}); err != nil {
+			t.Fatalf("InsertFXQuoteBatch: %v", err)
+		}
+		// The day closes at t0+24h; e − lag − (t0+24h) is 72h, inside 76h, so it binds.
+		if b, ok := bind(t, "KES", t0.Add(99*time.Hour), maxAge); !ok || b.RateUSD != "129" {
+			t.Fatalf("KES 72h after its day closed bound %+v ok=%v, want the day", b, ok)
+		}
+		// Five days on, the only fx_quotes day is inside the 7-day snap lookback but past maxAge.
+		if b, ok := bind(t, "KES", t0.Add(5*24*time.Hour), maxAge); ok {
+			t.Fatalf("a daily leg %s older than the %s max age bound %+v; it must withhold", t0.Add(5*24*time.Hour-timescale.FXFixingLag).Sub(b.BarEnd), maxAge, b)
+		}
+	})
+
 	t.Run("EraGapWithholds", func(t *testing.T) {
 		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{
 			{Bucket: t0.Add(9 * 24 * time.Hour), Ticker: "TRY", RateUSD: 32, InverseUSD: 1.0 / 32, Source: "massive"},

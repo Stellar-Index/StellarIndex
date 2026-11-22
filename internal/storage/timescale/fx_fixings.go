@@ -128,7 +128,16 @@ func (s *Store) FXFixingAtOrBefore(ctx context.Context, tickers []string, e time
 	if len(missing) == 0 {
 		return out, nil
 	}
-	return out, s.fxFixingDailyArm(ctx, missing, cutoff, out)
+	if err := s.fxFixingDailyArm(ctx, missing, cutoff, out); err != nil {
+		return nil, err
+	}
+	// One bound for every arm: a leg that closed maxAge or more before cutoff is withheld, not served.
+	for t, b := range out {
+		if !b.BarEnd.After(cutoff.Add(-maxAge)) {
+			delete(out, t)
+		}
+	}
+	return out, nil
 }
 
 // fxFixingRowsAtOrBefore runs [fxFixingAtOrBeforeSelect] for tickers at
