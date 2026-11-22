@@ -259,6 +259,39 @@ func TestRevoke_SelfRevokeFailingMidSweepLeavesTheRootAbleToRetry(t *testing.T) 
 	f.assertDead(t, map[string]string{"root": rootPlain, "mid": midPlain, "leaf": leafPlain})
 }
 
+// TestRevoke_SelfRevokeCatchesAChildMintedDuringTheSweepUnderADenyingACL: with `apikey-index:*`
+// denied no revoke marker is written, so a mint under the still-live root lands after the first
+// sweep; the revoke must still leave that child unable to authenticate.
+func TestRevoke_SelfRevokeCatchesAChildMintedDuringTheSweepUnderADenyingACL(t *testing.T) {
+	f := newLineageFixture(t)
+	ctx := context.Background()
+	denier := &indexDenier{}
+	denier.deny.Store(true)
+	f.rdb.AddHook(denier)
+	root, rootPlain, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+	_, midPlain, _ := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+	rootRecord := cachekeys.APIKey(hashAPIKey(rootPlain)).String()
+	var late APIKeyRecord
+	var latePlain string
+	var mintErr error
+	f.rdb.AddHook(&beforeCmd{
+		match: func(args []any) bool { return len(args) == 2 && args[0] == "del" && args[1] == rootRecord },
+		run:   func() { late, latePlain, mintErr = f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)) },
+	})
+
+	removed, err := f.store.RevokeKeyTree(ctx, "acct-x", root.KeyID)
+	if err != nil {
+		t.Fatalf("RevokeKeyTree: %v", err)
+	}
+	if mintErr != nil {
+		t.Fatalf("mint between the sweep and the root's deletion: %v, want it to land (no marker under this ACL)", mintErr)
+	}
+	f.assertDead(t, map[string]string{"root": rootPlain, "mid": midPlain, "late": latePlain})
+	if !slices.Contains(removed, late.KeyID) {
+		t.Errorf("removed = %v, want it to include the late child %s", removed, late.KeyID)
+	}
+}
+
 // TestRevoke_SweepsWhenTheRootHasNoRecord: a key whose record here is gone (a Postgres-backed key
 // whose mirror lapsed) still takes its delegated keys with it.
 func TestRevoke_SweepsWhenTheRootHasNoRecord(t *testing.T) {

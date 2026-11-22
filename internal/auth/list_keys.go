@@ -501,6 +501,13 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 		if err := s.removeRecord(ctx, hash, keyID, identifier); err != nil {
 			return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
 		}
+		// An ACL that denies the marker lets a mint under the live root land during the first sweep;
+		// with the root's record gone no further mint can, so this pass catches every such child.
+		late, err := s.revokeDescendants(ctx, identifier, keyID)
+		removed = append(removed, late...)
+		if err != nil {
+			return removed, fmt.Errorf("auth: RevokeKeyByID: %w", err)
+		}
 	}
 	if !owned && len(removed) == 0 {
 		return nil, ErrKeyNotFound
@@ -508,8 +515,8 @@ func (s *RedisAPIKeyStore) RevokeKeyTree(ctx context.Context, identifier, keyID 
 	return removed, nil
 }
 
-// keyRevokeMarkerTTL outlasts any revoke sweep; once it lapses every key it guarded is gone, and a
-// mint under a gone key is refused by the minter-record check.
+// keyRevokeMarkerTTL outlasts any revoke sweep. After a failed sweep the root is still live, and
+// once the marker lapses it can mint again until a retried revoke removes it.
 const keyRevokeMarkerTTL = time.Hour
 
 // keyRevokedTombstoneTTL covers a client retrying a revoke whose 204 it never received.
