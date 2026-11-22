@@ -150,7 +150,7 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		ObservedAt:       current.observedAt.UTC().Format(time.RFC3339),
 		Resolution:       resolutionLabel(current.resSec),
 	}
-	flags := s.withProxyDeviation(ctx, Flags{Triangulated: cur.triangulated}, now)
+	flags := s.withProxyDeviation(ctx, Flags{Triangulated: cur.triangulated}, quote, now)
 	if cur.adm.Admitted() {
 		flags.ThinMarket = true
 		resp.Substance = substanceEvidenceWire(cur.adm.Evidence())

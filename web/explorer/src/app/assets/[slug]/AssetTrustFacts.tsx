@@ -7,6 +7,7 @@ import { apiGet, asExample } from '@/api/client';
 import { useIssuer } from '@/api/hooks';
 import { scamFlagTags } from '@/lib/directory-tags';
 import { useIssuerScamFlags } from './AssetScamCallout';
+import { HOLDER_BOARD_EXCLUDES } from './HoldersTabPanel';
 import type { paths } from '@/api/types';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
@@ -163,7 +164,7 @@ export function AssetTrustFacts({
   } else if (holders && holderCount != null) {
     facts.push({
       label: 'Holders',
-      value: holderCount.toLocaleString('en-US'),
+      value: `${holderCount.toLocaleString('en-US')} accounts · ${HOLDER_BOARD_EXCLUDES}`,
       source: holdersSrc,
       asOf: holdersAsOf,
     });

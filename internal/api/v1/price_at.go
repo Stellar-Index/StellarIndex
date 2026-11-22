@@ -140,7 +140,7 @@ func (s *Server) resolvePriceAt(
 	if err != nil || fbFound {
 		flags := Flags{Triangulated: true}
 		if fbFound {
-			flags = s.withProxyDeviation(ctx, flags, ts)
+			flags = s.withProxyDeviation(ctx, flags, quote, ts)
 		}
 		return fbSnap, flags, fbFound, nil, err
 	}

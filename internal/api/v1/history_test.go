@@ -83,6 +83,8 @@ type stubHistoryReader struct {
 	// lpsMu guards lastCall.sourceFilter: computeObservations scans the
 	// alias spellings concurrently.
 	lpsMu sync.Mutex
+	// firstPointsFrom is the window start of the first HistoryPointsInRange call; later calls page forward from it.
+	firstPointsFrom time.Time
 	// pointsErr is set by tests that want to drive the
 	// since-inception handler to a specific error code (e.g.
 	// ErrUnknownGranularity).
@@ -174,6 +176,9 @@ func (r *stubHistoryReader) HistoryPoints(_ context.Context, pair canonical.Pair
 // the timeframe→window mapping.
 func (r *stubHistoryReader) HistoryPointsInRange(_ context.Context, pair canonical.Pair, granularity string, from, to time.Time, _ int) ([]v1.HistoryPoint, error) {
 	r.lastCall.granularity = granularity
+	if r.firstPointsFrom.IsZero() {
+		r.firstPointsFrom = from
+	}
 	r.lastCall.from = from
 	r.lastCall.to = to
 	if r.pointsErr != nil {
@@ -1575,7 +1580,7 @@ func TestHistoryPoints_NameDerivedSourcePerPoint(t *testing.T) {
 			{Bucket: t0.Add(24 * time.Hour), VWAP: "0.124", Sources: []string{"binance", "kraken"}},
 		},
 	}
-	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader, Clock: t0FixtureClock}))
 
 	for _, path := range []string{
 		"/v1/history/since-inception?asset=native&quote=fiat:USD",
@@ -1756,7 +1761,7 @@ func TestHistoryPoints_VendorOnlyPointDropsVolume(t *testing.T) {
 			{Bucket: t0.Add(24 * time.Hour), VWAP: "0.124", VolumeUSD: &vol, Sources: []string{"kraken"}},
 		},
 	}
-	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader, Clock: t0FixtureClock}))
 
 	for _, path := range []string{
 		"/v1/history/since-inception?asset=native&quote=fiat:USD",

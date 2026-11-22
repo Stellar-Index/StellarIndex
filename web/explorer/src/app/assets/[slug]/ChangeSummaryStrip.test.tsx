@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import {
   AccelerationArrow,
+  ChangeSummaryStrip,
   StreakChip,
   buildChangeWindows,
   unwrapChangeSummary,
@@ -69,5 +71,43 @@ describe('strip chips', () => {
     );
     expect(getByText('recovering')).toBeInTheDocument();
     expect(container.querySelectorAll('svg')).toHaveLength(1);
+  });
+});
+
+describe('ChangeSummaryStrip', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('withdraws the strip when a refetch is withheld, not the last good row', async () => {
+    let withheld = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => ({
+        status: withheld ? 404 : 200,
+        ok: !withheld,
+        json: async () =>
+          withheld
+            ? { type: 'https://api.stellarindex.io/errors/price-withheld' }
+            : { data: row },
+      })),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(
+        <QueryClientProvider client={client}>
+          <ChangeSummaryStrip assetID="native" />
+        </QueryClientProvider>,
+      );
+      expect(await screen.findByText(/low since indexed/)).toBeInTheDocument();
+      withheld = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() =>
+        expect(screen.queryByTestId('change-summary-strip')).toBeNull(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -769,7 +769,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	if governing.IsZero() {
 		governing = asset
 	}
-	flags := s.withProxyDeviation(r.Context(), Flags{Stale: stale, Triangulated: triangulated}, time.Now().UTC())
+	flags := s.withProxyDeviation(r.Context(), Flags{Stale: stale, Triangulated: triangulated}, quote, time.Now().UTC())
 	// Composite-quality signals (diverged / rerouted) run whichever arm served, since the router
 	// tracks the chain even when a closed bucket wins.
 	if pairKeyed {

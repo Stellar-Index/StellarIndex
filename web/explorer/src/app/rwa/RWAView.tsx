@@ -72,6 +72,8 @@ const VALUATION_REASON: Record<string, string> = {
     'Withheld — a price exists but its liquidity is below the floor at which a market cap would mean anything.',
   supply_unavailable:
     'A price exists but no circulating-supply reading does, so no market cap can be computed.',
+  market_cap_withheld:
+    'A price and a circulating supply both exist, but the market cap is withheld — for example on a derived or thin price, or a code that collides with a verified ticker. The API names the reason.',
   decimals_unavailable:
     "A price and a supply both exist, but this contract's own declared decimal scale does not, so there is no exponent to divide the supply by.",
 };

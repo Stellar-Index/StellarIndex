@@ -55,9 +55,13 @@ func xlmUSDFreezeOverlap(from, bucket, sac string) string {
 
 // xlmUSDFreezePairs renders "fe is a freeze on an XLM form against a USD proxy", either stored direction.
 func xlmUSDFreezePairs(sac string) string {
-	forms := xlmUSDAnchorForms(sac)
-	return `((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
-		                     OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))`
+	return usdProxyFreezePairs("IN (" + xlmUSDAnchorForms(sac) + ")")
+}
+
+// usdProxyFreezePairs renders "fe is a freeze on an asset matching `fe.<id> <match>` against a USD proxy", either stored direction.
+func usdProxyFreezePairs(match string) string {
+	return `((fe.asset_id ` + match + ` AND fe.quote_id IN (` + usdProxyQuotes + `))
+		                     OR (fe.quote_id ` + match + ` AND fe.asset_id IN (` + usdProxyQuotes + `)))`
 }
 
 // xlmUSDFreezeWindow renders "freeze row rel overlaps [from, bucket + 1 minute + xlmUSDFreezeTriggerLookback)".

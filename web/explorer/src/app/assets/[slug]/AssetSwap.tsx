@@ -9,6 +9,7 @@ import { thinMarketNote } from '@/components/ThinMarketBadge';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import {
+  LIVE_PRICE_POLL_MS,
   useAsset,
   useCoins,
   useVerifiedIndex,
@@ -411,8 +412,11 @@ export function AssetSwap({
       ? 'as baked at deploy'
       : null,
   ].filter((q): q is string => q != null);
-  const pageObservedAt =
-    resolved.live && !resolved.fromAssets ? resolved.poll.observedAt : null;
+  const pageObservedAt = resolved.fromAssets
+    ? resolved.detailAsOf
+    : resolved.live
+      ? resolved.poll.observedAt
+      : null;
   const legNote = (
     token: SwapToken,
     rate: ReturnType<typeof useLegRate>,
@@ -940,7 +944,9 @@ function useLegRate(
   // The batch answers for direct markets only; a derived leg is re-read from
   // /v1/assets, as the page leg's useResolvedAssetPrice does.
   const derived = !isPageLeg && !isUsd && Boolean(token.derived);
-  const detailRow = useAsset(derived ? token.key : undefined).data?.data;
+  const detailRow = useAsset(derived ? token.key : undefined, {
+    refetchInterval: LIVE_PRICE_POLL_MS,
+  }).data?.data;
   const fetchable =
     !isPageLeg && !isUsd && !derived && isPriceableAssetId(token.key);
   const q = useQuery<LegRate>({

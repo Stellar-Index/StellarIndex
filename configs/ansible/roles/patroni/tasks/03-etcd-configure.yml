@@ -37,6 +37,29 @@
     mode: '0750'
   when: etcd_tls_enabled
 
+- name: verify etcd TLS material
+  import_tasks: verify-tls.yml
+  vars:
+    tls_label: etcd server
+    tls_ca: "{{ etcd_tls_ca_pem | default('') }}"
+    tls_cert: "{{ etcd_tls_cert_pem | default('') }}"
+    tls_key: "{{ etcd_tls_key_pem | default('') }}"
+  when: etcd_tls_enabled
+
+- name: detect an etcd restart an earlier run refused or did not finish
+  stat:
+    path: /etc/default/.etcd-restart-pending
+  register: _etcd_restart_pending
+
+- name: re-queue the pending etcd restart
+  debug:
+    msg: >-
+      An earlier run left an etcd restart pending on {{ inventory_hostname }}
+      (the handler refused, failed, or never ran); the restart handler runs again.
+  changed_when: true
+  notify: "etcd config changed"
+  when: _etcd_restart_pending.stat.exists
+
 - name: install etcd TLS material
   copy:
     content: "{{ item.content }}\n"

@@ -1,4 +1,22 @@
 ---
+# Handlers run in this order. A guarded restart that refuses (exit 1) fails the
+# host and cancels every handler after it, so the markers, the reloads and the
+# firewall come first. A marker is cleared only by its restart succeeding; 05
+# re-notifies from it on the next run.
+- name: mark the prometheus restart pending
+  file:
+    path: /etc/prometheus/.restart-pending
+    state: touch
+    mode: "0600"
+  listen: "prometheus unit changed"
+
+- name: mark the alertmanager restart pending
+  file:
+    path: /etc/alertmanager/.restart-pending
+    state: touch
+    mode: "0600"
+  listen: "alertmanager unit changed"
+
 # Prometheus reloads via SIGHUP — zero-drop config update.
 - name: reload prometheus
   systemd:
@@ -7,26 +25,41 @@
     daemon_reload: yes
   listen: "prometheus config changed"
 
+- name: reload alertmanager
+  systemd:
+    name: alertmanager
+    state: reloaded
+    daemon_reload: yes
+  listen: "alertmanager config changed"
+
+- name: reload firewall
+  systemd:
+    name: nftables
+    state: reloaded
+  listen: "firewall rules changed"
+
 # SIGHUP re-reads prometheus.yml and rules only. Command-line flags
 # (retention, --web.config.file) live in the unit and need a restart.
 # throttle serialises the hosts but still runs the next one after a failure,
 # so a ready replica restarts only while its peer is ready too: a bad unit
 # change then stops at the first replica instead of taking both down.
-# A replica that is not ready is restarted regardless (that costs nothing).
-# The web config is deleted only once the restarted process no longer reads it,
-# and a refused or failed restart leaves the pending marker that 05 re-notifies from.
+# A replica that is not ready is restarted only when its unit is down; a running
+# one that fails the probe is refused. The probe sends the client password while
+# the file exists, so the old process (still enforcing basic auth) answers it.
+# The web config and the client password are deleted only once the restarted
+# process no longer needs them.
 - name: restart prometheus
   shell: |
     set -eu
     pending=/etc/prometheus/.restart-pending
     touch "$pending"
     ready() {
-      curl -fsS --max-time 5 -o /dev/null -K - <<EOF
-    url = "http://$1:{{ prometheus_port }}/-/ready"
-    {% if prometheus_basic_auth_password_hash %}
-    user = "{{ prometheus_basic_auth_username }}:$(cat /etc/prometheus/prometheus-client-password)"
-    {% endif %}
-    EOF
+      {
+        printf 'url = "http://%s:{{ prometheus_port }}/-/ready"\n' "$1"
+        if [ -s /etc/prometheus/prometheus-client-password ]; then
+          printf 'user = "%s:%s"\n' {{ prometheus_basic_auth_username | quote }} "$(cat /etc/prometheus/prometheus-client-password)"
+        fi
+      } | curl -fsS --max-time 5 -o /dev/null -K -
     }
     self={{ '127.0.0.1' if prometheus_listen.startswith('0.0.0.0:') else ansible_host }}
     if ready "$self"; then
@@ -36,13 +69,16 @@
           exit 1
         fi
       done
+    elif systemctl is-active --quiet prometheus; then
+      echo "refusing to restart prometheus on {{ inventory_hostname }}: it is running but /-/ready fails (still starting, or the probe address or credentials are wrong)" >&2
+      exit 1
     fi
     systemctl daemon-reload
     systemctl restart prometheus
     for _ in $(seq 120); do
       if ready "$self"; then
     {% if not prometheus_basic_auth_password_hash %}
-        rm -f /etc/prometheus/web-config.yml
+        rm -f /etc/prometheus/web-config.yml /etc/prometheus/prometheus-client-password
     {% endif %}
         rm -f "$pending"
         exit 0
@@ -56,27 +92,20 @@
   throttle: 1
   listen: "prometheus unit changed"
 
-- name: reload alertmanager
-  systemd:
-    name: alertmanager
-    state: reloaded
-    daemon_reload: yes
-  listen: "alertmanager config changed"
-
 # Flags (--web.config.file, cluster peers) live in the unit; SIGHUP skips them.
-# Same peer guard, cleanup and pending marker as restart prometheus above.
+# Same peer guard, probe, cleanup and pending marker as restart prometheus above.
 - name: restart alertmanager
   shell: |
     set -eu
     pending=/etc/alertmanager/.restart-pending
     touch "$pending"
     ready() {
-      curl -fsS --max-time 5 -o /dev/null -K - <<EOF
-    url = "http://$1:{{ alertmanager_port }}/-/ready"
-    {% if alertmanager_basic_auth_password_hash %}
-    user = "{{ alertmanager_basic_auth_username }}:$(cat /etc/prometheus/alertmanager-client-password)"
-    {% endif %}
-    EOF
+      {
+        printf 'url = "http://%s:{{ alertmanager_port }}/-/ready"\n' "$1"
+        if [ -s /etc/prometheus/alertmanager-client-password ]; then
+          printf 'user = "%s:%s"\n' {{ alertmanager_basic_auth_username | quote }} "$(cat /etc/prometheus/alertmanager-client-password)"
+        fi
+      } | curl -fsS --max-time 5 -o /dev/null -K -
     }
     self={{ '127.0.0.1' if alertmanager_listen.startswith('0.0.0.0:') else ansible_host }}
     if ready "$self"; then
@@ -86,13 +115,16 @@
           exit 1
         fi
       done
+    elif systemctl is-active --quiet alertmanager; then
+      echo "refusing to restart alertmanager on {{ inventory_hostname }}: it is running but /-/ready fails (still starting, or the probe address or credentials are wrong)" >&2
+      exit 1
     fi
     systemctl daemon-reload
     systemctl restart alertmanager
     for _ in $(seq 60); do
       if ready "$self"; then
     {% if not alertmanager_basic_auth_password_hash %}
-        rm -f /etc/alertmanager/web-config.yml
+        rm -f /etc/alertmanager/web-config.yml /etc/prometheus/alertmanager-client-password
     {% endif %}
         rm -f "$pending"
         exit 0
@@ -105,9 +137,3 @@
     executable: /bin/bash
   throttle: 1
   listen: "alertmanager unit changed"
-
-- name: reload firewall
-  systemd:
-    name: nftables
-    state: reloaded
-  listen: "firewall rules changed"

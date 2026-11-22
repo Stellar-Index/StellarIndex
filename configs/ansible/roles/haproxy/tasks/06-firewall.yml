@@ -122,9 +122,16 @@
           # Public ingress.
           tcp dport { 80, 443 } accept comment "haproxy-public"
 
-          # VRRP between peer LB hosts.
+          # VRRP between peer LB hosts: the unicast peers only when they are set,
+          # else (multicast) the internal ranges.
+      {% if keepalived_unicast_src_ip and keepalived_unicast_peer_ips %}
+      {% for peer in keepalived_unicast_peer_ips %}
+          {{ 'ip6 nexthdr vrrp ip6' if ':' in peer else 'ip protocol vrrp ip' }} saddr {{ peer }} accept comment "vrrp-peer"
+      {% endfor %}
+      {% else %}
           ip protocol vrrp ip saddr @internal_v4 accept comment "vrrp-internal"
           ip6 nexthdr vrrp ip6 saddr @internal_v6 accept comment "vrrp-internal-v6"
+      {% endif %}
 
           # Stats endpoint is bound to 127.0.0.1; covered by iif lo.
 

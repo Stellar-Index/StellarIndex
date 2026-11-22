@@ -126,6 +126,29 @@ describe('AssetSidebar floor marks', () => {
     expect(getAllByText('—').length).toBeGreaterThan(0);
   });
 
+  it('marks a lake-net supply the on-chain read calls a floor', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.endsWith('/supply'))
+        return { data: { circulating_supply_lower_bound: true } };
+      throw new Error('offline');
+    });
+    const { findAllByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{
+          decimals: 7,
+          supply_basis: 'sep41_lake_flows',
+          circulating_supply: '50000000000000',
+          total_supply: '50000000000000',
+        }}
+        priceUSD="0.9998"
+      />,
+    );
+    // Total supply and circulating supply, the same reading.
+    expect(await findAllByText('≥ 5M USDC')).toHaveLength(2);
+    vi.mocked(apiGet).mockReset();
+  });
+
   it('marks total supply and honours the server market-cap flag', () => {
     const { getAllByText, getByText } = renderWithQuery(
       <AssetSidebar
@@ -283,22 +306,39 @@ describe('AssetSidebar live market figures', () => {
     expect(queryByText('$8M')).toBeNull();
   });
 
-  it('keeps the labelled baked figures when the live row is stale', async () => {
+  function staleRow(row: Record<string, unknown>) {
     vi.mocked(apiGet).mockImplementation(async (path: string) => {
       if (path === `/v1/assets/${encodeURIComponent(coin.asset_id)}`)
-        return {
-          data: { ...coin, market_cap_usd: null, volume_24h_usd: '3000' },
-          flags: { stale: true },
-        };
+        return { data: row, flags: { stale: true } };
       throw new Error('offline');
     });
-    const { getAllByText, getByText, queryByText } = renderWithQuery(
+  }
+
+  it('never puts the baked cap in place of one a stale live row withholds', async () => {
+    staleRow({
+      ...coin,
+      market_cap_usd: null,
+      market_cap_withheld_reason: 'supply_stale',
+      volume_24h_usd: '3000',
+    });
+    const { findByText, getAllByText, queryByText } = renderWithQuery(
+      <AssetSidebar coin={bakedCoin} detail={baked} priceUSD="0.9998" />,
+    );
+    expect(await findByText('$3K')).toBeTruthy();
+    expect(queryByText('$5M')).toBeNull();
+    expect(queryByText('not valued · supply out of date')).toBeTruthy();
+    expect(getAllByText('stale · some reads out of date')).toHaveLength(2);
+    expect(queryByText('as baked at deploy')).toBeNull();
+  });
+
+  it('keeps the labelled baked figures when a stale live row carries none', async () => {
+    staleRow({ asset_id: coin.asset_id, observation_count: 0 });
+    const { getAllByText, getByText } = renderWithQuery(
       <AssetSidebar coin={bakedCoin} detail={baked} priceUSD="0.9998" />,
     );
     await waitFor(() => expect(apiGet).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 0));
     expect(getByText('$5M')).toBeTruthy();
-    expect(queryByText('$3K')).toBeNull();
     expect(getAllByText('as baked at deploy')).toHaveLength(2);
   });
 

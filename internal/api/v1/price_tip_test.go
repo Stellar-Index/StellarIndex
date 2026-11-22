@@ -819,12 +819,13 @@ func TestPriceTip_USDAnchoredCrossCarriesProxyDeviation(t *testing.T) {
 	usdc, _ := oraclePegsForFallback(t)
 	for usdcUSD, want := range map[string]bool{"0.90": true, "1.001": false} {
 		ts := startHTTPTest(t, v1.New(v1.Options{
-			Prices:            &stubPriceReader{err: v1.ErrPriceNotFound},
-			History:           &stubHistoryReader{},
-			Triangulated:      usdOnlyVWAPLooker{value: "0.2"},
-			Currencies:        brlCurrencies(),
-			PriceAt:           devPriceAtStub(map[string]string{"crypto:USDC/fiat:USD": usdcUSD}),
-			USDPeggedClassics: []canonical.Asset{usdc},
+			Prices:             &stubPriceReader{err: v1.ErrPriceNotFound},
+			History:            &stubHistoryReader{},
+			Triangulated:       usdOnlyVWAPLooker{value: "0.2"},
+			Currencies:         brlCurrencies(),
+			PriceAt:            devPriceAtStub(map[string]string{"crypto:USDC/fiat:USD": usdcUSD}),
+			USDPeggedClassics:  []canonical.Asset{usdc},
+			VerifiedCurrencies: newTestCatalogue(t),
 		}).Handler())
 		resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:BRL")
 		body, _ := readAll(resp)
