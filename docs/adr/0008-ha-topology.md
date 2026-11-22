@@ -68,6 +68,13 @@ Owned hardware plus cloud DR meets the commitment without lock-in, at the cost o
 keepalived, Sentinel and mirrors. A new service declares its tier, redundancy and degraded mode;
 runbooks live in `docs/operations/runbooks/`. Rejected: full cloud, single-replica Postgres.
 
+Redis down is not served from Timescale as Decision 6 describes: Redis holds the API-key store and
+the rate-limit counters, so keyed requests fail at once and, after `api.rate_limit_dwell`, every
+rate-limited route answers 503. `/v1/readyz` follows: 200 `degraded` inside the dwell, 503 (the
+critical `redis_outage` check) past it, so a load balancer drains the instance only once it has
+nothing left to serve ([ha-plan.md](../architecture/ha-plan.md) §3.1, §5, §9).
+
 ## Evidence
 
-`cmd/stellarindex-aggregator/main.go`, `deploy/monitoring/rules/slo.yml`, the two chops tests above.
+`cmd/stellarindex-aggregator/main.go`, `deploy/monitoring/rules/slo.yml`, the two chops tests above;
+`cmd/stellarindex-api/internal/wiring/redis_outage_test.go` for the Redis readiness behaviour.
