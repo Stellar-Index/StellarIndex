@@ -56,7 +56,6 @@ lint-docs-test.sh
 lint-lexicon-test.sh
 lint-migrations-test.sh
 lint-orphans-truth-test.sh
-lint-patroni-basic-auth-quoting-test.sh
 lint-runbook-annotations-test.sh
 lint-tripwire-window-test.sh
 node-healthcheck-galexie-mc-test.sh

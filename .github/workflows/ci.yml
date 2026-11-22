@@ -2279,6 +2279,11 @@ jobs:
         # material rather than fall back to plaintext.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-patroni-etcd-tls-test.sh
+      - name: patroni credential quoting test
+        # An unquoted credential scalar with a `:` or `#` is a YAML parse
+        # error or a different value than the one the operator set.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/lint-patroni-basic-auth-quoting-test.sh
       - name: node-exporter-collectors package install test (T630)
         # The apt/nvme systemd drop-ins repoint ExecStart at
         # /usr/share/prometheus-node-exporter-collectors/{apt_info,
