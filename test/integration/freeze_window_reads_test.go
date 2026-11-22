@@ -51,3 +51,36 @@ func TestFreezeWindowsForPair_ReturnsRecoveredAndOpenFreezes(t *testing.T) {
 		t.Fatalf("another quote's freezes must not be returned: %+v, %v", other, err)
 	}
 }
+
+// The fiat:USD read covers every freeze the XLM/USD anchor refuses: any USD proxy quote, in either stored direction.
+func TestFreezeWindowsForPair_USDCoversEveryProxyEitherDirection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	sink := timescale.NewFreezeEventSink(store)
+	usdc, err := c.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eur, _ := c.NewFiatAsset("EUR")
+	decision := anomaly.Decision{Action: anomaly.ActionFreeze, Class: anomaly.ClassStablecoin, Reason: "phase2:3_signal_AND"}
+	before := time.Now().UTC().Add(-time.Minute)
+	for _, p := range [][2]c.Asset{{c.NativeAsset(), usdc}, {usdc, c.NativeAsset()}, {c.NativeAsset(), eur}} {
+		if err := sink.RecordFreeze(ctx, p[0], p[1], "0.100000000000", decision); err != nil {
+			t.Fatalf("RecordFreeze %s/%s: %v", p[0], p[1], err)
+		}
+	}
+
+	got, err := store.FreezeWindowsForPair(ctx, []string{"native", "crypto:XLM"}, "fiat:USD", before)
+	if err != nil {
+		t.Fatalf("FreezeWindowsForPair: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("FreezeWindowsForPair(fiat:USD) = %+v, want the XLM/USDC freeze in both stored directions and not the EUR one", got)
+	}
+}

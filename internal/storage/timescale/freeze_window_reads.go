@@ -27,17 +27,23 @@ func (w FreezeWindow) CoversMinute(bucket time.Time) bool {
 	return w.RecoveredAt == nil || w.RecoveredAt.After(bucket)
 }
 
-// FreezeWindowsForPair returns every freeze recorded for any of assetIDs against quoteID that had not recovered by since.
+// FreezeWindowsForPair returns every freeze recorded for any of assetIDs against quoteID that had not recovered by since. A USD
+// proxy quote stands for every USD proxy in either stored direction, the population [xlmUSDFreezePairs] keeps off the anchor.
 func (s *Store) FreezeWindowsForPair(ctx context.Context, assetIDs []string, quoteID string, since time.Time) ([]FreezeWindow, error) {
 	if len(assetIDs) == 0 {
 		return nil, nil
 	}
-	const q = `
-		SELECT frozen_at, recovered_at
-		  FROM freeze_events
-		 WHERE asset_id = ANY($1) AND quote_id = $2
-		   AND (recovered_at IS NULL OR recovered_at > $3::timestamptz)`
-	rows, err := s.db.QueryContext(ctx, q, assetIDs, quoteID, since)
+	pairs := `fe.asset_id = ANY($1) AND fe.quote_id = $3`
+	args := []any{assetIDs, since, quoteID}
+	if isUSDProxyAsset(quoteID) {
+		pairs, args = usdProxyFreezePairs("= ANY($1)"), args[:2]
+	}
+	q := `
+		SELECT fe.frozen_at, fe.recovered_at
+		  FROM freeze_events fe
+		 WHERE ` + pairs + `
+		   AND (fe.recovered_at IS NULL OR fe.recovered_at > $2::timestamptz)`
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FreezeWindowsForPair: %w", err)
 	}

@@ -17,8 +17,9 @@ type FreezeWindowReader interface {
 	FreezeWindows(ctx context.Context, assets []canonical.Asset, quote canonical.Asset, since time.Time) ([]timescale.FreezeWindow, error)
 }
 
-// dropFrozenBuckets removes every closed 1-minute bucket inside a recorded freeze of any spelling of asset against
-// fiat:USD. dropped reports a removal; unknown a failed read, in which case the series is returned as read.
+// dropFrozenBuckets removes every closed 1-minute bucket inside a recorded freeze of any spelling of asset against any USD
+// proxy, either stored direction (the reader widens fiat:USD as the XLM/USD anchor does). dropped reports a removal; unknown a
+// failed read, in which case the series is returned as read.
 func (s *Server) dropFrozenBuckets(ctx context.Context, asset canonical.Asset, snaps []PriceSnapshot) (kept []PriceSnapshot, dropped, unknown bool) {
 	fr, ok := s.Prices.(FreezeWindowReader)
 	if !ok || len(snaps) == 0 {
