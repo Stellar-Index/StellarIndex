@@ -371,6 +371,23 @@ journalctl -u stellarindex-aggregator --since "-1h" | grep -i mev
 1. Clear the Postgres fault (reachability, lock wait, missing migration); the storage runbook covers each.
 2. Overlapping windows are deduplicated, so no catch-up step is needed. Verify `stellarindex_mev_detect_runs_total{outcome="ok"}` rises within 10 min.
 
+## stellarindex_mev_detect_stalled
+
+P3, `for: 30m`. Expr: `sum by (job) (increase(stellarindex_mev_detect_runs_total[1h])) == 0`. No MEV detection run finished with any outcome in the last hour although the aggregator is up. The worker runs every 5 min and cannot be disabled, so it is hung. `/v1/mev` serves the last good set.
+
+### Check
+
+```sh
+journalctl -u stellarindex-aggregator --since "-2h" | grep -i mev
+```
+
+The last `mev` log line shows where the run stopped. A Postgres or ClickHouse call without a deadline is the usual cause.
+
+### Fix
+
+1. Restart `stellarindex-aggregator` (take a goroutine dump first if you want the stuck frame).
+2. Overlapping windows are deduplicated, so no catch-up step is needed. Verify `stellarindex_mev_detect_runs_total{outcome="ok"}` rises within 10 min.
+
 ## stellarindex_change_summary_stale
 
 P3, `for: 15m`. Expr: `(time() - stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"}) > 1800 and stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"} > 0`. No pass upserted any entity for 30 min (`stellarindex_change_summary_passes_total{outcome="failed"}` usually rising); explorer delta strips serve frozen rows. `partial` passes are normal.

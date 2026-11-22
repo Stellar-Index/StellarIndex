@@ -755,3 +755,24 @@ groups:
             written, so /v1/mev serves the last good set. Look at the
             aggregator's mev component logs and
             stellarindex_mev_detect_runs_total by outcome.
+
+      # A hung worker counts no outcome at all, so the failing rule's
+      # 0 > 0 stays silent. The aggregator always starts the worker (no
+      # disable switch), so a missing series is a down target, not "off".
+      - alert: stellarindex_mev_detect_stalled
+        expr: |
+          sum by (job) (increase(stellarindex_mev_detect_runs_total{job="stellarindex_aggregator"}[1h])) == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_mev_detect_stalled
+          summary: "MEV detection has completed no run in an hour — /v1/mev is going stale"
+          description: |
+            No MEV detection run finished with any outcome (ok, scan_error
+            or write_error) over the last hour, held for 30 minutes, while
+            the aggregator is up. The worker is hung, most likely inside a
+            database call, so /v1/mev serves the last good set. Take a
+            goroutine dump and check the aggregator's mev component logs.
