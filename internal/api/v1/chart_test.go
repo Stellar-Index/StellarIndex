@@ -16,6 +16,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// fxFixtureClock pins the chart clock inside the 2024 fx fixtures' year, so a 1y window holds them.
+func fxFixtureClock() time.Time { return time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC) }
+
+// t0FixtureClock pins the chart clock one day after the shared t0 fixture, so a default 24h window opens at t0 and holds the
+// points a window-ignoring stub returns, as the store would.
+func t0FixtureClock() time.Time { return time.Unix(1_770_000_000, 0).UTC().Add(24 * time.Hour) }
+
 // stubFXHistoryReader implements v1.FXHistoryReader for chart-fiat tests.
 type stubFXHistoryReader struct {
 	points []v1.FXQuotePoint
@@ -88,7 +95,7 @@ func TestChart_Fiat_CrossPair_TriangulatesViaUSD(t *testing.T) {
 			{Bucket: d2, RateUSDText: "156.00", InverseUSDText: "0.00641025641025641026"},
 		},
 	}}
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx, Clock: fxFixtureClock})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:EUR&quote=fiat:JPY&timeframe=1y&granularity=1d")
 	if resp.StatusCode != http.StatusOK {
@@ -150,7 +157,7 @@ func TestChart_TWAP_ServesTimeWeightedSeries(t *testing.T) {
 			{Bucket: t0.Add(time.Hour), VWAP: "0.4300"},
 		},
 	}
-	srv := v1.New(v1.Options{History: reader})
+	srv := v1.New(v1.Options{History: reader, Clock: t0FixtureClock})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&price_type=twap")
@@ -271,7 +278,7 @@ func TestChart_DefaultsTimeframeAndGranularity(t *testing.T) {
 			{Bucket: t0.Add(15 * time.Minute), VWAP: "0.51"},
 		},
 	}
-	srv := v1.New(v1.Options{History: reader})
+	srv := v1.New(v1.Options{History: reader, Clock: t0FixtureClock})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD")
@@ -303,9 +310,8 @@ func TestChart_DefaultsTimeframeAndGranularity(t *testing.T) {
 	if reader.lastCall.from.IsZero() {
 		t.Error("reader saw zero from — timeframe window not applied")
 	}
-	delta := time.Since(reader.lastCall.from) - 24*time.Hour
-	if delta < -5*time.Second || delta > 5*time.Second {
-		t.Errorf("from window = %v from now, want ~24h", time.Since(reader.lastCall.from))
+	if got := t0FixtureClock().Sub(reader.firstPointsFrom); got != 24*time.Hour {
+		t.Errorf("from window = %v from now, want 24h", got)
 	}
 }
 
@@ -376,6 +382,7 @@ func TestChart_StablecoinFallback(t *testing.T) {
 	srv := v1.New(v1.Options{
 		History:           reader,
 		USDPeggedClassics: []canonical.Asset{usdc},
+		Clock:             t0FixtureClock,
 	})
 	ts := httpTestServer(t, srv)
 
@@ -440,7 +447,7 @@ func TestChart_NativeReadsCryptoXLMAlias(t *testing.T) {
 			},
 		},
 	}
-	srv := v1.New(v1.Options{History: reader})
+	srv := v1.New(v1.Options{History: reader, Clock: t0FixtureClock})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=24h&granularity=1h")
@@ -483,7 +490,7 @@ func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 		},
 	}
 	// No USDPeggedClassics — the crypto-backer path must carry it alone.
-	srv := v1.New(v1.Options{History: reader})
+	srv := v1.New(v1.Options{History: reader, Clock: t0FixtureClock})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=24h&granularity=1h")
@@ -767,6 +774,7 @@ func TestChart_MarketCap_FiatCNY_ComputesFromM2(t *testing.T) {
 		History:            &stubHistoryReader{},
 		FXHistory:          fx,
 		VerifiedCurrencies: newTestCatalogue(t),
+		Clock:              func() time.Time { return time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC) },
 	})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:CNY&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
@@ -868,7 +876,7 @@ func TestChart_Fiat_RateDirection(t *testing.T) {
 		{"CNY to USD serves the inverse", "asset=fiat:CNY&quote=fiat:USD", []string{"0.1392757660", "0.1388888888"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := getChartOpts(t, v1.Options{History: &stubHistoryReader{}, FXHistory: fx}, tc.query+"&timeframe=1y&granularity=1d")
+			s := getChartOpts(t, v1.Options{History: &stubHistoryReader{}, FXHistory: fx, Clock: fxFixtureClock}, tc.query+"&timeframe=1y&granularity=1d")
 			if len(s.Points) != len(tc.want) {
 				t.Fatalf("got %d points, want %d", len(s.Points), len(tc.want))
 			}
@@ -980,7 +988,7 @@ func TestChart_Fiat_DirectLeg_TinyRateSurvives(t *testing.T) {
 		{Bucket: d1, RateUSDText: "2500000000000", InverseUSDText: "0.0000000000004"},
 		{Bucket: d2, RateUSDText: "7.18", InverseUSDText: "0.13927576601671309192"},
 	}}
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx, Clock: fxFixtureClock})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:CNY&quote=fiat:USD&timeframe=1y&granularity=1d")
 	if resp.StatusCode != http.StatusOK {
@@ -1885,7 +1893,7 @@ func TestChart_StablecoinFallback_ReachesPegSACTwin(t *testing.T) {
 			{Bucket: t0.Add(time.Hour), VWAP: "0.0042"},
 		},
 	}}
-	srv := v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}})
+	srv := v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}, Clock: t0FixtureClock})
 	ts := httpTestServer(t, srv)
 
 	env := getChart(t, ts.URL+"/v1/chart?asset=AQUA:"+pegAliasAquaIssuer+
@@ -1990,7 +1998,7 @@ func TestChart_DeclaredPeg_FiatUSD_CrossesThroughXLM(t *testing.T) {
 			{Bucket: t0.Add(time.Hour), VWAP: "0.198"},
 		},
 	}}
-	srv := v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}})
+	srv := v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}, Clock: t0FixtureClock})
 	ts := httpTestServer(t, srv)
 
 	env := getChart(t, ts.URL+"/v1/chart?asset=USDC:"+pegAliasUSDCIssuer+

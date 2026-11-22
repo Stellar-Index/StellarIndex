@@ -144,7 +144,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
+	if !middleware.ChargeRateLimit(w, r, s.tradeReadCost(pair, from, to)) {
 		return
 	}
 
@@ -205,7 +205,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		Clamped:             clamped,
 		BelowFloor:          belowFloor,
 		Substance:           substance,
-	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
+	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, pair.Quote, to))
 }
 
 // filterOHLCOutliers applies the single-bar outlier filter; a window with trades but none kept is a 422 (the filter withheld them), not

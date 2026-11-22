@@ -26,8 +26,9 @@ func depegServer(t *testing.T, usdcUSD string) string {
 		byPair[depegUSDCUSDPair] = usdcUSD
 	}
 	srv := v1.New(v1.Options{
-		PriceAt:           &recordingPriceAtReader{byPair: byPair},
-		USDPeggedClassics: []canonical.Asset{usdc},
+		PriceAt:            &recordingPriceAtReader{byPair: byPair},
+		USDPeggedClassics:  []canonical.Asset{usdc},
+		VerifiedCurrencies: newTestCatalogue(t),
 	})
 	return startHTTPTest(t, srv.Handler()).URL
 }

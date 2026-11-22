@@ -80,7 +80,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
+	if !middleware.ChargeRateLimit(w, r, s.tradeReadCost(canonical.Pair{Base: base, Quote: quote}, from, to)) {
 		return
 	}
 
@@ -114,7 +114,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	res.Truncated = window.Truncated()
 	res.Clamped = clamped
 	res.Substance = s.thinMarketEvidence(ctx, base, quote, books, "twap")
-	writeJSON(w, res, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil}, to))
+	writeJSON(w, res, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil}, quote, to))
 }
 
 // computeTWAP filters trades at sigma and time-weights the survivors over [from, to), writing the problem response itself on failure;

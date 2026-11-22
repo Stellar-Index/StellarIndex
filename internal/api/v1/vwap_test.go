@@ -392,8 +392,9 @@ func TestVWAP_ProxyDeviationBand(t *testing.T) {
 			History: &pairAwareHistoryReader{tradesByPair: map[string][]canonical.Trade{
 				depegXLMUSDCPair: {trade},
 			}},
-			PriceAt:           &recordingPriceAtReader{byPair: byPair},
-			USDPeggedClassics: []canonical.Asset{usdc},
+			PriceAt:            &recordingPriceAtReader{byPair: byPair},
+			USDPeggedClassics:  []canonical.Asset{usdc},
+			VerifiedCurrencies: newTestCatalogue(t),
 		})
 		resp := mustGet(t, startHTTPTest(t, srv.Handler()).URL+"/v1/vwap?base=native&quote=fiat:USD")
 		body, _ := readAll(resp)

@@ -356,5 +356,6 @@ func (s *Server) writeChartSeries(
 		Stale:           walk.degraded,
 		Degraded:        walk.degraded,
 		OutsideCoverage: outside,
+		ThinMarket:      s.chartThin(r.Context(), pair, walk),
 	}, coverageFrom)
 }

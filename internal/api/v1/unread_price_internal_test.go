@@ -35,14 +35,14 @@ func TestWithProxyDeviation_UnreadPegIsDegraded(t *testing.T) {
 		{"depegged", depegProbeReader{value: "0.87"}, true, false},
 	}
 	for _, c := range cases {
-		s := &Server{Options: Options{PriceAt: c.reader, USDPeggedClassics: []canonical.Asset{peg}}}
-		got := s.withProxyDeviation(context.Background(), Flags{Triangulated: true}, time.Now())
+		s := &Server{Options: Options{PriceAt: c.reader, USDPeggedClassics: []canonical.Asset{peg}, VerifiedCurrencies: mustEmbeddedCatalogue(t)}}
+		got := s.withProxyDeviation(context.Background(), Flags{Triangulated: true}, usdQuote(t), time.Now())
 		if got.ProxyDeviation != c.deviated || got.Degraded != c.degraded {
 			t.Errorf("%s: proxy_deviation=%v degraded=%v, want %v %v", c.name, got.ProxyDeviation, got.Degraded, c.deviated, c.degraded)
 		}
 	}
 	s := &Server{Options: Options{PriceAt: depegProbeReader{err: errors.New("pool timeout")}, USDPeggedClassics: []canonical.Asset{peg}}}
-	if got := s.withProxyDeviation(context.Background(), Flags{}, time.Now()); got.Degraded {
+	if got := s.withProxyDeviation(context.Background(), Flags{}, usdQuote(t), time.Now()); got.Degraded {
 		t.Error("a direct (non-triangulated) answer has no peg leg to check")
 	}
 }

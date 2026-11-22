@@ -27,8 +27,8 @@ func TestWithProxyDeviation_UncheckedPegIsOnTheWire(t *testing.T) {
 		{"guarded", depegProbeReader{err: ErrPriceAtGuarded}, true, false},
 		{"in band", depegProbeReader{value: "1.0001"}, false, false},
 	} {
-		s := &Server{Options: Options{PriceAt: c.reader, USDPeggedClassics: []canonical.Asset{peg}}}
-		f := s.withProxyDeviation(context.Background(), Flags{Triangulated: true}, time.Now())
+		s := &Server{Options: Options{PriceAt: c.reader, USDPeggedClassics: []canonical.Asset{peg}, VerifiedCurrencies: mustEmbeddedCatalogue(t)}}
+		f := s.withProxyDeviation(context.Background(), Flags{Triangulated: true}, usdQuote(t), time.Now())
 		if f.Degraded != c.wantDegraded {
 			t.Errorf("%s: Degraded = %v, want %v", c.name, f.Degraded, c.wantDegraded)
 		}

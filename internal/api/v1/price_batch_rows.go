@@ -235,7 +235,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	}
 
 	env := batchEnvelope(ids, results)
-	env.Flags = s.withProxyDeviation(r.Context(), env.Flags, time.Now().UTC())
+	env.Flags = s.withProxyDeviation(r.Context(), env.Flags, quote, time.Now().UTC())
 	env.Flags.Degraded = env.Flags.Degraded || batchDegraded(results)
 	writeEnvelope(w, env)
 }

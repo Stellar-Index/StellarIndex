@@ -185,7 +185,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	cacheSnap, cacheSources, _, tri, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
 	if ok {
 		if tri {
-			cacheSnap.ProxyDeviation, cacheSnap.PegUnchecked, cacheSnap.PegReadFailed = s.proxyDeviationChecked(ctx, time.Now().UTC())
+			cacheSnap.ProxyDeviation, cacheSnap.PegUnchecked, cacheSnap.PegReadFailed = s.proxyDeviationChecked(ctx, quote, time.Now().UTC())
 		}
 		return cacheSnap, cacheSources, true, nil
 	}
@@ -203,7 +203,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 		return PriceSnapshot{}, nil, false, err
 	}
 	if proxyOK {
-		proxySnap.ProxyDeviation, proxySnap.PegUnchecked, proxySnap.PegReadFailed = s.proxyDeviationChecked(ctx, time.Now().UTC())
+		proxySnap.ProxyDeviation, proxySnap.PegUnchecked, proxySnap.PegReadFailed = s.proxyDeviationChecked(ctx, quote, time.Now().UTC())
 		return proxySnap, proxySources, true, nil
 	}
 	// Fiat-vs-fiat cross-rate via the forex snapshot (see tryFiatCrossRate); no on-chain pair
@@ -222,7 +222,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	switch {
 	case ok:
 		// The cross's USD leg can be the stablecoin proxy or the triangulated cache value.
-		fxSnap.ProxyDeviation, fxSnap.PegUnchecked, fxSnap.PegReadFailed = s.proxyDeviationChecked(ctx, time.Now().UTC())
+		fxSnap.ProxyDeviation, fxSnap.PegUnchecked, fxSnap.PegReadFailed = s.proxyDeviationChecked(ctx, quote, time.Now().UTC())
 		return fxSnap, fxSources, true, nil
 	case err != nil:
 		return PriceSnapshot{}, nil, false, err

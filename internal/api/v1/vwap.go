@@ -87,7 +87,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
+	if !middleware.ChargeRateLimit(w, r, s.tradeReadCost(canonical.Pair{Base: base, Quote: quote}, from, to)) {
 		return
 	}
 
@@ -150,7 +150,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		Clamped:             clamped,
 		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, window.Truncated()),
 		Substance:           substance,
-	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
+	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, quote, to))
 }
 
 // writeVWAPError maps an aggregate.VWAP failure to its problem+json.
