@@ -28,16 +28,6 @@ galexie-archive-contiguity.service:PrivateTmp
 galexie-archive-contiguity.service:ProtectKernelTunables
 galexie-archive-contiguity.service:ProtectKernelModules
 galexie-archive-contiguity.service:ProtectControlGroups
-galexie-archive-fill.service:NoNewPrivileges
-galexie-archive-fill.service:PrivateTmp
-galexie-archive-fill.service:ProtectKernelTunables
-galexie-archive-fill.service:ProtectKernelModules
-galexie-archive-fill.service:ProtectControlGroups
-galexie-archive-tip-lag.service:NoNewPrivileges
-galexie-archive-tip-lag.service:PrivateTmp
-galexie-archive-tip-lag.service:ProtectKernelTunables
-galexie-archive-tip-lag.service:ProtectKernelModules
-galexie-archive-tip-lag.service:ProtectControlGroups
 # Catch-up lane steps are arbitrary root operator commands (sudo, /tmp handoffs).
 si-catchup.service:NoNewPrivileges
 si-catchup.service:PrivateTmp

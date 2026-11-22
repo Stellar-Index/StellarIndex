@@ -27,6 +27,14 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
+# Root only for root's mc aliases, so ProtectHome stays off; nothing here
+# writes /usr, /etc or kernel state.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 # 75 = run-heavy-job.sh skipped this fire (a lock was held): not a
 # failure, but ExecMainStatus=75 keeps it distinct from a run.
 SuccessExitStatus=75
