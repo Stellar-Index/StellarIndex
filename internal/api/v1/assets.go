@@ -943,16 +943,14 @@ func (s *Server) buildAssetListPage(
 	// dust flag, peg basis, scam tags) to decide whether there is a hole to fill. See
 	// asset_listing_valuation.go.
 	s.applyListingValuations(valCtx, out)
-	unmeasured, stale = unmeasured || valReads.unread.Load(), stale || valReads.stale.Load()
 	s.fillImagesFromSep1(r.Context(), out)
 	suppressFlaggedIssuerIdentities(out)
 	// Last, after every price producer and both gates: the sparkline attaches only to rows that
 	// still publish a price.
-	s.attachSparklinesIfRequested(r, out)
-	// Honest freshness as /v1/markets does for SWR reads: cached rows are stamped with their
-	// actual observation time and, past the TTL, flags.stale, never now() over a boot-seeded or
-	// refresh-starved page set. An uncached read stamps the build time once, so a cached replay
-	// carries the same as_of as the response that built it.
+	s.attachSparklinesIfRequested(valCtx, r, out)
+	unmeasured, stale = unmeasured || valReads.unread.Load(), stale || valReads.stale.Load()
+	// Cached rows carry their observation time and, past the TTL, flags.stale; an uncached read
+	// stamps the build time once, so a cached replay carries the as_of of the response that built it.
 	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured, Degraded: stale || unmeasured || anyDirectoryUnchecked(out)}, AsOf: WireTime(time.Now().UTC())}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
@@ -1839,13 +1837,14 @@ func (s *Server) writeCataloguePage(
 	// this writer and neither applies the row filters (stated on all four
 	// parameters in the spec), so no arm has been selected away and the
 	// cross-arm total is the only figure a row here can honestly carry.
-	unmeasured, stale := s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{})
-	flags.Stale = flags.Stale || unmeasured || stale
-	flags.Degraded = flags.Degraded || unmeasured
+	ctx, reads := withReadReport(r.Context())
+	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, assetListFilters{})
 	end := min(limit, len(rows))
 	page := rows[:end]
-	s.attachSparklinesIfRequested(r, page)
-	flags.Degraded = flags.Degraded || anyDirectoryUnchecked(page)
+	s.attachSparklinesIfRequested(ctx, r, page)
+	unmeasured = unmeasured || reads.unread.Load()
+	flags.Stale = flags.Stale || unmeasured || stale
+	flags.Degraded = flags.Degraded || unmeasured || anyDirectoryUnchecked(page)
 	env := Envelope{Data: page, Flags: flags}
 	if end < len(rows) {
 		for _, row := range page {
@@ -2121,10 +2120,12 @@ func (s *Server) serveCatalogueUnifiedPage(
 	}
 	// Price + twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
-	unmeasured, stale := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
+	ctx, reads := withReadReport(r.Context())
+	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
 	end := min(limit, len(rows))
 	page := rows[:end]
-	s.attachSparklinesIfRequested(r, page)
+	s.attachSparklinesIfRequested(ctx, r, page)
+	unmeasured = unmeasured || reads.unread.Load()
 	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured || stale, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
 	if end < len(rows) {
 		for _, row := range page {
@@ -2303,10 +2304,10 @@ func (s *Server) fetchClassicUnifiedRows(
 	// gated price, dust flag, peg basis, scam tags) to decide whether a hole needs filling. See
 	// asset_listing_valuation.go.
 	s.applyListingValuations(valCtx, out)
-	unmeasured, cacheStale = unmeasured || valReads.unread.Load(), cacheStale || valReads.stale.Load()
 	s.fillImagesFromSep1(r.Context(), out)
 	suppressFlaggedIssuerIdentities(out)
-	s.attachSparklinesIfRequested(r, out)
+	s.attachSparklinesIfRequested(valCtx, r, out)
+	unmeasured, cacheStale = unmeasured || valReads.unread.Load(), cacheStale || valReads.stale.Load()
 	nextInner := ""
 	// `hasMore` alone, NOT `hasMore && len(out) > 0`: `out` shrinks after the query (twin
 	// suppression, alias folding), and gating on it would emit no cursor for a page whose rows all
@@ -3200,17 +3201,18 @@ func (s *Server) sacSearchAsClassic(r *http.Request, q string) string {
 // attachSparklinesIfRequested honours ?include=sparkline24h and ?include=sparkline7d, one batch read each; it runs in every phase, so it must be safe on mixed pages.
 // (1) Key on the row's Stellar asset id, never the wire asset_id (a catalogue slug matches no prices_1m row and reads as "never traded").
 // (2) No published price means no chart: withheld, scam-suppressed and declared-peg rows would republish the number we declined to publish.
-func (s *Server) attachSparklinesIfRequested(r *http.Request, rows []AssetDetail) {
+// (3) A failed batch read is reported unread on ctx's [readReport], so the caller degrades the page.
+func (s *Server) attachSparklinesIfRequested(ctx context.Context, r *http.Request, rows []AssetDetail) {
 	if s.AssetsReader == nil {
 		return
 	}
 	for _, name := range requestedSparklines(r.URL.Query().Get("include")) {
 		switch name {
 		case "sparkline24h":
-			s.attachSparkline(r, rows, name, s.AssetsReader.GetAssetsPriceHistory24hBatch,
+			s.attachSparkline(ctx, rows, name, s.AssetsReader.GetAssetsPriceHistory24hBatch,
 				func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory24h = w })
 		case "sparkline7d":
-			s.attachSparkline(r, rows, name, s.AssetsReader.GetAssetsPriceHistory7dBatch,
+			s.attachSparkline(ctx, rows, name, s.AssetsReader.GetAssetsPriceHistory7dBatch,
 				func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory7d = w })
 		}
 	}
@@ -3228,13 +3230,11 @@ func requestedSparklines(include string) []string {
 }
 
 // attachSparkline fills one listing series; only the 7d series feeds stellarindex_api_sparkline7d_rows_total.
-func (s *Server) attachSparkline(r *http.Request, rows []AssetDetail, name string,
+func (s *Server) attachSparkline(ctx context.Context, rows []AssetDetail, name string,
 	batch func(context.Context, []string) (map[string][]timescale.AssetPricePoint, error),
 	set func(*AssetDetail, []AssetPricePoint),
 ) {
-	// Series asset_id → the page rows that render it. A catalogue row and
-	// (on a mixed page) its classic twin resolve to the same id, so one
-	// lookup can feed several rows.
+	// Series asset_id → the page rows that render it: a catalogue row and its classic twin share an id.
 	rowsByID := make(map[string][]int, len(rows))
 	ids := make([]string, 0, len(rows))
 	eligible := 0
@@ -3255,9 +3255,10 @@ func (s *Server) attachSparkline(r *http.Request, rows []AssetDetail, name strin
 	if len(ids) == 0 {
 		return
 	}
-	hist, err := batch(r.Context(), ids)
+	hist, err := batch(ctx, ids)
 	if err != nil {
 		s.logger.Warn(name+" batch", "err", err)
+		reportUnreadRead(ctx)
 		return
 	}
 	served := 0
@@ -3285,9 +3286,8 @@ func (s *Server) attachSparkline(r *http.Request, rows []AssetDetail, name strin
 		}
 	}
 	if served == 0 {
-		// One line per request, only when every priced row came back without a price point: that
-		// is a broken lookup key, not a quiet market. Per-row detail is on the
-		// stellarindex_api_sparkline7d_rows_total counter.
+		// Every priced row came back without a point: a broken lookup key, not a quiet market.
+		// Per-row detail is on the stellarindex_api_sparkline7d_rows_total counter.
 		s.logger.Warn(name+": no priced row on this page has a series",
 			"requested_ids", len(ids), "priced_rows", eligible)
 	}
