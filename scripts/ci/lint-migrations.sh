@@ -525,22 +525,24 @@ hyper_indexes() {
       v = s; sub(/^set (local )?lock_timeout( to | ?= ?)/, "", v); gsub(/[\047" ]/, "", v)
       lt = (v ~ /^0+(us|ms|s|min|h|d)?$/ || v == "default") ? 0 : 1
     }
+    s ~ /^reset (lock_timeout|all)/ { lt = 0 }
+    # The timeout that guards a build is the one in force at it, not the file-final one.
     s ~ /^create (unique )?index / && s !~ /^create (unique )?index concurrently/ {
       j = (w[2] == "unique") ? 4 : 3; ine = (w[j] == "if"); if (ine) j += 3
       tbl = ""
       for (i = j; i <= n; i++) if (w[i] == "on") { tbl = (w[i+1] == "only") ? w[i+2] : w[i+1]; break }
-      sub(/\(.*/, "", tbl); sub(/^public\./, "", tbl)
-      k++; idx[k] = w[j]; on[k] = tbl; ok[k] = ine; kind[k] = "index"
+      gsub(/"/, "", tbl); sub(/\(.*/, "", tbl); sub(/^public\./, "", tbl)
+      k++; idx[k] = w[j]; on[k] = tbl; ok[k] = ine; kind[k] = "index"; ltat[k] = lt + 0
     }
     # ADD PRIMARY KEY / UNIQUE builds the same index under ACCESS EXCLUSIVE and
     # has no IF NOT EXISTS form, so only the lock_timeout is asked of it.
     s ~ /^alter table / && s ~ / add (constraint [^ ]+ )?(primary key|unique)[ (]/ && s !~ / using index / {
-      tbl = s; sub(/^alter table (if exists )?(only )?/, "", tbl); sub(/ .*/, "", tbl); sub(/^public\./, "", tbl)
+      tbl = s; sub(/^alter table (if exists )?(only )?/, "", tbl); sub(/ .*/, "", tbl); gsub(/"/, "", tbl); sub(/^public\./, "", tbl)
       c = "primary-key-or-unique"
       if (match(s, / add constraint [^ ]+/)) c = substr(s, RSTART + 16, RLENGTH - 16)
-      k++; idx[k] = c; on[k] = tbl; ok[k] = 1; kind[k] = "constraint"
+      k++; idx[k] = c; on[k] = tbl; ok[k] = 1; kind[k] = "constraint"; ltat[k] = lt + 0
     }
-    END { for (i = 1; i <= k; i++) if (!(on[i] in here)) printf "%s|%s|%d|%d|%s\n", idx[i], on[i], ok[i], lt + 0, kind[i] }'
+    END { for (i = 1; i <= k; i++) if (!(on[i] in here)) printf "%s|%s|%d|%d|%s\n", idx[i], on[i], ok[i], ltat[i], kind[i] }'
 }
 
 # Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction build
