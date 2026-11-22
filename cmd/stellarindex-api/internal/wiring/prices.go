@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -153,6 +154,11 @@ func (g GlobalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quo
 		default:
 			return nil, nil
 		}
+	}
+	// The tier's outlier filter needs three sources; an exclusion that switched it off must not serve survivors the full set's
+	// band would have rejected.
+	if len(kept) < len(rows) && !aggregate.ExcludedSurvivorsAgree(rows, kept) {
+		return nil, nil
 	}
 	return kept, nil
 }

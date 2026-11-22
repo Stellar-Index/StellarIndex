@@ -224,6 +224,26 @@ func TestGlobalPriceReader_SourceExclusion(t *testing.T) {
 		t.Fatalf("aggregator rows = %v (err %v), want only coingecko", rows, err)
 	}
 
+	aggAt := func(source string, price int64) canonical.OracleUpdate {
+		return canonical.OracleUpdate{Source: source, Timestamp: exclNow, Price: canonical.NewAmount(big.NewInt(price)), Decimals: 8}
+	}
+	// Excluding one of three sources switches the tier's outlier filter off: survivors the full set's band rejects are no data,
+	// survivors inside it are served.
+	for _, tc := range []struct {
+		name string
+		agg  []canonical.OracleUpdate
+		want int
+	}{
+		{"survivors disagree", []canonical.OracleUpdate{aggAt("kraken", 1000), aggAt("coingecko", 100), aggAt("cmc", 1000)}, 0},
+		{"survivors agree", []canonical.OracleUpdate{aggAt("kraken", 100), aggAt("coingecko", 1000), aggAt("cmc", 1001)}, 2},
+	} {
+		s := exclGlobalStore{exclPriceStore: store.exclPriceStore, agg: tc.agg}
+		g := GlobalPriceReader{S: s, PKPairFor: canonical.NewPair, Exclusions: exclGateOver(exclRows{rows: krakenExcluded()})}
+		if rows, err := g.LatestAggregatorPrices(ctx, base, quote, nil); err != nil || len(rows) != tc.want {
+			t.Errorf("%s: aggregator rows %v (err %v), want %d", tc.name, rows, err, tc.want)
+		}
+	}
+
 	unread := reader(exclGateOver(exclRows{err: errors.New("db down")}))
 	if _, _, _, _, ok, _ := unread.LatestVWAP(ctx, base, quote); ok {
 		t.Fatal("unreadable set: headline VWAP served")
