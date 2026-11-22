@@ -261,6 +261,43 @@ matrix "ansible-only" 1 1 1 0 configs/ansible/roles/a/tasks/main.yml
 matrix "docs + go (mixed) must run go and integration" 0 0 1 1 docs/x.md internal/storage/timescale/h.go
 matrix "openapi runs go and web, not integration" 0 1 0 1 openapi/stellar-index.v1.yaml
 
+# Non-Go inputs the integration suite reads at run time.
+run integration "configs/ansible/roles/archival-node/tasks/10-observability.yml"
+expect "10-observability.yml (pg_migrations_test runs its probe SQL) triggers integration" 0
+run integration "scripts/ci/lint-migrations.sh"
+expect "lint-migrations.sh (TestMoneyColumnsAreNumeric reads its stems) triggers integration" 0
+run integration "test/fixtures/reflector/v6/x.json"
+expect "test/fixtures/** (completeness_test reads it) triggers integration" 0
+
+# ── ci.yml's resolve step: go_pkgs must not hang off the go class ───
+# Go tests read migrations/, configs/ and docs/ too, so a diff that sets
+# go=false must still ask the selector. Runs the step's own script with a
+# stub selector.
+resolve_go_pkgs() { # <FILTER_GO> → RESOLVED_GO_PKGS
+  local tmp
+  tmp="$(mktemp -d)"
+  awk '
+    /^      - name: Resolve preflight outputs$/ { in_step = 1; next }
+    in_step && /^        run: \|$/ { in_run = 1; next }
+    in_run && /^[[:space:]]*$/ { print ""; next }
+    in_run && !/^          / { exit }
+    in_run { sub(/^          /, ""); print }
+  ' .github/workflows/ci.yml >"$tmp/resolve.sh"
+  printf '#!/bin/sh\necho ./...\n' >"$tmp/go"
+  chmod +x "$tmp/go"
+  : >"$tmp/out"
+  PATH="$tmp:$PATH" GITHUB_OUTPUT="$tmp/out" RESOLVED="$(git rev-parse HEAD)" \
+    FILTER_INTEGRATION=false FILTER_GO="$1" FILTER_WEB=false FILTER_ANSIBLE=false \
+    bash "$tmp/resolve.sh" >/dev/null 2>&1 </dev/null
+  RC=$?
+  RESOLVED_GO_PKGS="$(sed -n 's/^go_pkgs=//p' "$tmp/out")"
+  OUT="script lines: $(wc -l <"$tmp/resolve.sh"); go_pkgs='${RESOLVED_GO_PKGS}'"
+  rm -rf "$tmp"
+}
+resolve_go_pkgs false
+[ "$RC" -eq 0 ] && [ "$RESOLVED_GO_PKGS" = "./..." ] && RC=0 || RC=1
+expect "resolve step: go=false (a migrations/configs/docs-only diff) still sets go_pkgs from the selector" 0
+
 # ── stdin path (the real `git diff --name-only | check-change-class.sh`
 # call shape used in ci.yml) ─────────────────────────────────────────
 
@@ -283,7 +320,7 @@ expect "empty diff (zero files) → usage error, never read as 'nothing changed,
 
 echo
 echo "check-change-class-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 96 ]; then
+if [ "$asserts" -lt 100 ]; then
   echo "check-change-class-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi

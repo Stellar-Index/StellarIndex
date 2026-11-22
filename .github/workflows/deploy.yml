@@ -692,8 +692,8 @@ jobs:
         # on production" as the step above, so it runs the same three
         # lints ci.yml runs on every PR, against this checkout (pinned
         # to the tag being deployed by the `ref:` on this job's
-        # checkout step). The numbering check needs the host's live
-        # version as its base; it runs again with it before the playbook.
+        # checkout step). The numbering and immutability checks run again
+        # against the host's live version before the playbook.
         run: |
           set -euo pipefail
           bash scripts/ci/lint-migrations.sh
@@ -1250,6 +1250,9 @@ jobs:
             exit 1
           fi
           BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh
+          # The tag-checkout immutability run trusts the tag's own manifest,
+          # which the same commit can re-bless; the live release cannot be.
+          MIGRATION_IMMUTABILITY_BASE="$base_sha" bash scripts/ci/lint-migration-immutability.sh
 
       - name: Run deploy playbook
         id: playbook

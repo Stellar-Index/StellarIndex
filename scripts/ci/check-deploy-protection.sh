@@ -25,8 +25,12 @@
 # Usage:
 #   bash scripts/ci/check-deploy-protection.sh [--observe] env.json r1 [policies.json]
 #
-#   --observe  skip the reviewer requirement (scheduled read-only jobs cannot
-#              wait on a human); the branch policy still holds.
+#   --observe  skip the reviewer requirement (scheduled jobs cannot wait on a
+#              human); the branch policy still holds. This does NOT make the
+#              job read-only: an observe environment's jobs run main's code
+#              with whatever secrets they are given, today the same root SSH
+#              key the deploy uses, and nobody approves the run. Main-only is
+#              the whole gate in this mode.
 #
 # Exit 0 = gate present. Exit 1 = gate missing / malformed input. Fail CLOSED.
 set -euo pipefail

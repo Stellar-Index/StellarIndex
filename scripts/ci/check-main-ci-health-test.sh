@@ -120,6 +120,24 @@ run "$(runs_json "$(cancelled 150)" "$(one success 1 s1)" "$(one failure 30 f1)"
 expect 'green run behind a full page of cancelled runs → healthy' 0 'HEALTHY'
 expect 'report counts the dropped cancelled runs' 0 '150 dropped as cancelled'
 
+# ── Full-suite stream: a push run tests only what its diff reaches, so
+#    its green must not clear a red schedule/workflow_dispatch run. ────
+
+# ev <conclusion> <hours-ago> <url> <event>
+ev() { printf '{"conclusion":"%s","created_at":"%s","html_url":"%s","head_sha":"aaaaaaa","event":"%s"}' "$1" "$(now_iso "$2")" "$3" "$4"; }
+
+run "$(runs_json "$(ev success 1 p1 push)" "$(ev failure 8 n1 schedule)" "$(ev success 30 n0 schedule)")" 3 6
+expect 'push green after an 8h-old red nightly → RED' 1 "RED — full-suite"
+
+run "$(runs_json "$(ev success 1 p1 push)" "$(ev failure 3 d1 workflow_dispatch)" "$(ev success 30 n0 schedule)")" 3 6
+expect 'push green after a 3h-old red dispatch → full stream red but under threshold' 0 'not faulting yet'
+
+run "$(runs_json "$(ev success 1 p1 push)" "$(ev success 8 n1 schedule)" "$(ev failure 30 n0 schedule)")" 3 6
+expect 'push green and green nightly → healthy' 0 "HEALTHY — latest full-suite"
+
+run "$(runs_json "$(ev success 1 p1 push)" "$(cancelled 120)" "$(ev failure 8 n1 schedule)")" 3 6
+expect 'red nightly behind a full page of cancelled runs is still paged to → RED' 1 "RED — full-suite"
+
 # ── Stale listing: the filtered run listing once
 #    answered with nothing a month newer while main was building
 #    green, and the walk read it as "red for 666h". The unfiltered listing

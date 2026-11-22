@@ -93,6 +93,39 @@ snapshot
 run
 expect '--write output verifies clean' 0 'passed'
 
+# 7. Against a base commit (the deploy's host-live release): the manifest is
+#    ignored, so an edit that re-blessed its own manifest is still caught.
+#    The fixture is its own git repo; a hook's GIT_* must not leak into it.
+REPO="$TMP/repo"
+g() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_PREFIX \
+  git -C "$REPO" -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false "$@"; }
+runbase() {
+  OUT="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_PREFIX \
+    MIGRATIONS_DIR="$REPO/migrations" MIGRATION_IMMUTABILITY_MANIFEST=/nonexistent \
+    MIGRATION_IMMUTABILITY_BASE="$1" bash "$LINT" 2>&1)"
+  RC=$?
+}
+mkdir -p "$REPO/migrations"
+printf '%s\n' '-- header' 'CREATE TABLE t (a int);' > "$REPO/migrations/0001_t.up.sql"
+printf '%s\n' 'DROP TABLE t;' > "$REPO/migrations/0001_t.down.sql"
+g init -q . && g add . && g commit -q -m base
+base="$(g rev-parse HEAD)"
+runbase "$base"
+expect 'base mode: unchanged tree passes' 0 '1 shipped up migration'
+printf '%s\n' '-- header, corrected' 'CREATE TABLE t (a int);' > "$REPO/migrations/0001_t.up.sql"
+printf '%s\n' 'DROP TABLE IF EXISTS t;' > "$REPO/migrations/0001_t.down.sql"
+printf '%s\n' 'CREATE TABLE u (a int);' > "$REPO/migrations/0002_u.up.sql"
+runbase "$base"
+expect 'base mode: header comment, down body and a new migration pass' 0 'unchanged'
+printf '%s\n' '-- header' 'CREATE TABLE t (a int);' 'UPDATE t SET a = 0;' > "$REPO/migrations/0001_t.up.sql"
+runbase "$base"
+expect 'base mode: an edited shipped up body FAILS' 1 'differs from'
+rm "$REPO/migrations/0001_t.up.sql"
+runbase "$base"
+expect 'base mode: a deleted shipped up FAILS' 1 'missing here'
+runbase "0000000000000000000000000000000000000000"
+expect 'base mode: an unreadable base FAILS closed' 1 'fail-closed'
+
 echo
 echo "lint-migration-immutability-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

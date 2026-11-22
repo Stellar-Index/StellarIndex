@@ -43,11 +43,13 @@
 #                  internal/ops/{archive,chops}/**, internal/api/v1/**,
 #                  cmd/stellarindex-ops/**, migrations/**,
 #                  scripts/ops/**, test/integration/**, test/harness/**,
-#                  go.mod, go.sum, Makefile, scripts/ci/integration-shard.sh,
+#                  test/fixtures/**, go.mod, go.sum, Makefile,
+#                  scripts/ci/integration-shard.sh, scripts/ci/lint-migrations.sh,
 #                  .github/workflows/ci.yml, deploy/clickhouse/*.sql,
-#                  configs/ansible/roles/redis-sentinel/templates/users.acl.j2
-#                  (the shard script and the ClickHouse/Redis integration
-#                  tests read these directly)
+#                  configs/ansible/roles/redis-sentinel/templates/users.acl.j2,
+#                  configs/ansible/roles/archival-node/tasks/10-observability.yml
+#                  (the shard script and the integration tests read these
+#                  directly)
 #   go           — any *.go file, go.mod, go.sum, openapi/** (Go spec-parity
 #                  tests read the spec directly), and the go:embed inputs
 #                  (internal/sources/external/binance/pairs.yaml,
@@ -61,7 +63,11 @@
 #                  scripts/ci/{check-change-class,prepush-integration-required}.sh
 #                  (the trigger-class guard's inputs; it runs only in `test`),
 #                  and scripts/dev/third-party-notices.py (its go||web gated
-#                  step in repo-gates)
+#                  step in repo-gates). Not every input a Go test reads:
+#                  migrations/, configs/, deploy/, docs/ and test/ do not set
+#                  `go`. The unit tests that read them still run because
+#                  ci.yml's resolve step runs affected-go-pkgs on every diff,
+#                  whatever `go` says.
 #   web         — web/**, openapi/**, CHANGELOG.md, top-level files of
 #                  docs/{adr,architecture,blog,operations}/,
 #                  internal/incidents/data/**,
@@ -86,7 +92,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|internal/api/v1/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$'
+  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|internal/api/v1/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness|fixtures)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^scripts/ci/lint-migrations\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$|^configs/ansible/roles/archival-node/tasks/10-observability\.yml$'
 }
 
 class_go() {

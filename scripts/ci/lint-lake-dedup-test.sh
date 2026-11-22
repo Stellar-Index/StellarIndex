@@ -598,6 +598,16 @@ cp -R "$fpbase/." "$fpswap/"
 printf 'package clickhouse\n\nconst q = `SELECT asset, sum(amount) FROM stellar.supply_flows GROUP BY asset`\n' > "$fpswap/$GODIR/board.go"
 check "a baselined read swapped for another fails" 1 "$fpswap"
 
+# A baselined read aggregated by its consumer is pinned to that consumer too.
+fpcons="$(mk fpcons)"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q = `SELECT max(n) + sum(n) FROM (SELECT amount AS n FROM stellar.supply_flows WHERE ledger_seq > 1)`\n' > "$fpcons/$GODIR/board.go"
+suggest "$fpcons"
+check "a baselined subquery read silences its read" 0 "$fpcons"
+# shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+printf 'package clickhouse\n\nconst q = `SELECT count() FROM (SELECT amount AS n FROM stellar.supply_flows WHERE ledger_seq > 1)`\n' > "$fpcons/$GODIR/board.go"
+check "a baselined subquery read under a changed outer aggregate fails" 1 "$fpcons"
+
 ibase="$(mk ibase)"
 printf 'package clickhouse\n\nconst q = "SELECT count() FROM stellar.transactions"\n' > "$ibase/$GODIR/interp.go"
 suggest "$ibase"

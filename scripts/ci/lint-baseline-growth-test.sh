@@ -672,6 +672,94 @@ change_commit "chore: waive a metric" \
 runGate
 expect "a commented metric waiver fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-metric-refs.sh"
 
+# --- 25c. a fingerprinted entry: a new fingerprint at the same or a lower count swaps the excused reads
+fp_seed='c.go:#interp  6 reads: #111 spliced from a closed set'
+mkrepo 0
+change_commit "chore: swap a read" scripts/ci/demo-count.baseline "$fp_seed" \
+  'c.go:#interp  6 reads: #222 spliced from a closed set'
+runGate
+expect "a new fingerprint at the same count is undeclared growth" 1 "+ c.go:#interp  6 reads: #222"
+
+mkrepo 0
+change_commit "chore: swap a read" scripts/ci/demo-count.baseline "$fp_seed" \
+  'c.go:#interp  5 reads: #333 spliced from a closed set'
+runGate
+expect "a new fingerprint at a lower count is undeclared growth" 1 "+ c.go:#interp  5 reads: #333"
+
+mkrepo 0
+change_commit "chore: fewer" scripts/ci/demo-count.baseline "$fp_seed" \
+  'c.go:#interp  5 reads: #111 spliced from a closed set'
+runGate
+expect "a lower count keeping its fingerprint needs no trailer" 0 "no undeclared"
+
+# --- 25d. a Go guard test's waiver map: a new key is growth, a reworded reason is not
+map_go() { printf 'package p\n\nvar closedVWAPSeamExempt = map[string]string{\n%s}\n' "$1"; }
+mkrepo 0
+change_commit "chore: exempt a reader" internal/p/gate_test.go \
+  "$(map_go $'\t"a:b.C": "probe",\n')" "$(map_go $'\t"a:b.C": "probe",\n\t"x:y.Z": "sneak",\n')"
+runGate
+expect "a new Go waiver-map key fails undeclared" 1 "UNDECLARED GROWTH: internal/p/gate_test.go"
+
+mkrepo 0
+change_commit "chore: reword" internal/p/gate_test.go \
+  "$(map_go $'\t"a:b.C": "probe",\n')" "$(map_go $'\t"a:b.C": "existence probe, returns a bool",\n')"
+runGate
+expect "a reworded Go waiver reason needs no trailer" 0 "no undeclared"
+
+# --- 25e. golangci: a linter dropped from enable, or a new settings exclude, is growth
+golangci_seed="$(printf 'linters:\n  enable:\n    - gosec\n    - exhaustive\n  settings:\n    gosec:\n      excludes:\n        - G104\n')"
+mkrepo 0
+change_commit "chore: quieter" .golangci.yml "$golangci_seed" \
+  "$(printf 'linters:\n  enable:\n    - exhaustive\n  settings:\n    gosec:\n      excludes:\n        - G104\n')"
+runGate
+expect "a linter removed from linters.enable fails undeclared" 1 "removed from linters.enable: gosec"
+
+mkrepo 0
+change_commit "chore: quieter" .golangci.yml "$golangci_seed" "$(printf '%s\n        - G115\n' "$golangci_seed")"
+runGate
+expect "a new gosec exclude fails undeclared" 1 "+ linters: - G115"
+
+mkrepo 0
+change_commit "chore: stricter" .golangci.yml "$golangci_seed" \
+  "$(printf 'linters:\n  enable:\n    - gosec\n    - exhaustive\n    - nilerr\n  settings:\n    gosec:\n      excludes:\n        - G104\n')"
+runGate
+expect "a linter added to linters.enable needs no trailer" 0 "no undeclared"
+
+# --- 25f. third-party and prose waivers: exhaustive:ignore, DO NOT RUN
+mkrepo 0
+change_commit "chore: waive" \
+  internal/m/ex.go 'var e = 1' "$(printf '//exhaustive:ignore\nvar e = 1')" \
+  ops/r.sh 'echo' "psql -c \"CALL refresh_continuous_aggregate('t', NULL, now())\" # DO NOT RUN twice"
+runGate
+for f in internal/m/ex.go ops/r.sh; do
+  expect "an added waiver in $f fails undeclared" 1 "UNDECLARED GROWTH: $f"
+done
+
+mkrepo 0
+change_commit "chore: prose" internal/m/p.go 'var p = 1' "$(printf '// changes here do not run the shards\nvar p = 2')"
+runGate
+expect "lowercase do-not-run prose is not a marker" 0 "no undeclared"
+
+# --- 25g. a marker on the line above governs the line below: rewriting that line is growth
+mkrepo 0
+change_commit "chore: refactor" internal/api/l.go \
+  "$(printf 'type R struct {\n\t// floatmoney:ok rate, not an amount\n\tSupplyAPR *float64\n}')" \
+  "$(printf 'type R struct {\n\t// floatmoney:ok rate, not an amount\n\tSuppliedUSD *float64\n}')"
+runGate
+expect "a rewritten line under a standalone marker fails undeclared" 1 "+ SuppliedUSD *float64"
+
+# --- 25h. zizmor: an inline ignore in a workflow, a config waiver, or a raised floor is growth
+mkrepo 0
+# shellcheck disable=SC2016  # the ${{ }} is workflow syntax, not a shell expansion
+change_commit "chore: quiet zizmor" \
+  .github/workflows/x.yml 'run: echo' 'run: echo "${{ github.event.issue.title }}" # zizmor: ignore[template-injection]' \
+  .github/workflows/y.yml 'with: {}' "$(printf 'with:\n  min-confidence: high')" \
+  .github/zizmor.yml 'rules: {}' "$(printf 'rules:\n  template-injection:\n    disable: true')"
+runGate
+for f in .github/workflows/x.yml .github/workflows/y.yml .github/zizmor.yml; do
+  expect "a zizmor waiver in $f fails undeclared" 1 "UNDECLARED GROWTH: $f"
+done
+
 # --- 26. every marker a lint honours is registered as watched or unwatched
 reg() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$GATE" | tr '|' '\n'; }
 registered="$(reg WATCHED_MARKERS; reg UNWATCHED_MARKERS)"

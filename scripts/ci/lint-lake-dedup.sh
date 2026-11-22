@@ -414,7 +414,7 @@ violations="$(
 
     # ── the read-by-read verdict ─────────────────────────────────────
     function analyse(raw, line, file,    N, L, from, s, pos, len, tbl, i,
-                     owner, clause, blk, tail, snip, full, depth, ch) {
+                     owner, clause, blk, tail, snip, full, depth, ch, direct) {
       N = raw
       gsub(/[\n\t]/, " ", N)
       while (N ~ /  /) gsub(/  /, " ", N)
@@ -450,7 +450,8 @@ violations="$(
         # Its whole block, minus nested selects: an aggregate in HAVING or
         # ORDER BY consumes the same rows as one in the select list.
         clause = own_text(with_prefix(L, owner) block_of(L, owner))
-        if (!mult_agg(clause) && !consumed(L, owner, 0)) continue  # not an aggregating read
+        direct = mult_agg(clause)
+        if (!direct && !consumed(L, owner, 0)) continue  # not an aggregating read
         aggregating++
 
         # FINAL attached to this read (optionally through an alias).
@@ -460,6 +461,9 @@ violations="$(
         blk = block_of(L, owner)
         full = substr(N, owner, length(blk))
         snip = full
+        # A read aggregated only by a consumer is fingerprinted with its whole statement, so a
+        # baselined entry fails once the consumer changes.
+        if (!direct) full = N
         if (length(snip) > 220) snip = substr(snip, 1, 220) " …"
         printf "%s\t%d\t%s\t%s\t%s\n", file, line, tbl, snip, full
       }

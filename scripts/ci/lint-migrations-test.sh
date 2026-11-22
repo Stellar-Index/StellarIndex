@@ -259,6 +259,36 @@ SQL
 )"
 clean_mig "IF NOT EXISTS under SET LOCAL lock_timeout passes, split across lines" "$d"
 
+d="$(mig late-timeout 0002_signer.up.sql <<'SQL'
+BEGIN;
+CREATE INDEX IF NOT EXISTS trades_signer_idx ON trades (signer);
+SET LOCAL lock_timeout = '5s';
+COMMIT;
+SQL
+)"
+mcatches "a lock_timeout set only after the build is caught" "$d" \
+  "CREATE INDEX trades_signer_idx ON trades lacks SET LOCAL lock_timeout"
+
+d="$(mig reset-timeout 0002_signer.up.sql <<'SQL'
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+RESET lock_timeout;
+CREATE INDEX IF NOT EXISTS trades_signer_idx ON trades (signer);
+COMMIT;
+SQL
+)"
+mcatches "a lock_timeout RESET before the build is caught" "$d" \
+  "CREATE INDEX trades_signer_idx ON trades lacks SET LOCAL lock_timeout"
+
+d="$(mig quoted-target 0002_signer.up.sql <<'SQL'
+BEGIN;
+CREATE INDEX IF NOT EXISTS trades_signer_idx ON "trades" (signer);
+COMMIT;
+SQL
+)"
+mcatches "an index on a double-quoted hypertable name is caught" "$d" \
+  "CREATE INDEX trades_signer_idx ON trades lacks SET LOCAL lock_timeout"
+
 d="$(mig add-pk 0002_pk.up.sql <<'SQL'
 ALTER TABLE trades DROP CONSTRAINT IF EXISTS trades_pkey;
 ALTER TABLE trades ADD CONSTRAINT trades_pkey PRIMARY KEY (ts, signer);

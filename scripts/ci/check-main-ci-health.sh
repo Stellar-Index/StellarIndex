@@ -3,7 +3,9 @@
 #
 # Queries recent completed runs of the `ci` workflow on `main` and decides
 # whether main has been red past a threshold: consecutive failures OR
-# wall-clock age since the last green run. Decision core of
+# wall-clock age since the last green run. Full-suite runs (schedule,
+# workflow_dispatch) are also judged as their own stream, so a diff-scoped
+# push green cannot clear a red full run. Decision core of
 # .github/workflows/ci-health.yml, which turns RED into a tracking issue and
 # a failed run.
 #
@@ -38,8 +40,21 @@ FAIL_HOURS="${FAIL_HOURS:-6}"
 JQ_FILTER='.workflow_runs[]
   | select(.conclusion=="success" or .conclusion=="failure"
            or .conclusion=="timed_out" or .conclusion=="startup_failure")
-  | [.conclusion, .created_at, .html_url, (.head_sha[0:7])]
+  | [.conclusion, .created_at, .html_url, (.head_sha[0:7]), (.event // "")]
   | @tsv'
+
+# full_runs <runs> — the schedule/workflow_dispatch runs. A push run tests
+# only what its diff reaches, so its green cannot clear a red full run.
+full_runs() {
+  awk -F'\t' '$5 == "schedule" || $5 == "workflow_dispatch"' <<<"$1"
+}
+
+# settled <runs> — the stream's tip verdict is decidable from what is held.
+# An empty stream is not: its newest run may sit on a later page.
+settled() {
+  [ -n "$1" ] || return 1
+  grep -q '^success' <<<"$1" || [ "$(grep -c . <<<"$1")" -gt "$FAIL_RUNS" ]
+}
 
 PER_PAGE=100
 MAX_PAGES=5
@@ -89,7 +104,7 @@ collect_runs() {
       runs="${runs:+${runs}${NL}}${page_runs}"
     fi
     signal_count="$(grep -c . <<<"$runs" || true)"
-    if grep -q '^success' <<<"$runs" || [ "$signal_count" -gt "$FAIL_RUNS" ] \
+    if { settled "$runs" && settled "$(full_runs "$runs")"; } \
         || [ "$page_count" -lt "$PER_PAGE" ]; then
       break
     fi
@@ -137,61 +152,73 @@ if [ -z "$runs" ]; then
 fi
 echo "ci-health: '${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}': scanned ${raw_count} completed run(s), ${dropped} dropped as cancelled/skipped/neutral."
 
-# ── Walk newest→oldest, measure the red streak at the tip ──
-newest_conclusion=""
-streak=0
-streak_oldest_created=""
-first_red_url=""
-last_good_created=""
-while IFS=$'\t' read -r conclusion created url _sha; do
-  [ -z "$conclusion" ] && continue
-  if [ -z "$newest_conclusion" ]; then
-    newest_conclusion="$conclusion"
-  fi
-  if [ "$conclusion" = "success" ]; then
-    last_good_created="$created"
-    break
-  fi
-  streak=$((streak + 1))
-  streak_oldest_created="$created"
-  [ -z "$first_red_url" ] && first_red_url="$url"
-done <<EOF
-$runs
-EOF
-
-if [ "$newest_conclusion" = "success" ] || [ "$streak" -eq 0 ]; then
-  echo "ci-health: HEALTHY — latest '${CI_WORKFLOW_FILE}' run on '${CI_HEALTH_BRANCH}' is green."
-  exit 0
-fi
-
-# Streak age: now minus created_at of the OLDEST run in the streak.
 now_epoch="$(date -u +%s)"
 # ISO-8601 → epoch; GNU and BSD date differ.
 to_epoch() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || echo 0
 }
-streak_epoch="$(to_epoch "$streak_oldest_created")"
-if [ "$streak_epoch" -gt 0 ]; then
-  age_hours=$(( (now_epoch - streak_epoch) / 3600 ))
-else
-  age_hours=0
-fi
 
-echo "ci-health: '${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}' red streak = ${streak} run(s), oldest-in-streak ${streak_oldest_created} (~${age_hours}h ago)."
-echo "ci-health: thresholds FAIL_RUNS=${FAIL_RUNS} FAIL_HOURS=${FAIL_HOURS}."
-if [ -n "$first_red_url" ]; then
-  echo "ci-health: most recent failing run: ${first_red_url}"
-fi
-if [ -n "$last_good_created" ]; then
-  echo "ci-health: last green run at ${last_good_created}."
-else
-  echo "ci-health: no green run in the fetched window."
-fi
+# judge <label> <runs> — walk newest→oldest, measure the red streak at the
+# tip, print the report. Returns 1 when RED.
+judge() {
+  local label="$1" stream="$2"
+  local newest_conclusion="" streak=0 streak_oldest_created="" first_red_url=""
+  local last_good_created="" conclusion created url _rest streak_epoch age_hours
+  while IFS=$'\t' read -r conclusion created url _rest; do
+    [ -z "$conclusion" ] && continue
+    if [ -z "$newest_conclusion" ]; then
+      newest_conclusion="$conclusion"
+    fi
+    if [ "$conclusion" = "success" ]; then
+      last_good_created="$created"
+      break
+    fi
+    streak=$((streak + 1))
+    streak_oldest_created="$created"
+    [ -z "$first_red_url" ] && first_red_url="$url"
+  done <<EOF
+$stream
+EOF
 
-if [ "$streak" -ge "$FAIL_RUNS" ] || [ "$age_hours" -ge "$FAIL_HOURS" ]; then
-  echo "ci-health: RED — '${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}' has been red for ${streak} run(s) / ~${age_hours}h, past threshold."
-  exit 1
-fi
+  if [ "$newest_conclusion" = "success" ] || [ "$streak" -eq 0 ]; then
+    echo "ci-health: HEALTHY — latest ${label}'${CI_WORKFLOW_FILE}' run on '${CI_HEALTH_BRANCH}' is green."
+    return 0
+  fi
 
-echo "ci-health: red but under threshold (streak ${streak} < ${FAIL_RUNS} and age ${age_hours}h < ${FAIL_HOURS}h) — not faulting yet."
-exit 0
+  # Streak age: now minus created_at of the OLDEST run in the streak.
+  streak_epoch="$(to_epoch "$streak_oldest_created")"
+  if [ "$streak_epoch" -gt 0 ]; then
+    age_hours=$(( (now_epoch - streak_epoch) / 3600 ))
+  else
+    age_hours=0
+  fi
+
+  echo "ci-health: ${label}'${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}' red streak = ${streak} run(s), oldest-in-streak ${streak_oldest_created} (~${age_hours}h ago)."
+  echo "ci-health: thresholds FAIL_RUNS=${FAIL_RUNS} FAIL_HOURS=${FAIL_HOURS}."
+  if [ -n "$first_red_url" ]; then
+    echo "ci-health: most recent failing run: ${first_red_url}"
+  fi
+  if [ -n "$last_good_created" ]; then
+    echo "ci-health: last green run at ${last_good_created}."
+  else
+    echo "ci-health: no green run in the fetched window."
+  fi
+
+  if [ "$streak" -ge "$FAIL_RUNS" ] || [ "$age_hours" -ge "$FAIL_HOURS" ]; then
+    echo "ci-health: RED — ${label}'${CI_WORKFLOW_FILE}' on '${CI_HEALTH_BRANCH}' has been red for ${streak} run(s) / ~${age_hours}h, past threshold."
+    return 1
+  fi
+
+  echo "ci-health: red but under threshold (streak ${streak} < ${FAIL_RUNS} and age ${age_hours}h < ${FAIL_HOURS}h) — not faulting yet."
+  return 0
+}
+
+# Judge every run, then the full-suite runs on their own when push runs
+# are mixed in.
+rc=0
+judge "" "$runs" || rc=1
+full="$(full_runs "$runs")"
+if [ -n "$full" ] && [ "$full" != "$runs" ]; then
+  judge "full-suite " "$full" || rc=1
+fi
+exit "$rc"

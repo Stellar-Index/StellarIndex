@@ -67,6 +67,42 @@ if [ ! -d "$MIGRATIONS_DIR" ]; then
   exit 1
 fi
 
+# MIGRATION_IMMUTABILITY_BASE=<commit>: compare every up.sql present at that
+# commit (the host's live release, at deploy) with the tree, ignoring
+# full-line `--` comments (the part the README lets change). The manifest is
+# not consulted: a tree that edits a shipped migration can re-bless its own
+# manifest, but not the commit the host already ran.
+BASE="${MIGRATION_IMMUTABILITY_BASE:-}"
+if [ -n "$BASE" ]; then
+  body_of() { grep -vE '^[[:space:]]*--' || true; }
+  shipped="$(git -C "$MIGRATIONS_DIR" ls-tree --name-only "$BASE" -- ./)" || {
+    echo "lint-migration-immutability ❌ cannot list ${MIGRATIONS_DIR} at ${BASE}; refusing (fail-closed)." >&2
+    exit 1
+  }
+  checked=0
+  fail=0
+  for name in $shipped; do
+    case "$name" in *.up.sql) ;; *) continue ;; esac
+    checked=$((checked + 1))
+    if [ ! -f "$MIGRATIONS_DIR/$name" ]; then
+      echo "lint-migration-immutability ❌ ${MIGRATIONS_DIR}/${name}: present at ${BASE}, missing here (deleted or renamed after it shipped)." >&2
+      fail=1
+      continue
+    fi
+    if [ "$(git -C "$MIGRATIONS_DIR" show "${BASE}:./${name}" | body_of)" != "$(body_of <"$MIGRATIONS_DIR/$name")" ]; then
+      echo "lint-migration-immutability ❌ ${MIGRATIONS_DIR}/${name}: SQL differs from ${BASE}, which the host already ran; golang-migrate will not re-run it." >&2
+      fail=1
+    fi
+  done
+  if [ "$checked" -eq 0 ]; then
+    echo "lint-migration-immutability ❌ no up.sql under ${MIGRATIONS_DIR} at ${BASE}; refusing to read that as nothing shipped." >&2
+    exit 1
+  fi
+  [ "$fail" -eq 0 ] || exit 1
+  echo "✅ migration immutability vs ${BASE}: ${checked} shipped up migration(s) unchanged."
+  exit 0
+fi
+
 # Portable SHA-256: coreutils `sha256sum` (Linux/CI) or `shasum -a 256` (macOS);
 # only the hash is kept.
 sha256_of() {
