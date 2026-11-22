@@ -185,7 +185,7 @@ func TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins(t *testing.T) {
 	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{
 		mkTx(0x01, updated, removed),
 		mkTx(0x02, otherChange),
-	}, nil, 100, now)
+	}, nil, nil, 100, now)
 
 	if len(ext.Changes) != 3 {
 		t.Fatalf("expected 3 extracted changes, got %d", len(ext.Changes))
@@ -267,7 +267,7 @@ func TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase(t *testing.T) {
 	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{
 		mkTx(0x01, []xdr.LedgerEntryChange{acctAt(990)}, []xdr.LedgerEntryChange{acctAt(500)}),
 		mkTx(0x02, []xdr.LedgerEntryChange{acctAt(980)}, nil),
-	}, nil, 100, time.Unix(0, 0).UTC())
+	}, nil, nil, 100, time.Unix(0, 0).UTC())
 
 	if len(ext.Changes) != 3 {
 		t.Fatalf("expected 3 extracted changes, got %d", len(ext.Changes))
@@ -349,7 +349,7 @@ func TestExtractLedgerEntryChanges_RestoredEntryAndTTLAreRecorded(t *testing.T) 
 	}
 
 	var ext LedgerExtract
-	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{tx}, nil, 1000, time.Unix(0, 0).UTC())
+	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{tx}, nil, nil, 1000, time.Unix(0, 0).UTC())
 
 	if len(ext.Changes) != 2 {
 		t.Fatalf("extracted %d changes, want 2 (restored contract_data + restored ttl)", len(ext.Changes))
@@ -426,7 +426,7 @@ func TestExtractLedgerEntryChanges_BlockOrderDoesNotChangeRows(t *testing.T) {
 				V:  3,
 				V3: &xdr.TransactionMetaV3{Operations: []xdr.OperationMeta{{Changes: block}}},
 			},
-		}}, nil, 100, time.Unix(0, 0).UTC())
+		}}, nil, nil, 100, time.Unix(0, 0).UTC())
 		return ext.Changes
 	}
 
