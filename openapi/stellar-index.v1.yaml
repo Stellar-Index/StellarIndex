@@ -18472,8 +18472,9 @@ components:
           description: >-
             True when the request opted in with `include_thin=true` and a
             served price comes from a market below the substance floor, or
-            when /v1/vwap, /v1/twap or /v1/ohlc (which serve such a market by
-            default) computed from one. Key any low-confidence marker on this flag,
+            when /v1/vwap, /v1/twap, /v1/ohlc or the /v1/chart `vwap` and
+            `twap` series (which serve such a market by default) computed from
+            one. Key any low-confidence marker on this flag,
             never on `confidence`.
         diverged:
           type: boolean
@@ -23596,6 +23597,11 @@ components:
                     bucket and that bucket ends at or before
                     `requested_from` (e.g. `timeframe=1h` on a daily
                     market-cap or fiat series serves yesterday's point).
+                    When that bucket holds no data yet (a closed bucket
+                    not yet materialized) or ever (fx has no weekend or
+                    holiday sessions), the series is the newest bucket
+                    in force at `requested_from` instead, e.g. Friday's
+                    fiat rate on a Sunday or Monday, and is flagged.
                     A bucket that overlaps the window is not flagged.
                     Omitted when false.
                 discontinuous:
@@ -23637,6 +23643,9 @@ components:
                     (latest cap above aggregate.max_market_cap_volume_ratio
                     times trailing-24h volume) that set
                     `Asset.market_cap_low_liquidity` on `/assets/{id}`.
+                    Also set when a book behind the price leg is below
+                    the substance floor (`flags.thin_market` on the
+                    `vwap` series): a thin price values nothing.
                     A classic asset whose code collides with a verified
                     currency under another issuer also gets an empty
                     series, without this flag, as the detail page withholds
