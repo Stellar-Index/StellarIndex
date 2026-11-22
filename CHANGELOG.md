@@ -20,6 +20,44 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.130.0] - 2026-11-22
+
+Tested against Stellar protocol 27. Migrations 0235-0236 (schema version 236): 0235 allows a customer webhook only one current signing-key form and refuses to apply, listing the ids, if a row holds both; 0236 caps `nonstandard_decimals_assets.decimals` at 38 and refuses to apply if a row is above it; neither rewrites rows, and both tables are tiny. Run the pre-check queries in `docs/operations/credential-rotation.md` (webhook keys) and `docs/operations/runbooks/dex.md` (decimals) before deploying (#4265). No `pkg/*` break. Behaviour change for operators: apply the host role (archival-node) before or with the new binary; the API now refuses to start with a ClickHouse serving password but no serving user, and the role renders the two together (#4258). After deploy, run `stellarindex-ops ch-backfill -config <toml> -changes-only -from 2 -to <tip>` once per host to extract ledger-upgrade entry changes (#4265). New optional setting `webhook_seal_previous_key_env` (default `STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY`, role variable `vault_webhook_seal_previous_key`) rotates the webhook seal secret; steps are in `docs/operations/credential-rotation.md` (#4265). Behaviour changes for API clients, all additive in shape: asset rows and the detail carry `circulating_supply_lower_bound` (#4266); `price_withheld_reason` appears on the global asset view and takes the value `source_excluded` when a price depends on an excluded source (#4263); a fiat price is withheld when its only FX rate is older than 76 hours (#4270); the RWA valuation status is `market_cap_withheld` with a reason for any refusal other than a missing supply (#4259); a scoped key can revoke itself (#4257). Behaviour change for sign-up: a first email sign-in has its own hourly counter with the same cap as `api.register_max_per_hour`, so the total ceiling is twice that setting (#4264). Deploys now restart the long-running units that run `stellarindex-ops` (#4254).
+
+### Added
+
+- **api:** `circulating_supply_lower_bound` on asset rows and the asset detail, set when a supply or valuation comes from a floor (#4266).
+- **api:** `price_withheld_reason` on the global asset view; `source_excluded` marks a price that depends on a currently excluded source (#4263).
+- **api:** the OHLC, chart and oracle reads flag `starts_before_window`, `thin_market` and stale points; a `raw:<symbol>` oracle leg is a 400 (#4262).
+- **storage:** migration 0235, one current signing-key form per customer webhook; migration 0236, `decimals <= 38` on `nonstandard_decimals_assets` (#4265).
+- **webhooks:** optional previous seal secret (`webhook_seal_previous_key_env`) for rotating the secret that seals signing keys; keys are re-sealed at startup and on customer rotation, and the API refuses a previous secret without a current one (#4265).
+- **lake:** ledger-upgrade entry changes are extracted, kept out of entry history; `tag-tx-index` gains `-retag` (#4265).
+- **monitoring:** ticket alerts for a unit still running a replaced release binary (30 minutes), for MEV worker failed runs outnumbering good ones over an hour, and for no MEV run recorded in an hour; a `pool` label on `registrations_total` (#4256, #4267, #4264).
+- **ci:** a conflict-marker lint, a lint that every long-running unit running a release binary is on the deploy restart list, and a check that every package the integration tests import is a recorded decision (#4255, #4254).
+
+### Changed
+
+- **api:** served prices honour the source kill switch: `/v1/price`, batch, the tip and its stream, SEP-40, `/v1/vwap`, `/v1/twap` and the asset headline withhold or recompute a price that depends on an excluded source, and an unreadable exclusion list fails closed after 60 seconds (#4263).
+- **api:** the 76-hour FX max age applies to every fixing, including the daily fallback; DEX TVL legs are priced the way `usd_volume` prices them (#4270).
+- **api:** asset listings carry a stale supply map, a failed sparkline batch or a failed contract lookup in their flags and are not cached while degraded; the catalogue twin lookup keys on code and issuer (#4266).
+- **api:** RWA, protocol and listing reads refuse for the same reason the asset detail does; a licence-barred NAV source is never served; markets, pools and pairs answer a retryable 503 when the scam gate could not finish a page; rows that lose a market cap count as unvalued and raise the totals' `lower_bound` (#4259).
+- **api:** chart series are withheld or flagged where the asset detail withholds the figure; OHLC raw-trade reads are charged per book read (#4262).
+- **api:** lake reads recover without a restart when ClickHouse is down at boot; until it is back they degrade the way a later outage does (#4253).
+- **api:** `DELETE /v1/account/keys/{id}` lets a scoped key revoke itself and only itself; a self-revoke on the Redis key store also removes keys minted under it (#4257, #4270).
+- **auth:** a first email sign-in draws on its own hourly budget; `registrations_total` counts passkey and email sign-ups (#4264).
+- **storage:** markets skip buckets with no price; the completeness check reports the earliest missing ledger (#4265).
+- **supply:** the write band checks the first write after a restart against the last stored total; it only flags, it never blocks a write (#4267).
+- **explorer:** the asset page shows a withheld value as withheld with its reason, a stale one as stale, and a partial total as a bound; derived headline prices re-poll every 60 seconds; the holders board says it counts accounts only and lists the top 100 (#4261).
+- **deploy:** a deploy restarts the long-running units that run `stellarindex-ops` and rolls back if one still runs the old build; HA restart handlers record a refused restart as owed instead of dropping it, and VRRP and Alertmanager gossip are accepted only from their peers (#4254, #4260).
+- **ci:** the baseline, migration and test-selection guards no longer accept inputs they were meant to refuse, and the main-CI health check judges scheduled runs on their own (#4268, #4270).
+- **docs:** corrected where a document promised more than the code does (#4269).
+
+### Fixed
+
+- **api:** listing valuation no longer serves a thin market's own rate, and a read that failed is reported rather than served as clean (#4266).
+- **auth:** a failed self-revoke cascade can be retried by the holder, and a key minted during the sweep is removed (#4270).
+- **deploy:** the API environment file no longer renders a ClickHouse serving password when the serving user is off (#4258).
+
 ## [v0.129.0] - 2026-11-21
 
 Tested against Stellar protocol 27. Migrations 0233-0234 (schema version 234): 0233 makes `fx_fixings` append-only in the database, 0234 corrects a table comment; neither reads or rewrites rows. `pkg/client` gains `RevokeKeyWithReason`; `RevokeKey` is unchanged. Behaviour changes for API clients: asset detail, listing rows and the lending token block carry `market_cap_withheld_reason` (#4232); `DELETE /v1/account/keys/{id}` now revokes the calling key under the postgres auth backend, where it answered 503 (#4240); the staff account look-up answers 400 when both `email` and `slug` are given (#4235). Behaviour change for operators: the public API runs as its own OS user, `stellarindex-api`; apply the host role before deploying this release, which is phase 1 of the split (#4233). Alert change: a silence held for most of a day now raises a ticket and stops the dead-man heartbeat even if split or rotated; run `amtool silence query` before deploying (#4234). Further behaviour changes for API clients: a price is withheld with `price_withheld_reason` `decimals_mismatch` when a successful lake read contradicts the scale it was computed on (#4248); a supply whose latest refresh failed is served with `flags.stale` (#4249); `api.register_disabled` and `api.register_max_per_hour` now cover passkey and email-link or code sign-up as well as `/v1/register` (#4249); `/v1/rwa` `both_bases` gains `lower_bound` (#4244). Behaviour change for operators: `ch-rebuild -write` and the cap67 movements, entry history, entry index and lending state derive jobs now refuse a range they cannot cover (#4242); the first rules apply moves the prometheus-owned rule directory aside as a backup and needs the `prometheus` group, and an always-enabled timer that is disabled on a host now raises a ticket (#4246).
@@ -170,42 +208,3 @@ Tested against Stellar protocol 27. Migrations 0231-0232: 0231 creates the empty
 - **ops:** a failed parallelism reset in the volume-character rollup no longer returns a capped connection to the pool; a rebuild's `-sep41-supply-only` refusal runs before `-preflight`; the sponsorship proof reports "not comparable" for a stale read instead of "disagree" (#4195, #4212, #4200).
 - **ci:** a test-fixture key id no longer trips the secret scan; the doc-walking supply test tolerates a fixture that vanishes mid-walk (#4211, #4182).
 
-## [v0.125.0] - 2026-11-17
-
-Tested against Stellar protocol 27. Migrations 0227-0230: 0227 corrects the stored comment on `nonstandard_decimals_assets` (its rows drive a price correction and must not be deleted), 0228 sets 7-day chunks on the thirteen trades-derived continuous aggregates (new chunks only), 0229 adds `issuers.sep1_payload_previous` so a home-domain change leaves an identity-history row, and 0230 makes account erasure also strip the audit `reason`, a staff `actor_email`, and the erased account's own ip and user agent; the 0191 down migration is also made safer over compressed chunks. No `pkg/*` break; `pkg/client` gains `below_floor`, `substance` and `volume_lower_bound` fields. The OpenAPI contract gains `/v1/lending/protocols` and additive flags and fields; nothing is removed and no commit carries an `OpenAPI-Break:` trailer. Host payload changed: ClickHouse `lending_state.sql`, `contract_event_shapes.sql` and `tier1_schema.sql`, the lake dedup driver, the indexer, `verify-archive-tier-b` and `pg-logrotate` units, alert rules in both rule trees and `apply-rules.sh`, and the archival-node, haproxy, loki, patroni, prometheus and redis-sentinel roles. Not run by the deploy: apply `deploy/clickhouse/lending_state.sql`; run the host role from the tag before deploying; re-derive sponsorship history with `ch-entry-history -write -from 32747293`; backfill the ancestor chain of every legacy API key once.
-
-### Added
-
-- **api:** `/v1/lending/protocols` lists each lending protocol with its token, pool and reserve counts, and total supplied, borrowed and available in USD; a total that leaves out a pool or reserve is a lower bound and names what was excluded.
-- **api:** lending account earnings carry USD values and net APR.
-- **api:** OHLC bars and series flag `below_floor` when no trade cleared the $0.01 notional floor, and carry the measurement behind a thin-market bar; RWA rows carry `volume_lower_bound`.
-- **explorer:** lending pages show floors, stale reads and the true auction fill; the asset page shows the supply basis it has.
-- **monitoring:** alerts for failed key clamps, failed token sweeps, a stalled census rollup, and a degraded cold tier.
-- **ci:** the integration suite runs in eight shards.
-
-### Changed
-
-- **api:** asset search finds catalogue assets by issuer or full asset id, and a thin-market twin keeps its supply when its market cap is withheld.
-- **api:** the 24h change on the asset detail and batch price routes is absent when the price it compares against is more than 30 minutes off 24 hours ago.
-- **api:** an Aquarius pool the reserve read did not value is counted and named, and makes DEX TVL a lower bound; a source's volume floor is flagged as a lower bound.
-- **explorer:** the verified badge is decided by asset id on every surface; a look-alike SAC address redirects to its own asset; the converter uses the headline price and empties when that price is withheld; RWA figures show their bounds and staleness; a failed backups refresh reads "last known, not current".
-- **pricing:** one notional floor decides which OHLC bars and which minutes may set a served price, and a rollup past its age bound is not served.
-- **auth:** a key minted by another key never exceeds its minter in any field, stores its full ancestor chain, and revoking a key revokes every key minted from it.
-- **lake:** the dedup driver rejects bad arguments and counts duplicates per partition before optimising; sponsorship ends when a consumed pre-auth signer is removed.
-- **migrations:** `migrate force` refuses a version the dirty row does not justify unless `-force-unsafe` is passed.
-- **ops:** a unit copied to a host is hardened and compared directive by directive; collectors that return nothing fail instead of passing; `ch-backfill` exits non-zero when any ledger was read short.
-- **ansible:** the prometheus and loki roles wire basic auth, replica labels and restarts; the patroni, haproxy and redis-sentinel roles fail safe.
-- **monitoring:** rule apply is safe to run twice at once.
-- **ci:** the migration gates no longer have bypasses, the deploy numbering gate uses what the host ran, and eight lints are tightened.
-
-### Fixed
-
-- **api:** account positions are exact only when every event that moves them is counted, and a Blend or BLNT leg closes on a zero token balance; the curated gap compares totals of the same day.
-- **lending:** earnings, claims and auctions that may be incomplete are withheld or flagged; a memory-limited history fill splits its window instead of failing, and a replayed hourly state row replaces the older one.
-- **rwa:** premiums are judged against the published value, and partial and stale views are flagged.
-- **pricing:** change summaries use only guard-validated prices, and a failed freeze-ladder read is no longer reported as never frozen.
-- **auth:** account erasure leaves no free-text reason, staff email, or own ip and user agent in the audit log; a request line is never logged with a key in it, at any escape depth.
-- **api:** `/v1/stablecoins` folds an expired classic-supply map into its stale flag.
-- **lake:** the `contract_event_shapes` backfill includes the first ledger.
-- **ops:** `ch-census-rollup` exits non-zero when a lake hole stops it short of yesterday.
-- **docs:** the API design doc matches the code.
