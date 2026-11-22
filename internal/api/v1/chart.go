@@ -564,7 +564,8 @@ func (s *Server) handleChartFiat(
 	series.Credit = fxSeriesCredit(points)
 
 	series.markWindowStart(from)
-	writeChartJSON(w, series, Flags{})
+	outlived := series.windowStartOutlived(from)
+	writeChartJSON(w, series, Flags{Stale: outlived, Degraded: outlived})
 }
 
 // handleChartFiatCross serves non-USD fiat crosses as rate_usd[quote] / rate_usd[base] (as /v1/price's tryFiatCrossRate). A day
@@ -614,7 +615,8 @@ func (s *Server) handleChartFiatCross(
 	series.Credit = fxSeriesCredit(append(append([]FXQuotePoint{}, basePts...), quotePts...))
 
 	series.markWindowStart(from)
-	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0})
+	outlived := series.windowStartOutlived(from)
+	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0, Stale: outlived, Degraded: outlived})
 }
 
 // crossFiatChartPoints merges two ascending daily USD-leg series on equal buckets and emits
