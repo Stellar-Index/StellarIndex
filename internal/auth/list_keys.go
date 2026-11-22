@@ -89,12 +89,16 @@ end
 `
 
 // writeDelegatedRecordScript is writeIndexedRecordScript for a delegated key: it writes nothing (returns 0) unless the
-// minter's record still exists and no ancestor is being revoked. KEYS: index, record, minter record, revoke markers…
+// record of every ancestor and of the minter still exists and no ancestor is being revoked.
+// KEYS: index, record, the ARGV[6] lineage records (root first, minter last), revoke markers…
 var writeDelegatedRecordScript = redis.NewScript(keyIndexAddLua + recordSetLua + `
-if redis.call('EXISTS', KEYS[3]) == 0 then
-	return 0
+local last = 2 + tonumber(ARGV[6])
+for i = 3, last do
+	if redis.call('EXISTS', KEYS[i]) == 0 then
+		return 0
+	end
 end
-for i = 4, #KEYS do
+for i = last + 1, #KEYS do
 	if redis.call('EXISTS', KEYS[i]) == 1 then
 		return 0
 	end
@@ -104,10 +108,13 @@ set_record(KEYS[2], ARGV[1], ARGV[2])
 return 1
 `)
 
-// writeDelegatedUnindexedScript is the fallback when the ACL denies `apikey-index:*`. KEYS: record, minter record. ARGV: body, ttl-ms.
+// writeDelegatedUnindexedScript is the fallback when the ACL denies `apikey-index:*`. KEYS: record, lineage records…
+// ARGV: body, ttl-ms.
 var writeDelegatedUnindexedScript = redis.NewScript(recordSetLua + `
-if redis.call('EXISTS', KEYS[2]) == 0 then
-	return 0
+for i = 2, #KEYS do
+	if redis.call('EXISTS', KEYS[i]) == 0 then
+		return 0
+	end
 end
 set_record(KEYS[1], ARGV[1], ARGV[2])
 return 1
@@ -169,24 +176,27 @@ func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec API
 	return s.rdb.Set(ctx, recordKey, body, ttl).Err()
 }
 
-// writeDelegatedRecord is writeRecord for a key minted under the record at parentHash. The minter check runs inside
-// the atomic write, so a revoke that removed the minter or marked an ancestor first always wins.
+// writeDelegatedRecord is writeRecord for a key minted under the record at parentHash. The lineage check runs inside
+// the atomic write, so a revoke that removed the minter or any ancestor, or marked an ancestor, first always wins.
 func (s *RedisAPIKeyStore) writeDelegatedRecord(ctx context.Context, hash, parentHash string, rec APIKeyRecord, body []byte, ttl time.Duration) error {
 	recordKey := cachekeys.APIKey(hash).String()
-	parentKey := cachekeys.APIKey(parentHash).String()
-	keys := []string{cachekeys.APIKeyIndex().String(), recordKey, parentKey}
+	lineage := make([]string, 0, len(rec.AncestorHashes)+1)
+	for _, h := range append(slices.Clone(rec.AncestorHashes), parentHash) {
+		lineage = append(lineage, cachekeys.APIKey(h).String())
+	}
+	keys := append([]string{cachekeys.APIKeyIndex().String(), recordKey}, lineage...)
 	for _, id := range append(slices.Clone(rec.AncestorKeyIDs), rec.ParentKeyID) {
 		keys = append(keys, cachekeys.APIKeyRevoking(rec.Identifier, id).String())
 	}
-	wrote, err := writeDelegatedRecordScript.Run(ctx, s.rdb, keys, body, ttl.Milliseconds(), hash, rec.KeyID, rec.Identifier).Int()
+	wrote, err := writeDelegatedRecordScript.Run(ctx, s.rdb, keys, body, ttl.Milliseconds(), hash, rec.KeyID, rec.Identifier, len(lineage)).Int()
 	if isRedisNoPerm(err) {
-		wrote, err = writeDelegatedUnindexedScript.Run(ctx, s.rdb, []string{recordKey, parentKey}, body, ttl.Milliseconds()).Int()
+		wrote, err = writeDelegatedUnindexedScript.Run(ctx, s.rdb, append([]string{recordKey}, lineage...), body, ttl.Milliseconds()).Int()
 	}
 	if err != nil {
 		return err
 	}
 	if wrote == 0 {
-		return fmt.Errorf("%w: the minting key %s was revoked before the new key was written", ErrMinterNotLive, rec.ParentKeyID)
+		return fmt.Errorf("%w: the minting key %s or one of its ancestors was revoked before the new key was written", ErrMinterNotLive, rec.ParentKeyID)
 	}
 	return nil
 }

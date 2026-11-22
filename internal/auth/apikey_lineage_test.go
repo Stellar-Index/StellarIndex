@@ -77,6 +77,31 @@ func TestCreate_HashlessParentWithAGoneAncestorIsRefused(t *testing.T) {
 	}
 }
 
+// The write itself refuses when any ancestor record is gone, on the indexed path and the ACL-denied fallback.
+func TestCreate_DelegatedWriteRefusedWhenAnAncestorRecordIsGone(t *testing.T) {
+	for name, denyIndex := range map[string]bool{"indexed": false, "index denied by ACL": true} {
+		t.Run(name, func(t *testing.T) {
+			f := newLineageFixture(t)
+			if denyIndex {
+				denier := &indexDenier{}
+				denier.deny.Store(true)
+				f.rdb.AddHook(denier)
+			}
+			_, rootPlain, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
+			_, _, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+			f.mr.Del(cachekeys.APIKey(hashAPIKey(rootPlain)).String())
+			before := len(f.mr.Keys())
+
+			if _, _, err := f.store.Create(context.Background(), ChildKeyRequest(midSub, "leaf", nil)); !errors.Is(err, ErrMinterNotLive) {
+				t.Fatalf("Create under a key whose root record is gone: err = %v, want ErrMinterNotLive", err)
+			}
+			if after := len(f.mr.Keys()); after != before {
+				t.Errorf("refused mint changed the keyspace: %d keys, then %d", before, after)
+			}
+		})
+	}
+}
+
 func TestCreate_RefusesMintBeyondMaxDepth(t *testing.T) {
 	f := newLineageFixture(t)
 	_, _, sub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
