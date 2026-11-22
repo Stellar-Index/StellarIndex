@@ -524,7 +524,7 @@ func observerSEP41Supply(row *AssetDetail) (supply.Basis, bool) {
 }
 
 // applyContractMarketCap fills one contract row's supply/cap from a successful supply reading, encoding the refusal rules: unscaled
-// decimals, a held-balance supply basis, dust liquidity, scale disagreement and turnover. floor marks a figure that is a lower bound whatever its basis.
+// decimals, a held-balance supply basis, the price basis /v1/assets refuses, dust liquidity, scale disagreement and turnover. floor marks a figure that is a lower bound whatever its basis.
 func (s *Server) applyContractMarketCap(
 	row *AssetDetail, circ string, basis supply.Basis, floor, isScaled bool, sources int,
 ) {
@@ -546,6 +546,11 @@ func (s *Server) applyContractMarketCap(
 		return
 	}
 	if row.PriceUSD == nil {
+		return
+	}
+	// Before the scale check: a whole-token price carries no token scale to disagree with.
+	if r := capRefusedOnPriceBasis(row); r != "" {
+		row.MarketCapWithheldReason = r
 		return
 	}
 	if dustLiquiditySuppressed(sources, row.VolumeUSD24h, s.MinMarketCapVolumeUSD) {
