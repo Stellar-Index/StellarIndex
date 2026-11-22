@@ -479,6 +479,19 @@ else
   ok "metrics enum-fail run: private progress directory removed"
 fi
 
+# ── 8b. a directory link planted at the .prom name is not written into ──
+# mv onto a link to a directory moves the file INTO that directory.
+LINK_DIR="$TMP/textfile-linkdir"; LINK_VICTIM="$TMP/planted-dir"
+mkdir -p "$LINK_DIR" "$LINK_VICTIM"
+ln -s "$LINK_VICTIM" "$LINK_DIR/lake_dedup_operations.prom"
+run metrics_dir_link TEXTFILE_DIR="$LINK_DIR" -- operations
+if [ -z "$(find "$LINK_VICTIM" -mindepth 1)" ] && [ -L "$LINK_DIR/lake_dedup_operations.prom" ]; then
+  ok "metrics dir-link run: nothing is moved through a link planted at the .prom name"
+else
+  bad "metrics dir-link run: the driver moved its metrics file into the linked directory"
+  find "$LINK_VICTIM" -mindepth 1 | sed 's/^/       /'
+fi
+
 # ── 9. SIGTERM mid-OPTIMIZE is a failed run, not a clean one ─────────
 # The EXIT trap alone sees the last command's status on a signal. The fake
 # OPTIMIZE blocks 30s; the driver must exit within 10s of SIGTERM, non-zero,

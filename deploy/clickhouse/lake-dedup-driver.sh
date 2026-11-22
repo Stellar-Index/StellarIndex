@@ -72,6 +72,7 @@ OUT="${OUT:-/var/log/lake-dedup-${T}.log}"
 STOP="${STOP:-/tmp/lake-dedup.stop}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 METRICS_OUT="$TEXTFILE_DIR/lake_dedup_${T}.prom"
+MV_NO_TARGET_DIR=""; mv --version >/dev/null 2>&1 && MV_NO_TARGET_DIR=1
 # Root-private, never in the group-writable textfile directory: a member of that group could link a fixed name there
 # and have root write through it or read back a file of its choosing.
 PROGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lake-dedup.XXXXXX")" || { echo "lake-dedup-driver: cannot create a progress directory" >&2; exit 1; }
@@ -114,7 +115,18 @@ emit_metrics() {
     fi
   } > "$tmp" 2>/dev/null
   chmod 644 "$tmp" 2>/dev/null
-  mv "$tmp" "$METRICS_OUT" 2>/dev/null
+  # The directory is group-writable: a link or directory planted at the fixed
+  # name would have mv move root's file into it. -T is GNU-only (hosts).
+  if [ -L "$METRICS_OUT" ] || [ -d "$METRICS_OUT" ]; then
+    rm -f "$tmp"
+    echo "lake-dedup-driver: $METRICS_OUT is a link or directory - metrics not published" >&2
+    return 0
+  fi
+  if [ -n "$MV_NO_TARGET_DIR" ]; then
+    mv -T "$tmp" "$METRICS_OUT" 2>/dev/null
+  else
+    mv "$tmp" "$METRICS_OUT" 2>/dev/null
+  fi
 }
 
 # finish_metrics <rc>: stop the heartbeat ticker and any in-flight OPTIMIZE
