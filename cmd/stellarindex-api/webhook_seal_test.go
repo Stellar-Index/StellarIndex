@@ -14,7 +14,7 @@ import (
 func TestBuildWebhookKeySealer_RefusesPreviousWithoutCurrent(t *testing.T) {
 	cfg := config.DashboardConfig{WebhookSealKeyEnv: "SI_TEST_SEAL_KEY", WebhookSealPreviousKeyEnv: "SI_TEST_SEAL_PREVIOUS_KEY"}
 	t.Setenv(cfg.WebhookSealKeyEnv, "")
-	t.Setenv(cfg.WebhookSealPreviousKeyEnv, strings.Repeat("p", 32)) // gitleaks:allow — fixture filler, not a credential
+	t.Setenv(cfg.WebhookSealPreviousKeyEnv, strings.Repeat("p", 32))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	sealer, err := buildWebhookKeySealer(cfg, logger)
