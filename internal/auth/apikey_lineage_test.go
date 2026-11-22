@@ -37,13 +37,13 @@ func TestCreate_ChildRecordsAncestorHashes(t *testing.T) {
 
 	want := []string{hashAPIKey(rootPlain), hashAPIKey(midPlain)}
 	if !slices.Equal(leaf.AncestorHashes, want) {
-		t.Errorf("returned AncestorHashes = %v, want the root's then the middle key's record hash", leaf.AncestorHashes)
+		t.Errorf("returned %d AncestorHashes, want the root's then the middle key's record hash", len(leaf.AncestorHashes))
 	}
 	if got := f.storedRecord(t, leafPlain).AncestorHashes; !slices.Equal(got, want) {
-		t.Errorf("stored AncestorHashes = %v, want %v", got, want)
+		t.Errorf("stored %d AncestorHashes, want the root's then the middle key's record hash", len(got))
 	}
 	if got := f.storedRecord(t, rootPlain).AncestorHashes; got != nil {
-		t.Errorf("root AncestorHashes = %v, want none", got)
+		t.Errorf("root has %d AncestorHashes, want none", len(got))
 	}
 }
 
@@ -57,7 +57,7 @@ func TestCreate_LegacyMinterGivesItsChildTheFullChainOfHashes(t *testing.T) {
 
 	leaf := f.storedRecord(t, leafPlain)
 	if want := []string{hashAPIKey(rootPlain), hashAPIKey(midPlain)}; !slices.Equal(leaf.AncestorHashes, want) {
-		t.Errorf("AncestorHashes = %v, want %v", leaf.AncestorHashes, want)
+		t.Errorf("%d AncestorHashes, want the root's then mid's record hash", len(leaf.AncestorHashes))
 	}
 }
 

@@ -42,6 +42,13 @@ stellarindex-ops mint-key -config /etc/stellarindex.toml -identifier <id> -label
 stellarindex-ops upgrade-key -config /etc/stellarindex.toml -key-id <kid> -rate-limit-per-min <N> -reason "<why>" -write
 ```
 
+Record every delegated key's ancestor chain before deploying a release that enforces lineage. Review the orphaned KeyIDs the dry run lists: enforcement refuses them, and the account owner may need a fresh key.
+
+```sh
+stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -dry-run
+stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -write
+```
+
 ## Related
 
 - [api](api.md): API-side alerts.
