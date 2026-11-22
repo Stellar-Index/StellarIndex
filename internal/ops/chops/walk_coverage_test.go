@@ -43,7 +43,7 @@ func TestWalkCoverage(t *testing.T) {
 				"must not be reported on as if it were complete")
 		}
 		msg := err.Error()
-		for _, want := range []string{"ch-gate", "37", "100", "galexie-live", "galexie-archive"} {
+		for _, want := range []string{"ch-gate", "37", "100", "galexie-live", "galexie-archive", "s3_cold_bucket_archive"} {
 			if !strings.Contains(msg, want) {
 				t.Errorf("short-walk error %q does not mention %q — the operator needs the "+
 					"delivered/requested counts and the bucket that was actually read", msg, want)
