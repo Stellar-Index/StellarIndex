@@ -157,16 +157,26 @@ tracked in the private inventory.
    `patronictl list` still works.
 7. **Application secrets.** `vault_dashboard_code_secret` invalidates every live sign-in
    code, login-device proof and passkey ceremony: rotate when no one is mid-sign-in.
-   `vault_webhook_seal_key` has no re-seal path (the sealer holds one key and no ops
-   command re-seals): rotating it makes every sealed webhook signing key unreadable, and
-   deliveries to those webhooks fail terminally with no retry and no notice to the
-   customer. Rotate it only when it is known exposed. Afterwards each customer must call
-   rotate-secret on their webhook (the dashboard edit and delete still work), and
-   deliveries failed in the meantime are lost. Nothing tells them: in the same cycle,
-   notify every account in `SELECT DISTINCT account_id FROM customer_webhooks` through
-   the incident-comms path ([sev-playbook.md §5.3](sev-playbook.md)), and keep the
-   rotation open until each has rotated or been told. Restoring the old value makes the keys
-   readable again for new deliveries.
+   `vault_webhook_seal_key` rotates in two deploys. (1) Set `vault_webhook_seal_previous_key`
+   to the current value and `vault_webhook_seal_key` to a new 32+ byte value; deploy. The
+   API opens keys under either secret, seals only under the new one, re-seals every old
+   key in a background sweep at start, and retries (never fails terminally) a key neither
+   opens. Wait for `re-sealed customer-webhook signing keys` (an Info line, not the Error
+   one) in `journalctl -u stellarindex-api` on every API host; `unopenable=N` counts keys
+   neither secret opens, which retiring the previous secret will not change. (2) Set
+   `vault_webhook_seal_previous_key` to `""`; deploy. To roll the secret back, swap the two
+   values and deploy. Roll the binary back past this support only after step (1)'s sweep
+   has logged that Info line: an older binary reads only `vault_webhook_seal_key`. Replacing
+   the key without step (1) makes every sealed key unreadable and their deliveries fail
+   terminally (`no_secret`); restoring the old value makes them readable again.
+   **If `vault_webhook_seal_key` was exposed**, run the two deploys above without delay, then treat
+   every customer signing key as leaked: re-sealing protects nothing already sealed under the
+   leaked secret for anyone holding a copy of the database (a backup, a dump, a replica), who
+   can open every key with it and forge signed deliveries. Every customer must call
+   rotate-secret on their webhook. Nothing tells them: in the same cycle, notify every account
+   in `SELECT DISTINCT account_id FROM customer_webhooks` through the incident-comms path
+   ([sev-playbook.md §5.3](sev-playbook.md)), and keep the rotation open until each has
+   rotated or been told.
    **Operator-tier API keys** live in the key store, not the vault, and unlock every
    `/v1/admin/*` route (suspend accounts, mint keys). List the live ones:
    `SELECT id, account_id, name, created_at, last_used_at FROM api_keys WHERE tier = 'operator' AND revoked_at IS NULL;`.
@@ -185,6 +195,19 @@ tracked in the private inventory.
     `ANSIBLE_VAULT_FILE_B64` Actions secrets (test nets: `TESTNETS_ANSIBLE_VAULT_PASSWORD`,
     `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`), at environment scope as in
     step 8. Check: ansible-drift decrypts.
+
+## Migration pre-checks
+
+Migration 0235 refuses to run while a customer webhook holds both a raw and a sealed current
+signing key, and names those webhook ids in its error. Before deploying it, list them:
+
+```sql
+SELECT id FROM customer_webhooks WHERE secret_hash IS NOT NULL AND signing_key_sealed IS NOT NULL;
+```
+
+No binary since v0.99.0 writes such a row, so each one was written by hand. Find out which key
+the customer was given, NULL the other column for that id, and re-run the migration. Never copy
+either key into a ticket or a log.
 
 ## Related
 

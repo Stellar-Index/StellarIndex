@@ -127,7 +127,11 @@ func (s *Server) resolveFrozenCryptoCross(r *http.Request, c *cryptoCrossLegs, r
 	checked := a.checked && q.checked
 	switch {
 	case a.outcome == frozenServeNothingHeld || q.outcome == frozenServeNothingHeld:
-		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
+		withheld := a.withheld
+		if withheld == nil {
+			withheld = q.withheld
+		}
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: withheld}
 	case a.outcome == frozenServeNotFrozen && q.outcome == frozenServeNotFrozen:
 		return frozenResolution{outcome: frozenServeNotFrozen, checked: checked}
 	}

@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 const holdTestContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
@@ -104,6 +107,27 @@ func TestUnderReviewKeepsHoldOnInvalidFile(t *testing.T) {
 	}
 }
 
+// A loaded hold buffers every response on the wrapped routes; a degraded one must still reach the flagged-response
+// counter that stellarindex_api_degraded_responses_high divides by request volume.
+func TestUnderReviewKeepsDegradedResponsesCounted(t *testing.T) {
+	s := &Server{}
+	s.SetHolds([]holds.Hold{{Asset: "native", Reason: "r"}})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.underReview(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"asset_id": holdTestContract}, Flags{Degraded: true})
+	}))
+	counter := obs.APIFlaggedResponsesTotal.WithLabelValues("/v1/assets/{asset_id}/supply", "degraded")
+	before := testutil.ToFloat64(counter)
+	rec := httptest.NewRecorder()
+	obs.HTTPMetrics(mux).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/"+holdTestContract+"/supply", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 1 {
+		t.Fatalf("degraded responses counted under a hold = %v, want 1", got)
+	}
+}
+
 func TestUnderReviewLedgerRangeMiss(t *testing.T) {
 	s := &Server{}
 	s.SetHolds([]holds.Hold{{ContractID: holdTestContract, LedgerFrom: 600, Reason: "r"}})
@@ -158,6 +182,38 @@ func TestUnderReviewMarksCSVExportHeader(t *testing.T) {
 		if rec.Body.String() != body {
 			t.Errorf("%s: body altered: %q", asset, rec.Body.String())
 		}
+	}
+}
+
+// A flush from inside a held handler must stop at the buffer: if it reached the
+// outer writer, headers would be sent before the hold can mark the response.
+func TestUnderReviewFlushStopsAtBuffer(t *testing.T) {
+	s := &Server{}
+	s.SetHolds([]holds.Hold{{Asset: "native", Reason: "r"}})
+	var flushErr error
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/assets/{asset_id}/movements", s.underReview(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("X-StellarIndex-Flags", "lower_bound")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("asset,amount\n"))
+		flushErr = http.NewResponseController(w).Flush()
+		if rec, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
+			if outer, ok := rec.Unwrap().(*httptest.ResponseRecorder); ok && (outer.Flushed || outer.Body.Len() != 0) {
+				t.Errorf("flush reached the outer writer: flushed=%v body=%q", outer.Flushed, outer.Body.String())
+			}
+		}
+	}))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/XLM/movements", nil))
+	if flushErr != nil {
+		t.Errorf("Flush on the held writer: %v", flushErr)
+	}
+	if rec.Code != http.StatusOK || rec.Body.String() != "asset,amount\n" {
+		t.Errorf("status = %d body = %q, want 200 and the held body", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Values("X-StellarIndex-Flags"); !reflect.DeepEqual(got, []string{"lower_bound, under_review"}) {
+		t.Errorf("X-StellarIndex-Flags = %q, want the hold's flag added", got)
 	}
 }
 

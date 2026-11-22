@@ -70,12 +70,16 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // Scam is asked first, on both legs via [scamWithheld] (a flagged QUOTE issuer gets no inverted price). Nil gates withhold
 // nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
-	if s.Substance == nil && s.Scam == nil {
+	if s.Substance == nil && s.Scam == nil && s.Exclusions == nil {
 		return pricingguard.NotWithheld
 	}
 	ctx, cancel := context.WithTimeout(ctx, closedStreamGateBudget)
 	defer cancel()
-	return withheldBy(ctx, s.Substance, s.Scam, asset, quote, closedStreamGateSurface)
+	if w := withheldBy(ctx, s.Substance, s.Scam, asset, quote, closedStreamGateSurface); w != pricingguard.NotWithheld {
+		return w
+	}
+	// Frames carry no source list and no provenance (composites stream too), so any in-force exclusion withholds the series.
+	return s.unattributedWithheld(ctx, asset, quote, time.Now().Add(-cachekeys.VWAPMaxAge), true)
 }
 
 // closedStreamSeries picks ONE alias spelling's series per connection: XLM prices under `native` and `crypto:XLM` (disjoint trade

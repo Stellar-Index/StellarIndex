@@ -613,6 +613,28 @@ func TestWorker_MissingWebhook_IsStillTerminal(t *testing.T) {
 // that fails authentication under the configured seal key never opens, so
 // the delivery fails terminally instead of retrying on every lease expiry.
 func TestWorker_UnsealableKey(t *testing.T) {
+	sealerFor := func(c byte, previous ...byte) *platform.WebhookKeySealer {
+		s, err := platform.NewWebhookKeySealer(bytes.Repeat([]byte{c}, platform.MinWebhookSealSecretLen))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range previous {
+			if s, err = s.WithPrevious(bytes.Repeat([]byte{p}, platform.MinWebhookSealSecretLen)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return s
+	}
+	webhookID := uuid.New()
+	key := []byte("whsec_worker_seal_rotation_key_bytes")
+	sealedUnderA := sealerFor('a').Seal(webhookID, key)
+	openErr := func(s *platform.WebhookKeySealer) error {
+		_, err := s.Open(webhookID, sealedUnderA)
+		if err == nil {
+			t.Fatal("Open succeeded; the case needs an unopenable key")
+		}
+		return fmt.Errorf("get: %w", err)
+	}
 	for _, tc := range []struct {
 		name         string
 		err          error
@@ -620,10 +642,11 @@ func TestWorker_UnsealableKey(t *testing.T) {
 	}{
 		{"no seal key configured", fmt.Errorf("get: %w", platform.ErrWebhookSealKeyMissing), false},
 		{"wrong seal key", fmt.Errorf("get: %w", platform.ErrWebhookKeyUnsealable), true},
+		{"sealed under a retired secret", openErr(sealerFor('b')), true},
+		{"seal rotation in progress", openErr(sealerFor('b', 'c')), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newFakeStore()
-			webhookID := uuid.New()
 			store.addWebhook(platform.CustomerWebhook{
 				ID: webhookID, URL: "https://customer.example.com/hook", Enabled: true,
 			})
@@ -636,14 +659,24 @@ func TestWorker_UnsealableKey(t *testing.T) {
 				NextAttemptAt: time.Now().Add(-time.Second),
 			})
 
-			runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+			var logs safeBuffer
+			runOneTick(t, store, customerwebhook.Options{
+				PollInterval: 30 * time.Millisecond,
+				Logger:       slog.New(slog.NewTextHandler(&logs, nil)),
+			})
 
+			if bytes.Contains([]byte(logs.String()), key) {
+				t.Error("the worker log carries the clear signing key")
+			}
 			store.mu.Lock()
 			defer store.mu.Unlock()
+			if _, ok := store.delivered[deliveryID]; ok {
+				t.Error("delivery must not be marked delivered when the key cannot be unsealed")
+			}
 			got := store.failures[deliveryID]
 			if !tc.wantTerminal {
 				if len(got) != 0 {
-					t.Fatalf("delivery marked failed (%+v) with no seal key configured; want it left for retry", got)
+					t.Fatalf("delivery marked failed (%+v); want it left for retry", got)
 				}
 				return
 			}
@@ -655,6 +688,24 @@ func TestWorker_UnsealableKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// safeBuffer is a log sink the worker goroutine and the test can share.
+type safeBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 // TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter pins that a failed TERMINAL

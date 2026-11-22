@@ -85,7 +85,7 @@ func TestTagTxIndexChunks_TagsInsideEachDirtyChunkAndSkipsCleanOnes(t *testing.T
 	store, lake, from, to := txIndexChunkFixture()
 	_, copts, out := chunkTestOptions(true)
 
-	if err := runTagTxIndexChunks(context.Background(), lake, store, "/etc/stellarindex.toml", true, from, to, time.Hour, nil, copts); err != nil {
+	if err := runTagTxIndexChunks(context.Background(), lake, store, "/etc/stellarindex.toml", true, false, from, to, time.Hour, nil, copts); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	if !store.tagged["aa"] || !store.tagged["cc"] || store.tagged["zz"] {
@@ -118,7 +118,7 @@ func TestTagTxIndexChunks_DryRunListsDirtyChunksAndTouchesNone(t *testing.T) {
 	store, lake, from, to := txIndexChunkFixture()
 	_, copts, out := chunkTestOptions(false)
 
-	if err := runTagTxIndexChunks(context.Background(), lake, store, "/etc/stellarindex.toml", false, from, to, time.Hour, nil, copts); err != nil {
+	if err := runTagTxIndexChunks(context.Background(), lake, store, "/etc/stellarindex.toml", false, false, from, to, time.Hour, nil, copts); err != nil {
 		t.Fatal(err)
 	}
 	log := strings.Join(store.log, "\n")
@@ -142,7 +142,7 @@ func TestTagTxIndexChunks_StopsWhenTheChunkIsRecompressedUnderneath(t *testing.T
 	store.recompressed = "_hyper_1_1_chunk"
 	_, copts, out := chunkTestOptions(true)
 
-	err := runTagTxIndexChunks(context.Background(), lake, store, "/etc/stellarindex.toml", true, from, to, time.Hour, nil, copts)
+	err := runTagTxIndexChunks(context.Background(), lake, store, "/etc/stellarindex.toml", true, false, from, to, time.Hour, nil, copts)
 	if !errors.Is(err, timescale.ErrTradesChunkRecompressed) {
 		t.Fatalf("err = %v, want the recompressed-underneath stop", err)
 	}

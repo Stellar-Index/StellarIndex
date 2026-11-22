@@ -437,7 +437,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// at the reader seam; handlers that compute their own price (vwap, twap, chart, price/tip)
 	// consult it themselves, see scam.go. Nil when the directory reader is absent.
 	scamGate := pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{Logger: logger})
-	priceReader := wiring.StorePriceReader{S: store, Logger: logger, Substance: substanceGate, Scam: scamGate}
+	// The read side of `stellarindex-ops source-exclude`, shared so every reader agrees on one snapshot.
+	exclusionGate := pricingguard.NewSourceExclusionGate(store, pricingguard.SourceExclusionGateOptions{Logger: logger})
+	priceReader := wiring.StorePriceReader{S: store, Logger: logger, Substance: substanceGate, Scam: scamGate, Exclusions: exclusionGate}
 
 	// The latest-oracle query is expensive; a Redis read-through cache inside the oracle push
 	// interval absorbs polling fan-out. Without Redis it reads the store directly.
@@ -926,6 +928,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// One-hop pricing for Soroban-native assets, gated on both legs by the same substanceGate.
 		TransitivePricer:      store,
 		Scam:                  scamGate,
+		Exclusions:            exclusionGate,
 		Confidence:            redisConfidenceLooker{rdb: rdb},
 		Triangulated:          wiring.RedisTriangulatedLooker{RDB: rdb},
 		Freeze:                freezeLooker,
@@ -1048,9 +1051,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			PKPairFor: func(base, quote canonical.Asset) (canonical.Pair, error) {
 				return canonical.NewPair(base, quote)
 			},
-			Logger:    logger,
-			Substance: substanceGate,
-			Scam:      scamGate,
+			Logger:     logger,
+			Substance:  substanceGate,
+			Scam:       scamGate,
+			Exclusions: exclusionGate,
 		},
 		GlobalPriceOpts: aggregate.GlobalPriceOptions{
 			AggregatorSources: external.AggregatorSources(),
@@ -1540,26 +1544,11 @@ func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, audit p
 	}
 	if sealer != nil {
 		sealLegacyWebhookKeys(store, logger)
+		if sealer.Rotating() {
+			go resealWebhookKeys(store, logger)
+		}
 	}
 	return store, h, nil
-}
-
-// buildWebhookKeySealer reads the webhook seal secret from the env var
-// cfg names. Unset returns nil (keys stored raw); a too-short value is a
-// startup error rather than a weak key.
-func buildWebhookKeySealer(cfg config.DashboardConfig, logger *slog.Logger) (*platform.WebhookKeySealer, error) {
-	secret := os.Getenv(cfg.WebhookSealKeyEnv)
-	if secret == "" {
-		logger.Warn("webhook seal key env unset — new customer-webhook signing keys are stored unsealed, "+
-			"and deliveries to webhooks whose key is already sealed wait until it is set",
-			"env", cfg.WebhookSealKeyEnv)
-		return nil, nil
-	}
-	sealer, err := platform.NewWebhookKeySealer([]byte(secret))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", cfg.WebhookSealKeyEnv, err)
-	}
-	return sealer, nil
 }
 
 // sealLegacyWebhookKeys seals signing keys written before a seal key was

@@ -410,15 +410,16 @@ func (w *Worker) lookupWebhook(ctx context.Context, d platform.WebhookDelivery) 
 		w.opts.Logger.Warn("customer-webhook: webhook not found; permanently failing delivery",
 			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
 		w.markTerminal(ctx, d, fmt.Sprintf("webhook lookup: %v", err), "webhook_missing")
-	case errors.Is(err, platform.ErrWebhookKeyUnsealable) && !errors.Is(err, platform.ErrWebhookSealKeyMissing):
-		// The key fails authentication under the configured seal key, so
-		// no retry can sign this row. A missing seal key is the transient
-		// case below: setting it repairs the row.
+	case errors.Is(err, platform.ErrWebhookKeyUnsealable) && !errors.Is(err, platform.ErrWebhookSealKeyMissing) &&
+		!errors.Is(err, platform.ErrWebhookSealKeyRotating):
+		// The key fails authentication under the only configured seal key,
+		// so no retry can sign this row. A missing seal key, or a seal-key
+		// rotation still in progress, is the transient case below.
 		w.opts.Logger.Warn("customer-webhook: signing key cannot be unsealed; permanently failing delivery",
 			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
 		w.markTerminal(ctx, d, fmt.Sprintf("webhook lookup: %v", err), "no_secret")
 	default:
-		// A store blip or an unset seal key is not evidence the webhook is
+		// A store blip or an unset or rotating seal key is not evidence the webhook is
 		// gone: leave the row unmarked so its claim lease expires and it is
 		// retried, the same recovery a worker crash takes.
 		w.opts.Logger.Warn("customer-webhook: GetWebhook failed (transient); leaving delivery for lease expiry",

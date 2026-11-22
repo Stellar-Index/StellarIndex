@@ -56,6 +56,66 @@ func TestWebhookKeySealer(t *testing.T) {
 	}
 }
 
+// TestWebhookKeySealer_Rotation walks a seal-secret rotation A→B and its
+// rollback: a key sealed under either secret keeps opening while both are
+// configured, and is re-sealed so the new secret alone opens it.
+func TestWebhookKeySealer_Rotation(t *testing.T) {
+	mk := func(c string, previous ...string) *platform.WebhookKeySealer {
+		s, err := platform.NewWebhookKeySealer([]byte(strings.Repeat(c, platform.MinWebhookSealSecretLen)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range previous {
+			if s, err = s.WithPrevious([]byte(strings.Repeat(p, platform.MinWebhookSealSecretLen))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return s
+	}
+	id := uuid.New()
+	key := []byte("whsec_rotation_0123456789abcdef")
+	underA := mk("a").Seal(id, key)
+
+	rotating := mk("b", "a")
+	if !rotating.Rotating() || mk("b").Rotating() {
+		t.Fatal("Rotating() does not report the previous secret")
+	}
+	if got, err := rotating.Open(id, underA); err != nil || !bytes.Equal(got, key) {
+		t.Fatalf("current=B previous=A: Open = (%q, %v), want the key", got, err)
+	}
+	underB, err := rotating.Reseal(id, underA)
+	if err != nil || underB == nil {
+		t.Fatalf("Reseal of an A-sealed key = (%x, %v), want fresh bytes", underB, err)
+	}
+	if again, err := rotating.Reseal(id, underB); err != nil || again != nil {
+		t.Errorf("Reseal of a B-sealed key = (%x, %v), want nil: it is already current", again, err)
+	}
+	if got, err := mk("b").Open(id, underB); err != nil || !bytes.Equal(got, key) {
+		t.Fatalf("current=B alone on the re-sealed key: Open = (%q, %v), want the key", got, err)
+	}
+
+	_, err = mk("b").Open(id, underA)
+	if !errors.Is(err, platform.ErrWebhookKeyUnsealable) || errors.Is(err, platform.ErrWebhookSealKeyRotating) {
+		t.Errorf("current=B alone on an A-sealed key: err = %v, want ErrWebhookKeyUnsealable, not rotating", err)
+	}
+	if err != nil && strings.Contains(err.Error(), string(key)) {
+		t.Error("the unseal error carries the clear key")
+	}
+	if _, err := mk("b", "c").Open(id, underA); !errors.Is(err, platform.ErrWebhookSealKeyRotating) {
+		t.Errorf("an A-sealed key under current=B previous=C: err = %v, want ErrWebhookSealKeyRotating", err)
+	}
+
+	rollback := mk("a", "b")
+	for name, sealed := range map[string][]byte{"B-sealed": underB, "A-sealed": underA} {
+		if got, err := rollback.Open(id, sealed); err != nil || !bytes.Equal(got, key) {
+			t.Errorf("rollback current=A previous=B, %s: Open = (%q, %v), want the key", name, got, err)
+		}
+	}
+	if _, err := mk("b").Open(id, rollback.Seal(id, key)); err == nil {
+		t.Error("a seal by current=A previous=B opens under B: it sealed with the previous secret")
+	}
+}
+
 // TestActivePreviousSigningKey pins the overlap window the worker signs
 // the outgoing key through: open strictly before the expiry, shut at it.
 func TestActivePreviousSigningKey(t *testing.T) {

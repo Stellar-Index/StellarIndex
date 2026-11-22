@@ -21,14 +21,41 @@ type TxIndexTag struct {
 	TxIndex uint32
 }
 
+// txIndexWorkSQL is the one "does this row need the tagger?" predicate for the selector and the chunk probe. The default sweep picks
+// untagged rows; retag picks every on-chain row so a wrong stored tag is reached, and TagTradesTxIndex's IS DISTINCT FROM keeps it idempotent.
+func txIndexWorkSQL(retag bool) string {
+	if retag {
+		return "ledger > 0"
+	}
+	return "ledger > 0 AND tx_index IS NULL"
+}
+
 // UntaggedTxIndexTrades pages the distinct on-chain (ledger, tx_hash) pairs in [from, to) whose trades lack a tx_index, keyset-ordered strictly after (afterLedger, afterHash); off-chain rows (ledger = 0) are excluded.
 func (s *Store) UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, afterLedger uint32, afterHash string, limit int) ([]TxIndexKey, error) {
-	const q = `
+	return s.txIndexKeys(ctx, from, to, afterLedger, afterHash, limit, false)
+}
+
+// TxIndexRetag is the Store seen by the tx-index walk in retag mode: its selector and chunk probe take every on-chain trade, so a
+// transaction whose rows all carry a wrong tx_index is re-read from the lake; the UPDATE still writes only rows that differ.
+type TxIndexRetag struct{ *Store }
+
+// UntaggedTxIndexTrades pages every on-chain (ledger, tx_hash) in [from, to), tagged or not.
+func (r TxIndexRetag) UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, afterLedger uint32, afterHash string, limit int) ([]TxIndexKey, error) {
+	return r.txIndexKeys(ctx, from, to, afterLedger, afterHash, limit, true)
+}
+
+// UntaggedTxIndexTradeExists reports whether [from, to) holds any on-chain trade.
+func (r TxIndexRetag) UntaggedTxIndexTradeExists(ctx context.Context, from, to time.Time) (bool, error) {
+	return r.txIndexWorkExists(ctx, from, to, true)
+}
+
+func (s *Store) txIndexKeys(ctx context.Context, from, to time.Time, afterLedger uint32, afterHash string, limit int, retag bool) ([]TxIndexKey, error) {
+	//nolint:gosec // G202: txIndexWorkSQL returns one of two constant fragments; values bind via $N
+	q := `
         SELECT ledger, tx_hash, min(ts), max(ts)
           FROM trades
          WHERE ts >= $1 AND ts < $2
-           AND ledger > 0
-           AND tx_index IS NULL
+           AND ` + txIndexWorkSQL(retag) + `
            AND (ledger, tx_hash) > ($3, $4)
          GROUP BY ledger, tx_hash
          ORDER BY ledger, tx_hash
@@ -60,12 +87,15 @@ func (s *Store) UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, a
 // UntaggedTxIndexTradeExists reports whether [from, to) holds an on-chain trade without a tx_index. EXISTS stops at the first match,
 // so a chunk with work is not read whole to say so.
 func (s *Store) UntaggedTxIndexTradeExists(ctx context.Context, from, to time.Time) (bool, error) {
-	const q = `
+	return s.txIndexWorkExists(ctx, from, to, false)
+}
+
+func (s *Store) txIndexWorkExists(ctx context.Context, from, to time.Time, retag bool) (bool, error) {
+	q := `
         SELECT EXISTS (
             SELECT 1 FROM trades
              WHERE ts >= $1 AND ts < $2
-               AND ledger > 0
-               AND tx_index IS NULL
+               AND ` + txIndexWorkSQL(retag) + `
         )
     `
 	var exists bool

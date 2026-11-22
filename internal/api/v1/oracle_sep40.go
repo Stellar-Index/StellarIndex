@@ -153,7 +153,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// refused bucket just read — see [Server.resolveFrozenServe].
 	held := s.resolveFrozenServeFor(r, snapshot, asset, served, defaultPriceQuote)
 	if held.outcome == frozenServeNothingHeld {
-		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
+		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote, held)
 		return
 	}
 	out, flags, sources := s.sep40Serve(ctx, asset, defaultPriceQuote, sep40Read{
@@ -324,7 +324,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 func writeFrozenOraclePrices(w http.ResponseWriter, r *http.Request, asset canonical.Asset, held frozenResolution) bool {
 	switch held.outcome {
 	case frozenServeNothingHeld:
-		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote)
+		writeFrozenNothingHeldProblem(w, r, asset, defaultPriceQuote, held)
 		return true
 	case frozenServeHeld:
 		writeJSON(w, []SEP40Price{{
@@ -577,7 +577,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// Freeze, then the shared tail — see handleOracleLastPrice.
 	held := s.resolveFrozenServeFor(r, snapshot, base, served, quote)
 	if held.outcome == frozenServeNothingHeld {
-		writeFrozenNothingHeldProblem(w, r, base, quote)
+		writeFrozenNothingHeldProblem(w, r, base, quote, held)
 		return
 	}
 	out, flags, sources := s.sep40Serve(ctx, base, quote, sep40Read{

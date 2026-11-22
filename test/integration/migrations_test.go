@@ -1456,24 +1456,34 @@ func TestTagTradesTxIndex_FillsAndCorrectsOnChainRows(t *testing.T) {
 		}
 	}
 
-	// A corrected tag overwrites a wrong one; the same tags again change nothing.
-	swapped := []timescale.TxIndexTag{
-		{Ledger: 61_000_000, TxHash: txIndexHash("aa"), TxIndex: 0},
-		{Ledger: 61_000_000, TxHash: txIndexHash("ff"), TxIndex: 1},
-	}
-	n, err := store.TagTradesTxIndex(ctx, from, to, swapped)
-	if err != nil || n != 2 {
-		t.Errorf("re-tag with corrected values: n=%d err=%v, want 2, nil", n, err)
-	}
-	var aaIdx int
-	if err := db.QueryRowContext(ctx, `SELECT tx_index FROM trades WHERE tx_hash = $1`, txIndexHash("aa")).Scan(&aaIdx); err != nil || aaIdx != 0 {
-		t.Errorf("aa tx_index after correction = %d (err %v), want 0", aaIdx, err)
-	}
-	if n, err = store.TagTradesTxIndex(ctx, from, to, swapped); err != nil || n != 0 {
-		t.Errorf("repeat of the same tags: n=%d err=%v, want 0, nil", n, err)
-	}
 	if rest, err := store.UntaggedTxIndexTrades(ctx, from, to, 0, "", 10); err != nil || len(rest) != 0 {
 		t.Errorf("untagged after the walk = %s (err %v), want none", keyHashes(rest), err)
+	}
+
+	// Every row of both txs now carries the wrong order. The default walk never selects them; the retag walk
+	// (tag-tx-index -retag, and its -chunks probe) does and restores the lake's order, idempotently.
+	if _, err := db.ExecContext(ctx, `
+		UPDATE trades SET tx_index = CASE WHEN tx_hash = $1 THEN 0 ELSE 1 END
+		 WHERE ledger = 61000000`, txIndexHash("aa")); err != nil {
+		t.Fatalf("seed wrong tags: %v", err)
+	}
+	if n, err := pipeline.TagTxIndexWindow(ctx, lake, store, from, to, pipeline.TxIndexPageSize); err != nil || n != 0 {
+		t.Errorf("default walk over wrongly tagged rows: n=%d err=%v, want 0, nil (it picks untagged rows only)", n, err)
+	}
+	retag := timescale.TxIndexRetag{Store: store}
+	if dirty, err := retag.UntaggedTxIndexTradeExists(ctx, from, to); err != nil || !dirty {
+		t.Errorf("retag chunk probe = %v (err %v), want true for a window of tagged on-chain trades", dirty, err)
+	}
+	n, err := pipeline.TagTxIndexWindow(ctx, lake, retag, from, to, pipeline.TxIndexPageSize)
+	if err != nil || n != 2 {
+		t.Errorf("retag walk: n=%d err=%v, want 2, nil (the two wrongly tagged sdex rows)", n, err)
+	}
+	var aaIdx int
+	if err := db.QueryRowContext(ctx, `SELECT tx_index FROM trades WHERE tx_hash = $1`, txIndexHash("aa")).Scan(&aaIdx); err != nil || aaIdx != 1 {
+		t.Errorf("aa tx_index after retag = %d (err %v), want 1 (the lake's apply order)", aaIdx, err)
+	}
+	if n, err = pipeline.TagTxIndexWindow(ctx, lake, retag, from, to, pipeline.TxIndexPageSize); err != nil || n != 0 {
+		t.Errorf("repeat retag walk: n=%d err=%v, want 0, nil", n, err)
 	}
 }
 

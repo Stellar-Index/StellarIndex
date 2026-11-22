@@ -43,7 +43,11 @@ func registerControlsServer(t *testing.T, opts v1.Options) (*httptest.Server, *f
 }
 
 func registrationOutcome(outcome string) float64 {
-	return testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(outcome))
+	pool := obs.RegistrationPoolProofFree
+	if outcome == obs.RegistrationDisabled {
+		pool = obs.RegistrationPoolAll
+	}
+	return testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(outcome, pool))
 }
 
 func problemType(t *testing.T, resp *http.Response) string {

@@ -196,7 +196,7 @@ func TestGlobalMarket_RefusesFutureDatedRows(t *testing.T) {
 		priceUSD: big.NewRat(1, 1), wire: "1", source: "coingecko", asOf: time.Now().Add(time.Hour),
 	}}
 	d := AssetDetail{AssetID: globalTestUSDC}
-	s.applyGlobalMarket(&d, refs, time.Now())
+	s.applyGlobalMarket(context.Background(), &d, refs, time.Now())
 	if d.GlobalMarket != nil || d.PriceUSD != nil {
 		t.Errorf("a cached future-dated reference was applied: %+v", d.GlobalMarket)
 	}
@@ -254,7 +254,7 @@ func TestGlobalMarket_ThinPriceCarriesNoDerivedSignals(t *testing.T) {
 	}}
 	p := "0.90"
 	d := AssetDetail{AssetID: globalTestUSDC, PriceUSD: &p, ThinMarket: true}
-	s.applyGlobalMarket(&d, refs, time.Now())
+	s.applyGlobalMarket(context.Background(), &d, refs, time.Now())
 
 	if strPtr(d.PriceUSD) != p {
 		t.Fatalf("thin price altered: %s", strPtr(d.PriceUSD))

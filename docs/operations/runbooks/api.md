@@ -555,7 +555,7 @@ ssh r1 'curl -s http://localhost:3000/metrics | grep stellarindex_customer_webho
 
 **Check.** `SELECT webhook_id, last_error, COUNT(*) FROM webhook_deliveries WHERE status = 'failed' AND updated_at > now() - interval '2 hours' GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10`.
 
-**Fix.** `no_secret` across many webhooks means the seal key changed: restore the key the secrets were sealed with. For one webhook, ask the customer to rotate its secret or correct its URL. Terminal rows are not retried; re-enqueue only by operator decision. **Escalate:** none.
+**Fix.** `no_secret` across many webhooks means the seal key changed: restore the key the secrets were sealed with, or set it as `vault_webhook_seal_previous_key` beside the new one ([credential-rotation.md §7](../credential-rotation.md)). For one webhook, ask the customer to rotate its secret or correct its URL. Terminal rows are not retried; re-enqueue only by operator decision. **Escalate:** none.
 
 ## stellarindex_customer_webhook_mark_errors
 
@@ -722,25 +722,34 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 ## stellarindex_registration_table_growing
 
-**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50`, or the same over `[7d]` `> 100` (farming paced under the 6h threshold), for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
+**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="created"}[6h])) > 50`, or the same over `[7d]` `> 100` (farming paced under the 6h threshold), for 30m, P3. `created` counts every account-creating route: `POST /v1/register`, passkey finish-signup and an email's first magic-link or code sign-in. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
 
 **Check.** `stellarindex_api_keys_rows` moves in step; request rate and distinct client addresses on `/v1/register` in the API log. **Likely causes.** Rotating addresses (IPv6 /48s, proxy pools) each staying under the per-IP sign-up cap; or a real traffic spike. **Fix.** Limit the source ranges at the edge. Deleting the rows is a judgement call per account: they are real accounts with live keys. **Escalate:** growth continues past an edge block.
 
 ## stellarindex_registration_budget_exhausted
 
-**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0`, P3. `POST /v1/register` accepts `api.register_max_per_hour` registrations an hour (default 60) across every caller, because the per-IP throttle (5 an hour per IPv4 address or IPv6 /64) cannot bound a registrant that rotates addresses. Passkey sign-up (at finish-signup) and an email's first magic-link or code sign-in spend the same budget, one unit per account created. Past the cap all of them answer 503 until the hour rolls over; existing users still sign in.
+**Trigger.** `sum by (pool) (increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0`, P3. Sign-up has two hourly counters, each capped at `api.register_max_per_hour` (default 60) across every caller, because the per-IP throttle (5 an hour per IPv4 address or IPv6 /64) cannot bound a registrant that rotates addresses. The `pool` label says which one filled:
 
-**Check.** A wave or real demand? `sum by (outcome) (increase(stellarindex_registrations_total[1h]))`, and where the accepted ones came from:
+- `proof_free`: `POST /v1/register` and passkey sign-up (at finish-signup) share this counter, one unit per account created. Both answer 503 until the hour rolls over. An email's first sign-in still works.
+- `email_proven`: an email's first magic-link or code sign-in, after the mailbox is proven. That sign-in answers 503 until the hour rolls over. `/v1/register` and passkey sign-up still work.
+
+Existing users still sign in either way. `register_max_per_hour` sets both caps, so the total ceiling is twice the setting.
+
+**Check.** A wave or real demand? `sum by (outcome, pool) (increase(stellarindex_registrations_total[1h]))`, and where the accepted ones came from. `/v1/register` writes `account.register`; passkey sign-up writes `passkey.register` with `metadata.signup = true` (a plain `passkey.register` is an existing user adding a passkey). An email's first sign-in writes no audit row: count it from `created` with `pool="email_proven"` in the metric, and from the `accounts`/`users` creation times.
 
 ```sh
 ssh r1 'sudo -u postgres psql stellarindex' <<'SQL'
 SELECT set_masklen(ip::cidr, CASE family(ip) WHEN 4 THEN 24 ELSE 48 END) AS net, count(*)
-  FROM audit_log WHERE action = 'account.register' AND ts > now() - interval '6 hours'
+  FROM audit_log
+ WHERE (action = 'account.register' OR (action = 'passkey.register' AND metadata->>'signup' = 'true'))
+   AND ts > now() - interval '6 hours'
  GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 SQL
 ```
 
-**Fix.** A wave: set `register_disabled = true` under `[api]` in `/etc/stellarindex.toml` and restart `stellarindex-api`; `/v1/register`, passkey sign-up and an email's first sign-in answer 503, and existing users' sign-in is unaffected. Revoke the wave's keys from the `account_id`s the query's rows name (`PATCH /v1/admin/accounts/{id}`); an account whose key is never used is erased on its own. Real demand: raise `register_max_per_hour` and restart.
+The growth alert (`stellarindex_registration_table_growing`) counts passkey and email sign-ups against thresholds first set for `/v1/register` alone (50 in six hours, 100 in seven days), so a real sign-up wave can open it without any abuse.
+
+**Fix.** A wave: set `register_disabled = true` under `[api]` in `/etc/stellarindex.toml` and restart `stellarindex-api`; `/v1/register`, passkey sign-up and an email's first sign-in answer 503, and existing users' sign-in is unaffected. Revoke the wave's keys from the `account_id`s the query's rows name (`PATCH /v1/admin/accounts/{id}`); an account whose key is never used is erased on its own. Real demand: raise `register_max_per_hour` and restart; it raises both caps.
 
 ## stellarindex_login_code_lockout_table_growing
 

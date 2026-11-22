@@ -36,6 +36,17 @@ func (w ScaledWindow) FilterOutliers(sigma float64) ScaledWindow {
 	return ScaledWindow{trades: FilterOutliers(w.trades, sigma), decimals: w.decimals, truncated: w.truncated}
 }
 
+// Filter keeps the trades keep accepts at the window's scale, as [ScaledWindow.FilterOutliers] does.
+func (w ScaledWindow) Filter(keep func(canonical.Trade) bool) ScaledWindow {
+	out := w.trades[:0:0]
+	for _, t := range w.trades {
+		if keep(t) {
+			out = append(out, t)
+		}
+	}
+	return ScaledWindow{trades: out, decimals: w.decimals, truncated: w.truncated}
+}
+
 // NormalizeAmountScale lifts every trade's amounts to the LARGEST per-source scale by exact integer multiply (ADR-0003) so VWAP weights reflect real volume; input is never mutated and decimalsFor resolves scale from Source.
 func NormalizeAmountScale(trades []canonical.Trade, decimalsFor func(source string) int) ScaledWindow {
 	if len(trades) == 0 {

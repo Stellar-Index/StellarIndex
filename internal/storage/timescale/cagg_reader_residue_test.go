@@ -52,7 +52,7 @@ var untiedNewestRE = regexp.MustCompile(`ORDER BY last_trade_at DESC NULLS LAST\
 // must not fall to scan order. Every fold goes through canonLastPriceSQL.
 func TestCanonLastPriceIsTieBroken(t *testing.T) {
 	_, _, flipped := canonOrientSQL(1)
-	if !strings.Contains(canonLastPriceSQL(flipped), "ORDER BY last_trade_at DESC NULLS LAST, "+flipped+")") {
+	if !strings.Contains(canonLastPriceSQL(flipped, "last_trade_at"), "ORDER BY last_trade_at DESC NULLS LAST, "+flipped+")") {
 		t.Errorf("canonLastPriceSQL must break a last_trade_at tie on the orientation")
 	}
 	src, err := os.ReadFile("markets.go")
@@ -62,7 +62,7 @@ func TestCanonLastPriceIsTieBroken(t *testing.T) {
 	if loc := untiedNewestRE.FindIndex(src); loc != nil {
 		t.Errorf("markets.go picks a newest last_price with no tie-break at byte %d; use canonLastPriceSQL", loc[0])
 	}
-	if n := strings.Count(string(src), "canonLastPriceSQL(flipped)"); n != 3 {
+	if n := strings.Count(string(src), "canonLastPriceSQL(flipped, "); n != 3 {
 		t.Errorf("markets.go folds last_price through canonLastPriceSQL %d times, want 3", n)
 	}
 }

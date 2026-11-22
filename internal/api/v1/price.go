@@ -89,11 +89,16 @@ const (
 	// PriceWithheldDecimalsMismatch: asset payloads only. A successful decimals read contradicts the scale the market
 	// price was normalised on, so the per-whole-token figure would be off by a power of ten.
 	PriceWithheldDecimalsMismatch PriceWithheldReason = "decimals_mismatch"
+	// PriceWithheldSourceExcluded: a source an operator excluded (`stellarindex-ops source-exclude`) contributed to the
+	// served bucket (which pools every source) or trade, and no price can be recomputed without that source.
+	PriceWithheldSourceExcluded PriceWithheldReason = "source_excluded"
 )
 
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
 type withheldError struct {
 	reason PriceWithheldReason
+	// unread: the verdict rests on a failed read (the exclusion table), so the refusal is transient, not a market fact.
+	unread bool
 }
 
 func (e *withheldError) Error() string { return ErrPriceWithheld.Error() }
@@ -107,7 +112,7 @@ func newPriceWithheld(reason PriceWithheldReason) error {
 
 // PriceWithheldError is the ErrPriceWithheld a reader returns for a pricingguard verdict, carrying which gate fired.
 func PriceWithheldError(w pricingguard.Withholding) error {
-	return newPriceWithheld(withheldReasonFor(w))
+	return &withheldError{reason: withheldReasonFor(w), unread: w == pricingguard.WithheldExclusionsUnread}
 }
 
 func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
@@ -116,7 +121,9 @@ func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
 		return PriceWithheldScamIssuer
 	case pricingguard.WithheldThinMarket:
 		return PriceWithheldSubstance
-	case pricingguard.NotWithheld:
+	case pricingguard.WithheldSourceExcluded:
+		return PriceWithheldSourceExcluded
+	case pricingguard.WithheldExclusionsUnread, pricingguard.NotWithheld:
 	}
 	return PriceWithheldUnattributed
 }
@@ -241,6 +248,11 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 		return "Price withheld — FX leg unavailable",
 			"no FX fixing binds " + pair + " at the bucket's close within the lookback, so no converted price is published" +
 				" — /v1/price/tip converts at the live rate"
+	case PriceWithheldSourceExcluded:
+		return "Price withheld — contributing source excluded",
+			"the latest price for " + pair + " includes, or may include, a source an operator has excluded" +
+				" (a pooled bucket or trade from it, or a cached or multi-hop value that records no sources)" +
+				" and cannot be recomputed without it, so no price is published"
 	case PriceWithheldUnattributed, PriceWithheldDecimalsMismatch: // decimals_mismatch is asset payloads' own; /v1/price never sets it
 	}
 	return "Price withheld",
@@ -625,7 +637,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// comes from the VWAP cache, so it is viaFallback: already normalized, and stale.
 	held := s.resolveFrozenServeFor(r, snapshot, asset, served, market)
 	if held.outcome == frozenServeNothingHeld {
-		writeFrozenNothingHeldProblem(w, r, asset, quote)
+		writeFrozenNothingHeldProblem(w, r, asset, quote, held)
 		return
 	}
 	frozen := held.outcome == frozenServeHeld
@@ -820,6 +832,10 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	v, served, _, found, err := s.lookupCachedVWAPAliased(ctx, assetAliases(asset), []canonical.Asset{quote}, triangulationLookupWindow)
 	if !found {
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, err
+	}
+	// A withheld cached value ends the fallback chain: no lower layer may answer in its place.
+	if w := s.unattributedWithheld(ctx, asset, quote, v.ObservedAt.Add(-triangulationLookupWindow), v.Triangulated); w != pricingguard.NotWithheld {
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, PriceWithheldError(w)
 	}
 	snap = withCoverage(PriceSnapshot{
 		AssetID:       asset.String(),
@@ -1098,6 +1114,9 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if ok {
 		return fallbackResult{snap: cacheSnap, sources: cacheSrcs, served: served, triangulated: triangulated, ok: true, stale: true}
 	}
+	if errors.Is(cacheErr, ErrPriceWithheld) {
+		return fallbackResult{withheld: priceWithheldReason(cacheErr)}
+	}
 	snap, srcs, ok, withheld, err := s.tryStablecoinFiatProxy(ctx, asset, quote)
 	if err != nil {
 		return fallbackResult{err: err}
@@ -1169,13 +1188,17 @@ func (s *Server) writeFallbackMiss(w http.ResponseWriter, r *http.Request, asset
 }
 
 // fxBindFailure maps a failed [Server.bindFXFixings] to its fallback
-// outcome: a lookback miss withholds, anything else is a store failure.
+// outcome: a lookback miss or an excluded fixing withholds; anything else, an unread exclusion set included, is a read failure.
 func fxBindFailure(err error) (fallbackResult, bool) {
 	switch {
 	case err == nil:
 		return fallbackResult{}, false
 	case errors.Is(err, errFXLegMissing):
 		return fallbackResult{withheld: PriceWithheldFXLeg}, true
+	case errors.Is(err, ErrPriceWithheld) && !priceWithheldUnread(err):
+		return fallbackResult{withheld: priceWithheldReason(err)}, true
+	case errors.Is(err, ErrPriceWithheld):
+		return fallbackResult{err: fmt.Errorf("fx fixing: source exclusions unread: %w", err)}, true
 	}
 	return fallbackResult{err: err}, true
 }
@@ -1298,11 +1321,13 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	var rate float64
 	var rateUpdatedAt time.Time
 	var rateSource string
+	var rateEntry CurrencyEntry
 	for _, c := range fx.Currencies {
 		if c.Ticker == quote.Code {
 			rate = c.RateUSD
 			rateUpdatedAt = c.UpdatedAt
 			rateSource = fxSourceOf(c)
+			rateEntry = c
 			break
 		}
 	}
@@ -1326,6 +1351,9 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	// A declared peg is 1:1 against USD only; times a rate it is neither declaration nor observation.
 	if !ok || isDeclaredPeg(usdSnap) {
 		return PriceSnapshot{}, nil, false, false, nil
+	}
+	if err := s.liveRateWithheld(ctx, rateEntry, fx.PublishedAt); err != nil {
+		return PriceSnapshot{}, nil, false, false, err
 	}
 
 	// Exact rationals (ADR-0003); the float64 rate goes via its shortest round-trip decimal.
@@ -1394,6 +1422,9 @@ func (s *Server) resolveUSDLeg(
 	cacheSnap, cacheSrcs, _, _, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, usd)
 	if ok {
 		return cacheSnap, cacheSrcs, canonical.Asset{}, true, true, false, nil
+	}
+	if errors.Is(cacheErr, ErrPriceWithheld) {
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false, cacheErr
 	}
 	if unread != nil {
 		cacheErr = unread
@@ -1542,6 +1573,11 @@ func (s *Server) walkUSDPegs(
 		case lerr != nil:
 			return PriceSnapshot{}, nil, false, "", lerr
 		}
+		// The reader judged the peg book; an exclusion stored under the requested fiat pair names no book.
+		if w := s.pegBucketWithheld(ctx, asset, quote, snap, srcs); w != pricingguard.NotWithheld {
+			withheld = walkWithheldReason(withheld, PriceWithheldError(w))
+			continue
+		}
 		// LatestPrice returns the RAW asset/<peg> ratio; this is the SINGLE place the proxy tier
 		// is decimals-corrected, against the ACTUAL legs (asset, peg), NOT the requested fiat:USD.
 		s.normalizeRawPriceSnapshot(&snap, asset, peg)
@@ -1554,20 +1590,21 @@ func (s *Server) walkUSDPegs(
 
 // walkWithheldRank orders the reasons [Server.walkUSDPegs] reports when no peg serves: the asset's
 // own market below the floor outranks a withheld peg leg, which outranks a refusal that stated
-// no reason.
+// no reason; an operator exclusion outranks them all, since lifting it is what restores the price.
 var walkWithheldRank = map[PriceWithheldReason]int{
-	PriceWithheldUnattributed: 1,
-	PriceWithheldUpstreamLeg:  2,
-	PriceWithheldSubstance:    3,
+	PriceWithheldUnattributed:   1,
+	PriceWithheldUpstreamLeg:    2,
+	PriceWithheldSubstance:      3,
+	PriceWithheldSourceExcluded: 4,
 }
 
 // walkWithheldReason folds one refused peg read into the walk's running reason. The peg pair is
-// the asset's own market, so `substance` (as the listing says) and an unstated reason pass
-// through; any other cause (a flagged peg issuer, a refused cross) lies beyond it and is
-// `upstream_leg`.
+// the asset's own market, so `substance` (as the listing says), `source_excluded` and an unstated
+// reason pass through; any other cause (a flagged peg issuer, a refused cross) lies beyond it and
+// is `upstream_leg`.
 func walkWithheldReason(have PriceWithheldReason, err error) PriceWithheldReason {
 	got := priceWithheldReason(err)
-	if got != PriceWithheldSubstance && got != PriceWithheldUnattributed {
+	if _, ownMarket := walkWithheldRank[got]; !ownMarket {
 		got = PriceWithheldUpstreamLeg
 	}
 	if walkWithheldRank[got] > walkWithheldRank[have] {
@@ -1622,6 +1659,11 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	if xlmLeg.WindowSeconds > windowSeconds {
 		windowSeconds = xlmLeg.WindowSeconds
 	}
+	sources := unionSources(pegSources, xlmSources)
+	// Each leg was judged on its own book; an exclusion stored under the requested pair names neither, so judge the composite.
+	if w := s.pegBucketWithheld(ctx, asset, quote, compositeSpan(pegLeg, xlmLeg), sources); w != pricingguard.NotWithheld {
+		return PriceSnapshot{}, nil, pegXLMLegRefused, withheldReasonFor(w)
+	}
 	return PriceSnapshot{
 		AssetID:       asset.String(),
 		Quote:         quote.String(),
@@ -1629,7 +1671,28 @@ func (s *Server) crossDeclaredPegThroughXLM(
 		PriceType:     "vwap",
 		ObservedAt:    observedAt,
 		WindowSeconds: windowSeconds,
-	}, unionSources(pegSources, xlmSources), pegXLMLegPriced, ""
+	}, sources, pegXLMLegPriced, ""
+}
+
+// compositeSpan is the span a two-leg cross pooled, for [Server.pegBucketWithheld]: the earlier leg's window start through
+// the later leg's observation, rounded out to whole seconds.
+func compositeSpan(a, b PriceSnapshot) PriceSnapshot {
+	start := func(p PriceSnapshot) time.Time {
+		return p.ObservedAt.Time().Add(-time.Duration(p.WindowSeconds) * time.Second)
+	}
+	from, to := start(a), a.ObservedAt.Time()
+	if s := start(b); s.Before(from) {
+		from = s
+	}
+	if t := b.ObservedAt.Time(); t.After(to) {
+		to = t
+	}
+	span := to.Sub(from)
+	secs := int(span / time.Second)
+	if span%time.Second != 0 {
+		secs++
+	}
+	return PriceSnapshot{ObservedAt: WireTime(to), WindowSeconds: secs}
 }
 
 // readDeclaredPegXLMLeg reads asset/XLM for [Server.crossDeclaredPegThroughXLM]: each peg spelling against each XLM alias; the walk
@@ -1784,23 +1847,24 @@ func (s *Server) declaredPegSnapshot(asset, quote canonical.Asset) PriceSnapshot
 // tryFiatCrossRate synthesises a fiat-vs-fiat price from the CurrenciesReader's USD-base snapshot, the last resort (rate_usd[X] is "1 USD
 // = N X", so 1 X in Y = rate_usd[Y] / rate_usd[X]).
 // PriceType is "vwap" (the forex feed is volume-weighted); ok=false when a side isn't fiat, the reader is cold, or a rate is missing or
-// zero.
-func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, []string, bool) {
+// zero. A rate an exclusion covers withholds the cross (err).
+func (s *Server) tryFiatCrossRate(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
 	if asset.Type != canonical.AssetFiat || quote.Type != canonical.AssetFiat {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	if s.Currencies == nil {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	snap := s.Currencies.Latest()
 	if snap == nil {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 
 	// Linear scan: the slice is small (~110) and this is a last-resort fallback.
 	var rateAsset, rateQuote float64
 	var foundAsset, foundQuote bool
 	var sources []string
+	var legs []CurrencyEntry
 	// observedAt is pulled BACK to the older leg's UpdatedAt: the forex worker may be HOLDING a
 	// leg's last guarded rate, and the publication time would claim freshness it lacks.
 	observedAt := snap.PublishedAt
@@ -1810,37 +1874,43 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 			foundAsset = true
 			observedAt = olderNonZero(observedAt, c.UpdatedAt)
 			sources = appendFXSource(sources, fxSourceOf(c))
+			legs = append(legs, c)
 		}
 		if c.Ticker == quote.Code {
 			rateQuote = c.RateUSD
 			foundQuote = true
 			observedAt = olderNonZero(observedAt, c.UpdatedAt)
 			sources = appendFXSource(sources, fxSourceOf(c))
+			legs = append(legs, c)
 		}
 		if foundAsset && foundQuote {
 			break
 		}
 	}
-	if !foundAsset || rateAsset <= 0 {
-		return PriceSnapshot{}, nil, false
+	if !foundAsset {
+		return PriceSnapshot{}, nil, false, nil
 	}
 	// rate_usd[USD] is implicitly 1; the snapshot needn't carry a USD entry.
 	if !foundQuote {
 		if quote.Code != "USD" {
-			return PriceSnapshot{}, nil, false
+			return PriceSnapshot{}, nil, false, nil
 		}
 		rateQuote = 1
 	}
 	// [Cache.Latest] never expires, so without this bound a forex outage would serve the last fetch
 	// forever. observedAt is the older leg's, so one check covers a dead worker and a held ticker.
 	if fxCrossStale(observedAt, s.fxCrossMaxAge) {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	// Exact big.Rat, not float64 (ADR-0003); each float64 rate goes via its shortest round-trip decimal.
 	rateQuoteRat, okQ := new(big.Rat).SetString(strconv.FormatFloat(rateQuote, 'f', -1, 64))
 	rateAssetRat, okA := new(big.Rat).SetString(strconv.FormatFloat(rateAsset, 'f', -1, 64))
-	if !okQ || !okA || rateAssetRat.Sign() == 0 {
-		return PriceSnapshot{}, nil, false
+	// A non-positive asset rate is refused here, not at the scan: no step between the two can serve.
+	if !okQ || !okA || rateAssetRat.Sign() <= 0 {
+		return PriceSnapshot{}, nil, false, nil
+	}
+	if err := s.liveRatesWithheld(ctx, legs, snap.PublishedAt); err != nil {
+		return PriceSnapshot{}, nil, false, err
 	}
 	priceStr := formatCrossRate(new(big.Rat).Quo(rateQuoteRat, rateAssetRat))
 	return PriceSnapshot{
@@ -1849,7 +1919,7 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		Price:      priceStr,
 		PriceType:  "vwap",
 		ObservedAt: WireTime(observedAt),
-	}, sources, true
+	}, sources, true, nil
 }
 
 // olderNonZero returns the earlier of a and b, ignoring a zero b.
@@ -2012,6 +2082,8 @@ type frozenResolution struct {
 	triangulated bool
 	// pairBase is the spelling whose marker fired; composite-meta must ask for the same pair.
 	pairBase canonical.Asset
+	// withheld, beside frozenServeNothingHeld, is why the held value was refused; a caller that ignores it still serves nothing.
+	withheld error
 }
 
 // frozenHeldWindows are the aggregator windows a freeze can hold a value for, smallest first: the marker is per pair (ADR-0019) and can't
@@ -2042,6 +2114,10 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		}
 		if !found {
 			continue
+		}
+		// A held value carries no source list; withheld ends the chain (no longer window may answer).
+		if w := s.unattributedWithheld(r.Context(), pairBase, quote, v.ObservedAt.Add(-window), v.Triangulated); w != pricingguard.NotWithheld {
+			return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: PriceWithheldError(w)}
 		}
 		return frozenResolution{
 			outcome:      frozenServeHeld,
@@ -2080,6 +2156,9 @@ func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requ
 	}
 	// Converting at the fixing bound to its own bucket end keeps the hold one answer.
 	bound, err := s.bindFXFixings(r.Context(), []string{quote.Code}, time.Time(held.snapshot.ObservedAt))
+	if errors.Is(err, ErrPriceWithheld) {
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: held.checked, withheld: err}
+	}
 	if err != nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: held.checked}
 	}
@@ -2129,8 +2208,12 @@ func (s *Server) frozenAnyAlias(r *http.Request, requested, quote canonical.Asse
 
 // writeFrozenNothingHeldProblem is the single-asset refusal for frozenServeNothingHeld: a 503, not a 404 (prices exist and the
 // freeze clears on its own, so retry is right), with its own title and detail since the "market too thin" wording would misstate
-// why.
-func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset) {
+// why. A held value withheld by a gate is that gate's 404 instead.
+func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, held frozenResolution) {
+	if held.withheld != nil {
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(held.withheld))
+		return
+	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/price-unavailable",
 		"Price frozen — no last-known-good value available", http.StatusServiceUnavailable,

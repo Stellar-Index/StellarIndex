@@ -772,7 +772,7 @@ type APIConfig struct {
 
 	// RegisterDisabled switches anonymous registration off; RegisterMaxPerHour caps what it creates across every caller.
 	RegisterDisabled   bool `toml:"register_disabled" doc:"Switch off anonymous registration: POST /v1/register (account and API-key issuance) , passkey sign-up (/v1/auth/passkey/begin-signup and finish-signup) and an email's first magic-link or code sign-in (the one that creates its account) answer 503; existing users still sign in. The lever for an abuse wave; read at start, so restart the API after changing it." default:"false"`
-	RegisterMaxPerHour int  `toml:"register_max_per_hour" doc:"Cap on accounts created by anonymous sign-up per hour across ALL callers: POST /v1/register, passkey finish-signup and an email's first magic-link or code sign-in each spend one unit, immediately before the account is created. The per-IP throttles cannot bound a registrant that rotates addresses, and every account gets its own full free-tier budget. The budget is one counter shared by every caller and route, so a burst from a few addresses can exhaust it for everyone until the hour rolls over: every account-creating route then answers 503 with Retry-After, while existing users still sign in. 0 removes the cap." default:"60"`
+	RegisterMaxPerHour int  `toml:"register_max_per_hour" doc:"Cap on accounts created by sign-up per hour across ALL callers, spent one unit immediately before each account is created. Two counters share this cap: POST /v1/register and passkey finish-signup, which prove nothing, draw on one; an email's first magic-link or code sign-in, which proves a mailbox, draws on the other, so a /v1/register burst cannot refuse email sign-up. The per-IP throttles cannot bound a registrant that rotates addresses, and every account gets its own full free-tier budget. A burst from a few addresses can exhaust the proof-free counter for everyone until the hour rolls over: /v1/register and passkey sign-up then answer 503 with Retry-After, while existing users still sign in. 0 removes the cap." default:"60"`
 
 	HoldsFile string `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds. An invalid file at startup stops the API (and fails -dry-run); once running, an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
 
@@ -820,7 +820,9 @@ type DashboardConfig struct {
 
 	CodeSecretEnv string `toml:"code_secret_env" doc:"Environment variable holding the server secret that keys the 6-digit email-code derivation (HMAC over the stored token hash — without it a Postgres read would reveal every in-flight sign-in code) AND the WebAuthn passkey-ceremony, magic-link login-intent and login-device cookie MACs. Each consumer MACs under its own HKDF-derived key. Any long random string (32+ bytes). Required while passkeys are wired (the API refuses to start without it); otherwise an unset/empty env falls back to a random per-process secret: still keyed, but in-flight codes, magic links and browsers' login-device markers stop verifying across a restart or another instance." default:"STELLARINDEX_DASHBOARD_CODE_SECRET"`
 
-	WebhookSealKeyEnv string `toml:"webhook_seal_key_env" doc:"Environment variable holding the secret that seals customer-webhook signing keys at rest (AES-256-GCM under an HKDF-derived key; column customer_webhooks.signing_key_sealed). At least 32 bytes; a shorter value refuses to start. Separate from code_secret_env so either can be rotated alone. Unset/empty stores new signing keys raw (logged at startup) and cannot read a sealed one, so deliveries to sealed webhooks wait until it is set. Changing the value makes every sealed key unreadable: their deliveries fail terminally, and the webhooks must be recreated (dashboard edit and delete still work without the key)." default:"STELLARINDEX_WEBHOOK_SEAL_KEY"`
+	WebhookSealKeyEnv string `toml:"webhook_seal_key_env" doc:"Environment variable holding the secret that seals customer-webhook signing keys at rest (AES-256-GCM under an HKDF-derived key; column customer_webhooks.signing_key_sealed). At least 32 bytes; a shorter value refuses to start. Separate from code_secret_env so either can be rotated alone. Unset/empty stores new signing keys raw (logged at startup) and cannot read a sealed one, so deliveries to sealed webhooks wait until it is set. To rotate it, move the old value to webhook_seal_previous_key_env and set a new one; changing it without that makes every sealed key unreadable and their deliveries fail terminally." default:"STELLARINDEX_WEBHOOK_SEAL_KEY"`
+
+	WebhookSealPreviousKeyEnv string `toml:"webhook_seal_previous_key_env" doc:"Environment variable holding the seal secret being rotated out of webhook_seal_key_env. When set (32+ bytes) keys sealed under it still open, each is re-sealed under the current secret in a background sweep at startup, and a key neither secret opens is retried rather than failed terminally. Never used to seal. Unset it once the startup sweep has logged its re-sealed line on every API host." default:"STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY"`
 
 	MagicLinkTTLMinutes int `toml:"magic_link_ttl_minutes" doc:"Magic-link validity in minutes. Default 15 — long enough for an email to arrive + the user to switch contexts; short enough to limit replay-window if a phone is briefly unattended." default:"15"`
 
@@ -1278,13 +1280,14 @@ func defaultAPIConfig() APIConfig {
 			JWTTTL:        1 * time.Hour,
 		},
 		Dashboard: DashboardConfig{
-			EmailFrom:           "Stellar Index <hello@stellarindex.io>",
-			ResendAPIKeyEnv:     "STELLARINDEX_RESEND_API_KEY",
-			CodeSecretEnv:       "STELLARINDEX_DASHBOARD_CODE_SECRET",
-			WebhookSealKeyEnv:   "STELLARINDEX_WEBHOOK_SEAL_KEY",
-			MagicLinkTTLMinutes: 15,
-			SessionTTLDays:      30,
-			CookieSecure:        true, // dev (http://localhost) overrides to false
+			EmailFrom:                 "Stellar Index <hello@stellarindex.io>",
+			ResendAPIKeyEnv:           "STELLARINDEX_RESEND_API_KEY",
+			CodeSecretEnv:             "STELLARINDEX_DASHBOARD_CODE_SECRET",
+			WebhookSealKeyEnv:         "STELLARINDEX_WEBHOOK_SEAL_KEY",
+			WebhookSealPreviousKeyEnv: "STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY",
+			MagicLinkTTLMinutes:       15,
+			SessionTTLDays:            30,
+			CookieSecure:              true, // dev (http://localhost) overrides to false
 		},
 		Streaming: StreamingConfig{
 			Pairs:                    [][]string{},
