@@ -75,6 +75,7 @@ func (c *ChartSeries) markWindowStart(from time.Time) {
 	if from.IsZero() || len(c.Points) == 0 {
 		return
 	}
+	c.dropPointsBeforeWindowStart(from)
 	first := c.Points[0].T
 	switch end := chartBucketStep(first.Time(), c.Granularity); {
 	case first.Time().Sub(from) > chartGranularityGrace(c.Granularity):
@@ -451,20 +452,21 @@ func (s *Server) handleChartTWAP(
 
 // fxClosedDayWindow is the fx_quotes read window for a chart: closed UTC days only, because the
 // forex worker rewrites today's row on every refresh and a served bucket is final. `from` is
-// floored to its day so a 24h window holds yesterday's bucket; a zero `from` (timeframe=all) reads
-// 25 years, back to ECB inception. The bounds are inclusive, as ListFXHistory reads them.
+// floored to its day and stepped back over [fxNoSessionMaxRun] (fx_quotes has no weekend or
+// holiday rows), so the session in force at `from` is read and markWindowStart keeps only it; a
+// zero `from` (timeframe=all) reads 25 years, back to ECB inception. The bounds are inclusive.
 func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
 	today := now.UTC().Truncate(24 * time.Hour)
 	to = today.Add(-time.Nanosecond)
 	if from.IsZero() {
 		return today.AddDate(-25, 0, 0), to
 	}
-	// A window inside today (timeframe=1h) still holds yesterday's closed day.
-	return chartClosedReadFrom(now, from.UTC().Truncate(24*time.Hour), "1d"), to
+	return chartClosedReadFrom(now, from.UTC().Truncate(24*time.Hour), "1d").Add(-fxNoSessionMaxRun), to
 }
 
-// chartClosedReadFrom widens a window shorter than one served bucket back to the last CLOSED bucket's start, so a forced coarse
-// grain (TWAP 1h, market-cap 1d) never reads an empty range and answers a quiet 200 with no points. A zero `from` stays zero.
+// chartClosedReadFrom widens a window shorter than one served bucket back to the start of the bucket BEFORE the last closed one:
+// a CAGG materializes a closed bucket only on a refresh after its end_offset, so the last closed bucket alone can be an empty
+// read for hours. markWindowStart then keeps only the newest bucket at or before `from`. A zero `from` stays zero.
 func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
 	if from.IsZero() {
 		return from
@@ -472,9 +474,9 @@ func chartClosedReadFrom(now, from time.Time, gran string) time.Time {
 	var last time.Time
 	u := now.UTC()
 	if d, ok := chartFixedBucketWidth(gran); ok {
-		last = u.Truncate(d).Add(-d)
+		last = u.Truncate(d).Add(-2 * d)
 	} else if gran == "1mo" {
-		last = time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -1, 0)
+		last = time.Date(u.Year(), u.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -2, 0)
 	} else {
 		return from
 	}
