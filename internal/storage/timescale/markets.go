@@ -214,9 +214,11 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
             COALESCE(bool_or(r.sum_base_unpriced IS NOT NULL)
                      FILTER (WHERE ` + pools24hWholeHoursSQL + `), false) AS vol_lower_bound,
             -- One spelling's hourly buckets close in distinct hours, so bucket_last_ts cannot tie here.
-            -- A bucket of only zero-leg trades has a NULL price but a ts; skip it for the venue's latest price.
+            -- A bucket of only zero-leg trades has a NULL price but a ts; skip it for the venue's latest price,
+            -- and date that price by last_priced_at, never by the dust bucket's newer last_trade_at.
             last(r.bucket_last_price, r.bucket_last_ts)
-              FILTER (WHERE r.bucket_last_price IS NOT NULL) AS last_price
+              FILTER (WHERE r.bucket_last_price IS NOT NULL) AS last_price,
+            max(r.bucket_last_ts) FILTER (WHERE r.bucket_last_price IS NOT NULL) AS last_priced_at
             FROM pools_per_source_1h r
            WHERE r.bucket >= $1` + rawFilter + `
            GROUP BY r.source, r.base_asset, r.quote_asset
@@ -244,7 +246,7 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
                  h.vol_24h_usd + COALESCE(e.vol_24h_usd, 0) AS vol_24h_usd,
                  h.vol_lower_bound OR COALESCE(e.vol_lower_bound, false)
                    OR COALESCE((SELECT tail_partial FROM pools_tail), false) AS vol_lower_bound,
-                 h.last_price
+                 h.last_price, h.last_priced_at
             FROM pools_hourly h
             LEFT JOIN pools_edges e
               ON e.source = h.source AND e.base_asset = h.base_asset AND e.quote_asset = h.quote_asset
@@ -258,10 +260,11 @@ func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
             bool_or(p.vol_lower_bound) AS vol_lower_bound,
             -- Two spellings folded into one market can close a bucket in the same ledger, so their
             -- timestamps tie; the higher close breaks it, or the pick would vary per query.
-            (array_agg(p.last_price ORDER BY p.last_trade_at DESC, p.last_price DESC)
-               FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
+            (array_agg(p.last_price ORDER BY p.last_priced_at DESC, p.last_price DESC)
+               FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price,
+            MAX(p.last_priced_at) AS last_priced_at
           FROM (
-            SELECT r.source, r.last_trade_at, r.count_24h, r.vol_24h_usd, r.vol_lower_bound, r.last_price,
+            SELECT r.source, r.last_trade_at, r.count_24h, r.vol_24h_usd, r.vol_lower_bound, r.last_price, r.last_priced_at,
                    COALESCE(bf.canon, r.base_asset)  AS base_asset,
                    COALESCE(qf.canon, r.quote_asset) AS quote_asset
               FROM pools_raw r
@@ -337,7 +340,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
                  MAX(last_trade_at)             AS last_trade_at,
                  SUM(count_24h)                 AS count_24h,
                  SUM(vol_24h_usd::numeric)::text AS vol_24h_usd,
-                 ` + canonLastPriceSQL(flipped) + ` AS last_price,
+                 ` + canonLastPriceSQL(flipped, "last_priced_at") + ` AS last_price,
                  bool_or(vol_lower_bound)       AS vol_lower_bound
             FROM pools
            GROUP BY source, ` + canonBase + `, ` + canonQuote + `
@@ -498,12 +501,12 @@ func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, 
                  MAX(last_trade_at)              AS last_trade_at,
                  SUM(count_24h)                  AS count_24h,
                  SUM(vol_24h_usd::numeric)       AS vol_24h_num,
-                 ` + canonLastPriceSQL(flipped) + ` AS last_price,
+                 ` + canonLastPriceSQL(flipped, "last_priced_at") + ` AS last_price,
                  bool_or(vol_lower_bound)        AS vol_lower_bound
-            -- /v1/markets serves only a price traded in the last 24h; /v1/pools keeps the venue's latest. Keyed on the trade's own
-            -- timestamp, not its hourly bucket, so a trade 23.5h old in a bucket begun 24.3h ago still counts.
-            FROM (SELECT source, base_asset, quote_asset, last_trade_at, count_24h, vol_24h_usd, vol_lower_bound,
-                         CASE WHEN last_trade_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price
+            -- /v1/markets serves only a price traded in the last 24h; /v1/pools keeps the venue's latest. Keyed on the priced trade's
+            -- own timestamp, not its hourly bucket (a trade 23.5h old in a bucket begun 24.3h ago still counts) nor a newer zero-leg trade.
+            FROM (SELECT source, base_asset, quote_asset, last_trade_at, last_priced_at, count_24h, vol_24h_usd, vol_lower_bound,
+                         CASE WHEN last_priced_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price
                     FROM pools) pools
            GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
@@ -803,7 +806,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                    MAX(bucket_close_at) AS bucket_close_at,
                    SUM(count_24h)       AS count_24h,
                    SUM(vol_24h_num)     AS vol_24h_num,
-                   ` + canonLastPriceSQL(flipped) + ` AS last_price,
+                   ` + canonLastPriceSQL(flipped, "last_trade_at") + ` AS last_price,
                    bool_or(vol_lower_bound) AS vol_lower_bound
               FROM folded
              GROUP BY ` + canonBase + `, ` + canonQuote + `

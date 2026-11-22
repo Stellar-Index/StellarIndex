@@ -231,7 +231,7 @@ func TestListingLastPrice_TrailingDayOnly(t *testing.T) {
 	if strings.Contains(fold(pairs), "d.last_price") {
 		t.Error("/v1/markets last_price still falls back to a prices_1d close up to 14 days old")
 	}
-	const marketsBound = "CASE WHEN last_trade_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price"
+	const marketsBound = "CASE WHEN last_priced_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price"
 	const bucketBound = "FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours') AS last_price"
 	for _, order := range []MarketsOrder{MarketsOrderPair, MarketsOrderVolume24hDesc} {
 		src, _ := buildSourceMarketsQuery(since, "sdex", "", 100, order)
