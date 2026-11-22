@@ -13,6 +13,7 @@ import (
 type PriceExclusionGate interface {
 	InstantWithholding(ctx context.Context, base, quote canonical.Asset, source string, ts time.Time) pricingguard.Withholding
 	UnattributedWithholding(ctx context.Context, base, quote canonical.Asset, from, to time.Time) pricingguard.Withholding
+	MultiHopWithholding(ctx context.Context, from, to time.Time) pricingguard.Withholding
 }
 
 // exclusionCleanTrades drops trades from an excluded source; the survivors are each one venue's own fill, so a VWAP over them
@@ -41,10 +42,15 @@ func priceWithheldUnread(err error) bool {
 	return errors.As(err, &e) && e.unread
 }
 
-// unattributedWithheld judges a value with no source list that covers [from, now].
-func (s *Server) unattributedWithheld(ctx context.Context, asset, quote canonical.Asset, from time.Time) pricingguard.Withholding {
+// unattributedWithheld judges a value with no source list that covers [from, now]. multiHop marks a value that may be a
+// composite over unrecorded legs (a triangulated cache value, or one whose provenance is unknown): any exclusion withholds it.
+func (s *Server) unattributedWithheld(ctx context.Context, asset, quote canonical.Asset, from time.Time, multiHop bool) pricingguard.Withholding {
 	if s.Exclusions == nil {
 		return pricingguard.NotWithheld
 	}
-	return s.Exclusions.UnattributedWithholding(ctx, asset, quote, from, time.Now().Add(time.Nanosecond))
+	to := time.Now().Add(time.Nanosecond)
+	if multiHop {
+		return s.Exclusions.MultiHopWithholding(ctx, from, to)
+	}
+	return s.Exclusions.UnattributedWithholding(ctx, asset, quote, from, to)
 }

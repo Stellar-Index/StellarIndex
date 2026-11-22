@@ -18,7 +18,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const exclUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+const (
+	exclUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	exclAQUA = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+)
 
 type exclTable struct {
 	rows []timescale.SourceExclusion
@@ -29,11 +32,15 @@ func (e exclTable) UnliftedSourceExclusions(context.Context) ([]timescale.Source
 	return e.rows, e.err
 }
 
-// exclCache serves one cached VWAP for every pair, as the aggregator's Redis keys do for a triangulated value.
-type exclCache struct{ value string }
+// exclCache serves one cached VWAP for every pair, as the aggregator's Redis keys do for a triangulated value (direct: a
+// marker-less direct value instead).
+type exclCache struct {
+	value  string
+	direct bool
+}
 
 func (c exclCache) LookupTriangulatedVWAP(context.Context, canonical.Asset, canonical.Asset, time.Duration) (v1.CachedVWAP, bool, error) {
-	return v1.CachedVWAP{Value: c.value, Triangulated: true, ObservedAt: time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)}, true, nil
+	return v1.CachedVWAP{Value: c.value, Triangulated: !c.direct, ObservedAt: time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)}, true, nil
 }
 
 type exclCase struct {
@@ -41,6 +48,16 @@ type exclCase struct {
 	gate v1.PriceExclusionGate // nil: no gate wired
 	// withheld: the reason every surface must report; "" means served unchanged.
 	withheld string
+	// multiHop, when set, replaces withheld for a value that may be a composite over unrecorded legs.
+	multiHop string
+}
+
+// forMultiHop is tc as judged for a triangulated (or provenance-unknown) value, which any in-force exclusion withholds.
+func (tc exclCase) forMultiHop() exclCase {
+	if tc.multiHop != "" {
+		tc.withheld = tc.multiHop
+	}
+	return tc
 }
 
 func exclCases() []exclCase {
@@ -51,8 +68,8 @@ func exclCases() []exclCase {
 	return []exclCase{
 		{name: "no gate"},
 		{name: "no exclusions", gate: gate(exclTable{})},
-		{name: "another pair excluded", gate: gate(exclTable{rows: []timescale.SourceExclusion{{
-			ID: 1, Source: "soroswap", Base: "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", Quote: exclUSDC, From: from,
+		{name: "another pair excluded", multiHop: "source_excluded", gate: gate(exclTable{rows: []timescale.SourceExclusion{{
+			ID: 1, Source: "soroswap", Base: exclAQUA, Quote: exclUSDC, From: from,
 		}}})},
 		{name: "lifted exclusion", gate: gate(exclTable{rows: []timescale.SourceExclusion{{
 			ID: 1, Source: "soroswap", From: from, LiftedAt: time.Now().Add(-time.Minute),
@@ -98,27 +115,64 @@ func wantExclVerdict(t *testing.T, tc exclCase, status int, body, served, baseli
 func TestPriceSourceExclusion_RedisLayer(t *testing.T) {
 	for _, quote := range []string{"fiat:USD", exclUSDC} {
 		for _, path := range []string{"/v1/price?asset=native&quote=" + quote, "/v1/price/batch?asset_ids=native&quote=" + quote} {
-			newSrv := func(g v1.PriceExclusionGate) *v1.Server {
-				return v1.New(v1.Options{Prices: &stubPriceReader{}, Triangulated: exclCache{value: "0.2468"}, Exclusions: g})
+			for _, direct := range []bool{false, true} {
+				exclRedisLayerCase(t, quote, path, direct)
 			}
-			_, baseline := exclGet(t, newSrv(nil), path)
-			for _, tc := range exclCases() {
-				if quote == exclUSDC && tc.name == "pair exclusion under the crypto:XLM alias" {
-					continue // scoped to fiat:USD, which a USDC-quoted value is not
-				}
-				status, body := exclGet(t, newSrv(tc.gate), path)
-				if strings.HasPrefix(path, "/v1/price/batch") && tc.withheld != "" {
-					// The batch names withheld ids without a per-id reason.
-					if !strings.Contains(body, `"withheld":["native"]`) || strings.Contains(body, "0.2468") {
-						t.Fatalf("%s %s: %d %s, want native withheld", tc.name, path, status, body)
-					}
-					continue
-				}
-				wantExclVerdict(t, tc, status, body, "0.2468", baseline)
-				if tc.withheld != "" && strings.HasPrefix(path, "/v1/price?") && status != http.StatusNotFound {
-					t.Fatalf("%s %s: status %d, want 404", tc.name, path, status)
-				}
+		}
+	}
+}
+
+func exclRedisLayerCase(t *testing.T, quote, path string, direct bool) {
+	t.Helper()
+	newSrv := func(g v1.PriceExclusionGate) *v1.Server {
+		return v1.New(v1.Options{Prices: &stubPriceReader{}, Triangulated: exclCache{value: "0.2468", direct: direct}, Exclusions: g})
+	}
+	_, baseline := exclGet(t, newSrv(nil), path)
+	for _, tc := range exclCases() {
+		if !direct {
+			tc = tc.forMultiHop()
+		}
+		if quote == exclUSDC && tc.name == "pair exclusion under the crypto:XLM alias" {
+			continue // scoped to fiat:USD, which a USDC-quoted value is not
+		}
+		status, body := exclGet(t, newSrv(tc.gate), path)
+		if strings.HasPrefix(path, "/v1/price/batch") && tc.withheld != "" {
+			// The batch names withheld ids without a per-id reason.
+			if !strings.Contains(body, `"withheld":["native"]`) || strings.Contains(body, "0.2468") {
+				t.Fatalf("%s %s direct=%v: %d %s, want native withheld", tc.name, path, direct, status, body)
 			}
+			continue
+		}
+		wantExclVerdict(t, tc, status, body, "0.2468", baseline)
+		if tc.withheld != "" && strings.HasPrefix(path, "/v1/price?") && status != http.StatusNotFound {
+			t.Fatalf("%s %s direct=%v: status %d, want 404", tc.name, path, direct, status)
+		}
+	}
+}
+
+// TestPriceSourceExclusion_PivotLegOfTriangulatedValue: a triangulated AQUA/USD cache value can route AQUA/XLM x XLM/USDC, and
+// its legs are not recorded, so an exclusion on the XLM/USDC leg withholds it; a direct AQUA value keeps the pair/base rule.
+func TestPriceSourceExclusion_PivotLegOfTriangulatedValue(t *testing.T) {
+	const path = "/v1/price?asset=" + exclAQUA
+	pivotLeg := pricingguard.NewSourceExclusionGate(exclTable{rows: []timescale.SourceExclusion{{
+		ID: 1, Source: "sdex", Base: "native", Quote: exclUSDC, From: time.Now().Add(-time.Hour),
+	}}}, pricingguard.SourceExclusionGateOptions{})
+	for _, direct := range []bool{false, true} {
+		newSrv := func(g v1.PriceExclusionGate) *v1.Server {
+			return v1.New(v1.Options{Prices: &stubPriceReader{}, Triangulated: exclCache{value: "0.0042", direct: direct}, Exclusions: g})
+		}
+		_, baseline := exclGet(t, newSrv(nil), path)
+		_, clean := exclGet(t, newSrv(pricingguard.NewSourceExclusionGate(exclTable{}, pricingguard.SourceExclusionGateOptions{})), path)
+		if exclAsOf.ReplaceAllString(clean, "") != exclAsOf.ReplaceAllString(baseline, "") || !strings.Contains(baseline, "0.0042") {
+			t.Fatalf("direct=%v: no exclusions %s, want the ungated body %s", direct, clean, baseline)
+		}
+		status, body := exclGet(t, newSrv(pivotLeg), path)
+		if direct {
+			wantExclVerdict(t, exclCase{name: "direct, unrelated pair"}, status, body, "0.0042", baseline)
+			continue
+		}
+		if status != http.StatusNotFound || !strings.Contains(body, `"source_excluded"`) || strings.Contains(body, "0.0042") {
+			t.Fatalf("triangulated: %d %s, want 404 source_excluded", status, body)
 		}
 	}
 }
@@ -126,6 +180,13 @@ func TestPriceSourceExclusion_RedisLayer(t *testing.T) {
 // TestPriceSourceExclusion_FrozenHeldValue: a frozen pair replaces its clean closed bucket with the held VWAP-cache value,
 // which carries no source list, so an exclusion touching the pair withholds the held value instead of serving it.
 func TestPriceSourceExclusion_FrozenHeldValue(t *testing.T) {
+	for _, triangulated := range []bool{false, true} {
+		exclFrozenHeldCase(t, triangulated)
+	}
+}
+
+func exclFrozenHeldCase(t *testing.T, triangulated bool) {
+	t.Helper()
 	const key = "crypto:XLM/fiat:USD"
 	heldAt := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second)
 	newSrv := func(g v1.PriceExclusionGate) *v1.Server {
@@ -135,7 +196,7 @@ func TestPriceSourceExclusion_FrozenHeldValue(t *testing.T) {
 				sources:   map[string][]string{key: {"kraken", "coinbase", "bitstamp"}},
 			},
 			Freeze:       frozenPairs{key: true},
-			Triangulated: heldSincePairs{values: lkgPairs{key + "/300": heldLKG}, at: heldAt},
+			Triangulated: heldSincePairs{values: lkgPairs{key + "/300": heldLKG}, at: heldAt, triangulated: triangulated},
 			Exclusions:   g,
 		})
 	}
@@ -145,6 +206,9 @@ func TestPriceSourceExclusion_FrozenHeldValue(t *testing.T) {
 			t.Fatalf("%s: ungated frozen pair %s, want the held value %s", path, baseline, heldLKG)
 		}
 		for _, tc := range exclCases() {
+			if triangulated {
+				tc = tc.forMultiHop()
+			}
 			status, body := exclGet(t, newSrv(tc.gate), path)
 			if strings.Contains(body, movedBucket) {
 				t.Fatalf("%s %s: served the refused bucket: %s", tc.name, path, body)
@@ -239,6 +303,7 @@ func TestPriceSourceExclusion_TipStream(t *testing.T) {
 // exclusion touches, as /v1/price does.
 func TestPriceSourceExclusion_ClosedStream(t *testing.T) {
 	for _, tc := range exclCases() {
+		tc = tc.forMultiHop() // a frame does not say whether it is a composite
 		srv := v1.New(v1.Options{Hub: streaming.NewHub(0), Exclusions: tc.gate})
 		ts := startHTTPTest(t, srv.Handler())
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

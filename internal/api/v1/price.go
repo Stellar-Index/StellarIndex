@@ -837,7 +837,7 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, err
 	}
 	// A withheld cached value ends the fallback chain: no lower layer may answer in its place.
-	if w := s.unattributedWithheld(ctx, asset, quote, v.ObservedAt.Add(-triangulationLookupWindow)); w != pricingguard.NotWithheld {
+	if w := s.unattributedWithheld(ctx, asset, quote, v.ObservedAt.Add(-triangulationLookupWindow), v.Triangulated); w != pricingguard.NotWithheld {
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, PriceWithheldError(w)
 	}
 	snap = withCoverage(PriceSnapshot{
@@ -2072,7 +2072,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 			continue
 		}
 		// A held value carries no source list; withheld ends the chain (no longer window may answer).
-		if w := s.unattributedWithheld(r.Context(), pairBase, quote, v.ObservedAt.Add(-window)); w != pricingguard.NotWithheld {
+		if w := s.unattributedWithheld(r.Context(), pairBase, quote, v.ObservedAt.Add(-window), v.Triangulated); w != pricingguard.NotWithheld {
 			return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: PriceWithheldError(w)}
 		}
 		return frozenResolution{

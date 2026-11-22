@@ -20,8 +20,8 @@ func (e headlineExclTable) UnliftedSourceExclusions(context.Context) ([]timescal
 }
 
 // TestGlobalHeadlineTriangulatedTierFailsClosedOnExclusions: tier 3 is what the headline reaches after tiers 1 and 2 decline an
-// excluded or unjudged market, and its value carries no source list, so an in-force exclusion touching the pair, a source-wide
-// one, or an unreadable set is no data rather than a fall-through.
+// excluded or unjudged market, and its value records neither sources nor pivot legs, so ANY in-force exclusion (another pair's
+// could sit on a leg) or an unreadable set is no data rather than a fall-through; a lifted or expired one is not.
 func TestGlobalHeadlineTriangulatedTierFailsClosedOnExclusions(t *testing.T) {
 	base, quote := headlinePair(t)
 	const window = 5 * time.Minute
@@ -32,8 +32,14 @@ func TestGlobalHeadlineTriangulatedTierFailsClosedOnExclusions(t *testing.T) {
 		serve bool
 	}{
 		{name: "no exclusions", serve: true},
-		{name: "another pair excluded", serve: true, table: headlineExclTable{rows: []timescale.SourceExclusion{{
-			ID: 1, Source: "soroswap", Base: "native", Quote: "fiat:EUR", From: from,
+		{name: "lifted exclusion", serve: true, table: headlineExclTable{rows: []timescale.SourceExclusion{{
+			ID: 1, Source: "sdex", From: from, LiftedAt: time.Now().Add(-time.Minute),
+		}}}},
+		{name: "exclusion ended before the window", serve: true, table: headlineExclTable{rows: []timescale.SourceExclusion{{
+			ID: 1, Source: "sdex", From: from.Add(-time.Hour), Until: from,
+		}}}},
+		{name: "pivot-leg pair excluded", table: headlineExclTable{rows: []timescale.SourceExclusion{{
+			ID: 1, Source: "sdex", Base: "native", Quote: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", From: from,
 		}}}},
 		{name: "source-wide exclusion", table: headlineExclTable{rows: []timescale.SourceExclusion{{ID: 1, Source: "soroswap", From: from}}}},
 		{name: "pair exclusion", table: headlineExclTable{rows: []timescale.SourceExclusion{{

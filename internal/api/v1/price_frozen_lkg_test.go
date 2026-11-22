@@ -67,15 +67,16 @@ func getBody(t *testing.T, url string) (int, string) {
 // heldSincePairs is lkgPairs with a fixed observation stamp, so a test
 // can tell the held value's own observed_at from the read time.
 type heldSincePairs struct {
-	values lkgPairs
-	at     time.Time
+	values       lkgPairs
+	at           time.Time
+	triangulated bool
 }
 
 func (h heldSincePairs) LookupTriangulatedVWAP(
 	ctx context.Context, base, quote canonical.Asset, window time.Duration,
 ) (v1.CachedVWAP, bool, error) {
 	v, ok, err := h.values.LookupTriangulatedVWAP(ctx, base, quote, window)
-	v.ObservedAt = h.at
+	v.ObservedAt, v.Triangulated = h.at, h.triangulated
 	return v, ok, err
 }
 

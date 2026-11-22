@@ -93,7 +93,7 @@ func (g *SourceExclusionGate) UnattributedWithholding(ctx context.Context, base,
 	}
 	b, q := base.String(), quote.String()
 	for _, e := range rows {
-		if e.Lifted() || !e.From.Before(to) || (!e.Until.IsZero() && !e.Until.After(from)) {
+		if !inForceOver(e, from, to) {
 			continue
 		}
 		// CoversPair(b, e.Quote) holds when e.Base is b's family, CoversPair(e.Base, b) when e.Quote is.
@@ -102,6 +102,28 @@ func (g *SourceExclusionGate) UnattributedWithholding(ctx context.Context, base,
 		}
 	}
 	return NotWithheld
+}
+
+// MultiHopWithholding judges a value composed through pivot legs it does not record (a triangulated cache value): any un-lifted
+// exclusion overlapping [from, to) may sit on one of those legs, so any withholds it.
+func (g *SourceExclusionGate) MultiHopWithholding(ctx context.Context, from, to time.Time) Withholding {
+	if g == nil {
+		return NotWithheld
+	}
+	rows, ok := g.snapshot(ctx)
+	if !ok {
+		return WithheldExclusionsUnread
+	}
+	for _, e := range rows {
+		if inForceOver(e, from, to) {
+			return WithheldSourceExcluded
+		}
+	}
+	return NotWithheld
+}
+
+func inForceOver(e timescale.SourceExclusion, from, to time.Time) bool {
+	return !e.Lifted() && e.From.Before(to) && (e.Until.IsZero() || e.Until.After(from))
 }
 
 // BucketWithholding is [SourceExclusionGate.Withholding] for one closed 1m bucket and the sources it pooled.
