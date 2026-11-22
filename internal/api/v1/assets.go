@@ -379,8 +379,8 @@ type AssetDetail struct {
 	// Conditions is the issuer's declared terms for the asset (SEP-1 conditions), free-form text.
 	Conditions *string `json:"conditions,omitempty"`
 
-	// FixedNumber is the SEP-1-declared fixed total supply as a decimal string in the smallest
-	// unit. It is what the issuer committed to, not the live-ledger total_supply.
+	// FixedNumber is the SEP-1-declared fixed total supply as a decimal string in display units
+	// (whole tokens), as written in stellar.toml. It is what the issuer committed to, not total_supply.
 	FixedNumber *string `json:"fixed_number,omitempty"`
 
 	// MaxNumber is the SEP-1-declared maximum supply as a decimal string: the issuer's own ceiling,
@@ -2048,9 +2048,9 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 	return f
 }
 
-// handleAssetListUnified serves /v1/assets with no asset_class or issuer filter: catalogue rows by market_cap_usd desc, then
-// classic_assets by 24h volume_usd desc. The cursor is phase-prefixed (empty, "catalogue:<served>", "classic:<inner>",
-// "classic:"); a page never spans phases; `filters` narrows both, as the catalogue suppresses classic twins.
+// handleAssetListUnified serves /v1/assets?asset_class=all: catalogue rows by market_cap_usd desc, then classic_assets by 24h
+// volume_usd desc. The cursor is phase-prefixed (empty, "catalogue:<served>", "classic:<inner>", "classic:"); a short last
+// catalogue page is topped up from the classic phase; `filters` narrows both, as the catalogue suppresses classic twins.
 func (s *Server) handleAssetListUnified(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, cursor string,

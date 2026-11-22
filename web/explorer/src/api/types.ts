@@ -12277,7 +12277,7 @@ export interface components {
             anchor_asset_type?: string | null;
             /** @description Issuer's declared terms / conditions text. */
             conditions?: string | null;
-            /** @description SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum. */
+            /** @description SEP-1-declared fixed total supply (decimal string in display units, i.e. whole tokens, as written in stellar.toml; not scaled by `decimals`). Distinct from `total_supply` below — that's the live-ledger sum. */
             fixed_number?: string | null;
             /** @description SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived. */
             max_number?: string | null;
@@ -12819,7 +12819,7 @@ export interface components {
             anchor_asset_type?: string | null;
             /** @description Issuer's declared terms / conditions text. */
             conditions?: string | null;
-            /** @description SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum. */
+            /** @description SEP-1-declared fixed total supply (decimal string in display units, i.e. whole tokens, as written in stellar.toml; not scaled by `decimals`). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum. */
             fixed_number?: string | null;
             /** @description SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived. */
             max_number?: string | null;

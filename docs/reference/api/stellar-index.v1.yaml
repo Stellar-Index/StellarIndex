@@ -22471,7 +22471,7 @@ components:
         # SEP-1 issuance declarations (issuer's stated commitments,
         # distinct from the live-ledger F2 fields below).
         conditions:        { type: [string, "null"], description: "Issuer's declared terms / conditions text." }
-        fixed_number:      { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum." }
+        fixed_number:      { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in display units, i.e. whole tokens, as written in stellar.toml; not scaled by `decimals`). Distinct from `total_supply` below — that's the live-ledger sum." }
         max_number:        { type: [string, "null"], description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived." }
         is_unlimited:      { type: [boolean, "null"], description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all; false when they declared a bounded supply." }
         # SEP-1 standing and backing declarations from the same
@@ -22990,7 +22990,7 @@ components:
         # distinct from F2 supply numbers on /v1/assets/{id} which
         # observe live ledger state.
         conditions:      { type: [string, "null"], description: "Issuer's declared terms / conditions text." }
-        fixed_number:    { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum." }
+        fixed_number:    { type: [string, "null"], description: "SEP-1-declared fixed total supply (decimal string in display units, i.e. whole tokens, as written in stellar.toml; not scaled by `decimals`). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum." }
         max_number:      { type: [string, "null"], description: "SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived." }
         is_unlimited:    { type: [boolean, "null"], description: "Issuer asserts unbounded issuance. Null when the issuer didn't address supply at all (no fixed_number / max_number / is_unlimited declaration); false when they did and committed to a bounded supply." }
         # SEP-1 standing and backing declarations from the same
