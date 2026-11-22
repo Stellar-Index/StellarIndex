@@ -175,7 +175,8 @@ same generation-guarded upserts.
 
 - `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write`
   rewinds the LIVE projector's cursor and lets its normal cadence walk
-  forward (other flags: `-refresh-caggs -wait -wait-timeout
+  forward. Without `-write` it is a dry run that prints the plan and exits 0
+  having rewound nothing (other flags: `-refresh-caggs -wait -wait-timeout
   -refresh-only -refresh-to`; there is no `-to`). It writes generation 0,
   so it cannot correct a row a re-derive already stamped higher. Use it
   for short rewinds over gen-0 rows: an outage, a missing range.
