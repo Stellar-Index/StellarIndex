@@ -197,6 +197,7 @@ func (s *Server) fiatCombinedTrades(
 		answered := tradeGateBuckets(bookRows(reads))
 		for i := range held {
 			held[i].rows = dropTradesInAnsweredBuckets(held[i].rows, answered)
+			held[i].readFrom = heldReadCutFrom(held[i], from, answered)
 		}
 		reads = append(reads, held...)
 	}
@@ -220,7 +221,8 @@ func hitTradeCap(batch []canonical.Trade, maxTrades int) bool {
 	return maxTrades > 0 && len(batch) >= maxTrades
 }
 
-// bookRead is one constituent's TradesInRange answer; capped means rows older than readFrom, its earliest returned row, may be unread.
+// bookRead is one constituent's TradesInRange answer; capped means rows older than readFrom, its earliest returned row, may be unread
+// (for a held-back read, readFrom narrows to [heldReadCutFrom]).
 type bookRead struct {
 	book     canonical.Pair
 	rows     []canonical.Trade

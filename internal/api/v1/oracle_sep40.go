@@ -57,7 +57,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 			"asset query parameter is required")
 		return
 	}
-	asset, err := canonical.ParseAsset(rawAsset)
+	asset, err := parsePriceLeg(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -204,7 +204,7 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 		Degraded:      frozen,
 		FrozenChecked: held.checked,
 		SingleSource:  frozen,
-	}, time.Now().UTC())
+	}, quote, time.Now().UTC())
 	return out, flags, rd.sources
 }
 
@@ -229,7 +229,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 			"asset query parameter is required")
 		return
 	}
-	asset, err := canonical.ParseAsset(rawAsset)
+	asset, err := parsePriceLeg(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -296,6 +296,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
+	snapshots, dropped, windowsUnknown := s.dropFrozenBuckets(ctx, asset, snapshots)
 
 	out := make([]SEP40Price, len(snapshots))
 	for i, snap := range snapshots {
@@ -311,12 +312,15 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	}
 	// A peg-proxied series is not a print of the fiat:USD pair and sits
 	// below the surface's baseline: stale as well as triangulated, the
-	// rule lastprice/x_last_price follow.
-	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg, FrozenChecked: held.checked})
+	// rule lastprice/x_last_price follow. A series short of the buckets a recovered freeze refused is a partial answer.
+	writeJSON(w, out, Flags{
+		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown,
+		FrozenChecked: held.checked && !windowsUnknown,
+	})
 }
 
-// writeFrozenOraclePrices answers prices() for a frozen pair and reports whether it wrote. The freeze cannot say which closed buckets
-// it refused, so a frozen pair serves only the held value lastprice serves, or lastprice's 503 when nothing is held.
+// writeFrozenOraclePrices answers prices() for a pair frozen now and reports whether it wrote: it serves only the held value
+// lastprice serves, or lastprice's 503 when nothing is held. Buckets a recovered freeze covered are dropped by [Server.dropFrozenBuckets].
 func writeFrozenOraclePrices(w http.ResponseWriter, r *http.Request, asset canonical.Asset, held frozenResolution) bool {
 	switch held.outcome {
 	case frozenServeNothingHeld:
@@ -592,7 +596,7 @@ func (s *Server) parseXLastPriceBaseQuote(w http.ResponseWriter, r *http.Request
 			"base query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
-	base, err := canonical.ParseAsset(rawBase)
+	base, err := parsePriceLeg(rawBase)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -609,7 +613,7 @@ func (s *Server) parseXLastPriceBaseQuote(w http.ResponseWriter, r *http.Request
 			"quote query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
-	quote, err = canonical.ParseAsset(rawQuote)
+	quote, err = parsePriceLeg(rawQuote)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-quote",

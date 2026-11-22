@@ -363,6 +363,15 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	return out, nil
 }
 
+// FreezeWindows is the optional [v1.FreezeWindowReader]: the recorded freezes of any of assets against quote still open at since.
+func (r StorePriceReader) FreezeWindows(ctx context.Context, assets []canonical.Asset, quote canonical.Asset, since time.Time) ([]timescale.FreezeWindow, error) {
+	ids := make([]string, len(assets))
+	for i, a := range assets {
+		ids[i] = a.String()
+	}
+	return r.S.FreezeWindowsForPair(ctx, ids, quote.String(), since)
+}
+
 // RecentClosedVWAP1mExists is the optional gate the /v1/price stablecoin-proxy fallback uses to skip empty proxy pairs before the unbounded last-trade walk.
 func (r StorePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, quote canonical.Asset) (bool, error) {
 	pair, err := canonical.NewPair(base, quote)

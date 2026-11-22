@@ -7,9 +7,10 @@ import (
 )
 
 // TestRawTradeRoutes_ChargeByWindow: the window decides how many trades chunks the read probes, so it decides the price.
-// Each case is one request into a fresh 100-token window; the probe (a 400 costing the base token) reads what is left.
+// Each case is one request into a fresh 100-token window; the probe (a 400 costing the base token) reads what is left. The
+// pair is non-fiat, so one book is read; a fiat quote's per-constituent price is TestFiatRawReads_ChargeEveryConstituentRead.
 func TestRawTradeRoutes_ChargeByWindow(t *testing.T) {
-	const pair = "?base=native&quote=fiat:USD"
+	const pair = "?base=native&quote=crypto:USDT"
 	cases := []struct {
 		name, query   string
 		wantRemaining int

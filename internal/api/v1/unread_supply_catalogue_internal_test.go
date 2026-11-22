@@ -115,10 +115,11 @@ func TestMarketCapSeriesRefused_UnreadGuardInput(t *testing.T) {
 	wire := []HistoryPointWire{{P: "1000"}}
 	base := canonical.Asset{Type: canonical.AssetNative}
 	s := unreadTestServer(Options{Volume: failingVolume{}, MinMarketCapVolumeUSD: 1000})
-	if _, _, unread := s.marketCapSeriesRefused(context.Background(), base, wire); !unread {
+	pair := canonical.Pair{Base: base, Quote: canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}}
+	if _, _, unread := s.marketCapSeriesRefused(context.Background(), base, pair, chartWalkResult{}, wire); !unread {
 		t.Error("volume read failed: guard reported its inputs read")
 	}
-	if _, _, unread := unreadTestServer(Options{}).marketCapSeriesRefused(context.Background(), base, wire); unread {
+	if _, _, unread := unreadTestServer(Options{}).marketCapSeriesRefused(context.Background(), base, pair, chartWalkResult{}, wire); unread {
 		t.Error("no guard configured: nothing was read, nothing is unread")
 	}
 }

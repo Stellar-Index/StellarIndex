@@ -783,7 +783,8 @@ func TestPriceAt_ProxyDeviationAnyDeclaredPeg(t *testing.T) {
 			depegUSDCUSDPair:        "1.00",
 			"crypto:PYUSD/fiat:USD": "0.90",
 		}},
-		USDPeggedClassics: []canonical.Asset{usdc, pyusd},
+		USDPeggedClassics:  []canonical.Asset{usdc, pyusd},
+		VerifiedCurrencies: newTestCatalogue(t),
 	})
 	base := startHTTPTest(t, srv.Handler()).URL
 	at := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)

@@ -81,9 +81,71 @@ func TestFiatPoint_CappedHeldBackReadIsTruncated(t *testing.T) {
 	}
 }
 
-// When one book's read is capped, the merged answer must not keep another book's trades from before the capped book's earliest row:
-// the capped book's trades of that span were never read, so the mix would not be the combined market's newest trades.
-func TestFiatPoint_CappedReadCutsEveryBookToItsSpan(t *testing.T) {
+// A capped held-back read cuts the other books only where its unread rows could enter: every minute of its unread span that the
+// established book answered is gated anyway, so when all of them are answered nothing is cut and the book is served whole.
+func TestFiatPoint_CappedHeldBackReadCutsOnlyWhereItsUnreadRowsCouldEnter(t *testing.T) {
+	_ = installUSDCSACRegistry(t)
+	aqua := mustParseAsset(t, aquaClassicID)
+	usdcClassic := mustParseAsset(t, usdcClassicID)
+	bookPair, err := canonical.NewPair(aqua, usdcClassic)
+	if err != nil {
+		t.Fatalf("NewPair book: %v", err)
+	}
+	poolPair, err := canonical.NewPair(aqua, mustParseAsset(t, pegAliasUSDCSAC))
+	if err != nil {
+		t.Fatalf("NewPair pool: %v", err)
+	}
+	t0 := fiatParityBucketStart()
+	// The book prints once a minute: 0.9 for minutes 0-49, 0.2 for 50-59. The pool's 10500 trades all fall in minutes 50-59.
+	book := make([]canonical.Trade, 0, 60)
+	for m := range 60 {
+		quote := int64(900_0000000)
+		if m >= 50 {
+			quote = 200_0000000
+		}
+		tr := fiatParityTrade(bookPair, uint32(1+m), t0.Add(time.Duration(m)*time.Minute+30*time.Second), 1000_0000000, quote)
+		tr.ClearsNotionalFloor = true
+		book = append(book, tr)
+	}
+	const poolN = 10500
+	pool := make([]canonical.Trade, 0, poolN)
+	for i := range poolN {
+		ts := t0.Add(50*time.Minute + time.Duration(i)*10*time.Minute/poolN)
+		pool = append(pool, fiatParityTrade(poolPair, uint32(100+i), ts, 1000_0000000, 200_0000000))
+	}
+	reader := cappedConstituentReader{&fiatConstituentReader{tradesByPair: map[string][]canonical.Trade{
+		fiatParityPairKey(bookPair): book,
+		fiatParityPairKey(poolPair): pool,
+	}}}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdcClassic}}))
+	win := "?base=" + aquaClassicID + "&quote=fiat:USD&outlier_sigma=0&from=" + t0.Format(time.RFC3339) + "&to=" + t0.Add(time.Hour).Format(time.RFC3339)
+	for path, want := range map[string]map[string]*big.Rat{
+		"/v1/ohlc": {"open": big.NewRat(9, 10), "high": big.NewRat(9, 10), "low": big.NewRat(1, 5)},
+		"/v1/vwap": {"price": big.NewRat(47, 60)}, // (50*0.9 + 10*0.2) / 60
+	} {
+		resp := mustGet(t, ts.URL+path+win)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", path, resp.StatusCode)
+		}
+		var env struct {
+			Data map[string]any `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		if env.Data["truncated"] != true {
+			t.Errorf("%s truncated = %v, want true: the pool read hit the cap", path, env.Data["truncated"])
+		}
+		for field, w := range want {
+			got, _ := env.Data[field].(string)
+			if mustRat(t, got).Cmp(mustRat(t, w.FloatString(10))) != 0 { // prices are served at 10 dp
+				t.Errorf("%s %s = %s, want %s: the book's fully read trades were cut to the gated pool's span", path, field, got, w.FloatString(10))
+			}
+		}
+	}
+}
+
+// When a capped held-back read's unread span holds a minute no established book answered, its unread rows could enter there, so
+// the merged answer must not keep another book's trades from before that read's earliest row.
+func TestFiatPoint_CappedHeldBackReadCutsBooksWhereItsUnreadRowsCouldEnter(t *testing.T) {
 	_ = installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)
 	usdcClassic := mustParseAsset(t, usdcClassicID)

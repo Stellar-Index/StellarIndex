@@ -8962,7 +8962,7 @@ export interface components {
             /** @default false */
             single_source: boolean;
             /**
-             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap, /v1/twap or /v1/ohlc (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
+             * @description True when the request opted in with `include_thin=true` and a served price comes from a market below the substance floor, or when /v1/vwap, /v1/twap, /v1/ohlc or the /v1/chart `vwap` and `twap` series (which serve such a market by default) computed from one. Key any low-confidence marker on this flag, never on `confidence`.
              * @default false
              */
             thin_market: boolean;
@@ -8982,12 +8982,12 @@ export interface components {
              */
             pivot_unverified: boolean;
             /**
-             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. Omitted when false. Meaningful only when `proxy_deviation_unchecked` is absent.
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. A declared peg is observed through the stablecoin ticker the verified catalogue issues under that exact asset id; one sharing only the code has no observed market. A non-USD fiat answer (served through that fiat's stablecoins, e.g. crypto:EURC, or a USD anchor) also checks each of that fiat's stablecoins against the fiat. Omitted when false. Meaningful only when `proxy_deviation_unchecked` is absent.
              * @default false
              */
             proxy_deviation: boolean;
             /**
-             * @description Set beside a TRIANGULATED price when a declared USD peg had no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
+             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
              * @default false
              */
             proxy_deviation_unchecked: boolean;
@@ -13308,6 +13308,11 @@ export interface components {
                  *     bucket and that bucket ends at or before
                  *     `requested_from` (e.g. `timeframe=1h` on a daily
                  *     market-cap or fiat series serves yesterday's point).
+                 *     When that bucket holds no data yet (a closed bucket
+                 *     not yet materialized) or ever (fx has no weekend or
+                 *     holiday sessions), the series is the newest bucket
+                 *     in force at `requested_from` instead, e.g. Friday's
+                 *     fiat rate on a Sunday or Monday, and is flagged.
                  *     A bucket that overlaps the window is not flagged.
                  *     Omitted when false.
                  */
@@ -13349,6 +13354,9 @@ export interface components {
                  *     (latest cap above aggregate.max_market_cap_volume_ratio
                  *     times trailing-24h volume) that set
                  *     `Asset.market_cap_low_liquidity` on `/assets/{id}`.
+                 *     Also set when a book behind the price leg is below
+                 *     the substance floor (`flags.thin_market` on the
+                 *     `vwap` series): a thin price values nothing.
                  *     A classic asset whose code collides with a verified
                  *     currency under another issuer also gets an empty
                  *     series, without this flag, as the detail page withholds

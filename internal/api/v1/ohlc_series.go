@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -163,6 +164,9 @@ func (s *Server) handleOHLCSeries(
 
 	from, to, ok := parseOHLCSeriesFromTo(w, r, interval, limit)
 	if !ok {
+		return
+	}
+	if !middleware.ChargeRateLimit(w, r, s.ohlcSeriesCost(pair, interval, from, to)) {
 		return
 	}
 

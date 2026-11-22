@@ -34,15 +34,25 @@ func (s devPriceAtStub) PriceAt(_ context.Context, pair canonical.Pair, ts time.
 // usdcUSD is the peg's own observed dollar price ("" = unobserved).
 func devDeviationServer(t *testing.T, usdcUSD string) *testServerImpl {
 	t.Helper()
-	usdc, err := canonical.ParseAsset(devUSDC)
+	byPair := map[string]string{}
+	if usdcUSD != "" {
+		byPair["crypto:USDC/fiat:USD"] = usdcUSD
+	}
+	return devPegServer(t, devUSDC, true, byPair)
+}
+
+// devPegServer serves devToken against pegID (declared a USD peg when declared), with byPair as the observed peg markets.
+func devPegServer(t *testing.T, pegID string, declared bool, byPair map[string]string) *testServerImpl {
+	t.Helper()
+	peg, err := canonical.ParseAsset(pegID)
 	if err != nil {
-		t.Fatalf("parse USDC: %v", err)
+		t.Fatalf("parse peg: %v", err)
 	}
 	token, err := canonical.ParseAsset(devToken)
 	if err != nil {
 		t.Fatalf("parse token: %v", err)
 	}
-	pair, err := canonical.NewPair(token, usdc)
+	pair, err := canonical.NewPair(token, peg)
 	if err != nil {
 		t.Fatalf("NewPair: %v", err)
 	}
@@ -51,19 +61,19 @@ func devDeviationServer(t *testing.T, usdcUSD string) *testServerImpl {
 	snap := func(base, quote, price string) v1.PriceSnapshot {
 		return v1.PriceSnapshot{AssetID: base, Quote: quote, Price: price, PriceType: "vwap", ObservedAt: at, WindowSeconds: 60}
 	}
-	byPair := map[string]string{}
-	if usdcUSD != "" {
-		byPair["crypto:USDC/fiat:USD"] = usdcUSD
+	var pegs []canonical.Asset
+	if declared {
+		pegs = []canonical.Asset{peg}
 	}
 	srv := v1.New(v1.Options{
 		Prices: &stubPriceReader{
 			snapshots: map[string]v1.PriceSnapshot{
-				devToken + "/" + devUSDC: snap(devToken, devUSDC, "2.0000"),
-				"native/fiat:USD":        snap("native", "fiat:USD", "0.10"),
+				devToken + "/" + pegID: snap(devToken, pegID, "2.0000"),
+				"native/fiat:USD":      snap("native", "fiat:USD", "0.10"),
 			},
 			sources: map[string][]string{
-				devToken + "/" + devUSDC: {"sdex"},
-				"native/fiat:USD":        {"binance"},
+				devToken + "/" + pegID: {"sdex"},
+				"native/fiat:USD":      {"binance"},
 			},
 		},
 		PriceAt: devPriceAtStub(byPair),
@@ -73,9 +83,54 @@ func devDeviationServer(t *testing.T, usdcUSD string) *testServerImpl {
 				fiatParityTrade(pair, 2, t0.Add(2*time.Minute), 1000, 2000),
 			},
 		}},
-		USDPeggedClassics: []canonical.Asset{usdc},
+		USDPeggedClassics:  pegs,
+		VerifiedCurrencies: newTestCatalogue(t),
 	})
 	return startHTTPTest(t, srv.Handler())
+}
+
+// TestProxyDeviation_ChecksThePegTheAnswerRodeOnItsOwnIdentity: the depeg verdict covers the peg a triangulated answer was
+// served through, bound on that peg's full identity. A lookalike declared under Circle's code is not observed by Circle's
+// market, and a EUR answer through a EUR stablecoin is checked against that stablecoin, not only the USD pegs.
+func TestProxyDeviation_ChecksThePegTheAnswerRodeOnItsOwnIdentity(t *testing.T) {
+	t0 := sacReachDay(0)
+	win := "&from=" + t0.Format(time.RFC3339) + "&to=" + t0.Add(time.Hour).Format(time.RFC3339)
+	impostor := "USDC-" + otherRealIssuer
+	usd := "/v1/twap?base=" + devToken + "&quote=fiat:USD" + win
+	eur := "/v1/twap?base=" + devToken + "&quote=fiat:EUR" + win
+	for _, tc := range []struct {
+		name, peg, path string
+		declared        bool
+		observed        map[string]string
+		deviated        bool
+		unchecked       bool
+	}{
+		{"genuine peg on peg", devUSDC, usd, true, map[string]string{"crypto:USDC/fiat:USD": "1.001"}, false, false},
+		{"genuine peg depegged", devUSDC, usd, true, map[string]string{"crypto:USDC/fiat:USD": "0.95"}, true, false},
+		// Circle's market holding $1 says nothing about another issuer's USDC.
+		{"impostor not vouched by Circle's market", impostor, usd, true, map[string]string{"crypto:USDC/fiat:USD": "1.0"}, false, true},
+		{"EUR stablecoin depegged", "crypto:EURC", eur, false, map[string]string{"crypto:EURC/fiat:EUR": "0.95"}, true, false},
+		// EUROC is the same asset as EURC; an observation under either spelling checks it.
+		{"EUR stablecoin under its alias", "crypto:EURC", eur, false, map[string]string{"crypto:EUROC/fiat:EUR": "1.0", "crypto:EUROB/fiat:EUR": "1.0"}, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := devPegServer(t, tc.peg, tc.declared, tc.observed)
+			resp := mustGet(t, ts.URL+tc.path)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			body, _ := readAll(resp)
+			if !strings.Contains(body, `"triangulated":true`) {
+				t.Fatalf("fixture must be served through the peg: %s", body)
+			}
+			if got := strings.Contains(body, `"proxy_deviation":true`); got != tc.deviated {
+				t.Errorf("proxy_deviation = %v, want %v: %s", got, tc.deviated, body)
+			}
+			if got := strings.Contains(body, `"proxy_deviation_unchecked":true`); got != tc.unchecked {
+				t.Errorf("proxy_deviation_unchecked = %v, want %v: %s", got, tc.unchecked, body)
+			}
+		})
+	}
 }
 
 // Each primary price surface, served triangulated through the declared peg,
