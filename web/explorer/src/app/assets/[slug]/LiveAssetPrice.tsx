@@ -1,6 +1,6 @@
 'use client';
 
-import { useAsset, useChangeSummary } from '@/api/hooks';
+import { LIVE_PRICE_POLL_MS, useAsset, useChangeSummary } from '@/api/hooks';
 import {
   isFrameStale,
   tipCaveat,
@@ -12,7 +12,11 @@ import {
 import { ThinMarketBadge, thinMarketNote } from '@/components/ThinMarketBadge';
 import { DirectionPill } from '@/components/primitives';
 import { cn } from '@/lib/cn';
-import { formatPriceSmall, positiveDecimal } from '@/lib/format';
+import {
+  formatPriceSmall,
+  formatRelative,
+  positiveDecimal,
+} from '@/lib/format';
 
 import {
   isPriceWithheldError,
@@ -106,6 +110,7 @@ export function LiveAssetPrice({
     provenance,
     bakedDerived,
     fromAssets,
+    detailAsOf,
   } = useResolvedAssetPrice(
     assetID,
     initialPrice,
@@ -231,6 +236,11 @@ export function LiveAssetPrice({
           shown != null &&
           provenance === 'transitive' &&
           'derived · two-hop DEX route · both legs substance-gated'}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          detailAsOf != null &&
+          ` · as of ${formatRelative(detailAsOf)}`}
         {!withheld && !tipActive && shown != null && stale && (
           <span className="text-warn-500"> · stale</span>
         )}
@@ -305,13 +315,17 @@ export function useResolvedAssetPrice(
   const seed = positiveDecimal(initialPrice);
   // /v1/price has nothing to say about a derived price, so the baked one is
   // re-read from /v1/assets/{id}; until that answers it is captioned as baked.
-  const detail = useAsset(derived ? assetID : undefined);
+  // Polled like the headline it replaces, or a derived price freezes at mount.
+  const detail = useAsset(derived ? assetID : undefined, {
+    refetchInterval: LIVE_PRICE_POLL_MS,
+  });
   const detailRow = detail.data?.data;
   const fromAssets = derived && (!poll.polled || refused);
   const reread = fromAssets && detailRow != null;
   const bakedDerived = fromAssets && detailRow == null;
   const detailPrice = positiveDecimal(detailRow?.price_usd);
   const price = reread ? detailPrice : fromAssets ? seed : poll.price;
+  const detailAsOf = reread ? (detailRow.price_as_of ?? null) : null;
   const live = poll.polled;
   const stale = reread
     ? Boolean(detail.data?.flags?.stale)
@@ -339,5 +353,6 @@ export function useResolvedAssetPrice(
     provenance,
     bakedDerived,
     fromAssets,
+    detailAsOf,
   };
 }

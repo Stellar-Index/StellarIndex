@@ -178,6 +178,43 @@ describe('LiveAssetPrice', () => {
     hides(/\$0\.655/, /as baked at deploy/i);
   });
 
+  it('re-polls a derived price on the headline cadence and states its age', async () => {
+    let price = '0.61';
+    const reply = async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('/v1/assets/'))
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            data: {
+              price_usd: price,
+              price_basis: 'global_market',
+              price_as_of: new Date().toISOString(),
+            },
+          }),
+        };
+      return { status: 404, ok: false, json: async () => ({ type: WITHHELD }) };
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderPrice({
+        assetID: USDC,
+        initialPrice: '0.97',
+        initialProvenance: 'global_market',
+      });
+      await screen.findByText(/\$0\.61/);
+      shows(/ · as of /);
+      price = '0.52';
+      await vi.advanceTimersByTimeAsync(60_000);
+      await screen.findByText(/\$0\.52/);
+      hides(/\$0\.61/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('says a derived price is baked while the asset detail is unread', async () => {
     stubFetch(404, { type: WITHHELD }, '/v1/price');
     renderPrice({
