@@ -166,6 +166,23 @@ func TestCustomerWebhooksSealKeyRotation(t *testing.T) {
 	if _, _, err := underB.ResealSigningKeys(ctx); err == nil {
 		t.Error("ResealSigningKeys with no previous seal key succeeded; want a refusal")
 	}
+
+	// A customer rotation under current=B previous=A before the sweep reaches the row: the key it moves to the previous
+	// slot is re-sealed under B there, so B alone opens both once A is retired.
+	w2, err := underA.CreateWebhook(ctx, platform.CustomerWebhook{
+		AccountID: acct, Name: "rot-race", URL: "https://rotate-race.example/hook", SigningKey: prevKey,
+		Events: []string{string(platform.WebhookEventIncidentSEV1)}, Enabled: true,
+	}, 10)
+	if err != nil {
+		t.Fatalf("CreateWebhook: %v", err)
+	}
+	if err := rotating.RotateWebhookSecret(ctx, w2.ID, key, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("RotateWebhookSecret under current=B previous=A: %v", err)
+	}
+	got, err = underB.GetWebhook(ctx, w2.ID)
+	if err != nil || !bytes.Equal(got.SigningKey, key) || !bytes.Equal(got.PreviousSigningKey, prevKey) {
+		t.Fatalf("current=B alone after a rotation before the sweep: GetWebhook = (%q, %q, %v), want both keys", got.SigningKey, got.PreviousSigningKey, err)
+	}
 }
 
 func TestCustomerWebhooksSigningKeySealed(t *testing.T) {

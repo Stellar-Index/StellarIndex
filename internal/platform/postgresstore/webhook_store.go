@@ -763,6 +763,11 @@ func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, ne
 	switch {
 	case c.sealer != nil && sealed != nil:
 		curSealed, prevSealed = c.sealer.Seal(id, newSecret), sealed
+		// A start-up re-seal sweep that read this row before the move misses the previous slot, so re-seal here under the
+		// row lock. A key neither secret opens is kept as is, for the sweep to count as unopenable.
+		if fresh, err := c.sealer.Reseal(id, sealed); err == nil && fresh != nil {
+			prevSealed = fresh
+		}
 	case c.sealer != nil:
 		curSealed, prevSealed = c.sealer.Seal(id, newSecret), c.sealer.Seal(id, raw)
 	case sealed != nil:
