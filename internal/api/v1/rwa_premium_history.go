@@ -26,7 +26,8 @@ import (
 // The market leg is held to a floor of the live thin-market gate's shape
 // ([Server.rwaPremiumDayFloorFor]); a raw daily VWAP would publish, for past days, the
 // attacker-seeded dust rate the live surface refuses. The floor uses hourly data because minute
-// history depends on retention ([timescale.Store.DailyMarketDays]).
+// history depends on retention ([timescale.Store.DailyMarketDays]), so it is weaker than the live
+// minute-bucket gate; its trade-count leg is a necessary condition of that gate, not an equivalent.
 //
 // Only `rwa:` feeds in the curated binding (internal/rwa/oracle_reference.go) that trade against a
 // dollar can carry a premium; `excluded[]` names the rest.
@@ -49,8 +50,9 @@ var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "U
 // rwaPremiumDayFloorFor derives the per-day market-substance floor from the SAME policy /v1/price serves against
 // (s.RWAPremiumSubstance), evaluated by [pricingguard.SubstanceOK]. MinVolumeUSD and MinSpan are the serving values UNCHANGED but
 // MinBuckets is NOT: serving counts MINUTE buckets (1440/day), this counts HOUR buckets (24/day), the coarsest grain that still
-// says WHEN ([timescale.Store.DailyMarketDays]); inheriting it would blank every series.
-func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
+// says WHEN ([timescale.Store.DailyMarketDays]); inheriting it would blank every series. MinTrades carries the serving minute
+// count instead: a minute bucket holds at least one trade, so a day the live gate would refuse on that leg is refused here too.
+func (s *Server) rwaPremiumDayFloorFor() rwaPremiumDayFloor {
 	minVolumeUSD := s.RWAPremiumSubstance.MinVolumeUSD
 	if minVolumeUSD == nil {
 		minVolumeUSD = new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
@@ -59,12 +61,25 @@ func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
 	if minSpan == 0 {
 		minSpan = pricingguard.DefaultSubstanceMinSpan
 	}
-	return pricingguard.SubstancePolicy{
-		MinVolumeUSD: minVolumeUSD,
-		MinBuckets:   2,
-		MinSpan:      minSpan,
-		Window:       24 * time.Hour,
+	minTrades := s.RWAPremiumSubstance.MinBuckets
+	if minTrades == 0 {
+		minTrades = pricingguard.DefaultSubstanceMinBuckets
 	}
+	return rwaPremiumDayFloor{
+		SubstancePolicy: pricingguard.SubstancePolicy{
+			MinVolumeUSD: minVolumeUSD,
+			MinBuckets:   2,
+			MinSpan:      minSpan,
+			Window:       24 * time.Hour,
+		},
+		MinTrades: minTrades,
+	}
+}
+
+// rwaPremiumDayFloor is the hour-grain substance policy plus the serving gate's minute-bucket count read as a trade floor.
+type rwaPremiumDayFloor struct {
+	pricingguard.SubstancePolicy
+	MinTrades int64
 }
 
 // ─── wire ───────────────────────────────────────────────────────────
@@ -714,7 +729,7 @@ func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 // a day failing [Server.rwaPremiumDayFloorFor] is recorded as WITHHELD, not skipped: "too thin to publish" and "no market" differ.
 func rwaPremiumJoin(
 	c rwaHistoryCandidate, ref *rwaFeedSeries, market []timescale.MarketDay,
-	floor pricingguard.SubstancePolicy,
+	floor rwaPremiumDayFloor,
 ) rwaPremiumMember {
 	out := rwaPremiumMember{
 		assetID:   c.assetID,
@@ -784,12 +799,12 @@ func rwaPremiumAnchor(ref *rwaFeedSeries, refDays []time.Time, day time.Time) *b
 
 // rwaPremiumDayClears applies the thin-market floor to one day; a volume that will not parse counts as zero and the day fails, matching
 // [pricingguard.SubstanceOK]'s posture.
-func rwaPremiumDayClears(d timescale.MarketDay, floor pricingguard.SubstancePolicy) bool {
+func rwaPremiumDayClears(d timescale.MarketDay, floor rwaPremiumDayFloor) bool {
 	volume, ok := new(big.Rat).SetString(d.VolumeUSD)
 	if !ok {
 		volume = new(big.Rat)
 	}
-	return pricingguard.SubstanceOK(volume, d.Hours, d.SpanSeconds, floor)
+	return d.Trades >= floor.MinTrades && pricingguard.SubstanceOK(volume, d.Hours, d.SpanSeconds, floor.SubstancePolicy)
 }
 
 // rwaExactDecimal renders a price with every digit it has, so it reconciles with the feed and VWAP it came from; only a value with no
