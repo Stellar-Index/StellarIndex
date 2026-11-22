@@ -382,8 +382,55 @@ describe('LiveAssetPrice — 24h change pill', () => {
     }
   });
 
-  it('keeps the baked pill when the worker has no row yet', () => {
+  it('keeps the baked pill, labelled as baked, when the worker has no row yet', () => {
     renderPrice({ initialChangePct: 2.1 });
-    shows(/\+2\.10%/);
+    shows(/\+2\.10%/, /24h · as baked at deploy/);
+  });
+
+  it('shows no change pill beside a withheld price, baked or live', async () => {
+    stubFetch(404, {
+      type: WITHHELD,
+      title: 'Price withheld — issuer flagged',
+      detail: 'a directory-flagged issuer is on one leg of this market',
+    });
+    renderPrice({ initialProvenance: 'vwap1m', initialChangePct: 42 });
+    await screen.findByText(/directory-flagged issuer/i);
+    hides(/42\.00%/, /24h/);
+  });
+
+  it('drops the live pill when a refetch of the change summary is withheld', async () => {
+    let withheld = false;
+    const reply = async (input: string | URL) => {
+      const hit = String(input).includes('/v1/changes/');
+      const ok = hit && !withheld;
+      return {
+        status: ok ? 200 : 404,
+        ok,
+        json: async () =>
+          ok
+            ? {
+                data: {
+                  entity_type: 'coin',
+                  entity_id: 'native',
+                  h24_delta_pct: 3.4,
+                },
+              }
+            : hit
+              ? { type: WITHHELD }
+              : {},
+      };
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderPrice({ initialChangePct: 2.1 });
+      expect(await screen.findByText(/\+3\.40%/)).toBeInTheDocument();
+      withheld = true;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.waitFor(() => hides(/\+3\.40%/));
+      hides(/\+2\.10%/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
