@@ -1084,10 +1084,8 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]int64, verdicts map[string]timescale.CompletenessSnapshot) ProtocolView {
 	var events24h *int64
 	if events != nil {
-		n := events[meta.Name]
-		// Fold in any sub-module source's 24h count (e.g. blend_backstop into blend) so the
-		// headline covers the whole surface the page shows.
-		for _, src := range meta.ExtraEventSources {
+		var n int64
+		for _, src := range meta.Sources() {
 			n += events[src]
 		}
 		events24h = &n
@@ -1101,14 +1099,34 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 		ContractCount: contractCount,
 		Events24h:     events24h,
 	}
-	if sn, ok := verdicts[meta.Name]; ok {
-		v.Completeness = &ProtocolCompletenessView{
-			Complete:               sn.Complete,
-			WatermarkLedger:        sn.Watermark,
-			ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
-		}
-	}
+	v.Completeness = foldProtocolVerdicts(meta, verdicts)
 	return v
+}
+
+// foldProtocolVerdicts joins the verdict of every source the row covers: complete only when all are,
+// watermark the lowest, floor the highest. A folded sub-source with no snapshot is unverified, so
+// the composite is incomplete; nil when the primary source has no snapshot.
+func foldProtocolVerdicts(meta ProtocolMeta, verdicts map[string]timescale.CompletenessSnapshot) *ProtocolCompletenessView {
+	sn, ok := verdicts[meta.Name]
+	if !ok {
+		return nil
+	}
+	out := &ProtocolCompletenessView{
+		Complete:               sn.Complete,
+		WatermarkLedger:        sn.Watermark,
+		ProjectionVerifiedFrom: sn.ProjectionVerifiedFrom,
+	}
+	for _, src := range meta.ExtraEventSources {
+		sub, ok := verdicts[src]
+		if !ok {
+			out.Complete = false
+			continue
+		}
+		out.Complete = out.Complete && sub.Complete
+		out.WatermarkLedger = min(out.WatermarkLedger, sub.Watermark)
+		out.ProjectionVerifiedFrom = max(out.ProjectionVerifiedFrom, sub.ProjectionVerifiedFrom)
+	}
+	return out
 }
 
 // dexTVLLakeDerived names the protocols whose reserves come from the lake, read directly or (aquarius) through the

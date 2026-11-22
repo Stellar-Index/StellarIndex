@@ -106,10 +106,49 @@ func protocolsTestServer(t *testing.T) *testServer {
 		}},
 		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
 			{Source: "blend", Complete: true, Watermark: 62_999_000},
+			{Source: "blend_backstop", Complete: true, Watermark: 63_000_000},
+			{Source: "blend_emitter", Complete: true, Watermark: 63_000_000},
 			{Source: "soroswap", Complete: false, Watermark: 60_000_000},
 		}},
 	})
 	return httpTestServer(t, srv)
+}
+
+// The blend row folds Backstop and Emitter events and contracts, so its verdict must fold theirs too:
+// one incomplete or missing sub-source makes the row incomplete, at the lowest watermark.
+func TestHandleProtocolsList_CompletenessFoldsExtraEventSources(t *testing.T) {
+	cases := []struct {
+		name  string
+		snaps []timescale.CompletenessSnapshot
+		want  v1.ProtocolCompletenessView
+	}{
+		{"backstop incomplete", []timescale.CompletenessSnapshot{
+			{Source: "blend", Complete: true, Watermark: 62_999_000, ProjectionVerifiedFrom: 50_000_000},
+			{Source: "blend_backstop", Complete: false, Watermark: 62_000_000, ProjectionVerifiedFrom: 55_000_000},
+			{Source: "blend_emitter", Complete: true, Watermark: 63_000_000},
+		}, v1.ProtocolCompletenessView{Complete: false, WatermarkLedger: 62_000_000, ProjectionVerifiedFrom: 55_000_000}},
+		{"emitter has no snapshot", []timescale.CompletenessSnapshot{
+			{Source: "blend", Complete: true, Watermark: 62_999_000},
+			{Source: "blend_backstop", Complete: true, Watermark: 63_000_000},
+		}, v1.ProtocolCompletenessView{Complete: false, WatermarkLedger: 62_999_000}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httpTestServer(t, v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: tc.snaps}}))
+			resp := mustGet(t, ts.URL+"/v1/protocols")
+			var env struct {
+				Data v1.ProtocolsView `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			_ = resp.Body.Close()
+			got := protocolRow(t, env.Data.Protocols, "blend").Completeness
+			if got == nil || *got != tc.want {
+				t.Errorf("blend completeness = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
 }
 
 func protocolRow(t *testing.T, rows []v1.ProtocolView, name string) v1.ProtocolView {
@@ -1411,6 +1450,12 @@ func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 		ComputedAt:            time.Now().UTC().Add(-30 * time.Hour),
 		ProjectionEvidencedAt: time.Now().UTC().Add(-30 * time.Hour),
 	}}
+	// The blend row is complete only when its folded Backstop and Emitter sources are too.
+	for _, sub := range []string{"blend_backstop", "blend_emitter"} {
+		s := snaps[0]
+		s.Source = sub
+		snaps = append(snaps, s)
+	}
 	old := httpTestServer(t, v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}}))
 	for _, path := range []string{"/v1/protocols", "/v1/protocols/blend"} {
 		if !envelopeStale(t, old.URL+path) {
@@ -1422,7 +1467,9 @@ func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 		t.Fatal("/v1/coverage flags.stale = false for the same row — the gate itself regressed")
 	}
 
-	snaps[0].ComputedAt = time.Now().UTC().Add(-5 * time.Minute)
+	for i := range snaps {
+		snaps[i].ComputedAt = time.Now().UTC().Add(-5 * time.Minute)
+	}
 	fresh := httpTestServer(t, v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}}))
 	for _, path := range []string{"/v1/protocols", "/v1/protocols/blend"} {
 		if envelopeStale(t, fresh.URL+path) {
