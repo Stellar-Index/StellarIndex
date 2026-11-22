@@ -202,6 +202,26 @@ comment_toml() {
   )
 }
 
+# qualified_toml_then_drop <commit-message> <line> — commit a .gitleaks.toml carrying the
+# qualifiers whose removal widens it (base recorded in $TMP/qbase), then a commit deleting <line>.
+qualified_toml_then_drop() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf '%s\n' '[extend]' 'useDefault = true' '' '# why these fixtures are not secrets' \
+      '[[allowlists]]' 'condition = "AND"' "paths = ['''_test\\.go\$''']" "regexes = ['''GEXAMPLE''']" \
+      > .gitleaks.toml
+    git add -A
+    # Declared, so the gate's anti-heal walk keeps this commit as the base.
+    git commit -qm "chore: qualified allowlist" -m "Baseline-Growth: .gitleaks.toml — fixture seed"
+    git rev-parse HEAD > "$TMP/qbase"
+    grep -vxF "$2" .gitleaks.toml > "$TMP/toml" || true
+    cp "$TMP/toml" .gitleaks.toml
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
 # grow_govulncheck <commit-message> — add an accepted-risk vuln id
 # (scripts/ci/govulncheck-allow.txt is a .txt, missed by the
 # *.baseline glob).
@@ -417,6 +437,22 @@ mkrepo 0
 grow_toml_lines "docs: describe the allowlist" "description = \"why the docs archive is skipped\""
 runGate
 expect "gitleaks.toml description-only edit passes" 0 "no undeclared"
+
+# --- 9b. removing a qualifier widens .gitleaks.toml ----------------
+mkrepo 0
+qualified_toml_then_drop "chore: simplify the allowlist" 'condition = "AND"'
+runGate "$(cat "$TMP/qbase")"
+expect "gitleaks.toml removed condition = AND fails undeclared" 1 "UNDECLARED GROWTH: .gitleaks.toml"
+
+mkrepo 0
+qualified_toml_then_drop "chore: trim the extend block" 'useDefault = true'
+runGate "$(cat "$TMP/qbase")"
+expect "gitleaks.toml removed useDefault fails undeclared" 1 "UNDECLARED GROWTH: .gitleaks.toml"
+
+mkrepo 0
+qualified_toml_then_drop "docs: drop a stale comment" '# why these fixtures are not secrets'
+runGate "$(cat "$TMP/qbase")"
+expect "gitleaks.toml removed comment passes" 0 "no undeclared"
 
 # --- 10. PER-FILE SCOPING --------------------------------------------
 # Grow TWO allowlists in one commit but declare only ONE of them. The

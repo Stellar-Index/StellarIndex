@@ -65,6 +65,16 @@ added_entries() {
     | grep -E "$pattern" || true
 }
 
+# removed_entries <base> <head> <file> <pattern>: added_entries for the lines the range deletes.
+removed_entries() {
+  local base="$1" head="$2" file="$3" pattern="$4"
+  git diff "${base}...${head}" -- "$file" \
+    | grep -E '^-[^-]' \
+    | sed 's/^-//' \
+    | grep -vE '^\s*(#|$)' \
+    | grep -E "$pattern" || true
+}
+
 # baseline_added_entries <base> <head> <file>: like added_entries, but a counted entry
 # (`<key>|<n>` or `<key> <n> read(s)…`) whose key was removed with a count >= the new one is a
 # shrink, not growth: the owning lints fail on a stale count, so lowering one must not need a trailer.
@@ -214,6 +224,13 @@ detect_growth() {
   added="$(added_entries "$base" "$head" .gitleaks.toml '.' | grep -vE "$gitleaks_toml_inert" || true)"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .gitleaks.toml "$line"
+  done <<<"$added"
+  # Removing a qualifier widens too: no `condition = "AND"` falls back to OR, no `useDefault`
+  # drops the default rules, no `targetRules` applies an allowlist to every rule.
+  local gitleaks_toml_qualifier='^[[:space:]]*(\[|(condition|useDefault|regexTarget|targetRules|paths?)[[:space:]]*=)'
+  added="$(removed_entries "$base" "$head" .gitleaks.toml "$gitleaks_toml_qualifier")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\tremoved: %s\n' .gitleaks.toml "$line"
   done <<<"$added"
 
   # 5) govulncheck-allow.txt: one accepted-risk id per line (a .txt, so the *.baseline glob misses it).
