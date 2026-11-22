@@ -858,3 +858,62 @@ func TestListingValuation_FlaggedIssuerGetsNoValuationWhenTagsArrivedFirst(t *te
 			rows[0].ListingReference, rows[0].ListingValuation)
 	}
 }
+
+// tlvThinRow is a catalogued row whose own market is thin-gated, after the listing's cap pass stamped its trustline-sum supply.
+func tlvThinRow(t *testing.T, s *Server, thinPrice string) AssetDetail {
+	t.Helper()
+	row := AssetDetail{AssetID: tlvUSDT0Asset, Code: "USDT0", Decimals: 7, PriceUSD: &thinPrice, ThinMarket: true}
+	s.fillRowMarketCap(t.Context(), &row, nil, nil, nil,
+		map[string]string{tlvUSDT0Asset: tlvUSDT0TrustlineSupply}, nil)
+	return row
+}
+
+// A thin row may be valued only from the curated directory price times its flagged floor supply, never from its own thin
+// rate, and its market cap stays withheld.
+func TestListingValuation_ThinRowValuedFromTheDirectoryPriceOnly(t *testing.T) {
+	s := tlvServer(t,
+		&stubAssetListingDirectory{rows: map[string]timescale.ListingEntry{
+			tlvUSDT0SAC: tlvEntry(tlvUSDT0SAC, "usdt0", "1", time.Minute),
+		}},
+		map[string]string{},
+	)
+	row := tlvApply(t, s, []AssetDetail{tlvThinRow(t, s, "50.00")})[0]
+
+	v := row.ListingValuation
+	if v == nil || v.Status != ListingValuationPublished || v.ValueUSD == nil {
+		t.Fatalf("listing_valuation = %+v, want published", v)
+	}
+	// 6,469.52 trustline tokens x the directory's $1; the thin $50 rate would give 323476.00.
+	if got := *v.ValueUSD; got != "6469.52" {
+		t.Errorf("value_usd = %q, want 6469.52 (directory price x floor supply)", got)
+	}
+	if !v.ValueLowerBound {
+		t.Error("value_lower_bound = false; a trustline-sum multiplicand is a floor")
+	}
+	if row.MarketCapUSD != nil || row.MarketCapWithheldReason != MarketCapWithheldThinMarket {
+		t.Errorf("market_cap_usd = %v reason %q, want withheld with %q",
+			row.MarketCapUSD, row.MarketCapWithheldReason, MarketCapWithheldThinMarket)
+	}
+}
+
+// Without a usable directory price a thin row gets no dollar figure at all: its own thin rate is not a fallback.
+func TestListingValuation_ThinRowWithoutDirectoryPriceGetsNoValue(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rows map[string]timescale.ListingEntry
+		want string
+	}{
+		"not listed":  {map[string]timescale.ListingEntry{"COTHER": tlvEntry("COTHER", "other", "1", time.Minute)}, ListingValuationNotListed},
+		"price blank": {map[string]timescale.ListingEntry{tlvUSDT0SAC: tlvEntry(tlvUSDT0SAC, "usdt0", "", time.Minute)}, ListingValuationNoListingPrice},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := tlvServer(t, &stubAssetListingDirectory{rows: tc.rows}, map[string]string{})
+			row := tlvApply(t, s, []AssetDetail{tlvThinRow(t, s, "50.00")})[0]
+			if row.ListingValuation == nil || row.ListingValuation.Status != tc.want || row.ListingValuation.ValueUSD != nil {
+				t.Fatalf("listing_valuation = %+v, want status %q and no value_usd", row.ListingValuation, tc.want)
+			}
+			if row.MarketCapUSD != nil {
+				t.Errorf("market_cap_usd = %v, want nil on a thin row", *row.MarketCapUSD)
+			}
+		})
+	}
+}

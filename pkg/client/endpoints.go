@@ -513,7 +513,8 @@ func (c *Client) Me(ctx context.Context) (*Envelope[Account], error) {
 	return &env, nil
 }
 
-// Usage returns the caller's trailing-30-day usage, one row per (date, endpoint family); where the rollup is missing the server degrades to per-day rows with empty Endpoint, and without a usage backend returns an empty array.
+// Usage returns the caller's trailing-30-day usage (today included, so on the 31st it lacks the month's 1st), one row per (date, endpoint family); where the rollup is missing the server degrades to per-day rows with empty Endpoint.
+// An empty array does not prove zero usage: the server also returns one without a usage backend or when the usage read fails. Reconcile the monthly quota on Billable, never Requests.
 func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 	var env Envelope[[]UsageRow]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/account/usage", nil, nil, &env); err != nil {
@@ -590,6 +591,7 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 // RevokeKey permanently deletes keyID (the public KeyID, not the secret) with every key minted from it, so a replacement minted from keyID dies too; a key may revoke itself and its descendants.
 // nil on 204; an API-key caller gets a 403 *APIError for a key outside its own subtree, including an unknown id, but a SEP-10 session or operator gets nil for an unknown or already-revoked id, so nil does not prove keyID existed.
 // A 400 for a value not shaped like a key id. An operator-tier caller must use [Client.RevokeKeyWithReason]; without X-Reason the server answers 400 and revokes nothing.
+// A SEP-10 session or operator reaches only keys on its OWN identifier: nil for another account's key means nothing was revoked and no audit row was written. Staff revoke a customer's key with DELETE /v1/admin/keys/{keyID}, which this SDK does not cover.
 func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	return c.RevokeKeyWithReason(ctx, keyID, "")
 }

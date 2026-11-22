@@ -71,7 +71,7 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 		evicted = nil
 	}
 
-	extractLedgerEntryChanges(&ext, txs, evicted, seq, closeTime)
+	extractLedgerEntryChanges(&ext, txs, evicted, lcm.UpgradesProcessing(), seq, closeTime)
 
 	return ext, nil
 }

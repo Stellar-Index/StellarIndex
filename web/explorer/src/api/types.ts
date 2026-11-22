@@ -4197,7 +4197,10 @@ export interface paths {
          *
          *     Reconciling with the quota: sum `billable` over the current
          *     UTC month. That is the `month_to_date` a monthly-quota 429
-         *     reports, on either response shape below. Do not sum
+         *     reports, on either response shape below. The window is the
+         *     trailing 30 days (today included), so on the 31st of a month
+         *     the 1st is outside it and this sum falls short of
+         *     `month_to_date` by that day's units. Do not sum
          *     `requests` for this — it includes 5xx responses on the
          *     per-endpoint shape, and those never consume quota.
          *
@@ -4629,7 +4632,10 @@ export interface paths {
          *     exhaust it for everyone; past it the route answers
          *     `503 registration-unavailable` with `Retry-After`. Operators
          *     can also switch the route off (same 503). Passkey sign-up
-         *     (`/auth/passkey/*-signup`) does not draw on this budget. Sits
+         *     (`/auth/passkey/finish-signup`) spends the same budget, so
+         *     exhausting it refuses both with 503; an email's first
+         *     magic-link or code sign-in draws on a separate budget of the
+         *     same size that this route cannot exhaust. Sits
          *     underneath the global anonymous rate limit. The
          *     `Content-Type: application/json` header is REQUIRED — not
          *     merely validated when present — because a header-less POST is
@@ -12278,7 +12284,7 @@ export interface components {
             anchor_asset_type?: string | null;
             /** @description Issuer's declared terms / conditions text. */
             conditions?: string | null;
-            /** @description SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from `total_supply` below — that's the live-ledger sum. */
+            /** @description SEP-1-declared fixed total supply (decimal string in display units, i.e. whole tokens, as written in stellar.toml; not scaled by `decimals`). Distinct from `total_supply` below — that's the live-ledger sum. */
             fixed_number?: string | null;
             /** @description SEP-1-declared maximum supply ceiling (decimal string). Distinct from `max_supply` below which is operator/policy-derived. */
             max_number?: string | null;
@@ -12342,8 +12348,10 @@ export interface components {
             fdv_usd?: string | null;
             /** @description True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Three independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). SUBSTANCE (catalogue rows of the unified and class-scoped listings): the row's Stellar twin's on-chain price was withheld by the thin-market substance gate, so no on-chain price backs a cap, while price_usd is the global-tier price. Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present. */
             market_cap_low_liquidity?: boolean;
-            /** @description True when market_cap_usd was built on a circulating supply that is a provable floor, so the cap is a lower bound, not a total. On a listing row the floor is a `supply_basis` that is a trustline or held-balance sum, which leaves out liquidity-pool reserves and claimable balances. On the detail route it is a Soroban token's event-flow net (`supply_basis` `sep41_lake_flows`) that the contract's storage could not be checked against (an undecodable balance entry, more balance entries than the reader sums, or no captured instance entry), so circulating_supply is a floor too. Absent when the supply is a full reading. The detail route builds no cap on a held-balance floor. */
+            /** @description True when market_cap_usd was built on a circulating supply that is a provable floor, so the cap is a lower bound, not a total. On a listing row the floor is a `supply_basis` that is a trustline or held-balance sum, which leaves out liquidity-pool reserves and claimable balances. On the detail route it is a Soroban token's event-flow net (`supply_basis` `sep41_lake_flows`) that the contract's storage could not be checked against (an undecodable balance entry, more balance entries than the reader sums, or no captured instance entry), so circulating_supply is a floor too. Says nothing about the supply when no cap is built; see circulating_supply_lower_bound. The detail route builds no cap on a held-balance floor. */
             market_cap_lower_bound?: boolean;
+            /** @description True when circulating_supply is a provable floor, whether or not a market cap is built on it: a trustline or held-balance sum `supply_basis`, or (detail route) a Soroban token's event-flow net that the contract's storage could not be checked against. Absent when the supply is a full reading or absent. */
+            circulating_supply_lower_bound?: boolean;
             /** @description True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex.md#dex-nonstandard-decimals). Omitted when the resolvers agree. */
             market_cap_decimals_mismatch?: boolean;
             /**
@@ -12823,7 +12831,7 @@ export interface components {
             anchor_asset_type?: string | null;
             /** @description Issuer's declared terms / conditions text. */
             conditions?: string | null;
-            /** @description SEP-1-declared fixed total supply (decimal string in the asset's smallest integer unit). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum. */
+            /** @description SEP-1-declared fixed total supply (decimal string in display units, i.e. whole tokens, as written in stellar.toml; not scaled by `decimals`). Distinct from /v1/assets/{id}'s `total_supply` which is the live-ledger sum. */
             fixed_number?: string | null;
             /** @description SEP-1-declared maximum supply ceiling (decimal string). Distinct from /v1/assets/{id}'s `max_supply` which is operator/policy-derived. */
             max_number?: string | null;
@@ -14228,8 +14236,10 @@ export interface components {
             /**
              * @description Per-minute limit auth enforces on a key minted at the
              *     dashboard defaults, account override included — not the
-             *     tier ceiling. Limits are per key; an explicitly budgeted
-             *     key can differ.
+             *     tier ceiling. Every key on an account charges ONE shared
+             *     per-minute counter, and each request is checked against
+             *     the presenting key's own limit: a lower limit is not
+             *     isolation, since siblings' traffic counts against it.
              */
             rate_limit_per_min?: number;
             /**
@@ -14347,7 +14357,7 @@ export interface components {
              * @description 0 = inherit the tier default; positive = metered cap applied when a key has no per-key quota.
              */
             monthly_request_quota_override: number;
-            /** @description Per-minute limit auth enforces on a key minted without an explicit limit, override included. Limits are per key; an explicitly budgeted key can differ. */
+            /** @description Per-minute limit auth enforces on a key minted without an explicit limit, override included. Every key on an account charges one shared per-minute counter, checked against the presenting key's own limit, so an explicitly budgeted lower limit does not isolate a key from its siblings' traffic. */
             effective_rate_limit_per_min?: number;
             /**
              * Format: int64

@@ -261,6 +261,87 @@ func (c *WebhookStore) sealRawKey(ctx context.Context, q string, id uuid.UUID, r
 	return int(n), nil
 }
 
+// ResealSigningKeys re-seals under the current seal secret every sealed key (current and previous) that only the previous secret opens, returning the count and the keys neither secret opens; each write is a compare-and-swap on the sealed bytes it read, so it is idempotent and safe beside rotation and delete.
+func (c *WebhookStore) ResealSigningKeys(ctx context.Context) (resealed, unopenable int, err error) {
+	if c.sealer == nil || !c.sealer.Rotating() {
+		return 0, 0, errors.New("postgresstore: ResealSigningKeys: no previous seal key configured")
+	}
+	todo, err := c.sealedSigningKeys(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("postgresstore: ResealSigningKeys: %w", err)
+	}
+	for _, k := range todo {
+		for _, slot := range []struct {
+			sealed []byte
+			q      string
+		}{
+			{k.current, `UPDATE customer_webhooks SET signing_key_sealed = $2
+			          WHERE id = $1 AND signing_key_sealed = $3`},
+			{k.previous, `UPDATE customer_webhooks SET previous_signing_key_sealed = $2
+			          WHERE id = $1 AND previous_signing_key_sealed = $3`},
+		} {
+			if slot.sealed == nil {
+				continue
+			}
+			n, err := c.resealSlot(ctx, slot.q, k.id, slot.sealed)
+			if errors.Is(err, platform.ErrWebhookKeyUnsealable) {
+				unopenable++
+				continue
+			}
+			if err != nil {
+				return resealed, unopenable, err
+			}
+			resealed += n
+		}
+	}
+	return resealed, unopenable, nil
+}
+
+// resealSlot re-seals one stale key with a compare-and-swap UPDATE taking
+// ($1 id, $2 fresh, $3 sealed) and returns the rows it changed.
+func (c *WebhookStore) resealSlot(ctx context.Context, q string, id uuid.UUID, sealed []byte) (int, error) {
+	fresh, err := c.sealer.Reseal(id, sealed)
+	if err != nil || fresh == nil {
+		return 0, err
+	}
+	res, err := c.s.db.ExecContext(ctx, q, id, fresh, sealed)
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: ResealSigningKeys %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: ResealSigningKeys %s rows affected: %w", id, err)
+	}
+	return int(n), nil
+}
+
+// sealedSigningKeys reads every webhook's sealed current and previous key,
+// draining the rows before any UPDATE.
+func (c *WebhookStore) sealedSigningKeys(ctx context.Context) ([]sealedSigningKey, error) {
+	rows, err := c.s.db.QueryContext(ctx, `
+		SELECT id, signing_key_sealed, previous_signing_key_sealed
+		  FROM customer_webhooks
+		 WHERE signing_key_sealed IS NOT NULL OR previous_signing_key_sealed IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []sealedSigningKey
+	for rows.Next() {
+		var k sealedSigningKey
+		if err := rows.Scan(&k.id, &k.current, &k.previous); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+type sealedSigningKey struct {
+	id                uuid.UUID
+	current, previous []byte
+}
+
 type rawSigningKey struct {
 	id       uuid.UUID
 	raw      []byte
@@ -682,6 +763,11 @@ func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, ne
 	switch {
 	case c.sealer != nil && sealed != nil:
 		curSealed, prevSealed = c.sealer.Seal(id, newSecret), sealed
+		// A start-up re-seal sweep that read this row before the move misses the previous slot, so re-seal here under the
+		// row lock. A key neither secret opens is kept as is, for the sweep to count as unopenable.
+		if fresh, err := c.sealer.Reseal(id, sealed); err == nil && fresh != nil {
+			prevSealed = fresh
+		}
 	case c.sealer != nil:
 		curSealed, prevSealed = c.sealer.Seal(id, newSecret), c.sealer.Seal(id, raw)
 	case sealed != nil:

@@ -758,9 +758,9 @@ Privileged mutations that completed but whose audit row failed to append (logged
 
 ### `stellarindex_registrations_total`
 
-Counter, label `outcome` (`created` / `budget_exhausted` / `disabled`).
+Counter, labels `outcome` (`created` / `budget_exhausted` / `disabled`) and `pool` (`proof_free` / `email_proven` / `all`).
 
-`POST /v1/register` outcomes an operator acts on. `created`: an account and key were issued. `budget_exhausted`: refused with 503 because the hourly all-caller cap (`api.register_max_per_hour`) is spent. `disabled`: refused because `api.register_disabled` is set. Pre-seeded at zero. Alert: `stellarindex_registration_budget_exhausted`.
+Account-creating route outcomes an operator acts on (`POST /v1/register`, passkey sign-up, an email's first sign-in). `pool` names the hourly counter: `proof_free` is shared by `/v1/register` and passkey sign-up, `email_proven` is an email's first sign-in, `all` is `disabled`, which spans both. `created`: an account and key were issued. `budget_exhausted`: refused with 503 because that pool's hourly all-caller cap (`api.register_max_per_hour`, applied to each pool) is spent. `disabled`: refused because `api.register_disabled` is set. Pre-seeded at zero. Alert: `stellarindex_registration_budget_exhausted`.
 
 ### `stellarindex_passkey_login_refusals_total`
 

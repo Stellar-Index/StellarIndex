@@ -47,7 +47,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	if err != nil {
 		return err
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
+	lsCfg := gateStreamConfig(cfg, streamBucket)
 	passphrase := cfg.Stellar.Passphrase()
 
 	fmt.Fprintf(os.Stderr, "ch-gate: census-walking ledgers %d..%d from %q, comparing to ClickHouse %s\n",
@@ -194,8 +194,14 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	return nil
 }
 
-// walkCoverage fails unless the walk delivered every requested ledger: short walks are routine (-bucket defaults to the
-// trimmed live bucket; TolerateTrailingMissing hides holes near -to) and Stream still returns nil. Read-only [backfillCoverage].
+// gateStreamConfig is the gate's single-worker walk, reading through to the cold tier as ch-backfill does.
+func gateStreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
+	return backfillStreamConfig(cfg, bucket, 1)
+}
+
+// walkCoverage fails unless the walk delivered every requested ledger: short walks are routine (a -bucket override onto the
+// trimmed live bucket, an archive range trimmed with no cold tier configured; TolerateTrailingMissing hides holes near -to)
+// and Stream still returns nil. Read-only [backfillCoverage].
 func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	if uint64(walked) == requested {
@@ -203,16 +209,21 @@ func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error 
 	}
 	if walked == 0 {
 		return fmt.Errorf(
-			"%s walked 0 ledgers in [%d, %d] from bucket %q — nothing was examined; "+
-				"historical ranges need -bucket galexie-archive. Refusing to pass vacuously",
-			cmd, from, to, bucket)
+			"%s walked 0 ledgers in [%d, %d] from bucket %q — nothing was examined; %s. "+
+				"Refusing to pass vacuously",
+			cmd, from, to, bucket, walkCoverageHint)
 	}
 	return fmt.Errorf(
 		"%s walked %d of %d requested ledgers in [%d, %d] from bucket %q — the range was only "+
-			"partially examined, so every count above describes a subset; historical ranges need "+
-			"-bucket galexie-archive. Refusing to report on a short walk as if it were complete",
-		cmd, walked, requested, from, to, bucket)
+			"partially examined, so every count above describes a subset; %s. "+
+			"Refusing to report on a short walk as if it were complete",
+		cmd, walked, requested, from, to, bucket, walkCoverageHint)
 }
+
+// walkCoverageHint names both places a historical ledger lives: the hot archive and, once trimmed, the cold tier.
+const walkCoverageHint = "historical ranges are read from the archive bucket (e.g. galexie-archive, " +
+	"the default when -bucket is unset), and ranges trimmed from it only through the cold tier " +
+	"(storage.s3_cold_bucket_archive)"
 
 // gateCounts is one ledger's census-side tallies for the gate's four checks.
 type gateCounts struct {

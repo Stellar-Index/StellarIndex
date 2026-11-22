@@ -31,6 +31,7 @@ type txIndexChunkTier struct {
 	lake    pipeline.TxIndexLakeReader
 	store   txIndexChunkStore
 	isWrite bool
+	retag   bool
 	window  time.Duration
 	hb      *opsutil.JobHeartbeat
 
@@ -41,10 +42,10 @@ type txIndexChunkTier struct {
 // runTagTxIndexChunks walks [from, to), both at UTC midnight, chunk by chunk. The walk takes a
 // date-inclusive end, hence the day off `to`; the tier adds it back for what it prints.
 func runTagTxIndexChunks(ctx context.Context, lake pipeline.TxIndexLakeReader, store txIndexChunkStore, cfgPath string,
-	write bool, from, to time.Time, window time.Duration, hb *opsutil.JobHeartbeat, copts chunkRestampOptions,
+	write, retag bool, from, to time.Time, window time.Duration, hb *opsutil.JobHeartbeat, copts chunkRestampOptions,
 ) error {
 	copts.Command = "tag-tx-index"
-	tier := &txIndexChunkTier{lake: lake, store: store, isWrite: write, window: window, hb: hb}
+	tier := &txIndexChunkTier{lake: lake, store: store, isWrite: write, retag: retag, window: window, hb: hb}
 	return runChunkRestamp(ctx, store, cfgPath, from, to.AddDate(0, 0, -1), copts, tier)
 }
 
@@ -111,7 +112,7 @@ func (t *txIndexChunkTier) finish(cfgPath string, from, to time.Time) string {
 }
 
 func (t *txIndexChunkTier) resume(cfgPath string, from, to time.Time, copts chunkRestampOptions) string {
-	return fmt.Sprintf("RESUME (tagging is first-wins; finished chunks are skipped undecompressed):\n    %s\n",
+	return fmt.Sprintf("RESUME (without -retag, finished chunks are skipped undecompressed):\n    %s\n",
 		t.command(cfgPath, from, to, copts, t.isWrite))
 }
 
@@ -125,6 +126,9 @@ func (t *txIndexChunkTier) command(cfgPath string, from, to time.Time, copts chu
 	}
 	if copts.AllowLiveAdjacent {
 		args = append(args, "-allow-live-adjacent")
+	}
+	if t.retag {
+		args = append(args, "-retag")
 	}
 	if write {
 		args = append(args, "-write")

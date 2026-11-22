@@ -16,7 +16,8 @@ import (
 )
 
 // tagTxIndex is the historical half of trades.tx_index (the live sweeper covers a trailing 30-min window), via
-// pipeline.TagTxIndexWindow windowed by ts (the partition key). No checkpoint: tagging is first-wins. -write refuses a range touching a
+// pipeline.TagTxIndexWindow windowed by ts (the partition key). No checkpoint: by default only untagged rows are walked; -retag walks
+// every on-chain row to correct a wrong stored tag. -write refuses a range touching a
 // compressed trades chunk (the UPDATE decompresses it in-transaction and bloats WAL). Fail-closed via opsutil.WriteGate.
 func tagTxIndex(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("tag-tx-index")
@@ -29,6 +30,7 @@ func tagTxIndex(args []string) error {
 	minFreeBytes := fs.Int64("min-free-bytes", 0, "-chunks only: OVERRIDE the free-space measurement with this many bytes")
 	allowLiveAdjacent := fs.Bool("allow-live-adjacent", false, "-chunks only: walk a window reaching into the compression policy's lag")
 	resumePausedPolicy := fs.Bool("resume-paused-policy", false, "-chunks only: take over a trades compression policy that is already unscheduled and re-enable it at exit")
+	retag := fs.Bool("retag", false, "Check every on-chain trade in range against the lake, not only untagged ones, and correct a wrong stored tx_index")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,6 +65,7 @@ func tagTxIndex(args []string) error {
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	tagStore := txIndexTagSeam(store, *retag)
 
 	addr := *chAddr
 	if addr == "" {
@@ -84,17 +87,24 @@ func tagTxIndex(args []string) error {
 			MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent, ResumePausedPolicy: *resumePausedPolicy,
 			RemoteDBHost: remoteDSNHost(cfg.Storage.PostgresDSN),
 		}
-		err := runTagTxIndexChunks(ctx, lake, store, *cfgPath, write, from, to, *window, hb, copts)
+		err := runTagTxIndexChunks(ctx, lake, tagStore, *cfgPath, write, *retag, from, to, *window, hb, copts)
 		hb.Stop(err == nil)
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "tag-tx-index: [%s, %s), window %s\n", from.Format(time.RFC3339), to.Format(time.RFC3339), *window)
-	total, err := runTagTxIndex(ctx, lake, store, write, from, to, *window)
+	fmt.Fprintf(os.Stderr, "tag-tx-index: [%s, %s), window %s, retag=%t\n", from.Format(time.RFC3339), to.Format(time.RFC3339), *window, *retag)
+	total, err := runTagTxIndex(ctx, lake, tagStore, write, from, to, *window)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "tag-tx-index: done. %s: %d\n", opsutil.WriteModeVerb(write, "tagged trades", "WOULD tag txs"), total)
 	return nil
+}
+
+func txIndexTagSeam(store *timescale.Store, retag bool) txIndexChunkStore {
+	if retag {
+		return timescale.TxIndexRetag{Store: store}
+	}
+	return store
 }
 
 // txIndexTagStore is the tagger seam plus the chunk listing the -write

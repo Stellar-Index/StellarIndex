@@ -102,7 +102,7 @@ func (h *Handlers) signupEnabled(w http.ResponseWriter, r *http.Request) bool {
 	if !h.cfg.SignupDisabled {
 		return true
 	}
-	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationDisabled).Inc()
+	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationDisabled, obs.RegistrationPoolAll).Inc()
 	writeProblem(w, http.StatusServiceUnavailable, "sign-up is switched off on this deployment", r.URL.Path)
 	return false
 }
@@ -110,13 +110,13 @@ func (h *Handlers) signupEnabled(w http.ResponseWriter, r *http.Request) bool {
 // signupBudgetOK spends one unit of the all-caller hourly budget for an account about to be created, failing as /v1/register's
 // does: closed once the store has been down past its dwell time, open on a transient error. A spent unit is not refunded when
 // creation then fails, as /v1/register does not.
-func (h *Handlers) signupBudgetOK(w http.ResponseWriter, r *http.Request) bool {
-	err := h.cfg.SignupBudget.Spend(r.Context())
+func (h *Handlers) signupBudgetOK(w http.ResponseWriter, r *http.Request, budget *auth.RegistrationBudget, pool string) bool {
+	err := budget.Spend(r.Context())
 	switch {
 	case err == nil:
 		return true
 	case errors.Is(err, auth.ErrSignupRateLimited):
-		obs.RegistrationsTotal.WithLabelValues(obs.RegistrationBudgetExhausted).Inc()
+		obs.RegistrationsTotal.WithLabelValues(obs.RegistrationBudgetExhausted, pool).Inc()
 		w.Header().Set("Retry-After", strconv.FormatInt(3600-h.cfg.Now().Unix()%3600, 10))
 		writeProblem(w, http.StatusServiceUnavailable, "sign-up is at its hourly capacity on this deployment; retry later", r.URL.Path)
 		return false
@@ -189,7 +189,7 @@ func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	if !h.signupBudgetOK(w, r) {
+	if !h.signupBudgetOK(w, r, h.cfg.SignupBudget, obs.RegistrationPoolProofFree) {
 		return
 	}
 	user, row, err := h.createPasskeyAccount(r, userID, req.Name, cred)
@@ -264,6 +264,7 @@ func (h *Handlers) createPasskeyAccount(
 	if err != nil {
 		return abandon(fmt.Errorf("store passkey: %w", err))
 	}
+	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated, obs.RegistrationPoolProofFree).Inc()
 	return user, row, nil
 }
 

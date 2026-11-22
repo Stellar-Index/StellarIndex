@@ -1061,7 +1061,8 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
           summary: "{{ $value | humanize }} registrations (over 50 in 6h or over 100 in 7d)"
           description: |
-            POST /v1/register created more than 50 accounts in six hours
+            Sign-up (POST /v1/register, passkey sign-up and email first
+            sign-ins together) created more than 50 accounts in six hours
             or more than 100 in seven days.
             Each one is permanent and carries a live
             free-tier key with its own quota, so sustained growth
@@ -1069,14 +1070,16 @@ groups:
             path, not a table that cleans itself up.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
 
-      # The hourly all-caller cap on POST /v1/register
-      # (api.register_max_per_hour) is the bound the per-IP throttle
-      # cannot give against rotating addresses. Reaching it means either
+      # The hourly all-caller caps on sign-up (api.register_max_per_hour,
+      # applied to each of two pools: proof_free for POST /v1/register and
+      # passkey, email_proven for an email's first sign-in) are the bound
+      # the per-IP throttle cannot give against rotating addresses.
+      # Reaching one means either
       # a wave, or real sign-ups being turned away; both need a person.
       # This is the burst signal; the growth rule above catches farming
       # paced under the cap.
       - alert: stellarindex_registration_budget_exhausted
-        expr: sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0
+        expr: sum by (pool) (increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0
         for: 0m
         labels:
           severity: ticket
@@ -1084,12 +1087,16 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_budget_exhausted
-          summary: "{{ $value | humanize }} registration(s) refused in 15 minutes: the hourly cap is spent"
+          summary: "{{ $value | humanize }} sign-up(s) refused in 15 minutes: the {{ $labels.pool }} hourly cap is spent"
           description: |
-            POST /v1/register reached its hourly all-caller cap and is
-            answering 503. Either open registration is being farmed
-            from many addresses, or real sign-ups now exceed the cap
-            and are being turned away.
+            Sign-up has two hourly all-caller counters, and the pool
+            label says which one is spent. proof_free: POST /v1/register
+            and passkey sign-up are answering 503 (an email's first
+            sign-in still works). email_proven: an email's first
+            sign-in is answering 503 (the other routes still work).
+            Either open registration is being farmed from many
+            addresses, or real sign-ups now exceed the cap and are
+            being turned away.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_budget_exhausted
 
       # Two counters whose Help says "fails open" or "not being bounded"

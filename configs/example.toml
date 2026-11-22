@@ -647,6 +647,8 @@ resend_api_key_env     = "STELLARINDEX_RESEND_API_KEY"
 # suppressed_recipient_sha256 = []
 code_secret_env        = "STELLARINDEX_DASHBOARD_CODE_SECRET"
 webhook_seal_key_env   = "STELLARINDEX_WEBHOOK_SEAL_KEY"
+# Holds the old seal secret during a rotation; unset otherwise.
+webhook_seal_previous_key_env = "STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY"
 magic_link_ttl_minutes = 15
 session_ttl_days       = 30
 cookie_secure           = true

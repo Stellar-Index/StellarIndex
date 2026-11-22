@@ -791,3 +791,29 @@ func TestPrewarmClassicLakeSupplyReturnsOnCancellation(t *testing.T) {
 		t.Fatal("PrewarmClassicLakeSupply did not return on a cancelled context")
 	}
 }
+
+// circulating_supply_lower_bound describes the supply, so an unpriced row with no cap still says its trustline sum is a floor;
+// an observation is a full reading and leaves it unset.
+func TestFillRowMarketCap_UnpricedRowFlagsAFloorSupply(t *testing.T) {
+	const asset = "FOO-GAFOO"
+	for name, tc := range map[string]struct {
+		precise map[string]timescale.SupplyObservation
+		broad   map[string]string
+		want    bool
+	}{
+		"trustline sum": {nil, map[string]string{asset: "10000000"}, true},
+		"observation":   {observedSupply(map[string]string{asset: "10000000"}), nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &Server{}
+			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7}
+			s.fillRowMarketCap(t.Context(), &row, nil, tc.precise, nil, tc.broad, nil)
+			if row.CirculatingSupply == nil || row.MarketCapUSD != nil {
+				t.Fatalf("circulating_supply = %v market_cap_usd = %v, want a supply and no cap", row.CirculatingSupply, row.MarketCapUSD)
+			}
+			if row.CirculatingSupplyLowerBound != tc.want {
+				t.Errorf("circulating_supply_lower_bound = %v, want %v", row.CirculatingSupplyLowerBound, tc.want)
+			}
+		})
+	}
+}

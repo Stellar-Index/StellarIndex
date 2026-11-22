@@ -231,7 +231,7 @@ func TestListingLastPrice_TrailingDayOnly(t *testing.T) {
 	if strings.Contains(fold(pairs), "d.last_price") {
 		t.Error("/v1/markets last_price still falls back to a prices_1d close up to 14 days old")
 	}
-	const marketsBound = "CASE WHEN last_trade_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price"
+	const marketsBound = "CASE WHEN last_priced_at >= NOW() - INTERVAL '24 hours' THEN last_price END AS last_price"
 	const bucketBound = "FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours') AS last_price"
 	for _, order := range []MarketsOrder{MarketsOrderPair, MarketsOrderVolume24hDesc} {
 		src, _ := buildSourceMarketsQuery(since, "sdex", "", 100, order)
@@ -245,8 +245,8 @@ func TestListingLastPrice_TrailingDayOnly(t *testing.T) {
 		if strings.Contains(fold(pools), marketsBound) || strings.Contains(fold(pools), bucketBound) {
 			t.Errorf("order %v: /v1/pools last_price is bounded to 24h; its contract is the venue's most recent price", order)
 		}
-		if !strings.Contains(fold(pools), "last(r.bucket_last_price, r.bucket_last_ts) AS last_price") {
-			t.Errorf("order %v: /v1/pools no longer reads the venue's newest price", order)
+		if !strings.Contains(fold(pools), "last(r.bucket_last_price, r.bucket_last_ts) FILTER (WHERE r.bucket_last_price IS NOT NULL) AS last_price") {
+			t.Errorf("order %v: /v1/pools no longer reads the venue's newest priced close", order)
 		}
 	}
 }

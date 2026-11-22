@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/pkg/client"
@@ -713,8 +714,9 @@ func ExampleClient_Usage() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data": [
-				{"date":"2026-05-10","requests":12345,"errors":12,"throttled":0},
-				{"date":"2026-05-09","requests":11890,"errors":8,"throttled":2}
+				{"date":"2026-05-10","endpoint":"/v1/price","requests":12345,"billable":12340,"errors":12,"throttled":0},
+				{"date":"2026-05-09","endpoint":"/v1/price","requests":11890,"billable":11887,"errors":8,"throttled":2},
+				{"date":"2026-04-30","endpoint":"/v1/price","requests":9000,"billable":9000,"errors":0,"throttled":0}
 			],
 			"as_of": "2026-05-10T12:00:00Z",
 			"flags": {}
@@ -728,14 +730,18 @@ func ExampleClient_Usage() {
 		fmt.Println("error:", err)
 		return
 	}
+	// The monthly quota counts Billable, not Requests (which includes 5xx). The window is the trailing 30 days, so on the
+	// 31st this sum misses the 1st.
+	month, billable := "2026-05", 0
 	for _, row := range got.Data {
-		fmt.Printf("%s: %d requests (%d err, %d throttled)\n",
-			row.Date, row.Requests, row.Errors, row.Throttled)
+		if strings.HasPrefix(row.Date, month) {
+			billable += row.Billable
+		}
 	}
+	fmt.Printf("billable this month so far: %d\n", billable)
 
 	// Output:
-	// 2026-05-10: 12345 requests (12 err, 0 throttled)
-	// 2026-05-09: 11890 requests (8 err, 2 throttled)
+	// billable this month so far: 24227
 }
 
 // Issues a new API key. `Plaintext` is the only place the secret appears and the server never returns it again, so store

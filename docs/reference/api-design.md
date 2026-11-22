@@ -486,7 +486,11 @@ mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-
 ### 7.1 Tier → rate-limit mapping
 
 The SLA commits "≥ 1000 requests/minute per client". The
-"per client" wording means *per API key*, not per IP. Anonymous
+"per client" wording means *per account*, not per IP: every API key on
+an account charges one shared per-minute counter, and each request is
+checked against the presenting key's own limit. A key minted with a
+lower limit is therefore not isolated: its siblings' traffic counts
+against it, and its own denied requests still count against them. Anonymous
 callers (no API key) are bucketed by IP at a much tighter cap so a
 single shared egress can't burn the public surface.
 
@@ -496,8 +500,8 @@ Free and Partner, plus anonymous callers:
 | Tier | How obtained | Per-key default (req/min) | Per-key ceiling (req/min) | Identity |
 | ---- | ------------ | ------------------------: | ------------------------: | -------- |
 | Anonymous | no API key | `[api].anon_rate_limit_per_min` (code default **60**; r1 runs it higher — read `X-RateLimit-Limit`, don't hard-code either number) | n/a (`[api].anon_rate_limit_per_min`) | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
-| Free | `POST /v1/register` (every registered account's default) | **6,000** | **6,000** | per API key |
-| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **6,000** | **100,000** | per API key |
+| Free | `POST /v1/register` (every registered account's default) | **6,000** | **6,000** | per account (one counter for all its keys) |
+| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **6,000** | **100,000** | per account (one counter for all its keys) |
 
 Default and ceiling apply to dashboard-minted keys: a key minted
 without `rate_limit_per_min` gets 6,000, and a requested value is

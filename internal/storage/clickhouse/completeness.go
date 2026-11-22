@@ -171,6 +171,7 @@ func substrateQueryLo(wlo, from uint64) uint64 {
 }
 
 // SubstrateProblem returns the earliest ledger in [from,to] with a missing ledger or hash-chain break (ADR-0033 Claim 1); (0, false) means continuous and hash-linked.
+// Callers turn problem-1 into a resume watermark, so it must never name a ledger above a missing one.
 func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	conn, oerr := openRead(ctx, addr)
 	if oerr != nil {
@@ -224,8 +225,8 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 		return headProblem, true, headDetail, nil
 	}
 
-	// A truncated head does not excuse the walks: a source with genesis >= haveMin is certified
-	// clean only by walking [haveMin, to]. [from, haveMin) is already known missing.
+	// A truncated head is the earliest problem, but the walk over [haveMin, to] still runs so the
+	// detail names any later gap or break too.
 	walkFrom := uint64(from)
 	if headHasProblem {
 		walkFrom = haveMin
@@ -249,23 +250,26 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 			return 0, false, "", fmt.Errorf("clickhouse: substrate hash-chain [%d,%d]: %w", qlo, whi, qerr)
 		}
 
+		var p uint64
+		var d string
 		switch {
 		case firstGap == 0 && firstBreak == 0:
 			continue
 		case firstGap != 0 && (firstBreak == 0 || firstGap <= firstBreak):
-			return uint32(firstGap), true, fmt.Sprintf("substrate: missing ledger at %d", firstGap), nil
+			p, d = firstGap, fmt.Sprintf("substrate: missing ledger at %d", firstGap)
 		default:
-			return uint32(firstBreak), true, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
+			p, d = firstBreak, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak)
 		}
+		if headHasProblem {
+			return headProblem, true, headDetail + "; also " + d, nil
+		}
+		return uint32(p), true, d, nil
 	}
 	if headHasProblem {
-		// The interior is clean; report the head problem, the first in [from, to].
-		// sourceSubstrateOK's `problem < genesis` still passes sources whose genesis is >= haveMin.
 		return headProblem, true, headDetail, nil
 	}
-	// Tail guard: return `to` (not haveMax+1) so `problem < genesis` fails every source.
 	if haveMax < uint64(to) {
-		return to, true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
+		return uint32(haveMax + 1), true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
 	}
 	// Total-count guard: a hole spanning both overlap ledgers of a window seam is invisible to
 	// gapQ and chainQ, so compare `present` (uniqExact) against the range size.
@@ -305,15 +309,14 @@ func substrateLocateHole(ctx context.Context, addr string, from, to uint32) (pro
 	return problem, true, fmt.Sprintf("substrate: missing ledger at %d (window-seam hole)", problem), nil
 }
 
-// substrateHeadProblem is the pure low-ledger coverage decision (an empty range or missing head, which the gap scan cannot see). The
-// problem ledger keeps the consumer's `problem < genesis => source-OK` test correct: empty returns `to` so EVERY source fails; a missing
-// head returns haveMin-1 so only sources whose data begins in the absent head fail.
+// substrateHeadProblem is the pure low-ledger coverage decision (an empty range or missing head, which the gap scan cannot see). Both
+// return `from`, the first absent ledger; every scan starts at or above its source's genesis, so `problem < genesis` still fails it.
 func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (problem uint32, hasProblem bool, detail string) {
 	if !present {
-		return to, true, fmt.Sprintf("substrate: no ledgers present in [%d,%d] (empty range — not intact)", from, to)
+		return from, true, fmt.Sprintf("substrate: no ledgers present in [%d,%d] (empty range — not intact)", from, to)
 	}
 	if haveMin > from {
-		return haveMin - 1, true, fmt.Sprintf("substrate: missing head ledger(s) — first present is %d, expected %d (fails every source with genesis ≤ %d)", haveMin, from, haveMin-1)
+		return from, true, fmt.Sprintf("substrate: missing head ledger(s) [%d,%d] — first present is %d", from, haveMin-1, haveMin)
 	}
 	return 0, false, ""
 }
