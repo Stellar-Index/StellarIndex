@@ -1579,20 +1579,21 @@ func (s *Server) walkUSDPegs(
 
 // walkWithheldRank orders the reasons [Server.walkUSDPegs] reports when no peg serves: the asset's
 // own market below the floor outranks a withheld peg leg, which outranks a refusal that stated
-// no reason.
+// no reason; an operator exclusion outranks them all, since lifting it is what restores the price.
 var walkWithheldRank = map[PriceWithheldReason]int{
-	PriceWithheldUnattributed: 1,
-	PriceWithheldUpstreamLeg:  2,
-	PriceWithheldSubstance:    3,
+	PriceWithheldUnattributed:   1,
+	PriceWithheldUpstreamLeg:    2,
+	PriceWithheldSubstance:      3,
+	PriceWithheldSourceExcluded: 4,
 }
 
 // walkWithheldReason folds one refused peg read into the walk's running reason. The peg pair is
-// the asset's own market, so `substance` (as the listing says) and an unstated reason pass
-// through; any other cause (a flagged peg issuer, a refused cross) lies beyond it and is
-// `upstream_leg`.
+// the asset's own market, so `substance` (as the listing says), `source_excluded` and an unstated
+// reason pass through; any other cause (a flagged peg issuer, a refused cross) lies beyond it and
+// is `upstream_leg`.
 func walkWithheldReason(have PriceWithheldReason, err error) PriceWithheldReason {
 	got := priceWithheldReason(err)
-	if got != PriceWithheldSubstance && got != PriceWithheldUnattributed {
+	if _, ownMarket := walkWithheldRank[got]; !ownMarket {
 		got = PriceWithheldUpstreamLeg
 	}
 	if walkWithheldRank[got] > walkWithheldRank[have] {
