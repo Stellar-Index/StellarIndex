@@ -14,6 +14,7 @@ import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { PerformanceRange } from './PerformanceRange';
+import { marketCapNote } from './headerNotes';
 import { bakedAtDeploy } from './priceProvenance';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 import {
@@ -165,14 +166,23 @@ export function AssetSidebar({
   homeDomain?: string | null;
 }) {
   const seed = positiveDecimal(priceUSD);
-  // A fresh live row replaces the baked figures whole, so a USD figure it
-  // serves null (a withheld price, a refused cap) stays blank. A stale one
-  // may be a numbers-free degraded body: keep the labelled baked figures.
+  // A live row replaces the baked figures whole, so a USD figure it serves
+  // null (a withheld price, a refused cap) stays blank. `stale` packs causes
+  // unrelated to these figures (SEP-1, home domain, a supply_stale cap), so a
+  // stale row is kept and labelled; only a cut-short body with no market
+  // figure and no withheld reason falls back to the labelled baked figures.
   const envelope = useAsset(coin.asset_id).data;
-  const live = envelope?.flags?.stale ? null : (envelope?.data ?? null);
+  const row = envelope?.data ?? null;
+  const rowStale = envelope?.flags?.stale === true;
+  const live = row && (!rowStale || carriesMarketFigures(row)) ? row : null;
   const detail: SidebarDetail | null = live ?? bakedDetail;
   const activity = live ?? coin;
-  const bakedHint = live ? undefined : bakedAtDeploy();
+  const bakedHint = !live
+    ? bakedAtDeploy()
+    : rowStale
+      ? 'stale · some reads out of date'
+      : undefined;
+  const capNote = live ? marketCapNote(live) : undefined;
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
   // num() only, never divide. The supply fields (circulating / total /
   // max) are RAW smallest-unit integers, so scale them down 10^decimals.
@@ -231,7 +241,11 @@ export function AssetSidebar({
       >
         <StatRow
           label="Market cap"
-          value={floorMark(usd(marketCap), capFloor, derived)}
+          value={
+            marketCap == null && capNote
+              ? capNote
+              : floorMark(usd(marketCap), capFloor, derived)
+          }
           title={capTitle}
         />
         <StatRow
@@ -383,6 +397,26 @@ export function AssetSidebar({
 }
 
 /** floorMark prefixes "≥" to a floor figure and "≤" to a derived supply reading. */
+function carriesMarketFigures(r: {
+  market_cap_usd?: string | null;
+  volume_24h_usd?: string | null;
+  fdv_usd?: string | null;
+  circulating_supply?: string | null;
+  total_supply?: string | null;
+  price_withheld_reason?: string | null;
+  market_cap_withheld_reason?: string | null;
+}): boolean {
+  return [
+    r.market_cap_usd,
+    r.volume_24h_usd,
+    r.fdv_usd,
+    r.circulating_supply,
+    r.total_supply,
+    r.price_withheld_reason,
+    r.market_cap_withheld_reason,
+  ].some((v) => v != null);
+}
+
 function floorMark(text: string, floor: boolean, derived = false): string {
   return text !== '—' ? `${supplyMark(floor, derived)}${text}` : text;
 }
