@@ -171,7 +171,11 @@ func main() {
 }
 
 func run(base string, filesMode, worktree bool) error {
-	substantive, err := substantiveFiles(base, worktree)
+	changed, err := changedFiles(base, worktree)
+	if err != nil {
+		return err
+	}
+	substantive, err := substantiveFiles(base, changed)
 	if err != nil {
 		return err
 	}
@@ -192,14 +196,22 @@ func run(base string, filesMode, worktree bool) error {
 	if err := addCitationReaders(base, worktree, dirs); err != nil {
 		return err
 	}
-	if len(dirs) == 0 {
-		return nil
+	// Guards read comments too (//floatmoney:ok markers, godoc links), so a
+	// comment-only production edit still runs them.
+	return printPackages(dirs, touchesProductionGo(changed))
+}
+
+// printPackages prints the dependents of dirs, plus the guard packages
+// when guards is set.
+func printPackages(dirs map[string]bool, guards bool) error {
+	var pkgs []string
+	var err error
+	if len(dirs) > 0 {
+		if pkgs, err = dependents(dirs); err != nil {
+			return err
+		}
 	}
-	pkgs, err := dependents(dirs)
-	if err != nil {
-		return err
-	}
-	if touchesProductionGo(substantive) {
+	if guards {
 		if pkgs, err = withGuards(pkgs); err != nil {
 			return err
 		}
@@ -210,13 +222,8 @@ func run(base string, filesMode, worktree bool) error {
 	return nil
 }
 
-// substantiveFiles lists the files changed since base, minus comment-only
-// Go edits.
-func substantiveFiles(base string, worktree bool) ([]string, error) {
-	changed, err := changedFiles(base, worktree)
-	if err != nil {
-		return nil, err
-	}
+// substantiveFiles drops comment-only Go edits from changed.
+func substantiveFiles(base string, changed []string) ([]string, error) {
 	var out []string
 	for _, f := range changed {
 		if strings.HasSuffix(f, ".go") {
@@ -456,7 +463,7 @@ func affected(list string, touched map[string]bool) []string {
 }
 
 // commentOnly reports whether f differs from its base version only in
-// comments that the compiler and test runner ignore.
+// comments the compiler ignores. Guard tests may still read them.
 func commentOnly(base, f string) (bool, error) {
 	old, err := exec.CommandContext(context.Background(), "git", "show", base+":"+f).Output() //nolint:gosec // base and f come from git diff in CI
 	if err != nil {

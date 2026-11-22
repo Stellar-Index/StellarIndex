@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -103,6 +106,63 @@ func TestGuardDirsReadsTestFilesOnly(t *testing.T) {
 	}
 	if want := []string{"cmd/e", "internal/a"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("guardDirs = %v, want %v", got, want)
+	}
+}
+
+// TestRunCommentOnlyProductionEditRunsGuards: deleting a //floatmoney:ok
+// marker changes no token, but the money guard reads it, so the guard
+// package must still be selected.
+func TestRunCommentOnlyProductionEditRunsGuards(t *testing.T) {
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX"} {
+		if v, ok := os.LookupEnv(k); ok {
+			if err := os.Unsetenv(k); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Setenv(k, v) })
+		}
+	}
+	t.Chdir(t.TempDir())
+	write := func(name, src string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(name), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git := func(args ...string) {
+		t.Helper()
+		args = append([]string{"-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"}, args...)
+		if out, err := exec.CommandContext(context.Background(), "git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write("go.mod", "module example.com/m\n\ngo 1.27.0\n")
+	write("internal/a/a.go", "package a\n\ntype P struct {\n\t//floatmoney:ok fixture\n\tPrice float64\n}\n")
+	write("internal/g/g.go", "package g\n")
+	write("internal/g/g_test.go", "package g\n\nimport (\n\t\"go/parser\"\n\t\"testing\"\n)\n\nfunc TestG(t *testing.T) { _ = parser.ParseComments }\n")
+	git("init", "-q", ".")
+	git("add", ".")
+	git("commit", "-q", "-m", "base")
+	write("internal/a/a.go", "package a\n\ntype P struct {\n\tPrice float64\n}\n")
+	git("commit", "-q", "-am", "drop marker")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = w
+	runErr := run("HEAD~1", false, false)
+	os.Stdout = stdout
+	_ = w.Close()
+	out, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if !strings.Contains(string(out), "example.com/m/internal/g") {
+		t.Errorf("run printed %q, want the guard package example.com/m/internal/g", out)
 	}
 }
 
