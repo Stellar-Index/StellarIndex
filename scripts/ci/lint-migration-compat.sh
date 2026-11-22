@@ -224,18 +224,18 @@ grep_lines() {
   printf '%s' "$out"
 }
 
-# fn_body_lines <file>: line numbers inside CREATE FUNCTION $$ bodies, which run
-# when called, not at migrate time. A function the same file calls at top level
+# fn_body_lines <file>: line numbers inside CREATE FUNCTION/PROCEDURE $$ bodies, which
+# run when called, not at migrate time. A routine the same file calls at top level
 # (SELECT/PERFORM/CALL name(...)) does run at migrate time, so its body is kept.
 # Other body quoting is left to the DML checks.
 fn_body_lines() {
   awk '
     function fname(l,    n) {
-      n = l; sub(/^[ \t]*create (or replace )?function[ \t]+/, "", n); sub(/[ \t(].*$/, "", n); return n
+      n = l; sub(/^[ \t]*create (or replace )?(function|procedure)[ \t]+/, "", n); sub(/[ \t(].*$/, "", n); return n
     }
     { l = tolower($0) }
     infn { body[cur] = body[cur] " " NR; if (gsub(/\$[a-z0-9_]*\$/, "&", l) % 2) infn = 0; next }
-    l ~ /^[ \t]*create (or replace )?function / { pend = 1; cur = fname(l) }
+    l ~ /^[ \t]*create (or replace )?(function|procedure) / { pend = 1; cur = fname(l) }
     pend && (c = gsub(/\$[a-z0-9_]*\$/, "&", l)) { pend = 0; if (c % 2) infn = 1; next }
     pend && l ~ /;/ { pend = 0 }
     l !~ /^[ \t]*--/ && l ~ /(^|[^a-z_])(select|perform|call)[ \t]/ { top[++nt] = l }

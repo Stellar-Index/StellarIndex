@@ -240,6 +240,14 @@ $$;
 DELETE FROM comet_liquidity;' ''
 expect 'a RAISE EXCEPTION inside a function body is not a guard' 1 'dml'
 
+run 'CREATE OR REPLACE PROCEDURE refuse(job_id int, config jsonb) LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '"'"'no'"'"';
+END
+$$;
+DELETE FROM comet_liquidity;' ''
+expect 'a RAISE EXCEPTION inside a procedure body is not a guard' 1 'dml'
+
 run 'CREATE FUNCTION forget(p text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
     DELETE FROM marks WHERE k = p;
