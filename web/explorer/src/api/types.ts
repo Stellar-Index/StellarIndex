@@ -10533,6 +10533,9 @@ export interface components {
              *     dust-liquidity guard refused to turn it into a market cap.
              *     `supply_unavailable` — a price exists but no
              *     circulating-supply reading does.
+             *     `market_cap_withheld` — a price and a circulating supply are
+             *     both served and the market cap is not; `market_cap_withheld_reason`
+             *     says why.
              *     `decimals_unavailable` — a price and a supply both exist and
              *     the token's own declared SCALE does not. CONTRACT rows only:
              *     a classic asset is 7 decimals by protocol and a Stellar
@@ -10550,7 +10553,7 @@ export interface components {
              *     be true.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "unpriced" | "price_unmeasured" | "withheld_low_liquidity" | "supply_unavailable" | "decimals_unavailable";
+            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "unpriced" | "price_unmeasured" | "withheld_low_liquidity" | "supply_unavailable" | "market_cap_withheld" | "decimals_unavailable";
             /** @description Served USD price (decimal string — ADR-0003). Absent unless a price was published. */
             price_usd?: string;
             /**
@@ -10571,6 +10574,12 @@ export interface components {
             price_basis?: "global_market" | "declared_peg" | "transitive";
             /** @description Circulating supply times the served USD price (decimal string). Present only when status is published. */
             market_cap_usd?: string;
+            /**
+             * @description As `/v1/assets/{asset_id}` `market_cap_withheld_reason`, verbatim: why `market_cap_usd` is absent beside a served
+             *     price and circulating supply. Absent with `market_cap_withheld`, it is a compute gap, not a guard verdict.
+             * @enum {string}
+             */
+            market_cap_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed" | "manipulation_guard" | "fx_leg_unavailable" | "price_unread" | "supply_stale" | "decimals_unknown" | "decimals_mismatch" | "ticker_collision" | "low_liquidity" | "supply_floor" | "thin_market" | "price_basis";
         };
         /**
          * @description The row's circulating supply valued at the REFERENCE price — an
