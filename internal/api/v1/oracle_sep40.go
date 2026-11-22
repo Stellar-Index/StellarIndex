@@ -296,6 +296,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
+	snapshots, dropped, windowsUnknown := s.dropFrozenBuckets(ctx, asset, snapshots)
 
 	out := make([]SEP40Price, len(snapshots))
 	for i, snap := range snapshots {
@@ -311,12 +312,15 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	}
 	// A peg-proxied series is not a print of the fiat:USD pair and sits
 	// below the surface's baseline: stale as well as triangulated, the
-	// rule lastprice/x_last_price follow.
-	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg, FrozenChecked: held.checked})
+	// rule lastprice/x_last_price follow. A series short of the buckets a recovered freeze refused is a partial answer.
+	writeJSON(w, out, Flags{
+		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown,
+		FrozenChecked: held.checked && !windowsUnknown,
+	})
 }
 
-// writeFrozenOraclePrices answers prices() for a frozen pair and reports whether it wrote. The freeze cannot say which closed buckets
-// it refused, so a frozen pair serves only the held value lastprice serves, or lastprice's 503 when nothing is held.
+// writeFrozenOraclePrices answers prices() for a pair frozen now and reports whether it wrote: it serves only the held value
+// lastprice serves, or lastprice's 503 when nothing is held. Buckets a recovered freeze covered are dropped by [Server.dropFrozenBuckets].
 func writeFrozenOraclePrices(w http.ResponseWriter, r *http.Request, asset canonical.Asset, held frozenResolution) bool {
 	switch held.outcome {
 	case frozenServeNothingHeld:
