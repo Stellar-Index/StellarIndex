@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -31,6 +32,13 @@ func (s *Server) exclusionCleanTrades(ctx context.Context, asset, quote canonica
 		}
 	}
 	return kept, nil
+}
+
+// priceWithheldUnread reports whether err withholds because the exclusion set could not be read: a transient refusal that a
+// cached body must not replay as a clean withheld one.
+func priceWithheldUnread(err error) bool {
+	var e *withheldError
+	return errors.As(err, &e) && e.unread
 }
 
 // unattributedWithheld judges a value with no source list that covers [from, now].

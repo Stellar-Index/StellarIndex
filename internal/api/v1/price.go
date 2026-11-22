@@ -97,6 +97,8 @@ const (
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
 type withheldError struct {
 	reason PriceWithheldReason
+	// unread: the verdict rests on a failed read (the exclusion table), so the refusal is transient, not a market fact.
+	unread bool
 }
 
 func (e *withheldError) Error() string { return ErrPriceWithheld.Error() }
@@ -110,7 +112,7 @@ func newPriceWithheld(reason PriceWithheldReason) error {
 
 // PriceWithheldError is the ErrPriceWithheld a reader returns for a pricingguard verdict, carrying which gate fired.
 func PriceWithheldError(w pricingguard.Withholding) error {
-	return newPriceWithheld(withheldReasonFor(w))
+	return &withheldError{reason: withheldReasonFor(w), unread: w == pricingguard.WithheldExclusionsUnread}
 }
 
 func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
