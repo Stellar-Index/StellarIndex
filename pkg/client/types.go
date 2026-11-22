@@ -1822,6 +1822,8 @@ type RWAValuation struct {
 	// ("declared_peg" or "transitive"). Absent means market-derived.
 	PriceBasis   string  `json:"price_basis,omitempty"`
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
+	// MarketCapWithheldReason names why a priced row with a supply serves no market cap, verbatim from /v1/assets.
+	MarketCapWithheldReason string `json:"market_cap_withheld_reason,omitempty"`
 }
 
 // RWAReferenceValuation is supply valued at the oracle REFERENCE price, never folded into MarketCapUSD; ValueUSD is set if and only if Status is "published", beside an RWAAsset.Reference naming its provenance.
