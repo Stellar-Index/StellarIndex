@@ -121,8 +121,13 @@ func (s *Server) applyGlobalMarket(ctx context.Context, row *AssetDetail, refs m
 	}
 	ref, ok := refs[g.String()]
 	if !ok || ref.priceUSD == nil || ref.priceUSD.Sign() <= 0 ||
-		now.Sub(ref.asOf) > globalMarketMaxAge || ref.asOf.After(now.Add(globalMarketMaxSkew)) ||
-		s.globalRefWithheld(ctx, ref, g, local) {
+		now.Sub(ref.asOf) > globalMarketMaxAge || ref.asOf.After(now.Add(globalMarketMaxSkew)) {
+		return
+	}
+	if w := s.globalRefWithheld(ctx, ref, g, local); w != pricingguard.NotWithheld {
+		if w == pricingguard.WithheldExclusionsUnread {
+			reportUnreadRead(ctx) // a transient refusal: the body must not be cached as a lasting answer
+		}
 		return
 	}
 	gm := &AssetGlobalMarket{Asset: g.String(), PriceUSD: ref.wire, Source: ref.source, AsOf: WireTime(ref.asOf), Credit: external.Credit(ref.source)}
@@ -150,18 +155,18 @@ func (s *Server) applyGlobalMarket(ctx context.Context, row *AssetDetail, refs m
 	row.GlobalMarket = gm
 }
 
-// globalRefWithheld reports whether the reference's own source is excluded for the global ticker or the local asset, or the
-// exclusions cannot be read: either way the reference neither fills nor is shown.
-func (s *Server) globalRefWithheld(ctx context.Context, ref rwaReference, g, local canonical.Asset) bool {
+// globalRefWithheld is the exclusion verdict on the reference's own source for the global ticker or the local asset; a reference
+// that is excluded or cannot be judged neither fills nor is shown.
+func (s *Server) globalRefWithheld(ctx context.Context, ref rwaReference, g, local canonical.Asset) pricingguard.Withholding {
 	if s.Exclusions == nil {
-		return false
+		return pricingguard.NotWithheld
 	}
 	for _, a := range []canonical.Asset{g, local} {
-		if s.Exclusions.InstantWithholding(ctx, a, defaultPriceQuote, ref.source, ref.asOf) != pricingguard.NotWithheld {
-			return true
+		if w := s.Exclusions.InstantWithholding(ctx, a, defaultPriceQuote, ref.source, ref.asOf); w != pricingguard.NotWithheld {
+			return w
 		}
 	}
-	return false
+	return pricingguard.NotWithheld
 }
 
 // stampStellarDivergence sets the signed divergence of the Stellar price

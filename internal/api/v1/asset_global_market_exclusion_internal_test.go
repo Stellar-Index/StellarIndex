@@ -42,7 +42,12 @@ func TestGlobalMarket_SourceExclusion(t *testing.T) {
 		s := globalMarketServer(t, refUpdate(t, "coingecko", "crypto:USDC", "fiat:USD", "97000000", 8, time.Now()))
 		s.Exclusions = pricingguard.NewSourceExclusionGate(tc.table, pricingguard.SourceExclusionGateOptions{})
 		d := AssetDetail{AssetID: globalTestUSDC, PriceWithheldReason: tc.withheld}
-		s.fillDeclaredPegPrice(context.Background(), &d, nil)
+		ctx, rep := withReadReport(context.Background())
+		s.fillDeclaredPegPrice(ctx, &d, nil)
+		// An unjudged reference is a transient refusal: reported unread so the detail body is not cached as a lasting answer.
+		if unread := rep.unread.Load(); unread != (tc.table.err != nil) {
+			t.Errorf("%s: read reported unread = %v, want %v", tc.name, unread, tc.table.err != nil)
+		}
 		if filled := d.PriceBasis == priceBasisGlobalMarket; filled != tc.wantFill {
 			t.Errorf("%s: global-market fill = %v (price_usd=%s), want %v", tc.name, filled, strPtr(d.PriceUSD), tc.wantFill)
 		}
