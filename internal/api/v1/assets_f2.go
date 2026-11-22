@@ -76,10 +76,11 @@ func (s *Server) withContractSupply(
 	ctx context.Context, contractID string, snap supply.Supply, haveSnap, supplyFailed bool,
 ) (out supply.Supply, have, failed, floor bool) {
 	// A last-good reading kept by a failed refresh is a failed supply read: stale, and never cached as the detail.
+	// A failed observer read stays failed: the lake figure is another basis, served but not cached.
 	sctx, reads := withReadReport(ctx)
 	lake, floor, ok, unread := s.contractSupplySnapshot(sctx, contractID)
 	if ok {
-		return lake, true, reads.stale.Load(), floor
+		return lake, true, supplyFailed || reads.stale.Load(), floor
 	}
 	return snap, haveSnap, supplyFailed || unread || reads.stale.Load(), false
 }
