@@ -210,6 +210,31 @@ $fn$;
 UPDATE trades SET usd_volume = 0 WHERE ts < now();' ''
 expect 'a RAISE EXCEPTION inside a tag-quoted function body is not a guard' 1 'dml'
 
+# DML that does not open its line is still a statement.
+# shellcheck disable=SC2016  # $$ is SQL dollar quoting, not a shell expansion
+run 'DO $$ BEGIN DELETE FROM trades; END $$;' ''
+expect 'dml inside a one-line DO block fires' 1 'dml'
+run 'WITH gone AS (DELETE FROM trades RETURNING 1) SELECT count(*) FROM gone;' ''
+expect 'dml in a data-modifying CTE fires' 1 'dml'
+run "SET LOCAL lock_timeout = '5s'; UPDATE trades SET price = 0;" ''
+expect 'dml after another statement on the same line fires' 1 'dml'
+run 'MERGE INTO trades t USING fix f ON t.id = f.id WHEN MATCHED THEN DELETE;' ''
+expect 'MERGE fires as dml' 1 'dml'
+run "COMMENT ON TABLE audit_log IS 'TRUNCATE of audit_log is forbidden';" ''
+expect 'TRUNCATE in a COMMENT ON string stays quiet' 0 'passed'
+
+# A held UPDATE must end at its real `;`, not swallow the next statement.
+# shellcheck disable=SC2016
+guard='DO $$ BEGIN IF (SELECT count(*) FROM t) > 0 THEN RAISE EXCEPTION '"'"'x'"'"'; END IF; END $$;'
+run "$guard
+UPDATE t SET slug = replace(slug, '--', '-');
+DROP TRIGGER t_guard ON t;" ''
+expect "a '--' inside a string does not hide the next DROP" 1 'drop-other'
+run "$guard
+UPDATE t SET slug = lower(slug); /* normalise */
+REVOKE SELECT ON trades FROM stellarindex_api;" ''
+expect 'a trailing block comment does not hide the next REVOKE' 1 'revoke'
+
 run 'DELETE FROM comet_liquidity;  -- migration-compat:ok replay repairs it' ''
 expect 'inline marker alone does not clear dml (needs a RAISE EXCEPTION guard)' 1 'dml'
 

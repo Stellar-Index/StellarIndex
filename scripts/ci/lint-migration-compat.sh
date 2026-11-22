@@ -9,6 +9,13 @@
 # against the NEW schema. A `DROP COLUMN` shipped with the release that stops
 # reading it turns a failed deploy into an outage rollback cannot clear.
 #
+# What it does NOT check: the rollback target is the binary the host was
+# running, which after a skip-ahead deploy is older than the previous
+# release. This lint judges each file on its own and never sees the host's
+# version, so a marker reason that holds only from some release on (0207:
+# "only for a fleet already on the window key") is not enforced; deploy
+# such a host through that release first.
+#
 # Flagged (the mechanically detectable half of rule 9):
 #   drop-table            DROP TABLE
 #   drop-column           ALTER TABLE … DROP [COLUMN] c
@@ -31,7 +38,8 @@
 #   drop-other            any other DROP (TRIGGER, SCHEMA, SEQUENCE, OWNED …),
 #                         DISABLE/ENABLE TRIGGER
 #   owner                 OWNER TO
-#   dml                   DELETE FROM / TRUNCATE / UPDATE … SET /
+#   dml                   DELETE FROM / TRUNCATE / UPDATE … SET / MERGE INTO
+#                         at a statement start (DO blocks and CTEs included),
 #                         the chunk-dropping SELECT, unguarded
 #                         (a bare DELETE with a `SELECT 1` down re-deletes
 #                         replay-repaired rows on a down/up)
@@ -46,7 +54,9 @@
 #   1. Inline, per statement (the rule-9 two-release dance):
 #          … DROP COLUMN foo;  -- migration-compat:ok <reason>
 #      The reason is mandatory and must say why the PREVIOUS released binary
-#      is unaffected. Does NOT clear `dml` (see 3).
+#      is unaffected, and name the oldest release it holds for if that is
+#      not every older one. The lint checks only that a reason is present.
+#      Does NOT clear `dml` (see 3).
 #   2. scripts/ci/migration-compat.baseline — grandfathered violations keyed
 #      `<file>:<class>`. Shrink-only: stale entries FAIL, and growth needs a
 #      `Baseline-Growth:` trailer (scripts/ci/lint-baseline-growth.sh).
@@ -143,12 +153,13 @@ MATCH=(
   # POLICY, EXTENSION …), and switching a trigger off.
   '^[[:space:]]*DROP[[:space:]]+[A-Za-z]|(DISABLE|ENABLE)[[:space:]]+(REPLICA[[:space:]]+|ALWAYS[[:space:]]+)?(TRIGGER|RULE)'
   'OWNER[[:space:]]+TO'
-  # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
-  # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
-  # string, a `BEFORE TRUNCATE ON t` trigger). drop_chunks is a call, so it is
-  # matched wherever it is called: SELECT, PERFORM (a DO block) or FROM.
-  # flatten() joins each such statement onto its first line, so `UPDATE t` / `SET …` is one line.
-  '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+(ONLY[[:space:]]+)?[a-zA-Z0-9_."]+([[:space:]]+(AS[[:space:]]+)?[a-zA-Z0-9_"]+)?[[:space:]]+SET)|(^|[^a-zA-Z0-9_])drop_chunks[[:space:]]*\('
+  # Anchored to a statement start: line start, `;`, `(` (a data-modifying
+  # CTE) or BEGIN/THEN/ELSE/LOOP/AS (a DO block). That keeps it off prose
+  # ("TRUNCATE of audit_log" in a COMMENT ON string, a `BEFORE TRUNCATE ON t`
+  # trigger). drop_chunks is a call, so it is matched wherever it is called.
+  # Not seen: DML built as a string for a dynamic EXECUTE.
+  # flatten() joins a statement that opens a line, so `UPDATE t` / `SET …` is one line.
+  '(^|[;(]|[^a-zA-Z0-9_](BEGIN|THEN|ELSE|LOOP|AS))[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|MERGE[[:space:]]+INTO|UPDATE[[:space:]]+(ONLY[[:space:]]+)?[a-zA-Z0-9_."]+([[:space:]]+(AS[[:space:]]+)?[a-zA-Z0-9_"]+)?[[:space:]]+SET)|(^|[^a-zA-Z0-9_])drop_chunks[[:space:]]*\('
 )
 EXCLUDE=(
   ''
@@ -260,7 +271,20 @@ fn_body_lines() {
 # ones so line numbers hold (a statement with more clauses than lines drifts).
 flatten() {
   awk '
-    function strip(l,    c) { c = index(l, "--"); return c > 0 ? substr(l, 1, c - 1) : l }
+    # Quote-aware: a `--` inside a string or a same-line /* */ must not leave a
+    # held statement without its closing `;` and swallow the next one.
+    function strip(l,    i, ch, out, sq, inb) {
+      out = ""; sq = 0; inb = 0
+      for (i = 1; i <= length(l); i++) {
+        ch = substr(l, i, 1)
+        if (inb) { if (substr(l, i, 2) == "*/") { inb = 0; i++ }; continue }
+        if (ch == "\047") sq = !sq
+        if (!sq && substr(l, i, 2) == "--") break
+        if (!sq && substr(l, i, 2) == "/*") { inb = 1; i++; continue }
+        out = out ch
+      }
+      return out
+    }
     function feed(t,    i, ch) {
       for (i = 1; i <= length(t); i++) {
         ch = substr(t, i, 1)
