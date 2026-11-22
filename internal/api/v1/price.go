@@ -1859,7 +1859,7 @@ func (s *Server) tryFiatCrossRate(ctx context.Context, asset, quote canonical.As
 			break
 		}
 	}
-	if !foundAsset || rateAsset <= 0 {
+	if !foundAsset {
 		return PriceSnapshot{}, nil, false, nil
 	}
 	// rate_usd[USD] is implicitly 1; the snapshot needn't carry a USD entry.
@@ -1877,13 +1877,12 @@ func (s *Server) tryFiatCrossRate(ctx context.Context, asset, quote canonical.As
 	// Exact big.Rat, not float64 (ADR-0003); each float64 rate goes via its shortest round-trip decimal.
 	rateQuoteRat, okQ := new(big.Rat).SetString(strconv.FormatFloat(rateQuote, 'f', -1, 64))
 	rateAssetRat, okA := new(big.Rat).SetString(strconv.FormatFloat(rateAsset, 'f', -1, 64))
-	if !okQ || !okA || rateAssetRat.Sign() == 0 {
+	// A non-positive asset rate is refused here, not at the scan: no step between the two can serve.
+	if !okQ || !okA || rateAssetRat.Sign() <= 0 {
 		return PriceSnapshot{}, nil, false, nil
 	}
-	for _, c := range legs {
-		if err := s.liveRateWithheld(ctx, c, snap.PublishedAt); err != nil {
-			return PriceSnapshot{}, nil, false, err
-		}
+	if err := s.liveRatesWithheld(ctx, legs, snap.PublishedAt); err != nil {
+		return PriceSnapshot{}, nil, false, err
 	}
 	priceStr := formatCrossRate(new(big.Rat).Quo(rateQuoteRat, rateAssetRat))
 	return PriceSnapshot{

@@ -94,6 +94,16 @@ func (s *Server) fixingWithheld(ctx context.Context, ticker string, b timescale.
 	return s.fxRateWithheld(ctx, ticker, b.Source, from, to)
 }
 
+// liveRatesWithheld is [Server.liveRateWithheld] over every leg of a cross; the first covered leg withholds it.
+func (s *Server) liveRatesWithheld(ctx context.Context, legs []CurrencyEntry, publishedAt time.Time) error {
+	for _, c := range legs {
+		if err := s.liveRateWithheld(ctx, c, publishedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // liveRateWithheld is [Server.fxRateWithheld] for a forex snapshot entry at its own update time.
 func (s *Server) liveRateWithheld(ctx context.Context, c CurrencyEntry, publishedAt time.Time) error {
 	at := c.UpdatedAt
