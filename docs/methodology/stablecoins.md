@@ -45,9 +45,16 @@ is itself a floor, or `excluded` is non-empty.
 
 - Non-USD pegs (EURC) are not summed into the USD total; `by_peg` keeps them
   apart. Each `by_peg` row carries `assets_valued` and its own `lower_bound`,
-  true when one of its members is unvalued, a summed supply is a floor, or the
+  true when one of its members is unvalued, a supply is a floor, or the
   member list was truncated.
 - Yield-bearing wrappers (yUSDC) are listed with their own market price but
-  not summed, since their price is not meant to sit at the peg.
+  not summed into `total.supply_usd`, since their price is not meant to sit at
+  the peg. The `by_peg` subtotal does not apply that rule: it sums every
+  valued member of the peg, wrappers included, so `by_peg` USD can exceed
+  `total.supply_usd` by the wrapper's supply, and a wrapper's backing is then
+  counted in both it and the underlying. Treat `total` as the USD figure.
+- A `by_peg` row's `lower_bound` ignores `excluded` (USDT has no Stellar
+  issuer) and `not_summed`, so it can read false where `total.lower_bound` is
+  true for the same members. Only `total.lower_bound` carries those reasons.
 - The peg of each ticker is a table in `stablecoins.go`; a ticker missing from
   it is served with peg `unknown` and never summed.

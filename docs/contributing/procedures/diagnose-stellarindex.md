@@ -82,9 +82,13 @@ sudo -u postgres psql -d stellarindex -c "SELECT source, complete, coverage_pct,
   schema-evolution/gating path (ADR-0040), not a backfill problem.
 - `projection_ok=false` → per-ledger served≠lake (strict since
   CS-084): `detail` names the first mismatched ledger; catch-up is
-  `projector-replay -source <name> -from <ledger>` — NEVER a bespoke
-  backfill. Known benign class: oracle sources are aggregate-compared
-  (keying vintages, see reconciliation_catalogue.go).
+  `projector-replay -config PATH -source <name> -from <ledger> -write`
+  (without `-write` it is a dry run that exits 0) — NEVER a bespoke
+  backfill. There is no benign class: oracle sources reconcile strictly per
+  ledger like every other source (no source carries an aggregate waiver in
+  `reconciliation_catalogue.go`), so a red on `reflector-*`, `redstone` or
+  `chainlink-stellar` is a real hole to replay. `band` is the one expected
+  red until a catch-up fills `oracle_updates`.
 - Verdict simply STALE → the timer: `systemctl status
   compute-completeness.timer`; watermark-lag gauge (CS-090).
 
