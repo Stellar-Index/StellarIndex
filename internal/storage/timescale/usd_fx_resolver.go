@@ -120,6 +120,12 @@ type VWAPUSDFXResolverOptions struct {
 // Compile-time conformance check.
 var _ USDVolumeFXResolver = (*VWAPUSDFXResolver)(nil)
 
+// NewUSDVolumeFXResolver builds the resolver that stamps usd_volume; any surface claiming its tiers builds through this.
+// sacWrappers is the map the usd_volume quote spec consumes, so the exact and FX tiers recognise the same peg forms.
+func NewUSDVolumeFXResolver(store *Store, classicUSDPegs []string, sacWrappers map[string]string) (*VWAPUSDFXResolver, error) {
+	return NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{USDPegs: classicUSDPegs, PegSACWrappers: sacWrappers})
+}
+
 // NewVWAPUSDFXResolver constructs the resolver.
 func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSDFXResolver, error) {
 	if store == nil {
@@ -916,12 +922,7 @@ func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappe
 	}
 	store.SetUSDVolumeQuoteSpec(spec)
 
-	fxResolver, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
-		USDPegs: classicUSDPegs,
-		// Same map the quote spec above consumed, so tiers 1/2 and tiers
-		// 3/4 recognise the same peg forms. See [usdPegForms].
-		PegSACWrappers: sacWrappers,
-	})
+	fxResolver, err := NewUSDVolumeFXResolver(store, classicUSDPegs, sacWrappers)
 	if err != nil {
 		return fmt.Errorf("usd-volume fx resolver: %w", err)
 	}
