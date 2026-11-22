@@ -75,7 +75,7 @@ const registerBodyMaxBytes = 4 * 1024
 // ([accounterasure.AbandonedRegistrationRetention]).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if s.RegisterDisabled {
-		writeRegistrationUnavailable(w, r, obs.RegistrationDisabled, "registration is switched off on this deployment")
+		writeRegistrationUnavailable(w, r, obs.RegistrationDisabled, obs.RegistrationPoolAll, "registration is switched off on this deployment")
 		return
 	}
 	req, ok := s.parseAndValidateRegister(w, r)
@@ -112,7 +112,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated).Inc()
+	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated, obs.RegistrationPoolProofFree).Inc()
 	if s.Audit != nil {
 		// The row carries the caller's IP: it is what an operator selects on to revoke one wave's keys.
 		s.appendKeyAudit(r, platform.AuditEntry{
@@ -151,7 +151,7 @@ func (s *Server) registerBudgetOK(w http.ResponseWriter, r *http.Request) bool {
 	case errors.Is(err, auth.ErrSignupRateLimited):
 		// The budget is a clock-hour window, so it reopens at the top of the hour.
 		w.Header().Set("Retry-After", strconv.FormatInt(3600-time.Now().Unix()%3600, 10))
-		writeRegistrationUnavailable(w, r, obs.RegistrationBudgetExhausted,
+		writeRegistrationUnavailable(w, r, obs.RegistrationBudgetExhausted, obs.RegistrationPoolProofFree,
 			"registration is at its hourly capacity on this deployment; it reopens at the top of the hour")
 		return false
 	case errors.Is(err, auth.ErrThrottleUnavailable):
@@ -165,8 +165,8 @@ func (s *Server) registerBudgetOK(w http.ResponseWriter, r *http.Request) bool {
 
 // writeRegistrationUnavailable answers a registration the deployment refused for its own reasons (switched off, hourly
 // budget spent) and counts it: a 503, since nothing about the request was wrong.
-func writeRegistrationUnavailable(w http.ResponseWriter, r *http.Request, outcome, detail string) {
-	obs.RegistrationsTotal.WithLabelValues(outcome).Inc()
+func writeRegistrationUnavailable(w http.ResponseWriter, r *http.Request, outcome, pool, detail string) {
+	obs.RegistrationsTotal.WithLabelValues(outcome, pool).Inc()
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/registration-unavailable",
 		"Registration unavailable", http.StatusServiceUnavailable, detail)

@@ -562,10 +562,7 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
 	}
-	// Unrolled, as above: a loop tips this function over the gocognit ceiling.
-	RegistrationsTotal.WithLabelValues(RegistrationCreated)
-	RegistrationsTotal.WithLabelValues(RegistrationBudgetExhausted)
-	RegistrationsTotal.WithLabelValues(RegistrationDisabled)
+	seedRegistrations()
 	// The two mint routes that funnel through clampMintToCaller.
 	// Unrolled rather than looped: the loop tipped seedBoundedLabelSeries
 	// over the gocognit ceiling, and two literal routes read no worse.
@@ -2808,9 +2805,25 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 var RegistrationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_registrations_total",
-		Help: "Account-creating route outcomes (POST /v1/register, passkey sign-up, an email's first sign-in): created (an account was created), budget_exhausted (refused, the route's hourly cap is spent), disabled (refused, sign-up is switched off).",
+		Help: "Account-creating route outcomes (POST /v1/register, passkey sign-up, an email's first sign-in): created (an account was created), budget_exhausted (refused, the pool's hourly cap is spent), disabled (refused, sign-up is switched off). pool names the hourly counter: proof_free (/v1/register and passkey sign-up share one), email_proven (an email's first sign-in), or all (disabled applies to every route).",
 	},
-	[]string{"outcome"},
+	[]string{"outcome", "pool"},
+)
+
+// seedRegistrations pre-seeds every (outcome, pool) series at zero, so an alert reads 0 rather than absent.
+func seedRegistrations() {
+	for _, pool := range []string{RegistrationPoolProofFree, RegistrationPoolEmailProven} {
+		RegistrationsTotal.WithLabelValues(RegistrationCreated, pool)
+		RegistrationsTotal.WithLabelValues(RegistrationBudgetExhausted, pool)
+	}
+	RegistrationsTotal.WithLabelValues(RegistrationDisabled, RegistrationPoolAll)
+}
+
+// RegistrationsTotal pool label values: the two hourly sign-up counters, and "all" for an outcome that spans both.
+const (
+	RegistrationPoolProofFree   = "proof_free"
+	RegistrationPoolEmailProven = "email_proven"
+	RegistrationPoolAll         = "all"
 )
 
 // RegistrationsTotal outcome label values.

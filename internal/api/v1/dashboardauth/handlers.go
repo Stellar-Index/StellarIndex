@@ -697,7 +697,7 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		}
 		// Only after the email is proven, so the refusal tells nobody but its owner that it has no account.
 		// The proven mailbox is the per-account cost, so this draws on its own budget, not the one /v1/register can drain.
-		if !h.signupEnabled(w, r) || !h.signupBudgetOK(w, r, h.cfg.SignupBudget.EmailProven()) {
+		if !h.signupEnabled(w, r) || !h.signupBudgetOK(w, r, h.cfg.SignupBudget.EmailProven(), obs.RegistrationPoolEmailProven) {
 			return errSignupRefused
 		}
 		user, err = h.signupNewUser(r.Context(), email)
@@ -886,7 +886,7 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 		h.markUserlessSignupAccount(ctx, acct.ID, email)
 		return platform.User{}, fmt.Errorf("create user: %w", err)
 	}
-	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated).Inc()
+	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated, obs.RegistrationPoolEmailProven).Inc()
 	return user, nil
 }
 

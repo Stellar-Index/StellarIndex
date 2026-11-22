@@ -135,8 +135,13 @@ func TestRegistrationBudget_ProofFreeRoutesCannotDrainEmailSignUp(t *testing.T) 
 		return resp.StatusCode
 	}
 	created := func() float64 {
-		return testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated))
+		return testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated, obs.RegistrationPoolProofFree)) +
+			testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated, obs.RegistrationPoolEmailProven))
 	}
+	exhausted := func(pool string) float64 {
+		return testutil.ToFloat64(obs.RegistrationsTotal.WithLabelValues(obs.RegistrationBudgetExhausted, pool))
+	}
+	proofFreeExhaustedBefore, emailExhaustedBefore := exhausted(obs.RegistrationPoolProofFree), exhausted(obs.RegistrationPoolEmailProven)
 
 	before, createdBefore := rig.accountCount(), created()
 	if c := register(); c != http.StatusOK {
@@ -160,6 +165,13 @@ func TestRegistrationBudget_ProofFreeRoutesCannotDrainEmailSignUp(t *testing.T) 
 	}
 	if w := rig.signInByCode(t, "fourth@example.com"); w.Code != http.StatusServiceUnavailable {
 		t.Errorf("first code sign-in past the email budget: status = %d, want 503", w.Code)
+	}
+	// Each refusal names the counter that filled, so the alert shows which sign-up path is turned away.
+	if got := exhausted(obs.RegistrationPoolProofFree) - proofFreeExhaustedBefore; got != 2 {
+		t.Errorf("budget_exhausted{pool=proof_free} grew by %v, want 2 (register + passkey)", got)
+	}
+	if got := exhausted(obs.RegistrationPoolEmailProven) - emailExhaustedBefore; got != 1 {
+		t.Errorf("budget_exhausted{pool=email_proven} grew by %v, want 1", got)
 	}
 	if got := rig.accountCount() - before; got != 4 {
 		t.Errorf("%d account(s) created, want 4 (2 proof-free + 2 email-proven)", got)
