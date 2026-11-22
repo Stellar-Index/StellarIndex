@@ -169,6 +169,14 @@ tracked in the private inventory.
    has logged that Info line: an older binary reads only `vault_webhook_seal_key`. Replacing
    the key without step (1) makes every sealed key unreadable and their deliveries fail
    terminally (`no_secret`); restoring the old value makes them readable again.
+   **If `vault_webhook_seal_key` was exposed**, run the two deploys above at once, then treat
+   every customer signing key as leaked: re-sealing protects nothing already sealed under the
+   leaked secret for anyone holding a copy of the database (a backup, a dump, a replica), who
+   can open every key with it and forge signed deliveries. Every customer must call
+   rotate-secret on their webhook. Nothing tells them: in the same cycle, notify every account
+   in `SELECT DISTINCT account_id FROM customer_webhooks` through the incident-comms path
+   ([sev-playbook.md §5.3](sev-playbook.md)), and keep the rotation open until each has
+   rotated or been told.
    **Operator-tier API keys** live in the key store, not the vault, and unlock every
    `/v1/admin/*` route (suspend accounts, mint keys). List the live ones:
    `SELECT id, account_id, name, created_at, last_used_at FROM api_keys WHERE tier = 'operator' AND revoked_at IS NULL;`.
