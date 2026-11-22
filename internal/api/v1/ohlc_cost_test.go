@@ -36,18 +36,16 @@ func (r *readCountingHistory) OHLCSeries(ctx context.Context, p canonical.Pair, 
 	return r.stubHistoryReader.OHLCSeries(ctx, p, interval, from, to, limit)
 }
 
-// TestFiatRawReads_ChargeEveryConstituentRead: a fiat-quoted /v1/vwap, /v1/twap or /v1/ohlc (point and series) reads every
-// fiat constituent, so it is charged at least one token per book read; and the charge lands before the read, so a request
-// the remaining budget cannot cover reads nothing. A new constituent, peg or route that reads more than it pays fails here.
+// TestFiatRawReads_ChargeEveryConstituentRead: a fiat-quoted raw-trade read (/v1/vwap, /v1/twap, point /v1/ohlc) scans
+// trades once per fiat constituent, so it is charged at least one token per book read; and the charge lands before the
+// read, so a request the remaining budget cannot cover reads nothing. A series read is charged for the rows it aggregates
+// across every book instead (ohlc_series_cost_test.go).
 func TestFiatRawReads_ChargeEveryConstituentRead(t *testing.T) {
 	const budget = 30
-	from := time.Now().UTC().Truncate(time.Hour).Add(-48 * time.Hour).Format(time.RFC3339)
 	for _, path := range []string{
 		"/v1/vwap?base=native&quote=fiat:USD",
 		"/v1/twap?base=native&quote=fiat:USD",
 		"/v1/ohlc?base=native&quote=fiat:USD",
-		"/v1/ohlc?base=native&quote=fiat:USD&interval=1h",
-		"/v1/ohlc?base=native&quote=fiat:USD&interval=5m&from=" + from,
 	} {
 		t.Run(path, func(t *testing.T) {
 			mr := miniredis.RunT(t)

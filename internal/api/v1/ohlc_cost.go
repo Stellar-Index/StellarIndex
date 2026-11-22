@@ -21,13 +21,13 @@ func (s *Server) rawReadFanout(pair canonical.Pair) int {
 	return max(1, len(established)+len(heldBack))
 }
 
-// tradeReadCost is [tradeScanCost] per book the raw-trade fetch reads.
+// tradeReadCost is [tradeScanCost] per book the raw-trade fetch reads: each book read is its own trade scan.
 func (s *Server) tradeReadCost(pair canonical.Pair, from, to time.Time) int {
 	return saturatingCost(int64(tradeScanCost(from, to)), s.rawReadFanout(pair))
 }
 
-// ohlcSeriesCost prices a /v1/ohlc series by the SOURCE rows its window aggregates, per book: the store groups all of
-// [from, to) before its LIMIT, so `limit` bounds the answer, not the work.
+// ohlcSeriesCost prices a /v1/ohlc series by the SOURCE rows it aggregates across every book, one token per
+// [chartPointsPerToken]: the store groups all of [from, to) before its LIMIT, so `limit` bounds the answer, not the work.
 func (s *Server) ohlcSeriesCost(pair canonical.Pair, interval ohlcInterval, from, to time.Time) int {
 	route, ok := timescale.OHLCRouteFor(string(interval))
 	grain := route.Native
@@ -36,10 +36,10 @@ func (s *Server) ohlcSeriesCost(pair canonical.Pair, interval ohlcInterval, from
 	}
 	width := grain.BucketDuration()
 	if !ok || width <= 0 || !to.After(from) {
-		return s.rawReadFanout(pair)
+		return 1
 	}
-	rows := int64((to.Sub(from) + width - 1) / width)
-	return saturatingCost(1+rows/chartPointsPerToken, s.rawReadFanout(pair))
+	rows := saturatingCost(int64((to.Sub(from)+width-1)/width), s.rawReadFanout(pair))
+	return max(1, (rows+chartPointsPerToken-1)/chartPointsPerToken)
 }
 
 func saturatingCost(perRead int64, reads int) int {
