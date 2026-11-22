@@ -927,13 +927,12 @@ func (s *Server) buildAssetListPage(
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
+	// valReads collects the supply, peg and valuation reads' verdicts; it is folded into the flags below.
+	valCtx, valReads := withReadReport(r.Context())
+	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// After the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	pegCtx, pegReads := withReadReport(r.Context())
-	s.fillDeclaredPegPricesInListing(pegCtx, out)
-	unmeasured = unmeasured || pegReads.unread.Load()
-	stale = stale || pegReads.stale.Load()
+	s.fillDeclaredPegPricesInListing(valCtx, out)
 	// One batch query (no N+1) for the page's issuer labels. Must run before the listing-valuation
 	// arm: that arm refuses scam-tagged issuers using a field only this call populates, so run
 	// first it would publish a dollar figure under a nulled price_usd. Every price producer runs
@@ -943,7 +942,8 @@ func (s *Server) buildAssetListPage(
 	// Last among the valuation producers: it reads the outcome of all of them (cap, gated price,
 	// dust flag, peg basis, scam tags) to decide whether there is a hole to fill. See
 	// asset_listing_valuation.go.
-	s.applyListingValuations(r.Context(), out)
+	s.applyListingValuations(valCtx, out)
+	unmeasured, stale = unmeasured || valReads.unread.Load(), stale || valReads.stale.Load()
 	s.fillImagesFromSep1(r.Context(), out)
 	suppressFlaggedIssuerIdentities(out)
 	// Last, after every price producer and both gates: the sparkline attaches only to rows that
@@ -2295,13 +2295,12 @@ func (s *Server) fetchClassicUnifiedRows(
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
+	// valReads collects the supply, peg and valuation reads' verdicts; it is folded into the flags below.
+	valCtx, valReads := withReadReport(r.Context())
+	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	pegCtx, pegReads := withReadReport(r.Context())
-	s.fillDeclaredPegPricesInListing(pegCtx, out)
-	unmeasured = unmeasured || pegReads.unread.Load()
-	cacheStale = cacheStale || pegReads.stale.Load()
+	s.fillDeclaredPegPricesInListing(valCtx, out)
 	// Curated issuer label (account_directory), one batch query per page. Scam-class tags withhold
 	// the row's price and market cap (suppressScamIssuerPricing).
 	//
@@ -2313,7 +2312,8 @@ func (s *Server) fetchClassicUnifiedRows(
 	// LAST among the valuation producers: it reads the outcome of every one above it (served cap,
 	// gated price, dust flag, peg basis, scam tags) to decide whether a hole needs filling. See
 	// asset_listing_valuation.go.
-	s.applyListingValuations(r.Context(), out)
+	s.applyListingValuations(valCtx, out)
+	unmeasured, cacheStale = unmeasured || valReads.unread.Load(), cacheStale || valReads.stale.Load()
 	s.fillImagesFromSep1(r.Context(), out)
 	suppressFlaggedIssuerIdentities(out)
 	s.attachSparklinesIfRequested(r, out)

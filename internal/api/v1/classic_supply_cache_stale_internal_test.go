@@ -5,8 +5,13 @@ package v1
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // A broad map served past its TTL because refresh keeps failing is a stale read, and the listing must say so.
@@ -47,6 +52,40 @@ func TestFillMarketCapsFromSupply_ExpiredBroadMapFlagsStale(t *testing.T) {
 	s.fillMarketCapsFromSupply(ctx, cetesRow(), map[string]int{})
 	if !rep.stale.Load() {
 		t.Error("market caps built from an expired broad supply map left the response unflagged")
+	}
+}
+
+// The production listing caller, not a test-built report, must carry an expired broad map into the page's flags.
+func TestAssetListPage_ExpiredBroadMapIsStale(t *testing.T) {
+	for name, tc := range map[string]struct {
+		age   time.Duration
+		stale bool
+	}{
+		"fresh":   {time.Minute, false},
+		"expired": {classicSupplyTTL + time.Minute, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := lakeSupplyServer(t, "")
+			s.Explorer = failingClassicExplorer{}
+			s.classicSupplyCache = map[string]string{cetesAsset: "400000000"}
+			s.classicSupplyAt = time.Now().Add(-tc.age)
+			s.classicSupplyAttemptAt = time.Now()
+			price := "1.00"
+			s.AssetsReader = &classicPageReader{rows: []timescale.AssetRow{{
+				AssetID: cetesAsset, Code: "CETES", IssuerGStrkey: strings.SplitN(cetesAsset, "-", 2)[1], PriceUSD: &price,
+			}}}
+			req := httptest.NewRequest(http.MethodGet, "/v1/assets?limit=10", nil)
+			env, rows, err := s.buildAssetListPage(req, assetListFilters{}, "", 10, timescale.AssetsOrderVolume24hUSDDesc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != "400000000" {
+				t.Fatalf("instrument: want CETES valued on the cached map, got %+v", rows)
+			}
+			if env.Flags.Stale != tc.stale || assetListPageCacheable(env, rows) == tc.stale {
+				t.Errorf("stale = %v, cacheable = %v; want stale %v", env.Flags.Stale, assetListPageCacheable(env, rows), tc.stale)
+			}
+		})
 	}
 }
 
