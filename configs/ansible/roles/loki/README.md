@@ -148,9 +148,9 @@ Drops noise from a few high-volume low-signal units
 
 | Scenario | Consequence | Recovery |
 |---|---|---|
-| Loki host down | Promtail retries the pending batch until Loki accepts it and stops reading the journal meanwhile, so the backlog waits in each host's journal; existing logs in S3 still queryable from a backup query host | Restart Loki; Promtails resume from their journal position. Logs older than the journal's own retention when Loki returns are lost |
+| Loki host down | Promtail retries the pending batch until Loki accepts it and stops reading the journal meanwhile, so the backlog waits in each host's journal; existing logs in S3 still queryable from a backup query host | Restart Loki; Promtails resume from their journal position. Logs older than the journal's own retention when Loki returns are lost, and a Promtail restart during the outage drops its cursor and resumes `promtail_journal_max_age` (default 168h, Loki's reject window) back |
 | MinIO down | New chunks fail to write; Loki buffers up to its limit then drops with `429 Too Many Requests` | Restore MinIO; Loki retries from in-memory chunks |
-| Promtail position file lost | Promtail re-ships from `journal_max_age` (default 12h) — Loki rejects duplicates as out-of-order | Lossy but bounded; not corrupting |
+| Promtail position file lost | Promtail re-ships from `promtail_journal_max_age` (default 168h) — Loki rejects duplicates as out-of-order | Lossy but bounded; not corrupting |
 | Time skew across hosts | Loki rejects samples with timestamps too-far-in-future (`reject_old_samples_max_age` default 7d) | Preflight asserts time sync; check `chronyd` or `systemd-timesyncd` |
 
 ## Future: scaling to HA

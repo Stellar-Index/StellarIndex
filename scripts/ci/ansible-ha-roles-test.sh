@@ -77,6 +77,21 @@ cfg = code("loki/templates/loki-config.yaml.j2")
 check("shared_store" not in cfg and "boltdb" not in cfg, "loki config has no 2.x shared_store / boltdb keys")
 check("store: tsdb" in cfg and "schema: v13" in cfg and "tsdb_shipper:" in cfg, "loki config uses tsdb schema v13")
 check("delete_request_store: s3" in cfg, "loki compactor names a delete_request_store")
+# A promtail restart drops a saved journal cursor older than max_age, so a
+# max_age shorter than Loki's reject window loses a backlog Loki would accept.
+def hours(v):
+    m = re.fullmatch(r"(\d+)([hd])", str(v).strip())
+    return int(m.group(1)) * (24 if m.group(2) == "d" else 1) if m else -1
+reject = re.search(r"reject_old_samples_max_age:\s*(\S+)", cfg)
+check(reject is not None and hours(yaml.safe_load(text("loki/defaults/main.yml"))["promtail_journal_max_age"]) >= hours(reject.group(1)) > 0,
+      "promtail journal max_age is at least Loki's reject_old_samples_max_age")
+# promtail ships only the journal: an HA daemon that logs to a file never reaches Loki.
+pt = code("loki/templates/promtail-config.yaml.j2")
+if "__path__" not in pt:
+    for f in ("redis-sentinel/templates/redis.conf.j2", "redis-sentinel/templates/sentinel.conf.j2"):
+        check(re.search(r'^logfile ""\s*$', text(f), re.M) is not None, f"{f} logs to the journal (logfile \"\")")
+    check(not re.search(r"^log:\s*\n(?:[ \t]+.*\n)*?[ \t]+dir:", text("patroni/templates/patroni.yml.j2"), re.M),
+          "patroni.yml sets no log.dir, so Patroni logs to the journal")
 check(any("uri" in t and "/ready" in t["uri"]["url"] for t in tasks("loki/tasks/server-04-systemd.yml")),
       "loki start is followed by a /ready wait")
 

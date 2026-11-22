@@ -51,11 +51,3 @@
     owner: postgres
     group: postgres
     mode: '0750'
-
-- name: ensure Patroni log directory
-  file:
-    path: /var/log/patroni
-    state: directory
-    owner: postgres
-    group: postgres
-    mode: '0755'
