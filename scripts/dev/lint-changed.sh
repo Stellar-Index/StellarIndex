@@ -54,6 +54,8 @@
 #   deploy/systemd/, role    lint-systemd-hardening + its self-test (whole
 #   unit templates, API env, tree, instant): the API's own uid, env file
 #   defaults/main.yml        and /proc isolation.
+#   both env templates, the  ansible-api-env-test (real render, ~5 s): the
+#   toml, defaults/main.yml  API's env file mirrors the shared one.
 #   scripts/ci/*.baseline    lint-baseline-growth over the commit range. It
 #                            reads commit trailers, so it has nothing to say
 #                            about STAGED edits and is deferred there.
@@ -180,7 +182,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); op_corpus=0; budget=0; opsdoc=0; nummask=0
+rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); apienv_files=(); op_corpus=0; budget=0; opsdoc=0; nummask=0
 present=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
@@ -263,6 +265,14 @@ for f in "${changed[@]}"; do
         configs/ansible/roles/archival-node/defaults/main.yml|*/configs/ansible/roles/archival-node/defaults/main.yml| \
         scripts/ci/lint-systemd-hardening.sh|*/scripts/ci/lint-systemd-hardening.sh)
             sysd_files+=("$f"); hit=1 ;;
+    esac
+    # What the API's env file must mirror: both env templates, the toml and the role defaults.
+    case "$f" in
+        configs/ansible/roles/archival-node/templates/stellarindex-api.env.j2|*/configs/ansible/roles/archival-node/templates/stellarindex-api.env.j2| \
+        configs/ansible/roles/archival-node/templates/stellarindex.env.j2|*/configs/ansible/roles/archival-node/templates/stellarindex.env.j2| \
+        configs/ansible/roles/archival-node/templates/stellarindex.toml.j2|*/configs/ansible/roles/archival-node/templates/stellarindex.toml.j2| \
+        configs/ansible/roles/archival-node/defaults/main.yml|*/configs/ansible/roles/archival-node/defaults/main.yml)
+            apienv_files+=("$f"); hit=1 ;;
     esac
     case "$f" in
         *.go|*.sql|*.sh|*.j2|*.yml|*.yaml|*.py)
@@ -612,6 +622,11 @@ fi
 if [ "${#sysd_files[@]}" -gt 0 ]; then
     add_step "lint-systemd-hardening" "whole tree; ${#sysd_files[@]} unit/env/default file(s) changed" "$ci_dir/lint-systemd-hardening.sh"
     add_step "lint-systemd-hardening-test" "" bash "$ci_dir/lint-systemd-hardening-test.sh"
+fi
+
+# 8d. The API's env file against the shared one and the toml (a real ansible render, ~5 s).
+if [ "${#apienv_files[@]}" -gt 0 ]; then
+    add_step "ansible-api-env-test" "${#apienv_files[@]} env/toml/defaults file(s) changed" bash "$ci_dir/ansible-api-env-test.sh"
 fi
 
 # 9. A changed self-test is run. Last: these are the only steps whose cost
