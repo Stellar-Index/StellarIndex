@@ -3690,8 +3690,8 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 			return
 		}
 		// ListAssetsExt, not GetAssetByAssetID: only the listing query computes the windowed
-		// change columns. Filter by issuer, not Q: Q substring-matches column values, so a full
-		// asset id matches nothing.
+		// change columns. Filter by (code, issuer), not Q: Q substring-matches column values, so a
+		// full asset id matches nothing.
 		twinRow, twinUnread := s.lookupCatalogueTwin(statsCtx, entry.AssetID)
 		if twinUnread {
 			anyUnmeasured.Store(true)
