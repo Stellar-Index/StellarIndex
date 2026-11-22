@@ -173,9 +173,10 @@ subcommands (deleted in ADR-0032 Phase 5; NEVER add one).
 a projected source from the lake through the same decoders and the
 same generation-guarded upserts.
 
-- `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>`
+- `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write`
   rewinds the LIVE projector's cursor and lets its normal cadence walk
-  forward (other flags: `-refresh-caggs -wait -wait-timeout
+  forward. Without `-write` it is a dry run that prints the plan and exits 0
+  having rewound nothing (other flags: `-refresh-caggs -wait -wait-timeout
   -refresh-only -refresh-to`; there is no `-to`). It writes generation 0,
   so it cannot correct a row a re-derive already stamped higher. Use it
   for short rewinds over gen-0 rows: an outage, a missing range.
@@ -228,7 +229,7 @@ set.
 
 | The domain | The replay command |
 |---|---|
-| **Projected**, rewind ≲ 1M ledgers over gen-0 rows | `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>` |
+| **Projected**, rewind ≲ 1M ledgers over gen-0 rows | `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write` |
 | **Projected**, bulk (≳ 1M ledgers) or correcting stored rows | `stellarindex-ops projected-rebuild -config PATH -source <name> -from <l> [-to <l>] -write`. For a source that writes trades or oracle rows the run then refreshes the trade and oracle aggregates over the range, after a partial or interrupted run too; a failed refresh exits non-zero and prints the `trades-cagg-refresh` command to run, and with `-refresh-caggs=false` it prints that command as owed |
 | **Non-projected** lake re-derive (`sdex`, `band` / `soroswap_router` contract calls) | `stellarindex-ops ch-rebuild -config PATH -from <l> -to <l> -write` with the pass flag `-sdex` / `-contract-calls`. The run then refreshes the trade and oracle aggregates over the range; with `-refresh-caggs=false` it prints the refresh as owed |
 | `sep41` lake re-derive (`ch-rebuild -sep41 -write`) | `sep41_*` is PROJECTED, so this pass is a second writer, which is why `-write` refuses a range the live projector is still inside. Prefer `projector-replay` unless you need the lake re-derive specifically. |

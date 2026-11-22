@@ -629,7 +629,7 @@ Counter, labels `sink` (`persist_events`) and `kind` (`trade` |
 Rows a sink's shutdown drain could not land in budget; the Postgres twin of `stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}`. The cursor is upserted first, so these are gaps it never revisits.
 
 - `sink="persist_events"`: the only emitter today.
-- `kind="trade"`: per row; recover with `stellarindex-ops ch-rebuild -sdex -sdex-gaps`.
+- `kind="trade"`: per row; recover with `stellarindex-ops ch-rebuild -sdex -sdex-gaps -write`.
 - `kind="event"`: non-trade writes; no ledger is carried, so use the source's gap detector.
 
 Pre-seeded at zero; it should be 0 across clean deploys. On-chain rows are re-walked after the exit rewinds the cursor; the journal says which. A scrape can miss it; the journal ERROR line is authoritative. Alert `stellarindex_ingestion_sink_undrained_rows`.
@@ -1538,7 +1538,7 @@ Counter, no labels. **Drives a severity:page rule.**
 
 Freezes that exhausted the extension ladder. An escalated freeze does NOT auto-unfreeze; `/v1/price` stays pinned until a human acts. One increment per escalation.
 
-Force-unfreeze with `stellarindex-ops freeze-unfreeze -asset A -quote Q -reason "..."`; it counts under `stellarindex_anomaly_freeze_released_total{mode="operator"}`.
+Force-unfreeze with `stellarindex-ops freeze-unfreeze -asset A -quote Q -reason "..." -write`; it counts under `stellarindex_anomaly_freeze_released_total{mode="operator"}`.
 
 **Do not `redis-cli DEL` the marker.** The durable ladder is a second authority; the aggregator rehydrates the marker on its next tick.
 

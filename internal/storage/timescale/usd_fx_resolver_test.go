@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -517,6 +518,20 @@ var (
 		aquaSAC: "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
 	}
 )
+
+// TestNewUSDVolumeFXResolver_QuotesInThePegsSACForm: the usd_volume resolver (and DEX TVL, built the same way) matches
+// a market quoted in a declared peg's SAC, and only that wrapper.
+func TestNewUSDVolumeFXResolver_QuotesInThePegsSACForm(t *testing.T) {
+	t.Parallel()
+	store, _ := newScriptedStore(t)
+	r, err := NewUSDVolumeFXResolver(store, []string{usdcClassicPeg}, pegSACWrappersFixture)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeFXResolver: %v", err)
+	}
+	if !slices.Contains(r.pegForms, usdcSAC) || slices.Contains(r.pegForms, aquaSAC) {
+		t.Fatalf("pegForms = %v, want the USDC SAC and not the AQUA one", r.pegForms)
+	}
+}
 
 // TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms is the alias regression: XLM's USD markets
 // are split across native, crypto:XLM and the SAC, so a single-spelling predicate leaves usd_volume NULL. The

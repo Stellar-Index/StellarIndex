@@ -38,6 +38,7 @@ Reconstruct pre-P23 classic movements from the ClickHouse lake, never from a Min
 - The archive is on the order of 10 to 11 billion rows; serve-all versus a recent window is deferred until Phase 1 measures row bytes.
 - Phase 0 is a multi-day heavy job on the one-at-a-time schedule.
 - The P23 boundary is a permanent, visible provenance line in the data.
+- Status note: D4's reconcile of derived movement sums against `ledger_entry_changes` balance deltas has not shipped. The only value check is `classic-movements-backfill -verify`, which recounts rows per kind against the same run's decode counts (`internal/ops/chops/classic_movements_backfill.go`), so it catches a dropped or duplicated row but not a wrong amount. The Phase 4 kinds (`account_merge`, `liquidity_pool_deposit`, `liquidity_pool_withdraw`) are produced without the reconcile that D4 requires for them.
 
 ## Evidence
 

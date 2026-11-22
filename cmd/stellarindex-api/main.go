@@ -795,9 +795,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Verified: verifiedCurrencies,
 		Logger:   logger.With("component", "dex-tvl"),
 	}
-	if fx, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
-		USDPegs: cfg.Trades.USDPeggedClassicAssets,
-	}); err != nil {
+	if fx, err := timescale.NewUSDVolumeFXResolver(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers); err != nil {
 		logger.Warn("dex tvl usd resolver unavailable; tvl legs will be unpriced", "err", err)
 	} else {
 		dexTVLSources.Pricer = fx
