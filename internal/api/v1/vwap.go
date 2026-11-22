@@ -108,6 +108,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// filter drops still leaves the survivors lifted against its guessed scale.
 	volumeDecimals := commonAmountScaleDecimals(window)
 	sources := tradeSources(window.Trades())
+	window, ok = s.writeExclusionCleanWindow(w, r, base, quote, window)
+	if !ok {
+		return
+	}
 
 	pre := window.Len()
 	fetched := window.Trades()

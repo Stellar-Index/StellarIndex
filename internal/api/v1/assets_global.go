@@ -40,8 +40,11 @@ type GlobalAssetView struct {
 	// and can be days old over a weekend. It is null only under price_authority onchain_listing.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
-	PriceSources   []string                 `json:"price_sources,omitempty"`
-	PriceAsOf      *WireTime                `json:"price_as_of,omitempty"`
+	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded) or could not
+	// judge (unattributed, with flags.stale).
+	PriceWithheldReason PriceWithheldReason `json:"price_withheld_reason,omitempty"`
+	PriceSources        []string            `json:"price_sources,omitempty"`
+	PriceAsOf           *WireTime           `json:"price_as_of,omitempty"`
 	// PriceCredit names the vendor to credit when PriceSources is one licensed off-chain feed.
 	PriceCredit string `json:"price_credit,omitempty"`
 
@@ -137,6 +140,16 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 
 	res, err := aggregate.ComputeGlobalPrice(ctx, base, quote, s.globalPrice, opts)
 	if err != nil {
+		var held *aggregate.TierWithheldError
+		if errors.As(err, &held) {
+			// Refused, not absent: the reason blocks the on-chain fallback, and an unread set is a transient body.
+			view.PriceWithheldReason = PriceWithheldSourceExcluded
+			if held.Unread {
+				view.PriceWithheldReason = PriceWithheldUnattributed
+				reportUnreadRead(ctx)
+			}
+			return view
+		}
 		if errors.Is(err, aggregate.ErrNoPrice) {
 			return view // expected miss; leave price fields nil for the on-chain fallback
 		}
@@ -173,7 +186,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 // on-chain listing price of the catalogue entry's Stellar twin. Authority is AuthorityOnChainListing, not vwap_native (no trade-count floor,
 // no freshness ceiling), so price_sources carries "stellar_onchain" and price_as_of stays nil. No-op if a price is set.
 func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
-	if view.PriceUSD != nil || s.AssetsReader == nil {
+	if view.PriceUSD != nil || view.PriceWithheldReason != "" || s.AssetsReader == nil {
 		return view
 	}
 	se := vc.StellarEntry()
@@ -231,6 +244,22 @@ func newDecimalsCorrectedGlobalReader(r aggregate.GlobalPriceReader, decimals *N
 		return nil
 	}
 	return decimalsCorrectedGlobalReader{GlobalPriceReader: r, decimals: decimals}
+}
+
+// The embedded interface hides the inner reader's optional methods, so each one the aggregate package type-asserts is
+// forwarded explicitly.
+var _ aggregate.ExclusionTrimmingReader = decimalsCorrectedGlobalReader{}
+
+// LatestAggregatorPricesTrimmed forwards the inner reader's trimmed rows (aggregator rows are whole-unit, so neither set needs
+// the LatestVWAP correction); an inner reader without it yields its untrimmed rows and nothing excluded.
+func (g decimalsCorrectedGlobalReader) LatestAggregatorPricesTrimmed(
+	ctx context.Context, base, quote canonical.Asset, sources []string,
+) (kept, excluded []canonical.OracleUpdate, err error) {
+	if tr, ok := g.GlobalPriceReader.(aggregate.ExclusionTrimmingReader); ok {
+		return tr.LatestAggregatorPricesTrimmed(ctx, base, quote, sources)
+	}
+	kept, err = g.LatestAggregatorPrices(ctx, base, quote, sources)
+	return kept, nil, err
 }
 
 // LatestVWAP returns the inner tier-1 VWAP decimals-corrected; a flagged pair whose ratio cannot be parsed reads as a miss rather than serving raw.

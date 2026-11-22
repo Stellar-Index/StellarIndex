@@ -136,8 +136,8 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// Which alias combinations the window merges, and which it holds back
 	// until every other read has missed, is [tipMergePairs].
 	merge, last := tipMergePairs(asset, quote)
-	if snap, sources, ok := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, merge); ok {
-		return snap, sources, nil
+	if snap, sources, ok, err := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, merge); ok || err != nil {
+		return snap, sources, err
 	}
 	snap, sources, ok, err := s.tipFallback(ctx, asset, quote)
 	if err != nil {
@@ -153,8 +153,8 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// Last of all: the SAC-form combinations the caller did not name (for a wrapped classic, its
 	// Soroban SAC/SAC pool). Every established read has missed, so the alternative is no price;
 	// this is the SAC-last shape of canonical.AssetAliases applied to the one walk that merges.
-	if snap, sources, ok = s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); ok {
-		return snap, sources, nil
+	if snap, sources, ok, err = s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); ok || err != nil {
+		return snap, sources, err
 	}
 	return PriceSnapshot{}, nil, ErrPriceNotFound
 }
@@ -189,6 +189,9 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 		}
 		return cacheSnap, cacheSources, true, nil
 	}
+	if errors.Is(cacheErr, ErrPriceWithheld) {
+		return PriceSnapshot{}, nil, false, cacheErr
+	}
 	if unread != nil {
 		cacheErr = unread
 	}
@@ -205,7 +208,11 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	}
 	// Fiat-vs-fiat cross-rate via the forex snapshot (see tryFiatCrossRate); no on-chain pair
 	// carries fiat-vs-fiat trades.
-	if fxSnap, fxSources, ok := s.tryFiatCrossRate(asset, quote); ok {
+	fxSnap, fxSources, ok, err := s.tryFiatCrossRate(ctx, asset, quote)
+	if err != nil {
+		return PriceSnapshot{}, nil, false, err
+	}
+	if ok {
 		return fxSnap, fxSources, true, nil
 	}
 	// USD-anchored cross for a non-fiat asset in a fiat with no market (ADR-0051, the
@@ -295,25 +302,25 @@ func parseTipWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
 
 // tipWindowEscalating runs the window VWAP at the caller's window and, when empty, once more at the 30s SLA bound; window_seconds reports
 // the window used.
-func (s *Server) tipWindowEscalating(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
+func (s *Server) tipWindowEscalating(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool, error) {
 	if len(pairs) == 0 {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
-	if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, windowSeconds, pairs); ok {
-		return snap, sources, true
+	if snap, sources, ok, err := s.tipWindowVWAP(ctx, asset, quote, windowSeconds, pairs); ok || err != nil {
+		return snap, sources, ok, err
 	}
 	if windowSeconds < tipEscalationWindowSeconds {
 		return s.tipWindowVWAP(ctx, asset, quote, tipEscalationWindowSeconds, pairs)
 	}
-	return PriceSnapshot{}, nil, false
+	return PriceSnapshot{}, nil, false, nil
 }
 
 // tipWindowVWAP runs the rolling-window VWAP and returns ok=false when the window is empty or VWAP failed. Errors are swallowed
 // on purpose: the tip contract guarantees a response if the pair has any observation, so a transient hypertable error must not
-// 5xx while the LatestPrice fallback is healthy.
-func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
+// 5xx while the LatestPrice fallback is healthy. The one error returned is a withheld verdict, which no fallback may override.
+func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool, error) {
 	if s.History == nil || len(pairs) == 0 {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 	now := time.Now().UTC()
 	from := now.Add(-time.Duration(windowSeconds) * time.Second)
@@ -332,22 +339,25 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 					"err", err, "asset", pair.Base.String(), "quote", pair.Quote.String(),
 					"window_seconds", windowSeconds)
 			}
-			return PriceSnapshot{}, nil, false
+			return PriceSnapshot{}, nil, false, nil
 		}
 		trades = append(trades, tr...)
 	}
+	trades, err := s.exclusionCleanTrades(ctx, asset, quote, trades)
+	if err != nil {
+		return PriceSnapshot{}, nil, false, err
+	}
 	if len(trades) == 0 {
-		return PriceSnapshot{}, nil, false
+		return PriceSnapshot{}, nil, false, nil
 	}
 
 	// Scale-normalize before VWAP: the merge mixes on-chain (7dp) and CEX (8dp) venues, so a raw
 	// Σquote/Σbase mean would weight each trade by its smallest-unit magnitude and over-weight the
 	// finer-scaled venue ~10x per decimal. Lift every trade to the common scale first.
-	price, err := aggregate.VWAP(aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor))
-	if err != nil {
-		// All-zero-volume input. The fallback path will produce a
-		// usable response.
-		return PriceSnapshot{}, nil, false
+	price, vwapErr := aggregate.VWAP(aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor))
+	if vwapErr != nil {
+		// All-zero-volume input is a miss, not a verdict: the fallback path will produce a usable response.
+		return PriceSnapshot{}, nil, false, nil //nolint:nilerr // a miss, see above
 	}
 
 	// Forward-normalize dex-nonstandard decimals: the tip and its stream (which shares this
@@ -365,7 +375,7 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		PriceType:     "vwap",
 		ObservedAt:    WireTime(now),
 		WindowSeconds: windowSeconds,
-	}, sources, true
+	}, sources, true, nil
 }
 
 // tipMergePairs splits the alias-pair combinations into those the tip window MERGES and those read LAST, after every other read

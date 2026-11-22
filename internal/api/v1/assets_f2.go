@@ -678,7 +678,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	if errors.Is(err, ErrPriceWithheld) {
 		// Withheld beats every fallback, as on /v1/price: the proxy below
 		// would re-serve the refused market through a side door.
-		return usdPriceLookup{withheld: priceWithheldReason(err)}
+		return usdPriceLookup{withheld: priceWithheldReason(err), unread: priceWithheldUnread(err)}
 	}
 	if err == nil && snap.Price != "" {
 		// readPriceWithAliases returns the RAW asset/fiat:USD ratio. This is the chokepoint for all

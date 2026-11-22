@@ -1609,8 +1609,10 @@ Subcommands:
                           audit_log row is written before the table
                           changes; "source.exclude.recorded" links
                           the create to the row's id:N. Dry-run
-                          unless -write. Served prices do not read
-                          the table yet.
+                          unless -write. What an exclusion
+                          withholds is printed by the command and
+                          documented in docs/architecture/
+                          oracle-manipulation-defense.md.
                           Example:
                             stellarindex-ops source-exclude \
                               -config /etc/stellarindex.toml \
