@@ -732,3 +732,26 @@ groups:
             `timed_out` and `read_errors`, and
             stellarindex_aggregator_baseline_refresh_total{outcome="read_error"}.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_baseline_refresh_stale
+
+      # The MEV worker runs every 5 min; failed runs outnumbering ok ones over
+      # an hour means /v1/mev is serving a frozen event set. All three outcomes
+      # are pre-seeded at 0, so an all-failing hour still has an ok series.
+      - alert: stellarindex_mev_detect_failing
+        expr: |
+          sum by (job) (increase(stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome=~"scan_error|write_error"}[1h]))
+            > sum by (job) (increase(stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="ok"}[1h]))
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_mev_detect_failing
+          summary: "MEV detection runs are mostly failing — /v1/mev is going stale"
+          description: |
+            Over the last hour, MEV detection runs ending in scan_error or
+            write_error outnumber ok runs, held for 30 minutes. No new
+            arbitrage, wash-trade, cascade or sandwich events are being
+            written, so /v1/mev serves the last good set. Look at the
+            aggregator's mev component logs and
+            stellarindex_mev_detect_runs_total by outcome.

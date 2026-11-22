@@ -354,6 +354,23 @@ journalctl -u stellarindex-aggregator --since "-4h" | grep 'baseline refresh com
 1. Clear the blocking lock or Postgres fault; the next hourly pass refreshes every pair.
 2. Verify `stellarindex_aggregator_baseline_refresh_last_success_unix` advances within 1 h.
 
+## stellarindex_mev_detect_failing
+
+P3, `for: 30m`. Expr: `sum by (job) (increase(stellarindex_mev_detect_runs_total{outcome=~"scan_error|write_error"}[1h])) > sum by (job) (increase(stellarindex_mev_detect_runs_total{outcome="ok"}[1h]))`. Over the last hour more MEV detection runs failed than succeeded. The worker runs every 5 min; while it fails, no new MEV events are written and `/v1/mev` serves the last good set.
+
+### Check
+
+```sh
+journalctl -u stellarindex-aggregator --since "-1h" | grep -i mev
+```
+
+`scan_error` means the trades scan failed (oracle and auction read failures only skip their detectors). `write_error` means the `mev_events` insert failed.
+
+### Fix
+
+1. Clear the Postgres fault (reachability, lock wait, missing migration); the storage runbook covers each.
+2. Overlapping windows are deduplicated, so no catch-up step is needed. Verify `stellarindex_mev_detect_runs_total{outcome="ok"}` rises within 10 min.
+
 ## stellarindex_change_summary_stale
 
 P3, `for: 15m`. Expr: `(time() - stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"}) > 1800 and stellarindex_change_summary_last_success_unix{job="stellarindex-aggregator"} > 0`. No pass upserted any entity for 30 min (`stellarindex_change_summary_passes_total{outcome="failed"}` usually rising); explorer delta strips serve frozen rows. `partial` passes are normal.

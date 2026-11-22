@@ -1726,7 +1726,7 @@ The MEV worker scans recent trades every 5 minutes for arbitrage cycles and writ
 
 Counter, label `outcome` ∈ `ok | scan_error | write_error`.
 
-Per-run outcome. `scan_error` = the trades scan failed and the run was skipped; `write_error` = an `mev_events` insert failed mid-run. Sustained non-`ok` makes `/v1/mev` stale.
+Per-run outcome. `scan_error` = the trades scan failed and the run was skipped; `write_error` = an `mev_events` insert failed mid-run. Sustained non-`ok` makes `/v1/mev` stale; `stellarindex_mev_detect_failing` tickets when failed runs outnumber `ok` over an hour.
 
 ### `stellarindex_mev_events_inserted_total`
 

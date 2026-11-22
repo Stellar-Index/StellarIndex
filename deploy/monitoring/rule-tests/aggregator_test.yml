@@ -930,3 +930,53 @@ tests:
       - eval_time: 90m
         alertname: stellarindex_change_summary_stale
         exp_alerts: []
+
+  # ── stellarindex_mev_detect_failing ─────────────────────────────
+  # Every 5-min run is a scan_error from t=0; the seeded ok series stays at 0,
+  # so errors outnumber ok from the second sample, held 30m.
+  - interval: 5m
+    name: an all-failing MEV worker tickets
+    input_series:
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="ok"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="scan_error"}'
+        values: '0+1x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="write_error"}'
+        values: '0x24'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_mev_detect_failing
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_mev_detect_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              job: stellarindex_aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_mev_detect_failing
+              summary: "MEV detection runs are mostly failing — /v1/mev is going stale"
+              description: |
+                Over the last hour, MEV detection runs ending in scan_error or
+                write_error outnumber ok runs, held for 30 minutes. No new
+                arbitrage, wash-trade, cascade or sandwich events are being
+                written, so /v1/mev serves the last good set. Look at the
+                aggregator's mev component logs and
+                stellarindex_mev_detect_runs_total by outcome.
+
+  # Mostly-ok runs with an occasional write_error stay silent.
+  - interval: 5m
+    name: an occasional MEV write error does not ticket
+    input_series:
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="ok"}'
+        values: '0+1x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="scan_error"}'
+        values: '0x24'
+      - series: 'stellarindex_mev_detect_runs_total{job="stellarindex_aggregator",outcome="write_error"}'
+        values: '0x6 1x6 2x12'
+    alert_rule_test:
+      - eval_time: 110m
+        alertname: stellarindex_mev_detect_failing
+        exp_alerts: []
