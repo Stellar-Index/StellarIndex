@@ -122,7 +122,11 @@ Run/heed these locally before pushing so PRs are green on first push:
 5. **gitleaks history vs worktree:** CI scans full git history
    (`gitleaks detect`, fetch-depth 0); local verify scans only the working
    tree (`--no-git`). A committed-then-removed secret or fixture still reds
-   CI. The two cases are handled differently:
+   CI, with one exception: the global `[allowlist]` in `.gitleaks.toml`
+   exempts the per-host inventory paths under `configs/ansible/inventory/`
+   (`*.secrets.yml` and `r*.yml`) from the history scan too, so a force-added
+   file there is NOT caught by CI. Nothing else guards that; never `git add -f`
+   anything in that directory. The two cases are handled differently:
    - **A real credential** (any value that ever authenticated anything):
      treat it as an incident. Revoke and rotate it first and follow
      `SECURITY.md`; the repo is public, so deleting it does not undo the
@@ -144,11 +148,14 @@ Run/heed these locally before pushing so PRs are green on first push:
    `go.mod`/`go.sum`, release/deploy workflows, or `cut-release.sh`:
    cross-compiles every binary + builds every Dockerfile. A dep bump pays
    this cost and must pass it.
-10. **Docs-only PRs skip ci.yml** (paths-ignore on `**.md`, `docs/**`,
-    CHANGELOG). Required checks then never report — merge such PRs with the
-    admin path or bundle doc changes with their code PR (preferred).
-11. **Post-merge tripwires on main:** push-to-main re-runs full CI (a red run
-    on main is the alarm for the admin-bypass path), and api-audit hits the
+10. **Docs-only PRs run ci.yml.** Its `paths-ignore` covers only CHANGELOG.md,
+    LICENSE and the issue/PR templates, so the required checks report and
+    `repo-gates` (doc checks) can fail. Preflight's step-level `if:` skips the
+    expensive build/test matrix. Wait for the checks; there is no admin-bypass
+    path for docs.
+11. **Post-merge tripwires on main:** push-to-main tests only the packages the
+    diff reaches (nightly and dispatched runs test everything), so breakage
+    outside that reach waits for the nightly run. api-audit hits the
     live API when `openapi/**` / `internal/api/**` changed (see deploy-freeze
     note above).
 
