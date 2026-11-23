@@ -153,14 +153,115 @@ describe('TopAccountsPanel', () => {
     expect(await screen.findByText('at least 412')).toBeInTheDocument();
     const note = screen.getByText(/partial:/);
     expect(note.textContent).toContain('EURC (no reliable price)');
-    expect(note.textContent).toContain('position list cut short');
+    expect(note.textContent).toContain(
+      'too many positions to rank in one read',
+    );
+  });
+
+  it('words the reconciliation and rate reasons plainly on a partial ranking', async () => {
+    mockApi((q) =>
+      payload(q.side as string, {
+        lower_bound: true,
+        excluded: [
+          {
+            kind: 'supply',
+            pool: POOL,
+            asset: EURC_SAC,
+            reason: 'positions_unreconciled',
+          },
+          {
+            kind: 'supply',
+            pool: POOL,
+            asset: EURC_SAC,
+            reason: 'rate_unread',
+          },
+        ],
+      }),
+    );
+    renderIt();
+    expect(await screen.findByText('at least 412')).toBeInTheDocument();
+    const note = screen.getByText(/partial:/);
+    expect(note.textContent).toContain(
+      "EURC (the positions read did not add up to the reserve's total)",
+    );
+    expect(note.textContent).toContain(
+      "EURC (the reserve's rate could not be read)",
+    );
+    expect(note.textContent).not.toContain('positions_unreconciled');
+  });
+
+  it('says why when no position can be ranked', async () => {
+    mockApi((q) =>
+      payload(q.side as string, {
+        accounts: 3,
+        rows: [],
+        lower_bound: true,
+        excluded: [
+          {
+            kind: 'supply',
+            pool: POOL,
+            asset: USDC_SAC,
+            reason: 'positions_unreconciled',
+          },
+          {
+            kind: 'supply',
+            pool: POOL,
+            asset: null,
+            reason: 'positions_truncated',
+          },
+        ],
+      }),
+    );
+    renderIt();
+    expect(
+      await screen.findByText('No rankable positions.'),
+    ).toBeInTheDocument();
+    const why = screen.getByText(/^Why:/);
+    expect(why.textContent).toContain(
+      "USDC (the positions read did not add up to the reserve's total)",
+    );
+    expect(why.textContent).toContain('too many positions to rank in one read');
+    expect(screen.queryByText('No positions.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/accounts supplying/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('shows "no positions" for an empty ranking', async () => {
     mockApi((q) => payload(q.side as string, { accounts: 0, rows: [] }));
     renderIt();
     expect(await screen.findByText('No positions.')).toBeInTheDocument();
+    expect(screen.queryByText(/No rankable/)).not.toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('caps the share text at 100% like the meter', async () => {
+    mockApi((q) =>
+      payload(q.side as string, {
+        rows: [row({ share_of_reserve: '1.250000' })],
+      }),
+    );
+    renderIt();
+    expect(await screen.findByText('100.00%')).toBeInTheDocument();
+    expect(screen.queryByText('125.00%')).not.toBeInTheDocument();
+  });
+
+  it('notes archived positions unless the API note already does', async () => {
+    mockApi((q) => payload(q.side as string));
+    const { unmount } = renderIt();
+    expect(
+      await screen.findByText(/Positions include archived entries/),
+    ).toBeInTheDocument();
+    unmount();
+    mockApi((q) =>
+      payload(q.side as string, {
+        note: 'Archived entries are included at their stored value.',
+      }),
+    );
+    renderIt();
+    await screen.findByText('412');
+    expect(
+      screen.queryByText(/Positions include archived entries/),
+    ).not.toBeInTheDocument();
   });
 
   it('says the panel is unsupported on a 503, and offers a retry on other errors', async () => {

@@ -31,11 +31,16 @@ type Exclusion = Data['excluded'][number];
 const LIMIT = 20;
 
 const EXCLUSION_TEXT: Record<string, string> = {
-  rate_unread: 'rate could not be read',
-  positions_unreadable: 'positions could not be read',
-  positions_truncated: 'position list cut short',
-  reserve_list_unreadable: 'reserve list could not be read',
+  rate_unread: "the reserve's rate could not be read",
+  positions_unreadable: 'some positions could not be read',
+  positions_truncated: 'too many positions to rank in one read',
+  positions_unreconciled:
+    "the positions read did not add up to the reserve's total",
+  reserve_list_unreadable: "the pool's reserve list could not be read",
 };
+
+const ARCHIVED_NOTE =
+  'Positions include archived entries: they keep their value and can be restored.';
 
 function exclusionLine(
   excluded: readonly Exclusion[],
@@ -76,6 +81,7 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
   });
   const d = q.data;
   const verb = side === 'supply' ? 'supplying' : 'borrowing';
+  const unranked = d != null && d.rows.length === 0 && d.lower_bound;
 
   return (
     <Panel
@@ -117,7 +123,17 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
             </Button>
           </p>
         ))}
-      {d && (
+      {d && unranked && (
+        <div className="text-sm">
+          <p className="text-ink-body">No rankable positions.</p>
+          {d.excluded.length > 0 && (
+            <p className="text-ink-muted">
+              Why: {exclusionLine(d.excluded, assetText)}.
+            </p>
+          )}
+        </div>
+      )}
+      {d && !unranked && (
         <p className="text-ink-body text-sm">
           <span className="text-ink font-mono tabular-nums">
             {d.lower_bound ? 'at least ' : ''}
@@ -132,7 +148,7 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
           )}
         </p>
       )}
-      {d && d.rows.length === 0 && (
+      {d && d.rows.length === 0 && !unranked && (
         <p className="text-ink-muted text-sm">No positions.</p>
       )}
       {d && d.rows.length > 0 && (
@@ -152,10 +168,13 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
             </THead>
             <TBody>
               {d.rows.map((r) => {
-                const share =
+                const raw =
                   r.share_of_reserve == null
                     ? null
                     : Number(r.share_of_reserve);
+                // Matches the meter's clamp so the text never reads above 100%.
+                const share =
+                  raw == null ? null : Math.min(1, Math.max(0, raw));
                 return (
                   <TR key={`${r.account}-${r.asset}`}>
                     <Td align="right" className="font-mono tabular-nums">
@@ -210,6 +229,9 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
             </TBody>
           </Table>
         </div>
+      )}
+      {d && !/archived/i.test(d.note) && (
+        <p className="text-ink-faint text-xs">{ARCHIVED_NOTE}</p>
       )}
     </Panel>
   );
