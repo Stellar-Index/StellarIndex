@@ -39,7 +39,9 @@ const (
 	topAccountsUnreconciledTTL = 5 * time.Second
 )
 
-const lendingTopAccountsNote = "Each row is one account's current position in one reserve, read from the pool's Positions storage; amount is " +
+const lendingTopAccountsNote = "Rows are positions, not accounts: each row is one account's current position in one reserve, so an account " +
+	"holding several reserves appears once per reserve and value_usd is that one position's value, not the account's total. " +
+	"Positions are read from the pool's Positions storage; amount is " +
 	"its b- or d-tokens in the underlying at the reserve's stored rate, the figure /v1/lending/accounts/{account}/earnings serves as " +
 	"current_value. Without asset, rows rank by value_usd and a reserve without a USD price is left out and named in excluded; " +
 	"with asset, rows rank by amount. Positions are never ranked across reserves by token amount."

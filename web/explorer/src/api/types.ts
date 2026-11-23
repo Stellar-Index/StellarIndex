@@ -2448,7 +2448,10 @@ export interface paths {
         /**
          * Lending pool — largest suppliers or borrowers.
          * @description The pool's largest current positions on one side, Blend and BLNT
-         *     alike. Each row is one account's position in one reserve, read from
+         *     alike. Rows are positions, not accounts: an account holding several
+         *     reserves appears once per reserve, and `value_usd` is that one
+         *     position's value, never the account's total across the pool. Each
+         *     row is one account's position in one reserve, read from
          *     the pool's `Positions(account)` contract storage in the lake: `tokens`
          *     is the b-tokens (supply, collateral and non-collateral summed) or
          *     d-tokens (borrow) the account holds now, and `amount` is those tokens
@@ -19942,7 +19945,7 @@ export interface operations {
                      *           }
                      *         ],
                      *         "as_of_ledger": 63340102,
-                     *         "note": "Each row is one account's current position in one reserve."
+                     *         "note": "Rows are positions, not accounts: each row is one account's current position in one reserve."
                      *       },
                      *       "as_of": "2026-11-16T12:00:00Z",
                      *       "flags": {
@@ -19993,7 +19996,7 @@ export interface operations {
                                 tokens: string;
                                 /** @description `tokens` in the underlying at the reserve's stored rate, base units. */
                                 amount: string;
-                                /** @description `amount` in USD at the `/reserves` price, 2 dp; null with `usd_reason`. */
+                                /** @description This one position's `amount` in USD at the `/reserves` price, 2 dp, not the account's total; null with `usd_reason`. */
                                 value_usd: string | null;
                                 /** @enum {string|null} */
                                 usd_reason: "unpriced" | "withheld" | null;

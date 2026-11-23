@@ -5106,7 +5106,10 @@ paths:
       summary: Lending pool — largest suppliers or borrowers.
       description: |
         The pool's largest current positions on one side, Blend and BLNT
-        alike. Each row is one account's position in one reserve, read from
+        alike. Rows are positions, not accounts: an account holding several
+        reserves appears once per reserve, and `value_usd` is that one
+        position's value, never the account's total across the pool. Each
+        row is one account's position in one reserve, read from
         the pool's `Positions(account)` contract storage in the lake: `tokens`
         is the b-tokens (supply, collateral and non-collateral summed) or
         d-tokens (borrow) the account holds now, and `amount` is those tokens
@@ -5189,7 +5192,7 @@ paths:
                   rows:
                   - { rank: 1, account: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7, asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, decimals: 7, tokens: '9800000000000', amount: '10290000000000', value_usd: '308700.00', usd_reason: null, share_of_reserve: '0.041200', last_modified_ledger: 63339870 }
                   as_of_ledger: 63340102
-                  note: Each row is one account's current position in one reserve.
+                  note: "Rows are positions, not accounts: each row is one account's current position in one reserve."
                 as_of: '2026-11-16T12:00:00Z'
                 flags:
                   stale: false
@@ -5238,7 +5241,7 @@ paths:
                                 decimals: { type: [integer, "null"] }
                                 tokens: { type: string, description: "b-tokens (supply) or d-tokens (borrow) held on chain, base units." }
                                 amount: { type: string, description: "`tokens` in the underlying at the reserve's stored rate, base units." }
-                                value_usd: { type: [string, "null"], description: "`amount` in USD at the `/reserves` price, 2 dp; null with `usd_reason`." }
+                                value_usd: { type: [string, "null"], description: "This one position's `amount` in USD at the `/reserves` price, 2 dp, not the account's total; null with `usd_reason`." }
                                 usd_reason: { type: [string, "null"], enum: [unpriced, withheld, null] }
                                 share_of_reserve: { type: [string, "null"], description: "`amount` over the reserve's side total, 6 dp." }
                                 last_modified_ledger: { type: integer, format: int64, description: "Ledger the Positions entry was last written." }
