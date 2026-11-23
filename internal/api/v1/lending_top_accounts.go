@@ -158,7 +158,7 @@ func (s *Server) handleLendingPoolTopAccounts(w http.ResponseWriter, r *http.Req
 		writeLendingPoolNotFound(w, r)
 		return
 	}
-	built, _, cacheStale, err := s.lendingTopAccounts.get(ctx, "pool_top_accounts", pool, s.fillPoolTopAccounts(pr, pool, protocol))
+	built, at, cacheStale, err := s.lendingTopAccounts.get(ctx, "pool_top_accounts", pool, s.fillPoolTopAccounts(pr, pool, protocol))
 	if err != nil {
 		s.writeLendingLookupError(ctx, w, r, "lending top accounts", pool, err)
 		return
@@ -170,7 +170,7 @@ func (s *Server) handleLendingPoolTopAccounts(w http.ResponseWriter, r *http.Req
 	view := rankTopAccounts(pool, built, side, asset, limit)
 	view.AsOfLedger = built.asOf
 	flags := Flags{Stale: cacheStale || built.stale, Degraded: built.degraded || view.LowerBound}
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(at.UTC()), Flags: flags})
 }
 
 // fillPoolTopAccounts reads the pool's positions and then its reserve state. The two reads are not atomic, so a mismatch

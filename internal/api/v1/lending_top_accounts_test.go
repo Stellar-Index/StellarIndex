@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -317,7 +318,25 @@ func TestLendingTopAccounts_PersistentMismatchCachedShort(t *testing.T) {
 	}
 }
 
-// TestLendingTopAccounts_BLNTPool: a pool with BLNT lineage is served as protocol blnt through the same rate conversion.
+// TestLendingTopAccounts_AsOfIsTheFillTime: the envelope's as_of dates the cached read, not the request.
+func TestLendingTopAccounts_AsOfIsTheFillTime(t *testing.T) {
+	pool, _, _, _, srv := topAccountsFixture(t)
+	getTopAccounts(t, srv, pool, "?side=supply", http.StatusOK)
+	srv.AgeTopAccountsForTest(pool, 30*time.Second)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+pool+"/top-accounts?side=supply", nil))
+	var body struct {
+		AsOf time.Time `json:"as_of"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if age := time.Since(body.AsOf); age < 29*time.Second {
+		t.Fatalf("as_of %v is %v old, want the fill time 30s back", body.AsOf, age)
+	}
+}
+
+// TestLendingTopAccounts_BLNTPool:a pool with BLNT lineage is served as protocol blnt through the same rate conversion.
 func TestLendingTopAccounts_BLNTPool(t *testing.T) {
 	pool, asset := mkCStrkey(t, 1), mkCStrkey(t, 2)
 	unknown := blend.PoolVersionUnknown
