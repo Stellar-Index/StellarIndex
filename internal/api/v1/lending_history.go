@@ -21,6 +21,13 @@ type lendingHistoryReader interface {
 
 var _ lendingHistoryReader = (*clickhouse.ExplorerReader)(nil)
 
+// registerLendingHistoryRoutes mounts the lending history routes.
+func (s *Server) registerLendingHistoryRoutes() {
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/history", s.handleLendingPoolHistory)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves/{asset}/history", s.handleLendingReserveHistory)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop/history", s.handleLendingBackstopHistory)
+}
+
 const (
 	// lendingHistoryMaxPoints caps one series; a request past it is a 400, never a truncated series.
 	lendingHistoryMaxPoints = 2000
@@ -47,8 +54,11 @@ type LendingReserveHistoryView struct {
 	IRModDecimals  *int `json:"ir_mod_decimals"`
 	ConfigDecimals int  `json:"config_decimals"`
 	lendingHistoryCoverageView
-	BeforeFirstState bool                         `json:"before_first_state"`
-	Points           []LendingReserveHistoryPoint `json:"points"`
+	BeforeFirstState bool `json:"before_first_state"`
+	// PriceMaxAgeHours bounds how far before its bucket a point's USD price may be; USDUnvaluedPoints counts the points left null.
+	PriceMaxAgeHours  int                          `json:"price_max_age_hours"`
+	USDUnvaluedPoints int                          `json:"usd_unvalued_points"`
+	Points            []LendingReserveHistoryPoint `json:"points"`
 }
 
 // lendingHistoryCoverageView is how far the history is complete and how many points failed to decode.
@@ -80,6 +90,7 @@ type LendingReserveHistoryPoint struct {
 	SupplyCap        *string  `json:"supply_cap"`
 	// ConfigUncertain: the reserve config or pool instance changed later in this state's hour; what depends on it is null.
 	ConfigUncertain bool `json:"config_uncertain"`
+	LendingHistoryUSD
 }
 
 // LendingBackstopHistoryView is the GET /v1/lending/pools/{pool}/backstop/history body.
@@ -262,7 +273,8 @@ func (s *Server) handleLendingReserveHistory(w http.ResponseWriter, r *http.Requ
 			view.Decimals = &d
 		}
 	}
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: s.lendingHistoryFlags(ctx, view.lendingHistoryCoverageView)})
+	flags := s.valueReserveHistory(ctx, &view, h, q, s.lendingHistoryFlags(ctx, view.lendingHistoryCoverageView))
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 
 func lastReserveState(points []clickhouse.LendingReservePoint) (clickhouse.BlendReserveState, bool) {
