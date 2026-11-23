@@ -136,6 +136,19 @@ func TestLendingTopAccounts_XLMSpellingsReadTheSACOrAreRejected(t *testing.T) {
 	}
 }
 
+// TestLendingTopAccounts_AssetNotAReserveIs404: a well-formed asset outside the pool's readable reserve list is a 404, not
+// an empty ranking; with the list unreadable the route cannot tell, and serves its lower bound.
+func TestLendingTopAccounts_AssetNotAReserveIs404(t *testing.T) {
+	pool, _, _, _, srv := topAccountsFixture(t)
+	other := mkCStrkey(t, 9)
+	getTopAccounts(t, srv, pool, "?side=supply&asset="+other, http.StatusNotFound)
+	pool2, _, _, ex2, srv2 := topAccountsFixture(t)
+	ex2.positions = clickhouse.LendingPoolPositions{}
+	if got, _ := getTopAccounts(t, srv2, pool2, "?side=supply&asset="+other, http.StatusOK); !got.LowerBound || len(got.Rows) != 0 {
+		t.Fatalf("unreadable list = %+v", got)
+	}
+}
+
 // TestLendingTopAccounts_BorrowSideLimitAndCache: the borrow side reads d-tokens only; limit caps rows; a second request is
 // served from the per-pool cache without a second lake read.
 func TestLendingTopAccounts_BorrowSideLimitAndCache(t *testing.T) {

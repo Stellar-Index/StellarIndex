@@ -2492,7 +2492,11 @@ export interface paths {
          *     restorable and still the account's, and counts in the reserve's
          *     totals. Rows do not say whether an entry is archived.
          *
-         *     404 when no Blend or BLNT pool is known at the contract id.
+         *     Each reserve's state is read fresh after the positions, so no
+         *     position is converted at a rate older than the position.
+         *
+         *     404 when no Blend or BLNT pool is known at the contract id, or when
+         *     `asset` is not in the pool's (readable) reserve list.
          */
         get: operations["getLendingPoolTopAccounts"];
         put?: never;
@@ -19974,7 +19978,7 @@ export interface operations {
                             }[];
                             /**
                              * Format: int64
-                             * @description Highest ledger the lake had captured at serve time.
+                             * @description Highest ledger the lake had captured when the cached positions were read; they are at least this new.
                              */
                             as_of_ledger: number;
                             note: string;

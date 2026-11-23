@@ -3,6 +3,7 @@ package v1
 import (
 	"cmp"
 	"context"
+	"errors"
 	"maps"
 	"math/big"
 	"net/http"
@@ -79,6 +80,7 @@ type poolTopAccounts struct {
 	positions       clickhouse.LendingPoolPositions
 	states          map[string]clickhouse.BlendReserveState
 	views           map[string]ReserveView
+	asOf            uint32 // the lake watermark read just before the positions
 	stale, degraded bool
 }
 
@@ -134,24 +136,41 @@ func (s *Server) handleLendingPoolTopAccounts(w http.ResponseWriter, r *http.Req
 		s.writeLendingLookupError(ctx, w, r, "lending top accounts", pool, err)
 		return
 	}
+	if asset != "" && built.positions.Readable && !slices.Contains(built.positions.Reserves, asset) {
+		writeLendingHistoryNotFound(w, r, "asset is not a reserve of this pool")
+		return
+	}
 	view := rankTopAccounts(pool, built, side, asset, limit)
-	wm, lakeStale, _ := s.lakeWatermark(ctx)
-	view.AsOfLedger = wm
-	flags := Flags{Stale: cacheStale || lakeStale || built.stale, Degraded: built.degraded || view.LowerBound}
+	view.AsOfLedger = built.asOf
+	flags := Flags{Stale: cacheStale || built.stale, Degraded: built.degraded || view.LowerBound}
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 
 func (s *Server) fillPoolTopAccounts(pr lendingPoolPositionsReader, pool, protocol string) func(context.Context) (poolTopAccounts, error) {
 	return func(ctx context.Context) (poolTopAccounts, error) {
+		wm, lakeStale, _ := s.lakeWatermark(ctx)
 		pos, err := pr.LendingPoolPositions(ctx, pool)
 		if err != nil {
 			return poolTopAccounts{}, err
 		}
-		states, views, stale, degraded, err := s.earningsReserveStates(ctx, pool)
-		if err != nil {
+		// Reserve state is read fresh AFTER the positions, never from the reserves cache, so no position is newer than the
+		// rate that converts it; a write between the two reads breaks reconciliation and that reserve is not ranked.
+		res, err := s.buildPoolReserves(ctx, pool)
+		if err != nil && !errors.Is(err, errPoolLineageUnknown) {
 			return poolTopAccounts{}, err
 		}
-		return poolTopAccounts{protocol: protocol, positions: pos, states: states, views: views, stale: stale, degraded: degraded}, nil
+		states := make(map[string]clickhouse.BlendReserveState, len(res.states))
+		for _, st := range res.states {
+			states[st.Asset] = st
+		}
+		views := make(map[string]ReserveView, len(res.view.Reserves))
+		for _, rv := range res.view.Reserves {
+			views[rv.Asset] = rv
+		}
+		return poolTopAccounts{
+			protocol: protocol, positions: pos, states: states, views: views, asOf: wm,
+			stale: lakeStale || res.flags.Stale, degraded: res.flags.Degraded,
+		}, nil
 	}
 }
 

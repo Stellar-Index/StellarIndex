@@ -5150,7 +5150,11 @@ paths:
         restorable and still the account's, and counts in the reserve's
         totals. Rows do not say whether an entry is archived.
 
-        404 when no Blend or BLNT pool is known at the contract id.
+        Each reserve's state is read fresh after the positions, so no
+        position is converted at a rate older than the position.
+
+        404 when no Blend or BLNT pool is known at the contract id, or when
+        `asset` is not in the pool's (readable) reserve list.
       parameters:
         - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
         - { name: side, in: query, required: true, description: Which side to rank., schema: { type: string, enum: [supply, borrow] } }
@@ -5223,7 +5227,7 @@ paths:
                                 share_of_reserve: { type: [string, "null"], description: "`amount` over the reserve's side total, 6 dp." }
                                 last_modified_ledger: { type: integer, format: int64, description: "Ledger the Positions entry was last written." }
                               required: [rank, account, asset, decimals, tokens, amount, value_usd, usd_reason, share_of_reserve, last_modified_ledger]
-                          as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured at serve time." }
+                          as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured when the cached positions were read; they are at least this new." }
                           note: { type: string }
                         required: [pool, protocol, side, asset, ranking, accounts, lower_bound, excluded, rows, as_of_ledger, note]
                     required: [data]
