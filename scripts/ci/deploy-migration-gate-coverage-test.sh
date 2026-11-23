@@ -59,7 +59,8 @@ numbering="$(python3 - "$WORKFLOW" "$tmp/numbering-run.sh" <<'PY'
 import sys, yaml
 steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"].get("steps", [])
 play = next((i for i, s in enumerate(steps) if s.get("id") == "playbook"), len(steps))
-gate = next((s for s in steps[:play] if 'BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh' in (s.get("run") or "")), None)
+gate = next((s for s in steps[:play] if 'BASE_SHA="$base_sha" bash' in (s.get("run") or "")
+             and "scripts/ci/lint-migrations.sh" in (s.get("run") or "")), None)
 if gate is None:
     print("absent")
     sys.exit(0)
@@ -83,16 +84,39 @@ fi
 if [ -s "$tmp/numbering-run.sh" ]; then
   mkdir -p "$tmp/bin" "$tmp/ws/scripts/ci"
   # shellcheck disable=SC2016 # stub bodies expand when the stubs run
-  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; *) exit 1 ;; esac' > "$tmp/bin/git"
-  # shellcheck disable=SC2016
-  printf '%s\n' 'echo "LINT-REACHED BASE_SHA=${BASE_SHA:-}"' > "$tmp/ws/scripts/ci/lint-migrations.sh"
+  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; show) echo "echo LINT-REACHED BASE_SHA=\${BASE_SHA:-}" ;; *) exit 1 ;; esac' > "$tmp/bin/git"
   chmod +x "$tmp/bin/git"
-  got="$(cd "$tmp/ws" && PATH="$tmp/bin:$PATH" VERSION=v0.60.0 BASELINE=v0.59.0 bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)"
+  got="$(cd "$tmp/ws" && PATH="$tmp/bin:$PATH" GITHUB_WORKSPACE="$tmp/ws" RUNNER_TEMP="$tmp/rt" GITHUB_SHA=feedface \
+    VERSION=v0.60.0 BASELINE=v0.59.0 bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)"
   if [[ "$got" == *"LINT-REACHED BASE_SHA=0123456789abcdef0123456789abcdef01234567"* ]]; then
     ok "numbering gate reaches the lint with the base's sha when a base is available"
   else
     bad "numbering gate with BASELINE set returned before running lint-migrations.sh with BASE_SHA — output: ${got}"
   fi
+fi
+
+# The checkout is the deploying tag: its copy of a gate is the gate as it stood at that tag, so
+# an old tag would be judged by an old gate. Each run must read the dispatching commit's copy.
+from_tag="$(python3 - "$WORKFLOW" <<'PY'
+import re, sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"].get("steps", [])
+for name in ("lint-migrations.sh", "lint-migration-immutability.sh"):
+    tree = re.compile(r'(^|[\s;&|])(\./)?scripts/ci/' + re.escape(name) + r'($|[\s;&|])')
+    for s in steps:
+        run = s.get("run") or ""
+        if "scripts/ci/" + name not in run:
+            continue
+        if any(tree.search(l) for l in run.splitlines()) or \
+                'git show "${GITHUB_SHA}:scripts/ci/' + name + '"' not in run:
+            print(name + " in step '" + s.get("name", "?") + "'")
+PY
+)" || { echo "deploy-migration-gate-coverage-test: could not read the deploy job's gate steps" >&2; exit 2; }
+if [ -z "$from_tag" ]; then
+  ok "lint-migrations.sh and lint-migration-immutability.sh run from the dispatching commit"
+else
+  while IFS= read -r l; do
+    bad "deploy.yml runs the tag's own copy of ${l}; read it with git show \"\${GITHUB_SHA}:…\""
+  done <<<"$from_tag"
 fi
 
 followup="$(python3 - "$WORKFLOW" <<'PY'

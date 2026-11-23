@@ -867,12 +867,33 @@ change_commit "chore: exempt more" \
   internal/p/g_test.go "$(printf 'var bazWaiver = map[string]struct{ m struct{ x int } }{\n\t"e": {m: struct{ x int }{1}},\n}')" \
   "$(printf 'var bazWaiver = map[string]struct{ m struct{ x int } }{\n\t"e": {m: struct{ x int }{1}},\n\t"f": {m: struct{ x int }{2}},\n}')" \
   internal/p/h_test.go "$(printf 'var quoteExempt = map[string]bool{\n\t"a\\"b": true,\n\t"c\\td": true,\n}')" \
-  "$(printf 'var quoteExempt = map[string]bool{\n\t"a\\"b": true,\n\t"c\\td": true,\n\t"e": true,\n}')"
+  "$(printf 'var quoteExempt = map[string]bool{\n\t"a\\"b": true,\n\t"c\\td": true,\n\t"e": true,\n}')" \
+  internal/p/i_test.go "$(printf 'var tallExempt = map[string]struct {\n\twhy string // reason\n\tn   int\n}{\n\t"g": {why: "x", n: 1},\n}')" \
+  "$(printf 'var tallExempt = map[string]struct {\n\twhy string // reason\n\tn   int\n}{\n\t"g": {why: "x", n: 1},\n\t"late": {why: "y", n: 2},\n}')"
 runGate
 expect "a widened waiver map is reported by key" 1 '+ "f"'
-for f in a b c d e f g h; do
+expect "a waiver map whose struct type spans lines is reported by key" 1 '"late"'
+for f in a b c d e f g h i; do
   expect "a widened Go waiver map in internal/p/${f}_test.go fails undeclared" 1 "UNDECLARED GROWTH: internal/p/${f}_test.go"
 done
+
+# --- 25j2. HARDENING-EXCEPTIONS and lint-imports.sh's allow lists are waivers too
+hx=configs/ansible/roles/r/templates/systemd/HARDENING-EXCEPTIONS
+imports_seed="$(printf 'RULES = [\n    {\n        "name": "A/x",\n        "banned": [\n            "m/rpc",\n        ],\n        "allow": [\n            "a/",  # why\n        ],\n    },\n    {"name": "B/y", "allow": []},\n]')"
+mkrepo 0
+change_commit "chore: waive" \
+  "$hx" "$(printf '# hdr\na.service:PrivateTmp  # why')" \
+  "$(printf '# hdr\na.service:PrivateTmp  # why\nb.service:NoNewPrivileges  # why')" \
+  scripts/ci/lint-imports.sh "$imports_seed" \
+  "$(printf 'RULES = [\n    {\n        "name": "A/x",\n        "banned": [\n            "m/rpc",\n        ],\n        "allow": [\n            "a/",  # why\n        ],\n    },\n    {"name": "B/y", "allow": ["internal/ops/"]},\n]')"
+runGate
+expect "an added HARDENING-EXCEPTIONS line fails undeclared" 1 "UNDECLARED GROWTH: $hx"
+expect "an added lint-imports allow entry fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-imports.sh"
+mkrepo 0
+change_commit "chore: ban more" scripts/ci/lint-imports.sh "$imports_seed" \
+  "$(printf 'RULES = [\n    {\n        "name": "A/x",\n        "banned": [\n            "m/rpc",\n            "m/horizon",\n        ],\n        "allow": [\n            "a/",  # reworded why\n        ],\n    },\n    {"name": "B/y", "allow": []},\n]')"
+runGate
+expect "a new banned import and a reworded allow comment are not growth" 0 "no undeclared"
 
 # --- 25k. waiver entries in their other spellings: quoted, several per line, indented ids
 mkrepo 0

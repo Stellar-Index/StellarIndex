@@ -694,10 +694,29 @@ jobs:
         # to the tag being deployed by the `ref:` on this job's
         # checkout step). The numbering and immutability checks run again
         # against the host's live version before the playbook.
+        # The numbering and immutability scripts come from the dispatching
+        # commit, as the follow-up gate's does: a tag's own copy is the gate
+        # as it stood when the tag was cut. lint-migrations.sh resolves every
+        # path from its own location, so its copy sits two levels under the
+        # checkout.
         run: |
           set -euo pipefail
-          bash scripts/ci/lint-migrations.sh
-          bash scripts/ci/lint-migration-immutability.sh
+          numbering="$GITHUB_WORKSPACE/.dispatch-gate/ci/lint-migrations.sh"
+          immutability="$RUNNER_TEMP/immutability/scripts/ci/lint-migration-immutability.sh"
+          trap 'rm -rf "$GITHUB_WORKSPACE/.dispatch-gate"' EXIT
+          mkdir -p "$(dirname "$numbering")" "$(dirname "$immutability")"
+          if ! git show "${GITHUB_SHA}:scripts/ci/lint-migrations.sh" > "$numbering"; then
+            echo "::error::migration numbering gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
+            exit 1
+          fi
+          if ! git show "${GITHUB_SHA}:scripts/ci/lint-migration-immutability.sh" > "$immutability"; then
+            echo "::error::migration immutability gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
+            exit 1
+          fi
+          bash "$numbering"
+          MIGRATIONS_DIR="$GITHUB_WORKSPACE/migrations" \
+            MIGRATION_IMMUTABILITY_MANIFEST="$GITHUB_WORKSPACE/scripts/ci/migration-immutability.sha256" \
+            bash "$immutability"
           bash scripts/ci/lint-migration-commands.sh
 
       - name: Set up SSH
@@ -1250,11 +1269,19 @@ jobs:
             echo "::error::migration numbering gate: '${base}' is not a commit in this checkout; refusing to deploy (fail-closed)."
             exit 1
           fi
-          BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh
+          # Both scripts come from the dispatching commit, as the follow-up
+          # gate's does: a tag's own copy is the gate as it stood at the tag.
+          numbering="$GITHUB_WORKSPACE/.dispatch-gate/ci/lint-migrations.sh"
+          trap 'rm -rf "$GITHUB_WORKSPACE/.dispatch-gate"' EXIT
+          mkdir -p "$(dirname "$numbering")"
+          if ! git show "${GITHUB_SHA}:scripts/ci/lint-migrations.sh" > "$numbering"; then
+            echo "::error::migration numbering gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
+            exit 1
+          fi
+          BASE_SHA="$base_sha" bash "$numbering"
           # The tag-checkout immutability run trusts the tag's own manifest,
           # which the same commit can re-bless; the live release cannot be.
-          # The script comes from the dispatching commit, as the follow-up
-          # gate's does: a tag that predates base mode would ignore BASE.
+          # A tag that predates base mode would ignore BASE.
           gate="$RUNNER_TEMP/immutability/scripts/ci/lint-migration-immutability.sh"
           mkdir -p "$(dirname "$gate")"
           if ! git show "${GITHUB_SHA}:scripts/ci/lint-migration-immutability.sh" > "$gate"; then
