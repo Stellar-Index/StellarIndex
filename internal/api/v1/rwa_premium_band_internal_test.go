@@ -51,7 +51,7 @@ func TestRWAPremium_BothSurfacesRefuseTheSamePrints(t *testing.T) {
 					market = append(market, premGoodDay(d, before))
 				}
 				market = append(market, premGoodDay(depth+1, price))
-				got := rwaPremiumJoin(premCand(), premRefDays(depth+1), market, premDefaultFloor())
+				got := rwaPremiumJoin(premCand(), premRefDays(depth+1), market, premDefaultFloor(), nil)
 				history := premPublished(got, depth+1)
 
 				if pointInTime != history {

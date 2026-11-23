@@ -1249,25 +1249,47 @@ func TestRWAAssets_AdmittedButNeverObservedIsCounted(t *testing.T) {
 	checkFunnelArithmetic(t, v)
 }
 
-// TestRWAAssets_IssuerAssetPageTruncationIsReported: the per-issuer read is capped, so a member in an unread tail would
-// vanish silently. The count is issuers-with-unread-tail, kept out of asset arithmetic so the funnel does not invent a
-// number.
-func TestRWAAssets_IssuerAssetPageTruncationIsReported(t *testing.T) {
-	const page = 500
-	rows := make([]timescale.AssetRow, 0, page)
-	rows = append(rows, rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312))
-	for i := 1; i < page; i++ {
-		rows = append(rows, rwaRow("FILLER"+string(rune('A'+i%26))+itoaRWA(i), rwaGoodIssuer, sptr("0.01"), int64(i)))
+// rwaFullPageThen is a full issuer page of never-traded filler rows that sort first, followed by tail.
+func rwaFullPageThen(tail ...timescale.AssetRow) []timescale.AssetRow {
+	rows := make([]timescale.AssetRow, 0, 500+len(tail))
+	for i := range 500 {
+		rows = append(rows, rwaRow("FILLER"+string(rune('A'+i%26))+itoaRWA(i), rwaGoodIssuer, nil, 0))
 	}
+	return append(rows, tail...)
+}
+
+// TestRWAAssets_MemberPastAFullIssuerPageIsReadByIdentity: anyone can fill an issuer's listing page with trustline-only
+// codes, so a member past the page is read by its exact (code, issuer) and served, with no truncation claimed.
+func TestRWAAssets_MemberPastAFullIssuerPageIsReadByIdentity(t *testing.T) {
 	v := getRWA(t, rwaServer(t,
 		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
 		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
-		map[string][]timescale.AssetRow{rwaGoodIssuer: rows},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: rwaFullPageThen(rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312))},
+	))
+	if ids := rwaAssetIDs(v); len(ids) != 1 || ids[0] != "USTRY-"+rwaGoodIssuer {
+		t.Fatalf("assets = %v, want USTRY read past the full page", ids)
+	}
+	st := rwaFunnelStages(t, v)
+	if got := rwaDropCount(st, "assets_admitted", "issuer_asset_page_truncated"); got != 0 {
+		t.Errorf("issuer_asset_page_truncated = %d, want 0 — every member was read", got)
+	}
+	if got := rwaDropCount(st, "assets_admitted", "admitted_but_never_observed_on_chain"); got != 0 {
+		t.Errorf("never-observed drop = %d, want 0 — the member is catalogued", got)
+	}
+	checkFunnelArithmetic(t, v)
+}
+
+// TestRWAAssets_IssuerAssetPageTruncationIsReported: a member declared in a case no row is spelled in, under a full page
+// with no case-variant reader, may be a variant past the page; the issuer is counted, kept out of asset arithmetic.
+func TestRWAAssets_IssuerAssetPageTruncationIsReported(t *testing.T) {
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("ustry", rwaGoodIssuer, "etherfuse.com", "bond")},
+		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
+		map[string][]timescale.AssetRow{rwaGoodIssuer: rwaFullPageThen(rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312))},
 	))
 	st := rwaFunnelStages(t, v)
 	if got := rwaDropCount(st, "assets_admitted", "issuer_asset_page_truncated"); got != 1 {
-		t.Errorf("issuer_asset_page_truncated = %d, want 1 — a full page means an unread tail, and a member "+
-			"in it would vanish from the set unreported", got)
+		t.Errorf("issuer_asset_page_truncated = %d, want 1 — a case variant past the page went unchecked", got)
 	}
 	// The signal must not be allowed into the asset subtraction.
 	checkFunnelArithmetic(t, v)
@@ -1783,15 +1805,20 @@ func TestRWAAssets_AdmitsADeclaredAndRecognisedAsset(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound pins the scan-cap rule on the classic arm: a full issuer page may
-// hide a member in the unread tail, so the total is partial even when every served row is valued.
+// TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound pins the scan-cap rule on the classic arm: a member no row is
+// spelled as, under a full page with no case-variant reader, may be a variant past it, so the total is partial even when
+// every served row is valued.
 func TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound(t *testing.T) {
 	page := []timescale.AssetRow{rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}
 	for i := len(page); i < 500; i++ {
 		page = append(page, rwaRow(fmt.Sprintf("FILL%03d", i), rwaGoodIssuer, nil, 1))
 	}
+	page = append(page, rwaRow("TBILL", rwaGoodIssuer, sptr("1.0"), 1))
 	v := getRWA(t, rwaServer(t,
-		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")},
+		[]timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+			rwaBound("tbill", rwaGoodIssuer, "etherfuse.com", "bond"),
+		},
 		map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")},
 		map[string][]timescale.AssetRow{rwaGoodIssuer: page},
 	))
@@ -1803,7 +1830,7 @@ func TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound(t *testing.T) {
 		t.Errorf("lower_bound/truncated = %v/%v, want true/true with a full issuer page",
 			v.Summary.LowerBound, v.Summary.Truncated)
 	}
-	if !strings.Contains(v.Summary.Basis, "1 member issuer(s) have more classic assets than one listing page reads") {
+	if !strings.Contains(v.Summary.Basis, "1 member issuer(s) fill one listing page and a member's case variant past it went unchecked") {
 		t.Errorf("basis does not name the page cap: %q", v.Summary.Basis)
 	}
 }
@@ -2205,7 +2232,20 @@ type rwaListStub struct {
 func (l *rwaListStub) ListAssetsExt(
 	_ context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, error) {
-	return l.byIssuer[opts.Issuer], nil
+	rows := l.byIssuer[opts.Issuer]
+	if opts.Code != "" {
+		var exact []timescale.AssetRow
+		for _, r := range rows {
+			if r.Code == opts.Code {
+				exact = append(exact, r)
+			}
+		}
+		rows = exact
+	}
+	if opts.Limit > 0 && len(rows) > opts.Limit {
+		rows = rows[:opts.Limit]
+	}
+	return rows, nil
 }
 
 // LatestSupplyObservations satisfies the optional supply seam fillMarketCapsFromSupply type-asserts for, so tests
