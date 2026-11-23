@@ -166,14 +166,28 @@ func TestLiqValuer_AmountAboveInt64IsExact(t *testing.T) {
 	}
 }
 
-// TestLiqValuer_ExclusionAndV1AndUnprovenKinds: a fill after an excluded bucket is withheld; a V1 fill (no amounts on the wire) is
-// unvalued as a whole; a BLNT user liquidation's legs are leg_kind_unknown until its leg kinds are proven.
+// TestLiqValuer_ExclusionAndV1AndUnprovenKinds: a fill whose price an excluded bucket would have set is withheld, one priced by a
+// clean bucket newer than the exclusion is not; a V1 fill (no amounts on the wire) is unvalued as a whole; a BLNT user
+// liquidation's legs are leg_kind_unknown until its leg kinds are proven.
 func TestLiqValuer_ExclusionAndV1AndUnprovenKinds(t *testing.T) {
 	marks := liqTestMarks()
-	marks["CXLM"].withheldFrom = liqFillTime.Add(-2 * time.Hour)
+	marks["CXLM"].withheld = []time.Time{liqFillTime.Add(-10 * time.Minute)}
 	v := liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
 	if v.BidUSD != nil || liqDeref(v.Bid[0].Reason) != liqReasonPriceWithheld {
 		t.Errorf("bid = %s %+v, want withheld", liqDeref(v.BidUSD), v.Bid[0])
+	}
+	marks = liqTestMarks()
+	marks["CXLM"].withheld = []time.Time{liqFillTime.Add(-2 * time.Hour)}
+	v = liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
+	if v.BidUSD == nil || v.Bid[0].Reason != nil {
+		t.Errorf("bid after a clean newer bucket = %s %+v, want valued", liqDeref(v.BidUSD), v.Bid[0])
+	}
+	marks = liqTestMarks()
+	marks["CXLM"].prices = marks["CXLM"].prices[1:]
+	marks["CXLM"].withheld = []time.Time{liqFillTime.Add(-23 * time.Hour)}
+	v = liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
+	if liqDeref(v.Bid[0].Reason) != liqReasonPriceWithheld {
+		t.Errorf("bid with only a dropped bucket in bound = %+v, want withheld", v.Bid[0])
 	}
 	f := liqTestFill()
 	f.HasAmounts, f.Lot, f.Bid = false, nil, nil

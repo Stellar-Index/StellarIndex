@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,8 +43,8 @@ type liqMarks struct {
 	prices      []liqPrice // ascending by close
 	priceReason string     // set when no series could be used at all
 	scale       int
-	// withheldFrom: an exclusion dropped a bucket from here on, so a later fill could be priced across the hole.
-	withheldFrom time.Time
+	// withheld: closes of the buckets an exclusion dropped, ascending; one that would have priced a fill withholds it.
+	withheld []time.Time
 	// cappedAt: the series is incomplete after it.
 	cappedAt   time.Time
 	rates      map[clickhouse.LendingTxRef]blend.ReserveData // reserve state each fill's transaction stored
@@ -57,13 +58,21 @@ func (m *liqMarks) priceAt(t time.Time) (liqPrice, string) {
 		return liqPrice{}, liqReasonPriceUnread
 	case m.priceReason != "":
 		return liqPrice{}, m.priceReason
-	case !m.withheldFrom.IsZero() && !t.Before(m.withheldFrom):
+	}
+	i := sort.Search(len(m.prices), func(i int) bool { return m.prices[i].close.After(t) }) - 1
+	found := i >= 0 && t.Sub(m.prices[i].close) <= liquidationPriceMaxAge
+	after := t.Add(-liquidationPriceMaxAge - time.Nanosecond)
+	if found {
+		after = m.prices[i].close
+	}
+	// A dropped bucket closing after the one found (or within the bound when none is) is the price the fill should have had.
+	j := sort.Search(len(m.withheld), func(j int) bool { return m.withheld[j].After(after) })
+	switch {
+	case j < len(m.withheld) && !m.withheld[j].After(t):
 		return liqPrice{}, liqReasonPriceWithheld
 	case !m.cappedAt.IsZero() && t.After(m.cappedAt):
 		return liqPrice{}, liqReasonPriceUnread
-	}
-	i := sort.Search(len(m.prices), func(i int) bool { return m.prices[i].close.After(t) }) - 1
-	if i < 0 || t.Sub(m.prices[i].close) > liquidationPriceMaxAge {
+	case !found:
 		return liqPrice{}, liqReasonNoPrice
 	}
 	return m.prices[i], ""
@@ -305,11 +314,15 @@ func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset can
 		flags.Degraded = true
 		return &liqMarks{priceReason: liqReasonPriceUnread}
 	}
-	m := &liqMarks{scale: aggregate.ResolveDecimals(s.NonstandardDecimals, asset), withheldFrom: walk.withheldFrom, cappedAt: walk.cappedAt}
+	m := &liqMarks{scale: aggregate.ResolveDecimals(s.NonstandardDecimals, asset), cappedAt: walk.cappedAt}
 	for _, p := range points {
 		m.prices = append(m.prices, liqPrice{close: p.Bucket.UTC().Add(width), price: p.VWAP})
 	}
+	for _, b := range walk.withheld {
+		m.withheld = append(m.withheld, b.UTC().Add(width))
+	}
 	sort.Slice(m.prices, func(i, j int) bool { return m.prices[i].close.Before(m.prices[j].close) })
+	slices.SortFunc(m.withheld, time.Time.Compare)
 	return m
 }
 
