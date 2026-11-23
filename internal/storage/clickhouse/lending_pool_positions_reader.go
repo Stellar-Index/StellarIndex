@@ -23,14 +23,15 @@ type LendingPoolPosition struct {
 	Ledger  uint32              // the entry's last-modified ledger
 }
 
-// LendingPoolPositions is every current Positions entry of one pool the lake holds, in account order.
+// LendingPoolPositions is every current Positions entry of one pool the lake holds, in account order. Archived entries are
+// included: they keep their value and are restorable, so they still belong to the account and to the reserve's totals.
 type LendingPoolPositions struct {
 	// Readable is false when the pool's ResList is absent, archived or undecodable; Accounts is then empty and means nothing.
 	Readable bool
 	// Reserves is the pool's ResList, in reserve-index order; empty unless Readable.
 	Reserves []string
 	Accounts []LendingPoolPosition
-	// Unreadable counts present entries left out of Accounts as archived or undecodable: positions the chain still holds.
+	// Unreadable counts present entries left out of Accounts because they did not decode: positions the chain still holds.
 	Unreadable int
 	// Truncated is set when the read reached LendingPoolPositionsLimit, so entries past it are missing.
 	Truncated bool
@@ -64,7 +65,8 @@ func (r *ExplorerReader) LendingPoolPositions(ctx context.Context, pool string) 
 	if err != nil {
 		return LendingPoolPositions{}, err
 	}
-	ce, n, err := r.queryContractData(ctx, poolPositionsQuery, prefix, LendingPoolPositionsLimit+1)
+	// No TTL lookup: an archived Positions entry is ranked at its stored value like a live one.
+	ce, n, err := r.scanContractData(ctx, poolPositionsQuery, prefix, LendingPoolPositionsLimit+1)
 	if err != nil {
 		return LendingPoolPositions{}, err
 	}
@@ -129,7 +131,7 @@ func assemblePoolPositions(ce contractEntries, listVal xdr.ScVal, listOK bool) L
 	}
 	for k, v := range ce.vals {
 		account, ok := positionsKeyAccount(k)
-		if !ok || ce.archived[k] {
+		if !ok {
 			continue
 		}
 		p := LendingAccountPositions{Supply: map[string]*big.Int{}, Borrow: map[string]*big.Int{}}

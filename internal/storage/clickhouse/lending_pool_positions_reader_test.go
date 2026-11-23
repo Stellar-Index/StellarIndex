@@ -52,8 +52,9 @@ func TestPositionsKeyPrefix_MatchesEveryAccountOfThePoolOnly(t *testing.T) {
 	}
 }
 
-// TestAssemblePoolPositions_DecodesEachAccountAndCountsUnreadable: each live entry maps through ResList exactly above 2^63;
-// an archived or undecodable entry is counted unreadable, never read as zero; an unreadable ResList makes the read unreadable.
+// TestAssemblePoolPositions_DecodesEachAccountAndCountsUnreadable: each entry maps through ResList exactly above 2^63; an
+// entry whose value decodes is kept whatever its liveness (an archived entry is restorable and still the account's); an
+// undecodable one is counted unreadable, never read as zero; an unreadable ResList makes the read unreadable.
 func TestAssemblePoolPositions_DecodesEachAccountAndCountsUnreadable(t *testing.T) {
 	pool, a0 := xdr.ContractId{7}, xdr.ContractId{1}
 	s0 := strkeyOf(t, a0)
@@ -65,17 +66,22 @@ func TestAssemblePoolPositions_DecodesEachAccountAndCountsUnreadable(t *testing.
 			xdr.ScMapEntry{Key: symVal("supply"), Val: indexMap(t, nil)},
 		)
 	}
-	k1, k2, k3 := positionsKey(t, pool, g1), positionsKey(t, pool, g2), positionsKey(t, pool, g3)
+	k1, k2, k3, k4 := positionsKey(t, pool, g1), positionsKey(t, pool, g2), positionsKey(t, pool, g3), positionsKey(t, pool, s0)
 	ce := contractEntries{
-		vals:     map[string]xdr.ScVal{k1: pos("18446744073709551616", "3"), k2: pos("5", "0"), k3: symVal("junk")},
-		archived: map[string]bool{k2: true},
-		ledger:   map[string]uint32{k1: 100, k2: 101, k3: 102},
+		vals: map[string]xdr.ScVal{k1: pos("18446744073709551616", "3"), k2: pos("5", "0"), k3: symVal("junk")},
+		// k2 carries a TTL-archived flag beside its decoded value: it must still be read; k4's entry did not decode.
+		archived: map[string]bool{k2: true, k4: true},
+		ledger:   map[string]uint32{k1: 100, k2: 101, k3: 102, k4: 103},
 	}
 	got := assemblePoolPositions(ce, reserveListVal(t, a0), true)
-	if !got.Readable || got.Unreadable != 2 || len(got.Accounts) != 1 || len(got.Reserves) != 1 || got.Reserves[0] != s0 {
+	if !got.Readable || got.Unreadable != 2 || len(got.Accounts) != 2 || len(got.Reserves) != 1 || got.Reserves[0] != s0 {
 		t.Fatalf("got %+v", got)
 	}
-	if a := got.Accounts[0]; a.Account != g1 || a.Supply[s0].String() != "18446744073709551616" || a.Borrow[s0].String() != "3" || a.Ledger != 100 {
+	// Account order: the C-address archived holder sorts before the G-address.
+	if a := got.Accounts[0]; a.Account != g2 || a.Supply[s0].String() != "5" || a.Ledger != 101 {
+		t.Fatalf("archived account = %+v", a)
+	}
+	if a := got.Accounts[1]; a.Account != g1 || a.Supply[s0].String() != "18446744073709551616" || a.Borrow[s0].String() != "3" || a.Ledger != 100 {
 		t.Fatalf("account = %+v", a)
 	}
 	if got := assemblePoolPositions(ce, xdr.ScVal{}, false); got.Readable || len(got.Accounts) != 0 {

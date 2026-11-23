@@ -3,7 +3,9 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math/big"
+	"slices"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -345,13 +347,34 @@ func (r *ExplorerReader) readContractData(ctx context.Context, keys []string) (c
 // queryContractData runs a (key_xdr, entry_xdr, ledger_seq) contract_data read and resolves the TTL liveness of every present
 // entry; n is the number of rows read, removed keys included.
 func (r *ExplorerReader) queryContractData(ctx context.Context, query string, args ...any) (out contractEntries, n int, err error) {
+	out, n, err = r.scanContractData(ctx, query, args...)
+	if err != nil {
+		return contractEntries{}, 0, err
+	}
+	matched := slices.Collect(maps.Keys(out.vals))
+	if len(matched) == 0 {
+		return out, n, nil
+	}
+	liveness, err := r.ttlVerdicts.resolve(ctx, matched)
+	if err != nil {
+		return contractEntries{}, 0, fmt.Errorf("clickhouse: contract data ttl liveness: %w", err)
+	}
+	for _, k := range matched {
+		if liveness[k] == TTLArchived {
+			out.archived[k] = true
+		}
+	}
+	return out, n, nil
+}
+
+// scanContractData is queryContractData without the TTL lookup: archived marks only entries that did not decode.
+func (r *ExplorerReader) scanContractData(ctx context.Context, query string, args ...any) (out contractEntries, n int, err error) {
 	rows, err := r.conn.Query(ctx, query, args...)
 	if err != nil {
 		return contractEntries{}, 0, fmt.Errorf("clickhouse: contract data lookup: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	out = contractEntries{vals: map[string]xdr.ScVal{}, archived: map[string]bool{}, ledger: map[string]uint32{}}
-	var matched []string
 	for rows.Next() {
 		var keyXDR, b64 string
 		var ledger uint32
@@ -369,22 +392,9 @@ func (r *ExplorerReader) queryContractData(ctx context.Context, query string, ar
 			continue
 		}
 		out.vals[keyXDR], out.ledger[keyXDR] = v, modified
-		matched = append(matched, keyXDR)
 	}
 	if err := rows.Err(); err != nil {
 		return contractEntries{}, 0, fmt.Errorf("clickhouse: contract data rows: %w", err)
-	}
-	if len(matched) == 0 {
-		return out, n, nil
-	}
-	liveness, err := r.ttlVerdicts.resolve(ctx, matched)
-	if err != nil {
-		return contractEntries{}, 0, fmt.Errorf("clickhouse: contract data ttl liveness: %w", err)
-	}
-	for _, k := range matched {
-		if liveness[k] == TTLArchived {
-			out.archived[k] = true
-		}
 	}
 	return out, n, nil
 }

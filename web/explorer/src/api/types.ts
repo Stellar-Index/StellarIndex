@@ -2474,8 +2474,8 @@ export interface paths {
          *     accounts holding a non-zero position on the side (in `asset` when
          *     given). `lower_bound` is true, and `rows` and `accounts` are floors,
          *     whenever `excluded` is non-empty: a reserve whose rate is not read
-         *     (`rate_unread`), Positions entries that are TTL-archived or did not
-         *     decode (`positions_unreadable`), a read that reached its 50,000-entry
+         *     (`rate_unread`), Positions entries that did not decode
+         *     (`positions_unreadable`), a read that reached its 50,000-entry
          *     cap (`positions_truncated`), a reserve whose read positions do not
          *     sum exactly to its `b_supply` (supply) or `d_supply` (borrow)
          *     (`positions_unreconciled`), or a pool reserve list that could not be
@@ -2487,7 +2487,10 @@ export interface paths {
          *     set to that reserve `rows` is empty. `accounts` is then a floor.
          *
          *     The pool's positions are one primary-key range read of its
-         *     Positions entries, cached per pool for one minute.
+         *     Positions entries, cached per pool for one minute. They include
+         *     TTL-archived entries at their stored value: an archived position is
+         *     restorable and still the account's, and counts in the reserve's
+         *     totals. Rows do not say whether an entry is archived.
          *
          *     404 when no Blend or BLNT pool is known at the contract id.
          */
