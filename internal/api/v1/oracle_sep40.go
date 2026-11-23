@@ -400,7 +400,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		}
 	}
 	if len(best) > 0 {
-		if failed.withheld != nil && !s.oracleSeriesLive(best, bestAt) {
+		if failed.excluded && !s.oracleSeriesLive(best, bestAt) {
 			best = seriesFillsWithheld(best)
 		}
 		return best, served, viaPeg, directWithheld, nil
@@ -482,16 +482,24 @@ func (s *Server) pegSeriesClean(ctx context.Context, asset, quote canonical.Asse
 }
 
 // oracleLegErrors keeps what the peg walk's failed legs said: a withheld verdict outranks the
-// first read error.
-type oracleLegErrors struct{ withheld, first error }
+// first read error. excluded: some leg was withheld by a source exclusion, the only refusal an older series fills.
+type oracleLegErrors struct {
+	withheld, first error
+	excluded        bool
+}
 
 func (e *oracleLegErrors) note(err error) {
 	if errors.Is(err, ErrPriceWithheld) && e.withheld == nil {
 		e.withheld = err
 	}
+	e.excluded = e.excluded || withheldByExclusion(err)
 	if e.first == nil {
 		e.first = err
 	}
+}
+
+func withheldByExclusion(err error) bool {
+	return errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldSourceExcluded
 }
 
 func (e oracleLegErrors) err() error {
@@ -522,7 +530,7 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
 		firstErr error
-		withheld bool
+		excluded bool
 		best     []PriceSnapshot
 		bestAt   time.Time
 		served   canonical.Asset
@@ -533,7 +541,7 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 			if firstErr == nil {
 				firstErr = err
 			}
-			withheld = withheld || errors.Is(err, ErrPriceWithheld)
+			excluded = excluded || withheldByExclusion(err)
 			continue
 		}
 		if len(snapshots) == 0 {
@@ -548,7 +556,7 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 		}
 	}
 	if len(best) > 0 {
-		if withheld && !s.oracleSeriesLive(best, bestAt) {
+		if excluded && !s.oracleSeriesLive(best, bestAt) {
 			best = seriesFillsWithheld(best)
 		}
 		return best, bestAt, served, nil

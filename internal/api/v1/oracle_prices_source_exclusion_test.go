@@ -166,3 +166,46 @@ func TestOraclePrices_ReaderRemovalIsFlagged(t *testing.T) {
 		t.Fatalf("%d %s, want the direct series served with fills_withheld_reason=source_excluded", status, body)
 	}
 }
+
+// TestOraclePrices_DormantFallbackAfterOtherWithholdingIsNotFlagged: only an exclusion fills a series with an older one;
+// a spelling or peg leg withheld as thin leaves the served series unlabelled and cacheable, while an exclusion still marks.
+func TestOraclePrices_DormantFallbackAfterOtherWithholdingIsNotFlagged(t *testing.T) {
+	usdc, _ := canonical.ParseAsset(exclUSDC)
+	now := time.Now().UTC().Truncate(time.Minute)
+	var sac string
+	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
+		if s := a.String(); s != "native" && s != "crypto:XLM" {
+			sac = s
+		}
+	}
+	dormant := []v1.PriceSnapshot{v1.VWAP1mToSnapshot("native", "fiat:USD", "0.1900", now.Add(-21*24*time.Hour))}
+	thin := v1.PriceWithheldError(pricingguard.WithheldThinMarket)
+	excluded := v1.PriceWithheldError(pricingguard.WithheldSourceExcluded)
+	cases := []struct {
+		name      string
+		errByPair map[string]error
+		want      v1.PriceWithheldReason
+	}{
+		{"SAC spelling thin", map[string]error{sac + "/fiat:USD": thin}, ""},
+		{"peg leg thin", map[string]error{"native/" + exclUSDC: thin}, ""},
+		{"SAC spelling excluded", map[string]error{sac + "/fiat:USD": excluded}, v1.PriceWithheldSourceExcluded},
+	}
+	for _, tc := range cases {
+		ts := startHTTPTest(t, v1.New(v1.Options{
+			Prices:            &stubPriceReader{recent: map[string][]v1.PriceSnapshot{"native/fiat:USD": dormant}, errByPair: tc.errByPair},
+			USDPeggedClassics: []canonical.Asset{usdc},
+		}).Handler())
+		resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records=5")
+		var env struct {
+			Data  []v1.SEP40Price `json:"data"`
+			Flags v1.Flags        `json:"flags"`
+		}
+		mustDecode(t, resp, &env)
+		if resp.StatusCode != http.StatusOK || len(env.Data) != 1 || env.Flags.FillsWithheldReason != tc.want {
+			t.Errorf("%s: %d %+v %+v, want the dormant series with fills_withheld_reason=%q", tc.name, resp.StatusCode, env.Data, env.Flags, tc.want)
+		}
+		if noStore := strings.Contains(resp.Header.Get("Cache-Control"), "no-store"); noStore != (tc.want != "") {
+			t.Errorf("%s: Cache-Control %q, want no-store only when marked", tc.name, resp.Header.Get("Cache-Control"))
+		}
+	}
+}
