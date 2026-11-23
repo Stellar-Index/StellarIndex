@@ -22,6 +22,7 @@ import (
 	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
 	externalcoinbase "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
+	externalcoingecko "github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 	externalpoloniex "github.com/Stellar-Index/StellarIndex/internal/sources/external/poloniex"
 	externalvendorcsv "github.com/Stellar-Index/StellarIndex/internal/sources/external/vendorcsv"
@@ -39,8 +40,8 @@ const externalInsertBudget = 12 * time.Hour
 func backfillExternal(args []string) error {
 	fs := flag.NewFlagSet("backfill-external", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase | poloniex_via_btc | coingecko_daily (required)")
-	pairSym := fs.String("pair", "", "Venue-native symbol, e.g. XLMUSDT / XLM/USD / xlmusd / XLM-USD (required)")
+	source := fs.String("source", "", "Venue: binance | kraken | bitstamp | coinbase | poloniex_via_btc | coingecko_daily | coingecko (required)")
+	pairSym := fs.String("pair", "", "Venue-native symbol, e.g. XLMUSDT / XLM/USD / xlmusd / XLM-USD; coingecko takes all or BASE/QUOTE (required)")
 	file := fs.String("file", "", "Owner-exported daily close CSV; only with -source coingecko_daily")
 	fromStr := fs.String("from", "", "Start time, RFC 3339 (required, e.g. 2024-01-01T00:00:00Z)")
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
@@ -69,6 +70,10 @@ func backfillExternal(args []string) error {
 	}
 	if !from.Before(to) {
 		return fmt.Errorf("-from %v must be before -to %v", from, to)
+	}
+	// An aggregator's history is oracle updates, not candles: none of the trades-path guards apply.
+	if *source == externalcoingecko.SourceName {
+		return backfillCoinGecko(*cfgPath, *pairSym, from, to, dryRun)
 	}
 	if *source == externalpoloniex.SourceName {
 		if err := externalpoloniex.CheckRange(from, to); err != nil {
