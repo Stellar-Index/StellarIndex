@@ -74,10 +74,14 @@ func (l *lakeSupplyStub) TokenSupplyForContracts(_ context.Context, ids []string
 type trustlineOnlyExplorer struct {
 	ExplorerReader // nil embedded — only ClassicCirculatingSupply is called
 	supply         map[string]string
+	computedAt     time.Time // zero: summed now
 }
 
-func (e *trustlineOnlyExplorer) ClassicCirculatingSupply(context.Context) (map[string]string, error) {
-	return e.supply, nil
+func (e *trustlineOnlyExplorer) ClassicCirculatingSupply(context.Context) (map[string]string, time.Time, error) {
+	if e.computedAt.IsZero() {
+		return e.supply, time.Now(), nil
+	}
+	return e.supply, e.computedAt, nil
 }
 
 // lakeSupplyServer wires the token-supply reader on `tokenSupply` and the trustline sum behind `explorer` as main.go does.
@@ -227,8 +231,8 @@ type failingClassicExplorer struct {
 	ExplorerReader // nil embedded — only ClassicCirculatingSupply is called
 }
 
-func (failingClassicExplorer) ClassicCirculatingSupply(context.Context) (map[string]string, error) {
-	return nil, errors.New("classic supply GROUP BY exceeded its budget")
+func (failingClassicExplorer) ClassicCirculatingSupply(context.Context) (map[string]string, time.Time, error) {
+	return nil, time.Time{}, errors.New("classic supply GROUP BY exceeded its budget")
 }
 
 // TestStaleTrustlineSumCannotOutrankALowerLakeReading: the trustline map is max()ed against live readings, so if a failed

@@ -990,7 +990,7 @@ func (s *Server) fillMarketCapsWith(
 	broad, broadUnread := s.classicSupplyMap(ctx)
 	// A failed broad read leaves a priced row without the supply its cap needs; that hole is ours, not the token's.
 	defer func() {
-		if broadUnread && anyPricedRowWithoutSupply(rows) {
+		if broadUnread && (anyPricedRowWithoutSupply(rows) || anyLakeRowUnchecked(rows)) {
 			reportUnreadRead(ctx)
 		}
 	}()
@@ -2356,9 +2356,8 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// whether a hole needs filling. The figure lands in `listing_valuation` under its own
 	// provenance and gives the row no market cap.
 	//
-	// This path's supply comes from asset_supply_history, never the lake's flow totals, so valuing
-	// what the handler holds would price only trustline-visible tokens; applyListingValuations
-	// does the lake read itself.
+	// This path's supply may be trustline-only, so valuing what the handler holds could price only
+	// trustline-visible tokens; applyListingValuations does the lake read itself.
 	listingRows := []AssetDetail{detail}
 	s.applyListingValuations(ctx, listingRows)
 	detail = listingRows[0]

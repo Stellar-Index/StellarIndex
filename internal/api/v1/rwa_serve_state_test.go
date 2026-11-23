@@ -92,8 +92,8 @@ type failingTrustlineSum struct {
 	v1.ExplorerReader
 }
 
-func (failingTrustlineSum) ClassicCirculatingSupply(context.Context) (map[string]string, error) {
-	return nil, errors.New("classic supply GROUP BY exceeded its budget")
+func (failingTrustlineSum) ClassicCirculatingSupply(context.Context) (map[string]string, time.Time, error) {
+	return nil, time.Time{}, errors.New("classic supply GROUP BY exceeded its budget")
 }
 
 // answeringLakeSupply answers the bulk lake read with no reading for any asset.

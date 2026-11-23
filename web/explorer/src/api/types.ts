@@ -12324,7 +12324,7 @@ export interface components {
             approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
-            /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
+            /** @description Raw integer in asset's smallest unit. Null when no snapshot exists, and when the supply is a provable floor (`circulating_supply_lower_bound`), which is not served as an exact total. */
             total_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration. */
             max_supply?: string | null;
@@ -12901,11 +12901,11 @@ export interface components {
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
             /**
-             * @description Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is not a lower bound either. Omitted for every other source.
+             * @description Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is the on-chain event net, marked a lower bound when the trustline sum exceeds it. Omitted for every other source.
              * @enum {string}
              */
             supply_basis?: "sep41_lake_flows" | "classic_lake_flows";
-            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Also set for source=mint_burn_flows when the token's storage holds a balance entry the reader cannot decode: the storage cross-check that would prove the event net short could not run, so the net is a floor. Omitted when false. */
+            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Also set for source=mint_burn_flows when the token's storage holds a balance entry the reader cannot decode: the storage cross-check that would prove the event net short could not run, so the net is a floor. Also set for a classic asset's supply_basis=classic_lake_flows when its trustline sum, a provable floor, exceeds the net: total_supply stays the net so mint_total − burn_total − clawback_total adds up, but holders provably hold more, and /v1/assets serves that trustline sum as circulating_supply. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
             /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */
             balance_entries?: number;

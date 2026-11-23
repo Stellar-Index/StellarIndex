@@ -39,7 +39,7 @@ func TestClassicCirculatingSupply_PreservesAboveInt64Totals(t *testing.T) {
 		{"EURC-" + testIssuer, "1234567890123456789012345678"},
 	})
 
-	got, err := r.ClassicCirculatingSupply(t.Context())
+	got, _, err := r.ClassicCirculatingSupply(t.Context())
 	if err != nil {
 		t.Fatalf("ClassicCirculatingSupply: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestClassicCirculatingSupply_OmitsUnusableRows(t *testing.T) {
 		{"SMALL-" + testIssuer, "0000001"}, // not the literal "0" — kept
 	})
 
-	got, err := r.ClassicCirculatingSupply(t.Context())
+	got, _, err := r.ClassicCirculatingSupply(t.Context())
 	if err != nil {
 		t.Fatalf("ClassicCirculatingSupply: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestClassicCirculatingSupply_OmitsUnusableRows(t *testing.T) {
 // balance > 0, grouped per asset, with toInt128 + toString for ADR-0003 no-truncation.
 func TestClassicCirculatingSupply_QueryShape(t *testing.T) {
 	r, conn := classicSupplyConn(t, nil)
-	if _, err := r.ClassicCirculatingSupply(t.Context()); err != nil {
+	if _, _, err := r.ClassicCirculatingSupply(t.Context()); err != nil {
 		t.Fatalf("ClassicCirculatingSupply: %v", err)
 	}
 	if len(conn.queries) != 2 {
@@ -127,7 +127,7 @@ func TestClassicCirculatingSupply_QueryErrorPropagates(t *testing.T) {
 	boom := errors.New("memory limit exceeded")
 	r := &ExplorerReader{conn: &stubConn{respond: func(string) (driver.Rows, error) { return nil, boom }}}
 
-	got, err := r.ClassicCirculatingSupply(t.Context())
+	got, _, err := r.ClassicCirculatingSupply(t.Context())
 	if err == nil {
 		t.Fatalf("ClassicCirculatingSupply hid a query failure; got map %v", got)
 	}
@@ -147,7 +147,7 @@ func TestClassicCirculatingSupply_TruncatedStreamIsAnError(t *testing.T) {
 		return &stubRows{data: [][]any{{"USDC-" + testIssuer, "500"}}, streamErr: truncated}, nil
 	}}}
 
-	got, err := r.ClassicCirculatingSupply(t.Context())
+	got, _, err := r.ClassicCirculatingSupply(t.Context())
 	if !errors.Is(err, truncated) {
 		t.Fatalf("err = %v (map %v), want the truncation error — a partial supply map must not be reported as complete", err, got)
 	}
@@ -171,9 +171,9 @@ func TestClassicCirculatingSupply_ServesFreshRollup(t *testing.T) {
 		{"USDC-" + testIssuer, huge, int64(3), at},
 		{"GONE-" + testIssuer, "0", int64(0), at},
 	}, nil)
-	got, err := (&ExplorerReader{conn: conn}).ClassicCirculatingSupply(t.Context())
-	if err != nil || len(got) != 1 || got["USDC-"+testIssuer] != huge {
-		t.Fatalf("got %v, %v; want only USDC at %s", got, err, huge)
+	got, gotAt, err := (&ExplorerReader{conn: conn}).ClassicCirculatingSupply(t.Context())
+	if err != nil || len(got) != 1 || got["USDC-"+testIssuer] != huge || !gotAt.Equal(at) {
+		t.Fatalf("got %v at %v, %v; want only USDC at %s, computed at the cycle's %v", got, gotAt, err, huge, at)
 	}
 	if len(conn.queries) != 1 || !strings.Contains(conn.queries[0], "FROM stellar.asset_holders_counts WHERE asset != 'native'") {
 		t.Fatalf("want one rollup read and no scan, got %v", conn.queries)
@@ -193,9 +193,10 @@ func TestClassicCirculatingSupply_ScansWhenRollupUnusable(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			conn := rollupSupplyConn(rows, scan)
-			got, err := (&ExplorerReader{conn: conn}).ClassicCirculatingSupply(t.Context())
-			if err != nil || len(got) != 1 || got["USDC-"+testIssuer] != "500" {
-				t.Fatalf("got %v, %v; want the scan's 500", got, err)
+			before := time.Now()
+			got, gotAt, err := (&ExplorerReader{conn: conn}).ClassicCirculatingSupply(t.Context())
+			if err != nil || len(got) != 1 || got["USDC-"+testIssuer] != "500" || gotAt.Before(before) {
+				t.Fatalf("got %v at %v, %v; want the scan's 500, computed no earlier than %v", got, gotAt, err, before)
 			}
 			if len(conn.queries) != 2 || !strings.Contains(conn.queries[1], "stellar.ledger_entries_current FINAL") {
 				t.Fatalf("want the rollup read then the scan, got %v", conn.queries)

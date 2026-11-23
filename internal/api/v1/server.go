@@ -209,11 +209,11 @@ type Server struct {
 	// SAC contract id → the asset_id it wraps, and → expiry of a "not a SAC" answer; see sacWrappedAssetID.
 	sacWrapped    sync.Map
 	sacNotWrapped sync.Map
-	// TTL + single-flight cache for the classic circulating-supply map (one ~0.5s ClickHouse
-	// GROUP BY over the trustline slice, see cachedClassicSupply); backs market-cap fill on /v1/assets.
+	// TTL + single-flight cache for the trustline circulating-supply map ([Server.cachedClassicSupply]).
 	classicSupplyMu     sync.Mutex
 	classicSupplyCache  map[string]string
 	classicSupplyAt     time.Time
+	classicSupplyLag    time.Duration // how far the cached sums trailed classicSupplyAt when filled
 	classicSupplyFlight chan struct{}
 	// classicSupplyAttemptAt advances on every attempt, unlike classicSupplyAt (success only), so a
 	// failing refresh retries once per classicSupplyRetryGap, not per request at full timeout.
