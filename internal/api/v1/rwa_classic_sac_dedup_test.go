@@ -10,41 +10,24 @@ import (
 
 // TestRWA_ClassicMembersSACIsNotASecondAsset: the directory naming an admitted classic member's
 // SAC must not add a contract row, or the one supply is valued twice in every total. A mis-cased or padded declaration
-// still reaches the USTRY row through the catalogue join, so it must reach the USTRY SAC too.
+// still reaches its row through the catalogue join, so it must reach that row's SAC too, under the row's real (mixed-case) code.
 func TestRWA_ClassicMembersSACIsNotASecondAsset(t *testing.T) {
-	for _, declared := range []string{"USTRY", "ustry", " USTRY"} {
-		t.Run(declared, func(t *testing.T) { classicMemberSACIsNotASecondAsset(t, declared) })
+	for _, tc := range []struct{ declared, real string }{
+		{"USTRY", "USTRY"}, {"ustry", "USTRY"}, {" USTRY", "USTRY"}, {"XAUM", "XAUm"}, {"IBENJI", "iBENJI"},
+	} {
+		t.Run(tc.declared+"->"+tc.real, func(t *testing.T) { classicMemberSACIsNotASecondAsset(t, tc.declared, tc.real) })
 	}
 }
 
-func classicMemberSACIsNotASecondAsset(t *testing.T, declared string) {
+func classicMemberSACIsNotASecondAsset(t *testing.T, declared, real string) {
 	bound, dir, rows := oneBoundMember()
 	bound[0].Code = declared
-	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: "USTRY", Issuer: rwaGoodIssuer}.SacContractID()
+	rows[rwaGoodIssuer][0] = rwaRow(real, rwaGoodIssuer, sptr("1.0412"), 346312)
+	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: real, Issuer: rwaGoodIssuer}.SacContractID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	view := getRWA(t, v1.New(v1.Options{
-		Sep1Cache: &stubSep1BoundReader{bound: bound},
-		Directory: &stubDirectoryReader{entries: dir},
-		AssetsReader: &rwaListStub{
-			stubAssetsReaderExt: &stubAssetsReaderExt{},
-			byIssuer:            rows,
-			supply:              rwaSupplyFor(rows),
-		},
-		RWAContracts: &stubRWAContractReader{contracts: []timescale.DirectoryEntry{
-			recognisedContract(sac, "Etherfuse"),
-			recognisedContract(rwaContractGood, "Example Treasury Fund"),
-		}},
-		ContractCatalogue: &stubContractCatalogue{rows: map[string]timescale.AssetRow{
-			sac:             rwaContractRow(sac, sptr("1.0412")),
-			rwaContractGood: rwaContractRow(rwaContractGood, sptr("1.0740000000")),
-		}},
-		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{sac: "USTRY", rwaContractGood: "USTRY"}},
-		TokenSupply:           &stubTokenSupplies{byID: map[string]string{sac: "3463120000000", rwaContractGood: "10000000000000"}},
-		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{sac: 7, rwaContractGood: 7}},
-		MinMarketCapVolumeUSD: 1000,
-	}))
+	view := getRWA(t, rwaClassicSACServer(bound, dir, rows, sac))
 
 	contracts := 0
 	for _, a := range view.Assets {
@@ -69,6 +52,55 @@ func classicMemberSACIsNotASecondAsset(t *testing.T, declared string) {
 	if !found {
 		t.Errorf("refused = %+v, want contract_is_classic_member_sac: 1", view.Refused)
 	}
+}
+
+// TestRWA_DistinctCaseSiblingSACIsKept: one issuer's `ustry` beside the admitted `USTRY` is another asset (codes are
+// case-sensitive), so its SAC is not the member's and must be served, not refused as a duplicate.
+func TestRWA_DistinctCaseSiblingSACIsKept(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	rows[rwaGoodIssuer] = append(rows[rwaGoodIssuer], rwaRow("ustry", rwaGoodIssuer, sptr("1.0412"), 346312))
+	sibling, err := canonical.Asset{Type: canonical.AssetClassic, Code: "ustry", Issuer: rwaGoodIssuer}.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := getRWA(t, rwaClassicSACServer(bound, dir, rows, sibling))
+	served := false
+	for _, a := range view.Assets {
+		served = served || a.ContractID == sibling
+	}
+	if !served {
+		t.Fatalf("assets = %+v, refused = %+v: the distinct ustry SAC was dropped as the USTRY member's", view.Assets, view.Refused)
+	}
+	for _, r := range view.Refused {
+		if r.Reason == "contract_is_classic_member_sac" {
+			t.Errorf("refused = %+v, want no contract_is_classic_member_sac", view.Refused)
+		}
+	}
+}
+
+// rwaClassicSACServer serves one bound classic member beside a directory naming sac and an unrelated contract.
+func rwaClassicSACServer(bound []timescale.Sep1BoundCurrency, dir map[string]timescale.DirectoryEntry, rows map[string][]timescale.AssetRow, sac string) *v1.Server {
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            rows,
+			supply:              rwaSupplyFor(rows),
+		},
+		RWAContracts: &stubRWAContractReader{contracts: []timescale.DirectoryEntry{
+			recognisedContract(sac, "Etherfuse"),
+			recognisedContract(rwaContractGood, "Example Treasury Fund"),
+		}},
+		ContractCatalogue: &stubContractCatalogue{rows: map[string]timescale.AssetRow{
+			sac:             rwaContractRow(sac, sptr("1.0412")),
+			rwaContractGood: rwaContractRow(rwaContractGood, sptr("1.0740000000")),
+		}},
+		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{sac: "USTRY", rwaContractGood: "USTRY"}},
+		TokenSupply:           &stubTokenSupplies{byID: map[string]string{sac: "3463120000000", rwaContractGood: "10000000000000"}},
+		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{sac: 7, rwaContractGood: 7}},
+		MinMarketCapVolumeUSD: 1000,
+	})
 }
 
 // TestRWACurated_ClassicMembersSACIsAlsoVerified: a curated row for a verified classic member's
