@@ -1510,6 +1510,21 @@ Subcommands:
                               -rate-limit-per-min 10000 \
                               -reason 'partner contract 2026-09' \
                               -write
+  apikey-lineage-backfill -config PATH [-timeout DUR] (-dry-run | -write)
+                          Record each delegated API key's ancestor
+                          chain (KeyIDs and record hashes) on its
+                          Redis record, from one keyspace walk;
+                          rewrites keep the record's TTL and lose
+                          to a concurrent writer. Reports resolved,
+                          orphaned (an ancestor record is gone, so
+                          lineage enforcement will refuse the key)
+                          and the deepest chain, by KeyID only.
+                          Run -dry-run, review the orphans, then
+                          -write on every host before a release
+                          that enforces lineage.
+                          Example:
+                            stellarindex-ops apikey-lineage-backfill \
+                              -config /etc/stellarindex.toml -dry-run
   emit-incident -config PATH -slug SLUG -event {sev1|resolved} -write
                           Fan out one incident.sev1 or
                           incident.resolved customer webhook for

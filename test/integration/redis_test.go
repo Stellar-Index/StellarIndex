@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1046,4 +1047,45 @@ func TestAPIKeyIndex_RealRedisACL(t *testing.T) {
 			t.Fatalf("KeyID pointer survived the revoke (exists=%v err=%v)", n, err)
 		}
 	})
+
+	for name, rule := range map[string][]string{"shipped ACL": shipped, "index denied": withoutPattern(shipped, aclIndexPattern)} {
+		t.Run(name+": a delegated mint needs every ancestor record", func(t *testing.T) {
+			if err := admin.FlushAll(ctx).Err(); err != nil {
+				t.Fatalf("flushall: %v", err)
+			}
+			setACLUser(ctx, t, admin, "stellarindex", rule)
+			app := appClient(t, admin, "stellarindex")
+			store := auth.NewRedisAPIKeyStore(app)
+			validator := auth.NewRedisAPIKeyValidator(app)
+			const owner = "account:lineage"
+			mintUnder := func(plain, label string) (auth.APIKeyRecord, string, error) {
+				sub, err := validator.Lookup(ctx, plain)
+				if err != nil {
+					t.Fatalf("Lookup %s's minter: %v", label, err)
+				}
+				return store.Create(ctx, auth.ChildKeyRequest(sub, label, nil))
+			}
+			_, rootPlain, err := store.Create(ctx, auth.CreateAPIKeyRequest{Identifier: owner})
+			if err != nil {
+				t.Fatalf("Create root: %v", err)
+			}
+			_, midPlain, err := mintUnder(rootPlain, "mid")
+			if err != nil {
+				t.Fatalf("Create mid: %v", err)
+			}
+			leaf, _, err := mintUnder(midPlain, "leaf")
+			if err != nil {
+				t.Fatalf("Create leaf: %v", err)
+			}
+			if want := []string{auth.HashAPIKey(rootPlain), auth.HashAPIKey(midPlain)}; !slices.Equal(leaf.AncestorHashes, want) {
+				t.Fatalf("leaf carries %d ancestor hashes, want the root's then mid's", len(leaf.AncestorHashes))
+			}
+			if err := admin.Del(ctx, cachekeys.APIKey(auth.HashAPIKey(rootPlain)).String()).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := mintUnder(midPlain, "late"); !errors.Is(err, auth.ErrMinterNotLive) {
+				t.Fatalf("Create under a key whose root record is gone: %v, want ErrMinterNotLive", err)
+			}
+		})
+	}
 }

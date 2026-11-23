@@ -27,14 +27,6 @@
     group: "{{ redis_group }}"
     mode: "0750"
 
-- name: ensure log dir exists
-  file:
-    path: "{{ redis_log_dir }}"
-    state: directory
-    owner: "{{ redis_user }}"
-    group: "{{ redis_group }}"
-    mode: "0750"
-
 # Redis ships its own systemd units; the role's 05-systemd.yml
 # adds a hardening drop-in rather than replacing the unit.
 - name: ensure redis-server is enabled

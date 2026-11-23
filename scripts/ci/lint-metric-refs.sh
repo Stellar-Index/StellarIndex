@@ -47,6 +47,9 @@ EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/a
 ANSIBLE_TASK_PATHS=(
   configs/ansible/roles/archival-node/tasks
   configs/ansible/roles/archival-node/handlers
+  configs/ansible/roles/patroni/tasks
+  configs/ansible/roles/redis-sentinel/tasks
+  configs/ansible/roles/haproxy/tasks
 )
 
 # Deliberately-inert references: kept in the rule files (with an INERT comment) but with no
@@ -207,7 +210,8 @@ done
 UNALERTED_OK=(
 )
 
-FAILURE_CLASS_RE='_(error|errors|failure|failures|failed|refused)(_total)?$'
+# Includes the fail-open/refusal vocabulary: a guard that serves unguarded or refuses customers is a failure.
+FAILURE_CLASS_RE='_(error|errors|failure|failures|failed|refused|rejected|unmeasured|fail_open|fail_closed|shed|overflow)(_total)?$'
 # Failure-class metrics with no rule, each with its reason. An entry that gains a rule must go.
 UNALERTED_FAILURE_OK=(
   # Pre-existing gaps, not yet triaged: write the rule or replace this reason with why none.

@@ -47,15 +47,16 @@ func main() {
 // a verb-prefixed argv leaves every flag zero. Only TestSubcommandDispatch_LeafHandlersSeeTheirFlags covers the dispatcher path.
 // A returned error exits 1 with a "name: err" prefix; opsutil.ErrExitSilently suppresses it.
 var subcommands = map[string]func(args []string) error{
-	"docs-config":           leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
-	"mint-key":              leaf(keys.Mint),
-	"upgrade-key":           leaf(keys.Upgrade),
-	"emit-incident":         leaf(incident.Emit),
-	"usage-rollup-backfill": leaf(usage.RollupBackfill),
-	"freeze-unfreeze":       leaf(accounts.FreezeUnfreeze),
-	"account-erase":         leaf(accounts.Erase),
-	"change-summary-reset":  leaf(usage.ChangeSummaryReset),
-	"source-exclude":        leaf(incident.SourceExclude),
+	"docs-config":             leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
+	"mint-key":                leaf(keys.Mint),
+	"upgrade-key":             leaf(keys.Upgrade),
+	"apikey-lineage-backfill": leaf(keys.LineageBackfill),
+	"emit-incident":           leaf(incident.Emit),
+	"usage-rollup-backfill":   leaf(usage.RollupBackfill),
+	"freeze-unfreeze":         leaf(accounts.FreezeUnfreeze),
+	"account-erase":           leaf(accounts.Erase),
+	"change-summary-reset":    leaf(usage.ChangeSummaryReset),
+	"source-exclude":          leaf(incident.SourceExclude),
 
 	"rpc-probe":             diagnostics.Run,
 	"verify-decoders":       diagnostics.Run,
