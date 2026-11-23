@@ -25,7 +25,7 @@ interface Page {
 
 const LIMIT = 25;
 
-function AccountLink({ id }: { id: string }) {
+export function AccountLink({ id }: { id: string }) {
   return (
     <Link
       href={`/${id.startsWith('C') ? 'contracts' : 'accounts'}/${encodeURIComponent(id)}/`}
@@ -37,7 +37,7 @@ function AccountLink({ id }: { id: string }) {
   );
 }
 
-function TxLink({ hash }: { hash: string }) {
+export function TxLink({ hash }: { hash: string }) {
   return (
     <Link
       href={`/transactions/${hash}/`}
