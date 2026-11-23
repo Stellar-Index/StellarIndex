@@ -10151,14 +10151,13 @@ paths:
         exclusion covers, on the token's dollar markets or on the oracle
         series, is absent and counted in `source_excluded_days`, and the
         response carries `flags.fills_withheld_reason: source_excluded`.
-        A day on which a pooled stablecoin's own market has no usable
-        day (no trades, below the same thin-market floor, or under an
-        operator exclusion), including every day before its first
-        observed dollar day, is absent and counted in
-        `peg_unobserved_days`, never treated as $1. A declared
-        stablecoin the verified catalogue cannot bind to a dollar
-        ticker has no market to judge it by, so its trades are not
-        pooled at all.
+        From a stablecoin's first observed dollar day on, a day on
+        which its own market has no usable day (no trades, below the
+        same thin-market floor, or under an operator exclusion) is
+        absent and counted in `peg_unobserved_days`, never treated as
+        $1. Days before that first observed day, and every day of a
+        stablecoin with no observed dollar market, are not judged
+        against it.
 
         The floor is not, and cannot be, the live gate: that one
         measures a trailing 24 hours ending now. So an asset may carry a
@@ -20087,8 +20086,8 @@ components:
           type: integer
           description: |
             Days inside the window that cleared the floor and are absent
-            because a dollar stablecoin the market leg pools had no
-            usable day of its own, before its first observed day too
+            because a dollar stablecoin the market leg pools, from its
+            first observed dollar day on, had no usable day of its own
             (no trades, too thin, or under an operator exclusion), so
             the price could not be shown to be in dollars. Not in
             `market_withheld_days`.
