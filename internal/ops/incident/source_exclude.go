@@ -28,7 +28,8 @@ const readSideNote = "source-exclude: note:\n" +
 	"    /v1/price/changes (a covered bucket withholds the point; a covered horizon reads withheld:true), /v1/history (a covered\n" +
 	"    fill is removed from its page, served degraded and uncached; paging continues past the window), /v1/chart and\n" +
 	"    /v1/history/since-inception (a covered bucket or fx day is removed, a gap, never a zero; a derived cross loses the day;\n" +
-	"    served uncached). Every recompute or removal sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
+	"    served uncached; if every observed bucket is withheld the series derived through XLM is served instead, judged under the\n" +
+	"    served pair, marked and flags.triangulated). Every recompute or removal sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
 	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +
