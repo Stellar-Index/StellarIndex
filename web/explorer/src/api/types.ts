@@ -2381,19 +2381,24 @@ export interface paths {
          *     same alias, stablecoin-proxy and source-exclusion walk as
          *     `/v1/chart`, after the reserve page's SAC and scam-issuer gates; a
          *     series whose latest bucket stands on a thin book values nothing
-         *     (`price_thin_market`), as the market-cap chart refuses it.
+         *     (`price_thin_market`), as the market-cap chart refuses it, and a
+         *     bucket whose own USD volume is unknown or under the substance
+         *     gate's trailing-window floor values no fill (`price_thin_at_fill`).
          *     Leg kinds follow `/auctions`: a BLNT leg is `leg_kind_unknown`, and
          *     a backstop-token leg is unvalued
          *     (`backstop_token_not_valued_at_event_time`). A missing value is
          *     null with a `reason` (`no_price_within_bound`, `price_withheld`,
-         *     `price_thin_market`, `price_unread`, `rate_at_fill_unrecorded`, `rate_unread`,
+         *     `price_thin_market`, `price_thin_at_fill`, `price_unread`, `rate_at_fill_unrecorded`, `rate_unread`,
          *     `leg_kind_unknown`, `backstop_token_not_valued_at_event_time`,
          *     `amount_unparseable`), never 0.
          *
          *     `lot_usd` / `bid_usd` sum a side's valued legs to 2 dp (`"0.00"` for
          *     an empty side, null when no leg is valued); `*_usd_lower_bound` is
          *     true when a leg is left out. `filler_profit_usd` is `lot_usd -
-         *     bid_usd` only when both sides are fully valued, else null. A failed
+         *     bid_usd` only when both sides are fully valued and every leg's
+         *     `price_at` lies within an hour of the others, else null with
+         *     `filler_profit_reason` (`inputs_partial`,
+         *     `prices_not_contemporaneous`). A failed
          *     read marks the response degraded. 503 when the deployment has no
          *     liquidation history reader.
          *
@@ -19780,6 +19785,7 @@ export interface operations {
                      *             "bid_usd": null,
                      *             "bid_usd_lower_bound": false,
                      *             "filler_profit_usd": null,
+                     *             "filler_profit_reason": "inputs_partial",
                      *             "usd_reason": null
                      *           }
                      *         ]
@@ -19831,8 +19837,13 @@ export interface operations {
                                 /** @description Sum of the bid's valued legs at the fill, 2 dp; null when none is valued. */
                                 bid_usd: string | null;
                                 bid_usd_lower_bound: boolean;
-                                /** @description lot_usd - bid_usd, only when both sides are fully valued. */
+                                /** @description lot_usd - bid_usd, only when both sides are fully valued at prices within an hour of each other. */
                                 filler_profit_usd: string | null;
+                                /**
+                                 * @description Why filler_profit_usd is null on a fill with amounts.
+                                 * @enum {string|null}
+                                 */
+                                filler_profit_reason: "inputs_partial" | "prices_not_contemporaneous" | null;
                                 /** @description Why the fill as a whole is unvalued (amounts_not_emitted). */
                                 usd_reason: string | null;
                             }[];

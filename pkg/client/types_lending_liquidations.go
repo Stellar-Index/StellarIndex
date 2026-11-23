@@ -18,7 +18,7 @@ type LendingLiquidations struct {
 }
 
 // LendingLiquidation is one user-liquidation or bad-debt fill: Lot is what the filler received, Bid what it repaid.
-// FillerProfitUSD is set only when both sides are fully valued.
+// FillerProfitUSD is set only when both sides are fully valued at prices within an hour of each other.
 type LendingLiquidation struct {
 	AuctionType      uint32                  `json:"auction_type"`
 	AuctionTypeLabel string                  `json:"auction_type_label"`
@@ -37,7 +37,9 @@ type LendingLiquidation struct {
 	BidUSD           *string                 `json:"bid_usd"`
 	BidUSDLowerBound bool                    `json:"bid_usd_lower_bound"`
 	FillerProfitUSD  *string                 `json:"filler_profit_usd"`
-	USDReason        *string                 `json:"usd_reason"`
+	// FillerProfitReason is inputs_partial or prices_not_contemporaneous when FillerProfitUSD is null on a fill with amounts.
+	FillerProfitReason *string `json:"filler_profit_reason"`
+	USDReason          *string `json:"usd_reason"`
 }
 
 // LendingLiquidationLeg is one asset of a fill's side, valued at the fill.

@@ -40,7 +40,9 @@ type LendingLiquidationView struct {
 	BidUSD           *string                 `json:"bid_usd"`
 	BidUSDLowerBound bool                    `json:"bid_usd_lower_bound"`
 	FillerProfitUSD  *string                 `json:"filler_profit_usd"`
-	USDReason        *string                 `json:"usd_reason"` // set when the fill as a whole cannot be valued
+	// FillerProfitReason says why a fill with amounts has no profit.
+	FillerProfitReason *string `json:"filler_profit_reason"`
+	USDReason          *string `json:"usd_reason"` // set when the fill as a whole cannot be valued
 }
 
 // LendingLiquidationLeg is one asset of a side: the event's token amount, its underlying at the fill's reserve rate, and its USD at

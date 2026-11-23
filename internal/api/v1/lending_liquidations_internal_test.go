@@ -173,6 +173,30 @@ func TestLiqValuer_ThinBucketAtFill(t *testing.T) {
 	}
 }
 
+// TestLiqValuer_ProfitNeedsContemporaneousPrices: a lot priced 23 h before the fill against a bid priced 30 min before is no
+// profit (both sides still served); legs priced exactly one bucket apart are; a partial side names inputs_partial.
+func TestLiqValuer_ProfitNeedsContemporaneousPrices(t *testing.T) {
+	marks := liqTestMarks()
+	marks["CUSDC"].prices = []liqPrice{{close: liqFillTime.Add(-23 * time.Hour), price: "0.90", traded: true}}
+	v := liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
+	if liqDeref(v.LotUSD) != "99.00" || liqDeref(v.BidUSD) != "37.50" || v.FillerProfitUSD != nil ||
+		liqDeref(v.FillerProfitReason) != liqProfitNotContemporaneous {
+		t.Fatalf("lot %s bid %s profit %s reason %s, want 99.00 37.50 null %s", liqDeref(v.LotUSD), liqDeref(v.BidUSD),
+			liqDeref(v.FillerProfitUSD), liqDeref(v.FillerProfitReason), liqProfitNotContemporaneous)
+	}
+	marks["CUSDC"].prices[0].close = liqFillTime.Add(-90 * time.Minute)
+	v = liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
+	if liqDeref(v.FillerProfitUSD) != "61.50" || v.FillerProfitReason != nil {
+		t.Fatalf("one bucket apart: profit %s reason %s, want 61.50 null", liqDeref(v.FillerProfitUSD), liqDeref(v.FillerProfitReason))
+	}
+	f := liqTestFill()
+	f.Lot["CODD"] = "5"
+	v = liqValuer{protocol: blend.SourceName, marks: liqTestMarks()}.value(f)
+	if v.FillerProfitUSD != nil || liqDeref(v.FillerProfitReason) != liqProfitInputsPartial {
+		t.Fatalf("partial lot: profit %s reason %s, want null %s", liqDeref(v.FillerProfitUSD), liqDeref(v.FillerProfitReason), liqProfitInputsPartial)
+	}
+}
+
 // TestLiqBucketTraded: the floor is inclusive, compared exactly; unknown or unparseable volume is refused.
 func TestLiqBucketTraded(t *testing.T) {
 	floor := big.NewRat(1000, 1)

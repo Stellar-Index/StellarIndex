@@ -33,6 +33,13 @@ const (
 	liqReasonNoPrice           = "no_price_within_bound"
 )
 
+// Why filler_profit_usd is null on a fill with amounts.
+const (
+	liqProfitInputsPartial      = "inputs_partial"
+	liqProfitNotContemporaneous = "prices_not_contemporaneous"
+	liqProfitPriceSpread        = time.Hour // one hourly bucket
+)
+
 // liqPrice is one closed USD price bucket: its VWAP per whole token (at scale decimals) and the time it closed.
 type liqPrice struct {
 	close time.Time
@@ -202,10 +209,36 @@ func (lv liqValuer) value(f timescale.LendingLiquidationFill) LendingLiquidation
 	if bid != nil {
 		v.BidUSD = strRef(ratString(bid, 2))
 	}
-	if lot != nil && bid != nil && !v.LotUSDLowerBound && !v.BidUSDLowerBound {
+	switch {
+	case lot == nil || bid == nil || v.LotUSDLowerBound || v.BidUSDLowerBound:
+		v.FillerProfitReason = strRef(liqProfitInputsPartial)
+	case !liqPricesContemporaneous(v.Lot, v.Bid):
+		v.FillerProfitReason = strRef(liqProfitNotContemporaneous)
+	default:
 		v.FillerProfitUSD = strRef(ratString(new(big.Rat).Sub(lot, bid), 2))
 	}
 	return v
+}
+
+// liqPricesContemporaneous: every valued leg of both sides was priced within one hourly bucket of the others, so the profit
+// does not set a lot priced near the bound against a bid priced at the fill.
+func liqPricesContemporaneous(sides ...[]LendingLiquidationLeg) bool {
+	var first, last time.Time
+	for _, legs := range sides {
+		for _, l := range legs {
+			if l.PriceAt == nil {
+				continue
+			}
+			at := time.Time(*l.PriceAt)
+			if first.IsZero() || at.Before(first) {
+				first = at
+			}
+			if at.After(last) {
+				last = at
+			}
+		}
+	}
+	return last.Sub(first) <= liqProfitPriceSpread
 }
 
 // liquidationAssets is each asset the page's fills need marks for, and whether it needs reserve rates.
