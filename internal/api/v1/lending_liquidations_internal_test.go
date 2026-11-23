@@ -197,6 +197,20 @@ func TestLiqValuer_ProfitNeedsContemporaneousPrices(t *testing.T) {
 	}
 }
 
+// TestLiqMarks_PriceAtExclusionBoundaries: a dropped bucket closing exactly at the fill would have priced it (withheld); one
+// dropped at the same close as the served bucket is that bucket's excluded half, so the served price stands.
+func TestLiqMarks_PriceAtExclusionBoundaries(t *testing.T) {
+	m := liqTestMarks()["CUSDC"]
+	m.withheld = []time.Time{liqFillTime}
+	if _, reason := m.priceAt(liqFillTime); reason != liqReasonPriceWithheld {
+		t.Errorf("dropped bucket closing at the fill: reason %q, want %s", reason, liqReasonPriceWithheld)
+	}
+	m.withheld = []time.Time{liqFillTime.Add(-time.Hour)}
+	if p, reason := m.priceAt(liqFillTime); reason != "" || p.price != "0.90" {
+		t.Errorf("dropped bucket at the served close: %+v %q, want 0.90 valued", p, reason)
+	}
+}
+
 // TestLiqBucketTraded: the floor is inclusive, compared exactly; unknown or unparseable volume is refused.
 func TestLiqBucketTraded(t *testing.T) {
 	floor := big.NewRat(1000, 1)
