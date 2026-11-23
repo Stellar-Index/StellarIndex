@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,6 +247,58 @@ func TestClassicSupply_OldTrustlineSumIsNoFloor(t *testing.T) {
 			}
 			if tc.lake != "" && (got.supply.CirculatingSupplyLowerBound != tc.wantLB || got.supplyFlags.Degraded == tc.wantLB) {
 				t.Errorf("/supply: lb=%v degraded=%v, want lb=%v", got.supply.CirculatingSupplyLowerBound, got.supplyFlags.Degraded, tc.wantLB)
+			}
+		})
+	}
+}
+
+// detailExplorer is the trustline sum plus the issuer-account read the detail handler makes; the issuer has no lake state.
+type detailExplorer struct{ trustlineOnlyExplorer }
+
+func (*detailExplorer) AccountStateCached(context.Context, string) (clickhouse.AccountState, bool, error) {
+	return clickhouse.AccountState{}, false, nil
+}
+
+// Through the real detail handler: a priced trustline floor values a cap marked a lower bound and no FDV; a healthy read is
+// cached; a failed lake read is served stale and no-store and never cached.
+func TestClassicSupply_DetailHandlerValuesAndCachesTheReading(t *testing.T) {
+	asset, err := canonical.ParseAsset(cetesAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		lakeErr error
+		cached  bool
+	}{"healthy": {nil, true}, "lake read fails": {errLakeDown, false}} {
+		t.Run(name, func(t *testing.T) {
+			_, stub := lakeSupplyServer(t, "500000000") // below cetesTrustlineOnly
+			stub.err = tc.lakeErr
+			s := New(Options{
+				Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+				TokenSupply: stub,
+				Explorer:    &detailExplorer{trustlineOnlyExplorer{supply: map[string]string{cetesAsset: cetesTrustlineOnly}}},
+				Prices:      fixedPriceReader{snap: PriceSnapshot{AssetID: cetesAsset, Quote: "fiat:USD", Price: "2", PriceType: "vwap"}},
+			})
+			rec := httptest.NewRecorder()
+			s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/"+cetesAsset, nil))
+			body := rec.Body.String()
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", rec.Code, body)
+			}
+			for _, want := range []string{
+				`"circulating_supply":"` + cetesTrustlineOnly + `"`, `"circulating_supply_lower_bound":true`,
+				`"market_cap_usd":"200.00"`, `"market_cap_lower_bound":true`,
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body lacks %s: %s", want, body)
+				}
+			}
+			if strings.Contains(body, `"fdv_usd":"`) || strings.Contains(body, `"total_supply":"`) {
+				t.Errorf("a floor valued an FDV or served a total: %s", body)
+			}
+			_, cached := s.assetDetailCache.get(assetDetailCacheKey(asset, false))
+			if cached != tc.cached || noStore(rec) == tc.cached || decodeFlags(t, rec).Stale == tc.cached {
+				t.Errorf("cached=%v no-store=%v stale=%v, want cached=%v", cached, noStore(rec), decodeFlags(t, rec).Stale, tc.cached)
 			}
 		})
 	}
