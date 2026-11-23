@@ -1,8 +1,10 @@
 package v1
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -373,8 +375,8 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	best, bestAt, served, err := s.recentClosedForAliases(ctx, asset, quote, n)
 	var failed oracleLegErrors
 	if err != nil {
-		if !usdQuote || !s.directRefusalAdmitsPeg(ctx, asset, err) {
-			return nil, canonical.Asset{}, false, nil, err
+		if refusal := s.directReadRefusal(ctx, asset, usdQuote, err); refusal != nil {
+			return nil, canonical.Asset{}, false, nil, refusal
 		}
 		failed.note(err)
 		directWithheld = exclusionVerdict(err)
@@ -392,9 +394,6 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		if failed.read != nil {
 			// An unread leg is not a missing one: the next peg's market never stands in for it, but a leg read before it
 			// still answers (walkUSDPegs' rule).
-			if len(best) == 0 {
-				return nil, canonical.Asset{}, false, nil, failed.read
-			}
 			break
 		}
 		if !ok {
@@ -413,37 +412,57 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		}
 		return best, served, viaPeg, directWithheld, nil
 	}
-	return nil, canonical.Asset{}, false, nil, failed.err()
+	return nil, canonical.Asset{}, false, nil, cmp.Or(failed.read, failed.err())
 }
 
-// liveDirectRefusal is directWithheld unless it is a thin verdict on a dormant book. The series read has no lower time
-// bound, so a thin verdict on a book with no closed bucket inside the existence window lastprice gates on is a dormant book, not a
-// refused market; any other verdict, or an unanswered probe, still withdraws the hold.
-func (s *Server) liveDirectRefusal(ctx context.Context, asset canonical.Asset, directWithheld error) error {
-	if directWithheld == nil || priceWithheldReason(directWithheld) != PriceWithheldSubstance {
-		return directWithheld
-	}
+// directBookDormant reports whether no spelling of asset has a closed fiat:USD bucket inside the existence window lastprice gates
+// on. The series read has no lower time bound, so a thin verdict on such a book is a dormant book, not a refused market. A probe
+// that could not be read leaves the question unanswered: its error is returned unless another spelling proved the book live.
+func (s *Server) directBookDormant(ctx context.Context, asset canonical.Asset) (bool, error) {
 	gate, ok := s.Prices.(proxyPairGate)
 	if !ok {
-		return directWithheld
+		return false, nil
 	}
+	var unread error
 	for _, a := range assetAliases(asset) {
-		if exists, err := gate.RecentClosedVWAP1mExists(ctx, a, defaultPriceQuote); err != nil || exists {
-			return directWithheld
+		exists, err := gate.RecentClosedVWAP1mExists(ctx, a, defaultPriceQuote)
+		if err != nil {
+			unread = cmp.Or(unread, fmt.Errorf("fiat:USD existence probe for %s: %w", a, err))
+			continue
 		}
+		if exists {
+			return false, nil
+		}
+	}
+	return unread == nil, unread
+}
+
+// directReadRefusal is the error prices() answers for a failed direct read, or nil when a peg book may answer in its place.
+func (s *Server) directReadRefusal(ctx context.Context, asset canonical.Asset, usdQuote bool, err error) error {
+	if !usdQuote {
+		return err
+	}
+	admits, probeErr := s.directRefusalAdmitsPeg(ctx, asset, err)
+	if probeErr != nil {
+		return probeErr
+	}
+	if !admits {
+		return err
 	}
 	return nil
 }
 
 // directRefusalAdmitsPeg: a direct series withheld by a source exclusion, or refused as thin on a dormant book, is no direct
 // series, so a clean peg book may answer. Any other refusal (a live thin book, a flagged issuer, an unreadable exclusion set)
-// refuses the pair, as lastprice does.
-func (s *Server) directRefusalAdmitsPeg(ctx context.Context, asset canonical.Asset, err error) bool {
+// refuses the pair, as lastprice does. An unanswered dormancy probe is a read error, never a withheld verdict.
+func (s *Server) directRefusalAdmitsPeg(ctx context.Context, asset canonical.Asset, err error) (bool, error) {
 	if withheldByExclusion(err) {
-		return true
+		return true, nil
 	}
-	return errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldSubstance &&
-		s.liveDirectRefusal(ctx, asset, err) == nil
+	if !errors.Is(err, ErrPriceWithheld) || priceWithheldReason(err) != PriceWithheldSubstance {
+		return false, nil
+	}
+	return s.directBookDormant(ctx, asset)
 }
 
 // stablecoinOwnSeries answers a USD stablecoin from its own series only: a withheld verdict outranks "no series".

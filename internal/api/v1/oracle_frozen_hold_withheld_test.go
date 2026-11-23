@@ -2,6 +2,7 @@ package v1_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -191,5 +192,32 @@ func TestOraclePrices_UnfrozenRefusedDirectBookAgreesWithLastPrice(t *testing.T)
 				t.Fatalf("lastprice = %d, want 404: %s", ls, lb)
 			}
 		})
+	}
+}
+
+// TestOraclePrices_UnreadDormancyProbeIsRetryable: a thin verdict whose dormancy probe could not be read is unjudged, so
+// prices() answers a retryable, uncached 5xx, never a 404 price-withheld verdict nor the peg book.
+func TestOraclePrices_UnreadDormancyProbeIsRetryable(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	thin := v1.PriceWithheldError(pricingguard.WithheldThinMarket)
+	srv := v1.New(v1.Options{
+		Prices: &gatingStubPriceReader{
+			stubPriceReader: stubPriceReader{
+				errByPair: map[string]error{xlmUSD: thin, "native/fiat:USD": thin},
+				recent: map[string][]v1.PriceSnapshot{
+					"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
+					"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
+				},
+			},
+			existsErr: errors.New("pool acquire timeout"),
+		},
+		USDPeggedClassics: []canonical.Asset{usdc},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, ts.URL+pricesURL)
+	body, _ := readAll(resp)
+	if resp.StatusCode < 500 || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
+		t.Fatalf("prices() = %d (Cache-Control %q), want an uncached 5xx: %s",
+			resp.StatusCode, resp.Header.Get("Cache-Control"), body)
 	}
 }

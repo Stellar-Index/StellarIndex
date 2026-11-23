@@ -924,11 +924,12 @@ func TestPrice_XLMQuoteAlias_ReadFailureEndsTheWalk(t *testing.T) {
 type gatingStubPriceReader struct {
 	stubPriceReader
 	exists      map[string]bool
+	existsErr   error
 	latestCalls map[string]int
 }
 
 func (r *gatingStubPriceReader) RecentClosedVWAP1mExists(_ context.Context, base, quote canonical.Asset) (bool, error) {
-	return r.exists[base.String()+"/"+quote.String()], nil
+	return r.exists[base.String()+"/"+quote.String()], r.existsErr
 }
 
 func (r *gatingStubPriceReader) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
