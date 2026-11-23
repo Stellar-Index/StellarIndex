@@ -30,6 +30,7 @@ func TestLendingLegEntries_CarryAssetIdentity(t *testing.T) {
 
 // An open lending leg whose repayments or withdrawals exceed its principal (interest paid at the
 // b/d-token rate) has a negative underlying net; that is not the position, so amount is unknown ("").
+// A leg whose b/d-token balance is exactly zero is closed, a proven zero whatever its net.
 func TestBlendLegEntry_NegativeNetIsUnknownNotServed(t *testing.T) {
 	for _, tc := range []struct {
 		name, net, tokens, wantAmount string
@@ -37,7 +38,9 @@ func TestBlendLegEntry_NegativeNetIsUnknownNotServed(t *testing.T) {
 	}{
 		{"open borrow repaid past principal", "-500000000", "123", "", false},
 		{"open supply withdrawn past principal", "-1", "5", "", false},
-		{"closed leg with interest earned", "-80", "0", "", true},
+		{"open leg with unread balance", "-1", "", "", false},
+		{"closed leg with interest earned", "-80", "0", "0", true},
+		{"closed leg with a positive residue", "15", "0", "0", true},
 		{"open positive net", "1000", "9", "1000", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

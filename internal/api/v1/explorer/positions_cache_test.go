@@ -66,6 +66,61 @@ func getPositions(t *testing.T, h *Handler, query string) *httptest.ResponseReco
 	return rec
 }
 
+// flakyNamingReader fails every SAC identity lookup while fail is set, then names the contract.
+type flakyNamingReader struct {
+	*capReader
+	fail atomic.Bool
+}
+
+func (r *flakyNamingReader) SACClassicAssetName(context.Context, string) (string, bool, error) {
+	if r.fail.Load() {
+		return "", false, errors.New("lake down")
+	}
+	return "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", true, nil
+}
+
+func (r *flakyNamingReader) SACAssetFromEvents(context.Context, string) (string, bool, error) {
+	if r.fail.Load() {
+		return "", false, errors.New("lake down")
+	}
+	return "", false, nil
+}
+
+// A snapshot built while an identity lookup failed carries the contract id as asset_ids; it must be
+// replaced as soon as a lookup works, not kept for the class TTL.
+func TestAccountPositions_UnresolvedLabelsAreNotHeldForTheTTL(t *testing.T) {
+	const contract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	naming := &flakyNamingReader{capReader: &capReader{probe: &deadlineProbe{}}}
+	naming.fail.Store(true)
+	h := newProbeHandler(naming, &blendRowsReader{slowPositionsReader: &slowPositionsReader{}, rows: []timescale.BlendPositionFold{
+		{Pool: "P1", Asset: contract, HasSupplyLeg: true, SupplyNet: "5"},
+	}})
+	var ids atomic.Value
+	h.WriteJSONAt = func(w http.ResponseWriter, v any, _, _ bool, _ time.Time) {
+		if view, ok := v.(AccountPositionsView); ok && len(view.Positions) == 1 {
+			ids.Store(fmt.Sprint(view.Positions[0].AssetIDs))
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+
+	getPositions(t, h, "")
+	if got := ids.Load(); got != "["+contract+"]" {
+		t.Fatalf("failing lookup: asset_ids = %v, want the contract id", got)
+	}
+	naming.fail.Store(false)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		getPositions(t, h, "")
+		if got := ids.Load().(string); strings.HasPrefix(got, "[USDC-") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("asset_ids still %v after a working lookup; the unresolved snapshot is held for the TTL", ids.Load())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // A second request inside the TTL must be served from the entry without
 // re-reading Postgres — and ?include_closed must share it, since the cached
 // set is UNFILTERED and the filter is applied at serve time.

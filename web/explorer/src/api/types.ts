@@ -7521,8 +7521,9 @@ export interface components {
              *     what this number represents. The empty string means the
              *     quantity is unknown (superseded_by_auction,
              *     not_yet_published, shares_unknown, a negative
-             *     net_share_flows, a negative net_underlying_at_event_time),
-             *     never a verified zero.
+             *     net_share_flows, a negative net_underlying_at_event_time on
+             *     an open leg), never a verified zero. A lending leg whose
+             *     b/d-token balance is exactly zero is closed and serves "0".
              */
             amount: string;
             /**

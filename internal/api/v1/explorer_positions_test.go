@@ -351,10 +351,10 @@ func TestExplorer_AccountPositions_BlendLegClosedByTokenBalance(t *testing.T) {
 	}}
 	open := map[string]positionWant{"blend/lending_supply/CPOOLHELD": {"0", "net_underlying_at_event_time"}}
 	assertPositions(t, servePositions(t, reader, false), open)
-	// A negative net is not a position, so even a closed leg serves it as unknown.
-	open["blend/lending_supply/CPOOLEXIT"] = positionWant{"", "net_underlying_at_event_time"}
-	open["blend/lending_borrow/CPOOLEXIT"] = positionWant{"", "net_underlying_at_event_time"}
-	open["blend/lending_supply/CPOOLLOSS"] = positionWant{"25", "net_underlying_at_event_time"}
+	// A zero b/d-token balance is a proven zero, whatever sign the leftover net has.
+	open["blend/lending_supply/CPOOLEXIT"] = positionWant{"0", "net_underlying_at_event_time"}
+	open["blend/lending_borrow/CPOOLEXIT"] = positionWant{"0", "net_underlying_at_event_time"}
+	open["blend/lending_supply/CPOOLLOSS"] = positionWant{"0", "net_underlying_at_event_time"}
 	assertPositions(t, servePositions(t, reader, true), open)
 }
 

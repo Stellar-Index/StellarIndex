@@ -294,6 +294,9 @@ type accountPositionsSnapshot struct {
 	labelsUnresolved bool
 }
 
+// provisional marks a snapshot built on a failed identity lookup: its fallback contract ids are stale from birth.
+func (s accountPositionsSnapshot) provisional() bool { return s.labelsUnresolved }
+
 // AccountPositions serves GET /v1/accounts/{g_strkey}/positions, excluding closed positions unless ?include_closed=true; SWR-cached
 // under the same contract as AccountActivity.
 func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
@@ -534,7 +537,8 @@ func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows [
 }
 
 // blendLegEntry sets a Blend leg's amount. A superseded leg's underlying net omits the auctioned b/d-tokens, so it serves no amount;
-// only an exactly-zero token balance (fully seized or repaid) is a known zero. A negative net is never served as an amount.
+// only an exactly-zero token balance (fully seized or repaid) is a known zero, as it is for any leg. An open leg's negative net is
+// never served as an amount.
 func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) PositionEntry {
 	if superseded {
 		e.AmountSemantics = AmountSemanticsSupersededByAuction
@@ -544,14 +548,18 @@ func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) 
 		}
 		return e
 	}
+	e.AmountSemantics = AmountSemanticsNetUnderlying
+	// Closure is the b/d-token balance: a full exit returns principal plus interest, so the underlying net is almost never zero.
+	if tokens == "0" {
+		e.Amount = "0"
+		e.closed = true
+		return e
+	}
 	e.Amount = net
 	if strings.HasPrefix(net, "-") {
 		// Interest is paid out at the b/d-token rate, so exits can exceed principal; a negative net is not the position.
 		e.Amount = ""
 	}
-	e.AmountSemantics = AmountSemanticsNetUnderlying
-	// Closure is the b/d-token balance: a full exit returns principal plus interest, so the underlying net is almost never zero.
-	e.closed = tokens == "0"
 	return e
 }
 
