@@ -202,11 +202,12 @@ func mustJSON(t *testing.T, v any) string {
 // withheld while an exclusion names the asset, including when a clean body was cached before it began.
 func TestAssetDetail_SourceExclusionWithholdsCataloguePrice(t *testing.T) {
 	now := time.Now().UTC()
-	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	// Series points are labelled by their hourly bucket's start.
+	at := func(d time.Duration) string { return now.Truncate(time.Hour).Add(-d).Format(time.RFC3339) }
 	overlay := &stubAssetsReaderExt{
 		row: timescale.AssetRow{AssetID: exclAQUA, PriceUSD: sptr("0.5"), Change24hPct: sptr("+1.00"), Volume24hUSD: sptr("1000")},
 		hist24: []timescale.AssetPricePoint{
-			{T: at(3 * time.Hour), P: sptr("0.4")}, {T: at(2 * time.Hour), P: sptr("0.45")}, {T: at(time.Minute), P: sptr("0.5")},
+			{T: at(2 * time.Hour), P: sptr("0.4")}, {T: at(time.Hour), P: sptr("0.45")}, {T: at(0), P: sptr("0.5")},
 		},
 		ath: &timescale.AssetATH{USD: "0.9", At: at(30 * time.Minute)},
 	}
@@ -244,17 +245,15 @@ func TestAssetDetail_SourceExclusionWithholdsCataloguePrice(t *testing.T) {
 	if flags["fills_withheld_reason"] != "source_excluded" || cc != "no-store" {
 		t.Errorf("flags %v, Cache-Control %q: want fills_withheld_reason source_excluded and no-store", flags, cc)
 	}
-	// An exclusion that ended 140 minutes ago leaves the headline but takes what spans it: the change, the volume, the ATH
-	// beside it and the one series point whose hour holds it.
+	// An exclusion that ended 140 minutes ago still sits inside the 7-day lookback the unrecorded headline minute may come
+	// from, so it takes the headline and everything derived from it.
 	gate.set(assetExclGate(exclTable{rows: []timescale.SourceExclusion{{
 		ID: 2, Source: "soroswap", Base: exclAQUA, Quote: "fiat:USD", From: now.Add(-150 * time.Minute), Until: now.Add(-140 * time.Minute),
 	}}}))
 	d, flags, _ = get()
-	pts, _ := d["price_history_24h"].([]any)
-	if d["price_usd"] != "0.5" || d["change_24h_pct"] != nil || d["volume_24h_usd"] != nil || d["ath"] != nil || len(pts) != 3 ||
-		pts[0].(map[string]any)["p"] != "0.4" || pts[1].(map[string]any)["p"] != nil || pts[2].(map[string]any)["p"] != "0.5" ||
-		flags["fills_withheld_reason"] != "source_excluded" {
-		t.Errorf("ended exclusion: %v flags %v", d, flags)
+	wantWithheld(t, d, "source_excluded")
+	if flags["fills_withheld_reason"] != "source_excluded" {
+		t.Errorf("ended exclusion: flags %v", flags)
 	}
 	gate.set(assetExclGate(exclTable{err: errors.New("db down")}))
 	if d, flags, _ = get(); flags["stale"] != true {

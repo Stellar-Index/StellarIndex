@@ -10,12 +10,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Look-backs of the values an asset row serves: the snapshot price's maximum age, and each change's horizon plus the slack its
-// reference bucket may sit before it (see timescale.AssetRow).
+// Look-backs of the values an asset row serves (see timescale's asset_price_snapshot). The snapshot row does not record the
+// minute its price was read at, only that it is the newest traded minute in the 7 days before the row was computed, so the
+// headline is judged over that whole lookback.
 const (
-	assetPriceExclusionSpan = 15 * time.Minute
-	assetVolumeSpan         = 24 * time.Hour
-	assetSurfaceSpan        = 7*24*time.Hour + 2*time.Hour
+	assetSnapshotMaxAge = 15 * time.Minute
+	assetPriceLookback  = 7*24*time.Hour + assetSnapshotMaxAge
+	// assetAnchorMaxAge: an XLM-routed price multiplies by the XLM/USD anchor up to an hour before its own minute.
+	assetAnchorMaxAge = time.Hour
+	assetVolumeSpan   = 24 * time.Hour
+	assetSurfaceSpan  = 7*24*time.Hour + 2*time.Hour
 	// assetATHSpan brackets an ATH's instant: its bucket grain is not recorded, so the day either side is judged.
 	assetATHSpan = 24 * time.Hour
 )
@@ -68,11 +72,11 @@ func (sc assetExclusionScope) judgeRows(ctx context.Context, s *Server, rows []A
 // judgeRow applies the unattributed rule to one row, except a headline that records its sources. The listing price may be
 // read through XLM (the snapshot's XLM arm), so an exclusion naming XLM covers it too, as for the global headline.
 func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetDetail) bool {
-	asset, known := assetRowIdentity(s, d)
-	covered := sc.rowCovered(ctx, s, d, asset, known)
+	j := sc.rowJudge(ctx, s, d)
+	covered := j.covered
 	now := sc.now.Add(time.Nanosecond)
 	removed := false
-	if d.PriceUSD != nil && sc.headlineCovered(ctx, d, asset, known, covered, now) {
+	if d.PriceUSD != nil && j.headlineCovered(d, now) {
 		removed = withholdAssetRow(d, PriceWithheldSourceExcluded)
 	}
 	for _, c := range []struct {
@@ -86,8 +90,8 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 	if covered(now.Add(-assetVolumeSpan), now) {
 		removed = withholdAssetVolume(d) || removed
 	}
-	d.PriceHistory24h, removed = sc.cleanSeries(d.PriceHistory24h, covered, removed)
-	d.PriceHistory7d, removed = sc.cleanSeries(d.PriceHistory7d, covered, removed)
+	d.PriceHistory24h, removed = cleanSeries(d.PriceHistory24h, covered, now, removed)
+	d.PriceHistory7d, removed = cleanSeries(d.PriceHistory7d, covered, now, removed)
 	if d.ATH != nil {
 		at, err := time.Parse(time.RFC3339Nano, d.ATH.At)
 		if err != nil || covered(at.Add(-assetATHSpan), at.Add(assetATHSpan)) {
@@ -97,56 +101,86 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 	return removed
 }
 
-// rowCovered judges a span of a row's unattributed values: on the asset and every leg it may be priced through, or, for an
-// asset that does not resolve, by any exclusion in force.
-func (sc assetExclusionScope) rowCovered(
-	ctx context.Context, s *Server, d *AssetDetail, asset canonical.Asset, known bool,
-) func(from, to time.Time) bool {
-	legs := []canonical.Asset{asset, canonical.NativeAsset()}
-	// A declared non-USD peg is filled through its fiat's FX rate.
+// rowJudge judges one row's unattributed values on every leg it may be priced through: the asset's own books, XLM's (an
+// XLM-routed price) and a declared non-USD peg's FX; an asset that does not resolve is judged by any exclusion in force.
+type rowJudge struct {
+	ctx   context.Context
+	set   pricingguard.ExclusionSet
+	asset canonical.Asset
+	known bool
+	xlm   bool // the row is XLM itself, so its own leg is the XLM/USD anchor
+	peg   *canonical.Asset
+}
+
+func (sc assetExclusionScope) rowJudge(ctx context.Context, s *Server, d *AssetDetail) rowJudge {
+	j := rowJudge{ctx: ctx, set: sc.set}
+	j.asset, j.known = assetRowIdentity(s, d)
+	j.xlm = j.known && slices.Contains(canonical.AssetAliasStrings(canonical.NativeAsset()), j.asset.String())
 	if peg, ok := s.FiatPeggedClassics[d.AssetID]; ok && !peg.Equal(defaultPriceQuote) {
-		legs = append(legs, peg)
+		j.peg = &peg
 	}
-	return func(from, to time.Time) bool {
-		if !from.Before(to) {
-			to = from.Add(time.Nanosecond)
-		}
-		if !known {
-			return sc.set.MultiHopWithholding(ctx, from, to) != pricingguard.NotWithheld
-		}
-		for _, a := range legs {
-			if sc.set.UnattributedWithholding(ctx, a, defaultPriceQuote, from, to) != pricingguard.NotWithheld {
-				return true
+	return j
+}
+
+// covered judges every leg over one span.
+func (j rowJudge) covered(from, to time.Time) bool { return j.legsCovered(from, from, from, to) }
+
+// legsCovered judges the asset's leg from own, the XLM leg from xlm and the peg's FX from fx, each to to.
+func (j rowJudge) legsCovered(own, xlm, fx, to time.Time) bool {
+	if !own.Before(to) {
+		to = own.Add(time.Nanosecond)
+	}
+	if !j.known {
+		from := own
+		for _, t := range []time.Time{xlm, fx} {
+			if t.Before(from) {
+				from = t
 			}
 		}
-		return false
+		return j.set.MultiHopWithholding(j.ctx, from, to) != pricingguard.NotWithheld
 	}
+	if !j.xlm && j.set.UnattributedWithholding(j.ctx, j.asset, defaultPriceQuote, own, to) != pricingguard.NotWithheld {
+		return true
+	}
+	if j.set.UnattributedWithholding(j.ctx, canonical.NativeAsset(), defaultPriceQuote, xlm, to) != pricingguard.NotWithheld {
+		return true
+	}
+	return j.peg != nil && j.set.UnattributedWithholding(j.ctx, *j.peg, defaultPriceQuote, fx, to) != pricingguard.NotWithheld
 }
 
-// headlineCovered judges price_usd over the snapshot's age: on its recorded sources when it has them, else unattributed.
-func (sc assetExclusionScope) headlineCovered(
-	ctx context.Context, d *AssetDetail, asset canonical.Asset, known bool, covered func(from, to time.Time) bool, now time.Time,
-) bool {
-	from := now.Add(-assetPriceExclusionSpan)
-	if !known || len(d.PriceSources) == 0 {
-		return covered(from, now)
+// headlineCovered judges price_usd over the lookback its minute may sit in, as the row does not carry the minute: the
+// newest traded minute in [assetPriceLookback]; for XLM itself the anchor at the row's computation; for an XLM-routed price the
+// anchor up to [assetAnchorMaxAge] before that minute; for a peg's FX the daily point holding that lookback's start. On the
+// recorded sources when it has them.
+func (j rowJudge) headlineCovered(d *AssetDetail, now time.Time) bool {
+	own := now.Add(-assetPriceLookback)
+	if j.known && len(d.PriceSources) > 0 {
+		return judgeBucket(j.ctx, j.set, []canonical.Pair{{Base: j.asset, Quote: defaultPriceQuote}}, d.PriceSources, own, now) != pricingguard.NotWithheld
 	}
-	return judgeBucket(ctx, sc.set, []canonical.Pair{{Base: asset, Quote: defaultPriceQuote}}, d.PriceSources, from, now) != pricingguard.NotWithheld
+	xlm := own.Add(-assetAnchorMaxAge)
+	if j.xlm {
+		xlm = now.Add(-assetSnapshotMaxAge - assetAnchorMaxAge)
+	}
+	return j.legsCovered(own, xlm, own.Truncate(24*time.Hour), now)
 }
 
-// cleanSeries nulls each point whose span (from the previous point) an exclusion covers: a gap where it was, never a zero.
-func (sc assetExclusionScope) cleanSeries(pts []AssetPricePoint, covered func(from, to time.Time) bool, removed bool) ([]AssetPricePoint, bool) {
-	var prev time.Time
+// cleanSeries nulls each point whose bucket an exclusion covers: a point is labelled by its bucket's start, so it holds a value
+// read in [its label, the next point's), the last one up to now. A gap stands where it was, never a zero.
+func cleanSeries(pts []AssetPricePoint, covered func(from, to time.Time) bool, now time.Time, removed bool) ([]AssetPricePoint, bool) {
 	for i := range pts {
-		t, err := time.Parse(time.RFC3339Nano, pts[i].T)
-		from := prev
-		if prev.IsZero() {
-			from = t
+		if pts[i].P == nil {
+			continue
 		}
-		if pts[i].P != nil && (err != nil || covered(from, t)) {
+		t, err := time.Parse(time.RFC3339Nano, pts[i].T)
+		to := now
+		if i+1 < len(pts) {
+			if next, nerr := time.Parse(time.RFC3339Nano, pts[i+1].T); nerr == nil && next.After(t) {
+				to = next
+			}
+		}
+		if err != nil || covered(t, to) {
 			pts[i].P, removed = nil, true
 		}
-		prev = t
 	}
 	return pts, removed
 }
