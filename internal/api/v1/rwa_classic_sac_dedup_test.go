@@ -12,18 +12,18 @@ import (
 // SAC must not add a contract row, or the one supply is valued twice in every total. A mis-cased or padded declaration
 // still reaches its row through the catalogue join, so it must reach that row's SAC too, under the row's real (mixed-case) code.
 func TestRWA_ClassicMembersSACIsNotASecondAsset(t *testing.T) {
-	for _, tc := range []struct{ declared, real string }{
+	for _, tc := range []struct{ declared, listed string }{
 		{"USTRY", "USTRY"}, {"ustry", "USTRY"}, {" USTRY", "USTRY"}, {"XAUM", "XAUm"}, {"IBENJI", "iBENJI"},
 	} {
-		t.Run(tc.declared+"->"+tc.real, func(t *testing.T) { classicMemberSACIsNotASecondAsset(t, tc.declared, tc.real) })
+		t.Run(tc.declared+"->"+tc.listed, func(t *testing.T) { classicMemberSACIsNotASecondAsset(t, tc.declared, tc.listed) })
 	}
 }
 
-func classicMemberSACIsNotASecondAsset(t *testing.T, declared, real string) {
+func classicMemberSACIsNotASecondAsset(t *testing.T, declared, listed string) {
 	bound, dir, rows := oneBoundMember()
 	bound[0].Code = declared
-	rows[rwaGoodIssuer][0] = rwaRow(real, rwaGoodIssuer, sptr("1.0412"), 346312)
-	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: real, Issuer: rwaGoodIssuer}.SacContractID()
+	rows[rwaGoodIssuer][0] = rwaRow(listed, rwaGoodIssuer, sptr("1.0412"), 346312)
+	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: listed, Issuer: rwaGoodIssuer}.SacContractID()
 	if err != nil {
 		t.Fatal(err)
 	}
