@@ -24,11 +24,15 @@ func TestLineageBackfillFlags_RequireAStatedMode(t *testing.T) {
 }
 
 func TestPrintLineageBackfill_NamesKeysByIDAndModeVerb(t *testing.T) {
-	rep := auth.LineageBackfillReport{Scanned: 5, Delegated: 3, Complete: 1, Resolved: []string{"k-a"}, Orphaned: []string{"k-b"}, MaxDepth: 2}
+	rep := auth.LineageBackfillReport{Scanned: 5, Delegated: 3, Complete: 1, Resolved: []string{"k-a"}, Orphaned: []string{"k-b"}, MaxDepth: 2, LineageMissing: []string{"k-c"}}
 	out := lineageBackfillSummary(rep, false)
-	for _, want := range []string{"scanned 5 records: 3 delegated, 1 already complete, max depth 2", "would record the chain of 1 keys: k-a", "orphaned", "1 keys: k-b"} {
+	for _, want := range []string{"scanned 5 records: 3 delegated, 1 already complete, max depth 2", "would record the chain of 1 keys: k-a", "orphaned", "1 keys: k-b", "would create the lineage record of 1 keys: k-c"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry-run output lacks %q:\n%s", want, out)
 		}
+	}
+	denied := lineageBackfillSummary(auth.LineageBackfillReport{LineageDenied: true}, false)
+	if !strings.Contains(denied, "not checked, the Redis ACL denies apikey-lineage:*") || strings.Contains(denied, "lineage record of 0 keys") {
+		t.Errorf("a denied lineage check must never read as 0 missing:\n%s", denied)
 	}
 }

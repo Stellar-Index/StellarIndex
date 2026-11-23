@@ -28,6 +28,8 @@ type RedisAPIKeyValidator struct {
 	// mirroredKeyIdleTTL is the sliding idle window re-applied to a TTL-bearing record on every
 	// validated Lookup (the read-path half of [MirroredKeyIdleTTL]); zero disables refresh-on-use.
 	mirroredKeyIdleTTL time.Duration
+
+	lineage lineageSlider
 }
 
 // accountStatusGate is the account-level kill switch both validators apply to a record naming a
@@ -231,6 +233,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	// gate so a suspended account's key is not kept alive. Best-effort EXPIRE ... XX: it never touches
 	// persistent records, and a failed refresh never rejects auth.
 	v.refreshIdleTTL(ctx, hash)
+	v.lineage.slide(ctx, v.rdb, hash, rec, v.mirroredKeyIdleTTL, v.now())
 	return sub, nil
 }
 

@@ -42,6 +42,9 @@ func LineageBackfill(args []string) error {
 		return err
 	}
 	fmt.Print(lineageBackfillSummary(rep, write))
+	if rep.LineageDenied {
+		return errors.New("lineage records not checked: the Redis ACL does not admit ~apikey-lineage:* — apply the redis-sentinel role, then rerun")
+	}
 	return nil
 }
 
@@ -74,5 +77,9 @@ func lineageBackfillSummary(rep auth.LineageBackfillReport, write bool) string {
 	if len(rep.Changed) > 0 {
 		out += fmt.Sprintf("changed during the run, not written (rerun) %d keys: %s\n", len(rep.Changed), strings.Join(rep.Changed, " "))
 	}
-	return out
+	if rep.LineageDenied {
+		return out + "lineage records: not checked, the Redis ACL denies apikey-lineage:*\n"
+	}
+	return out + fmt.Sprintf("%s the lineage record of %d keys: %s\n",
+		opsutil.WriteModeVerb(write, "created", "would create"), len(rep.LineageMissing), strings.Join(rep.LineageMissing, " "))
 }

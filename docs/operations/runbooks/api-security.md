@@ -54,6 +54,18 @@ stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -dry-run
 stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -write
 ```
 
+### Lineage records (step 2)
+
+Each key also has an `apikey-lineage:<hash>` record (KeyID and owner only, no key material). A key's own use and its descendants' use slide it, at most once an hour per key per API process, to the 90-day idle window plus 2 hours, so an ancestor nobody calls directly still stands while its children are in use. Only an EXPIRE that cannot create a record slides it, and a revoke or an account erasure deletes it. No authentication decision reads it yet. The ancestor's credential record still idles out on its own use, as before. A write that fails is counted in `stellarindex_apikey_lineage_write_failures_total{op}` and changes nothing else: a mint still succeeds, and the backfill writes the missing record later.
+
+Order, per host. Do not ship lineage enforcement until the last step passes:
+
+1. Deploy the binary.
+2. Apply the `redis-sentinel` role, which grants the app user `~apikey-lineage:*`. Until then every lineage write is NOPERM. Check the grant (prints key patterns only): `redis-cli ACL GETUSER stellarindex | grep -F 'apikey-lineage'`, run as the admin user.
+3. Run `apikey-lineage-backfill -dry-run`. It prints `would create the lineage record of N keys`. If it says `not checked, the Redis ACL denies apikey-lineage:*` and exits non-zero, go back to step 2.
+4. Run `apikey-lineage-backfill -write`.
+5. Run `-dry-run` again. It must print `would create the lineage record of 0 keys`.
+
 ## Related
 
 - [api](api.md): API-side alerts.

@@ -82,6 +82,12 @@ func TestRedisACL_AppUserAdmitsAPIKeyCache(t *testing.T) {
 		t.Fatalf("%s: the stellarindex user rule does not admit ~apikey-cache:* — "+
 			"under lockdown every postgres-backend key-cache read and write is NOPERM", path)
 	}
+	// cachekeys.APIKeyLineage: without it no lineage record is ever written, and lineage
+	// enforcement would refuse every child of an ancestor whose credential idled out.
+	if !slices.Contains(rule, "~apikey-lineage:*") {
+		t.Fatalf("%s: the stellarindex user rule does not admit ~apikey-lineage:* — "+
+			"under lockdown every lineage record write is NOPERM", path)
+	}
 }
 
 // lint-replay-plan.sh derives the projected set by parsing source_spec.go

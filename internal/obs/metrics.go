@@ -390,6 +390,10 @@ func registerFailedAuthMetrics() {
 	Registry.MustRegister(FailedAuthTotal)
 	FailedAuthTotal.WithLabelValues(FailedAuthRejected)
 	FailedAuthTotal.WithLabelValues(FailedAuthThrottled)
+	Registry.MustRegister(APIKeyLineageWriteFailuresTotal)
+	for _, op := range []string{APIKeyLineageOpMint, APIKeyLineageOpSlide, APIKeyLineageOpDelete} {
+		APIKeyLineageWriteFailuresTotal.WithLabelValues(op)
+	}
 }
 
 // registerRedisFailureMetrics registers and zero-seeds the signals for a
@@ -2905,6 +2909,23 @@ var FailedAuthTotal = prometheus.NewCounterVec(
 const (
 	FailedAuthRejected  = "rejected"
 	FailedAuthThrottled = "throttled"
+)
+
+// APIKeyLineageWriteFailuresTotal counts best-effort `apikey-lineage:` writes that failed (NOPERM
+// before the ACL grant, outage, OOM); none changes an auth result. Pre-seeded per op.
+var APIKeyLineageWriteFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_apikey_lineage_write_failures_total",
+		Help: "Failed best-effort API-key lineage record writes, by op (mint|slide|delete). Authentication is unaffected; the lineage backfill repairs a missed mint.",
+	},
+	[]string{"op"},
+)
+
+// APIKeyLineageWriteFailuresTotal op label values.
+const (
+	APIKeyLineageOpMint   = "mint"
+	APIKeyLineageOpSlide  = "slide"
+	APIKeyLineageOpDelete = "delete"
 )
 
 // AdminKeyBudgetClampsTotal counts credentials whose per-minute budget clampKeyBudgetsToTier lowered to the tier ceiling (`lowered`) or failed to (`failed`, key keeps its higher budget); `failed` is alerted by stellarindex_admin_key_budget_clamp_failed.

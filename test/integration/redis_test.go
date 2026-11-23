@@ -846,9 +846,10 @@ func (r *redisOracleReader) LatestOracleStreams(
 }
 
 const (
-	aclTemplatePath  = "configs/ansible/roles/redis-sentinel/templates/users.acl.j2"
-	aclIndexPattern  = "~apikey-index:*"
-	aclFixtureAppPwd = "index-acl-fixture" // gitleaks:allow — throwaway container ACL user, not a credential
+	aclTemplatePath   = "configs/ansible/roles/redis-sentinel/templates/users.acl.j2"
+	aclIndexPattern   = "~apikey-index:*"
+	aclLineagePattern = "~apikey-lineage:*"
+	aclFixtureAppPwd  = "index-acl-fixture" // gitleaks:allow — throwaway container ACL user, not a credential
 )
 
 // shippedStellarindexACLRule returns the `user stellarindex …` rule of
@@ -931,11 +932,62 @@ func TestAPIKeyIndex_RealRedisACL(t *testing.T) {
 		}
 	})
 
+	t.Run("lineage grant not yet applied: auth, mint and revoke as before; backfill after the grant", func(t *testing.T) {
+		if err := admin.FlushAll(ctx).Err(); err != nil {
+			t.Fatalf("flushall: %v", err)
+		}
+		setACLUser(ctx, t, admin, "stellarindex", withoutPattern(shipped, aclLineagePattern))
+		app := appClient(t, admin, "stellarindex")
+		store := auth.NewRedisAPIKeyStore(app)
+		validator := auth.NewRedisAPIKeyValidator(app)
+		const owner = "account:lineage-gap"
+		root, rootPlain, err := store.Create(ctx, auth.CreateAPIKeyRequest{Identifier: owner, SelfService: true})
+		if err != nil {
+			t.Fatalf("Create while the lineage family is denied: %v", err)
+		}
+		rootSub, err := validator.Lookup(ctx, rootPlain)
+		if err != nil {
+			t.Fatalf("Lookup while the lineage family is denied: %v", err)
+		}
+		_, childPlain, err := store.Create(ctx, auth.ChildKeyRequest(rootSub, "c", nil))
+		if err != nil {
+			t.Fatalf("delegated Create while the lineage family is denied: %v", err)
+		}
+		if _, err := validator.Lookup(ctx, childPlain); err != nil {
+			t.Fatalf("child Lookup while the lineage family is denied: %v", err)
+		}
+		lineage := cachekeys.APIKeyLineage(auth.HashAPIKey(rootPlain)).String()
+		if n, err := admin.Exists(ctx, lineage).Result(); err != nil || n != 0 {
+			t.Fatalf("lineage record exists=%d err=%v under a denying ACL", n, err)
+		}
+		if rep, err := store.BackfillAncestorHashes(ctx, false); err != nil || !rep.LineageDenied {
+			t.Fatalf("backfill under a denying ACL: denied=%v err=%v; want reported denied", rep.LineageDenied, err)
+		}
+
+		if err := admin.Do(ctx, "ACL", "SETUSER", "stellarindex", aclLineagePattern).Err(); err != nil {
+			t.Fatalf("grant %s: %v", aclLineagePattern, err)
+		}
+		if rep, err := store.BackfillAncestorHashes(ctx, true); err != nil || len(rep.LineageMissing) != 2 {
+			t.Fatalf("backfill -write after the grant: missing=%v err=%v; want both keys", rep.LineageMissing, err)
+		}
+		if rep, err := store.BackfillAncestorHashes(ctx, false); err != nil || len(rep.LineageMissing) != 0 {
+			t.Fatalf("dry run after -write: missing=%v err=%v; want 0", rep.LineageMissing, err)
+		}
+		if err := store.RevokeKeyByID(ctx, owner, root.KeyID); err != nil {
+			t.Fatalf("revoke after the grant: %v", err)
+		}
+		for _, pattern := range []string{"apikey:*", "apikey-lineage:*"} {
+			if left, err := admin.Keys(ctx, pattern).Result(); err != nil || len(left) != 0 {
+				t.Fatalf("%d %s keys err=%v after revoking the tree, want none", len(left), pattern, err)
+			}
+		}
+	})
+
 	t.Run("ACL not yet applied: issuance and revocation work, nothing half-written", func(t *testing.T) {
 		if err := admin.FlushAll(ctx).Err(); err != nil {
 			t.Fatalf("flushall: %v", err)
 		}
-		setACLUser(ctx, t, admin, "stellarindex", withoutPattern(shipped, aclIndexPattern))
+		setACLUser(ctx, t, admin, "stellarindex", withoutPattern(withoutPattern(shipped, aclIndexPattern), aclLineagePattern))
 		app := appClient(t, admin, "stellarindex")
 		store := auth.NewRedisAPIKeyStore(app)
 		validator := auth.NewRedisAPIKeyValidator(app)

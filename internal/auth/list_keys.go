@@ -170,10 +170,14 @@ func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec API
 	err := writeIndexedRecordScript.Run(ctx, s.rdb,
 		[]string{cachekeys.APIKeyIndex().String(), recordKey},
 		body, ttl.Milliseconds(), hash, rec.KeyID, rec.Identifier).Err()
-	if err == nil || !isRedisNoPerm(err) {
+	if isRedisNoPerm(err) {
+		err = s.rdb.Set(ctx, recordKey, body, ttl).Err()
+	}
+	if err != nil {
 		return err
 	}
-	return s.rdb.Set(ctx, recordKey, body, ttl).Err()
+	writeMintedLineage(ctx, s.rdb, hash, rec)
+	return nil
 }
 
 // writeDelegatedRecord is writeRecord for a key minted under the record at parentHash. The lineage check runs inside
@@ -198,6 +202,7 @@ func (s *RedisAPIKeyStore) writeDelegatedRecord(ctx context.Context, hash, paren
 	if wrote == 0 {
 		return fmt.Errorf("%w: the minting key %s or one of its ancestors was revoked before the new key was written", ErrMinterNotLive, rec.ParentKeyID)
 	}
+	writeMintedLineage(ctx, s.rdb, hash, rec)
 	return nil
 }
 
@@ -458,15 +463,8 @@ func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifi
 	}
 	deleted := make([]string, 0, len(owned))
 	for _, o := range owned {
-		recordKey := cachekeys.APIKey(o.hash).String()
-		err := removeIndexedRecordScript.Run(ctx, s.rdb,
-			[]string{cachekeys.APIKeyIndex().String(), recordKey},
-			o.hash, o.rec.KeyID, identifier, "1").Err()
-		if isRedisNoPerm(err) {
-			err = s.rdb.Del(ctx, recordKey).Err()
-		}
-		if err != nil {
-			return deleted, fmt.Errorf("auth: DeleteKeysForIdentifier: redis del %s: %w", recordKey, err)
+		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
+			return deleted, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
 		}
 		deleted = append(deleted, o.rec.KeyID)
 	}
@@ -688,8 +686,21 @@ func delegationDepths(owned []ownedRecord) map[string]int {
 	return depth
 }
 
-// removeRecord deletes one record and its index entries.
+// removeRecord deletes one record, its index entries and its lineage record.
 func (s *RedisAPIKeyStore) removeRecord(ctx context.Context, hash, keyID, identifier string) error {
+	// Lineage goes first so a failure leaves the credential for a retry to find, and again after,
+	// for a backfill that created it while the credential still existed.
+	if err := DeleteLineageRecords(ctx, s.rdb, hash); err != nil {
+		return err
+	}
+	if err := s.removeCredential(ctx, hash, keyID, identifier); err != nil {
+		return err
+	}
+	return DeleteLineageRecords(ctx, s.rdb, hash)
+}
+
+// removeCredential deletes one credential record and its index entries.
+func (s *RedisAPIKeyStore) removeCredential(ctx context.Context, hash, keyID, identifier string) error {
 	recordKey := cachekeys.APIKey(hash).String()
 	err := removeIndexedRecordScript.Run(ctx, s.rdb,
 		[]string{cachekeys.APIKeyIndex().String(), recordKey},

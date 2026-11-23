@@ -25,6 +25,9 @@ type LineageBackfillReport struct {
 	Orphaned  []string // KeyIDs with a missing, foreign, malformed or over-deep ancestor chain
 	Changed   []string // KeyIDs rewritten by another writer between the read and the write; rerun to cover them
 	MaxDepth  int      // most ancestors any non-orphaned delegated record has
+
+	LineageMissing []string // KeyIDs of standing keys with no `apikey-lineage:` record (with write, created)
+	LineageDenied  bool     // the Redis ACL does not admit `apikey-lineage:*`, so no record was checked
 }
 
 // backfillLineageScript rewrites a record only while it still holds the body the backfill read.
@@ -69,7 +72,67 @@ func (s *RedisAPIKeyStore) BackfillAncestorHashes(ctx context.Context, write boo
 			return rep, fmt.Errorf("auth: BackfillAncestorHashes: %s: %w", o.rec.KeyID, err)
 		}
 	}
+	err = s.backfillLineageRecords(ctx, byID, write, &rep)
+	if isRedisNoPerm(err) {
+		rep.LineageMissing, rep.LineageDenied = nil, true
+		return rep, nil
+	}
+	if err != nil {
+		return rep, fmt.Errorf("auth: BackfillAncestorHashes: lineage records: %w", err)
+	}
 	return rep, nil
+}
+
+// lineageBackfillBatch bounds one EXISTS pipeline of the lineage-record check.
+const lineageBackfillBatch = 500
+
+// backfillLineageRecords reports every standing key with no lineage record and, with write, creates it
+// (expiring LineageTTLMargin after its credential, or persistent with it). Revoked or expired keys get none.
+func (s *RedisAPIKeyStore) backfillLineageRecords(ctx context.Context, byID map[string]ownedRecord, write bool, rep *LineageBackfillReport) error {
+	now := s.now()
+	var ids []string
+	for id, o := range byID {
+		if o.rec.RevokedAt.IsZero() && (o.rec.ExpiresAt.IsZero() || now.Before(o.rec.ExpiresAt)) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	for start := 0; start < len(ids); start += lineageBackfillBatch {
+		missing, err := s.lineageMissing(ctx, byID, ids[start:min(start+lineageBackfillBatch, len(ids))])
+		if err != nil {
+			return err
+		}
+		rep.LineageMissing = append(rep.LineageMissing, missing...)
+		for _, id := range missing {
+			if !write {
+				break
+			}
+			if err := createLineage(ctx, s.rdb, byID[id].hash, byID[id].rec); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// lineageMissing returns the ids among chunk whose key has no lineage record, in one pipeline.
+func (s *RedisAPIKeyStore) lineageMissing(ctx context.Context, byID map[string]ownedRecord, chunk []string) ([]string, error) {
+	exists := make([]*redis.IntCmd, len(chunk))
+	if _, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		for i, id := range chunk {
+			exists[i] = p.Exists(ctx, cachekeys.APIKeyLineage(byID[id].hash).String())
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	var missing []string
+	for i, id := range chunk {
+		if exists[i].Val() == 0 {
+			missing = append(missing, id)
+		}
+	}
+	return missing, nil
 }
 
 // backfillOne resolves one delegated record's chain into rep and, with write, records it.

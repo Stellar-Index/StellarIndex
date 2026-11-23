@@ -270,6 +270,10 @@ func (e *Eraser) deleteRedis(
 			return keys, 0, fmt.Errorf("delete key records: %w", err)
 		}
 		deleted += n
+		// Separate from the DEL above: a Redis ACL that does not admit lineage records yet must not stop it.
+		if err := auth.DeleteLineageRecords(ctx, e.Redis, keyHashes...); err != nil {
+			return keys, deleted, fmt.Errorf("delete key lineage records: %w", err)
+		}
 	}
 	counter := usage.New(e.Redis)
 	for _, s := range subjects {
