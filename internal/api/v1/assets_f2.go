@@ -205,8 +205,10 @@ func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetai
 // populateVolume24h fills detail.VolumeUSD24h with the asset's own volume plus its derived SAC's ([Server.addDerivedSACVolume24h]).
 // Reports whether the plain read or the derived SAC's arm failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
-	if failed = s.populateOwnVolume24h(ctx, detail, asset); !failed {
-		failed = s.addDerivedSACVolume24h(ctx, detail, asset)
+	failed = s.populateOwnVolume24h(ctx, detail, asset)
+	if detail.VolumeUSD24h != nil {
+		// A pre-filled figure standing in for a failed read omits the derived SAC's volume as the plain read does.
+		failed = s.addDerivedSACVolume24h(ctx, detail, asset) || failed
 	}
 	return failed
 }
@@ -278,8 +280,8 @@ func (s *Server) populateOwnVolume24h(ctx context.Context, detail *AssetDetail, 
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
 		}
-		// A pre-filled figure (insert-time prices_1m) is as partial as the plain read.
-		detail.VolumeLowerBound = asset.Type == canonical.AssetSoroban && detail.VolumeUSD24h != nil
+		// A pre-filled figure (insert-time prices_1m) is as partial as the plain read, and keeps its own lower-bound flag.
+		detail.VolumeLowerBound = detail.VolumeUSD24h != nil && (detail.VolumeLowerBound || asset.Type == canonical.AssetSoroban)
 		return true
 	}
 	detail.VolumeUSD24h = &v
