@@ -28,7 +28,7 @@ type priceAtStub struct {
 	gotStaleness *time.Duration
 }
 
-func (s priceAtStub) PriceAt(_ context.Context, _ canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, error) {
+func (s priceAtStub) PriceAt(_ context.Context, _ canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, []string, error) {
 	if s.gotStaleness != nil {
 		*s.gotStaleness = maxStaleness
 	}
@@ -37,9 +37,9 @@ func (s priceAtStub) PriceAt(_ context.Context, _ canonical.Pair, ts time.Time, 
 		res = 60
 	}
 	if s.err == nil && !s.ignoreStaleness && ts.Sub(s.bucketAt) > maxStaleness {
-		return "", time.Time{}, 0, ErrPriceAtUnavailable
+		return "", time.Time{}, 0, nil, ErrPriceAtUnavailable
 	}
-	return s.value, s.bucketAt, res, s.err
+	return s.value, s.bucketAt, res, nil, s.err
 }
 
 // TestHandlePriceAt pins that a historical instant serves the closed bucket at-or-before it with the bucket's own
@@ -153,11 +153,11 @@ type priceAtPairStub struct {
 	bucketAt time.Time
 }
 
-func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.Time, _ time.Duration) (string, time.Time, int, error) {
+func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.Time, _ time.Duration) (string, time.Time, int, []string, error) {
 	if v, ok := s.byPair[pair.Base.String()+"/"+pair.Quote.String()]; ok {
-		return v, s.bucketAt, 60, nil
+		return v, s.bucketAt, 60, nil, nil
 	}
-	return "", time.Time{}, 0, ErrPriceAtUnavailable
+	return "", time.Time{}, 0, nil, ErrPriceAtUnavailable
 }
 
 // TestHandlePriceAt_StablecoinFallback pins the CAGG sibling of the stablecoin proxy: a
@@ -247,15 +247,15 @@ type priceAtReadFailStub struct {
 
 func (s priceAtReadFailStub) PriceAt(
 	_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration,
-) (string, time.Time, int, error) {
+) (string, time.Time, int, []string, error) {
 	fails := s.failPair == "" || pair.Base.String()+"/"+pair.Quote.String() == s.failPair
 	if s.failOlderThan > 0 && time.Since(ts) < s.failOlderThan {
 		fails = false
 	}
 	if fails {
-		return "", time.Time{}, 0, s.err
+		return "", time.Time{}, 0, nil, s.err
 	}
-	return "0.1", ts.Add(-time.Minute), 60, nil
+	return "0.1", ts.Add(-time.Minute), 60, nil, nil
 }
 
 func assertReadFailureProblem(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantType string) {

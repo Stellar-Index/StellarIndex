@@ -30,8 +30,10 @@ const readSideNote = "source-exclude: note:\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
 	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +
-	"    /v1/price/at and /changes withhold a bucket WHOLE, and any exclusion naming the asset withholds it: 1m for instants\n" +
-	"    under 48h old, hourly up to 45 days, daily beyond; /changes 7d/30d read hourly/4-hourly buckets.\n" +
+	"    /v1/price/at and /changes withhold a bucket WHOLE when an excluded source fed it (its recorded sources; a source-wide\n" +
+	"    exclusion only where that venue traded) and the bucket's span overlaps the window, so a bucket wider than the window is\n" +
+	"    withheld whole: 1m for instants under 48h old, hourly up to 45 days, daily beyond; /changes 7d/30d read hourly/4-hourly\n" +
+	"    buckets. A bucket with no recorded sources is withheld by any exclusion naming the asset, or any source-wide one.\n" +
 	"    A source-wide exclusion with no -until withholds every /v1/ohlc series with a bar containing that source until it is lifted.\n" +
 	"  DELAY: re-read every 15s; an unreadable table keeps the last good set up to 60s, then withholds everything gated.\n" +
 	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset detail ~225s;\n" +

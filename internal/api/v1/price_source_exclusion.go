@@ -137,28 +137,12 @@ func (s *Server) ohlcSeriesWithheld(ctx context.Context, pair canonical.Pair, ba
 	return nil
 }
 
-// priceAtSourcesReader is a [PriceAtReader] that also returns the served bucket's recorded sources.
-type priceAtSourcesReader interface {
-	PriceAtSources(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, []string, error)
-}
-
 // readPriceAt is the [PriceAtReader] read every point-in-time walk makes, with a bucket an exclusion covers, on book or on any
 // of also (the requested pair a stablecoin fallback stands in for), returned as a withheld-class miss.
 func (s *Server) readPriceAt(
 	ctx context.Context, book canonical.Pair, ts time.Time, maxStaleness time.Duration, also ...canonical.Pair,
 ) (string, time.Time, int, error) {
-	var (
-		value      string
-		observedAt time.Time
-		resSec     int
-		sources    []string
-		err        error
-	)
-	if sr, ok := s.PriceAt.(priceAtSourcesReader); ok {
-		value, observedAt, resSec, sources, err = sr.PriceAtSources(ctx, book, ts, maxStaleness)
-	} else {
-		value, observedAt, resSec, err = s.PriceAt.PriceAt(ctx, book, ts, maxStaleness)
-	}
+	value, observedAt, resSec, sources, err := s.PriceAt.PriceAt(ctx, book, ts, maxStaleness)
 	for _, p := range append([]canonical.Pair{book}, also...) {
 		if err == nil {
 			err = s.priceAtWithheld(ctx, p, observedAt, resSec, sources)

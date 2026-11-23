@@ -2492,16 +2492,16 @@ type recordingPriceAtReader struct {
 
 func (r *recordingPriceAtReader) PriceAt(
 	_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration,
-) (string, time.Time, int, error) {
+) (string, time.Time, int, []string, error) {
 	key := pair.Base.String() + "/" + pair.Quote.String()
 	r.mu.Lock()
 	r.calls = append(r.calls, key)
 	r.mu.Unlock()
 	value, ok := r.byPair[key]
 	if !ok {
-		return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+		return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 	}
-	return value, ts, 60, nil
+	return value, ts, 60, nil, nil
 }
 
 func (r *recordingPriceAtReader) pairsAsked() []string {

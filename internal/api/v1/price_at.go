@@ -15,11 +15,12 @@ import (
 // PriceAtReader returns the closed VWAP bucket at-or-before an instant, picking the finest CAGG within the honesty cap; staleness tolerance is a parameter because /v1/price/changes shares it.
 type PriceAtReader interface {
 	// PriceAt returns (vwap decimal string, the bucket's CLOSE time, the serving CAGG resolution in
-	// seconds, error); the resolution lets the caller label window_seconds honestly. Past
+	// seconds, the served bucket's recorded sources (nil when none), error); the resolution lets the
+	// caller label window_seconds honestly and the sources let an exclusion be judged per venue. Past
 	// maxStaleness the reader returns ErrPriceAtUnavailable rather than fabricating continuity
 	// across a dead-market gap; an existing but refused bucket returns ErrPriceWithheld or
 	// ErrPriceAtGuarded.
-	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, err error)
+	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, sources []string, err error)
 }
 
 // ErrPriceAtUnavailable means no closed bucket exists within maxStaleness at-or-before the instant; it never means a bucket exists and was refused.

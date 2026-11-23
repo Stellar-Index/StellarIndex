@@ -18,13 +18,8 @@ const exclEURC = "EURC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 // sourcedBucketReader is [minuteBucketReader] for a reader that reports the bucket's recorded sources.
 type sourcedBucketReader struct{ sources []string }
 
-func (r sourcedBucketReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, m time.Duration) (string, time.Time, int, error) {
-	v, at, res, _, err := r.PriceAtSources(ctx, pair, ts, m)
-	return v, at, res, err
-}
-
-func (r sourcedBucketReader) PriceAtSources(ctx context.Context, pair canonical.Pair, ts time.Time, m time.Duration) (string, time.Time, int, []string, error) {
-	v, at, res, err := minuteBucketReader{}.PriceAt(ctx, pair, ts, m)
+func (r sourcedBucketReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, m time.Duration) (string, time.Time, int, []string, error) {
+	v, at, res, _, err := minuteBucketReader{}.PriceAt(ctx, pair, ts, m)
 	return v, at, res, r.sources, err
 }
 
@@ -73,6 +68,35 @@ func TestPriceAtJudgesBucketSources(t *testing.T) {
 		refused := status == http.StatusNotFound && strings.Contains(body, `"source_excluded"`) && !strings.Contains(body, "0.25")
 		if (tc.withheld && !refused) || (!tc.withheld && !served) {
 			t.Errorf("%s: %d %s, want withheld=%v", tc.name, status, body, tc.withheld)
+		}
+	}
+}
+
+// TestPriceChangesJudgesBucketSources: each /v1/price/changes horizon is judged on its reference bucket's sources, as
+// /v1/price/at is.
+func TestPriceChangesJudgesBucketSources(t *testing.T) {
+	path := "/v1/price/changes?asset=native&quote=" + exclUSDC
+	day := time.Now().UTC().Add(-24 * time.Hour)
+	h24 := `"24h":{"change_pct":null,"reference_price":null,"reference_at":null,"resolution":null,"available":false,"withheld":true}`
+	excl := func(base, quote string) []timescale.SourceExclusion {
+		return []timescale.SourceExclusion{{ID: 1, Source: "soroswap", Base: base, Quote: quote, From: day.Add(-10 * time.Minute), Until: day.Add(10 * time.Minute)}}
+	}
+	sdex, both := sourcedBucketReader{[]string{"sdex"}}, sourcedBucketReader{[]string{"sdex", "soroswap"}}
+	for _, tc := range []struct {
+		name   string
+		reader v1.PriceAtReader
+		rows   []timescale.SourceExclusion
+		h24    bool
+	}{
+		{"other book, bucket without the source", sdex, excl("native", exclEURC), false},
+		{"source-wide, bucket without it", sdex, excl("", ""), false},
+		{"source-wide, bucket with it", both, excl("", ""), true},
+		{"no sources recorded: unattributed", minuteBucketReader{}, excl("native", exclEURC), true},
+	} {
+		status, body := exclGet(t, priceAtGated(tc.reader, tc.rows), path)
+		withheld := strings.Contains(body, h24) && strings.Count(body, `"available":true`) == 3
+		if status != http.StatusOK || withheld != tc.h24 || (!tc.h24 && strings.Contains(body, `"withheld":true`)) {
+			t.Errorf("%s: %d %s, want h24 withheld=%v and every other horizon served", tc.name, status, body, tc.h24)
 		}
 	}
 }

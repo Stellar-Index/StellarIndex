@@ -2,7 +2,7 @@ package main
 
 // Source tripwire (freeze_wiring_guard_test.go pattern): storePriceAtReader.PriceAt, behind /v1/price/at and
 // /v1/price/changes, must apply the serving-sanity guard to a prices_1m answer, else a manipulated minute /v1/price
-// refuses is republished. The store is concrete, so this walks main.go's AST; pricingguard proves the decision.
+// refuses is republished. This walks main.go's AST; pricingguard proves the decision.
 
 import (
 	"go/ast"

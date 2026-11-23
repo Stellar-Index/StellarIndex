@@ -14,15 +14,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// minuteBucketReader serves native/USDC as a closed 1m bucket closing at the minute at-or-before ts; it records no sources, as
-// the CAGG ladder behind /v1/price/at and /v1/price/changes does not.
+// minuteBucketReader serves native/USDC as a closed 1m bucket closing at the minute at-or-before ts with no recorded sources,
+// so every exclusion is judged by the unattributed rule.
 type minuteBucketReader struct{}
 
-func (minuteBucketReader) PriceAt(_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, error) {
+func (minuteBucketReader) PriceAt(_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, []string, error) {
 	if pair.Base.String() != "native" || pair.Quote.String() != exclUSDC {
-		return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+		return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 	}
-	return "0.25", ts.Truncate(time.Minute), 60, nil
+	return "0.25", ts.Truncate(time.Minute), 60, nil, nil
 }
 
 func priceAtExclServer(gated bool, rows []timescale.SourceExclusion, err error) *v1.Server {
