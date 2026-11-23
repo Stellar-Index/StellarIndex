@@ -65,22 +65,39 @@ func TestProveSponsorships(t *testing.T) {
 		}
 	}
 	yes, no := true, false
-	want("agrees", ProveSponsorships(entry, 100, sponsoring, sponsored), &yes)
-	want("sponsor side short", ProveSponsorships(entry, 100, clickhouse.SponsorshipTotals{InForceReserves: 2}, sponsored), &no)
-	want("sponsored side over", ProveSponsorships(entry, 100, sponsoring, clickhouse.SponsorshipTotals{InForceReserves: 4}), &no)
-	want("modified after the watermark", ProveSponsorships(entry, 99, sponsoring, sponsored), nil)
-	want("nothing derived", ProveSponsorships(entry, 0, sponsoring, sponsored), nil)
-	want("absent account", ProveSponsorships(clickhouse.AccountState{}, 100, sponsoring, sponsored), nil)
+	const g = GenesisDeriveFloor
+	want("agrees", ProveSponsorships(entry, g, 100, sponsoring, sponsored), &yes)
+	want("derived from ledger 1", ProveSponsorships(entry, 1, 100, sponsoring, sponsored), &yes)
+	want("sponsor side short", ProveSponsorships(entry, g, 100, clickhouse.SponsorshipTotals{InForceReserves: 2}, sponsored), &no)
+	want("sponsored side over", ProveSponsorships(entry, g, 100, sponsoring, clickhouse.SponsorshipTotals{InForceReserves: 4}), &no)
+	want("modified after the watermark", ProveSponsorships(entry, g, 99, sponsoring, sponsored), nil)
+	want("nothing derived", ProveSponsorships(entry, g, 0, sponsoring, sponsored), nil)
+	want("absent account", ProveSponsorships(clickhouse.AccountState{}, g, 100, sponsoring, sponsored), nil)
 	// The entry was read at ledger 1000; at 1500 the account began sponsoring, which the derive through 2000 holds.
 	stale := clickhouse.AccountState{Exists: true, LastModifiedLedger: 900, AsOfLedger: 1000}
-	want("snapshot predates the watermark", ProveSponsorships(stale, 2000, clickhouse.SponsorshipTotals{InForceReserves: 1}, clickhouse.SponsorshipTotals{}), nil)
+	want("snapshot predates the watermark", ProveSponsorships(stale, g, 2000, clickhouse.SponsorshipTotals{InForceReserves: 1}, clickhouse.SponsorshipTotals{}), nil)
 	unstamped := entry
 	unstamped.AsOfLedger = 0
-	want("snapshot with no vintage", ProveSponsorships(unstamped, 100, sponsoring, sponsored), nil)
+	want("snapshot with no vintage", ProveSponsorships(unstamped, g, 100, sponsoring, sponsored), nil)
 	later := entry
 	later.AsOfLedger = 5000
-	want("snapshot after the watermark", ProveSponsorships(later, 100, sponsoring, sponsored), &yes)
-	if p := ProveSponsorships(entry, 100, sponsoring, sponsored); p.DerivedSponsoring != 3 || p.DerivedSponsored != 2 || p.ThroughLedger != 100 {
+	want("snapshot after the watermark", ProveSponsorships(later, g, 100, sponsoring, sponsored), &yes)
+	if p := ProveSponsorships(entry, g, 100, sponsoring, sponsored); p.DerivedSponsoring != 3 || p.DerivedSponsored != 2 || p.ThroughLedger != 100 {
 		t.Fatalf("proof numbers = %+v", p)
+	}
+}
+
+// An arrangement in force since below the derive floor has no event, so the derived reserves undercount and the
+// counters cannot be compared: both a recorded floor above genesis and an unrecorded one (0) leave the proof open.
+func TestProveSponsorships_FloorAboveGenesisIsNotComparable(t *testing.T) {
+	entry := clickhouse.AccountState{Exists: true, NumSponsoring: 2, LastModifiedLedger: 49_000_000, AsOfLedger: 60_000_000}
+	for _, floor := range []uint32{50_000_000, GenesisDeriveFloor + 1, 0} {
+		p := ProveSponsorships(entry, floor, 60_000_000, clickhouse.SponsorshipTotals{}, clickhouse.SponsorshipTotals{})
+		if p.Match != nil {
+			t.Fatalf("floor %d: match = %v, want not comparable", floor, *p.Match)
+		}
+		if p.FromLedger != floor {
+			t.Fatalf("floor %d: FromLedger = %d", floor, p.FromLedger)
+		}
 	}
 }

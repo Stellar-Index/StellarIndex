@@ -339,7 +339,8 @@
         fi
       fi
 
-      TMP=$(mktemp)
+      # Beside the target: a rename from /tmp is a cross-filesystem copy, not atomic.
+      TMP=$(mktemp "$DIR/galexie_catchup.prom.XXXXXX")
       trap 'rm -f "$TMP"' EXIT
       {
         echo "# HELP stellarindex_galexie_catchup_refusals_5m 'History: Skipping catchup' journal lines in the last 5 minutes."
@@ -385,7 +386,7 @@
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles.
       chmod 644 "$TMP"
-      mv "$TMP" "$DIR/galexie_catchup.prom"
+      mv -T "$TMP" "$DIR/galexie_catchup.prom"
       trap - EXIT
 
 - name: galexie catchup-probe service unit
@@ -633,7 +634,7 @@
       # the collector silently skips it (the same textfile-permissions
       # trap as the galexie catchup probe above).
       chmod 644 "$TMP"
-      mv "$TMP" "$OUT"
+      mv -T "$TMP" "$OUT"
       trap - EXIT
 
 - name: stellar-stack version-lag probe service unit
@@ -862,7 +863,7 @@
       # without this the collector silently skips the file (the same
       # textfile-permissions trap as the galexie catchup probe).
       chmod 644 "$TMP"
-      mv "$TMP" "$OUT"
+      mv -T "$TMP" "$OUT"
       trap - EXIT
   tags: [observability]
 
@@ -1173,7 +1174,8 @@
       # environment, so a real run always takes the default.
       DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
       mkdir -p "$DIR"
-      TMP=$(mktemp)
+      # Beside the target: a rename from /tmp is a cross-filesystem copy, not atomic.
+      TMP=$(mktemp "$DIR/timescale_jobs.prom.XXXXXX")
       HEALTH=$(mktemp)
       trap 'rm -f "$TMP" "$HEALTH"' EXIT
 
@@ -1678,7 +1680,7 @@
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles.
       chmod 644 "$TMP"
-      mv "$TMP" "$DIR/timescale_jobs.prom"
+      mv -T "$TMP" "$DIR/timescale_jobs.prom"
       trap - EXIT
   notify: Reload systemd
 

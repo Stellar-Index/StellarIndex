@@ -30,6 +30,17 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 BIN="$TMP/bin"
 mkdir -p "$BIN"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$BIN/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$BIN/mv"
+fi
 
 pass=0
 fail=0

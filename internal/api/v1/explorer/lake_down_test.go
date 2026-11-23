@@ -181,6 +181,10 @@ func (downReader) EntryHistoryWatermark(context.Context) (uint32, error) {
 	return 0, errLakeDown
 }
 
+func (downReader) EntryHistoryFloor(context.Context) (uint32, error) {
+	return 0, errLakeDown
+}
+
 func (downReader) EntryIndexWatermark(context.Context) (uint32, error) {
 	return 0, errLakeDown
 }

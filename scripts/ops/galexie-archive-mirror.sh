@@ -65,7 +65,12 @@ write_metrics() {
     fi
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  # -T: a directory, or a link to one, planted at $out must not receive the file.
+  if ! mv -T "$tmp" "$out"; then
+    rm -f "$tmp"
+    note "cannot publish $out"
+    return 1
+  fi
 }
 
 main() {
@@ -100,7 +105,7 @@ main() {
 
   run_ok=1
   note "mirror to $dest verified clean"
-  write_metrics
+  write_metrics || return 1
   return 0
 }
 

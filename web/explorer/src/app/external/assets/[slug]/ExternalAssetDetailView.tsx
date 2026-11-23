@@ -92,7 +92,9 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
         )}
       </Panel>
 
-      {chartAssetID && <ChartPanel assetID={chartAssetID} />}
+      {chartAssetID && (
+        <ChartPanel assetID={chartAssetID} scaleMismatch={null} />
+      )}
 
       <Panel
         headingLevel={2}

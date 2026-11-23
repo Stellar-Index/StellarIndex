@@ -405,7 +405,7 @@ emit_intent_metrics() {
     fi
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  mv -T "$tmp" "$out"
 }
 
 intent_release="$(sed -n 's/^-- *Intent-Version: *\([^ ]*\).*$/\1/p' "$INTENT")"
@@ -786,7 +786,7 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     fi
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  mv -T "$tmp" "$out"
 fi
 
 if [[ "$drift" -gt 0 ]]; then

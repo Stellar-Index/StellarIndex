@@ -401,6 +401,32 @@ describe('RWAView', () => {
     atLeast(/≥/, 4);
   });
 
+  it('charts each group by the value of its backing, not its market cap', async () => {
+    for (const [market, reference] of [
+      [false, true],
+      [true, false],
+    ] as const) {
+      const { unmount } = show(view(rollups(market, reference)));
+      await screen.findByText('Value of backing by issuer');
+      for (const by of ['instrument class', 'issuer']) {
+        const name = `Value of backing by ${by}, by reference valuation`;
+        if (reference) {
+          const list = screen.getByRole('list', { name });
+          expect(list).toHaveTextContent('$1.32M');
+          expect(list).not.toHaveTextContent('$1.28M');
+        } else {
+          expect(screen.queryByRole('list', { name })).toBeNull();
+        }
+      }
+      absent(/Market cap by/, 'Value by issuer');
+      if (!reference)
+        expect(
+          screen.getAllByText('1 group with no reference valuation not shown'),
+        ).toHaveLength(2);
+      unmount();
+    }
+  });
+
   it('marks a partly-valued total as a lower bound', async () => {
     show(
       view({

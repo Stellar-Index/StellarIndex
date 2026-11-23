@@ -44,9 +44,8 @@ type AccountMovementsView struct {
 	Account    string                 `json:"account"`
 	Movements  []AccountMovementEntry `json:"movements"`
 	NextCursor string                 `json:"next_cursor,omitempty"`
-	// CoverageNote is non-empty when this response is NOT the full ADR-0048 D5 merge: the
-	// ClickHouse pre-P23 archive is not backfilled yet (an operator-run job, so CH starts empty),
-	// or the Postgres recent-tail reader is unwired or errored. Absent means the full merge ran.
+	// CoverageNote states the feed's scope by epoch: the cap67 archive's watermark, a failed or unwired Postgres tail, the
+	// kinds each arm carries, and that pre-P23 classic history is only as complete as the unrecorded classic backfill.
 	CoverageNote string `json:"coverage_note,omitempty"`
 	// Coverage is coverage_note as data: one entry per movement kind family.
 	Coverage []MovementKindCoverage `json:"coverage"`
@@ -173,7 +172,7 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 }
 
 // AccountMovements serves GET /v1/accounts/{g_strkey}/movements (ADR-0048 D5), merging ClickHouse below movementsSplit's pgFloor with
-// Postgres sep41_transfers at or above it; CoverageNote flags an empty CH table.
+// Postgres sep41_transfers at or above it; CoverageNote states each epoch's scope.
 func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -193,6 +192,12 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	filter, assetLookupFailed, ok := h.parseMovementFilter(w, r)
 	if !ok {
+		return
+	}
+	if assetLookupFailed {
+		// The archive stores a SAC's legs under the classic asset it wraps, so an unresolved C... filter matches none of them.
+		h.Logger.Warn("explorer AccountMovements: ?asset= SAC lookup failed; refusing a page missing the archive rows", "account", g)
+		h.movementsUnavailable(w, r)
 		return
 	}
 
@@ -238,11 +243,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	// A short page carries no next_cursor, which reads as the end of the list, so a missing arm 503s at any page length.
 	if movementsArmMissing(cur, pgFloor, tailFailed, wmFailed) {
 		h.Logger.Warn("explorer AccountMovements: a merge arm failed; refusing to serve a page missing its rows", "account", g, "tail_failed", tailFailed, "watermark_failed", wmFailed)
-		w.Header().Set("Retry-After", retryAfterDependencyDown)
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/explorer-unavailable",
-			"Account movements temporarily unavailable", http.StatusServiceUnavailable,
-			"part of this account's movement history could not be read, and serving the rest would "+
-				"skip those movements for the rest of the walk; retry shortly")
+		h.movementsUnavailable(w, r)
 		return
 	}
 	merged := mergeAccountMovementRows(chRows, pgRows, limit)
@@ -259,7 +260,16 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
 	// wmFailed here is a pinned page whose pin could not be re-checked against the live watermark.
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed || tailLabelsFailed, time.Time{})
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || tailLabelsFailed, time.Time{})
+}
+
+// movementsUnavailable is the retryable 503 for a page that would be missing rows it owns.
+func (h *Handler) movementsUnavailable(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Retry-After", retryAfterDependencyDown)
+	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/explorer-unavailable",
+		"Account movements temporarily unavailable", http.StatusServiceUnavailable,
+		"part of this account's movement history could not be read, and serving the rest would "+
+			"skip those movements for the rest of the walk; retry shortly")
 }
 
 // movementsArmMissing reports that an arm owning part of this page's ledger range failed, so the page is not a complete merge: a short
@@ -356,8 +366,13 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // movementsCoverageNote is the feed's honest-scope statement by cap67 watermark; tailNote (a tail failure) wins. wm == 0: only the
 // watched-token PG tail covers post-P23. wm > 0: all assets through the watermark, a progress marker not a verdict, so never "complete".
 func movementsCoverageNote(wm uint32, tailNote string, supply supplyRange) string {
-	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote(supply)
+	return movementsArchiveNote(wm, tailNote) + "; " + movementsKindGapNote(supply) + "; " + movementsPreP23Note
 }
+
+// movementsPreP23Note: no served marker records how far the classic backfill ran, so pre-P23 is never stated as complete.
+const movementsPreP23Note = "movements before 2025-09-03 (P23) are served only as far as the operator-run " +
+	"classic-movements-backfill has run, and its progress is not recorded here, so the end of the pre-P23 " +
+	"history is not proof that there were no earlier movements"
 
 // movementsCoverage is the structured form of movementsCoverageNote; fees and order-book fills are never served, so always reported
 // not_served.
@@ -430,6 +445,14 @@ func movementsKindGapNote(supply supplyRange) string {
 // movementsKindNote replaces the archive note under a ?kind= other than transfer, naming the ledgers it can match: the CAP-67 supply
 // kinds only the supply range (clawback also pre-P23 classic), every other kind only before P23.
 func movementsKindNote(kind string, supply supplyRange) string {
+	note := movementsKindScope(kind, supply)
+	if kind == "mint" || kind == "burn" {
+		return note
+	}
+	return note + "; " + movementsPreP23Note
+}
+
+func movementsKindScope(kind string, supply supplyRange) string {
 	floor := timescale.MovementsFloor()
 	switch kind {
 	case "mint", "burn", "clawback":
@@ -465,10 +488,10 @@ func movementsArchiveNote(wm uint32, tailNote string) string {
 			"(the full-history movement archive is being extended); see /accounts/{g}/operations " +
 			"for complete raw operation history"
 	}
-	return fmt.Sprintf("all assets through ledger %d, from the movement archive derived from the "+
+	return fmt.Sprintf("from ledger %d (P23, 2025-09-03) to ledger %d, all assets from the movement archive derived from the "+
 		"CAP-67 event lake (derive progress, not a verified completeness verdict — this archive has no "+
 		"/v1/coverage entry); more recent movements may include watched Soroban/SAC tokens only while "+
-		"the archive follows the tip (near real-time)", wm)
+		"the archive follows the tip (near real-time)", timescale.MovementsFloor(), wm)
 }
 
 // mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows to clickhouse.AccountMovementRow. Each DISTINCT contract_id resolves

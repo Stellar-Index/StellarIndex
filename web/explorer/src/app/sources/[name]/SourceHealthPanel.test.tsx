@@ -51,9 +51,7 @@ describe('SourceHealthPanel — deploy-skew resilience', () => {
     ).not.toBeInTheDocument();
   });
 
-  // The API soft-fails a timed-out stats or Prometheus read to 0 with no
-  // flag, so a 0 counter cannot be shown as a measured "0 / dead venue".
-  it('never presents a zero counter as a measured zero', async () => {
+  it('shows a measured zero as 0 and an unmeasured counter as a titled dash', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: {
         name: 'sdex',
@@ -67,45 +65,107 @@ describe('SourceHealthPanel — deploy-skew resilience', () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
-    render(
+    const { unmount } = render(
       <QueryClientProvider client={client}>
+        <SourceHealthPanel source="sdex" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByText('0')).toHaveLength(3));
+    expect(screen.queryByTitle(/could not be read/)).not.toBeInTheDocument();
+    unmount();
+
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        name: 'sdex',
+        class: 'exchange',
+        enabled: true,
+        trade_count_24h: 0,
+        markets_count_24h: 0,
+        entries_24h: 0,
+        volume_24h_usd: '0',
+        entries_24h_unmeasured: true,
+        trade_stats_unmeasured: true,
+      },
+    });
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
         <SourceHealthPanel source="sdex" />
       </QueryClientProvider>,
     );
     await waitFor(() =>
       expect(
-        screen.getAllByText('none counted, or the read failed'),
+        screen.getAllByTitle('trade statistics could not be read'),
       ).toHaveLength(3),
     );
-    expect(screen.queryByText('0')).not.toBeInTheDocument();
     expect(
-      screen.queryByText('no decoded events in 24h'),
-    ).not.toBeInTheDocument();
+      screen.getByTitle('event counter could not be read'),
+    ).toHaveTextContent('—');
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+    expect(screen.queryByText('$0')).not.toBeInTheDocument();
   });
 
-  it('labels a switched-off source as off, not as failing', async () => {
+  // "Off" comes only from enabled === false, as its own state; a zero
+  // counter never implies it and an unread counter is not masked by it.
+  it('labels a switched-off source as off apart from its counters', async () => {
+    for (const [extra, events] of [
+      [{}, '0'],
+      [{ entries_24h_unmeasured: true }, '—'],
+    ] as const) {
+      vi.mocked(apiGet).mockResolvedValue({
+        data: {
+          name: 'kraken',
+          class: 'exchange',
+          enabled: false,
+          trade_count_24h: 0,
+          markets_count_24h: 0,
+          entries_24h: 0,
+          ...extra,
+        },
+      });
+      const { unmount } = render(
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
+          <SourceHealthPanel source="kraken" />
+        </QueryClientProvider>,
+      );
+      expect(await screen.findByText('Off')).toBeInTheDocument();
+      expect(
+        screen.getByText('not switched on for this deployment'),
+      ).toBeInTheDocument();
+      const label = screen.getByText('Events seen');
+      expect(label.closest('div')?.parentElement).toHaveTextContent(events);
+      expect(label.closest('div')?.parentElement).not.toHaveTextContent('Off');
+      unmount();
+    }
+
     vi.mocked(apiGet).mockResolvedValue({
       data: {
         name: 'kraken',
         class: 'exchange',
-        enabled: false,
+        enabled: true,
         trade_count_24h: 0,
         markets_count_24h: 0,
         entries_24h: 0,
       },
     });
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
     render(
-      <QueryClientProvider client={client}>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
         <SourceHealthPanel source="kraken" />
       </QueryClientProvider>,
     );
-    expect(await screen.findByText('Off')).toBeInTheDocument();
-    expect(
-      screen.getByText('not switched on for this deployment'),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('0')).toHaveLength(3));
+    expect(screen.queryByText('Off')).not.toBeInTheDocument();
   });
 
   it('renders 24h volume exactly from its decimal string', async () => {

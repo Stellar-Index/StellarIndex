@@ -8,18 +8,20 @@ import { formatReadable } from '@/lib/format';
 export type ShareRow = {
   key: string;
   label: string;
-  /** Served market-cap decimal string; null when no member is valued. */
+  /** Served `reference_value_usd`; null when no member has a reference valuation. */
   usd: string | null;
-  /** Members without a valuation: any > 0 makes the figure a floor. */
+  /** `assets_reference_unvalued`: any > 0 makes the figure a lower bound. */
   unvalued: number;
-  /** The API's own flag: also set when a counted member's supply is a floor. */
+  /** `reference_value_lower_bound`: the API's own partial-total flag. */
   lowerBound?: boolean;
 };
 
+const assetsText = (n: number) => `${n} asset${n === 1 ? '' : 's'}`;
+
 /**
- * Market cap per group as ranked bars. A group the API flags as a lower
- * bound carries the "≥" in its label and the hatched tail;
- * groups with no valuation are counted in a note, never drawn as zero.
+ * Value of backing (by reference valuation) per group as ranked bars, never
+ * market cap. A lower bound carries "≥" and a hatched tail; a group with no
+ * reference valuation is counted in a note, never drawn as zero.
  */
 export function ShareBars({
   rows,
@@ -40,26 +42,26 @@ export function ShareBars({
         display: `${floor ? '≥ ' : ''}${formatReadable(r.usd, true)}`,
         annotation:
           r.unvalued > 0
-            ? `${r.unvalued} unvalued`
+            ? `${assetsText(r.unvalued)} unvalued`
             : floor
-              ? 'floor supply'
+              ? 'lower bound'
               : undefined,
         hatchTail: floor,
         title: !floor
           ? `$${r.usd}`
           : r.unvalued > 0
-            ? `≥ $${r.usd}. A floor: members without a valuation are not counted.`
-            : `≥ $${r.usd}. A floor: a member's supply is a lower bound.`,
+            ? `At least $${r.usd}. A lower bound: ${assetsText(r.unvalued)} without a reference valuation ${r.unvalued === 1 ? 'is' : 'are'} not counted.`
+            : `At least $${r.usd}. A lower bound: the API flags this reference value as partial.`,
       };
     })
     .sort((a, b) => b.value - a.value);
-  if (items.length === 0) return null;
   return (
     <>
-      <HBarList items={items} ariaLabel={ariaLabel} />
+      {items.length > 0 && <HBarList items={items} ariaLabel={ariaLabel} />}
       {omitted > 0 && (
         <p className="text-ink-muted mt-1 text-xs">
-          {omitted} group{omitted === 1 ? '' : 's'} with no valuation not shown
+          {omitted} group{omitted === 1 ? '' : 's'} with no reference valuation
+          not shown
         </p>
       )}
     </>

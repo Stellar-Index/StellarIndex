@@ -322,7 +322,7 @@ func TestContractWasm_EventsProbeErrorStatus(t *testing.T) {
 func TestPositionAssetResolver_SACLookupFailureIsRecorded(t *testing.T) {
 	h := newProbeHandler(&sacLookupErrReader{&movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}}}, nil)
 	var failed bool
-	label := h.newPositionAssetResolver(context.Background(), &failed)(validTestContract)
+	label := h.newPositionAssetResolver(context.Background(), &failed)(validTestContract).Label
 	if !failed {
 		t.Fatalf("label %q came from a failed SAC lookup but the failure was not recorded", label)
 	}
