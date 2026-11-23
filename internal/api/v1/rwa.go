@@ -1246,7 +1246,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	flags := Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0}
 	return rwaAssetsBuild{
 		view:        view,
-		flags:       markFillsWithheld(flags, rwaReferencesExcluded(view.Assets) || listReads.withheld.Load() || valReads.withheld.Load()),
+		flags:       markFillsWithheld(flags, rwaViewWithheld(view.Assets, listReads, valReads)),
 		builtAt:     now,
 		observedAt:  observedAt,
 		refVerdicts: refVerdicts,

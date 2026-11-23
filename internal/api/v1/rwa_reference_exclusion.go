@@ -109,3 +109,8 @@ func rwaReferencesExcluded(assets []RWAAsset) bool {
 	}
 	return false
 }
+
+// rwaViewWithheld reports whether the view withheld any figure: an excluded reference or a withheld read in either arm.
+func rwaViewWithheld(assets []RWAAsset, listReads, valReads *readReport) bool {
+	return rwaReferencesExcluded(assets) || listReads.withheld.Load() || valReads.withheld.Load()
+}
