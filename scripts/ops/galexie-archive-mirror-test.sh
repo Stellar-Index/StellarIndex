@@ -47,6 +47,9 @@ echo "galexie-archive-mirror-test: unexpected mc invocation: $*" >&2
 exit 9
 STUB
 chmod +x "$TMP/bin/mc"
+# shellcheck source=scripts/ci/lib/gnu-mv-shim.sh
+. "$PWD/scripts/ci/lib/gnu-mv-shim.sh"
+gnu_mv_shim "$TMP/bin"
 export PATH="$TMP/bin:$PATH"
 
 run() {
@@ -85,6 +88,28 @@ echo "== dry-run exits 0 but still lists outstanding objects =="
 DEST_ENDPOINT="https://acct.r2.cloudflarestorage.com/bucket/" MOCK_MIRROR_RC=0 MOCK_DRYRUN_RC=0 MOCK_DRYRUN_OUT="galexie-archive/ledgers/00001.xdr.zstd" run
 expect_rc 1 "dry-run listing outstanding objects must fail the run"
 prom_unstamped "does not stamp success while objects remain outstanding"
+
+# The textfile dir is group-writable, so the .prom name can be pre-planted.
+# A root rename must never land the file inside what was planted.
+echo "== a directory planted at the output path =="
+rm -rf "$TMP/tf"; mkdir -p "$PROM"
+DEST_ENDPOINT="https://acct.r2.cloudflarestorage.com/bucket/" MOCK_MIRROR_RC=0 MOCK_DRYRUN_RC=0 MOCK_DRYRUN_OUT="" \
+  MC_CMD=mc TEXTFILE_DIR="$TMP/tf" "$SCRIPT" >"$TMP/out" 2>"$TMP/err"
+rc=$?
+expect_rc 1 "a run that cannot publish its metrics fails"
+if [[ -d "$PROM" && -z "$(ls -A "$PROM")" ]]; then ok "the planted directory is left empty"; else bad "the planted directory received a file"; fi
+if grep -q 'cannot publish' "$TMP/err"; then ok "says it could not publish"; else bad "no publish error on stderr"; fi
+if compgen -G "$TMP/tf/galexie_archive_mirror.prom.tmp.*" >/dev/null; then bad "temp file left behind"; else ok "no temp file left behind"; fi
+
+echo "== a symlink to a directory planted at the output path =="
+rm -rf "$TMP/tf" "$TMP/elsewhere"; mkdir -p "$TMP/tf" "$TMP/elsewhere"
+ln -s "$TMP/elsewhere" "$PROM"
+DEST_ENDPOINT="https://acct.r2.cloudflarestorage.com/bucket/" MOCK_MIRROR_RC=0 MOCK_DRYRUN_RC=0 MOCK_DRYRUN_OUT="" \
+  MC_CMD=mc TEXTFILE_DIR="$TMP/tf" "$SCRIPT" >"$TMP/out" 2>"$TMP/err"
+rc=$?
+expect_rc 0 "the link is renamed over, so the run succeeds"
+if [[ -z "$(ls -A "$TMP/elsewhere")" ]]; then ok "the link's target directory is untouched"; else bad "the file was written through the link"; fi
+if [[ -f "$PROM" && ! -L "$PROM" ]]; then ok "the link is replaced by the metrics file"; else bad "the output path is not a plain file"; fi
 
 echo
 echo "$pass passed, $fail failed"

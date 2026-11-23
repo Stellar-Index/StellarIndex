@@ -51,6 +51,8 @@ off_record() { if grep -qx -- "$1" "$TMP/state/chains"; then bad "$2"; else ok "
 chain_unchanged() { if cmp -s "$TMP/chain.before" "$TMP/state/chain"; then ok "$1"; else bad "$1"; fi; }
 
 mkdir -p "$TMP/bin"
+# shellcheck source=scripts/ci/lib/gnu-mv-shim.sh
+. "$PWD/scripts/ci/lib/gnu-mv-shim.sh"; gnu_mv_shim "$TMP/bin"
 cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 q=""
