@@ -126,6 +126,22 @@ expect 'base mode: a deleted shipped up FAILS' 1 'missing here'
 runbase "0000000000000000000000000000000000000000"
 expect 'base mode: an unreadable base FAILS closed' 1 'fail-closed'
 
+# 8. Rollback: the tree is an older release than BASE, so BASE's newer
+#    migration is absent. Passes only when the deploy skips migrations.
+g checkout -q -- migrations && g clean -qfd migrations
+printf '%s\n' 'CREATE TABLE v (a int);' > "$REPO/migrations/0002_v.up.sql"
+g add . && g commit -q -m newer
+newer="$(g rev-parse HEAD)"
+g checkout -q "$base"
+runbase "$newer"
+expect 'base mode: rollback past a newer migration without migrations_skip FAILS' 1 'migrations_skip=true'
+MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
+expect 'base mode: rollback with migrations skipped passes' 0 'unchanged'
+g checkout -q "$newer"
+rm "$REPO/migrations/0002_v.up.sql"
+MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
+expect 'base mode: deleting the newest shipped up is not a rollback and FAILS' 1 'missing here'
+
 echo
 echo "lint-migration-immutability-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

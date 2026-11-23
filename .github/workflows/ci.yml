@@ -1090,9 +1090,10 @@ jobs:
         # The first three guard the money + i128 ADR-0003 invariants (and the
         # baseline-tripwire that guards everyone else); lint-imports.sh and
         # lint-deploy-systemd-authority.sh run in this job and read grandfather
-        # baselines/ORPHANS, so they are pinned too. lint-lake-dedup.sh and
-        # lint-migration-compat.sh guard served sums and the deploy's
-        # migrate step; their self-test steps check the PR-head copy back
+        # baselines/ORPHANS, so they are pinned too. lint-lake-dedup.sh,
+        # lint-migration-compat.sh and lint-migration-immutability.sh guard
+        # served sums and the deploy's migrate step; their self-test steps
+        # check the PR-head copy back
         # out first, so a PR can still change such a gate and its tests
         # together. Deliberately not every
         # scripts/ci/*.sh: a blanket policy would also block a PR from ever
@@ -1118,7 +1119,7 @@ jobs:
             echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running PR-head gate scripts (fetch-depth too shallow?)."
             exit 0
           fi
-          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh scripts/ci/lint-imports.sh scripts/ci/lint-deploy-systemd-authority.sh scripts/ci/lint-lake-dedup.sh scripts/ci/lint-migration-compat.sh; do
+          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh scripts/ci/lint-imports.sh scripts/ci/lint-deploy-systemd-authority.sh scripts/ci/lint-lake-dedup.sh scripts/ci/lint-migration-compat.sh scripts/ci/lint-migration-immutability.sh; do
             if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
               mv "${f}.trusted" "$f"
               chmod +x "$f"
@@ -1278,7 +1279,10 @@ jobs:
         # trips it, a deleted one trips it, a new migration missing from the
         # baseline trips it, and a new migration added with its checksum
         # passes. A frozen-migration gate that stops tripping is worse than none.
-        run: ./scripts/ci/lint-migration-immutability-test.sh
+        # The step above judged the tree with the base copy.
+        run: |
+          git checkout -q HEAD -- scripts/ci/lint-migration-immutability.sh
+          ./scripts/ci/lint-migration-immutability-test.sh
       - name: lint-migration-commands
         # A SQL command written into a migration HEADER is a claim, and
         # claims get tested. 0156's disarm command shipped with a

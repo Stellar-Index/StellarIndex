@@ -1234,6 +1234,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           BASELINE: ${{ steps.baseline.outputs.newest }}
+          MIGRATIONS_SKIP: ${{ inputs.migrations_skip }}
         run: |
           set -euo pipefail
           base="${BASELINE:-}"
@@ -1252,7 +1253,16 @@ jobs:
           BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh
           # The tag-checkout immutability run trusts the tag's own manifest,
           # which the same commit can re-bless; the live release cannot be.
-          MIGRATION_IMMUTABILITY_BASE="$base_sha" bash scripts/ci/lint-migration-immutability.sh
+          # The script comes from the dispatching commit, as the follow-up
+          # gate's does: a tag that predates base mode would ignore BASE.
+          gate="$RUNNER_TEMP/immutability/scripts/ci/lint-migration-immutability.sh"
+          mkdir -p "$(dirname "$gate")"
+          if ! git show "${GITHUB_SHA}:scripts/ci/lint-migration-immutability.sh" > "$gate"; then
+            echo "::error::migration immutability gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
+            exit 1
+          fi
+          MIGRATIONS_DIR="$GITHUB_WORKSPACE/migrations" MIGRATION_IMMUTABILITY_BASE="$base_sha" \
+            MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED="$MIGRATIONS_SKIP" bash "$gate"
 
       - name: Run deploy playbook
         id: playbook
