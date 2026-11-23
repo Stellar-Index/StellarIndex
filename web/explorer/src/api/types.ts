@@ -2438,6 +2438,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/top-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — largest suppliers or borrowers.
+         * @description The pool's largest current positions on one side, Blend and BLNT
+         *     alike. Each row is one account's position in one reserve, read from
+         *     the pool's `Positions(account)` contract storage in the lake: `tokens`
+         *     is the b-tokens (supply, collateral and non-collateral summed) or
+         *     d-tokens (borrow) the account holds now, and `amount` is those tokens
+         *     in the underlying at the reserve's stored `b_rate`/`d_rate`, the same
+         *     conversion `/v1/lending/accounts/{account}/earnings` serves as
+         *     `current_value`, true as of the reserve's `last_update` on
+         *     `/reserves`. Both are base-unit decimal strings; `decimals` scales
+         *     them to whole tokens.
+         *
+         *     Ranking. Without `asset`, rows rank by `value_usd` (the amount at
+         *     the price `/v1/lending/pools/{pool}/reserves` serves for the
+         *     reserve, 2 dp), `ranking: value_usd`. A reserve without a USD price
+         *     is left out of that ranking, never compared by token amount: it is
+         *     named in `excluded` with `reason: unpriced` and `lower_bound` is
+         *     true; pass its `asset` to rank it. With `asset`, rows rank by
+         *     `amount` within that reserve, `ranking: amount`, and a row whose
+         *     price is unavailable keeps its amount with `value_usd: null` and
+         *     `usd_reason`. Ties order by account.
+         *
+         *     `share_of_reserve` is `amount` over the reserve's current `supplied`
+         *     (or `borrowed`) total on `/reserves`, a decimal fraction at 6 dp;
+         *     null when that total is zero. `accounts` counts the distinct
+         *     accounts holding a non-zero position on the side (in `asset` when
+         *     given). `lower_bound` is true, and `rows` and `accounts` are floors,
+         *     whenever `excluded` is non-empty: a reserve whose rate is not read
+         *     (`rate_unread`), Positions entries that are TTL-archived or did not
+         *     decode (`positions_unreadable`), a read that reached its 50,000-entry
+         *     cap (`positions_truncated`), or a pool reserve list that could not be
+         *     read (`reserve_list_unreadable`).
+         *
+         *     The pool's positions are one primary-key range read of its
+         *     Positions entries, cached per pool for one minute.
+         *
+         *     404 when no Blend or BLNT pool is known at the contract id.
+         */
+        get: operations["getLendingPoolTopAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mev": {
         parameters: {
             query?: never;
@@ -19789,6 +19844,130 @@ export interface operations {
                             as_of_ledger?: number;
                             /** Format: date-time */
                             as_of_time: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolTopAccounts: {
+        parameters: {
+            query: {
+                /** @description Which side to rank. */
+                side: "supply" | "borrow";
+                /** @description Reserve token C-strkey; ranks that reserve by amount. */
+                asset?: string;
+                /** @description Rows to return. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pool's largest positions on one side. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "side": "supply",
+                     *         "asset": null,
+                     *         "ranking": "value_usd",
+                     *         "accounts": 412,
+                     *         "lower_bound": false,
+                     *         "excluded": [],
+                     *         "rows": [
+                     *           {
+                     *             "rank": 1,
+                     *             "account": "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+                     *             "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *             "decimals": 7,
+                     *             "tokens": "9800000000000",
+                     *             "amount": "10290000000000",
+                     *             "value_usd": "308700.00",
+                     *             "usd_reason": null,
+                     *             "share_of_reserve": "0.041200",
+                     *             "last_modified_ledger": 63339870
+                     *           }
+                     *         ],
+                     *         "as_of_ledger": 63340102,
+                     *         "note": "Each row is one account's current position in one reserve."
+                     *       },
+                     *       "as_of": "2026-11-16T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string} */
+                            protocol: "blend" | "blnt";
+                            /** @enum {string} */
+                            side: "supply" | "borrow";
+                            /** @description The `asset` filter; null when every reserve is ranked. */
+                            asset: string | null;
+                            /** @enum {string} */
+                            ranking: "value_usd" | "amount";
+                            /** @description Distinct accounts with a non-zero position on the side; a floor when `lower_bound`. */
+                            accounts: number;
+                            lower_bound: boolean;
+                            excluded: {
+                                /** @enum {string} */
+                                kind: "supply" | "borrow";
+                                pool: string | null;
+                                /** @description The reserve left out; null for a pool-wide exclusion. */
+                                asset: string | null;
+                                /** @enum {string} */
+                                reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "reserve_list_unreadable";
+                            }[];
+                            rows: {
+                                rank: number;
+                                /** @description G- or C-strkey. */
+                                account: string;
+                                /** @description Reserve token C-strkey. */
+                                asset: string;
+                                decimals: number | null;
+                                /** @description b-tokens (supply) or d-tokens (borrow) held on chain, base units. */
+                                tokens: string;
+                                /** @description `tokens` in the underlying at the reserve's stored rate, base units. */
+                                amount: string;
+                                /** @description `amount` in USD at the `/reserves` price, 2 dp; null with `usd_reason`. */
+                                value_usd: string | null;
+                                /** @enum {string|null} */
+                                usd_reason: "unpriced" | "withheld" | null;
+                                /** @description `amount` over the reserve's side total, 6 dp. */
+                                share_of_reserve: string | null;
+                                /**
+                                 * Format: int64
+                                 * @description Ledger the Positions entry was last written.
+                                 */
+                                last_modified_ledger: number;
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Highest ledger the lake had captured at serve time.
+                             */
+                            as_of_ledger: number;
+                            note: string;
                         };
                     };
                 };

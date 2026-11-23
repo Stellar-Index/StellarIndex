@@ -77,6 +77,7 @@ var coveredOperations = []coveredOperation{
 	{"Pair", "GET", "/pairs", Market{}, ""},
 	{"Pools", "GET", "/pools", Pool{}, ""},
 	{"LendingPools", "GET", "/lending/pools", LendingPool{}, ""},
+	{"LendingPoolTopAccounts", "GET", "/lending/pools/{pool}/top-accounts", LendingTopAccounts{}, ""},
 	{"SACWrappers", "GET", "/sac-wrappers", nil, ""}, // map[string]string payload
 	{"RWAAssets", "GET", "/rwa/assets", RWAAssetsView{}, ""},
 	{"RWAHistory", "GET", "/rwa/history", RWAHistoryView{}, ""},
