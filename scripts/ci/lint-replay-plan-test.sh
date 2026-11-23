@@ -237,6 +237,24 @@ for f in dispatcher_adapter.go abi.go; do
   expect "$f change without a plan fails" 1 "~ internal/sources/demo/$f"
 done
 
+# --- 2f. off-chain venue parsers and rate fixings set recorded trade and price values
+for f in parse.go rates.go fixings.go; do
+  mkrepo 0
+  mkdir -p "$TMP/repo/internal/sources/external/venue"
+  touch_commit "internal/sources/external/venue/$f" "fix(venue): change what $f records"
+  runGate
+  expect "external $f change without a plan fails" 1 "~ internal/sources/external/venue/$f"
+done
+
+# --- 2g. HTTP/retry plumbing records nothing, so it demands no plan
+for f in poller.go backfill.go backfill_trades.go openexchangerates.go; do
+  mkrepo 0
+  mkdir -p "$TMP/repo/internal/sources/external/venue"
+  touch_commit "internal/sources/external/venue/$f" "fix(venue): retry timing in $f"
+  runGate
+  expect "external $f change without a plan passes" 0 "nothing to declare"
+done
+
 # --- 3. declared plan passes ------------------------------------------
 mkrepo 0
 touch_commit internal/canonical/asset_fiat.go "$(printf 'canonical: widen fiat allow-list\n\nReplay-Plan: stellarindex-ops projector-replay -source reflector-fx -from 61602787 on r1 after deploy')"

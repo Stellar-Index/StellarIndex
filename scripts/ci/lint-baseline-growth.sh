@@ -5,7 +5,8 @@
 #   settings, run/issues, and linters removed from enable), configs/ansible/.ansible-lint
 #   skip_list, deploy/systemd/ORPHANS, the waiver maps in lint-pk-discriminators,
 #   lint-derive-generation-guard and the Go guard tests (`*Exempt*|*Allow(ed|list)*|*Waiver*|
-#   *Ignore(d)* (:)= map`), .github/zizmor.yml and zizmor's floor flags in workflows, alternate
+#   *Ignore(d)* (:)= map`), the roles' systemd HARDENING-EXCEPTIONS, the RULES allow lists in
+#   lint-imports.sh, .github/zizmor.yml and zizmor's floor flags in workflows, alternate
 #   golangci/zizmor config files, diff-hiding .gitattributes lines, the inline migration
 #   baselines in lint-migrations.sh, and (mutations only,
 #   since new migrations append freely) scripts/ci/migration-immutability.sha256, the inline
@@ -191,11 +192,16 @@ go_waiver_map_keys() {
       inmap = 1; depth = 0; instr = 0; unit = ""; col = 0
       s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s)
       # Collapse struct{…}/interface{…} in the value TYPE, innermost first, so the literal opens
-      # at the first remaining `{`; groups after that brace are values and are left alone.
-      while (match(s, /(struct|interface)[[:space:]]*[{][^{}]*[}]/)) {
-        pre = substr(s, 1, RSTART - 1); gsub(/(struct|interface)[[:space:]]*[{]/, "", pre)
-        if (pre ~ /[{]/) break
-        s = substr(s, 1, RSTART - 1) "T" substr(s, RSTART + RLENGTH)
+      # at the first remaining `{`; groups after that brace are values and are left alone. A type
+      # still open after collapsing spans lines: join the next one and collapse again.
+      for (;;) {
+        while (match(s, /(struct|interface)[[:space:]]*[{][^{}]*[}]/)) {
+          pre = substr(s, 1, RSTART - 1); gsub(/(struct|interface)[[:space:]]*[{]/, "", pre)
+          if (pre ~ /[{]/) break
+          s = substr(s, 1, RSTART - 1) "T" substr(s, RSTART + RLENGTH)
+        }
+        if (s !~ /^[^{]*(struct|interface)[[:space:]]*[{]/ || (getline nxt) <= 0) break
+        sub(/\/\/.*$/, "", nxt); s = s " " nxt
       }
       scan(s); next
     }
@@ -209,6 +215,50 @@ go_waiver_map_added_keys() {
   b="$(go_waiver_map_keys "$1" "$3")"
   # Through the environment: -v aborts on a quote plus newline and expands backslashes in keys.
   go_waiver_map_keys "$2" "$3" | old="$b" awk '
+    BEGIN { n = split(ENVIRON["old"], o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
+    !($0 in seen) { print }
+  '
+}
+
+# imports_allow_entries <rev>: "<rule> <entry>" for each string in an `"allow"`/`"allow_internal"`
+# list of lint-imports.sh's RULES, and "<rule> exempt_importers <entry>" for each in a layering
+# rule's `"exempt_importers"`, so a new entry or one moved to another rule reads as new.
+imports_allow_entries() {
+  git show "${1}:scripts/ci/lint-imports.sh" 2>/dev/null | awk '
+    { s = $0; sub(/#.*$/, "", s) }
+    match(s, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/) { r = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[[:space:]]*/, "", r); rule = r }
+    !inblk && s ~ /"(allow(_internal)?|exempt_importers)"[[:space:]]*:/ {
+      inblk = 1; tag = (s ~ /"exempt_importers"/) ? " exempt_importers" : ""
+      s = substr(s, index(s, ":") + 1)
+    }
+    inblk {
+      while (match(s, /"[^"]*"/)) { print rule tag " " substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) }
+      if (index(s, "]") || index(s, "}") || index(s, "set()")) inblk = 0
+    }
+  '
+}
+
+# imports_allow_added <base> <head>: imports_allow_entries in <head> absent from <base>.
+imports_allow_added() {
+  local b
+  b="$(imports_allow_entries "$1")"
+  imports_allow_entries "$2" | old="$b" awk '
+    BEGIN { n = split(ENVIRON["old"], o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
+    !($0 in seen) { print }
+  '
+}
+
+# api_env_allow_words <rev>: the names in lint-systemd-hardening.sh's inline API_ENV_ALLOW list.
+api_env_allow_words() {
+  git show "${1}:scripts/ci/lint-systemd-hardening.sh" 2>/dev/null \
+    | sed -nE 's/^[[:space:]]*API_ENV_ALLOW="([^"]*)".*/\1/p' | tr -s ' ' '\n' | grep -v '^$' || true
+}
+
+# api_env_allow_added <base> <head>: names in <head>'s API_ENV_ALLOW absent from <base>'s.
+api_env_allow_added() {
+  local b
+  b="$(api_env_allow_words "$1")"
+  api_env_allow_words "$2" | old="$b" awk '
     BEGIN { n = split(ENVIRON["old"], o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
     !($0 in seen) { print }
   '
@@ -329,6 +379,30 @@ detect_growth() {
       [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
     done <<<"$added"
   done < <(git diff --name-only "${base}...${head}" -- '*.go' 2>/dev/null)
+
+  # 10c) lint-systemd-hardening's HARDENING-EXCEPTIONS (one per role): each line waives a
+  #      sandbox directive for a unit, and the file is not a *.baseline.
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    added="$(added_entries "$base" "$head" "$f" '.')"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
+    done <<<"$added"
+  done < <(git diff --name-only "${base}...${head}" -- \
+    ':(glob)configs/ansible/roles/*/templates/systemd/HARDENING-EXCEPTIONS' 2>/dev/null)
+
+  # 10d) lint-imports.sh's per-rule allow lists: CI runs the base copy, so a widened list is not
+  #      used on the PR that adds it, but it is the base for every later one.
+  added="$(imports_allow_added "$base" "$head")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-imports.sh "$line"
+  done <<<"$added"
+
+  # 10e) the environment names the API process may see: growing the inline list admits a credential.
+  added="$(api_env_allow_added "$base" "$head")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-systemd-hardening.sh "$line"
+  done <<<"$added"
 
   # 14) zizmor: its config file waives audits repo-wide, and the workflow step sets its floor.
   added="$(added_entries "$base" "$head" .github/zizmor.yml '.')"
