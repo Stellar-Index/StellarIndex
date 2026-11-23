@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math/big"
 	"net/http"
@@ -193,14 +194,69 @@ func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAsse
 	if se == nil || se.AssetID == "" {
 		return view
 	}
-	price := s.onChainListingPriceUSD(ctx, se.AssetID)
+	price, withheld := s.onChainListingPriceUSD(ctx, se.AssetID)
 	if price == nil {
+		view.PriceWithheldReason = withheld
 		return view
 	}
 	view.PriceUSD = price
 	view.PriceAuthority = aggregate.AuthorityOnChainListing
 	view.PriceSources = []string{"stellar_onchain"}
 	return view
+}
+
+// onChainListingWindow is the span the per-asset reader pools prices_1m buckets over for its price.
+const onChainListingWindow = 24 * time.Hour
+
+// onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID, nil when absent or refused, with
+// the refusal's reason when an exclusion caused it. It passes the same fail-closed substance gate as the classic row, so a dust
+// market cannot price a row /v1/price withholds.
+func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) (*string, PriceWithheldReason) {
+	if s.AssetsReader == nil || assetID == "" {
+		return nil, ""
+	}
+	row, err := s.AssetsReader.GetAssetByAssetID(ctx, assetID)
+	if err != nil || row.PriceUSD == nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			reportUnreadRead(ctx)
+		}
+		return nil, ""
+	}
+	asset, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		return nil, ""
+	}
+	if w := s.onChainListingLegsWithheld(ctx, asset); w != pricingguard.NotWithheld {
+		if w == pricingguard.WithheldExclusionsUnread {
+			reportUnreadRead(ctx)
+		}
+		return nil, withheldReasonFor(w)
+	}
+	if s.Substance != nil {
+		if allowed, unread := s.catalogueRowPriceAllowed(ctx, asset); !allowed {
+			if unread {
+				reportUnreadRead(ctx)
+			}
+			return nil, ""
+		}
+	}
+	// The per-asset reader's price is a RAW prices_1m ratio (not the writer-normalised listing rollup), so it takes the same
+	// correction the detail page gives the same row. Withheld means unpriced, never raw.
+	price, ok := s.normalizeCatalogueReadUSDByID(*row.PriceUSD, assetID)
+	if !ok {
+		return nil, ""
+	}
+	return &price, ""
+}
+
+// onChainListingLegsWithheld judges the per-asset price, a pooled ratio with no source list read either direct against a USD proxy or
+// against XLM times the XLM/USD anchor. Which arm priced it is not returned, so both legs it may rest on are judged.
+func (s *Server) onChainListingLegsWithheld(ctx context.Context, asset canonical.Asset) pricingguard.Withholding {
+	from := time.Now().Add(-onChainListingWindow)
+	if w := s.unattributedWithheld(ctx, asset, defaultPriceQuote, from, false); w != pricingguard.NotWithheld || sameAsset(asset, canonical.NativeAsset()) {
+		return w
+	}
+	return s.unattributedWithheld(ctx, canonical.NativeAsset(), defaultPriceQuote, from, false)
 }
 
 // populateFiatView fills a fiat currency's price and market cap: USD is identity-priced, others use the fiat:CCY/fiat:USD rate

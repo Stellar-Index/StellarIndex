@@ -132,8 +132,8 @@ func (s *Server) applyGlobalMarket(ctx context.Context, row *AssetDetail, refs m
 	}
 	gm := &AssetGlobalMarket{Asset: g.String(), PriceUSD: ref.wire, Source: ref.source, AsOf: WireTime(ref.asOf), Credit: external.Credit(ref.source)}
 	switch {
-	case row.PriceUSD == nil && row.PriceWithheldReason == PriceWithheldSourceExcluded:
-		// The direct price was refused for an excluded source; a reference beside it is not a replacement.
+	case row.PriceUSD == nil && !fillMayReplace(row.PriceWithheldReason, fillGlobalMarket):
+		// The direct price was refused for a cause a reference beside it does not answer.
 	case row.PriceUSD == nil:
 		p := ref.wire
 		row.PriceUSD = &p
