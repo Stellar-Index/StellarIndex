@@ -1396,69 +1396,6 @@ func sep1ImageKey(code, issuer string) string {
 	return strings.TrimSpace(code) + "-" + issuer
 }
 
-// sep1ImageFoldKey keys the case-insensitive fallback entries; the "fold:" prefix cannot collide with an exact key since codes
-// are alphanumeric.
-func sep1ImageFoldKey(code, issuer string) string {
-	return "fold:" + strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
-}
-
-// sep1ImageFor looks a logo up by exact code first, then through the
-// fallback entry [buildSep1ImageMap] writes only for unambiguous folds.
-func sep1ImageFor(images map[string]string, code, issuer string) string {
-	if img, ok := images[sep1ImageKey(code, issuer)]; ok {
-		return img
-	}
-	return images[sep1ImageFoldKey(code, issuer)]
-}
-
-// buildSep1ImageMap keys each safe logo by exact (code, issuer) and, where exactly one code spelling folds to it, by a
-// case-insensitive fallback too, so a mis-cased stellar.toml reaches its asset but an issuer's USDX and usdx never share a
-// logo.
-func buildSep1ImageMap(imgs []timescale.Sep1Image) map[string]string {
-	built := make(map[string]string, len(imgs))
-	spellings := map[string][]string{}
-	for _, img := range imgs {
-		if !isSafeImageURL(img.Image) {
-			continue
-		}
-		k := sep1ImageKey(img.Code, img.Issuer)
-		if _, dup := built[k]; !dup {
-			fk := sep1ImageFoldKey(img.Code, img.Issuer)
-			spellings[fk] = append(spellings[fk], k)
-		}
-		built[k] = img.Image
-	}
-	for fk, keys := range spellings {
-		if len(keys) == 1 {
-			built[fk] = built[keys[0]]
-		}
-	}
-	return built
-}
-
-// matchAssetCode returns the index of the entry naming the case-sensitive code want: exact spelling, else the one
-// case-insensitive spelling, else -1; two distinct case-insensitive spellings are ambiguous and match none.
-func matchAssetCode(want string, codes []string) int {
-	fold, ambiguous := -1, false
-	for i, c := range codes {
-		if c == want {
-			return i
-		}
-		if !strings.EqualFold(c, want) {
-			continue
-		}
-		if fold == -1 {
-			fold = i
-		} else if codes[fold] != c {
-			ambiguous = true
-		}
-	}
-	if ambiguous {
-		return -1
-	}
-	return fold
-}
-
 // sep1ImagesReader is the narrow capability the logo overlay needs, type-asserted off [Server.sep1Cache] (not added to
 // [Sep1CachedReader]) so existing stubs keep compiling and opt out. Production wires *timescale.Store.
 type sep1ImagesReader interface {
@@ -1569,24 +1506,6 @@ func (s *Server) PrewarmSep1Images(ctx context.Context) {
 	select {
 	case <-flight:
 	case <-ctx.Done():
-	}
-}
-
-// fillImagesFromSep1 overlays the SEP-1 [[CURRENCIES]] logo URL onto rows lacking one, from the once-per-TTL logo map (the hot
-// listing query deliberately does not JOIN sep1_payload). Best-effort: no verified image or no reader is a no-op.
-func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
-	images := s.cachedSep1Images(ctx)
-	if len(images) == 0 {
-		return
-	}
-	for i := range rows {
-		if rows[i].Image != nil || rows[i].Issuer == nil || rows[i].Code == "" {
-			continue
-		}
-		if img := sep1ImageFor(images, rows[i].Code, *rows[i].Issuer); img != "" {
-			v := img
-			rows[i].Image = &v
-		}
 	}
 }
 
@@ -2934,7 +2853,12 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 		return
 	}
 
-	match := findMatchingCachedCurrency(sep, asset)
+	match, unread := s.matchSep1Currency(ctx, sep, asset)
+	if unread {
+		// OUR case-variant read failed; the fold fails closed and the response says so.
+		detail.Sep1Status, detail.sep1Unread = "not_fetched", true
+		return
+	}
 	if match == nil {
 		detail.Sep1Status = "no_match"
 		if name, ok := sep.BoundOrgName(asset.Issuer); ok {
@@ -3025,29 +2949,6 @@ func sep1CurrencyAuthorityFrom(match *timescale.IssuerSep1Currency) Sep1Currency
 		ApprovalServer:         safeURL(match.ApprovalServer),
 		ApprovalCriteria:       nonEmpty(match.ApprovalCriteria),
 	}
-}
-
-// findMatchingCachedCurrency returns the cached SEP-1 currency matching the asset: issuer exact, code per [matchAssetCode]; nil
-// if none.
-func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical.Asset) *timescale.IssuerSep1Currency {
-	if asset.Type != canonical.AssetClassic {
-		return nil
-	}
-	if asset.Code == "" || asset.Issuer == "" {
-		return nil
-	}
-	codes := make([]string, 0, len(sep.Currencies))
-	at := make([]int, 0, len(sep.Currencies))
-	for i := range sep.Currencies {
-		if c := &sep.Currencies[i]; c.Issuer != "" && c.Issuer == asset.Issuer {
-			codes = append(codes, c.Code)
-			at = append(at, i)
-		}
-	}
-	if j := matchAssetCode(asset.Code, codes); j >= 0 {
-		return &sep.Currencies[at[j]]
-	}
-	return nil
 }
 
 // isSafeImageURL reports whether s is a plausible http(s) image URL for `data.image` from a hostile stellar.toml: a scheme allow-list plus

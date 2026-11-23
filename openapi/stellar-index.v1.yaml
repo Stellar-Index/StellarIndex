@@ -22901,7 +22901,7 @@ components:
         coingecko_id:     { type: string,  description: "CoinGecko slug for this currency (when known)." }
         coinmarketcap_id: { type: string,  description: "CoinMarketCap integer ID for this currency (when known)." }
         price_usd:        { type: [string, "null"], description: "USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead." }
-        price_withheld_reason: { type: string, enum: [source_excluded, unattributed], description: "Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`), or the exclusion set could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline." }
+        price_withheld_reason: { type: string, enum: [source_excluded, unattributed, scam_issuer], description: "Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`), the entry's Stellar issuer is flagged in the directory or the curated scam list (`scam_issuer`, as on the listing's catalogue row), or the exclusion set or the issuer's directory entry could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline." }
         price_authority:
           type: string
           enum: [vwap_native, aggregator_avg, triangulated, reference_rate, identity, onchain_listing]
