@@ -4191,7 +4191,10 @@ export interface paths {
          *     CLOSED 1-minute VWAP snapshots for the asset/USD pair,
          *     newest first; the in-progress bucket is excluded
          *     (ADR-0015). 200 with an empty array when the asset has no
-         *     closed buckets yet. A pair frozen by the anomaly checker
+         *     closed buckets yet. A USD stablecoin (a declared peg, or a
+         *     `crypto:<STABLE>` ticker) is served only from its own observed
+         *     fiat:USD series, never from another stablecoin's book; with
+         *     none recorded it answers 404 `price-not-found`. A pair frozen by the anomaly checker
          *     (ADR-0019) serves one record, the held last-known-good value
          *     `lastprice` serves, with `flags.frozen` and `flags.degraded`;
          *     the closed buckets are not served while the freeze holds, and
@@ -9121,7 +9124,7 @@ export interface components {
              */
             proxy_deviation: boolean;
             /**
-             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
+             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A reading older than 17 minutes at the requested time is reported as unchecked, so historical vwap/twap answers past the 1-minute retention carry this flag. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
              * @default false
              */
             proxy_deviation_unchecked: boolean;
@@ -24582,6 +24585,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];

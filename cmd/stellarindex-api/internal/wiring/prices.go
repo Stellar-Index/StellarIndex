@@ -426,17 +426,54 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 		return nil, v1.PriceWithheldError(withheld)
 	}
 	// An excluded source's minutes are dropped before the guard so they neither serve nor set the baseline.
-	rows, w := r.Exclusions.CleanBuckets(ctx, asset, quote, rows)
+	clean, w := r.Exclusions.CleanBuckets(ctx, asset, quote, rows)
 	if w != pricingguard.NotWithheld {
 		return nil, v1.PriceWithheldError(w)
 	}
 	// Each bucket is the same bare CAGG ratio /v1/price guards; a manipulated minute is dropped.
-	rows = pricingguard.GuardServedVWAP1mSeries(r.Logger, pair, rows, n)
-	out := make([]v1.PriceSnapshot, len(rows))
-	for i, row := range rows {
+	served := pricingguard.GuardServedVWAP1mSeries(r.Logger, pair, clean, n)
+	holed, err := seriesHoledByExclusion(rows, clean, served)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.PriceSnapshot, len(served))
+	for i, row := range served {
 		out[i] = v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket)
+		out[i].FillsWithheld = holed
+		out[i].BucketSources = row.Sources
 	}
 	return out, nil
+}
+
+// seriesHoledByExclusion reports whether a bucket the exclusion dropped (in read, not in clean) is no older than the oldest
+// served one, so the served series has a hole in it; dropped buckets that leave nothing to serve are a refusal, not "no records".
+func seriesHoledByExclusion(read, clean, served []timescale.Vwap1mRow) (bool, error) {
+	if len(clean) == len(read) {
+		return false, nil
+	}
+	if len(served) == 0 {
+		// Only an exclusion that emptied the series alone is `source_excluded`; the guard dropping the rest is "no records".
+		if len(clean) == 0 {
+			return false, v1.PriceWithheldError(pricingguard.WithheldSourceExcluded)
+		}
+		return false, nil
+	}
+	kept := make(map[time.Time]bool, len(clean))
+	oldest := served[0].Bucket
+	for _, row := range clean {
+		kept[row.Bucket] = true
+	}
+	for _, row := range served {
+		if row.Bucket.Before(oldest) {
+			oldest = row.Bucket
+		}
+	}
+	for _, row := range read {
+		if !kept[row.Bucket] && !row.Bucket.Before(oldest) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // FreezeWindows is the optional [v1.FreezeWindowReader]: the recorded freezes of any of assets against quote still open at since.

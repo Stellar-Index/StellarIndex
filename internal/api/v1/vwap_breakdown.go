@@ -99,7 +99,7 @@ func vwapBucketBounds(t time.Time, interval ohlcInterval, from, to time.Time) (t
 		return s, s.AddDate(0, 1, 0)
 	default:
 		d := interval.duration()
-		s := t.UTC().Truncate(d)
+		s := truncateToBucketOrigin(t.UTC(), d)
 		return s, s.Add(d)
 	}
 }
