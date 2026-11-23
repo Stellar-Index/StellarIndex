@@ -2,7 +2,6 @@ package v1_test
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -56,41 +55,42 @@ func TestOraclePrices_FrozenHoldOfWithheldPairIsNotServed(t *testing.T) {
 	}
 }
 
-// TestOraclePrices_FrozenHoldBesideDormantRefusedBook: the direct fiat:USD read was refused while a USDC book answered. A thin
-// verdict on a book with no closed bucket in the existence window is a dormant book, not a refused market, so the hold serves as
-// on lastprice; a live thin book or a scam refusal of any age still withdraws it.
-func TestOraclePrices_FrozenHoldBesideDormantRefusedBook(t *testing.T) {
+// TestOraclePrices_FrozenHoldBesideThinRefusedBook: the direct fiat:USD read was refused while a USDC book answered. A thin
+// verdict yields to a peg book checked inside its band, so the hold serves as on lastprice; a thin book whose peg is unchecked,
+// or a scam refusal, still withdraws it.
+func TestOraclePrices_FrozenHoldBesideThinRefusedBook(t *testing.T) {
 	usdc, _ := oraclePegs(t)
 	thin := v1.PriceWithheldError(pricingguard.WithheldThinMarket)
 	scam := v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer)
 	cases := []struct {
 		name    string
 		refusal error
-		live    bool
+		checked bool
 		serves  bool
 	}{
-		{"dormant thin book", thin, false, true},
-		{"live thin book", thin, true, false},
-		{"dormant scam-refused book", scam, false, false},
+		{"thin book, peg in band", thin, true, true},
+		{"thin book, peg unchecked", thin, false, false},
+		{"scam-refused book, peg in band", scam, true, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := v1.New(v1.Options{
-				Prices: &gatingStubPriceReader{
-					stubPriceReader: stubPriceReader{
-						errByPair: map[string]error{xlmUSD: tc.refusal, "native/fiat:USD": tc.refusal},
-						recent: map[string][]v1.PriceSnapshot{
-							"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
-							"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
-						},
+			opts := v1.Options{
+				Prices: &stubPriceReader{
+					errByPair: map[string]error{xlmUSD: tc.refusal, "native/fiat:USD": tc.refusal},
+					recent: map[string][]v1.PriceSnapshot{
+						"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
+						"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
 					},
-					exists: map[string]bool{xlmUSD: tc.live, "native/fiat:USD": tc.live},
 				},
-				USDPeggedClassics: []canonical.Asset{usdc},
-				Freeze:            frozenPairs{xlmUSD: true, "native/fiat:USD": true},
-				Triangulated:      lkgPairs{xlmUSD + "/300": heldUSD, "native/fiat:USD/300": heldUSD},
-			})
-			status, body := getBody(t, startHTTPTest(t, srv.Handler()).URL+pricesURL)
+				USDPeggedClassics:  []canonical.Asset{usdc},
+				VerifiedCurrencies: newTestCatalogue(t),
+				Freeze:             frozenPairs{xlmUSD: true, "native/fiat:USD": true},
+				Triangulated:       lkgPairs{xlmUSD + "/300": heldUSD, "native/fiat:USD/300": heldUSD},
+			}
+			if tc.checked {
+				opts.PriceAt = usdcObserved("1.0")
+			}
+			status, body := getBody(t, startHTTPTest(t, v1.New(opts).Handler()).URL+pricesURL)
 			served := status == http.StatusOK && strings.Contains(body, `"price":"`+heldUSD+`"`)
 			if served != tc.serves {
 				t.Fatalf("held value served = %v, want %v: %d %s", served, tc.serves, status, body)
@@ -146,34 +146,30 @@ func TestFrozenHoldOfTriangulatedTokenIsServed(t *testing.T) {
 }
 
 // TestOraclePrices_UnfrozenRefusedDirectBookAgreesWithLastPrice: with no freeze, a refused direct fiat:USD read lets a peg
-// book answer only when the refusal is an exclusion or a thin verdict on a dormant book; a live thin book, a flagged issuer or
-// an unreadable exclusion set refuses prices() exactly as it refuses lastprice.
+// book answer when the refusal is an exclusion; a thin book whose peg is unchecked (no point-in-time reader here), a flagged
+// issuer or an unreadable exclusion set refuses prices() exactly as it refuses lastprice. The checked-peg cases are
+// TestOracleThinDirect_PegBookQualifiesOnBothRoutes.
 func TestOraclePrices_UnfrozenRefusedDirectBookAgreesWithLastPrice(t *testing.T) {
 	usdc, _ := oraclePegs(t)
 	cases := []struct {
 		name    string
 		refusal error
-		live    bool
 		serves  bool
 	}{
-		{"dormant thin book", v1.PriceWithheldError(pricingguard.WithheldThinMarket), false, true},
-		{"excluded source", v1.PriceWithheldError(pricingguard.WithheldSourceExcluded), true, true},
-		{"live thin book", v1.PriceWithheldError(pricingguard.WithheldThinMarket), true, false},
-		{"flagged issuer", v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer), false, false},
-		{"exclusions unread", v1.PriceWithheldError(pricingguard.WithheldExclusionsUnread), true, false},
+		{"excluded source", v1.PriceWithheldError(pricingguard.WithheldSourceExcluded), true},
+		{"thin book, peg unchecked", v1.PriceWithheldError(pricingguard.WithheldThinMarket), false},
+		{"flagged issuer", v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer), false},
+		{"exclusions unread", v1.PriceWithheldError(pricingguard.WithheldExclusionsUnread), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := v1.New(v1.Options{
-				Prices: &gatingStubPriceReader{
-					stubPriceReader: stubPriceReader{
-						errByPair: map[string]error{xlmUSD: tc.refusal, "native/fiat:USD": tc.refusal},
-						recent: map[string][]v1.PriceSnapshot{
-							"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
-							"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
-						},
+				Prices: &stubPriceReader{
+					errByPair: map[string]error{xlmUSD: tc.refusal, "native/fiat:USD": tc.refusal},
+					recent: map[string][]v1.PriceSnapshot{
+						"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
+						"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
 					},
-					exists: map[string]bool{xlmUSD: tc.live, "native/fiat:USD": tc.live},
 				},
 				USDPeggedClassics: []canonical.Asset{usdc},
 			})
@@ -192,32 +188,5 @@ func TestOraclePrices_UnfrozenRefusedDirectBookAgreesWithLastPrice(t *testing.T)
 				t.Fatalf("lastprice = %d, want 404: %s", ls, lb)
 			}
 		})
-	}
-}
-
-// TestOraclePrices_UnreadDormancyProbeIsRetryable: a thin verdict whose dormancy probe could not be read is unjudged, so
-// prices() answers a retryable, uncached 5xx, never a 404 price-withheld verdict nor the peg book.
-func TestOraclePrices_UnreadDormancyProbeIsRetryable(t *testing.T) {
-	usdc, _ := oraclePegs(t)
-	thin := v1.PriceWithheldError(pricingguard.WithheldThinMarket)
-	srv := v1.New(v1.Options{
-		Prices: &gatingStubPriceReader{
-			stubPriceReader: stubPriceReader{
-				errByPair: map[string]error{xlmUSD: thin, "native/fiat:USD": thin},
-				recent: map[string][]v1.PriceSnapshot{
-					"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
-					"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
-				},
-			},
-			existsErr: errors.New("pool acquire timeout"),
-		},
-		USDPeggedClassics: []canonical.Asset{usdc},
-	})
-	ts := startHTTPTest(t, srv.Handler())
-	resp := mustGet(t, ts.URL+pricesURL)
-	body, _ := readAll(resp)
-	if resp.StatusCode < 500 || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
-		t.Fatalf("prices() = %d (Cache-Control %q), want an uncached 5xx: %s",
-			resp.StatusCode, resp.Header.Get("Cache-Control"), body)
 	}
 }
