@@ -618,8 +618,14 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread || withheld})
 }
 
+// isSafeHTTPSImageURL is isSafeImageURL restricted to https: wallets bulk-load the verified listing's logos on its https-only
+// promise, and a cleartext logo of a verified asset can be swapped on path.
+func isSafeHTTPSImageURL(s string) bool {
+	return strings.HasPrefix(s, "https://") && isSafeImageURL(s)
+}
+
 // attachVerifiedImages fills each row's Image from the issuer's cached SEP-1 entry (sep1_payload cache only, no live HTTPS),
-// best-effort per row, behind the same isSafeImageURL gate as the detail overlay.
+// best-effort per row, behind isSafeHTTPSImageURL.
 func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Sep1Cache == nil {
 		return
@@ -641,7 +647,7 @@ func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.V
 		if match == nil {
 			continue
 		}
-		if v := strings.TrimSpace(match.Image); isSafeImageURL(v) {
+		if v := strings.TrimSpace(match.Image); isSafeHTTPSImageURL(v) {
 			out[i].Image = v
 		}
 	}
