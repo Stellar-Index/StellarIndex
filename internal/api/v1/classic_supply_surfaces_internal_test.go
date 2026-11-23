@@ -219,6 +219,38 @@ func TestClassicSupply_DetailIgnoresAForeignLakeFlight(t *testing.T) {
 	}
 }
 
+// A trustline sum taken before a burn can exceed true supply, so a sum older than classicFloorMaxLag neither marks the net nor
+// stands in as the figure, on any surface; the read is flagged. A sum a healthy rollup cycle old is still a floor.
+func TestClassicSupply_OldTrustlineSumIsNoFloor(t *testing.T) {
+	const net = "500000000" // below cetesTrustlineOnly
+	for name, tc := range map[string]struct {
+		age            time.Duration
+		lake, wantCirc string
+		wantLB         bool
+	}{
+		"old sum, net present":   {classicFloorMaxLag + 30*time.Minute, net, net, false},
+		"old sum, no net":        {classicFloorMaxLag + 30*time.Minute, "", "null", false},
+		"healthy sum, net below": {45 * time.Minute, net, cetesTrustlineOnly, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sums := &trustlineOnlyExplorer{supply: map[string]string{cetesAsset: cetesTrustlineOnly}, computedAt: time.Now().Add(-tc.age)}
+			s, _ := surfacesServer(t, tc.lake, sums, "")
+			got := readClassicSurfaces(t, s, cetesAsset)
+			for surface, d := range map[string]AssetDetail{"listing": got.listing, "detail": got.detail} {
+				if strOr(d.CirculatingSupply) != tc.wantCirc || d.CirculatingSupplyLowerBound != tc.wantLB {
+					t.Errorf("%s: circ=%q lb=%v, want %q lb=%v", surface, strOr(d.CirculatingSupply), d.CirculatingSupplyLowerBound, tc.wantCirc, tc.wantLB)
+				}
+			}
+			if got.detail.f2ReadFailed == tc.wantLB {
+				t.Errorf("detail failed=%v, want %v", got.detail.f2ReadFailed, !tc.wantLB)
+			}
+			if tc.lake != "" && (got.supply.CirculatingSupplyLowerBound != tc.wantLB || got.supplyFlags.Degraded == tc.wantLB) {
+				t.Errorf("/supply: lb=%v degraded=%v, want lb=%v", got.supply.CirculatingSupplyLowerBound, got.supplyFlags.Degraded, tc.wantLB)
+			}
+		})
+	}
+}
+
 // sacExplorer is the trustline sum plus the lake's SAC instance lookup (contract id to "CODE:ISSUER").
 type sacExplorer struct {
 	trustlineOnlyExplorer
