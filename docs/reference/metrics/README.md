@@ -530,7 +530,7 @@ The cursor commits a ledger only once the indexer's sink has landed every row th
 
 Gauge, no labels.
 
-Ledgers the indexer has processed that the `ledgerstream` cursor does not yet cover, because some of their served-tier rows (trades, observations, protocol events) are still buffered or being written. Normally 0–2. A climbing value means a write is stuck while ledger processing continues; a restart would re-walk that many ledgers.
+Ledgers the indexer has processed that the `ledgerstream` cursor does not yet cover, because some of their served-tier rows (trades, observations, protocol events) are still buffered or being written. A row counts as covered once it landed or was permanently dropped under the ADR-0041 fault policy. Normally 0–2. A climbing value means a write is stuck while ledger processing continues; a restart would re-walk that many ledgers.
 
 ### `stellarindex_trade_inserts_total`
 

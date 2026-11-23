@@ -1476,7 +1476,7 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 var CursorDurableLagLedgers = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_cursor_durable_lag_ledgers",
-		Help: "Ledgers processed by the indexer but not yet committed to the ledgerstream cursor because some of their rows have not landed.",
+		Help: "Ledgers processed by the indexer but not yet committed to the ledgerstream cursor because some of their rows have neither landed nor been permanently dropped (ADR-0041).",
 	},
 )
 

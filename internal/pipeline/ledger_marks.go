@@ -29,7 +29,8 @@ func (m *LedgerMarks) Processed() uint32 {
 }
 
 // DurableThrough returns the highest ledger, at most [LedgerMarks.Processed], at or below which every enqueued row
-// has landed. It never decreases: rows are only enqueued for ledgers above it.
+// has landed or been dropped under the ADR-0041 permanent-fault policy. It can decrease: a trade counted under a
+// t.Ledger below it lowers it until it lands. durableCursor keeps the persisted cursor monotonic.
 func (m *LedgerMarks) DurableThrough() uint32 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
