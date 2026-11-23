@@ -257,8 +257,14 @@ never decoded in the first place).
    matching `(ledger, tx_hash, op_index)` rows from `trades WHERE source =
    'aquarius'` via a staged temp table — do NOT delete by `(ledger,
    tx_hash)` alone (an aggregator tx could legitimately touch both a
-   registry pool and a foreign pool).
+   registry pool and a foreign pool). The replay's own aggregate refresh
+   ran before this DELETE, and the aggregate policies never look back this
+   far, so then run `stellarindex-ops trades-cagg-refresh -from <lowest
+   deleted ledger> -to <highest> -write` (`cmd/stellarindex-ops/help.go`);
+   without it served prices, OHLC, TWAP and volume keep the deleted trades.
 3. Verdict watch: one green `compute-completeness -ch` cycle for aquarius.
+   It reconciles `trades` against the lake, not the aggregates, so it does
+   not show a skipped step 2 refresh.
 
 ### 2026-08-02 addendum — first full-range completeness reconcile closed
 

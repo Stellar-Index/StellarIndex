@@ -166,9 +166,11 @@ playbook).
   ClickHouse are non-critical (200 with `status="degraded"`), so a cache or
   lake outage does not drain the pool. When a Redis-backed rate limiter is
   configured, the critical `redis_outage` check turns `/v1/readyz` into 503
-  once Redis has been unreachable for `api.rate_limit_dwell`, the point at
-  which every rate-limited route answers 503; readiness pings drive its
-  clock, so a drained backend rejoins on the first round after Redis answers.
+  once Redis has been unreachable or refusing writes for
+  `api.rate_limit_dwell`, the point at which every rate-limited route answers
+  503: it probes with the limiters' own write script, not PING. Readiness
+  probes drive its clock, so a drained backend rejoins on the first round
+  after Redis accepts writes again.
   `GET /v1/livez/lake` is the
   lake-only signal (503 while ClickHouse is unreachable) for steering lake
   routes separately.
@@ -446,11 +448,17 @@ operator fixes it. Today r1 is a single point of failure for everything.
 ## 6. Security posture
 
 - **Secrets:** Ansible Vault; `configs/ansible/inventory/<region>.secrets.yml`
-  holds them and is gitignored (`/configs/ansible/inventory/*.yml`), so a
-  suffixed copy such as `r1.secrets.yml.bak-<date>` is not ignored and
-  `git add` stages it; never copy these files inside the repo. The offline
-  age identity for `config_backup_age_recipient` is the only key that opens
-  the config backup, so its custody matters. Validator keys are never on disk
+  holds them and is gitignored, and so are suffixed copies such as
+  `r1.secrets.yml.bak-<date>` (`*.secrets.yml.*` in `.gitignore`). A suffixed
+  copy of a host inventory (`r1.yml.bak-<date>`) is NOT ignored, because
+  `/configs/ansible/inventory/*.yml` needs the name to end in `.yml`, and it
+  holds the host's IP, SSH CIDRs and disk serials; never copy these files
+  inside the repo. The config backup is age-encrypted to
+  `config_backup_age_recipient`, whose role default in
+  `configs/ansible/roles/archival-node/defaults/main.yml` is a fixed project
+  key, and nothing makes a deployment override it: a self-hosted deployment
+  that keeps the default writes backups only the project's identity opens.
+  An override check is not built. Validator keys are never on disk
   unencrypted (ADR-0004).
 - **External TLS:** Caddy on r1; HAProxy in the Phase 1 shape.
 - **Internal traffic today** stays on one host. In the multi-host build:
@@ -575,7 +583,7 @@ Current state on r1:
 | Postgres | pgBackRest `repo1` at `/var/lib/pgbackrest` (same ZFS pool as the DB): full Sunday, diff Mon–Sat 02:00 UTC, continuous async WAL archiving | **Live:** `repo2`, encrypted, on AWS S3 since 2026-08-29, moving to B2. Rendered only when `pgbackrest_repo2_s3_bucket` is set (`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:187`); staleness alert `stellarindex_backup_offsite_stale` | 5 min (WAL) | ~1–3 h |
 | ClickHouse lake | `scripts/ops/ch-lake-backup.sh`: native `BACKUP DATABASE` to an `s3_plain` disk, 28-day full + daily incrementals | **Not running:** installed, but backs nothing up until `ch_lake_backup_s3_endpoint` and its vault keys are set; `stellarindex_ch_lake_backup_stale` tickets each lake host until then | daily (target) | ~4–36 h (10 Gbps / 1 Gbps); re-derivation ~1–2 weeks is the last resort |
 | Raw galexie archive | Not backed up by design; re-pulled from `aws-public-blockchain` (`galexie_archive_mirror_enabled: false`) | — | — | days to weeks |
-| Config, vault, systemd | `config-backup.timer` (`scripts/ops/config-backup.sh`): daily age-encrypted tarball of `/etc` config, secrets and units, 30 days kept locally in `/var/lib/stellarindex/config-backup` | Only when `config_backup_mc_target` (default: `ch_schema_snapshot_mc_target` + `/config-backup`) is set; alert `stellarindex_config_backup_offsite_stale` | daily | Needs the offline identity for `config_backup_age_recipient`; nobody else can open it |
+| Config, vault, systemd | `config-backup.timer` (`scripts/ops/config-backup.sh`): daily age-encrypted tarball of `/etc` config, secrets and units, 30 days kept locally in `/var/lib/stellarindex/config-backup` | Only when `config_backup_mc_target` (default: `ch_schema_snapshot_mc_target` + `/config-backup`) is set; alert `stellarindex_config_backup_offsite_stale` | daily | Needs the identity for the configured `config_backup_age_recipient`; with the role default (a project key, §6) only the project can open it |
 | Redis | No AOF (§3.4); not a cache: store of record for `apikey:` credentials | — | — | Nothing re-warms it from Postgres. A restored older RDB resurrects keys revoked since it was taken |
 
 Provider, cost and sequencing:

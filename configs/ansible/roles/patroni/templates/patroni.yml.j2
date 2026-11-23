@@ -52,6 +52,8 @@ bootstrap:
         max_replication_slots: 10
         max_wal_senders: 10
         wal_keep_size: '1024MB'
+        # Patroni keeps a slot per member, so without a cap one stuck replica fills the primary's disk.
+        max_slot_wal_keep_size: '{{ patroni_max_slot_wal_keep_size }}'
         archive_mode: 'on'
         archive_command: '{{ patroni_archive_command }}'
         # TimescaleDB extension preloading — required for the
