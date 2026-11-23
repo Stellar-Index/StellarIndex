@@ -22,6 +22,7 @@ import {
   convertDecimalAmount,
   formatPriceSmall,
   formatRelative,
+  parseAmountInput,
   positiveDecimal,
   truncateMiddle,
 } from '@/lib/format';
@@ -440,7 +441,7 @@ export function AssetSwap({
     legNote(toToken, toRate, toThin),
   ]);
 
-  const input = normalizeAmount(amount);
+  const input = parseAmountInput(amount);
 
   // The computed counter value for the non-edited field: exact decimal
   // arithmetic, rounded once to the output leg's precision.
@@ -503,10 +504,10 @@ export function AssetSwap({
   }
 
   function onEdit(side: 'from' | 'to', raw: string) {
-    // Permit digits + a single dot; drop grouping/letters.
-    const cleaned = raw.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
     setEdited(side);
-    setAmount(cleaned);
+    // The field keeps the typed separators: rewriting "1," as "1." would turn
+    // a keystroke-by-keystroke "1,000" into 1.000.
+    setAmount(raw.replace(/[^\d.,\s]/g, ''));
   }
 
   return (
@@ -1055,14 +1056,6 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────
-/** The typed amount as a plain decimal string ("1." → "1", ".5" → "0.5"); null when empty. */
-function normalizeAmount(raw: string): string | null {
-  const t = raw.replace(/,/g, '').replace(/\.$/, '');
-  if (t === '' || t === '.') return null;
-  const s = t.startsWith('.') ? `0${t}` : t;
-  return /^\d+(\.\d+)?$/.test(s) ? s : null;
-}
-
 // Stellar classic precision when a crypto leg's decimals are unknown; a fiat
 // leg rounds to cents but keeps four significant digits below one unit.
 const DEFAULT_CRYPTO_DECIMALS = 7;
