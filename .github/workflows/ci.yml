@@ -2224,6 +2224,11 @@ jobs:
         # every lake-backed route 503'd behind a 200 readyz.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-api-env-test.sh
+      - name: Validated stellarindex.toml write test (local ansible run)
+        # A role apply ahead of the binary deploy wrote a key the installed API
+        # did not know and crash-looped it; the write must be validated first.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-config-check-test.sh
       - name: Postgres WAL archiving render test
         # A rebuilt archival node must render archive_mode/archive_command,
         # or pgBackRest silently loses point-in-time recovery; hosts without
