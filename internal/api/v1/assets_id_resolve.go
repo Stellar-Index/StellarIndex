@@ -12,33 +12,29 @@ import (
 )
 
 // classicSlugResolver is the optional reader capability behind /v1/assets/{slug} classic-slug
-// resolution (the proxyPairGate idiom); a reader without it answers 400 on non-canonical ids.
+// resolution (the proxyPairGate idiom); a reader without it answers 400 on non-canonical ids. The exact slug wins, else
+// the single case-folded match; several case variants and no exact one read as ok=false.
 type classicSlugResolver interface {
 	ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error)
 }
 
-// issuerFoldedClassic reads raw as <code>-<issuer> with only the issuer case-folded: a strkey is base32 and case-free, a classic
-// code is case-significant, so "usdc-<issuer>" names the asset usdc and never another case variant of it.
-func issuerFoldedClassic(raw string) (canonical.Asset, bool) {
+// issuerFoldedSlug is raw with only the issuer of a <code>-<issuer> id upper-cased: a strkey is base32 and case-free, a classic
+// code is case-significant, so the code as typed is the exact spelling the registry is asked for first.
+func issuerFoldedSlug(raw string) string {
 	i := strings.LastIndexByte(raw, '-')
 	if i <= 0 {
-		return canonical.Asset{}, false
+		return raw
 	}
 	asset, err := canonical.NewClassicAsset(raw[:i], strings.ToUpper(raw[i+1:]))
 	if err != nil || asset.Validate() != nil {
-		return canonical.Asset{}, false
+		return raw
 	}
-	return asset, true
+	return asset.String()
 }
 
 // resolveClassicSlug maps a classic-asset slug to (code, issuer). A lookup error logs and reads as a miss (caller 400s), never
 // a 500.
 func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.Asset, bool) {
-	// The store's slug match folds the code too and returns any one case variant, so an id that names a code and an issuer
-	// never reaches it.
-	if asset, ok := issuerFoldedClassic(raw); ok {
-		return asset, true
-	}
 	// Two reader seams exist (`assets` and `assetsReader`); binaries wire the same adapter behind
 	// both but a test may wire only one, so probe both.
 	res, ok := s.Assets.(classicSlugResolver)
@@ -48,7 +44,7 @@ func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.
 	if !ok {
 		return canonical.Asset{}, false
 	}
-	code, issuer, found, err := res.ClassicAssetBySlug(ctx, raw)
+	code, issuer, found, err := res.ClassicAssetBySlug(ctx, issuerFoldedSlug(raw))
 	if err != nil {
 		s.logger.Warn("classic slug lookup failed", "slug", raw, "err", err)
 		return canonical.Asset{}, false
@@ -117,8 +113,9 @@ func (s *Server) parseAssetListQuery(w http.ResponseWriter, r *http.Request) (as
 }
 
 // sacSearchAsClassic rewrites a q that is a classic asset's SAC address to that asset's id, so the C-form finds the rows its
-// asset_id does; the SAC's own listing row carries no code or issuer to match on. ok=false means a 503 was written: an
-// unread lookup leaves the query's meaning unknown, and searching the raw address would serve and cache a wrong page.
+// asset_id does; the SAC's own listing row carries no code or issuer to match on. ok=false means a response was written: an
+// unread lookup leaves the query's meaning unknown, and searching the raw address would serve and cache a wrong page, so
+// it replays the page a resolved lookup cached under this query, else 503s.
 func (s *Server) sacSearchAsClassic(w http.ResponseWriter, r *http.Request, q string) (string, bool) {
 	if s.Explorer == nil || !canonical.IsContractID(q) {
 		return q, true
@@ -128,6 +125,11 @@ func (s *Server) sacSearchAsClassic(w http.ResponseWriter, r *http.Request, q st
 		if !clientAborted(r, err) {
 			s.logger.Warn("SAC search lookup failed", "q", q, "err", err)
 		}
+		if body, stale, _, hit := s.assetListCache.lookup(assetListCacheKey(r)); hit {
+			writeCachedAssetList(w, body, stale)
+			return "", false
+		}
+		w.Header().Set("Retry-After", "5")
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/contract-identity-unavailable",
 			"Contract identity unavailable", http.StatusServiceUnavailable,
