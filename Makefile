@@ -165,7 +165,7 @@ fmt: ## Format all Go code with gofumpt + goimports
 
 .PHONY: lint
 lint: ## Run golangci-lint
-	@$(GOBIN)/golangci-lint run ./...
+	@$(GOBIN)/golangci-lint run --config=.golangci.yml ./...
 
 .PHONY: vet
 vet: ## go vet

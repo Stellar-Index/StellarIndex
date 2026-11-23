@@ -138,6 +138,16 @@ expect 'push green and green nightly → healthy' 0 "HEALTHY — latest full-sui
 run "$(runs_json "$(ev success 1 p1 push)" "$(cancelled 120)" "$(ev failure 8 n1 schedule)")" 3 6
 expect 'red nightly behind a full page of cancelled runs is still paged to → RED' 1 "RED — full-suite"
 
+# The reverse: a nightly skips push-only jobs, so its green must not clear red pushes.
+run "$(runs_json "$(ev success 2 n1 schedule)" "$(ev failure 5 p4 push)" "$(ev failure 9 p3 push)" \
+  "$(ev failure 14 p2 push)" "$(ev failure 20 p1 push)" "$(ev success 26 n0 schedule)")" 3 6
+expect 'green nightly newer than 4 red pushes over 18h → RED (push stream)' 1 "RED — push"
+
+# A workflow with no schedule has no full suite: a red dispatch behind green pushes is cleared.
+run "$(runs_json "$(ev success 1 p2 push)" "$(ev success 30 p1 push)" "$(ev failure 400 d1 workflow_dispatch)" \
+  "$(ev success 500 p0 push)")" 3 6
+expect 'red dispatch of a cron-less workflow behind green pushes → healthy' 0 'HEALTHY'
+
 # ── Stale listing: the filtered run listing once
 #    answered with nothing a month newer while main was building
 #    green, and the walk read it as "red for 666h". The unfiltered listing
