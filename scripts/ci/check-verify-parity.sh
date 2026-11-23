@@ -82,7 +82,10 @@ extract_invoked() {
 #                         checks every workflow ROUTES THROUGH it, is mirrored.
 #   affected-go-pkgs     a HELPER: preflight passes it the diff base to scope
 #                         the unit tests. Its own tests run in `make test`.
-LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh coverage-floor.sh fuzz-smoke.sh check-change-class.sh check-dependabot-toolchain-bump.sh install-ansible.sh affected-go-pkgs"
+#   prepull-integration-images.sh
+#                         pulls the Docker images the integration shards need
+#                         (network + Docker); a local run pulls them on demand.
+LOCAL_EXEMPT="govulncheck-gated.sh integration-shard.sh prepull-integration-images.sh coverage-floor.sh fuzz-smoke.sh check-change-class.sh check-dependabot-toolchain-bump.sh install-ansible.sh affected-go-pkgs"
 
 ci_scripts="$(extract_invoked <"$CI_YML" || true)"
 

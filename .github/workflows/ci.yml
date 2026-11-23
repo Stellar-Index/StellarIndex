@@ -698,6 +698,11 @@ jobs:
             sleep $((i * 15))
           done
           echo "::error::go mod download failed after 3 attempts"; exit 1
+      - name: pre-pull integration images (mirror, then Docker Hub fallback)
+        # A failed mirror pull inside a test is cached by the ClickHouse
+        # harness and fails the rest of the shard with "No such image";
+        # fail here, before any test runs, instead.
+        run: ./scripts/ci/prepull-integration-images.sh
       - name: integration shard ${{ matrix.shard }} of 8
         # testcontainers-go spins TimescaleDB/Redis/MinIO; ubuntu-latest ships
         # a Docker daemon. Same go test flags as `make test-integration`
