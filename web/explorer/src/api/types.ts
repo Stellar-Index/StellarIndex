@@ -2068,9 +2068,52 @@ export interface paths {
          *     when no lending source knows the pool, or nothing was ever
          *     recorded for this reserve in it (a window with no change is a
          *     200 with no points). 503 `history-unavailable` when this
-         *     deployment has not derived the history. No USD values.
+         *     deployment has not derived the history.
+         *
+         *     `supplied_usd` / `borrowed_usd` value each point at the USD
+         *     price of the bucket it falls in (the seed at the bucket of
+         *     `from`): the VWAP of the newest price bucket starting at or
+         *     before it, at most `price_max_age_hours` (48) earlier, from the
+         *     series `/v1/chart` serves, never a later bucket's or today's
+         *     price. `price_at` is that price bucket's start. Without one
+         *     the USD values are null, `usd_reason` says why, and
+         *     `usd_unvalued_points` counts the point; never 0.
          */
         get: operations["getLendingReserveHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools/{pool}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — TVL and borrowed USD over time.
+         * @description The pool's (Blend V1/V2, BLNT) USD value at every hour
+         *     (`interval=1h`) or UTC day (`interval=1d`) from `from` to the
+         *     earliest of `to`, now and the history coverage. Each reserve's
+         *     state at the bucket's close (as
+         *     `/v1/lending/pools/{pool}/reserves/{asset}/history` records it)
+         *     is valued at that bucket's own USD price under the same rule
+         *     as that route: at most `price_max_age_hours` before the bucket,
+         *     never a later or current price. `tvl_usd` sums the valued
+         *     reserves' `supplied_usd`; null when none is valued, never 0.
+         *     When a reserve present in the bucket is unvalued
+         *     (`unvalued_reserves`) or a pool reserve has no recorded history
+         *     (`omitted_reserves`) a non-null `tvl_usd` is a lower bound and
+         *     `lower_bound` is true. A reserve not yet listed, or removed, at
+         *     a bucket is absent from it. Window, interval and errors as the
+         *     reserve history route.
+         */
+        get: operations["getLendingPoolHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -18992,6 +19035,150 @@ export interface operations {
                                 supply_cap: string | null;
                                 /** @description True when the reserve config or the pool instance changed later in this state's hour, so the one in force at this state is not known; the fields that depend on it are null. */
                                 config_uncertain: boolean;
+                                /** @description Decimal USD at this point's bucket price; null with usd_reason when not valued. */
+                                supplied_usd?: string | null;
+                                borrowed_usd?: string | null;
+                                /** @description USD per whole token used. */
+                                price_usd?: string | null;
+                                /**
+                                 * Format: date-time
+                                 * @description Start of the price bucket used.
+                                 */
+                                price_at?: string | null;
+                                /**
+                                 * @description transitive: crossed through XLM; omitted for a directly traded price.
+                                 * @enum {string}
+                                 */
+                                price_basis?: "transitive";
+                                /** @description Why the USD values are null, e.g. no_price_within_bound, unpriced, decimals_unknown, price_scale_mismatch, withheld, price_read_failed; null on a removed point. */
+                                usd_reason?: string | null;
+                            }[];
+                            /** @description How far before its bucket a USD price may be. */
+                            price_max_age_hours?: number;
+                            /** @description Points (not removed) whose USD values are null. */
+                            usd_unvalued_points?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolHistory: {
+        parameters: {
+            query?: {
+                interval?: "1h" | "1d";
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
+                from?: string;
+                /** @description RFC 3339; default now. */
+                to?: string;
+                /** @description Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pool USD history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend_v2",
+                     *         "interval": "1d",
+                     *         "from": "2026-08-18T00:00:00Z",
+                     *         "to": "2026-11-16T00:00:00Z",
+                     *         "price_max_age_hours": 48,
+                     *         "history_through_ledger": 63340102,
+                     *         "history_through_time": "2026-11-15T23:59:58Z",
+                     *         "dropped_points": 0,
+                     *         "omitted_reserves": [],
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-08-18T00:00:00Z",
+                     *             "tvl_usd": "1200000.00",
+                     *             "borrowed_usd": "900000.00",
+                     *             "lower_bound": false,
+                     *             "unvalued_reserves": [],
+                     *             "reserves": [
+                     *               {
+                     *                 "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *                 "supplied_usd": "1200000.00",
+                     *                 "borrowed_usd": "900000.00",
+                     *                 "price_usd": "1.0001",
+                     *                 "price_at": "2026-08-18T00:00:00Z",
+                     *                 "usd_reason": null
+                     *               }
+                     *             ]
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-11-16T00:00:01Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string|null} */
+                            protocol: "blend_v1" | "blend_v2" | "blnt" | null;
+                            /** @enum {string} */
+                            interval: "1h" | "1d";
+                            /** Format: date-time */
+                            from: string;
+                            /** Format: date-time */
+                            to: string;
+                            price_max_age_hours: number;
+                            /**
+                             * Format: int64
+                             * @description The lowest derive watermark across the pool's reserves.
+                             */
+                            history_through_ledger: number;
+                            /** Format: date-time */
+                            history_through_time: string | null;
+                            dropped_points: number;
+                            /** @description Pool reserves with no recorded history. */
+                            omitted_reserves: string[];
+                            points: {
+                                /**
+                                 * Format: date-time
+                                 * @description Bucket start.
+                                 */
+                                t: string;
+                                /** @description Decimal USD; null when no reserve is valued. */
+                                tvl_usd: string | null;
+                                borrowed_usd: string | null;
+                                lower_bound: boolean;
+                                unvalued_reserves: string[];
+                                reserves: {
+                                    asset: string;
+                                    supplied_usd: string | null;
+                                    borrowed_usd: string | null;
+                                    price_usd: string | null;
+                                    /** Format: date-time */
+                                    price_at: string | null;
+                                    /** @enum {string} */
+                                    price_basis?: "transitive";
+                                    usd_reason: string | null;
+                                }[];
                             }[];
                         };
                     };

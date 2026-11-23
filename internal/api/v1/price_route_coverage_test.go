@@ -82,6 +82,7 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/lending/pools/{pool}/config-history":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/backstop":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/backstop/history":         lendingUncovered,
+	"GET /v1/lending/pools/{pool}/history":                  lendingUncovered,
 	"GET /v1/lending/accounts/{account}/earnings":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/auctions":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/emissions":                lendingUncovered,
