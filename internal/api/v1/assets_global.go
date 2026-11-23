@@ -41,8 +41,8 @@ type GlobalAssetView struct {
 	// and can be days old over a weekend. It is null only under price_authority onchain_listing.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
-	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded) or could not
-	// judge (unattributed, with flags.stale).
+	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded), the Stellar
+	// issuer's flag withholds (scam_issuer), or an exclusion or directory read could not judge (unattributed, with flags.stale).
 	PriceWithheldReason PriceWithheldReason `json:"price_withheld_reason,omitempty"`
 	PriceSources        []string            `json:"price_sources,omitempty"`
 	PriceAsOf           *WireTime           `json:"price_as_of,omitempty"`
@@ -487,9 +487,40 @@ func globalBaseForTicker(ticker string) (canonical.Asset, bool) {
 // `price_usd: null` is legitimate for a Stellar-only token with no global price.
 func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *currency.VerifiedCurrency) {
 	ctx, rep := withReadReport(r.Context())
-	view := s.buildGlobalAssetView(ctx, vc)
+	view := s.withTwinIssuerVerdict(ctx, s.buildGlobalAssetView(ctx, vc), vc)
 	unread := rep.unread.Load()
 	writeJSON(w, view, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
+}
+
+// withTwinIssuerVerdict judges the entry's Stellar issuance on its issuer with the helpers the listing's [carryTwinIssuerVerdict]
+// and the asset detail use, so a flagged or unreadable issuer withholds the slug's dollar figures as it does the listing row's.
+// The listing judges its twins in one batch, which is why this runs here and not in [Server.buildGlobalAssetView].
+func (s *Server) withTwinIssuerVerdict(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
+	se := vc.StellarEntry()
+	if se == nil {
+		return view
+	}
+	asset, err := canonical.ParseAsset(se.AssetID)
+	if err != nil || asset.Type == canonical.AssetNative {
+		return view
+	}
+	probe := AssetDetail{AssetID: se.AssetID, Type: string(asset.Type), PriceUSD: view.PriceUSD, PriceWithheldReason: view.PriceWithheldReason}
+	if asset.Issuer != "" {
+		probe.Issuer = &asset.Issuer
+	}
+	stampIssuerScamReason(&probe, asset)
+	s.applyIssuerDirectoryTags(ctx, &probe)
+	if !issuerPricingWithheld(&probe) {
+		return view
+	}
+	if probe.issuerDirectoryUnchecked {
+		reportUnreadRead(ctx)
+	}
+	suppressScamIssuerPricing(&probe)
+	view.PriceUSD, view.PriceWithheldReason = nil, probe.PriceWithheldReason
+	view.PriceAuthority, view.PriceSources, view.PriceAsOf, view.PriceCredit = "", nil, nil, ""
+	view.MarketCapUSD = nil
+	return view
 }
 
 // VerifiedCurrencyListItem is one `GET /v1/assets/verified` entry: identity only, no price block or description, to avoid N storage round-trips.
