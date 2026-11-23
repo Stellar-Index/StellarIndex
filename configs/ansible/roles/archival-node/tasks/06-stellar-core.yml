@@ -47,6 +47,8 @@
     owner: stellar
     group: stellar
     mode: "0640"
+  # Renders the stellar-core Postgres password into DATABASE.
+  diff: false
   notify: Restart stellar-core
 
 - name: Install stellar-core systemd unit
