@@ -331,6 +331,7 @@ export function AssetSwap({
   priceUSD: bakedPriceUSD,
   priceProvenance = null,
   priceStale,
+  priceScaleMismatch,
   decimals = null,
 }: {
   symbol: string;
@@ -340,6 +341,7 @@ export function AssetSwap({
   priceUSD: string | null;
   priceProvenance?: PriceProvenance;
   priceStale?: boolean;
+  priceScaleMismatch?: boolean;
   /** The asset's on-chain decimals; its converted amount rounds to them. */
   decimals?: number | null;
 }) {
@@ -349,6 +351,7 @@ export function AssetSwap({
     bakedPriceUSD,
     priceProvenance,
     priceStale,
+    priceScaleMismatch,
   );
   const priceUSD = resolved.withheld ? null : positiveDecimal(resolved.price);
   // The page asset is the default "pay" leg; USD is the default "receive" leg.

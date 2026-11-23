@@ -1,4 +1,5 @@
 import type { components } from '@/api/types';
+import { positiveDecimal } from '@/lib/format';
 import type { PriceProvenance } from './LiveAssetPrice';
 
 export type PriceBasis = components['schemas']['Asset']['price_basis'];
@@ -67,6 +68,45 @@ export function bakedAtDeploy(
   const t = builtAt ? new Date(builtAt) : null;
   if (!t || Number.isNaN(t.getTime())) return BAKED_AT_DEPLOY;
   return `${BAKED_AT_DEPLOY} (built ${t.toISOString().slice(0, 16).replace('T', ' ')} UTC)`;
+}
+
+type MarketPrice =
+  | {
+      price?: string | null;
+      flags?: { triangulated?: boolean; stale?: boolean };
+    }
+  | null
+  | undefined;
+
+type ScaleRow = {
+  price_usd?: string | null;
+  price_basis?: PriceBasis;
+  price_withheld_reason?: string | null;
+  market_cap_decimals_mismatch?: boolean;
+};
+
+/** True when the asset row says the token's read decimals contradict its market price's scale. */
+export function scaleContradicted(row: ScaleRow): boolean {
+  return (
+    row.market_cap_decimals_mismatch === true ||
+    row.price_withheld_reason === 'decimals_mismatch'
+  );
+}
+
+/**
+ * The build-time headline price, its caption and staleness. /v1/price never
+ * checks a token's read decimals, so under a contradicted scale only the
+ * row's own whole-token fill (global market, declared peg) may stand.
+ */
+export function bakedHeadline(price: MarketPrice, coin: ScaleRow) {
+  const scaleMismatch = scaleContradicted(coin);
+  const market = scaleMismatch ? null : price;
+  return {
+    price: positiveDecimal(market?.price) ?? positiveDecimal(coin.price_usd),
+    provenance: headlinePriceProvenance(market, coin),
+    stale: Boolean(market?.flags?.stale),
+    scaleMismatch,
+  };
 }
 
 /** Caption vocabulary for the headline price on the static asset page. */

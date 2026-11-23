@@ -84,6 +84,7 @@ export function AssetIdentityCard({
   priceUSD,
   priceProvenance,
   priceStale,
+  priceScaleMismatch,
   name,
 }: {
   coin: SidebarCoin;
@@ -108,6 +109,7 @@ export function AssetIdentityCard({
    */
   priceProvenance?: PriceProvenance;
   priceStale?: boolean;
+  priceScaleMismatch?: boolean;
   name?: string | null;
 }) {
   // Native (and a few sparse rows) can arrive without a `code` — fall
@@ -138,6 +140,7 @@ export function AssetIdentityCard({
         initialPrice={priceUSD}
         initialProvenance={priceProvenance ?? null}
         initialStale={priceStale}
+        initialScaleMismatch={priceScaleMismatch}
         initialChangePct={num(coin.change_24h_pct)}
       />
       <ChangeSummaryStrip assetID={coin.asset_id} className="mt-3" />
@@ -156,6 +159,7 @@ export function AssetSidebar({
   priceUSD,
   priceProvenance,
   priceStale,
+  priceScaleMismatch,
   homeDomain,
 }: {
   coin: SidebarCoin;
@@ -164,6 +168,7 @@ export function AssetSidebar({
   priceUSD: string | null;
   priceProvenance?: PriceProvenance;
   priceStale?: boolean;
+  priceScaleMismatch?: boolean;
   homeDomain?: string | null;
 }) {
   const seed = positiveDecimal(priceUSD);
@@ -385,6 +390,7 @@ export function AssetSidebar({
             priceUSD={seed}
             priceProvenance={priceProvenance ?? null}
             priceStale={priceStale}
+            priceScaleMismatch={priceScaleMismatch}
             decimals={decimals}
           />
           <PerformanceRange
@@ -392,6 +398,7 @@ export function AssetSidebar({
             priceUSD={seed}
             priceProvenance={priceProvenance ?? null}
             priceStale={priceStale}
+            priceScaleMismatch={priceScaleMismatch}
             points={coin.price_history_24h ?? []}
             source={source}
           />

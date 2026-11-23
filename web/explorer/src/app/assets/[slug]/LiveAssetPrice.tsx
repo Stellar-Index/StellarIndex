@@ -23,7 +23,11 @@ import {
   unwrapChangeSummary,
 } from './ChangeSummaryStrip';
 import { withheldNote } from './headerNotes';
-import { isDerivedProvenance, provenanceFromBasis } from './priceProvenance';
+import {
+  isDerivedProvenance,
+  provenanceFromBasis,
+  scaleContradicted,
+} from './priceProvenance';
 
 export type PriceProvenance =
   | 'vwap1m'
@@ -78,11 +82,14 @@ export function LiveAssetPrice({
   initialProvenance,
   initialStale,
   initialChangePct,
+  initialScaleMismatch,
 }: {
   assetID: string;
   /** Wire decimal string; rounded only at render. */
   initialPrice: string | null;
   initialProvenance: PriceProvenance;
+  /** The build-time asset row's decimals_mismatch verdict ([scaleContradicted]). */
+  initialScaleMismatch?: boolean;
   initialStale?: boolean;
   /**
    * 24h % change baked at build time (from the static export's
@@ -113,11 +120,13 @@ export function LiveAssetPrice({
     bakedDerived,
     fromAssets,
     detailAsOf,
+    scaleRefused,
   } = useResolvedAssetPrice(
     assetID,
     initialPrice,
     initialProvenance,
     initialStale,
+    initialScaleMismatch,
   );
   // Same live feed ChangeSummaryStrip renders below (identical query key,
   // so TanStack Query serves both from one in-flight request) — never a
@@ -132,7 +141,8 @@ export function LiveAssetPrice({
     : (unwrapChangeSummary(changeSummary.data)?.h24_delta_pct ?? null);
   // The server withholds the change summary under the price's own verdict,
   // so neither a live nor a baked move may sit beside a refused price.
-  const changeWithheld = withheld || isPriceWithheldError(changeSummary.error);
+  const changeWithheld =
+    withheld || scaleRefused || isPriceWithheldError(changeSummary.error);
   const changeBaked = liveChangePct == null;
   const changePct = changeWithheld
     ? null
@@ -150,7 +160,7 @@ export function LiveAssetPrice({
   const freshDirectMarket =
     initialProvenance === 'vwap1m' && !initialStale && seed != null;
   const tipEnabled =
-    withheld || poll.thin
+    withheld || poll.thin || scaleRefused
       ? false
       : poll.polled
         ? !poll.stale
@@ -281,6 +291,7 @@ export function useResolvedAssetPrice(
   initialPrice: string | null,
   initialProvenance: PriceProvenance,
   initialStale?: boolean,
+  initialScaleMismatch?: boolean,
 ) {
   const poll = usePricePoll({
     asset: assetID,
@@ -322,34 +333,33 @@ export function useResolvedAssetPrice(
     refetchInterval: derived ? LIVE_PRICE_POLL_MS : undefined,
   });
   const detailRow = detail.data?.data;
-  const scaleRefused = detailRow?.price_withheld_reason === 'decimals_mismatch';
-  const withheld = (poll.withheld && !derived) || scaleRefused;
-  const withheldCaption = scaleRefused
-    ? withheldNote('decimals_mismatch')
-    : (poll.withheldDetail ?? poll.withheldTitle);
-  const fromAssets = derived && (!poll.polled || refused);
+  // The build-time verdict stands until the live row answers, so an unread or
+  // failed row read never lets the /v1/price figure through.
+  const scaleRefused = detailRow
+    ? scaleContradicted(detailRow)
+    : Boolean(initialScaleMismatch);
+  // Under a contradicted scale only the row's whole-token fill may stand.
+  const fromAssets = scaleRefused || (derived && (!poll.polled || refused));
   const reread = fromAssets && detailRow != null;
   const bakedDerived = fromAssets && detailRow == null;
   const detailPrice = positiveDecimal(detailRow?.price_usd);
-  const price = scaleRefused
-    ? null
-    : reread
-      ? detailPrice
-      : fromAssets
-        ? seed
-        : poll.price;
+  const price = reread ? detailPrice : fromAssets ? seed : poll.price;
+  const withheld = scaleRefused ? price == null : poll.withheld && !derived;
+  const withheldCaption = scaleRefused
+    ? withheldNote('decimals_mismatch')
+    : (poll.withheldDetail ?? poll.withheldTitle);
   const detailAsOf = reread ? (detailRow.price_as_of ?? null) : null;
-  const live = poll.polled;
+  const live = scaleRefused ? reread : poll.polled;
   const stale = reread
     ? Boolean(detail.data?.flags?.stale)
-    : poll.polled
+    : poll.polled && !scaleRefused
       ? poll.stale || poll.unrefreshed
       : Boolean(initialStale);
   const provenance: PriceProvenance = reread
     ? detailPrice != null
       ? provenanceFromBasis(detailRow.price_basis, 'listing')
       : null
-    : poll.polled && !refused
+    : !fromAssets && poll.polled && !refused
       ? poll.triangulated
         ? 'triangulated'
         : 'vwap1m'
@@ -359,12 +369,13 @@ export function useResolvedAssetPrice(
     derived,
     withheld,
     withheldCaption,
-    thin,
+    thin: thin && !scaleRefused,
+    scaleRefused,
     seed,
     price,
     live,
     stale,
-    provenance: scaleRefused ? null : provenance,
+    provenance,
     bakedDerived,
     fromAssets,
     detailAsOf,
