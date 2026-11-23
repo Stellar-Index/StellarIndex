@@ -81,6 +81,25 @@ func TestResolveClassicSlug_ExactCodeWinsElseTheOneVariant(t *testing.T) {
 
 // A SAC-address search whose lake lookup failed cannot know what it searches for: it must answer a retryable 503, not search
 // the raw address and serve (and cache) a clean page missing the classic asset; a page a resolved lookup cached still replays.
+// failingSlugResolver cannot read the asset registry.
+type failingSlugResolver struct{ AssetReader }
+
+func (failingSlugResolver) ClassicAssetBySlug(context.Context, string) (string, string, bool, error) {
+	return "", "", false, errors.New("registry read timed out")
+}
+
+// A slug the registry cannot be read for is 503 with Retry-After on the metadata route, never a 400 or a 404.
+func TestAssetMetadata_SlugReadFailureIsUnavailable(t *testing.T) {
+	s := New(Options{Assets: failingSlugResolver{}})
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/usdc-ga5zsejy/metadata", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" ||
+		!strings.Contains(rec.Body.String(), "asset-slug-unavailable") {
+		t.Fatalf("status = %d, Retry-After = %q, body %s; want the slug-unavailable 503 with Retry-After",
+			rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+}
+
 func TestAssetsQSACLookupFailureIsUnavailable(t *testing.T) {
 	const path = "/v1/assets?q=CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75&limit=3"
 	stub := &filterCapturingAssets{}

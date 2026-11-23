@@ -44,6 +44,8 @@ type Subject struct {
 	Assets []string
 	// Ledger is the response's as_of_ledger; 0 means unknown.
 	Ledger uint32
+	// Current marks a response serving present state: at an unknown Ledger a hold with no ledger_to still covers it.
+	Current bool
 }
 
 // Parse decodes and validates a hold file; unknown keys are an error so a typo cannot silently turn a hold into a no-op.
@@ -94,7 +96,11 @@ func (h Hold) matches(sub Subject) bool {
 		return false
 	}
 	if h.LedgerFrom != 0 || h.LedgerTo != 0 {
-		if sub.Ledger == 0 || sub.Ledger < h.LedgerFrom || (h.LedgerTo != 0 && sub.Ledger > h.LedgerTo) {
+		if sub.Ledger == 0 {
+			if !sub.Current || h.LedgerTo != 0 {
+				return false
+			}
+		} else if sub.Ledger < h.LedgerFrom || (h.LedgerTo != 0 && sub.Ledger > h.LedgerTo) {
 			return false
 		}
 	}

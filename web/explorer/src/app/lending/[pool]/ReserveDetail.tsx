@@ -2,6 +2,7 @@ import { FactList, Fact } from '@/components/ui/Facts';
 import { rateCurve, type CurvePoint, type RateModel } from '@/lib/blendRate';
 import { formatReadable } from '@/lib/format';
 import { fixedDecimal, fixedPct, supplyCapText } from '../poolConfig';
+import { PoolUsdHistory } from './PoolUsdHistory';
 import { ReserveHistory } from './ReserveHistory';
 import type { ReserveRow } from './usePoolReserves';
 
@@ -208,6 +209,7 @@ export function ReserveDetail({
           </p>
         )}
       </div>
+      <PoolUsdHistory pool={pool} asset={rv.asset} />
       <ReserveHistory pool={pool} asset={rv.asset} />
     </div>
   );

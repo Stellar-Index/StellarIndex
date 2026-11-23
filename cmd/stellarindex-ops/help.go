@@ -522,7 +522,12 @@ Subcommands:
                           the trades hypertable. -dry-run prints stats
                           only, no writes. Refuses a window that already
                           holds rows for the source+pair unless
-                          -allow-overlap. Example:
+                          -allow-overlap. -source coingecko (-pair all
+                          or BASE/QUOTE) instead fills a hole in the
+                          reference series: the vendor's retrospective
+                          points become oracle_updates, skipping any
+                          within two polls of a stored live row, then
+                          the oracle aggregates are refreshed. Example:
                             stellarindex-ops backfill-external \
                               -config configs/prod.toml \
                               -source binance -pair XLMUSDT \

@@ -246,8 +246,8 @@ for f in parse.go rates.go fixings.go; do
   expect "external $f change without a plan fails" 1 "~ internal/sources/external/venue/$f"
 done
 
-# --- 2g. HTTP/retry plumbing records nothing, so it demands no plan
-for f in poller.go backfill.go backfill_trades.go openexchangerates.go; do
+# --- 2g. HTTP fetch plumbing records nothing, so it demands no plan
+for f in openexchangerates.go client.go; do
   mkrepo 0
   mkdir -p "$TMP/repo/internal/sources/external/venue"
   touch_commit "internal/sources/external/venue/$f" "fix(venue): retry timing in $f"
@@ -294,6 +294,30 @@ touch_commit internal/sources/demo/helper.go "chore(demo): tidy a helper"
 touch_commit internal/sources/demo/decode_test.go "test(demo): add a case"
 runGate
 expect "un-watched + *_test.go changes pass" 0 "$NOTHING"
+
+# --- 7b. off-chain writers decide recorded rows too ----------------------
+for f in external/demo/poller.go external/demo/backfill.go external/demo/backfill_trades.go forex/worker.go; do
+  mkrepo 0
+  mkdir -p "$TMP/repo/internal/sources/$(dirname "$f")"
+  touch_commit "internal/sources/$f" "fix(demo): refuse id-less frames"
+  runGate
+  expect "$f change without a plan fails" 1 "~ internal/sources/$f"
+done
+
+# --- 7c. every watched pattern names at least one file in this repo -------
+eval "$(sed -n '/^WATCHED=(/,/^)/p' "$GATE")"
+dead=""
+for p in "${WATCHED[@]}"; do
+  [[ "$p" == :* ]] && continue
+  [[ -n "$(git -C "$REAL" ls-files -- "$p")" ]] || dead="$dead $p"
+done
+if [[ ${#WATCHED[@]} -gt 0 && -z "$dead" ]]; then
+  echo "ok: every WATCHED pattern matches a tracked file"
+  pass=$((pass + 1))
+else
+  echo "FAIL: WATCHED patterns matching no tracked file:${dead:- (none parsed)}"
+  fail=$((fail + 1))
+fi
 
 # --- 8. no BASE_SHA / unknown BASE_SHA skips ---------------------------
 mkrepo 0

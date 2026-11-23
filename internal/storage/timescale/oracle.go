@@ -469,6 +469,43 @@ func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+// OracleStamp is one stored oracle row's (asset, quote) as written by Asset.String() and its ts.
+type OracleStamp struct {
+	Asset, Quote string
+	TS           time.Time
+}
+
+// OracleStampsInWindow lists every row of source with ts in [from, to), skipping rows whose
+// tx_hash starts with excludeTxPrefix (empty skips none).
+func (s *Store) OracleStampsInWindow(ctx context.Context, source string, from, to time.Time, excludeTxPrefix string) ([]OracleStamp, error) {
+	const q = `
+        SELECT asset, quote, ts
+          FROM oracle_updates
+         WHERE source = $1
+           AND asset NOT LIKE 'raw:%'
+           AND ts >= $2 AND ts < $3
+           AND ($4::text = '' OR NOT starts_with(tx_hash::text, $4::text))
+         ORDER BY ts
+    `
+	rows, err := s.db.QueryContext(ctx, q, source, from.UTC(), to.UTC(), excludeTxPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: OracleStampsInWindow: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OracleStamp
+	for rows.Next() {
+		var st OracleStamp
+		if err := rows.Scan(&st.Asset, &st.Quote, &st.TS); err != nil {
+			return nil, fmt.Errorf("timescale: OracleStampsInWindow scan: %w", err)
+		}
+		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: OracleStampsInWindow rows: %w", err)
+	}
+	return out, nil
+}
+
 // LatestOracleStreams returns the newest observation per (source, asset, quote) in the trailing 7d window for /v1/oracles/streams; the window is the live-stream definition, so a dead feed does not surface as current.
 func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
 	// One (asset, quote, ts DESC) index probe per stream instead of sorting the whole 7-day window

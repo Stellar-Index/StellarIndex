@@ -420,7 +420,7 @@ type Options struct {
 	// dollar VWAP). Nil publishes no series, for [OracleHistory]'s reason: a premium missing a
 	// leg is no series.
 	MarketHistory RWAMarketHistoryReader
-	// RWAPremiumSubstance is the thin-market floor /v1/rwa/premium's day-clearing check uses; it
+	// RWAPremiumSubstance is the thin-market floor /v1/rwa/premium's day check and liquidation fills use; it
 	// must be the same policy as the live [pricingguard.SubstanceGate] (pass
 	// substanceGate.Policy()). Zero falls back to pricingguard defaults.
 	RWAPremiumSubstance pricingguard.SubstancePolicy
@@ -1392,7 +1392,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.Handle("GET /metrics", loopbackOnly(obs.Handler()))
 
 	// Asset catalogue.
-	s.mux.HandleFunc("GET /v1/assets", s.handleAssetList)
+	s.mux.HandleFunc("GET /v1/assets", s.underReviewRows(s.handleAssetList))
 	// /v1/external/assets — non-Stellar assets (fiat + reference-only coins)
 	// split off /v1/assets. /v1/assets is Stellar-only.
 	s.mux.HandleFunc("GET /v1/external/assets", s.handleExternalAssetList)
@@ -1502,9 +1502,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves", s.handleLendingPoolReserves)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/config-history", s.handleLendingConfigHistory)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop", s.handleLendingPoolBackstop)
-	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves/{asset}/history", s.handleLendingReserveHistory)
-	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop/history", s.handleLendingBackstopHistory)
+	s.registerLendingHistoryRoutes()
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/auctions", s.handleLendingPoolAuctions)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/liquidations", s.handleLendingPoolLiquidations)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/emissions", s.handleLendingPoolEmissions)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/top-accounts", s.handleLendingPoolTopAccounts)
 	s.mux.HandleFunc("GET /v1/lending/accounts/{account}/earnings", s.handleLendingAccountEarnings)
@@ -1523,8 +1523,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// one source can be polled cheaply.
 	s.mux.HandleFunc("GET /v1/sources/{name}/health", s.handleSourceHealth)
 
-	// Router / aggregator-vault registry + routed-via 24h rollup
-	// (migration 0025 Phase B).
+	// Router / aggregator-vault registry + routed-via 24h rollup (migration 0025 Phase B).
 	s.mux.HandleFunc("GET /v1/aggregators", s.handleAggregators)
 
 	// Machine-readable summary of the active aggregation policy, mirroring the explorer's

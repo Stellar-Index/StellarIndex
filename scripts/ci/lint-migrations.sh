@@ -391,7 +391,8 @@ ch_money_floats() {
       }
       if (line ~ /^[ \t]*--/) next
       if (line ~ /-- *lint-money:ok +[^ ]/) next
-      if (!match(line, "(^|[ \t(,])`?(" name ")`?[ \t]+(nullable\\()?float(32|64)([^a-z0-9_]|$)")) next
+      # Every spelling ClickHouse resolves to a float, aliases and wrappers included.
+      if (!match(line, "(^|[ \t(,])`?(" name ")`?[ \t]+((nullable|lowcardinality)\\()*(float(32|64)?|double( +precision)?|real|single|bfloat16)([^a-z0-9_]|$)")) next
       col = substr(line, RSTART, RLENGTH)
       sub(/^[ \t(,]*`?/, "", col); sub(/`?[ \t].*$/, "", col)
       printf "%d\t%s.%s\t%s\n", NR, tbl, col, raw
@@ -415,7 +416,7 @@ for f in "$CH_DIR"/*.sql; do
     fail=1
   done < <(ch_money_floats "$f")
   stale=$(grep -nEi -- '-- *lint-money:ok' "$f" \
-    | grep -vEi "(^|[[:space:](,])\`?(${name})\`?[[:space:]]+(Nullable\()?Float(32|64)\b" || true)
+    | grep -vEi "(^|[[:space:](,])\`?(${name})\`?[[:space:]]+((Nullable|LowCardinality)\()*(Float(32|64)?|Double( +Precision)?|Real|Single|BFloat16)\b" || true)
   if [ -n "$stale" ]; then
     echo "lint-migrations ❌ ${f}: stale lint-money:ok marker (line no longer matches the lint) — remove it:" >&2
     indent "$stale" >&2

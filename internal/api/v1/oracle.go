@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -271,8 +272,9 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 // as a live price frozen in time.
 func latestOracleReadings(updates []canonical.OracleUpdate, filterQuote bool, quote canonical.Asset) []OracleReading {
 	rows := make([]OracleReading, 0, len(updates))
+	quotes := assetAliases(quote)
 	for _, u := range updates {
-		if filterQuote && !u.Quote.Equal(quote) {
+		if filterQuote && !slices.ContainsFunc(quotes, u.Quote.Equal) {
 			continue
 		}
 		if external.Registry[u.Source].Retired || external.RedistributionBarred(u.Source) {

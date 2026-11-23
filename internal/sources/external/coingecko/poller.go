@@ -145,6 +145,36 @@ func (p *Poller) lookupID(ticker string) (string, bool) {
 	return id, ok
 }
 
+// target is one (CoinGecko id, vs_currency) series the poller serves; currency is upper-case.
+type target struct {
+	id, ticker, currency string
+	base, quote          canonical.Asset
+}
+
+// targets keeps the crypto/fiat pairs whose ticker has a CoinGecko id, deduplicated; PollOnce and
+// History both read it so the live and backfilled pair sets cannot drift apart.
+func (p *Poller) targets(pairs []canonical.Pair) []target {
+	seen := map[string]struct{}{}
+	var out []target
+	for _, pair := range pairs {
+		if pair.Base.Type != canonical.AssetCrypto || pair.Quote.Type != canonical.AssetFiat {
+			continue
+		}
+		ticker := strings.ToUpper(pair.Base.Code)
+		id, ok := p.lookupID(ticker)
+		if !ok {
+			continue // unknown crypto ticker; skip the whole pair
+		}
+		code := strings.ToUpper(pair.Quote.Code)
+		if _, dup := seen[ticker+"/"+code]; dup {
+			continue
+		}
+		seen[ticker+"/"+code] = struct{}{}
+		out = append(out, target{id: id, ticker: ticker, currency: code, base: pair.Base, quote: pair.Quote})
+	}
+	return out
+}
+
 // NewPoller constructs a Poller with defaults. No key required.
 func NewPoller() *Poller {
 	return &Poller{
@@ -206,22 +236,13 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// avoids flooding oracle_updates with divergence-candidates for pairs that have no corresponding aggregated output.
 	wantedCombos := map[string]struct{}{}
 
-	for _, pair := range pairs {
-		if pair.Base.Type != canonical.AssetCrypto || pair.Quote.Type != canonical.AssetFiat {
-			continue
-		}
-		ticker := strings.ToUpper(pair.Base.Code)
-		id, ok := p.lookupID(ticker)
-		if !ok {
-			continue // unknown crypto ticker; skip the whole pair
-		}
-		code := strings.ToUpper(pair.Quote.Code)
-		idSet[id] = struct{}{}
-		tickerForID[id] = ticker
-		cryptoAssets[ticker] = pair.Base
-		currencySet[strings.ToLower(code)] = struct{}{}
-		fiatAssets[code] = pair.Quote
-		wantedCombos[ticker+"/"+code] = struct{}{}
+	for _, t := range p.targets(pairs) {
+		idSet[t.id] = struct{}{}
+		tickerForID[t.id] = t.ticker
+		cryptoAssets[t.ticker] = t.base
+		currencySet[strings.ToLower(t.currency)] = struct{}{}
+		fiatAssets[t.currency] = t.quote
+		wantedCombos[t.ticker+"/"+t.currency] = struct{}{}
 	}
 
 	if len(idSet) == 0 || len(currencySet) == 0 {
@@ -268,10 +289,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		wait := backoffFromRetryAfter(resp.Header.Get("Retry-After"))
 		p.applyBackoff(wait)
 		return nil, nil, fmt.Errorf("http %d (throttled — backing off %s): %s",
-			resp.StatusCode, p.cooldownRemaining().Truncate(time.Second), truncate(string(body), 200))
+			resp.StatusCode, p.cooldownRemaining().Truncate(time.Second), truncate(string(body)))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, nil, fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(body)))
 	}
 	// Successful response — clear any prior backoff so the next 429
 	// starts fresh from MinBackoff rather than wherever we'd grown to.
@@ -402,13 +423,15 @@ func backoffFromRetryAfter(h string) time.Duration {
 	return 0
 }
 
-// truncate keeps log lines bounded (CoinGecko's HTML error pages can be 50KB+): cuts `s` to at most `n` bytes plus "…", on a UTF-8 rune
-// boundary.
-func truncate(s string, n int) string {
-	if len(s) <= n {
+// errBodyMax bounds an error body quoted into a log line; CoinGecko's HTML error pages can be 50KB+.
+const errBodyMax = 200
+
+// truncate cuts s to at most errBodyMax bytes plus "…", on a UTF-8 rune boundary.
+func truncate(s string) string {
+	if len(s) <= errBodyMax {
 		return s
 	}
-	end := n
+	end := errBodyMax
 	for end > 0 && !utf8.RuneStart(s[end]) {
 		end--
 	}

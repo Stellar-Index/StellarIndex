@@ -44,11 +44,24 @@ TASKS_DIR = "configs/ansible/tasks"
 # Word-bounded on purpose: `stellar_passphrase` (the public network
 # passphrase) and `ssh_permit_password_auth` (a bool) must NOT match, while
 # `*_cipher_pass`, `*_s3_key`, `*_s3_key_secret`, `*_secret_key`, `*_token`,
-# `*_password`, `vault_*_api_key` must.
+# `*_password`, `vault_*_api_key` must. `_pass`/`_secret` may carry a
+# qualifier (`postgres_pass_core`, `*_secret_access_key`) unless it names the
+# env var or file holding it (`*_secret_key_env`); every `vault_*` name ending
+# in `_key` is a credential.
 SECRET_VAR = re.compile(
-    r"\b[A-Za-z0-9_]*(_password|_pass|_secret|_token|_api_key|_s3_key|_secret_key|_seal_key"
-    r"|_pagerduty_key|_webhook_url(_[a-z0-9]+)*|_healthchecks_[a-z0-9_]+_url)\b"
+    r"\b[A-Za-z0-9_]*(_password|(_pass|_secret)(_(?!(?:env|name|file|path)\b)[a-z0-9]+)*"
+    r"|_token|_api_key|_s3_key"
+    r"|_seal_key|_pagerduty_key|_webhook_url(_[a-z0-9]+)*|_healthchecks_[a-z0-9_]+_url)\b"
+    r"|\bvault_[A-Za-z0-9_]*_key\b"
 )
+JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.S)
+# Modules that write inline text through Jinja: the text arg is templated
+# like a .j2 file, so a secret in it lands in the file and in --diff.
+INLINE_TEXT_MODULES = {
+    "copy": "content", "ansible.builtin.copy": "content",
+    "lineinfile": "line", "ansible.builtin.lineinfile": "line",
+    "blockinfile": "block", "ansible.builtin.blockinfile": "block",
+}
 JINJA_EXPR = re.compile(r"\{\{(.*?)\}\}", re.S)
 
 # file::task-name → reason. Each is a secret-rendering template task that
@@ -80,11 +93,25 @@ def err(msg):
     print(f"lint-ansible-secret-diff: FAIL — {msg}", file=sys.stderr)
 
 
-def template_renders_secret(path):
+def guarded_names(text):
+    text = JINJA_COMMENT.sub("", text)
+    # Names only: an expression can carry a literal, and this goes to the CI log.
+    names = (SECRET_VAR.search(m.group(1)) for m in JINJA_EXPR.finditer(text))
+    return sorted({n.group(0) for n in names if n})
+
+
+def template_guarded_names(path):
     with open(path, encoding="utf-8") as fh:
-        text = fh.read()
-    return [m.group(0).strip() for m in JINJA_EXPR.finditer(text)
-            if SECRET_VAR.search(m.group(1))]
+        return guarded_names(fh.read())
+
+
+def inline_text_of(task):
+    """(module, text) for a copy/lineinfile/blockinfile task with inline text."""
+    for mod_name, arg in INLINE_TEXT_MODULES.items():
+        mod = task.get(mod_name)
+        if isinstance(mod, dict) and isinstance(mod.get(arg), str):
+            return mod_name, mod[arg]
+    return None, None
 
 
 def role_of(task_file):
@@ -117,21 +144,26 @@ def walk(tasks, task_file, role):
             if isinstance(task.get(key), list):
                 walk(task[key], task_file, role)
         mod = task.get("ansible.builtin.template", task.get("template"))
-        if mod is None:
+        inline_mod, inline = inline_text_of(task)
+        if inline is not None:
+            tpl = f"its inline `{inline_mod}` text"
+            hits = guarded_names(inline)
+        elif mod is None:
             continue
-        if isinstance(mod, dict):
-            src = mod.get("src")
-        else:  # k=v shorthand
-            m = re.search(r"\bsrc=(\S+)", str(mod))
-            src = m.group(1) if m else None
-        if not src or "{{" in src:
-            # loop-driven src (e.g. systemd/{{ item }}.j2) — not statically
-            # resolvable; those templates render unit files, not secrets.
-            continue
-        tpl = os.path.join(templates_dir_for(task_file, role), src)
-        if not os.path.isfile(tpl):
-            continue
-        hits = template_renders_secret(tpl)
+        else:
+            if isinstance(mod, dict):
+                src = mod.get("src")
+            else:  # k=v shorthand
+                m = re.search(r"\bsrc=(\S+)", str(mod))
+                src = m.group(1) if m else None
+            if not src or "{{" in src:
+                # loop-driven src (e.g. systemd/{{ item }}.j2) — not statically
+                # resolvable; those templates render unit files, not secrets.
+                continue
+            tpl = os.path.join(templates_dir_for(task_file, role), src)
+            if not os.path.isfile(tpl):
+                continue
+            hits = template_guarded_names(tpl)
         if not hits:
             continue
         checked += 1

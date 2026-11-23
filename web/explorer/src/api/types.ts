@@ -406,9 +406,10 @@ export interface paths {
          *     refresh metadata without re-fetching the pricing core.
          *     `sep1_status` reports resolver state (`verified` /
          *     `not_fetched` / `unreachable` / `no_match` /
-         *     `not_applicable`) — resolver failures surface there, not
-         *     as an HTTP error. 404 only when the asset isn't indexed
-         *     at all.
+         *     `not_applicable`) — SEP-1 resolver failures surface there,
+         *     not as an HTTP error. 404 only when the asset isn't indexed
+         *     at all; 503 (with `Retry-After`) when a slug id cannot be
+         *     resolved because the asset registry read failed.
          */
         get: operations["getAssetMetadata"];
         put?: never;
@@ -2068,9 +2069,66 @@ export interface paths {
          *     when no lending source knows the pool, or nothing was ever
          *     recorded for this reserve in it (a window with no change is a
          *     200 with no points). 503 `history-unavailable` when this
-         *     deployment has not derived the history. No USD values.
+         *     deployment has not derived the history.
+         *
+         *     `supplied_usd` / `borrowed_usd` value each point at the USD
+         *     price of the bucket it falls in (the seed at the bucket of
+         *     `from`): the volume-weighted price (VWAP, not the close) of the
+         *     newest price bucket starting at or before it, at most
+         *     `price_max_age_hours` earlier (6 for `1h`, 48 for `1d`), from
+         *     the series `/v1/chart` serves, never a later bucket's or
+         *     today's price. `price_at` is that price bucket's start;
+         *     `price_carried` marks one more than one bucket older. A token
+         *     the live reserve page withholds (a thin market, an operator
+         *     exclusion) is withheld here too. Without a price the USD
+         *     values are null, `usd_reason` says why, and
+         *     `usd_unvalued_points` counts the point; never 0. Clients must
+         *     not carry a USD value forward over a null one.
          */
         get: operations["getLendingReserveHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools/{pool}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — TVL and borrowed USD over time.
+         * @description The pool's (Blend V1/V2, BLNT) USD value at every hour
+         *     (`interval=1h`) or UTC day (`interval=1d`) from `from` to the
+         *     earliest of `to`, now and the history coverage. Each reserve's
+         *     state at the bucket's close (as
+         *     `/v1/lending/pools/{pool}/reserves/{asset}/history` records it)
+         *     is valued at that bucket's own USD price under the same rule
+         *     as that route: at most `price_max_age_hours` before the bucket,
+         *     never a later or current price. `tvl_usd` sums the valued
+         *     reserves' `supplied_usd`; null when none is valued, never 0.
+         *     A bucket's value is each reserve's end-of-bucket balance times
+         *     that bucket's volume-weighted price, not the close; clients
+         *     must not carry a USD value forward over a null one.
+         *     When a reserve present in the bucket is unvalued
+         *     (`unvalued_reserves`, including one whose state entry is
+         *     archived, reason `archived`), a pool reserve has no recorded
+         *     history (`omitted_reserves`), or the reserve list is not
+         *     verified complete (`reserves_lower_bound_reason`: the list is
+         *     read from the served positions projection, which is complete
+         *     only when verified from the protocol's genesis), a non-null
+         *     `tvl_usd` is a lower bound and `lower_bound` is true.
+         *     `price_carried_reserves` names valued reserves whose price is
+         *     more than one bucket old. A reserve not yet listed at a bucket
+         *     is absent from it. Window, interval and errors as the reserve
+         *     history route.
+         */
+        get: operations["getLendingPoolHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2345,6 +2403,69 @@ export interface paths {
          *     `pagination` is omitted on the last page.
          */
         get: operations["listLendingPoolAuctions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools/{pool}/liquidations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — liquidation fills valued at the fill.
+         * @description A Blend or BLNT pool's user_liquidation (0) and bad_debt (1)
+         *     auction fills, newest first. `lot` is what the filler received and
+         *     `bid` what it repaid, from the fill event's own filled auction data
+         *     (the filled portion, already scaled by the contract). Blend V1
+         *     pools emit no amounts with a fill: such a fill has
+         *     `amounts_recorded: false`, empty sides and `usd_reason:
+         *     amounts_not_emitted`.
+         *
+         *     Every value is taken AT THE FILL (`valued_at: event_time`), never
+         *     at today's prices. A bToken or dToken leg is converted to
+         *     underlying with the reserve state written in the fill's own ledger
+         *     (the rate the fill used), rounded as the contract rounds; when no
+         *     state is recorded for that ledger the leg keeps its token
+         *     `amount` and is unvalued (`rate_at_fill_unrecorded`). The USD
+         *     price is the hourly VWAP bucket that closed at or before the fill
+         *     and at most `price_max_age_seconds` before it, read through the
+         *     same alias, stablecoin-proxy and source-exclusion walk as
+         *     `/v1/chart`, after the reserve page's SAC and scam-issuer gates; a
+         *     series whose latest bucket stands on a thin book values nothing
+         *     (`price_thin_market`), as the market-cap chart refuses it, and a
+         *     bucket whose own USD volume is unknown or under the substance
+         *     gate's trailing-window floor values no fill (`price_thin_at_fill`).
+         *     Leg kinds follow `/auctions`, except that a BLNT user liquidation
+         *     is valued as Blend V2's (lot bTokens, bid dTokens, as its fills'
+         *     same-transaction repay and withdraw_collateral burns show); a BLNT
+         *     bad-debt leg is `leg_kind_unknown`, and a backstop-token leg is unvalued
+         *     (`backstop_token_not_valued_at_event_time`). A missing value is
+         *     null with a `reason` (`no_price_within_bound`, `price_withheld`,
+         *     `price_thin_market`, `price_thin_at_fill`, `price_unread`, `rate_at_fill_unrecorded`, `rate_unread`,
+         *     `leg_kind_unknown`, `backstop_token_not_valued_at_event_time`,
+         *     `amount_unparseable`), never 0.
+         *
+         *     `lot_usd` / `bid_usd` sum a side's valued legs to 2 dp (`"0.00"` for
+         *     an empty side, null when no leg is valued); `*_usd_lower_bound` is
+         *     true when a leg is left out. `filler_profit_usd` is `lot_usd -
+         *     bid_usd` only when both sides are fully valued and every leg's
+         *     `price_at` lies within an hour of the others, else null with
+         *     `filler_profit_reason` (`inputs_partial`,
+         *     `prices_not_contemporaneous`). A failed
+         *     read marks the response degraded. 503 when the deployment has no
+         *     liquidation history reader.
+         *
+         *     Pagination: pass `pagination.next` back as `cursor`;
+         *     `pagination` is omitted on the last page.
+         */
+        get: operations["listLendingPoolLiquidations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4082,6 +4203,21 @@ export interface paths {
          *     `market_withheld_days` too. The published value is the only
          *     centre: no run of earlier market days can move it.
          *
+         *     The market leg pools every dollar spelling, declared USD
+         *     stablecoins included. A day on which any of them traded more
+         *     than 2% from $1 on its own observed dollar market is absent and
+         *     counted in `peg_outside_band_days`; a day an operator source
+         *     exclusion covers, on the token's dollar markets or on the oracle
+         *     series, is absent and counted in `source_excluded_days`, and the
+         *     response carries `flags.fills_withheld_reason: source_excluded`.
+         *     From a stablecoin's first observed dollar day on, a day on
+         *     which its own market has no usable day (no trades, below the
+         *     same thin-market floor, or under an operator exclusion) is
+         *     absent and counted in `peg_unobserved_days`, never treated as
+         *     $1. Days before that first observed day, and every day of a
+         *     stablecoin with no observed dollar market, are not judged
+         *     against it.
+         *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a
          *     premium on a past day and none today, because its market was
@@ -4196,7 +4332,10 @@ export interface paths {
          *     CLOSED 1-minute VWAP snapshots for the asset/USD pair,
          *     newest first; the in-progress bucket is excluded
          *     (ADR-0015). 200 with an empty array when the asset has no
-         *     closed buckets yet. A pair frozen by the anomaly checker
+         *     closed buckets yet. A USD stablecoin (a declared peg, or a
+         *     `crypto:<STABLE>` ticker) is served only from its own observed
+         *     fiat:USD series, never from another stablecoin's book; with
+         *     none recorded it answers 404 `price-not-found`. A pair frozen by the anomaly checker
          *     (ADR-0019) serves one record, the held last-known-good value
          *     `lastprice` serves, with `flags.frozen` and `flags.degraded`;
          *     the closed buckets are not served while the freeze holds, and
@@ -6933,6 +7072,24 @@ export interface components {
             kind: "b_token" | "d_token" | "underlying" | "backstop_token" | "unknown";
             reason: string;
         };
+        /** @description One asset of a liquidation fill's lot or bid, valued at the fill. A null value carries its `reason`. */
+        LendingLiquidationLeg: {
+            /** @description The leg's map key: the reserve's underlying asset, or the backstop token. */
+            asset: string;
+            /** @enum {string} */
+            kind: "b_token" | "d_token" | "underlying" | "backstop_token" | "unknown";
+            /** @description The event's amount, base units of `kind`. */
+            amount: string;
+            /** @description Underlying base units at the reserve rate written in the fill's ledger. */
+            underlying: string | null;
+            /** @description USD per whole token from the bucket that closed at `price_at`. */
+            price_usd: string | null;
+            /** Format: date-time */
+            price_at: string | null;
+            /** @description 2 dp. */
+            usd: string | null;
+            reason: string | null;
+        };
         /** @description USD sums of a lending account's valued supply and borrow legs, decimal strings, exact sums rounded half away from zero to 2 dp. A backstop leg is never valued, so it is always in `excluded`. */
         LendingUSDTotals: {
             /** @description A floor when `lower_bound` is true. */
@@ -9121,7 +9278,7 @@ export interface components {
              */
             proxy_deviation: boolean;
             /**
-             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
+             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A reading older than 17 minutes at the requested time is reported as unchecked, so historical vwap/twap answers past the 1-minute retention carry this flag. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
              * @default false
              */
             proxy_deviation_unchecked: boolean;
@@ -9147,7 +9304,7 @@ export interface components {
              */
             outside_coverage: boolean;
             /**
-             * @description Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`, `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the asset, contract or ledger the response is about. The figures are served unchanged; treat them as unconfirmed. The envelope's `under_review_reason` says why. Omitted when false.
+             * @description Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`, `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the asset, contract or ledger the response is about, and on `/v1/assets` when a hold covers any row; each such row carries its own `under_review` and `under_review_reason`. The figures are served unchanged; treat them as unconfirmed. On a single-subject response the envelope's `under_review_reason` says why. Omitted when false.
              * @default false
              */
             under_review: boolean;
@@ -9202,7 +9359,7 @@ export interface components {
              */
             coverage_from?: string;
             sources?: string[];
-            /** @description Operator-supplied reason; present exactly when `flags.under_review` is true. */
+            /** @description Operator-supplied reason; present exactly when `flags.under_review` is true on a single-subject response. A listing carries it per row. */
             under_review_reason?: string;
             flags: components["schemas"]["Flags"];
         };
@@ -9738,13 +9895,16 @@ export interface components {
          * @description One reason a set member is absent from a series. Shared by
          *     `/rwa/history` and `/rwa/premium`: the first five reasons are the
          *     same refusal by the same rule on both, and two spellings of one
-         *     reason is how a funnel starts lying. The last six are specific
-         *     to one series — the supply pair to the value series, the market
-         *     four to the premium series.
+         *     reason is how a funnel starts lying. `no_same_day_observation`
+         *     is reported by both, each with its own detail: the series' two
+         *     legs were both read but never held on one day (on the value
+         *     series, no priced day had any supply outstanding). Of the rest,
+         *     the supply pair is specific to the value series and the other
+         *     five to the premium series.
          */
         RWAHistoryExcluded: {
             /** @enum {string} */
-            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "reference_isin_mismatch" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation";
+            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "reference_isin_mismatch" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation" | "peg_outside_band" | "peg_unobserved" | "source_excluded";
             /** @description How many set members this reason accounts for. */
             assets: number;
             /** @description What the reason means and, where it matters, who can move it. */
@@ -9870,6 +10030,29 @@ export interface components {
              *     market.
              */
             reference_only_days?: number;
+            /**
+             * @description Days inside the window that cleared the floor and are absent
+             *     because a dollar stablecoin the market leg pools traded more
+             *     than 2% from $1 that day, so the price was not in dollars.
+             *     Not in `market_withheld_days`.
+             */
+            peg_outside_band_days?: number;
+            /**
+             * @description Days inside the window that cleared the floor and are absent
+             *     because an operator source exclusion covers the token's
+             *     dollar markets or the oracle series that day. Not in
+             *     `market_withheld_days`.
+             */
+            source_excluded_days?: number;
+            /**
+             * @description Days inside the window that cleared the floor and are absent
+             *     because a dollar stablecoin the market leg pools, from its
+             *     first observed dollar day on, had no usable day of its own
+             *     (no trades, too thin, or under an operator exclusion), so
+             *     the price could not be shown to be in dollars. Not in
+             *     `market_withheld_days`.
+             */
+            peg_unobserved_days?: number;
         };
         /**
          * @description One day of one member's premium. Both prices are served beside
@@ -11710,8 +11893,10 @@ export interface components {
              *     is still valued, so the contract and listing-corroborated arms
              *     never report it.
              *     `issuer_asset_page_truncated` — counts ISSUERS whose classic
-             *     asset list filled one read, so a member in the unread tail
-             *     could not be found. It counts issuers, not assets, so it is
+             *     asset list filled one read and a member matching no exact
+             *     spelling could not be checked for a case variant past it
+             *     (members past a full read are otherwise read by exact code
+             *     and issuer). It counts issuers, not assets, so it is
              *     deliberately NOT a term in the asset arithmetic.
              *     CONTRACT arm:
              *
@@ -12769,6 +12954,16 @@ export interface components {
              * @default false
              */
             unverified_ticker_collision: boolean;
+            /**
+             * @description LISTING-row operator hold (/v1/assets): true when an operator
+             *     hold covers this row's asset, as `flags.under_review` marks it
+             *     on `/v1/assets/{asset_id}`. The row's figures are served
+             *     unchanged; treat them as unconfirmed. Omitted when false.
+             * @default false
+             */
+            under_review: boolean;
+            /** @description Operator-supplied reason; present exactly when this row's `under_review` is true. */
+            under_review_reason?: string;
             /**
              * @description Attached when the requested classic asset's code names a
              *     verified-currency catalogue sovereign denomination (USD,
@@ -15521,21 +15716,23 @@ export interface operations {
                  *       lookup of the classic twin, which no SAC wrapper can
                  *       match, so an unfiltered request adds the wrapper's
                  *       trailing-24h volume to that arm and publishes the
-                 *       classic + SAC sum. That is the sum the spine intends for
-                 *       the twin this row replaces, not one it guarantees: the
-                 *       spine folds a wrapper only when the wrapper's row lands
-                 *       in the same page window, while the catalogue row always
-                 *       point-reads it. Under any of the four filters
-                 *       the addition is skipped and the classic arm alone is
-                 *       reported, matching the spine.
-                 *     - `xlm` is the exception. It is served by the dedicated
-                 *       `native` reader rather than by a classic-twin lookup, so
-                 *       its `volume_24h_usd` is the `native` (SDEX) arm on every
-                 *       request. Neither of XLM's other two identities is added
-                 *       to it: the XLM Stellar Asset Contract is a distinct
-                 *       on-chain venue population, and `crypto:XLM` is off-Stellar
-                 *       exchange turnover that no on-Stellar volume figure
-                 *       includes.
+                 *       classic + SAC sum, the same sum the spine publishes for
+                 *       the twin this row replaces: the spine folds a wrapper whose
+                 *       row lands in the same page window and, on an unfiltered
+                 *       request, adds the trailing-24h volume of a wrapper that
+                 *       did not. Under any of the four filters the addition is
+                 *       skipped and the classic arm alone is reported, matching
+                 *       the spine.
+                 *     - `xlm` takes its classic arm from the dedicated `native`
+                 *       reader (trailing-24h volume of every on-Stellar market
+                 *       with `native` on either side) rather than a classic-twin
+                 *       lookup, then follows the same rule: an unfiltered request
+                 *       adds the XLM Stellar Asset Contract's trailing-24h volume,
+                 *       and any row filter reports the `native` arm alone.
+                 *       `crypto:XLM`, off-Stellar exchange turnover, is never added
+                 *       to a listing row. `GET /v1/assets/native` sums all three
+                 *       identities, so its `volume_24h_usd` also includes that
+                 *       exchange turnover and can exceed the listing figure.
                  */
                 type?: "native" | "classic" | "soroban" | "fiat" | "any";
                 /**
@@ -15976,6 +16173,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAssetSupply: {
@@ -19104,6 +19302,169 @@ export interface operations {
                                 supply_cap: string | null;
                                 /** @description True when the reserve config or the pool instance changed later in this state's hour, so the one in force at this state is not known; the fields that depend on it are null. */
                                 config_uncertain: boolean;
+                                /** @description Decimal USD at this point's bucket price; null with usd_reason when not valued. */
+                                supplied_usd?: string | null;
+                                borrowed_usd?: string | null;
+                                /** @description USD per whole token used. */
+                                price_usd?: string | null;
+                                /**
+                                 * Format: date-time
+                                 * @description Start of the price bucket used.
+                                 */
+                                price_at?: string | null;
+                                /**
+                                 * @description transitive: crossed through XLM; stablecoin_proxy: from a book quoted in a USD stablecoin; omitted for a price traded against fiat:USD.
+                                 * @enum {string}
+                                 */
+                                price_basis?: "transitive" | "stablecoin_proxy";
+                                /** @description True when price_at is more than one bucket before this point's bucket; omitted otherwise. */
+                                price_carried?: boolean;
+                                /**
+                                 * @description Why the USD values are null; null when valued. archived: a removed (archived) point. withheld: refused as the live valuation refuses it (operator exclusion, flagged issuer, thin market). price_read_failed: an input could not be read; the body is stale and not cached.
+                                 * @enum {string|null}
+                                 */
+                                usd_reason?: "no_price_within_bound" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "negative_amount" | "withheld" | "price_read_failed" | "archived" | null;
+                            }[];
+                            /** @description How far before its bucket a USD price may be: 6 for 1h, 48 for 1d. */
+                            price_max_age_hours?: number;
+                            /** @description Points whose USD values are null, removed points included. */
+                            usd_unvalued_points?: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolHistory: {
+        parameters: {
+            query?: {
+                interval?: "1h" | "1d";
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
+                from?: string;
+                /** @description RFC 3339; default now. */
+                to?: string;
+                /** @description Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pool USD history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend_v2",
+                     *         "interval": "1d",
+                     *         "from": "2026-08-18T00:00:00Z",
+                     *         "to": "2026-11-16T00:00:00Z",
+                     *         "price_max_age_hours": 48,
+                     *         "history_through_ledger": 63340102,
+                     *         "history_through_time": "2026-11-15T23:59:58Z",
+                     *         "dropped_points": 0,
+                     *         "omitted_reserves": [],
+                     *         "reserves_lower_bound_reason": null,
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-08-18T00:00:00Z",
+                     *             "tvl_usd": "1200000.00",
+                     *             "borrowed_usd": "900000.00",
+                     *             "lower_bound": false,
+                     *             "unvalued_reserves": [],
+                     *             "price_carried_reserves": [],
+                     *             "reserves": [
+                     *               {
+                     *                 "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *                 "supplied_usd": "1200000.00",
+                     *                 "borrowed_usd": "900000.00",
+                     *                 "price_usd": "1.0001",
+                     *                 "price_at": "2026-08-18T00:00:00Z",
+                     *                 "usd_reason": null
+                     *               }
+                     *             ]
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-11-16T00:00:01Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string|null} */
+                            protocol: "blend_v1" | "blend_v2" | "blnt" | null;
+                            /** @enum {string} */
+                            interval: "1h" | "1d";
+                            /** Format: date-time */
+                            from: string;
+                            /** Format: date-time */
+                            to: string;
+                            price_max_age_hours: number;
+                            /**
+                             * Format: int64
+                             * @description The lowest derive watermark across the pool's reserves.
+                             */
+                            history_through_ledger: number;
+                            /** Format: date-time */
+                            history_through_time: string | null;
+                            dropped_points: number;
+                            /** @description Pool reserves with no recorded history. */
+                            omitted_reserves: string[];
+                            /**
+                             * @description Set when the reserve list may miss a reserve (its projection is not verified from genesis); every non-null tvl_usd is then a lower bound.
+                             * @enum {string|null}
+                             */
+                            reserves_lower_bound_reason: "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | null;
+                            points: {
+                                /**
+                                 * Format: date-time
+                                 * @description Bucket start.
+                                 */
+                                t: string;
+                                /** @description Decimal USD; null when no reserve is valued. */
+                                tvl_usd: string | null;
+                                borrowed_usd: string | null;
+                                lower_bound: boolean;
+                                unvalued_reserves: string[];
+                                /** @description Valued reserves whose price is more than one bucket old. */
+                                price_carried_reserves: string[];
+                                reserves: {
+                                    asset: string;
+                                    supplied_usd: string | null;
+                                    borrowed_usd: string | null;
+                                    price_usd: string | null;
+                                    /** Format: date-time */
+                                    price_at: string | null;
+                                    /** @enum {string} */
+                                    price_basis?: "transitive" | "stablecoin_proxy";
+                                    price_carried?: boolean;
+                                    /**
+                                     * @description As the reserve history route's usd_reason.
+                                     * @enum {string|null}
+                                     */
+                                    usd_reason: "no_price_within_bound" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "negative_amount" | "withheld" | "price_read_failed" | "archived" | null;
+                                }[];
                             }[];
                         };
                     };
@@ -19745,6 +20106,148 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listLendingPoolLiquidations: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a prior `pagination.next`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Liquidation fills, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "valued_at": "event_time",
+                     *         "price_max_age_seconds": 86400,
+                     *         "liquidations": [
+                     *           {
+                     *             "auction_type": 0,
+                     *             "auction_type_label": "user_liquidation",
+                     *             "user": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+                     *             "filler": "GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R",
+                     *             "fill_percent": "100",
+                     *             "ledger": 63340300,
+                     *             "time": "2026-07-03T22:57:00Z",
+                     *             "tx_hash": "9e8d7c6b5a49382716051f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a",
+                     *             "block": 63340103,
+                     *             "amounts_recorded": true,
+                     *             "lot": [
+                     *               {
+                     *                 "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                     *                 "kind": "b_token",
+                     *                 "amount": "9000000000",
+                     *                 "underlying": "9900000000",
+                     *                 "price_usd": "0.30",
+                     *                 "price_at": "2026-07-03T22:00:00Z",
+                     *                 "usd": "297.00",
+                     *                 "reason": null
+                     *               }
+                     *             ],
+                     *             "bid": [
+                     *               {
+                     *                 "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *                 "kind": "d_token",
+                     *                 "amount": "1200000000",
+                     *                 "underlying": null,
+                     *                 "price_usd": null,
+                     *                 "price_at": null,
+                     *                 "usd": null,
+                     *                 "reason": "rate_at_fill_unrecorded"
+                     *               }
+                     *             ],
+                     *             "lot_usd": "297.00",
+                     *             "lot_usd_lower_bound": false,
+                     *             "bid_usd": null,
+                     *             "bid_usd_lower_bound": false,
+                     *             "filler_profit_usd": null,
+                     *             "filler_profit_reason": "inputs_partial",
+                     *             "usd_reason": null
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:58:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /**
+                             * @description Every price and rate is the one at the fill.
+                             * @enum {string}
+                             */
+                            valued_at: "event_time";
+                            /** @description Oldest a price bucket may have closed before a fill and still value it. */
+                            price_max_age_seconds: number;
+                            liquidations: {
+                                /** @description 0 user_liquidation, 1 bad_debt. */
+                                auction_type: number;
+                                auction_type_label: string;
+                                /** @description The liquidated account (the backstop for bad debt). */
+                                user: string;
+                                filler: string;
+                                fill_percent: string;
+                                /** Format: int64 */
+                                ledger: number;
+                                /** Format: date-time */
+                                time: string;
+                                tx_hash: string;
+                                /** @description Ledger the auction's pricing starts from, as recorded by the fill. */
+                                block: number | null;
+                                /** @description False when the fill event carries no amounts (Blend V1). */
+                                amounts_recorded: boolean;
+                                /** @description What the filler received. */
+                                lot: components["schemas"]["LendingLiquidationLeg"][];
+                                /** @description What the filler repaid. */
+                                bid: components["schemas"]["LendingLiquidationLeg"][];
+                                /** @description Sum of the lot's valued legs at the fill, 2 dp; null when none is valued. */
+                                lot_usd: string | null;
+                                lot_usd_lower_bound: boolean;
+                                /** @description Sum of the bid's valued legs at the fill, 2 dp; null when none is valued. */
+                                bid_usd: string | null;
+                                bid_usd_lower_bound: boolean;
+                                /** @description lot_usd - bid_usd, only when both sides are fully valued at prices within an hour of each other. */
+                                filler_profit_usd: string | null;
+                                /**
+                                 * @description Why filler_profit_usd is null on a fill with amounts.
+                                 * @enum {string|null}
+                                 */
+                                filler_profit_reason: "inputs_partial" | "prices_not_contemporaneous" | null;
+                                /** @description Why the fill as a whole is unvalued (amounts_not_emitted). */
+                                usd_reason: string | null;
+                            }[];
+                        };
+                        pagination?: components["schemas"]["Pagination"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -24531,6 +25034,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];

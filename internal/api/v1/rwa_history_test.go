@@ -574,6 +574,31 @@ func TestRWAHistory_NoFlowsAtAllIsItsOwnReason(t *testing.T) {
 	}
 }
 
+// TestRWAHistory_NoSupplyOnAnyPricedDayIsNotAnOracleGap: the oracle published, but on none of its days was any of the
+// token in circulation (first minted after the last priced day, or redeemed to zero). Calling that no_reference_history
+// would send an operator after an oracle integration that is working.
+func TestRWAHistory_NoSupplyOnAnyPricedDayIsNotAnOracleGap(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	for name, flows := range map[string][]clickhouse.SupplyFlowDay{
+		"minted after the last priced day": {histFlow(sac, 3, "200000000")},
+		"redeemed to zero":                 {histFlow(sac, 1, "200000000"), histFlow(sac, 2, "-200000000")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := rwaHistoryServer(t, bound, dir, rows, &stubFlowSupply{days: flows},
+				&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 2, 107000000)}},
+			)
+			v := getRWAHistory(t, srv, "?timeframe=all")
+			if len(v.Points) != 0 || !hasExclusion(v, "no_same_day_observation", 1) || hasExclusion(v, "no_reference_history", 1) {
+				t.Fatalf("points/excluded = %+v/%+v, want none and no_same_day_observation×1", v.Points, v.Excluded)
+			}
+			if d := exclusionDetail(v, "no_same_day_observation"); !containsFold(d, "supply") {
+				t.Errorf("detail = %q, want the supply-side cause named", d)
+			}
+		})
+	}
+}
+
 // TestRWAHistory_UnboundMemberIsExcludedNotDropped: a member with no curated (code, issuer) to feed binding can't be
 // valued, and the total must say so rather than become a smaller claim under the same label.
 func TestRWAHistory_UnboundMemberIsExcludedNotDropped(t *testing.T) {
@@ -766,4 +791,75 @@ func TestPrewarmRWA_RebuildsFreshHistories(t *testing.T) {
 	if n := len(market.askedFroms); n != 2 {
 		t.Errorf("premium history built %d times over two prewarms, want 2", n)
 	}
+}
+
+// rwaHistoryTagSkewServer admits USTRY on an untagged directory entry, then answers every later directory read with dir.
+func rwaHistoryTagSkewServer(t *testing.T, dir *rwaSkewedDirectory) *v1.Server {
+	t.Helper()
+	bound, _, rows := oneBoundMember()
+	dir.membership = recognisedIssuer(rwaGoodIssuer, "Etherfuse")
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: dir,
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{}, byIssuer: rows, supply: rwaSupplyFor(rows),
+		},
+		TokenSupply: &stubFlowSupply{days: []clickhouse.SupplyFlowDay{
+			histFlow(rwaHistSAC(t, "USTRY", rwaGoodIssuer), 1, "200000000"),
+		}},
+		OracleHistory: &stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+		MarketHistory: &stubMarketHistory{rows: []timescale.MarketDay{premMarket(premAssetID("USTRY", rwaGoodIssuer), 1, "1.08")}},
+	})
+}
+
+// TestRWAHistory_AFlagTaggedAfterMembershipWithholdsTheIssuer: /v1/rwa/assets re-reads the directory at every build, so a
+// series built from the same cached membership must too, or it keeps valuing an issuer the listing already withholds.
+func TestRWAHistory_AFlagTaggedAfterMembershipWithholdsTheIssuer(t *testing.T) {
+	flagged := recognisedIssuer(rwaGoodIssuer, "Etherfuse")
+	flagged.Tags = []string{"issuer", "malicious"}
+	srv := rwaHistoryTagSkewServer(t, &rwaSkewedDirectory{rowFill: flagged})
+	v := getRWAHistory(t, srv, "?timeframe=all")
+	if len(v.Points) != 0 || v.Members != 0 {
+		t.Fatalf("points/members = %+v/%d, want none — the issuer is flagged now", v.Points, v.Members)
+	}
+	if !hasExclusion(v, "issuer_flagged", 1) {
+		t.Fatalf("excluded = %+v, want issuer_flagged×1", v.Excluded)
+	}
+	p := getRWAPremium(t, srv, "?timeframe=all")
+	if len(p.Series) != 0 || premiumExcluded(p, "issuer_flagged") != 1 {
+		t.Fatalf("premium series/excluded = %+v/%+v, want none and issuer_flagged×1", p.Series, p.Excluded)
+	}
+}
+
+// TestRWAHistory_KeysAMisCasedMemberOnItsOnChainCode: the issuer declares `ustry`, the chain holds `USTRY`. The listing
+// folds the declaration to the on-chain row, so the binding, the SAC and the market leg must key on `USTRY` here too.
+func TestRWAHistory_KeysAMisCasedMemberOnItsOnChainCode(t *testing.T) {
+	_, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{rwaBound("ustry", rwaGoodIssuer, "etherfuse.com", "bond")}},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{}, byIssuer: rows, supply: rwaSupplyFor(rows),
+		},
+		TokenSupply:   &stubFlowSupply{days: []clickhouse.SupplyFlowDay{histFlow(sac, 1, "200000000")}},
+		OracleHistory: &stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+		MarketHistory: &stubMarketHistory{rows: []timescale.MarketDay{premMarket(premAssetID("USTRY", rwaGoodIssuer), 1, "1.08")}},
+	})
+	v := getRWAHistory(t, srv, "?timeframe=all")
+	if len(v.Points) != 1 || v.Points[0].ValueUSD != "21.40" || v.Members != 1 {
+		t.Fatalf("points/members/excluded = %+v/%d/%+v, want one 21.40 point from the on-chain USTRY", v.Points, v.Members, v.Excluded)
+	}
+	p := getRWAPremium(t, srv, "?timeframe=all")
+	if len(p.Series) != 1 {
+		t.Fatalf("premium series/excluded = %+v/%+v, want the USTRY series", p.Series, p.Excluded)
+	}
+}
+
+// TestRWAHistory_AnUnreadIssuerFlagPublishesNoSeries: the listing withholds a row whose directory read failed, so a
+// series must not value one either.
+func TestRWAHistory_AnUnreadIssuerFlagPublishesNoSeries(t *testing.T) {
+	srv := rwaHistoryTagSkewServer(t, &rwaSkewedDirectory{rowFillErr: errors.New("account_directory: statement timeout")})
+	getRWAUnavailable(t, srv, "/v1/rwa/history")
+	getRWAUnavailable(t, srv, "/v1/rwa/premium")
 }

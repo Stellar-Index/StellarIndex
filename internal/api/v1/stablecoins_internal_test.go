@@ -22,6 +22,32 @@ func TestStablecoinSummarise_TotalEqualsReAddedRows(t *testing.T) {
 	}
 }
 
+// A USDC priced only by its declared peg is withheld, so the USD total over the remaining member is a floor that names USDC.
+func TestStablecoinSummarise_DeclaredPegMemberMakesTheTotalAFloor(t *testing.T) {
+	supply, one, pyCap := "50000000000000", "1", "90000.00"
+	usdc := stablecoinAssetOf(stablecoinMember{ticker: "USDC", code: "USDC", issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		AssetDetail{Decimals: 7, CirculatingSupply: &supply, PriceUSD: &one, PriceBasis: priceBasisDeclaredPeg}, true)
+	if usdc.ValuationStatus != stablecoinWithheld || usdc.SupplyUSD != nil || usdc.PriceBasis != priceBasisDeclaredPeg {
+		t.Fatalf("declared-peg USDC = status %q supply_usd %v basis %q, want withheld / absent / declared_peg",
+			usdc.ValuationStatus, usdc.SupplyUSD, usdc.PriceBasis)
+	}
+	py := StablecoinAsset{Ticker: "PYUSD", Peg: "USD", SupplyUSD: &pyCap, ValuationStatus: stablecoinPublished}
+	tot, pegs := stablecoinSummarise([]StablecoinAsset{usdc, py}, nil, false)
+	if tot.SupplyUSD == nil || *tot.SupplyUSD != "90000.00" || !tot.LowerBound {
+		t.Fatalf("total = %v lower_bound = %v, want 90000.00 as a lower bound", tot.SupplyUSD, tot.LowerBound)
+	}
+	named := false
+	for _, e := range tot.NotSummed {
+		named = named || (e.Ticker == "USDC" && e.Reason == stablecoinReasonMCapNull)
+	}
+	if !named {
+		t.Fatalf("not_summed = %v, want USDC/%s", tot.NotSummed, stablecoinReasonMCapNull)
+	}
+	if len(pegs) != 1 || pegs[0].Peg != "USD" || !pegs[0].LowerBound || pegs[0].AssetsValued != 1 {
+		t.Fatalf("by_peg = %+v, want one USD row, a lower bound with 1 valued", pegs)
+	}
+}
+
 func TestStablecoinSummarise_PegSubtotalMarksItsFloor(t *testing.T) {
 	one, two := "1.00", "2.00"
 	assets := []StablecoinAsset{

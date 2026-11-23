@@ -77,6 +77,7 @@ var coveredOperations = []coveredOperation{
 	{"Pair", "GET", "/pairs", Market{}, ""},
 	{"Pools", "GET", "/pools", Pool{}, ""},
 	{"LendingPools", "GET", "/lending/pools", LendingPool{}, ""},
+	{"LendingPoolLiquidations", "GET", "/lending/pools/{pool}/liquidations", LendingLiquidations{}, ""},
 	{"LendingPoolTopAccounts", "GET", "/lending/pools/{pool}/top-accounts", LendingTopAccounts{}, ""},
 	{"SACWrappers", "GET", "/sac-wrappers", nil, ""}, // map[string]string payload
 	{"RWAAssets", "GET", "/rwa/assets", RWAAssetsView{}, ""},
@@ -180,6 +181,7 @@ var uncoveredOperations = map[string]string{
 	"GET /lending/pools/{pool}/auctions":                 "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/reserves/{asset}/history": "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/backstop/history":         "lending drill-down — explorer surface",
+	"GET /lending/pools/{pool}/history":                  "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/emissions":                "lending drill-down — explorer surface",
 	"GET /lending/accounts/{account}/earnings":           "lending drill-down — explorer surface",
 	"GET /lending/rates":                                 "lending rate comparison — explorer surface",

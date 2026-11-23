@@ -60,13 +60,12 @@ WATCHED=(
   'internal/sources/*/pairs.go'
   # correlation / scaling / reconstruction logic that decides a recorded value
   # outside decode*.go: soroswap Swap/Sync correlation, redstone median,
-  # classicmovements LP op decoders, sorobanevents reconstruction, CEX/oracle
-  # amount scalers.
+  # classicmovements LP op decoders, sorobanevents reconstruction, the shared
+  # off-chain amount scaler.
   'internal/sources/*/consumer.go'
   'internal/sources/*/payload.go'
   'internal/sources/*/entrychanges.go'
   'internal/sources/*/reconstruct.go'
-  'internal/sources/*/decimals.go'
   'internal/sources/*/scale.go'
   # dispatcher adapters hold every Decode entry point and contract-identity
   # gate; abi.go maps event fields to columns; blend/auction_data.go decodes
@@ -74,12 +73,15 @@ WATCHED=(
   'internal/sources/*/dispatcher_adapter.go'
   'internal/sources/*/abi.go'
   'internal/sources/blend/auction_data.go'
-  # off-chain venues: the CEX trade parsers and FX rate/fixing code that
-  # compute recorded values. Pollers, backfill drivers and the OXR fetcher
-  # are HTTP/retry plumbing and stay unwatched.
+  # off-chain venues: the CEX trade parsers, FX rate/fixing code, and the
+  # pollers, history backfills and FX worker, which build, scale, refuse or
+  # band the rows they write.
   'internal/sources/*/parse.go'
   'internal/sources/*/rates.go'
   'internal/sources/*/fixings.go'
+  'internal/sources/*/poller.go'
+  'internal/sources/*/backfill*.go'
+  'internal/sources/*/worker.go'
   ':(exclude)*_test.go'
 )
 

@@ -37,7 +37,7 @@ export function AccountLink({ id }: { id: string }) {
   );
 }
 
-function TxLink({ hash }: { hash: string }) {
+export function TxLink({ hash }: { hash: string }) {
   return (
     <Link
       href={`/transactions/${hash}/`}
