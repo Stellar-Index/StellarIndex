@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -965,6 +966,8 @@ type chartWalk struct {
 	merge *chartBucketMerge
 	res   chartWalkResult
 	spent time.Duration // time spent on reads taken after the merge filled
+	// notVia are proxy quotes the fallback must not read through (see [Server.fiatSeriesThroughXLM]).
+	notVia []canonical.Asset
 }
 
 func (s *Server) newChartWalk(pair canonical.Pair, win chartWindow, read chartRead) *chartWalk {
@@ -1114,15 +1117,17 @@ func (s *Server) chartSeriesPoints(
 	return nil, res, nil
 }
 
-// chartObservedPoints merges every DIRECTLY OBSERVED source (alias spellings, then fiat-quote stablecoin proxies) with no
-// derivation, so a [Server.fiatSeriesThroughXLM] leg can read it without recursing.
+// chartObservedPoints merges every DIRECTLY OBSERVED source (alias spellings, then fiat-quote stablecoin proxies other than
+// notVia) with no derivation, so a [Server.fiatSeriesThroughXLM] leg can read it without recursing.
 func (s *Server) chartObservedPoints(
 	ctx context.Context,
 	pair canonical.Pair,
 	win chartWindow,
 	read chartRead,
+	notVia ...canonical.Asset,
 ) ([]HistoryPoint, chartWalkResult, error) {
 	w := s.newChartWalk(pair, win, read)
+	w.notVia = notVia
 	if err := s.chartMergeAliasPairs(ctx, w); err != nil {
 		return nil, chartWalkResult{}, err
 	}
@@ -1142,6 +1147,9 @@ func (s *Server) chartStablecoinFallback(ctx context.Context, w *chartWalk) erro
 		return nil
 	}
 	for _, pp := range s.chartFiatProxyPairs(w.pair) {
+		if slices.ContainsFunc(w.notVia, func(a canonical.Asset) bool { return sameAsset(a, pp.Quote) }) {
+			continue
+		}
 		cont, err := w.step(ctx, pp, chartSourceProxy)
 		if err != nil {
 			return err
@@ -1306,7 +1314,8 @@ func (s *Server) fiatSeriesThroughXLM(
 	if pivotWin.from.IsZero() {
 		pivotWin.from = assetPts[0].Bucket
 	}
-	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], pivotWin, read)
+	// The pivot is never read through the base's own peg family: base/XLM x XLM/base cancels to 1.0 and would hide a depeg.
+	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], pivotWin, read, s.pegFamily(pair.Base)...)
 	if err != nil {
 		return nil, chartWalkResult{}, err
 	}
@@ -1321,6 +1330,22 @@ func (s *Server) fiatSeriesThroughXLM(
 	res.books = append(append(res.books, assetRes.books...), xlmRes.books...)
 	res.noteCrossLatest(crossed, assetRes, xlmRes)
 	return crossed, res, nil
+}
+
+// pegFamily is the asset and the verified-catalogue ticker issued under any of its alias forms (crypto:USDC for classic
+// USDC): every proxy quote that prices in the asset itself.
+func (s *Server) pegFamily(asset canonical.Asset) []canonical.Asset {
+	family := []canonical.Asset{asset}
+	for _, alias := range canonical.AssetAliasStrings(asset) {
+		vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(alias)
+		if !ok {
+			continue
+		}
+		if ticker, err := canonical.NewCryptoAsset(vc.Ticker); err == nil {
+			family = append(family, ticker)
+		}
+	}
+	return family
 }
 
 // fiatCrossLegsThroughXLM is the gate and leg list of [Server.fiatSeriesThroughXLM] (fiat-quoted, non-fiat, non-XLM base gives

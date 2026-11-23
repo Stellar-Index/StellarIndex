@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,24 @@ func TestXLMCross_SinceInception_PivotReadCoversTheAssetLeg(t *testing.T) {
 	h := getHistorySeries(t, opts, "asset=USDC:"+pegAliasUSDCIssuer+"&quote=fiat:USD&granularity=1h")
 	if len(h.Points) != 100 || h.RowCapTruncated {
 		t.Errorf("since-inception: %d points row_cap_truncated=%v, want 100 uncapped", len(h.Points), h.RowCapTruncated)
+	}
+}
+
+// A declared peg derived through XLM must not read its XLM/USD pivot from its own book: USDC/XLM x XLM/USDC is 1.0 by
+// construction and hides a depeg. Buckets only the peg's own book prices are a miss; a direct XLM/USD bucket still crosses.
+func TestXLMCross_PivotNeverReadsThePegsOwnBook(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	day := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -3)
+	d1, d2 := day, day.AddDate(0, 0, 1)
+	reader := &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+		usdc.String() + "/native": {{Bucket: d1, VWAP: "3.3333333333"}, {Bucket: d2, VWAP: "3.3333333333"}},
+		"native/" + usdc.String(): {{Bucket: d1, VWAP: "0.3"}, {Bucket: d2, VWAP: "0.3"}},
+		"crypto:XLM/fiat:USD":     {{Bucket: d1, VWAP: "0.27"}},
+	}}
+	series := getChartOpts(t, v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}},
+		"asset="+usdc.String()+"&quote=fiat:USD&timeframe=1mo&granularity=1d")
+	if len(series.Points) != 1 || !strings.HasPrefix(series.Points[0].P, "0.8999") {
+		t.Fatalf("points=%+v, want only the directly pivoted bucket (~0.90), never the self-pivoted 1.0", series.Points)
 	}
 }
 
