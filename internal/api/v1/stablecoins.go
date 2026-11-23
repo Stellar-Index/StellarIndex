@@ -389,5 +389,5 @@ func (s *Server) handleStablecoins(w http.ResponseWriter, r *http.Request) {
 	}
 	stablecoinSortAssets(view.Assets)
 	view.Total, view.ByPeg = stablecoinSummarise(view.Assets, view.Excluded, join.pagesTruncated > 0)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: join.unanswered, Degraded: join.unanswered}})
+	writeEnvelope(w, Envelope{Data: view, Flags: markFillsWithheld(Flags{Stale: join.unanswered, Degraded: join.unanswered}, reads.withheld.Load())})
 }

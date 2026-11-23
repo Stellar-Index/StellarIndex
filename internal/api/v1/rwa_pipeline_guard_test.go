@@ -32,6 +32,10 @@ var listingOnlyPipelineCalls = map[string]string{
 	"applyListingValuations": "the RWA surface publishes this claim already, through its own reference block (rwa_reference.go); it is additive, never a gate",
 }
 
+// judgedPipelineCalls maps a listing step that relies on the /v1/assets outbound judge to the judged form a surface without
+// that judge must call instead.
+var judgedPipelineCalls = map[string]string{"fillDeclaredPegPricesForRowJudge": "fillDeclaredPegPricesInListing"}
+
 func checkRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
 	assertRWAPipelineMatchesListing(t, "rwa.go", "rwaListingRows")
 }
@@ -56,6 +60,9 @@ func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 	for _, c := range listing {
 		if _, skip := listingOnlyPipelineCalls[c]; skip {
 			continue
+		}
+		if judged, ok := judgedPipelineCalls[c]; ok {
+			c = judged
 		}
 		want = append(want, c)
 	}
