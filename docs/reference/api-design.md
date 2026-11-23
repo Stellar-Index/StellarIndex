@@ -466,7 +466,10 @@ documented in `internal/auth/sep10/doc.go`. Whether the hosted
 deployment should adopt it — accepting the API-key trade-off — is an
 open product decision.
 
-mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-plan.md#6-security-posture)).
+Internal traffic stays on one host today and is not mTLS. In the multi-host shape only etcd uses
+client-cert TLS; Redis, Postgres (`sslmode=disable` by default) and Promtail to Loki are
+unencrypted, so a multi-host deployment needs its own network-layer encryption (see
+[HA plan §6](../architecture/ha-plan.md#6-security-posture)).
 
 ---
 
