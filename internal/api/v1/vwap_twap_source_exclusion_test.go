@@ -97,3 +97,40 @@ func TestOHLCSeriesWithholdsExcludedBars(t *testing.T) {
 		t.Fatalf("exclusions unread: %d %s, want a withheld 404, never a bar", status, body)
 	}
 }
+
+// TestOHLCSeriesWithholdsExcludedConstituentBars: a fiat-quoted series pools each stablecoin market's bars, so an exclusion
+// stored on the constituent market that fed a bar withholds the series; one on a constituent that fed no bar does not. An alias
+// spelling's bars are judged under the market that supplied them.
+func TestOHLCSeriesWithholdsExcludedConstituentBars(t *testing.T) {
+	const usdt = "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+	native, _ := canonical.ParseAsset("native")
+	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
+	usdc, _ := canonical.ParseAsset(exclUSDC)
+	usdtA, _ := canonical.ParseAsset(usdt)
+	fed, _ := canonical.NewPair(native, usdc)
+	aliasFed, _ := canonical.NewPair(cryptoXLM, usdc)
+	bucket := time.Now().UTC().Truncate(time.Hour).Add(-3 * time.Hour)
+	bar := v1.OHLCSeriesBar{T: v1.WireTime(bucket), O: "1", H: "1", L: "1", C: "1", VBase: "1", VQuote: "1", N: 1, Sources: []string{"soroswap"}}
+	srv := func(book canonical.Pair, rows ...timescale.SourceExclusion) *v1.Server {
+		g := pricingguard.NewSourceExclusionGate(exclTable{rows: rows}, pricingguard.SourceExclusionGateOptions{})
+		h := &stubHistoryReader{ohlcByPair: map[string][]v1.OHLCSeriesBar{book.String(): {bar}}}
+		return v1.New(v1.Options{History: h, Exclusions: g, USDPeggedClassics: []canonical.Asset{usdc, usdtA}})
+	}
+	on := func(base, quote string) timescale.SourceExclusion {
+		return timescale.SourceExclusion{ID: 1, Source: "soroswap", Base: base, Quote: quote, From: bucket.Add(-time.Hour)}
+	}
+	fiat := "/v1/ohlc?base=native&quote=fiat:USD&interval=1h"
+	if status, body := exclGet(t, srv(fed), fiat); status != http.StatusOK || !strings.Contains(body, `"soroswap"`) {
+		t.Fatalf("no exclusions: %d %s, want the pooled bar served", status, body)
+	}
+	if status, body := exclGet(t, srv(fed, on("native", exclUSDC)), fiat); status != http.StatusNotFound || !strings.Contains(body, `"source_excluded"`) {
+		t.Fatalf("soroswap excluded on the constituent that fed the bar: %d %s, want 404 source_excluded", status, body)
+	}
+	if status, body := exclGet(t, srv(fed, on("native", usdt)), fiat); status != http.StatusOK {
+		t.Fatalf("soroswap excluded on a constituent that fed no bar: %d %s, want 200", status, body)
+	}
+	alias := "/v1/ohlc?base=native&quote=" + exclUSDC + "&interval=1h"
+	if status, body := exclGet(t, srv(aliasFed, on("crypto:XLM", exclUSDC)), alias); status != http.StatusNotFound || !strings.Contains(body, `"source_excluded"`) {
+		t.Fatalf("soroswap excluded on the alias spelling that fed the bar: %d %s, want 404 source_excluded", status, body)
+	}
+}

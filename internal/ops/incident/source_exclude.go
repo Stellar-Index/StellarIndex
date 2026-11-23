@@ -23,11 +23,12 @@ const readSideNote = "source-exclude: note:\n" +
 	"  WITHHELD (404 reason source_excluded; tip, /v1/vwap, /v1/twap and the headline aggregator tier recompute without the source):\n" +
 	"    /v1/price (closed, swapped-in, last-trade, cached, stablecoin proxy, USD-leg cross, frozen held, FX conversions), /v1/price/batch,\n" +
 	"    /v1/price/tip + stream, closed-bucket price stream, SEP-40, /v1/vwap, /v1/twap, /v1/ohlc (a covered series bar\n" +
-	"    withholds the series), asset headline (three tiers, global-market\n" +
+	"    withholds the series; a fiat series is judged on each stablecoin market it pools), asset headline (three tiers, global-market\n" +
 	"    reference; never falls back to the listing price; a declared USD peg does not replace it).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
 	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +
+	"    A source-wide exclusion with no -until withholds every /v1/ohlc series with a bar containing that source until it is lifted.\n" +
 	"  DELAY: re-read every 15s; an unreadable table keeps the last good set up to 60s, then withholds everything gated.\n" +
 	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset detail ~225s.\n" +
 	"  NOT COVERED (may still include the source until lifted or aged out): /v1/price/at, /changes, /depeg, history, since-inception,\n" +

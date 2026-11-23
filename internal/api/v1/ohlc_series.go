@@ -210,7 +210,7 @@ func (s *Server) handleOHLCSeries(
 	}
 
 	bars = capOHLCSeriesNewest(bars, limit)
-	if err := s.ohlcSeriesWithheld(hCtx, pair, bars, interval); err != nil {
+	if err := s.ohlcSeriesWithheld(hCtx, pair, bars, books, interval); err != nil {
 		writePriceWithheldProblem(w, r, pair.Base, pair.Quote, priceWithheldReason(err))
 		return
 	}
