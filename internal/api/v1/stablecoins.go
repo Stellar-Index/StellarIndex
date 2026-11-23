@@ -42,8 +42,17 @@ var stablecoinPegs = map[string]string{
 	"USDC": "USD", "PYUSD": "USD", "USDT0": "USD", "YUSDC": "USD", "EURC": "EUR",
 }
 
-// stablecoinYieldBearing maps each wrapper whose price is not meant to sit at the peg to the asset id of its underlying.
-var stablecoinYieldBearing = map[string]string{"YUSDC": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}
+// stablecoinUnderlying maps each wrapper whose price is not meant to sit at the peg to the asset id of its underlying.
+var stablecoinUnderlying = map[string]string{"YUSDC": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}
+
+// stablecoinYieldBearing marks the wrappers in [stablecoinUnderlying].
+var stablecoinYieldBearing = func() map[string]bool {
+	m := make(map[string]bool, len(stablecoinUnderlying))
+	for ticker := range stablecoinUnderlying {
+		m[ticker] = true
+	}
+	return m
+}()
 
 // StablecoinsView is the GET /v1/stablecoins data object.
 type StablecoinsView struct {
@@ -184,7 +193,7 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 	a := StablecoinAsset{
 		AssetID: m.code + "-" + m.issuer, Code: m.code, Issuer: m.issuer, Ticker: m.ticker, Peg: peg,
 		// decimals-7: stablecoinAssetOf admits classic assets only, fixed by the protocol.
-		YieldBearing: stablecoinYieldBearing[strings.ToUpper(m.ticker)] != "", Decimals: 7,
+		YieldBearing: stablecoinYieldBearing[strings.ToUpper(m.ticker)], Decimals: 7,
 		ValuationStatus: stablecoinNotObserved,
 	}
 	if sac, ok := classicSACContractID(a.AssetID); ok {
@@ -225,7 +234,7 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 // is in neither: its backing is already that underlying's supply. A wrapper of an asset outside the set is an ordinary member.
 func stablecoinSumRule(a StablecoinAsset, members map[string]bool) (reason string, inPeg bool) {
 	switch {
-	case a.YieldBearing && members[stablecoinYieldBearing[strings.ToUpper(a.Ticker)]]:
+	case a.YieldBearing && members[stablecoinUnderlying[strings.ToUpper(a.Ticker)]]:
 		return stablecoinReasonYield, false
 	case a.Peg == "unknown":
 		return stablecoinReasonPegUnknown, true
