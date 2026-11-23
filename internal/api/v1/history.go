@@ -329,6 +329,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// per-asset value is wrong for off-chain rows (CEX 1e8, FX 1e6) and one page can mix them;
 	// the scale-invariant `price` would not reveal a 10x overstatement.
 	// An undeclared scale stays 0, which omits the field: amounts are then base units with no stated scale.
+	if err := s.historyTradesWithheld(hCtx, base, quote, trades); err != nil {
+		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(err))
+		return
+	}
 	baseDec, quoteDec, unread, ok := s.historyScales(hCtx, base, quote)
 	if !ok {
 		writeDecimalsUnavailable(w, r, "https://api.stellarindex.io/errors/history-unavailable")

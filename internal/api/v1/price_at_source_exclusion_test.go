@@ -69,6 +69,49 @@ func TestPriceAtWithholdsExcludedBucket(t *testing.T) {
 	}
 }
 
+// TestHistoryWithholdsPageWithExcludedFill: a trade page holding a fill an exclusion covers is withheld, never served with
+// the row silently dropped; an exclusion outside the page's fills leaves it byte-identical; an unreadable table withholds.
+func TestHistoryWithholdsPageWithExcludedFill(t *testing.T) {
+	excluded, other := mkHistTrade(100), mkHistTrade(101)
+	other.Source, other.Ledger = "aquarius", 2
+	at := excluded.Timestamp
+	srv := func(gated bool, rows []timescale.SourceExclusion, err error) *v1.Server {
+		opts := v1.Options{History: &stubHistoryReader{trades: []canonical.Trade{excluded, other}}}
+		if gated {
+			opts.Exclusions = pricingguard.NewSourceExclusionGate(exclTable{rows: rows, err: err}, pricingguard.SourceExclusionGateOptions{})
+		}
+		return v1.New(opts)
+	}
+	window := func(from, until time.Time) []timescale.SourceExclusion {
+		return []timescale.SourceExclusion{{ID: 1, Source: "soroswap", Base: "native", Quote: "fiat:USD", From: from, Until: until}}
+	}
+	path := "/v1/history?base=native&quote=fiat:USD&limit=50"
+	status, baseline := exclGet(t, srv(false, nil, nil), path)
+	if status != http.StatusOK || !strings.Contains(baseline, `"soroswap"`) || !strings.Contains(baseline, `"aquarius"`) {
+		t.Fatalf("no gate: %d %s, want both fills", status, baseline)
+	}
+	for name, rows := range map[string][]timescale.SourceExclusion{
+		"no exclusions":        nil,
+		"window after fills":   window(at.Add(time.Second), time.Time{}),
+		"another source":       {{ID: 1, Source: "phoenix", From: at.Add(-time.Hour)}},
+		"window before fills":  window(at.Add(-time.Hour), at.Add(-time.Minute)),
+		"another pair's fills": {{ID: 1, Source: "soroswap", Base: exclAQUA, Quote: exclUSDC, From: at.Add(-time.Hour)}},
+	} {
+		if status, body := exclGet(t, srv(true, rows, nil), path); status != http.StatusOK ||
+			exclAsOf.ReplaceAllString(body, "") != exclAsOf.ReplaceAllString(baseline, "") {
+			t.Errorf("%s: %d %s, want byte-identical %s", name, status, body, baseline)
+		}
+	}
+	if status, body := exclGet(t, srv(true, window(at.Add(-time.Minute), at.Add(time.Minute)), nil), path); status != http.StatusNotFound ||
+		!strings.Contains(body, `"source_excluded"`) || strings.Contains(body, `"aquarius"`) {
+		t.Errorf("soroswap excluded over its fill: %d %s, want 404 source_excluded", status, body)
+	}
+	if status, body := exclGet(t, srv(true, nil, errors.New("db down")), path); status != http.StatusNotFound ||
+		!strings.Contains(body, "price-withheld") {
+		t.Errorf("exclusions unread: %d %s, want a withheld 404", status, body)
+	}
+}
+
 // TestPriceChangesWithholdsExcludedHorizon: an exclusion over one horizon's reference bucket marks that horizon withheld and
 // leaves its siblings and the anchor served; one over the anchor withholds the response; an unreadable table withholds it.
 func TestPriceChangesWithholdsExcludedHorizon(t *testing.T) {

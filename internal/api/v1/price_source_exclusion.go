@@ -63,6 +63,16 @@ func (s *Server) exclusionCleanWindow(ctx context.Context, base, quote canonical
 	return kept, nil
 }
 
+// historyTradesWithheld refuses a /v1/history page holding a fill an exclusion covers: dropping the row would read as a quiet
+// market and move the cursor past it. A ?source= page of another venue still serves.
+func (s *Server) historyTradesWithheld(ctx context.Context, base, quote canonical.Asset, trades []canonical.Trade) error {
+	kept, err := s.exclusionCleanTrades(ctx, base, quote, trades)
+	if err == nil && len(kept) < len(trades) {
+		err = PriceWithheldError(pricingguard.WithheldSourceExcluded)
+	}
+	return err
+}
+
 // writeExclusionCleanWindow is [Server.exclusionCleanWindow] for a handler: it writes the withheld problem (an emptied window
 // included, which is excluded rather than "no trades") and returns ok=false.
 func (s *Server) writeExclusionCleanWindow(w http.ResponseWriter, r *http.Request, base, quote canonical.Asset, window aggregate.ScaledWindow) (aggregate.ScaledWindow, bool) {
