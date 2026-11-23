@@ -32,13 +32,35 @@
 # makes an OLD series look young for as long as the gap lines up. The
 # `for: 1h` absorbs short gaps; a multi-hour Prometheus outage 8 days
 # ago delays the page by its own length, it does not suppress it.
-# Prometheus retention is 30d on every host this role provisions
-# (prometheus role, prometheus_retention_days), so the offset resolves.
+# The offset needs 8 days of TSDB history, which neither r1's distro
+# Prometheus nor a freshly reset TSDB guarantees; with less, this rule
+# stays quiet. stellarindex_backup_offsite_failed reads the backup
+# wrapper's own per-repo stamps instead and needs no history.
 
 groups:
   - name: stellarindex.backup_offsite
     interval: 60s
     rules:
+
+      - alert: stellarindex_backup_offsite_failed
+        expr: |
+          stellarindex_pgbackrest_backup_last_rc{repo="2"} != 0
+          or (time() - stellarindex_pgbackrest_backup_last_success_unix{repo="2"}) > 129600
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite.md#stellarindex_backup_offsite_failed
+          summary: "The off-site (repo2) pgBackRest backup failed or has not succeeded in 36 h on {{ $labels.instance }}"
+          description: |
+            The nightly backup wrapper recorded a non-zero exit for repo2
+            (the encrypted S3 off-site copy), or its last repo2 success
+            is more than 36 hours old. repo1 may be fresh, so the
+            cross-repo backup alerts stay green. Check `journalctl -u
+            pgbackrest-backup.service -n 100` for repo2 errors and
+            `sudo -u postgres pgbackrest --stanza=stellarindex info --repo=2`.
 
       - alert: stellarindex_backup_offsite_stale
         expr: |

@@ -84,6 +84,12 @@ expect() {
   pass=$((pass + 1))
 }
 
+# The installed copy --live-check compares byte for byte; a faithful copy unless a case changes it.
+LIVE_DEST="$TMP/live-dest"
+mkdir -p "$LIVE_DEST"
+cp "$SRC"/*.yml "$LIVE_DEST/"
+export RULES_DEST="$LIVE_DEST"
+
 # Live set matches the repo exactly, including the recording rule: live-check OK.
 # A codified `record:` must not read as "loaded but NOT in the repo".
 cat >"$TMP/matching.json" <<'EOF'
@@ -139,6 +145,28 @@ if ! grep -q 'StaleAlertC' <<<"$OUT"; then
 else
   echo "ok: drift message names the extra alert"; pass=$((pass + 1))
 fi
+
+# Same names loaded, but the installed file weakens an expression (out-of-band edit,
+# a failed apply that kept the old file, or a stale restore): DRIFT, naming the file.
+sed 's/up == 0/up == 0 and on() vector(0) > 1/' "$SRC/alerts.yml" >"$LIVE_DEST/alerts.yml"
+start_mock "$TMP/matching.json"
+OUT="$(PROM_URL="http://127.0.0.1:$MOCK_PORT" bash "$SCRIPT" --live-check "$SRC" 2>&1)"; RC=$?
+stop_mock
+expect 'installed file differs from repo under the same names → DRIFT' 1
+if ! grep -q 'alerts.yml' <<<"$OUT"; then
+  echo "FAIL: drift message does not name the differing file" >&2; fail=$((fail + 1))
+else
+  echo "ok: drift message names the differing file"; pass=$((pass + 1))
+fi
+cp "$SRC/alerts.yml" "$LIVE_DEST/alerts.yml"
+
+# An installed rule file the repo no longer has: DRIFT even when it declares nothing loaded.
+printf 'groups: []\n' >"$LIVE_DEST/stale.yml"
+start_mock "$TMP/matching.json"
+OUT="$(PROM_URL="http://127.0.0.1:$MOCK_PORT" bash "$SCRIPT" --live-check "$SRC" 2>&1)"; RC=$?
+stop_mock
+expect 'installed rule file not in the repo → DRIFT' 1
+unset RULES_DEST
 
 # ─── Install + verify path ───
 # A stateful loopback Prometheus: serves $STATE/rules.json and $STATE/query.json;

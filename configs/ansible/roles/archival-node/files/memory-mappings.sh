@@ -112,7 +112,7 @@ exe_basename() {
   echo '# TYPE stellarindex_process_memory_mappings_unreadable gauge'
   echo '# HELP stellarindex_process_memory_mappings_updated_unix Unix time of the last successful run. node_exporter re-serves a stale textfile verbatim on every scrape, so a stopped timer FREEZES these gauges at their last value instead of making them absent — this is the only series that can see that.'
   echo '# TYPE stellarindex_process_memory_mappings_updated_unix gauge'
-  echo '# HELP stellarindex_unit_running_replaced_binary 1 when a process in this systemd unit runs a release binary (/usr/local/bin/stellarindex-* or galexie) that was replaced on disk after it started: its exe link ends in " (deleted)" or names a .prev-<tag> backup. 0 for a unit whose release-binary processes all run the installed file. Units running no release binary have no series.'
+  echo '# HELP stellarindex_unit_running_replaced_binary 1 when a process in this systemd unit runs a release binary (/usr/local/bin/stellarindex-* or galexie) that was replaced on disk after it started: its exe link ends in " (deleted)" or names a dotted build the deploy renamed aside (.prev-, .failed-, .rolledback-). 0 for a unit whose release-binary processes all run the installed file. Units running no release binary have no series.'
   echo '# TYPE stellarindex_unit_running_replaced_binary gauge'
 } > "$TMP"
 
@@ -203,7 +203,7 @@ done
 # ── Release binaries replaced under a running process ────────────────
 #
 # The BARE readlink is the kernel's own text: "<path> (deleted)" once the file was unlinked,
-# or the .prev-<tag> name when a deploy renamed it aside. Every pid is a thread-group leader,
+# or a dotted name (.prev-, .failed-, .rolledback-) when a deploy renamed it aside. Every pid is a thread-group leader,
 # so a unit's main process and its children are each checked; the unit reports the worst.
 rows=""
 for entry in "$PROC_ROOT"/[0-9]*; do
@@ -218,7 +218,7 @@ for entry in "$PROC_ROOT"/[0-9]*; do
   case "$file" in
     */*) continue ;;
   esac
-  case "${file%%.prev-*}" in
+  case "${file%%.*}" in
     stellarindex-* | galexie) ;;
     *) continue ;;
   esac
@@ -226,8 +226,9 @@ for entry in "$PROC_ROOT"/[0-9]*; do
   case "$link" in
     *' (deleted)') replaced=1 ;;
   esac
+  # Release names carry no dot; the deploy parks every other build as "$live".* (.prev-, .failed-, .rolledback-, .new).
   case "$file" in
-    *.prev-*) replaced=1 ;;
+    *.*) replaced=1 ;;
   esac
   unit="$(unit_of "${entry##*/}")" || unit=""
   [ -n "$unit" ] || unit="unknown"
