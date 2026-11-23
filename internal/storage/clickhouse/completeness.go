@@ -415,14 +415,19 @@ func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([
 	})
 }
 
+// eventCensusIdentityQuery counts distinct events with FINAL: the identity is the table's ORDER BY, so the collapse streams
+// part-by-part in key order instead of holding a ~100M-tuple uniqExact set that cannot spill. Binds: lo, hi.
+const eventCensusIdentityQuery = `SELECT toUInt64(count())
+		FROM stellar.contract_events FINAL WHERE ledger_seq BETWEEN ? AND ?
+		SETTINGS do_not_merge_across_partitions_select_final = 1,
+		         max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 600`
+
 // eventCensusIdentity counts partition p's distinct events over ledgers <= to; unmerged duplicates do not count twice.
 func eventCensusIdentity(ctx context.Context, conn driver.Conn, p, to uint32) (uint64, error) {
-	const q = `SELECT toUInt64(uniqExact((ledger_seq, tx_hash, op_index, event_index)))
-		FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?`
 	lo := p * eventCensusPartitionWidth
 	hi := min(lo+eventCensusPartitionWidth-1, to)
 	var n uint64
-	if err := conn.QueryRow(ctx, q, lo, hi).Scan(&n); err != nil {
+	if err := conn.QueryRow(ctx, eventCensusIdentityQuery, lo, hi).Scan(&n); err != nil {
 		return 0, fmt.Errorf("clickhouse: event census identity %d [%d,%d]: %w", p, lo, hi, err)
 	}
 	return n, nil

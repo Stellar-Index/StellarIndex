@@ -6,6 +6,7 @@ package clickhouse
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +100,25 @@ func TestCensusShortfalls(t *testing.T) {
 	}
 	if !reflect.DeepEqual(recounted, []uint32{53, 54}) {
 		t.Fatalf("recounted %v, want only the over-count partitions [53 54]", recounted)
+	}
+}
+
+// The identity recount runs over a whole 1M-ledger partition on every over-count, so it must stream (FINAL over the ORDER BY
+// key, not an in-memory uniqExact set) and carry the package's memory and time caps.
+func TestEventCensusIdentityQuery_StreamsUnderCaps(t *testing.T) {
+	q := strings.Join(strings.Fields(eventCensusIdentityQuery), " ")
+	for _, want := range []string{
+		"FROM stellar.contract_events FINAL WHERE ledger_seq BETWEEN ? AND ?",
+		"do_not_merge_across_partitions_select_final = 1",
+		"max_memory_usage = 8589934592",
+		"max_execution_time = 600",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("identity recount query lacks %q:\n%s", want, q)
+		}
+	}
+	if strings.Contains(q, "uniqExact") {
+		t.Errorf("identity recount must not build an in-memory uniqExact set:\n%s", q)
 	}
 }
 

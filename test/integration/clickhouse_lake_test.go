@@ -1539,6 +1539,77 @@ func TestEventCensusShortfalls_DroppedEventPartition(t *testing.T) {
 	}
 }
 
+// Unmerged duplicates push a partition's physical row count over expected while a ledger's events are lost; the identity
+// recount must collapse them on the real table and report the distinct count, not the physical one.
+func TestEventCensusShortfalls_DuplicatesDoNotHideALoss(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const p = uint32(147_000_000) // a partition nothing else in the suite writes
+	conn := dialClickHouse(t, ctx, "stellar")
+	// Hold merges so the duplicate parts reach the census unmerged and the recount path runs.
+	if err := conn.Exec(ctx, "SYSTEM STOP MERGES stellar.contract_events"); err != nil {
+		t.Fatalf("stop merges: %v", err)
+	}
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		_ = conn.Exec(cctx, "SYSTEM START MERGES stellar.contract_events")
+		if err := conn.Exec(cctx, "ALTER TABLE stellar.contract_events DROP PARTITION 147"); err != nil {
+			t.Errorf("drop census fixture events: %v", err)
+		}
+		if err := conn.Exec(cctx, fmt.Sprintf(`ALTER TABLE stellar.ledgers DELETE
+			WHERE ledger_seq BETWEEN %d AND %d SETTINGS mutations_sync = 2`, p, p+2)); err != nil {
+			t.Errorf("purge census fixture ledgers: %v", err)
+		}
+	})
+
+	// Three ledgers declare 2 events each; ledger p's events are written three times (one part per flush) and ledger p+2's
+	// never: 8 physical rows over 6 expected, 4 distinct.
+	add := func(seq, written uint32) {
+		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
+			LedgerSeq: seq, CloseTime: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			LedgerHash: fmt.Sprintf("h%d", seq), PrevHash: fmt.Sprintf("h%d", seq-1),
+			ProtocolVersion: 22, BucketListHash: "cc00",
+			SorobanEventCount: 2,
+			TotalCoins:        1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
+		}}
+		for i := uint32(0); i < written; i++ {
+			ext.Events = append(ext.Events, chstore.ContractEventRow{
+				LedgerSeq: seq, CloseTime: ext.Ledger.CloseTime, TxHash: fmt.Sprintf("tx%d", seq),
+				EventIndex: i, ContractID: "CCENSUSDUPFIXTURE", EventType: "contract",
+				TopicCount: 1, Topic0Sym: "transfer", InSuccessfulCall: 1,
+			})
+		}
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add ledger %d: %v", seq, err)
+		}
+		if err := sink.Flush(ctx); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	}
+	add(p, 2)
+	add(p+1, 2)
+	add(p+2, 0)
+	add(p, 2)
+	add(p, 2)
+
+	short, err := chstore.EventCensusShortfalls(ctx, addr, p, p+2)
+	if err != nil {
+		t.Fatalf("EventCensusShortfalls: %v", err)
+	}
+	want := chstore.EventCensusShortfall{Partition: 147, FirstEventLedger: p, Expected: 6, Present: 4}
+	if len(short) != 1 || short[0] != want {
+		t.Fatalf("shortfalls = %+v, want %+v", short, want)
+	}
+}
+
 // The census ends at `to`, but its partition also holds the ledgers ingested above it; those rows must not stand in for
 // events lost at or below `to`.
 func TestEventCensusShortfalls_RowsAboveTheRangeDoNotHideALoss(t *testing.T) {
