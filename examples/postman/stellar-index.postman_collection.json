@@ -42519,6 +42519,114 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
+                  "name": "429 from either of the two independent gates that share this status on a metered route: the per-tier rate limiter (see `Retry-After` + `X-RateLimit-*` below) or, on Postgres-backed keys with a monthly cap, the MonthlyQuota middleware — which runs BEFORE the rate limiter in the same chain (see `middleware/doc.go`) and can 429 first. The two are distinguished by `type`/`title` in the body: see the `monthlyQuotaExceeded` and `monthlyQuotaUnavailable` examples below (or `#/components/responses/MonthlyQuotaExceeded` and `#/components/responses/MonthlyQuotaUnavailable`, documented standalone for the same shapes).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "auth",
+                        "callback"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Hex-encoded magic-link plaintext from the email.",
+                            "type": "text/plain"
+                          },
+                          "key": "token",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Path-only redirect target after sign-in (e.g. `/keys`).\nAbsolute URLs and protocol-relative paths (`//evil.com`)\nare rejected; the user lands at `/` instead.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "next",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Too Many Requests",
+                  "code": 429,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
+                        "type": "text/plain"
+                      },
+                      "key": "Retry-After",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Request budget for the caller's tier in the current fixed window (per-key override applied when one is set). Rate-limit 429s only.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Limit",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd. Rate-limit 429s only.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — except a GET/HEAD response whose Cache-Control lets a shared cache reuse it without revalidating (the `public` bands), which omits them and X-Request-ID so a CDN cannot replay one caller's values to another. They are also absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "The account's monthly request cap. Present only on a MonthlyQuota-shaped 429 (both `monthly-quota-exceeded` and `monthly-quota-unavailable`).",
+                        "type": "text/plain"
+                      },
+                      "key": "X-StellarIndex-Monthly-Quota",
+                      "value": "<long>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Month-to-date request count that triggered the cap. Present only on `monthly-quota-exceeded`; omitted on `monthly-quota-unavailable` (the counter read failed, so there is no honest value to report).",
+                        "type": "text/plain"
+                      },
+                      "key": "X-StellarIndex-Monthly-Used",
+                      "value": "<long>"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
                   "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                   "originalRequest": {
                     "url": {
@@ -42774,6 +42882,108 @@
                     {
                       "key": "Content-Type",
                       "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "429 from either of the two independent gates that share this status on a metered route: the per-tier rate limiter (see `Retry-After` + `X-RateLimit-*` below) or, on Postgres-backed keys with a monthly cap, the MonthlyQuota middleware — which runs BEFORE the rate limiter in the same chain (see `middleware/doc.go`) and can 429 first. The two are distinguished by `type`/`title` in the body: see the `monthlyQuotaExceeded` and `monthlyQuotaUnavailable` examples below (or `#/components/responses/MonthlyQuotaExceeded` and `#/components/responses/MonthlyQuotaUnavailable`, documented standalone for the same shapes).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "auth",
+                        "verify-code"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"432600\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Too Many Requests",
+                  "code": 429,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Seconds until the caller can retry. Always present on both MonthlyQuota shapes — `monthly-quota-exceeded` (seconds to the 1st UTC of next month, when the counter resets) and `monthly-quota-unavailable` (the fail-open dwell window); absent from a rate-limit 429 unless the limiter sets it.",
+                        "type": "text/plain"
+                      },
+                      "key": "Retry-After",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Request budget for the caller's tier in the current fixed window (per-key override applied when one is set). Rate-limit 429s only.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Limit",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd. Rate-limit 429s only.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Remaining",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — except a GET/HEAD response whose Cache-Control lets a shared cache reuse it without revalidating (the `public` bands), which omits them and X-Request-ID so a CDN cannot replay one caller's values to another. They are also absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage.",
+                        "type": "text/plain"
+                      },
+                      "key": "X-RateLimit-Reset",
+                      "value": "<integer>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "The account's monthly request cap. Present only on a MonthlyQuota-shaped 429 (both `monthly-quota-exceeded` and `monthly-quota-unavailable`).",
+                        "type": "text/plain"
+                      },
+                      "key": "X-StellarIndex-Monthly-Quota",
+                      "value": "<long>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Month-to-date request count that triggered the cap. Present only on `monthly-quota-exceeded`; omitted on `monthly-quota-unavailable` (the counter read failed, so there is no honest value to report).",
+                        "type": "text/plain"
+                      },
+                      "key": "X-StellarIndex-Monthly-Used",
+                      "value": "<long>"
                     }
                   ],
                   "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
