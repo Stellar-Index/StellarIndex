@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -391,6 +390,8 @@ func (s *Server) fiatUSDRate(ctx context.Context, ticker string) (fiatUSDRate, p
 	if w := s.bucketWithholding(ctx, book, rate.judgedSources, rate.asOf, rate.asOf.Add(rate.span)); w != pricingguard.NotWithheld {
 		if w == pricingguard.WithheldExclusionsUnread {
 			reportUnreadRead(ctx)
+		} else {
+			reportWithheldRead(ctx)
 		}
 		return fiatUSDRate{}, w
 	}
@@ -487,25 +488,20 @@ func fxQuoteSourceLabel(source string) string {
 
 // fiatMarketCapUSD computes market_cap_usd for a fiat entry: USD is identity (1.00); others use the latest fx_quotes point in a
 // trailing 7 days (InverseUSD, authoritative). PriceReader.LatestPrice is last resort only: storePriceReader fast-paths fiat
-// quotes to ErrPriceNotFound. Nil when neither returns a price or the supply parse fails.
+// quotes to ErrPriceNotFound. Nil when neither returns a price or the supply parse fails; a rate an exclusion withheld is put
+// on ctx's read report.
 func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurrency) *string {
-	capStr, _ := s.fiatMarketCapJudged(ctx, vc)
-	return capStr
-}
-
-// fiatMarketCapJudged is [Server.fiatMarketCapUSD] with the verdict that withheld its rate, so a listing can mark the refusal.
-func (s *Server) fiatMarketCapJudged(ctx context.Context, vc *currency.VerifiedCurrency) (*string, pricingguard.Withholding) {
 	if vc.CirculatingSupply == "" {
-		return nil, pricingguard.NotWithheld
+		return nil
 	}
 	if strings.EqualFold(vc.Ticker, "USD") {
-		return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, "1.00000000000000"), pricingguard.NotWithheld
+		return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, "1.00000000000000")
 	}
-	rate, w := s.fiatUSDRate(ctx, vc.Ticker)
+	rate, _ := s.fiatUSDRate(ctx, vc.Ticker)
 	if rate.price == "" {
-		return nil, w
+		return nil
 	}
-	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, rate.price), pricingguard.NotWithheld
+	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, rate.price)
 }
 
 // computeFiatMarketCap returns supplyStr / 10^decimals x priceStr to 2 dp, nil when unparseable; it scales via
@@ -544,7 +540,8 @@ func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *c
 	ctx, rep := withReadReport(r.Context())
 	view := s.withTwinIssuerVerdict(ctx, s.buildGlobalAssetView(ctx, vc), vc)
 	unread := rep.unread.Load()
-	writeJSON(w, view, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
+	// The view names a withheld rate; degraded keeps the null out of shared caches until the exclusion lifts.
+	writeJSON(w, view, Flags{Stale: unread || rep.stale.Load(), Degraded: unread || rep.withheld.Load()})
 }
 
 // withTwinIssuerVerdict judges the entry's Stellar issuance on its issuer with the helpers the listing's [carryTwinIssuerVerdict]
@@ -615,11 +612,10 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	entries := s.VerifiedCurrencies.Browseable()
 	out := projectVerifiedCurrencyList(entries)
 	ctx, rep := withReadReport(r.Context())
-	withheld := s.attachFiatMarketCaps(ctx, entries, out)
+	s.attachFiatMarketCaps(ctx, entries, out)
 	s.attachVerifiedImages(ctx, entries, out)
 	unread := rep.unread.Load()
-	// A withheld cap is otherwise the same body as a missing rate; degraded keeps it out of shared caches until lifted.
-	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread || withheld})
+	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread || rep.withheld.Load()})
 }
 
 // isSafeHTTPSImageURL is isSafeImageURL restricted to https: wallets bulk-load the verified listing's logos on its https-only
@@ -696,26 +692,32 @@ func verifiedStellarIdentity(se *currency.IssuanceEntry) (assetID, issuer string
 	return a.String(), a.Issuer
 }
 
-// attachFiatMarketCaps computes fiat market caps in parallel via fiatMarketCapJudged, reporting whether a source exclusion
-// withheld any. No-op only when NEITHER rate source is wired: gating on `s.Prices == nil` alone would skip every fiat cap on
-// a deployment with fxHistory but no PriceReader.
-func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) bool {
+// attachFiatMarketCaps computes fiat market caps in parallel via [Server.computeAllCatalogueMarketCaps]. No-op only when
+// NEITHER rate source is wired: gating on `s.Prices == nil` alone would skip every fiat cap on a deployment with fxHistory but
+// no PriceReader.
+func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Prices == nil && s.FXHistory == nil {
-		return false
+		return
 	}
-	var withheld atomic.Bool
+	for i, c := range s.computeAllCatalogueMarketCaps(ctx, entries) {
+		if c != "" {
+			out[i].MarketCapUSD = c
+		}
+	}
+}
+
+// computeAllCatalogueMarketCaps returns market_cap_usd parallel to entries; only fiat rows (M2 x FX rate) carry one. A cap an
+// exclusion withheld is put on ctx's read report, for the caller to mark the response.
+func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency) []string {
+	caps := make([]string, len(entries))
 	forEachBounded(s.logger, len(entries), readFanoutConcurrency, func(i int) {
 		vc := entries[i]
 		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
 			return
 		}
-		capStr, w := s.fiatMarketCapJudged(ctx, vc)
-		if capStr != nil {
-			out[i].MarketCapUSD = *capStr
-		}
-		if w != pricingguard.NotWithheld {
-			withheld.Store(true)
+		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
+			caps[i] = *capStr
 		}
 	})
-	return withheld.Load()
+	return caps
 }

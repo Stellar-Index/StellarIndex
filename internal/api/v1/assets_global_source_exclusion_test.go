@@ -96,8 +96,24 @@ func TestGlobalAssetFXSourceExclusionWithholdsFiatRate(t *testing.T) {
 				t.Errorf("view price=%v cap=%v sources=%v reason=%q, want withheld as %q", view.PriceUSD, view.MarketCapUSD,
 					view.PriceSources, view.PriceWithheldReason, tc.wantReason)
 			}
-			if stale != tc.wantStale || degraded != tc.wantStale {
-				t.Errorf("view stale=%v degraded=%v, want %v", stale, degraded, tc.wantStale)
+			// A withheld rate is otherwise the same null as a missing one, so it is degraded (no-store) whatever the reason.
+			if withheld := tc.wantReason != ""; stale != tc.wantStale || degraded != withheld {
+				t.Errorf("view stale=%v degraded=%v, want stale=%v degraded=%v", stale, degraded, tc.wantStale, withheld)
+			}
+
+			// The listing's way-out judge also withholds this row under the other feed's exclusion (fail closed), so that case
+			// is not asserted here.
+			var listed []map[string]any
+			_, degraded = globalExclGet(t, srv, "/v1/external/assets?asset_class=fiat", &listed)
+			if tc.gate == nil || tc.wantReason != "" {
+				for _, row := range listed {
+					if row["slug"] == "euro" && (row["market_cap_usd"] != nil) != (tc.wantPrice != "") {
+						t.Errorf("external listing euro market_cap_usd = %v, want served only when the rate is", row["market_cap_usd"])
+					}
+				}
+				if withheld := tc.wantReason != ""; degraded != withheld {
+					t.Errorf("external listing degraded=%v, want %v", degraded, withheld)
+				}
 			}
 
 			var rows []v1.VerifiedCurrencyListItem
