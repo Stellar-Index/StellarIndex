@@ -165,6 +165,18 @@ Fix:
 
 Escalate: a partition between indexer and DB looks identical; correlate with `up{job="postgres_exporter"}`. Record the streak length before the alert fired.
 
+## stellarindex_patroni_leader_count_wrong
+
+P1 (page, `for: 2m`), multi-host only. `sum(stellarindex_patroni_role{role="leader"}) != 1`, summed over every `patroni.prom` (`configs/ansible/roles/patroni/tasks/11-monitoring.yml`). 0: no writable primary, every write fails while `pg_up` stays 1 (usually etcd lost quorum and Patroni demoted the leader, or the leader's REST API stopped answering its scraper). 2: split brain.
+
+```sh
+patronictl -c /etc/patroni/patroni.yml list
+etcdctl endpoint health --cluster   # with the role's TLS flags
+journalctl -u patroni -u etcd -n 100
+```
+
+Fix: 0 leaders: restore etcd quorum (two of three members) and Patroni elects a leader. 2 leaders: stop writes, keep the member on the newest timeline, `systemctl stop patroni` on the other and let it rejoin as a replica.
+
 ## stellarindex_timescale_replica_lag
 
 P2 (ticket, `for: 2m`), `configs/prometheus/rules.r1/storage.yml`. INERT on r1: r1 has no replica, so `pg_replication_lag_seconds` has no series (absence, not health). First consumer will be the r3 async DR replica ([ADR-0016](../../adr/0016-per-region-storage-strategy.md)). Do not act on this against r1 as it stands; below is the playbook for when a standby exists. A sync replica holds back primary writes; an async one grows the DR copy's RPO.

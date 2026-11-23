@@ -1,0 +1,142 @@
+---
+# promtool unit tests for the HA state-count pages: no or two Patroni
+# leaders (storage.yml), no or two Sentinel primaries (cache.yml), no or two
+# VIP owners (infra.yml). Each gauge is per host; the alert reads the sum.
+#
+#   promtool test rules deploy/monitoring/rule-tests/ha-state-count_test.yml
+
+rule_files:
+  - ../rules/storage.yml
+  - ../rules/cache.yml
+  - ../rules/infra.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: every Patroni member a replica pages; one leader does not
+    input_series:
+      - series: 'stellarindex_patroni_role{role="leader",instance="db-01:9100",job="node_exporter"}'
+        values: '1x10 0x10'
+      - series: 'stellarindex_patroni_role{role="leader",instance="db-02:9100",job="node_exporter"}'
+        values: '0x20'
+      - series: 'stellarindex_patroni_role{role="leader",instance="db-03:9100",job="node_exporter"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_patroni_leader_count_wrong
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_patroni_leader_count_wrong
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_patroni_leader_count_wrong
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_patroni_leader_count_wrong
+              summary: "Patroni cluster has 0 leaders, want 1"
+              description: |
+                Summed over every Patroni host's patroni.prom, the number of
+                members reporting role=leader is not 1. 0 = no writable
+                primary (every write fails); 2 = split brain. `patronictl
+                -c /etc/patroni/patroni.yml list` on any member.
+
+  - interval: 1m
+    name: two Patroni leaders page
+    input_series:
+      - series: 'stellarindex_patroni_role{role="leader",instance="db-01:9100",job="node_exporter"}'
+        values: '1x10'
+      - series: 'stellarindex_patroni_role{role="leader",instance="db-02:9100",job="node_exporter"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_patroni_leader_count_wrong
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_patroni_leader_count_wrong
+              summary: "Patroni cluster has 2 leaders, want 1"
+              description: |
+                Summed over every Patroni host's patroni.prom, the number of
+                members reporting role=leader is not 1. 0 = no writable
+                primary (every write fails); 2 = split brain. `patronictl
+                -c /etc/patroni/patroni.yml list` on any member.
+
+  - interval: 1m
+    name: two Sentinel primaries page; one does not
+    input_series:
+      - series: 'stellarindex_redis_sentinel_primary{instance="cache-01:9100",job="node_exporter"}'
+        values: '1x20'
+      - series: 'stellarindex_redis_sentinel_primary{instance="cache-02:9100",job="node_exporter"}'
+        values: '0x10 1x10'
+      - series: 'stellarindex_redis_sentinel_primary{instance="cache-03:9100",job="node_exporter"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_redis_sentinel_primary_count_wrong
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_redis_sentinel_primary_count_wrong
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: cache
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_sentinel_primary_count_wrong
+              summary: "2 Redis hosts are the Sentinel primary, want 1"
+              description: |
+                Summed over every Redis host's redis_sentinel.prom, the number
+                of hosts that are the Sentinel-elected primary is not 1. 0 =
+                Sentinel has not elected a primary; 2 = split brain. `redis-cli
+                -p 26379 SENTINEL get-master-addr-by-name <master>` on each host.
+
+  - interval: 1m
+    name: no VIP owner pages; one owner does not
+    input_series:
+      - series: 'stellarindex_haproxy_vip_owner{instance="lb-01:9100",job="node_exporter"}'
+        values: '1x10 0x10'
+      - series: 'stellarindex_haproxy_vip_owner{instance="lb-02:9100",job="node_exporter"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_haproxy_vip_owner_count_wrong
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_haproxy_vip_owner_count_wrong
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_haproxy_vip_owner_count_wrong
+              summary: "0 load balancers hold the VIP, want 1"
+              description: |
+                Summed over every LB's keepalived.prom, the number of hosts
+                holding the VIP is not 1. 0 = API traffic has no entry point;
+                2 = VRRP split brain, traffic flaps between LBs. `journalctl
+                -u keepalived -n 100` on both.
+
+  - interval: 1m
+    name: a host with no HA gauges never pages
+    input_series:
+      - series: 'up{instance="r1:9100",job="node_exporter"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_patroni_leader_count_wrong
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_redis_sentinel_primary_count_wrong
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_haproxy_vip_owner_count_wrong
+        exp_alerts: []

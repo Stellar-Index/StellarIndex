@@ -47,6 +47,9 @@ EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/a
 ANSIBLE_TASK_PATHS=(
   configs/ansible/roles/archival-node/tasks
   configs/ansible/roles/archival-node/handlers
+  configs/ansible/roles/patroni/tasks
+  configs/ansible/roles/redis-sentinel/tasks
+  configs/ansible/roles/haproxy/tasks
 )
 
 # Deliberately-inert references: kept in the rule files (with an INERT comment) but with no
