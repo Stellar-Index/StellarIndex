@@ -272,7 +272,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(s.liveDirectRefusal(ctx, asset, directWithheld))
+	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(directWithheld)
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
@@ -364,8 +364,8 @@ const oracleLiveWindow = 10 * time.Minute
 // (viaPeg=true marks the envelope stale and triangulated). A dormant book is non-empty forever, so
 // "first non-empty" would serve months-old records beside a live series.
 // With nothing to serve, a withheld verdict wins, then the first read error: neither is 200 [].
-// served is the spelling of asset whose series was chosen (it governs the freeze check); directWithheld is the refusal of the
-// asset's own quote series when a peg book answered in its place.
+// served is the spelling of asset whose series was chosen (it governs the freeze check); directWithheld is the exclusion that
+// withheld the asset's own quote series when a peg book answered in its place (it withdraws a frozen pair's hold).
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, served canonical.Asset, viaPeg bool, directWithheld, err error) {
@@ -373,12 +373,13 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	best, bestAt, served, err := s.recentClosedForAliases(ctx, asset, quote, n)
 	var failed oracleLegErrors
 	if err != nil {
-		// A direct series the exclusion withheld is no direct series: a clean peg book may still answer.
-		if !usdQuote || !errors.Is(err, ErrPriceWithheld) {
+		if !usdQuote || !s.directRefusalAdmitsPeg(ctx, asset, err) {
 			return nil, canonical.Asset{}, false, nil, err
 		}
 		failed.note(err)
-		directWithheld = err
+		if withheldByExclusion(err) {
+			directWithheld = err
+		}
 	}
 	if !usdQuote || s.oracleSeriesLive(best, bestAt) {
 		return best, served, false, nil, nil
@@ -409,7 +410,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	return nil, canonical.Asset{}, false, nil, failed.err()
 }
 
-// liveDirectRefusal is the direct-series refusal that withdraws a frozen pair's held value. The series read has no lower time
+// liveDirectRefusal is directWithheld unless it is a thin verdict on a dormant book. The series read has no lower time
 // bound, so a thin verdict on a book with no closed bucket inside the existence window lastprice gates on is a dormant book, not a
 // refused market; any other verdict, or an unanswered probe, still withdraws the hold.
 func (s *Server) liveDirectRefusal(ctx context.Context, asset canonical.Asset, directWithheld error) error {
@@ -426,6 +427,17 @@ func (s *Server) liveDirectRefusal(ctx context.Context, asset canonical.Asset, d
 		}
 	}
 	return nil
+}
+
+// directRefusalAdmitsPeg: a direct series withheld by a source exclusion, or refused as thin on a dormant book, is no direct
+// series, so a clean peg book may answer. Any other refusal (a live thin book, a flagged issuer, an unreadable exclusion set)
+// refuses the pair, as lastprice does.
+func (s *Server) directRefusalAdmitsPeg(ctx context.Context, asset canonical.Asset, err error) bool {
+	if withheldByExclusion(err) {
+		return true
+	}
+	return errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldSubstance &&
+		s.liveDirectRefusal(ctx, asset, err) == nil
 }
 
 // stablecoinOwnSeries answers a USD stablecoin from its own series only: a withheld verdict outranks "no series".

@@ -143,3 +143,53 @@ func TestFrozenHoldOfTriangulatedTokenIsServed(t *testing.T) {
 		})
 	}
 }
+
+// TestOraclePrices_UnfrozenRefusedDirectBookAgreesWithLastPrice: with no freeze, a refused direct fiat:USD read lets a peg
+// book answer only when the refusal is an exclusion or a thin verdict on a dormant book; a live thin book, a flagged issuer or
+// an unreadable exclusion set refuses prices() exactly as it refuses lastprice.
+func TestOraclePrices_UnfrozenRefusedDirectBookAgreesWithLastPrice(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	cases := []struct {
+		name    string
+		refusal error
+		live    bool
+		serves  bool
+	}{
+		{"dormant thin book", v1.PriceWithheldError(pricingguard.WithheldThinMarket), false, true},
+		{"excluded source", v1.PriceWithheldError(pricingguard.WithheldSourceExcluded), true, true},
+		{"live thin book", v1.PriceWithheldError(pricingguard.WithheldThinMarket), true, false},
+		{"flagged issuer", v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer), false, false},
+		{"exclusions unread", v1.PriceWithheldError(pricingguard.WithheldExclusionsUnread), true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices: &gatingStubPriceReader{
+					stubPriceReader: stubPriceReader{
+						errByPair: map[string]error{xlmUSD: tc.refusal, "native/fiat:USD": tc.refusal},
+						recent: map[string][]v1.PriceSnapshot{
+							"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
+							"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
+						},
+					},
+					exists: map[string]bool{xlmUSD: tc.live, "native/fiat:USD": tc.live},
+				},
+				USDPeggedClassics: []canonical.Asset{usdc},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+			status, body := getBody(t, ts.URL+pricesURL)
+			if tc.serves {
+				if status != http.StatusOK || !strings.Contains(body, `"price":"0.1626"`) {
+					t.Fatalf("want the peg series served: %d %s", status, body)
+				}
+				return
+			}
+			if status != http.StatusNotFound || !strings.Contains(body, "errors/price-withheld") {
+				t.Fatalf("prices() = %d, want 404 price-withheld as lastprice answers: %s", status, body)
+			}
+			if ls, lb := getBody(t, ts.URL+lastPriceURL); ls != http.StatusNotFound {
+				t.Fatalf("lastprice = %d, want 404: %s", ls, lb)
+			}
+		})
+	}
+}
