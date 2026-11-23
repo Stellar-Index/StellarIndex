@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 323 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 324 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -198,6 +198,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_restore_drill_failed` | `restore_drill_failures` per repo | > 0 for 30 min | ticket | [restore-drill-failed](runbooks/restore-drill.md#stellarindex_restore_drill_failed) |
 | `stellarindex_restore_drill_offsite_stale` | `time() - restore_drill_last_success_unix{repo="2"}`, or absent | > 35 d, 30 min. A green repo1 drill says nothing about it | ticket | [restore-drill-offsite-stale](runbooks/restore-drill.md#stellarindex_restore_drill_offsite_stale) |
 | `stellarindex_restore_drill_textfile_stale` | `time() - node_textfile_mtime_seconds{file=~"restore_drill.*\.prom"}` | > 35 d, 30 min (backstop) | ticket | [restore-drill-stale](runbooks/restore-drill.md#stellarindex_restore_drill_textfile_stale) |
+| `stellarindex_backup_offsite_failed` | wrapper `stellarindex_pgbackrest_backup_last_rc{repo="2"}` / `_last_success_unix{repo="2"}` | last repo2 run exited non-zero, or no repo2 success in 36 h, 1 h. Needs no TSDB history | ticket | [backup-offsite-failed](runbooks/backup-offsite.md#stellarindex_backup_offsite_failed) |
 | `stellarindex_backup_offsite_stale` | pgbackrest `backup_info{repo_key="2"}` age | no repo2 backup < 8 d, 1 h. repo1-fresh/repo2-stale is invisible to the alerts above | ticket | [backup-offsite-stale](runbooks/backup-offsite.md#stellarindex_backup_offsite_stale) |
 
 ## Cache / serving alerts
