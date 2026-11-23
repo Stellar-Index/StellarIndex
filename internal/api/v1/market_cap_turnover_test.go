@@ -210,6 +210,20 @@ func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
 	}
 }
 
+// TestPopulateMarketCapNativeIsNeverTurnoverSuppressed: the detail exempts XLM's cap and FDV from the ceiling, as the listing does.
+func TestPopulateMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
+	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000, MaxMarketCapVolumeRatio: 50_000}, logger: slogDiscard()}
+	price, vol := "0.16", "10"
+	detail := AssetDetail{AssetID: "native", Decimals: 7, PriceUSD: &price, VolumeUSD24h: &vol}
+	circ, _ := new(big.Int).SetString("100000000000000000", 10)
+	snap := supply.Supply{CirculatingSupply: circ, MaxSupply: circ}
+	s.populateMarketCap(context.Background(), &detail, canonical.NativeAsset(), snap, "native", 5)
+	if detail.MarketCapUSD == nil || detail.FDVUSD == nil || detail.MarketCapLowLiquidity {
+		t.Errorf("market_cap_usd = %q fdv_usd = %q low_liquidity = %v, want both served unflagged",
+			strOrEmpty(detail.MarketCapUSD), strOrEmpty(detail.FDVUSD), detail.MarketCapLowLiquidity)
+	}
+}
+
 // TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset: listing and /v1/assets/{id} must agree on whether a cap is
 // published. FDV is asserted too, since publishing a bigger fdv_usd while withholding market_cap_usd defeats the guard.
 func TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset(t *testing.T) {

@@ -508,6 +508,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		// No price (no reader wired, or lookup found none): nothing to compute against.
 		return
 	}
+	// A low-volume day against the whole XLM float would trip the turnover ratio; the listing exempts native too.
+	ceiling := !asset.Equal(canonical.NativeAsset())
 	if detail.SupplyStale {
 		// Today's price times a supply unobserved for longer than preciseSupplyMaxAge is not a
 		// market cap; supply_as_of says how old it is and flags.stale marks the body.
@@ -543,9 +545,9 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if mc, err := usdMarketValue(snap.CirculatingSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("market_cap_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+		} else if ceiling && capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// The ceiling tests the computed FIGURE, so unlike the floor it can only run here;
-			// detail and listing must agree on the verdict.
+			// detail and listing must agree on the verdict, XLM's exemption included.
 			detail.MarketCapLowLiquidity = true
 			detail.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		} else {
@@ -558,7 +560,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if fdv, err := usdMarketValue(snap.MaxSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+		} else if ceiling && capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// FDV is computed over MAX supply, so it can breach the ceiling even when the cap did
 			// not. Flag it as the cap branch does: a withheld fdv_usd with no flag would read as
 			// "no max_supply on record".
