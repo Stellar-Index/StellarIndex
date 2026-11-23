@@ -42,6 +42,17 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
 # Stub: LIVE_MODE / ARCHIVE_MODE = ok | fail | empty per bucket.
 mkdir -p "$TMP/bin" "$TMP/textfile"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$TMP/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/bin/mv"
+fi
 cat > "$TMP/bin/mc" <<'SH'
 #!/usr/bin/env bash
 [ "$1" = "ls" ] || exit 64

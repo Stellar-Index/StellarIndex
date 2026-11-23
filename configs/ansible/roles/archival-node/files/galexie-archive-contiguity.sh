@@ -212,7 +212,7 @@ printf 'galexie_archive_unparseable_lines %s\n' "$DROPPED" >> "$TMP"
 # node_exporter runs unprivileged and SILENTLY skips an unreadable textfile; set the mode
 # explicitly rather than inheriting umask.
 chmod 644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"
 trap - EXIT
 
 # Published; now be loud. A withheld line is a defect here or in what mc answered. The good

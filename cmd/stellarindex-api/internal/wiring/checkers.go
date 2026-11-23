@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -54,27 +55,32 @@ func (c RedisChecker) Ping(ctx context.Context) error {
 }
 
 // redisOutageDetail is the public readyz text for a Redis outage past the dwell.
-const redisOutageDetail = "redis unreachable longer than api.rate_limit_dwell: keyed and rate-limited routes answer 503"
+const redisOutageDetail = "redis failing rate-limit writes longer than api.rate_limit_dwell: keyed and rate-limited routes answer 503"
 
-// RedisOutageChecker is critical and fails only while its DwellClock is failing closed, i.e. when the Redis-backed limiters answer
-// 503. Its clock is fed by readiness pings alone, so a drained instance, which gets no traffic, still sees Redis recover.
+// RedisOutageChecker is critical and fails only while its probe bucket fails closed, i.e. when the Redis-backed limiters answer 503.
+// The probe runs the limiters' own write script, not PING: a Redis that answers PING but refuses writes (MISCONF, OOM under
+// noeviction, NOREPLICAS) closes every limited route too. Its dwell clock is fed by readiness probes alone, so a drained instance,
+// which gets no traffic, still sees Redis recover.
 type RedisOutageChecker struct {
-	RDB   redis.UniversalClient
-	Clock *ratelimit.DwellClock
+	Probe *ratelimit.Bucket
 }
 
 func (RedisOutageChecker) Name() string   { return "redis_outage" }
 func (RedisOutageChecker) Critical() bool { return true }
 func (c RedisOutageChecker) Ping(ctx context.Context) error {
-	if err := c.RDB.Ping(ctx).Err(); err != nil {
-		c.Clock.Failure()
-		if c.Clock.FailingClosed() {
-			return v1.NewReadyzPublicError(redisOutageDetail)
-		}
-		return nil
+	if _, err := c.Probe.Take(ctx, "probe"); errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		return v1.NewReadyzPublicError(redisOutageDetail)
 	}
-	c.Clock.Success()
 	return nil
+}
+
+// newRedisOutageChecker builds the probe bucket under its own key prefix with a limit no probe rate reaches; a nil now means time.Now.
+func newRedisOutageChecker(rdb redis.UniversalClient, dwell time.Duration, now func() time.Time) RedisOutageChecker {
+	opts := []ratelimit.Option{ratelimit.WithKeyPrefix("rl:readyz:"), ratelimit.WithDwellTime(dwell)}
+	if now != nil {
+		opts = append(opts, ratelimit.WithClock(now))
+	}
+	return RedisOutageChecker{Probe: ratelimit.New(rdb, math.MaxInt32, time.Minute, opts...)}
 }
 
 // RedisOutageReadyChecks returns the outage checker only when Redis is configured and a Redis-backed limiter exists; without one, a
@@ -83,7 +89,7 @@ func RedisOutageReadyChecks(rdb redis.UniversalClient, redisLimited bool, dwell 
 	if rdb == nil || !redisLimited {
 		return nil
 	}
-	return []v1.ReadyChecker{RedisOutageChecker{RDB: rdb, Clock: ratelimit.NewDwellClock(dwell, nil)}}
+	return []v1.ReadyChecker{newRedisOutageChecker(rdb, dwell, nil)}
 }
 
 // NonstandardDecimalsRefreshTimeout bounds each nonstandard-decimals cache load, the blocking startup one included.

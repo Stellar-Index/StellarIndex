@@ -88,6 +88,18 @@ mkdir -p "$FAKE/sys/vm" "$TMP/bin"
 : > "$TMP/bin/clickhouse"
 : > "$TMP/bin/postgres"
 echo 1048576 > "$FAKE/sys/vm/max_map_count"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$TMP/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/bin/mv"
+fi
+export PATH="$TMP/bin:$PATH"
 
 make_proc() {  # make_proc <pid> <exe-target> <maps-line-count>
   mkdir -p "$FAKE/$1"

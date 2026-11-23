@@ -44,8 +44,7 @@ type Bucket struct {
 	dwell *DwellClock
 }
 
-// DwellClock tracks how long Redis has been failing against a dwell window, safe for concurrent use; [Bucket] and the readiness
-// probe each own one, so the probe can report fail-closed without depending on request traffic.
+// DwellClock tracks how long Redis has been failing against a dwell window, safe for concurrent use; each [Bucket] owns one.
 type DwellClock struct {
 	dwell time.Duration
 	now   func() time.Time
@@ -103,17 +102,6 @@ func (c *DwellClock) Success() {
 		c.redisErrorSince = time.Time{}
 		c.healthySince = time.Time{}
 	}
-}
-
-// FailingClosed reports whether a Redis failure now would fail closed: the error clock has run longer than the dwell.
-func (c *DwellClock) FailingClosed() bool {
-	if c.dwell < 0 {
-		return false
-	}
-	now := c.now()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return !c.redisErrorSince.IsZero() && now.Sub(c.redisErrorSince) > c.dwell
 }
 
 // Option configures a Bucket at construction.

@@ -70,6 +70,15 @@
       is not installed or has no /etc/pgbackrest/pgbackrest.conf on
       {{ inventory_hostname }}: provision pgBackRest and its repository first.
 
+- name: assert replication slots have a WAL retention cap
+  assert:
+    that:
+      - patroni_max_slot_wal_keep_size | string is match('^[1-9][0-9]*(MB|GB|TB)$')
+    fail_msg: >-
+      patroni_max_slot_wal_keep_size must be a positive size such as 64GB. Patroni
+      keeps a slot per member, so with no cap (-1) one stuck replica holds WAL on
+      the primary until its data volume fills and the cluster has no writable primary.
+
 - name: assert vault contents present
   assert:
     that:

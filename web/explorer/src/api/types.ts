@@ -26635,6 +26635,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            429: components["responses"]["RateLimited"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -26715,6 +26716,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            429: components["responses"]["RateLimited"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

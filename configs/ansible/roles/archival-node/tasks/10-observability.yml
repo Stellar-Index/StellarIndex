@@ -385,7 +385,7 @@
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles.
       chmod 644 "$TMP"
-      mv "$TMP" "$DIR/galexie_catchup.prom"
+      mv -T "$TMP" "$DIR/galexie_catchup.prom"
       trap - EXIT
 
 - name: galexie catchup-probe service unit
@@ -633,7 +633,7 @@
       # the collector silently skips it (the same textfile-permissions
       # trap as the galexie catchup probe above).
       chmod 644 "$TMP"
-      mv "$TMP" "$OUT"
+      mv -T "$TMP" "$OUT"
       trap - EXIT
 
 - name: stellar-stack version-lag probe service unit
@@ -862,7 +862,7 @@
       # without this the collector silently skips the file (the same
       # textfile-permissions trap as the galexie catchup probe).
       chmod 644 "$TMP"
-      mv "$TMP" "$OUT"
+      mv -T "$TMP" "$OUT"
       trap - EXIT
   tags: [observability]
 
@@ -1678,7 +1678,7 @@
       # mktemp creates 0600; node_exporter runs unprivileged and
       # SILENTLY skips unreadable textfiles.
       chmod 644 "$TMP"
-      mv "$TMP" "$DIR/timescale_jobs.prom"
+      mv -T "$TMP" "$DIR/timescale_jobs.prom"
       trap - EXIT
   notify: Reload systemd
 
