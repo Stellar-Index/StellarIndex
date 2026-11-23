@@ -277,6 +277,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	excluded := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsWithheld })
+	unread := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsUnread })
 	snapshots, dropped, windowsUnknown := s.dropFrozenBuckets(ctx, asset, snapshots)
 
 	out := make([]SEP40Price, len(snapshots))
@@ -295,7 +296,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	// below the surface's baseline: stale as well as triangulated, the
 	// rule lastprice/x_last_price follow. A series short of the buckets a recovered freeze refused is a partial answer.
 	writeJSON(w, out, markFillsWithheld(Flags{
-		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown,
+		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown || unread,
 		FrozenChecked: held.checked && !windowsUnknown,
 	}, excluded))
 }
@@ -400,8 +401,8 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		}
 	}
 	if len(best) > 0 {
-		if failed.excluded && !s.oracleSeriesLive(best, bestAt) {
-			best = seriesFillsWithheld(best)
+		if !s.oracleSeriesLive(best, bestAt) {
+			best = seriesFillsWithheld(best, failed.excluded, failed.unread)
 		}
 		return best, served, viaPeg, directWithheld, nil
 	}
@@ -453,12 +454,15 @@ func (s *Server) oraclePegSeries(
 	return snaps, newestSnapshotTime(snaps), served, true
 }
 
-// seriesFillsWithheld marks an older series served because an exclusion withheld a newer one: the answer is not what an
-// unexcluded market would give. The reader's slice is copied, not mutated.
-func seriesFillsWithheld(snaps []PriceSnapshot) []PriceSnapshot {
+// seriesFillsWithheld marks an older series served because a newer one was withheld: by an exclusion (the answer is not what an
+// unexcluded market would give) or by an unreadable exclusion set (unknown). The reader's slice is copied, not mutated.
+func seriesFillsWithheld(snaps []PriceSnapshot, excluded, unread bool) []PriceSnapshot {
+	if !excluded && !unread {
+		return snaps
+	}
 	out := slices.Clone(snaps)
 	for i := range out {
-		out[i].FillsWithheld = true
+		out[i].FillsWithheld, out[i].FillsUnread = out[i].FillsWithheld || excluded, out[i].FillsUnread || unread
 	}
 	return out
 }
@@ -501,10 +505,11 @@ func (s *Server) pegSeriesClean(ctx context.Context, asset, quote canonical.Asse
 }
 
 // oracleLegErrors keeps what the peg walk's failed legs said: a withheld verdict outranks the
-// first read error. excluded: some leg was withheld by a source exclusion, the only refusal an older series fills.
+// first read error. excluded: some leg was withheld by a source exclusion; unread: by an unreadable exclusion set. These are the
+// only refusals an older series fills.
 type oracleLegErrors struct {
-	withheld, first error
-	excluded        bool
+	withheld, first  error
+	excluded, unread bool
 }
 
 func (e *oracleLegErrors) note(err error) {
@@ -512,6 +517,7 @@ func (e *oracleLegErrors) note(err error) {
 		e.withheld = err
 	}
 	e.excluded = e.excluded || withheldByExclusion(err)
+	e.unread = e.unread || withheldExclusionsUnread(err)
 	if e.first == nil {
 		e.first = err
 	}
@@ -519,6 +525,11 @@ func (e *oracleLegErrors) note(err error) {
 
 func withheldByExclusion(err error) bool {
 	return errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldSourceExcluded
+}
+
+func withheldExclusionsUnread(err error) bool {
+	var e *withheldError
+	return errors.As(err, &e) && e.unread
 }
 
 func (e oracleLegErrors) err() error {
@@ -548,11 +559,11 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 // walk, plus the spelling that served it. An error is returned only when no spelling served.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
-		firstErr error
-		excluded bool
-		best     []PriceSnapshot
-		bestAt   time.Time
-		served   canonical.Asset
+		firstErr         error
+		excluded, unread bool
+		best             []PriceSnapshot
+		bestAt           time.Time
+		served           canonical.Asset
 	)
 	for _, a := range assetAliases(asset) {
 		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
@@ -561,6 +572,7 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 				firstErr = err
 			}
 			excluded = excluded || withheldByExclusion(err)
+			unread = unread || withheldExclusionsUnread(err)
 			continue
 		}
 		if len(snapshots) == 0 {
@@ -575,8 +587,8 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 		}
 	}
 	if len(best) > 0 {
-		if excluded && !s.oracleSeriesLive(best, bestAt) {
-			best = seriesFillsWithheld(best)
+		if !s.oracleSeriesLive(best, bestAt) {
+			best = seriesFillsWithheld(best, excluded, unread)
 		}
 		return best, bestAt, served, nil
 	}

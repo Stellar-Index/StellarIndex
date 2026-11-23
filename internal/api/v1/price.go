@@ -341,6 +341,8 @@ type PriceSnapshot struct {
 	PegReadFailed bool `json:"-"`
 	// FillsWithheld: a source exclusion removed buckets from the series this snapshot was served in; never on the wire.
 	FillsWithheld bool `json:"-"`
+	// FillsUnread: this series stands in for a newer one withheld because the exclusions were unreadable; never on the wire.
+	FillsUnread bool `json:"-"`
 	// BucketSources: the sources that fed a series bucket, so a peg bucket is judged on them; never on the wire.
 	BucketSources []string `json:"-"`
 

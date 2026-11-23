@@ -105,6 +105,48 @@ func TestOraclePrices_DormantFallbackAfterWithheldIsFlagged(t *testing.T) {
 	}
 }
 
+// TestOraclePrices_DormantFallbackAfterUnreadExclusionsIsDegraded: when the exclusion set could not be read for the newer
+// series, the older one served in its place is degraded and not cached, but names no exclusion, for a peg leg and an alias alike.
+func TestOraclePrices_DormantFallbackAfterUnreadExclusionsIsDegraded(t *testing.T) {
+	usdc, _ := canonical.ParseAsset(exclUSDC)
+	now := time.Now().UTC().Truncate(time.Minute)
+	dormant := func(base string) []v1.PriceSnapshot {
+		return []v1.PriceSnapshot{v1.VWAP1mToSnapshot(base, "fiat:USD", "0.1900", now.Add(-21*24*time.Hour))}
+	}
+	unread := v1.PriceWithheldError(pricingguard.WithheldExclusionsUnread)
+	cases := map[string]v1.Options{
+		"peg leg unread": {
+			Prices: &stubPriceReader{
+				recent:    map[string][]v1.PriceSnapshot{"native/fiat:USD": dormant("native")},
+				errByPair: map[string]error{"native/" + exclUSDC: unread},
+			},
+			USDPeggedClassics: []canonical.Asset{usdc},
+		},
+		"alias spelling unread": {
+			Prices: &stubPriceReader{
+				recent:    map[string][]v1.PriceSnapshot{"crypto:XLM/fiat:USD": dormant("crypto:XLM")},
+				errByPair: map[string]error{"native/fiat:USD": unread},
+			},
+		},
+	}
+	for name, opts := range cases {
+		ts := startHTTPTest(t, v1.New(opts).Handler())
+		resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records=5")
+		var env struct {
+			Data  []v1.SEP40Price `json:"data"`
+			Flags v1.Flags        `json:"flags"`
+		}
+		mustDecode(t, resp, &env)
+		if resp.StatusCode != http.StatusOK || len(env.Data) != 1 || env.Flags.FillsWithheldReason != "" {
+			t.Errorf("%s: %d %+v %+v, want the dormant series with no fills_withheld_reason", name, resp.StatusCode, env.Data, env.Flags)
+		}
+		// Degraded never reaches the wire; no-store is how it shows.
+		if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+			t.Errorf("%s: Cache-Control %q, want no-store (degraded)", name, cc)
+		}
+	}
+}
+
 // TestOraclePrices_PegSeriesJudgedUnderRequestedPair: prices() for native in fiat:USD with no fiat:USD series is served from
 // the native/USDC book, so an exclusion stored under native/fiat:USD must reach those buckets: a covered bucket is not
 // served, the survivors carry fills_withheld_reason, and a series the exclusion empties is withheld, never 200 [].
