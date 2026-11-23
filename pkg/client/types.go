@@ -385,6 +385,8 @@ type AssetDetail struct {
 	// declaration), when USD price is unavailable, or when suppressed
 	// (see MarketCapLowLiquidity and MarketCapDecimalsMismatch).
 	FDVUSD *string `json:"fdv_usd,omitempty"`
+	// FDVWithheldReason says why FDVUSD alone is null beside a served MarketCapUSD (e.g. "low_liquidity").
+	FDVWithheldReason string `json:"fdv_withheld_reason,omitempty"`
 
 	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed (served null) by
 	// either guard:
