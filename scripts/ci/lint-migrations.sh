@@ -422,28 +422,81 @@ echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under
 # A down that narrows a CHECK must REFUSE while offending rows exist
 # (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not DELETE
 # them: a rollback would otherwise discard production rows and report success.
-# Any executable DELETE/TRUNCATE in a down is a violation unless its line carries
-# `-- lint-down-delete:ok <reason>` (e.g. removing only the seed row the matching
-# up inserted).
-del_re='^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE)\b'
+# Any executable DELETE/TRUNCATE/drop_chunks in a down is a violation unless its
+# line carries `-- lint-down-delete:ok <reason>` (e.g. removing only the seed row
+# the matching up inserted). It is matched anywhere on the line outside quoted
+# strings and comments: inside a one-line DO block, after a CTE's `(`, or as a
+# DELETE whose FROM is on the next line. A character scanner blanks '…' / E'…'
+# strings, "…" identifiers and -- / nested /* */ comments; dollar-quoted text
+# is always scanned as code (a DO body is code), its own strings and comments
+# ending at its closing tag. A raw line opening with DELETE FROM / TRUNCATE is
+# a hit whatever the scanner made of it.
+del_re='(^|[^a-z0-9_])(delete([[:space:]]+from([^a-z0-9_]|$)|[[:space:]]*$)|truncate([[:space:]]|;|$)|drop_chunks[[:space:]]*[(])'
 down_files=0
-for f in migrations/*.down.sql; do
+for f in "${MIG_DIR:-migrations}"/*.down.sql; do
   [ -e "$f" ] || continue
   down_files=$((down_files + 1))
-  hits=$(grep -nEi "$del_re" "$f" | grep -viE -- '-- *lint-down-delete:ok +[^ ]' || true)
+  # HIT <n>:<line> for an unmarked delete, STALE <n>:<line> for a marker on a line without one.
+  p5="$(awk -v re="$del_re" '
+    function tagat(i,   t) { # the $tag$ opening at i, or ""
+      if (substr(buf, i - 1, 1) ~ /[A-Za-z0-9_]/) return ""
+      t = substr(buf, i + 1, 64)
+      if (match(t, /^([A-Za-z_][A-Za-z0-9_]*)?[$]/)) return substr(buf, i, RLENGTH + 1)
+      return ""
+    }
+    { raw[NR] = $0; buf = buf $0 "\n" }
+    END {
+      n = length(buf); ln = 1; out = ""; mode = ""; sp = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(buf, i, 1); c2 = substr(buf, i, 2)
+        if (c == "\n") { code[ln++] = out; out = ""; if (mode == "line") mode = ""; continue }
+        if (c == "$" && sp && substr(buf, i, length(stk[sp])) == stk[sp]) {
+          out = out stk[sp]; i += length(stk[sp]) - 1; sp--; mode = ""; continue
+        }
+        if (mode == "sq" || mode == "eq") {
+          if (mode == "eq" && c == "\\") { if (substr(buf, i + 1, 1) != "\n") i++; continue }
+          if (c2 == "'"''"'") { i++; continue }
+          if (c == "'"'"'") { mode = ""; out = out " " }
+          continue
+        }
+        if (mode == "dq") { if (c2 == "\"\"") i++; else if (c == "\"") { mode = ""; out = out " " }; continue }
+        if (mode == "blk") {
+          if (c2 == "/*") { bd++; i++ } else if (c2 == "*/") { i++; if (--bd == 0) { mode = ""; out = out " " } }
+          continue
+        }
+        if (mode == "line") continue
+        if (c == "'"'"'") {
+          mode = (tolower(substr(buf, i - 1, 1)) == "e" && substr(buf, i - 2, 1) !~ /[A-Za-z0-9_$]/) ? "eq" : "sq"
+          out = out " "; continue
+        }
+        if (c == "\"") { mode = "dq"; out = out " "; continue }
+        if (c2 == "--") { mode = "line"; i++; continue }
+        if (c2 == "/*") { mode = "blk"; bd = 1; i++; out = out " "; continue }
+        if (c == "$" && (t = tagat(i)) != "") { stk[++sp] = t; out = out t; i += length(t) - 1; continue }
+        out = out c
+      }
+      for (k = 1; k <= NR; k++) {
+        r = tolower(raw[k]); ok = (r ~ /-- *lint-down-delete:ok/)
+        del = (tolower(code[k]) ~ re) || (r ~ /^[[:space:]]*(delete[[:space:]]+from|truncate)([^a-z0-9_]|$)/)
+        if (del && !(r ~ /-- *lint-down-delete:ok +[^ ]/)) print "HIT " k ":" raw[k]
+        else if (ok && !del) print "STALE " k ":" raw[k]
+      }
+    }' "$f")"
+  hits="$(sed -n 's/^HIT //p' <<<"$p5")"
   if [ -n "$hits" ]; then
     echo "lint-migrations ❌ ${f}: down deletes rows silently — refuse with a RAISE EXCEPTION guard instead (see 0070's down):" >&2
     indent "$hits" >&2
     fail=1
   fi
-  stale=$(grep -nEi -- '-- *lint-down-delete:ok' "$f" | grep -vEi "^[0-9]+:${del_re#^}" || true)
+  stale="$(sed -n 's/^STALE //p' <<<"$p5")"
   if [ -n "$stale" ]; then
     echo "lint-migrations ❌ ${f}: stale lint-down-delete:ok marker (line is not a DELETE/TRUNCATE) — remove it:" >&2
     indent "$stale" >&2
     fail=1
   fi
 done
-if [ "$down_files" -eq 0 ]; then
+# Vacuity is judged on the real tree; a test fixture (MIG_DIR) may carry no down.
+if [ "$down_files" -eq 0 ] && [ -z "${MIG_DIR:-}" ]; then
   echo "lint-migrations ❌ no migrations/*.down.sql found — the down-delete pass cannot pass vacuously" >&2
   fail=1
 fi
