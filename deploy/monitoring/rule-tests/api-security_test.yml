@@ -46,3 +46,69 @@ tests:
       - eval_time: 10m
         alertname: stellarindex_api_cors_wildcard_in_prod
         exp_alerts: []
+
+  - interval: 1m
+    name: sustained lineage write failures (a missing ACL grant) file a ticket per op
+    input_series:
+      - series: 'stellarindex_apikey_lineage_write_failures_total{op="slide",instance="api-1"}'
+        values: '0+3x60'
+      - series: 'stellarindex_apikey_lineage_write_failures_total{op="mint",instance="api-1"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_apikey_lineage_write_failures
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: stellarindex_apikey_lineage_write_failures
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              op: slide
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-security.md#stellarindex_apikey_lineage_write_failures
+              summary: "API-key lineage writes (op=slide) have failed for 30 minutes (P3)"
+              description: |
+                stellarindex_apikey_lineage_write_failures_total{op="slide"} has
+                increased at least 3 times in every 90-minute window for 30 minutes.
+                No request fails, but lineage records go unwritten or undeleted.
+                Check first that the redis-sentinel role was applied after the
+                binary: the ACL must grant ~apikey-lineage:*.
+
+  - interval: 1m
+    name: sparse lineage write failures on a quiet host (one every 20 minutes) file a ticket
+    input_series:
+      - series: 'stellarindex_apikey_lineage_write_failures_total{op="mint",instance="api-1"}'
+        values: '0x19 1x19 2x19 3x19 4x19 5x19 6x19 7x19'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_apikey_lineage_write_failures
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              op: mint
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-security.md#stellarindex_apikey_lineage_write_failures
+              summary: "API-key lineage writes (op=mint) have failed for 30 minutes (P3)"
+              description: |
+                stellarindex_apikey_lineage_write_failures_total{op="mint"} has
+                increased at least 3 times in every 90-minute window for 30 minutes.
+                No request fails, but lineage records go unwritten or undeleted.
+                Check first that the redis-sentinel role was applied after the
+                binary: the ACL must grant ~apikey-lineage:*.
+
+  - interval: 1m
+    name: one lineage write blip never files a ticket
+    input_series:
+      - series: 'stellarindex_apikey_lineage_write_failures_total{op="delete",instance="api-1"}'
+        values: '0x5 1x55'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_apikey_lineage_write_failures
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: stellarindex_apikey_lineage_write_failures
+        exp_alerts: []

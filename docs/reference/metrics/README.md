@@ -780,6 +780,12 @@ Counter, label `outcome` (`rejected` / `throttled`).
 
 Credentials the Auth middleware rejected: `rejected` is 401/403, `throttled` is 429 from the failed-auth throttle. 503s are not counted. Pre-seeded at zero. Alert: `stellarindex_failed_auth_rate_high` (on `rejected` only).
 
+### `stellarindex_apikey_lineage_write_failures_total`
+
+Counter, label `op` (`mint` / `slide` / `delete`).
+
+Best-effort `apikey-lineage:` record writes that failed: NOPERM before the Redis ACL grants `~apikey-lineage:*`, an outage, or OOM. No authentication result depends on them. A `mint` failure leaves a key without a lineage record until `stellarindex-ops apikey-lineage-backfill -write` runs; `delete` counts only ACL denials (no record could exist), other delete failures fail the revoke. Not alerted. Pre-seeded at zero.
+
 ### `stellarindex_admin_key_budget_clamps_total`
 
 Counter, label `outcome` (`lowered` / `failed`).

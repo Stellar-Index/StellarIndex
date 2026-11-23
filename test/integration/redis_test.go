@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -31,6 +32,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
@@ -851,6 +853,8 @@ const (
 	aclFixtureAppPwd = "index-acl-fixture" // gitleaks:allow — throwaway container ACL user, not a credential
 )
 
+const aclLineagePattern = "~apikey-lineage:*"
+
 // shippedStellarindexACLRule returns the `user stellarindex …` rule of
 // the shipped template as ACL SETUSER arguments, with the vaulted
 // password placeholder replaced by the fixture word.
@@ -931,11 +935,93 @@ func TestAPIKeyIndex_RealRedisACL(t *testing.T) {
 		}
 	})
 
+	t.Run("lineage grant not yet applied: auth, mint and revoke as before; backfill after the grant", func(t *testing.T) {
+		if err := admin.FlushAll(ctx).Err(); err != nil {
+			t.Fatalf("flushall: %v", err)
+		}
+		setACLUser(ctx, t, admin, "stellarindex", withoutPattern(shipped, aclLineagePattern))
+		app := appClient(t, admin, "stellarindex")
+		store := auth.NewRedisAPIKeyStore(app)
+		validator := auth.NewRedisAPIKeyValidator(app)
+		const owner = "account:lineage-gap"
+		root, rootPlain, err := store.Create(ctx, auth.CreateAPIKeyRequest{Identifier: owner, SelfService: true})
+		if err != nil {
+			t.Fatalf("Create while the lineage family is denied: %v", err)
+		}
+		rootSub, err := validator.Lookup(ctx, rootPlain)
+		if err != nil {
+			t.Fatalf("Lookup while the lineage family is denied: %v", err)
+		}
+		_, childPlain, err := store.Create(ctx, auth.ChildKeyRequest(rootSub, "c", nil))
+		if err != nil {
+			t.Fatalf("delegated Create while the lineage family is denied: %v", err)
+		}
+		if _, err := validator.Lookup(ctx, childPlain); err != nil {
+			t.Fatalf("child Lookup while the lineage family is denied: %v", err)
+		}
+		lineage := cachekeys.APIKeyLineage(auth.HashAPIKey(rootPlain)).String()
+		if n, err := admin.Exists(ctx, lineage).Result(); err != nil || n != 0 {
+			t.Fatalf("lineage record exists=%d err=%v under a denying ACL", n, err)
+		}
+		if rep, err := store.BackfillAncestorHashes(ctx, false); err != nil || !rep.LineageDenied {
+			t.Fatalf("backfill under a denying ACL: denied=%v err=%v; want reported denied", rep.LineageDenied, err)
+		}
+
+		if err := admin.Do(ctx, "ACL", "SETUSER", "stellarindex", aclLineagePattern).Err(); err != nil {
+			t.Fatalf("grant %s: %v", aclLineagePattern, err)
+		}
+		if rep, err := store.BackfillAncestorHashes(ctx, true); err != nil || len(rep.LineageMissing) != 2 {
+			t.Fatalf("backfill -write after the grant: missing=%v err=%v; want both keys", rep.LineageMissing, err)
+		}
+		if rep, err := store.BackfillAncestorHashes(ctx, false); err != nil || len(rep.LineageMissing) != 0 {
+			t.Fatalf("dry run after -write: missing=%v err=%v; want 0", rep.LineageMissing, err)
+		}
+		// A fresh validator, so the slide the denied Lookup throttled runs now: EXPIRE XX and EXPIRE GT.
+		slides := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpSlide))
+		if _, err := auth.NewRedisAPIKeyValidator(app).Lookup(ctx, childPlain); err != nil {
+			t.Fatalf("child Lookup after the grant: %v", err)
+		}
+		if got := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpSlide)); got != slides {
+			t.Fatalf("slide failures %v -> %v after the grant: the shipped ACL refuses the slide", slides, got)
+		}
+		// Erasure under the shipped ACL: the credentials, then the owner set's page script.
+		const erased = "account:lineage-erase"
+		_, erasedPlain, err := store.Create(ctx, auth.CreateAPIKeyRequest{Identifier: erased, SelfService: true})
+		if err != nil {
+			t.Fatalf("Create after the grant: %v", err)
+		}
+		erasedSub, err := validator.Lookup(ctx, erasedPlain)
+		if err != nil {
+			t.Fatalf("Lookup after the grant: %v", err)
+		}
+		if _, _, err := store.Create(ctx, auth.ChildKeyRequest(erasedSub, "c", nil)); err != nil {
+			t.Fatalf("delegated Create after the grant: %v", err)
+		}
+		deletes := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete))
+		if ids, err := store.DeleteKeysForIdentifier(ctx, erased); err != nil || len(ids) != 2 {
+			t.Fatalf("DeleteKeysForIdentifier after the grant: %v, err %v; want both keys", ids, err)
+		}
+		if got := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete)); got != deletes {
+			t.Fatalf("lineage delete failures %v -> %v: the shipped ACL refuses the erasure's lineage deletes", deletes, got)
+		}
+		if n, err := admin.Exists(ctx, cachekeys.APIKeyLineageOwner(erased).String()).Result(); err != nil || n != 0 {
+			t.Fatalf("erased account's owner set exists=%d err=%v, want gone", n, err)
+		}
+		if err := store.RevokeKeyByID(ctx, owner, root.KeyID); err != nil {
+			t.Fatalf("revoke after the grant: %v", err)
+		}
+		for _, pattern := range []string{"apikey:*", "apikey-lineage:*"} {
+			if left, err := admin.Keys(ctx, pattern).Result(); err != nil || len(left) != 0 {
+				t.Fatalf("%d %s keys err=%v after revoking the tree, want none", len(left), pattern, err)
+			}
+		}
+	})
+
 	t.Run("ACL not yet applied: issuance and revocation work, nothing half-written", func(t *testing.T) {
 		if err := admin.FlushAll(ctx).Err(); err != nil {
 			t.Fatalf("flushall: %v", err)
 		}
-		setACLUser(ctx, t, admin, "stellarindex", withoutPattern(shipped, aclIndexPattern))
+		setACLUser(ctx, t, admin, "stellarindex", withoutPattern(withoutPattern(shipped, aclIndexPattern), aclLineagePattern))
 		app := appClient(t, admin, "stellarindex")
 		store := auth.NewRedisAPIKeyStore(app)
 		validator := auth.NewRedisAPIKeyValidator(app)

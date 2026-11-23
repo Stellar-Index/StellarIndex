@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 328 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 329 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -506,6 +506,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_priceless_coverage_check_stale` | `time() - priceless_coverage_check_last_success_unix{job="stellarindex_aggregator"}` | > 1800 s, 30 min (tripwire wedged) | ticket | [assets-popular-priceless](runbooks/data-freshness.md#stellarindex_assets_popular_priceless) |
 | `stellarindex_priceless_coverage_check_errors` | `increase(priceless_coverage_check_runs_total{outcome="error"}[15m])` | > 0 for 15 min | ticket | [assets-popular-priceless](runbooks/data-freshness.md#stellarindex_assets_popular_priceless) |
 | `stellarindex_api_cors_wildcard_in_prod` | `increase(api_cors_decisions_total{outcome="allowed_wildcard"}[15m])` | > 0 for 5 min (wildcard CORS matching real traffic on r1) | ticket | [api-cors-wildcard](runbooks/api-security.md#stellarindex_api_cors_wildcard_in_prod) |
+| `stellarindex_apikey_lineage_write_failures` | `sum by (op) (increase(apikey_lineage_write_failures_total[90m]))` | >= 3 for 30 min (sustained, per op; a missing ACL grant fires, so do sparse failures on a quiet host) | ticket | [apikey-lineage-write-failures](runbooks/api-security.md#stellarindex_apikey_lineage_write_failures) |
 | `stellarindex_cross_region_divergence` | `rate(cross_region_divergences_total[15m])` per (pair, metric) | > 0 for 5 min (regions disagree on a closed bucket) | ticket | [cross-region-divergence](runbooks/cross-region.md#stellarindex_cross_region_divergence) |
 | `stellarindex_cross_region_fetch_errors` | `rate(cross_region_fetch_errors_total[15m])` per (region, pair, metric) | > 0 for 10 min (that region not compared) | ticket | [cross-region-divergence](runbooks/cross-region.md#stellarindex_cross_region_fetch_errors) |
 | `stellarindex_cross_region_check_stale` | `time() - cross_region_last_run_timestamp_seconds` | > 300 s, 5 min | ticket | [cross-region-divergence](runbooks/cross-region.md#stellarindex_cross_region_check_stale) |
