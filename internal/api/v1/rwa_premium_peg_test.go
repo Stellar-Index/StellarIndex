@@ -130,11 +130,19 @@ func TestRWAPremium_ADayWithNoUsablePegObservationIsWithheldNotAssumedAtPar(t *t
 		})
 	}
 
-	// Before USDC's first observed day there was no feed to judge with: the day is not withheld on its account.
+	// Before USDC's first observed day the pooled dollar was not observed either: that day is unobserved, not at par.
 	market := &stubMarketHistory{rows: []timescale.MarketDay{premMarket(id, 1, "1.08"), premMarket(id, 2, "1.06"), pegDay(2, "1.0")}}
 	v, _ := getRWAPremiumEnvelope(t, premPegServer(t, market, nil))
-	if len(v.Series) != 1 || len(v.Series[0].Points) != 2 || v.Series[0].PegUnobservedDays != 0 {
-		t.Errorf("series = %+v, want both days published and none unobserved", v.Series)
+	if len(v.Series) != 1 || len(v.Series[0].Points) != 1 || !v.Series[0].Points[0].T.Time().Equal(histTime(2)) ||
+		v.Series[0].PegUnobservedDays != 1 {
+		t.Errorf("series = %+v, want only day 2 published and day 1 unobserved", v.Series)
+	}
+
+	// A peg with no observed day at all judges every day unobserved.
+	market.rows = []timescale.MarketDay{premMarket(id, 1, "1.08"), premMarket(id, 2, "1.06")}
+	v, _ = getRWAPremiumEnvelope(t, premPegServer(t, market, nil))
+	if len(v.Series) != 0 || premiumExcluded(v, v1.RWAPremiumExcludedPegUnobserved) != 1 {
+		t.Errorf("series = %+v, excluded = %+v; want none and peg_unobserved", v.Series, v.Excluded)
 	}
 
 	// Every cleared day unobserved: no series, and the reason names it.
@@ -203,7 +211,10 @@ func TestRWAPremium_ASourceExcludedDayIsWithheldAndFlagged(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ex.From, ex.Until = histTime(2), histTime(3)
-			market := &stubMarketHistory{rows: []timescale.MarketDay{premMarket(id, 1, "1.08"), premMarket(id, 2, "1.06")}}
+			// USDC observed at par both days, so only the exclusion can remove day 2.
+			market := &stubMarketHistory{rows: []timescale.MarketDay{
+				premMarket(id, 1, "1.08"), premMarket(id, 2, "1.06"), pegDay(1, "1.0"), pegDay(2, "1.0"),
+			}}
 			v, reason := getRWAPremiumEnvelope(t, premPegServer(t, market, []timescale.SourceExclusion{ex}))
 			if len(v.Series) != 1 || len(v.Series[0].Points) != 1 || !v.Series[0].Points[0].T.Time().Equal(histTime(1)) {
 				t.Fatalf("series = %+v, want one series holding only day 1", v.Series)

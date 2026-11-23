@@ -33,10 +33,8 @@ func (g *rwaPremiumMemberGuard) anchors(day time.Time) bool {
 
 // rwaPegDays is one declared USD peg's own observed dollar market, judged.
 type rwaPegDays struct {
-	// first is the earliest day the read returned for the peg, usable or not; before it there was no feed to judge with.
-	first time.Time
 	// inBand holds only the USABLE days (cleared the thin-market floor, no exclusion covers the peg's book) and whether
-	// each closed inside [depegBand]; a later day absent from it is unobserved, never assumed at par.
+	// each closed inside [depegBand]; any day absent from it, before the peg's first row too, is unobserved, never at par.
 	inBand map[time.Time]bool
 }
 
@@ -64,14 +62,11 @@ func (g rwaPremiumDayGuard) member(c rwaHistoryCandidate, source string) *rwaPre
 	}
 }
 
-// rwaPremiumPegRefusal judges day against every peg whose market had been observed by then; like [proxyDeviationChecked], a
-// missing observation is unchecked, never all-clear.
+// rwaPremiumPegRefusal judges day against every peg the market leg pools; like [proxyDeviationChecked], a missing
+// observation is unchecked, never all-clear.
 func rwaPremiumPegRefusal(pegs []rwaPegDays, day time.Time) string {
 	unobserved := false
 	for _, p := range pegs {
-		if day.Before(p.first) {
-			continue
-		}
 		in, seen := p.inBand[day]
 		if !seen {
 			unobserved = true
@@ -107,9 +102,7 @@ func (s *Server) rwaPremiumDayGuard(ctx context.Context, to time.Time, floor rwa
 		for _, form := range assetAliases(ticker) {
 			books = appendBook(books, canonical.Pair{Base: form, Quote: rwaPremiumHistoryQuote})
 		}
-		if p, ok := rwaPremiumJudgePeg(rows[ticker.String()], floor, func(day time.Time) bool { return covers(books, nil, day) }); ok {
-			g.pegs = append(g.pegs, p)
-		}
+		g.pegs = append(g.pegs, rwaPremiumJudgePeg(rows[ticker.String()], floor, func(day time.Time) bool { return covers(books, nil, day) }))
 	}
 	if !judge {
 		return g, true
@@ -137,35 +130,47 @@ func (s *Server) rwaPremiumDayGuard(ctx context.Context, to time.Time, floor rwa
 }
 
 // rwaPremiumJudgePeg applies the market leg's own thin-market floor and the exclusion set to one peg's days, so a single
-// thin or excluded print can neither pass nor blank a day; ok=false when the peg was never observed.
-func rwaPremiumJudgePeg(days []timescale.MarketDay, floor rwaPremiumDayFloor, excluded func(day time.Time) bool) (rwaPegDays, bool) {
-	if len(days) == 0 {
-		return rwaPegDays{}, false
-	}
-	p := rwaPegDays{first: rwaPremiumFirstObserved(days), inBand: map[time.Time]bool{}}
+// thin or excluded print can neither pass nor blank a day. A peg never observed judges every day unobserved.
+func rwaPremiumJudgePeg(days []timescale.MarketDay, floor rwaPremiumDayFloor, excluded func(day time.Time) bool) rwaPegDays {
+	p := rwaPegDays{inBand: map[time.Time]bool{}}
 	for _, d := range days {
 		day := d.Day.UTC()
 		if rwaPremiumDayClears(d, floor) && !excluded(day) {
 			p.inBand[day] = !outsideDepegBand(d.VWAP)
 		}
 	}
-	p.first = p.first.UTC()
-	return p, true
+	return p
 }
 
-// rwaPremiumPegMarkets reads each declared USD peg's own observed `crypto:<STABLE>/fiat:USD` days, keyed by ticker: the
-// market leg pools those pegs as dollars, so a day its peg was not a dollar is not a dollar price. A peg with no verified
-// ticker cannot be observed and is not judged here.
-func (s *Server) rwaPremiumPegMarkets(ctx context.Context, to time.Time) ([]canonical.Asset, map[string][]timescale.MarketDay, bool) {
-	tickers := make([]canonical.Asset, 0, len(s.USDPeggedClassics))
-	out := map[string][]timescale.MarketDay{}
+// rwaPremiumVerifiedPegs is the ONE list both the market leg's dollar quotes and the peg guard are built from: each declared
+// USD peg the verified catalogue binds to a crypto ticker, and those tickers once each. A peg it cannot bind is never pooled
+// as a dollar, since no market could show the day it was not one.
+func (s *Server) rwaPremiumVerifiedPegs() (pegs, tickers []canonical.Asset) {
+	if s.VerifiedCurrencies == nil {
+		return nil, nil
+	}
+	seen := map[string]struct{}{}
 	for _, peg := range s.USDPeggedClassics {
 		ticker, ok := s.verifiedPegTicker(peg)
-		if _, dup := out[ticker.String()]; !ok || dup {
+		if !ok {
 			continue
 		}
+		pegs = append(pegs, peg)
+		if _, dup := seen[ticker.String()]; !dup {
+			seen[ticker.String()] = struct{}{}
+			tickers = append(tickers, ticker)
+		}
+	}
+	return pegs, tickers
+}
+
+// rwaPremiumPegMarkets reads each pooled USD peg's own observed `crypto:<STABLE>/fiat:USD` days, keyed by ticker: the
+// market leg pools those pegs as dollars, so a day its peg was not a dollar is not a dollar price.
+func (s *Server) rwaPremiumPegMarkets(ctx context.Context, to time.Time) ([]canonical.Asset, map[string][]timescale.MarketDay, bool) {
+	_, tickers := s.rwaPremiumVerifiedPegs()
+	out := map[string][]timescale.MarketDay{}
+	for _, ticker := range tickers {
 		out[ticker.String()] = nil
-		tickers = append(tickers, ticker)
 	}
 	if len(tickers) == 0 {
 		return nil, out, true

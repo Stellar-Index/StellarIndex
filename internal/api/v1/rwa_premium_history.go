@@ -756,7 +756,7 @@ func (s *Server) rwaPremiumMarketDays(
 }
 
 // rwaPremiumUSDQuotes is the set of spellings a dollar may take on the quote side of a market this surface reads. Deliberately
-// NARROW: the verified USD-pegged classic assets in every canonical form plus `fiat:USD`, not the chart's wider stablecoin-ticker
+// NARROW: the USD-pegged classic assets [Server.rwaPremiumVerifiedPegs] admits, in every canonical form, plus `fiat:USD`, not the chart's wider stablecoin-ticker
 // proxy set (trusting a ticker rather than the issuer let an unpegged "USDT" set XLM's all-time high, see [timescale.AssetATH]):
 // a non-dollar quote leg is a false financial claim.
 func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
@@ -771,7 +771,8 @@ func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 		out = append(out, a)
 	}
 	add(rwaPremiumHistoryQuote)
-	for _, peg := range s.USDPeggedClassics {
+	pegs, _ := s.rwaPremiumVerifiedPegs()
+	for _, peg := range pegs {
 		for _, form := range assetAliases(peg) {
 			add(form)
 		}
