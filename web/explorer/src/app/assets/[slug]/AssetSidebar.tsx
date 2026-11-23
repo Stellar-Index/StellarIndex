@@ -12,7 +12,11 @@ import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
-import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+import {
+  LiveAssetPrice,
+  type PriceProvenance,
+  useScaleRefused,
+} from './LiveAssetPrice';
 import { PerformanceRange } from './PerformanceRange';
 import { marketCapNote } from './headerNotes';
 import { bakedAtDeploy } from './priceProvenance';
@@ -117,6 +121,7 @@ export function AssetIdentityCard({
   // Native (and a few sparse rows) can arrive without a `code` — fall
   // back to the slug so the avatar glyph + labels never crash on slice.
   const code = coin.code || coin.slug || '—';
+  const scaleRefused = useScaleRefused(coin.asset_id, priceScaleMismatch);
   return (
     <div className="rounded-card border-line bg-surface border p-4">
       <div className="flex items-start justify-between gap-2">
@@ -145,7 +150,11 @@ export function AssetIdentityCard({
         initialScaleMismatch={priceScaleMismatch}
         initialChangePct={num(coin.change_24h_pct)}
       />
-      <ChangeSummaryStrip assetID={coin.asset_id} className="mt-3" />
+      <ChangeSummaryStrip
+        assetID={coin.asset_id}
+        scaleRefused={scaleRefused}
+        className="mt-3"
+      />
     </div>
   );
 }

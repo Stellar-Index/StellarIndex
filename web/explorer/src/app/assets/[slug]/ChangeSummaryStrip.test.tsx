@@ -97,7 +97,7 @@ describe('ChangeSummaryStrip', () => {
     try {
       render(
         <QueryClientProvider client={client}>
-          <ChangeSummaryStrip assetID="native" />
+          <ChangeSummaryStrip assetID="native" scaleRefused={false} />
         </QueryClientProvider>,
       );
       expect(await screen.findByText(/low since indexed/)).toBeInTheDocument();
@@ -109,5 +109,27 @@ describe('ChangeSummaryStrip', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // /v1/changes scales its USD low by the projection the asset row contradicts.
+  it('renders nothing under a contradicted scale', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ({ data: row }),
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <ChangeSummaryStrip assetID="CTOKEN" scaleRefused />
+      </QueryClientProvider>,
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByTestId('change-summary-strip')).toBeNull();
   });
 });

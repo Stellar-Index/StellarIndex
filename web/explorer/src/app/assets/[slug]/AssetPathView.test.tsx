@@ -81,6 +81,23 @@ describe('AssetPathView', () => {
       expect(screen.getByText('$1,000,000T')).toBeInTheDocument(),
     );
   });
+  // The live row and /v1/price never answer; the shell's own verdict must hold.
+  it('withholds the price on the shell detail’s decimals verdict', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      data: {
+        asset_id: 'CTOKEN',
+        type: 'soroban',
+        code: 'TKN',
+        price_usd: null,
+        price_withheld_reason: 'decimals_mismatch',
+      },
+    });
+    renderAtPath('/assets/ctoken');
+    expect(
+      await screen.findByText('withheld · decimals disagree'),
+    ).toBeInTheDocument();
+  });
+
   it('titles a SEP-41 contract token as a Soroban token', async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({
       data: { asset_id: 'CAS3J7GY', type: 'soroban', code: 'BLND' },

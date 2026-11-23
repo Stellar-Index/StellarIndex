@@ -94,6 +94,22 @@ export function scaleContradicted(row: ScaleRow): boolean {
 }
 
 /**
+ * The page's scale verdict: the live row's, else the build-time one. A row
+ * whose decimals read failed (decimals omitted) cannot vouch for the scale,
+ * so it never clears an earlier refusal.
+ */
+export function resolveScaleRefused(
+  row: (ScaleRow & { decimals?: number | null }) | null | undefined,
+  initialScaleMismatch: boolean | undefined,
+): boolean {
+  if (!row) return Boolean(initialScaleMismatch);
+  return (
+    scaleContradicted(row) ||
+    (Boolean(initialScaleMismatch) && row.decimals == null)
+  );
+}
+
+/**
  * The build-time headline price, its caption and staleness. /v1/price never
  * checks a token's read decimals, so under a contradicted scale only the
  * row's own whole-token fill (global market, declared peg) may stand.

@@ -15,7 +15,11 @@ import { AssetScamCallout } from './AssetScamCallout';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { LiveAssetPrice } from './LiveAssetPrice';
 import { SacRedirect } from './SacRedirect';
-import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
+import {
+  type PriceBasis,
+  provenanceFromBasis,
+  scaleContradicted,
+} from './priceProvenance';
 import { formatCompactUnits } from '@/lib/format';
 import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
@@ -35,6 +39,8 @@ interface AssetShellDetail {
   price_usd?: string | null;
   /** Absent = direct market. See the OpenAPI enum for the other values. */
   price_basis?: PriceBasis;
+  price_withheld_reason?: string | null;
+  market_cap_decimals_mismatch?: boolean;
   unverified_ticker_collision?: boolean;
   unverified_warning?: { note?: string } | null;
   /**
@@ -183,6 +189,7 @@ export function AssetPathView() {
           assetID={d.asset_id}
           initialPrice={d.price_usd ?? null}
           initialProvenance={provenanceFromBasis(d.price_basis, 'vwap1m')}
+          initialScaleMismatch={scaleContradicted(d)}
         />
         {d.unverified_warning?.note && (
           <p className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm">
