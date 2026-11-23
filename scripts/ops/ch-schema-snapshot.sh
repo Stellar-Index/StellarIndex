@@ -288,7 +288,12 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     fi
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  # -T: a directory, or a link to one, planted at $out must not receive the file.
+  if ! mv -T "$tmp" "$out"; then
+    rm -f "$tmp"
+    note "cannot publish $out"
+    [[ "$rc" -eq 0 ]] && rc=1
+  fi
 fi
 
 exit "$rc"

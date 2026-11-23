@@ -412,7 +412,7 @@ Decimals and resolution exposed via `/v1/oracle/decimals` and
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
 | GET | `/v1/account/me` | API key holder info + quota status. |
-| GET | `/v1/account/usage?from=&to=` | Per-day request counts for the authenticated key over the trailing 30 days. Backed by the Redis usage counter the rate-limit middleware writes. Returns `[]` only when the counter isn't wired (Redis-less deployment); the absence is reflected on `/v1/readyz` under `checks`. F-1259 (codex audit-2026-05-12). |
+| GET | `/v1/account/usage?from=&to=` | Per-day request counts for the authenticated account (every key it holds) over the trailing 30 days; an API key or the dashboard session cookie. Backed by the Redis usage counter the rate-limit middleware writes. Returns `[]` only when the counter isn't wired (Redis-less deployment); the absence is reflected on `/v1/readyz` under `checks`. F-1259 (codex audit-2026-05-12). |
 | POST | `/v1/account/keys` | Create a child API key under the calling key (revoking a key also revokes its children). |
 
 Self-service signup flow lives at `https://stellarindex.io/signup`;
@@ -563,9 +563,9 @@ account's `rate_limit_per_min_override` when one is set.
 | `/v1/healthz`, `/v1/readyz`, `/v1/version`, `/metrics` | `no-store` |
 | `/v1/account/*`, `/v1/auth/sep10/*` | `private, no-store` |
 | `/v1/price/tip`, `/v1/observations*` | `private, no-cache, must-revalidate` |
-| `/v1/price`, `/v1/price/batch`, `/v1/price/changes`, `/v1/price/at`, `/v1/vwap`, `/v1/twap`, `/v1/ohlc`, `/v1/chart`, `/v1/oracle/latest` | `public, max-age=30, s-maxage=5` |
+| `/v1/price`, `/v1/price/batch`, `/v1/price/changes`, `/v1/price/at`, `/v1/vwap`, `/v1/twap`, `/v1/ohlc`, `/v1/chart`, `/v1/history`, `/v1/history/since-inception`, `/v1/oracle/latest`, `/v1/oracle/lastprice`, `/v1/oracle/prices`, `/v1/oracle/x_last_price` | `public, max-age=30, s-maxage=5` |
 | `/v1/assets*`, `/v1/pools/reserves`, `/v1/protocols/{name}/tvl`, `/v1/liquidity-pools`, `/v1/sdex/orderbook` | `public, max-age=30, s-maxage=60` |
-| `/v1/history*`, `/v1/markets`, `/v1/pairs`, `/v1/sources`, the rest of `/v1/oracle/*` | `public, max-age=60, s-maxage=300` |
+| the other `/v1/history/*` paths, `/v1/markets`, `/v1/pairs`, `/v1/sources`, the rest of `/v1/oracle/*` | `public, max-age=60, s-maxage=300` |
 
 The **5 s** shared TTL on the price surfaces is not a round number picked
 for taste. ADR-0015/0018 is a determinism contract, not a freshness bound,

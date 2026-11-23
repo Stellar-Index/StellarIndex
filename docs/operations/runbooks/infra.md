@@ -163,7 +163,7 @@ Fix:
 
 ## stellarindex_nvme_health_series_missing
 
-Ticket (`for: 30m`). An instance published `nvme_temperature_celsius` or `nvme_num_err_log_entries_total` in the last 3 days and no longer does, so `stellarindex_nvme_thermal_throttle` and `stellarindex_nvme_smart_warn` are blind on it. Per-instance by design: a host that never published NVMe series does not alert, and the alert self-clears 3 days after the series vanished, so fix the collector rather than waiting it out. Check `node_textfile_scrape_error`, `ls -l /var/lib/node_exporter/textfile_collector/nvme.prom`, `systemctl status` of the nvme collector unit, and `nvme list` (a drive that fell off the bus is a hardware event: follow `## stellarindex_nvme_smart_warn`).
+Ticket (`for: 30m`). A drive (`device`) on an instance published `nvme_temperature_celsius` or `nvme_num_err_log_entries_total` in the last 14 days and no longer does, so `stellarindex_nvme_thermal_throttle` and `stellarindex_nvme_smart_warn` are blind on it. Per (instance, device) by design: one drive vanishing is not masked by its siblings, a host that never published NVMe series does not alert, and the alert self-clears 14 days after the series vanished, so fix the collector rather than waiting it out. A drive removed on purpose tickets for those 14 days; silence it by `device` and `instance`. Check `node_textfile_scrape_error`, `ls -l /var/lib/node_exporter/textfile_collector/nvme.prom`, `systemctl status` of the nvme collector unit, and `nvme list` (a drive that fell off the bus is a hardware event: follow `## stellarindex_nvme_smart_warn`).
 
 ## stellarindex_nvme_critical_warning
 

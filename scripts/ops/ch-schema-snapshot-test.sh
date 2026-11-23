@@ -36,6 +36,8 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
 # ─── stub ClickHouse ────────────────────────────────────────────────
 mkdir -p "$TMP/bin"
+# shellcheck source=scripts/ci/lib/gnu-mv-shim.sh
+. "$PWD/scripts/ci/lib/gnu-mv-shim.sh"; gnu_mv_shim "$TMP/bin"
 cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 # Fake ClickHouse HTTP endpoint. Reads the query from --data-binary and

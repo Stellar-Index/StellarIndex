@@ -4293,6 +4293,9 @@ export interface paths {
          *     a per-endpoint response is missing. `billable` means the same
          *     thing on both shapes. Deployments without the usage backend
          *     return an empty array.
+         *
+         *     Authentication: an API key or the dashboard session cookie. When
+         *     a request carries both, the session's account is the one reported.
          */
         get: operations["getAccountUsage"];
         put?: never;
