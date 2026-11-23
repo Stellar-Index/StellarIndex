@@ -967,6 +967,36 @@ runGate
 expect "lines added near an unchanged trailing marker are not growth" 0 "no undeclared"
 
 mkrepo 0
+change_commit "chore: another read" internal/s/q.go \
+  "$(printf 'var q = "SELECT a FROM t LIMIT 500" // cap-ok: one row per id\nvar z = 0')" \
+  "$(printf 'var q = "SELECT a FROM t LIMIT 500" // cap-ok: one row per id\nvar q2 = "SELECT amount FROM trades LIMIT 5000"\nvar z = 0')"
+runGate
+expect "a line inserted under an unchanged trailing marker fails undeclared" 1 "+ var q2 ="
+
+# --- 25o. guard-test waiver maps named excluded…/…Exclusions/…Exceptions are watched too
+mkrepo 0
+change_commit "chore: exclude more" \
+  internal/p/gap_test.go "$(printf 'var excludedFromGapDetector = map[string]string{\n\t"a": "r",\n}')" \
+  "$(printf 'var excludedFromGapDetector = map[string]string{\n\t"a": "r",\n\t"trades": "r",\n}')" \
+  internal/p/wire_test.go "$(printf 'var wireTimeExclusions = map[string]bool{\n\t"a": true,\n}')" \
+  "$(printf 'var wireTimeExclusions = map[string]bool{\n\t"a": true,\n\t"b": true,\n}')" \
+  internal/p/spec_test.go "$(printf 'var schemaExceptions = map[string]string{\n\t"a": "r",\n}')" \
+  "$(printf 'var schemaExceptions = map[string]string{\n\t"a": "r",\n\t"c": "r",\n}')"
+runGate
+for f in gap wire spec; do
+  expect "a new key in internal/p/${f}_test.go's waiver map fails undeclared" 1 "UNDECLARED GROWTH: internal/p/${f}_test.go"
+done
+
+# --- 25p. deleting a .golangci.yml qualifier widens the waiver
+mkrepo 0
+change_commit "chore: tidy lint config" .golangci.yml \
+  "$(printf 'linters:\n  exclusions:\n    generated: disable\n    rules:\n      - path: cmd/.*/main\\.go\n        linters:\n          - errcheck')" \
+  "$(printf 'linters:\n  exclusions:\n    rules:\n      - path: cmd/.*/main\\.go')"
+runGate
+expect "a removed generated: qualifier fails undeclared" 1 "removed qualifier: linters: generated: disable"
+expect "a removed exclusion-rule linters: key fails undeclared" 1 "removed qualifier: linters: linters:"
+
+mkrepo 0
 change_commit "chore: refactor" internal/api/l.go \
   "$(printf 'type R struct {\n\t// floatmoney:ok rate, not an amount\n\tSupplyAPR *float64\n}')" \
   "$(printf 'type R struct {\n\t// floatmoney:ok rate, not an amount\n\tSuppliedUSD *float64\n\tSupplyAPR *float64\n}')"
