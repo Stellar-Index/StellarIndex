@@ -36,8 +36,7 @@ const rwaMembershipTTL = 10 * time.Minute
 // rather than serving a silently truncated set.
 const rwaMaxIssuers = 64
 
-// rwaAssetsPerIssuer bounds one issuer's listing page. The long tail past it goes unread and is
-// reported like the issuer cap.
+// rwaAssetsPerIssuer bounds one issuer's listing page; members past a full page are read by identity.
 const rwaAssetsPerIssuer = 500
 
 // Sep1BoundCurrencyReader is the storage seam for RWA membership attestations; optional, and its candidate pool is only issuers with a sep1_payload, so unreached issuers are absent from `refused` counts.
@@ -1321,8 +1320,7 @@ func rwaDefinition() RWADefinition {
 // rwaCatalogueJoin counts what the join from the admitted set to the asset catalogue removed, at the very end of the funnel where an
 // asset meeting every requirement could otherwise vanish from every tally.
 type rwaCatalogueJoin struct {
-	// pagesTruncated counts member issuers whose listing page filled to rwaAssetsPerIssuer, so a
-	// member in the unread tail cannot be found.
+	// pagesTruncated counts member issuers whose page filled with a member's case variant past it unchecked.
 	pagesTruncated int
 	// fullPageIssuers names those issuers: only their own totals can be missing such a member.
 	fullPageIssuers map[string]bool
@@ -1364,8 +1362,8 @@ func rwaMemberIssuers(m rwaMembership) []string {
 	return issuers
 }
 
-// rwaListingRows reads each member issuer through the same listing query /v1/assets uses (one indexed page per issuer), returning rows
-// keyed by asset_id plus what the read could not cover.
+// rwaListingRows reads each member issuer through the same listing query /v1/assets uses ([Server.rwaIssuerMemberRows]), returning
+// rows keyed by asset_id plus what the read could not cover.
 // Running the real listing path keeps this surface from publishing a valuation /v1/assets would have refused.
 func (s *Server) rwaListingRows(
 	ctx context.Context, m rwaMembership,
@@ -1380,17 +1378,13 @@ func (s *Server) rwaListingRows(
 
 	out := make(map[string]AssetDetail, len(m.members))
 	for _, issuer := range issuers {
-		rows, at, _, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{
-			Limit:  rwaAssetsPerIssuer,
-			Issuer: issuer,
-			Type:   "classic",
-		})
+		got, err := s.rwaIssuerMemberRows(ctx, issuer, codesByIssuer[issuer])
 		if err != nil {
 			return nil, join, err
 		}
 		// Judged against the view, not the catalogue's 2-minute TTL that every 5-minute prewarm outlives; the age still lands in as_of.
-		join.notePage(issuer, at, !at.IsZero() && time.Since(at) >= rwaAssetsViewTTL, len(rows))
-		keep, memberCodes := rwaMatchMemberRows(codesByIssuer[issuer], rows)
+		join.notePage(issuer, got.at, !got.at.IsZero() && time.Since(got.at) >= rwaAssetsViewTTL, got.tailUnchecked)
+		keep, memberCodes := got.keep, got.memberCodes
 		if len(keep) == 0 {
 			continue
 		}
@@ -1405,8 +1399,7 @@ func (s *Server) rwaListingRows(
 		s.stampListingCollisions(details)
 		unmeasured := s.applySubstanceGateToListing(ctx, details, false)
 		supplyUnread := s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
-		// The fill above reads supply only to multiply by a price, so an unpriced asset keeps none;
-		// the reference basis here values a float that has never traded. Touches no price or gate.
+		// The fill above can leave a row without supply; the reference basis values it. Touches no price or gate.
 		supplyUnread = s.rwaFillMissingSupply(ctx, details) || supplyUnread
 		s.fillDeclaredPegPricesInListing(ctx, details)
 		s.fillIssuerDirectoryTags(ctx, details)
@@ -1419,14 +1412,12 @@ func (s *Server) rwaListingRows(
 }
 
 // notePage folds one issuer page's freshness and truncation into the join.
-func (j *rwaCatalogueJoin) notePage(issuer string, at time.Time, stale bool, n int) {
+func (j *rwaCatalogueJoin) notePage(issuer string, at time.Time, stale, tailUnchecked bool) {
 	j.unanswered = j.unanswered || stale
 	if !at.IsZero() && (j.observedAt.IsZero() || at.Before(j.observedAt)) {
 		j.observedAt = at
 	}
-	// A full page means a member in the unread tail would vanish silently; count the
-	// truncation so it is reported.
-	if n >= rwaAssetsPerIssuer {
+	if tailUnchecked {
 		j.pagesTruncated++
 		if j.fullPageIssuers == nil {
 			j.fullPageIssuers = map[string]bool{}
@@ -1451,12 +1442,12 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) (
 		}
 		// Same preference chain as the market-cap fill, naming the arm it took.
 		circ, basis := classicSupplyReading(rows[i].AssetID, precise, lake, broad)
-		if circ == "" {
-			// No figure because a reader did not answer is an outage, not "this asset has no supply".
-			supplyUnread = supplyUnread || broadUnread || slices.Contains(lakeMissing, rows[i].AssetID)
-			continue
+		// No figure, or a lake figure the unread trustline floor could not check, is an outage, not a reading.
+		missing := circ == "" && slices.Contains(lakeMissing, rows[i].AssetID)
+		supplyUnread = supplyUnread || missing || broadUnread && (circ == "" || basis == supply.BasisClassicLakeFlows)
+		if circ != "" {
+			stampCirculatingSupply(&rows[i], circ, basis)
 		}
-		stampCirculatingSupply(&rows[i], circ, basis)
 	}
 	return supplyUnread
 }
@@ -1963,7 +1954,7 @@ func rwaWriteTruncation(b *strings.Builder, t rwaTruncation, totalPublished bool
 		caps = append(caps, "the contract scan cap left "+strconv.Itoa(t.overContractCap)+" recognised contract(s) unevaluated")
 	}
 	if t.issuerPagesFull > 0 {
-		caps = append(caps, strconv.Itoa(t.issuerPagesFull)+" member issuer(s) have more classic assets than one listing page reads")
+		caps = append(caps, strconv.Itoa(t.issuerPagesFull)+" member issuer(s) fill one listing page and a member's case variant past it went unchecked")
 	}
 	if t.capped() {
 		b.WriteString(" A rebuild cap bound this set (")

@@ -11598,8 +11598,10 @@ export interface components {
              *     is still valued, so the contract and listing-corroborated arms
              *     never report it.
              *     `issuer_asset_page_truncated` — counts ISSUERS whose classic
-             *     asset list filled one read, so a member in the unread tail
-             *     could not be found. It counts issuers, not assets, so it is
+             *     asset list filled one read and a member matching no exact
+             *     spelling could not be checked for a case variant past it
+             *     (members past a full read are otherwise read by exact code
+             *     and issuer). It counts issuers, not assets, so it is
              *     deliberately NOT a term in the asset arithmetic.
              *     CONTRACT arm:
              *

@@ -6,7 +6,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // dropClassicMemberSACs removes from c a contract member that is an admitted classic member's SAC: one
@@ -44,12 +43,11 @@ func (s *Server) classicMemberSACs(ctx context.Context, members []rwaMember) (ma
 		codesByIssuer[mem.issuer] = append(codesByIssuer[mem.issuer], strings.TrimSpace(mem.code))
 	}
 	for issuer, codes := range codesByIssuer {
-		rows, _, _, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{Limit: rwaAssetsPerIssuer, Issuer: issuer, Type: "classic"})
+		got, err := s.rwaIssuerMemberRows(ctx, issuer, codes)
 		if err != nil {
 			return sacs, false
 		}
-		keep, _ := rwaMatchMemberRows(codes, rows)
-		for _, row := range keep {
+		for _, row := range got.keep {
 			if id, err := (canonical.Asset{Type: canonical.AssetClassic, Code: row.Code, Issuer: issuer}).SacContractID(); err == nil {
 				sacs[id] = struct{}{}
 			}
