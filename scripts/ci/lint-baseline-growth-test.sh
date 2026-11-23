@@ -995,6 +995,14 @@ change_commit "test: prove another route" \
 runGate
 expect "a new key in an …ExclusionProof map passes" 0 "no undeclared"
 
+# --- 25o3. in served code an …Excluded… map is domain vocabulary, not a waiver list
+mkrepo 0
+change_commit "feat: explain another excluded day" \
+  internal/p/premium.go "$(printf 'var premiumExcludedDetail = map[string]string{\n\tA: "r",\n}')" \
+  "$(printf 'var premiumExcludedDetail = map[string]string{\n\tA: "r",\n\tB: "s",\n}')"
+runGate
+expect "a new key in a non-test …Excluded… map passes" 0 "no undeclared"
+
 # --- 25p. deleting a .golangci.yml qualifier widens the waiver
 mkrepo 0
 change_commit "chore: tidy lint config" .golangci.yml \
