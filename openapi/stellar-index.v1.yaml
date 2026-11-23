@@ -601,21 +601,23 @@ paths:
               lookup of the classic twin, which no SAC wrapper can
               match, so an unfiltered request adds the wrapper's
               trailing-24h volume to that arm and publishes the
-              classic + SAC sum. That is the sum the spine intends for
-              the twin this row replaces, not one it guarantees: the
-              spine folds a wrapper only when the wrapper's row lands
-              in the same page window, while the catalogue row always
-              point-reads it. Under any of the four filters
-              the addition is skipped and the classic arm alone is
-              reported, matching the spine.
-            - `xlm` is the exception. It is served by the dedicated
-              `native` reader rather than by a classic-twin lookup, so
-              its `volume_24h_usd` is the `native` (SDEX) arm on every
-              request. Neither of XLM's other two identities is added
-              to it: the XLM Stellar Asset Contract is a distinct
-              on-chain venue population, and `crypto:XLM` is off-Stellar
-              exchange turnover that no on-Stellar volume figure
-              includes.
+              classic + SAC sum, the same sum the spine publishes for
+              the twin this row replaces: the spine folds a wrapper whose
+              row lands in the same page window and, on an unfiltered
+              request, adds the trailing-24h volume of a wrapper that
+              did not. Under any of the four filters the addition is
+              skipped and the classic arm alone is reported, matching
+              the spine.
+            - `xlm` takes its classic arm from the dedicated `native`
+              reader (trailing-24h volume of every on-Stellar market
+              with `native` on either side) rather than a classic-twin
+              lookup, then follows the same rule: an unfiltered request
+              adds the XLM Stellar Asset Contract's trailing-24h volume,
+              and any row filter reports the `native` arm alone.
+              `crypto:XLM`, off-Stellar exchange turnover, is never added
+              to a listing row. `GET /v1/assets/native` sums all three
+              identities, so its `volume_24h_usd` also includes that
+              exchange turnover and can exceed the listing figure.
           schema:
             type: string
             enum: [native, classic, soroban, fiat, any]

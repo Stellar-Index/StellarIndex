@@ -9035,7 +9035,7 @@ export interface components {
              */
             outside_coverage: boolean;
             /**
-             * @description Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`, `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the asset, contract or ledger the response is about. The figures are served unchanged; treat them as unconfirmed. The envelope's `under_review_reason` says why. Omitted when false.
+             * @description Set on `/v1/assets/{asset_id}`, `/v1/assets/{asset_id}/supply`, `/v1/assets/{asset_id}/holders` and `/v1/accounts/{g_strkey}` when an operator hold covers the asset, contract or ledger the response is about, and on `/v1/assets` when a hold covers any row; each such row carries its own `under_review` and `under_review_reason`. The figures are served unchanged; treat them as unconfirmed. On a single-subject response the envelope's `under_review_reason` says why. Omitted when false.
              * @default false
              */
             under_review: boolean;
@@ -9090,7 +9090,7 @@ export interface components {
              */
             coverage_from?: string;
             sources?: string[];
-            /** @description Operator-supplied reason; present exactly when `flags.under_review` is true. */
+            /** @description Operator-supplied reason; present exactly when `flags.under_review` is true on a single-subject response. A listing carries it per row. */
             under_review_reason?: string;
             flags: components["schemas"]["Flags"];
         };
@@ -12658,6 +12658,16 @@ export interface components {
              */
             unverified_ticker_collision: boolean;
             /**
+             * @description LISTING-row operator hold (/v1/assets): true when an operator
+             *     hold covers this row's asset, as `flags.under_review` marks it
+             *     on `/v1/assets/{asset_id}`. The row's figures are served
+             *     unchanged; treat them as unconfirmed. Omitted when false.
+             * @default false
+             */
+            under_review: boolean;
+            /** @description Operator-supplied reason; present exactly when this row's `under_review` is true. */
+            under_review_reason?: string;
+            /**
              * @description Attached when the requested classic asset's code names a
              *     verified-currency catalogue sovereign denomination (USD,
              *     EUR, …) that has no Stellar issuance of its own — the
@@ -15409,21 +15419,23 @@ export interface operations {
                  *       lookup of the classic twin, which no SAC wrapper can
                  *       match, so an unfiltered request adds the wrapper's
                  *       trailing-24h volume to that arm and publishes the
-                 *       classic + SAC sum. That is the sum the spine intends for
-                 *       the twin this row replaces, not one it guarantees: the
-                 *       spine folds a wrapper only when the wrapper's row lands
-                 *       in the same page window, while the catalogue row always
-                 *       point-reads it. Under any of the four filters
-                 *       the addition is skipped and the classic arm alone is
-                 *       reported, matching the spine.
-                 *     - `xlm` is the exception. It is served by the dedicated
-                 *       `native` reader rather than by a classic-twin lookup, so
-                 *       its `volume_24h_usd` is the `native` (SDEX) arm on every
-                 *       request. Neither of XLM's other two identities is added
-                 *       to it: the XLM Stellar Asset Contract is a distinct
-                 *       on-chain venue population, and `crypto:XLM` is off-Stellar
-                 *       exchange turnover that no on-Stellar volume figure
-                 *       includes.
+                 *       classic + SAC sum, the same sum the spine publishes for
+                 *       the twin this row replaces: the spine folds a wrapper whose
+                 *       row lands in the same page window and, on an unfiltered
+                 *       request, adds the trailing-24h volume of a wrapper that
+                 *       did not. Under any of the four filters the addition is
+                 *       skipped and the classic arm alone is reported, matching
+                 *       the spine.
+                 *     - `xlm` takes its classic arm from the dedicated `native`
+                 *       reader (trailing-24h volume of every on-Stellar market
+                 *       with `native` on either side) rather than a classic-twin
+                 *       lookup, then follows the same rule: an unfiltered request
+                 *       adds the XLM Stellar Asset Contract's trailing-24h volume,
+                 *       and any row filter reports the `native` arm alone.
+                 *       `crypto:XLM`, off-Stellar exchange turnover, is never added
+                 *       to a listing row. `GET /v1/assets/native` sums all three
+                 *       identities, so its `volume_24h_usd` also includes that
+                 *       exchange turnover and can exceed the listing figure.
                  */
                 type?: "native" | "classic" | "soroban" | "fiat" | "any";
                 /**
