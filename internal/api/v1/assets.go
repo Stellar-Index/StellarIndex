@@ -1396,67 +1396,21 @@ func sep1ImageKey(code, issuer string) string {
 	return strings.TrimSpace(code) + "-" + issuer
 }
 
-// sep1ImageFoldKey keys the case-insensitive fallback entries; the "fold:" prefix cannot collide with an exact key since codes
-// are alphanumeric.
-func sep1ImageFoldKey(code, issuer string) string {
-	return "fold:" + strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
-}
-
-// sep1ImageFor looks a logo up by exact code first, then through the
-// fallback entry [buildSep1ImageMap] writes only for unambiguous folds.
+// sep1ImageFor looks a logo up by exact (code, issuer): a case variant is another asset, often a trustline-only copy anyone
+// can mint, so it never borrows the issuer's logo.
 func sep1ImageFor(images map[string]string, code, issuer string) string {
-	if img, ok := images[sep1ImageKey(code, issuer)]; ok {
-		return img
-	}
-	return images[sep1ImageFoldKey(code, issuer)]
+	return images[sep1ImageKey(code, issuer)]
 }
 
-// buildSep1ImageMap keys each safe logo by exact (code, issuer) and, where exactly one code spelling folds to it, by a
-// case-insensitive fallback too, so a mis-cased stellar.toml reaches its asset but an issuer's USDX and usdx never share a
-// logo.
+// buildSep1ImageMap keys each safe logo by exact (code, issuer).
 func buildSep1ImageMap(imgs []timescale.Sep1Image) map[string]string {
 	built := make(map[string]string, len(imgs))
-	spellings := map[string][]string{}
 	for _, img := range imgs {
-		if !isSafeImageURL(img.Image) {
-			continue
-		}
-		k := sep1ImageKey(img.Code, img.Issuer)
-		if _, dup := built[k]; !dup {
-			fk := sep1ImageFoldKey(img.Code, img.Issuer)
-			spellings[fk] = append(spellings[fk], k)
-		}
-		built[k] = img.Image
-	}
-	for fk, keys := range spellings {
-		if len(keys) == 1 {
-			built[fk] = built[keys[0]]
+		if isSafeImageURL(img.Image) {
+			built[sep1ImageKey(img.Code, img.Issuer)] = img.Image
 		}
 	}
 	return built
-}
-
-// matchAssetCode returns the index of the entry naming the case-sensitive code want: exact spelling, else the one
-// case-insensitive spelling, else -1; two distinct case-insensitive spellings are ambiguous and match none.
-func matchAssetCode(want string, codes []string) int {
-	fold, ambiguous := -1, false
-	for i, c := range codes {
-		if c == want {
-			return i
-		}
-		if !strings.EqualFold(c, want) {
-			continue
-		}
-		if fold == -1 {
-			fold = i
-		} else if codes[fold] != c {
-			ambiguous = true
-		}
-	}
-	if ambiguous {
-		return -1
-	}
-	return fold
 }
 
 // sep1ImagesReader is the narrow capability the logo overlay needs, type-asserted off [Server.sep1Cache] (not added to
@@ -3027,8 +2981,8 @@ func sep1CurrencyAuthorityFrom(match *timescale.IssuerSep1Currency) Sep1Currency
 	}
 }
 
-// findMatchingCachedCurrency returns the cached SEP-1 currency matching the asset: issuer exact, code per [matchAssetCode]; nil
-// if none.
+// findMatchingCachedCurrency returns the cached SEP-1 currency naming the asset's exact (code, issuer), nil if none: a case
+// variant never inherits the issuer's verification.
 func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical.Asset) *timescale.IssuerSep1Currency {
 	if asset.Type != canonical.AssetClassic {
 		return nil
@@ -3036,16 +2990,10 @@ func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical
 	if asset.Code == "" || asset.Issuer == "" {
 		return nil
 	}
-	codes := make([]string, 0, len(sep.Currencies))
-	at := make([]int, 0, len(sep.Currencies))
 	for i := range sep.Currencies {
-		if c := &sep.Currencies[i]; c.Issuer != "" && c.Issuer == asset.Issuer {
-			codes = append(codes, c.Code)
-			at = append(at, i)
+		if c := &sep.Currencies[i]; c.Issuer == asset.Issuer && c.Code == asset.Code {
+			return c
 		}
-	}
-	if j := matchAssetCode(asset.Code, codes); j >= 0 {
-		return &sep.Currencies[at[j]]
 	}
 	return nil
 }

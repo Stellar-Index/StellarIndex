@@ -1467,8 +1467,8 @@ func rwaKey(code, issuer string) string {
 	return strings.TrimSpace(code) + "-" + issuer
 }
 
-// rwaMatchMemberRows pairs one issuer's member codes with its listing rows via [matchAssetCode], so a mis-cased declaration still reaches
-// its asset.
+// rwaMatchMemberRows pairs one issuer's member codes with its listing rows by exact code: a mis-cased declaration names another
+// asset (a case variant anyone can mint by trustline), so it reaches none.
 // A row two members resolve to goes to the member spelling it exactly, or to neither: serving it twice would count it twice.
 func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.AssetRow, []string) {
 	rowCodes := make([]string, len(rows))
@@ -1477,7 +1477,7 @@ func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.
 	}
 	claims := make(map[int][]string, len(codes))
 	for _, c := range codes {
-		if i := matchAssetCode(c, rowCodes); i >= 0 {
+		if i := slices.Index(rowCodes, c); i >= 0 {
 			claims[i] = append(claims[i], c)
 		}
 	}
