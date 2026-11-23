@@ -40,8 +40,12 @@ type exclCache struct {
 }
 
 func (c exclCache) LookupTriangulatedVWAP(context.Context, canonical.Asset, canonical.Asset, time.Duration) (v1.CachedVWAP, bool, error) {
-	return v1.CachedVWAP{Value: c.value, Triangulated: !c.direct, ObservedAt: time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)}, true, nil
+	return v1.CachedVWAP{Value: c.value, Triangulated: !c.direct, ObservedAt: exclCacheObservedAt}, true, nil
 }
+
+// exclCacheObservedAt is fixed once so two requests in one test see the same observed_at; a per-call clock read made
+// the compared bodies differ whenever a minute boundary fell between them.
+var exclCacheObservedAt = time.Now().UTC().Add(-time.Minute).Truncate(time.Minute)
 
 type exclCase struct {
 	name string
