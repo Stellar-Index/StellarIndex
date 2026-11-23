@@ -153,13 +153,15 @@ golangci_waiver_added_lines() {
 }
 
 # go_waiver_map_keys <rev> <file>: the entries of every `<x>Exempt…|<x>Allow(ed|list)…|<x>Waiver…|
-# <x>Ignore(d)…|<x>Exclu(de|ded|sion)…|<x>Exception… (:)= map[…]{` literal in a Go file; each key
-# exempts one site from a guard test.
+# <x>Ignore(d)… (:)= map[…]{` literal in a Go file, plus <x>Exclu(de|ded|sion)…|<x>Exception… in a
+# _test.go file; each key exempts one site from a guard test.
 # Every key of the literal is read, any key expression, several per line included. A string or
 # struct value is a reason and is dropped; any other value (a count, a bool) is part of the entry,
 # so raising it is growth.
 go_waiver_map_keys() {
-  git show "${1}:${2}" 2>/dev/null | awk '
+  local intest=0
+  case "$2" in *_test.go) intest=1 ;; esac
+  git show "${1}:${2}" 2>/dev/null | awk -v intest="$intest" '
     function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
     function flush(   k, v) {
       if (col) {
@@ -193,7 +195,9 @@ go_waiver_map_keys() {
       if (depth >= 1) unit = unit " "
     }
     # A map named …Proof(s) lists evidence (a test per covered site): growing it tightens a guard.
-    !inmap && $0 !~ /Proofs?[[:space:]]*:?=/ && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?|[Ee]xclu(de|ded|sions?)|[Ee]xceptions?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
+    # …Exclu…/…Exception… name a waiver map only in a _test.go guard; in served code they are domain
+    # vocabulary (reason texts for excluded days, sources), and growing one hides nothing.
+    !inmap && $0 !~ /Proofs?[[:space:]]*:?=/ && (/^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ || (intest && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xclu(de|ded|sions?)|[Ee]xceptions?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/)) {
       inmap = 1; depth = 0; instr = 0; unit = ""; col = 0
       s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s)
       # Collapse struct{…}/interface{…} in the value TYPE, innermost first, so the literal opens
