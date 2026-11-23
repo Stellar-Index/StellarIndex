@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -83,5 +84,30 @@ func TestClassicUnifiedPage_UnconfirmedContractRowIsWithheldFlagged(t *testing.T
 				t.Errorf("withheld row: stale = %v, no-store = %v; want both", f.Stale, noStore(rec))
 			}
 		})
+	}
+}
+
+// Page 1 of the unified listing: when the catalogue runs out and the classic fill withholds every row it read, the page is
+// still short of what it could not read, so it is flagged and uncached like the classic phase's own pages.
+func TestCatalogueUnifiedPage_FillThatWithheldEveryRowIsFlagged(t *testing.T) {
+	const sep41 = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Options: Options{
+		VerifiedCurrencies: cat,
+		AssetsReader:       &classicPageReader{rows: []timescale.AssetRow{{AssetID: sep41, Slug: sep41}}},
+		Explorer:           sacLookupExplorer{err: errors.New("lake read timed out")},
+	}}
+	s.logger = discardLogger()
+	rec := httptest.NewRecorder()
+	s.serveCatalogueUnifiedPage(rec, httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=all&limit=500", nil),
+		assetListFilters{}, 500, "")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), sep41) {
+		t.Fatalf("status %d, want 200 without the unconfirmed row: %s", rec.Code, rec.Body.String())
+	}
+	if f := decodeFlags(t, rec); !f.Stale || !noStore(rec) {
+		t.Errorf("stale = %v, no-store = %v; want both", f.Stale, noStore(rec))
 	}
 }

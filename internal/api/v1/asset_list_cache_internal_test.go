@@ -213,6 +213,39 @@ func TestAssetListCacheKey_CanonicalQueryOrder(t *testing.T) {
 	}
 }
 
+// A parameter the listing never reads must not mint a slot (each new slot evicts a prewarmed page), and every input that
+// can change the page must still separate one.
+func TestAssetListCacheKey_OnlyPageShapingInputsSplitTheSlot(t *testing.T) {
+	key := func(query string) string {
+		return assetListCacheKey(httptest.NewRequest(http.MethodGet, "/v1/assets?"+query, nil))
+	}
+	base := key("limit=100&q=usd")
+	for _, same := range []string{
+		"limit=100&q=usd&_=1", "limit=100&q=usd&_=2&utm_source=x", "q=usd&limit=100", "q=usd",
+		"limit=100&q=+usd+", "limit=100&q=usd&order_by=observation_count_desc", "limit=100&q=usd&type=any",
+	} {
+		if got := key(same); got != base {
+			t.Errorf("%q keyed %q, want the same slot as limit=100&q=usd (%q)", same, got, base)
+		}
+	}
+	seen := map[string]string{base: "limit=100&q=usd"}
+	for _, diff := range []string{
+		"limit=50&q=usd", "limit=100&q=usdc", "limit=100&q=usd&cursor=abc", "limit=100&q=usd&type=classic",
+		"limit=100&q=usd&code=USDC", "limit=100&q=usd&issuer=" + cetesIssuer, "limit=100&q=usd&order_by=volume_24h_usd_desc",
+		"limit=100&q=usd&include=sparkline7d", "limit=100&q=usd&include=sparkline24h",
+		"limit=100&q=usd&include_thin=true", "limit=100&q=usd&asset_class=all",
+	} {
+		k := key(diff)
+		if prev, dup := seen[k]; dup {
+			t.Errorf("%q shares a slot with %q", diff, prev)
+		}
+		seen[k] = diff
+	}
+	if key("include=sparkline7d,sparkline24h") != key("include=sparkline24h,sparkline7d") {
+		t.Error("include order split one page into two slots")
+	}
+}
+
 func TestAssetListCache_BoundedEntries(t *testing.T) {
 	c := newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge)
 	for i := range assetListCacheMaxEntries + 10 {
