@@ -16,7 +16,7 @@ Counts every request through the `obs.HTTPMetrics` middleware. `route` is the ro
 
 Histogram, labels `method`, `route`.
 
-Handler latency including middleware. Buckets 1ms to 10s.
+Handler latency including middleware. Buckets 1ms to 10s. A client abort (499) is observed only when it came after the 0.2 s latency-SLO bound, so a fast disconnect does not count against the SLO; `http_requests_total` still counts every 499.
 
 ### `stellarindex_dependency_up`
 

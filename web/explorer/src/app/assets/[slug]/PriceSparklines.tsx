@@ -23,6 +23,7 @@ export function PriceSparklines({
   priceUSD,
   priceProvenance,
   priceStale,
+  priceScaleMismatch,
   points24h,
   points7d,
 }: {
@@ -30,6 +31,7 @@ export function PriceSparklines({
   priceUSD: string | null;
   priceProvenance: PriceProvenance;
   priceStale?: boolean;
+  priceScaleMismatch?: boolean;
   points24h: Point[];
   points7d: Point[];
 }) {
@@ -39,6 +41,7 @@ export function PriceSparklines({
     priceUSD,
     priceProvenance,
     priceStale,
+    priceScaleMismatch,
   );
   const has24 = points24h.filter((p) => p.p != null).length >= 2;
   const has7 = points7d.filter((p) => p.p != null).length >= 2;

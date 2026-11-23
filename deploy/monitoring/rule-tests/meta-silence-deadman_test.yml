@@ -98,3 +98,19 @@ tests:
       - eval_time: 25h
         alertname: stellarindex_deadmansswitch
         exp_alerts: *beat
+
+  # Held 21h, expired 3h, every day: 252 of 288 a day stays under the 24h
+  # bar, but 87.5% of the week clears the 7-day 50% bar, so the heartbeat
+  # stops, even when evaluated inside a 3h gap.
+  - interval: 5m
+    name: deadmansswitch — a sub-90% daily duty cycle held for a week stops it
+    input_series:
+      - series: 'alertmanager_silences{state="active"}'
+        values: '1x251 0x35 1x251 0x35 1x251 0x35 1x251 0x35 1x251 0x35 1x251 0x35 1x251 0x35'
+    alert_rule_test:
+      - eval_time: 1d
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: *beat
+      - eval_time: 6d22h
+        alertname: stellarindex_deadmansswitch
+        exp_alerts: []

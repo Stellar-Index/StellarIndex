@@ -33,7 +33,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// ReadyChecker is what /readyz polls; Ping MUST respect ctx (shared 2 s deadline) and Critical() separates "cannot serve" (Postgres) from "degrades" (Redis), so only a critical failure returns 503.
+// ReadyChecker is what /readyz polls; Ping MUST respect ctx (shared 2 s deadline) and Critical() separates "cannot serve" (Postgres, or Redis down past api.rate_limit_dwell) from "degrades" (Redis inside the dwell), so only a critical failure returns 503.
 type ReadyChecker interface {
 	Ping(ctx context.Context) error
 	Name() string
@@ -1782,8 +1782,8 @@ func (s *Server) computeReadyz() (int, []byte) {
 	}
 	wg.Wait()
 
-	// Critical failures 503; non-critical ones return 200 status="degraded", so a Redis outage
-	// cannot make HAProxy drain every healthy backend while the Timescale fallback still serves.
+	// Critical failures 503; non-critical ones return 200 status="degraded", so a Redis blip inside
+	// the dwell, while anonymous routes still fail open, cannot drain every healthy backend.
 	criticalFailed := false
 	anyFailed := false
 	for i, r := range results {
@@ -1815,9 +1815,8 @@ func (s *Server) computeReadyz() (int, []byte) {
 		resp.Status = "unready"
 		return render(http.StatusServiceUnavailable, Flags{Stale: true})
 	case anyFailed:
-		// Non-critical dependency degraded: the API still serves (Timescale fallback for Redis
-		// misses, ADR-0007), so 200 keeps the backend in HAProxy's pool; the body's per-check
-		// breakdown tells operators what is down.
+		// Non-critical dependency degraded: the API still serves, so 200 keeps the backend in the
+		// pool; the body's per-check breakdown tells operators what is down.
 		resp.Status = "degraded"
 		return render(http.StatusOK, Flags{Stale: true})
 	}
@@ -1833,6 +1832,9 @@ const readyCheckFailedDetail = "ping failed — see the API server log for the u
 type readyzPublicError struct{ msg string }
 
 func (e readyzPublicError) Error() string { return e.msg }
+
+// NewReadyzPublicError returns a Ping failure whose msg is served verbatim in the public readyz body; msg must name no endpoint or credential.
+func NewReadyzPublicError(msg string) error { return readyzPublicError{msg} }
 
 // runReadyCheck pings one dependency, logging the raw error server-side
 // and returning only a publishable detail.

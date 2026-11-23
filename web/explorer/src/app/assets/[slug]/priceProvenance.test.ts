@@ -1,6 +1,48 @@
 import { describe, it, expect } from 'vitest';
 
-import { headlinePriceProvenance } from './priceProvenance';
+import { bakedHeadline, headlinePriceProvenance } from './priceProvenance';
+
+// /v1/price never checks a token's read decimals; the asset row does, and
+// may still fill a whole-token price (the fill clears price_withheld_reason).
+describe('bakedHeadline', () => {
+  const market = { price: '123456.78', flags: { stale: true } };
+  it('shows the row’s peg fill, not the market figure, under a scale mismatch', () => {
+    expect(
+      bakedHeadline(market, {
+        price_usd: '1.0001',
+        price_basis: 'declared_peg',
+        market_cap_decimals_mismatch: true,
+      }),
+    ).toEqual({
+      price: '1.0001',
+      provenance: 'declared_peg',
+      stale: false,
+      scaleMismatch: true,
+    });
+  });
+  it('withholds under a scale mismatch with no fill', () => {
+    expect(
+      bakedHeadline(market, {
+        price_usd: null,
+        price_withheld_reason: 'decimals_mismatch',
+        market_cap_decimals_mismatch: true,
+      }),
+    ).toEqual({
+      price: null,
+      provenance: null,
+      stale: false,
+      scaleMismatch: true,
+    });
+  });
+  it('prefers the market figure when the scales agree', () => {
+    expect(bakedHeadline(market, { price_usd: '1' })).toEqual({
+      price: '123456.78',
+      provenance: 'vwap1m',
+      stale: true,
+      scaleMismatch: false,
+    });
+  });
+});
 
 // The static asset page captions the listing-cache price by its
 // server-declared basis. A two-hop (price_basis "transitive") price
