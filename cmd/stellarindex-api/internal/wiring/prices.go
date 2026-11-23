@@ -440,6 +440,7 @@ func (r StorePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	for i, row := range served {
 		out[i] = v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket)
 		out[i].FillsWithheld = holed
+		out[i].BucketSources = row.Sources
 	}
 	return out, nil
 }
@@ -451,7 +452,11 @@ func seriesHoledByExclusion(read, clean, served []timescale.Vwap1mRow) (bool, er
 		return false, nil
 	}
 	if len(served) == 0 {
-		return false, v1.PriceWithheldError(pricingguard.WithheldSourceExcluded)
+		// Only an exclusion that emptied the series alone is `source_excluded`; the guard dropping the rest is "no records".
+		if len(clean) == 0 {
+			return false, v1.PriceWithheldError(pricingguard.WithheldSourceExcluded)
+		}
+		return false, nil
 	}
 	kept := make(map[time.Time]bool, len(clean))
 	oldest := served[0].Bucket

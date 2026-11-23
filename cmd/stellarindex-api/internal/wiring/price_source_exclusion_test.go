@@ -188,8 +188,12 @@ func TestStorePriceReader_RecentClosedSnapshotsSourceExclusion(t *testing.T) {
 	}
 	excluded := v1.VWAP1mToSnapshot(canonical.NativeAsset().String(), mustFiatUSD(t).String(), recent[0].VWAP, recent[0].Bucket)
 	for _, s := range got {
-		if reflect.DeepEqual(s, excluded) {
+		if s.ObservedAt == excluded.ObservedAt {
 			t.Fatalf("excluded bucket %v served: %+v", recent[0].Bucket, got)
+		}
+		// Each served bucket names the sources that fed it, so a caller judging it under another pair can be exact.
+		if !reflect.DeepEqual(s.BucketSources, []string{"sdex"}) {
+			t.Fatalf("served bucket sources = %v, want [sdex]", s.BucketSources)
 		}
 	}
 	if len(got) != len(clean)-1 {
@@ -222,6 +226,12 @@ func TestStorePriceReader_RecentClosedSnapshotsExclusionEdges(t *testing.T) {
 	got, err := read(1, exclRow(0, "1.0", "sdex"), exclRow(1, "1.0", "sdex"), exclRow(2, "1.0", "kraken"))
 	if err != nil || len(got) != 1 || got[0].FillsWithheld {
 		t.Fatalf("got %+v (err %v), want the newest bucket served unmarked", got, err)
+	}
+
+	// The exclusion dropped one bucket and the serving guard the rest: not the exclusion's refusal.
+	rows := []timescale.Vwap1mRow{exclRow(0, "1.0", "kraken"), exclRow(1, "1.0", "sdex")}
+	if holed, err := seriesHoledByExclusion(rows, rows[1:], nil); err != nil || holed {
+		t.Fatalf("guard emptied the clean rows: holed=%v err=%v, want neither", holed, err)
 	}
 }
 

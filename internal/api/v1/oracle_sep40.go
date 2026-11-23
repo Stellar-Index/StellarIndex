@@ -367,21 +367,29 @@ const oracleLiveWindow = 10 * time.Minute
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, served canonical.Asset, viaPeg bool, err error) {
+	usdQuote := quote.Type == canonical.AssetFiat && quote.Code == "USD"
 	best, bestAt, served, err := s.recentClosedForAliases(ctx, asset, quote, n)
+	var failed oracleLegErrors
 	if err != nil {
-		return nil, canonical.Asset{}, false, err
+		// A direct series the exclusion withheld is no direct series: a clean peg book may still answer.
+		if !usdQuote || !errors.Is(err, ErrPriceWithheld) {
+			return nil, canonical.Asset{}, false, err
+		}
+		failed.note(err)
 	}
-	if quote.Type != canonical.AssetFiat || quote.Code != "USD" || s.oracleSeriesLive(best, bestAt) {
+	if !usdQuote || s.oracleSeriesLive(best, bestAt) {
 		return best, served, false, nil
 	}
 	// A USD stablecoin's book against another peg would hide a joint depeg (and its own peg is no market).
 	if s.isUSDStablecoin(asset) {
-		if len(best) == 0 {
-			return nil, canonical.Asset{}, false, errStablecoinNoOwnSeries
+		if len(best) > 0 {
+			return best, served, false, nil
 		}
-		return best, served, false, nil
+		if err := failed.err(); err != nil {
+			return nil, canonical.Asset{}, false, err
+		}
+		return nil, canonical.Asset{}, false, errStablecoinNoOwnSeries
 	}
-	var failed oracleLegErrors
 	for _, peg := range s.usdPegProxyQuotes() {
 		pegSnapshots, pegAt, pegServed, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
 		if pegErr == nil {
@@ -400,9 +408,22 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		}
 	}
 	if len(best) > 0 {
+		if failed.withheld != nil && !s.oracleSeriesLive(best, bestAt) {
+			best = seriesFillsWithheld(best)
+		}
 		return best, served, viaPeg, nil
 	}
 	return nil, canonical.Asset{}, false, failed.err()
+}
+
+// seriesFillsWithheld marks an older series served because an exclusion withheld a newer one: the answer is not what an
+// unexcluded market would give. The reader's slice is copied, not mutated.
+func seriesFillsWithheld(snaps []PriceSnapshot) []PriceSnapshot {
+	out := slices.Clone(snaps)
+	for i := range out {
+		out[i].FillsWithheld = true
+	}
+	return out
 }
 
 // errStablecoinNoOwnSeries: a USD stablecoin has no observed fiat:USD series, and no other stablecoin's book may stand in.
@@ -422,7 +443,7 @@ func (s *Server) isUSDStablecoin(asset canonical.Asset) bool {
 func (s *Server) pegSeriesClean(ctx context.Context, asset, quote canonical.Asset, snaps []PriceSnapshot) ([]PriceSnapshot, error) {
 	kept := snaps[:0:0]
 	for _, snap := range snaps {
-		switch w := s.pegBucketWithheld(ctx, asset, quote, snap, nil); w {
+		switch w := s.pegBucketWithheld(ctx, asset, quote, snap, snap.BucketSources); w {
 		case pricingguard.NotWithheld:
 			kept = append(kept, snap)
 		case pricingguard.WithheldSourceExcluded:
@@ -483,6 +504,7 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
 		firstErr error
+		withheld bool
 		best     []PriceSnapshot
 		bestAt   time.Time
 		served   canonical.Asset
@@ -493,6 +515,7 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 			if firstErr == nil {
 				firstErr = err
 			}
+			withheld = withheld || errors.Is(err, ErrPriceWithheld)
 			continue
 		}
 		if len(snapshots) == 0 {
@@ -507,6 +530,9 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 		}
 	}
 	if len(best) > 0 {
+		if withheld && !s.oracleSeriesLive(best, bestAt) {
+			best = seriesFillsWithheld(best)
+		}
 		return best, bestAt, served, nil
 	}
 	return nil, time.Time{}, canonical.Asset{}, firstErr

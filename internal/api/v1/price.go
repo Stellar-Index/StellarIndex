@@ -341,6 +341,8 @@ type PriceSnapshot struct {
 	PegReadFailed bool `json:"-"`
 	// FillsWithheld: a source exclusion removed buckets from the series this snapshot was served in; never on the wire.
 	FillsWithheld bool `json:"-"`
+	// BucketSources: the sources that fed a series bucket, so a peg bucket is judged on them; never on the wire.
+	BucketSources []string `json:"-"`
 
 	// FXRate is the USD→quote fixing a closed USD-anchored cross converted
 	// at: the vendor bar's exact close, quote units per 1 USD.
