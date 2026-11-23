@@ -2476,15 +2476,22 @@ export interface paths {
          *     whenever `excluded` is non-empty: a reserve whose rate is not read
          *     (`rate_unread`), Positions entries that did not decode
          *     (`positions_unreadable`), a read that reached its 50,000-entry
-         *     cap (`positions_truncated`), a reserve whose read positions do not
-         *     sum exactly to its `b_supply` (supply) or `d_supply` (borrow)
-         *     (`positions_unreconciled`), or a pool reserve list that could not be
+         *     cap (`positions_truncated`), a reserve whose read positions sum past
+         *     its `b_supply` (supply) or `d_supply` (borrow)
+         *     (`positions_overcounted`), or a pool reserve list that could not be
          *     read (`reserve_list_unreadable`).
          *
-         *     A rank is never served when an account could be missing from it. A
-         *     truncated read serves `rows: []`; an unreconciled reserve's
-         *     positions are left out of the ranking and named, so with `asset`
-         *     set to that reserve `rows` is empty. `accounts` is then a floor.
+         *     Reconciliation has zero tolerance. Positions that sum past the
+         *     reserve's total cannot all be true, so that reserve is left out and
+         *     named; with `asset` set to it `rows` is empty. Positions that sum
+         *     short of it are ranked, `lower_bound` is true, and the gap is served
+         *     in `unattributed`: an unread position may hold all of it. A row's
+         *     rank is exact only while its `amount` is at least the reserve's
+         *     unattributed `amount` (without `asset`: while its `value_usd` is at
+         *     least the unattributed amounts' summed USD value, and no rank is
+         *     exact when one of them has no price); every other row carries
+         *     `rank_lower_bound: true`. A truncated read serves `rows: []`.
+         *     `accounts` is a floor whenever `lower_bound`.
          *
          *     The pool's positions are one primary-key range read of its
          *     Positions entries, cached per pool for one minute. They include
@@ -2493,7 +2500,10 @@ export interface paths {
          *     totals. Rows do not say whether an entry is archived.
          *
          *     Each reserve's state is read fresh after the positions, so no
-         *     position is converted at a rate older than the position.
+         *     position is converted at a rate older than the position. The two
+         *     reads are not atomic: when a reserve mismatches, both are read once
+         *     more, and a mismatch that remains is cached for 5 seconds rather
+         *     than a minute.
          *
          *     404 when no Blend or BLNT pool is known at the contract id, or when
          *     `asset` is not in the pool's (readable) reserve list.
@@ -6967,10 +6977,10 @@ export interface components {
             /** @description The reserve left out; null for a pool-wide exclusion. */
             asset: string | null;
             /**
-             * @description Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_unreconciled`: the reserve's read positions do not sum to its `b_supply`/`d_supply`, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read.
+             * @description Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_overcounted`: the reserve's read positions sum past its `b_supply`/`d_supply`, which cannot be true, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read.
              * @enum {string}
              */
-            reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_unreconciled" | "reserve_list_unreadable";
+            reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_overcounted" | "reserve_list_unreadable";
         };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's
@@ -19916,6 +19926,7 @@ export interface operations {
                      *         "accounts": 412,
                      *         "lower_bound": false,
                      *         "excluded": [],
+                     *         "unattributed": [],
                      *         "rows": [
                      *           {
                      *             "rank": 1,
@@ -19958,6 +19969,19 @@ export interface operations {
                             accounts: number;
                             lower_bound: boolean;
                             excluded: components["schemas"]["LendingTopAccountsExclusion"][];
+                            /** @description Per ranked reserve, the part of its side total no read position holds; empty when every reserve reconciles. */
+                            unattributed: {
+                                /** @description Reserve token C-strkey. */
+                                asset: string;
+                                /** @enum {string} */
+                                side: "supply" | "borrow";
+                                /** @description b-tokens (supply) or d-tokens (borrow) of the reserve's total no read position holds, base units. */
+                                tokens: string;
+                                /** @description `tokens` in the underlying at the reserve's stored rate, base units. */
+                                amount: string;
+                                /** @description `tokens` over the reserve's `b_supply` (`d_supply`), 6 dp. */
+                                share_of_reserve: string;
+                            }[];
                             rows: {
                                 rank: number;
                                 /** @description G- or C-strkey. */
@@ -19980,6 +20004,8 @@ export interface operations {
                                  * @description Ledger the Positions entry was last written.
                                  */
                                 last_modified_ledger: number;
+                                /** @description Present and true when an unread position could hold more than this row, so its rank is a floor. Absent otherwise. */
+                                rank_lower_bound?: boolean;
                             }[];
                             /**
                              * Format: int64

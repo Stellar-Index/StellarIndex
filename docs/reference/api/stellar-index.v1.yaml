@@ -5134,15 +5134,22 @@ paths:
         whenever `excluded` is non-empty: a reserve whose rate is not read
         (`rate_unread`), Positions entries that did not decode
         (`positions_unreadable`), a read that reached its 50,000-entry
-        cap (`positions_truncated`), a reserve whose read positions do not
-        sum exactly to its `b_supply` (supply) or `d_supply` (borrow)
-        (`positions_unreconciled`), or a pool reserve list that could not be
+        cap (`positions_truncated`), a reserve whose read positions sum past
+        its `b_supply` (supply) or `d_supply` (borrow)
+        (`positions_overcounted`), or a pool reserve list that could not be
         read (`reserve_list_unreadable`).
 
-        A rank is never served when an account could be missing from it. A
-        truncated read serves `rows: []`; an unreconciled reserve's
-        positions are left out of the ranking and named, so with `asset`
-        set to that reserve `rows` is empty. `accounts` is then a floor.
+        Reconciliation has zero tolerance. Positions that sum past the
+        reserve's total cannot all be true, so that reserve is left out and
+        named; with `asset` set to it `rows` is empty. Positions that sum
+        short of it are ranked, `lower_bound` is true, and the gap is served
+        in `unattributed`: an unread position may hold all of it. A row's
+        rank is exact only while its `amount` is at least the reserve's
+        unattributed `amount` (without `asset`: while its `value_usd` is at
+        least the unattributed amounts' summed USD value, and no rank is
+        exact when one of them has no price); every other row carries
+        `rank_lower_bound: true`. A truncated read serves `rows: []`.
+        `accounts` is a floor whenever `lower_bound`.
 
         The pool's positions are one primary-key range read of its
         Positions entries, cached per pool for one minute. They include
@@ -5151,7 +5158,10 @@ paths:
         totals. Rows do not say whether an entry is archived.
 
         Each reserve's state is read fresh after the positions, so no
-        position is converted at a rate older than the position.
+        position is converted at a rate older than the position. The two
+        reads are not atomic: when a reserve mismatches, both are read once
+        more, and a mismatch that remains is cached for 5 seconds rather
+        than a minute.
 
         404 when no Blend or BLNT pool is known at the contract id, or when
         `asset` is not in the pool's (readable) reserve list.
@@ -5175,6 +5185,7 @@ paths:
                   accounts: 412
                   lower_bound: false
                   excluded: []
+                  unattributed: []
                   rows:
                   - { rank: 1, account: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7, asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, decimals: 7, tokens: '9800000000000', amount: '10290000000000', value_usd: '308700.00', usd_reason: null, share_of_reserve: '0.041200', last_modified_ledger: 63339870 }
                   as_of_ledger: 63340102
@@ -5204,6 +5215,18 @@ paths:
                           excluded:
                             type: array
                             items: { $ref: "#/components/schemas/LendingTopAccountsExclusion" }
+                          unattributed:
+                            type: array
+                            description: "Per ranked reserve, the part of its side total no read position holds; empty when every reserve reconciles."
+                            items:
+                              type: object
+                              properties:
+                                asset: { type: string, description: Reserve token C-strkey. }
+                                side: { type: string, enum: [supply, borrow] }
+                                tokens: { type: string, description: "b-tokens (supply) or d-tokens (borrow) of the reserve's total no read position holds, base units." }
+                                amount: { type: string, description: "`tokens` in the underlying at the reserve's stored rate, base units." }
+                                share_of_reserve: { type: string, description: "`tokens` over the reserve's `b_supply` (`d_supply`), 6 dp." }
+                              required: [asset, side, tokens, amount, share_of_reserve]
                           rows:
                             type: array
                             items:
@@ -5219,10 +5242,11 @@ paths:
                                 usd_reason: { type: [string, "null"], enum: [unpriced, withheld, null] }
                                 share_of_reserve: { type: [string, "null"], description: "`amount` over the reserve's side total, 6 dp." }
                                 last_modified_ledger: { type: integer, format: int64, description: "Ledger the Positions entry was last written." }
+                                rank_lower_bound: { type: boolean, description: "Present and true when an unread position could hold more than this row, so its rank is a floor. Absent otherwise." }
                               required: [rank, account, asset, decimals, tokens, amount, value_usd, usd_reason, share_of_reserve, last_modified_ledger]
                           as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured when the cached positions were read; they are at least this new." }
                           note: { type: string }
-                        required: [pool, protocol, side, asset, ranking, accounts, lower_bound, excluded, rows, as_of_ledger, note]
+                        required: [pool, protocol, side, asset, ranking, accounts, lower_bound, excluded, unattributed, rows, as_of_ledger, note]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -16611,14 +16635,14 @@ components:
         asset:  { type: [string, "null"], description: "The reserve left out; null for a pool-wide exclusion." }
         reason:
           type: string
-          description: "Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_unreconciled`: the reserve's read positions do not sum to its `b_supply`/`d_supply`, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read."
+          description: "Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_overcounted`: the reserve's read positions sum past its `b_supply`/`d_supply`, which cannot be true, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read."
           enum:
             - unpriced
             - withheld
             - rate_unread
             - positions_unreadable
             - positions_truncated
-            - positions_unreconciled
+            - positions_overcounted
             - reserve_list_unreadable
       required: [kind, pool, asset, reason]
     LendingReserveConfig:

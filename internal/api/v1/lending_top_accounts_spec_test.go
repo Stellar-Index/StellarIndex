@@ -12,7 +12,7 @@ func TestTopAccountsExclusionReasonEnumMatchesHandler(t *testing.T) {
 		topAccountsReasonTruncated,
 		topAccountsReasonUnreadable,
 		topAccountsReasonList,
-		topAccountsReasonUnreconciled,
+		topAccountsReasonOvercounted,
 		earningsReasonRateUnread,
 		earningsUSDWithheld,
 		earningsUSDUnpriced,

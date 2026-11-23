@@ -44,6 +44,7 @@ function payload(side: string, over: Record<string, unknown> = {}) {
       accounts: 412,
       lower_bound: false,
       excluded: [],
+      unattributed: [],
       rows: [row()],
       as_of_ledger: 63340102,
       note: '',
@@ -167,7 +168,7 @@ describe('TopAccountsPanel', () => {
             kind: 'supply',
             pool: POOL,
             asset: EURC_SAC,
-            reason: 'positions_unreconciled',
+            reason: 'positions_overcounted',
           },
           {
             kind: 'supply',
@@ -182,12 +183,61 @@ describe('TopAccountsPanel', () => {
     expect(await screen.findByText('at least 412')).toBeInTheDocument();
     const note = screen.getByText(/partial:/);
     expect(note.textContent).toContain(
-      "EURC (the positions read did not add up to the reserve's total)",
+      "EURC (the positions read add up to more than the reserve's total)",
     );
     expect(note.textContent).toContain(
       "EURC (the reserve's rate could not be read)",
     );
-    expect(note.textContent).not.toContain('positions_unreconciled');
+    expect(note.textContent).not.toContain('positions_overcounted');
+  });
+
+  it('names each unattributed share and marks ranks that are floors', async () => {
+    mockApi((q) =>
+      payload(q.side as string, {
+        lower_bound: true,
+        unattributed: [
+          {
+            asset: USDC_SAC,
+            side: 'supply',
+            tokens: '4000000000000',
+            amount: '4200000000000',
+            share_of_reserve: '0.125000',
+          },
+          {
+            asset: EURC_SAC,
+            side: 'supply',
+            tokens: '1',
+            amount: '1',
+            share_of_reserve: '0.000000',
+          },
+        ],
+        rows: [
+          row(),
+          row({
+            rank: 2,
+            account: 'GBX',
+            value_usd: '10.00',
+            rank_lower_bound: true,
+          }),
+        ],
+      }),
+    );
+    renderIt();
+    expect(await screen.findByText('at least 412')).toBeInTheDocument();
+    const note = screen.getByText(/partial:/);
+    expect(note.textContent).toContain(
+      "USDC (12.50% of this reserve's supply is not attributed to a read position)",
+    );
+    expect(note.textContent).toContain(
+      "EURC (under 0.01% of this reserve's supply is not attributed to a read position)",
+    );
+    const marks = screen.getAllByText('≥');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toHaveAttribute(
+      'title',
+      expect.stringContaining('an unread one could be larger'),
+    );
+    expect(marks[0].closest('tr')?.textContent).toContain('2');
   });
 
   it('says why when no position can be ranked', async () => {
@@ -201,7 +251,7 @@ describe('TopAccountsPanel', () => {
             kind: 'supply',
             pool: POOL,
             asset: USDC_SAC,
-            reason: 'positions_unreconciled',
+            reason: 'positions_overcounted',
           },
           {
             kind: 'supply',
@@ -218,7 +268,7 @@ describe('TopAccountsPanel', () => {
     ).toBeInTheDocument();
     const why = screen.getByText(/^Why:/);
     expect(why.textContent).toContain(
-      "USDC (the positions read did not add up to the reserve's total)",
+      "USDC (the positions read add up to more than the reserve's total)",
     );
     expect(why.textContent).toContain('too many positions to rank in one read');
     expect(screen.queryByText('No positions.')).not.toBeInTheDocument();

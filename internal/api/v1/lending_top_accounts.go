@@ -26,14 +26,17 @@ const (
 	topAccountsRankUSD    = "value_usd"
 	topAccountsRankAmount = "amount"
 
-	topAccountsReasonTruncated    = "positions_truncated"
-	topAccountsReasonUnreadable   = "positions_unreadable"
-	topAccountsReasonList         = "reserve_list_unreadable"
-	topAccountsReasonUnreconciled = "positions_unreconciled"
+	topAccountsReasonTruncated   = "positions_truncated"
+	topAccountsReasonUnreadable  = "positions_unreadable"
+	topAccountsReasonList        = "reserve_list_unreadable"
+	topAccountsReasonOvercounted = "positions_overcounted"
 
 	topAccountsDefaultLimit  = 20
 	topAccountsMaxLimit      = 100
 	topAccountsShareDecimals = 6
+
+	// topAccountsUnreconciledTTL is how long a fill that still mismatched after its re-read is served before the next read.
+	topAccountsUnreconciledTTL = 5 * time.Second
 )
 
 const lendingTopAccountsNote = "Each row is one account's current position in one reserve, read from the pool's Positions storage; amount is " +
@@ -50,12 +53,14 @@ type LendingTopAccountsView struct {
 	Ranking  string  `json:"ranking"`  // value_usd | amount
 	// Accounts counts the accounts holding a position on this side (in asset when filtered); a floor when lower_bound.
 	Accounts int `json:"accounts"`
-	// LowerBound marks rows and accounts as incomplete; Excluded names what was left out.
-	LowerBound bool                    `json:"lower_bound"`
-	Excluded   []LendingStatsExclusion `json:"excluded"`
-	Rows       []LendingTopAccount     `json:"rows"`
-	AsOfLedger uint32                  `json:"as_of_ledger"`
-	Note       string                  `json:"note"`
+	// LowerBound marks rows and accounts as incomplete; Excluded names what was left out and Unattributed what no read
+	// position accounts for.
+	LowerBound   bool                             `json:"lower_bound"`
+	Excluded     []LendingStatsExclusion          `json:"excluded"`
+	Unattributed []LendingTopAccountsUnattributed `json:"unattributed"`
+	Rows         []LendingTopAccount              `json:"rows"`
+	AsOfLedger   uint32                           `json:"as_of_ledger"`
+	Note         string                           `json:"note"`
 }
 
 // LendingTopAccount is one account's position in one reserve; amounts are base-unit decimal strings.
@@ -72,6 +77,18 @@ type LendingTopAccount struct {
 	// ShareOfReserve is amount over the reserve's supplied (or borrowed) total, 6 dp; null when that total is zero.
 	ShareOfReserve     *string `json:"share_of_reserve"`
 	LastModifiedLedger uint32  `json:"last_modified_ledger"`
+	// RankLowerBound marks a row ranked below what one unread position could hold, so an unread account may rank above it.
+	RankLowerBound bool `json:"rank_lower_bound,omitempty"`
+}
+
+// LendingTopAccountsUnattributed is the part of a reserve's side total that no read position holds: tokens and their amount
+// in the underlying as base-unit decimal strings, and tokens over the total at 6 dp.
+type LendingTopAccountsUnattributed struct {
+	Asset          string `json:"asset"`
+	Side           string `json:"side"`
+	Tokens         string `json:"tokens"`
+	Amount         string `json:"amount"`
+	ShareOfReserve string `json:"share_of_reserve"`
 }
 
 // poolTopAccounts is one pool's cached positions and the reserve states and views that convert and price them.
@@ -82,6 +99,16 @@ type poolTopAccounts struct {
 	views           map[string]ReserveView
 	asOf            uint32 // the lake watermark read just before the positions
 	stale, degraded bool
+	unreconciled    bool // a reserve still mismatched after the re-read
+}
+
+// poolTopAccountsTTL serves an unreconciled fill only briefly, so a mismatch from a write between the reads is not every
+// caller's answer for the full TTL.
+func poolTopAccountsTTL(b poolTopAccounts) time.Duration {
+	if b.unreconciled {
+		return topAccountsUnreconciledTTL
+	}
+	return lendingReservesTTL
 }
 
 // handleLendingPoolTopAccounts serves GET /v1/lending/pools/{pool}/top-accounts. Invariant: every amount is the account's
@@ -146,32 +173,59 @@ func (s *Server) handleLendingPoolTopAccounts(w http.ResponseWriter, r *http.Req
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: flags})
 }
 
+// fillPoolTopAccounts reads the pool's positions and then its reserve state. The two reads are not atomic, so a mismatch
+// reads both once more; one that survives is served and marked unreconciled.
 func (s *Server) fillPoolTopAccounts(pr lendingPoolPositionsReader, pool, protocol string) func(context.Context) (poolTopAccounts, error) {
 	return func(ctx context.Context) (poolTopAccounts, error) {
-		wm, lakeStale, _ := s.lakeWatermark(ctx)
-		pos, err := pr.LendingPoolPositions(ctx, pool)
-		if err != nil {
+		built, err := s.readPoolTopAccounts(ctx, pr, pool, protocol)
+		if err != nil || built.reconciles() {
+			return built, err
+		}
+		if built, err = s.readPoolTopAccounts(ctx, pr, pool, protocol); err != nil {
 			return poolTopAccounts{}, err
 		}
-		// Reserve state is read fresh AFTER the positions, never from the reserves cache, so no position is newer than the
-		// rate that converts it; a write between the two reads breaks reconciliation and that reserve is not ranked.
-		res, err := s.buildPoolReserves(ctx, pool)
-		if err != nil && !errors.Is(err, errPoolLineageUnknown) {
-			return poolTopAccounts{}, err
-		}
-		states := make(map[string]clickhouse.BlendReserveState, len(res.states))
-		for _, st := range res.states {
-			states[st.Asset] = st
-		}
-		views := make(map[string]ReserveView, len(res.view.Reserves))
-		for _, rv := range res.view.Reserves {
-			views[rv.Asset] = rv
-		}
-		return poolTopAccounts{
-			protocol: protocol, positions: pos, states: states, views: views, asOf: wm,
-			stale: lakeStale || res.flags.Stale, degraded: res.flags.Degraded,
-		}, nil
+		built.unreconciled = !built.reconciles()
+		return built, nil
 	}
+}
+
+func (s *Server) readPoolTopAccounts(ctx context.Context, pr lendingPoolPositionsReader, pool, protocol string) (poolTopAccounts, error) {
+	wm, lakeStale, _ := s.lakeWatermark(ctx)
+	pos, err := pr.LendingPoolPositions(ctx, pool)
+	if err != nil {
+		return poolTopAccounts{}, err
+	}
+	// Reserve state is read fresh AFTER the positions, never from the reserves cache, so no position is newer than the
+	// rate that converts it.
+	res, err := s.buildPoolReserves(ctx, pool)
+	if err != nil && !errors.Is(err, errPoolLineageUnknown) {
+		return poolTopAccounts{}, err
+	}
+	states := make(map[string]clickhouse.BlendReserveState, len(res.states))
+	for _, st := range res.states {
+		states[st.Asset] = st
+	}
+	views := make(map[string]ReserveView, len(res.view.Reserves))
+	for _, rv := range res.view.Reserves {
+		views[rv.Asset] = rv
+	}
+	return poolTopAccounts{
+		protocol: protocol, positions: pos, states: states, views: views, asOf: wm,
+		stale: lakeStale || res.flags.Stale, degraded: res.flags.Degraded,
+	}, nil
+}
+
+// reconciles reports that every read reserve's positions sum exactly to its b_supply and d_supply; a read that cannot be
+// reconciled at all (unreadable list, truncated) has nothing a re-read would fix.
+func (b poolTopAccounts) reconciles() bool {
+	for _, side := range []string{earningsSideSupply, earningsSideBorrow} {
+		for _, r := range b.reconciliation(side) {
+			if r.gap != nil || r.reason == topAccountsReasonOvercounted {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // topCandidate is one ranked position before the limit is applied.
@@ -190,8 +244,11 @@ func rankTopAccounts(pool string, built poolTopAccounts, side, asset string, lim
 	if asset != "" {
 		view.Asset, view.Ranking = strRef(asset), topAccountsRankAmount
 	}
-	excluded := topAccountsReadExclusions(built, side, asset)
+	recon := built.reconciliation(side)
+	excluded := topAccountsReadExclusions(built, asset, recon)
 	cands, accounts := topAccountCandidates(built, side, asset, excluded)
+	var bound rankBound
+	view.Unattributed, bound = unattributedGaps(built, side, asset, recon)
 	view.Accounts = accounts
 	if built.positions.Truncated {
 		// The read stopped at its cap in key order, so the largest account may be past it: no row can be ranked.
@@ -223,10 +280,75 @@ func rankTopAccounts(pool string, built poolTopAccounts, side, asset string, lim
 	})
 	for i, c := range cands[:min(limit, len(cands))] {
 		c.row.Rank = i + 1
+		c.row.RankLowerBound = bound.inexact(c, view.Ranking)
 		view.Rows = append(view.Rows, c.row)
 	}
-	view.LowerBound = len(view.Excluded) > 0
+	view.LowerBound = len(view.Excluded) > 0 || len(view.Unattributed) > 0
 	return view
+}
+
+// rankBound is the least a row must hold for its rank to be exact: one unread position could hold a short reserve's whole gap.
+type rankBound struct {
+	amount *big.Int // ranking by amount: the reserve's unattributed amount
+	usd    *big.Rat // ranking by value_usd: the short reserves' unattributed amounts in USD, summed
+	all    bool     // a short reserve's gap has no USD value, so no USD rank is exact
+}
+
+func (b rankBound) inexact(c topCandidate, ranking string) bool {
+	if ranking == topAccountsRankAmount {
+		return b.amount != nil && c.amount.Cmp(b.amount) < 0
+	}
+	return b.all || (b.usd != nil && c.usd.Cmp(b.usd) < 0)
+}
+
+// unattributedGaps serves, in reserve order, each ranked reserve's tokens on the side that no read position holds (in asset
+// when set), and the bound below which a row's rank is not exact.
+func unattributedGaps(built poolTopAccounts, side, asset string, recon map[string]reserveRecon) ([]LendingTopAccountsUnattributed, rankBound) {
+	out := []LendingTopAccountsUnattributed{}
+	var bound rankBound
+	convert := sideConverter(side)
+	for _, a := range built.positions.Reserves {
+		gap := recon[a].gap
+		if gap == nil || (asset != "" && a != asset) {
+			continue
+		}
+		st := built.states[a]
+		amount := convert(st.Data, gap)
+		out = append(out, LendingTopAccountsUnattributed{
+			Asset: a, Side: side, Tokens: gap.String(), Amount: amount.String(),
+			ShareOfReserve: ratString(new(big.Rat).SetFrac(gap, sideTotal(st, side)), topAccountsShareDecimals),
+		})
+		if asset != "" {
+			bound.amount = amount
+			continue
+		}
+		amt := amount.String()
+		value, reason := legUSD(&amt, built.views[a])
+		if reason != "" {
+			bound.all = true
+			continue
+		}
+		if bound.usd == nil {
+			bound.usd = new(big.Rat)
+		}
+		bound.usd.Add(bound.usd, value)
+	}
+	return out, bound
+}
+
+func sideConverter(side string) func(blend.ReserveData, *big.Int) *big.Int {
+	if side == earningsSideBorrow {
+		return blend.ReserveData.DTokensToUnderlying
+	}
+	return blend.ReserveData.BTokensToUnderlying
+}
+
+// sideTotal is the reserve's b_supply (supply) or d_supply (borrow); nil when unread.
+func sideTotal(st clickhouse.BlendReserveState, side string) *big.Int {
+	if side == earningsSideBorrow {
+		return st.Data.DSupply
+	}
+	return st.Data.BSupply
 }
 
 // topAccountCandidate converts one position at its reserve's stored rate and values it through the earnings route's legUSD;
@@ -275,13 +397,13 @@ func heldOn(acct clickhouse.LendingPoolPosition, side string) map[string]*big.In
 	return acct.Supply
 }
 
-// reserveUnranked reports a reserve whose positions cannot be ranked because its total is unread or unreconciled.
+// reserveUnranked reports a reserve whose positions cannot be ranked because its total is unread or overcounted.
 func reserveUnranked(excluded map[[2]string]bool, asset string) bool {
-	return excluded[[2]string{asset, topAccountsReasonUnreconciled}] || excluded[[2]string{asset, earningsReasonRateUnread}]
+	return excluded[[2]string{asset, topAccountsReasonOvercounted}] || excluded[[2]string{asset, earningsReasonRateUnread}]
 }
 
 // topAccountsReadExclusions keys, by (asset, reason), what the positions read itself leaves out of the ranking.
-func topAccountsReadExclusions(built poolTopAccounts, side, asset string) map[[2]string]bool {
+func topAccountsReadExclusions(built poolTopAccounts, asset string, recon map[string]reserveRecon) map[[2]string]bool {
 	excluded := map[[2]string]bool{}
 	pos := built.positions
 	switch {
@@ -293,29 +415,33 @@ func topAccountsReadExclusions(built poolTopAccounts, side, asset string) map[[2
 	if pos.Unreadable > 0 {
 		excluded[[2]string{"", topAccountsReasonUnreadable}] = true
 	}
-	if pos.Readable && !pos.Truncated {
-		for a, reason := range reserveReconciliation(built, side) {
-			if asset == "" || a == asset {
-				excluded[[2]string{a, reason}] = true
-			}
+	for a, r := range recon {
+		if r.reason != "" && (asset == "" || a == asset) {
+			excluded[[2]string{a, r.reason}] = true
 		}
 	}
 	return excluded
 }
 
-// reserveReconciliation names each reserve whose positions on the side cannot be shown complete: its total is unread
-// (rate_unread), or the read tokens do not sum EXACTLY to its b_supply (d_supply). The tolerance is zero: b- and d-tokens
-// are integers, minted and burned in the same transaction that writes the position, so a read that missed no entry and
-// saw no later write sums exactly; any difference is a missing entry, a key layout this read does not match, or a write
-// between the two reads, and none of those can be ranked truthfully.
-func reserveReconciliation(built poolTopAccounts, side string) map[string]string {
+// reserveRecon is one reserve's reconciliation on one side.
+type reserveRecon struct {
+	reason string   // rate_unread | positions_overcounted: the reserve is not ranked; "" when it is
+	gap    *big.Int // tokens of the side's total no read position holds; nil when the positions sum exactly
+}
+
+// reconciliation compares each reserve's read tokens on the side with its b_supply (d_supply), with zero tolerance: b- and
+// d-tokens are integers, minted and burned in the transaction that writes the position, so a read that missed no entry and
+// saw no later write sums exactly. A sum past the total cannot be true and the reserve is not ranked (positions_overcounted);
+// a sum short of it ranks the reserve as a lower bound with the gap served, since an unread position may hold it. Nothing is
+// reconciled when the read is unreadable or truncated.
+func (b poolTopAccounts) reconciliation(side string) map[string]reserveRecon {
+	out := map[string]reserveRecon{}
+	if !b.positions.Readable || b.positions.Truncated {
+		return out
+	}
 	sums := map[string]*big.Int{}
-	for _, acct := range built.positions.Accounts {
-		held := acct.Supply
-		if side == earningsSideBorrow {
-			held = acct.Borrow
-		}
-		for a, tokens := range held {
+	for _, acct := range b.positions.Accounts {
+		for a, tokens := range heldOn(acct, side) {
 			if tokens == nil {
 				continue
 			}
@@ -325,22 +451,22 @@ func reserveReconciliation(built poolTopAccounts, side string) map[string]string
 			sums[a].Add(sums[a], tokens)
 		}
 	}
-	out := map[string]string{}
-	for _, a := range built.positions.Reserves {
-		st, ok := built.states[a]
-		total := st.Data.BSupply
-		if side == earningsSideBorrow {
-			total = st.Data.DSupply
+	for _, a := range b.positions.Reserves {
+		st, ok := b.states[a]
+		total := sideTotal(st, side)
+		if !ok || total == nil {
+			out[a] = reserveRecon{reason: earningsReasonRateUnread}
+			continue
 		}
 		sum := sums[a]
 		if sum == nil {
 			sum = new(big.Int)
 		}
-		switch {
-		case !ok || total == nil:
-			out[a] = earningsReasonRateUnread
-		case sum.Cmp(total) != 0:
-			out[a] = topAccountsReasonUnreconciled
+		switch sum.Cmp(total) {
+		case 1:
+			out[a] = reserveRecon{reason: topAccountsReasonOvercounted}
+		case -1:
+			out[a] = reserveRecon{gap: new(big.Int).Sub(total, sum)}
 		}
 	}
 	return out
@@ -349,10 +475,7 @@ func reserveReconciliation(built poolTopAccounts, side string) map[string]string
 // topAccountCandidates converts every non-zero position on the side (in asset when set) and counts the accounts holding one;
 // a position it cannot rank is recorded in excluded by (asset, reason). Without asset an unpriced position cannot be ranked.
 func topAccountCandidates(built poolTopAccounts, side, asset string, excluded map[[2]string]bool) (cands []topCandidate, accounts int) {
-	convert := blend.ReserveData.BTokensToUnderlying
-	if side == earningsSideBorrow {
-		convert = blend.ReserveData.DTokensToUnderlying
-	}
+	convert := sideConverter(side)
 	for _, acct := range built.positions.Accounts {
 		counted := false
 		for a, tokens := range heldOn(acct, side) {

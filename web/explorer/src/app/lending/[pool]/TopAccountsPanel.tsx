@@ -26,30 +26,39 @@ type Resp =
   paths['/lending/pools/{pool}/top-accounts']['get']['responses'][200]['content']['application/json'];
 type Data = Resp['data'];
 type Side = Data['side'];
-type Exclusion = Data['excluded'][number];
-
 const LIMIT = 20;
 
 const EXCLUSION_TEXT: Record<string, string> = {
   rate_unread: "the reserve's rate could not be read",
   positions_unreadable: 'some positions could not be read',
   positions_truncated: 'too many positions to rank in one read',
-  positions_unreconciled:
-    "the positions read did not add up to the reserve's total",
+  positions_overcounted:
+    "the positions read add up to more than the reserve's total",
   reserve_list_unreadable: "the pool's reserve list could not be read",
 };
 
 const ARCHIVED_NOTE =
   'Positions include archived entries: they keep their value and can be restored.';
 
-function exclusionLine(
-  excluded: readonly Exclusion[],
-  assetText: (a: string) => string,
-): string {
-  const parts = excluded.map((e) => {
+const RANK_FLOOR_TITLE =
+  'Not every position in this reserve was read, and an unread one could be larger, so this rank may be lower.';
+
+function sharePercent(share: string): string {
+  const pct = Number(share) * 100;
+  return pct < 0.01 ? 'under 0.01%' : `${pct.toFixed(2)}%`;
+}
+
+/** Everything that makes the ranking partial: left-out positions, then each reserve's unattributed share. */
+function partialLine(d: Data, assetText: (a: string) => string): string {
+  const parts = d.excluded.map((e) => {
     const why = EXCLUSION_TEXT[e.reason] ?? reasonText(e.reason);
     return e.asset ? `${assetText(e.asset)} (${why})` : why;
   });
+  for (const u of d.unattributed) {
+    parts.push(
+      `${assetText(u.asset)} (${sharePercent(u.share_of_reserve)} of this reserve's ${u.side} is not attributed to a read position)`,
+    );
+  }
   return [...new Set(parts)].join(', ');
 }
 
@@ -82,6 +91,8 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
   const d = q.data;
   const verb = side === 'supply' ? 'supplying' : 'borrowing';
   const unranked = d != null && d.rows.length === 0 && d.lower_bound;
+  const partial =
+    d != null && (d.excluded.length > 0 || d.unattributed.length > 0);
 
   return (
     <Panel
@@ -126,10 +137,8 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
       {d && unranked && (
         <div className="text-sm">
           <p className="text-ink-body">No rankable positions.</p>
-          {d.excluded.length > 0 && (
-            <p className="text-ink-muted">
-              Why: {exclusionLine(d.excluded, assetText)}.
-            </p>
+          {partial && (
+            <p className="text-ink-muted">Why: {partialLine(d, assetText)}.</p>
           )}
         </div>
       )}
@@ -140,10 +149,10 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
             {d.accounts.toLocaleString('en-US')}
           </span>{' '}
           account{d.accounts === 1 ? '' : 's'} {verb}
-          {d.lower_bound && d.excluded.length > 0 && (
+          {d.lower_bound && partial && (
             <span className="text-ink-muted">
               {' '}
-              · partial: {exclusionLine(d.excluded, assetText)}
+              · partial: {partialLine(d, assetText)}
             </span>
           )}
         </p>
@@ -178,6 +187,14 @@ export function TopAccountsPanel({ pool }: { pool: string }) {
                 return (
                   <TR key={`${r.account}-${r.asset}`}>
                     <Td align="right" className="font-mono tabular-nums">
+                      {r.rank_lower_bound && (
+                        <span
+                          className="text-ink-faint"
+                          title={RANK_FLOOR_TITLE}
+                        >
+                          ≥
+                        </span>
+                      )}
                       {r.rank}
                     </Td>
                     <Td className="font-mono whitespace-nowrap">

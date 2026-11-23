@@ -48,19 +48,30 @@ type LendingTopAccountsQuery struct {
 	Limit int
 }
 
-// LendingTopAccounts is one pool's largest positions on one side; LowerBound means Rows and Accounts omit what Excluded names.
+// LendingTopAccounts is one pool's largest positions on one side; LowerBound means Rows and Accounts omit what Excluded and
+// Unattributed name.
 type LendingTopAccounts struct {
-	Pool       string                       `json:"pool"`
-	Protocol   string                       `json:"protocol"`
-	Side       string                       `json:"side"`
-	Asset      *string                      `json:"asset"`
-	Ranking    string                       `json:"ranking"` // value_usd | amount
-	Accounts   int                          `json:"accounts"`
-	LowerBound bool                         `json:"lower_bound"`
-	Excluded   []LendingTopAccountsExcluded `json:"excluded"`
-	Rows       []LendingTopAccount          `json:"rows"`
-	AsOfLedger uint32                       `json:"as_of_ledger"`
-	Note       string                       `json:"note"`
+	Pool         string                           `json:"pool"`
+	Protocol     string                           `json:"protocol"`
+	Side         string                           `json:"side"`
+	Asset        *string                          `json:"asset"`
+	Ranking      string                           `json:"ranking"` // value_usd | amount
+	Accounts     int                              `json:"accounts"`
+	LowerBound   bool                             `json:"lower_bound"`
+	Excluded     []LendingTopAccountsExcluded     `json:"excluded"`
+	Unattributed []LendingTopAccountsUnattributed `json:"unattributed"`
+	Rows         []LendingTopAccount              `json:"rows"`
+	AsOfLedger   uint32                           `json:"as_of_ledger"`
+	Note         string                           `json:"note"`
+}
+
+// LendingTopAccountsUnattributed is the part of a reserve's side total no read position holds; decimal strings, share 6 dp.
+type LendingTopAccountsUnattributed struct {
+	Asset          string `json:"asset"`
+	Side           string `json:"side"`
+	Tokens         string `json:"tokens"`
+	Amount         string `json:"amount"`
+	ShareOfReserve string `json:"share_of_reserve"`
 }
 
 // LendingTopAccountsExcluded names positions left out of a ranking and why.
@@ -83,4 +94,5 @@ type LendingTopAccount struct {
 	UsdReason          *string `json:"usd_reason"`
 	ShareOfReserve     *string `json:"share_of_reserve"`
 	LastModifiedLedger uint32  `json:"last_modified_ledger"`
+	RankLowerBound     bool    `json:"rank_lower_bound,omitempty"` // an unread position could rank above this row
 }

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -15,16 +16,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// stubTopAccountsExplorer serves a fixed pool-wide Positions read and counts the reads.
+// stubTopAccountsExplorer serves a fixed pool-wide Positions read, or the reads in seq in turn (the last repeating), and
+// counts the reads.
 type stubTopAccountsExplorer struct {
 	*stubBLNTExplorer
 	positions clickhouse.LendingPoolPositions
+	seq       []clickhouse.LendingPoolPositions
 	reads     atomic.Int32
 }
 
 func (e *stubTopAccountsExplorer) LendingPoolPositions(context.Context, string) (clickhouse.LendingPoolPositions, error) {
-	e.reads.Add(1)
+	n := int(e.reads.Add(1))
+	if len(e.seq) > 0 {
+		return e.seq[min(n, len(e.seq))-1], nil
+	}
 	return e.positions, nil
+}
+
+// withPositions is the fixture's read with accounts replacing its own.
+func withPositions(p clickhouse.LendingPoolPositions, accounts ...clickhouse.LendingPoolPosition) clickhouse.LendingPoolPositions {
+	p.Accounts = accounts
+	return p
 }
 
 // topReserve is a reserve whose b_supply and d_supply are the totals the fixture's positions must sum to.
@@ -200,36 +212,108 @@ func TestLendingTopAccounts_ReconciledReadIsComplete(t *testing.T) {
 	}
 }
 
-// TestLendingTopAccounts_NoPositionsAgainstANonZeroReserveIsUnreconciled: a read that finds no Positions entries while the
-// reserve holds b-tokens (as a key layout the reader does not match would) is never served as a clean "0 accounts".
-func TestLendingTopAccounts_NoPositionsAgainstANonZeroReserveIsUnreconciled(t *testing.T) {
-	pool, sac, unpriced, ex, srv := topAccountsFixture(t)
+// TestLendingTopAccounts_NoPositionsAgainstANonZeroReserveIsUnattributed: a read that finds no Positions entries while the
+// reserve holds b-tokens (as a key layout the reader does not match would) is never served as a clean "0 accounts": the
+// whole supply is served as unattributed and the answer is a lower bound.
+func TestLendingTopAccounts_NoPositionsAgainstANonZeroReserveIsUnattributed(t *testing.T) {
+	pool, sac, _, ex, srv := topAccountsFixture(t)
 	ex.positions.Accounts = nil
 	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
-	if !got.LowerBound || len(got.Rows) != 0 || !topExcluded(got, sac, "positions_unreconciled") {
+	if !got.LowerBound || len(got.Rows) != 0 || len(got.Excluded) != 0 || len(got.Unattributed) != 1 {
 		t.Fatalf("view = %+v", got)
 	}
-	got, _ = getTopAccounts(t, srv, pool, "?side=supply", http.StatusOK)
-	if !got.LowerBound || !topExcluded(got, sac, "positions_unreconciled") || !topExcluded(got, unpriced, "positions_unreconciled") {
-		t.Fatalf("all reserves = %+v", got)
+	if u := got.Unattributed[0]; u.Asset != sac || u.Side != "supply" || u.Tokens != "18446744076709551616" ||
+		u.Amount != "20291418484380506777" || u.ShareOfReserve != "1.000000" {
+		t.Fatalf("unattributed = %+v", u)
 	}
 }
 
-// TestLendingTopAccounts_UnreconciledReserveIsNotRanked: a reserve whose positions sum short of (or past) its b_supply is
-// left out of the ranking and named; the reconciled reserves still rank, as a lower bound. A position holding more than
-// the reserve's total can then never be served with a share above 1.
-func TestLendingTopAccounts_UnreconciledReserveIsNotRanked(t *testing.T) {
+// TestLendingTopAccounts_OvercountedReserveIsNotRanked: positions summing past the reserve's b_supply cannot all be true, so
+// that reserve is left out and named positions_overcounted; the other side, which reconciles, still ranks completely. A
+// position holding more than the reserve's total is then never served with a share above 1.
+func TestLendingTopAccounts_OvercountedReserveIsNotRanked(t *testing.T) {
 	pool, sac, _, ex, srv := topAccountsFixture(t)
 	ex.positions.Accounts = append(ex.positions.Accounts, clickhouse.LendingPoolPosition{
 		Account: "GE", Supply: map[string]*big.Int{sac: bigStr(t, "36893488147419103232")}, Ledger: 14,
 	})
 	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
-	if !got.LowerBound || len(got.Rows) != 0 || !topExcluded(got, sac, "positions_unreconciled") {
+	if !got.LowerBound || len(got.Rows) != 0 || !topExcluded(got, sac, "positions_overcounted") || len(got.Unattributed) != 0 {
 		t.Fatalf("view = %+v", got)
 	}
 	got, _ = getTopAccounts(t, srv, pool, "?side=borrow&asset="+sac, http.StatusOK)
 	if got.LowerBound || len(got.Rows) != 1 {
 		t.Fatalf("borrow side reconciles on d_supply alone: %+v", got)
+	}
+}
+
+// TestLendingTopAccounts_ShortReserveRanksWithRankBounds: positions summing short of b_supply are ranked as a lower bound with
+// the gap served; a row is marked rank_lower_bound once its amount (or, across reserves, value_usd) is below what one unread
+// position could hold, and every row is when a short reserve's gap cannot be valued.
+func TestLendingTopAccounts_ShortReserveRanksWithRankBounds(t *testing.T) {
+	pool, sac, unpriced, ex, srv := topAccountsFixture(t)
+	acc := ex.positions.Accounts
+	// GB's 300 XLM of b-tokens is replaced by GF's 100: 200 XLM of b-tokens (220 XLM, $440) is not attributed.
+	gf := clickhouse.LendingPoolPosition{Account: "GF", Supply: map[string]*big.Int{sac: big.NewInt(100 * xlm)}, Ledger: 15}
+	ex.positions = withPositions(ex.positions, acc[0], gf, acc[2], acc[3])
+	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
+	if !got.LowerBound || len(got.Excluded) != 0 || len(got.Rows) != 2 || len(got.Unattributed) != 1 {
+		t.Fatalf("view = %+v", got)
+	}
+	if u := got.Unattributed[0]; u.Tokens != "2000000000" || u.Amount != "2200000000" || u.ShareOfReserve != "0.000000" {
+		t.Fatalf("unattributed = %+v", u)
+	}
+	if got.Rows[0].Account != "GA" || got.Rows[0].RankLowerBound || got.Rows[1].Account != "GF" || !got.Rows[1].RankLowerBound {
+		t.Fatalf("amount rank bounds = %+v", got.Rows)
+	}
+	got, _ = getTopAccounts(t, srv, pool, "?side=supply", http.StatusOK)
+	if len(got.Rows) != 2 || got.Rows[0].RankLowerBound || !got.Rows[1].RankLowerBound || len(got.Unattributed) != 1 {
+		t.Fatalf("usd rank bounds = %+v", got)
+	}
+
+	pool2, _, _, ex2, srv2 := topAccountsFixture(t)
+	acc2 := ex2.positions.Accounts
+	ex2.positions = withPositions(ex2.positions, acc2[0], acc2[1], acc2[3]) // the unpriced reserve's only holder unread
+	got, _ = getTopAccounts(t, srv2, pool2, "?side=supply", http.StatusOK)
+	if len(got.Rows) != 2 || !got.Rows[0].RankLowerBound || !got.Rows[1].RankLowerBound || len(got.Unattributed) != 1 ||
+		got.Unattributed[0].Asset != unpriced {
+		t.Fatalf("unpriced gap: every row is a rank floor: %+v", got)
+	}
+}
+
+// TestLendingTopAccounts_MismatchRereadsOnce: a mismatch from a write between the positions and reserve reads is read again
+// once, and the clean second read is the answer, cached for the full TTL.
+func TestLendingTopAccounts_MismatchRereadsOnce(t *testing.T) {
+	pool, sac, _, ex, srv := topAccountsFixture(t)
+	over := withPositions(ex.positions, append(slices.Clone(ex.positions.Accounts), clickhouse.LendingPoolPosition{
+		Account: "GE", Supply: map[string]*big.Int{sac: big.NewInt(1)}, Ledger: 14,
+	})...)
+	ex.seq = []clickhouse.LendingPoolPositions{over, ex.positions}
+	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
+	if got.LowerBound || len(got.Rows) != 2 || len(got.Excluded) != 0 {
+		t.Fatalf("view = %+v", got)
+	}
+	if n := ex.reads.Load(); n != 2 {
+		t.Fatalf("positions reads = %d, want 2", n)
+	}
+	if ttl := srv.TopAccountsTTLForTest(pool); ttl != v1.TopAccountsTTL {
+		t.Fatalf("clean fill ttl = %v, want %v", ttl, v1.TopAccountsTTL)
+	}
+}
+
+// TestLendingTopAccounts_PersistentMismatchCachedShort: a mismatch that survives the re-read is served, and cached only for
+// the short unreconciled TTL so the next caller reads again soon.
+func TestLendingTopAccounts_PersistentMismatchCachedShort(t *testing.T) {
+	pool, sac, _, ex, srv := topAccountsFixture(t)
+	ex.positions.Accounts = ex.positions.Accounts[1:] // GA unread: the sac reserve is short
+	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
+	if !got.LowerBound || len(got.Unattributed) != 1 {
+		t.Fatalf("view = %+v", got)
+	}
+	if n := ex.reads.Load(); n != 2 {
+		t.Fatalf("positions reads = %d, want 2", n)
+	}
+	if ttl := srv.TopAccountsTTLForTest(pool); ttl != v1.TopAccountsUnreconciledTTL || ttl >= v1.TopAccountsTTL {
+		t.Fatalf("unreconciled fill ttl = %v, want %v", ttl, v1.TopAccountsUnreconciledTTL)
 	}
 }
 
