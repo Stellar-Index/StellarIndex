@@ -127,6 +127,51 @@ SETTINGS max_bytes_before_external_group_by = 8e9
 
 Pause these timers for the repair (stop `X.timer` after confirming `X.service` is inactive); restart once verified: holders-rollup, cohort-rollup, creators-rollup, sponsors-rollup, census-rollup, issuer-flags, ch-supply, supply-snapshot, supply-verify-rollup, verify-network-state, verify-served-values, compute-completeness, compute-completeness-sdex, compute-completeness-sep41, verify-lake. Leave ch-live-catchup running.
 
+### Targeted: ledger-upgrade rows only
+
+Ledgers captured before the lake wrote `UpgradesProcessing` lack their upgrade rows (`tx_hash = ''`, `op_index = -2`). Re-derive only those ledgers with `ch-backfill -ledgers FILE`, not `-from 2 -to <tip>`. `-ledgers` takes one sequence per line (`#` comments), sorts and dedupes, refuses `-from`/`-to`, a sequence below 2, an empty file and more than 2000 ledgers. Only listed ledgers are written; neighbours in the same galexie object are decoded and skipped. It is the same writer and rows as a range run, so it needs no renumbering step of its own.
+
+1. List. `stellar.ledgers` does not store upgrades, but version and base-reserve upgrades (the only ones that change entries before Soroban) show as a header change. Those changes are one bounded query:
+
+   ```sql
+   SELECT ledger_seq FROM (
+     SELECT ledger_seq, protocol_version, base_reserve,
+            lagInFrame(protocol_version) OVER w AS prev_version,
+            lagInFrame(base_reserve) OVER w AS prev_reserve
+     FROM stellar.ledgers FINAL
+     WHERE ledger_seq BETWEEN 2 AND <tip>
+     WINDOW w AS (ORDER BY ledger_seq ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))
+   WHERE ledger_seq > 2 AND (protocol_version != prev_version OR base_reserve != prev_reserve)
+   ORDER BY ledger_seq FORMAT TSV
+   ```
+
+   Save it as `header.txt`. Config and Soroban tx-set-size upgrades leave no header trace, so walk the Soroban era read-only. This fetches and decodes about 15M ledgers and writes nothing to ClickHouse. Then annotate the header list:
+
+   ```
+   run-heavy-job.sh upgrade-list stellarindex-ops ch-backfill -config /etc/stellarindex.toml -from 50457424 -to <tip> \
+     -bucket galexie-archive -parallel 4 -list-upgrade-ledgers -dry-run > soroban.txt
+   stellarindex-ops ch-backfill -config /etc/stellarindex.toml -ledgers header.txt -bucket galexie-archive \
+     -list-upgrade-ledgers -dry-run > pre-soroban.txt
+   cat pre-soroban.txt soroban.txt > upgrade-ledgers.txt
+   ```
+
+   Each line reads `<seq> # upgrades=N changes=M`, where M is the number of upgrade rows the write must leave. For certainty without the header shortcut, walk `-from 2` instead; that costs a full read-only walk.
+2. Dry-run: `stellarindex-ops ch-backfill -config /etc/stellarindex.toml -ledgers upgrade-ledgers.txt -bucket galexie-archive -changes-only -dry-run`.
+3. Write: `run-heavy-job.sh upgrade-rows stellarindex-ops ch-backfill -config /etc/stellarindex.toml -ledgers upgrade-ledgers.txt -bucket galexie-archive -changes-only -write`. A non-zero exit means a listed ledger was missing or extracted short. A re-run is safe: the rows have the same `(ledger_seq, tx_hash, op_index, change_index)` and collapse.
+4. Verify. Paste the `changes>0` lines as tuples (`awk '/changes=[1-9]/{sub("changes=","",$4); printf "%s(%s,%s)", n++ ? "," : "", $1, $4}' upgrade-ledgers.txt`). The result must be 0:
+
+   ```sql
+   WITH [<(seq,changes),...>] AS expect
+   SELECT count()
+   FROM (SELECT tupleElement(t, 1) AS seq, tupleElement(t, 2) AS want FROM (SELECT arrayJoin(expect) AS t)) AS e
+   LEFT JOIN (
+     SELECT ledger_seq, count() AS got
+     FROM stellar.ledger_entry_changes FINAL
+     WHERE ledger_seq IN (SELECT tupleElement(arrayJoin(expect), 1)) AND tx_hash = '' AND op_index = -2
+     GROUP BY ledger_seq) AS g ON g.ledger_seq = e.seq
+   WHERE g.got != e.want
+   ```
+
 ## 2. Rebuild the current-state projection
 
 Needed only for the accounts seed (3b) or `account_state` / asset-holder reads over the range.
