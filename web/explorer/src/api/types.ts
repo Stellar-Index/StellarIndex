@@ -3849,19 +3849,25 @@ export interface paths {
          *     `not_observed`.
          *
          *     TOTAL. `total.supply_usd` sums the published per-asset
-         *     `supply_usd` strings of USD-pegged, non-yield-bearing members, so a
-         *     reader re-adding the rows reaches the same figure. It is ABSENT, not
+         *     `supply_usd` strings of USD-pegged members, leaving out a
+         *     yield-bearing wrapper whose underlying is in the set, so a reader
+         *     re-adding the rows reaches the same figure. It is ABSENT, not
          *     `"0.00"`, when none is valued. `total.lower_bound` is true whenever
          *     the figure is less than the value of every stablecoin on Stellar:
-         *     a set member is unvalued or not summed, a supply is itself a floor,
-         *     or `excluded` is non-empty. `excluded` names catalogue stablecoins
-         *     outside the set (USDT has no Tether-native Stellar issuer);
-         *     `total.not_summed` names set members left out of the total: non-USD
-         *     pegs (`non_usd_peg`), yield-bearing wrappers
-         *     (`yield_bearing_wrapper`), unmapped pegs (`peg_unmapped`) and
-         *     members whose market cap is withheld (`market_cap_withheld`).
-         *     `by_peg` keeps pegs apart and totals every valued member of a peg,
-         *     including those `not_summed`.
+         *     a member that should be summed is unvalued, a non-USD or unmapped
+         *     peg is left out, a supply is itself a floor, or `excluded` is
+         *     non-empty. A wrapper left out does not set it, since its backing is
+         *     its underlying's summed supply. `excluded` names catalogue
+         *     stablecoins outside the set (USDT has no Tether-native Stellar
+         *     issuer); `total.not_summed` names every set member left out of the
+         *     total, valued or not: non-USD pegs (`non_usd_peg`), yield-bearing
+         *     wrappers of a member (`yield_bearing_wrapper`), unmapped pegs
+         *     (`peg_unmapped`) and members whose market cap is withheld
+         *     (`market_cap_withheld`). A wrapper whose underlying is not in the
+         *     set is an ordinary member. `by_peg` keeps pegs apart and totals each
+         *     peg's valued members under the same rule, so a wrapper of a member
+         *     is in its row's `assets` but never in `supply_usd`; non-USD and
+         *     unmapped pegs get their own rows.
          *
          *     No query parameters. Served with `public, max-age=30`.
          */
@@ -9831,7 +9837,7 @@ export interface components {
             assets: number;
             /** @description Members of this peg summed into `supply_usd`. */
             assets_valued: number;
-            /** @description True when `supply_usd` is a floor, not a total — a member of this peg is unvalued, a summed supply is itself a floor, or the member list was truncated. */
+            /** @description True when `supply_usd` is a floor, not a total — a member of this peg that the row sums is unvalued (a wrapper of a member never is one), a summed supply is itself a floor, or the member list was truncated. */
             lower_bound: boolean;
         };
         StablecoinExclusion: {
@@ -15250,6 +15256,12 @@ export interface operations {
                  *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
                  *     has no code, slug or issuer to match, so `q` never selects
                  *     one.
+                 *
+                 *     A `q` that is a classic asset's SAC address searches for that
+                 *     asset's id. When the lake cannot say whether the address is a
+                 *     SAC, the request answers `503` with problem type
+                 *     `contract-identity-unavailable` and `Retry-After`, unless a
+                 *     page built for the same query is still cached.
                  */
                 q?: string;
                 /**
@@ -23793,9 +23805,9 @@ export interface operations {
                      *           },
                      *           {
                      *             "peg": "USD",
-                     *             "supply_usd": "118059162072207.18",
+                     *             "supply_usd": "118059162072206.13",
                      *             "assets": 4,
-                     *             "assets_valued": 3,
+                     *             "assets_valued": 2,
                      *             "lower_bound": true
                      *           }
                      *         ],

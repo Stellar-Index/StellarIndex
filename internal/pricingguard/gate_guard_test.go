@@ -14,9 +14,8 @@ import (
 // gateMethods are Gate's decision methods: asking one of these is what
 // "consulted the withholding decision" means.
 var gateMethods = map[string]bool{
-	"PriceWithheld":         true,
-	"PriceWithholding":      true,
-	"PriceWithholdingAt":    true,
+	"PriceWithheld":         true, // wiring.PriceWithheld, the API binary's chokepoint
+	"PushWithholding":       true,
 	"AssetValueWithholding": true,
 	"Judge":                 true,
 }
@@ -289,7 +288,7 @@ func (r reader) Latest() { st := r.db; st.LatestClosedVWAP1mForPair(nil, nil) }`
 	t.Run("gated through a package-level chokepoint", func(t *testing.T) {
 		dir := t.TempDir()
 		src := `package main
-func withheld(g Gate) bool { return g.PriceWithheld(nil, a, b, "x") }
+func withheld(g Gate) bool { w, _ := g.PushWithholding(nil, a, b, "x"); return w != "" }
 func (r reader) Latest() { r.db.LatestClosedVWAP1mForPair(nil, nil); _ = withheld(r.g) }`
 		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o600); err != nil {
 			t.Fatal(err)

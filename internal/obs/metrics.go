@@ -134,6 +134,8 @@ func registerPricingMetrics() {
 		PriceServeSubstanceUnmeasuredTotal,
 		PriceServeThinAdmittedTotal,
 		PriceServeScamWithheldTotal,
+		PriceSourceExclusionsActive,
+		PriceSourceExclusionReadFailuresTotal,
 		PricingGuardTrailingFetchFailedTotal,
 
 		SupplyCrossCheckDivergenceStroops,
@@ -578,7 +580,7 @@ func seedBoundedLabelSeries() {
 	} {
 		for _, reason := range []string{
 			FanoutFailureInvalidPayload, FanoutFailureListSubscribers, FanoutFailureEnqueue,
-			FanoutFailureQueueFull,
+			FanoutFailureQueueFull, FanoutFailurePriceUnmeasured,
 		} {
 			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
 		}
@@ -2199,7 +2201,7 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 )
 
 // Reason labels on [CustomerWebhookFanoutFailuresTotal]. Bounded set
-// of four — one per way a producer-side fan-out can lose a customer's
+// of five — one per way a producer-side fan-out can lose a customer's
 // event before a delivery row exists.
 const (
 	// FanoutFailureInvalidPayload — the caller handed Publish bytes
@@ -2213,6 +2215,8 @@ const (
 	FanoutFailureEnqueue = "enqueue"
 	// FanoutFailureQueueFull — the producer's off-tick queue had no room, so the fan-out never started.
 	FanoutFailureQueueFull = "queue_full"
+	// FanoutFailurePriceUnmeasured — a one-shot event's pricing_guard substance read failed twice, so it was not sent.
+	FanoutFailurePriceUnmeasured = "price_unmeasured"
 )
 
 // CustomerWebhookFanoutFailuresTotal counts customer events that never became a delivery row and are permanently lost, by reason; the producer-side counterpart of [CustomerWebhookDeliveryAttemptsTotal].
@@ -2314,7 +2318,7 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	[]string{"surface", "floor"},
 )
 
-// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline); single lookups then serve unguarded (ADR-0018). Expected zero; read by stellarindex_price_serve_substance_fail_open.
+// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline); single lookups then serve unguarded (ADR-0018), while push surfaces (freeze/divergence webhooks, price alerts) retry instead of sending. Expected zero; read by stellarindex_price_serve_substance_fail_open.
 var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_unmeasured_total",
@@ -2339,6 +2343,24 @@ var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 		Help: "Aggregated price serves withheld by the scam-pricing gate (directory-flagged issuer), labelled by serving surface.",
 	},
 	[]string{"surface"},
+)
+
+// PriceSourceExclusionReadFailuresTotal counts failed reads of source_exclusions; past the 60s stale bound the gate withholds
+// every covered price (alert: stellarindex_price_source_exclusion_read_failing).
+var PriceSourceExclusionReadFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_source_exclusion_read_failures_total",
+		Help: "Failed reads of source_exclusions by the API's source-exclusion gate (cancellation not counted). Sustained failures past 60s withhold every price the gate covers.",
+	},
+)
+
+// PriceSourceExclusionsActive is the number of operator source exclusions in force at the API's last successful read of
+// source_exclusions (alert: stellarindex_price_source_exclusion_active).
+var PriceSourceExclusionsActive = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_price_source_exclusions_active",
+		Help: "Operator price-source exclusions (source-exclude) in force at the API's last successful read of source_exclusions; read at startup and about every 15s after. > 0 means the kill switch is withholding prices.",
+	},
 )
 
 // ScamGateLookupFailuresTotal counts scam-gate lookups that errored so the gate FAILED OPEN and the price served unguarded (alert: stellarindex_scam_gate_fail_open); same `surface` labels.

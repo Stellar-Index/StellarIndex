@@ -256,8 +256,12 @@ func TestApplyF2Fields_SEP41FlowlessContractReadsStorageBalances(t *testing.T) {
 	}, logger: slog.Default()}
 	detail := &AssetDetail{Decimals: 7}
 	s.applyF2Fields(context.Background(), detail, asset)
-	if detail.TotalSupply == nil || *detail.TotalSupply != "500" {
-		t.Errorf("total_supply = %v, want \"500\" from held balances", detail.TotalSupply)
+	if detail.CirculatingSupply == nil || *detail.CirculatingSupply != "500" || !detail.CirculatingSupplyLowerBound {
+		t.Errorf("circulating_supply = %v (floor %v), want the floor \"500\" from held balances",
+			detail.CirculatingSupply, detail.CirculatingSupplyLowerBound)
+	}
+	if detail.TotalSupply != nil {
+		t.Errorf("total_supply = %q, want absent: held balances are a floor", *detail.TotalSupply)
 	}
 	if detail.SupplyBasis == nil || *detail.SupplyBasis != "contract_storage_balances" {
 		t.Errorf("supply_basis = %v, want \"contract_storage_balances\"", detail.SupplyBasis)
@@ -286,8 +290,8 @@ func TestApplyF2Fields_NoMarketCapOnHeldBalances(t *testing.T) {
 		return detail
 	}
 	floor := run(0, &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(50_000_000), BalanceEntries: 3}})
-	if floor.TotalSupply == nil || floor.MarketCapUSD != nil {
-		t.Errorf("held balances: total=%v market_cap=%v, want a supply and no cap", floor.TotalSupply, floor.MarketCapUSD)
+	if floor.CirculatingSupply == nil || floor.MarketCapUSD != nil {
+		t.Errorf("held balances: circulating=%v market_cap=%v, want a supply and no cap", floor.CirculatingSupply, floor.MarketCapUSD)
 	}
 	measured := run(50_000_000, nil)
 	if measured.MarketCapUSD == nil {
@@ -317,9 +321,13 @@ func TestApplyF2Fields_StorageAboveEventNetServesTheFloorWithoutCapOrFDV(t *test
 		return detail
 	}
 	floor := run(80_000_000)
-	if floor.TotalSupply == nil || *floor.TotalSupply != "80000000" ||
+	if floor.CirculatingSupply == nil || *floor.CirculatingSupply != "80000000" || !floor.CirculatingSupplyLowerBound ||
 		floor.SupplyBasis == nil || *floor.SupplyBasis != "contract_storage_balances" {
-		t.Errorf("total = %v basis = %v, want 80000000 on contract_storage_balances", floor.TotalSupply, floor.SupplyBasis)
+		t.Errorf("circulating = %v (floor %v) basis = %v, want floor 80000000 on contract_storage_balances",
+			floor.CirculatingSupply, floor.CirculatingSupplyLowerBound, floor.SupplyBasis)
+	}
+	if floor.TotalSupply != nil {
+		t.Errorf("total_supply = %q, want absent: a floor is not an exact total", *floor.TotalSupply)
 	}
 	if floor.MarketCapUSD != nil || floor.FDVUSD != nil {
 		t.Errorf("market_cap = %v fdv = %v, want neither on a floor", floor.MarketCapUSD, floor.FDVUSD)

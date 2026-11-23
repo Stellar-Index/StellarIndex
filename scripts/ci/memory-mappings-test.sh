@@ -32,7 +32,8 @@
 #      the repo's own parser (lint_textfile_exposition.py --check-file)
 #      rather than a second copy of the grammar written here.
 #   7. A unit running a release binary replaced on disk (" (deleted)" or
-#      a .prev-<tag> name, in the main process or a child) reports 1;
+#      a dotted name: .prev-, .failed-, .rolledback-, .new; in the main
+#      process or a child) reports 1;
 #      a healthy unit reports an explicit 0; non-release binaries are
 #      ignored; the unit comes from cgroup v2, else v1, else "unknown".
 #
@@ -291,6 +292,10 @@ make_unit_proc 508 '/opt/stellarindex-ops (deleted)' '0::/system.slice/elsewhere
 make_unit_proc 509 '/usr/local/bin/galexie (deleted)' "$(printf '12:name=systemd:/system.slice/galexie.service\n1:cpu:/')"
 # No readable cgroup: reported, not dropped.
 make_unit_proc 510 '/usr/local/bin/stellarindex-ops (deleted)' none
+# A rollback parks the rejected build under a dotted name; a process left on it is stale.
+make_unit_proc 511 '/usr/local/bin/stellarindex-ops.rolledback-v0.121.0' '0::/system.slice/rolledback.service'
+make_unit_proc 512 '/usr/local/bin/stellarindex-api.failed-v0.121.0' '0::/system.slice/failed.service'
+make_unit_proc 513 '/usr/local/bin/stellarindex-ops.new' '0::/system.slice/staged.service'
 
 rc="$(run_probe replaced)"
 exited0 replaced "$rc"
@@ -301,6 +306,9 @@ has replaced 'stellarindex_unit_running_replaced_binary{unit="split.service"} 1'
 has replaced 'stellarindex_unit_running_replaced_binary{unit="ch-supply.service"} 1'
 has replaced 'stellarindex_unit_running_replaced_binary{unit="galexie.service"} 1'
 has replaced 'stellarindex_unit_running_replaced_binary{unit="unknown"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="rolledback.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="failed.service"} 1'
+has replaced 'stellarindex_unit_running_replaced_binary{unit="staged.service"} 1'
 hasnt replaced 'unit="minio-mirror.service"' "only stellarindex-* and galexie are release binaries"
 hasnt replaced 'unit="elsewhere.service"' "only /usr/local/bin is the deploy target"
 hasnt replaced 'unit="split.service"} 0' "one replaced child makes the whole unit stale"

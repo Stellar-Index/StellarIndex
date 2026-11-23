@@ -317,8 +317,9 @@ func TestMergeDerivedSACVolume_CountsOffPageSACOnce(t *testing.T) {
 	}
 }
 
-// TestMergeDerivedSACVolume_LookupFailureIsALowerBound: when the lake cannot confirm the SAC, its row is served on its own (the
-// fold could not confirm it either), so the classic row must not add it; the figure is flagged instead.
+// TestMergeDerivedSACVolume_LookupFailureIsALowerBound: when the lake cannot confirm the SAC, the classic row must not add it and
+// flags the figure instead; the fold withholds the unconfirmed row on an unfiltered page (a later page's confirmed merge would
+// otherwise count it twice) and serves it on a filtered one.
 func TestMergeDerivedSACVolume_LookupFailureIsALowerBound(t *testing.T) {
 	s := &Server{Options: Options{Explorer: errSACReader{}}}
 	row := AssetDetail{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1")}
@@ -326,8 +327,11 @@ func TestMergeDerivedSACVolume_LookupFailureIsALowerBound(t *testing.T) {
 	if *row.VolumeUSD24h != "0.1" || !row.VolumeLowerBound {
 		t.Errorf("after failed lookup = %s lower_bound=%v, want 0.1 flagged as a lower bound", *row.VolumeUSD24h, row.VolumeLowerBound)
 	}
-	if out, _ := s.foldAliasTwins(context.Background(), []AssetDetail{{AssetID: foldSUSDSAC}}, false); len(out) != 1 {
-		t.Errorf("fold with failed lookup = %+v, want the SAC served as its own row", out)
+	if out, _ := s.foldAliasTwins(context.Background(), []AssetDetail{{AssetID: foldSUSDSAC}}, false); len(out) != 0 {
+		t.Errorf("unfiltered fold with failed lookup = %+v, want the unconfirmed SAC withheld", out)
+	}
+	if out, _ := s.foldAliasTwins(context.Background(), []AssetDetail{{AssetID: foldSUSDSAC}}, true); len(out) != 1 {
+		t.Errorf("filtered fold with failed lookup = %+v, want the SAC served as its own row", out)
 	}
 }
 

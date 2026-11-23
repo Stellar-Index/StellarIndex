@@ -910,7 +910,7 @@ Alert: `stellarindex_customer_webhook_worker_stalled` →
 
 Counter, labels `event_type` (`incident.sev1` / `incident.resolved` /
 `anomaly.freeze` / `divergence.firing` / `price.alert`) × `reason`
-(`invalid_payload` / `list_subscribers` / `enqueue`).
+(`invalid_payload` / `list_subscribers` / `enqueue` / `queue_full` / `price_unmeasured`).
 
 Producer-side counterpart to the delivery-attempts counter: events that never became a delivery row. No retry, no dead-letter; the customer has lost the event.
 
@@ -1296,6 +1296,24 @@ Fires once per gate consultation whose `account_directory` lookup errored, so th
 
 Alert: `stellarindex_scam_gate_fail_open` →
 [scam-gate-fail-open](../../operations/runbooks/api.md#stellarindex_scam_gate_fail_open).
+
+### `stellarindex_price_source_exclusions_active`
+
+Gauge, no labels.
+
+Operator source exclusions (`stellarindex-ops source-exclude`) in force at the API's last successful read of `source_exclusions`; the API reads at startup and about every 15 s after, with or without price traffic. Above zero means the price kill switch is on.
+
+Alert: `stellarindex_price_source_exclusion_active` →
+[price-source-exclusion-active](../../operations/runbooks/api.md#stellarindex_price_source_exclusion_active).
+
+### `stellarindex_price_source_exclusion_read_failures_total`
+
+Counter, no labels.
+
+Failed reads of `source_exclusions` by the API's source-exclusion gate (store error or timeout; cancellation is not counted). Past 60 s without a good read the gate withholds every price it covers.
+
+Alert: `stellarindex_price_source_exclusion_read_failing` →
+[price-source-exclusion-read-failing](../../operations/runbooks/api.md#stellarindex_price_source_exclusion_read_failing).
 
 ### `stellarindex_explorer_exact_fallback_total`
 

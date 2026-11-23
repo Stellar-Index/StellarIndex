@@ -933,9 +933,41 @@ ORDER BY ts DESC;
 
 **Escalate:** none; related [directory_sync_unflagged](#stellarindex_directory_sync_unflagged), `stellarindex_price_serve_scam_withheld_total` (dropping to zero while this fires is the same outage), [metrics reference](../../reference/metrics/README.md).
 
+## stellarindex_price_source_exclusion_active
+
+**Trigger.** `max(stellarindex_price_source_exclusions_active) > 0` for 15m, P3. The gauge is the number of `source_exclusions` rows in force at the API's last successful read. The API reads at startup and re-reads within 5 s of each 15 s cache expiry whether or not price requests arrive, so a lift clears it within about 20 s. An exclusion is deliberate; this ticket keeps one from outliving its incident.
+
+**Check.**
+
+1. `stellarindex-ops source-exclude -config /etc/stellarindex/stellarindex.toml -list` lists each row with its state (pending, in-force, expired, lifted).
+2. Routes covered by the gate answer 404 `source_excluded` for the affected pair; the operator note printed by `source-exclude` lists the routes NOT COVERED, which still serve the source. The reviewed route table is `priceRouteCoverage` in `internal/api/v1/price_route_coverage_test.go`.
+
+**Fix.**
+
+1. Still needed: leave it and acknowledge the ticket.
+2. Over: `stellarindex-ops source-exclude -config /etc/stellarindex/stellarindex.toml -lift -id N -reason "..." -write`.
+
+**Escalate:** none; related [oracle-manipulation defense](../../architecture/oracle-manipulation-defense.md).
+
+## stellarindex_price_source_exclusion_read_failing
+
+**Trigger.** `sum(increase(stellarindex_price_source_exclusion_read_failures_total[2m])) > 0` for 5m, P3. The API's source-exclusion gate could not read `source_exclusions` (a store error or its 2 s read timeout; cancellation is not counted). The gate fails CLOSED: it serves under the last good read for 60 s, then every route it covers withholds its value (withheld reason `unattributed`). The active-exclusions gauge keeps its last value meanwhile, so it cannot show this. Reads retry every 5 s, with or without traffic.
+
+**Check.**
+
+1. The API log: `source exclusions unreadable; withholding prices until they can be read` (ERROR) or `... serving under the last good read` (WARN), with the store error.
+2. Whether Postgres is reachable from the API: `stellarindex_dependency_up{dependency="postgres"}` and `/v1/readyz` ([dependency-down](dependency-down.md)).
+3. `curl /v1/price` for any pair: a withheld answer with reason `unattributed` confirms prices are being withheld.
+
+**Fix.**
+
+1. Restore the Postgres read (connection pool, statement timeout, a lock on `source_exclusions`). Prices return on the next good read; no restart is needed.
+
+**Escalate:** none; related [price-source-exclusion-active](#stellarindex_price_source_exclusion_active).
+
 ## stellarindex_price_serve_substance_fail_open
 
-**Trigger.** `sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0` for 5m (or the series' first increment), P3. `internal/pricingguard.SubstanceGate` reads 24h of `prices_1m` per pair; on a store error or deadline it has no verdict and single lookups serve the price unguarded, so a dust-seeded market can be priced. Shared and cached reads fail closed (withheld). A deadline writes no WARN line.
+**Trigger.** `sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0` for 5m (or the series' first increment), P3. `internal/pricingguard.SubstanceGate` reads 24h of `prices_1m` per pair; on a store error or deadline it has no verdict and single lookups serve the price unguarded, so a dust-seeded market can be priced. Shared and cached reads fail closed (withheld). The three push surfaces never send unguarded: a `divergence_webhook` episode retries on the next firing refresh, a `price_alert` counts as a failed read and retries next sweep, and a `freeze_webhook` re-reads once, then is lost and counted as `stellarindex_customer_webhook_fanout_failures_total{reason="price_unmeasured"}`. A deadline writes no WARN line.
 
 **Check.**
 

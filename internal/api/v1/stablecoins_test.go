@@ -182,6 +182,34 @@ func TestStablecoins_ByPegKeepsEURApart(t *testing.T) {
 	}
 }
 
+// The USD row sums the same members as the headline: a yield-bearing wrapper's backing is already its underlying's supply.
+func TestStablecoins_ByPegUSDLeavesOutTheWrapper(t *testing.T) {
+	v, _ := scFixture(t)
+	for _, p := range v.ByPeg {
+		if p.Peg != "USD" {
+			continue
+		}
+		if p.SupplyUSD == nil || v.Total.SupplyUSD == nil || *p.SupplyUSD != *v.Total.SupplyUSD {
+			t.Fatalf("by_peg USD supply_usd = %s, want total.supply_usd %s (yUSDC not summed)", scStr(p.SupplyUSD), scStr(v.Total.SupplyUSD))
+		}
+		if p.Assets != 4 || p.AssetsValued != 2 {
+			t.Errorf("by_peg USD assets/valued = %d/%d, want 4/2 (USDC, PYUSD summed; USDT0 unvalued; yUSDC a wrapper)", p.Assets, p.AssetsValued)
+		}
+		if !p.LowerBound {
+			t.Error("by_peg USD lower_bound = false, want true (USDT0 unvalued)")
+		}
+		return
+	}
+	t.Fatalf("no USD row in %v", v.ByPeg)
+}
+
+func scStr(s *string) string {
+	if s == nil {
+		return "<absent>"
+	}
+	return *s
+}
+
 // scGlobalOracle serves aggregator USD rows, the global-market reference
 // applyGlobalMarket fills a withheld Stellar price from.
 type scGlobalOracle struct{ streams []canonical.OracleUpdate }

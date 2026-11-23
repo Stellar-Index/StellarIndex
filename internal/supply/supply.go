@@ -77,7 +77,8 @@ func (b Basis) LowerBound() bool {
 	}
 }
 
-// Supply is the wire-shape result of a supply derivation; TotalSupply and CirculatingSupply are never nil, MaxSupply is nil when no defensible value exists.
+// Supply is the wire-shape result of a supply derivation; CirculatingSupply is never nil, TotalSupply is nil when the reading
+// is only a floor, MaxSupply is nil when no defensible value exists.
 type Supply struct {
 	AssetKey          string
 	TotalSupply       *big.Int

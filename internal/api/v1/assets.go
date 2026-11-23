@@ -327,9 +327,6 @@ type AssetDetail struct {
 	// priceUnmeasured: the substance gate could not measure this row, so its
 	// missing price is an unanswered read, not a market that produced none.
 	priceUnmeasured bool
-	// priceWholeToken: PriceUSD is a global per-whole-token price standing in for none of the row's own, so it was never
-	// normalised on the nonstandard-decimals projection's scale and a lake scale cannot drift from it.
-	priceWholeToken bool
 	// scaleSettled: the listing fill already answered this Soroban row's scale (read, vouched by the projection, or
 	// declared none), so a later overlay need not read it again.
 	scaleSettled bool
@@ -717,11 +714,10 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// Row filters (type / code / issuer). Validated BEFORE the
 	// asset_class dispatch so malformed input 400s on every path,
 	// not just the assetsReader-backed one.
-	filters, ok := parseAssetListFilters(w, r)
+	filters, ok := s.parseAssetListQuery(w, r)
 	if !ok {
 		return
 	}
-	filters.q = s.sacSearchAsClassic(r, filters.q)
 
 	// order_by is validated here so an unrecognised value 400s on every path, not only the one
 	// that reads it.
@@ -1151,7 +1147,7 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 	row.Decimals = lake
 	row.scaleSettled = true
 	// Only a price can have been normalised on the projection's scale: an unpriced row's lake scale is a fact, not drift.
-	valued := (row.PriceUSD != nil && !row.priceWholeToken) || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
+	valued := row.PriceUSD != nil || row.PriceWithheldReason == PriceWithheldSubstance || row.priceUnmeasured
 	if valued && ((hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals)) {
 		row.MarketCapDecimalsMismatch = true
 		// Request-driven, so labelled by site and outcome only: a per-asset label here would be
@@ -1268,7 +1264,7 @@ func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, mem
 
 // fillFixedPegPrice is the declared fiat peg × FX fill.
 func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
-	if len(s.FiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) || declaredPegMayNotReplace(row) {
+	if len(s.FiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) || !fillMayReplace(row.PriceWithheldReason, fillDeclaredPeg) {
 		return
 	}
 	fiat, ok := s.FiatPeggedClassics[row.AssetID]
@@ -1933,7 +1929,7 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 		if view.PriceAuthority != aggregate.AuthorityIdentity {
 			page[i].PriceAsOf = view.PriceAsOf
 		}
-		page[i].PriceCredit = view.PriceCredit
+		page[i].PriceCredit, page[i].PriceWithheldReason = view.PriceCredit, view.PriceWithheldReason
 		if page[i].MarketCapUSD == nil {
 			page[i].MarketCapUSD = view.MarketCapUSD
 		}
@@ -1944,42 +1940,6 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 // to the on-chain classic listing price (fillGlobalPriceFromOnChain) for Stellar-only tokens the global tier cannot reach.
 func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedCurrency) GlobalAssetView {
 	return s.buildGlobalAssetView(ctx, vc)
-}
-
-// onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID, nil when absent. It passes
-// the same fail-closed substance gate as the classic row, so a dust market cannot price a row /v1/price withholds.
-func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
-	if s.AssetsReader == nil || assetID == "" {
-		return nil
-	}
-	row, err := s.AssetsReader.GetAssetByAssetID(ctx, assetID)
-	if err != nil || row.PriceUSD == nil {
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			reportUnreadRead(ctx)
-		}
-		return nil
-	}
-	if s.Substance != nil {
-		asset, err := canonical.ParseAsset(assetID)
-		if err != nil {
-			return nil
-		}
-		if allowed, unread := s.catalogueRowPriceAllowed(ctx, asset); !allowed {
-			if unread {
-				reportUnreadRead(ctx)
-			}
-			return nil
-		}
-	}
-	// The per-asset reader's price is a RAW prices_1m ratio (it is not
-	// the writer-normalised listing rollup, whatever this function's name
-	// suggests), so it takes the same correction the detail page gives
-	// the same row. Withheld means unpriced, never raw.
-	price, ok := s.normalizeCatalogueReadUSDByID(*row.PriceUSD, assetID)
-	if !ok {
-		return nil
-	}
-	return &price
 }
 
 // assetTypeGlobal is [AssetDetail.Type] on a catalogue-projected row; such rows are keyed by slug, so on-chain reads must
@@ -2648,7 +2608,7 @@ func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID s
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, any casing)")
+			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, issuer in any case)")
 		return canonical.Asset{}, false
 	}
 	if err := parsed.Validate(); err != nil {
@@ -2659,40 +2619,6 @@ func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID s
 		return canonical.Asset{}, false
 	}
 	return parsed, true
-}
-
-// classicSlugResolver is the optional reader capability behind /v1/assets/{slug} classic-slug
-// resolution (the proxyPairGate idiom); a reader without it answers 400 on non-canonical ids.
-type classicSlugResolver interface {
-	ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error)
-}
-
-// resolveClassicSlug maps a classic-asset slug to (code, issuer). A lookup error logs and reads as a miss (caller 400s), never
-// a 500.
-func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.Asset, bool) {
-	// Two reader seams exist (`assets` and `assetsReader`); binaries wire the same adapter behind
-	// both but a test may wire only one, so probe both.
-	res, ok := s.Assets.(classicSlugResolver)
-	if !ok {
-		res, ok = s.AssetsReader.(classicSlugResolver)
-	}
-	if !ok {
-		return canonical.Asset{}, false
-	}
-	code, issuer, found, err := res.ClassicAssetBySlug(ctx, raw)
-	if err != nil {
-		s.logger.Warn("classic slug lookup failed", "slug", raw, "err", err)
-		return canonical.Asset{}, false
-	}
-	if !found {
-		return canonical.Asset{}, false
-	}
-	asset, err := canonical.NewClassicAsset(code, issuer)
-	if err != nil {
-		s.logger.Warn("classic slug resolved to unbuildable asset", "slug", raw, "code", code, "err", err)
-		return canonical.Asset{}, false
-	}
-	return asset, true
 }
 
 // lookupCatalogue resolves a slug OR ticker to a verified currency (slug wins),
@@ -3140,59 +3066,6 @@ func isSafeImageURL(s string) bool {
 	})
 }
 
-// resolveSACToClassic maps a SAC address to the classic (or native) asset it wraps; the resolved asset's deterministic SAC
-// address must equal the queried contract, so spoofed metadata cannot redirect pricing.
-func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (canonical.Asset, bool) {
-	asset, ok, _ := s.resolveSAC(ctx, contractID)
-	return asset, ok
-}
-
-// resolveSAC is [Server.resolveSACToClassic] that also returns the lake read error, so "not a SAC" is told apart from "unknown".
-func (s *Server) resolveSAC(ctx context.Context, contractID string) (canonical.Asset, bool, error) {
-	name, found, err := s.Explorer.SACClassicAssetName(ctx, contractID)
-	if err != nil {
-		return canonical.Asset{}, false, err
-	}
-	if !found {
-		return canonical.Asset{}, false, nil
-	}
-	asset, ok := sacNameVerified(name, contractID)
-	return asset, ok, nil
-}
-
-// sacNameVerified parses the lake's wrapped-asset name and keeps it only if its derived SAC address is contractID; metadata
-// that fails either test is a definite "not this SAC", not a read error.
-func sacNameVerified(name, contractID string) (canonical.Asset, bool) {
-	asset := canonical.NativeAsset()
-	if name != "native" {
-		code, issuer, ok := strings.Cut(name, ":")
-		if !ok {
-			return canonical.Asset{}, false
-		}
-		var err error
-		if asset, err = canonical.NewClassicAsset(code, issuer); err != nil {
-			return canonical.Asset{}, false
-		}
-	}
-	derived, err := asset.SacContractID()
-	if err != nil || derived != contractID {
-		return canonical.Asset{}, false
-	}
-	return asset, true
-}
-
-// sacSearchAsClassic rewrites a q that is a classic asset's SAC address to that asset's id, so the C-form finds the rows its
-// asset_id does; the SAC's own listing row carries no code or issuer to match on.
-func (s *Server) sacSearchAsClassic(r *http.Request, q string) string {
-	if s.Explorer == nil || !canonical.IsContractID(q) {
-		return q
-	}
-	if classic, ok := s.resolveSACToClassic(r.Context(), q); ok && classic.Type == canonical.AssetClassic {
-		return classic.String()
-	}
-	return q
-}
-
 // attachSparklinesIfRequested honours ?include=sparkline24h and ?include=sparkline7d, one batch read each; it runs in every phase, so it must be safe on mixed pages.
 // (1) Key on the row's Stellar asset id, never the wire asset_id (a catalogue slug matches no prices_1m row and reads as "never traded").
 // (2) No published price means no chart: withheld, scam-suppressed and declared-peg rows would republish the number we declined to publish.
@@ -3443,8 +3316,8 @@ func (s *Server) foldAliasTwins(ctx context.Context, rows []AssetDetail, keepLon
 }
 
 // listingCanonicalIDs maps each row to its class's canonical asset_id: the alias registry's, else, for a contract row, the asset it
-// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself
-// and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
+// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup maps the row to its own
+// [unconfirmedSACClass] and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
 func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []string {
 	ids := make([]string, len(rows))
 	bySAC := make(map[string]string)
@@ -3476,12 +3349,20 @@ func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []
 		if err != nil {
 			reportUnreadRead(ctx)
 		}
-		if ok {
+		switch {
+		case ok:
 			ids[i] = wrapped
+		case err != nil:
+			// A class no row is primary of, so an unfiltered page drops the row: the page holding its classic row may add
+			// its volume, and serving it here as well would count it twice across pages.
+			ids[i] = unconfirmedSACClass + rows[i].AssetID
 		}
 	})
 	return ids
 }
+
+// unconfirmedSACClass prefixes the fold class of a contract row whose SAC lookup failed; no asset_id starts with it.
+const unconfirmedSACClass = "unconfirmed-sac:"
 
 // derivedSAC is a classic asset_id's SAC address.
 func derivedSAC(assetID string) (string, bool) {
@@ -3729,18 +3610,19 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 }
 
 // fillTwinCapAtRowPrice values the twin's supply at the catalogue row's own served price, so the cap mergeTwinStats carries is
-// that row's price times its own Stellar issuance; with no row price no cap is built. The twin's on-chain price is restored for
-// the valuations that rule on it, and a withheld or unmeasured twin backs no cap.
+// that row's price times its own Stellar issuance. A withheld or unmeasured twin backs no cap, and an unpriced one backs none
+// at a whole-token row price (price_basis, as on the detail): there is no market in this token to value.
 func (s *Server) fillTwinCapAtRowPrice(
 	ctx context.Context, twin []AssetDetail, rowPrice *string, sourceCounts map[string]int, precise map[string]timescale.SupplyObservation,
 ) {
-	own := twin[0].PriceUSD
-	if twin[0].PriceWithheldReason == "" && !twin[0].priceUnmeasured {
+	own, open := twin[0].PriceUSD, twin[0].PriceWithheldReason == "" && !twin[0].priceUnmeasured
+	if open && own != nil {
 		twin[0].PriceUSD = rowPrice
-		twin[0].priceWholeToken = own == nil
 	}
 	s.fillMarketCapsWith(ctx, twin, sourceCounts, precise)
-	twin[0].PriceUSD, twin[0].priceWholeToken = own, false
+	if twin[0].PriceUSD = own; open && own == nil && rowPrice != nil && twin[0].CirculatingSupply != nil {
+		twin[0].MarketCapWithheldReason = MarketCapWithheldPriceBasis
+	}
 }
 
 // flagTwinSubstanceWithheldCap names a catalogue row's missing cap after its twin's withheld on-chain price, and marks it
@@ -3796,15 +3678,15 @@ func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDet
 }
 
 // mergeTwinStats fills a catalogue row's nil analytics from its
-// Stellar-network twin without overwriting anything already set.
+// Stellar-network twin without overwriting anything already set; a withheld row takes no price-derived change pill.
 func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
-	if dst.Change1hPct == nil {
+	if dst.PriceWithheldReason == "" && dst.Change1hPct == nil {
 		dst.Change1hPct = twin.Change1hPct
 	}
-	if dst.Change24hPct == nil {
+	if dst.PriceWithheldReason == "" && dst.Change24hPct == nil {
 		dst.Change24hPct = twin.Change24hPct
 	}
-	if dst.Change7dPct == nil {
+	if dst.PriceWithheldReason == "" && dst.Change7dPct == nil {
 		dst.Change7dPct = twin.Change7dPct
 	}
 	if dst.VolumeUSD24h == nil {

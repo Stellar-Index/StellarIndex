@@ -183,7 +183,7 @@ fi
 # ── Classification ──────────────────────────────────────────────────────────
 sh_files=(); test_scripts=(); go_files=(); go_dirs=(); wf_files=()
 mig_files=(); md_files=(); baseline_files=(); lake_files=(); parity=0; other=()
-rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); apienv_files=(); op_corpus=0; budget=0; opsdoc=0; nummask=0
+rules_files=(); ansible_files=(); ch_files=(); sysd_files=(); apienv_files=(); cfgchk=0; op_corpus=0; budget=0; opsdoc=0; nummask=0
 present=()
 
 add_unique() { # add_unique <value> — appends to go_dirs if absent
@@ -275,6 +275,13 @@ for f in "${changed[@]}"; do
         configs/ansible/roles/archival-node/defaults/main.yml|*/configs/ansible/roles/archival-node/defaults/main.yml| \
         docs/operations/self-hosting.md|*/docs/operations/self-hosting.md)
             apienv_files+=("$f"); hit=1 ;;
+    esac
+    # The role's validated write of /etc/stellarindex.toml and the check it runs.
+    case "$f" in
+        configs/ansible/roles/archival-node/tasks/stellarindex-toml.yml|*/configs/ansible/roles/archival-node/tasks/stellarindex-toml.yml| \
+        configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml|*/configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml| \
+        cmd/stellarindex-ops/config_check.go|*/cmd/stellarindex-ops/config_check.go)
+            cfgchk=1; hit=1 ;;
     esac
     case "$f" in
         *.go|*.sql|*.sh|*.j2|*.yml|*.yaml|*.py)
@@ -629,6 +636,10 @@ fi
 # 8d. The API's env file against the shared one and the toml (a real ansible render, ~5 s).
 if [ "${#apienv_files[@]}" -gt 0 ]; then
     add_step "ansible-api-env-test" "${#apienv_files[@]} env/toml/defaults file(s) changed" bash "$ci_dir/ansible-api-env-test.sh"
+fi
+# 8e. The role refuses to replace stellarindex.toml with a file the installed binaries reject (a real ansible run, ~5 s).
+if [ "$cfgchk" -eq 1 ]; then
+    add_step "ansible-config-check-test" "stellarindex.toml write or config-check changed" bash "$ci_dir/ansible-config-check-test.sh"
 fi
 
 # 9. A changed self-test is run. Last: these are the only steps whose cost

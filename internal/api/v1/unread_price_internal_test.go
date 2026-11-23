@@ -15,10 +15,14 @@ import (
 type depegProbeReader struct {
 	value string
 	err   error
+	age   time.Duration // how long before `at` the answering 1m bucket closed; zero is a current reading
 }
 
-func (d depegProbeReader) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, error) {
-	return d.value, time.Time{}, 0, d.err
+func (d depegProbeReader) PriceAt(_ context.Context, _ canonical.Pair, at time.Time, _ time.Duration) (string, time.Time, int, error) {
+	if d.err != nil {
+		return "", time.Time{}, 0, d.err
+	}
+	return d.value, at.Add(-d.age), 60, nil
 }
 
 // TestWithProxyDeviation_UnreadPegIsDegraded: a peg check that did not answer must not leave a clean, cacheable "no depeg".

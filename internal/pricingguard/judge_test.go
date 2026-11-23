@@ -167,10 +167,39 @@ func TestPriceWithholdingUnchangedByJudge(t *testing.T) {
 			gate, _, base, quote := thinGate(t, sub)
 			g := Gate{Substance: gate, Scam: scam}
 			want := WithholdingFor(scam.WithheldPair(ctx, base, quote, "x"), gate.Allowed(ctx, base, quote, "x"))
-			if got := g.PriceWithholding(ctx, base, quote, "x"); got != want {
-				t.Errorf("volume=%s flagged=%v: PriceWithholding = %q, want the two-half fold %q", sub.VolumeUSD, scam != nil, got, want)
+			if got, err := g.PushWithholding(ctx, base, quote, "x"); got != want || err != nil {
+				t.Errorf("volume=%s flagged=%v: PushWithholding = (%q, %v), want the two-half fold %q", sub.VolumeUSD, scam != nil, got, err, want)
 			}
 		}
+	}
+}
+
+// A push surface cannot carry doubt to its reader, so an unmeasured pair is neither cleared nor a
+// deliberate withholding: it is an error the caller retries. Measured verdicts carry no error.
+func TestPushWithholdingRetriesUnmeasured(t *testing.T) {
+	ctx := context.Background()
+	_, _, base, quote := thinGate(t, dustSubstance)
+	g := Gate{Substance: NewSubstanceGate(&fakeSubstanceReader{err: errors.New("db down")}, SubstanceGateOptions{Policy: testPolicy()})}
+	if got, err := g.PushWithholding(ctx, base, quote, "x"); got != NotWithheld || !errors.Is(err, ErrSubstanceUnmeasured) {
+		t.Errorf("unmeasured: PushWithholding = (%q, %v), want (NotWithheld, ErrSubstanceUnmeasured)", got, err)
+	}
+	if v := g.Judge(ctx, base, quote, "x", Query{}); v.Withholding != NotWithheld || !v.Unmeasured {
+		t.Errorf("Judge = %+v, want the readable fail-open (NotWithheld, Unmeasured)", v)
+	}
+
+	expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := g.PushWithholding(expired, base, quote, "x"); !errors.Is(err, ErrSubstanceUnmeasured) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expired ctx: err = %v, want ErrSubstanceUnmeasured wrapping DeadlineExceeded", err)
+	}
+
+	fine, _, _, _ := thinGate(t, thickSubstance)
+	if got, err := (Gate{Substance: fine}).PushWithholding(ctx, base, quote, "x"); got != NotWithheld || err != nil {
+		t.Errorf("measured and fine: PushWithholding = (%q, %v), want (NotWithheld, nil)", got, err)
+	}
+	thin, _, _, _ := thinGate(t, dustSubstance)
+	if got, err := (Gate{Substance: thin}).PushWithholding(ctx, base, quote, "x"); got != WithheldThinMarket || err != nil {
+		t.Errorf("measured thin: PushWithholding = (%q, %v), want (WithheldThinMarket, nil)", got, err)
 	}
 }
 

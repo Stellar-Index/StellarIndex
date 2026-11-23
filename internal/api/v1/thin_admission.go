@@ -21,10 +21,11 @@ type ThinAdmission struct {
 	quote     canonical.Asset
 	requested bool
 
-	mu       sync.Mutex
-	admitted bool
-	admitEv  *pricingguard.SubstanceEvidence
-	heldEv   *pricingguard.SubstanceEvidence
+	mu         sync.Mutex
+	admitted   bool
+	unmeasured bool
+	admitEv    *pricingguard.SubstanceEvidence
+	heldEv     *pricingguard.SubstanceEvidence
 }
 
 // WithThinAdmission installs a fresh record for the request pair; with requested=false it only collects evidence for a 404 body.
@@ -59,7 +60,15 @@ func (a *ThinAdmission) ThinWithheld(reason PriceWithheldReason) bool {
 
 // Record stores a covered chokepoint verdict's evidence.
 func (a *ThinAdmission) Record(base, quote canonical.Asset, v pricingguard.Verdict) {
-	if a == nil || v.Substance == nil || !a.Covers(base, quote) {
+	if a == nil || !a.Covers(base, quote) {
+		return
+	}
+	if v.Unmeasured {
+		a.mu.Lock()
+		a.unmeasured = true
+		a.mu.Unlock()
+	}
+	if v.Substance == nil {
 		return
 	}
 	switch {
@@ -105,6 +114,16 @@ func (a *ThinAdmission) Admitted() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.admitted
+}
+
+// Unmeasured reports whether a covered substance read failed, so its fail-open verdict ruled nothing.
+func (a *ThinAdmission) Unmeasured() bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.unmeasured
 }
 
 // Evidence is the admitted route's evidence, else the withheld one.

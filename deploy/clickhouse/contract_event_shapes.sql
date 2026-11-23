@@ -20,9 +20,11 @@
 -- half the granules), so the scan ran 14-25 min. DistinctTopicShapes now reads
 -- whole partitions from here and scans only the partial edge windows.
 --
--- No code path deletes from stellar.contract_events, so min/max ledger and the
--- shape set are exact. cnt counts inserted rows, duplicates included, as the
--- raw count() over the ReplacingMergeTree does; a re-inserted window raises it.
+-- Background merges and lake-dedup-driver.sh (OPTIMIZE ... FINAL) remove
+-- duplicate rows from stellar.contract_events but never the last copy, so
+-- min/max ledger and the shape set stay exact. cnt only ever grows: it counts
+-- every inserted row, so after a merge it is an upper bound on the raw count(),
+-- not equal to it.
 --
 -- *** ORDERING ***
 --   Step 1 (DDL, instant): the MV captures every insert from here on.

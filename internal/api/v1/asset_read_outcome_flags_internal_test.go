@@ -225,7 +225,7 @@ func TestOnChainListingPriceUSD_UnmeasuredGateIsReportedUnread(t *testing.T) {
 				}},
 			})
 			ctx, rep := withReadReport(context.Background())
-			if got := s.onChainListingPriceUSD(ctx, withheldTestAsset); got != nil {
+			if got, _ := s.onChainListingPriceUSD(ctx, withheldTestAsset); got != nil {
 				t.Fatalf("price = %s, want withheld", *got)
 			}
 			if rep.unread.Load() != tc.want {

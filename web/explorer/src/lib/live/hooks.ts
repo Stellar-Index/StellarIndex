@@ -175,6 +175,7 @@ export interface PriceIntegrityFlags {
   rerouted?: boolean;
   pivot_unverified?: boolean;
   proxy_deviation?: boolean;
+  proxy_deviation_unchecked?: boolean;
 }
 
 /**
@@ -187,6 +188,8 @@ export function priceIntegrityCaveats(
   const out: string[] = [];
   if (flags?.proxy_deviation)
     out.push('assumes a USD peg that is more than 2% off $1');
+  if (flags?.proxy_deviation_unchecked)
+    out.push('peg not verified at this time');
   if (flags?.diverged) out.push('price routes disagree');
   if (flags?.rerouted) out.push('rerouted around a market with no trades');
   if (flags?.pivot_unverified)

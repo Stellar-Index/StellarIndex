@@ -11,13 +11,11 @@ Subject: "Re: Stellar Index API access — getting started"
 
 # Welcome to Stellar Index, {{customer_name}}
 
-Your API key:
+Your API key is not in this email: we never send keys. Sign in to
+the dashboard and mint one (`POST /v1/dashboard/keys`); it is shown
+once, at mint time, and we keep only its hash.
 
-```
-{{api_key}}
-```
-
-(Treat as a credential — store in a secret manager, not in
+(Treat it as a credential — store it in a secret manager, not in
 code. To replace it, mint an independent key from the dashboard
 (`POST /v1/dashboard/keys`) or ask us for one, deploy the new key,
 then revoke this one with `DELETE /v1/account/keys/{keyID}`. Do not
@@ -27,7 +25,7 @@ key, and revoking this key revokes its children too.)
 ## First request
 
 ```sh
-curl -H "Authorization: Bearer {{api_key}}" \
+curl -H "Authorization: Bearer $STELLARINDEX_API_KEY" \
   'https://api.stellarindex.io/v1/price?base=native&quote=fiat:USD' | jq .
 ```
 

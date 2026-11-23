@@ -9,6 +9,14 @@ status: draft
 
 Rules: `deploy/monitoring/rules/backup-offsite.yml` (R1 overlay: `configs/prometheus/rules.r1/backup-offsite.yml`).
 
+## stellarindex_backup_offsite_failed
+
+P3. The nightly wrapper (`pgbackrest-backup.service`) wrote a non-zero `stellarindex_pgbackrest_backup_last_rc{repo="2"}`, or `stellarindex_pgbackrest_backup_last_success_unix{repo="2"}` is more than 36 h old. It fires on the first failed night and needs no TSDB history, which `stellarindex_backup_offsite_stale` below does (8 days). Run the checks below; the causes are the same.
+
+```sh
+grep pgbackrest_backup_last /var/lib/node_exporter/textfile_collector/*.prom
+```
+
 ## stellarindex_backup_offsite_stale
 
 P3. The exporter is up but no `pgbackrest_backup_info{repo_key="2"}` series appeared in 8 days. repo2 (encrypted S3) is the copy that survives host loss; it is the ONLY alert for a dead off-site stream (`stellarindex_timescale_backup_failed` / `_none_24h` look across repos). Status page: Off-site copy (S3, repo 2) red or grey. A grey "stamp from the future" is clock skew or a corrupt label, not this alert: check `timedatectl` / `chronyc tracking`.

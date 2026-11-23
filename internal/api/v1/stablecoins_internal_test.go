@@ -54,6 +54,54 @@ func TestStablecoinSummarise_PegSubtotalMarksItsFloor(t *testing.T) {
 	}
 }
 
+// A wrapper is left out only when its underlying (by asset id) is in the set; it is then always named in not_summed and,
+// valued or not, never makes the headline a floor, since its backing is summed. lower_bound is true exactly when a
+// member that should be summed is unvalued.
+func TestStablecoinSummarise_WrapperFollowsItsUnderlying(t *testing.T) {
+	one := "1.00"
+	usdc := StablecoinAsset{AssetID: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", Ticker: "USDC", Peg: "USD", SupplyUSD: &one}
+	wrapper := func(valued bool) StablecoinAsset {
+		a := StablecoinAsset{
+			AssetID: "yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF", Ticker: "yUSDC", Peg: "USD", YieldBearing: true,
+			ValuationStatus: stablecoinSupplyUnavailable,
+		}
+		if valued {
+			a.SupplyUSD, a.ValuationStatus = &one, stablecoinPublished
+		}
+		return a
+	}
+	for _, valued := range []bool{false, true} {
+		tot, pegs := stablecoinSummarise([]StablecoinAsset{usdc, wrapper(valued)}, nil, false)
+		if len(tot.NotSummed) != 1 || tot.NotSummed[0] != (StablecoinExclusion{Ticker: "yUSDC", Reason: stablecoinReasonYield}) {
+			t.Errorf("valued=%v underlying in set: not_summed = %v, want yUSDC/%s", valued, tot.NotSummed, stablecoinReasonYield)
+		}
+		if tot.LowerBound || scStrInternal(tot.SupplyUSD) != "1.00" {
+			t.Errorf("valued=%v underlying in set: total = %s lower_bound=%v, want 1.00 exact", valued, scStrInternal(tot.SupplyUSD), tot.LowerBound)
+		}
+		if len(pegs) != 1 || pegs[0].LowerBound || scStrInternal(pegs[0].SupplyUSD) != "1.00" {
+			t.Errorf("valued=%v underlying in set: by_peg = %+v, want USD 1.00 exact", valued, pegs)
+		}
+	}
+
+	// Underlying absent from the set: the wrapper is an ordinary member.
+	tot, pegs := stablecoinSummarise([]StablecoinAsset{wrapper(true)}, nil, false)
+	if len(tot.NotSummed) != 0 || tot.LowerBound || scStrInternal(tot.SupplyUSD) != "1.00" || scStrInternal(pegs[0].SupplyUSD) != "1.00" {
+		t.Errorf("valued, no underlying: total = %s lower_bound=%v not_summed=%v by_peg=%+v, want it summed exactly",
+			scStrInternal(tot.SupplyUSD), tot.LowerBound, tot.NotSummed, pegs)
+	}
+	tot, pegs = stablecoinSummarise([]StablecoinAsset{wrapper(false)}, nil, false)
+	if !tot.LowerBound || !pegs[0].LowerBound {
+		t.Errorf("unvalued, no underlying: lower_bound total=%v peg=%v, want both true", tot.LowerBound, pegs[0].LowerBound)
+	}
+}
+
+func scStrInternal(s *string) string {
+	if s == nil {
+		return "<nil>"
+	}
+	return *s
+}
+
 func TestStablecoinAliasSupply_FindsReadingUnderAnAliasForm(t *testing.T) {
 	// native's alias set includes crypto:XLM; a reading keyed there must be found.
 	circ, _ := stablecoinAliasSupply("native", nil, map[string]string{"crypto:XLM": "5"}, nil)
