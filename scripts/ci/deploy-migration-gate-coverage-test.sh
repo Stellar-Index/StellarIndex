@@ -83,11 +83,28 @@ fi
 # Execute the step against stubs: with a base available it must reach the lint with that base's sha.
 if [ -s "$tmp/numbering-run.sh" ]; then
   mkdir -p "$tmp/bin" "$tmp/ws/scripts/ci"
+  # ls-tree answers only the live release's migrations listing; any other tree (the deploying
+  # tag's own, whose head would floor out every new migration) is logged and refused.
   # shellcheck disable=SC2016 # stub bodies expand when the stubs run
-  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; ls-tree) printf "0001_a.up.sql\\n0007_b.up.sql\\n0003_c.down.sql\\n" ;; show) echo "echo LINT-REACHED BASE_SHA=\${BASE_SHA:-} FLOOR=\${MIGRATIONS_CONTENT_FLOOR:-}" ;; *) exit 1 ;; esac' > "$tmp/bin/git"
+  printf '%s\n' '#!/bin/sh' 'case "$1" in' \
+    'rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;;' \
+    'describe) echo v0.0.1 ;;' \
+    'ls-tree) if [ "$#" -eq 3 ] && [ "$2" = --name-only ] && [ "$3" = 0123456789abcdef0123456789abcdef01234567:migrations ]; then' \
+    '  printf "0001_a.up.sql\\n0007_b.up.sql\\n0003_c.down.sql\\n"; else echo "$*" >>"$FAKE_GIT_LOG"; exit 1; fi ;;' \
+    'show) echo "echo LINT-REACHED BASE_SHA=\${BASE_SHA:-} FLOOR=\${MIGRATIONS_CONTENT_FLOOR:-}" ;;' \
+    '*) exit 1 ;;' 'esac' > "$tmp/bin/git"
   chmod +x "$tmp/bin/git"
-  got="$(cd "$tmp/ws" && PATH="$tmp/bin:$PATH" GITHUB_WORKSPACE="$tmp/ws" RUNNER_TEMP="$tmp/rt" GITHUB_SHA=feedface \
-    VERSION=v0.60.0 BASELINE=v0.59.0 bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)"
+  : > "$tmp/git.log"
+  gate_run() {
+    (cd "$tmp/ws" && PATH="$tmp/bin:$PATH" GITHUB_WORKSPACE="$tmp/ws" RUNNER_TEMP="$tmp/rt" GITHUB_SHA=feedface \
+      FAKE_GIT_LOG="$tmp/git.log" VERSION=v0.60.0 BASELINE="$1" bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)
+  }
+  got="$(gate_run v0.59.0)"
+  if [ -s "$tmp/git.log" ]; then
+    bad "numbering gate listed a tree other than the live release's migrations: $(tr '\n' ' ' <"$tmp/git.log")"
+  else
+    ok "numbering gate lists only the live release's migrations"
+  fi
   if [[ "$got" == *"LINT-REACHED BASE_SHA=0123456789abcdef0123456789abcdef01234567"* ]]; then
     ok "numbering gate reaches the lint with the base's sha when a base is available"
   else
@@ -97,6 +114,14 @@ if [ -s "$tmp/numbering-run.sh" ]; then
     ok "numbering gate floors the content rules at the live release's highest migration"
   else
     bad "numbering gate does not pass the live release's highest migration as MIGRATIONS_CONTENT_FLOOR — a rollback tag's applied migrations are judged by newer content rules: ${got}"
+  fi
+  # No host version (fresh host, wiped sidecars): the ancestry tag still drives numbering, but
+  # nothing proves its migrations are applied, so no floor.
+  got="$(gate_run "")"
+  if grep -qx 'LINT-REACHED BASE_SHA=0123456789abcdef0123456789abcdef01234567 FLOOR=' <<<"$got"; then
+    ok "with no host baseline the gate keeps BASE_SHA and sets no content floor"
+  else
+    bad "with no host baseline the gate must pass BASE_SHA and no MIGRATIONS_CONTENT_FLOOR — a fresh host would apply the previous tag's migrations unjudged: ${got}"
   fi
 fi
 

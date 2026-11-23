@@ -1251,6 +1251,9 @@ jobs:
         run: |
           set -euo pipefail
           base="${BASELINE:-}"
+          # Only a version read from the host proves what is applied; the ancestry tag does not.
+          from_host=""
+          [ -n "$base" ] && from_host=1
           if [ -z "$base" ]; then
             base="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
             echo "::warning::no live version read from the host; comparing migrations with the previous tag by ancestry (${base:-none})."
@@ -1277,9 +1280,11 @@ jobs:
           fi
           # Migrations numbered at or below the live release's head are already applied and
           # immutable, so the newest gate's content rules judge only the ones above it; an
-          # unreadable listing leaves no floor and every migration is judged.
+          # unreadable listing or a baseline not read from the host leaves no floor.
+          # Known gap: the host version comes from binary version files, written even when a deploy
+          # skips migrations; the durable fix is a marker written only after migrations succeed.
           floor=""
-          if listing="$(git ls-tree --name-only "${base_sha}:migrations" 2>/dev/null)"; then
+          if [ -n "$from_host" ] && listing="$(git ls-tree --name-only "${base_sha}:migrations" 2>/dev/null)"; then
             floor="$(sed -nE 's/^([0-9]+)_.*\.up\.sql$/\1/p' <<<"$listing" | sort -n | tail -1)"
           fi
           echo "migration content floor: ${floor:-none} (live release ${base})"
