@@ -500,11 +500,9 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	// Route the primary read through the XLM dual-form alias loop,
-	// exactly as handlePrice does — so `x_last_price(native,
-	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
-	// trades populate rather than missing it on the literal form.
-	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, quote)
+	// Both legs walk their XLM/SAC spellings, as handlePrice does, so `x_last_price(native, fiat:USD)` finds the
+	// crypto:XLM book and quote=crypto:XLM or the XLM SAC reads the book stored under native.
+	snapshot, sources, stale, served, market, err := s.readPriceWithQuoteAliasesServed(ctx, reader, base, quote)
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handleOracleLastPrice above.
 	if errors.Is(err, ErrPriceWithheld) {
@@ -568,14 +566,14 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// The ADR-0053 basis rule, as on /v1/price, so both closed surfaces
 	// serve one number for the pair.
 	if !viaFallback {
-		if basis, ok := s.preferUSDAnchoredBasis(ctx, base, quote, snapshot, sources); ok {
+		if basis, ok := s.preferUSDAnchoredBasis(ctx, base, market, snapshot, sources); ok {
 			snapshot, sources, served, triangulated, stale = basis.snap, basis.sources, basis.served, true, basis.stale
 			viaFallback = true
 		}
 	}
 
 	// Freeze, then the shared tail — see handleOracleLastPrice.
-	held := s.resolveFrozenServeFor(r, snapshot, base, served, quote)
+	held := s.resolveFrozenServeFor(r, snapshot, base, served, market)
 	if held.outcome == frozenServeNothingHeld {
 		writeFrozenNothingHeldProblem(w, r, base, quote, held)
 		return
@@ -584,6 +582,30 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
 	}, held)
 	writeJSON(w, out, flags, sources...)
+}
+
+// readPriceWithQuoteAliasesServed is [Server.readPriceWithAliasesServed] over each spelling of quote in alias priority order, the
+// walk [Server.resolvePriceServeQuoteAliases] gives /v1/price: a hit, a withheld verdict or a read failure ends it. market is the
+// spelling that answered, or quote on a miss.
+func (s *Server) readPriceWithQuoteAliasesServed(ctx context.Context, reader PriceReader, base, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, canonical.Asset, error) {
+	var miss error
+	for _, q := range assetAliases(quote) {
+		if q.Equal(base) {
+			continue
+		}
+		snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, q)
+		if !errors.Is(err, ErrPriceNotFound) {
+			return snap, sources, stale, served, q, err
+		}
+		if miss == nil {
+			miss = err
+		}
+	}
+	if miss == nil {
+		snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, quote)
+		return snap, sources, stale, served, quote, err
+	}
+	return PriceSnapshot{}, nil, false, canonical.Asset{}, quote, miss
 }
 
 // parseXLastPriceBaseQuote validates the x_last_price base/quote pair; ok=false after writing a problem response.
