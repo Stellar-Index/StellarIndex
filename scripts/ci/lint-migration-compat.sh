@@ -60,9 +60,11 @@
 #   2. scripts/ci/migration-compat.baseline — grandfathered violations keyed
 #      `<file>:<class>`. Shrink-only: stale entries FAIL, and growth needs a
 #      `Baseline-Growth:` trailer (scripts/ci/lint-baseline-growth.sh).
-#   3. `dml` only: a `RAISE EXCEPTION` row-count guard anywhere in the same
-#      file (`DO $$ … IF n > 0 THEN RAISE EXCEPTION … END IF; END $$;`, as in
-#      migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97). An
+#   3. `dml` only: a `RAISE EXCEPTION` row-count guard in the same file
+#      (`DO $$ … IF n > 0 THEN RAISE EXCEPTION … END IF; END $$;`, as in
+#      migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97) whose
+#      dollar-quoted block names the relation each DML statement targets,
+#      outside that block's own DML: a guard on one table clears no other. An
 #      unconditional DELETE/TRUNCATE/UPDATE cannot prove the previous binary's
 #      row-count assumptions; it needs a statement that refuses to run, not a
 #      comment promise.
@@ -355,6 +357,47 @@ strip_comments() {
   }' "$1"
 }
 
+# dml_unguarded <hits> <fn-lines>: the dml hit lines (`N:sql`) whose target
+# relation no RAISE EXCEPTION block in $NOCOMMENT names. A hit with no
+# recognisable target fails closed.
+dml_unguarded() {
+  HITS="$1" awk -v skip="$2" '
+    function rel(s) {
+      sub(/^[ \t]+/, "", s); sub(/^only[ \t]+/, "", s); gsub(/"/, "", s)
+      sub(/[^a-z0-9_.].*$/, "", s); sub(/^.*\./, "", s); return s
+    }
+    BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) in_fn[a[i]] = 1 }
+    {
+      l = tolower($0); c = gsub(/[$][a-z_0-9]*[$]/, "&", l)
+      if (inq || c > 0) { if (!inq) blk++; txt[blk] = txt[blk] " " l; if (!(NR in in_fn) && l ~ /raise[ \t]+exception/) g[blk] = 1 }
+      inq = (inq + c) % 2
+    }
+    END {
+      for (b in g) {
+        t = txt[b]
+        gsub(/(delete[ \t]+from|truncate([ \t]+table)?|merge[ \t]+into|update([ \t]+only)?)[ \t]+"?[a-z0-9_.]+"?/, " ", t)
+        guards = guards " " t
+      }
+      m = split(ENVIRON["HITS"], h, "\n")
+      for (i = 1; i <= m; i++) {
+        if (h[i] == "") continue
+        s = tolower(h[i]); nt = 0; ok = 1
+        while (match(s, /(^|[^a-z0-9_])((delete[ \t]+from|merge[ \t]+into|update)[ \t]+|truncate[ \t]+(table[ \t]+)?[^;]*|drop_chunks[ \t]*\([ \t]*\047[^\047]*)/)) {
+          v = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH); sub(/^[^a-z]/, "", v)
+          if (v ~ /^truncate/) {
+            sub(/^truncate[ \t]+(table[ \t]+)?/, "", v); sub(/[ \t]+(restart|continue|cascade|restrict)([^a-z0-9_].*)?$/, "", v)
+            k = split(v, p, ","); for (j = 1; j <= k; j++) tg[++nt] = rel(p[j])
+          } else if (v ~ /^drop_chunks/) { sub(/^[^\047]*\047/, "", v); tg[++nt] = rel(v) }
+          else tg[++nt] = rel(s)
+        }
+        if (nt == 0) ok = 0
+        for (j = 1; j <= nt; j++)
+          if (tg[j] == "" || guards !~ ("(^|[^a-z0-9_])" tg[j] "([^a-z0-9_]|$)")) ok = 0
+        if (!ok) print h[i]
+      }
+    }' "$NOCOMMENT"
+}
+
 FLAT="$(mktemp)"
 NOCOMMENT="$(mktemp)"
 trap 'rm -f "$FLAT" "$NOCOMMENT"' EXIT
@@ -406,7 +449,8 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
           'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) in_fn[a[i]] = 1 } !($1 in in_fn)')"
       fi
       if [ -n "$ghits" ]; then
-        continue
+        hits="$(dml_unguarded "$hits" "$fnlines")"
+        [ -z "$hits" ] && continue
       fi
       if ! in_baseline "${base}:${class}" && ! { [ "$class" = dml ] && in_baseline "${base}:dml-joined"; }; then
         echo "lint-migration-compat ❌ ${f}: ${class} — not old-binary-safe (migrations/README.md rule 9):" >&2
@@ -442,8 +486,8 @@ Fix one of these ways:
     the statement inline and say why:
         ALTER TABLE t DROP COLUMN c;  -- migration-compat:ok column added in 0104, never read by a released binary
   * For `dml` (DELETE/TRUNCATE/UPDATE): add a RAISE EXCEPTION row-count
-    guard to the migration — the inline marker alone does not clear this
-    class. See migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97.
+    guard on the same relation to the migration — the inline marker alone
+    does not clear this class. See migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97.
 EOF
   exit 1
 fi
