@@ -34,7 +34,10 @@ const readSideNote = "source-exclude: note:\n" +
 	"    its legs in the last 7 days withholds it; a change, 24h USD volume, series point or ATH whose own span is covered is\n" +
 	"    dropped alone; judged on the asset, XLM's USD books and a non-USD peg's fiat: an exclusion naming XLM against a USD\n" +
 	"    proxy (USDC, its SAC, fiat:USD) or a source-wide one withholds every row, XLM's too; one naming XLM against another\n" +
-	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale), /v1/rwa/premium (a day an\n" +
+	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale), lending pool and reserve\n" +
+	"    /history USD (a covered price bucket values no state; an older price within the age bound may carry, else USD is null;\n" +
+	"    the pool point names the unvalued reserve; unreadable: price_read_failed, stale),\n" +
+	"    /v1/rwa/premium (a day an\n" +
 	"    exclusion covers on the token's dollar books or its oracle series is removed and counted in source_excluded_days; an\n" +
 	"    exclusion on a stablecoin's own fiat:USD book removes every member's day, counted in peg_unobserved_days; a new\n" +
 	"    exclusion can take the premium cache TTL, 10 minutes, plus the re-read and a rebuild to show; unreadable: the previous body keeps serving with\n" +
@@ -55,7 +58,7 @@ const readSideNote = "source-exclude: note:\n" +
 	"    /v1/price/at, /changes, /v1/history, /v1/ohlc, /v1/chart, since-inception: the 15s re-read plus a 30s client / 5s CDN cache.\n" +
 	"  NOT COVERED (may still include the source until lifted or aged out): /depeg, RWA assets/history,\n" +
 	"    /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
-	"    /v1/protocols + tvl USD, /v1/lending/* USD but /liquidations (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
+	"    /v1/protocols + tvl USD, other /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
 	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +
 	"    graph USD, /v1/accounts usd_value + priced_assets, volume_24h_usd on /v1/network/stats, /v1/sources/{name}/health and\n" +
 	"    /v1/diagnostics/ingestion, /v1/changes/{type}/{id} values + ATH/ATL, and the venue-native mid and offer prices of\n" +
