@@ -1219,6 +1219,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		apiSrv.StartReadinessProbe(rootCtx, v1.ReadinessProbeCadence)
 	}()
 
+	// Keeps the source-exclusion gauges current without price traffic: after a restart the
+	// kill switch shows at once, and a lift clears its ticket.
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "source-exclusion-refresh")
+		exclusionGate.Run(rootCtx, pricingguard.SourceExclusionRefreshCadence)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:              cfg.API.ListenAddr,
 		Handler:           apiSrv.Handler(),
