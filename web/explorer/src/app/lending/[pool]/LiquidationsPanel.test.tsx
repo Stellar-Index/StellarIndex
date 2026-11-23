@@ -56,6 +56,7 @@ function fill(over: Partial<Liquidation>): Liquidation {
     bid_usd: '30.00',
     bid_usd_lower_bound: false,
     filler_profit_usd: '3.00',
+    filler_profit_reason: null,
     usd_reason: null,
     ...over,
   };
