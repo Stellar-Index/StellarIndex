@@ -30,10 +30,13 @@ func (s *Server) chartThin(ctx context.Context, pair canonical.Pair, walk chartW
 }
 
 // chartLatestThin measures only the books under the newest served bucket, the price /v1/assets/{id} values: a dust book
-// that filled an older bucket does not withhold a valuation the headline serves.
-func (s *Server) chartLatestThin(ctx context.Context, pair canonical.Pair, walk chartWalkResult) bool {
-	return !walk.latestAt.IsZero() && len(walk.latestBooks) > 0 &&
-		s.thinMarketEvidence(ctx, pair.Base, pair.Quote, walk.latestBooks, "chart") != nil
+// that filled an older bucket does not withhold a valuation the headline serves. unmeasured: a book's read failed.
+func (s *Server) chartLatestThin(ctx context.Context, pair canonical.Pair, walk chartWalkResult) (thin, unmeasured bool) {
+	if walk.latestAt.IsZero() || len(walk.latestBooks) == 0 {
+		return false, false
+	}
+	ev, unmeasured := s.thinMarketMeasure(ctx, pair.Base, pair.Quote, walk.latestBooks, "chart")
+	return ev != nil, unmeasured
 }
 
 // noteCrossLatest records the books under a cross's newest bucket: every crossed point multiplies BOTH legs, so both back it.

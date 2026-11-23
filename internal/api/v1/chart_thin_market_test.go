@@ -5,6 +5,8 @@ package v1_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"testing"
@@ -171,6 +173,73 @@ func TestChartMarketCap_DerivedRouteMeasuresBothLegs(t *testing.T) {
 			}
 			if !tc.withheld && len(points) != 2 {
 				t.Errorf("served %d points, want both crossed buckets", len(points))
+			}
+		})
+	}
+}
+
+// failingSubstanceStore errors measuring any book in fail and measures every other one deep.
+type failingSubstanceStore struct{ fail map[string]bool }
+
+func (s failingSubstanceStore) measure(bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
+	for _, b := range bases {
+		for _, q := range quotes {
+			if s.fail[b.String()+"/"+q.String()] || s.fail[q.String()+"/"+b.String()] {
+				return timescale.MarketSubstance{}, errors.New("substance read timeout")
+			}
+		}
+	}
+	return thickMarket, nil
+}
+
+func (s failingSubstanceStore) PairMarketSubstance(_ context.Context, bases, quotes []canonical.Asset, _ time.Duration) (timescale.MarketSubstance, error) {
+	return s.measure(bases, quotes)
+}
+
+func (s failingSubstanceStore) PairMarketSubstanceAt(_ context.Context, bases, quotes []canonical.Asset, _ time.Time, _ time.Duration, _ timescale.HistoryGranularity) (timescale.MarketSubstance, error) {
+	return s.measure(bases, quotes)
+}
+
+// TestChartMarketCap_UnmeasuredBookIsNotCleared: a substance read that failed on either book under the derived price has
+// not ruled, so the market cap is never a clean cacheable 200 (served Stale, no-store, or withheld).
+func TestChartMarketCap_UnmeasuredBookIsNotCleared(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	assetLeg := clearedAssetID + "/native"
+	legs := map[string][]v1.HistoryPoint{
+		assetLeg:          {{Bucket: d(1), VWAP: "10"}, {Bucket: d(2), VWAP: "15"}},
+		"native/fiat:USD": {{Bucket: d(1), VWAP: "0.4"}, {Bucket: d(2), VWAP: "0.4"}},
+	}
+	for _, tc := range []struct {
+		name string
+		fail map[string]bool
+	}{
+		{"asset/XLM book unread", map[string]bool{assetLeg: true}},
+		{"XLM/USD book unread", map[string]bool{"native/fiat:USD": true, "crypto:XLM/fiat:USD": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: legs},
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: big.NewInt(1_000_0000000)},
+				}},
+				VerifiedCurrencies: newTestCatalogue(t),
+				Substance:          pricingguard.NewSubstanceGate(failingSubstanceStore{fail: tc.fail}, pricingguard.SubstanceGateOptions{}),
+			}).Handler())
+			resp := mustGet(t, ts.URL+"/v1/chart?asset="+clearedAssetID+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status %d: %s", resp.StatusCode, body)
+			}
+			m := decodeMap(t, body)
+			data, _ := m["data"].(map[string]any)
+			flags, _ := m["flags"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if len(points) > 0 && (flags["stale"] != true || resp.Header.Get("Cache-Control") != "no-store") {
+				t.Errorf("unmeasured book served clean: points=%v flags=%v Cache-Control=%q", points, flags, resp.Header.Get("Cache-Control"))
 			}
 		})
 	}

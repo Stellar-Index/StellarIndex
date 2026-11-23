@@ -1779,20 +1779,22 @@ func (s *Server) handleChartMarketCapCrypto(
 
 // marketCapSeriesRefused applies the detail page's valuation guards (a thin book under the latest price values nothing,
 // [Server.marketCapRefused], then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers
-// the whole series (inputs are current readings); unmeasured inputs never refuse.
+// the whole series (inputs are current readings); unmeasured inputs never refuse, they report unread.
 func (s *Server) marketCapSeriesRefused(
 	ctx context.Context, base canonical.Asset, pair canonical.Pair, walk chartWalkResult, wire []HistoryPointWire,
 ) (refused, lowLiquidity, unread bool) {
 	if len(wire) == 0 {
 		return false, false, false
 	}
-	if s.chartLatestThin(ctx, pair, walk) {
+	thin, thinUnread := s.chartLatestThin(ctx, pair, walk)
+	if thin {
 		return true, true, false
 	}
 	var probe AssetDetail
 	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {
 		unread = s.populateVolume24h(ctx, &probe, base)
 	}
+	unread = unread || thinUnread
 	sources := 0
 	if probe.VolumeUSD24h != nil && s.MinMarketCapVolumeUSD > 0 {
 		l := s.lookupUSDPriceWithSources(ctx, base)
