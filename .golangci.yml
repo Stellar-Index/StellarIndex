@@ -96,7 +96,7 @@ linters:
       comparison: true
 
   exclusions:
-    # No Go file here is generated, so a hand-added "Code generated ... DO NOT EDIT." banner must not switch every linter off.
+    # No Go file here is generated: a hand-added "Code generated ... DO NOT EDIT." banner must not switch linting off.
     generated: disable
     rules:
       # Tests: helpers (mustGet, newTestServer) clean up via t.Cleanup, which
