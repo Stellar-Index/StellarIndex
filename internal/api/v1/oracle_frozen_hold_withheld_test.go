@@ -55,6 +55,52 @@ func TestOraclePrices_FrozenHoldOfWithheldPairIsNotServed(t *testing.T) {
 	}
 }
 
+// TestOraclePrices_FrozenHoldBesideDormantRefusedBook: the direct fiat:USD read was refused while a USDC book answered. A thin
+// verdict on a book with no closed bucket in the existence window is a dormant book, not a refused market, so the hold serves as
+// on lastprice; a live thin book or a scam refusal of any age still withdraws it.
+func TestOraclePrices_FrozenHoldBesideDormantRefusedBook(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	thin := v1.PriceWithheldError(pricingguard.WithheldThinMarket)
+	scam := v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer)
+	cases := []struct {
+		name    string
+		refusal error
+		live    bool
+		serves  bool
+	}{
+		{"dormant thin book", thin, false, true},
+		{"live thin book", thin, true, false},
+		{"dormant scam-refused book", scam, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices: &gatingStubPriceReader{
+					stubPriceReader: stubPriceReader{
+						errByPair: map[string]error{xlmUSD: tc.refusal, "native/fiat:USD": tc.refusal},
+						recent: map[string][]v1.PriceSnapshot{
+							"crypto:XLM/" + usdc.String(): pegSeries(usdc.String(), "0.1626"),
+							"native/" + usdc.String():     pegSeries(usdc.String(), "0.1626"),
+						},
+					},
+					exists: map[string]bool{xlmUSD: tc.live, "native/fiat:USD": tc.live},
+				},
+				USDPeggedClassics: []canonical.Asset{usdc},
+				Freeze:            frozenPairs{xlmUSD: true, "native/fiat:USD": true},
+				Triangulated:      lkgPairs{xlmUSD + "/300": heldUSD, "native/fiat:USD/300": heldUSD},
+			})
+			status, body := getBody(t, startHTTPTest(t, srv.Handler()).URL+pricesURL)
+			served := status == http.StatusOK && strings.Contains(body, `"price":"`+heldUSD+`"`)
+			if served != tc.serves {
+				t.Fatalf("held value served = %v, want %v: %d %s", served, tc.serves, status, body)
+			}
+			if !tc.serves && (status != http.StatusNotFound || !strings.Contains(body, "errors/price-withheld")) {
+				t.Fatalf("status = %d, want 404 price-withheld: %s", status, body)
+			}
+		})
+	}
+}
+
 // TestFrozenHoldOfTriangulatedTokenIsServed: XLM has no fiat:USD rows (priced only through a USDC book), so the substance
 // floor measured on the literal fiat:USD pair reads as thin by construction. A frozen pair must still serve its held value.
 func TestFrozenHoldOfTriangulatedTokenIsServed(t *testing.T) {

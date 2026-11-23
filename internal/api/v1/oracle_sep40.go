@@ -272,7 +272,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(directWithheld)
+	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(s.liveDirectRefusal(ctx, asset, directWithheld))
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
@@ -406,6 +406,25 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		return best, served, viaPeg, directWithheld, nil
 	}
 	return nil, canonical.Asset{}, false, nil, failed.err()
+}
+
+// liveDirectRefusal is the direct-series refusal that withdraws a frozen pair's held value. The series read has no lower time
+// bound, so a thin verdict on a book with no closed bucket inside the existence window lastprice gates on is a dormant book, not a
+// refused market; any other verdict, or an unanswered probe, still withdraws the hold.
+func (s *Server) liveDirectRefusal(ctx context.Context, asset canonical.Asset, directWithheld error) error {
+	if directWithheld == nil || priceWithheldReason(directWithheld) != PriceWithheldSubstance {
+		return directWithheld
+	}
+	gate, ok := s.Prices.(proxyPairGate)
+	if !ok {
+		return directWithheld
+	}
+	for _, a := range assetAliases(asset) {
+		if exists, err := gate.RecentClosedVWAP1mExists(ctx, a, defaultPriceQuote); err != nil || exists {
+			return directWithheld
+		}
+	}
+	return nil
 }
 
 // stablecoinOwnSeries answers a USD stablecoin from its own series only: a withheld verdict outranks "no series".
