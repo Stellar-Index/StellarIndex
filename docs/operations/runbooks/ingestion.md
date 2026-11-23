@@ -269,7 +269,12 @@ See also [worker-panicked](infra.md#stellarindex_worker_panicked) (a panicking b
 
 ## stellarindex_source_amount_degraded
 
-Ticket: `stellarindex_source_amount_degraded_total > 0`. A decoder could not parse a money field and kept the row with that amount NULL, so every served sum over the field is short. Today only sorocredit's settlement decoder emits it (`field="settled_amount"`). It clears only on restart; the NULL rows stay until the window is re-derived.
+Ticket: `stellarindex_source_amount_degraded_total{field!="settled_amount_extra_legs"} > 0`. A decoder could not parse a money field and kept the row with that amount NULL, so every served sum over the field is short. Today only sorocredit's settlement decoder emits the counter:
+
+- `field="settled_amount"`: the settled amount failed to parse and was written NULL. This fires the alert.
+- `field="settled_amount_extra_legs"`: a liquidation settled more than one debt asset. Only leg 0 is stored, so the row is a designed lower bound (`debt_legs` in its attrs), not a parse failure. It is excluded from the alert and needs no action.
+
+The counter resets on restart, so the alert clears then while the NULL rows stay. A restart does not resolve it; only the re-derive below does.
 
 Check:
 

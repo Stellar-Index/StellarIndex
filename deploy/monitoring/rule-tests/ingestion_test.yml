@@ -18,9 +18,18 @@ tests:
         source: sorocredit
         field: settled_amount
       exp_annotations:
-        description: "The sorocredit decoder could not parse settled_amount\nand kept the row with that amount NULL. Every served total over\nthat field is short by the lost amount until the decoder is\nfixed and the window re-derived.\n"
+        description: "The sorocredit decoder could not parse settled_amount\nand kept the row with that amount NULL. Every served total over\nthat field is short by the lost amount. The alert clears on\nrestart but the NULL rows stay: fix the decoder, then re-derive\nthe window.\n"
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_source_amount_degraded
         summary: "sorocredit wrote settled_amount NULL — served sums under-report"
+- interval: 30s
+  name: source_amount_degraded stays silent on a multi-asset liquidation's extra legs
+  input_series:
+  - series: stellarindex_source_amount_degraded_total{source="sorocredit",field="settled_amount_extra_legs"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: stellarindex_source_amount_degraded
+    exp_alerts: []
 - interval: 30s
   name: source_amount_degraded stays silent when healthy
   input_series:
