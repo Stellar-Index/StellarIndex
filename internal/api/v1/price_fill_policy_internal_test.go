@@ -58,7 +58,8 @@ func TestPriceFills_HonourEveryWithholding(t *testing.T) {
 		},
 		fillDeclaredPeg: func(t *testing.T, d *AssetDetail) {
 			d.AssetID = globalTestUSDC
-			globalMarketServer(t).fillFixedPegPrice(ctx, d, nil)
+			s := globalMarketServer(t)
+			s.fillFixedPegPrice(ctx, d, nil, s.fiatUSDPriceFor)
 		},
 	}
 	// The include_thin second pass over the transitive route, with a held thin leg measured on the asset's own market.

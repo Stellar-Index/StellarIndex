@@ -100,6 +100,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_usage_units_dropped_total",
 		"stellarindex_failed_auth_total",
 		"stellarindex_cursor_last_ledger",
+		"stellarindex_cursor_durable_lag_ledgers",
 		"stellarindex_price_staleness_seconds",
 		"stellarindex_oracle_last_update_unix",
 		"stellarindex_oracle_resolution_seconds",

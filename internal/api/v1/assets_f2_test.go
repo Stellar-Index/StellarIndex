@@ -148,6 +148,22 @@ func TestF2_SorobanVolumeFallbackIsLowerBound(t *testing.T) {
 	}
 }
 
+// TestF2_PrefilledClassicVolumeKeepsItsLowerBound: a classic asset's pre-filled figure flagged partial (unpriced trades) keeps
+// the flag when the plain read then fails, and still lacks the unconfirmable derived SAC's volume, so it stays a lower bound.
+func TestF2_PrefilledClassicVolumeKeepsItsLowerBound(t *testing.T) {
+	const id = "FOO-" + testUSDCIssuer
+	prefilled := "1234.5"
+	assets := &stubAssetReader{byID: map[string]v1.AssetDetail{
+		id: {AssetID: id, Type: "classic", Code: "FOO", VolumeUSD24h: &prefilled, VolumeLowerBound: true},
+	}}
+	vol := &stubDualVolumeReader{plainErr: errors.New("plain read failed")}
+	ts := startHTTPTest(t, v1.New(v1.Options{Assets: assets, Volume: vol}).Handler())
+	body, _ := readAll(mustGet(t, ts.URL+"/v1/assets/"+id))
+	if !strings.Contains(body, `"volume_24h_usd":"1234.5"`) || !strings.Contains(body, `"volume_lower_bound":true`) {
+		t.Errorf("partial pre-filled classic volume served without volume_lower_bound: %s", body)
+	}
+}
+
 // TestF2_PrefilledVolumeIsLowerBoundWhenBothReadersFail — GetAsset pre-fills
 // the insert-time prices_1m figure; if both trade-time reads then fail it is
 // served as-is, so it must carry volume_lower_bound.

@@ -84,8 +84,15 @@ func TestLedgerTagIsAppliedAndRemovedEverywhere(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(proc), "events <- withLedger(ev, lcm.LedgerSequence())") {
-		t.Error("ProcessLedger does not tag the events it sends with their ledger")
+	if !strings.Contains(string(proc), "return enqueueLedger(ctx, events, outputs, lcm.LedgerSequence(), marks)") {
+		t.Error("ProcessLedger does not send its events through enqueueLedger")
+	}
+	enq, err := os.ReadFile("ledger_marks.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(enq), "events <- ledgerEvent{Event: ev, ledger: ledger, marks: marks}") {
+		t.Error("enqueueLedger does not tag the events it sends with their ledger")
 	}
 	sink, err := os.ReadFile("sink.go")
 	if err != nil {

@@ -205,8 +205,11 @@ func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetai
 // populateVolume24h fills detail.VolumeUSD24h with the asset's own volume plus its derived SAC's ([Server.addDerivedSACVolume24h]).
 // Reports whether the plain read or the derived SAC's arm failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
-	if failed = s.populateOwnVolume24h(ctx, detail, asset); !failed {
-		failed = s.addDerivedSACVolume24h(ctx, detail, asset)
+	failed = s.populateOwnVolume24h(ctx, detail, asset)
+	if detail.VolumeUSD24h != nil {
+		// A pre-filled figure standing in for a failed read omits the derived SAC's volume as the plain read does: timescale's
+		// getAssetBySlugSQL (per_asset_24h_vol) and asset_volume_24h both sum prices_1m for the one asset_id, never its SAC.
+		failed = s.addDerivedSACVolume24h(ctx, detail, asset) || failed
 	}
 	return failed
 }
@@ -278,8 +281,8 @@ func (s *Server) populateOwnVolume24h(ctx context.Context, detail *AssetDetail, 
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.logger.Warn("volume_24h_usd lookup failed", "err", err, "asset_key", assetKey)
 		}
-		// A pre-filled figure (insert-time prices_1m) is as partial as the plain read.
-		detail.VolumeLowerBound = asset.Type == canonical.AssetSoroban && detail.VolumeUSD24h != nil
+		// A pre-filled figure (insert-time prices_1m) is as partial as the plain read, and keeps its own lower-bound flag.
+		detail.VolumeLowerBound = detail.VolumeUSD24h != nil && (detail.VolumeLowerBound || asset.Type == canonical.AssetSoroban)
 		return true
 	}
 	detail.VolumeUSD24h = &v
@@ -364,11 +367,26 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	if l.price == "" {
 		return 0
 	}
+	if l.basis == priceBasisDeclaredPeg {
+		// A declaration observed no market: held back so no cap, FDV or change pill is built on it and a vetted global_market
+		// price, which fills before the declared pegs, can still take its place.
+		detail.declaredUSDPeg = l.price
+		return 0
+	}
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
 	detail.PriceBasis = l.basis
 	detail.priceStale = l.stale
 	return l.sources
+}
+
+// fillDeclaredPegs is the detail's declared fills, after every market producer and the global-market fill: the USD-peg
+// declaration [Server.populatePriceUSD] held back, then the fiat peg x FX.
+func (s *Server) fillDeclaredPegs(ctx context.Context, row *AssetDetail, memo map[string]*string, fx fiatUSDRead) {
+	if p := row.declaredUSDPeg; p != "" && (row.PriceUSD == nil || row.ThinMarket) && fillMayReplace(row.PriceWithheldReason, fillDeclaredPeg) {
+		row.PriceUSD, row.PriceBasis, row.PriceWithheldReason, row.ThinMarket, row.Substance = &p, priceBasisDeclaredPeg, "", false, nil
+	}
+	s.fillFixedPegPrice(ctx, row, memo, fx)
 }
 
 // assetDetailCacheKey keys the opt-in apart: its body can carry a thin
