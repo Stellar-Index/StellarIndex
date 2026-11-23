@@ -65,6 +65,10 @@ func TestAssetDetail_CapOverAnUncheckedEventNetIsALowerBound(t *testing.T) {
 			if got := strings.Contains(body, `"circulating_supply_lower_bound":true`); got != tc.floor {
 				t.Errorf("circulating_supply_lower_bound = %v, want %v: %s", got, tc.floor, body)
 			}
+			// total_supply has no floor qualifier, so a floor must not be served there as an exact total.
+			if got := strings.Contains(body, `"total_supply":"`+net.String()+`"`); got == tc.floor {
+				t.Errorf("total_supply served = %v, want %v (floor %v): %s", got, !tc.floor, tc.floor, body)
+			}
 		})
 	}
 }

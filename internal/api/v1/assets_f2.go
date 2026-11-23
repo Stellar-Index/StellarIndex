@@ -67,7 +67,12 @@ func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) 
 	if !parsed {
 		return supply.Supply{}, false, false, false
 	}
-	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, floor, true, false
+	snap = supply.Supply{AssetKey: contractID, CirculatingSupply: total, Basis: basis}
+	// total_supply carries no floor qualifier: a floor is left absent there rather than served as an exact total.
+	if !floor && !basis.LowerBound() {
+		snap.TotalSupply = total
+	}
+	return snap, floor, true, false
 }
 
 // withContractSupply replaces a missing or stale observer snapshot with the contract's own reading when there
