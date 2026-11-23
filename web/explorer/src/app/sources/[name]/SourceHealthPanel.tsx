@@ -33,15 +33,26 @@ export function SourceHealthPanel({ source }: { source: string }) {
           still authoritative for this venue&apos;s configuration.
         </p>
       )}
+      {data?.enabled === false && (
+        <p className="text-ink-muted mb-3 text-sm">
+          <span className="text-ink font-medium">Off</span>
+          {' · '}
+          <span>not switched on for this deployment</span>
+        </p>
+      )}
       {data && (
         <StatGrid cols={4}>
           <StatCell>
-            <EventsStat entries={data.entries_24h} enabled={data.enabled} />
+            <EventsStat
+              entries={data.entries_24h}
+              unmeasured={data.entries_24h_unmeasured === true}
+            />
           </StatCell>
           <StatCell>
             <CounterStat
               label="Trades"
               n={data.trade_count_24h}
+              unmeasured={data.trade_stats_unmeasured === true}
               sub="trades-table rows"
             />
           </StatCell>
@@ -49,7 +60,9 @@ export function SourceHealthPanel({ source }: { source: string }) {
             <Stat
               label="Volume"
               value={
-                data.volume_24h_usd ? (
+                data.trade_stats_unmeasured ? (
+                  <Unread why={TRADES_UNREAD} />
+                ) : data.volume_24h_usd ? (
                   <span
                     title={
                       data.volume_lower_bound ? VOLUME_FLOOR_HINT : undefined
@@ -68,6 +81,7 @@ export function SourceHealthPanel({ source }: { source: string }) {
             <CounterStat
               label="Markets"
               n={data.markets_count_24h}
+              unmeasured={data.trade_stats_unmeasured === true}
               sub="distinct pairs traded"
             />
           </StatCell>
@@ -77,57 +91,73 @@ export function SourceHealthPanel({ source }: { source: string }) {
   );
 }
 
-// The API soft-fails a timed-out counter read to 0 with no flag, so a 0 is
-// "nothing counted OR unread" and never renders as a measured zero.
-const ZERO_OR_UNREAD = 'none counted, or the read failed';
 const NOT_REPORTED = 'not reported by this API';
+const EVENTS_UNREAD = 'event counter could not be read';
+const TRADES_UNREAD = 'trade statistics could not be read';
+
+function Unread({ why }: { why: string }) {
+  return (
+    <span className="text-warn-700" title={why}>
+      —
+    </span>
+  );
+}
 
 function CounterStat({
   label,
   n,
+  unmeasured,
   sub,
 }: {
   label: string;
   n: number | null | undefined;
+  unmeasured: boolean;
   sub: string;
 }) {
+  if (unmeasured)
+    return (
+      <Stat
+        label={label}
+        value={<Unread why={TRADES_UNREAD} />}
+        sub={TRADES_UNREAD}
+      />
+    );
   if (n == null) return <Stat label={label} value="—" sub={NOT_REPORTED} />;
-  if (n === 0) return <Stat label={label} value="—" sub={ZERO_OR_UNREAD} />;
   return <Stat label={label} value={n.toLocaleString('en-US')} sub={sub} />;
 }
 
 function EventsStat({
   entries,
-  enabled,
+  unmeasured,
 }: {
   entries: number | null | undefined;
-  enabled: boolean | undefined;
+  unmeasured: boolean;
 }) {
-  if (entries != null && entries > 0) {
+  if (unmeasured)
     return (
       <Stat
         label="Events seen"
-        value={
-          <span className="text-ok-700">{entries.toLocaleString('en-US')}</span>
-        }
-        sub="decoded events, all types"
+        value={<Unread why={EVENTS_UNREAD} />}
+        sub={EVENTS_UNREAD}
       />
     );
-  }
-  if (entries === 0 && enabled === false) {
+  if (entries == null)
     return (
       <Stat
         label="Events seen"
-        value="Off"
-        sub="not switched on for this deployment"
+        value={<span className="text-warn-700">—</span>}
+        sub={NOT_REPORTED}
       />
     );
-  }
   return (
     <Stat
       label="Events seen"
-      value={<span className="text-warn-700">—</span>}
-      sub={entries == null ? NOT_REPORTED : ZERO_OR_UNREAD}
+      value={
+        <span className={entries > 0 ? 'text-ok-700' : undefined}>
+          {entries.toLocaleString('en-US')}
+        </span>
+      }
+      sub="decoded events, all types"
     />
   );
 }

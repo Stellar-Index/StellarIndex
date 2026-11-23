@@ -27,7 +27,7 @@ func TestCollectPositions_CappedFoldIsDisclosed(t *testing.T) {
 	}}
 	h := newProbeHandler(&vaultMetaReader{capReader: capReader{probe: &deadlineProbe{}}}, positions)
 	cov := &positionsCoverage{}
-	got := h.collectPositions(context.Background(), validTestAccount, func(string) string { return "" }, cov)
+	got := h.collectPositions(context.Background(), validTestAccount, func(string) positionAsset { return positionAsset{} }, cov)
 	if len(got) != 1 {
 		t.Fatalf("rows = %d, want the capped fold's rows kept", len(got))
 	}
