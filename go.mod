@@ -36,7 +36,7 @@ require (
 	github.com/prometheus/client_golang v1.25.0 // /metrics + counters/gauges in internal/obs
 	github.com/prometheus/client_model v0.6.3
 	github.com/redis/go-redis/v9 v9.23.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
-	github.com/stellar/go-stellar-sdk v0.8.0 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
+	github.com/stellar/go-stellar-sdk v0.9.0 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
 	github.com/testcontainers/testcontainers-go v0.44.0 // Integration-test Postgres container
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0 // Timescale-flavoured container helper
 	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
