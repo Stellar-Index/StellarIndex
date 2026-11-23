@@ -30,11 +30,15 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 
 	var rows []SourceHealthRow
 	var asOf WireTime // zero stamps now on the inline build
+	var flags Flags
 	if entry := s.freshIngestionSnapshot(); entry != nil {
-		rows, asOf = entry.snap.Sources, WireTime(entry.builtAt.UTC())
+		// Only a kept last-good snapshot (re-freshened each tick, so built before it was computed) is old. A fresh
+		// degraded build failed ledger, cursor or entry-count reads; the source rows use none of them.
+		kept := entry.builtAt.Before(entry.computedAt)
+		rows, asOf, flags = entry.snap.Sources, WireTime(entry.builtAt.UTC()), Flags{Stale: kept, Degraded: kept}
 	}
 	if len(rows) == 0 {
-		asOf = WireTime{}
+		asOf, flags = WireTime{}, Flags{}
 		// Cold start, or a dead refresher left the snapshot stale (see
 		// freshIngestionSnapshot). buildSourceHealth soft-fails its stat reads, so
 		// the worst case is registry metadata with zeroed counters, not an error.
@@ -44,7 +48,7 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range rows {
 		if rows[i].Name == name {
-			writeEnvelope(w, Envelope{Data: rows[i], AsOf: asOf})
+			writeEnvelope(w, Envelope{Data: rows[i], AsOf: asOf, Flags: flags})
 			return
 		}
 	}

@@ -774,6 +774,46 @@ export function convertDecimalAmount(
 }
 
 /**
+ * parseAmountInput — a typed amount as a plain decimal string ("1,000" →
+ * "1000", "0,5" → "0.5", "1.234,56" → "1234.56"); null when empty or not a
+ * number. Decided by the input's shape alone, never the browser locale: the
+ * explorer prints en-US grouping, so a copied "1,000" must read as one
+ * thousand in every locale. Spaces between digits are grouping.
+ */
+export function parseAmountInput(raw: string): string | null {
+  const s = raw.trim().replace(/(\d)\s+(?=\d)/g, '$1');
+  if (!/^[\d.,]+$/.test(s)) return null;
+  const comma = s.lastIndexOf(',');
+  const dot = s.lastIndexOf('.');
+  let whole: string;
+  let frac = '';
+  if (comma >= 0 && dot >= 0) {
+    // Both marks: the later one is the decimal, the other only groups.
+    const at = Math.max(comma, dot);
+    const group = s[at] === ',' ? '.' : ',';
+    const groups = s.slice(0, at).split(group);
+    if (!groups.every((g) => /^\d+$/.test(g))) return null;
+    whole = groups.join('');
+    frac = s.slice(at + 1);
+  } else if (comma >= 0 || dot >= 0) {
+    const mark = comma >= 0 ? ',' : '.';
+    const parts = s.split(mark);
+    const grouped = parts.length > 2 || (mark === ',' && /^\d+,\d{3}$/.test(s));
+    if (grouped) {
+      if (!parts.every((p, i) => (i === 0 ? /^\d+$/ : /^\d{3}$/).test(p)))
+        return null;
+      whole = parts.join('');
+    } else {
+      [whole, frac] = parts as [string, string];
+    }
+  } else {
+    whole = s;
+  }
+  if (!/^\d*$/.test(frac) || (whole === '' && frac === '')) return null;
+  return `${whole || '0'}${frac ? `.${frac}` : ''}`;
+}
+
+/**
  * Truncate a long identifier (G-strkey, C-id, tx hash) to `head…tail`.
  * Server-safe here in lib: ui/Mono.tsx is a 'use client' module, and server
  * components cannot call client-module exports (RSC turns them into

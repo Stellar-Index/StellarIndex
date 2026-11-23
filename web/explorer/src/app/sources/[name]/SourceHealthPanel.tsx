@@ -4,7 +4,7 @@ import { useSourceHealth } from '@/api/hooks';
 import { asExample } from '@/api/client';
 import { Panel } from '@/components/reveal';
 import { Skeleton, Stat, StatCell, StatGrid } from '@/components/ui';
-import { formatCompactUnits } from '@/lib/format';
+import { formatCompactUnits, formatRelative } from '@/lib/format';
 import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
 /**
@@ -17,7 +17,11 @@ import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
  * trades-table aggregates that are legitimately 0 for non-trade sources.
  */
 export function SourceHealthPanel({ source }: { source: string }) {
-  const { data, isLoading, error } = useSourceHealth(source);
+  const health = useSourceHealth(source);
+  const { isLoading, error } = health;
+  const data = health.data?.data;
+  const staleAsOf =
+    health.data?.flags?.stale === true ? health.data.as_of : undefined;
 
   return (
     <Panel
@@ -31,6 +35,18 @@ export function SourceHealthPanel({ source }: { source: string }) {
         <p className="text-ink-muted text-sm">
           Live health unavailable right now — the registry profile above is
           still authoritative for this venue&apos;s configuration.
+        </p>
+      )}
+      {data && health.data?.flags?.stale === true && (
+        <p className="text-ink-muted mb-3 text-sm">
+          <span className="text-ink font-medium">Last known, not current</span>
+          {' · '}
+          <span>
+            the ingestion snapshot could not be refreshed
+            {staleAsOf
+              ? `; these figures are from ${formatRelative(staleAsOf)}`
+              : ''}
+          </span>
         </p>
       )}
       {data?.enabled === false && (

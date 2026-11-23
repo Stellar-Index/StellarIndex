@@ -36,7 +36,11 @@ describe('LiquidityTabPanel volume', () => {
       ),
     );
     const { container } = render(
-      await LiquidityTabPanel({ assetID: ASSET, code: 'USDC' }),
+      await LiquidityTabPanel({
+        assetID: ASSET,
+        code: 'USDC',
+        scaleMismatch: false,
+      }),
     );
     expect(screen.getAllByText('$1,000,000T').length).toBeGreaterThan(0);
     // Average trade = 24h volume / 24h trades, divided exactly.
