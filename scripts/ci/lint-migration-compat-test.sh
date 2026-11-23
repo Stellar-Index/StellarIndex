@@ -15,8 +15,8 @@
 #   - a commented-out DDL line is not flagged;
 #   - baseline entries grandfather, and stale ones fail (repo mode)
 #     but are tolerated under `--staged` (older tag, fewer files);
-#   - `dml` (DELETE/TRUNCATE/UPDATE) needs a file-level RAISE EXCEPTION
-#     row-count guard — the inline marker alone does not clear it
+#   - `dml` (DELETE/TRUNCATE/UPDATE) needs a RAISE EXCEPTION row-count
+#     guard naming its relation — the inline marker alone does not clear it
 #     (0137's bare `DELETE FROM comet_liquidity;` passed every
 #     other class).
 #
@@ -167,7 +167,7 @@ run 'ALTER TABLE trades DROP COLUMN legacy_price;' '' --staged
 expect 'staged mode still blocks a new violation' 1 'drop-column'
 
 # 6. `dml`: unguarded DELETE/TRUNCATE/UPDATE, and its
-#    file-level RAISE EXCEPTION escape (stronger than the inline marker
+#    per-relation RAISE EXCEPTION escape (stronger than the inline marker
 #    — see escape hatch 3 in lint-migration-compat.sh's header).
 run 'DELETE FROM comet_liquidity;' ''
 expect 'dml (bare DELETE) fires' 1 'dml'
@@ -249,6 +249,21 @@ BEGIN
     DELETE FROM comet_liquidity;
 END $$;' ''
 expect 'RAISE EXCEPTION guard clears dml (no inline marker needed)' 0 'passed'
+
+run 'DO $$ BEGIN
+    IF (SELECT count(*) FROM pg_tables WHERE tablename = '"'"'nope'"'"') > 0 THEN
+        RAISE EXCEPTION '"'"'unrelated'"'"';
+    END IF;
+END $$;
+DELETE FROM trades WHERE ledger >= 0;' ''
+expect 'a guard on another relation does not clear a ranged DELETE' 1 'DELETE FROM trades'
+
+run 'DO $$ BEGIN
+    IF (SELECT count(*) FROM comet_liquidity) > 100000 THEN RAISE EXCEPTION '"'"'big'"'"'; END IF;
+    DELETE FROM comet_liquidity;
+    TRUNCATE trades;
+END $$;' ''
+expect 'a guarded block clears only the relation its guard names' 1 'TRUNCATE trades'
 
 run 'DELETE FROM comet_liquidity;' '0001_fixture.up.sql:dml'
 expect 'baselined dml entry passes' 0 'passed'

@@ -10,6 +10,7 @@ import { AuctionsPanel } from './AuctionsPanel';
 import { BackstopPanel } from './BackstopPanel';
 import { PoolUsdHistory } from './PoolUsdHistory';
 import { EmissionsPanel } from './EmissionsPanel';
+import { LiquidationsPanel } from './LiquidationsPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
@@ -58,6 +59,7 @@ export function LendingPoolPathView() {
       {pool && <BackstopPanel pool={pool} />}
       {pool && <EmissionsPanel pool={pool} />}
       {pool && <AuctionsPanel pool={pool} />}
+      {pool && <LiquidationsPanel pool={pool} />}
       {pool && <ConfigHistory pool={pool} />}
     </div>
   );

@@ -7,6 +7,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -188,6 +189,7 @@ var rwaHistoryExcludedDetail = map[string]string{
 	RWAHistoryExcludedNoSupplyHistory:    "The lake holds no mint/burn record for this asset's Stellar Asset Contract, so no supply level can be reconstructed for any day. An operator can move this by seeding the contract's flows.",
 	RWAHistoryExcludedSupplyIncomplete:   "The running total of this asset's recorded flows goes negative, which no real token can do. Its flow log is incompletely seeded in the lake, and a series built on it would understate the supply by an unknown amount. An operator can move this by re-seeding the contract.",
 	RWAHistoryExcludedNoReferenceHistory: "The oracles have published no dollar-denominated day bucket for this asset's bound instrument, so there is no value to multiply the supply by.",
+	RWAPremiumExcludedNoOverlap:          "The oracles published day buckets for this asset's bound instrument and the lake holds its supply flows, but on none of those priced days was any supply outstanding: it was first minted after the latest closed priced day, or its supply was zero on every one. It enters the series on the first priced day it has supply.",
 }
 
 // rwaHistoryBasis is the prose on every response: what the number is, what it is not, and the two structural caveats a reader cannot
@@ -656,6 +658,10 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		return rwaValueHistory{}
 	}
 	out := rwaHistorySetOf(m, time.Now().UTC())
+	m, ok := s.rwaSeriesMembers(ctx, m)
+	if !ok {
+		return rwaValueHistory{}
+	}
 
 	cands := rwaHistoryCandidates(m, out.excluded)
 	if len(cands) == 0 {
@@ -687,7 +693,8 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		}
 		days := rwaHistoryMemberDays(levels, series.days, c.decimals)
 		if len(days) == 0 {
-			out.excluded[RWAHistoryExcludedNoReferenceHistory]++
+			// Both legs were read; no priced day held any supply. That is not an oracle gap.
+			out.excluded[RWAPremiumExcludedNoOverlap]++
 			continue
 		}
 		out.members = append(out.members, rwaHistoryMember{
@@ -704,6 +711,61 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 	out.sources = rwaHistorySources(out.members)
 	out.available = true
 	return out
+}
+
+// rwaSeriesMembers is m with its classic members as /v1/rwa/assets judges them at this build: each code is the on-chain
+// spelling the catalogue join matches (the declared one when nothing matched), and the issuers' directory tags are re-read
+// in one batch, since a tag added after the membership was built must withhold the series too. ok=false when a read
+// failed, as the listing withholds what it could not check.
+func (s *Server) rwaSeriesMembers(ctx context.Context, m rwaMembership) (rwaMembership, bool) {
+	if len(m.members) == 0 {
+		return m, true
+	}
+	m.members = slices.Clone(m.members)
+	if !s.rwaResolveMemberCodes(ctx, m.members) {
+		return m, false
+	}
+	if s.Directory == nil {
+		return m, true
+	}
+	found, err := s.Directory.DirectoryEntriesByAddresses(ctx, rwaMemberIssuers(m))
+	if err != nil {
+		s.logger.Warn("rwa series: issuer directory read failed", "err", err)
+		return m, false
+	}
+	for i := range m.members {
+		m.members[i].dirTags = found[m.members[i].issuer].Tags
+	}
+	return m, true
+}
+
+// rwaResolveMemberCodes rewrites each member's code to the listing row [Server.rwaIssuerMemberRows] resolves it to, one
+// issuer page each: the binding, the SAC and the market leg are case-sensitive, so the declared spelling would miss them.
+func (s *Server) rwaResolveMemberCodes(ctx context.Context, members []rwaMember) bool {
+	if s.AssetsReader == nil {
+		return true
+	}
+	codesByIssuer := make(map[string][]string, len(members))
+	for _, mem := range members {
+		codesByIssuer[mem.issuer] = append(codesByIssuer[mem.issuer], strings.TrimSpace(mem.code))
+	}
+	onChain := make(map[string]string, len(members))
+	for issuer, codes := range codesByIssuer {
+		got, err := s.rwaIssuerMemberRows(ctx, issuer, codes)
+		if err != nil {
+			s.logger.Warn("rwa series: member listing read failed", "issuer", issuer, "err", err)
+			return false
+		}
+		for i, declared := range got.memberCodes {
+			onChain[rwaKey(declared, issuer)] = got.keep[i].Code
+		}
+	}
+	for i := range members {
+		if code, ok := onChain[rwaKey(members[i].code, members[i].issuer)]; ok {
+			members[i].code = code
+		}
+	}
+	return true
 }
 
 func rwaHistoryIssuerCount(m rwaMembership) int {

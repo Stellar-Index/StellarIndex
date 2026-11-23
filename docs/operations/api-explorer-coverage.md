@@ -90,6 +90,7 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/lending/pools/{pool}/backstop` | GET | 3 | app/lending/[pool]/BackstopPanel.tsx |
 | `/lending/pools/{pool}/backstop/history` | GET | 3 | app/lending/[pool]/BackstopPanel.tsx |
 | `/lending/pools/{pool}/auctions` | GET | 3 | app/lending/[pool]/AuctionsPanel.tsx |
+| `/lending/pools/{pool}/liquidations` | GET | 3 | app/lending/lendingLiquidations.ts |
 | `/lending/pools/{pool}/emissions` | GET | 1 | — |
 | `/lending/accounts/{account}/earnings` | GET | 1 | — |
 | `/lending/rates` | GET | 1 | — |

@@ -339,6 +339,12 @@ type PriceSnapshot struct {
 	PegUnchecked bool `json:"-"`
 	// PegReadFailed: a peg read errored (not merely missed), so the answer is degraded and not cached.
 	PegReadFailed bool `json:"-"`
+	// FillsWithheld: a source exclusion removed buckets from the series this snapshot was served in; never on the wire.
+	FillsWithheld bool `json:"-"`
+	// FillsUnread: this series stands in for a newer one withheld because the exclusions were unreadable; never on the wire.
+	FillsUnread bool `json:"-"`
+	// BucketSources: the sources that fed a series bucket, so a peg bucket is judged on them; never on the wire.
+	BucketSources []string `json:"-"`
 
 	// FXRate is the USD→quote fixing a closed USD-anchored cross converted
 	// at: the vendor bar's exact close, quote units per 1 USD.
@@ -2117,6 +2123,11 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 	if s.Triangulated == nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 	}
+	// The cache is written with no gate consulted. Scam only, as in [Server.priceFallback]: a triangulated pair has no literal
+	// rows, so the substance floor would refuse every held value; a caller whose direct read was refused says so via refusedBy.
+	if scamWithheld(r.Context(), s.Scam, pairBase, quote, "frozen_hold") {
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: newPriceWithheld(PriceWithheldScamIssuer)}
+	}
 	for _, window := range frozenHeldWindows {
 		v, found, err := s.lookupCachedVWAP(r.Context(), pairBase, quote, window)
 		if err != nil {
@@ -2151,6 +2162,15 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		}
 	}
 	return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
+}
+
+// refusedBy withdraws a held value when the caller's own read of the pair was withheld (directWithheld non-nil): the pair has a
+// market of its own and it was refused, so the ungated cache must not publish it in its place.
+func (f frozenResolution) refusedBy(directWithheld error) frozenResolution {
+	if f.outcome != frozenServeHeld || directWithheld == nil {
+		return f
+	}
+	return frozenResolution{outcome: frozenServeNothingHeld, checked: f.checked, withheld: directWithheld}
 }
 
 // resolveFrozenServeFor is [Server.resolveFrozenServe] for the snapshot in hand. An ADR-0051 cross is governed by its USD leg's marker

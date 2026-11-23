@@ -246,6 +246,30 @@ func TestChartTWAPUnreadExclusionsWithholds(t *testing.T) {
 	}
 }
 
+// TestChartUnattributedDirectBucketsJudgedOnTheirPair: a TWAP bucket carries no sources but is a direct read of its book, so
+// an exclusion on another market quoting its base (AQUA/native) leaves native/USD byte-identical to a gate-less answer, while
+// one covering the pair itself still withholds it.
+func TestChartUnattributedDirectBucketsJudgedOnTheirPair(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	b0, b1 := t0, t0.Add(time.Hour)
+	reader := &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{"native/fiat:USD": {
+		{Bucket: b0, VWAP: "0.10"}, {Bucket: b1, VWAP: "0.11"},
+	}}}
+	const path = "/v1/chart?asset=native&quote=fiat:USD&timeframe=24h&granularity=1h&price_type=twap"
+	base := chartExclGet(t, chartExclServer(reader, nil, nil, nil), path)
+	if !equalUnix(base.points, b0, b1) {
+		t.Fatalf("gate-less twap = %v, want [b0 b1]\n%s", base.points, base.raw)
+	}
+	other := []timescale.SourceExclusion{{ID: 1, Source: "sdex", Base: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", Quote: "native", From: b0.Add(-time.Hour)}}
+	if got := chartExclGet(t, chartExclServer(reader, nil, other, nil), path); got.raw != base.raw || got.cache != base.cache {
+		t.Errorf("exclusion on another native-quoted market changed the native/USD twap chart\n got %s\nwant %s", got.raw, base.raw)
+	}
+	own := []timescale.SourceExclusion{{ID: 2, Source: "sdex", Base: "native", Quote: "fiat:USD", From: b0.Add(-time.Hour)}}
+	if got := chartExclGet(t, chartExclServer(reader, nil, own, nil), path); len(got.points) != 0 || got.withheld != "source_excluded" {
+		t.Errorf("exclusion on the pair itself = %v withheld=%q, want every unattributed bucket withheld\n%s", got.points, got.withheld, got.raw)
+	}
+}
+
 // TestChartWithheldWindowStartIsNotRetention: buckets withheld at the window's start are data this deployment holds, so the
 // series is not reported truncated there; the withheld marker explains the gap.
 func TestChartWithheldWindowStartIsNotRetention(t *testing.T) {

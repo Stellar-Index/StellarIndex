@@ -504,6 +504,10 @@ type AssetDetail struct {
 	// code the catalogue does not hold as a fiat denomination.
 	FiatCodeAnchor *FiatCodeAnchor `json:"fiat_code_anchor,omitempty"`
 
+	// UnderReview marks a /v1/assets row an operator hold covers (figures unchanged, unconfirmed); UnderReviewReason says why.
+	UnderReview       bool   `json:"under_review,omitempty"`
+	UnderReviewReason string `json:"under_review_reason,omitempty"`
+
 	// ─── Asset-catalogue overlay listing fields (populated when
 	// the server's AssetsReader is wired) ──
 	Slug             string           `json:"slug,omitempty"`
@@ -835,37 +839,6 @@ type AssetSupplyFlowDay struct {
 	Clawback string `json:"clawback"`
 	Net      string `json:"net"`
 	Flows    int64  `json:"flows"`
-}
-
-// AssetMetadata is the data shape of [Client.AssetMetadata] (the SEP-1 overlay); overlay fields populate only when Sep1Status == "verified" and are nil otherwise.
-type AssetMetadata struct {
-	AssetID    string  `json:"asset_id"`
-	HomeDomain *string `json:"home_domain,omitempty"`
-	Sep1Status string  `json:"sep1_status"`
-
-	// SEP-1 [[CURRENCIES]] overlay — populated only on Sep1Status=="verified".
-	Name            *string `json:"name,omitempty"`
-	Description     *string `json:"description,omitempty"`
-	Image           *string `json:"image,omitempty"`
-	OrgName         *string `json:"org_name,omitempty"`
-	AnchorAsset     *string `json:"anchor_asset,omitempty"`
-	AnchorAssetType *string `json:"anchor_asset_type,omitempty"`
-
-	// SEP-1 standing and backing declarations; issuer-declared, nil unless Sep1Status == "verified".
-	CurrencyStatus         *string `json:"currency_status,omitempty"`
-	IsAssetAnchored        *bool   `json:"is_asset_anchored,omitempty"`
-	AttestationOfReserve   *string `json:"attestation_of_reserve,omitempty"`
-	RedemptionInstructions *string `json:"redemption_instructions,omitempty"`
-	Regulated              *bool   `json:"regulated,omitempty"`
-	ApprovalServer         *string `json:"approval_server,omitempty"`
-	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
-
-	// SEP-1 issuance declarations — issuer-declared, distinct from
-	// the F2 fields on AssetDetail which observe live ledger state.
-	Conditions  *string `json:"conditions,omitempty"`
-	FixedNumber *string `json:"fixed_number,omitempty"`
-	MaxNumber   *string `json:"max_number,omitempty"`
-	IsUnlimited *bool   `json:"is_unlimited,omitempty"`
 }
 
 // Account is the data shape returned by [Client.Me].

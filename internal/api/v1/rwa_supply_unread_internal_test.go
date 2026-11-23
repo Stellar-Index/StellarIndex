@@ -27,6 +27,24 @@ func TestRWAFillMissingSupplyReportsAnUnreadSupplyAsUnread(t *testing.T) {
 	}
 }
 
+// TestRWAFillMissingSupplyLakeFigureWithoutAFloorIsUnread: a lake net stamped while the trustline floor that bounds an
+// under-seeded lake went unread is unchecked, as the listing reports it; the fill must say so.
+func TestRWAFillMissingSupplyLakeFigureWithoutAFloorIsUnread(t *testing.T) {
+	s, _ := lakeSupplyServer(t, "50000000000")
+	s.Explorer = failingClassicExplorer{}
+	rows := cetesRow()
+	rows[0].PriceUSD = nil
+
+	unread := s.rwaFillMissingSupply(context.Background(), rows)
+
+	if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != "classic_lake_flows" {
+		t.Fatalf("supply_basis = %v, want classic_lake_flows", rows[0].SupplyBasis)
+	}
+	if !unread {
+		t.Error("a lake figure with the trustline floor unread was served as answered")
+	}
+}
+
 // TestRWAFillMissingSupplyAnsweredEmptyIsNotUnread is the control: both readers answered and neither holds the asset.
 func TestRWAFillMissingSupplyAnsweredEmptyIsNotUnread(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "")

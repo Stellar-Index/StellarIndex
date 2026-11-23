@@ -29,8 +29,10 @@ func outsideDepegBand(price string) bool {
 
 // pegObservationMarkets lists, per peg a triangulated answer in quote may have been served through, the alias forms of that
 // peg's directly observed `crypto:<STABLE>/fiat:<CODE>` market: every declared USD peg (a non-USD answer can ride a USD
-// anchor), plus each stablecoin backer of a non-USD fiat quote. unbound counts declared pegs with no such market.
-func (s *Server) pegObservationMarkets(quote canonical.Asset) (markets [][]canonical.Pair, unbound int) {
+// anchor), each stablecoin backer of a non-USD fiat quote, and the backer quoting each fiat-combine book that fed the
+// answer (books; nil off the combine), since a USD combine reads X/crypto:<STABLE> books plain triangulation never does.
+// unbound counts declared pegs with no such market.
+func (s *Server) pegObservationMarkets(quote canonical.Asset, books []canonical.Pair) (markets [][]canonical.Pair, unbound int) {
 	seen := map[string]struct{}{}
 	for _, peg := range s.USDPeggedClassics {
 		ticker, ok := s.verifiedPegTicker(peg)
@@ -40,11 +42,23 @@ func (s *Server) pegObservationMarkets(quote canonical.Asset) (markets [][]canon
 		}
 		markets = appendPegMarket(markets, seen, ticker, "USD")
 	}
-	if quote.Type == canonical.AssetFiat && quote.Code != "USD" {
+	if quote.Type != canonical.AssetFiat {
+		return markets, unbound
+	}
+	if quote.Code != "USD" {
 		for _, code := range aggregate.FiatBackers(quote.Code) {
 			if ticker, err := canonical.NewCryptoAsset(code); err == nil {
 				markets = appendPegMarket(markets, seen, ticker, quote.Code)
 			}
+		}
+	}
+	for _, book := range books {
+		ticker := book.Quote
+		if t, ok := s.verifiedPegTicker(book.Quote); ok {
+			ticker = t // a classic spelling of a USD stablecoin
+		}
+		if ticker.Type == canonical.AssetCrypto && aggregate.IsFiatProxyFor(ticker, quote.Code) {
+			markets = appendPegMarket(markets, seen, ticker, quote.Code)
 		}
 	}
 	return markets, unbound
@@ -95,10 +109,15 @@ func appendPegMarket(markets [][]canonical.Pair, seen map[string]struct{}, ticke
 // outside the [depegBand]. When none is seen outside it, unchecked says some peg had no usable observation (unbound, missed or
 // withheld) and failed says some read errored; either way false is not a "peg holds" verdict.
 func (s *Server) proxyDeviationChecked(ctx context.Context, quote canonical.Asset, at time.Time) (deviated, unchecked, failed bool) {
+	return s.pegDeviation(ctx, quote, at, nil)
+}
+
+// pegDeviation is [Server.proxyDeviationChecked] also covering the pegs quoting the fiat-combine books that fed the answer.
+func (s *Server) pegDeviation(ctx context.Context, quote canonical.Asset, at time.Time, books []canonical.Pair) (deviated, unchecked, failed bool) {
 	if s.PriceAt == nil {
 		return false, false, false
 	}
-	markets, unbound := s.pegObservationMarkets(quote)
+	markets, unbound := s.pegObservationMarkets(quote, books)
 	unchecked = unbound > 0
 	for _, forms := range markets {
 		value, observed, stale, readFailed := s.observePeg(ctx, forms, at)
@@ -121,16 +140,18 @@ func (s *Server) proxyDeviationChecked(ctx context.Context, quote canonical.Asse
 	return deviated, unchecked, failed
 }
 
-// pegEvidenceGrace is how far past one bucket of its serving resolution a peg reading may close before `at` and still count
-// as an observation at `at`: a stalled feed's last in-band bucket is not evidence that the peg holds now.
-const pegEvidenceGrace = 15 * time.Minute
+// pegEvidenceMaxAge is how long before `at` a peg reading's bucket may have OPENED and still count as an observation at `at`:
+// one 1m bucket plus 15m grace past its close, whatever rung served it. A stalled feed's last in-band bucket (often a 1d
+// rung the price-at ladder falls back to) is not evidence that the peg holds now.
+const pegEvidenceMaxAge = 17 * time.Minute
 
 // pegReadingCurrent reports whether a reading that closed at observedAt, from a resolutionSeconds-wide bucket, observes `at`.
 func pegReadingCurrent(at, observedAt time.Time, resolutionSeconds int) bool {
 	if observedAt.IsZero() {
 		return false
 	}
-	return at.Sub(observedAt) <= time.Duration(resolutionSeconds)*time.Second+pegEvidenceGrace
+	opened := observedAt.Add(-time.Duration(resolutionSeconds) * time.Second)
+	return at.Sub(opened) <= pegEvidenceMaxAge
 }
 
 // observePeg reads one peg's observed price under the first alias form that answers currently. When only a reading too old
@@ -155,10 +176,16 @@ func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time
 // withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire; a failed
 // read is also degraded (no-store), while a miss is a standing state the cache may hold.
 func (s *Server) withProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, at time.Time) Flags {
+	return s.withFiatCombineProxyDeviation(ctx, f, quote, at, nil)
+}
+
+// withFiatCombineProxyDeviation is [Server.withProxyDeviation] for an answer from [Server.tradesInRangeWithStablecoinFallback]:
+// books are the constituents that fed it, whose stablecoin quotes are pegs the answer rode on too.
+func (s *Server) withFiatCombineProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, at time.Time, books []canonical.Pair) Flags {
 	if !f.Triangulated {
 		return f
 	}
-	deviated, unchecked, failed := s.proxyDeviationChecked(ctx, quote, at)
+	deviated, unchecked, failed := s.pegDeviation(ctx, quote, at, books)
 	f.ProxyDeviation = deviated
 	f.ProxyDeviationUnchecked = unchecked
 	f.Degraded = f.Degraded || failed
