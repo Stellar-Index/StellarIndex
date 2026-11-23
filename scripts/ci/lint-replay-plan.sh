@@ -74,6 +74,14 @@ WATCHED=(
   'internal/sources/*/dispatcher_adapter.go'
   'internal/sources/*/abi.go'
   'internal/sources/blend/auction_data.go'
+  # off-chain venues: CEX trade parsers, aggregator/FX pollers and rate
+  # fixings, and the backfills that write the same rows for past days.
+  'internal/sources/*/parse.go'
+  'internal/sources/*/poller.go'
+  'internal/sources/*/rates.go'
+  'internal/sources/*/fixings.go'
+  'internal/sources/*/openexchangerates.go'
+  'internal/sources/*/backfill*.go'
   ':(exclude)*_test.go'
 )
 
@@ -309,6 +317,7 @@ a bare `none` does not count:
 
 Watched: internal/canonical/asset_{fiat,crypto,rwa}.go and
 internal/sources/*/{decode*,events,feeds,pairs,dispatcher_adapter,abi}.go,
+internal/sources/*/{parse,poller,rates,fixings,openexchangerates,backfill*}.go,
 internal/sources/blend/auction_data.go and the other recorded-value files
 listed in WATCHED (not *_test.go).
 EOF2
