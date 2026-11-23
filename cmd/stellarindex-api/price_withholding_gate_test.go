@@ -836,7 +836,7 @@ func TestReaderChokepointNamesTheScamGate(t *testing.T) {
 	gate := pricingguard.NewScamGate(&flaggingScamDirectory{flagged: map[string]bool{issuer: true}}, pricingguard.ScamGateOptions{})
 	reader := storePriceAtReader{scam: gate} // nil store: the gate answers before any read
 
-	_, _, _, readErr := reader.PriceAt(context.Background(), pair, time.Now().Add(-time.Hour), time.Hour)
+	_, _, _, _, readErr := reader.PriceAt(context.Background(), pair, time.Now().Add(-time.Hour), time.Hour)
 	if !errors.Is(readErr, v1.ErrPriceWithheld) {
 		t.Fatalf("PriceAt err = %v, want an ErrPriceWithheld-compatible error", readErr)
 	}

@@ -101,6 +101,9 @@ type Flags struct {
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`, `/v1/markets`).
 	IncludesUnread []string `json:"includes_unread,omitempty"`
+	// FillsWithheldReason is set on `/v1/history` when fills were removed from the page ("source_excluded": an operator
+	// excluded their source); the page is thinner than the market was, not a quiet market.
+	FillsWithheldReason string `json:"fills_withheld_reason,omitempty"`
 }
 
 // Pagination is present on list endpoints when more results than the limit exist, and nil on the terminal page.

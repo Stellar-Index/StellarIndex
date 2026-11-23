@@ -100,7 +100,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/rwa/premium", "public, max-age=60, s-maxage=300"},
 
 		// Historical / closed-bucket
-		{"/v1/history", "public, max-age=60, s-maxage=300"},
+		{"/v1/history", "public, max-age=30, s-maxage=5"},
 		{"/v1/history/since-inception", "public, max-age=30, s-maxage=5"},
 		// /v1/price/at, /v1/vwap, /v1/twap, /v1/ohlc and /v1/chart are
 		// scam-gated price surfaces and take the short band (above).
@@ -273,7 +273,7 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/operations", "public, max-age=10"},
 		{"/v1/contracts", "public, max-age=10"},
 		{"/v1/contracts/stats", "public, max-age=10"},
-		{"/v1/history", "public, max-age=60"},
+		{"/v1/history", "public, max-age=30"},
 		{"/v1/ohlc", "public, max-age=30"},
 		{"/v1/chart", "public, max-age=30"},
 		{"/v1/vwap", "public, max-age=30"},

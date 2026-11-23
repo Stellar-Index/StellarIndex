@@ -63,6 +63,22 @@ func (s *Server) exclusionCleanWindow(ctx context.Context, base, quote canonical
 	return kept, nil
 }
 
+// historyCleanPage drops the fills an exclusion covers from a /v1/history page; removed reports any were, so the caller marks
+// the page degraded. The cursor is the read's, not the survivors', so paging continues past the window; only a page that
+// empties with no next page is withheld, as an empty terminal page would read as a quiet market.
+func (s *Server) historyCleanPage(
+	ctx context.Context, base, quote canonical.Asset, trades []canonical.Trade, hasNext bool,
+) (kept []canonical.Trade, removed bool, err error) {
+	kept, err = s.exclusionCleanTrades(ctx, base, quote, trades)
+	if err == nil && len(kept) == 0 && len(trades) > 0 && !hasNext {
+		err = PriceWithheldError(pricingguard.WithheldSourceExcluded)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return kept, len(kept) < len(trades), nil
+}
+
 // writeExclusionCleanWindow is [Server.exclusionCleanWindow] for a handler: it writes the withheld problem (an emptied window
 // included, which is excluded rather than "no trades") and returns ok=false.
 func (s *Server) writeExclusionCleanWindow(w http.ResponseWriter, r *http.Request, base, quote canonical.Asset, window aggregate.ScaledWindow) (aggregate.ScaledWindow, bool) {
@@ -117,6 +133,43 @@ func (s *Server) ohlcSeriesWithheld(ctx context.Context, pair canonical.Pair, ba
 				return PriceWithheldError(w)
 			}
 		}
+	}
+	return nil
+}
+
+// readPriceAt is the [PriceAtReader] read every point-in-time walk makes, with a bucket an exclusion covers, on book or on any
+// of also (the requested pair a stablecoin fallback stands in for), returned as a withheld-class miss.
+func (s *Server) readPriceAt(
+	ctx context.Context, book canonical.Pair, ts time.Time, maxStaleness time.Duration, also ...canonical.Pair,
+) (string, time.Time, int, error) {
+	value, observedAt, resSec, sources, err := s.PriceAt.PriceAt(ctx, book, ts, maxStaleness)
+	for _, p := range append([]canonical.Pair{book}, also...) {
+		if err == nil {
+			err = s.priceAtWithheld(ctx, p, observedAt, resSec, sources)
+		}
+	}
+	if err != nil {
+		return "", time.Time{}, 0, err
+	}
+	return value, observedAt, resSec, nil
+}
+
+// priceAtWithheld judges a point-in-time CAGG bucket closing at observedAt under pair over the whole span it pooled, on the
+// bucket's sources; a bucket with none recorded cannot be checked source by source, so any exclusion touching the pair withholds it.
+func (s *Server) priceAtWithheld(ctx context.Context, pair canonical.Pair, observedAt time.Time, resSec int, sources []string) error {
+	if s.Exclusions == nil {
+		return nil
+	}
+	from, to := observedAt.Add(-time.Duration(resSec)*time.Second), observedAt
+	if !from.Before(to) {
+		to = from.Add(time.Nanosecond)
+	}
+	w := s.Exclusions.UnattributedWithholding(ctx, pair.Base, pair.Quote, from, to)
+	if len(sources) > 0 {
+		w = s.Exclusions.Withholding(ctx, pair.Base, pair.Quote, sources, from, to)
+	}
+	if w != pricingguard.NotWithheld {
+		return PriceWithheldError(w)
 	}
 	return nil
 }

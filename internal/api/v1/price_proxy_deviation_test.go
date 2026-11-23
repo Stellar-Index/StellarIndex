@@ -22,11 +22,11 @@ const (
 // devPriceAtStub answers PriceAt for the listed pairs and misses on the rest.
 type devPriceAtStub map[string]string
 
-func (s devPriceAtStub) PriceAt(_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, error) {
+func (s devPriceAtStub) PriceAt(_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, []string, error) {
 	if v, ok := s[pair.Base.String()+"/"+pair.Quote.String()]; ok {
-		return v, ts.Add(-time.Minute), 60, nil
+		return v, ts.Add(-time.Minute), 60, nil, nil
 	}
-	return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+	return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 }
 
 // devDeviationServer serves devToken/fiat:USD only through the declared USDC

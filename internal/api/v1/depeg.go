@@ -137,7 +137,7 @@ func pegReadingCurrent(at, observedAt time.Time, resolutionSeconds int) bool {
 // to observe `at` answers, it is returned with stale set: it can still show a depeg, never that the peg holds.
 func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time.Time) (value string, observed, stale, readFailed bool) {
 	for _, pair := range forms {
-		v, observedAt, resolution, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
+		v, observedAt, resolution, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
 		switch {
 		case err == nil && pegReadingCurrent(at, observedAt, resolution):
 			return v, true, false, false

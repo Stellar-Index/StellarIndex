@@ -1771,6 +1771,9 @@ func TestClosedVWAPAtOrBefore_SkipsVendorOnlyBuckets(t *testing.T) {
 	if !at.Bucket.Equal(venueTS) {
 		t.Errorf("bucket = %s, want the fill minute %s, not the vendor close at %s", at.Bucket, venueTS, vendorTS)
 	}
+	if len(at.Sources) != 1 || at.Sources[0] != "sdex" {
+		t.Errorf("sources = %v, want [sdex], the served bucket's recorded union", at.Sources)
+	}
 	got := new(big.Rat)
 	if _, ok := got.SetString(at.VWAP); !ok || got.Cmp(big.NewRat(1, 2)) != 0 {
 		t.Errorf("VWAP = %q, want 0.5 from the fill, not the vendor close", at.VWAP)
