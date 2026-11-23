@@ -169,6 +169,18 @@ SR
 chmod +x "$TMP/bin/systemd-run"
 printf '#!/usr/bin/env bash\necho "CH_ARGS=$*"\n' > "$TMP/bin/clickhouse-client"
 chmod +x "$TMP/bin/clickhouse-client"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+mv_version="$(mv --version 2>/dev/null)"
+if [[ "$mv_version" != *GNU* ]]; then
+  cat > "$TMP/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/bin/mv"
+fi
 export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
 # Never read the host's real per-host floor; case 4b points at a fixture.
@@ -309,6 +321,11 @@ HP
   chmod +x "$TMP/held-payload.sh"
   HEAVY_JOB_TEXTFILE_DIR="$TMP/tf" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" test-job "$TMP/held-payload.sh" >"$TMP/out" 2>"$TMP/err"
   if grep -q '^# HELP stellarindex_heavy_lock_held_since_unix ' "$TMP/out" && grep -qE '^stellarindex_heavy_lock_held_since_unix\{ops_job="test-job"\} [0-9]+$' "$TMP/out" && [ -z "$(ls -A "$TMP/tf")" ]; then ok "held-since metric published during the job, removed on exit"; else bad "held-since metric wrong (out: $(tr '\n' ' ' < "$TMP/out"), left: $(ls "$TMP/tf"))"; fi
+
+  # A directory planted at the hold path is refused, never moved into.
+  rm -rf "$TMP/tf5"; mkdir -p "$TMP/tf5/heavy_job_test_job.prom"
+  HEAVY_JOB_TEXTFILE_DIR="$TMP/tf5" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" test-job "$TMP/held-payload.sh" >"$TMP/out" 2>"$TMP/err"
+  if [ -z "$(ls -A "$TMP/tf5/heavy_job_test_job.prom")" ]; then ok "planted directory at the hold path: nothing moved into it"; else bad "hold file moved into a planted directory (left: $(ls "$TMP/tf5/heavy_job_test_job.prom"))"; fi
 
     # A run that did not get the lock must not publish a hold.
   rm -rf "$TMP/tf2"; mkdir -p "$TMP/tf2"

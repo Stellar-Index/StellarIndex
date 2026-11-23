@@ -38,7 +38,7 @@ var thinAdmissionSites = map[string]map[string]bool{
 		v1ChokepointDir + ":thinDetailPricePass":        true,
 		v1ChokepointDir + ":readPriceWithAliasesServed": true,
 		// The raw-tier evidence probe: it never withholds, only reads the verdict.
-		v1ChokepointDir + ":thinMarketEvidence": true,
+		v1ChokepointDir + ":thinMarketMeasure": true,
 	},
 	"Merge":     {v1ChokepointDir + ":readPriceWithAliasesServed": true},
 	"AdmitThin": {wiringDir + ":PriceWithheld": true},

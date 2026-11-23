@@ -2101,10 +2101,11 @@ func TestChart_DeclaredPeg_ThroughXLM_LegReadFailureIsNotAnEmptySeries(t *testin
 }
 
 // TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale: a pivot leg left empty by failed proxy reads marks the empty
-// reply flags.stale=true, since the emptiness may be the failure's doing, not the market's.
+// reply flags.stale=true, since the emptiness may be the failure's doing, not the market's. The peg's own book is never a
+// pivot source, so the failing proxy is another USD backer.
 func TestChart_DeclaredPeg_ThroughXLM_DegradedEmptyLegFlagsStale(t *testing.T) {
 	url := throughXLMLegChartURL(t, false, func(base, quote string) error {
-		if isXLMSpelling(base) && isUSDCSpelling(quote) {
+		if isXLMSpelling(base) && quote == "crypto:USDT" {
 			return errors.New("pq: connection reset")
 		}
 		return nil

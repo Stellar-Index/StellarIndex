@@ -101,33 +101,55 @@ func (s *Server) proxyDeviationChecked(ctx context.Context, quote canonical.Asse
 	markets, unbound := s.pegObservationMarkets(quote)
 	unchecked = unbound > 0
 	for _, forms := range markets {
-		value, observed, readFailed := s.observePeg(ctx, forms, at)
+		value, observed, stale, readFailed := s.observePeg(ctx, forms, at)
 		switch {
-		case observed:
+		case observed && !stale:
 			if outsideDepegBand(value) {
 				return true, false, false
 			}
+		case observed:
+			// A stale reading only adds doubt: out of band it still warns, in band it is never an all-clear.
+			deviated = deviated || outsideDepegBand(value)
+			unchecked = true
+			failed = failed || readFailed
 		case readFailed:
 			unchecked, failed = true, true
 		default:
 			unchecked = true
 		}
 	}
-	return false, unchecked, failed
+	return deviated, unchecked, failed
 }
 
-// observePeg reads one peg's observed price under the first alias form that answers.
-func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time.Time) (value string, observed, readFailed bool) {
+// pegEvidenceGrace is how far past one bucket of its serving resolution a peg reading may close before `at` and still count
+// as an observation at `at`: a stalled feed's last in-band bucket is not evidence that the peg holds now.
+const pegEvidenceGrace = 15 * time.Minute
+
+// pegReadingCurrent reports whether a reading that closed at observedAt, from a resolutionSeconds-wide bucket, observes `at`.
+func pegReadingCurrent(at, observedAt time.Time, resolutionSeconds int) bool {
+	if observedAt.IsZero() {
+		return false
+	}
+	return at.Sub(observedAt) <= time.Duration(resolutionSeconds)*time.Second+pegEvidenceGrace
+}
+
+// observePeg reads one peg's observed price under the first alias form that answers currently. When only a reading too old
+// to observe `at` answers, it is returned with stale set: it can still show a depeg, never that the peg holds.
+func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time.Time) (value string, observed, stale, readFailed bool) {
 	for _, pair := range forms {
-		v, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
+		v, observedAt, resolution, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
 		switch {
+		case err == nil && pegReadingCurrent(at, observedAt, resolution):
+			return v, true, false, false
 		case err == nil:
-			return v, true, false
+			if !observed || outsideDepegBand(v) {
+				value, observed, stale = v, true, true
+			}
 		case !isPriceAtMiss(err):
 			readFailed = true
 		}
 	}
-	return "", false, readFailed
+	return value, observed, stale, readFailed
 }
 
 // withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire; a failed

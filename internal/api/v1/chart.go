@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -682,23 +683,25 @@ func chartGranularityGrace(gran string) time.Duration {
 // source set depend on the WINDOW. Sources are never blended within a bucket, so no VWAP is published that no venue set produced.
 type chartBucketMerge struct {
 	byBucket map[time.Time]HistoryPoint
+	owner    map[time.Time]canonical.Pair
 }
 
 func newChartBucketMerge() *chartBucketMerge {
-	return &chartBucketMerge{byBucket: make(map[time.Time]HistoryPoint)}
+	return &chartBucketMerge{byBucket: make(map[time.Time]HistoryPoint), owner: make(map[time.Time]canonical.Pair)}
 }
 
 // empty reports whether no bucket is held. Buckets are keyed in UTC because [time.Time] compares location as well as instant.
 func (m *chartBucketMerge) empty() bool { return len(m.byBucket) == 0 }
 
-// add claims every bucket of points not already owned and returns how many it claimed and the newest of them.
-func (m *chartBucketMerge) add(points []HistoryPoint) (claimed int, newest time.Time) {
+// add claims for source pair sp every bucket of points not already owned and returns how many it claimed and the newest of them.
+func (m *chartBucketMerge) add(sp canonical.Pair, points []HistoryPoint) (claimed int, newest time.Time) {
 	for _, p := range points {
 		k := p.Bucket.UTC()
 		if _, taken := m.byBucket[k]; taken {
 			continue
 		}
 		m.byBucket[k] = p
+		m.owner[k] = sp
 		claimed++
 		if k.After(newest) {
 			newest = k
@@ -828,9 +831,13 @@ type chartWalkResult struct {
 	cappedAt time.Time
 	// books are the source pairs that claimed a served bucket, which the substance measurement covers.
 	books []canonical.Pair
-	// latestBook owns latestAt, the newest served bucket: the price a headline valuation stands on.
-	latestBook canonical.Pair
-	latestAt   time.Time
+	// latestBooks back latestAt, the newest served bucket: the price a headline valuation stands on. A derived cross has one per leg.
+	latestBooks []canonical.Pair
+	latestAt    time.Time
+	// bookAt is the source pair that owns each served bucket (UTC key).
+	bookAt map[time.Time]canonical.Pair
+	// crossLegs are a derived cross's leg walks, whose bookAt name the books under each crossed bucket.
+	crossLegs []chartWalkResult
 }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
@@ -856,6 +863,11 @@ func (r *chartWalkResult) mergeCap(at time.Time) {
 // trimToCap drops merged points past the earliest capped read, which a lower-ranked source would otherwise own although the
 // capped source was never read there, then keeps the oldest historyMaxPoints so data_ends_at is the last point served.
 func (r *chartWalkResult) trimToCap(points []HistoryPoint) []HistoryPoint {
+	defer func(read int) {
+		if len(points) < read {
+			r.noteServedLatest(points)
+		}
+	}(len(points))
 	if !r.cappedAt.IsZero() {
 		n := sort.Search(len(points), func(i int) bool { return points[i].Bucket.After(r.cappedAt) })
 		points = points[:n]
@@ -961,6 +973,8 @@ type chartWalk struct {
 	merge *chartBucketMerge
 	res   chartWalkResult
 	spent time.Duration // time spent on reads taken after the merge filled
+	// notVia are proxy quotes the fallback must not read through (see [Server.fiatSeriesThroughXLM]).
+	notVia []canonical.Asset
 }
 
 func (s *Server) newChartWalk(pair canonical.Pair, win chartWindow, read chartRead) *chartWalk {
@@ -1060,7 +1074,7 @@ func (w *chartWalk) readSpan(
 // to the merge, recording whether the source's quote leg was a proxy.
 func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 	points = w.s.adjustSourcePoints(sp, points)
-	claimed, newest := w.merge.add(points)
+	claimed, newest := w.merge.add(sp, points)
 	if claimed == 0 {
 		return
 	}
@@ -1110,21 +1124,24 @@ func (s *Server) chartSeriesPoints(
 	return nil, res, nil
 }
 
-// chartObservedPoints merges every DIRECTLY OBSERVED source (alias spellings, then fiat-quote stablecoin proxies) with no
-// derivation, so a [Server.fiatSeriesThroughXLM] leg can read it without recursing.
+// chartObservedPoints merges every DIRECTLY OBSERVED source (alias spellings, then fiat-quote stablecoin proxies other than
+// notVia) with no derivation, so a [Server.fiatSeriesThroughXLM] leg can read it without recursing.
 func (s *Server) chartObservedPoints(
 	ctx context.Context,
 	pair canonical.Pair,
 	win chartWindow,
 	read chartRead,
+	notVia ...canonical.Asset,
 ) ([]HistoryPoint, chartWalkResult, error) {
 	w := s.newChartWalk(pair, win, read)
+	w.notVia = notVia
 	if err := s.chartMergeAliasPairs(ctx, w); err != nil {
 		return nil, chartWalkResult{}, err
 	}
 	if err := s.chartStablecoinFallback(ctx, w); err != nil {
 		return nil, chartWalkResult{}, err
 	}
+	w.res.bookAt = w.merge.owner
 	return w.merge.series(), w.res, nil
 }
 
@@ -1137,6 +1154,9 @@ func (s *Server) chartStablecoinFallback(ctx context.Context, w *chartWalk) erro
 		return nil
 	}
 	for _, pp := range s.chartFiatProxyPairs(w.pair) {
+		if slices.ContainsFunc(w.notVia, func(a canonical.Asset) bool { return sameAsset(a, pp.Quote) }) {
+			continue
+		}
 		cont, err := w.step(ctx, pp, chartSourceProxy)
 		if err != nil {
 			return err
@@ -1301,7 +1321,8 @@ func (s *Server) fiatSeriesThroughXLM(
 	if pivotWin.from.IsZero() {
 		pivotWin.from = assetPts[0].Bucket
 	}
-	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], pivotWin, read)
+	// The pivot is never read through the base's own peg family: base/XLM x XLM/base cancels to 1.0 and would hide a depeg.
+	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], pivotWin, read, s.pegFamily(pair.Base)...)
 	if err != nil {
 		return nil, chartWalkResult{}, err
 	}
@@ -1314,7 +1335,25 @@ func (s *Server) fiatSeriesThroughXLM(
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
 	res.proxied = len(crossed) > 0
 	res.books = append(append(res.books, assetRes.books...), xlmRes.books...)
+	res.crossLegs = []chartWalkResult{assetRes, xlmRes}
+	res.noteCrossLatest(crossed, res.crossLegs...)
 	return crossed, res, nil
+}
+
+// pegFamily is the asset and the verified-catalogue ticker issued under any of its alias forms (crypto:USDC for classic
+// USDC): every proxy quote that prices in the asset itself.
+func (s *Server) pegFamily(asset canonical.Asset) []canonical.Asset {
+	family := []canonical.Asset{asset}
+	for _, alias := range canonical.AssetAliasStrings(asset) {
+		vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(alias)
+		if !ok {
+			continue
+		}
+		if ticker, err := canonical.NewCryptoAsset(vc.Ticker); err == nil {
+			family = append(family, ticker)
+		}
+	}
+	return family
 }
 
 // fiatCrossLegsThroughXLM is the gate and leg list of [Server.fiatSeriesThroughXLM] (fiat-quoted, non-fiat, non-XLM base gives
@@ -1748,20 +1787,22 @@ func (s *Server) handleChartMarketCapCrypto(
 
 // marketCapSeriesRefused applies the detail page's valuation guards (a thin book under the latest price values nothing,
 // [Server.marketCapRefused], then the turnover ceiling on the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers
-// the whole series (inputs are current readings); unmeasured inputs never refuse.
+// the whole series (inputs are current readings); unmeasured inputs never refuse, they report unread.
 func (s *Server) marketCapSeriesRefused(
 	ctx context.Context, base canonical.Asset, pair canonical.Pair, walk chartWalkResult, wire []HistoryPointWire,
 ) (refused, lowLiquidity, unread bool) {
 	if len(wire) == 0 {
 		return false, false, false
 	}
-	if s.chartLatestThin(ctx, pair, walk) {
+	thin, thinUnread := s.chartLatestThin(ctx, pair, walk)
+	if thin {
 		return true, true, false
 	}
 	var probe AssetDetail
 	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {
 		unread = s.populateVolume24h(ctx, &probe, base)
 	}
+	unread = unread || thinUnread
 	sources := 0
 	if probe.VolumeUSD24h != nil && s.MinMarketCapVolumeUSD > 0 {
 		l := s.lookupUSDPriceWithSources(ctx, base)
@@ -1770,7 +1811,7 @@ func (s *Server) marketCapSeriesRefused(
 	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
 		return refused, lowLiquidity, unread
 	}
-	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+	if turnoverCeilingApplies(base) && capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		return true, true, unread
 	}
 	return false, false, unread

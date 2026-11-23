@@ -16,6 +16,11 @@ Usage:
 
 Subcommands:
   docs-config             Emit the generated config reference to stdout.
+  config-check -config PATH
+                          Exit non-zero, naming the offending keys, if the
+                          daemons would refuse to boot on PATH. Read-only and
+                          file-only: no network, no datastore, and environment
+                          secrets are not applied (structure, not credentials).
   rpc-probe [endpoint]    Diagnostic probe against a stellar-rpc endpoint.
                           Default: http://127.0.0.1:8000.
   list-cursors -config PATH

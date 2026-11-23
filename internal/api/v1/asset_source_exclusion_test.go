@@ -37,7 +37,13 @@ func TestAssetDetail_UnreadExclusionsNotCached(t *testing.T) {
 		{pricingguard.WithheldSourceExcluded, "source_excluded", false},
 	} {
 		reader := &countingWithheldReader{verdict: tc.verdict}
-		tsrv := startHTTPTest(t, v1.New(v1.Options{Prices: reader}).Handler())
+		usd, err := canonical.NewFiatAsset("USD")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A declared peg must not stand in for either verdict: both mean the price may rest on an excluded source.
+		pegs := map[string]canonical.Asset{exclUSDC: usd}
+		tsrv := startHTTPTest(t, v1.New(v1.Options{Prices: reader, FiatPeggedClassics: pegs}).Handler())
 		var first int64
 		for i := range 2 {
 			resp := mustGet(t, tsrv.URL+"/v1/assets/"+exclUSDC)

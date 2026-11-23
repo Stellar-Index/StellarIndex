@@ -38,21 +38,24 @@ All amounts are decimal strings.
 
 ## The total
 
-`total.supply_usd` sums the published per-asset strings of USD-pegged,
-non-yield-bearing members. It is absent when none is valued.
-`total.lower_bound` is true when a member is unvalued or not summed, a supply
-is itself a floor, or `excluded` is non-empty.
+`total.supply_usd` sums the published per-asset strings of USD-pegged
+members, leaving out a yield-bearing wrapper whose underlying is in the set.
+It is absent when none is valued. `total.lower_bound` is true when a member
+that should be summed is unvalued, a non-USD or unmapped peg is left out, a
+supply is itself a floor, or `excluded` is non-empty. Every member left out,
+valued or not, is named in `total.not_summed`.
 
 - Non-USD pegs (EURC) are not summed into the USD total; `by_peg` keeps them
   apart. Each `by_peg` row carries `assets_valued` and its own `lower_bound`,
   true when one of its members is unvalued, a supply is a floor, or the
   member list was truncated.
-- Yield-bearing wrappers (yUSDC) are listed with their own market price but
-  not summed into `total.supply_usd`, since their price is not meant to sit at
-  the peg. The `by_peg` subtotal does not apply that rule: it sums every
-  valued member of the peg, wrappers included, so `by_peg` USD can exceed
-  `total.supply_usd` by the wrapper's supply, and a wrapper's backing is then
-  counted in both it and the underlying. Treat `total` as the USD figure.
+- Yield-bearing wrappers (yUSDC) name their underlying by asset id in
+  `stablecoins.go`. While that underlying is in the set, the wrapper is listed
+  with its own market price but not summed, since its backing is already
+  counted in the underlying's supply: it is in its `by_peg` row's `assets` but
+  not in `assets_valued` or `supply_usd`, it is named in `total.not_summed`,
+  and, valued or not, it makes neither the row nor the total a floor. A
+  wrapper whose underlying is not in the set is an ordinary member.
 - A `by_peg` row's `lower_bound` ignores `excluded` (USDT has no Stellar
   issuer) and `not_summed`, so it can read false where `total.lower_bound` is
   true for the same members. Only `total.lower_bound` carries those reasons.

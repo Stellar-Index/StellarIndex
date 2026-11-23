@@ -43,12 +43,13 @@ rollback), copy the actual sent text into a dated doc under
 directory on first use). Keeps an audit trail of what was
 actually said vs. the template.
 
-**NEVER commit a sent `onboarding-email.md`.** It contains the
-customer's API key and name, and this repo is public. Keep
-per-customer sends out of git entirely (the support mailbox is the
-audit trail). Before committing any comms-log entry, confirm it
-contains no `{{api_key}}` value, key-shaped string, or customer
-name.
+**NEVER put an API key in an email.** Customers mint their own keys
+in the dashboard, which shows each key once; the server keeps only
+its hash. **NEVER commit a sent `onboarding-email.md`:** it carries
+the customer's name, and this repo is public. Keep per-customer sends
+out of git entirely (the support mailbox is the audit trail). Before
+committing any comms-log entry, confirm it contains no key-shaped
+string or customer name.
 
 ## Cross-references
 
