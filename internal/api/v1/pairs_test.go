@@ -318,3 +318,34 @@ func TestPairs_FoldTakesTheNewestPricedSpelling(t *testing.T) {
 		}
 	}
 }
+
+// TestPairs_SameMinuteFoldTakesTheLaterTrade: two spellings priced in one minute are ordered by their trades' own times, as
+// /v1/markets orders them; price breaks only an identical timestamp, so a later, lower print is served.
+func TestPairs_SameMinuteFoldTakesTheLaterTrade(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	xlm := canonical.AssetAliases(canonical.NativeAsset())
+	sac := xlm[len(xlm)-1]
+	minute := time.Date(2026, 11, 1, 11, 59, 0, 0, time.UTC)
+	bookPx, poolPx := "0.0050000000", "0.0041000000"
+	reader := &pairKeyedMarketsReader{byPair: map[string]v1.Market{
+		"native/" + usdc.String(): {
+			Base: "native", Quote: usdc.String(), TradeCount24h: 7, LastTradeAt: v1.WireTime(minute.Add(10 * time.Second)),
+			LastPrice: &bookPx, LastPricedAt: v1.WireTime(minute.Add(10 * time.Second)),
+		},
+		sac.String() + "/" + usdc.String(): {
+			Base: sac.String(), Quote: usdc.String(), TradeCount24h: 3, LastTradeAt: v1.WireTime(minute.Add(40 * time.Second)),
+			LastPrice: &poolPx, LastPricedAt: v1.WireTime(minute.Add(40 * time.Second)),
+		},
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{Markets: reader}))
+	var body struct {
+		Data []v1.Market `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/pairs?base=native&quote="+usdc.String()), &body)
+	if len(body.Data) != 1 || body.Data[0].LastPrice == nil || *body.Data[0].LastPrice != poolPx {
+		t.Errorf("rows = %+v, want one market at the later trade's %s", body.Data, poolPx)
+	}
+}

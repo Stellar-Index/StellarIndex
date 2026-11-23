@@ -478,10 +478,16 @@ func TestPairMarketQueryShape(t *testing.T) {
 	// ── determinism: the last_price sort needs a total order ──
 	// `bucket DESC` alone is not one once a bucket holds both orientations, so which leg won
 	// would be planner-defined. Same tiebreaker, and same reasoning, as the prices_1m readers.
-	if !strings.Contains(q, "ORDER BY bucket DESC, base_asset LIMIT 1") {
+	if !strings.Contains(q, "ORDER BY priced_at DESC, base_asset LIMIT 1") {
 		t.Error("pairMarketQuery's last_price sort lacks the base_asset tiebreaker. " +
 			"With both directions present in one bucket the winner would be " +
 			"planner-defined, which ADR-0015 byte-identical cross-region serving " +
 			"cannot rely on")
+	}
+	// last_priced_at is the priced trade's own time (the listing's bucket_last_ts), read by one probe bounded to that minute.
+	pricedProbe := regexp.MustCompile(`(?s)t\.ts >= p\.bucket AND t\.ts < p\.bucket \+ INTERVAL '1 minute'.*?t\.ts DESC LIMIT 1\)`)
+	if !pricedProbe.MatchString(q) || !strings.Contains(q, "lp.priced_at AS last_priced_at") {
+		t.Errorf("pairMarketQuery must date last_price by its trade's own time via one LIMIT 1 probe inside the "+
+			"priced minute; a bucket start ties every spelling priced in that minute\n\nquery:\n%s", q)
 	}
 }

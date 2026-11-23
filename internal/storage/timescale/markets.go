@@ -26,7 +26,7 @@ type Market struct {
 	// close, or under a source filter that VENUE's own price from pools_per_source_1h. nil when the
 	// pair has no priced trade in 24h. It is a numeric string for precision.
 	LastPrice *string
-	// LastPricedAt is the bucket LastPrice came from ([Store.PairMarket] only); zero when LastPrice is nil.
+	// LastPricedAt is the time of the trade LastPrice came from ([Store.PairMarket] only); zero when LastPrice is nil.
 	LastPricedAt time.Time
 }
 
@@ -868,21 +868,32 @@ const pairMarketQuery = `
                   ORDER BY t.ts DESC LIMIT 1)
             ) AS both_directions
         ), last_px AS (
-            SELECT bucket, (CASE WHEN base_asset = $2 THEN last_price
-                                 ELSE 1.0 / NULLIF(last_price, 0) END)::text AS price FROM (
-                (SELECT bucket, base_asset, last_price FROM prices_1m
-                  WHERE base_asset = $2 AND quote_asset = $3
-                    AND bucket >= NOW() - INTERVAL '24 hours'
-                    AND last_price IS NOT NULL
-                  ORDER BY bucket DESC LIMIT 1)
-                UNION ALL
-                (SELECT bucket, base_asset, last_price FROM prices_1m
-                  WHERE base_asset = $3 AND quote_asset = $2
-                    AND bucket >= NOW() - INTERVAL '24 hours'
-                    AND last_price IS NOT NULL
-                  ORDER BY bucket DESC LIMIT 1)
+            SELECT priced_at, (CASE WHEN base_asset = $2 THEN last_price
+                                    ELSE 1.0 / NULLIF(last_price, 0) END)::text AS price FROM (
+                -- prices_1m keeps only the minute; the priced trade's own time is read from that minute, preferring a notional
+                -- trade as last_price does. Spellings priced in one minute tie on the bucket, not on this.
+                SELECT p.base_asset, p.last_price,
+                       COALESCE((SELECT t.ts FROM trades t
+                                  WHERE t.base_asset = p.base_asset AND t.quote_asset = p.quote_asset
+                                    AND t.ts >= p.bucket AND t.ts < p.bucket + INTERVAL '1 minute'
+                                    AND t.base_amount > 0 AND t.quote_amount > 0
+                                  ORDER BY (t.usd_volume >= 0.01) IS TRUE DESC, t.ts DESC LIMIT 1),
+                                p.bucket) AS priced_at
+                  FROM (
+                    (SELECT bucket, base_asset, quote_asset, last_price FROM prices_1m
+                      WHERE base_asset = $2 AND quote_asset = $3
+                        AND bucket >= NOW() - INTERVAL '24 hours'
+                        AND last_price IS NOT NULL
+                      ORDER BY bucket DESC LIMIT 1)
+                    UNION ALL
+                    (SELECT bucket, base_asset, quote_asset, last_price FROM prices_1m
+                      WHERE base_asset = $3 AND quote_asset = $2
+                        AND bucket >= NOW() - INTERVAL '24 hours'
+                        AND last_price IS NOT NULL
+                      ORDER BY bucket DESC LIMIT 1)
+                  ) AS p
             ) AS both_directions
-             ORDER BY bucket DESC, base_asset LIMIT 1
+             ORDER BY priced_at DESC, base_asset LIMIT 1
         )
         SELECT lt.ts AS last_trade_at,
                CASE WHEN lt.ts IS NULL THEN 0 ELSE
@@ -905,7 +916,7 @@ const pairMarketQuery = `
                        AND volume_usd IS NOT NULL
                 ) AS both_directions) AS vol_24h_usd,
                lp.price AS last_price,
-               lp.bucket AS last_priced_at,
+               lp.priced_at AS last_priced_at,
                -- The listing's rule (CTE u): the hourly view up to the last closed hour, trades for the two newest.
                (EXISTS (SELECT 1 FROM pools_per_source_1h r
                          WHERE r.base_asset = $2 AND r.quote_asset = $3

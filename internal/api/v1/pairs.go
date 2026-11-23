@@ -155,7 +155,7 @@ func sacFolded(a canonical.Asset) canonical.Asset {
 }
 
 // foldPairSpelling adds another stored spelling of the same market into dst: counts and volume sum, the newer trade sets the
-// timestamp, and the price is the newest priced bucket's (ties to the higher price), the listing's rule (canonLastPriceSQL). The
+// timestamp, and the price is the newest priced trade's (ties to the higher price), the listing's rule (canonLastPriceSQL). The
 // two clocks differ: a trade in the open minute, or one prices_1m never prices, has no bucket yet.
 func foldPairSpelling(dst *Market, m Market) {
 	dst.TradeCount24h += m.TradeCount24h
@@ -169,7 +169,7 @@ func foldPairSpelling(dst *Market, m Market) {
 	}
 }
 
-// pricedLater reports whether a's price supersedes b's under the listing's order: bucket DESC NULLS LAST, then price DESC.
+// pricedLater reports whether a's price supersedes b's under the listing's order: priced-trade time DESC NULLS LAST, then price DESC.
 func pricedLater(a, b Market) bool {
 	if a.LastPrice == nil {
 		return false
