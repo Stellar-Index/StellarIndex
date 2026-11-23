@@ -7502,15 +7502,27 @@ export interface components {
              *     position (e.g. "USDC", "XLM"). Absent when the underlying
              *     table carries no resolvable asset identity for this
              *     position_kind (documented per-protocol in
-             *     internal/api/v1/explorer/positions.go).
+             *     internal/api/v1/explorer/positions.go). Display only, never
+             *     an identity: a code can be claimed by any issuer — read
+             *     asset_ids.
              */
             assets?: string[];
+            /**
+             * @description The identity of each `assets` entry, in the same order:
+             *     "CODE-ISSUER", "native", or the token's contract C-strkey
+             *     when it names no classic asset or its classic asset could not
+             *     be read. Absent wherever `assets` is absent or is a fixed
+             *     label with no resolved contract behind it (the Blend backstop
+             *     token, sorocredit's USDC) — never guessed.
+             */
+            asset_ids?: string[];
             /**
              * @description Decimal string (ADR-0003) — see amount_semantics for exactly
              *     what this number represents. The empty string means the
              *     quantity is unknown (superseded_by_auction,
              *     not_yet_published, shares_unknown, a negative
-             *     net_share_flows), never a verified zero.
+             *     net_share_flows, a negative net_underlying_at_event_time),
+             *     never a verified zero.
              */
             amount: string;
             /**

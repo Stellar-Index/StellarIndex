@@ -120,11 +120,14 @@ type QueuedWithdrawal struct {
 
 // PositionEntry is one row in the wire response for GET /v1/accounts/{g_strkey}/positions.
 type PositionEntry struct {
-	Protocol        string   `json:"protocol"`
-	PositionKind    string   `json:"position_kind"`
-	Venue           string   `json:"venue"`
-	VenueLabel      string   `json:"venue_label,omitempty"`
-	Assets          []string `json:"assets,omitempty"`
+	Protocol     string   `json:"protocol"`
+	PositionKind string   `json:"position_kind"`
+	Venue        string   `json:"venue"`
+	VenueLabel   string   `json:"venue_label,omitempty"`
+	Assets       []string `json:"assets,omitempty"`
+	// AssetIDs is the identity of each Assets entry, index-aligned; absent where Assets is a fixed label with no
+	// resolved contract behind it (Blend backstop, sorocredit), never guessed.
+	AssetIDs        []string `json:"asset_ids,omitempty"`
 	Amount          string   `json:"amount"`
 	AmountSemantics string   `json:"amount_semantics"`
 	// Decimals scales Amount to whole units; set only where the unit is a known token whose scale was read
@@ -365,10 +368,10 @@ func (h *Handler) newPositionAssetResolver(ctx context.Context, labelsFailed *bo
 	// are a FATAL runtime throw that no recover() catches. The lock is held across the resolve
 	// (which may hit the lake) on purpose, so a contract is resolved once per request, not per fold.
 	var mu sync.Mutex
-	cache := map[string]string{}
-	return func(contractID string) string {
+	cache := map[string]positionAsset{}
+	return func(contractID string) positionAsset {
 		if contractID == "" {
-			return ""
+			return positionAsset{}
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -383,15 +386,21 @@ func (h *Handler) newPositionAssetResolver(ctx context.Context, labelsFailed *bo
 				*labelsFailed = true // under mu; read by the caller only after every fold has returned
 			}
 		}
-		v := assetDisplayLabel(resolved)
+		v := positionAsset{ID: resolved, Label: assetDisplayLabel(resolved)}
 		cache[contractID] = v
 		return v
 	}
 }
 
-// positionAssetResolver maps a contract id to its display label, memoised per request; safe for concurrent use (see
+// positionAsset is a resolved token: ID is its identity ("CODE-ISSUER", "native", or the contract C-strkey when it names no
+// classic asset or the lookup failed); Label is display-only.
+type positionAsset struct {
+	ID, Label string
+}
+
+// positionAssetResolver maps a contract id to its identity and display label, memoised per request; safe for concurrent use (see
 // newPositionAssetResolver).
-type positionAssetResolver = func(contractID string) string
+type positionAssetResolver = func(contractID string) positionAsset
 
 // assetDisplayLabel shortens a resolved asset id to a display code: "native" -> "XLM"; "CODE-ISSUER" or "CODE:GISSUER" -> "CODE" (SAC
 // metadata uses the colon SEP-11 form); a raw C-strkey -> a truncated contract id. Display-only, never identity.
@@ -434,19 +443,16 @@ func (h *Handler) poolTokensFor(ctx context.Context, source string, cov *positio
 	return m
 }
 
-// joinAssetLabels resolves each pool token to its display label. It returns nil when tokens is
-// empty, so callers leave VenueLabel/Assets absent rather than emit an empty string.
-func joinAssetLabels(tokens []string, resolve func(string) string) []string {
-	if len(tokens) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(tokens))
+// resolveAssets resolves each token to its display label and its identity, index-aligned. Both are nil when tokens is
+// empty, so callers leave VenueLabel/Assets/AssetIDs absent rather than emit an empty string.
+func resolveAssets(tokens []string, resolve positionAssetResolver) (labels, ids []string) {
 	for _, t := range tokens {
-		if lbl := resolve(t); lbl != "" {
-			out = append(out, lbl)
+		if a := resolve(t); a.Label != "" {
+			labels = append(labels, a.Label)
+			ids = append(ids, a.ID)
 		}
 	}
-	return out
+	return labels, ids
 }
 
 func isZeroDecimal(s string) bool {
@@ -464,7 +470,7 @@ func fmtActivity(ledger uint32, t time.Time) PositionLastActivity {
 
 // buildBlendPositions maps BlendPositionFold rows to up to two PositionEntry rows each (independent lending_supply and/or lending_borrow
 // legs; see timescale.BlendPositionFold).
-func (h *Handler) buildBlendPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
+func (h *Handler) buildBlendPositions(ctx context.Context, address string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendPositionsByUser(ctx, address)
 	if h.foldUnusable(cov, "blend", address, err) {
 		return nil
@@ -474,7 +480,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 
 // buildBLNTPositions maps BLNT folds exactly as Blend's: the same leg semantics over blnt_events. No pool-token
 // source exists for BLNT yet, so venue_label is absent.
-func (h *Handler) buildBLNTPositions(ctx context.Context, r BLNTPositionsReader, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
+func (h *Handler) buildBLNTPositions(ctx context.Context, r BLNTPositionsReader, address string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	rows, err := r.BLNTPositionsByUser(ctx, address)
 	if h.foldUnusable(cov, "blnt", address, err) {
 		return nil
@@ -483,7 +489,7 @@ func (h *Handler) buildBLNTPositions(ctx context.Context, r BLNTPositionsReader,
 }
 
 // lendingLegEntries maps Blend-shaped (pool, asset) folds to their lending_supply / lending_borrow entries.
-func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows []timescale.BlendPositionFold, poolTokens map[string][]string, resolve func(string) string) []PositionEntry {
+func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows []timescale.BlendPositionFold, poolTokens map[string][]string, resolve positionAssetResolver) []PositionEntry {
 	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
 	defer cancel()
 	scale := h.assetScales(dctx)
@@ -496,12 +502,9 @@ func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows [
 
 	out := make([]PositionEntry, 0, len(rows)*2)
 	for _, row := range rows {
-		venueLabel := strings.Join(joinAssetLabels(poolTokens[row.Pool], resolve), "/")
-		assetLabel := resolve(row.Asset)
-		var assets []string
-		if assetLabel != "" {
-			assets = []string{assetLabel}
-		}
+		reserves, _ := resolveAssets(poolTokens[row.Pool], resolve)
+		venueLabel := strings.Join(reserves, "/")
+		assets, assetIDs := resolveAssets([]string{row.Asset}, resolve)
 		if row.HasSupplyLeg {
 			out = append(out, withScale(blendLegEntry(PositionEntry{
 				Protocol:     protocol,
@@ -509,6 +512,7 @@ func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows [
 				Venue:        row.Pool,
 				VenueLabel:   venueLabel,
 				Assets:       assets,
+				AssetIDs:     assetIDs,
 				LastActivity: fmtActivity(row.SupplyLastLedger, row.SupplyLastActivity),
 				Basis:        BasisEventDerived,
 			}, row.SupplyNet, row.SupplySuperseded, row.SupplyTokens), row.Asset))
@@ -520,6 +524,7 @@ func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows [
 				Venue:        row.Pool,
 				VenueLabel:   venueLabel,
 				Assets:       assets,
+				AssetIDs:     assetIDs,
 				LastActivity: fmtActivity(row.BorrowLastLedger, row.BorrowLastActivity),
 				Basis:        BasisEventDerived,
 			}, row.BorrowNet, row.BorrowSuperseded, row.BorrowTokens), row.Asset))
@@ -529,7 +534,7 @@ func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows [
 }
 
 // blendLegEntry sets a Blend leg's amount. A superseded leg's underlying net omits the auctioned b/d-tokens, so it serves no amount;
-// only an exactly-zero token balance (fully seized or repaid) is a known zero.
+// only an exactly-zero token balance (fully seized or repaid) is a known zero. A negative net is never served as an amount.
 func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) PositionEntry {
 	if superseded {
 		e.AmountSemantics = AmountSemanticsSupersededByAuction
@@ -540,6 +545,10 @@ func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) 
 		return e
 	}
 	e.Amount = net
+	if strings.HasPrefix(net, "-") {
+		// Interest is paid out at the b/d-token rate, so exits can exceed principal; a negative net is not the position.
+		e.Amount = ""
+	}
 	e.AmountSemantics = AmountSemanticsNetUnderlying
 	// Closure is the b/d-token balance: a full exit returns principal plus interest, so the underlying net is almost never zero.
 	e.closed = tokens == "0"
@@ -548,7 +557,7 @@ func blendLegEntry(e PositionEntry, net string, superseded bool, tokens string) 
 
 // buildBlendBackstopPositions maps BlendBackstopFold rows to backstop_shares entries. Assets is a fixed label, not a resolved contract:
 // blend_backstop_events carries no LP-token contract id, and the label is the documented backstop token (BLND:USDC LP).
-func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
+func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendBackstopSharesByUser(ctx, address)
 	if h.foldUnusable(cov, "blend_backstop", address, err) {
 		return nil
@@ -557,7 +566,8 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
-		reserveLabel := strings.Join(joinAssetLabels(poolTokens[row.Pool], resolve), "/")
+		reserves, _ := resolveAssets(poolTokens[row.Pool], resolve)
+		reserveLabel := strings.Join(reserves, "/")
 		venueLabel := reserveLabel
 		if venueLabel != "" {
 			venueLabel += " backstop"
@@ -620,22 +630,20 @@ func (h *Handler) buildBLNTBackstopPositions(ctx context.Context, r BLNTBackstop
 
 // buildPhoenixStakePositions maps PhoenixStakeFold rows to `stake` entries. PoolTokens is pool-keyed for Phoenix, not stake-contract-keyed,
 // so VenueLabel is left absent (a known best-effort gap).
-func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
+func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.PhoenixStakeByUser(ctx, address)
 	if h.foldUnusable(cov, "phoenix_stake", address, err) {
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
-		var assets []string
-		if lbl := resolve(row.LPToken); lbl != "" {
-			assets = []string{lbl}
-		}
+		assets, assetIDs := resolveAssets([]string{row.LPToken}, resolve)
 		out = append(out, PositionEntry{
 			Protocol:        "phoenix",
 			PositionKind:    PositionKindStake,
 			Venue:           row.StakeContract,
 			Assets:          assets,
+			AssetIDs:        assetIDs,
 			Amount:          row.NetAmount,
 			AmountSemantics: AmountSemanticsShares,
 			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),
@@ -721,7 +729,7 @@ func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov 
 
 // buildAquariusGaugePositions maps AquariusGaugeFold rows to `gauge` entries. Venue is the pool
 // contract id, the same key aquariusPoolTokens uses, so PoolTokens("aquarius") resolves directly.
-func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
+func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address string, resolve positionAssetResolver, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.AquariusGaugeByUser(ctx, address)
 	if h.foldUnusable(cov, "aquarius_rewards", address, err) {
 		return nil
@@ -730,7 +738,7 @@ func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address strin
 
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
-		assets := joinAssetLabels(poolTokens[row.ContractID], resolve)
+		assets, assetIDs := resolveAssets(poolTokens[row.ContractID], resolve)
 		venueLabel := strings.Join(assets, "/")
 		out = append(out, PositionEntry{
 			Protocol:        "aquarius",
@@ -738,6 +746,7 @@ func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address strin
 			Venue:           row.ContractID,
 			VenueLabel:      venueLabel,
 			Assets:          assets,
+			AssetIDs:        assetIDs,
 			Amount:          row.NetDelta,
 			AmountSemantics: AmountSemanticsSignedDeltaSum,
 			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),

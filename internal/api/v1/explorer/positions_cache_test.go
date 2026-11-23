@@ -188,7 +188,7 @@ func TestAccountPositions_FoldsRunConcurrently(t *testing.T) {
 
 	start := time.Now()
 	var cov positionsCoverage
-	_ = h.collectPositions(context.Background(), "GTEST", func(string) string { return "" }, &cov)
+	_ = h.collectPositions(context.Background(), "GTEST", func(string) positionAsset { return positionAsset{} }, &cov)
 	elapsed := time.Since(start)
 
 	if got := reader.maxFlight.Load(); got < 2 {
@@ -208,7 +208,7 @@ func TestAccountPositions_CoverageOrderIsDeterministic(t *testing.T) {
 		reader := &slowPositionsReader{blendFails: true}
 		h := &Handler{Positions: reader, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 		var cov positionsCoverage
-		_ = h.collectPositions(context.Background(), "GTEST", func(string) string { return "" }, &cov)
+		_ = h.collectPositions(context.Background(), "GTEST", func(string) positionAsset { return positionAsset{} }, &cov)
 		note := cov.note()
 		if note == "" {
 			t.Fatal("expected a degraded coverage note (three folds fail in this fixture)")
@@ -245,7 +245,7 @@ func TestBuildBlendPositions_DecimalsOnlyOnNetUnderlying(t *testing.T) {
 	h.TokenDecimals = func(_ context.Context, contractID string) (int, bool) {
 		return 18, contractID == validTestContract
 	}
-	got := h.buildBlendPositions(context.Background(), validTestAccount, func(s string) string { return s }, &positionsCoverage{})
+	got := h.buildBlendPositions(context.Background(), validTestAccount, func(s string) positionAsset { return positionAsset{ID: s, Label: s} }, &positionsCoverage{})
 	var dec []any
 	for _, e := range got {
 		if e.Decimals == nil {
