@@ -49,10 +49,10 @@ is itself a floor, or `excluded` is non-empty.
   member list was truncated.
 - Yield-bearing wrappers (yUSDC) are listed with their own market price but
   not summed into `total.supply_usd`, since their price is not meant to sit at
-  the peg. The `by_peg` subtotal does not apply that rule: it sums every
-  valued member of the peg, wrappers included, so `by_peg` USD can exceed
-  `total.supply_usd` by the wrapper's supply, and a wrapper's backing is then
-  counted in both it and the underlying. Treat `total` as the USD figure.
+  the peg. The `by_peg` rows apply the same rule, since a wrapper's backing is
+  already counted in its underlying: a wrapper is in its row's `assets` but
+  not in `assets_valued` or `supply_usd`, and an unvalued wrapper does not
+  make the row a floor. Its exclusion is named in `total.not_summed`.
 - A `by_peg` row's `lower_bound` ignores `excluded` (USDT has no Stellar
   issuer) and `not_summed`, so it can read false where `total.lower_bound` is
   true for the same members. Only `total.lower_bound` carries those reasons.

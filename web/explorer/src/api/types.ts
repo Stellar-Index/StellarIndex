@@ -23793,9 +23793,9 @@ export interface operations {
                      *           },
                      *           {
                      *             "peg": "USD",
-                     *             "supply_usd": "118059162072207.18",
+                     *             "supply_usd": "118059162072206.13",
                      *             "assets": 4,
-                     *             "assets_valued": 3,
+                     *             "assets_valued": 2,
                      *             "lower_bound": true
                      *           }
                      *         ],
