@@ -177,21 +177,30 @@ func TestMarketCap_FilledPriceGuards(t *testing.T) {
 }
 
 // TestMarketCap_FilledPriceValuesNoCapWhenF2RefusedOrCouldNotRead — a price the direct reader refused, or could not read, is no
-// gap for a later fill to close: neither the catalogue row nor the transitive step may then value a market cap or FDV.
+// gap for a later fill to close: neither the catalogue row nor the transitive step may then value a market cap or FDV, and a
+// refusal they cannot answer (a flagged issuer, a refused upstream leg) is not replaced at all.
 func TestMarketCap_FilledPriceValuesNoCapWhenF2RefusedOrCouldNotRead(t *testing.T) {
 	direct := capTestAsset + "/" + defaultPriceQuote.String()
 	for _, tc := range []struct {
 		name   string
 		reader withheldUSDReader
+		stands PriceWithheldReason
 	}{
-		{"withheld scam_issuer", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldScamIssuer)}}},
-		{"withheld upstream_leg", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldUpstreamLeg)}}},
-		{"withheld substance", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldSubstance)}}},
-		{"price read failed", withheldUSDReader{direct: {err: errors.New("price store unreachable")}}},
+		{"withheld scam_issuer", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldScamIssuer)}}, PriceWithheldScamIssuer},
+		{"withheld upstream_leg", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldUpstreamLeg)}}, PriceWithheldUpstreamLeg},
+		{"withheld substance", withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldSubstance)}}, ""},
+		{"price read failed", withheldUSDReader{direct: {err: errors.New("price store unreachable")}}, ""},
 	} {
 		for _, withRow := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/catalogue_row=%v", tc.name, withRow), func(t *testing.T) {
 				detail := capTestRun(t, capTestServer(tc.reader, capTestSupply()), withRow)
+				if tc.stands != "" {
+					if detail.PriceUSD != nil || detail.PriceWithheldReason != tc.stands || detail.MarketCapUSD != nil {
+						t.Errorf("price_usd = %q reason = %q cap = %q, want the %q refusal to stand", strOrEmpty(detail.PriceUSD),
+							detail.PriceWithheldReason, strOrEmpty(detail.MarketCapUSD), tc.stands)
+					}
+					return
+				}
 				if detail.PriceUSD == nil {
 					t.Fatal("price_usd = nil, want the later fill (the case under test)")
 				}

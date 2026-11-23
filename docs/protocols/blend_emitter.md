@@ -87,8 +87,8 @@ mechanism.
 
 **Admitting a future instance:** fail-closed by design. A genuinely
 new Emitter deployment must be operator-admitted before its events
-attribute — `stellarindex-ops seed-protocol-contracts -source
-blend_emitter` (after adding it to the curated set) or a direct
+attribute — `stellarindex-ops seed-protocol-contracts -source blend_emitter -write`
+(after adding it to the curated set; without `-write` it is a dry run) or a direct
 `protocol_contracts` row.
 
 ## Backfill safety — audited, `BackfillSafe = true`

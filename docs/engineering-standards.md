@@ -633,7 +633,7 @@ mechanism in the codebase.
 | Forbidden patterns | `golangci-lint` custom rules | `.golangci.yml` |
 | TODO discipline | CI regex check | `scripts/ci/lint-docs.sh` (TODO discipline) |
 | Deprecation policy | CI scan: every `// Deprecated:` names a removal version | `scripts/ci/check-deprecations.sh` |
-| Dependency minimalism | `go mod tidy` + `govulncheck` | `security.yml` |
+| Dependency minimalism | `go mod tidy` + `govulncheck` | `.github/workflows/ci.yml` toolchain-gates `govulncheck` step (Go-changing PRs; accepted risks in `scripts/ci/govulncheck-allow.txt`) |
 | Feature flag hygiene | **Gap** by design: no flag registry or age scan; kill-switches are config booleans, and CI checks each key is in the config reference | `scripts/ci/lint-docs.sh` (see §2.6) |
 | SLO burn-rate alerts | **Gap** by design: hand-written rules, no SLO struct | `configs/prometheus/rules.r1/slo.yml` |
 | Runbook ↔ alert link | CI check | `scripts/ci/lint-runbook-annotations.py`, `scripts/ci/lint-alerts-catalog.py` |

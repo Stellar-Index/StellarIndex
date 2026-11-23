@@ -48,6 +48,11 @@
 #   `# si-swallow-ok: <reason>` on its line or the line above. Pre-existing
 #   sites are baselined per file by count in lint-ansible-swallow.baseline.
 #
+# Rule 7: strict-config-unvalidated. Every stellarindex daemon refuses to boot
+#   on an unknown key in stellarindex.toml, so a template/copy task rendering
+#   stellarindex.toml.j2 MUST carry `validate:` (the installed binary checks the
+#   temp file before it replaces the live one; see tasks/stellarindex-toml.yml).
+#
 # The rules are line-oriented (awk), deliberately conservative, and
 # self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
 # Prints a self-accounting line so a scan of zero files cannot pass silently.
@@ -116,6 +121,12 @@ for f in "${yml_files[@]}"; do
                file, recurse_line, task_name)
         n++
       }
+      if (strict_src_line && !has_validate) {
+        printf("%s:%d: strict-config-unvalidated: task renders stellarindex.toml.j2 without `validate:` — a key the installed binaries do not know replaces the live file and crash-loops them on restart (task: %s)\n",
+               file, strict_src_line, task_name)
+        n++
+      }
+      strict_src_line = 0; has_validate = 0
       file_path_line = 0; file_absent = 0; follow_false = 0; recurse_line = 0
       is_shell = 0; is_cmd = 0; pipefail_line = 0; bash_exec = 0; task_line = 0; task_name = ""
       key = ""; subkey = ""; key_indent = -1
@@ -160,6 +171,8 @@ for f in "${yml_files[@]}"; do
         if (line ~ /^[ \t]*state:[ \t]*absent[ \t]*$/) file_absent = 1
         if (line ~ /^[ \t]*follow:[ \t]*(false|no)[ \t]*$/) follow_false = 1
       }
+      if (line ~ /^[ \t]*src:[ \t]*"?([^ \t"]*\/)?stellarindex\.toml\.j2"?[ \t]*$/) strict_src_line = NR
+      if (line ~ /^[ \t]*validate:[ \t]*[^ \t]/) has_validate = 1
       if (line ~ /^[ \t]*(src|dest|creates):[ \t]*"?\/(var\/)?tmp(\/|"|[ \t]|$)/) {
         printf("%s:%d: stage-in-tmp: root task reads or writes a predictable path under a world-writable directory — stage in a root-only directory (task: %s)\n",
                file, NR, task_name)

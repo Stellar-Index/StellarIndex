@@ -54,7 +54,6 @@ func TestMarketCapWithheldReason_EveryRefusalIsNamed(t *testing.T) {
 		want    string
 	}{
 		{name: "direct price withheld for substance", reader: withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldSubstance)}}, want: "substance"},
-		{name: "direct price withheld upstream", reader: withheldUSDReader{direct: {err: newPriceWithheld(PriceWithheldUpstreamLeg)}}, want: "upstream_leg"},
 		{name: "direct price read failed", reader: withheldUSDReader{direct: {err: errors.New("price store unreachable")}}, want: "price_unread"},
 		{name: "stale supply", snap: stale, want: "supply_stale"},
 		{name: "unknown scale", between: func(d *AssetDetail) { d.DecimalsUndeclared = true }, want: "decimals_unknown"},

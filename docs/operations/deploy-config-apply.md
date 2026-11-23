@@ -108,11 +108,16 @@ r1: `ssh -i ~/.ssh/si_deploy root@<r1-host>`. Each step: **back up → apply →
 verify the key landed** (never trust "deploy OK"; grep the live surface).
 
 ### `stellarindex.toml` (ansible template changed)
+Deploy the release's binaries first, then apply the role: every daemon refuses
+to boot on a key it does not know, so the role validates its render with the
+installed `stellarindex-ops config-check` and refuses a host whose binaries
+predate it or disagree on version, leaving the live file untouched.
 The full render needs the ansible vault (operator-gated). For a small
 additive change, surgically edit `/etc/stellarindex.toml` to match the
 template's new keys (back up first: `cp /etc/stellarindex.toml
-/root/stellarindex.toml.pre-<change>`), validate the parse with the ops
-binary, restart the affected service. **Verify:** grep the live config for
+/root/stellarindex.toml.pre-<change>`), validate the parse with
+`stellarindex-ops config-check -config /etc/stellarindex.toml`, restart the
+affected service. **Verify:** grep the live config for
 the new key AND confirm the runtime behavior (e.g. the API serves the new
 field), not just that the process restarted.
 

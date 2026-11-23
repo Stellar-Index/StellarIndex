@@ -39,8 +39,8 @@ linked design doc has the full detail.
   if one ever deploys; the Blend BLND/USDC backstop and BLNT/USDC and
   BLNT/XLM pools are seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
   CS-026) all gate `Matches()` on contract identity. A future genuine
-  comet pool must be operator-admitted (`seed-protocol-contracts -source
-  comet` / a `protocol_contracts` row) before its events attribute —
+  comet pool must be operator-admitted (`seed-protocol-contracts -source comet -write`
+  / a `protocol_contracts` row) before its events attribute —
   fail-closed, visible as an ADR-0033 recognition gap. →
   [docs/adr/0035-factory-anchored-contract-gating.md](../../docs/adr/0035-factory-anchored-contract-gating.md),
   [docs/adr/0040-completing-contract-gating.md](../../docs/adr/0040-completing-contract-gating.md)
@@ -146,7 +146,11 @@ linked design doc has the full detail.
   (Its sibling `stellarindex_ingestion_oracle_unrepresentable_symbols`
   stays a ticket, because there no row is written at all.)
   Widening the allow-list re-derives the same PK and promotes
-  `raw:X` → `crypto:X` in place on replay, so no capture is lost.
+  `raw:X` → `crypto:X` in place on a re-derive at or above the stored
+  `derive_generation` (`projected-rebuild -write` for reflector and
+  redstone, `ch-rebuild -contract-calls -write` for band), so no capture
+  is lost. A gen-0 `projector-replay` does not touch rows a re-derive
+  already stamped.
   Design: docs/design/oracle-capture-totality-design.md.
 - **Post-P23 (Whisk, mainnet 2025-09-03) every classic asset
   movement emits a unified transfer/mint/burn event with a 4th

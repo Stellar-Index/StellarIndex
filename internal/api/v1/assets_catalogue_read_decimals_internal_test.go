@@ -100,7 +100,7 @@ func TestOnChainListingPriceUSD_NormalisesNonstandardDecimals(t *testing.T) {
 	reader := onChainPriceReader{row: timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &raw}}
 
 	s := &Server{Options: Options{AssetsReader: reader, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 9})}}
-	got := s.onChainListingPriceUSD(context.Background(), sorobanContract)
+	got, _ := s.onChainListingPriceUSD(context.Background(), sorobanContract)
 	if got == nil {
 		t.Fatal("flagged 9dp price = nil, want 2.5000000000")
 	}
@@ -113,13 +113,13 @@ func TestOnChainListingPriceUSD_NormalisesNonstandardDecimals(t *testing.T) {
 	s = &Server{
 		Options: Options{AssetsReader: onChainPriceReader{row: timescale.AssetRow{AssetID: sorobanContract, PriceUSD: &crushed}}, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{sorobanContract: 18})},
 	}
-	if got := s.onChainListingPriceUSD(context.Background(), sorobanContract); got != nil {
+	if got, _ := s.onChainListingPriceUSD(context.Background(), sorobanContract); got != nil {
 		t.Errorf("crushed 18dp price = %s, want nil", *got)
 	}
 
 	// Unflagged: the reader's own pointer target, byte for byte.
 	s = &Server{Options: Options{AssetsReader: reader, NonstandardDecimals: decimalsCacheFlagging(t, map[string]int{})}}
-	got = s.onChainListingPriceUSD(context.Background(), sorobanContract)
+	got, _ = s.onChainListingPriceUSD(context.Background(), sorobanContract)
 	if got == nil {
 		t.Fatalf("unflagged price = nil, want %s", raw)
 	}

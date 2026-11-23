@@ -69,6 +69,14 @@ nothing ships the RDB to MinIO or anywhere off the host. A revoke is a Redis-onl
 (`RevokeKeyTree`, `internal/auth/list_keys.go`) and the Redis validator reads only `apikey:<hash>`,
 so an unclean Redis death can bring back a key whose revoke already answered 204.
 
+Status note: `apikey:` records are not TTL-less. Self-service keys (`/v1/register`, keys minted by a key) carry
+a sliding `MirroredKeyIdleTTL` of 90 days, reset on each successful lookup (`internal/auth/apikey_redis.go`); one
+unused that long stops authenticating with a plain 401. The redis-sentinel role's default policy is `noeviction`
+(`roles/redis-sentinel/defaults/main.yml`), not `volatile-lru`. The "falls back to Timescale" failure modes do not
+hold for credentials or rate limits: a failed key lookup answers 503 `auth-key-store-unavailable` at once
+(`internal/api/v1/middleware/auth.go`), and rate-limited routes answer 503 once Redis errors outlast
+`api.rate_limit_dwell` (30s). See ha-plan.md §3.4 and §5.
+
 ## Evidence
 
 HA topology: [ha-plan.md](../architecture/ha-plan.md); the redis-sentinel role applies the eviction policy.

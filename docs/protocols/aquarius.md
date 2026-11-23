@@ -247,7 +247,7 @@ never decoded in the first place).
    optional for aquarius — PG `soroban_events` is capture-scoped and only
    holds recent `add_pool` rows anyway; live announcements upsert
    provenance into `protocol_contracts` from day one).
-2. Re-derive: `projector-replay -source aquarius -from 52728375` (under
+2. Re-derive: `projector-replay -source aquarius -from 52728375 -write` (under
    `run-heavy-job.sh`). Replay is upsert-only, so ALSO delete the flagged
    rows: export the flagged contracts' trade-event identities from
    ClickHouse (`SELECT ledger_seq, tx_hash, op_index, event_index FROM

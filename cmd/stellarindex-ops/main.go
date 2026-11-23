@@ -48,6 +48,7 @@ func main() {
 // A returned error exits 1 with a "name: err" prefix; opsutil.ErrExitSilently suppresses it.
 var subcommands = map[string]func(args []string) error{
 	"docs-config":             leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
+	"config-check":            leaf(configCheck),
 	"mint-key":                leaf(keys.Mint),
 	"upgrade-key":             leaf(keys.Upgrade),
 	"apikey-lineage-backfill": leaf(keys.LineageBackfill),
