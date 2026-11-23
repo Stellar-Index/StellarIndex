@@ -18592,6 +18592,17 @@ components:
             enrichment batch failed.
             Absent when every requested section was read. A response carrying
             it is sent `Cache-Control: no-store`; the next request retries.
+        fills_withheld_reason:
+          type: string
+          enum: [source_excluded]
+          description: >
+            Set on `/v1/history` when fills were removed from this page:
+            `source_excluded` means an operator excluded the source that made
+            them (the same reason a `price-withheld` 404 carries). The page is
+            thinner than the market was, not a quiet market; it may be empty
+            with `pagination.next` still continuing the tape. A response
+            carrying it is sent `Cache-Control: no-store`. Absent when no fill
+            was removed.
         outside_coverage:
           type: boolean
           default: false

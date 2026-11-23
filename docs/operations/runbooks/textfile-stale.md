@@ -38,6 +38,20 @@ Fix: restart the timer or fix the dependency, run the producer once by hand, con
 
 Escalate: if the producer cannot be identified from the manifest, page the infra owner.
 
+## stellarindex_heavy_lock_held_too_long
+
+P3. `time() - stellarindex_heavy_lock_held_since_unix > 72 h`, `for: 30m`, per `ops_job`. `run-heavy-job.sh` publishes the metric (`heavy_job_<name>.prom`) while a job holds the host-wide lock and removes it on exit; every later heavy job queues behind the holder. 72 h is the hold `stellarindex_textfile_producer_stale` already accepts as legitimate. Non-root holders (verify-archive tiers A/B) never publish, so a stuck one is not covered here.
+
+Check:
+
+```sh
+fuser -v /run/lock/stellarindex-heavy.lock   # who holds it
+ls -l /var/lib/node_exporter/textfile_collector/heavy_job_*.prom
+journalctl -u <the holder's service> -n 50
+```
+
+Fix: if the holder is progressing and 72 h is genuinely too short for it, say so in the ticket rather than silencing; if wedged, stop its unit. If `fuser` shows no holder, the `.prom` is an orphan from a SIGKILLed job: remove it.
+
 ## stellarindex_patroni_textfile_stale
 
 P3. `patroni.prom` has not been rewritten. Producer: `patroni-textfile-scraper.timer` (30 s; `configs/ansible/roles/patroni/tasks/11-monitoring.yml`) running `/usr/local/bin/patroni-textfile-scraper`. Until fixed, `stellarindex_patroni_role` / `stellarindex_patroni_running` are frozen and a failover is invisible to them.

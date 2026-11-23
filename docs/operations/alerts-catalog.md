@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 326 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 328 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -147,6 +147,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_config_assertions_stale` | config-assertions producer silent | textfile older than 2 h, deleted, or never written, for 30 min | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_patroni_leader_count_wrong` | `sum(stellarindex_patroni_role{role="leader"})` | != 1 for 2 min | page | [postgres](runbooks/postgres.md#stellarindex_patroni_leader_count_wrong) |
 | `stellarindex_patroni_textfile_stale` | `time() - node_textfile_mtime_seconds{file="patroni.prom"}` | > 10 min, for 5 min | ticket | [patroni-textfile-stale](runbooks/textfile-stale.md#stellarindex_patroni_textfile_stale) |
+| `stellarindex_heavy_lock_held_too_long` | `time() - stellarindex_heavy_lock_held_since_unix` per `ops_job` | > 72 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-stale.md#stellarindex_heavy_lock_held_too_long) |
 | `stellarindex_textfile_producer_stale` | `time() - node_textfile_mtime_seconds`, any file without its own alert (excl. orphan/one-off `ops_job_*`, `restore_drill*`, `alertmanager_receivers`) | > 24 h, for 30 min | ticket | [textfile-producer-stale](runbooks/textfile-stale.md#stellarindex_textfile_producer_stale) |
 | `stellarindex_node_root_disk_filling_fast` | `predict_linear` 10 min trend: root avail hits 0 in 30 min, and avail < 50% | for 2 min (log floods fill root in ~5 min) | page | [node-root-disk-filling-fast](runbooks/infra.md#stellarindex_node_root_disk_filling_fast) |
 | `stellarindex_node_root_disk_full` | root `/` avail % (holds /var/log, /tmp, /var/cache) | < 10 % | page | [node-root-disk-full](runbooks/infra.md#stellarindex_node_root_disk_full) |
@@ -584,6 +585,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_zfs_pool_fill_90pct_within_7d` | same | < 10 % free in 7 d, 30 min | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_fill_90pct_within_7d) |
 | `stellarindex_nvme_smart_warn` | `increase(nvme_num_err_log_entries_total[1h])` | > 0 for > 5 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_smart_warn) |
 | `stellarindex_nvme_thermal_throttle` | `nvme_temperature_celsius` | > 70 °C for > 5 min | page | [infra](runbooks/infra.md#stellarindex_nvme_thermal_throttle) |
+| `stellarindex_nvme_health_series_missing` | `nvme_temperature_celsius` / `nvme_num_err_log_entries_total` seen in the last 3 d, now absent per instance | any, for 30 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_health_series_missing) |
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [infra](runbooks/infra.md#stellarindex_nvme_wear_high) |
 | `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | page | [infra](runbooks/infra.md#stellarindex_nvme_spare_low) |
 | `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_media_errors) |

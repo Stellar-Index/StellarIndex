@@ -23,19 +23,19 @@ type priceChangesAgeStub struct{}
 
 func (priceChangesAgeStub) PriceAt(
 	_ context.Context, _ canonical.Pair, ts time.Time, _ time.Duration,
-) (string, time.Time, int, error) {
+) (string, time.Time, int, []string, error) {
 	age := time.Since(ts)
 	switch {
 	case age < 30*time.Minute: // current
-		return "1.00", ts, 60, nil
+		return "1.00", ts, 60, nil, nil
 	case age < 12*time.Hour: // 1h horizon
-		return "0.99", ts, 60, nil
+		return "0.99", ts, 60, nil, nil
 	case age < 4*24*time.Hour: // 24h horizon
-		return "0.80", ts, 60, nil
+		return "0.80", ts, 60, nil, nil
 	case age < 20*24*time.Hour: // 7d horizon — served by a 1h bar
-		return "0.50", ts, 3600, nil
+		return "0.50", ts, 3600, nil, nil
 	default: // 30d horizon — no data that far back
-		return "", time.Time{}, 0, ErrPriceAtUnavailable
+		return "", time.Time{}, 0, nil, ErrPriceAtUnavailable
 	}
 }
 
@@ -138,8 +138,8 @@ type priceChangesWithheldStub struct{}
 
 func (priceChangesWithheldStub) PriceAt(
 	context.Context, canonical.Pair, time.Time, time.Duration,
-) (string, time.Time, int, error) {
-	return "", time.Time{}, 0, ErrPriceWithheld
+) (string, time.Time, int, []string, error) {
+	return "", time.Time{}, 0, nil, ErrPriceWithheld
 }
 
 // TestHandlePriceChanges_WithheldDistinctFromNotFound pins that when every orientation of the current-price anchor is
@@ -166,15 +166,15 @@ type priceChangesHorizonWithheldStub struct{}
 
 func (priceChangesHorizonWithheldStub) PriceAt(
 	_ context.Context, _ canonical.Pair, ts time.Time, _ time.Duration,
-) (string, time.Time, int, error) {
+) (string, time.Time, int, []string, error) {
 	age := time.Since(ts)
 	switch {
 	case age < 30*time.Minute:
-		return "1.00", ts, 60, nil
+		return "1.00", ts, 60, nil, nil
 	case age < 12*time.Hour:
-		return "", time.Time{}, 0, ErrPriceWithheld
+		return "", time.Time{}, 0, nil, ErrPriceWithheld
 	default:
-		return "", time.Time{}, 0, ErrPriceAtUnavailable
+		return "", time.Time{}, 0, nil, ErrPriceAtUnavailable
 	}
 }
 
@@ -219,11 +219,11 @@ type priceChangesPairStub struct {
 
 func (s priceChangesPairStub) PriceAt(
 	_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration,
-) (string, time.Time, int, error) {
+) (string, time.Time, int, []string, error) {
 	if v, ok := s.byPair[pair.Base.String()+"/"+pair.Quote.String()]; ok {
-		return v, ts, 60, nil
+		return v, ts, 60, nil, nil
 	}
-	return "", time.Time{}, 0, ErrPriceAtUnavailable
+	return "", time.Time{}, 0, nil, ErrPriceAtUnavailable
 }
 
 // TestHandlePriceChanges_ReaderFailureIsNotAbsence: a failed read of the current anchor is not a 404, and a failed
