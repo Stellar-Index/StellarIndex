@@ -165,7 +165,14 @@ it. Replace a key like this:
   allowlists still apply, so send the revoke from an allowed client.
   A key minted with a permission list that does not allow this route
   still cannot revoke itself; revoke it from the dashboard or with a
-  key that may.
+  key that may. The self-revoke still counts against the account's
+  monthly quota and per-minute rate limit: a holder who has spent either
+  gets `429` until the minute rolls over or the quota resets on the
+  1st, so a `/v1/register`-only account has no other way to revoke in
+  that window.
+- **Idle keys expire.** A key from `/v1/register` or minted by a key
+  that sends no request for 90 days stops authenticating with a plain
+  `401`; each successful request resets the window.
 
 ## Rate limits
 
