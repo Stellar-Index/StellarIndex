@@ -128,15 +128,20 @@ mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY" "$STALE" "$REQUIRED" "$L
 exec >>"$LOG" 2>&1
 # Every exit, refusals included, leaves its code in the log: a detached run has no other witness.
 trap 'echo "=== ch-rebuild-projected EXIT rc=$? $(date -u) ==="' EXIT
+# Without these a signal-killed run logs rc=0; exiting 128+N makes the EXIT line record the signal.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 # One run at a time over these state files: a second run would read the first's
 # in-flight $DIRTY line as an earlier run's hole and DELETE that window under it.
-# Read-only open, as run-heavy-job.sh opens its locks.
+# Read-only open, as run-heavy-job.sh opens its locks. fd 200, not 4-9: the wrapper's
+# exec hands the payload its per-job lock on fd 9, and reopening that fd would drop it.
 if ! command -v flock >/dev/null; then
   echo "REFUSED: flock is not installed, so this run cannot exclude a concurrent one — nothing was touched"; exit 2
 fi
-exec 9<"$LOCK" || { echo "REFUSED: cannot open lock $LOCK — nothing was touched"; exit 2; }
-if ! flock -n 9; then
+exec 200<"$LOCK" || { echo "REFUSED: cannot open lock $LOCK — nothing was touched"; exit 2; }
+if ! flock -n 200; then
   echo "SKIPPED: another ch-rebuild-projected run holds $LOCK — nothing was touched (exit 75)"; exit 75
 fi
 
