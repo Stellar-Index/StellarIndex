@@ -72,6 +72,17 @@ func TestGlobalAssetSlug_IssuerVerdictMatchesListing(t *testing.T) {
 		t.Errorf("directory down: %s, want no price, reason unattributed, stale", body)
 	}
 
+	// The issuer flag outranks a source exclusion: a price already withheld as source_excluded is reported as scam_issuer.
+	usdc, ok := cat.LookupBySlug("usdc")
+	if !ok {
+		t.Fatal("embedded catalogue has no usdc")
+	}
+	excluded := New(Options{VerifiedCurrencies: cat, Directory: scamTaggedDirectory{}}).withTwinIssuerVerdict(
+		context.Background(), GlobalAssetView{PriceWithheldReason: PriceWithheldSourceExcluded}, usdc)
+	if excluded.PriceUSD != nil || excluded.PriceWithheldReason != PriceWithheldScamIssuer {
+		t.Errorf("flagged issuer, price source_excluded: price=%v reason=%q, want scam_issuer", excluded.PriceUSD, excluded.PriceWithheldReason)
+	}
+
 	// Native has no issuer to judge: an unreadable directory must not withhold XLM.
 	xlm, ok := cat.LookupBySlug("xlm")
 	if !ok || xlm.StellarEntry() == nil || xlm.StellarEntry().AssetID != "native" {
