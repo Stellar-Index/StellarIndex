@@ -432,6 +432,12 @@ func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, v
 	return false, false
 }
 
+// turnoverCeilingApplies is false for XLM in any alias form (keyed on identity, never the code): its on-network volume is
+// not its market, so the listing, detail and chart never judge its cap by [capExceedsObservedTurnover].
+func turnoverCeilingApplies(asset canonical.Asset) bool {
+	return !normalizeXLMAliases(asset).Equal(canonical.NativeAsset())
+}
+
 // MarketCapWithheldReason says why market_cap_usd is null beside a served price_usd and circulating_supply. A direct-price
 // verdict reuses its [PriceWithheldReason] value: the cap is withheld because that price was.
 type MarketCapWithheldReason string
@@ -548,7 +554,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if mc, err := usdMarketValue(snap.CirculatingSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("market_cap_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+		} else if turnoverCeilingApplies(asset) && capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// The ceiling tests the computed FIGURE, so unlike the floor it can only run here;
 			// detail and listing must agree on the verdict.
 			detail.MarketCapLowLiquidity = true
@@ -563,7 +569,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if fdv, err := usdMarketValue(snap.MaxSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+		} else if turnoverCeilingApplies(asset) && capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// FDV is computed over MAX supply, so it can breach the ceiling even when the cap did
 			// not. Flag it as the cap branch does: a withheld fdv_usd with no flag would read as
 			// "no max_supply on record".

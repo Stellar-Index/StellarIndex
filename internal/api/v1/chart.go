@@ -1811,7 +1811,7 @@ func (s *Server) marketCapSeriesRefused(
 	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
 		return refused, lowLiquidity, unread
 	}
-	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+	if turnoverCeilingApplies(base) && capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 		return true, true, unread
 	}
 	return false, false, unread

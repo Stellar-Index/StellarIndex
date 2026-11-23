@@ -178,6 +178,45 @@ func TestChartMarketCap_DerivedRouteMeasuresBothLegs(t *testing.T) {
 	}
 }
 
+// TestChartMarketCap_TurnoverCeilingExemptsXLMByIdentity: the chart applies the turnover ceiling as the listing does, which
+// never judges XLM's cap against its on-network turnover; a classic asset that only shares the code XLM is not exempt.
+func TestChartMarketCap_TurnoverCeilingExemptsXLMByIdentity(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	const lookalike = "XLM-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	for _, tc := range []struct {
+		asset    string
+		withheld bool
+	}{
+		{"native", false},
+		{"crypto:XLM", false},
+		{lookalike, true},
+	} {
+		t.Run(tc.asset, func(t *testing.T) {
+			price := []v1.HistoryPoint{{Bucket: d(1), VWAP: "0.4"}, {Bucket: d(2), VWAP: "0.4"}}
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: map[string][]v1.HistoryPoint{
+					"native/fiat:USD": price, lookalike + "/fiat:USD": price,
+				}},
+				// 10^10 tokens at $0.40 against $10 of daily volume: far past the ceiling.
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: new(big.Int).Exp(big.NewInt(10), big.NewInt(17), nil)},
+				}},
+				Volume:                  &stubVolumeReader{volume: "10"},
+				MaxMarketCapVolumeRatio: 50_000,
+			}).Handler())
+			status, body := fetch(t, ts.URL+"/v1/chart?asset="+tc.asset+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			if status != http.StatusOK {
+				t.Fatalf("status %d: %s", status, body)
+			}
+			data, _ := decodeMap(t, body)["data"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if withheld := len(points) == 0 && data["market_cap_low_liquidity"] == true; withheld != tc.withheld {
+				t.Errorf("points=%v low_liquidity=%v, want withheld=%v", points, data["market_cap_low_liquidity"], tc.withheld)
+			}
+		})
+	}
+}
+
 // failingSubstanceStore errors measuring any book in fail and measures every other one deep.
 type failingSubstanceStore struct{ fail map[string]bool }
 
