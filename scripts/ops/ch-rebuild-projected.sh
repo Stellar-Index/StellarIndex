@@ -84,9 +84,14 @@
 #
 # Exit: 0 complete · 1 a window was refused or failed, or a CAGG refresh failed
 # (read the log) · 2 bad SRC/FROM/TO/WIN (nothing touched), or a corrupt line in
-# $DIRTY or $STALE (lines listed before it may already have been handled).
+# $DIRTY or $STALE (lines listed before it may already have been handled), or
+# no flock · 75 another run holds $STATE.lock (nothing touched). Every exit
+# appends `=== ch-rebuild-projected EXIT rc=N ===` to $LOG.
 #
-# Run on r1: nohup setsid bash scripts/ops/ch-rebuild-projected.sh >/dev/null 2>&1 &
+# Run on r1 under the heavy-job wrapper (host-wide heavy lock, memory cap, and
+# the exit status recorded in the journal for its scope):
+#   nohup setsid /usr/local/sbin/run-heavy-job.sh ch-rebuild-projected \
+#     bash scripts/ops/ch-rebuild-projected.sh >>/var/log/ch-rebuild-projected.log 2>&1 &
 set -uo pipefail
 # Read a systemd EnvironmentFile VERBATIM, never `.`/source it: its unquoted
 # values would be expanded, split on `;`/`&`/`|`/whitespace and stripped of
@@ -118,8 +123,27 @@ DIRTY=${DIRTY:-"$STATE.dirty"}
 STALE=${STALE:-"$STATE.caggs"}
 REQUIRED=${REQUIRED:-"$STATE.required"}
 LOG=${LOG:-/var/log/ch-rebuild-projected.log}
-mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY" "$STALE" "$REQUIRED"
+LOCK=${LOCK:-"$STATE.lock"}
+mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY" "$STALE" "$REQUIRED" "$LOCK"
 exec >>"$LOG" 2>&1
+# Every exit, refusals included, leaves its code in the log: a detached run has no other witness.
+trap 'echo "=== ch-rebuild-projected EXIT rc=$? $(date -u) ==="' EXIT
+# Without these a signal-killed run logs rc=0; exiting 128+N makes the EXIT line record the signal.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
+
+# One run at a time over these state files: a second run would read the first's
+# in-flight $DIRTY line as an earlier run's hole and DELETE that window under it.
+# Read-only open, as run-heavy-job.sh opens its locks. fd 200, not 4-9: the wrapper's
+# exec hands the payload its per-job lock on fd 9, and reopening that fd would drop it.
+if ! command -v flock >/dev/null; then
+  echo "REFUSED: flock is not installed, so this run cannot exclude a concurrent one — nothing was touched"; exit 2
+fi
+exec 200<"$LOCK" || { echo "REFUSED: cannot open lock $LOCK — nothing was touched"; exit 2; }
+if ! flock -n 200; then
+  echo "SKIPPED: another ch-rebuild-projected run holds $LOCK — nothing was touched (exit 75)"; exit 75
+fi
 
 # The sources window_delete_sql has a DELETE map for. Pinned against the
 # reconciliation catalogue's table ownership by

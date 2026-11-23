@@ -387,12 +387,7 @@ func clearThinWhenUnpriced(d *AssetDetail) {
 // only price producers, never applyF2Fields, so no market cap, FDV or change derives from a thin price. "unattributed" is
 // excluded: on detail it labels issuer suppression, which no thin release may override.
 func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
-	if detail.PriceUSD != nil || off.Evidence() == nil {
-		return
-	}
-	switch detail.PriceWithheldReason {
-	case "", PriceWithheldSubstance, PriceWithheldUpstreamLeg:
-	default:
+	if detail.PriceUSD != nil || off.Evidence() == nil || !fillMayReplace(detail.PriceWithheldReason, fillThinRelease) {
 		return
 	}
 	onCtx, on := WithThinAdmission(ctx, asset, defaultPriceQuote, true)
@@ -467,9 +462,9 @@ func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
 
 // withholdContradictedScalePrice withholds a market price, and every figure derived from it, only on positive evidence: a
 // successful decimals read contradicting the scale it was normalised on. An unread or undeclared scale is no such evidence.
-// A global-market, declared-peg or whole-token price is quoted per whole token, so no token scale enters it.
+// A global-market or declared-peg price is quoted per whole token, so no token scale enters it.
 func withholdContradictedScalePrice(d *AssetDetail) {
-	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil || d.priceWholeToken ||
+	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil ||
 		d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
 		return
 	}
@@ -519,6 +514,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		// No price (no reader wired, or lookup found none): nothing to compute against.
 		return
 	}
+	// A low-volume day against the whole XLM float would trip the turnover ratio; the listing exempts native too.
+	ceiling := turnoverCeilingApplies(asset)
 	if detail.SupplyStale {
 		// Today's price times a supply unobserved for longer than preciseSupplyMaxAge is not a
 		// market cap; supply_as_of says how old it is and flags.stale marks the body.
@@ -554,9 +551,9 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if mc, err := usdMarketValue(snap.CirculatingSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("market_cap_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if turnoverCeilingApplies(asset) && capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+		} else if ceiling && capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// The ceiling tests the computed FIGURE, so unlike the floor it can only run here;
-			// detail and listing must agree on the verdict.
+			// detail and listing must agree on the verdict, XLM's exemption included.
 			detail.MarketCapLowLiquidity = true
 			detail.MarketCapWithheldReason = MarketCapWithheldLowLiquidity
 		} else {
@@ -569,7 +566,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if fdv, err := usdMarketValue(snap.MaxSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if turnoverCeilingApplies(asset) && capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
+		} else if ceiling && capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
 			// FDV is computed over MAX supply, so it can breach the ceiling even when the cap did
 			// not. Flag it as the cap branch does: a withheld fdv_usd with no flag would read as
 			// "no max_supply on record".

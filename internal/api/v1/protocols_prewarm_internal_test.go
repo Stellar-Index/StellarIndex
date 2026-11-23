@@ -249,6 +249,34 @@ func TestHandleProtocolDetail_BespokeAgeJudgedAtServeTime(t *testing.T) {
 	}
 }
 
+// TestHandleProtocolDetail_AgedBespokeIsStaleWhileUnavailable: with no lake every build is "unavailable", which outranks
+// "stale" in the status; an aged bespoke block must still raise flags.stale while the status keeps reporting the outage.
+func TestHandleProtocolDetail_AgedBespokeIsStaleWhileUnavailable(t *testing.T) {
+	stub := &bespokeStub{block: make(chan struct{})}
+	t.Cleanup(func() { close(stub.block) })
+	srv := New(Options{ProtocolBespoke: stub})
+	meta, _ := protocolByName("cctp")
+	key := protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays)
+	clk := &bespokeFakeClock{t: time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)}
+	srv.protocolBespokeCache.now = clk.Now
+	srv.protocolBespokeCache.put(key, &timescale.BespokeBlock{
+		Category: meta.Category,
+		KPIs:     []timescale.BespokeKPI{{Label: "probe", Value: "1"}},
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	if _, env := getProtoDetail(t, ts.URL, "cctp"); env.Data.Analytics == nil || env.Data.Analytics.Status != protocolAnalyticsUnavailable || env.Flags.Stale {
+		t.Fatalf("fresh block, no lake: analytics = %+v, flags.stale = %v; want unavailable and false (precondition)", env.Data.Analytics, env.Flags.Stale)
+	}
+	clk.Advance(bespokeStaleAfter + time.Minute)
+	_, env := getProtoDetail(t, ts.URL, "cctp")
+	if env.Data.Analytics == nil || env.Data.Analytics.Status != protocolAnalyticsUnavailable || !env.Flags.Stale {
+		t.Errorf("46m-old block, no lake: analytics = %+v, flags.stale = %v; want unavailable and true",
+			env.Data.Analytics, env.Flags.Stale)
+	}
+}
+
 // TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag pins that analytics.status "stale"
 // always travels with flags.stale, even when the DETAIL entry is fresh: the age lives in the
 // bespoke block, and a client must not read a last-good suite as live.

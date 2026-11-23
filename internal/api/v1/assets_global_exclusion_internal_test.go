@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -43,7 +44,53 @@ func (r *withheldTierReader) LookupTriangulated(context.Context, canonical.Asset
 	return "", time.Time{}, false, nil
 }
 
-// TestGlobalAssetHeadline_WithheldTierBlocksOnChainFallback: a headline tier refused by a source exclusion is not "no data",
+// TestGlobalAssetHeadline_ExcludedTwinIsNotServed: the twin's pooled on-chain price is judged against the exclusions on the
+// twin's own markets and on the XLM/USD anchor, so the slug view and the catalogue row withhold what /v1/assets/{asset_id} withholds,
+// with the reason and without the twin's change pills.
+func TestGlobalAssetHeadline_ExcludedTwinIsNotServed(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vc, ok := cat.LookupBySlug("usdc")
+	if !ok || vc.StellarEntry() == nil {
+		t.Fatal("embedded catalogue has no usdc Stellar issuance")
+	}
+	twin := vc.StellarEntry().AssetID
+	from := time.Now().Add(-time.Hour)
+	listing := "0.4321"
+	for _, tc := range []struct {
+		name string
+		rows []timescale.SourceExclusion
+		want PriceWithheldReason
+	}{
+		{name: "no exclusion"},
+		{name: "unrelated pair excluded", rows: []timescale.SourceExclusion{{ID: 1, Source: "sdex", Base: "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", Quote: "fiat:USD", From: from}}},
+		{name: "twin market excluded", rows: []timescale.SourceExclusion{{ID: 1, Source: "sdex", Base: twin, Quote: "native", From: from}}, want: PriceWithheldSourceExcluded},
+		{name: "anchor excluded", rows: []timescale.SourceExclusion{{ID: 1, Source: "sdex", Base: "native", Quote: twin, From: from}}, want: PriceWithheldSourceExcluded},
+	} {
+		s := New(Options{
+			VerifiedCurrencies: cat,
+			GlobalPrice:        newWithheldTierReader(nil),
+			AssetsReader:       onChainPriceReader{row: timescale.AssetRow{PriceUSD: &listing}},
+			Exclusions:         pricingguard.NewSourceExclusionGate(globalExclTable{rows: tc.rows}, pricingguard.SourceExclusionGateOptions{}),
+		})
+		view := s.buildGlobalAssetView(context.Background(), vc)
+		page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
+		s.fillCataloguePricesForPage(context.Background(), page)
+		pct := "4.2"
+		mergeTwinStats(&page[0], AssetDetail{Change24hPct: &pct})
+		if (view.PriceUSD == nil) != (tc.want != "") || view.PriceWithheldReason != tc.want {
+			t.Errorf("%s: slug view price_usd=%s reason=%q, want reason %q", tc.name, strOrEmpty(view.PriceUSD), view.PriceWithheldReason, tc.want)
+		}
+		if (page[0].PriceUSD == nil) != (tc.want != "") || page[0].PriceWithheldReason != tc.want || (page[0].Change24hPct != nil) != (tc.want == "") {
+			t.Errorf("%s: catalogue row price_usd=%s reason=%q change_24h set=%v, want reason %q", tc.name, strOrEmpty(page[0].PriceUSD),
+				page[0].PriceWithheldReason, page[0].Change24hPct != nil, tc.want)
+		}
+	}
+}
+
+// TestGlobalAssetHeadline_WithheldTierBlocksOnChainFallback:a headline tier refused by a source exclusion is not "no data",
 // so the on-chain listing price (raw pooled prices_1m, which no exclusion judges) does not fill it; an unreadable exclusion
 // set marks the body stale and is not replayed, and a plain miss still takes the listing price.
 func TestGlobalAssetHeadline_WithheldTierBlocksOnChainFallback(t *testing.T) {

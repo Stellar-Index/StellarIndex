@@ -40,13 +40,72 @@ describe('SourceHealthPanel — deploy-skew resilience', () => {
         <SourceHealthPanel source="binance" />
       </QueryClientProvider>,
     );
-    // The events-seen stat degrades to the em-dash + "no decoded events"
-    // sub-label rather than throwing. Reaching this assertion at all proves
-    // the panel rendered (an unguarded render throws before it can).
+    // An absent counter is unknown, not a finding of "no events". Reaching
+    // this assertion proves the panel rendered (an unguarded render throws).
     await waitFor(() =>
-      expect(screen.getByText('no decoded events in 24h')).toBeInTheDocument(),
+      expect(screen.getByText('not reported by this API')).toBeInTheDocument(),
     );
     expect(screen.getByText('—')).toBeInTheDocument();
+    expect(
+      screen.queryByText('no decoded events in 24h'),
+    ).not.toBeInTheDocument();
+  });
+
+  // The API soft-fails a timed-out stats or Prometheus read to 0 with no
+  // flag, so a 0 counter cannot be shown as a measured "0 / dead venue".
+  it('never presents a zero counter as a measured zero', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        name: 'sdex',
+        class: 'exchange',
+        enabled: true,
+        trade_count_24h: 0,
+        markets_count_24h: 0,
+        entries_24h: 0,
+      },
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SourceHealthPanel source="sdex" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getAllByText('none counted, or the read failed'),
+      ).toHaveLength(3),
+    );
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('no decoded events in 24h'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('labels a switched-off source as off, not as failing', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        name: 'kraken',
+        class: 'exchange',
+        enabled: false,
+        trade_count_24h: 0,
+        markets_count_24h: 0,
+        entries_24h: 0,
+      },
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <SourceHealthPanel source="kraken" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Off')).toBeInTheDocument();
+    expect(
+      screen.getByText('not switched on for this deployment'),
+    ).toBeInTheDocument();
   });
 
   it('renders 24h volume exactly from its decimal string', async () => {

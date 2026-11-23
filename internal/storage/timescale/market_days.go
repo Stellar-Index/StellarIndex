@@ -91,12 +91,14 @@ const dailyMarketDaysQuery = `
          ORDER BY day ASC, member ASC
     `
 
-// earliestMarketHourQuery applies DailyMarketDays' own row filter: a bucket of some other pair is
-// not evidence that a dollar trade would have been seen.
+// earliestMarketHourQuery applies DailyMarketDays' own row filter: a dollar leg against an on-chain
+// asset (native, classic or SAC; every off-chain spelling carries a "type:" prefix), so an older CEX
+// or vendor fiat:USD bucket cannot claim reach the candidates' venues do not have.
 const earliestMarketHourQuery = `
         SELECT bucket
           FROM prices_1h
-         WHERE (quote_asset = ANY($1) OR base_asset = ANY($1))
+         WHERE ((quote_asset = ANY($1) AND base_asset NOT LIKE '%:%')
+             OR (base_asset = ANY($1) AND quote_asset NOT LIKE '%:%'))
            AND vwap IS NOT NULL
            AND volume_priced > 0
          ORDER BY bucket ASC

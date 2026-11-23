@@ -745,7 +745,7 @@ func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
 func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	out := s.buildRWAClassicMembership(ctx)
 	c := s.buildRWAContractMembership(ctx)
-	out.contracts = dropClassicMemberSACs(out.members, c)
+	s.dropClassicMemberSACs(ctx, &out, c)
 	out.unreached = c.unreached
 	out.contractCensus = c.census
 	out.listingCensus = c.listingCensus
