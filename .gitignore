@@ -36,10 +36,12 @@ service-account*.json
 *.jks
 *.keystore
 # Defence-in-depth glob for ansible-style secrets files
-# (F-1207, audit-2026-05-12): catches stray *.secrets.yml anywhere. Names
-# ending in another suffix (`.yml.bak-*`) are NOT matched.
+# (F-1207, audit-2026-05-12): catches stray *.secrets.yml anywhere, and
+# suffixed copies of one (`.yml.bak-*`), which hold the same secrets.
 *.secrets.yml
 *.secrets.yaml
+*.secrets.yml.*
+*.secrets.yaml.*
 # The vault is NOT tracked (2026-07-03 exposure response: the repo is
 # PUBLIC; an encrypted vault in a public repo is an offline-bruteforce
 # target). Workflows materialize it from the ANSIBLE_VAULT_FILE_B64
