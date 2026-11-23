@@ -294,12 +294,22 @@ func runSponsorshipProof(ctx context.Context, chAddr string, accounts []string, 
 	if err != nil {
 		return err
 	}
+	floor, err := rd.EntryHistoryFloor(ctx)
+	if err != nil {
+		return err
+	}
+	if floor == 0 || floor > entryhistory.GenesisDeriveFloor {
+		// Not a per-account verdict: every account below reads "not comparable" for this reason.
+		if _, err := fmt.Fprintf(out, "derive floor %d (0 = unrecorded) is above genesis: in-force reserves are a lower bound\n", floor); err != nil {
+			return err
+		}
+	}
 	for _, g := range accounts {
 		g = strings.TrimSpace(g)
 		if g == "" {
 			continue
 		}
-		p, err := sponsorshipProofFor(ctx, rd, g, wm)
+		p, err := sponsorshipProofFor(ctx, rd, g, floor, wm)
 		if err != nil {
 			return fmt.Errorf("%s: %w", g, err)
 		}
@@ -315,7 +325,7 @@ func runSponsorshipProof(ctx context.Context, chAddr string, accounts []string, 
 	return nil
 }
 
-func sponsorshipProofFor(ctx context.Context, rd *clickhouse.ExplorerReader, g string, wm uint32) (entryhistory.SponsorshipProof, error) {
+func sponsorshipProofFor(ctx context.Context, rd *clickhouse.ExplorerReader, g string, floor, wm uint32) (entryhistory.SponsorshipProof, error) {
 	// Read before the scan, as the cache refresh does, so the stamp never names a ledger later than the entry.
 	asOf, _, err := rd.LakeWatermark(ctx)
 	if err != nil {
@@ -334,7 +344,7 @@ func sponsorshipProofFor(ctx context.Context, rd *clickhouse.ExplorerReader, g s
 	if err != nil {
 		return entryhistory.SponsorshipProof{}, err
 	}
-	return entryhistory.ProveSponsorships(st, wm, sponsoring, sponsored), nil
+	return entryhistory.ProveSponsorships(st, floor, wm, sponsoring, sponsored), nil
 }
 
 // sponsorshipTotalsFollower keeps the totals buckets in step with the derive. On a host whose events predate the

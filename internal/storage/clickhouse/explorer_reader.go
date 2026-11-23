@@ -1496,8 +1496,9 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 		case err == nil && found:
 			return tx, true, nil
 		case err == nil && !indexHit:
-			// The index had no row: authoritative absence, since the coverage marker vouches for
-			// genesis to tip. Falling through to the scan would make every garbage hash a bloom probe over the full table.
+			// The index had no row: the marker vouches for every OUTER hash genesis to tip, not for the inner hash of a
+			// fee bump ingested before inner_tx_hash existed (the scan cannot find that either; TxDetail's 404 says so).
+			// Falling through to the scan would make every garbage hash a bloom probe over the full table.
 			return TxSummary{}, false, nil
 		}
 		// Index-path error, or index/base inconsistency (index row, base row missing): the scan is the availability-preserving answer.

@@ -6,7 +6,9 @@
 --
 -- Backfill-completion marker for stellar.tx_hash_index. The reader serves
 -- GET /v1/tx/{hash} from the index only while a row exists here; otherwise it
--- takes the bloom scan.
+-- takes the bloom scan. The row vouches for every OUTER hash in its range;
+-- a fee bump's inner hash is indexed only where stellar.transactions carries
+-- inner_tx_hash (see transactions_fee_bump.sql), whatever the row says.
 --
 -- *** ORDERING *** apply this, then either run
 --   stellarindex-ops ch-txindex-backfill -full -write

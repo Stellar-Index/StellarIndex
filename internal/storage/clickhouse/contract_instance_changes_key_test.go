@@ -165,7 +165,14 @@ func TestContractInstanceIndexedReads_OrderSameLedgerWritesByWalkPosition(t *tes
 	if _, _, err := r.contractWasmHash(context.Background(), cid); err != nil {
 		t.Fatalf("contractWasmHash: %v", err)
 	}
-	if q := lastTimelineRead(t, conn); !strings.Contains(q, "ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC") {
+	// The indexed read is followed by the genesis-watermark check (and, without one, the current-state read), so pick it by shape.
+	q = ""
+	for _, s := range conn.queries {
+		if strings.Contains(s, "is_sac") {
+			q = s
+		}
+	}
+	if !strings.Contains(q, "ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC") {
 		t.Errorf("wasm-hash read does not rank by intra_ledger_seq:\n%s", q)
 	}
 }

@@ -295,6 +295,11 @@ func (r *capReader) EntryHistoryWatermark(ctx context.Context) (uint32, error) {
 	return 1, nil
 }
 
+func (r *capReader) EntryHistoryFloor(ctx context.Context) (uint32, error) {
+	r.probe.record(ctx)
+	return 1, nil
+}
+
 func (r *capReader) EntryIndexWatermark(ctx context.Context) (uint32, error) {
 	r.probe.record(ctx)
 	return 1, nil

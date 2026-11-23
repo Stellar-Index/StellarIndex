@@ -122,6 +122,15 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 // txNotFoundDetail keeps a behind-the-network lake from making a recent
 // transaction's 404 indistinguishable from a hash that never existed.
 func txNotFoundDetail(tip uint32, stale, tipOK bool) string {
+	return txNotFoundRange(tip, stale, tipOK) + txNotFoundInnerHash
+}
+
+// txNotFoundInnerHash: a fee bump ingested before the outer layer was captured has an empty inner hash in the lake,
+// so neither the hash index nor the scan can find it by the hash its submitter's SDK returned.
+const txNotFoundInnerHash = "; a fee bump's inner hash resolves only where the lake captured the fee-bump layer, " +
+	"so look an older fee bump up by its outer (fee-bump) hash"
+
+func txNotFoundRange(tip uint32, stale, tipOK bool) string {
 	const base = "no transaction with that hash in the indexed range"
 	switch {
 	case !stale:

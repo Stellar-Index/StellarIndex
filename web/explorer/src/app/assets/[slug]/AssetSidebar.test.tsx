@@ -126,13 +126,8 @@ describe('AssetSidebar floor marks', () => {
     expect(getAllByText('—').length).toBeGreaterThan(0);
   });
 
-  it('marks a lake-net supply the on-chain read calls a floor', async () => {
-    vi.mocked(apiGet).mockImplementation(async (path: string) => {
-      if (path.endsWith('/supply'))
-        return { data: { circulating_supply_lower_bound: true } };
-      throw new Error('offline');
-    });
-    const { findAllByText } = renderWithQuery(
+  it('marks a lake-net supply the detail calls a floor', () => {
+    const { getAllByText } = renderWithQuery(
       <AssetSidebar
         coin={coin}
         detail={{
@@ -140,12 +135,37 @@ describe('AssetSidebar floor marks', () => {
           supply_basis: 'sep41_lake_flows',
           circulating_supply: '50000000000000',
           total_supply: '50000000000000',
+          circulating_supply_lower_bound: true,
         }}
         priceUSD="0.9998"
       />,
     );
     // Total supply and circulating supply, the same reading.
-    expect(await findAllByText('≥ 5M USDC')).toHaveLength(2);
+    expect(getAllByText('≥ 5M USDC')).toHaveLength(2);
+  });
+
+  // /supply serves the lake net; the detail's observer figure is another reading.
+  it('never borrows the on-chain read’s floor for the detail figures', async () => {
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.endsWith('/supply'))
+        return { data: { circulating_supply_lower_bound: true } };
+      throw new Error('offline');
+    });
+    const { findAllByText, queryByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{
+          ...figures,
+          supply_basis: 'issuer_exclusion',
+          total_supply: '50000000000000',
+        }}
+        priceUSD="0.9998"
+      />,
+    );
+    expect(await findAllByText('5M USDC')).toHaveLength(2);
+    // Let any /supply read settle before asserting nothing borrowed its flag.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(queryByText(/≥/)).toBeNull();
     vi.mocked(apiGet).mockReset();
   });
 
