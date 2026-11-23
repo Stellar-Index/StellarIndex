@@ -9,9 +9,17 @@ import (
 )
 
 // TestRWA_ClassicMembersSACIsNotASecondAsset: the directory naming an admitted classic member's
-// SAC must not add a contract row, or the one supply is valued twice in every total.
+// SAC must not add a contract row, or the one supply is valued twice in every total. A mis-cased or padded declaration
+// still reaches the USTRY row through the catalogue join, so it must reach the USTRY SAC too.
 func TestRWA_ClassicMembersSACIsNotASecondAsset(t *testing.T) {
+	for _, declared := range []string{"USTRY", "ustry", " USTRY"} {
+		t.Run(declared, func(t *testing.T) { classicMemberSACIsNotASecondAsset(t, declared) })
+	}
+}
+
+func classicMemberSACIsNotASecondAsset(t *testing.T, declared string) {
 	bound, dir, rows := oneBoundMember()
+	bound[0].Code = declared
 	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: "USTRY", Issuer: rwaGoodIssuer}.SacContractID()
 	if err != nil {
 		t.Fatal(err)

@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"strings"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
@@ -10,9 +12,14 @@ import (
 func dropClassicMemberSACs(classic []rwaMember, c rwaContractBuild) []rwaContractMember {
 	sacs := make(map[string]struct{}, len(classic))
 	for _, mem := range classic {
-		a := canonical.Asset{Type: canonical.AssetClassic, Code: mem.code, Issuer: mem.issuer}
-		if id, err := a.SacContractID(); err == nil {
-			sacs[id] = struct{}{}
+		// The catalogue join trims the declared code and folds its case, so the row is served under the asset's real code;
+		// its SAC is derived from every spelling that join can land on.
+		code := strings.TrimSpace(mem.code)
+		for _, spelling := range []string{mem.code, code, strings.ToUpper(code), strings.ToLower(code)} {
+			a := canonical.Asset{Type: canonical.AssetClassic, Code: spelling, Issuer: mem.issuer}
+			if id, err := a.SacContractID(); err == nil {
+				sacs[id] = struct{}{}
+			}
 		}
 	}
 	kept := c.members[:0:0]
