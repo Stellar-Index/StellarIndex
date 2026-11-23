@@ -1393,7 +1393,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.Handle("GET /metrics", loopbackOnly(obs.Handler()))
 
 	// Asset catalogue.
-	s.mux.HandleFunc("GET /v1/assets", s.handleAssetList)
+	s.mux.HandleFunc("GET /v1/assets", s.underReviewRows(s.handleAssetList))
 	// /v1/external/assets — non-Stellar assets (fiat + reference-only coins)
 	// split off /v1/assets. /v1/assets is Stellar-only.
 	s.mux.HandleFunc("GET /v1/external/assets", s.handleExternalAssetList)

@@ -366,6 +366,7 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	}
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
+	detail.PriceBasis = l.basis
 	detail.priceStale = l.stale
 	return l.sources
 }
@@ -665,6 +666,8 @@ type usdPriceLookup struct {
 	unread bool
 	// anchor is the alias whose market served price; a trailing comparison must read the same market.
 	anchor canonical.Asset
+	// basis is [priceBasisDeclaredPeg] when price is the operator's peg declaration, "" for an observation.
+	basis string
 }
 
 // usdProxyFreshness matches the price reader's default closed-bucket freshness.
@@ -718,7 +721,11 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	if ok && proxy.Price != "" {
 		// A declaration (no sources) is not an observation and has no age.
 		old := len(proxySources) > 0 && s.now().Sub(proxy.ObservedAt.Time()) > usdProxyFreshness
-		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old, unread: unread, anchor: asset}
+		l := usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old, unread: unread, anchor: asset}
+		if proxy.PriceType == "peg" {
+			l.basis = priceBasisDeclaredPeg
+		}
+		return l
 	}
 	if withheld != "" {
 		// The walk's own verdict, so the detail agrees with the listing: this asset's thin market is
@@ -735,7 +742,8 @@ func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, ass
 		return false
 	}
 	l := s.lookupUSDPriceWithSources(ctx, asset)
-	if l.price == "" {
+	if l.price == "" || l.basis != "" {
+		// A declaration observed no move.
 		return false
 	}
 	currStr := l.price
