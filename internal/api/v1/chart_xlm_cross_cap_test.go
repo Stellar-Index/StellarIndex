@@ -85,6 +85,25 @@ func TestXLMCross_PivotNeverReadsThePegsOwnBook(t *testing.T) {
 	}
 }
 
+// With the production catalogue wired, the peg's verified ticker (crypto:USDC for classic USDC) is the peg's own book too:
+// XLM priced in crypto:USDC is never the pivot for USDC.
+func TestXLMCross_PivotNeverReadsThePegsCatalogueTicker(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	day := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -3)
+	d1, d2 := day, day.AddDate(0, 0, 1)
+	reader := &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+		usdc.String() + "/native": {{Bucket: d1, VWAP: "3.3333333333"}, {Bucket: d2, VWAP: "3.3333333333"}},
+		"native/crypto:USDC":      {{Bucket: d1, VWAP: "0.3"}, {Bucket: d2, VWAP: "0.3"}},
+		"crypto:XLM/fiat:USD":     {{Bucket: d1, VWAP: "0.27"}},
+	}}
+	series := getChartOpts(t, v1.Options{
+		History: reader, USDPeggedClassics: []canonical.Asset{usdc}, VerifiedCurrencies: newTestCatalogue(t),
+	}, "asset="+usdc.String()+"&quote=fiat:USD&timeframe=1mo&granularity=1d")
+	if len(series.Points) != 1 || !strings.HasPrefix(series.Points[0].P, "0.8999") {
+		t.Fatalf("points=%+v, want only the directly pivoted bucket (~0.90), never one pivoted through crypto:USDC", series.Points)
+	}
+}
+
 // A capped leg cuts the cross short of the cap's point count, so the row-cap flag must come from the walk, not len(points).
 func TestXLMCross_SinceInception_CappedLegFlagsRowCap(t *testing.T) {
 	const capN = 50_000 // historyMaxPoints
