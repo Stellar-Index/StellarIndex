@@ -88,6 +88,30 @@ func (s *Server) RWAAssetsViewLifetimeForTest() time.Duration {
 	return time.Until(s.rwaViewExpires)
 }
 
+// TopAccountsTTLs are the production lifetimes of a reconciled and an unreconciled top-accounts fill.
+const TopAccountsTTL, TopAccountsUnreconciledTTL = lendingReservesTTL, topAccountsUnreconciledTTL
+
+// TopAccountsTTLForTest is the lifetime the top-accounts cache gives pool's current fill; 0 when none is cached.
+func (s *Server) TopAccountsTTLForTest(pool string) time.Duration {
+	c := s.lendingTopAccounts
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[pool]; ok && e.flight == nil {
+		return c.entryTTL(e.val)
+	}
+	return 0
+}
+
+// AgeTopAccountsForTest moves pool's cached top-accounts fill d into the past.
+func (s *Server) AgeTopAccountsForTest(pool string, d time.Duration) {
+	c := s.lendingTopAccounts
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[pool]; ok {
+		e.at = e.at.Add(-d)
+	}
+}
+
 // RWAAssetsDegradedTTL is the production lifetime of a degraded /v1/rwa/assets view.
 const RWAAssetsDegradedTTL = rwaAssetsDegradedTTL
 

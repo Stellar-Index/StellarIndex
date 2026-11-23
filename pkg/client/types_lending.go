@@ -39,3 +39,60 @@ type LendingPoolSummary struct {
 	PricedReserveCount int      `json:"priced_reserve_count"`
 	ReserveCount       int      `json:"reserve_count"`
 }
+
+// LendingTopAccountsQuery is the input for [Client.LendingPoolTopAccounts]; Side is "supply" or "borrow", Asset (optional) a
+// reserve token C-strkey that switches the ranking to amount within that reserve, Limit 1..100 (0 = server default 20).
+type LendingTopAccountsQuery struct {
+	Side  string
+	Asset string
+	Limit int
+}
+
+// LendingTopAccounts is one pool's largest positions on one side; LowerBound means Rows and Accounts omit what Excluded and
+// Unattributed name.
+type LendingTopAccounts struct {
+	Pool         string                           `json:"pool"`
+	Protocol     string                           `json:"protocol"`
+	Side         string                           `json:"side"`
+	Asset        *string                          `json:"asset"`
+	Ranking      string                           `json:"ranking"` // value_usd | amount
+	Accounts     int                              `json:"accounts"`
+	LowerBound   bool                             `json:"lower_bound"`
+	Excluded     []LendingTopAccountsExcluded     `json:"excluded"`
+	Unattributed []LendingTopAccountsUnattributed `json:"unattributed"`
+	Rows         []LendingTopAccount              `json:"rows"`
+	AsOfLedger   uint32                           `json:"as_of_ledger"`
+	Note         string                           `json:"note"`
+}
+
+// LendingTopAccountsUnattributed is the part of a reserve's side total no read position holds; decimal strings, share 6 dp.
+type LendingTopAccountsUnattributed struct {
+	Asset          string `json:"asset"`
+	Side           string `json:"side"`
+	Tokens         string `json:"tokens"`
+	Amount         string `json:"amount"`
+	ShareOfReserve string `json:"share_of_reserve"`
+}
+
+// LendingTopAccountsExcluded names positions left out of a ranking and why.
+type LendingTopAccountsExcluded struct {
+	Kind   string  `json:"kind"`
+	Pool   *string `json:"pool"`
+	Asset  *string `json:"asset"`
+	Reason string  `json:"reason"`
+}
+
+// LendingTopAccount is one account's position in one reserve; Tokens, Amount, ValueUSD and ShareOfReserve are decimal strings.
+type LendingTopAccount struct {
+	Rank               int     `json:"rank"`
+	Account            string  `json:"account"`
+	Asset              string  `json:"asset"`
+	Decimals           *int    `json:"decimals"`
+	Tokens             string  `json:"tokens"`
+	Amount             string  `json:"amount"`
+	ValueUSD           *string `json:"value_usd"`
+	UsdReason          *string `json:"usd_reason"`
+	ShareOfReserve     *string `json:"share_of_reserve"`
+	LastModifiedLedger uint32  `json:"last_modified_ledger"`
+	RankLowerBound     bool    `json:"rank_lower_bound,omitempty"` // an unread position could rank above this row
+}
