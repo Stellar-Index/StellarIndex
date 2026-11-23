@@ -37,6 +37,7 @@ func exemptBecause(why string) subcommandClass { return subcommandClass{class: e
 // how it writes. A namespace's sub-verbs are keyed "namespace verb".
 var subcommandClasses = map[string]subcommandClass{
 	"docs-config":             ro(),
+	"config-check":            ro(),
 	"mint-key":                gate(),
 	"upgrade-key":             gate(),
 	"apikey-lineage-backfill": gate(),
@@ -149,6 +150,7 @@ var pinnedReadOnly = []string{
 	"ch-recognition",
 	"ch-reproject",
 	"compare-entry-changes",
+	"config-check",
 	"cross-region-check",
 	"detect-gaps",
 	"discovery list",
