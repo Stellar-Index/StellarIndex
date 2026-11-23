@@ -131,3 +131,38 @@ func TestAssetRowHeadline_JudgedOverThePriceLookback(t *testing.T) {
 		})
 	}
 }
+
+// A listing reference is judged on its own source at its own publication instant, as global_market is: one an exclusion covers
+// goes with its valuation while the headline, on other recorded sources, stands; one published outside the window stays.
+func TestAssetRowListingReference_JudgedOnItsSourceAndInstant(t *testing.T) {
+	now := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	sc := spanScope(t, now, timescale.SourceExclusion{
+		ID: 1, Source: "coingecko", Base: spanAQUA, Quote: "fiat:USD", From: now.Add(-3 * time.Hour), Until: now.Add(-2 * time.Hour),
+	})
+	for _, tc := range []struct {
+		name     string
+		at       time.Time
+		withheld bool
+	}{
+		{"inside the window", now.Add(-150 * time.Minute), true},
+		{"after the window", now.Add(-time.Hour), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := spanRow(spanAQUA)
+			d.PriceSources = []string{"sdex"}
+			d.ListingReference = &AssetListingReference{PriceUSD: "0.5", Source: "coingecko", Quote: "fiat:USD", AsOf: WireTime(tc.at)}
+			d.ListingValuation = &AssetListingValuation{Status: ListingValuationPublished}
+			rows := []AssetDetail{d}
+			flags := sc.judgeRows(context.Background(), &Server{}, rows, Flags{})
+			if rows[0].PriceUSD == nil {
+				t.Fatal("headline on unexcluded recorded sources was withheld")
+			}
+			if got := rows[0].ListingReference == nil && rows[0].ListingValuation == nil; got != tc.withheld {
+				t.Errorf("reference %v, valuation %v; want withheld=%v", rows[0].ListingReference, rows[0].ListingValuation, tc.withheld)
+			}
+			if tc.withheld && flags.FillsWithheldReason != PriceWithheldSourceExcluded {
+				t.Errorf("flags %+v: want fills_withheld_reason source_excluded", flags)
+			}
+		})
+	}
+}

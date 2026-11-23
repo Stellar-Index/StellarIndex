@@ -85,6 +85,10 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 		// read at that same excluded price.
 		removed = withholdAssetRow(d, PriceWithheldSourceExcluded)
 	}
+	// The listing reference records its source and instant, so it is judged on those, as global_market is at its fill.
+	if r := d.ListingReference; r != nil && j.instantCovered(r.Source, time.Time(r.AsOf)) {
+		d.ListingReference, d.ListingValuation, removed = nil, nil, true
+	}
 	for _, c := range []struct {
 		v    **string
 		back time.Duration
@@ -138,6 +142,16 @@ func (sc assetExclusionScope) rowJudge(ctx context.Context, s *Server, d *AssetD
 		j.peg = &peg
 	}
 	return j
+}
+
+// instantCovered judges one source's observation at at on the asset's own leg; an asset that does not resolve, by any
+// exclusion in force then.
+func (j rowJudge) instantCovered(source string, at time.Time) bool {
+	to := at.Add(time.Nanosecond)
+	if !j.known {
+		return j.set.MultiHopWithholding(j.ctx, at, to) != pricingguard.NotWithheld
+	}
+	return j.set.Withholding(j.ctx, j.asset, defaultPriceQuote, []string{source}, at, to) != pricingguard.NotWithheld
 }
 
 // covered judges every leg over one span.
