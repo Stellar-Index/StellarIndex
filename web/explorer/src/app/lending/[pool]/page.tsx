@@ -25,6 +25,7 @@ import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolHeadlineStats } from './PoolHeadlineStats';
 import { PoolReserves } from './PoolReserves';
+import { TopAccountsPanel } from './TopAccountsPanel';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { LENDING_POOL_META, poolProtocol } from '../poolMeta';
 import { hrefFor } from '@/lib/hrefFor';
@@ -272,6 +273,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         </p>
       )}
       <PoolReserves pool={pool} />
+      <TopAccountsPanel pool={pool} />
       <BackstopPanel pool={pool} />
       <EmissionsPanel pool={pool} />
       <AuctionsPanel
