@@ -29,7 +29,13 @@ const readSideNote = "source-exclude: note:\n" +
 	"    fill is removed from its page, served degraded and uncached; paging continues past the window), /v1/chart and\n" +
 	"    /v1/history/since-inception (a covered bucket or fx day is removed, a gap, never a zero; a derived cross loses the day;\n" +
 	"    served uncached; if every observed bucket is withheld the series derived through XLM is served instead, judged under the\n" +
-	"    served pair, marked and flags.triangulated). Every recompute or removal sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
+	"    served pair, marked and flags.triangulated), /v1/assets (every asset_class) and asset detail (a covered price withholds\n" +
+	"    price, cap, FDV, changes, series and ATH as source_excluded; the headline's minute is not recorded, so any exclusion on\n" +
+	"    its legs in the last 7 days withholds it; a change, 24h USD volume, series point or ATH whose own span is covered is\n" +
+	"    dropped alone; judged on the asset, XLM's USD books and a non-USD peg's fiat: an exclusion naming XLM against a USD\n" +
+	"    proxy (USDC, its SAC, fiat:USD) or a source-wide one withholds every row, XLM's too; one naming XLM against another\n" +
+	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale). Every recompute or removal\n" +
+	"    sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
 	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +
@@ -40,11 +46,11 @@ const readSideNote = "source-exclude: note:\n" +
 	"    A bucket with no recorded sources (every TWAP bucket) is withheld by any exclusion naming the asset, or any source-wide one.\n" +
 	"    A source-wide exclusion with no -until withholds every /v1/ohlc series with a bar containing that source until it is lifted.\n" +
 	"  DELAY: re-read every 15s; an unreadable table keeps the last good set up to 60s, then withholds everything gated.\n" +
-	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset detail ~225s;\n" +
+	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset listing and\n" +
+	"    detail 15s, then uncached while an exclusion overlaps the last 7d2h, plus the edge/client life of a body served before;\n" +
 	"    /v1/price/at, /changes, /v1/history, /v1/ohlc, /v1/chart, since-inception: the 15s re-read plus a 30s client / 5s CDN cache.\n" +
-	"  NOT COVERED (may still include the source until lifted or aged out): /depeg,\n" +
-	"    asset listing price_usd, sparkline, ATH, transitive fill, RWA assets/history/premium, fiat-asset headline and\n" +
-	"    non-USD declared-peg FX, /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
+	"  NOT COVERED (may still include the source until lifted or aged out): /depeg, RWA assets/history/premium,\n" +
+	"    /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
 	"    /v1/protocols + tvl USD, /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
 	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +
 	"    graph USD, /v1/accounts usd_value + priced_assets, volume_24h_usd on /v1/network/stats, /v1/sources/{name}/health and\n" +

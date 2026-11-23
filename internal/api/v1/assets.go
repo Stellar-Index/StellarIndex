@@ -140,17 +140,14 @@ type AssetDetail struct {
 	// price is unavailable.
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
 
-	// FDVUSD = max_supply × USD price / 10^decimals. Null when
-	// max_supply is null (uncapped issuer + no override + no SEP-1
-	// declaration) or when USD price is unavailable.
-	FDVUSD *string `json:"fdv_usd,omitempty"`
+	// FDVUSD = max_supply × USD price / 10^decimals. Null when max_supply is null (uncapped issuer + no override + no SEP-1
+	// declaration), when USD price is unavailable, or when suppressed.
+	FDVUSD            *string                 `json:"fdv_usd,omitempty"`
+	FDVWithheldReason MarketCapWithheldReason `json:"fdv_withheld_reason,omitempty"` // fdv_usd alone refused beside a served cap
 
-	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed:
-	// either the dust floor (single venue and 24h USD volume below
-	// aggregate.min_market_cap_volume_usd) or the turnover ceiling (capExceedsObservedTurnover;
-	// FDV, over max_supply, can breach it alone), or, on a catalogue row, the Stellar twin's on-chain
-	// price failing the substance gate (flagTwinSubstanceWithheldCap). It separates "suppressed on purpose" from "no
-	// data"; price_usd still serves, only the valuation is guarded.
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed by the dust floor, the
+	// turnover ceiling (capExceedsObservedTurnover; FDV can breach it alone) or, on a catalogue row, the twin's substance
+	// gate (flagTwinSubstanceWithheldCap). price_usd still serves; only the valuation is guarded.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 	// MarketCapLowerBound: on a listing row, market_cap_usd rests on a floor supply, so the cap is a floor too.
 	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
@@ -450,6 +447,9 @@ func (d AssetDetail) MarshalJSON() ([]byte, error) {
 	if d.PriceUSD == nil || d.CirculatingSupply == nil || d.MarketCapUSD != nil {
 		// A later suppressor can unprice a row after its cap was refused; the reason explains only a missing cap.
 		d.MarketCapWithheldReason = ""
+	}
+	if d.PriceUSD == nil || d.MarketCapUSD == nil || d.FDVUSD != nil {
+		d.FDVWithheldReason = "" // beside no cap, market_cap_withheld_reason explains fdv_usd too
 	}
 	if !d.scaleUnknown() {
 		return json.Marshal(wire(d))
@@ -827,7 +827,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
 	}
-	writeEnvelope(w, env)
+	s.writeAssetListing(w, r, s.assetExclusionScope(r.Context()), env)
 }
 
 // AssetsListOverfetchBy is how far past limit the classic listing requests so the extra row signals a next page; exported so the prewarm cache-key set mirrors it.
@@ -856,12 +856,12 @@ func (s *Server) handleAssetListFromAssets(
 		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
 		return
 	}
-	key := assetListCacheKey(r)
-	if body, stale, refresh, ok := s.assetListCache.lookup(key); ok {
+	key, excl := assetListCacheKey(r), s.assetExclusionScope(r.Context())
+	if hit, refresh, ok := s.assetListCache.lookup(key); ok {
 		if refresh {
 			s.refreshAssetListPage(r, key, filters, cursor, limit, order) //nolint:contextcheck // the refresh outlives this request on purpose; see its doc.
 		}
-		writeCachedAssetList(w, body, stale)
+		s.replayAssetListing(w, r, excl, hit)
 		return
 	}
 	env, rows, err := s.buildAssetListPage(r, filters, cursor, limit, order)
@@ -882,7 +882,7 @@ func (s *Server) handleAssetListFromAssets(
 			s.logger.Debug("assets listing render for cache failed", "err", err)
 		}
 	}
-	writeEnvelope(w, env)
+	s.writeAssetListing(w, r, excl, env)
 }
 
 // buildAssetListPage assembles one default-listing page: the cached rows plus every per-request overlay, in their load-bearing
@@ -1753,7 +1753,7 @@ func (s *Server) writeCataloguePage(
 	// parameters in the spec), so no arm has been selected away and the
 	// cross-arm total is the only figure a row here can honestly carry.
 	ctx, reads := withReadReport(r.Context())
-	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, assetListFilters{})
+	excl, unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, assetListFilters{})
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
@@ -1767,7 +1767,7 @@ func (s *Server) writeCataloguePage(
 		}
 		env.Pagination = &Pagination{Next: encodeCatalogueServedCursor(served)}
 	}
-	writeEnvelope(w, env)
+	s.writeAssetListing(w, r, excl, env)
 }
 
 // encodeCatalogueServedCursor / parseCatalogueServedCursor: the cursor is base64url of the served slugs as a JSON array, so no
@@ -1813,15 +1813,16 @@ func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail 
 	})
 }
 
-// fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge) and only then ranks by market cap, so
-// order follows published figures; ranking first would rank Stellar-issued rows on nil caps. unmeasured is
-// fillCatalogueStatsForPage's; stale: a row was priced from a read past its freshness ceiling.
-func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured, stale bool) {
+// fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge), then ranks by the cap each row serves
+// once judged ([Server.catalogueRankKeys]), returning that scope for the write. unmeasured: stats fill; stale: past-ceiling read.
+func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (excl assetExclusionScope, unmeasured, stale bool) {
 	ctx, rep := withReadReport(ctx)
 	s.fillCataloguePricesForPage(ctx, rows)
 	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
-	sortAssetDetailsByMarketCapDesc(rows)
-	return unmeasured || rep.unread.Load(), rep.stale.Load()
+	excl, keys := s.catalogueRankKeys(ctx, rows)
+	sortAssetDetailsByMarketCapDesc(keys)
+	placeRanked(rows, keys)
+	return excl, unmeasured || rep.unread.Load(), rep.stale.Load()
 }
 
 // fillCataloguePricesForPage resolves each row's headline USD price through buildGlobalAssetView's fallback chain so listing
@@ -1985,8 +1986,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// not the entries, because it also matches the projected name.
 	rows = filterCatalogueRowsByQuery(rows, entries, filters.q)
 
-	// The same served-slug cursor as writeCataloguePage: the rank below
-	// moves between requests, so an offset into it would duplicate or skip.
+	// The served-slug cursor writeCataloguePage uses: the rank below moves between requests, so an offset would duplicate or skip.
 	served, ok := parseCatalogueServedCursor(w, r, innerCursor)
 	if !ok {
 		return
@@ -2000,7 +2000,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Price + twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
 	ctx, reads := withReadReport(r.Context())
-	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
+	excl, unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
@@ -2011,7 +2011,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 			served = append(served, row.Slug)
 		}
 		env.Pagination = &Pagination{Next: "catalogue:" + encodeCatalogueServedCursor(served)}
-		writeEnvelope(w, env)
+		s.writeAssetListing(w, r, excl, env)
 		return
 	}
 	// Catalogue exhausted below the limit: fill the rest of the page from the classic stream, or
@@ -2034,12 +2034,12 @@ func (s *Server) serveCatalogueUnifiedPage(
 		} else {
 			env.Pagination = nil
 		}
-		writeEnvelope(w, env)
+		s.writeAssetListing(w, r, excl, env)
 		return
 	}
 	// Exact-boundary page: next page picks up classic from the top.
 	env.Pagination = &Pagination{Next: "classic:"}
-	writeEnvelope(w, env)
+	s.writeAssetListing(w, r, excl, env)
 }
 
 // serveClassicUnifiedPage serves the classic phase through the AssetsReader path in volume order, prefixing the inner
@@ -2062,7 +2062,7 @@ func (s *Server) serveClassicUnifiedPage(
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
 	}
-	writeEnvelope(w, env)
+	s.writeAssetListing(w, r, s.assetExclusionScope(r.Context()), env)
 }
 
 // classicUnifiedRows is one classic-phase page with the freshness the envelope has to carry.
@@ -2257,12 +2257,12 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// covers the whole F2 chain and the overlays, which cost ~50-200ms each warm and dominate the
 	// ~700-900ms uncached latency.
 	includeThin := includeThinRequested(r)
-	cacheKey := assetDetailCacheKey(parsed, includeThin)
+	cacheKey, excl := assetDetailCacheKey(parsed, includeThin), s.assetExclusionScope(r.Context())
 	// The prewarm always re-renders: served a hit, it would refresh nothing and the entry would lapse
-	// for up to a prewarm cadence once per TTL.
+	// for up to a prewarm cadence once per TTL. The entry is unjudged; exclusions are judged on the way out.
 	if !isPrewarmRequest(r) {
 		if entry, ok := s.assetDetailCache.get(cacheKey); ok {
-			writeCachedAssetDetail(w, entry)
+			excl.writeDetail(r.Context(), w, s, entry)
 			return
 		}
 	}
@@ -2375,22 +2375,22 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// degraded snapshot as a fresh 200 for the full TTL, so stamp it stale and skip the cache write.
 	ctxDead := ctx.Err() != nil
 	flags.Stale, flags.Degraded = detailFreshness(flags.Stale, &detail, homeDomainDegraded, ctxDead)
-
-	// Render once, cache, write; see [assetDetailResponseCache].
+	// Render once, cache unjudged, judge on the way out; see [assetDetailResponseCache].
 	body, err := renderAssetDetailEnvelope(detail, flags)
 	if err != nil {
 		// Marshal failure is very rare; fall back to writeJSON rather than a 500.
 		s.logger.Debug("asset detail envelope render failed; falling back to direct write", "asset_id", parsed.String(), "err", err)
-		writeJSON(w, detail, flags)
+		writeJSON(w, detail, excl.judgeDetail(ctx, s, &detail, flags))
 		return
 	}
+	entry := newAssetDetailEntry(detail, body, flags)
 	// A failed decimals, issuer-directory or F2 read is a transient outage, and a dead context means
 	// the body holds only the reads that landed before cancellation; replaying either for the whole
 	// TTL would outlive the outage. Skip the cache write, not the response.
 	if !transientlyDegraded(&detail, ctxDead) {
-		s.assetDetailCache.put(cacheKey, body, flags)
+		s.assetDetailCache.put(cacheKey, entry)
 	}
-	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: flags.Degraded, stale: flags.Stale})
+	excl.writeDetail(ctx, w, s, entry)
 }
 
 // assetDetailStale reports whether detail rests on a failed, cut-short or
@@ -2520,14 +2520,7 @@ func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw
 func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID string) (canonical.Asset, bool) {
 	parsed, err := canonical.ParseAsset(rawID)
 	if err != nil {
-		if resolved, ok := s.resolveClassicSlug(r.Context(), rawID); ok {
-			return resolved, true
-		}
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, issuer in any case)")
-		return canonical.Asset{}, false
+		return s.resolveSlugOrProblem(w, r, rawID)
 	}
 	if err := parsed.Validate(); err != nil {
 		writeProblem(w, r,

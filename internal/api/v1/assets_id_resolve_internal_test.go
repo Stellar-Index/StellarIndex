@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // registrySlugResolver answers only the asset_ids it holds, as the store does: the exact slug, else the single case-folded
@@ -59,7 +62,10 @@ func TestResolveClassicSlug_ExactCodeWinsElseTheOneVariant(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{Options: Options{Assets: registrySlugResolver{ids: tc.ids}}}
 			s.logger = discardLogger()
-			got, ok := s.resolveClassicSlug(context.Background(), tc.raw)
+			got, ok, err := s.resolveClassicSlug(context.Background(), tc.raw)
+			if err != nil {
+				t.Fatalf("%s: unexpected read error %v", tc.raw, err)
+			}
 			if tc.want == "" {
 				if ok {
 					t.Errorf("%s resolved to %q, want refused", tc.raw, got.String())
@@ -96,5 +102,20 @@ func TestAssetsQSACLookupFailureIsUnavailable(t *testing.T) {
 	s.handleAssetList(rec, req)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "USDC-"+cetesIssuer) {
 		t.Errorf("with a cached page: status = %d body %s; want the cached page replayed", rec.Code, rec.Body.String())
+	}
+
+	// The replayed page was cached unjudged, so an exclusion on the cached row's asset withholds it on the way out.
+	usdc := "USDC-" + cetesIssuer
+	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: usdc, PriceUSD: sptrLocal("1.0")}}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Exclusions = pricingguard.NewSourceExclusionGate(globalExclTable{rows: []timescale.SourceExclusion{{
+		ID: 1, Source: "soroswap", Base: usdc, Quote: "fiat:USD", From: time.Now().Add(-time.Hour),
+	}}}, pricingguard.SourceExclusionGateOptions{})
+	rec = httptest.NewRecorder()
+	s.handleAssetList(rec, req)
+	if body := rec.Body.String(); rec.Code != http.StatusOK || strings.Contains(body, `"price_usd"`) ||
+		!strings.Contains(body, `"price_withheld_reason":"source_excluded"`) {
+		t.Errorf("replayed page under an exclusion: status = %d body %s; want price_usd withheld", rec.Code, body)
 	}
 }

@@ -576,6 +576,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			// not. Flag it as the cap branch does: a withheld fdv_usd with no flag would read as
 			// "no max_supply on record".
 			detail.MarketCapLowLiquidity = true
+			detail.FDVWithheldReason = MarketCapWithheldLowLiquidity
 		} else {
 			// FDV is the larger figure, so it clears the ceiling less often than the cap; withholding
 			// the cap yet publishing a bigger FDV beside it would defeat the guard.
