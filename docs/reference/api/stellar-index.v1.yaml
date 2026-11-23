@@ -18576,8 +18576,10 @@ components:
             not bind) or no usable observation within 24h (none, or withheld by a serving
             guard) or its price read failed, so the depeg check did not run
             and an absent `proxy_deviation` is not a "peg holds" verdict. A
-            failed read is also sent with `Cache-Control: no-store`. Omitted
-            when false.
+            reading older than 17 minutes at the requested time is reported as
+            unchecked, so historical vwap/twap answers past the 1-minute
+            retention carry this flag. A failed read is also sent with
+            `Cache-Control: no-store`. Omitted when false.
         unverified_ticker_collision: { type: boolean, default: false }
         truncated:
           type: boolean

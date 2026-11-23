@@ -9012,7 +9012,7 @@ export interface components {
              */
             proxy_deviation: boolean;
             /**
-             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
+             * @description Set beside a TRIANGULATED price when a peg `proxy_deviation` checks had no observed market (a declared peg the verified catalogue does not bind) or no usable observation within 24h (none, or withheld by a serving guard) or its price read failed, so the depeg check did not run and an absent `proxy_deviation` is not a "peg holds" verdict. A reading older than 17 minutes at the requested time is reported as unchecked, so historical vwap/twap answers past the 1-minute retention carry this flag. A failed read is also sent with `Cache-Control: no-store`. Omitted when false.
              * @default false
              */
             proxy_deviation_unchecked: boolean;
