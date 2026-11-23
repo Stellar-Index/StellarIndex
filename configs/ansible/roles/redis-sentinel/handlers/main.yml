@@ -8,6 +8,19 @@
   throttle: 1
   listen: "redis config changed"
 
+# After "restart redis", so a first run starts with the aclfile before it is loaded.
+# ACL LOAD is all-or-nothing: a file that does not parse leaves the old ACL and fails here.
+- name: load redis ACL
+  shell:
+    cmd: |
+      set -eu
+      IFS= read -r REDISCLI_AUTH; export REDISCLI_AUTH
+      [ "$(redis-cli -h {{ ansible_host }} -p {{ redis_port }} --user {{ redis_sentinel_auth_user }} ACL LOAD < /dev/null)" = OK ]
+    stdin: "{{ redis_password }}"
+    executable: /bin/bash
+  no_log: true
+  listen: "redis acl changed"
+
 - name: restart redis-sentinel
   systemd:
     name: redis-sentinel
