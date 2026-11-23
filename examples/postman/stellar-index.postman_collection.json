@@ -692,7 +692,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n",
+                    "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n\nA `q` that is a classic asset's SAC address searches for that\nasset's id. When the lake cannot say whether the address is a\nSAC, the request answers `503` with problem type\n`contract-identity-unavailable` and `Retry-After`, unless a\npage built for the same query is still cached.\n",
                     "type": "text/plain"
                   },
                   "key": "q",
@@ -807,7 +807,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n",
+                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n\nA `q` that is a classic asset's SAC address searches for that\nasset's id. When the lake cannot say whether the address is a\nSAC, the request answers `503` with problem type\n`contract-identity-unavailable` and `Retry-After`, unless a\npage built for the same query is still cached.\n",
                         "type": "text/plain"
                       },
                       "key": "q",
@@ -932,7 +932,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n",
+                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n\nA `q` that is a classic asset's SAC address searches for that\nasset's id. When the lake cannot say whether the address is a\nSAC, the request answers `503` with problem type\n`contract-identity-unavailable` and `Retry-After`, unless a\npage built for the same query is still cached.\n",
                         "type": "text/plain"
                       },
                       "key": "q",
@@ -1057,7 +1057,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n",
+                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n\nA `q` that is a classic asset's SAC address searches for that\nasset's id. When the lake cannot say whether the address is a\nSAC, the request answers `503` with problem type\n`contract-identity-unavailable` and `Retry-After`, unless a\npage built for the same query is still cached.\n",
                         "type": "text/plain"
                       },
                       "key": "q",
@@ -1236,7 +1236,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n",
+                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n\nA `q` that is a classic asset's SAC address searches for that\nasset's id. When the lake cannot say whether the address is a\nSAC, the request answers `503` with problem type\n`contract-identity-unavailable` and `Retry-After`, unless a\npage built for the same query is still cached.\n",
                         "type": "text/plain"
                       },
                       "key": "q",
@@ -1361,7 +1361,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n",
+                        "content": "Case-insensitive substring filter over code / asset id /\nslug / name, applied server-side across BOTH phases of the\nunified listing (catalogue + the ~191K classic long tail).\n\nApplied on the default listing and on `asset_class=all`; accepted\nbut ignored on `asset_class=fiat|stablecoin|crypto` (named in\n`flags.filters_ignored`).\n\nA row's `volume_24h_usd` under this filter is the volume of\nthe arm the filter admitted — see **Row filters and\n`volume_24h_usd`** on the `type` parameter. A SAC wrapper\nhas no code, slug or issuer to match, so `q` never selects\none.\n\nA `q` that is a classic asset's SAC address searches for that\nasset's id. When the lake cannot say whether the address is a\nSAC, the request answers `503` with problem type\n`contract-identity-unavailable` and `Retry-After`, unless a\npage built for the same query is still cached.\n",
                         "type": "text/plain"
                       },
                       "key": "q",

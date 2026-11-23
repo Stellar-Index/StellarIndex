@@ -15256,6 +15256,12 @@ export interface operations {
                  *     `volume_24h_usd`** on the `type` parameter. A SAC wrapper
                  *     has no code, slug or issuer to match, so `q` never selects
                  *     one.
+                 *
+                 *     A `q` that is a classic asset's SAC address searches for that
+                 *     asset's id. When the lake cannot say whether the address is a
+                 *     SAC, the request answers `503` with problem type
+                 *     `contract-identity-unavailable` and `Retry-After`, unless a
+                 *     page built for the same query is still cached.
                  */
                 q?: string;
                 /**

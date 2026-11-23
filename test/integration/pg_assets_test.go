@@ -2451,3 +2451,58 @@ func TestGetAssetBySlug_ResolvesEachInputShape(t *testing.T) {
 		}
 	}
 }
+
+// TestClassicAssetBySlug_ExactElseTheOneCaseVariant pins the slug resolver: the exact slug wins, else the single case-folded
+// match, and two case variants with no exact match are refused rather than one picked.
+func TestClassicAssetBySlug_ExactElseTheOneCaseVariant(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	c.InstallAliasRegistry(nil)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	const (
+		twinIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		loneIssuer = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO classic_assets
+		    (asset_id, code, issuer_g_strkey, slug,
+		     first_seen_at, first_seen_ledger, last_seen_at, last_seen_ledger)
+		SELECT v.code || '-' || v.issuer, v.code, v.issuer, v.code || '-' || v.issuer, now(), 1, now(), 1
+		  FROM (VALUES ('USDC', $1::text), ('usdc', $1::text), ('FOO', $2::text)) AS v(code, issuer)`,
+		twinIssuer, loneIssuer); err != nil {
+		t.Fatalf("seed classic_assets: %v", err)
+	}
+
+	for _, tc := range []struct{ in, want string }{
+		{"USDC-" + twinIssuer, "USDC-" + twinIssuer},
+		{"usdc-" + twinIssuer, "usdc-" + twinIssuer},
+		{"Usdc-" + twinIssuer, ""},
+		{"foo-gbnzilstvqz4r7ikqdghygy2qxl5qofjyqmxpkwrrm5pav7y4m67aqua", "FOO-" + loneIssuer},
+		{"BAR-" + loneIssuer, ""},
+	} {
+		code, issuer, ok, err := store.ClassicAssetBySlug(ctx, tc.in)
+		if err != nil {
+			t.Fatalf("ClassicAssetBySlug(%q): %v", tc.in, err)
+		}
+		got := ""
+		if ok {
+			got = code + "-" + issuer
+		}
+		if got != tc.want {
+			t.Errorf("ClassicAssetBySlug(%q) = %q (ok %v), want %q", tc.in, got, ok, tc.want)
+		}
+	}
+}

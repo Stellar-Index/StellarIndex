@@ -158,12 +158,8 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
 		t.Fatalf("seed ledger_entry_changes: %v", err)
 	}
-	args := []string{
-		"ch-entry-history", "-ch-addr", addr, "-write",
-		"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
-	}
 	runEntryIndexWrite(t, addr, base, base+2)
-	if err := chops.Run(args); err != nil {
+	if err := runEntryHistoryWrite(addr, base, base+2); err != nil {
 		t.Fatalf("ch-entry-history: %v", err)
 	}
 
