@@ -199,7 +199,8 @@ write_error_metric() {
     echo "stellarindex_zfs_snapshot_pool_free_unreadable{pool=\"$ZFS_SNAPSHOT_POOL\"} 1"
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  # -T: a directory, or a link to one, planted at $out must not receive the file.
+  mv -T "$tmp" "$out" || { rm -f "$tmp"; return 1; }
 }
 
 dataset_exists() { zfs list -H -o name "$1" >/dev/null 2>&1; }
@@ -402,7 +403,7 @@ write_metrics() {
     echo "stellarindex_zfs_snapshot_last_run_unix $(date +%s)"
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  mv -T "$tmp" "$out"
   METRICS_TMP=""       # renamed into place: nothing left to clean up
   rm -f "$TEXTFILE_DIR/zfs_snapshot_error.prom"
 }

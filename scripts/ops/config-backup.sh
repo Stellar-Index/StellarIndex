@@ -59,7 +59,12 @@ write_metrics() {
     fi
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  # -T: a directory, or a link to one, planted at $out must not receive the file.
+  if ! mv -T "$tmp" "$out"; then
+    rm -f "$tmp"
+    note "cannot publish $out"
+    return 1
+  fi
 }
 
 fail() { note "$1"; write_metrics 0 0 0; exit 1; }
@@ -142,5 +147,5 @@ if [[ -n "$BACKUP_MC_TARGET" ]]; then
   fi
 fi
 
-write_metrics 1 "$bytes" "$offsite_ok"
+if ! write_metrics 1 "$bytes" "$offsite_ok" && [[ "$rc" -eq 0 ]]; then rc=1; fi
 exit "$rc"
