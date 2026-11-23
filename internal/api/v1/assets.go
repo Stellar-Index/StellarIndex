@@ -1813,14 +1813,15 @@ func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail 
 	})
 }
 
-// fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge) and only then ranks by the market cap
-// served after judging ([Server.rankCatalogueRows]), whose exclusion scope it returns for the write. unmeasured is
-// fillCatalogueStatsForPage's; stale: a row was priced from a read past its freshness ceiling.
+// fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge), then ranks by the cap each row serves
+// once judged ([Server.catalogueRankKeys]), returning that scope for the write. unmeasured: stats fill; stale: past-ceiling read.
 func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (excl assetExclusionScope, unmeasured, stale bool) {
 	ctx, rep := withReadReport(ctx)
 	s.fillCataloguePricesForPage(ctx, rows)
 	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
-	excl = s.rankCatalogueRows(ctx, rows)
+	excl, keys := s.catalogueRankKeys(ctx, rows)
+	sortAssetDetailsByMarketCapDesc(keys)
+	placeRanked(rows, keys)
 	return excl, unmeasured || rep.unread.Load(), rep.stale.Load()
 }
 
@@ -1985,8 +1986,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// not the entries, because it also matches the projected name.
 	rows = filterCatalogueRowsByQuery(rows, entries, filters.q)
 
-	// The same served-slug cursor as writeCataloguePage: the rank below
-	// moves between requests, so an offset into it would duplicate or skip.
+	// The served-slug cursor writeCataloguePage uses: the rank below moves between requests, so an offset would duplicate or skip.
 	served, ok := parseCatalogueServedCursor(w, r, innerCursor)
 	if !ok {
 		return

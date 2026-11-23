@@ -257,27 +257,28 @@ func withholdAssetVolume(d *AssetDetail) bool {
 	return had
 }
 
-// rankCatalogueRows reads the request's exclusion scope and ranks catalogue rows by market cap as they will be served, so a row
-// the scope withholds ranks as an uncapped row does rather than in the slot its hidden cap earned. The served-slug cursor drops
-// what a prior page served before this rank, so the re-rank neither repeats nor skips a row across pages.
-func (s *Server) rankCatalogueRows(ctx context.Context, rows []AssetDetail) assetExclusionScope {
+// catalogueRankKeys reads the request's exclusion scope and returns rows as they will be served, judged, to rank on, so a row
+// the scope withholds ranks as an uncapped row does rather than in the slot its hidden cap earned. Each key's slug is its row's
+// index for [placeRanked]. The served-slug cursor drops what a prior page served before the rank, so no row repeats or is skipped.
+func (s *Server) catalogueRankKeys(ctx context.Context, rows []AssetDetail) (assetExclusionScope, []AssetDetail) {
 	sc := s.assetExclusionScope(ctx)
-	if sc.empty() {
-		sortAssetDetailsByMarketCapDesc(rows)
-		return sc
+	keys := slices.Clone(rows)
+	if !sc.empty() {
+		sc.judgeRows(ctx, s, keys, Flags{})
 	}
-	judged := slices.Clone(rows)
-	sc.judgeRows(ctx, s, judged, Flags{})
+	for i := range keys {
+		keys[i].Slug = strconv.Itoa(i)
+	}
+	return sc, keys
+}
+
+// placeRanked reorders rows to the order of their ranked keys.
+func placeRanked(rows, keys []AssetDetail) {
 	orig := slices.Clone(rows)
-	for i := range judged {
-		judged[i].Slug = strconv.Itoa(i) // the judged copy is discarded; its slug carries the row's place in orig
-	}
-	sortAssetDetailsByMarketCapDesc(judged)
-	for i := range judged {
-		at, _ := strconv.Atoi(judged[i].Slug)
+	for i := range keys {
+		at, _ := strconv.Atoi(keys[i].Slug)
 		rows[i] = orig[at]
 	}
-	return sc
 }
 
 // judgeDetail is [assetExclusionScope.judgeRows] for one detail payload.
