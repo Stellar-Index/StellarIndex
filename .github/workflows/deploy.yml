@@ -694,26 +694,20 @@ jobs:
         # to the tag being deployed by the `ref:` on this job's
         # checkout step). The numbering and immutability checks run again
         # against the host's live version before the playbook.
-        # The numbering and immutability scripts come from the dispatching
-        # commit, as the follow-up gate's does: a tag's own copy is the gate
-        # as it stood when the tag was cut. lint-migrations.sh resolves every
-        # path from its own location, so its copy sits two levels under the
-        # checkout.
+        # lint-migrations.sh is NOT run here: it needs the host's live version
+        # (a rollback tag's already-applied migrations fail the dispatching
+        # commit's newer content rules), which is read later; the gate below
+        # runs it before the playbook. The immutability script comes from the
+        # dispatching commit, as the follow-up gate's does: a tag's own copy is
+        # the gate as it stood when the tag was cut.
         run: |
           set -euo pipefail
-          numbering="$GITHUB_WORKSPACE/.dispatch-gate/ci/lint-migrations.sh"
           immutability="$RUNNER_TEMP/immutability/scripts/ci/lint-migration-immutability.sh"
-          trap 'rm -rf "$GITHUB_WORKSPACE/.dispatch-gate"' EXIT
-          mkdir -p "$(dirname "$numbering")" "$(dirname "$immutability")"
-          if ! git show "${GITHUB_SHA}:scripts/ci/lint-migrations.sh" > "$numbering"; then
-            echo "::error::migration numbering gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
-            exit 1
-          fi
+          mkdir -p "$(dirname "$immutability")"
           if ! git show "${GITHUB_SHA}:scripts/ci/lint-migration-immutability.sh" > "$immutability"; then
             echo "::error::migration immutability gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
             exit 1
           fi
-          bash "$numbering"
           MIGRATIONS_DIR="$GITHUB_WORKSPACE/migrations" \
             MIGRATION_IMMUTABILITY_MANIFEST="$GITHUB_WORKSPACE/scripts/ci/migration-immutability.sha256" \
             bash "$immutability"
@@ -1261,16 +1255,10 @@ jobs:
             base="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
             echo "::warning::no live version read from the host; comparing migrations with the previous tag by ancestry (${base:-none})."
           fi
-          if [ -z "$base" ]; then
-            echo "::notice::no earlier release to compare with; the numbering check has nothing to judge."
-            exit 0
-          fi
-          if ! base_sha="$(git rev-parse -q --verify "${base}^{commit}")"; then
-            echo "::error::migration numbering gate: '${base}' is not a commit in this checkout; refusing to deploy (fail-closed)."
-            exit 1
-          fi
           # Both scripts come from the dispatching commit, as the follow-up
           # gate's does: a tag's own copy is the gate as it stood at the tag.
+          # lint-migrations.sh resolves every path from its own location, so
+          # its copy sits two levels under the checkout.
           numbering="$GITHUB_WORKSPACE/.dispatch-gate/ci/lint-migrations.sh"
           trap 'rm -rf "$GITHUB_WORKSPACE/.dispatch-gate"' EXIT
           mkdir -p "$(dirname "$numbering")"
@@ -1278,7 +1266,24 @@ jobs:
             echo "::error::migration numbering gate: cannot read the gate script at the dispatching commit ${GITHUB_SHA}; refusing to deploy (fail-closed). Dispatch from main."
             exit 1
           fi
-          BASE_SHA="$base_sha" bash "$numbering"
+          if [ -z "$base" ]; then
+            echo "::notice::no earlier release to compare with; every migration is new to the host and judged in full."
+            bash "$numbering"
+            exit 0
+          fi
+          if ! base_sha="$(git rev-parse -q --verify "${base}^{commit}")"; then
+            echo "::error::migration numbering gate: '${base}' is not a commit in this checkout; refusing to deploy (fail-closed)."
+            exit 1
+          fi
+          # Migrations numbered at or below the live release's head are already applied and
+          # immutable, so the newest gate's content rules judge only the ones above it; an
+          # unreadable listing leaves no floor and every migration is judged.
+          floor=""
+          if listing="$(git ls-tree --name-only "${base_sha}:migrations" 2>/dev/null)"; then
+            floor="$(sed -nE 's/^([0-9]+)_.*\.up\.sql$/\1/p' <<<"$listing" | sort -n | tail -1)"
+          fi
+          echo "migration content floor: ${floor:-none} (live release ${base})"
+          MIGRATIONS_CONTENT_FLOOR="$floor" BASE_SHA="$base_sha" bash "$numbering"
           # The tag-checkout immutability run trusts the tag's own manifest,
           # which the same commit can re-bless; the live release cannot be.
           # A tag that predates base mode would ignore BASE.

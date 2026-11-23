@@ -84,7 +84,7 @@ fi
 if [ -s "$tmp/numbering-run.sh" ]; then
   mkdir -p "$tmp/bin" "$tmp/ws/scripts/ci"
   # shellcheck disable=SC2016 # stub bodies expand when the stubs run
-  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; show) echo "echo LINT-REACHED BASE_SHA=\${BASE_SHA:-}" ;; *) exit 1 ;; esac' > "$tmp/bin/git"
+  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; ls-tree) printf "0001_a.up.sql\\n0007_b.up.sql\\n0003_c.down.sql\\n" ;; show) echo "echo LINT-REACHED BASE_SHA=\${BASE_SHA:-} FLOOR=\${MIGRATIONS_CONTENT_FLOOR:-}" ;; *) exit 1 ;; esac' > "$tmp/bin/git"
   chmod +x "$tmp/bin/git"
   got="$(cd "$tmp/ws" && PATH="$tmp/bin:$PATH" GITHUB_WORKSPACE="$tmp/ws" RUNNER_TEMP="$tmp/rt" GITHUB_SHA=feedface \
     VERSION=v0.60.0 BASELINE=v0.59.0 bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)"
@@ -93,6 +93,40 @@ if [ -s "$tmp/numbering-run.sh" ]; then
   else
     bad "numbering gate with BASELINE set returned before running lint-migrations.sh with BASE_SHA — output: ${got}"
   fi
+  if [[ "$got" == *"FLOOR=0007"* ]]; then
+    ok "numbering gate floors the content rules at the live release's highest migration"
+  else
+    bad "numbering gate does not pass the live release's highest migration as MIGRATIONS_CONTENT_FLOOR — a rollback tag's applied migrations are judged by newer content rules: ${got}"
+  fi
+fi
+
+# lint-migrations.sh's floor, on a copy of the real tree whose newest down migration deletes rows
+# silently. Applied (<= floor) is exempt, new (> floor) fails, and a bad floor fails closed.
+fx="$tmp/fx"
+mkdir -p "$fx/x/ci" "$fx/deploy" "$fx/scripts/ci"
+cp scripts/ci/lint-migrations.sh "$fx/x/ci/lint-migrations.sh"
+cp scripts/ci/lint-migrations-ch-float.baseline "$fx/scripts/ci/"
+cp -R migrations "$fx/migrations"
+cp -R deploy/clickhouse "$fx/deploy/clickhouse"
+newest_down="$(find "$fx/migrations" -name '*.down.sql' | sort | tail -1)"
+nn="$(basename "$newest_down" | sed -E 's/^([0-9]+)_.*/\1/')"
+printf '\nDELETE FROM trades;\n' >> "$newest_down"
+floor_run() { (cd "$fx" && MIGRATIONS_CONTENT_FLOOR="$1" bash x/ci/lint-migrations.sh >"$tmp/fl.out" 2>&1); }
+if floor_run "$nn"; then ok "a down-delete in an already-applied migration (floor ${nn}) passes"; else bad "floor ${nn} still fails on the applied migration: $(grep -m3 '❌' "$tmp/fl.out")"; fi
+if floor_run "$((10#$nn - 1))"; then
+  bad "a down-delete in a migration above the floor passed"
+elif grep -q 'down deletes rows silently' "$tmp/fl.out"; then
+  ok "a down-delete above the floor fails"
+else
+  bad "failed for the wrong reason: $(grep -m3 '❌' "$tmp/fl.out")"
+fi
+if floor_run ""; then bad "no floor judged nothing"; else ok "no floor judges every migration"; fi
+if floor_run "abc"; then
+  bad "a non-numeric floor passed"
+elif grep -q 'not a number' "$tmp/fl.out"; then
+  ok "a non-numeric floor fails closed"
+else
+  bad "bad floor failed for the wrong reason"
 fi
 
 # The checkout is the deploying tag: its copy of a gate is the gate as it stood at that tag, so
