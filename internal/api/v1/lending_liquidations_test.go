@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,6 +148,57 @@ func TestLendingPoolLiquidations_PartialWalkIsUnread(t *testing.T) {
 		if leg, _ := l.(map[string]any); leg["asset"] == deep && (leg["usd"] != nil || leg["reason"] != "price_unread") {
 			t.Errorf("deep leg = %v, want usd null with reason price_unread", leg)
 		}
+	}
+}
+
+// liqTodayWalkFailReader degrades only the today's-market walk. The fills' walk reads through liqReadBefore and so always passes a
+// bound; an asset's today walk runs after its fills' walk and opens with an unbounded canonical read, which arms proxy failures
+// for that asset. The canonical buckets still merge, so the walk ends partial, not empty.
+type liqTodayWalkFailReader struct {
+	*stubHistoryReader
+	mu    sync.Mutex
+	armed map[string]bool
+}
+
+func (r *liqTodayWalkFailReader) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, n int) ([]v1.HistoryPoint, error) {
+	r.mu.Lock()
+	if p.Quote.Type == canonical.AssetFiat && to.IsZero() {
+		r.armed[p.Base.String()] = true
+	}
+	fail := p.Quote.Type != canonical.AssetFiat && r.armed[p.Base.String()]
+	r.mu.Unlock()
+	if fail {
+		return nil, context.DeadlineExceeded
+	}
+	return r.stubHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, n)
+}
+
+// TestLendingPoolLiquidations_PartialTodayWalkIsUnread: the fills' walk is complete but the walk judging today's market stopped
+// early, so whether today's book is thin is unknown; no leg is valued and each says price_unread.
+func TestLendingPoolLiquidations_PartialTodayWalkIsUnread(t *testing.T) {
+	_, lr, _, deep := liqRouteServer(t)
+	vol := "1000"
+	bucket := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour)
+	pts := []v1.HistoryPoint{{Bucket: bucket, VWAP: "0.50", VolumeUSD: &vol, Sources: []string{"soroswap"}}}
+	ts := startHTTPTest(t, v1.New(v1.Options{
+		Explorer: liqRouteExplorer{&stubExplorerReader{}}, Lending: lr, VerifiedCurrencies: newTestCatalogue(t),
+		History: &liqTodayWalkFailReader{stubHistoryReader: &stubHistoryReader{points: pts, twapPoints: pts}, armed: map[string]bool{}},
+	}).Handler())
+	f := liqRouteFirstFill(t, ts)
+	if f["bid_usd"] != nil || f["filler_profit_usd"] != nil {
+		t.Fatalf("bid_usd %v profit %v, want null when today's walk is partial", f["bid_usd"], f["filler_profit_usd"])
+	}
+	seen := false
+	for _, l := range append(f["lot"].([]any), f["bid"].([]any)...) {
+		if leg, _ := l.(map[string]any); leg["asset"] == deep {
+			seen = true
+			if leg["usd"] != nil || leg["reason"] != "price_unread" {
+				t.Errorf("deep leg = %v, want usd null with reason price_unread", leg)
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("no leg in the deep asset; the fixture no longer exercises the walk")
 	}
 }
 
