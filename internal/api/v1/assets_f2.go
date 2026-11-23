@@ -427,6 +427,12 @@ func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, v
 	return false, false
 }
 
+// turnoverCeilingApplies is false for XLM in any alias form (keyed on identity, never the code): its on-network volume is
+// not its market, so the listing, detail and chart never judge its cap by [capExceedsObservedTurnover].
+func turnoverCeilingApplies(asset canonical.Asset) bool {
+	return !normalizeXLMAliases(asset).Equal(canonical.NativeAsset())
+}
+
 // MarketCapWithheldReason says why market_cap_usd is null beside a served price_usd and circulating_supply. A direct-price
 // verdict reuses its [PriceWithheldReason] value: the cap is withheld because that price was.
 type MarketCapWithheldReason string
@@ -509,7 +515,7 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		return
 	}
 	// A low-volume day against the whole XLM float would trip the turnover ratio; the listing exempts native too.
-	ceiling := !asset.Equal(canonical.NativeAsset())
+	ceiling := turnoverCeilingApplies(asset)
 	if detail.SupplyStale {
 		// Today's price times a supply unobserved for longer than preciseSupplyMaxAge is not a
 		// market cap; supply_as_of says how old it is and flags.stale marks the body.
