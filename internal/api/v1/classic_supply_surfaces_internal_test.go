@@ -193,6 +193,94 @@ func TestClassicSupply_ThreeSurfacesAgree(t *testing.T) {
 
 var errLakeDown = errors.New("supply_flows sum failed")
 
+// An unwatched asset outside the batch a running lake refresh is summing is answered by the per-asset reader /supply uses:
+// the detail never joins another batch's flight, reads clean, and agrees with the listing.
+func TestClassicSupply_DetailIgnoresAForeignLakeFlight(t *testing.T) {
+	asset, err := canonical.ParseAsset(cetesAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct{ lake, wantCirc string }{
+		"asset has a lake net":  {cetesTrueSupply, cetesTrueSupply},
+		"asset has no lake net": {"", cetesTrustlineOnly},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, stub := surfacesServer(t, tc.lake, nil, "")
+			s.lakeSupplyFlight, s.lakeSupplyAttemptAt = make(chan struct{}), time.Now() // never lands
+			detail := AssetDetail{AssetID: cetesAsset, Decimals: 7}
+			s.applyF2Fields(context.Background(), &detail, asset)
+			if detail.f2ReadFailed || strOr(detail.CirculatingSupply) != tc.wantCirc {
+				t.Errorf("circ=%q failed=%v, want %q read clean", strOr(detail.CirculatingSupply), detail.f2ReadFailed, tc.wantCirc)
+			}
+			if len(stub.asked) != 0 {
+				t.Errorf("detail asked the bulk lake read for %v, want the per-asset reader", stub.asked)
+			}
+		})
+	}
+}
+
+// sacExplorer is the trustline sum plus the lake's SAC instance lookup (contract id to "CODE:ISSUER").
+type sacExplorer struct {
+	trustlineOnlyExplorer
+	wraps map[string]string
+}
+
+func (e *sacExplorer) SACClassicAssetName(_ context.Context, contractID string) (string, bool, error) {
+	name, ok := e.wraps[contractID]
+	return name, ok, nil
+}
+
+// /supply marks a classic asset's net below its trustline floor whichever id form names it; a Soroban-native contract is not
+// checked against any trustline sum.
+func TestClassicSupply_SupplyFloorMarkedForTheSACForm(t *testing.T) {
+	sac, err := mustSACFor(cetesAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native, err := mustSACFor("OTHER-" + cetesIssuer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, stub := surfacesServer(t, "500000000", nil, "")
+	stub.byContract[native] = clickhouse.TokenSupply{
+		ContractID: native, Total: big.NewInt(5), Mint: big.NewInt(5), Burn: big.NewInt(0), Clawback: big.NewInt(0), FlowCount: 1,
+	}
+	s.Explorer = &sacExplorer{
+		trustlineOnlyExplorer: trustlineOnlyExplorer{supply: map[string]string{cetesAsset: cetesTrustlineOnly}},
+		wraps:                 map[string]string{sac: "CETES:" + cetesIssuer},
+	}
+	for id, wantLB := range map[string]bool{cetesAsset: true, sac: true, native: false} {
+		got := readClassicSurfaces(t, s, id)
+		if got.supplyCode != http.StatusOK || got.supply.CirculatingSupplyLowerBound != wantLB || got.supplyFlags.Degraded {
+			t.Errorf("%s: code=%d lb=%v degraded=%v, want lb=%v clean", id, got.supplyCode,
+				got.supply.CirculatingSupplyLowerBound, got.supplyFlags.Degraded, wantLB)
+		}
+	}
+}
+
+// A watched asset whose observer reading is past preciseSupplyMaxAge keeps that reading, flagged stale, with its operator
+// max-supply override: the lake fallback is for assets the observer does not watch.
+func TestClassicSupply_StaleWatchedAssetKeepsItsObserverReading(t *testing.T) {
+	const observed = "1200000000"
+	s, _ := surfacesServer(t, cetesTrueSupply, nil, "")
+	circ, _ := new(big.Int).SetString(observed, 10)
+	s.Supply = capSupplyStub{snap: supply.Supply{
+		AssetKey: cetesAsset, CirculatingSupply: circ, TotalSupply: circ, MaxSupply: big.NewInt(9_000_000_000),
+		Basis: supply.BasisIssuerExclusion, ObservedAt: time.Now().Add(-preciseSupplyMaxAge - time.Hour),
+	}}
+	asset, err := canonical.ParseAsset(cetesAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := AssetDetail{AssetID: cetesAsset, Decimals: 7}
+	s.applyF2Fields(context.Background(), &detail, asset)
+	if strOr(detail.CirculatingSupply) != observed || !detail.SupplyStale || strOr(detail.MaxSupply) != "9000000000" ||
+		strOr(detail.SupplyBasis) != supply.BasisIssuerExclusion.String() {
+		t.Errorf("circ=%q stale=%v max=%q basis=%q, want the observer reading flagged stale with its override",
+			strOr(detail.CirculatingSupply), detail.SupplyStale, strOr(detail.MaxSupply), strOr(detail.SupplyBasis))
+	}
+}
+
 // Native and Soroban details keep their own arms: the classic reading never touches them.
 func TestClassicSupply_DetailLeavesNativeAndContractAssetsAlone(t *testing.T) {
 	s, stub := surfacesServer(t, cetesTrueSupply, nil, "")
