@@ -60,24 +60,34 @@ func TestPoolPositions_RealEntries(t *testing.T) {
 	}
 	want := map[string]struct {
 		account, shape string
-		supply, borrow []string // by reserve index 0..2; "" is absent
+		supply, borrow []string // by reserve index 0..3; "" is absent
+		nonZero        bool     // the entry must carry at least one non-zero amount
 	}{
 		// A closed position: the account repaid and withdrew everything, and the entry keeps its three empty maps.
-		"blend": {
+		"blend@63030578": {
 			account: "GD57AJD6CR4QD4HJG3FW6PO76QBHZXVGNRT3NRHGWX2EER3YEXP4VKUC", shape: "{collateral:{},liabilities:{},supply:{}}",
-			supply: []string{"", "", ""}, borrow: []string{"", "", ""},
+			supply: []string{"", "", "", ""}, borrow: []string{"", "", "", ""},
 		},
-		"blnt": {
+		"blend@55126867": {
+			account: "GDSFASSHZ7Q47B7KVIAXXT4PRT27OZJMOB4XIHPL62BDNO7FXDMJHLXJ", shape: "{collateral:{u32(3):i128(3292845684288)},liabilities:{},supply:{}}",
+			supply: []string{"", "", "", "3292845684288"}, borrow: []string{"", "", "", ""}, nonZero: true,
+		},
+		"blend@65581104": {
+			account: "GCTSFIICPYZW2R6HWA25IWDHQYSFBJJUAXVYHGUQ7K64G54ZQ6OOJUF6", shape: "{collateral:{u32(0):i128(6980245630778052)},liabilities:{u32(1):i128(252592852494516)},supply:{}}",
+			supply: []string{"6980245630778052", "", "", ""}, borrow: []string{"", "252592852494516", "", ""}, nonZero: true,
+		},
+		"blnt@65581656": {
 			account: "GDJSH2NU2WF6J4P5DL4522DUCABWSTZOKFQ7BHBCFYQ3QKC6FRYWP6OL",
 			shape:   "{collateral:{u32(0):i128(5955145417),u32(1):i128(74472245)},liabilities:{u32(2):i128(414147918)},supply:{}}",
-			supply:  []string{"5955145417", "74472245", ""}, borrow: []string{"", "", "414147918"},
+			supply:  []string{"5955145417", "74472245", "", ""}, borrow: []string{"", "", "414147918", ""},
 		},
 	}
-	if len(entries) != 2 {
-		t.Fatalf("fixture holds %d entries, want one per protocol", len(entries))
+	if len(entries) != len(want) {
+		t.Fatalf("fixture holds %d entries, want %d", len(entries), len(want))
 	}
-	reserves := []xdr.ContractId{{1}, {2}, {3}}
+	reserves := []xdr.ContractId{{1}, {2}, {3}, {4}}
 	for _, e := range entries {
+		e.Protocol = fmt.Sprintf("%s@%d", e.Protocol, e.Ledger) // blend holds two pool versions; label each by ledger
 		w, ok := want[e.Protocol]
 		if !ok {
 			t.Fatalf("unexpected fixture protocol %q", e.Protocol)
@@ -112,6 +122,15 @@ func TestPoolPositions_RealEntries(t *testing.T) {
 			t.Fatalf("%s: assembled %+v", e.Protocol, got)
 		}
 		p := got.Accounts[0]
+		if w.nonZero {
+			nz := false
+			for _, a := range append(append([]string{}, w.supply...), w.borrow...) {
+				nz = nz || (a != "" && a != "0")
+			}
+			if !nz {
+				t.Fatalf("%s: pinned amounts are all empty or zero", e.Protocol)
+			}
+		}
 		for i, r := range reserves {
 			asset := strkeyOf(t, r)
 			if s := amountOrEmpty(p.Supply[asset]); s != w.supply[i] {
