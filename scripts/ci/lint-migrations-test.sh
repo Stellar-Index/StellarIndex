@@ -943,13 +943,22 @@ for shape in \
   'DO $$ BEGIN DELETE FROM trades WHERE signer IS NULL; END $$;' \
   'WITH gone AS (DELETE FROM trades RETURNING 1) SELECT count(*) FROM gone;' \
   "$chunks_shape" \
-  "$(printf 'DELETE\nFROM trades WHERE signer IS NULL;')"; do
+  "$(printf 'DELETE\nFROM trades WHERE signer IS NULL;')" \
+  'DELETE FROM"trades";' \
+  'SELECT 1 AS "--"; DELETE FROM trades;' \
+  'SELECT $$--$$; DELETE FROM trades;' \
+  "SELECT E'a\\' -- '; DELETE FROM trades;" \
+  "/* don't */ DELETE FROM trades; SELECT 'x';" \
+  "SELECT \$a\$'\$a\$; DELETE FROM trades; SELECT \$a\$'\$a\$;" \
+  "$(printf 'DO $$ BEGIN\n  RAISE NOTICE %s--%s; DELETE FROM trades;\nEND $$;' "\$q\$" "\$q\$")"; do
   n=$((n + 1))
   d="$(mig "down-del-$n" 0001_trades.down.sql <<<"$shape")"
   mcatches "a down deleting rows as: ${shape%%$'\n'*}" "$d" "down deletes rows silently"
 done
 ok_down="$(printf '%s\n' \
   "DO \$\$ BEGIN RAISE EXCEPTION 'refusing: rows would DELETE FROM trades'; END \$\$;" \
+  "DO \$\$ BEGIN -- a DELETE FROM trades here would lose rows" \
+  "  RAISE EXCEPTION 'refusing /* DELETE FROM trades */'; END \$\$;" \
   "DELETE FROM trades WHERE signer = 'seed'; -- lint-down-delete:ok removes the seed row")"
 d="$(mig down-del-ok 0001_trades.down.sql <<<"$ok_down")"
 clean_mig "a quoted delete and a reasoned marker pass" "$d"
