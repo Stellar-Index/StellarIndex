@@ -977,6 +977,9 @@ func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 	if lp := mustFloat(t, *m.LastPrice); lp < 0.49 || lp > 0.51 {
 		t.Errorf("PairMarket LastPrice = %s, want ~0.5 (latest bucket is flipped, inverted)", *m.LastPrice)
 	}
+	if m.LastPricedAt.IsZero() || m.LastPricedAt.After(time.Now()) || m.LastPricedAt.Second() != 0 {
+		t.Errorf("PairMarket LastPricedAt = %s, want the priced prices_1m bucket's start", m.LastPricedAt)
+	}
 
 	// ── OHLCSeries ─────────────────────────────────────────────────
 	bars, err := store.OHLCSeries(ctx, xlmUSDC, timescale.HistoryGranularity("1m"), from, to, 0)

@@ -154,14 +154,32 @@ func sacFolded(a canonical.Asset) canonical.Asset {
 	return a
 }
 
-// foldPairSpelling adds another stored spelling of the same market into dst: counts and volume sum, and the newer trade's
-// timestamp and price win together. A newer trade with no usable price leaves the price absent: an older spelling's price
-// beside it would read as that trade's.
+// foldPairSpelling adds another stored spelling of the same market into dst: counts and volume sum, the newer trade sets the
+// timestamp, and the price is the newest priced bucket's (ties to the higher price), the listing's rule (canonLastPriceSQL). The
+// two clocks differ: a trade in the open minute, or one prices_1m never prices, has no bucket yet.
 func foldPairSpelling(dst *Market, m Market) {
 	dst.TradeCount24h += m.TradeCount24h
 	dst.Volume24hUSD = addDecimalStrings(dst.Volume24hUSD, m.Volume24hUSD)
 	dst.VolumeLowerBound = dst.VolumeLowerBound || m.VolumeLowerBound
 	if m.LastTradeAt.After(dst.LastTradeAt) {
-		dst.LastTradeAt, dst.BucketCloseAt, dst.LastPrice = m.LastTradeAt, m.BucketCloseAt, m.LastPrice
+		dst.LastTradeAt, dst.BucketCloseAt = m.LastTradeAt, m.BucketCloseAt
 	}
+	if pricedLater(m, *dst) {
+		dst.LastPrice, dst.LastPricedAt = m.LastPrice, m.LastPricedAt
+	}
+}
+
+// pricedLater reports whether a's price supersedes b's under the listing's order: bucket DESC NULLS LAST, then price DESC.
+func pricedLater(a, b Market) bool {
+	if a.LastPrice == nil {
+		return false
+	}
+	if b.LastPrice == nil || a.LastPricedAt.Time().After(b.LastPricedAt.Time()) {
+		return true
+	}
+	if !a.LastPricedAt.Time().Equal(b.LastPricedAt.Time()) {
+		return false
+	}
+	ra, rb := ratFromDecimal(*a.LastPrice), ratFromDecimal(*b.LastPrice)
+	return ra != nil && (rb == nil || ra.Cmp(rb) > 0)
 }

@@ -26,6 +26,8 @@ type Market struct {
 	// close, or under a source filter that VENUE's own price from pools_per_source_1h. nil when the
 	// pair has no priced trade in 24h. It is a numeric string for precision.
 	LastPrice *string
+	// LastPricedAt is the bucket LastPrice came from ([Store.PairMarket] only); zero when LastPrice is nil.
+	LastPricedAt time.Time
 }
 
 // Pool is one (source, base, quote) tuple — same shape as Market but with the source dimension preserved.
@@ -865,6 +867,22 @@ const pairMarketQuery = `
                     AND t.ts >= $1
                   ORDER BY t.ts DESC LIMIT 1)
             ) AS both_directions
+        ), last_px AS (
+            SELECT bucket, (CASE WHEN base_asset = $2 THEN last_price
+                                 ELSE 1.0 / NULLIF(last_price, 0) END)::text AS price FROM (
+                (SELECT bucket, base_asset, last_price FROM prices_1m
+                  WHERE base_asset = $2 AND quote_asset = $3
+                    AND bucket >= NOW() - INTERVAL '24 hours'
+                    AND last_price IS NOT NULL
+                  ORDER BY bucket DESC LIMIT 1)
+                UNION ALL
+                (SELECT bucket, base_asset, last_price FROM prices_1m
+                  WHERE base_asset = $3 AND quote_asset = $2
+                    AND bucket >= NOW() - INTERVAL '24 hours'
+                    AND last_price IS NOT NULL
+                  ORDER BY bucket DESC LIMIT 1)
+            ) AS both_directions
+             ORDER BY bucket DESC, base_asset LIMIT 1
         )
         SELECT lt.ts AS last_trade_at,
                CASE WHEN lt.ts IS NULL THEN 0 ELSE
@@ -886,21 +904,8 @@ const pairMarketQuery = `
                        AND bucket >= NOW() - INTERVAL '24 hours'
                        AND volume_usd IS NOT NULL
                 ) AS both_directions) AS vol_24h_usd,
-               (SELECT (CASE WHEN base_asset = $2 THEN last_price
-                             ELSE 1.0 / NULLIF(last_price, 0) END)::text FROM (
-                    (SELECT bucket, base_asset, last_price FROM prices_1m
-                      WHERE base_asset = $2 AND quote_asset = $3
-                        AND bucket >= NOW() - INTERVAL '24 hours'
-                        AND last_price IS NOT NULL
-                      ORDER BY bucket DESC LIMIT 1)
-                    UNION ALL
-                    (SELECT bucket, base_asset, last_price FROM prices_1m
-                      WHERE base_asset = $3 AND quote_asset = $2
-                        AND bucket >= NOW() - INTERVAL '24 hours'
-                        AND last_price IS NOT NULL
-                      ORDER BY bucket DESC LIMIT 1)
-                ) AS both_directions
-                 ORDER BY bucket DESC, base_asset LIMIT 1) AS last_price,
+               lp.price AS last_price,
+               lp.bucket AS last_priced_at,
                -- The listing's rule (CTE u): the hourly view up to the last closed hour, trades for the two newest.
                (EXISTS (SELECT 1 FROM pools_per_source_1h r
                          WHERE r.base_asset = $2 AND r.quote_asset = $3
@@ -916,7 +921,7 @@ const pairMarketQuery = `
              OR EXISTS (SELECT 1 FROM trades t
                          WHERE t.base_asset = $3 AND t.quote_asset = $2
                            AND t.ts >= date_trunc('hour', NOW()) - INTERVAL '1 hour' AND t.usd_volume IS NULL)) AS vol_lower_bound
-          FROM last_trade lt
+          FROM last_trade lt LEFT JOIN last_px lp ON true
     `
 
 // PairMarket returns the activity summary for one (base, quote) pair; false when it has not traded inside MarketsRecencyWindow, so callers answer an empty list (200), not a 404.
@@ -927,10 +932,12 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 		count24h  *int64
 		vol24hUSD sql.NullString
 		lastPx    sql.NullString
+		pricedAt  *time.Time
 		// lowerBound: a trade in the window has no trade-time usd_volume, so the sum leaves it out.
 		lowerBound bool
 	)
-	if err := s.db.QueryRowContext(ctx, pairMarketQuery, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD, &lastPx, &lowerBound); err != nil {
+	if err := s.db.QueryRowContext(ctx, pairMarketQuery, since, base.String(), quote.String()).
+		Scan(&lastAt, &count24h, &vol24hUSD, &lastPx, &pricedAt, &lowerBound); err != nil {
 		return Market{}, false, fmt.Errorf("timescale: PairMarket: %w", err)
 	}
 	if lastAt == nil {
@@ -958,9 +965,9 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 		v := vol24hUSD.String
 		m.Volume24hUSD = &v
 	}
-	if lastPx.Valid && lastPx.String != "" {
+	if lastPx.Valid && lastPx.String != "" && pricedAt != nil {
 		v := lastPx.String
-		m.LastPrice = &v
+		m.LastPrice, m.LastPricedAt = &v, pricedAt.UTC()
 	}
 	return m, true, nil
 }
