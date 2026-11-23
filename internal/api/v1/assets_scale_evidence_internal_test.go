@@ -103,7 +103,6 @@ func TestWithholdContradictedScalePrice_WholeTokenPricesExempt(t *testing.T) {
 	}{
 		{"global market", func(p *string) AssetDetail { return AssetDetail{PriceUSD: p, PriceBasis: priceBasisGlobalMarket} }},
 		{"declared peg", func(p *string) AssetDetail { return AssetDetail{PriceUSD: p, PriceBasis: priceBasisDeclaredPeg} }},
-		{"twin's whole-token row price", func(p *string) AssetDetail { return AssetDetail{PriceUSD: p, priceWholeToken: true} }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := "1.00"

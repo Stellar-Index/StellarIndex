@@ -1,0 +1,60 @@
+---
+# /etc/stellarindex.toml, validated by the installed release before it replaces the live file. Every daemon refuses
+# to boot on an unknown key, so a render carrying a key newer than the installed binaries would crash-loop them on
+# the restart below. Order: deploy the release's binaries (deploy.yml), then apply this role.
+#
+# stellarindex-ops shares the daemons' config loader, so it speaks for them only at the same version: the gate
+# below refuses a host where a config-reading binary is at a different version than stellarindex-ops.
+# Imported by 14-stellarindex-services.yml with stellarindex_toml_dest and stellarindex_toml_bin_dir set.
+
+- name: Check the installed binaries can validate {{ stellarindex_toml_dest }}
+  ansible.builtin.shell:
+    cmd: |
+      set -eu
+      bin={{ stellarindex_toml_bin_dir | quote }}
+      present=""
+      for b in stellarindex-api stellarindex-indexer {{ 'stellarindex-aggregator' if (run_aggregator | default(true) | bool) else '' }}; do
+        if [ -x "$bin/$b" ]; then present="$present $b"; fi
+      done
+      if [ ! -x "$bin/stellarindex-ops" ]; then
+        if [ -z "$present" ]; then echo first-install; exit 0; fi
+        echo "stellarindex-ops is not installed but$present is: deploy this release's binaries first, then apply the role" >&2
+        exit 3
+      fi
+      if ! "$bin/stellarindex-ops" config-check -h >/dev/null 2>&1; then
+        echo "installed stellarindex-ops predates config-check: deploy the binary first, then apply the role" >&2
+        exit 4
+      fi
+      # The release tag only: the build date and Go version after it may differ per binary.
+      want=$("$bin/stellarindex-ops" version); want=${want%% *}
+      for b in $present; do
+        got=$("$bin/$b" -version); got=${got%% *}
+        if [ "$got" != "$want" ]; then
+          echo "$b is $got but stellarindex-ops is $want: deploy this release's binaries first, then apply the role" >&2
+          exit 5
+        fi
+      done
+      echo validate
+  register: stellarindex_toml_gate
+  changed_when: false
+  # Read-only, and the template below needs its verdict in --check too.
+  check_mode: false
+
+- name: Template {{ stellarindex_toml_dest }}
+  # The on-disk config carries everything except secrets. Secrets
+  # come from /etc/default/stellarindex via EnvironmentFile (the
+  # Postgres password overrides the DSN here; S3 creds + connector
+  # keys are injected the same way). `validate` runs on the rendered
+  # temp file; a refusal fails the task and leaves the live file as it was.
+  ansible.builtin.template:
+    src: stellarindex.toml.j2
+    dest: "{{ stellarindex_toml_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "{{ (stellarindex_toml_bin_dir ~ '/stellarindex-ops config-check -config %s') if stellarindex_toml_gate.stdout == 'validate' else omit }}"
+  diff: false
+  notify:
+    - Restart stellarindex-indexer
+    - Restart stellarindex-aggregator
+    - Restart stellarindex-api

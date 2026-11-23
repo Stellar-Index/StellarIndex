@@ -38,12 +38,19 @@ func (s *Server) ohlcSeriesCost(pair canonical.Pair, interval ohlcInterval, from
 	if !ok || width <= 0 || !to.After(from) {
 		return 1
 	}
-	rows := saturatingCost(int64((to.Sub(from)+width-1)/width), s.rawReadFanout(pair))
+	// Divide before rounding up: Sub saturates at MaxInt64 past ~292 years, and adding width-1 to that wraps negative.
+	span := to.Sub(from)
+	buckets := int64(span / width)
+	if span%width != 0 {
+		buckets++
+	}
+	rows := saturatingCost(buckets, s.rawReadFanout(pair))
 	return max(1, (rows+chartPointsPerToken-1)/chartPointsPerToken)
 }
 
+// saturatingCost is perRead x reads capped at MaxInt32; a negative perRead is an overflowed count, so it saturates too.
 func saturatingCost(perRead int64, reads int) int {
-	if perRead > math.MaxInt32/int64(reads) {
+	if perRead < 0 || perRead > math.MaxInt32/int64(reads) {
 		return math.MaxInt32
 	}
 	return int(perRead * int64(reads))

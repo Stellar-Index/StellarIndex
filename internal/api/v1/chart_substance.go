@@ -13,7 +13,7 @@ import (
 // noteBook records a source pair that claimed at least one served bucket, once, and whether it owns the newest one so far.
 func (r *chartWalkResult) noteBook(sp canonical.Pair, newest time.Time) {
 	if newest.After(r.latestAt) {
-		r.latestBook, r.latestAt = sp, newest
+		r.latestBooks, r.latestAt = []canonical.Pair{sp}, newest
 	}
 	for _, b := range r.books {
 		if b.Base.Equal(sp.Base) && b.Quote.Equal(sp.Quote) {
@@ -29,9 +29,47 @@ func (s *Server) chartThin(ctx context.Context, pair canonical.Pair, walk chartW
 	return len(walk.books) > 0 && s.thinMarketEvidence(ctx, pair.Base, pair.Quote, walk.books, "chart") != nil
 }
 
-// chartLatestThin measures only the book that owns the newest served bucket, the price /v1/assets/{id} values: a dust book
-// that filled an older bucket does not withhold a valuation the headline serves.
-func (s *Server) chartLatestThin(ctx context.Context, pair canonical.Pair, walk chartWalkResult) bool {
-	return !walk.latestAt.IsZero() &&
-		s.thinMarketEvidence(ctx, pair.Base, pair.Quote, []canonical.Pair{walk.latestBook}, "chart") != nil
+// chartLatestThin measures only the books under the newest served bucket, the price /v1/assets/{id} values: a dust book
+// that filled an older bucket does not withhold a valuation the headline serves. unmeasured: a book's read failed.
+func (s *Server) chartLatestThin(ctx context.Context, pair canonical.Pair, walk chartWalkResult) (thin, unmeasured bool) {
+	if walk.latestAt.IsZero() || len(walk.latestBooks) == 0 {
+		return false, false
+	}
+	ev, unmeasured := s.thinMarketMeasure(ctx, pair.Base, pair.Quote, walk.latestBooks, "chart")
+	return ev != nil, unmeasured
+}
+
+// noteServedLatest re-records the books under the newest bucket of a trimmed series: a book that only owned a cut bucket backs
+// no served price. A bucket with no recorded owner is measured on every book, so the measurement can only widen.
+func (r *chartWalkResult) noteServedLatest(served []HistoryPoint) {
+	switch {
+	case len(served) == 0:
+		r.latestAt, r.latestBooks = time.Time{}, nil
+	case len(r.crossLegs) > 0:
+		r.noteCrossLatest(served, r.crossLegs...)
+	default:
+		r.latestAt = served[len(served)-1].Bucket.UTC()
+		if book, ok := r.bookAt[r.latestAt]; ok {
+			r.latestBooks = []canonical.Pair{book}
+			return
+		}
+		r.latestBooks = r.books
+	}
+}
+
+// noteCrossLatest records the books under a cross's newest bucket: every crossed point multiplies BOTH legs, so both back it.
+// A leg with no recorded owner there contributes all its books, so the measurement can only widen.
+func (r *chartWalkResult) noteCrossLatest(crossed []HistoryPoint, legs ...chartWalkResult) {
+	if len(crossed) == 0 {
+		return
+	}
+	at := crossed[len(crossed)-1].Bucket.UTC()
+	r.latestAt, r.latestBooks = at, nil
+	for _, leg := range legs {
+		if book, ok := leg.bookAt[at]; ok {
+			r.latestBooks = append(r.latestBooks, book)
+			continue
+		}
+		r.latestBooks = append(r.latestBooks, leg.books...)
+	}
 }

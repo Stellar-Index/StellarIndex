@@ -5,6 +5,8 @@ package v1_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"testing"
@@ -123,6 +125,160 @@ func TestChartMarketCap_MeasuresTheBookUnderTheLatestPrice(t *testing.T) {
 			}
 			if !tc.withheld && len(points) != 2 {
 				t.Errorf("served %d points, want both buckets", len(points))
+			}
+		})
+	}
+}
+
+// TestChartMarketCap_DerivedRouteMeasuresBothLegs: a price derived through XLM stands on two books, the asset/XLM book and
+// the XLM/fiat book under the newest crossed bucket. Either one thin withholds the market cap, as /v1/assets/{id} would; a
+// thin book that only filled a bucket the cross never emitted does not.
+func TestChartMarketCap_DerivedRouteMeasuresBothLegs(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	assetLeg := clearedAssetID + "/native"
+	pivotLeg := "native/fiat:USD"
+	legs := map[string][]v1.HistoryPoint{
+		assetLeg: {{Bucket: d(1), VWAP: "10"}, {Bucket: d(2), VWAP: "15"}},
+		pivotLeg: {{Bucket: d(1), VWAP: "0.4"}, {Bucket: d(2), VWAP: "0.4"}},
+		// A pivot proxy book owns a newer bucket the asset leg lacks, so the cross never serves it.
+		"native/crypto:USDT": {{Bucket: d(3), VWAP: "0.5"}},
+	}
+	for _, tc := range []struct {
+		name     string
+		thin     map[string]bool
+		withheld bool
+	}{
+		{"asset leg thin", map[string]bool{assetLeg: true}, true},
+		{"pivot leg thin", map[string]bool{"native/fiat:USD": true, "crypto:XLM/fiat:USD": true}, true},
+		{"both legs deep", nil, false},
+		{"thin book only past the last crossed bucket", map[string]bool{"native/crypto:USDT": true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: legs},
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: big.NewInt(1_000_0000000)},
+				}},
+				VerifiedCurrencies: newTestCatalogue(t),
+				Substance:          pricingguard.NewSubstanceGate(thinStore{pairs: tc.thin}, pricingguard.SubstanceGateOptions{}),
+			}).Handler())
+			status, body := fetch(t, ts.URL+"/v1/chart?asset="+clearedAssetID+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			if status != http.StatusOK {
+				t.Fatalf("status %d: %s", status, body)
+			}
+			data, _ := decodeMap(t, body)["data"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if withheld := len(points) == 0 && data["market_cap_low_liquidity"] == true; withheld != tc.withheld {
+				t.Errorf("points=%v low_liquidity=%v, want withheld=%v", points, data["market_cap_low_liquidity"], tc.withheld)
+			}
+			if !tc.withheld && len(points) != 2 {
+				t.Errorf("served %d points, want both crossed buckets", len(points))
+			}
+		})
+	}
+}
+
+// TestChartMarketCap_TurnoverCeilingExemptsXLMByIdentity: the chart applies the turnover ceiling as the listing does, which
+// never judges XLM's cap against its on-network turnover; a classic asset that only shares the code XLM is not exempt.
+func TestChartMarketCap_TurnoverCeilingExemptsXLMByIdentity(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	const lookalike = "XLM-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	for _, tc := range []struct {
+		asset    string
+		withheld bool
+	}{
+		{"native", false},
+		{"crypto:XLM", false},
+		{lookalike, true},
+	} {
+		t.Run(tc.asset, func(t *testing.T) {
+			price := []v1.HistoryPoint{{Bucket: d(1), VWAP: "0.4"}, {Bucket: d(2), VWAP: "0.4"}}
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: map[string][]v1.HistoryPoint{
+					"native/fiat:USD": price, lookalike + "/fiat:USD": price,
+				}},
+				// 10^10 tokens at $0.40 against $10 of daily volume: far past the ceiling.
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: new(big.Int).Exp(big.NewInt(10), big.NewInt(17), nil)},
+				}},
+				Volume:                  &stubVolumeReader{volume: "10"},
+				MaxMarketCapVolumeRatio: 50_000,
+			}).Handler())
+			status, body := fetch(t, ts.URL+"/v1/chart?asset="+tc.asset+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			if status != http.StatusOK {
+				t.Fatalf("status %d: %s", status, body)
+			}
+			data, _ := decodeMap(t, body)["data"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if withheld := len(points) == 0 && data["market_cap_low_liquidity"] == true; withheld != tc.withheld {
+				t.Errorf("points=%v low_liquidity=%v, want withheld=%v", points, data["market_cap_low_liquidity"], tc.withheld)
+			}
+		})
+	}
+}
+
+// failingSubstanceStore errors measuring any book in fail and measures every other one deep.
+type failingSubstanceStore struct{ fail map[string]bool }
+
+func (s failingSubstanceStore) measure(bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
+	for _, b := range bases {
+		for _, q := range quotes {
+			if s.fail[b.String()+"/"+q.String()] || s.fail[q.String()+"/"+b.String()] {
+				return timescale.MarketSubstance{}, errors.New("substance read timeout")
+			}
+		}
+	}
+	return thickMarket, nil
+}
+
+func (s failingSubstanceStore) PairMarketSubstance(_ context.Context, bases, quotes []canonical.Asset, _ time.Duration) (timescale.MarketSubstance, error) {
+	return s.measure(bases, quotes)
+}
+
+func (s failingSubstanceStore) PairMarketSubstanceAt(_ context.Context, bases, quotes []canonical.Asset, _ time.Time, _ time.Duration, _ timescale.HistoryGranularity) (timescale.MarketSubstance, error) {
+	return s.measure(bases, quotes)
+}
+
+// TestChartMarketCap_UnmeasuredBookIsNotCleared: a substance read that failed on either book under the derived price has
+// not ruled, so the market cap is never a clean cacheable 200 (served Stale, no-store, or withheld).
+func TestChartMarketCap_UnmeasuredBookIsNotCleared(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	assetLeg := clearedAssetID + "/native"
+	legs := map[string][]v1.HistoryPoint{
+		assetLeg:          {{Bucket: d(1), VWAP: "10"}, {Bucket: d(2), VWAP: "15"}},
+		"native/fiat:USD": {{Bucket: d(1), VWAP: "0.4"}, {Bucket: d(2), VWAP: "0.4"}},
+	}
+	for _, tc := range []struct {
+		name string
+		fail map[string]bool
+	}{
+		{"asset/XLM book unread", map[string]bool{assetLeg: true}},
+		{"XLM/USD book unread", map[string]bool{"native/fiat:USD": true, "crypto:XLM/fiat:USD": true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: legs},
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: big.NewInt(1_000_0000000)},
+				}},
+				VerifiedCurrencies: newTestCatalogue(t),
+				Substance:          pricingguard.NewSubstanceGate(failingSubstanceStore{fail: tc.fail}, pricingguard.SubstanceGateOptions{}),
+			}).Handler())
+			resp := mustGet(t, ts.URL+"/v1/chart?asset="+clearedAssetID+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status %d: %s", resp.StatusCode, body)
+			}
+			m := decodeMap(t, body)
+			data, _ := m["data"].(map[string]any)
+			flags, _ := m["flags"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if len(points) > 0 && (flags["stale"] != true || resp.Header.Get("Cache-Control") != "no-store") {
+				t.Errorf("unmeasured book served clean: points=%v flags=%v Cache-Control=%q", points, flags, resp.Header.Get("Cache-Control"))
 			}
 		})
 	}

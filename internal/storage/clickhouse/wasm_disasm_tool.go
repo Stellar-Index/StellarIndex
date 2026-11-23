@@ -1,7 +1,9 @@
 package clickhouse
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,6 +23,13 @@ const wasmToolTimeout = 10 * time.Second
 // maxDisasmOutputBytes caps the WAT / decompile text retained so a large module can't blow the JSON response; bigger outputs are
 // truncated with a marker.
 const maxDisasmOutputBytes = 2 << 20 // 2 MiB
+
+// maxDisasmInputBytes is well above the network's contract size limit (128 KiB), so only a
+// module no ledger could hold is refused.
+const maxDisasmInputBytes = 1 << 20
+
+// maxDisasmStderrBytes bounds the tool's error text kept for the note.
+const maxDisasmStderrBytes = 4 << 10
 
 // buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends to info.ToolNote; it never fails the caller.
 // info.WasmHash is a content address, so a cached SUCCESSFUL run is served without fork/exec. Only full success populates r.disasmCache:
@@ -59,14 +68,17 @@ func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *Contrac
 }
 
 // runWasmTool runs a wabt binary against the wasm module and returns its text output plus a human note (empty on success). wabt reads the
-// module from a real file path (this build treats "-" as a literal filename) and "-o -" is silently empty, so input and output are staged
-// through temp files, removed before returning.
+// module from a real file path (this build treats "-" as a literal filename), so the input is staged through a temp file. Output is read
+// from stdout through a bounded reader and the tool is killed at the cap: a small module can expand to gigabytes of WAT.
 func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...string) (string, string) {
+	if len(code) > maxDisasmInputBytes {
+		return "", tool + " skipped: module too large"
+	}
 	if _, err := exec.LookPath(tool); err != nil {
 		return "", tool + " not on PATH (install wabt to enable)"
 	}
 
-	inPath, outPath, cleanup, err := stageWasmTempFiles(code)
+	inPath, cleanup, err := stageWasmInput(code)
 	if err != nil {
 		return "", tool + " staging failed: " + err.Error()
 	}
@@ -75,8 +87,7 @@ func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...str
 	ctx, cancel := context.WithTimeout(ctx, wasmToolTimeout)
 	defer cancel()
 
-	args := append([]string{}, extraArgs...)
-	args = append(args, "-o", outPath, inPath)
+	args := append(append([]string{}, extraArgs...), inPath)
 
 	// G204: tool is one of two fixed wabt binary names ("wasm2wat" /
 	// "wasm-decompile"), never user input; args are temp paths we created.
@@ -84,59 +95,74 @@ func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...str
 	// The module is attacker-uploaded: the tool gets PATH only, never the API's secrets.
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
 	cmd.Dir = os.TempDir()
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	// Bounds Wait after a kill: a descendant still holding stdout/stderr must not hang the request.
+	cmd.WaitDelay = time.Second
+	stderr := &cappedBuffer{limit: maxDisasmStderrBytes}
+	cmd.Stderr = stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", tool + " failed: " + err.Error()
+	}
+	if err := cmd.Start(); err != nil {
+		return "", tool + " failed: " + truncate(err.Error(), 200)
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(stdout, maxDisasmOutputBytes+1))
+	truncated := len(raw) > maxDisasmOutputBytes
+	if truncated {
+		cancel()
+	}
+	waitErr := cmd.Wait()
+	if truncated {
+		return string(raw[:maxDisasmOutputBytes]) + "\n;; … output truncated …\n", ""
+	}
+	if waitErr != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return "", tool + " timed out"
 		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
-			msg = err.Error()
+			msg = waitErr.Error()
 		}
 		return "", tool + " failed: " + truncate(msg, 200)
 	}
-
-	// G304: outPath is from os.CreateTemp above — a path we created, not
-	// caller-influenced.
-	raw, err := os.ReadFile(outPath) //nolint:gosec // see note above
-	if err != nil {
-		return "", tool + " output read failed: " + err.Error()
+	if readErr != nil {
+		return "", tool + " output read failed: " + readErr.Error()
 	}
-	text := string(raw)
-	if len(text) > maxDisasmOutputBytes {
-		text = text[:maxDisasmOutputBytes] + "\n;; … output truncated …\n"
-	}
-	return text, ""
+	return string(raw), ""
 }
 
-// stageWasmTempFiles writes code to a temp input file and returns the input + (empty) output paths plus a cleanup that removes both; the
-// output path is created+closed so the tool can write to it.
-func stageWasmTempFiles(code []byte) (inPath, outPath string, cleanup func(), err error) {
+// cappedBuffer keeps the first limit bytes written and discards the rest without failing the writer.
+type cappedBuffer struct {
+	limit int
+	buf   bytes.Buffer
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := c.limit - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(room, len(p))])
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) String() string { return c.buf.String() }
+
+// stageWasmInput writes code to a temp file and returns its path plus a cleanup that removes it.
+func stageWasmInput(code []byte) (string, func(), error) {
 	in, err := os.CreateTemp("", "stellarindex-wasm-*.wasm")
 	if err != nil {
-		return "", "", nil, err
+		return "", nil, err
 	}
-	inPath = in.Name()
+	inPath := in.Name()
 	if _, werr := in.Write(code); werr != nil {
 		_ = in.Close()
 		_ = os.Remove(inPath)
-		return "", "", nil, werr
+		return "", nil, werr
 	}
-	_ = in.Close()
-
-	out, err := os.CreateTemp("", "stellarindex-wasm-*.out")
-	if err != nil {
+	if cerr := in.Close(); cerr != nil {
 		_ = os.Remove(inPath)
-		return "", "", nil, err
+		return "", nil, cerr
 	}
-	outPath = out.Name()
-	_ = out.Close()
-
-	return inPath, outPath, func() {
-		_ = os.Remove(inPath)
-		_ = os.Remove(outPath)
-	}, nil
+	return inPath, func() { _ = os.Remove(inPath) }, nil
 }
 
 func truncate(s string, n int) string {

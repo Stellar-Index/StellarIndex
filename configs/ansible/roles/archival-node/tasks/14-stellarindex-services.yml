@@ -288,22 +288,11 @@
   notify: Restart stellarindex-api
   register: stellarindex_api_env
 
-- name: Template /etc/stellarindex.toml
-  # The on-disk config carries everything except secrets. Secrets
-  # come from /etc/default/stellarindex via EnvironmentFile (the
-  # Postgres password overrides the DSN here; S3 creds + connector
-  # keys are injected the same way).
-  ansible.builtin.template:
-    src: stellarindex.toml.j2
-    dest: /etc/stellarindex.toml
-    owner: root
-    group: root
-    mode: "0644"
-  diff: false
-  notify:
-    - Restart stellarindex-indexer
-    - Restart stellarindex-aggregator
-    - Restart stellarindex-api
+- name: Template /etc/stellarindex.toml, validated by the installed binaries
+  ansible.builtin.import_tasks: stellarindex-toml.yml
+  vars:
+    stellarindex_toml_dest: /etc/stellarindex.toml
+    stellarindex_toml_bin_dir: /usr/local/bin
 
 - name: Install stellarindex-indexer systemd unit
   ansible.builtin.template:
@@ -630,7 +619,16 @@
       # run this wrapper, and an O_CREAT open (`>`, `<>`) of a lock file
       # another user owns in sticky /run/lock is EACCES under
       # fs.protected_regular.
-      lock_file_prep() { [ -e "$1" ] || [ -L "$1" ] || (umask 027; : >>"$1") 2>/dev/null || true; }
+      # The lock dir is group-writable, so a link planted between the check
+      # and the create must not be followed: link(2) never follows its target.
+      lock_file_prep() {
+        [ -e "$1" ] || [ -L "$1" ] && return 0
+        local t
+        t="$(mktemp "$1.XXXXXX" 2>/dev/null)" || return 0
+        chmod 640 "$t" && ln "$t" "$1" 2>/dev/null
+        rm -f "$t"
+        return 0
+      }
       # A lock is only a plain file owned by root, stellarindex or the
       # caller: opening a planted FIFO blocks until TimeoutStartSec, and a
       # file another uid owns is one that uid can hold forever.
@@ -888,7 +886,8 @@
           echo "# HELP stellarindex_heavy_lock_held_since_unix Unix time this job took the host-wide heavy lock; present only while it is held."
           echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
           echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
-        } > "$t" && chmod 644 "$t" && mv "$t" "$HELD_PROM" || rm -f "$t"
+        # -T: a directory a group writer planted at HELD_PROM is refused, not moved into.
+        } > "$t" && chmod 644 "$t" && mv -T -- "$t" "$HELD_PROM" || rm -f "$t"
       }
 
       if [ "$(id -u)" -ne 0 ]; then
