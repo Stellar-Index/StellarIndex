@@ -119,7 +119,8 @@ user redis_exporter on >{{ redis_password }} -@all +@connection +info +client +c
 {# the `stellarindex` application user. A failover demotes the old #}
 {# primary inside MULTI/EXEC with CLIENT KILL, and SCRIPT KILL frees a #}
 {# primary stuck in a script; without them the failover never completes. #}
-user sentinel on >{{ redis_password }} -@all +auth +ping +info +subscribe +publish +config|get +config|set +config|rewrite +replicaof +slaveof +role +multi +exec +client|setname +client|getname +client|id +client|list +client|kill +script|kill ~* &*
+{# ACL LOAD lets the role apply a changed users.acl (root-written) without a restart. #}
+user sentinel on >{{ redis_password }} -@all +auth +ping +info +subscribe +publish +config|get +config|set +config|rewrite +acl|load +replicaof +slaveof +role +multi +exec +client|setname +client|getname +client|id +client|list +client|kill +script|kill ~* &*
 
 {# Replication user. redis.conf.j2's `masteruser` points here instead #}
 {# of the disabled `default` user, so a replica's masterauth AUTH #}

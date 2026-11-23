@@ -56,7 +56,7 @@ ssh root@cache-01 "systemctl status redis-sentinel --no-pager | head -10"
 
 ## stellarindex_redis_memory_saturated
 
-**Symptom.** `(redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90`, `for: 5m`, ticket (P2). r1 pins `maxmemory-policy noeviction` (`redis_maxmemory_policy`, `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`; protects TTL-less `apikey:` records): at the cap writes fail. Multi-host default `volatile-lru` evicts TTL keys, so hit rate drops and p95 rises.
+**Symptom.** `(redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90`, `for: 5m`, ticket (P2). r1 pins `maxmemory-policy noeviction` (`redis_maxmemory_policy`, `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`; protects TTL-less `apikey:` records): at the cap writes fail. The multi-host `redis-sentinel` role pins the same `redis_maxmemory_policy: noeviction` (`configs/ansible/roles/redis-sentinel/defaults/main.yml`) and applies it to running nodes, so there too every write (VWAP cache, rate limits, key mints) fails with OOM at the cap.
 
 **Check.**
 
@@ -131,7 +131,7 @@ redis-cli -h cache-01 -p 26379 sentinel replicas stellarindex-r1-cache
 
 ## stellarindex_redis_sentinel_primary_count_wrong
 
-**Symptom.** `sum(stellarindex_redis_sentinel_primary) != 1`, `for: 2m`, page, multi-host only. Summed over every `redis_sentinel.prom` (`configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`), the hosts that are the Sentinel-elected primary. 0: Sentinel has no primary (no quorum, or every Redis down). 2: split brain, a partitioned host still believes it is primary; `redis_up` stays 1 on every member either way.
+**Symptom.** `sum(stellarindex_redis_sentinel_primary) != 1`, `for: 2m`, page, multi-host only. Summed over every `redis_sentinel.prom` (`configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`), the hosts whose own Redis reports `role:master` (`INFO replication`; a host whose Redis cannot be asked writes no series). 0: no Redis is primary (Sentinel has no quorum to promote one, or the primary's Redis is down). 2: split brain, a partitioned host still believes it is primary; `redis_up` stays 1 on every member either way. A host's own Sentinel being down does not change the sum: it shows as `stellarindex_redis_sentinel_up 0` in the same file.
 
 **Check.**
 

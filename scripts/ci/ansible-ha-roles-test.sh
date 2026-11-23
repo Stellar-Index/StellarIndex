@@ -415,6 +415,20 @@ conf = env.from_string(text("redis-sentinel/templates/redis.conf.j2")).render(
        "redis_effective_primary_host": "10.0.0.22"})
 check("min-replicas-to-write 1" in conf, "redis.conf renders min-replicas-to-write")
 
+# redis: users.acl is policy, not topology: reconciled every run and loaded live, after a password check.
+r03 = tasks("redis-sentinel/tasks/03-redis-configure.yml")
+r03n = [t.get("name", "") for t in r03]
+acl_i = r03n.index("render /etc/redis/users.acl (lockdown)")
+check("redis_render_configs" not in str(r03[acl_i].get("when")) and r03[acl_i].get("notify") == "redis acl changed",
+      "users.acl renders on a configured host too and notifies the ACL reload, not a restart")
+pw_i = next((i for i, t in enumerate(r03) if "redis_acl_password_probe" in str(t.get("assert", {}).get("that"))), None)
+check(pw_i is not None and pw_i < acl_i, "a rotated redis_password fails the play before users.acl is rewritten")
+rh = tasks("redis-sentinel/handlers/main.yml")
+rhn = {h.get("listen"): i for i, h in enumerate(rh)}
+check("redis acl changed" in rhn and "ACL LOAD" in str(rh[rhn["redis acl changed"]].get("shell"))
+      and rhn["redis acl changed"] > rhn["redis config changed"],
+      "an ACL change is applied with ACL LOAD, after any first-run restart")
+
 # redis: a fresh or replaced host must hear the surviving Sentinels.
 peer = next(t for t in tasks("redis-sentinel/tasks/03-redis-configure.yml") if t.get("name", "").startswith("ask the other Sentinels"))
 check("redis_sentinel_managed" not in str(peer["when"]), "peer-Sentinel query is not skipped on a host without a rendered sentinel.conf")
@@ -769,6 +783,31 @@ for vip, addrs, want in (("10.0.0.10", ["10.0.0.101/24"], "0"), ("10.0.0.10", ["
         subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}"}, check=False)
         prom = open(f"{d}/keepalived.prom").read() if os.path.exists(f"{d}/keepalived.prom") else ""
         check(f"stellarindex_haproxy_vip_owner {want}\n" in prom, f"keepalived scraper reports owner={want} for VIP {vip} on {addrs}")
+
+# redis: the primary gauge is the host's own Redis role; its Sentinel being down is not "no primary".
+rscr = next(t for t in tasks("redis-sentinel/tasks/07-monitoring.yml")
+            if "redis_sentinel.prom" in str(t.get("copy", {}).get("content", "")))["copy"]["content"]
+for role, sentinel, want_primary, want_up in (("master", "", "1", "0"), ("slave", "10.0.0.21", "0", "1"),
+                                              ("master", "10.0.0.21", "1", "1"), (None, "10.0.0.21", None, "1")):
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f"{d}/bin")
+        info = f"# Replication\\r\\nrole:{role}\\r\\n" if role else ""
+        with open(f"{d}/bin/redis-cli", "w") as fh:
+            fh.write(f"#!/bin/sh\ncase \"$*\" in *SENTINEL*) printf '%s' '{sentinel and sentinel + chr(10) + '6379' + chr(10)}' ;;"
+                     f" *INFO*) [ -n '{info}' ] || exit 1; printf '{info}' ;; esac\n")
+        os.chmod(f"{d}/bin/redis-cli", 0o755)
+        renv = jinja2.Environment()
+        renv.filters["bool"] = bool
+        script = renv.from_string(rscr).render(
+            redis_node_exporter_textfile_dir=d, ansible_host="10.0.0.21", redis_port=6379, redis_acl_lockdown=False,
+            redis_sentinel_port=26379, redis_sentinel_master_name="m")
+        r = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}",
+                                                         "REDIS_PASSWORD": "x"}, capture_output=True, text=True)
+        prom = open(f"{d}/redis_sentinel.prom").read() if os.path.exists(f"{d}/redis_sentinel.prom") else ""
+        got_primary = re.search(r"^stellarindex_redis_sentinel_primary (\d)$", prom, re.M)
+        check(r.returncode == 0 and (got_primary.group(1) if got_primary else None) == want_primary
+              and f"stellarindex_redis_sentinel_up {want_up}\n" in prom,
+              f"redis scraper: role={role} sentinel={'up' if sentinel else 'down'} -> primary={want_primary} up={want_up}")
 
 # A task failure before the handler flush drops every queued notification unless the play forces handlers.
 pdir = os.path.join(roles, "..", "playbooks")
