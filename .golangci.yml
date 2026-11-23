@@ -5,7 +5,7 @@
 version: "2"
 
 run:
-  timeout: 10m
+  timeout: 5m
   modules-download-mode: readonly
   # Tests are first-class code — they get linted too.
   tests: true
