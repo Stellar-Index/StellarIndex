@@ -546,22 +546,43 @@ func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	return out
 }
 
-// rwaContractCandidateDrops is what happened to contracts that reached the full ordered evaluation: the C4 refusal, the classic
-// member's SAC, then the structural non-refusal drop. C1 to C3 are decided by the scan itself, so their refusal constants are unreachable here.
+// rwaContractCandidateDropActors orders the directory arm's refusals. C1 is reachable: the directory sync and the table CHECK test
+// an address's shape, not its strkey checksum, so a mistyped address reaches the evaluation.
+var rwaContractCandidateDropActors = []struct{ reason, actor string }{
+	{rwa.RejectNotContract, rwaActorOperator},
+	{rwa.RejectNoContractBasis, rwaActorDefinition},
+	{rwa.RejectContractIsClassicMemberSAC, rwaActorDefinition},
+}
+
+// rwaContractCandidateDrops is what happened to contracts that reached the full ordered evaluation: every refusal in the directory
+// arm's own tally (a reason outside the known order is listed under operator so it cannot unbalance the funnel silently), then the
+// structural non-refusal drop. Not the merged refusals: the listing arm can emit the same reason.
 func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
-	out := make([]RWAFunnelDrop, 0, 2)
-	if n := m.refusals[rwa.RejectNoContractBasis]; n > 0 {
-		out = append(out, RWAFunnelDrop{
-			Reason: rwa.RejectNoContractBasis, Count: n, Actor: rwaActorDefinition,
-		})
+	out := make([]RWAFunnelDrop, 0, len(m.contractRefusals)+1)
+	seen := make(map[string]struct{}, len(rwaContractCandidateDropActors))
+	for _, d := range rwaContractCandidateDropActors {
+		seen[d.reason] = struct{}{}
+		if n := m.contractRefusals[d.reason]; n > 0 {
+			out = append(out, RWAFunnelDrop{Reason: d.reason, Count: n, Actor: d.actor})
+		}
 	}
-	return append(out, rwaDrops(
-		RWAFunnelDrop{
-			Reason: rwa.RejectContractIsClassicMemberSAC, Actor: rwaActorDefinition,
-			Count: m.contractRefusals[rwa.RejectContractIsClassicMemberSAC],
-		},
-		RWAFunnelDrop{Reason: rwaDropDuplicateContractEntry, Count: m.contractCensus.duplicates, Actor: rwaActorOperator},
-	)...)
+	unknown := make([]string, 0, 1)
+	for reason, n := range m.contractRefusals {
+		if _, ok := seen[reason]; !ok && n > 0 {
+			unknown = append(unknown, reason)
+		}
+	}
+	sort.Strings(unknown)
+	for _, reason := range unknown {
+		out = append(out, RWAFunnelDrop{Reason: reason, Count: m.contractRefusals[reason], Actor: rwaActorOperator})
+	}
+	if n := m.contractCensus.duplicates; n > 0 {
+		out = append(out, RWAFunnelDrop{Reason: rwaDropDuplicateContractEntry, Count: n, Actor: rwaActorOperator})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // rwaCandidateDrops is what happened to candidates that reached the full ordered evaluation: requirement refusals in R1-R4 order, then

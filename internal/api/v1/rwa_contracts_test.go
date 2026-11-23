@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -355,6 +356,32 @@ func TestRWAContracts_UnreadScaleValuesNothingFromAnySupply(t *testing.T) {
 				t.Errorf("summary market_cap_usd = %q, want absent", *view.Summary.MarketCapUSD)
 			}
 		})
+	}
+}
+
+// TestRWAContracts_ABadChecksumAddressIsAFunnelDrop: the directory sync checks an address's shape, not its strkey checksum, so a
+// mistyped address reaches the evaluation and is refused at C1. The candidate stage must account for it or the funnel cannot balance.
+func TestRWAContracts_ABadChecksumAddressIsAFunnelDrop(t *testing.T) {
+	const mistyped = "CAAREAYEAUDAOCAJBIFQYDIOB4IBCEQTCQKRMFYYDENBWHA5DYPSBFLM"
+	if canonical.IsContractID(mistyped) {
+		t.Fatal("fixture address passes the checksum")
+	}
+	view := getRWA(t, rwaContractServer(t,
+		&stubRWAContractReader{contracts: []timescale.DirectoryEntry{
+			recognisedContract(rwaContractGood, "Example Treasury Fund"),
+			recognisedContract(mistyped, "Example Credit Fund"),
+		}},
+		map[string]timescale.AssetRow{rwaContractGood: rwaContractRow(rwaContractGood, sptr("1.0740000000"))},
+		map[string]string{rwaContractGood: "USTRY"},
+		map[string]string{rwaContractGood: "1000000000000"},
+		map[string]uint32{rwaContractGood: 6},
+		nil,
+	))
+	assertContractStage(t, view, "contract_candidates_evaluated", 2)
+	assertContractDrop(t, view, "contract_candidates_evaluated", "not_a_contract_address", 1)
+	assertContractStage(t, view, "contract_assets_admitted", 1)
+	if !view.Funnel.Balanced {
+		t.Errorf("funnel unbalanced by a C1 refusal:\n%s", funnelDump(view))
 	}
 }
 
