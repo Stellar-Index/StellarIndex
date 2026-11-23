@@ -3,7 +3,27 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { usePricePoll } from './hooks';
+import { priceIntegrityCaveats, usePricePoll } from './hooks';
+
+describe('priceIntegrityCaveats', () => {
+  it('names an unchecked peg, so its absent depeg flag never reads as clear', () => {
+    expect(priceIntegrityCaveats({ proxy_deviation_unchecked: true })).toEqual([
+      'peg not verified at this time',
+    ]);
+  });
+
+  it('keeps the depeg warning beside an unchecked peg', () => {
+    expect(
+      priceIntegrityCaveats({
+        proxy_deviation: true,
+        proxy_deviation_unchecked: true,
+      }),
+    ).toEqual([
+      'assumes a USD peg that is more than 2% off $1',
+      'peg not verified at this time',
+    ]);
+  });
+});
 
 // REGRESSION: usePricePoll's tick() called raw fetch() with no
 // AbortController/signal — the `cancelled` flag only gated the subsequent
