@@ -41,8 +41,8 @@ type GlobalAssetView struct {
 	// and can be days old over a weekend. It is null only under price_authority onchain_listing.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
-	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded), the Stellar
-	// issuer's flag withholds (scam_issuer), or an exclusion or directory read could not judge (unattributed, with flags.stale).
+	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded), the substance gate
+	// refused (substance), the Stellar issuer's flag withholds (scam_issuer), or a read could not judge (unattributed, flags.stale).
 	PriceWithheldReason PriceWithheldReason `json:"price_withheld_reason,omitempty"`
 	PriceSources        []string            `json:"price_sources,omitempty"`
 	PriceAsOf           *WireTime           `json:"price_as_of,omitempty"`
@@ -210,9 +210,6 @@ func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAsse
 	return view
 }
 
-// onChainListingWindow is the span the per-asset reader pools prices_1m buckets over for its price.
-const onChainListingWindow = 24 * time.Hour
-
 // onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID, nil when absent or refused, with
 // the refusal's reason when an exclusion caused it. It passes the same fail-closed substance gate as the classic row, so a dust
 // market cannot price a row /v1/price withholds.
@@ -255,9 +252,10 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) (*s
 }
 
 // onChainListingLegsWithheld judges the per-asset price, a pooled ratio with no source list read either direct against a USD proxy or
-// against XLM times the XLM/USD anchor. Which arm priced it is not returned, so both legs it may rest on are judged.
+// against XLM times the XLM/USD anchor. Which arm priced it is not returned, so both legs it may rest on are judged, over the
+// reader's whole 7-day window (assetPriceLookback, as the classic row's judge uses): the price may come from any bucket in it.
 func (s *Server) onChainListingLegsWithheld(ctx context.Context, asset canonical.Asset) pricingguard.Withholding {
-	from := time.Now().Add(-onChainListingWindow)
+	from := time.Now().Add(-assetPriceLookback)
 	if w := s.unattributedWithheld(ctx, asset, defaultPriceQuote, from, false); w != pricingguard.NotWithheld || sameAsset(asset, canonical.NativeAsset()) {
 		return w
 	}
@@ -279,15 +277,19 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 	}
 	// Shared with the listing path ([Server.fiatUSDPriceFor]); PriceReader alone would serve null
 	// price_usd / market_cap_usd for every non-USD fiat.
-	price, obs, sources, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
-	if !ok {
+	rate, w := s.fiatUSDRate(ctx, vc.Ticker)
+	if w != pricingguard.NotWithheld {
+		view.PriceWithheldReason = withheldReasonFor(w)
 		return view
 	}
-	view.PriceUSD = &price
+	if rate.price == "" {
+		return view
+	}
+	view.PriceUSD = &rate.price
 	view.PriceAuthority = aggregate.AuthorityReferenceRate
-	view.PriceSources = sources
-	view.PriceAsOf = wireTimePtr(&obs)
-	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, price)
+	view.PriceSources = rate.sources
+	view.PriceAsOf = wireTimePtr(&rate.asOf)
+	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, rate.price)
 	return view
 }
 
@@ -358,46 +360,88 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // the ECB calendar leaves (Thursday's rate is still current on the Tuesday after Easter).
 const fiatRateStaleAfter = 6 * 24 * time.Hour
 
-// fiatUSDPriceFor resolves a non-USD fiat's USD price, shared by the LISTING and DETAIL paths so they cannot drift. Order is
-// load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
-// InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
-func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
-	price, asOf, sources, ok, fxSilent := s.fiatUSDPriceFromFX(ctx, ticker)
-	if ok {
-		return price, asOf, sources, true
+// fiatUSDPriceFor is the declared-peg fill's rate, judged: ok is false both when no rate exists and when [Server.fiatUSDRate]
+// withheld it, so a route with no outbound judge cannot serve an excluded rate.
+func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, ok bool) {
+	rate, w := s.fiatUSDRate(ctx, ticker)
+	return rate.price, rate.asOf, w == pricingguard.NotWithheld && rate.price != ""
+}
+
+// fiatUSDPriceUnjudged is [Server.fiatUSDPriceFor] without the exclusion judgement; read only through the RowJudge fills.
+func (s *Server) fiatUSDPriceUnjudged(ctx context.Context, ticker string) (price string, asOf time.Time, ok bool) {
+	rate, ok := s.readFiatUSDRate(ctx, ticker)
+	return rate.price, rate.asOf, ok
+}
+
+// fiatUSDRate is one reading of a fiat's USD rate. judgedSources is what an exclusion is matched on: the fx_quotes row's own
+// vendor, empty when it recorded none (any exclusion on the pair then covers it, as on the FX series).
+type fiatUSDRate struct {
+	price         string
+	asOf          time.Time
+	sources       []string
+	judgedSources []string
+	span          time.Duration
+}
+
+// fiatUSDRate resolves the rate and judges it against source exclusions over the span the reading pools; a withheld rate is
+// returned empty and is never replaced by the fallback path, and an unreadable exclusion set withholds. Order is load-bearing:
+// fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use InverseUSD ("1 unit in
+// USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
+func (s *Server) fiatUSDRate(ctx context.Context, ticker string) (fiatUSDRate, pricingguard.Withholding) {
+	rate, ok := s.readFiatUSDRate(ctx, ticker)
+	if !ok {
+		return fiatUSDRate{}, pricingguard.NotWithheld
 	}
-	// Path 2: PriceReader fallback.
+	book := []canonical.Pair{{Base: canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, Quote: defaultPriceQuote}}
+	if w := s.bucketWithholding(ctx, book, rate.judgedSources, rate.asOf, rate.asOf.Add(rate.span)); w != pricingguard.NotWithheld {
+		if w == pricingguard.WithheldExclusionsUnread {
+			reportUnreadRead(ctx)
+		} else {
+			reportWithheldRead(ctx)
+		}
+		return fiatUSDRate{}, w
+	}
+	return rate, pricingguard.NotWithheld
+}
+
+// readFiatUSDRate resolves the rate, fx_quotes then the PriceReader fallback, unjudged.
+func (s *Server) readFiatUSDRate(ctx context.Context, ticker string) (fiatUSDRate, bool) {
+	rate, ok, fxSilent := s.fiatUSDPriceFromFX(ctx, ticker)
+	if !ok {
+		rate, ok = s.fiatUSDPriceFromReader(ctx, ticker, fxSilent)
+	}
+	return rate, ok
+}
+
+// fiatUSDPriceFromReader is path 2, the PriceReader fallback, judged at its observation instant on the sources it reports.
+func (s *Server) fiatUSDPriceFromReader(ctx context.Context, ticker string, fxSilent bool) (fiatUSDRate, bool) {
 	if s.Prices == nil {
 		if fxSilent {
 			reportStaleRead(ctx)
 		}
-		return "", time.Time{}, nil, false
+		return fiatUSDRate{}, false
 	}
 	base, err := canonical.NewFiatAsset(ticker)
 	if err != nil {
-		return "", time.Time{}, nil, false
+		return fiatUSDRate{}, false
 	}
-	quote, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		return "", time.Time{}, nil, false
-	}
-	snap, srcs, _, err := s.Prices.LatestPrice(ctx, base, quote)
+	snap, srcs, _, err := s.Prices.LatestPrice(ctx, base, defaultPriceQuote)
 	if err != nil {
 		if isPriceReadFailure(err) {
 			reportUnreadRead(ctx)
 		} else if fxSilent {
 			reportStaleRead(ctx)
 		}
-		return "", time.Time{}, nil, false
+		return fiatUSDRate{}, false
 	}
-	return snap.Price, snap.ObservedAt.Time(), srcs, true
+	return fiatUSDRate{price: snap.Price, asOf: snap.ObservedAt.Time(), sources: srcs, judgedSources: srcs}, true
 }
 
 // fiatUSDPriceFromFX is path 1, fx_quotes. fxSilent reports a wired feed that read cleanly, quoted this ticker before, yet
 // holds no usable point in the window: if path 2 cannot answer either, the missing rate is a stale feed, not an unpriced fiat.
-func (s *Server) fiatUSDPriceFromFX(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok, fxSilent bool) {
+func (s *Server) fiatUSDPriceFromFX(ctx context.Context, ticker string) (rate fiatUSDRate, ok, fxSilent bool) {
 	if s.FXHistory == nil {
-		return "", time.Time{}, nil, false, false
+		return fiatUSDRate{}, false, false
 	}
 	now := time.Now().UTC()
 	points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
@@ -411,10 +455,17 @@ func (s *Server) fiatUSDPriceFromFX(ctx context.Context, ticker string) (price s
 			if now.Sub(points[i].Bucket) > fiatRateStaleAfter {
 				reportStaleRead(ctx)
 			}
-			return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true, false
+			rate = fiatUSDRate{
+				price: points[i].InverseUSDText, asOf: points[i].Bucket, sources: []string{fxQuoteSourceLabel(points[i].Source)},
+				span: 24 * time.Hour, // a daily point, judged over its day as [Server.fxSeriesClean] does
+			}
+			if points[i].Source != "" {
+				rate.judgedSources = []string{points[i].Source}
+			}
+			return rate, true, false
 		}
 	}
-	return "", time.Time{}, nil, false, err == nil && s.fxTickerQuotedBefore(ctx, ticker, now.AddDate(0, 0, -7))
+	return fiatUSDRate{}, false, err == nil && s.fxTickerQuotedBefore(ctx, ticker, now.AddDate(0, 0, -7))
 }
 
 // fxCoverageLookback bounds how far back [Server.fxTickerQuotedBefore] looks; a daily feed leaves at most ~one row per day.
@@ -443,7 +494,8 @@ func fxQuoteSourceLabel(source string) string {
 
 // fiatMarketCapUSD computes market_cap_usd for a fiat entry: USD is identity (1.00); others use the latest fx_quotes point in a
 // trailing 7 days (InverseUSD, authoritative). PriceReader.LatestPrice is last resort only: storePriceReader fast-paths fiat
-// quotes to ErrPriceNotFound. Nil when neither returns a price or the supply parse fails.
+// quotes to ErrPriceNotFound. Nil when neither returns a price or the supply parse fails; a rate an exclusion withheld is put
+// on ctx's read report.
 func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurrency) *string {
 	if vc.CirculatingSupply == "" {
 		return nil
@@ -451,11 +503,11 @@ func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurr
 	if strings.EqualFold(vc.Ticker, "USD") {
 		return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, "1.00000000000000")
 	}
-	price, _, _, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
-	if !ok {
+	rate, _ := s.fiatUSDRate(ctx, vc.Ticker)
+	if rate.price == "" {
 		return nil
 	}
-	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, price)
+	return computeFiatMarketCap(vc.CirculatingSupply, vc.SupplyDecimals, rate.price)
 }
 
 // computeFiatMarketCap returns supplyStr / 10^decimals x priceStr to 2 dp, nil when unparseable; it scales via
@@ -494,7 +546,8 @@ func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *c
 	ctx, rep := withReadReport(r.Context())
 	view := s.withTwinIssuerVerdict(ctx, s.buildGlobalAssetView(ctx, vc), vc)
 	unread := rep.unread.Load()
-	writeJSON(w, view, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
+	// The view names a withheld rate; degraded keeps the null out of shared caches until the exclusion lifts.
+	writeJSON(w, view, Flags{Stale: unread || rep.stale.Load(), Degraded: unread || rep.withheld.Load()})
 }
 
 // withTwinIssuerVerdict judges the entry's Stellar issuance on its issuer with the helpers the listing's [carryTwinIssuerVerdict]
@@ -568,11 +621,17 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	s.attachFiatMarketCaps(ctx, entries, out)
 	s.attachVerifiedImages(ctx, entries, out)
 	unread := rep.unread.Load()
-	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
+	writeJSON(w, out, Flags{Stale: unread || rep.stale.Load(), Degraded: unread || rep.withheld.Load()})
+}
+
+// isSafeHTTPSImageURL is isSafeImageURL restricted to https: wallets bulk-load the verified listing's logos on its https-only
+// promise, and a cleartext logo of a verified asset can be swapped on path.
+func isSafeHTTPSImageURL(s string) bool {
+	return strings.HasPrefix(s, "https://") && isSafeImageURL(s)
 }
 
 // attachVerifiedImages fills each row's Image from the issuer's cached SEP-1 entry (sep1_payload cache only, no live HTTPS),
-// best-effort per row, behind the same isSafeImageURL gate as the detail overlay.
+// best-effort per row, behind isSafeHTTPSImageURL.
 func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Sep1Cache == nil {
 		return
@@ -594,7 +653,7 @@ func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.V
 		if match == nil {
 			continue
 		}
-		if v := strings.TrimSpace(match.Image); isSafeImageURL(v) {
+		if v := strings.TrimSpace(match.Image); isSafeHTTPSImageURL(v) {
 			out[i].Image = v
 		}
 	}
@@ -639,19 +698,32 @@ func verifiedStellarIdentity(se *currency.IssuanceEntry) (assetID, issuer string
 	return a.String(), a.Issuer
 }
 
-// attachFiatMarketCaps computes fiat market caps in parallel via fiatMarketCapUSD. No-op only when NEITHER rate source is
-// wired: gating on `s.Prices == nil` alone would skip every fiat cap on a deployment with fxHistory but no PriceReader.
+// attachFiatMarketCaps computes fiat market caps in parallel via [Server.computeAllCatalogueMarketCaps]. No-op only when
+// NEITHER rate source is wired: gating on `s.Prices == nil` alone would skip every fiat cap on a deployment with fxHistory but
+// no PriceReader.
 func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
 	if s.Prices == nil && s.FXHistory == nil {
 		return
 	}
+	for i, c := range s.computeAllCatalogueMarketCaps(ctx, entries) {
+		if c != "" {
+			out[i].MarketCapUSD = c
+		}
+	}
+}
+
+// computeAllCatalogueMarketCaps returns market_cap_usd parallel to entries; only fiat rows (M2 x FX rate) carry one. A cap an
+// exclusion withheld is put on ctx's read report, for the caller to mark the response.
+func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency) []string {
+	caps := make([]string, len(entries))
 	forEachBounded(s.logger, len(entries), readFanoutConcurrency, func(i int) {
 		vc := entries[i]
 		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
 			return
 		}
 		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-			out[i].MarketCapUSD = *capStr
+			caps[i] = *capStr
 		}
 	})
+	return caps
 }

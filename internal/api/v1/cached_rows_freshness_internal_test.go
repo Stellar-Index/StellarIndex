@@ -83,7 +83,7 @@ func TestFiatUSDPrice_ReportsOldAndUnreadRates(t *testing.T) {
 	for _, c := range cases {
 		s := unreadTestServer(Options{FXHistory: c.fx})
 		ctx, rep := withReadReport(context.Background())
-		_, _, _, ok := s.fiatUSDPriceFor(ctx, "EUR")
+		_, _, ok := s.fiatUSDPriceFor(ctx, "EUR")
 		if ok != c.ok || rep.stale.Load() != c.stale || rep.unread.Load() != c.unread {
 			t.Errorf("%s: ok=%v stale=%v unread=%v, want %v %v %v",
 				c.name, ok, rep.stale.Load(), rep.unread.Load(), c.ok, c.stale, c.unread)
