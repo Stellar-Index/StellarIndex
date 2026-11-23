@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -29,6 +30,44 @@ func (s *Server) dropClassicMemberSACs(ctx context.Context, out *rwaMembership, 
 		}
 	}
 	out.contracts = kept
+}
+
+// withoutServedClassicSACs is [Server.dropClassicMemberSACs] against the classic rows a view serves: the membership's dedupe
+// read an earlier issuer page, so a row catalogued since would leave its SAC valued as a second asset. Only a contract whose
+// classic row is in classic is dropped, so the asset keeps a row. The tallies are copied: m is the cached membership's.
+func withoutServedClassicSACs(m rwaMembership, classic []RWAAsset) rwaMembership {
+	sacs := make(map[string]struct{}, len(classic))
+	for _, a := range classic {
+		if a.ContractID != "" || a.Code == "" || a.Issuer == "" {
+			continue
+		}
+		if id, err := (canonical.Asset{Type: canonical.AssetClassic, Code: a.Code, Issuer: a.Issuer}).SacContractID(); err == nil {
+			sacs[id] = struct{}{}
+		}
+	}
+	kept := m.contracts[:0:0]
+	for _, c := range m.contracts {
+		if _, dup := sacs[c.contractID]; !dup {
+			kept = append(kept, c)
+		}
+	}
+	if len(kept) == len(m.contracts) {
+		return m
+	}
+	m.refusals, m.contractRefusals, m.listingRefusals = maps.Clone(m.refusals), maps.Clone(m.contractRefusals), maps.Clone(m.listingRefusals)
+	for _, c := range m.contracts {
+		if _, dup := sacs[c.contractID]; !dup {
+			continue
+		}
+		m.refusals[rwa.RejectContractIsClassicMemberSAC]++
+		if c.recognition == rwa.RecognitionCuratedDirectory {
+			m.contractRefusals[rwa.RejectContractIsClassicMemberSAC]++
+		} else {
+			m.listingRefusals[rwa.RejectContractIsClassicMemberSAC]++
+		}
+	}
+	m.contracts = kept
+	return m
 }
 
 // classicMemberSACs is the SAC of each listing row the catalogue join ([Server.rwaListingRows]) resolves a classic member to.

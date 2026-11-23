@@ -1178,7 +1178,6 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 		at := time.Now()
 		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: m.serveFlags(), builtAt: at, observedAt: at}, nil
 	}
-	view := rwaMembershipView(m)
 	now := time.Now()
 	listCtx, listReads := withReadReport(ctx)
 	rows, join, err := s.rwaListingRows(listCtx, m)
@@ -1196,6 +1195,8 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	for _, n := range unobserved {
 		join.notObserved += n
 	}
+	m = withoutServedClassicSACs(m, classicAssets)
+	view := rwaMembershipView(m)
 
 	// The contract arm fails the build as the classic arm does: degrading to zero rows would
 	// drop admitted members from the totals without a lower_bound. Both contract arms share one
