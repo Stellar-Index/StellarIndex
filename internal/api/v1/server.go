@@ -184,8 +184,7 @@ type Server struct {
 	nativeLPFetched    time.Time
 	nativeLPFillMu     sync.Mutex
 	nativeLPRefreshing atomic.Bool
-	// protocolFast{Mu,Settled,OK} cache the daily-pre-aggregation probe only once definitive (see
-	// fastActivity); a sync.Once would latch a transient first-probe error for the process lifetime.
+	// protocolFast{Mu,Settled,OK} cache the probe once definitive (fastActivity); a sync.Once would latch a transient error.
 	protocolFastMu      sync.Mutex
 	protocolFastSettled bool
 	protocolFastOK      bool
@@ -194,15 +193,14 @@ type Server struct {
 	protoDetailMu     sync.Mutex
 	protoDetailCache  map[string]protoDetailEntry
 	protoDetailFlight map[string]chan struct{}
-	// Last-good cache for the bespoke analytics block of that detail view, which is built last and
-	// would otherwise vanish when the rebuild's budget runs out. See protocol_bespoke_cache.go.
+	// Last-good cache of that detail view's bespoke block, built last so a spent budget would drop it (protocol_bespoke_cache.go).
 	protocolBespokeCache bespokeCache
-	// Prewarmed SWR cache for the per-source contract_count on GET /v1/protocols: the roster is a served-tier
-	// `SELECT DISTINCT ... LIMIT 5000` scan on an unauthenticated route, so scanning per origin miss is a DoS surface.
+	// Prewarmed SWR cache for GET /v1/protocols contract_count: a per-miss roster scan on an open route is a DoS surface.
 	protocolRosterCache rosterCache
-	// Per-pool built reserves views (see buildPoolReserves), and the GET /v1/lending/protocols totals built from them.
+	// Per-pool reserves views (buildPoolReserves), the /v1/lending/protocols totals from them, and /top-accounts positions.
 	lendingReserves       *swrCache[poolReserves]
 	lendingProtocolsCache *swrCache[lendingProtocolsBuild]
+	lendingTopAccounts    *swrCache[poolTopAccounts]
 	// lendingSummaryFailed maps a pool to when the list last saw its reserves build fail; see attachLendingSummaries.
 	lendingSummaryMu     sync.Mutex
 	lendingSummaryFailed map[string]time.Time
@@ -957,6 +955,7 @@ func New(opts Options) *Server {
 		coverageFloorCache:    &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
 		lendingReserves:       newSWRCache[poolReserves](logger, "lending_reserves", "api-lending-reserves-fill", lendingReservesTTL, lendingReservesMaxEntries).withTTLOf(poolReservesTTL),
 		lendingProtocolsCache: newSWRCache[lendingProtocolsBuild](logger, "lending_protocols", "api-lending-protocols-fill", lendingReservesTTL, 1),
+		lendingTopAccounts:    newSWRCache[poolTopAccounts](logger, "lending_top_accounts", "api-lending-top-accounts-fill", lendingReservesTTL, lendingReservesMaxEntries).withTTLOf(poolTopAccountsTTL),
 		fxCrossMaxAge:         fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
 		fxFixings:             newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
 		streamDrain:           streaming.NewDrain(),
@@ -1503,11 +1502,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves", s.handleLendingPoolReserves)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/config-history", s.handleLendingConfigHistory)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop", s.handleLendingPoolBackstop)
-	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves/{asset}/history", s.handleLendingReserveHistory)
-	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop/history", s.handleLendingBackstopHistory)
+	s.registerLendingHistoryRoutes()
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/auctions", s.handleLendingPoolAuctions)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/liquidations", s.handleLendingPoolLiquidations)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/emissions", s.handleLendingPoolEmissions)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/top-accounts", s.handleLendingPoolTopAccounts)
 	s.mux.HandleFunc("GET /v1/lending/accounts/{account}/earnings", s.handleLendingAccountEarnings)
 
 	// MEV — auto-flagged MEV-event feed (arbitrage cycles today).

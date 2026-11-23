@@ -4208,7 +4208,21 @@ paths:
         when no lending source knows the pool, or nothing was ever
         recorded for this reserve in it (a window with no change is a
         200 with no points). 503 `history-unavailable` when this
-        deployment has not derived the history. No USD values.
+        deployment has not derived the history.
+
+        `supplied_usd` / `borrowed_usd` value each point at the USD
+        price of the bucket it falls in (the seed at the bucket of
+        `from`): the volume-weighted price (VWAP, not the close) of the
+        newest price bucket starting at or before it, at most
+        `price_max_age_hours` earlier (6 for `1h`, 48 for `1d`), from
+        the series `/v1/chart` serves, never a later bucket's or
+        today's price. `price_at` is that price bucket's start;
+        `price_carried` marks one more than one bucket older. A token
+        the live reserve page withholds (a thin market, an operator
+        exclusion) is withheld here too. Without a price the USD
+        values are null, `usd_reason` says why, and
+        `usd_unvalued_points` counts the point; never 0. Clients must
+        not carry a USD value forward over a null one.
       parameters:
         - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
         - { name: asset, in: path, required: true, description: Reserve token contract C-strkey., schema: { type: string } }
@@ -4290,8 +4304,138 @@ paths:
                                 liability_factor: { type: [string, "null"] }
                                 supply_cap: { type: [string, "null"], description: "Base units; null on Blend V1 and when no config is in force." }
                                 config_uncertain: { type: boolean, description: "True when the reserve config or the pool instance changed later in this state's hour, so the one in force at this state is not known; the fields that depend on it are null." }
+                                supplied_usd: { type: [string, "null"], description: "Decimal USD at this point's bucket price; null with usd_reason when not valued." }
+                                borrowed_usd: { type: [string, "null"] }
+                                price_usd: { type: [string, "null"], description: "USD per whole token used." }
+                                price_at: { type: [string, "null"], format: date-time, description: "Start of the price bucket used." }
+                                price_basis: { type: string, enum: [transitive, stablecoin_proxy], description: "transitive: crossed through XLM; stablecoin_proxy: from a book quoted in a USD stablecoin; omitted for a price traded against fiat:USD." }
+                                price_carried: { type: boolean, description: "True when price_at is more than one bucket before this point's bucket; omitted otherwise." }
+                                usd_reason: { type: [string, "null"], enum: [no_price_within_bound, unpriced, decimals_unknown, price_scale_mismatch, negative_amount, withheld, price_read_failed, archived, null], description: "Why the USD values are null; null when valued. archived: a removed (archived) point. withheld: refused as the live valuation refuses it (operator exclusion, flagged issuer, thin market). price_read_failed: an input could not be read; the body is stale and not cached." }
                               required: [t, state_ledger, config_ledger, removed, supplied, borrowed, b_rate, d_rate, ir_mod, backstop_credit, utilization_pct, borrow_apr, supply_apr, collateral_factor, liability_factor, supply_cap, config_uncertain]
+                          price_max_age_hours: { type: integer, description: "How far before its bucket a USD price may be: 6 for 1h, 48 for 1d." }
+                          usd_unvalued_points: { type: integer, description: "Points whose USD values are null, removed points included." }
                         required: [pool, asset, protocol, interval, from, to, decimals, rate_decimals, ir_mod_decimals, config_decimals, history_through_ledger, history_through_time, dropped_points, before_first_state, points]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /lending/pools/{pool}/history:
+    get:
+      operationId: getLendingPoolHistory
+      tags: [protocols]
+      summary: Lending pool — TVL and borrowed USD over time.
+      description: |
+        The pool's (Blend V1/V2, BLNT) USD value at every hour
+        (`interval=1h`) or UTC day (`interval=1d`) from `from` to the
+        earliest of `to`, now and the history coverage. Each reserve's
+        state at the bucket's close (as
+        `/v1/lending/pools/{pool}/reserves/{asset}/history` records it)
+        is valued at that bucket's own USD price under the same rule
+        as that route: at most `price_max_age_hours` before the bucket,
+        never a later or current price. `tvl_usd` sums the valued
+        reserves' `supplied_usd`; null when none is valued, never 0.
+        A bucket's value is each reserve's end-of-bucket balance times
+        that bucket's volume-weighted price, not the close; clients
+        must not carry a USD value forward over a null one.
+        When a reserve present in the bucket is unvalued
+        (`unvalued_reserves`, including one whose state entry is
+        archived, reason `archived`), a pool reserve has no recorded
+        history (`omitted_reserves`), or the reserve list is not
+        verified complete (`reserves_lower_bound_reason`: the list is
+        read from the served positions projection, which is complete
+        only when verified from the protocol's genesis), a non-null
+        `tvl_usd` is a lower bound and `lower_bound` is true.
+        `price_carried_reserves` names valued reserves whose price is
+        more than one bucket old. A reserve not yet listed at a bucket
+        is absent from it. Window, interval and errors as the reserve
+        history route.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: interval, in: query, required: false, schema: { type: string, enum: ["1h", "1d"], default: "1d" } }
+        - { name: from, in: query, required: false, description: "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).", schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: "RFC 3339; default now.", schema: { type: string, format: date-time } }
+        - { name: window, in: query, required: false, description: "Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`.", schema: { type: string } }
+      responses:
+        "200":
+          description: Pool USD history.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend_v2
+                  interval: 1d
+                  from: '2026-08-18T00:00:00Z'
+                  to: '2026-11-16T00:00:00Z'
+                  price_max_age_hours: 48
+                  history_through_ledger: 63340102
+                  history_through_time: '2026-11-15T23:59:58Z'
+                  dropped_points: 0
+                  omitted_reserves: []
+                  reserves_lower_bound_reason: null
+                  points:
+                  - t: '2026-08-18T00:00:00Z'
+                    tvl_usd: '1200000.00'
+                    borrowed_usd: '900000.00'
+                    lower_bound: false
+                    unvalued_reserves: []
+                    price_carried_reserves: []
+                    reserves:
+                    - { asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, supplied_usd: '1200000.00', borrowed_usd: '900000.00', price_usd: '1.0001', price_at: '2026-08-18T00:00:00Z', usd_reason: null }
+                as_of: '2026-11-16T00:00:01Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: [string, "null"], enum: [blend_v1, blend_v2, blnt, null] }
+                          interval: { type: string, enum: ["1h", "1d"] }
+                          from: { type: string, format: date-time }
+                          to: { type: string, format: date-time }
+                          price_max_age_hours: { type: integer }
+                          history_through_ledger: { type: integer, format: int64, description: "The lowest derive watermark across the pool's reserves." }
+                          history_through_time: { type: [string, "null"], format: date-time }
+                          dropped_points: { type: integer }
+                          omitted_reserves: { type: array, items: { type: string }, description: "Pool reserves with no recorded history." }
+                          reserves_lower_bound_reason: { type: [string, "null"], enum: [history_unverified, history_verdict_stale, history_verdict_unread, null], description: "Set when the reserve list may miss a reserve (its projection is not verified from genesis); every non-null tvl_usd is then a lower bound." }
+                          points:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                t: { type: string, format: date-time, description: "Bucket start." }
+                                tvl_usd: { type: [string, "null"], description: "Decimal USD; null when no reserve is valued." }
+                                borrowed_usd: { type: [string, "null"] }
+                                lower_bound: { type: boolean }
+                                unvalued_reserves: { type: array, items: { type: string } }
+                                price_carried_reserves: { type: array, items: { type: string }, description: "Valued reserves whose price is more than one bucket old." }
+                                reserves:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      asset: { type: string }
+                                      supplied_usd: { type: [string, "null"] }
+                                      borrowed_usd: { type: [string, "null"] }
+                                      price_usd: { type: [string, "null"] }
+                                      price_at: { type: [string, "null"], format: date-time }
+                                      price_basis: { type: string, enum: [transitive, stablecoin_proxy] }
+                                      price_carried: { type: boolean }
+                                      usd_reason: { type: [string, "null"], enum: [no_price_within_bound, unpriced, decimals_unknown, price_scale_mismatch, negative_amount, withheld, price_read_failed, archived, null], description: "As the reserve history route's usd_reason." }
+                                    required: [asset, supplied_usd, borrowed_usd, price_usd, price_at, usd_reason]
+                              required: [t, tvl_usd, borrowed_usd, lower_bound, unvalued_reserves, price_carried_reserves, reserves]
+                        required: [pool, protocol, interval, from, to, price_max_age_hours, history_through_ledger, history_through_time, dropped_points, omitted_reserves, reserves_lower_bound_reason, points]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -5244,6 +5388,162 @@ paths:
                           as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured at serve time." }
                           as_of_time: { type: string, format: date-time }
                         required: [pool, protocol, emission_token, emission_token_decimals, eps_decimals, storage_available, reserves, backstop, claims, as_of_time]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /lending/pools/{pool}/top-accounts:
+    get:
+      operationId: getLendingPoolTopAccounts
+      tags: [protocols]
+      summary: Lending pool — largest suppliers or borrowers.
+      description: |
+        The pool's largest current positions on one side, Blend and BLNT
+        alike. Rows are positions, not accounts: an account holding several
+        reserves appears once per reserve, and `value_usd` is that one
+        position's value, never the account's total across the pool. Each
+        row is one account's position in one reserve, read from
+        the pool's `Positions(account)` contract storage in the lake: `tokens`
+        is the b-tokens (supply, collateral and non-collateral summed) or
+        d-tokens (borrow) the account holds now, and `amount` is those tokens
+        in the underlying at the reserve's stored `b_rate`/`d_rate`, the same
+        conversion `/v1/lending/accounts/{account}/earnings` serves as
+        `current_value`, true as of the reserve's `last_update` on
+        `/reserves`. Both are base-unit decimal strings; `decimals` scales
+        them to whole tokens.
+
+        Ranking. Without `asset`, rows rank by `value_usd` (the amount at
+        the price `/v1/lending/pools/{pool}/reserves` serves for the
+        reserve, 2 dp), `ranking: value_usd`. A reserve without a USD price
+        is left out of that ranking, never compared by token amount: it is
+        named in `excluded` with `reason: unpriced` and `lower_bound` is
+        true; pass its `asset` to rank it. With `asset`, rows rank by
+        `amount` within that reserve, `ranking: amount`, and a row whose
+        price is unavailable keeps its amount with `value_usd: null` and
+        `usd_reason`. Ties order by account.
+
+        `share_of_reserve` is `amount` over the reserve's current `supplied`
+        (or `borrowed`) total on `/reserves`, a decimal fraction at 6 dp;
+        null when that total is zero. `accounts` counts the distinct
+        accounts holding a non-zero position on the side (in `asset` when
+        given). `lower_bound` is true, and `rows` and `accounts` are floors,
+        whenever `excluded` is non-empty: a reserve whose rate is not read
+        (`rate_unread`), Positions entries that did not decode
+        (`positions_unreadable`), a read that reached its 50,000-entry
+        cap (`positions_truncated`), a reserve whose read positions sum past
+        its `b_supply` (supply) or `d_supply` (borrow)
+        (`positions_overcounted`), or a pool reserve list that could not be
+        read (`reserve_list_unreadable`).
+
+        Reconciliation has zero tolerance. Positions that sum past the
+        reserve's total cannot all be true, so that reserve is left out and
+        named; with `asset` set to it `rows` is empty. Positions that sum
+        short of it are ranked, `lower_bound` is true, and the gap is served
+        in `unattributed`: an unread position may hold all of it. A row's
+        rank is exact only while its `amount` is at least the reserve's
+        unattributed `amount` (without `asset`: while its `value_usd` is at
+        least the unattributed amounts' summed USD value, and no rank is
+        exact when one of them has no price); every other row carries
+        `rank_lower_bound: true`. A truncated read serves `rows: []`.
+        `accounts` is a floor whenever `lower_bound`.
+
+        The pool's positions are one primary-key range read of its
+        Positions entries, cached per pool for one minute. They include
+        TTL-archived entries at their stored value: an archived position is
+        restorable and still the account's, and counts in the reserve's
+        totals. Rows do not say whether an entry is archived.
+
+        Each reserve's state is read fresh after the positions, so no
+        position is converted at a rate older than the position. The two
+        reads are not atomic: when a reserve mismatches, both are read once
+        more, and a mismatch that remains is cached for 5 seconds rather
+        than a minute.
+
+        404 when no Blend or BLNT pool is known at the contract id, or when
+        `asset` is not in the pool's (readable) reserve list.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: side, in: query, required: true, description: Which side to rank., schema: { type: string, enum: [supply, borrow] } }
+        - { name: asset, in: query, required: false, description: "Reserve token C-strkey; ranks that reserve by amount.", schema: { type: string } }
+        - { name: limit, in: query, required: false, description: Rows to return., schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: The pool's largest positions on one side.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend
+                  side: supply
+                  asset: null
+                  ranking: value_usd
+                  accounts: 412
+                  lower_bound: false
+                  excluded: []
+                  unattributed: []
+                  rows:
+                  - { rank: 1, account: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7, asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, decimals: 7, tokens: '9800000000000', amount: '10290000000000', value_usd: '308700.00', usd_reason: null, share_of_reserve: '0.041200', last_modified_ledger: 63339870 }
+                  as_of_ledger: 63340102
+                  note: "Rows are positions, not accounts: each row is one account's current position in one reserve."
+                as_of: '2026-11-16T12:00:00Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: string, enum: [blend, blnt] }
+                          side: { type: string, enum: [supply, borrow] }
+                          asset: { type: [string, "null"], description: "The `asset` filter; null when every reserve is ranked." }
+                          ranking: { type: string, enum: [value_usd, amount] }
+                          accounts: { type: integer, description: "Distinct accounts with a non-zero position on the side; a floor when `lower_bound`." }
+                          lower_bound: { type: boolean }
+                          excluded:
+                            type: array
+                            items: { $ref: "#/components/schemas/LendingTopAccountsExclusion" }
+                          unattributed:
+                            type: array
+                            description: "Per ranked reserve, the part of its side total no read position holds; empty when every reserve reconciles."
+                            items:
+                              type: object
+                              properties:
+                                asset: { type: string, description: Reserve token C-strkey. }
+                                side: { type: string, enum: [supply, borrow] }
+                                tokens: { type: string, description: "b-tokens (supply) or d-tokens (borrow) of the reserve's total no read position holds, base units." }
+                                amount: { type: string, description: "`tokens` in the underlying at the reserve's stored rate, base units." }
+                                share_of_reserve: { type: string, description: "`tokens` over the reserve's `b_supply` (`d_supply`), 6 dp." }
+                              required: [asset, side, tokens, amount, share_of_reserve]
+                          rows:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                rank: { type: integer }
+                                account: { type: string, description: "G- or C-strkey." }
+                                asset: { type: string, description: Reserve token C-strkey. }
+                                decimals: { type: [integer, "null"] }
+                                tokens: { type: string, description: "b-tokens (supply) or d-tokens (borrow) held on chain, base units." }
+                                amount: { type: string, description: "`tokens` in the underlying at the reserve's stored rate, base units." }
+                                value_usd: { type: [string, "null"], description: "This one position's `amount` in USD at the `/reserves` price, 2 dp, not the account's total; null with `usd_reason`." }
+                                usd_reason: { type: [string, "null"], enum: [unpriced, withheld, null] }
+                                share_of_reserve: { type: [string, "null"], description: "`amount` over the reserve's side total, 6 dp." }
+                                last_modified_ledger: { type: integer, format: int64, description: "Ledger the Positions entry was last written." }
+                                rank_lower_bound: { type: boolean, description: "Present and true when an unread position could hold more than this row, so its rank is a floor. Absent otherwise." }
+                              required: [rank, account, asset, decimals, tokens, amount, value_usd, usd_reason, share_of_reserve, last_modified_ledger]
+                          as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured when the cached positions were read; they are at least this new." }
+                          note: { type: string }
+                        required: [pool, protocol, side, asset, ranking, accounts, lower_bound, excluded, unattributed, rows, as_of_ledger, note]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -16665,6 +16965,25 @@ components:
             - token_read_failed
             - withheld
             - unpriced
+      required: [kind, pool, asset, reason]
+    LendingTopAccountsExclusion:
+      type: object
+      description: A position set a pool's top-accounts ranking leaves out, and why.
+      properties:
+        kind:   { type: string, enum: [supply, borrow] }
+        pool:   { type: [string, "null"] }
+        asset:  { type: [string, "null"], description: "The reserve left out; null for a pool-wide exclusion." }
+        reason:
+          type: string
+          description: "Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_overcounted`: the reserve's read positions sum past its `b_supply`/`d_supply`, which cannot be true, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read."
+          enum:
+            - unpriced
+            - withheld
+            - rate_unread
+            - positions_unreadable
+            - positions_truncated
+            - positions_overcounted
+            - reserve_list_unreadable
       required: [kind, pool, asset, reason]
     LendingReserveConfig:
       type: object

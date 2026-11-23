@@ -879,6 +879,24 @@ func (c *Client) LendingPools(ctx context.Context) (*Envelope[[]LendingPool], er
 	return &env, nil
 }
 
+// LendingPoolTopAccounts fetches a pool's largest suppliers or borrowers (GET /v1/lending/pools/{pool}/top-accounts): ranked by
+// value_usd across reserves, or by amount within q.Asset.
+func (c *Client) LendingPoolTopAccounts(ctx context.Context, pool string, q LendingTopAccountsQuery) (*Envelope[LendingTopAccounts], error) {
+	v := url.Values{}
+	v.Set("side", q.Side)
+	if q.Asset != "" {
+		v.Set("asset", q.Asset)
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	var env Envelope[LendingTopAccounts]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/lending/pools/"+url.PathEscape(pool)+"/top-accounts", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // AggregateQuery is the input for [Client.VWAP] and [Client.TWAP]; Base and Quote are required, From/To default to a 1-hour window ending at the previous closed-bucket boundary (ADR-0015), and OutlierSigma is forwarded to VWAP only (zero disables the filter).
 type AggregateQuery struct {
 	Base         string

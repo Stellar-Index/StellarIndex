@@ -1,0 +1,14 @@
+[Unit]
+Description=Stellar Index off-host edge probe schedule - %i
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/sla-probe.md
+
+[Timer]
+# One run a minute; the check should carry a 1 min period and a grace of
+# about 3 min so a single skipped run does not page.
+OnBootSec=1min
+OnUnitActiveSec=1min
+RandomizedDelaySec=5s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

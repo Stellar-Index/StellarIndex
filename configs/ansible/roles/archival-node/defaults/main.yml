@@ -1661,3 +1661,13 @@ pgbackrest_repo1_sftp_host_fingerprint: ""
 # later — which is the point, so decide whether to keep paying rather
 # than silencing the alert.
 restore_drill_offsite_enabled: "{{ (pgbackrest_backup_enabled | default(true) | bool) and (pgbackrest_repo2_s3_bucket | default('') != '') and (pgbackrest_repo2_enabled | bool) }}"
+
+# Off-host edge probe (17-stellarindex-healthchecks.yml), off by default.
+# Set on a host in a DIFFERENT data centre from the deployment it probes.
+# Each entry: name (lowercase letters, digits, dashes), base_url (https://...),
+# ping_url_var (NAME of a vault variable holding that check's Healthchecks.io
+# ping URL), and optionally cert_min_days / data_path. Removing an entry
+# stops its timer and removes its env file on the next apply.
+edge_probe_targets: []
+# Fail the probe when the served certificate expires within this many days.
+edge_probe_cert_min_days: 7

@@ -23,6 +23,7 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/oracle/x_last_price":               {TestPriceSourceExclusion_SEP40FrozenHeldValue},
 	"GET /v1/lending/pools/{pool}/liquidations": {TestLendingPoolLiquidations_ExcludedSourceDoesNotValueFill},
 	"GET /v1/rwa/premium":                       {TestRWAPremium_ASourceExcludedDayIsWithheldAndFlagged},
+	"GET /v1/lending/pools/{pool}/history":      {TestLendingHistory_ExcludedSourceDoesNotValueBucket},
 	"GET /v1/assets/{asset_id}":                 {TestAssetDetail_SourceExclusionWithholdsCataloguePrice, v1.TestAssetRoutes_ExclusionGatesEveryVariant},
 	"GET /v1/price/at":                          {TestPriceAtWithholdsExcludedBucket, TestPriceAtJudgesBucketSources},
 	"GET /v1/price/changes":                     {TestPriceChangesWithholdsExcludedHorizon, TestPriceChangesJudgesBucketSources},
@@ -32,6 +33,8 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/assets":                            {TestAssetListing_SourceExclusionWithholdsCoveredRows, v1.TestAssetRoutes_ExclusionGatesEveryVariant},
 	"GET /v1/assets/verified":                   {TestGlobalAssetFXSourceExclusionWithholdsFiatRate},
 	"GET /v1/external/assets/{slug}":            {TestGlobalAssetFXSourceExclusionWithholdsFiatRate},
+
+	"GET /v1/lending/pools/{pool}/reserves/{asset}/history": {TestLendingHistory_ExcludedSourceDoesNotValueBucket},
 }
 
 // TestPriceRouteCoverage_GatedRoutesHaveExclusionProof: a route filed gated must cite a behavioural exclusion test, and a
