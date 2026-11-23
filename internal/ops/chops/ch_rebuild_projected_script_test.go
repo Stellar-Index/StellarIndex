@@ -227,6 +227,12 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 			t.Fatal(err)
 		}
 	}
+	if _, err := exec.LookPath("flock"); err != nil {
+		// macOS has no util-linux flock: a perl shim taking the same real flock(2) on the inherited fd.
+		if err := os.WriteFile(filepath.Join(bin, "flock"), []byte(flockShim), 0o755); err != nil { //nolint:gosec // an executable test stub
+			t.Fatal(err)
+		}
+	}
 	calls := filepath.Join(dir, "calls.txt")
 	_ = os.Remove(calls)
 	vars := map[string]string{
