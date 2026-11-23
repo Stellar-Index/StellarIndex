@@ -14,6 +14,9 @@
 #   - a file task whose literal path is inside a service-owned directory is
 #     flagged without `follow: false` (root chowned the target of a planted
 #     link); `state: absent`, the directory itself and root-owned trees are not;
+#   - a task rendering stellarindex.toml.j2 without `validate:` is flagged
+#     (a release's new key crash-looped the old API on restart); the
+#     validated render and an unrelated template are not;
 #   - baseline: a listed (rule, path) is reported but not counted; a listed
 #     pair with no live violation is STALE and fails (shrink-only);
 #   - the gate refuses to pass vacuously on an empty tree.
@@ -271,12 +274,32 @@ if printf '%s\n%s\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" \
   echo ok
 fi
 SH
+cat > "$T/strict.yml" <<'YML'
+---
+- name: bad — strict config rendered unvalidated
+  ansible.builtin.template:
+    src: stellarindex.toml.j2
+    dest: /etc/stellarindex.toml
+
+- name: good — validated by the installed binary
+  ansible.builtin.template:
+    src: stellarindex.toml.j2
+    dest: /etc/stellarindex.toml
+    validate: "/usr/local/bin/stellarindex-ops config-check -config %s"
+
+- name: good — another template is not strict
+  ansible.builtin.template:
+    src: galexie.toml.j2
+    dest: /etc/galexie.toml
+YML
 
 run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansible-tasks.sh 2>&1); }
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 17 "exit code = 17 findings"
+expect_rc 18 "exit code = 18 findings"
+expect_hit 'strict.yml:4: strict-config-unvalidated' "unvalidated stellarindex.toml render flagged"
+expect_miss 'strict.yml:1[0-9]:' "validated render and non-strict template not flagged"
 expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
 expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
 expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
@@ -310,13 +333,13 @@ expect_hit 'pg.yml:31: superuser-db-unpinned' "login_user postgres is not an exe
 expect_miss 'pg.yml:35:' "cluster-database task not flagged"
 expect_hit 'override.sh:4: superuser-db-unpinned' "a PGOPTIONS assignment that drops the pin is flagged"
 expect_miss 'pinned.sh' "script that exports the pin not flagged"
-expect_hit 'scanned 5 task files + 5 shell scripts' "self-accounting line"
+expect_hit 'scanned 6 task files + 5 shell scripts' "self-accounting line"
 
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 17 live findings − 5 baselined (all secrets.yml) + 1 stale = 13
-expect_rc 13 "exit code = 13"
+# 18 live findings − 5 baselined (all secrets.yml) + 1 stale = 14
+expect_rc 14 "exit code = 14"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 
