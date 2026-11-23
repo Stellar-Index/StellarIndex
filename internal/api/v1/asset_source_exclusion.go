@@ -62,6 +62,7 @@ func (sc assetExclusionScope) judgeRows(ctx context.Context, s *Server, rows []A
 		} else if sc.judge {
 			removed = sc.judgeRow(ctx, s, &rows[i]) || removed
 		}
+		clearThinWhenUnpriced(&rows[i])
 	}
 	if sc.unread && removed {
 		flags.Stale, flags.Degraded = true, true
@@ -101,8 +102,11 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 			*c.v, removed = nil, true
 		}
 	}
-	if covered(now.Add(-assetVolumeSpan), now) {
+	if j.volumeCovered(now.Add(-assetVolumeSpan), now) {
 		removed = withholdAssetVolume(d) || removed
+	}
+	if (d.VolumeCharacter != "" || d.VolumeCharacterSignals != nil) && j.volumeCovered(now.Add(-volumeCharacterSpan(d)), now) {
+		removed = withholdVolumeCharacter(d) || removed
 	}
 	d.PriceHistory24h, removed = cleanSeries(d.PriceHistory24h, covered, now, removed)
 	d.PriceHistory7d, removed = cleanSeries(d.PriceHistory7d, covered, now, removed)
@@ -156,6 +160,23 @@ func (j rowJudge) instantCovered(source string, at time.Time) bool {
 
 // covered judges every leg over one span.
 func (j rowJudge) covered(from, to time.Time) bool { return j.legsCovered(from, from, from, to) }
+
+// volumeCovered is [rowJudge.covered] for a USD volume, which sums every pair the asset sits on, base or quote, so an exclusion
+// naming it on either side reaches the volume even for XLM, whose price reads only its USD books.
+func (j rowJudge) volumeCovered(from, to time.Time) bool {
+	return j.covered(from, to) ||
+		j.xlm && j.set.UnattributedWithholding(j.ctx, j.asset, defaultPriceQuote, from, to) != pricingguard.NotWithheld
+}
+
+// volumeCharacterSpan is the trades window the volume-character rollup summed: its window_days (timescale's 14-day default when
+// the row carries only the label) up to a roll ago, with room for a missed 6-hourly roll.
+func volumeCharacterSpan(d *AssetDetail) time.Duration {
+	days := 14
+	if s := d.VolumeCharacterSignals; s != nil && s.WindowDays > 0 {
+		days = s.WindowDays
+	}
+	return time.Duration(days)*24*time.Hour + 12*time.Hour
+}
 
 // legsCovered judges the asset's leg from own, the XLM leg from xlm and the peg's FX from fx, each to to.
 func (j rowJudge) legsCovered(own, xlm, fx, to time.Time) bool {
@@ -242,7 +263,16 @@ func withholdAssetRow(d *AssetDetail, reason PriceWithheldReason) bool {
 	d.ListingReference, d.ListingValuation, d.GlobalMarket = nil, nil, nil
 	if reason != PriceWithheldSourceExcluded {
 		had = withholdAssetVolume(d) || had
+		had = withholdVolumeCharacter(d) || had
 	}
+	return had
+}
+
+// withholdVolumeCharacter drops the volume-character label and its signals, whose volume_usd is a USD trade volume; false when
+// none was served.
+func withholdVolumeCharacter(d *AssetDetail) bool {
+	had := d.VolumeCharacter != "" || d.VolumeCharacterSignals != nil
+	d.VolumeCharacter, d.VolumeCharacterSignals = "", nil
 	return had
 }
 
@@ -289,6 +319,10 @@ func (sc assetExclusionScope) judgeDetail(ctx context.Context, s *Server, d *Ass
 	rows := []AssetDetail{*d}
 	flags = sc.judgeRows(ctx, s, rows, flags)
 	*d = rows[0]
+	if d.Trust != nil {
+		// The trust summary read the price and volume the judgement may just have withheld.
+		d.Trust = buildAssetTrust(d, flags.UnverifiedTickerCollision)
+	}
 	return flags
 }
 
