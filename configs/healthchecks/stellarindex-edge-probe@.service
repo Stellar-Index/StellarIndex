@@ -1,0 +1,21 @@
+[Unit]
+Description=Stellar Index off-host edge probe - %i
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/sla-probe.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Two attempts at 15 s per request plus the retry delay and the certificate
+# read fit well inside this; it only guards a wedged run.
+TimeoutStartSec=2min
+ExecStart=/opt/stellarindex/healthchecks/edge-probe.sh
+# Required, unlike the on-host wrappers: a probe with no ping URL reports to
+# nothing. The file is root 0600; systemd reads it before dropping privileges.
+EnvironmentFile=/etc/default/stellarindex-edge-probe-%i
+DynamicUser=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
