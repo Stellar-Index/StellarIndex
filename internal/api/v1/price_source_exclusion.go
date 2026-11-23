@@ -121,6 +121,35 @@ func (s *Server) ohlcSeriesWithheld(ctx context.Context, pair canonical.Pair, ba
 	return nil
 }
 
+// readPriceAt is the [PriceAtReader] read every point-in-time walk makes, with a bucket an exclusion covers returned as a
+// withheld-class miss.
+func (s *Server) readPriceAt(ctx context.Context, book canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, error) {
+	value, observedAt, resSec, err := s.PriceAt.PriceAt(ctx, book, ts, maxStaleness)
+	if err == nil {
+		err = s.priceAtWithheld(ctx, book, observedAt, resSec)
+	}
+	if err != nil {
+		return "", time.Time{}, 0, err
+	}
+	return value, observedAt, resSec, nil
+}
+
+// priceAtWithheld judges a point-in-time CAGG bucket read from book and closing at observedAt over the span it pooled. The
+// bucket records no sources, so any exclusion touching the book in that span withholds it.
+func (s *Server) priceAtWithheld(ctx context.Context, book canonical.Pair, observedAt time.Time, resSec int) error {
+	if s.Exclusions == nil {
+		return nil
+	}
+	from, to := observedAt.Add(-time.Duration(resSec)*time.Second), observedAt
+	if !from.Before(to) {
+		to = from.Add(time.Nanosecond)
+	}
+	if w := s.Exclusions.UnattributedWithholding(ctx, book.Base, book.Quote, from, to); w != pricingguard.NotWithheld {
+		return PriceWithheldError(w)
+	}
+	return nil
+}
+
 // fxRateWithheld judges one FX rate, source's own reading of ticker per USD over [from, to); nil when no exclusion covers it.
 func (s *Server) fxRateWithheld(ctx context.Context, ticker, source string, from, to time.Time) error {
 	if s.Exclusions == nil || ticker == "USD" {

@@ -164,7 +164,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			if pairErr != nil {
 				continue
 			}
-			value, bucketAt, resSec, lookErr := s.PriceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
+			value, bucketAt, resSec, lookErr := s.readPriceAt(ctx, pair, ts, priceAtMaxLookback)
 			if lookErr != nil {
 				if failErr := notePriceAtMiss(&withheld, lookErr); failErr != nil {
 					return PriceSnapshot{}, false, nil, failErr
