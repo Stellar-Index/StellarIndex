@@ -1283,7 +1283,8 @@ export interface paths {
          *     `price` the decimal string, never floats; an absent `price` or
          *     `routed_via` is an empty cell. The next page is the `Link` header's
          *     `rel="next"`, `coverage_from` is `X-StellarIndex-Coverage-From`, and
-         *     `outside_coverage` is listed in `X-StellarIndex-Flags`. A cell a
+         *     `outside_coverage`, `stale`, `degraded` and
+         *     `fills_withheld_reason=<reason>` are listed in `X-StellarIndex-Flags`. A cell a
          *     spreadsheet would evaluate as a formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain
          *     number) is prefixed with `'`. JSON stays the default; both
          *     representations send `Vary: Accept`, and the CSV is
@@ -9022,7 +9023,7 @@ export interface components {
             /** @description Names of the `include` sections this response was asked for and could not read (a failed or timed-out read). The fields of a named section are absent from every row, which is otherwise the same body as rows with nothing to report: on `/v1/sources`, a source whose stats were not read and a source with no trades in 24h; on `/v1/markets`, `sparkline` or `inception` rows whose enrichment batch failed. Absent when every requested section was read. A response carrying it is sent `Cache-Control: no-store`; the next request retries. */
             includes_unread?: string[];
             /**
-             * @description Set on `/v1/history` when fills were removed from this page: `source_excluded` means an operator excluded the source that made them (the same reason a `price-withheld` 404 carries). The page is thinner than the market was, not a quiet market; it may be empty with `pagination.next` still continuing the tape. A response carrying it is sent `Cache-Control: no-store`. Absent when no fill was removed.
+             * @description Set when fills, or the buckets built from them, were removed from this answer: `source_excluded` means an operator excluded the source that made them (the same reason a `price-withheld` 404 carries). On `/v1/history` the page is thinner than the market was, not a quiet market; it may be empty with `pagination.next` still continuing the tape. On `/v1/vwap`, `/v1/twap` and single-bar `/v1/ohlc` the value is recomputed from the other sources' trades. On `/v1/chart` and `/v1/history/since-inception` each covered point is absent (a gap, never a zero), and a derived cross loses the point either leg lost. A response carrying it is sent `Cache-Control: no-store`. Absent when nothing was removed.
              * @enum {string}
              */
             fills_withheld_reason?: "source_excluded";
@@ -17213,7 +17214,7 @@ export interface operations {
                 headers: {
                     /** @description text/csv only: `</v1/history?cursor=…>; rel="next"` when another page exists. */
                     Link?: string;
-                    /** @description text/csv only: `outside_coverage` when that flag is true; absent otherwise. */
+                    /** @description text/csv only: comma-separated `outside_coverage`, `stale`, `degraded` and `fills_withheld_reason=<reason>`, each when set; absent when none is. */
                     "X-StellarIndex-Flags"?: string;
                     /** @description text/csv only: the JSON's `coverage_from`; absent when the JSON omits it. */
                     "X-StellarIndex-Coverage-From"?: string;

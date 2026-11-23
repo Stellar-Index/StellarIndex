@@ -137,6 +137,11 @@ func (fillExclGate) MultiHopWithholding(context.Context, time.Time, time.Time) p
 	return pricingguard.NotWithheld
 }
 
+// Snapshot cannot carry this fake's pair rule, so a set-judged read through it is refused rather than judged clean.
+func (fillExclGate) Snapshot(context.Context) (pricingguard.ExclusionSet, pricingguard.Withholding) {
+	return pricingguard.ExclusionSet{}, pricingguard.WithheldExclusionsUnread
+}
+
 // TestTransitiveFill_ExcludedLegIsNotServed: prices_1m pools every source, so a hop whose near or far leg an operator excluded
 // cannot price the asset even when the direct read found nothing to withhold; an unreadable exclusion set is an unread fill.
 func TestTransitiveFill_ExcludedLegIsNotServed(t *testing.T) {

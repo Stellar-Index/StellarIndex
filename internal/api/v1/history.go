@@ -325,10 +325,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 
 	// Pagination: next comes from the read itself, not from len(trades) == limit, because the
 	// two-direction merge can cut a page short with rows still behind it.
-	env := Envelope{Data: rows, Flags: Flags{Stale: unread, Degraded: unread || excludedFills}}
-	if excludedFills {
-		env.Flags.FillsWithheldReason = PriceWithheldSourceExcluded
-	}
+	env := Envelope{Data: rows, Flags: markFillsWithheld(Flags{Stale: unread, Degraded: unread}, excludedFills)}
 	// The coverage probe spans both legs' alias families and both stored directions, exactly
 	// what the page read spans (see historyCoverageSet), so the floor describes returnable rows.
 	coverageFrom, outsideCoverage := s.coverageAnnotationIfEmpty(
@@ -703,7 +700,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		if clientAborted(r, err) {
+		if clientAborted(r, err) || writeChartWithheld(w, r, pair, err) {
 			return
 		}
 		if handlerTimedOut(hCtx, err) {
@@ -737,7 +734,7 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	}
 	series.markRowCap(walk)
 	series.markDiscontinuity()
-	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
+	writeJSON(w, series, walk.markWithheld(Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded}))
 }
 
 // sinceInceptionReader reads unbounded, but honours bounds the walk sets (a later source's span, an XLM-cross pivot leg).
