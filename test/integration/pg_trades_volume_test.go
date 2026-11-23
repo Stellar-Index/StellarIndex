@@ -1424,6 +1424,66 @@ func TestStoreDailyMarketDays_ReadsWholeLastDay(t *testing.T) {
 	}
 }
 
+// TestStoreEarliestMarketHour_IgnoresOffChainDollarBuckets: an older CEX crypto:XLM/fiat:USD bucket is not where an
+// on-chain token's dollar history can begin; the floor is the first bucket of a dollar leg against an on-chain asset.
+func TestStoreEarliestMarketHour_IgnoresOffChainDollarBuckets(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const issuerAccount = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	usdc, err := c.NewClassicAsset("USDC", issuerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ustry, err := c.NewClassicAsset("USTRY", issuerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onChain, err := c.NewPair(ustry, usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cex, err := c.NewPair(c.Asset{Type: c.AssetCrypto, Code: "XLM"}, c.Asset{Type: c.AssetFiat, Code: "USD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old := time.Date(2019, 3, 1, 10, 0, 0, 0, time.UTC)
+	first := time.Date(2025, 6, 2, 14, 0, 0, 0, time.UTC)
+	cexTrade := mkAPITrade(1, old.Add(5*time.Minute), cex, 1_000_000_000, 1_000_000_000)
+	cexTrade.Source = "kraken"
+	for i, tr := range []c.Trade{cexTrade, mkAPITrade(2, first.Add(5*time.Minute), onChain, 1_000_000_000, 1_000_000_000)} {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade[%d]: %v", i, err)
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1h', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1h: %v", err)
+	}
+	var cexBuckets int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM prices_1h WHERE quote_asset = 'fiat:USD' AND vwap IS NOT NULL AND volume_priced > 0`).Scan(&cexBuckets); err != nil || cexBuckets != 1 {
+		t.Fatalf("precondition: priced fiat:USD buckets = %d (err %v), want the 2019 CEX bucket present", cexBuckets, err)
+	}
+
+	got, ok, err := store.EarliestMarketHour(ctx, []c.Asset{{Type: c.AssetFiat, Code: "USD"}, usdc})
+	if err != nil || !ok {
+		t.Fatalf("EarliestMarketHour: ok=%v err=%v", ok, err)
+	}
+	if !got.Equal(first) {
+		t.Errorf("EarliestMarketHour = %s, want %s (the first on-chain dollar bucket, not the 2019 CEX one)", got, first)
+	}
+}
+
 // TestStoreDailyMarketDays_FoldsSACSpellingOfBase: a token with a SAC wrapper trades under both spellings; the reader
 // folds SAC rows onto the classic asset and measures hours/span over the UNION (the 00:00 hour under both counts once): 3
 // hours, 20h, 4 trades, VWAP 0.25 (classic alone 0.15).

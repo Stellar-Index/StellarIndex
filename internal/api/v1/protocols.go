@@ -643,7 +643,9 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A detail entry outlives the bespoke horizon by up to its TTL, so the block's age is judged now, not at build.
-	if stale || (!view.bespokeAt.IsZero() && s.protocolBespokeCache.clock().Sub(view.bespokeAt) > bespokeStaleAfter) {
+	// The age is its own bit: an "unavailable" status outranks "stale" and would otherwise drop it.
+	bespokeAged := !view.bespokeAt.IsZero() && s.protocolBespokeCache.clock().Sub(view.bespokeAt) > bespokeStaleAfter
+	if stale || bespokeAged {
 		view = staleProtocolDetail(view)
 	}
 	// The cached view predates a later failed reserve read or lake stall, so the figure and its
@@ -659,7 +661,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	tvlStale := view.TVL != nil && view.TVL.Stale
 	// The flag tracks the ANALYTICS status, not just entry age: analytics.status="stale" always
 	// travels with flags.stale (openapi contract).
-	staleFlag := stale || view.verdictsStale || tvlStale || bespokePriceStale(view.Bespoke) ||
+	staleFlag := stale || bespokeAged || view.verdictsStale || tvlStale || bespokePriceStale(view.Bespoke) ||
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")

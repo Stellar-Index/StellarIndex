@@ -855,6 +855,55 @@ func TestPrice_XLMQuoteAlias(t *testing.T) {
 	}
 }
 
+// Every closed price route reads one book across the quote's XLM spellings: SEP-40's x_last_price must answer
+// quote=crypto:XLM and the XLM SAC with the price it serves for quote=native, as /v1/price does.
+func TestClosedPriceRoutes_XLMQuoteAlias(t *testing.T) {
+	book := v1.PriceSnapshot{AssetID: usdcClassicID, Quote: "native", Price: "8.1234567", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())}
+	reader := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdcClassicID + "/native": book}}
+	priceField := regexp.MustCompile(`"price":"[^"]*"`)
+	for _, route := range []string{"/v1/price?asset=", "/v1/oracle/x_last_price?base="} {
+		status, want := priceGet(t, v1.Options{Prices: reader}, route+usdcClassicID+"&quote=native")
+		if status != http.StatusOK || priceField.FindString(want) == "" {
+			t.Fatalf("%s quote=native: %d %s, want 200 with a price (precondition)", route, status, want)
+		}
+		for _, q := range []string{"crypto:XLM", canonical.XLMSacContractID} {
+			status, body := priceGet(t, v1.Options{Prices: reader}, route+usdcClassicID+"&quote="+q)
+			if status != http.StatusOK || priceField.FindString(body) != priceField.FindString(want) {
+				t.Errorf("%s quote=%s: %d %s, want 200 with %s", route, q, status, body, priceField.FindString(want))
+			}
+		}
+	}
+}
+
+// One spelling answering only from the fallback chain and a later one holding a closed bucket: both closed surfaces walk each
+// spelling's closed read then its fallback, so SEP-40 serves the number /v1/price serves.
+func TestClosedPriceRoutes_XLMQuoteAliasFallbackOrder(t *testing.T) {
+	closed := v1.PriceSnapshot{AssetID: usdcClassicID, Quote: "crypto:XLM", Price: "9.1000000", PriceType: "vwap", ObservedAt: v1.WireTime(time.Now().UTC())}
+	opts := v1.Options{
+		Prices:       &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{usdcClassicID + "/crypto:XLM": closed}},
+		Triangulated: quoteValueVWAPLooker{quote: "native", value: "7.7000000"},
+	}
+	priceField := regexp.MustCompile(`"price":"[^"]*"`)
+	status, want := priceGet(t, opts, "/v1/price?asset="+usdcClassicID+"&quote=native")
+	if status != http.StatusOK || priceField.FindString(want) == "" {
+		t.Fatalf("/v1/price: %d %s, want 200 with a price (precondition)", status, want)
+	}
+	status, body := priceGet(t, opts, "/v1/oracle/x_last_price?base="+usdcClassicID+"&quote=native")
+	if status != http.StatusOK || priceField.FindString(body) != priceField.FindString(want) {
+		t.Fatalf("x_last_price: %d %s, want 200 with /v1/price's %s", status, body, priceField.FindString(want))
+	}
+}
+
+// quoteValueVWAPLooker is a VWAP cache holding value under one quote spelling only.
+type quoteValueVWAPLooker struct{ quote, value string }
+
+func (l quoteValueVWAPLooker) LookupTriangulatedVWAP(_ context.Context, _, quote canonical.Asset, _ time.Duration) (v1.CachedVWAP, bool, error) {
+	if quote.String() != l.quote {
+		return v1.CachedVWAP{}, false, nil
+	}
+	return v1.CachedVWAP{Value: l.value, ObservedAt: time.Now().UTC()}, true, nil
+}
+
 // A quote spelling that could not be read ends the walk: the SAC's thin book must not answer for an established book
 // that failed, or a cache outage reads as a 200 from the weakest market.
 func TestPrice_XLMQuoteAlias_ReadFailureEndsTheWalk(t *testing.T) {
