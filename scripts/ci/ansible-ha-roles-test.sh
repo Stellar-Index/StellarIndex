@@ -716,6 +716,15 @@ check(vrrp == ['ip protocol vrrp ip saddr 10.0.0.22 accept comment "vrrp-peer"',
                'ip6 nexthdr vrrp ip6 saddr fd00::22 accept comment "vrrp-peer"'],
       f"haproxy firewall accepts VRRP from the unicast peers only: {vrrp}")
 
+# keepalived: a rejected config is refused at render, and a failed restart stops the other LB's.
+k04 = {t.get("name"): t for t in tasks("haproxy/tasks/04-keepalived-configure.yml")}
+check(str(k04["render /etc/keepalived/keepalived.conf"]["template"].get("validate", "")).startswith("keepalived -t -f %s")
+      and k04["install chk_haproxy.sh (backend-pool reachability probe)"]["copy"].get("validate") == "sh -n %s",
+      "keepalived.conf and its check script are validated before they replace the live files")
+kh = next(h for h in tasks("haproxy/handlers/main.yml") if h.get("listen") == "keepalived config changed")
+check(kh.get("throttle") == 1 and kh.get("any_errors_fatal") is True and "is-active" in str(kh.get("shell")),
+      "keepalived restarts one LB at a time and a failed restart ends the play before the next LB")
+
 # alertmanager: gossip is unauthenticated, so only the other prometheus_pair host may reach it.
 pfw = next(t for t in tasks("prometheus/tasks/06-firewall.yml") if "copy" in t)["copy"]["content"]
 pfwr = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined).from_string(pfw).render(
