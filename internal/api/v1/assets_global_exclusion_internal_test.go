@@ -90,6 +90,43 @@ func TestGlobalAssetHeadline_ExcludedTwinIsNotServed(t *testing.T) {
 	}
 }
 
+// refuseGlobalTierGate refuses only the off-chain crypto:TICKER/fiat:USD market, so every on-chain leg passes.
+type refuseGlobalTierGate struct{}
+
+func (refuseGlobalTierGate) Allowed(_ context.Context, base, _ canonical.Asset, _ string) bool {
+	return !strings.HasPrefix(base.String(), "crypto:")
+}
+
+func (g refuseGlobalTierGate) Probe(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
+}
+
+// TestGlobalAssetHeadline_SubstanceRefusalIsNamed: a headline tier the substance gate refuses is withheld with its reason,
+// like a source-excluded one, rather than silently filled from the twin's on-chain listing price.
+func TestGlobalAssetHeadline_SubstanceRefusalIsNamed(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vc, ok := cat.LookupBySlug("usdc")
+	if !ok {
+		t.Fatal("embedded catalogue has no usdc")
+	}
+	listing := "0.4321"
+	reader := newWithheldTierReader(nil)
+	reader.refusing.Store(false)
+	s := New(Options{
+		VerifiedCurrencies: cat,
+		GlobalPrice:        reader,
+		AssetsReader:       onChainPriceReader{row: timescale.AssetRow{PriceUSD: &listing}},
+		Substance:          refuseGlobalTierGate{},
+	})
+	view := s.buildGlobalAssetView(context.Background(), vc)
+	if view.PriceUSD != nil || view.PriceWithheldReason != PriceWithheldSubstance {
+		t.Fatalf("price_usd=%s reason=%q, want no price and reason %q", strOrEmpty(view.PriceUSD), view.PriceWithheldReason, PriceWithheldSubstance)
+	}
+}
+
 // TestGlobalAssetHeadline_WithheldTierBlocksOnChainFallback:a headline tier refused by a source exclusion is not "no data",
 // so the on-chain listing price (raw pooled prices_1m, which no exclusion judges) does not fill it; an unreadable exclusion
 // set marks the body stale and is not replayed, and a plain miss still takes the listing price.
