@@ -556,12 +556,20 @@ func TestAccountErasure(t *testing.T) {
 			VALUES ('Customer Z', 'customer-z', 'z@z.example') RETURNING id`).Scan(&otherCustomer); err != nil {
 			t.Fatal(err)
 		}
+		// A row the member wrote as a user but scoped to a third account
+		// belongs to that account.
+		var thirdAccount uuid.UUID
+		if err := db.QueryRowContext(ctx, `INSERT INTO accounts (name, slug, billing_email)
+			VALUES ('Customer W', 'customer-w', 'w@w.example') RETURNING id`).Scan(&thirdAccount); err != nil {
+			t.Fatal(err)
+		}
 		mustExec(t, ctx, db, `UPDATE users SET is_staff = true WHERE id = $1`, y.memberID)
 		mustExec(t, ctx, db, `INSERT INTO audit_log (account_id, actor_user_id, actor_kind, action, target_kind, target_id, metadata)
 			VALUES ($1::uuid, $2, 'staff', 'staff.customer.lookup', 'account', $3, '{"account_status":"suspended"}'),
 			       (NULL, $2, 'staff', 'key.mint', 'account', $3, '{"label":"z-staff-mint"}'),
-			       (NULL, $2, 'user', 'session.login', NULL, NULL, '{"note":"member-unscoped"}')`,
-			otherCustomer, y.memberID, otherCustomer.String())
+			       (NULL, $2, 'user', 'session.login', NULL, NULL, '{"note":"member-unscoped"}'),
+			       ($4::uuid, $2, 'user', 'webhook.create', NULL, NULL, '{"note":"member-third-account"}')`,
+			otherCustomer, y.memberID, otherCustomer.String(), thirdAccount)
 		exp, err := (&accounterasure.Exporter{Store: accounts, Redis: rdb}).Export(ctx, y.accountID, y.ownerID, time.Now())
 		if err != nil {
 			t.Fatalf("ExportAccount: %v", err)
@@ -591,6 +599,9 @@ func TestAccountErasure(t *testing.T) {
 		}
 		if strings.Contains(doc, otherCustomer.String()) || strings.Contains(doc, "z-staff-mint") {
 			t.Error("export carries a member's staff work on another customer's account")
+		}
+		if strings.Contains(doc, thirdAccount.String()) || strings.Contains(doc, "member-third-account") {
+			t.Error("export carries a member's row scoped to another account")
 		}
 		if !strings.Contains(doc, "member-unscoped") {
 			t.Error("export dropped a member's own unscoped audit row")
