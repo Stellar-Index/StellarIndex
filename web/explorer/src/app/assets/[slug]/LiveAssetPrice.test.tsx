@@ -251,6 +251,130 @@ describe('LiveAssetPrice', () => {
     hides(/market too thin to aggregate/i, /\$0\.17/);
   });
 
+  // /v1/price normalises on the scale /v1/assets says is contradicted.
+  it('withholds a polled price the asset detail refuses as decimals_mismatch', async () => {
+    const reply = async (input: string | URL) => {
+      const url = String(input);
+      const body = url.includes('/v1/assets/')
+        ? {
+            data: {
+              price_usd: null,
+              price_withheld_reason: 'decimals_mismatch',
+            },
+          }
+        : url.includes('/v1/price')
+          ? { data: { price: '123456.78' } }
+          : null;
+      return {
+        status: body ? 200 : 404,
+        ok: body != null,
+        json: async () => body ?? {},
+      };
+    };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+    renderPrice({ assetID: CAUP7, initialPrice: null });
+    await screen.findByText('withheld · decimals disagree');
+    hides(/123,?456/, /1-min VWAP/i);
+  });
+
+  // A build-time scale verdict holds until the live asset row answers.
+  describe('with a build-time decimals_mismatch verdict', () => {
+    // /v1/price answers a fresh market figure on the contradicted scale.
+    function stubScale(asset: 'pending' | 'rejected' | unknown) {
+      const reply = (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('/v1/assets/')) {
+          if (asset === 'pending') return new Promise(() => {});
+          if (asset === 'rejected') return Promise.reject(new Error('down'));
+          return Promise.resolve({
+            status: 200,
+            ok: true,
+            json: async () => asset,
+          });
+        }
+        const body = url.includes('/v1/price')
+          ? { data: { price: '123456.78' } }
+          : null;
+        return Promise.resolve({
+          status: body ? 200 : 404,
+          ok: body != null,
+          json: async () => body ?? {},
+        });
+      };
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+    }
+    const pricePolled = () =>
+      vi.waitFor(() =>
+        expect(
+          vi
+            .mocked(fetch)
+            .mock.calls.some(([u]) => String(u).includes('/v1/price')),
+        ).toBe(true),
+      );
+    const settle = () => new Promise((r) => setTimeout(r, 50));
+
+    it.each(['pending', 'rejected'] as const)(
+      'renders no market figure and opens no tip while the asset read is %s',
+      async (asset) => {
+        stubScale(asset);
+        renderPrice({
+          assetID: CAUP7,
+          initialPrice: null,
+          initialProvenance: null,
+          initialScaleMismatch: true,
+        });
+        await pricePolled();
+        await settle();
+        hides(/123,?456/, /1-min VWAP/i);
+        shows('withheld · decimals disagree');
+        expect(useTipStream).not.toHaveBeenCalledWith(CAUP7);
+      },
+    );
+
+    it('shows the row’s declared-peg fill, never the market figure', async () => {
+      stubScale({
+        data: {
+          price_usd: '1.0001',
+          price_basis: 'declared_peg',
+          market_cap_decimals_mismatch: true,
+          market_cap_withheld_reason: 'decimals_mismatch',
+        },
+      });
+      renderPrice({
+        assetID: CAUP7,
+        initialPrice: '1.0001',
+        initialProvenance: 'declared_peg',
+        initialScaleMismatch: true,
+      });
+      await pricePolled();
+      await settle();
+      shows(/\$1\.0001/, PEG_CAPTION);
+      hides(/123,?456/, /1-min VWAP/i, 'withheld · decimals disagree');
+      expect(useTipStream).not.toHaveBeenCalledWith(CAUP7);
+    });
+
+    it('withholds when the row carries no fill', async () => {
+      stubScale({
+        data: {
+          price_usd: null,
+          price_withheld_reason: 'decimals_mismatch',
+          market_cap_decimals_mismatch: true,
+        },
+      });
+      renderPrice({
+        assetID: CAUP7,
+        initialPrice: null,
+        initialProvenance: null,
+        initialScaleMismatch: true,
+      });
+      await screen.findByText('withheld · decimals disagree');
+      await pricePolled();
+      await settle();
+      hides(/123,?456/, /1-min VWAP/i);
+      expect(useTipStream).not.toHaveBeenCalledWith(CAUP7);
+    });
+  });
+
   it('a thin-market poll shows the price with a warning badge and the substance note', async () => {
     stubFetch(200, {
       data: {
