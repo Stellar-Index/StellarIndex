@@ -380,7 +380,7 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
 
 ## stellarindex_auth_reaper_stalled
 
-**Trigger.** `time() - stellarindex_auth_reaper_last_sweep_unix{reaper}` exceeds `3 * stellarindex_auth_reaper_interval_seconds{reaper}` for 15m (also if the interval series exists with no last-sweep series). P3. A dead reaper freezes its rows gauge, so the `_table_growing` alerts fire only after the table has filled; this is the liveness signal. `reaper` is `login_code` ([lockout table](api.md#stellarindex_login_code_lockout_table_growing)), `magic_link` ([token table](#stellarindex_magic_link_token_table_growing)), `signup`, `session` or `webhook_delivery` (the last two, `internal/retentionreaper`, have no rows gauge; check `stellarindex_retention_reaper_errors_total{reaper}`).
+**Trigger.** `time() - stellarindex_auth_reaper_last_sweep_unix{reaper}` exceeds `3 * stellarindex_auth_reaper_interval_seconds{reaper}` for 15m (also if the interval series exists with no last-sweep series). P3. A dead reaper freezes its rows gauge, so the `_table_growing` alerts fire only after the table has filled; this is the liveness signal. `reaper` is `login_code` ([lockout table](api.md#stellarindex_login_code_lockout_table_growing)), `magic_link` ([token table](#stellarindex_magic_link_token_table_growing)), `signup`, `session` or `webhook_delivery` (the last two run in `internal/retentionreaper`; check `stellarindex_retention_reaper_errors_total{reaper}`. `session` has no rows gauge; `webhook_delivery` has [its table alert](#stellarindex_webhook_delivery_table_growing)).
 
 **Check.**
 
@@ -413,6 +413,16 @@ A `worker panicked` line names the reaper ([worker-panicked](infra.md#stellarind
 
 1. `rate(stellarindex_magic_link_token_rows_deleted_total[1h])` against the gauge growth: near zero means the sweep fails (API log `magiclinkreaper`); high means a mint flood.
 2. Flood: `sum(rate(http_requests_total{route="/v1/auth/login"}[15m]))` and the per-IP throttle counters; block the source at the edge.
+3. A dead sweep also fires [auth_reaper_stalled](#stellarindex_auth_reaper_stalled); fix that first.
+
+## stellarindex_webhook_delivery_table_growing
+
+**Trigger.** [`stellarindex_retention_reaper_rows{reaper="webhook_delivery"}`](../../reference/metrics/README.md#stellarindex_retention_reaper_rows) `> 1000000` for 30m, ticket. Customer webhooks and price alerts write `webhook_deliveries`; the 30-day retention sweep (`internal/retentionreaper`) is its only bound, and it is outpaced or failing.
+
+**Check.**
+
+1. `increase(stellarindex_retention_reaper_rows_deleted_total{reaper="webhook_delivery"}[1d])` against the gauge growth, and `stellarindex_retention_reaper_errors_total{reaper="webhook_delivery"}`: no deletes or rising errors means the sweep fails (API log `webhook-delivery-reaper`); a healthy sweep with steep growth means a delivery flood.
+2. Flood: find the accounts behind it with `SELECT w.account_id, count(*) FROM webhook_deliveries d JOIN customer_webhooks w ON w.id = d.webhook_id WHERE d.created_at > now() - interval '1 day' GROUP BY 1 ORDER BY 2 DESC LIMIT 10;`, then check them against [registration_table_growing](#stellarindex_registration_table_growing) for a burst of fresh accounts.
 3. A dead sweep also fires [auth_reaper_stalled](#stellarindex_auth_reaper_stalled); fix that first.
 
 ## stellarindex_ch_schema_probe_absent
