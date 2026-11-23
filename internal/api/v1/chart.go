@@ -682,23 +682,25 @@ func chartGranularityGrace(gran string) time.Duration {
 // source set depend on the WINDOW. Sources are never blended within a bucket, so no VWAP is published that no venue set produced.
 type chartBucketMerge struct {
 	byBucket map[time.Time]HistoryPoint
+	owner    map[time.Time]canonical.Pair
 }
 
 func newChartBucketMerge() *chartBucketMerge {
-	return &chartBucketMerge{byBucket: make(map[time.Time]HistoryPoint)}
+	return &chartBucketMerge{byBucket: make(map[time.Time]HistoryPoint), owner: make(map[time.Time]canonical.Pair)}
 }
 
 // empty reports whether no bucket is held. Buckets are keyed in UTC because [time.Time] compares location as well as instant.
 func (m *chartBucketMerge) empty() bool { return len(m.byBucket) == 0 }
 
-// add claims every bucket of points not already owned and returns how many it claimed and the newest of them.
-func (m *chartBucketMerge) add(points []HistoryPoint) (claimed int, newest time.Time) {
+// add claims for source pair sp every bucket of points not already owned and returns how many it claimed and the newest of them.
+func (m *chartBucketMerge) add(sp canonical.Pair, points []HistoryPoint) (claimed int, newest time.Time) {
 	for _, p := range points {
 		k := p.Bucket.UTC()
 		if _, taken := m.byBucket[k]; taken {
 			continue
 		}
 		m.byBucket[k] = p
+		m.owner[k] = sp
 		claimed++
 		if k.After(newest) {
 			newest = k
@@ -828,9 +830,11 @@ type chartWalkResult struct {
 	cappedAt time.Time
 	// books are the source pairs that claimed a served bucket, which the substance measurement covers.
 	books []canonical.Pair
-	// latestBook owns latestAt, the newest served bucket: the price a headline valuation stands on.
-	latestBook canonical.Pair
-	latestAt   time.Time
+	// latestBooks back latestAt, the newest served bucket: the price a headline valuation stands on. A derived cross has one per leg.
+	latestBooks []canonical.Pair
+	latestAt    time.Time
+	// bookAt is the source pair that owns each served bucket (UTC key).
+	bookAt map[time.Time]canonical.Pair
 }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
@@ -1060,7 +1064,7 @@ func (w *chartWalk) readSpan(
 // to the merge, recording whether the source's quote leg was a proxy.
 func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
 	points = w.s.adjustSourcePoints(sp, points)
-	claimed, newest := w.merge.add(points)
+	claimed, newest := w.merge.add(sp, points)
 	if claimed == 0 {
 		return
 	}
@@ -1125,6 +1129,7 @@ func (s *Server) chartObservedPoints(
 	if err := s.chartStablecoinFallback(ctx, w); err != nil {
 		return nil, chartWalkResult{}, err
 	}
+	w.res.bookAt = w.merge.owner
 	return w.merge.series(), w.res, nil
 }
 
@@ -1314,6 +1319,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
 	res.proxied = len(crossed) > 0
 	res.books = append(append(res.books, assetRes.books...), xlmRes.books...)
+	res.noteCrossLatest(crossed, assetRes, xlmRes)
 	return crossed, res, nil
 }
 

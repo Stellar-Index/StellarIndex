@@ -128,6 +128,54 @@ func TestChartMarketCap_MeasuresTheBookUnderTheLatestPrice(t *testing.T) {
 	}
 }
 
+// TestChartMarketCap_DerivedRouteMeasuresBothLegs: a price derived through XLM stands on two books, the asset/XLM book and
+// the XLM/fiat book under the newest crossed bucket. Either one thin withholds the market cap, as /v1/assets/{id} would; a
+// thin book that only filled a bucket the cross never emitted does not.
+func TestChartMarketCap_DerivedRouteMeasuresBothLegs(t *testing.T) {
+	d := func(day int) time.Time { return time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC) }
+	assetLeg := clearedAssetID + "/native"
+	pivotLeg := "native/fiat:USD"
+	legs := map[string][]v1.HistoryPoint{
+		assetLeg: {{Bucket: d(1), VWAP: "10"}, {Bucket: d(2), VWAP: "15"}},
+		pivotLeg: {{Bucket: d(1), VWAP: "0.4"}, {Bucket: d(2), VWAP: "0.4"}},
+		// A pivot proxy book owns a newer bucket the asset leg lacks, so the cross never serves it.
+		"native/crypto:USDT": {{Bucket: d(3), VWAP: "0.5"}},
+	}
+	for _, tc := range []struct {
+		name     string
+		thin     map[string]bool
+		withheld bool
+	}{
+		{"asset leg thin", map[string]bool{assetLeg: true}, true},
+		{"pivot leg thin", map[string]bool{"native/fiat:USD": true, "crypto:XLM/fiat:USD": true}, true},
+		{"both legs deep", nil, false},
+		{"thin book only past the last crossed bucket", map[string]bool{"native/crypto:USDT": true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := startHTTPTest(t, v1.New(v1.Options{
+				History: legHistory{stubHistoryReader: &stubHistoryReader{}, legs: legs},
+				Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
+					{Bucket: d(1), Circulating: big.NewInt(1_000_0000000)},
+				}},
+				VerifiedCurrencies: newTestCatalogue(t),
+				Substance:          pricingguard.NewSubstanceGate(thinStore{pairs: tc.thin}, pricingguard.SubstanceGateOptions{}),
+			}).Handler())
+			status, body := fetch(t, ts.URL+"/v1/chart?asset="+clearedAssetID+"&quote=fiat:USD&price_type=market_cap&timeframe=1y&granularity=1d")
+			if status != http.StatusOK {
+				t.Fatalf("status %d: %s", status, body)
+			}
+			data, _ := decodeMap(t, body)["data"].(map[string]any)
+			points, _ := data["points"].([]any)
+			if withheld := len(points) == 0 && data["market_cap_low_liquidity"] == true; withheld != tc.withheld {
+				t.Errorf("points=%v low_liquidity=%v, want withheld=%v", points, data["market_cap_low_liquidity"], tc.withheld)
+			}
+			if !tc.withheld && len(points) != 2 {
+				t.Errorf("served %d points, want both crossed buckets", len(points))
+			}
+		})
+	}
+}
+
 // TestChartFamily_ThinMarketIsNeverServedClean: every /v1/chart price type must treat a sub-floor market the way its
 // siblings do. A price series (vwap, twap) is served but flagged thin_market as /v1/vwap, /v1/twap and /v1/ohlc are; a
 // market-cap series is withheld, because /v1/assets/{id} never derives a valuation from a thin price. A new price type
