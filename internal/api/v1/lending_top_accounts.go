@@ -190,27 +190,10 @@ func rankTopAccounts(pool string, built poolTopAccounts, side, asset string, lim
 	if asset != "" {
 		view.Asset, view.Ranking = strRef(asset), topAccountsRankAmount
 	}
-	excluded := map[[2]string]bool{}
-	pos := built.positions
-	switch {
-	case !pos.Readable:
-		excluded[[2]string{"", topAccountsReasonList}] = true
-	case pos.Truncated:
-		excluded[[2]string{"", topAccountsReasonTruncated}] = true
-	}
-	if pos.Unreadable > 0 {
-		excluded[[2]string{"", topAccountsReasonUnreadable}] = true
-	}
-	if pos.Readable && !pos.Truncated {
-		for a, reason := range reserveReconciliation(built, side) {
-			if asset == "" || a == asset {
-				excluded[[2]string{a, reason}] = true
-			}
-		}
-	}
+	excluded := topAccountsReadExclusions(built, side, asset)
 	cands, accounts := topAccountCandidates(built, side, asset, excluded)
 	view.Accounts = accounts
-	if pos.Truncated {
+	if built.positions.Truncated {
 		// The read stopped at its cap in key order, so the largest account may be past it: no row can be ranked.
 		cands = nil
 	}
@@ -284,6 +267,42 @@ func topAccountCandidate(acct clickhouse.LendingPoolPosition, asset string, toke
 	return topCandidate{row: row, amount: amount, usd: value}, ""
 }
 
+// heldOn is the account's b-tokens (supply) or d-tokens (borrow) by reserve.
+func heldOn(acct clickhouse.LendingPoolPosition, side string) map[string]*big.Int {
+	if side == earningsSideBorrow {
+		return acct.Borrow
+	}
+	return acct.Supply
+}
+
+// reserveUnranked reports a reserve whose positions cannot be ranked because its total is unread or unreconciled.
+func reserveUnranked(excluded map[[2]string]bool, asset string) bool {
+	return excluded[[2]string{asset, topAccountsReasonUnreconciled}] || excluded[[2]string{asset, earningsReasonRateUnread}]
+}
+
+// topAccountsReadExclusions keys, by (asset, reason), what the positions read itself leaves out of the ranking.
+func topAccountsReadExclusions(built poolTopAccounts, side, asset string) map[[2]string]bool {
+	excluded := map[[2]string]bool{}
+	pos := built.positions
+	switch {
+	case !pos.Readable:
+		excluded[[2]string{"", topAccountsReasonList}] = true
+	case pos.Truncated:
+		excluded[[2]string{"", topAccountsReasonTruncated}] = true
+	}
+	if pos.Unreadable > 0 {
+		excluded[[2]string{"", topAccountsReasonUnreadable}] = true
+	}
+	if pos.Readable && !pos.Truncated {
+		for a, reason := range reserveReconciliation(built, side) {
+			if asset == "" || a == asset {
+				excluded[[2]string{a, reason}] = true
+			}
+		}
+	}
+	return excluded
+}
+
 // reserveReconciliation names each reserve whose positions on the side cannot be shown complete: its total is unread
 // (rate_unread), or the read tokens do not sum EXACTLY to its b_supply (d_supply). The tolerance is zero: b- and d-tokens
 // are integers, minted and burned in the same transaction that writes the position, so a read that missed no entry and
@@ -335,19 +354,15 @@ func topAccountCandidates(built poolTopAccounts, side, asset string, excluded ma
 		convert = blend.ReserveData.DTokensToUnderlying
 	}
 	for _, acct := range built.positions.Accounts {
-		held := acct.Supply
-		if side == earningsSideBorrow {
-			held = acct.Borrow
-		}
 		counted := false
-		for a, tokens := range held {
+		for a, tokens := range heldOn(acct, side) {
 			if tokens == nil || tokens.Sign() <= 0 || (asset != "" && a != asset) {
 				continue
 			}
 			if !counted {
 				accounts, counted = accounts+1, true
 			}
-			if excluded[[2]string{a, topAccountsReasonUnreconciled}] || excluded[[2]string{a, earningsReasonRateUnread}] {
+			if reserveUnranked(excluded, a) {
 				continue
 			}
 			c, reason := topAccountCandidate(acct, a, tokens, side, built, convert)
