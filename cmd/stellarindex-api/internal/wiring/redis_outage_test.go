@@ -1,7 +1,9 @@
 package wiring
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -48,8 +50,57 @@ func newOutageFixture(t *testing.T, dwell time.Duration) (*miniredis.Miniredis, 
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 	t.Cleanup(func() { _ = rdb.Close() })
 	now := time.Unix(1_750_000_000, 0)
-	clock := ratelimit.NewDwellClock(dwell, func() time.Time { return now })
-	return mr, &now, []v1.ReadyChecker{RedisChecker{RDB: rdb}, RedisOutageChecker{RDB: rdb, Clock: clock}}
+	return mr, &now, []v1.ReadyChecker{RedisChecker{RDB: rdb}, newRedisOutageChecker(rdb, dwell, func() time.Time { return now })}
+}
+
+// refuseWritesHook fails script evaluation the way a MISCONF Redis does, and passes PING and connection setup.
+type refuseWritesHook struct{}
+
+var refusedCommands = map[string]bool{"eval": true, "evalsha": true}
+
+func (refuseWritesHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (refuseWritesHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func (refuseWritesHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if !refusedCommands[cmd.Name()] {
+			return next(ctx, cmd)
+		}
+		err := errors.New("MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk")
+		cmd.SetErr(err)
+		return err
+	}
+}
+
+// The limiters fail closed on a Redis that answers PING but refuses writes, so readiness must drain on it too.
+func TestRedisOutageChecker_UnreadyWhenRedisRefusesWrites(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = rdb.Close() })
+	rdb.AddHook(refuseWritesHook{})
+	now := time.Unix(1_750_000_000, 0)
+	clock := func() time.Time { return now }
+	limiter := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock), ratelimit.WithDwellTime(30*time.Second))
+	checks := []v1.ReadyChecker{RedisChecker{RDB: rdb}, newRedisOutageChecker(rdb, 30*time.Second, clock)}
+
+	probeReadyz(t, checks)
+	_, _ = limiter.Take(context.Background(), "client")
+	now = now.Add(31 * time.Second)
+	if _, err := limiter.Take(context.Background(), "client"); !errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("limiter past the dwell: err = %v, want ErrThrottleUnavailable", err)
+	}
+	code, status, byName := probeReadyz(t, checks)
+	if code != http.StatusServiceUnavailable || status != "unready" {
+		t.Fatalf("writes refused past the dwell: got %d %q (%+v), want 503 \"unready\"", code, status, byName)
+	}
+	if !byName["redis"].OK {
+		t.Fatalf("redis = %+v, want PING ok (the fixture must refuse writes only)", byName["redis"])
+	}
+	if got := byName["redis_outage"]; got.OK || got.Error != redisOutageDetail {
+		t.Fatalf("redis_outage = %+v, want failed with %q", got, redisOutageDetail)
+	}
 }
 
 func TestRedisOutageChecker_DegradedInsideDwellUnreadyPastIt(t *testing.T) {
