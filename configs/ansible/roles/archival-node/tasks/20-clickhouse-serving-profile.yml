@@ -492,8 +492,9 @@
                Password: SHA-256 hex digest of
                clickhouse_live_daemon_password (ansible-vault —
                vault_clickhouse_live_daemon_password). The plaintext is
-               templated ONLY into /etc/default/stellarindex
-               (stellarindex.env.j2, 0640 root:stellarindex). -->
+               templated into /etc/default/stellarindex (0640
+               root:stellarindex) and, until the serving flip, into
+               /etc/default/stellarindex-api. -->
           <users>
               <{{ clickhouse_live_daemon_user }}>
                   <password_sha256_hex>{{ clickhouse_live_daemon_password | hash('sha256') }}</password_sha256_hex>

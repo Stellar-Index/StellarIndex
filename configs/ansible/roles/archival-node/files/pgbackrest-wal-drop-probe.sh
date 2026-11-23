@@ -34,5 +34,5 @@ trap 'rm -f "$tmp"' EXIT
 } > "$tmp"
 # mktemp creates 0600 and node_exporter silently skips a file it cannot read.
 chmod 644 "$tmp"
-mv "$tmp" "$DIR/pgbackrest_wal_drop.prom"
+mv -T "$tmp" "$DIR/pgbackrest_wal_drop.prom"
 trap - EXIT

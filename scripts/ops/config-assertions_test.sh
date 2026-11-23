@@ -26,6 +26,19 @@ trap 'rm -rf "$TMP"' EXIT
 
 FAKEBIN="$TMP/bin"
 mkdir -p "$FAKEBIN"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  mkdir -p "$TMP/gnubin"
+  export PATH="$TMP/gnubin:$PATH"
+  cat > "$TMP/gnubin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/gnubin/mv"
+fi
 cat > "$FAKEBIN/psql" <<'EOF'
 #!/usr/bin/env bash
 for a in "$@"; do
@@ -282,11 +295,14 @@ mkdir -p "$MVBIN"
 cat > "$MVBIN/mv" <<'EOF'
 #!/usr/bin/env bash
 src="${@: -2:1}" dst="${@: -1}"
-if [ -n "$(find "$src" -perm 644 2>/dev/null)" ] && [ "$(dirname "$src")" = "$(dirname "$dst")" ]; then
+# -T: a directory or a link to one planted at the target must not receive the file.
+if [ "$1" = -T ] && [ -n "$(find "$src" -perm 644 2>/dev/null)" ] && [ "$(dirname "$src")" = "$(dirname "$dst")" ]; then
   echo ok >> "$MV_LOG"
 else
   echo bad >> "$MV_LOG"
 fi
+# BSD mv (macOS) has no -T; the flag is recorded above.
+[ "$1" = -T ] && shift
 exec /bin/mv "$@"
 EOF
 chmod +x "$MVBIN/mv"

@@ -13,7 +13,19 @@ fail=0
 check() { if eval "$2"; then echo "ok: $1"; else echo "FAIL: $1"; fail=1; fi; }
 # The fake answers the listing from $FAKE_DIR/list, a decode from
 # $FAKE_DIR/v/<relation> (default ok) and the liveness probe from down.
-mkdir "$t/v"
+mkdir "$t/v" "$t/bin"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$t/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$t/bin/mv"
+fi
+export PATH="$t/bin:$PATH"
 cat >"$t/psql" <<'FAKE'
 #!/usr/bin/env bash
 # Every session must search pg_catalog only: the scan runs as the superuser in an app-owned database.
