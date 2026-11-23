@@ -74,6 +74,22 @@ fail=0
 
 indent() { printf '  %s\n' "${1//$'\n'/$'\n'  }"; }
 
+# MIGRATIONS_CONTENT_FLOOR=<N> (deploy only; unset = judge every file, as CI does): the content
+# rules (passes 1 and 5-10) skip migrations numbered <= N, which the host has already applied and
+# which are immutable. Numbering, pairing, register and back-numbering checks still cover all files.
+floor="${MIGRATIONS_CONTENT_FLOOR:-}"
+case "$floor" in
+  *[!0-9]*) echo "lint-migrations ❌ MIGRATIONS_CONTENT_FLOOR='${floor}' is not a number — refusing to judge (fail-closed)" >&2; exit 1 ;;
+esac
+# above_floor <file|entry>: true when the migration is new to the host (or no floor is set).
+above_floor() {
+  local n
+  [ -n "$floor" ] || return 0
+  n="$(basename "$1")"; n="${n%%_*}"
+  case "$n" in '' | *[!0-9]*) return 0 ;; esac
+  [ "$((10#$n))" -gt "$((10#$floor))" ]
+}
+
 # Monetary column-name stems. `_usd` matches only as a column-name suffix
 # (value_usd, volume_usd, …) so `usda`-style codes don't trip it. twap/vwap/tvl/
 # wealth are included: a weighted-average PRICE and total-value-locked/net-worth
@@ -98,6 +114,7 @@ type='bigint|integer|smallint|int8|int4|int2|int|money|double precision|float[0-
 tre="(${type})\\b|(numeric|decimal)[[:space:]]*\\("
 
 for f in "${MIG_DIR:-migrations}"/*.up.sql; do
+  above_floor "$f" || continue
   hits=$(grep -nEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${tre})" "$f" \
     | grep -vE '^[0-9]+:[[:space:]]*--' \
     | grep -viE -- '-- *lint-money:ok +[^ ]' || true)
@@ -321,6 +338,9 @@ else
       if (e !~ /\.$/) printf "  %s (does not end in a full stop: ...%s)\n", substr($0, 3, 4), substr(c, length(c) - 39)
       else if (c !~ /^([A-Z0-9`]|\*\*)/) printf "  %s (does not start a sentence: %s...)\n", substr($0, 3, 4), substr(c, 1, 40)
     }' "$REGISTER")"
+  if [ -n "$floor" ] && [ -n "$malformed" ]; then
+    malformed="$(awk -v fl="$floor" '$1 + 0 > fl + 0' <<<"$malformed")"
+  fi
   if [ -n "$malformed" ]; then
     echo "lint-migrations: register row(s) whose description is not a whole sentence:" >&2
     echo "$malformed" >&2
@@ -436,6 +456,7 @@ down_files=0
 for f in "${MIG_DIR:-migrations}"/*.down.sql; do
   [ -e "$f" ] || continue
   down_files=$((down_files + 1))
+  above_floor "$f" || continue
   # HIT <n>:<line> for an unmarked delete, STALE <n>:<line> for a marker on a line without one.
   p5="$(awk -v re="$del_re" '
     function tagat(i,   t) { # the $tag$ opening at i, or ""
@@ -644,6 +665,7 @@ fi
 hi_seen=""
 hi_checked=0
 for f in "$MIG_DIR"/*.up.sql; do
+  above_floor "$f" || continue
   stmts="$(sql_stmts "$f")"
   grep -qiE 'create (unique )?index|add (constraint|primary|unique)' <<<"$stmts" || continue
   b="$(basename "$f")"
@@ -671,6 +693,7 @@ done
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   [ -e "${MIG_DIR}/${entry%%:*}" ] || continue
+  above_floor "$entry" || continue
   if ! grep -qx "$entry" <<<"$hi_seen"; then
     echo "lint-migrations ❌ stale hyper_index_baseline entry ${entry} — it no longer names a non-conforming hypertable index; remove it (the list only shrinks)" >&2
     fail=1
@@ -692,6 +715,7 @@ cagg_refresh_baseline='0002_create_price_aggregates.up.sql
 cr_seen=""
 cagg_files=0
 for f in "$MIG_DIR"/*.sql; do
+  above_floor "$f" || continue
   stmts="$(sql_stmts "$f")"
   grep -qi 'with no data' <<<"$stmts" || continue
   cagg_files=$((cagg_files + 1))
@@ -710,6 +734,7 @@ done
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   [ -e "${MIG_DIR}/${entry}" ] || continue
+  above_floor "$entry" || continue
   if ! grep -qx "$entry" <<<"$cr_seen"; then
     echo "lint-migrations ❌ stale cagg_refresh_baseline entry ${entry} — it now names a refresh for every view it leaves empty; remove it (the list only shrinks)" >&2
     fail=1
@@ -734,6 +759,7 @@ txn_files=0
 for f in "$TXN_DIR"/*.sql; do
   [ -e "$f" ] || continue
   txn_files=$((txn_files + 1))
+  above_floor "$f" || continue
   [ "$(basename "$f")" = "$txn_exempt" ] && continue
   after="$(awk '
     function endstmt(    u) {
@@ -820,6 +846,7 @@ pr_files=0
 for f in "$MIG_DIR"/*.up.sql; do
   [ -e "$f" ] || continue
   pr_files=$((pr_files + 1))
+  above_floor "$f" || continue
   b="$(basename "$f")"
   hits="$(priceable_hits "$f")"
   while read -r kind ln; do
@@ -838,6 +865,7 @@ done
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   [ -e "${MIG_DIR}/${entry}" ] || continue
+  above_floor "$entry" || continue
   if ! grep -qx "$entry" <<<"$pr_seen"; then
     echo "lint-migrations ❌ stale priceable_baseline entry ${entry} — it no longer holds an unguarded leg division; remove it (the list only shrinks)" >&2
     fail=1
@@ -979,6 +1007,7 @@ rc_seen=""
 fu_blanking=0
 for f in "$MIG_DIR"/*.up.sql; do
   [ -e "$f" ] || continue
+  above_floor "$f" || continue
   b="$(basename "$f")"
   bad_marker="$(grep -niE '^--[[:space:]]*required[-_ ]?follow[-_ ]?up[[:space:]]*:' "$f" \
     | grep -vE '^[0-9]+:-- REQUIRED-FOLLOWUP: [^[:space:]]' || true)"
@@ -1020,6 +1049,7 @@ done
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   [ -e "${MIG_DIR}/${entry}" ] || continue
+  above_floor "$entry" || continue
   if ! grep -qx "$entry" <<<"$fu_seen"; then
     echo "lint-migrations ❌ stale followup_baseline entry ${entry} — it no longer blanks data without a marker; remove it (the list only shrinks)" >&2
     fail=1
@@ -1028,6 +1058,7 @@ done <<<"$followup_baseline"
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
   [ -e "${MIG_DIR}/${entry}" ] || continue
+  above_floor "$entry" || continue
   if ! grep -qx "$entry" <<<"$rc_seen"; then
     echo "lint-migrations ❌ stale rebuild_ckpt_baseline entry ${entry} — its rebuild follow-ups now clear their checkpoints; remove it (the list only shrinks)" >&2
     fail=1

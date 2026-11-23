@@ -59,7 +59,8 @@ numbering="$(python3 - "$WORKFLOW" "$tmp/numbering-run.sh" <<'PY'
 import sys, yaml
 steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"].get("steps", [])
 play = next((i for i, s in enumerate(steps) if s.get("id") == "playbook"), len(steps))
-gate = next((s for s in steps[:play] if 'BASE_SHA="$base_sha" bash scripts/ci/lint-migrations.sh' in (s.get("run") or "")), None)
+gate = next((s for s in steps[:play] if 'BASE_SHA="$base_sha" bash' in (s.get("run") or "")
+             and "scripts/ci/lint-migrations.sh" in (s.get("run") or "")), None)
 if gate is None:
     print("absent")
     sys.exit(0)
@@ -82,17 +83,99 @@ fi
 # Execute the step against stubs: with a base available it must reach the lint with that base's sha.
 if [ -s "$tmp/numbering-run.sh" ]; then
   mkdir -p "$tmp/bin" "$tmp/ws/scripts/ci"
+  # ls-tree answers only the live release's migrations listing; any other tree (the deploying
+  # tag's own, whose head would floor out every new migration) is logged and refused.
   # shellcheck disable=SC2016 # stub bodies expand when the stubs run
-  printf '%s\n' '#!/bin/sh' 'case "$1" in rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;; describe) echo v0.0.1 ;; *) exit 1 ;; esac' > "$tmp/bin/git"
-  # shellcheck disable=SC2016
-  printf '%s\n' 'echo "LINT-REACHED BASE_SHA=${BASE_SHA:-}"' > "$tmp/ws/scripts/ci/lint-migrations.sh"
+  printf '%s\n' '#!/bin/sh' 'case "$1" in' \
+    'rev-parse) echo 0123456789abcdef0123456789abcdef01234567 ;;' \
+    'describe) echo v0.0.1 ;;' \
+    'ls-tree) if [ "$#" -eq 3 ] && [ "$2" = --name-only ] && [ "$3" = 0123456789abcdef0123456789abcdef01234567:migrations ]; then' \
+    '  printf "0001_a.up.sql\\n0007_b.up.sql\\n0003_c.down.sql\\n"; else echo "$*" >>"$FAKE_GIT_LOG"; exit 1; fi ;;' \
+    'show) echo "echo LINT-REACHED BASE_SHA=\${BASE_SHA:-} FLOOR=\${MIGRATIONS_CONTENT_FLOOR:-}" ;;' \
+    '*) exit 1 ;;' 'esac' > "$tmp/bin/git"
   chmod +x "$tmp/bin/git"
-  got="$(cd "$tmp/ws" && PATH="$tmp/bin:$PATH" VERSION=v0.60.0 BASELINE=v0.59.0 bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)"
+  : > "$tmp/git.log"
+  gate_run() {
+    (cd "$tmp/ws" && PATH="$tmp/bin:$PATH" GITHUB_WORKSPACE="$tmp/ws" RUNNER_TEMP="$tmp/rt" GITHUB_SHA=feedface \
+      FAKE_GIT_LOG="$tmp/git.log" VERSION=v0.60.0 BASELINE="$1" bash -e "$tmp/numbering-run.sh" </dev/null 2>&1)
+  }
+  got="$(gate_run v0.59.0)"
+  if [ -s "$tmp/git.log" ]; then
+    bad "numbering gate listed a tree other than the live release's migrations: $(tr '\n' ' ' <"$tmp/git.log")"
+  else
+    ok "numbering gate lists only the live release's migrations"
+  fi
   if [[ "$got" == *"LINT-REACHED BASE_SHA=0123456789abcdef0123456789abcdef01234567"* ]]; then
     ok "numbering gate reaches the lint with the base's sha when a base is available"
   else
     bad "numbering gate with BASELINE set returned before running lint-migrations.sh with BASE_SHA — output: ${got}"
   fi
+  if [[ "$got" == *"FLOOR=0007"* ]]; then
+    ok "numbering gate floors the content rules at the live release's highest migration"
+  else
+    bad "numbering gate does not pass the live release's highest migration as MIGRATIONS_CONTENT_FLOOR — a rollback tag's applied migrations are judged by newer content rules: ${got}"
+  fi
+  # No host version (fresh host, wiped sidecars): the ancestry tag still drives numbering, but
+  # nothing proves its migrations are applied, so no floor.
+  got="$(gate_run "")"
+  if grep -qx 'LINT-REACHED BASE_SHA=0123456789abcdef0123456789abcdef01234567 FLOOR=' <<<"$got"; then
+    ok "with no host baseline the gate keeps BASE_SHA and sets no content floor"
+  else
+    bad "with no host baseline the gate must pass BASE_SHA and no MIGRATIONS_CONTENT_FLOOR — a fresh host would apply the previous tag's migrations unjudged: ${got}"
+  fi
+fi
+
+# lint-migrations.sh's floor, on a copy of the real tree whose newest down migration deletes rows
+# silently. Applied (<= floor) is exempt, new (> floor) fails, and a bad floor fails closed.
+fx="$tmp/fx"
+mkdir -p "$fx/x/ci" "$fx/deploy" "$fx/scripts/ci"
+cp scripts/ci/lint-migrations.sh "$fx/x/ci/lint-migrations.sh"
+cp scripts/ci/lint-migrations-ch-float.baseline "$fx/scripts/ci/"
+cp -R migrations "$fx/migrations"
+cp -R deploy/clickhouse "$fx/deploy/clickhouse"
+newest_down="$(find "$fx/migrations" -name '*.down.sql' | sort | tail -1)"
+nn="$(basename "$newest_down" | sed -E 's/^([0-9]+)_.*/\1/')"
+printf '\nDELETE FROM trades;\n' >> "$newest_down"
+floor_run() { (cd "$fx" && MIGRATIONS_CONTENT_FLOOR="$1" bash x/ci/lint-migrations.sh >"$tmp/fl.out" 2>&1); }
+if floor_run "$nn"; then ok "a down-delete in an already-applied migration (floor ${nn}) passes"; else bad "floor ${nn} still fails on the applied migration: $(grep -m3 '❌' "$tmp/fl.out")"; fi
+if floor_run "$((10#$nn - 1))"; then
+  bad "a down-delete in a migration above the floor passed"
+elif grep -q 'down deletes rows silently' "$tmp/fl.out"; then
+  ok "a down-delete above the floor fails"
+else
+  bad "failed for the wrong reason: $(grep -m3 '❌' "$tmp/fl.out")"
+fi
+if floor_run ""; then bad "no floor judged nothing"; else ok "no floor judges every migration"; fi
+if floor_run "abc"; then
+  bad "a non-numeric floor passed"
+elif grep -q 'not a number' "$tmp/fl.out"; then
+  ok "a non-numeric floor fails closed"
+else
+  bad "bad floor failed for the wrong reason"
+fi
+
+# The checkout is the deploying tag: its copy of a gate is the gate as it stood at that tag, so
+# an old tag would be judged by an old gate. Each run must read the dispatching commit's copy.
+from_tag="$(python3 - "$WORKFLOW" <<'PY'
+import re, sys, yaml
+steps = yaml.safe_load(open(sys.argv[1]))["jobs"]["deploy"].get("steps", [])
+for name in ("lint-migrations.sh", "lint-migration-immutability.sh"):
+    tree = re.compile(r'(^|[\s;&|])(\./)?scripts/ci/' + re.escape(name) + r'($|[\s;&|])')
+    for s in steps:
+        run = s.get("run") or ""
+        if "scripts/ci/" + name not in run:
+            continue
+        if any(tree.search(l) for l in run.splitlines()) or \
+                'git show "${GITHUB_SHA}:scripts/ci/' + name + '"' not in run:
+            print(name + " in step '" + s.get("name", "?") + "'")
+PY
+)" || { echo "deploy-migration-gate-coverage-test: could not read the deploy job's gate steps" >&2; exit 2; }
+if [ -z "$from_tag" ]; then
+  ok "lint-migrations.sh and lint-migration-immutability.sh run from the dispatching commit"
+else
+  while IFS= read -r l; do
+    bad "deploy.yml runs the tag's own copy of ${l}; read it with git show \"\${GITHUB_SHA}:…\""
+  done <<<"$from_tag"
 fi
 
 followup="$(python3 - "$WORKFLOW" <<'PY'
