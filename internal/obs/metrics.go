@@ -87,6 +87,7 @@ func registerAppMetrics() {
 		AdminKeyBudgetClampsTotal,
 		MintScopeClampRefusedTotal,
 		CursorLastLedger,
+		CursorDurableLagLedgers,
 		DivergenceRefreshTotal,
 		DivergenceRefresherWired,
 		TradeInsertsTotal,
@@ -1469,6 +1470,14 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 		Help: "Last ledger committed to the per-source cursor.",
 	},
 	[]string{"source"},
+)
+
+// CursorDurableLagLedgers is how many processed ledgers the ledgerstream cursor holds back because their rows have not all landed.
+var CursorDurableLagLedgers = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_cursor_durable_lag_ledgers",
+		Help: "Ledgers processed by the indexer but not yet committed to the ledgerstream cursor because some of their rows have not landed.",
+	},
 )
 
 // DivergenceRefreshTotal counts divergence cache refreshes by outcome; only `ok` writes a fresh entry, so alerts also fire when ok stops.

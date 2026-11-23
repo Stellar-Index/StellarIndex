@@ -524,6 +524,14 @@ Mirror of the committed `ingestion_cursors.last_ledger`. It advances only when a
 
 Only `source="ledgerstream"` is emitted. `ledger-ingest-stalled` (page) fires on a flat or absent series. `cursor-stuck` joins on `stellarindex_source_enabled == 1`, so it does not cover `ledgerstream` (a cursor namespace, not a source).
 
+The cursor commits a ledger only once the indexer's sink has landed every row the ledger produced, so it trails the processed ledger by about one ledger in steady state. A crash or forced exit then re-walks the uncommitted ledgers instead of skipping their rows.
+
+### `stellarindex_cursor_durable_lag_ledgers`
+
+Gauge, no labels.
+
+Ledgers the indexer has processed that the `ledgerstream` cursor does not yet cover, because some of their served-tier rows (trades, observations, protocol events) are still buffered or being written. Normally 0–2. A climbing value means a write is stuck while ledger processing continues; a restart would re-walk that many ledgers.
+
 ### `stellarindex_trade_inserts_total`
 
 Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |

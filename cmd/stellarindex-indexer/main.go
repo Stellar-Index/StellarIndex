@@ -709,6 +709,12 @@ func run(cfgPath string, dryRun bool) error {
 		)
 	}
 
+	// from-1 is what the persisted cursor already covers (or nothing, on a first start from backfill_from_ledger).
+	marks := pipeline.NewLedgerMarks(from - 1)
+	cursor := &durableCursor{
+		store: store, marks: marks, logger: logger, written: from - 1,
+		accountObserverActive: accountObserverActive, classicObserverActive: classicObserverActive,
+	}
 	streamErr := make(chan error, 1)
 	go func() {
 		// CRASH, but drain on the way out. Recovering in place is the worst option: nothing would
@@ -728,7 +734,7 @@ func run(cfgPath string, dryRun bool) error {
 		err = ledgerstream.StreamArchiveThenLive(
 			rootCtx, archiveCfg, liveCfg, from, cfg.Ingestion.LiveSeamLedger, logger,
 			func(lcm sdkxdr.LedgerCloseMeta) error {
-				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase(), accountObserverActive, classicObserverActive); perr != nil {
+				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase(), marks, cursor); perr != nil {
 					return perr
 				}
 				// hashdb append is best-effort and never stalls or fails ingest (see recordHashdb).
@@ -761,8 +767,8 @@ func run(cfgPath string, dryRun bool) error {
 	// close(events) while it might still send.
 	streamExited := false
 	// fatalErr is returned AFTER the drain, never instead of it: returning early would discard up
-	// to one channel buffer (256) of events already counted against the cursor, so the next start
-	// would resume past them. A decoder panic arrives here as a ledger error.
+	// to one channel buffer (256) of events the next start then has to re-walk. A decoder panic
+	// arrives here as a ledger error.
 	var fatalErr error
 	select {
 	case <-rootCtx.Done():
@@ -824,8 +830,16 @@ func run(cfgPath string, dryRun bool) error {
 		// the loss's only fix.
 		rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
 		lossCovered = rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
+		// Workers stop acking at cancel, so the cursor sits below the drained tail. A closed, fully drained channel with
+		// nothing abandoned means every processed ledger landed; commit it so a clean restart re-walks nothing.
+		if safeToClose && sinkLoss.Rows == 0 {
+			marks.AllLanded()
+			cursor.checkpoint(rctx) //nolint:contextcheck // deliberate fresh ctx, see above
+		}
 		rcancel()
 	case <-shutdownCtx.Done():
+		// No rewind is needed: the cursor was only ever committed at the durable ledger, so it is already below
+		// every row the sink still holds, and the restart re-walks them.
 		writersStopped = false
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
@@ -1829,8 +1843,9 @@ func rewindCursorForSinkLoss(ctx context.Context, store cursorRewinder, loss pip
 	return !loss.LedgerUnknown
 }
 
-// processAndPersistCursor wraps pipeline.ProcessLedger with the cursor upsert and metric so a restart resumes at cursor+1.
-// Backfill does NOT call it: it has explicit -from/-to and shares no cursor row.
+// processAndPersistCursor wraps pipeline.ProcessLedgerMarked with the durable cursor checkpoint so a restart resumes
+// at cursor+1, below any row the sink has not landed. Backfill does NOT call it: it has explicit -from/-to and shares
+// no cursor row.
 func processAndPersistCursor(
 	ctx context.Context,
 	disp *dispatcher.Dispatcher,
@@ -1839,9 +1854,10 @@ func processAndPersistCursor(
 	logger *slog.Logger,
 	lcm sdkxdr.LedgerCloseMeta,
 	networkPassphrase string,
-	accountObserverActive, classicObserverActive bool,
+	marks *pipeline.LedgerMarks,
+	cursor *durableCursor,
 ) error {
-	if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, networkPassphrase); err != nil {
+	if err := pipeline.ProcessLedgerMarked(ctx, disp, events, logger, lcm, networkPassphrase, marks); err != nil {
 		return err
 	}
 	// ADR-0033: write the substrate-continuity record once the ledger's events are ENQUEUED to
@@ -1850,39 +1866,7 @@ func processAndPersistCursor(
 	// reconcile is what proves the rows landed. Best-effort: a write failure must not stall
 	// ingest, because the gap surfaces in the substrate continuity check.
 	recordLedgerIngest(ctx, store, logger, lcm, networkPassphrase)
-	if err := store.UpsertCursor(ctx, cursorSource, "", lcm.LedgerSequence()); err != nil {
-		// Do NOT advance the cursor gauge on a persist failure. The gauge tracks the DURABLE resume position — on restart,
-		// ingest resumes from the last successfully-upserted cursor, so a gauge that advanced past it would hide the stall/gap
-		// from the cursor-lag alert.
-		logger.Warn("cursor upsert",
-			"ledger", lcm.LedgerSequence(),
-			"err", err,
-		)
-	} else {
-		recordCursorMetric(lcm.LedgerSequence())
-	}
-	// Advance the account observer's TRUE processed-ledger watermark, only when the observer is
-	// registered (SDF reserve accounts configured). It runs for every live ledger the observer
-	// saw, whether or not a watched account changed, so the XLM supply freshness anchor tracks
-	// observer liveness. Best-effort: a failed write lags the anchor a tick and the monotonic
-	// guard catches it up next ledger.
-	if accountObserverActive {
-		if err := store.UpsertAccountObserverWatermark(ctx, lcm.LedgerSequence()); err != nil {
-			logger.Warn("account observer watermark upsert",
-				"ledger", lcm.LedgerSequence(),
-				"err", err,
-			)
-		}
-	}
-	// Same for the classic-supply observers, so a quiet component table cannot freeze the classic supply anchor.
-	if classicObserverActive {
-		if err := store.UpsertClassicObserverWatermark(ctx, lcm.LedgerSequence()); err != nil {
-			logger.Warn("classic observer watermark upsert",
-				"ledger", lcm.LedgerSequence(),
-				"err", err,
-			)
-		}
-	}
+	cursor.checkpoint(ctx)
 	return nil
 }
 

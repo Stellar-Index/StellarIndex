@@ -135,6 +135,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 	var carried []consumer.Event
 	var drain drainDeadline
 	ep = dispatcherEventPersister(ep, mode)
+	acks := newMarkAcks(ctx)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
 
@@ -146,7 +147,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 		}
 		batch := tradeBuf
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
-		return flushTradeBatch(fctx, logger, tw, buf, batch, workerID)
+		return acks.flushed(batch, flushTradeBatch(fctx, logger, tw, buf, batch, workerID))
 	}
 	// flush is the steady-state flush under the parent ctx, so a stuck write cannot hold shutdown hostage.
 	// Rows abandoned by a racing cancel go back into tradeBuf for flushShutdown to retry; a fresh bounded ctx's abandon is a genuine loss.
@@ -179,16 +180,13 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			// Shutdown: drain whatever this worker can pull NON-BLOCKING, since the racy select can pick this arm with events still buffered.
 			// Every phase shares one deadline latched by the first post-cancellation phase, so worker 0 logs the undrained range before main hard-exits.
 			deadline := drain.get()
-			// Carried events first: they were dequeued BEFORE anything
-			// still sitting in `in`, and nothing else can redeliver them.
+			// Carried events first: dequeued before anything still in `in`, and nothing else redelivers them.
 			persistCarried(carried, logger, ep, deadline, lt)
 			shutdownCtx, shutdownCancel := context.WithDeadline(context.Background(), deadline)
 			tradeBuf = drainInFlightNow(shutdownCtx, in, logger, ep, mode, tradeBuf, lt)
 			shutdownCancel()
 			flushShutdown(deadline)
-			// Only the first worker handles the blocking shutdown drain
-			// (catches events that arrive after our non-blocking sweep + the
-			// channel close) to avoid duplicate drain work; the others exit.
+			// Only worker 0 runs the blocking drain for events arriving after the non-blocking sweep; the others exit.
 			if workerID == 0 {
 				drainBufferedEvents(in, logger, ep, tw, mode, deadline, lt)
 			}
@@ -206,14 +204,17 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 				flushShutdown(deadline)
 				return
 			}
+			marks := eventMarks(ev)
 			ev, ledger := eventLedger(ev)
 			if skipInSink(ev, mode) {
+				acks.event(marks, markLedger(ev, ledger))
 				continue
 			}
 			if t, ok := tradeFromEvent(ev); ok {
 				if !countsInProjector(ev, mode) {
 					countReceived(t.Source)
 				}
+				acks.bufferTrade(marks, t)
 				tradeBuf = append(tradeBuf, t)
 				if len(tradeBuf) >= tradeBatchSize {
 					// See the flushTicker arm above.
@@ -226,13 +227,13 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			// Dispatcher drain for non-trade served-tier writes (oracle updates, supply observations, blend / cctp / rozo rows), under the same
 			// ADR-0041 failure policy as trades (persistEventResilient).
 			fctx, fcancel := shutdownSafeCtx(ctx, &drain)
-			if err := persistEventResilient(fctx, logger, ep, ev); err != nil {
+			if err := persistEventResilient(fctx, logger, ep, ev); err == nil {
+				acks.event(marks, ledger)
+			} else if fctx == ctx {
 				// Same carry rule as flush: only the parent-ctx case is carried; an abandon under a fresh bounded ctx is a genuine loss.
-				if fctx == ctx {
-					carried = append(carried, withLedger(ev, ledger))
-				} else {
-					reportAbandonedEvent(logger, lt, ev, ledger, err)
-				}
+				carried = append(carried, withLedger(ev, ledger))
+			} else {
+				reportAbandonedEvent(logger, lt, ev, ledger, err)
 			}
 			fcancel()
 		}
