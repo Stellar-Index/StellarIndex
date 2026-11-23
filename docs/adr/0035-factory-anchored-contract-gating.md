@@ -36,7 +36,7 @@ Soroswap keeps its own `soroswap_pairs` registry, which also carries token ident
 ## Consequences
 
 - Coverage is a hard function of registry completeness. An unseeded real child is dropped, which is silent under-capture traded for silent over-capture. The factory seed is provable because the creation events are themselves in the hash-chained lake (ADR-0033). Children not created by a factory need ADR-0040.
-- Rows written under topic-only matching are phantoms once a gate lands. A gated source needs a one-time lake re-derive (`projector-replay`) to purge them, and the reconcile reports them until then. Gate code must not deploy before its seed exists, or live ingest fail-closes on every pool.
+- Rows written under topic-only matching are phantoms once a gate lands. `projector-replay` and `projected-rebuild` are upsert-only and never delete them, so a gated source also needs a `contract_id`-scoped DELETE of the foreign emitters' rows (as in `docs/protocols/aquarius.md`), or the clean-slate `scripts/ops/ch-rebuild-projected.sh`; the reconcile reports them until then. Gate code must not deploy before its seed exists, or live ingest fail-closes on every pool.
 - A factory deployed after enumeration is a residual risk, mitigated by re-running the creation-event enumeration.
 
 ## Evidence

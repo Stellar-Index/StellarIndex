@@ -68,6 +68,10 @@ Owned hardware plus cloud DR meets the commitment without lock-in, at the cost o
 keepalived, Sentinel and mirrors. A new service declares its tier, redundancy and degraded mode;
 runbooks live in `docs/operations/runbooks/`. Rejected: full cloud, single-replica Postgres.
 
+Status note: Decision 6's "Redis down: query Timescale directly with `flags.stale=true`" is not what the code does.
+A failed API-key lookup answers 503 `auth-key-store-unavailable` at once, and rate-limited routes answer 503 after
+`api.rate_limit_dwell` (default 30s) of Redis errors. See [ha-plan.md](../architecture/ha-plan.md) §3.4 and §5.
+
 ## Evidence
 
 `cmd/stellarindex-aggregator/main.go`, `deploy/monitoring/rules/slo.yml`, the two chops tests above.
