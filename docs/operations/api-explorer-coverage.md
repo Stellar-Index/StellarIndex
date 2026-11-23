@@ -20,8 +20,8 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **157** |
-| Level 3 — reachable | **120** |
+| Paths in the OpenAPI contract | **158** |
+| Level 3 — reachable | **121** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **33** |
 | Deliberately excluded (operational) | **4** |
@@ -89,6 +89,7 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/lending/pools/{pool}/backstop` | GET | 3 | app/lending/[pool]/BackstopPanel.tsx |
 | `/lending/pools/{pool}/backstop/history` | GET | 3 | app/lending/[pool]/BackstopPanel.tsx |
 | `/lending/pools/{pool}/auctions` | GET | 3 | app/lending/[pool]/AuctionsPanel.tsx |
+| `/lending/pools/{pool}/top-accounts` | GET | 3 | app/lending/[pool]/TopAccountsPanel.tsx |
 | `/lending/pools/{pool}/emissions` | GET | 1 | — |
 | `/lending/accounts/{account}/earnings` | GET | 1 | — |
 | `/lending/rates` | GET | 1 | — |
