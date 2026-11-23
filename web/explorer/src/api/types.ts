@@ -7109,8 +7109,9 @@ export interface components {
              * @description Present on a fee-bump transaction: hash is then the OUTER
              *     (fee-bump) hash, source_account the inner transaction's source,
              *     and max_fee the fee payer's bid. GET /v1/tx/{hash} also resolves
-             *     the inner hash. Absent on a fee bump ingested before the outer
-             *     layer was captured; its result still reads
+             *     the inner hash, except for a fee bump ingested before the outer
+             *     layer was captured: look that one up by its outer hash. Absent on
+             *     such a fee bump; its result still reads
              *     tx_fee_bump_inner_success / tx_fee_bump_inner_failed.
              */
             fee_bump?: {
