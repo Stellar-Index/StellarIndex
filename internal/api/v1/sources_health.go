@@ -60,5 +60,8 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 		Subclass:      string(md.Subclass),
 		IncludeInVWAP: md.IncludeInVWAP,
 		BackfillSafe:  md.BackfillSafe(),
+
+		EntriesUnmeasured:    true,
+		TradeStatsUnmeasured: true,
 	}, Flags{})
 }

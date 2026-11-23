@@ -140,17 +140,14 @@ type AssetDetail struct {
 	// price is unavailable.
 	MarketCapUSD *string `json:"market_cap_usd,omitempty"`
 
-	// FDVUSD = max_supply × USD price / 10^decimals. Null when
-	// max_supply is null (uncapped issuer + no override + no SEP-1
-	// declaration) or when USD price is unavailable.
-	FDVUSD *string `json:"fdv_usd,omitempty"`
+	// FDVUSD = max_supply × USD price / 10^decimals. Null when max_supply is null (uncapped issuer + no override + no SEP-1
+	// declaration), when USD price is unavailable, or when suppressed.
+	FDVUSD            *string                 `json:"fdv_usd,omitempty"`
+	FDVWithheldReason MarketCapWithheldReason `json:"fdv_withheld_reason,omitempty"` // fdv_usd alone refused beside a served cap
 
-	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed:
-	// either the dust floor (single venue and 24h USD volume below
-	// aggregate.min_market_cap_volume_usd) or the turnover ceiling (capExceedsObservedTurnover;
-	// FDV, over max_supply, can breach it alone), or, on a catalogue row, the Stellar twin's on-chain
-	// price failing the substance gate (flagTwinSubstanceWithheldCap). It separates "suppressed on purpose" from "no
-	// data"; price_usd still serves, only the valuation is guarded.
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed by the dust floor, the
+	// turnover ceiling (capExceedsObservedTurnover; FDV can breach it alone) or, on a catalogue row, the twin's substance
+	// gate (flagTwinSubstanceWithheldCap). price_usd still serves; only the valuation is guarded.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 	// MarketCapLowerBound: on a listing row, market_cap_usd rests on a floor supply, so the cap is a floor too.
 	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
@@ -450,6 +447,9 @@ func (d AssetDetail) MarshalJSON() ([]byte, error) {
 	if d.PriceUSD == nil || d.CirculatingSupply == nil || d.MarketCapUSD != nil {
 		// A later suppressor can unprice a row after its cap was refused; the reason explains only a missing cap.
 		d.MarketCapWithheldReason = ""
+	}
+	if d.PriceUSD == nil || d.MarketCapUSD == nil || d.FDVUSD != nil {
+		d.FDVWithheldReason = "" // beside no cap, market_cap_withheld_reason explains fdv_usd too
 	}
 	if !d.scaleUnknown() {
 		return json.Marshal(wire(d))
@@ -2520,14 +2520,7 @@ func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw
 func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID string) (canonical.Asset, bool) {
 	parsed, err := canonical.ParseAsset(rawID)
 	if err != nil {
-		if resolved, ok := s.resolveClassicSlug(r.Context(), rawID); ok {
-			return resolved, true
-		}
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, issuer in any case)")
-		return canonical.Asset{}, false
+		return s.resolveSlugOrProblem(w, r, rawID)
 	}
 	if err := parsed.Validate(); err != nil {
 		writeProblem(w, r,
