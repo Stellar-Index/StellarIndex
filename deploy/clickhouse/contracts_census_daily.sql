@@ -22,7 +22,10 @@
 -- stellarindex-ops ch-census-rollup recomputes whole days and swaps them in
 -- with ALTER TABLE … REPLACE PARTITION, so a recompute is idempotent and a
 -- partial write never mixes with served rows. The current day is re-replaced
--- every cycle, so the tail is at most one cadence (30 min) stale.
+-- every cycle, so the tail is at most one cadence (30 min) stale. An earlier
+-- day is NEVER recomputed by the timer: after a lake repair that adds
+-- contract_events rows (ch-backfill -write), run the recompute its
+-- FOLLOW-UP OWED line names (ch-census-rollup -from-day <day> -write).
 --
 -- OPERATOR CONTRACT (same as the sibling indexes): presence + non-empty =
 -- the reader TRUSTS it for any window whose floor is covered. Apply the
