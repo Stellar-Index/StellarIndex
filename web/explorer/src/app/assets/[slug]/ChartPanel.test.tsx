@@ -1,13 +1,66 @@
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+import { resolveScaleRefused } from './priceProvenance';
 
 import { ChartPanel, chartQuoteFor, USDC_ASSET_ID } from './ChartPanel';
 
+// /v1/ohlc and the tip stream never check a token's read decimals.
+describe('ChartPanel under a contradicted scale', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderChart(row: Record<string, unknown> | null) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    );
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    // The live row, as useAsset caches it.
+    if (row) qc.setQueryData(['/v1/assets/{id}', 'CTOKEN'], { data: row });
+    return render(
+      <QueryClientProvider client={qc}>
+        <ChartPanel assetID="CTOKEN" scaleMismatch={row == null} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('withholds the price chart on the build-time verdict', () => {
+    renderChart(null);
+    expect(screen.getByText(/Price chart withheld/)).toBeInTheDocument();
+    expect(screen.queryByText(/OHLC/)).toBeNull();
+  });
+
+  it('withholds the price chart when the live row refuses the scale', async () => {
+    renderChart({
+      asset_id: 'CTOKEN',
+      price_withheld_reason: 'decimals_mismatch',
+    });
+    expect(screen.getByText(/Price chart withheld/)).toBeInTheDocument();
+  });
+});
+
 describe('ChartPanel for USDC', () => {
   it('never prints a constant dollar price that would hide a depeg', () => {
-    const { container } = render(<ChartPanel assetID={USDC_ASSET_ID} />);
+    const { container } = render(
+      <ChartPanel assetID={USDC_ASSET_ID} scaleMismatch={false} />,
+    );
     expect(container.textContent).not.toMatch(/\$1\.00/);
     expect(container.textContent).toMatch(/depeg/);
+  });
+});
+
+describe('resolveScaleRefused', () => {
+  it('keeps a build-time refusal when the live row could not read decimals', () => {
+    expect(resolveScaleRefused({ price_usd: '1' }, true)).toBe(true);
+  });
+
+  it('lets a live row that read its decimals clear the build-time refusal', () => {
+    expect(resolveScaleRefused({ price_usd: '1', decimals: 7 }, true)).toBe(
+      false,
+    );
   });
 });
 

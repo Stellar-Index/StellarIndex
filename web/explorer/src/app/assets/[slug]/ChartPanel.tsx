@@ -9,6 +9,8 @@ import { priceFormatForValues } from '@/components/charts/pricePrecision';
 import { useFiatUsdSeries } from '@/api/hooks';
 import { shortAssetText } from '@/lib/asset-label';
 import { USDC_ASSET_ID } from '@/lib/networks';
+import { withheldNote } from './headerNotes';
+import { useScaleRefused } from './LiveAssetPrice';
 
 // The verified Circle-issued USDC is the chart anchor quote.
 export { USDC_ASSET_ID };
@@ -61,12 +63,50 @@ export function chartQuoteFor(assetID: string): {
  *   - Everything else (incl. native XLM): real OHLC candles + volume via
  *     the shared MarketChart, quoted per [chartQuoteFor].
  */
-export function ChartPanel({ assetID }: { assetID: string }) {
+export function ChartPanel({
+  assetID,
+  scaleMismatch,
+}: {
+  assetID: string;
+  /** The asset row's decimals_mismatch verdict; null for an off-chain id, which has no token scale. */
+  scaleMismatch: boolean | null;
+}) {
   if (assetID === USDC_ASSET_ID) {
     return <UsdcReferencePanel />;
   }
   if (assetID.startsWith('fiat:')) {
     return <FiatUsdChartPanel assetID={assetID} />;
+  }
+  return <MarketPriceChart assetID={assetID} scaleMismatch={scaleMismatch} />;
+}
+
+function MarketPriceChart({
+  assetID,
+  scaleMismatch,
+}: {
+  assetID: string;
+  scaleMismatch: boolean | null;
+}) {
+  // /v1/ohlc and the tip stream scale by the projection the asset row contradicts.
+  const scaleRefused = useScaleRefused(
+    scaleMismatch === null ? undefined : assetID,
+    scaleMismatch ?? false,
+  );
+  if (scaleRefused) {
+    return (
+      <Panel
+        headingLevel={2}
+        title="Price chart"
+        hint={withheldNote('decimals_mismatch')}
+        source={asExample('/v1/assets/{id}', { id: assetID })}
+      >
+        <p className="text-ink-muted py-14 text-center text-sm">
+          Price chart withheld: this token&apos;s on-chain decimals contradict
+          the scale its market price is normalised on, so a per-unit price would
+          be off by a power of ten.
+        </p>
+      </Panel>
+    );
   }
 
   const { quote, label } = chartQuoteFor(assetID);
