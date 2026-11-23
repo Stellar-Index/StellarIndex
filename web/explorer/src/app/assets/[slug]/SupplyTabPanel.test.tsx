@@ -77,6 +77,40 @@ describe('SupplyTabPanel market-cap chart', () => {
     ).not.toBeInTheDocument();
   });
 
+  // A failed or refused read is an empty 200 marked stale (degraded is header-only).
+  it('says the history is unavailable when the server marks an empty series stale', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: { points: [] },
+      flags: { stale: true },
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Market-cap history unavailable right now/),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/No market-cap history for this asset/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says a low-liquidity series is withheld, not absent', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: { points: [], market_cap_low_liquidity: true },
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          /withheld: the price behind it comes from negligible liquidity/i,
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/No market-cap history for this asset/),
+    ).not.toBeInTheDocument();
+  });
+
   it('keeps the genuine empty claim when the series is served but too short', async () => {
     vi.mocked(apiGet).mockResolvedValue({ data: { points: [] } });
     renderPanel();

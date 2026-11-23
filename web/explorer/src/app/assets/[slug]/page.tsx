@@ -52,7 +52,7 @@ import { SacRedirect } from './SacRedirect';
 import { AssetIdentityCard, AssetSidebar } from './AssetSidebar';
 import { AssetIdentityLine } from './AssetIdentityLine';
 import { AssetTrustFacts } from './AssetTrustFacts';
-import { bakedAtDeploy, headlinePriceProvenance } from './priceProvenance';
+import { bakedAtDeploy, bakedHeadline } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { AssetAbout } from './AssetAbout';
@@ -955,8 +955,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     assetIDParts.length === 2 && assetIDParts[1].startsWith('G')
       ? assetIDParts[1]
       : null;
-  const headlinePrice =
-    positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd);
+  const headline = bakedHeadline(price, coin);
   return (
     <Container className="space-y-6 py-8">
       <script
@@ -1061,9 +1060,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         <div className="lg:col-start-1 lg:row-start-1">
           <AssetIdentityCard
             coin={coin}
-            priceUSD={headlinePrice}
-            priceProvenance={headlinePriceProvenance(price, coin)}
-            priceStale={Boolean(price?.flags?.stale)}
+            priceUSD={headline.price}
+            priceProvenance={headline.provenance}
+            priceStale={headline.stale}
+            priceScaleMismatch={headline.scaleMismatch}
             name={globalView?.name}
           />
         </div>
@@ -1091,12 +1091,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <Suspense fallback={null}>
             <ActiveTabSlot
               overview={
-                <OverviewBody
-                  coin={coin}
-                  detail={detail}
-                  price={price}
-                  headlinePrice={headlinePrice}
-                />
+                <OverviewBody coin={coin} detail={detail} headline={headline} />
               }
               chart={<ChartPanel assetID={coin.asset_id} />}
               markets={
@@ -1156,9 +1151,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           <AssetSidebar
             coin={coin}
             detail={detail}
-            priceUSD={headlinePrice}
-            priceProvenance={headlinePriceProvenance(price, coin)}
-            priceStale={Boolean(price?.flags?.stale)}
+            priceUSD={headline.price}
+            priceProvenance={headline.provenance}
+            priceStale={headline.stale}
+            priceScaleMismatch={headline.scaleMismatch}
             homeDomain={detail?.home_domain}
           />
         </aside>
@@ -1170,13 +1166,11 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
 function OverviewBody({
   coin,
   detail,
-  price,
-  headlinePrice,
+  headline,
 }: {
   coin: CoinSummary;
-  headlinePrice: string | null;
+  headline: ReturnType<typeof bakedHeadline>;
   detail: AssetDetail | null;
-  price: PriceResp | null;
 }) {
   const peg = pegBadgeCurrency(assetSymbol(coin), detail?.unverified_warning);
   const hasSupply =
@@ -1205,18 +1199,20 @@ function OverviewBody({
               paints first and is captioned as baked until the poll answers. */}
           <LiveAssetPrice
             assetID={coin.asset_id}
-            initialPrice={headlinePrice}
-            initialProvenance={headlinePriceProvenance(price, coin)}
-            initialStale={Boolean(price?.flags?.stale)}
+            initialPrice={headline.price}
+            initialProvenance={headline.provenance}
+            initialStale={headline.stale}
+            initialScaleMismatch={headline.scaleMismatch}
             initialChangePct={
               coin.change_24h_pct ? Number(coin.change_24h_pct) : null
             }
           />
           <PriceSparklines
             assetId={coin.asset_id}
-            priceUSD={headlinePrice}
-            priceProvenance={headlinePriceProvenance(price, coin)}
-            priceStale={Boolean(price?.flags?.stale)}
+            priceUSD={headline.price}
+            priceProvenance={headline.provenance}
+            priceStale={headline.stale}
+            priceScaleMismatch={headline.scaleMismatch}
             points24h={coin.price_history_24h ?? []}
             points7d={coin.price_history_7d ?? []}
           />
