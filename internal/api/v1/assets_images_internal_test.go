@@ -64,7 +64,7 @@ func TestFillImagesFromSep1_Overlay(t *testing.T) {
 	preset := "https://preset.example/logo.png"
 	rows := []AssetDetail{
 		{AssetID: "USDC-" + imgIssuerUSDC, Type: "classic", Code: "USDC", Issuer: ptr(imgIssuerUSDC)},
-		// A lower-case code is another asset: no AQUA logo.
+		// A lower-case code is another asset, and no chain reader confirms a fold: no AQUA logo.
 		{AssetID: "aqua-" + imgIssuerAQUA, Type: "classic", Code: "aqua", Issuer: ptr(imgIssuerAQUA)},
 		// Row already carrying an image must be left untouched.
 		{AssetID: "USDC-x", Type: "classic", Code: "USDC", Issuer: ptr(imgIssuerUSDC), Image: ptr(preset)},

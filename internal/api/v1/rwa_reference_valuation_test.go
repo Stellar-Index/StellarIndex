@@ -2118,12 +2118,12 @@ func TestRWAAssets_CodesDifferingOnlyInCaseAreDistinctAssets(t *testing.T) {
 		t.Errorf("both declared: assets = %v, want %v", got, want)
 	}
 
-	// A mis-cased declaration names another asset, so it reaches none, even with one candidate row.
+	// A mis-cased declaration still reaches the one asset it can mean.
 	v = getRWA(t, rwaServer(t,
 		[]timescale.Sep1BoundCurrency{rwaBound("Ustry", rwaGoodIssuer, "etherfuse.com", "bond")}, dir,
 		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}}))
-	if got := rwaAssetIDs(v); len(got) != 0 {
-		t.Errorf("mis-cased declaration: assets = %v, want none", got)
+	if got := rwaAssetIDs(v); len(got) != 1 || got[0] != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("mis-cased declaration: assets = %v, want [USTRY-%s]", got, rwaGoodIssuer)
 	}
 
 	// A mis-cased declaration that fits both twins names neither.

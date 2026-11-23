@@ -9,11 +9,11 @@ import (
 )
 
 // TestRWA_ClassicMembersSACIsNotASecondAsset: the directory naming an admitted classic member's
-// SAC must not add a contract row, or the one supply is valued twice in every total. A padded declaration still reaches its
-// row through the catalogue join, so it must reach that row's SAC too, under the row's real (mixed-case) code.
+// SAC must not add a contract row, or the one supply is valued twice in every total. A mis-cased or padded declaration
+// still reaches its row through the catalogue join, so it must reach that row's SAC too, under the row's real (mixed-case) code.
 func TestRWA_ClassicMembersSACIsNotASecondAsset(t *testing.T) {
 	for _, tc := range []struct{ declared, listed string }{
-		{"USTRY", "USTRY"}, {" USTRY", "USTRY"}, {"XAUm", "XAUm"}, {"iBENJI", "iBENJI"},
+		{"USTRY", "USTRY"}, {"ustry", "USTRY"}, {" USTRY", "USTRY"}, {"XAUM", "XAUm"}, {"IBENJI", "iBENJI"},
 	} {
 		t.Run(tc.declared+"->"+tc.listed, func(t *testing.T) { classicMemberSACIsNotASecondAsset(t, tc.declared, tc.listed) })
 	}

@@ -585,7 +585,7 @@ func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.V
 		if err != nil || sep == nil || sep.OutlivedDomain {
 			continue
 		}
-		match := findMatchingCachedCurrency(sep, asset)
+		match, _ := s.matchSep1Currency(ctx, sep, asset)
 		if match == nil {
 			continue
 		}

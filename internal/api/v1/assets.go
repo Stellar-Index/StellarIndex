@@ -1396,23 +1396,6 @@ func sep1ImageKey(code, issuer string) string {
 	return strings.TrimSpace(code) + "-" + issuer
 }
 
-// sep1ImageFor looks a logo up by exact (code, issuer): a case variant is another asset, often a trustline-only copy anyone
-// can mint, so it never borrows the issuer's logo.
-func sep1ImageFor(images map[string]string, code, issuer string) string {
-	return images[sep1ImageKey(code, issuer)]
-}
-
-// buildSep1ImageMap keys each safe logo by exact (code, issuer).
-func buildSep1ImageMap(imgs []timescale.Sep1Image) map[string]string {
-	built := make(map[string]string, len(imgs))
-	for _, img := range imgs {
-		if isSafeImageURL(img.Image) {
-			built[sep1ImageKey(img.Code, img.Issuer)] = img.Image
-		}
-	}
-	return built
-}
-
 // sep1ImagesReader is the narrow capability the logo overlay needs, type-asserted off [Server.sep1Cache] (not added to
 // [Sep1CachedReader]) so existing stubs keep compiling and opt out. Production wires *timescale.Store.
 type sep1ImagesReader interface {
@@ -1523,24 +1506,6 @@ func (s *Server) PrewarmSep1Images(ctx context.Context) {
 	select {
 	case <-flight:
 	case <-ctx.Done():
-	}
-}
-
-// fillImagesFromSep1 overlays the SEP-1 [[CURRENCIES]] logo URL onto rows lacking one, from the once-per-TTL logo map (the hot
-// listing query deliberately does not JOIN sep1_payload). Best-effort: no verified image or no reader is a no-op.
-func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
-	images := s.cachedSep1Images(ctx)
-	if len(images) == 0 {
-		return
-	}
-	for i := range rows {
-		if rows[i].Image != nil || rows[i].Issuer == nil || rows[i].Code == "" {
-			continue
-		}
-		if img := sep1ImageFor(images, rows[i].Code, *rows[i].Issuer); img != "" {
-			v := img
-			rows[i].Image = &v
-		}
 	}
 }
 
@@ -2888,7 +2853,12 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 		return
 	}
 
-	match := findMatchingCachedCurrency(sep, asset)
+	match, unread := s.matchSep1Currency(ctx, sep, asset)
+	if unread {
+		// OUR case-variant read failed; the fold fails closed and the response says so.
+		detail.Sep1Status, detail.sep1Unread = "not_fetched", true
+		return
+	}
 	if match == nil {
 		detail.Sep1Status = "no_match"
 		if name, ok := sep.BoundOrgName(asset.Issuer); ok {
@@ -2979,23 +2949,6 @@ func sep1CurrencyAuthorityFrom(match *timescale.IssuerSep1Currency) Sep1Currency
 		ApprovalServer:         safeURL(match.ApprovalServer),
 		ApprovalCriteria:       nonEmpty(match.ApprovalCriteria),
 	}
-}
-
-// findMatchingCachedCurrency returns the cached SEP-1 currency naming the asset's exact (code, issuer), nil if none: a case
-// variant never inherits the issuer's verification.
-func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical.Asset) *timescale.IssuerSep1Currency {
-	if asset.Type != canonical.AssetClassic {
-		return nil
-	}
-	if asset.Code == "" || asset.Issuer == "" {
-		return nil
-	}
-	for i := range sep.Currencies {
-		if c := &sep.Currencies[i]; c.Issuer == asset.Issuer && c.Code == asset.Code {
-			return c
-		}
-	}
-	return nil
 }
 
 // isSafeImageURL reports whether s is a plausible http(s) image URL for `data.image` from a hostile stellar.toml: a scheme allow-list plus
