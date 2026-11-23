@@ -192,7 +192,8 @@ go_waiver_map_keys() {
       }
       if (depth >= 1) unit = unit " "
     }
-    !inmap && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?|[Ee]xclu(de|ded|sions?)|[Ee]xceptions?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
+    # A map named …Proof(s) lists evidence (a test per covered site): growing it tightens a guard.
+    !inmap && $0 !~ /Proofs?[[:space:]]*:?=/ && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?|[Ee]xclu(de|ded|sions?)|[Ee]xceptions?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
       inmap = 1; depth = 0; instr = 0; unit = ""; col = 0
       s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s)
       # Collapse struct{…}/interface{…} in the value TYPE, innermost first, so the literal opens

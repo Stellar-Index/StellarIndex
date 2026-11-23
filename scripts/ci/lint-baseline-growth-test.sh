@@ -987,6 +987,14 @@ for f in gap wire spec; do
   expect "a new key in internal/p/${f}_test.go's waiver map fails undeclared" 1 "UNDECLARED GROWTH: internal/p/${f}_test.go"
 done
 
+# --- 25o2. a map of proofs that happens to carry "Exclusion" in its name is not a waiver list
+mkrepo 0
+change_commit "test: prove another route" \
+  internal/p/proof_test.go "$(printf 'var gatedRouteExclusionProof = map[string][]string{\n\t"a": {"T"},\n}')" \
+  "$(printf 'var gatedRouteExclusionProof = map[string][]string{\n\t"a": {"T"},\n\t"b": {"U"},\n}')"
+runGate
+expect "a new key in an …ExclusionProof map passes" 0 "no undeclared"
+
 # --- 25p. deleting a .golangci.yml qualifier widens the waiver
 mkrepo 0
 change_commit "chore: tidy lint config" .golangci.yml \
