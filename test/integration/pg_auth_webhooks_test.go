@@ -93,6 +93,84 @@ func TestCustomerWebhooksUnopenablePreviousKey(t *testing.T) {
 	}
 }
 
+// TestCustomerWebhooksClearExpiredPreviousKey pins that the retention sweep erases a retired signing key, sealed or raw, once its
+// rotation overlap is past the threshold, and leaves an open overlap and every current key untouched.
+func TestCustomerWebhooksClearExpiredPreviousKey(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	acct := insertRawAccount(t, ctx, db, "clearprev")
+
+	sealer, err := platform.NewWebhookKeySealer([]byte(strings.Repeat("c", platform.MinWebhookSealSecretLen)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := postgresstore.NewSealingWebhookStore(postgresstore.New(db), sealer)
+	raw := postgresstore.NewWebhookStore(postgresstore.New(db))
+
+	now := time.Now()
+	cases := []struct {
+		name      string
+		store     *postgresstore.WebhookStore
+		expiresAt time.Time
+		cleared   bool
+	}{
+		{"sealed-expired", sealed, now.Add(-3 * time.Hour), true},
+		{"raw-expired", raw, now.Add(-3 * time.Hour), true},
+		{"sealed-within-grace", sealed, now.Add(-30 * time.Minute), false},
+		{"sealed-open-overlap", sealed, now.Add(time.Hour), false},
+	}
+	current := []byte("fixture-current-key-not-a-secret-01")
+	ids := make([]uuid.UUID, len(cases))
+	for i, tc := range cases {
+		w, err := tc.store.CreateWebhook(ctx, platform.CustomerWebhook{
+			AccountID: acct, Name: tc.name, URL: "https://clearprev.example/" + tc.name,
+			SigningKey: []byte("fixture-retired-key-not-a-secret-01"),
+			Events:     []string{string(platform.WebhookEventIncidentSEV1)}, Enabled: true,
+		}, 10)
+		if err != nil {
+			t.Fatalf("%s CreateWebhook: %v", tc.name, err)
+		}
+		if err := tc.store.RotateWebhookSecret(ctx, w.ID, current, tc.expiresAt); err != nil {
+			t.Fatalf("%s RotateWebhookSecret: %v", tc.name, err)
+		}
+		ids[i] = w.ID
+	}
+
+	n, err := sealed.ClearExpiredPreviousSigningKeys(ctx, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("ClearExpiredPreviousSigningKeys: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("cleared %d retired keys, want 2", n)
+	}
+	for i, tc := range cases {
+		var hasRaw, hasSealed, hasExpiry bool
+		if err := db.QueryRowContext(ctx, `
+			SELECT previous_secret IS NOT NULL, previous_signing_key_sealed IS NOT NULL, previous_secret_expires_at IS NOT NULL
+			  FROM customer_webhooks WHERE id = $1`, ids[i]).Scan(&hasRaw, &hasSealed, &hasExpiry); err != nil {
+			t.Fatalf("%s read previous slot: %v", tc.name, err)
+		}
+		if held := hasRaw || hasSealed; held == tc.cleared || hasExpiry == tc.cleared {
+			t.Errorf("%s: previous key held=%v expiry set=%v, want both %v", tc.name, held, hasExpiry, !tc.cleared)
+		}
+		got, err := tc.store.GetWebhook(ctx, ids[i])
+		if err != nil {
+			t.Fatalf("%s GetWebhook: %v", tc.name, err)
+		}
+		if !bytes.Equal(got.SigningKey, current) {
+			t.Errorf("%s: current signing key changed by the sweep", tc.name)
+		}
+	}
+}
+
 // preSealMigration is the newest migration before 0204 on this branch.
 const preSealMigration = 203
 
