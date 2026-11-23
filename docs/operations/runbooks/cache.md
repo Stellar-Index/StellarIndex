@@ -129,6 +129,19 @@ redis-cli -h cache-01 -p 26379 sentinel replicas stellarindex-r1-cache
 
 **Escalate:** none (ticket).
 
+## stellarindex_redis_sentinel_primary_count_wrong
+
+**Symptom.** `sum(stellarindex_redis_sentinel_primary) != 1`, `for: 2m`, page, multi-host only. Summed over every `redis_sentinel.prom` (`configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`), the hosts that are the Sentinel-elected primary. 0: Sentinel has no primary (no quorum, or every Redis down). 2: split brain, a partitioned host still believes it is primary; `redis_up` stays 1 on every member either way.
+
+**Check.**
+
+```sh
+redis-cli -p 26379 SENTINEL get-master-addr-by-name <master>   # on each host, needs auth
+redis-cli -p 26379 SENTINEL ckquorum <master>
+```
+
+**Fix.** 2 primaries: find the partitioned host (the one whose answer differs), restore its network; Sentinel then demotes it. 0: restore Sentinel quorum (two of three Sentinels up and reachable on 26379).
+
 ## stellarindex_redis_sentinel_textfile_stale
 
 **Symptom.** `time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/redis_sentinel.prom"} > 600`, `for: 5m`, ticket (P3), multi-host only. `redis-sentinel-textfile-scraper.timer` (30 s, `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`) stopped rewriting the file; `stellarindex_redis_sentinel_primary` is frozen, so a re-election is invisible (same mechanism as `stellarindex_config_assertions_stale`, [config-assertion-failed](config-assertion-failed.md)).

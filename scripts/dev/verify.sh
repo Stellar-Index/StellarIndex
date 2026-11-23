@@ -571,6 +571,7 @@ lane_d() { # everything else
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh
     echo "=== Ansible prometheus port var self-test ===" && ./scripts/ci/ansible-prometheus-port-var-test.sh
     echo "=== Ansible patroni etcd TLS self-test ===" && ./scripts/ci/ansible-patroni-etcd-tls-test.sh
+    echo "=== Patroni credential quoting self-test ===" && ./scripts/ci/lint-patroni-basic-auth-quoting-test.sh
     echo "=== Ansible node-exporter-collectors install self-test ===" && ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Ansible galexie-backfill-status empty-log self-test ===" && ./scripts/ci/ansible-galexie-backfill-status-test.sh

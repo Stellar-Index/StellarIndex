@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// sloLatencyThresholdSeconds is the success-bucket bound (le="0.2") the latency SLO recording rules read.
+const sloLatencyThresholdSeconds = 0.2
+
 // routeCapture carries the matched route out of the mux; see [HTTPMetrics].
 type routeCapture struct{ route string }
 
@@ -51,6 +54,12 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		// A stream's elapsed time is connection lifetime, which would pin p99 at +Inf; count it
 		// but skip the duration.
 		if isStreamingRoute(route) {
+			return
+		}
+		// This count is the latency SLO denominator. An abort before the threshold says nothing about
+		// server latency, and counting it lets any caller page by resetting connections; an abort past
+		// it was kept waiting, so it stays in and scores slow.
+		if status == 499 && elapsed < sloLatencyThresholdSeconds {
 			return
 		}
 		HTTPRequestDuration.WithLabelValues(method, route).Observe(elapsed)

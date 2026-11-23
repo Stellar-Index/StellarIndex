@@ -276,6 +276,18 @@ journalctl -u keepalived-textfile-scraper.service -n 50
 
 Likely causes: `systemctl is-active keepalived` failing; the `ip -4 a show` interface no longer matching `keepalived_iface`.
 
+## stellarindex_haproxy_vip_owner_count_wrong
+
+Page. `sum(stellarindex_haproxy_vip_owner) != 1`, `for: 2m`. The number of LBs holding the VIP, summed over every `keepalived.prom` (`configs/ansible/roles/haproxy/tasks/07-monitoring.yml`). 0: no LB holds it, API traffic has no entry point. 2: VRRP split brain (multicast dropped, auth mismatch), traffic flaps between LBs.
+
+```sh
+ip -o addr show | awk '{print $4}' | cut -d/ -f1 | grep -xF <vip>   # on each LB
+journalctl -u keepalived -n 100
+systemctl status keepalived haproxy
+```
+
+Fix: 0 owners: start keepalived on the healthy LB, check `chk_haproxy.sh`. 2 owners: check VRRP reaches the peer (nft, multicast or unicast_peer) and that `keepalived_vrrp_password` matches on both, then restart keepalived on the BACKUP-priority host.
+
 ## stellarindex_worker_panicked
 
 Page. `stellarindex_worker_panics_total > 0`, `for: 0m`, per `worker` label. A goroutine wrapped in `worker.Recover` (`internal/worker/recover.go`) panicked: the process is up but that worker is STOPPED until restart (the restart resets the counter and clears the alert). Journal: `background worker panicked — worker STOPPED, process still running`.

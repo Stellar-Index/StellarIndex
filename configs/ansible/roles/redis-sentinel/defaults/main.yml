@@ -17,7 +17,6 @@ redis_sentinel_quorum: 2
 redis_port: 6379
 redis_bind_address: "{{ ansible_host }}"
 redis_data_dir: /var/lib/redis
-redis_log_dir: /var/log/redis
 redis_user: redis
 redis_group: redis
 

@@ -1,9 +1,14 @@
 package obs
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -244,6 +249,67 @@ func TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess(t *testing.T) {
 	// not a latency success and must stay out of the SLO numerator).
 	if got := successAfter - successBefore; got != 0 {
 		t.Errorf("fast 500 leaked into success histogram: count delta = %d, want 0", got)
+	}
+}
+
+// A client that disconnects before the SLO threshold must not move either side of the latency SLO, or any
+// anonymous caller can page on-call by resetting connections; one that waited past it was genuinely kept waiting.
+func TestHTTPMetrics_ClientAbortScoresAgainstSLOOnlyPastThreshold(t *testing.T) {
+	const method = "GET"
+	for _, tc := range []struct {
+		name      string
+		route     string
+		abortAt   time.Duration
+		wantDurDt uint64
+	}{
+		{"fast abort is excluded from the denominator", "/test-abort-fast", 0, 0},
+		{"abort past the threshold counts as slow", "/test-abort-slow", time.Duration(sloLatencyThresholdSeconds*float64(time.Second)) + 50*time.Millisecond, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc(method+" "+tc.route, func(_ http.ResponseWriter, r *http.Request) {
+				<-r.Context().Done()
+			})
+			h := HTTPMetrics(CaptureRoute(mux))
+
+			successBefore := histSampleCount(t, HTTPRequestSuccessDuration.WithLabelValues(method, tc.route))
+			durationBefore := histSampleCount(t, HTTPRequestDuration.WithLabelValues(method, tc.route))
+			abortedBefore := testutil.ToFloat64(HTTPRequestsTotal.WithLabelValues(method, tc.route, "499"))
+
+			ctx, cancel := context.WithCancel(context.Background())
+			time.AfterFunc(tc.abortAt, cancel)
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(method, tc.route, nil).WithContext(ctx))
+
+			if got := testutil.ToFloat64(HTTPRequestsTotal.WithLabelValues(method, tc.route, "499")) - abortedBefore; got != 1 {
+				t.Errorf("http_requests_total{status=\"499\"} delta = %v, want 1", got)
+			}
+			if got := histSampleCount(t, HTTPRequestDuration.WithLabelValues(method, tc.route)) - durationBefore; got != tc.wantDurDt {
+				t.Errorf("http_request_duration_seconds count delta = %d, want %d", got, tc.wantDurDt)
+			}
+			if got := histSampleCount(t, HTTPRequestSuccessDuration.WithLabelValues(method, tc.route)) - successBefore; got != 0 {
+				t.Errorf("client abort leaked into success histogram: count delta = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// The SLO recording rules hard-code the success-bucket bound; the abort cut-off must be the same number.
+func TestSLOLatencyThreshold_matchesRecordingRules(t *testing.T) {
+	re := regexp.MustCompile(`http_request_success_duration_seconds_bucket\{[^}]*le="([^"]+)"`)
+	for _, path := range []string{"../../deploy/monitoring/rules/slo.yml", "../../configs/prometheus/rules.r1/slo.yml"} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		ms := re.FindAllSubmatch(b, -1)
+		if len(ms) == 0 {
+			t.Fatalf("%s: no success-bucket selector found", path)
+		}
+		for _, m := range ms {
+			if got, err := strconv.ParseFloat(string(m[1]), 64); err != nil || got != sloLatencyThresholdSeconds {
+				t.Errorf("%s: success bucket le=%q, want %v (sloLatencyThresholdSeconds)", path, m[1], sloLatencyThresholdSeconds)
+			}
+		}
 	}
 }
 

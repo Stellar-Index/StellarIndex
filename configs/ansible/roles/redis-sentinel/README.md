@@ -172,18 +172,15 @@ Net: no separate "Redis HAProxy" sub-role of Task #72.
 
 ## Rolling password rotation
 
-`requirepass` is set from vault — rotating it is a rolling
-deploy:
-
-1. Update `redis_password` in `inventory/<region>.secrets.yml`.
-2. Re-apply this role to ONE node first (`--limit cache-02`).
-3. Confirm Sentinel still sees the cluster (`SENTINEL ckquorum`).
-4. Roll the remaining two.
-
-Until all three are rolled, Sentinel will misreport quorum
-because the "old password" Sentinels can't auth to the "new
-password" Redis. Plan ~5 minutes for the full rotation; do it
-during a quiet window.
+Not supported by re-applying the role yet. On a configured host
+`redis_first_run_only` skips the redis.conf, users.acl and
+sentinel.conf renders, so a changed `redis_password` reaches only
+`/etc/default/redis_exporter`: the play goes green while Redis and
+Sentinel keep the old secret, and apps deployed with the new one get
+WRONGPASS. Do not deploy apps with a new password until the role
+applies it live (`CONFIG SET requirepass`/`masterauth` + `CONFIG
+REWRITE`, `SENTINEL SET <master> auth-pass`, `ACL SETUSER`) and
+proves `AUTH` with the new secret on every node.
 
 ## Observability
 

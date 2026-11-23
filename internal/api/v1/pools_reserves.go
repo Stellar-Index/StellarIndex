@@ -142,6 +142,13 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, buildPoolReservesRow(st, displays, displaysOK))
 	}
+	// A named pool is either a row or a refusal: an empty 200 would read as "nothing to report" for a known pool.
+	if poolFilter != "" && len(out) == 0 {
+		writeProblem(w, r, "https://api.stellarindex.io/errors/pool-reserves-unreadable",
+			"No readable reserves for this pool", http.StatusNotFound,
+			"a registered Soroswap pair with no readable current state in the lake (not captured, archived, or a storage layout the decoder does not recognise); reserves are absent, never zero.")
+		return
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Pool < out[j].Pool })
 	// ADR-0041 Decision 4: rows carry their own per-pool `as_of_ledger`, but `flags.stale` still
 	// reflects lake freshness, since a wedged sink makes EVERY reserve read stale whatever a

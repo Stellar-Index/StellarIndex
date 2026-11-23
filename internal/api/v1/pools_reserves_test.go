@@ -3,9 +3,11 @@ package v1_test
 import (
 	"context"
 	"errors"
+	"io"
 	"math/big"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -241,6 +243,20 @@ func TestPoolReserves_PoolFilter(t *testing.T) {
 		}
 		if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 			t.Fatalf("problem Cache-Control = %q, want no-store", cc)
+		}
+	})
+
+	t.Run("registered pair with no readable state is a named 404, not an empty 200", func(t *testing.T) {
+		pairB := mkCStrkey(t, 2)
+		srv := poolReservesTestServer(t, reader, []timescale.SoroswapPair{
+			{PairStrkey: pairA, Token0Strkey: tok0, Token1Strkey: tok1},
+			{PairStrkey: pairB, Token0Strkey: tok0, Token1Strkey: tok1},
+		})
+		resp := mustGet(t, srv+"/v1/pools/reserves?pool="+pairB)
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "errors/pool-reserves-unreadable") {
+			t.Fatalf("status = %d body = %s, want 404 pool-reserves-unreadable", resp.StatusCode, body)
 		}
 	})
 

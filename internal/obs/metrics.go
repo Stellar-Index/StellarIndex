@@ -2314,7 +2314,7 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	[]string{"surface", "floor"},
 )
 
-// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline); single lookups then serve unguarded (ADR-0018). Expected zero. Dashboard-only.
+// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline); single lookups then serve unguarded (ADR-0018). Expected zero; read by stellarindex_price_serve_substance_fail_open.
 var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_unmeasured_total",

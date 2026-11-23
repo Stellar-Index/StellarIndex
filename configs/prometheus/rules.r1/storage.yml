@@ -111,6 +111,25 @@ groups:
             are being held back until it catches up — look for saturation on
             the replica.
 
+      # pg_up stays 1 when etcd loses quorum and every member demotes to a
+      # replica, or when two members both claim leader. 2m rides out a normal
+      # Patroni failover. Empty, so silent, on a host with no patroni.prom.
+      - alert: stellarindex_patroni_leader_count_wrong
+        expr: sum(stellarindex_patroni_role{role="leader"}) != 1
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_patroni_leader_count_wrong
+          summary: "Patroni cluster has {{ $value }} leaders, want 1"
+          description: |
+            Summed over every Patroni host's patroni.prom, the number of
+            members reporting role=leader is not 1. 0 = no writable
+            primary (every write fails); 2 = split brain. `patronictl
+            -c /etc/patroni/patroni.yml list` on any member.
+
       # node_exporter re-serves patroni.prom's last values even when the 30 s
       # scraper timer is dead, and stellarindex_patroni_role/_running cannot see
       # that. 10m tolerates ~20 missed runs before paging.

@@ -1366,15 +1366,16 @@ func TestRWAAssets_RefusalTallyStaysConsistentWithTheFunnel(t *testing.T) {
 }
 
 // TestRWAAssets_ChargesOneTokenPerListingRead: /v1/rwa/assets runs one uncached listing read per member issuer per
-// request, so two issuers cost two tokens, not the one the pre-dispatch charge takes.
+// request, so two issuers cost two tokens, not the one the pre-dispatch charge takes. The cold membership build reads each
+// issuer's page once more for its classic-member SAC join; that read belongs to the cached set, not the request, and is not charged.
 func TestRWAAssets_ChargesOneTokenPerListingRead(t *testing.T) {
 	ts, reader := newRWALimitedServer(t, 100)
 	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if got := reader.lists.Load(); got != 2 {
-		t.Fatalf("listing reads = %d, want 2 (one per member issuer)", got)
+	if got := reader.lists.Load(); got != 4 {
+		t.Fatalf("listing reads = %d, want 4 (one per member issuer for the request, one per issuer for the membership build)", got)
 	}
 	if got := rwaRemaining(t, ts, resp); got != 98 {
 		t.Fatalf("X-RateLimit-Remaining = %d, want 98", got)

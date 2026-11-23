@@ -204,6 +204,37 @@ func (r scriptRun) ofKind(kind string, needWrite, preflight bool) []scriptCall {
 // when empty) with stubs first on PATH. env entries override the defaults.
 func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptRun {
 	t.Helper()
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	// Bounded: a script that never terminates (e.g. WIN=0 spinning forever)
+	// must read as a failure here, not as a stuck suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd, vars := projectedScriptCmd(ctx, t, dir, env)
+	calls := vars["STUB_CALLS"]
+	out, runErr := cmd.CombinedOutput()
+	run := scriptRun{dir: dir}
+	if ctx.Err() != nil {
+		t.Fatalf("the script did not terminate within 60s (env %v)", env)
+	}
+	if runErr != nil {
+		ee, ok := runErr.(*exec.ExitError) //nolint:errorlint // exec returns the concrete type
+		if !ok {
+			t.Fatalf("run script: %v\n%s", runErr, out)
+		}
+		run.exit = ee.ExitCode()
+	}
+	run.calls = parseScriptCalls(t, calls)
+	run.log = readIfExists(t, vars["LOG"]) + string(out)
+	run.state = readIfExists(t, vars["STATE"])
+	run.dirty = readIfExists(t, vars["STATE"]+".dirty")
+	return run
+}
+
+// projectedScriptCmd builds the shipped script's command in dir with stubs first on PATH, returning it unstarted with its env.
+func projectedScriptCmd(ctx context.Context, t *testing.T, dir string, env map[string]string) (*exec.Cmd, map[string]string) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the ops script is bash; r1 and CI are Linux")
 	}
@@ -215,15 +246,18 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dir == "" {
-		dir = t.TempDir()
-	}
 	bin := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{"psql": stubPsql, "stellarindex-ops-ch": stubOps} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil { //nolint:gosec // an executable test stub
+			t.Fatal(err)
+		}
+	}
+	if _, err := exec.LookPath("flock"); err != nil {
+		// macOS has no util-linux flock: a perl shim taking the same real flock(2) on the inherited fd.
+		if err := os.WriteFile(filepath.Join(bin, "flock"), []byte(flockShim), 0o755); err != nil { //nolint:gosec // an executable test stub
 			t.Fatal(err)
 		}
 	}
@@ -246,31 +280,11 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 	for k, v := range env {
 		vars[k] = v
 	}
-	// Bounded: a script that never terminates (e.g. WIN=0 spinning forever)
-	// must read as a failure here, not as a stuck suite.
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, bash, script) //nolint:gosec // fixed script path, test-controlled env
 	for k, v := range vars {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	out, runErr := cmd.CombinedOutput()
-	run := scriptRun{dir: dir}
-	if ctx.Err() != nil {
-		t.Fatalf("the script did not terminate within 60s (env %v)", env)
-	}
-	if runErr != nil {
-		ee, ok := runErr.(*exec.ExitError) //nolint:errorlint // exec returns the concrete type
-		if !ok {
-			t.Fatalf("run script: %v\n%s", runErr, out)
-		}
-		run.exit = ee.ExitCode()
-	}
-	run.calls = parseScriptCalls(t, calls)
-	run.log = readIfExists(t, vars["LOG"]) + string(out)
-	run.state = readIfExists(t, vars["STATE"])
-	run.dirty = readIfExists(t, vars["STATE"]+".dirty")
-	return run
+	return cmd, vars
 }
 
 func readIfExists(t *testing.T, path string) string {

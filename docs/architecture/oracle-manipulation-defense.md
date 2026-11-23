@@ -282,7 +282,8 @@ What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`
   FX conversions at a bound fixing or live rate), `/v1/price/batch`,
   `/v1/price/tip` and its stream, the closed-bucket price stream, SEP-40
   (a frozen pair's withheld held value is the same 404), `/v1/vwap`,
-  `/v1/twap`, and the asset headline price (VWAP, aggregator and
+  `/v1/twap`, `/v1/ohlc` (a single bar drops the source's trades; a series
+  bar the exclusion covers withholds the series), and the asset headline price (VWAP, aggregator and
   triangulated tiers, global-market reference). A withheld headline never
   falls back to the listing price, and the declared USD-peg fill does not
   replace a `source_excluded` withholding.
@@ -306,7 +307,7 @@ What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`
   30 s client). A detail read while the table is unreadable is not cached.
 - **Not covered** (keep serving values that may include the excluded source
   until it is lifted or the data ages out): `/v1/price/at`, `/v1/price/changes`,
-  `/v1/depeg`, history, since-inception, chart, `/v1/ohlc`, asset listing
+  `/v1/depeg`, history, since-inception, chart, asset listing
   `price_usd`, sparkline, ATH, transitive price fill, RWA
   assets/history/premium; a fiat asset's headline and a non-USD declared peg
   (FX via `fiatUSDPriceFor`, ungated); `/v1/observations` and its stream

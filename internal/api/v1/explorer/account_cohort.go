@@ -464,7 +464,8 @@ func (h *Handler) cohortContractsView(ctx context.Context, contracts []clickhous
 			}
 		}
 		if v.Protocol == "" && h.Reader != nil {
-			if resolved := h.resolveSEP41MovementAsset(ctx, ct.ContractID); resolved != ct.ContractID {
+			// A failed lookup leaves the label absent beside ContractID, never a wrong one.
+			if resolved, _ := h.resolveSEP41MovementAssetChecked(ctx, ct.ContractID); resolved != ct.ContractID {
 				v.Label = "token " + assetDisplayLabel(resolved)
 			}
 		}
@@ -498,7 +499,7 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 		}
 		if p.Asset != "" {
 			if resolve == nil {
-				resolve = h.newPositionAssetResolver(ctx)
+				resolve = h.newPositionAssetResolver(ctx, nil) // Asset carries the identity; a failed lookup only shortens the label
 			}
 			v.AssetLabel = assetDisplayLabel(resolve(p.Asset))
 		}
