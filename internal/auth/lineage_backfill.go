@@ -31,6 +31,37 @@ type LineageBackfillReport struct {
 
 	LineageOrphans        int // lineage records with no credential that no credential's chain lists
 	LineageOrphansDeleted int // of those, deleted (write only); a credential that reappeared keeps its record
+
+	LineageOwnerOrphans        int // owner sets none of whose members has a lineage record or a credential
+	LineageOwnerOrphansDeleted int // of those, deleted (write only); a set that gained or revived a member stays
+}
+
+// deleteOrphanOwnerSetScript deletes an owner set only while it holds exactly the members read and none of them
+// has a lineage record or a credential. KEYS: owner set, then lineage and credential per member. ARGV: members.
+var deleteOrphanOwnerSetScript = redis.NewScript(`
+if redis.call('SCARD', KEYS[1]) ~= #ARGV then
+	return 0
+end
+for i = 1, #ARGV do
+	if redis.call('SISMEMBER', KEYS[1], ARGV[i]) == 0 or redis.call('EXISTS', KEYS[2*i], KEYS[2*i+1]) > 0 then
+		return 0
+	end
+end
+return redis.call('DEL', KEYS[1])
+`)
+
+// DeleteOrphanOwnerSet deletes the lineage owner set owner if it still holds exactly members (distinct) and none
+// has a lineage record or a credential, re-checked atomically; it reports whether it deleted the set.
+func DeleteOrphanOwnerSet(ctx context.Context, rdb redis.Cmdable, owner string, members []string) (bool, error) {
+	keys := make([]string, 0, 1+2*len(members))
+	args := make([]any, 0, len(members))
+	keys = append(keys, owner)
+	for _, h := range members {
+		keys = append(keys, cachekeys.APIKeyLineage(h).String(), cachekeys.APIKey(h).String())
+		args = append(args, h)
+	}
+	n, err := deleteOrphanOwnerSetScript.Run(ctx, rdb, keys, args...).Int()
+	return n == 1, err
 }
 
 // deleteOrphanLineageScript deletes a lineage record only while its credential is absent.

@@ -52,7 +52,7 @@ If the grant is there, look for Redis refusing writes (`used_memory` against `ma
 **Fix**
 
 1. Grant missing: apply the `redis-sentinel` role to the host.
-2. Then run `stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -dry-run` and `-write` as in [Lineage records](#lineage-records-step-2): it creates the records the failed mints and slides missed and deletes the ones failed deletes left.
+2. Then run `stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -dry-run` and `-write` as in [Lineage records](#lineage-records-step-2): it creates the records the failed mints and slides missed, and deletes the records and the `apikey-lineage:owner:` sets that failed deletes left (an owner set goes once none of its members has a lineage record or a credential).
 3. Verify: the counter stops increasing and the alert resolves within 45 minutes.
 
 ## Operator-issued API keys
@@ -82,8 +82,8 @@ Each key also has an `apikey-lineage:<hash>` record (KeyID and owner only, no ke
 
 When a lineage record is deleted:
 
-- A revoke deletes the lineage records of the revoked key, of every key it removes, and of idled-out keys between them, read from the removed keys' stored chains. An erasure deletes those of the account's keys, of their idled-out ancestors, and of every key in the account's `apikey-lineage:owner:<sha256>` set, so it reaches an account with no credential left. Only records naming the same account are deleted.
-- These deletes are best-effort and run after the credential delete. A failed one never fails the revoke or the erasure, and is counted as `op="delete"`. What it leaves expires at most 2 hours after its own and every descendant's credential have idled out; a persistent key's record never expires, and `apikey-lineage-backfill -write` deletes it.
+- A revoke deletes the lineage records of the revoked key, of every key it removes, and of idled-out keys between them, read from the removed keys' stored chains. An erasure deletes those of the account's keys, of their idled-out ancestors, and of every key in the account's `apikey-lineage:owner:<sha256>` set, so it reaches an account with no credential left. Only records naming the same account are deleted, and never while the key's own credential exists, so a revoke that fails part-way keeps the records of the keys it left live.
+- These deletes are best-effort and run after the credential delete. A failed one never fails the revoke or the erasure, and is counted as `op="delete"`; `account-erase` also prints `some api-key lineage records were not deleted`. What it leaves expires at most 2 hours after its own and every descendant's credential have idled out. A persistent key's record never expires, nor does its account's owner set (its name derives from the account identifier); `apikey-lineage-backfill -write` deletes both.
 - A record no revoke reaches expires the same way: an idled-out key revoked with no live descendant, for example.
 - A revoke or an erasure run by a binary older than this one deletes no lineage record, and one left for a persistent key never expires. Before enforcement ships, run the backfill after the last old binary is gone. It reports `would delete N orphaned lineage records` (no credential, no live descendant), and `-write` deletes them.
 
@@ -93,7 +93,7 @@ Order, per host. Do not ship lineage enforcement until the last step passes:
 2. Apply the `redis-sentinel` role, which grants the app user `~apikey-lineage:*`. Until then every lineage write is NOPERM. Check the grant (prints key patterns only): `redis-cli ACL GETUSER stellarindex | grep -F 'apikey-lineage'`, run as the admin user.
 3. Run `apikey-lineage-backfill -dry-run`. It prints `would create the lineage record of N keys`. If it says `not checked, the Redis ACL denies apikey-lineage:*` and exits non-zero, go back to step 2.
 4. Run `apikey-lineage-backfill -write`.
-5. Run `-dry-run` again. It must print `would create the lineage record of 0 keys` and `would delete 0 orphaned lineage records`.
+5. Run `-dry-run` again. It must print `would create the lineage record of 0 keys`, `would delete 0 orphaned lineage records` and `would delete 0 orphaned lineage owner sets`.
 
 ## Related
 

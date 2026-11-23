@@ -3,6 +3,7 @@ package keys
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -33,7 +34,7 @@ func TestLineageRecordHashes_ListsRecordsAcrossCursorsSkippingOwnerSets(t *testi
 	if err := mr.Set(cachekeys.APIKey(want[0]).String(), "{}"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := lineageRecordHashes(context.Background(), rdb)
+	got, owners, err := lineageRecordHashes(context.Background(), rdb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +42,75 @@ func TestLineageRecordHashes_ListsRecordsAcrossCursorsSkippingOwnerSets(t *testi
 	slices.Sort(want)
 	if !slices.Equal(slices.Compact(got), want) {
 		t.Errorf("listed %d hashes, want the %d lineage records and no owner set or credential", len(got), len(want))
+	}
+	if owner := cachekeys.APIKeyLineageOwner("acct-x").String(); !slices.Equal(slices.Compact(owners), []string{owner}) {
+		t.Errorf("listed owner sets %v, want [%s]", owners, owner)
+	}
+}
+
+// The sweep deletes an owner set none of whose members has a lineage record or a credential, across SSCAN pages;
+// keeps one with a member that has either; deletes nothing on a dry run; and finds nothing on a rerun.
+func TestSweepOwnerSets_DeletesSetsWithNoStandingMember(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	add := func(acct string, members ...string) string {
+		owner := cachekeys.APIKeyLineageOwner(acct).String()
+		if _, err := mr.SAdd(owner, members...); err != nil {
+			t.Fatal(err)
+		}
+		return owner
+	}
+	var big []string
+	for i := range 2500 {
+		big = append(big, fmt.Sprintf("gone%04d", i))
+	}
+	orphan, bigOrphan := add("acct-a", "gone-a1", "gone-a2"), add("acct-b", big...)
+	withRecord, withCredential := add("acct-c", "gone-c", "rec-c"), add("acct-d", "cred-d")
+	if err := mr.Set(cachekeys.APIKeyLineage("rec-c").String(), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mr.Set(cachekeys.APIKey("cred-d").String(), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	_, owners, err := lineageRecordHashes(ctx, rdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, del, err := sweepOwnerSets(ctx, rdb, false, owners); err != nil || n != 2 || del != 0 || !mr.Exists(orphan) || !mr.Exists(bigOrphan) {
+		t.Fatalf("dry run: orphans %d, deleted %d, err %v; want 2 reported and none deleted", n, del, err)
+	}
+	if n, del, err := sweepOwnerSets(ctx, rdb, true, owners); err != nil || n != 2 || del != 2 {
+		t.Fatalf("write: orphans %d, deleted %d, err %v; want 2 and 2", n, del, err)
+	}
+	if mr.Exists(orphan) || mr.Exists(bigOrphan) || !mr.Exists(withRecord) || !mr.Exists(withCredential) {
+		t.Errorf("after write: orphan %v, big orphan %v, with record %v, with credential %v; want only the orphans gone",
+			mr.Exists(orphan), mr.Exists(bigOrphan), mr.Exists(withRecord), mr.Exists(withCredential))
+	}
+	if n, del, err := sweepOwnerSets(ctx, rdb, true, owners); err != nil || n != 0 || del != 0 {
+		t.Fatalf("rerun: orphans %d, deleted %d, err %v; want 0", n, del, err)
+	}
+}
+
+// The delete re-checks: a set that gained a member, or whose member gained a record, since it was read stays.
+func TestDeleteOrphanOwnerSet_RechecksAtomically(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	owner := cachekeys.APIKeyLineageOwner("acct-a").String()
+	if _, err := mr.SAdd(owner, "h1", "h2"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := auth.DeleteOrphanOwnerSet(ctx, rdb, owner, []string{"h1"}); err != nil || ok {
+		t.Fatalf("set with an unread member: deleted %v, err %v; want kept", ok, err)
+	}
+	if err := mr.Set(cachekeys.APIKeyLineage("h2").String(), "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := auth.DeleteOrphanOwnerSet(ctx, rdb, owner, []string{"h1", "h2"}); err != nil || ok || !mr.Exists(owner) {
+		t.Fatalf("set whose member has a record: deleted %v, err %v; want kept", ok, err)
 	}
 }
 
@@ -66,11 +136,13 @@ func TestPrintLineageBackfill_NamesKeysByIDAndModeVerb(t *testing.T) {
 			t.Errorf("dry-run output lacks %q:\n%s", want, out)
 		}
 	}
-	orphans := auth.LineageBackfillReport{LineageOrphans: 3, LineageOrphansDeleted: 2}
-	if out := lineageBackfillSummary(orphans, false); !strings.Contains(out, "would delete 3 orphaned lineage records") {
-		t.Errorf("dry-run output lacks the orphan count:\n%s", out)
+	orphans := auth.LineageBackfillReport{LineageOrphans: 3, LineageOrphansDeleted: 2, LineageOwnerOrphans: 5, LineageOwnerOrphansDeleted: 4}
+	if out := lineageBackfillSummary(orphans, false); !strings.Contains(out, "would delete 3 orphaned lineage records") ||
+		!strings.Contains(out, "would delete 5 orphaned lineage owner sets") {
+		t.Errorf("dry-run output lacks the orphan counts:\n%s", out)
 	}
-	if out := lineageBackfillSummary(orphans, true); !strings.Contains(out, "deleted 2 of 3 orphaned lineage records") {
+	if out := lineageBackfillSummary(orphans, true); !strings.Contains(out, "deleted 2 of 3 orphaned lineage records") ||
+		!strings.Contains(out, "deleted 4 of 5 orphaned lineage owner sets") {
 		t.Errorf("write output lacks the orphan deletes:\n%s", out)
 	}
 	denied := lineageBackfillSummary(auth.LineageBackfillReport{LineageDenied: true}, false)

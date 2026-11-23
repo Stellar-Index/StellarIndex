@@ -41,13 +41,20 @@ func LineageBackfill(args []string) error {
 		return fmt.Errorf("redis ping: %w", err)
 	}
 	write := gate.Banner()
-	lineage, err := lineageRecordHashes(ctx, rdb)
+	lineage, owners, err := lineageRecordHashes(ctx, rdb)
 	if err != nil {
 		return fmt.Errorf("list lineage records: %w", err)
 	}
 	rep, err := auth.NewRedisAPIKeyStore(rdb).BackfillAncestorHashes(ctx, write, lineage...)
 	if err != nil {
 		return err
+	}
+	if !rep.LineageDenied {
+		// After the record sweep, so a set whose last records it just deleted goes in the same run.
+		rep.LineageOwnerOrphans, rep.LineageOwnerOrphansDeleted, err = sweepOwnerSets(ctx, rdb, write, owners)
+		if err != nil {
+			return fmt.Errorf("orphaned lineage owner sets: %w", err)
+		}
 	}
 	fmt.Print(lineageBackfillSummary(rep, write))
 	if rep.LineageDenied {
@@ -56,18 +63,85 @@ func LineageBackfill(args []string) error {
 	return nil
 }
 
-// lineageRecordHashes lists the key hash of every `apikey-lineage:` record (owner sets skipped) with a cursor
-// SCAN, 1000 keys a call, so Redis is never blocked the way KEYS would block it. Offline: one pass per run.
-func lineageRecordHashes(ctx context.Context, rdb redis.Cmdable) ([]string, error) {
-	var out []string
+// lineageRecordHashes lists the key hash of every `apikey-lineage:` record, and separately the key of every owner
+// set, with a cursor SCAN, 1000 keys a call, so Redis is never blocked the way KEYS would block it. Offline: one
+// pass per run.
+func lineageRecordHashes(ctx context.Context, rdb redis.Cmdable) (hashes, owners []string, err error) {
+	ownerPrefix := cachekeys.APIKeyLineage("owner:").String()
 	iter := rdb.Scan(ctx, 0, cachekeys.APIKeyLineage("*").String(), 1000).Iterator()
 	for iter.Next(ctx) {
-		h := strings.TrimPrefix(iter.Val(), cachekeys.APIKeyLineage("").String())
-		if !strings.HasPrefix(h, "owner:") {
-			out = append(out, h)
+		if strings.HasPrefix(iter.Val(), ownerPrefix) {
+			owners = append(owners, iter.Val())
+			continue
+		}
+		hashes = append(hashes, strings.TrimPrefix(iter.Val(), cachekeys.APIKeyLineage("").String()))
+	}
+	return hashes, owners, iter.Err()
+}
+
+// sweepOwnerSets counts the owner sets none of whose members has a lineage record or a credential and, with write,
+// deletes each that is still so when the delete script re-checks it. A rerun finds nothing left to delete.
+func sweepOwnerSets(ctx context.Context, rdb redis.Cmdable, write bool, owners []string) (orphans, deleted int, err error) {
+	seen := map[string]bool{}
+	for _, owner := range owners {
+		if seen[owner] {
+			continue
+		}
+		seen[owner] = true
+		members, live, err := ownerSetMembers(ctx, rdb, owner)
+		if err != nil {
+			return orphans, deleted, err
+		}
+		if live || len(members) == 0 {
+			continue
+		}
+		orphans++
+		if !write {
+			continue
+		}
+		ok, err := auth.DeleteOrphanOwnerSet(ctx, rdb, owner, members)
+		if err != nil {
+			return orphans, deleted, err
+		}
+		if ok {
+			deleted++
 		}
 	}
-	return out, iter.Err()
+	return orphans, deleted, nil
+}
+
+// ownerSetMembers SSCANs owner, 1000 members a call, and stops at the first page holding a member whose lineage
+// record or credential exists (live).
+func ownerSetMembers(ctx context.Context, rdb redis.Cmdable, owner string) (members []string, live bool, err error) {
+	seen := map[string]bool{}
+	var cursor uint64
+	for {
+		page, next, err := rdb.SScan(ctx, owner, cursor, "", 1000).Result()
+		if err != nil {
+			return nil, false, err
+		}
+		names := make([]string, 0, 2*len(page))
+		for _, h := range page {
+			names = append(names, cachekeys.APIKeyLineage(h).String(), cachekeys.APIKey(h).String())
+			if !seen[h] {
+				seen[h] = true
+				members = append(members, h)
+			}
+		}
+		if len(names) > 0 {
+			n, err := rdb.Exists(ctx, names...).Result()
+			if err != nil {
+				return nil, false, err
+			}
+			if n > 0 {
+				return nil, true, nil
+			}
+		}
+		if next == 0 {
+			return members, false, nil
+		}
+		cursor = next
+	}
 }
 
 // parseLineageBackfillFlags parses argv without touching config or Redis.
@@ -107,6 +181,12 @@ func lineageBackfillSummary(rep auth.LineageBackfillReport, write bool) string {
 		orphans = fmt.Sprintf("deleted %d of %d orphaned lineage records (no credential, no live descendant)\n",
 			rep.LineageOrphansDeleted, rep.LineageOrphans)
 	}
+	owners := fmt.Sprintf("would delete %d orphaned lineage owner sets (no member has a lineage record or credential)\n",
+		rep.LineageOwnerOrphans)
+	if write {
+		owners = fmt.Sprintf("deleted %d of %d orphaned lineage owner sets (no member has a lineage record or credential)\n",
+			rep.LineageOwnerOrphansDeleted, rep.LineageOwnerOrphans)
+	}
 	return out + fmt.Sprintf("%s the lineage record of %d keys: %s\n",
-		opsutil.WriteModeVerb(write, "created", "would create"), len(rep.LineageMissing), strings.Join(rep.LineageMissing, " ")) + orphans
+		opsutil.WriteModeVerb(write, "created", "would create"), len(rep.LineageMissing), strings.Join(rep.LineageMissing, " ")) + orphans + owners
 }
