@@ -836,6 +836,8 @@ type chartWalkResult struct {
 	latestAt    time.Time
 	// bookAt is the source pair that owns each served bucket (UTC key).
 	bookAt map[time.Time]canonical.Pair
+	// crossLegs are a derived cross's leg walks, whose bookAt name the books under each crossed bucket.
+	crossLegs []chartWalkResult
 }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
@@ -861,6 +863,11 @@ func (r *chartWalkResult) mergeCap(at time.Time) {
 // trimToCap drops merged points past the earliest capped read, which a lower-ranked source would otherwise own although the
 // capped source was never read there, then keeps the oldest historyMaxPoints so data_ends_at is the last point served.
 func (r *chartWalkResult) trimToCap(points []HistoryPoint) []HistoryPoint {
+	defer func(read int) {
+		if len(points) < read {
+			r.noteServedLatest(points)
+		}
+	}(len(points))
 	if !r.cappedAt.IsZero() {
 		n := sort.Search(len(points), func(i int) bool { return points[i].Bucket.After(r.cappedAt) })
 		points = points[:n]
@@ -1328,7 +1335,8 @@ func (s *Server) fiatSeriesThroughXLM(
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
 	res.proxied = len(crossed) > 0
 	res.books = append(append(res.books, assetRes.books...), xlmRes.books...)
-	res.noteCrossLatest(crossed, assetRes, xlmRes)
+	res.crossLegs = []chartWalkResult{assetRes, xlmRes}
+	res.noteCrossLatest(crossed, res.crossLegs...)
 	return crossed, res, nil
 }
 

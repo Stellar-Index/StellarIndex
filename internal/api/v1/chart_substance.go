@@ -39,6 +39,24 @@ func (s *Server) chartLatestThin(ctx context.Context, pair canonical.Pair, walk 
 	return ev != nil, unmeasured
 }
 
+// noteServedLatest re-records the books under the newest bucket of a trimmed series: a book that only owned a cut bucket backs
+// no served price. A bucket with no recorded owner is measured on every book, so the measurement can only widen.
+func (r *chartWalkResult) noteServedLatest(served []HistoryPoint) {
+	switch {
+	case len(served) == 0:
+		r.latestAt, r.latestBooks = time.Time{}, nil
+	case len(r.crossLegs) > 0:
+		r.noteCrossLatest(served, r.crossLegs...)
+	default:
+		r.latestAt = served[len(served)-1].Bucket.UTC()
+		if book, ok := r.bookAt[r.latestAt]; ok {
+			r.latestBooks = []canonical.Pair{book}
+			return
+		}
+		r.latestBooks = r.books
+	}
+}
+
 // noteCrossLatest records the books under a cross's newest bucket: every crossed point multiplies BOTH legs, so both back it.
 // A leg with no recorded owner there contributes all its books, so the measurement can only widen.
 func (r *chartWalkResult) noteCrossLatest(crossed []HistoryPoint, legs ...chartWalkResult) {
