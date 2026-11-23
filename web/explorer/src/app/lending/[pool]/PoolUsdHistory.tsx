@@ -103,15 +103,11 @@ export function PoolUsdHistory({
   const [rangeId, setRangeId] = useState<RangeOption['id']>('90d');
   const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
   const text = useAssetText();
+  let keyPath = '/v1/lending/pools/{pool}/history';
+  if (asset) keyPath = '/v1/lending/pools/{pool}/reserves/{asset}/history';
   const q = useQuery({
-    queryKey: [
-      asset
-        ? '/v1/lending/pools/{pool}/reserves/{asset}/history'
-        : '/v1/lending/pools/{pool}/history',
-      pool,
-      asset,
-      range.id,
-    ],
+    // 'usd' keeps this apart from ReserveHistory, which caches the same path in another shape.
+    queryKey: [keyPath, pool, asset, range.id, 'usd'],
     retry: false,
     staleTime: 60_000,
     queryFn: async () => {
