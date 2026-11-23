@@ -52,7 +52,7 @@ func TestResolveSEP41MovementAsset_SpoofedEventLabelRejected(t *testing.T) {
 	// validTestContract is NOT the deterministic SAC address for
 	// USDC-<validTestAccount>; a hostile token emitting the spoofed
 	// topic must never render as Circle USDC.
-	got := h.resolveSEP41MovementAsset(context.Background(), validTestContract)
+	got, _ := h.resolveSEP41MovementAssetChecked(context.Background(), validTestContract)
 
 	if got == "USDC:"+validTestAccount || got == "USDC-"+validTestAccount {
 		t.Fatalf("spoofed SAC label rendered as trusted identity %q — SacContractID cross-check missing (W2-explorer-1)", got)
@@ -81,7 +81,7 @@ func TestResolveSEP41MovementAsset_LegitimateSACRendersTrusted(t *testing.T) {
 	}
 	h := newProbeHandler(reader, nil)
 
-	got := h.resolveSEP41MovementAsset(context.Background(), sac)
+	got, _ := h.resolveSEP41MovementAssetChecked(context.Background(), sac)
 	want := asset.String() // canonical dash form: "USDC-<validTestAccount>"
 	if got != want {
 		t.Fatalf("legitimate SAC (derived address matches claim) should render trusted label %q, got %q", want, got)
@@ -107,7 +107,7 @@ func TestMapSEP41RowsToMovements_SpoofedAssetNotRenderedOnWire(t *testing.T) {
 		Amount:     big.NewInt(1),
 	}}
 
-	out := h.mapSEP41RowsToMovements(context.Background(), validTestAccount, rows, "")
+	out, _ := h.mapSEP41RowsToMovements(context.Background(), validTestAccount, rows, "")
 	if len(out) != 1 {
 		t.Fatalf("want exactly 1 mapped movement, got %d", len(out))
 	}

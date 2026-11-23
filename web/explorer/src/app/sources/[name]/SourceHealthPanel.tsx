@@ -36,26 +36,12 @@ export function SourceHealthPanel({ source }: { source: string }) {
       {data && (
         <StatGrid cols={4}>
           <StatCell>
-            <Stat
-              label="Events seen"
-              value={
-                <span
-                  className={data.entries_24h ? 'text-ok-700' : 'text-warn-700'}
-                >
-                  {data.entries_24h?.toLocaleString('en-US') ?? '—'}
-                </span>
-              }
-              sub={
-                data.entries_24h
-                  ? 'decoded events, all types'
-                  : 'no decoded events in 24h'
-              }
-            />
+            <EventsStat entries={data.entries_24h} enabled={data.enabled} />
           </StatCell>
           <StatCell>
-            <Stat
+            <CounterStat
               label="Trades"
-              value={data.trade_count_24h.toLocaleString('en-US')}
+              n={data.trade_count_24h}
               sub="trades-table rows"
             />
           </StatCell>
@@ -79,14 +65,69 @@ export function SourceHealthPanel({ source }: { source: string }) {
             />
           </StatCell>
           <StatCell>
-            <Stat
+            <CounterStat
               label="Markets"
-              value={data.markets_count_24h.toLocaleString('en-US')}
+              n={data.markets_count_24h}
               sub="distinct pairs traded"
             />
           </StatCell>
         </StatGrid>
       )}
     </Panel>
+  );
+}
+
+// The API soft-fails a timed-out counter read to 0 with no flag, so a 0 is
+// "nothing counted OR unread" and never renders as a measured zero.
+const ZERO_OR_UNREAD = 'none counted, or the read failed';
+const NOT_REPORTED = 'not reported by this API';
+
+function CounterStat({
+  label,
+  n,
+  sub,
+}: {
+  label: string;
+  n: number | null | undefined;
+  sub: string;
+}) {
+  if (n == null) return <Stat label={label} value="—" sub={NOT_REPORTED} />;
+  if (n === 0) return <Stat label={label} value="—" sub={ZERO_OR_UNREAD} />;
+  return <Stat label={label} value={n.toLocaleString('en-US')} sub={sub} />;
+}
+
+function EventsStat({
+  entries,
+  enabled,
+}: {
+  entries: number | null | undefined;
+  enabled: boolean | undefined;
+}) {
+  if (entries != null && entries > 0) {
+    return (
+      <Stat
+        label="Events seen"
+        value={
+          <span className="text-ok-700">{entries.toLocaleString('en-US')}</span>
+        }
+        sub="decoded events, all types"
+      />
+    );
+  }
+  if (entries === 0 && enabled === false) {
+    return (
+      <Stat
+        label="Events seen"
+        value="Off"
+        sub="not switched on for this deployment"
+      />
+    );
+  }
+  return (
+    <Stat
+      label="Events seen"
+      value={<span className="text-warn-700">—</span>}
+      sub={entries == null ? NOT_REPORTED : ZERO_OR_UNREAD}
+    />
   );
 }
