@@ -169,18 +169,13 @@ SR
 chmod +x "$TMP/bin/systemd-run"
 printf '#!/usr/bin/env bash\necho "CH_ARGS=$*"\n' > "$TMP/bin/clickhouse-client"
 chmod +x "$TMP/bin/clickhouse-client"
-# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
-mv_version="$(mv --version 2>/dev/null)"
-if [[ "$mv_version" != *GNU* ]]; then
-  cat > "$TMP/bin/mv" <<'MV'
-#!/usr/bin/env bash
-[ "$1" = -T ] || exec /bin/mv "$@"
-shift; [ "$1" = -- ] && shift
-[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
-exec /bin/mv -- "$1" "$2"
-MV
-  chmod +x "$TMP/bin/mv"
-fi
+# shellcheck source=scripts/ci/lib/gnu-mv-shim.sh
+. "$PWD/scripts/ci/lib/gnu-mv-shim.sh"; gnu_mv_shim "$TMP/bin"
+# ln that fails (not EEXIST) for one per-job lock, so that lock is never created.
+mkdir -p "$TMP/lnfail"
+# shellcheck disable=SC2016  # the stub's own $2/$@, expanded when it runs
+printf '#!/usr/bin/env bash\ncase "$2" in *lnfail-job*) echo "ln: EIO" >&2; exit 1 ;; esac\nexec /bin/ln "$@"\n' > "$TMP/lnfail/ln"
+chmod +x "$TMP/lnfail/ln"
 export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
 # Never read the host's real per-host floor; case 4b points at a fixture.
@@ -571,6 +566,15 @@ fifo_dt=$(( $(date +%s) - fifo_t0 ))
 kill "$FIFO_DOG" 2>/dev/null; wait "$FIFO_DOG" 2>/dev/null
 rm -f "$QDIR/0000000001-0000000002"
 if [ "$rc" -eq 0 ] && ran && [ "$fifo_dt" -lt 5 ]; then ok "a FIFO in the ticket queue is skipped, not opened"; else bad "a FIFO ticket stalled the queue (rc=$rc, ${fifo_dt}s, err='$(errs)')"; fi
+# The queue dir is group-writable and a ticket is <epoch>-<pid>: a directory
+# planted at that name must not receive the ticket. exec keeps the pid.
+# shellcheck disable=SC2016  # expanded by the inner bash, whose $$ is the wrapper's pid
+env -u INVOCATION_ID HEAVY_JOB_CLASS=scheduled HEAVY_JOB_LOCK_WAIT=5 HEAVY_JOB_OPS_ENV="$OPS_ENV" \
+  Q="$QDIR" W="$WRAP" P="$PAYLOAD" bash -c 'n=$(date +%s); for s in 0 1 2; do mkdir -p "$Q/$((n + s))-$(printf %010d $$)"; done; exec "$W" sched-planted "$P"' \
+  >"$TMP/out" 2>"$TMP/err"
+rc=$?
+if [ "$rc" -eq 0 ] && ran && [ -z "$(find "$QDIR" -mindepth 1 -type f)" ] && err_has "cannot take ticket"; then ok "a directory planted at the ticket name is left empty; the job waits unordered and runs"; else bad "planted ticket directory mishandled (rc=$rc, files: '$(find "$QDIR" -mindepth 1 -type f | tr '\n' ' ')', err='$(errs)')"; fi
+find "$QDIR" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
 hold_start h5 sched-q2 scheduled
 lrun sched-x scheduled HEAVY_JOB_LOCK_WAIT=1 INVOCATION_ID=0123456789abcdef
 if [ "$rc" -eq 75 ] && ! ran && err_has "deferring sched-x (scheduled): another scheduled heavy job holds" && err_has "after waiting 1s"; then ok "a scheduled job outlasting the wait defers the scheduled job (exit 75, payload not run)"; else bad "expired wait behind a scheduled job did not defer (rc=$rc, err='$(errs)')"; fi
@@ -627,6 +631,9 @@ for cls in "" scheduled; do
   if [ "$rc" -eq 2 ] && ! ran && err_has "is not a plain file"; then ok "FIFO per-job lock: ${cls:-operator} job refused (exit 2, payload not run)"; else bad "FIFO per-job lock: ${cls:-operator} job not refused with exit 2 (rc=$rc, err='$(errs)')"; fi
 done
 rm -f "$JOB_DIR/stellarindex-heavy-fifo-job.lock"
+# A lock that could not be created is reported as that, not as a foreign file.
+lrun lnfail-job "" PATH="$TMP/lnfail:$PATH"
+if [ "$rc" -eq 2 ] && ! ran && err_has "could not create lock" && ! err_has "is not a plain file"; then ok "uncreatable per-job lock: refused (exit 2) and says it could not create it"; else bad "uncreatable per-job lock misreported (rc=$rc, err='$(errs)')"; fi
 if [ "$REAL_UID" -eq 0 ]; then
   : > "$JOB_DIR/stellarindex-heavy-foreign-job.lock"; chown 65534 "$JOB_DIR/stellarindex-heavy-foreign-job.lock"
   lrun foreign-job ""

@@ -205,6 +205,8 @@ else
 fi
 STUB
 chmod +x "$TMP/bin/zfs" "$TMP/bin/zpool" "$TMP/bin/logger" "$TMP/bin/date"
+# shellcheck source=scripts/ci/lib/gnu-mv-shim.sh
+. "$PWD/scripts/ci/lib/gnu-mv-shim.sh"; gnu_mv_shim "$TMP/bin"
 export PATH="$TMP/bin:$PATH"
 
 export TEXTFILE_DIR="$TMP/textfile"

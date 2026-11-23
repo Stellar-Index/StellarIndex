@@ -644,6 +644,10 @@
       lock_ready() { # absent: create it; then it must be a lock of ours
         lock_file_prep "$1"
         lock_path_ok "$1" && return 0
+        if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+          echo "run-heavy-job: refusing to start ${NAME}: could not create lock ${1} (nothing ran, exit 2)" >&2
+          exit 2
+        fi
         echo "run-heavy-job: refusing to start ${NAME}: lock ${1} is not a plain file owned by root or stellarindex — remove it (nothing ran, exit 2)" >&2
         exit 2
       }
@@ -765,16 +769,23 @@
         # flock(2) wakes every waiter on release and the first to run wins, so a daily job queued at
         # 04:21 lost to later arrivals for six hours. Waiters take a ticket; only the oldest live one contends.
         sched_queue_lock() {
-          local q="${SCHED_LOCK}.queue" t ticket
+          local q="${SCHED_LOCK}.queue" t ticket new=""
           [ -n "$LOCK_WAIT" ] || { flock -n -x 7; return; }
-          if ! restricted_dir "$q" 1770 \
-            || ! (umask 022; set -C; : >"$q/.new-$$") 2>/dev/null || ! exec 6<"$q/.new-$$"; then
+          # 0644: other waiters (root or stellarindex) open each ticket to test it.
+          if ! restricted_dir "$q" 1770 || ! new="$(mktemp "$q/.new-XXXXXX" 2>/dev/null)" \
+            || ! chmod 644 "$new" || ! exec 6<"$new"; then
+            [ -z "$new" ] || rm -f "$new"
             echo "run-heavy-job: WARNING ${NAME} (scheduled) cannot queue in ${q} (missing, or not a root/stellarindex directory) — waiting unordered. Recreate it: sudo systemd-tmpfiles --create /etc/tmpfiles.d/stellarindex-heavy-job.conf" >&2
             flock -w "$(lock_left)" -x 7; return
           fi
           flock -n -x 6
           ticket="$q/$(date +%s)-$(printf '%010d' "$$")"
-          mv "$q/.new-$$" "$ticket"
+          # The ticket name is predictable: -T refuses a directory planted there, never moves into it.
+          if ! mv -T "$new" "$ticket"; then
+            rm -f "$new"; exec 6<&-
+            echo "run-heavy-job: WARNING ${NAME} (scheduled) cannot take ticket ${ticket} — waiting unordered. Remove what is at that path." >&2
+            flock -w "$(lock_left)" -x 7; return
+          fi
           while :; do
             for t in "$q"/*; do
               [ "$t" = "$ticket" ] && break
