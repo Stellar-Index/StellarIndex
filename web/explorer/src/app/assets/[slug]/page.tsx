@@ -1109,6 +1109,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 <HistoryTabPanel
                   assetID={coin.asset_id}
                   decimals={detail?.decimals}
+                  scaleMismatch={headline.scaleMismatch}
                 />
               }
               supply={<SupplyTabPanel assetID={coin.asset_id} />}
@@ -1126,6 +1127,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                 <LiquidityTabPanel
                   assetID={coin.asset_id}
                   code={assetSymbol(coin)}
+                  scaleMismatch={headline.scaleMismatch}
                 />
               }
               oracles={

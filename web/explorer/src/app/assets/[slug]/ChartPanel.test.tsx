@@ -40,6 +40,29 @@ describe('ChartPanel under a contradicted scale', () => {
     });
     expect(screen.getByText(/Price chart withheld/)).toBeInTheDocument();
   });
+
+  // A failed lake read is served with the projection's decimals and
+  // flags.stale: that row never ran the check, so it cannot clear the refusal.
+  it('keeps the build-time refusal when the live row is stale', () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    );
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    qc.setQueryData(['/v1/assets/{id}', 'CTOKEN'], {
+      data: { asset_id: 'CTOKEN', price_usd: '20', decimals: 6 },
+      flags: { stale: true },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <ChartPanel assetID="CTOKEN" scaleMismatch={true} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText(/Price chart withheld/)).toBeInTheDocument();
+    expect(screen.queryByText(/OHLC/)).toBeNull();
+  });
 });
 
 describe('ChartPanel for USDC', () => {

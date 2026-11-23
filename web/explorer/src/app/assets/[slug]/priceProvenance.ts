@@ -95,17 +95,20 @@ export function scaleContradicted(row: ScaleRow): boolean {
 
 /**
  * The page's scale verdict: the live row's, else the build-time one. A row
- * whose decimals read failed (decimals omitted) cannot vouch for the scale,
- * so it never clears an earlier refusal.
+ * whose decimals read failed cannot vouch for the scale, so it never clears an
+ * earlier refusal: decimals omitted, or a stale body (the server falls back to
+ * the very projection the refusal contradicts when its lake read fails).
  */
 export function resolveScaleRefused(
   row: (ScaleRow & { decimals?: number | null }) | null | undefined,
   initialScaleMismatch: boolean | undefined,
+  rowStale?: boolean,
 ): boolean {
   if (!row) return Boolean(initialScaleMismatch);
   return (
     scaleContradicted(row) ||
-    (Boolean(initialScaleMismatch) && row.decimals == null)
+    (Boolean(initialScaleMismatch) &&
+      (row.decimals == null || rowStale === true))
   );
 }
 

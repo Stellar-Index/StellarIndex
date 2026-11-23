@@ -1182,15 +1182,14 @@ export type SourceHealth = NonNullable<
  * ingestion snapshot). Polls at the snapshot cadence.
  */
 export function useSourceHealth(name: string | undefined) {
-  return useQuery<SourceHealth>({
+  // The whole envelope: a kept snapshot carries flags.stale and its own as_of.
+  return useQuery<Envelope<SourceHealth>>({
     queryKey: ['/v1/sources/health', name],
     enabled: !!name,
-    queryFn: async () => {
-      const env = await apiGet<{ data: SourceHealth }>(
+    queryFn: () =>
+      apiGet<Envelope<SourceHealth>>(
         `/v1/sources/${encodeURIComponent(name ?? '')}/health`,
-      );
-      return env.data;
-    },
+      ),
     refetchInterval: 15_000,
   });
 }

@@ -27,6 +27,7 @@ import { isCIStub } from '@/lib/buildFetch';
 import { assetIdentityLabel } from '@/lib/asset-label';
 import { LiquidityVenueBars } from './LiquidityVenueBars';
 import { bakedAtDeploy } from './priceProvenance';
+import { withheldNote } from './headerNotes';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -77,9 +78,12 @@ async function fetchPoolsForAsset(
 export async function LiquidityTabPanel({
   assetID,
   code,
+  scaleMismatch,
 }: {
   assetID: string;
   code: string;
+  /** The page's scale verdict: `last_price` is normalised by the projection it contradicts. */
+  scaleMismatch: boolean | null;
 }) {
   const page = await fetchPoolsForAsset(assetID);
   const rows = page?.rows ?? null;
@@ -149,9 +153,10 @@ export async function LiquidityTabPanel({
                 const avgTrade = floor
                   ? null
                   : divideDecimalString(p.volume_24h_usd, p.trade_count_24h);
-                const lpFixed = p.last_price
-                  ? formatPairPrice(p.last_price)
-                  : null;
+                const lpFixed =
+                  p.last_price && !scaleMismatch
+                    ? formatPairPrice(p.last_price)
+                    : null;
                 return (
                   <LinkRow
                     href={`/markets/${slug}`}
@@ -180,6 +185,10 @@ export async function LiquidityTabPanel({
                     <Td align="right">
                       {lpFixed ? (
                         <span className="font-mono">{lpFixed}</span>
+                      ) : scaleMismatch && p.last_price ? (
+                        <span className="text-ink-faint">
+                          {withheldNote('decimals_mismatch')}
+                        </span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
