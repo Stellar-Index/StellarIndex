@@ -82,6 +82,29 @@ func TestAssetVolume_ExclusionOnTheDerivedSACWithholdsClassicVolume(t *testing.T
 			t.Errorf("%s withheld FOO's price, which an exclusion on its SAC's XLM market does not cover: %s", path, body)
 		}
 	}
+
+	// An exclusion on another asset's SAC covers none of FOO's markets, so its volume stays.
+	other, err := canonical.ParseAsset("BAR-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSAC, err := other.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := pricingguard.NewSourceExclusionGate(exclTable{rows: []timescale.SourceExclusion{{
+		Source: "soroswap", Base: otherSAC, Quote: canonical.NativeAsset().String(), From: time.Now().Add(-time.Hour),
+	}}}, pricingguard.SourceExclusionGateOptions{})
+	ts = startHTTPTest(t, v1.New(v1.Options{
+		Assets:     &stubAssetReader{byID: map[string]v1.AssetDetail{id: foo}, page: []v1.AssetDetail{foo}},
+		Exclusions: unrelated,
+	}).Handler())
+	for _, path := range []string{"/v1/assets", "/v1/assets/" + id} {
+		body, _ := readAll(mustGet(t, ts.URL+path))
+		if !strings.Contains(body, `"volume_24h_usd":"5000.00"`) || strings.Contains(body, `"fills_withheld_reason"`) {
+			t.Errorf("%s withheld FOO's volume over an exclusion on an unrelated SAC: %s", path, body)
+		}
+	}
 }
 
 // TestAssetDetail_TrustReadsTheJudgedPrice: the trust summary is rebuilt after the exclusion judgement, so a withheld price is
