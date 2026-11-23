@@ -82,7 +82,7 @@ probe_ln="$(grep -n -m1 -E '^SF_AGE' "$SRC" | cut -d: -f1)"
 # shellcheck disable=SC2016  # the literal $TMP/$OUT are the patterns being searched for
 chmod_ln="$(grep -n -m1 -E '^chmod 0644 "\$TMP"$' "$SRC" | cut -d: -f1)"
 # shellcheck disable=SC2016  # ditto
-mv_ln="$(grep -n -m1 -E '^mv "\$TMP" "\$OUT"$' "$SRC" | cut -d: -f1)"
+mv_ln="$(grep -n -m1 -E '^mv -T "\$TMP" "\$OUT"$' "$SRC" | cut -d: -f1)"
 if [[ -n "$probe_ln" && -n "$chmod_ln" && -n "$mv_ln" && $probe_ln -lt $chmod_ln && $chmod_ln -lt $mv_ln ]]; then
   ok "ClickHouse probe precedes chmod 0644 + the atomic mv (an abort there costs the whole tick)"
 else
@@ -122,6 +122,17 @@ SH
 chmod +x "$WORK/bin/curl"
 # The shipped wrapper, as the role installs it: the script hands psql its DSN through it.
 cp "$PWD/scripts/ops/psql-dsn.sh" "$WORK/bin/psql-dsn"; chmod +x "$WORK/bin/psql-dsn"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$WORK/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$WORK/bin/mv"
+fi
 export PATH="$WORK/bin:$PATH"
 
 # run <rc> <body> → rc in $RC, stderr in $ERR, textfile content in $PROM
@@ -273,8 +284,9 @@ PUBLISH="$WORK/publish.sh"
   awk '/^CHECKED=/ { p = 1 } p' "$SRC"
 } > "$PUBLISH"
 # shellcheck disable=SC2016  # the literal $TMP/$OUT are the patterns being searched for
-if grep -q 'mv "$TMP" "$OUT"' "$PUBLISH" && grep -q 'awk -v keep=' "$PUBLISH"; then
-  ok "extracted region carries the validator and the atomic mv"
+# -T: a directory or a link to one planted at $OUT must not receive the file.
+if grep -q 'mv -T "$TMP" "$OUT"' "$PUBLISH" && grep -q 'awk -v keep=' "$PUBLISH"; then
+  ok "extracted region carries the validator and the atomic mv -T"
 else
   bad "publication-path extraction produced nothing usable — the markers drifted"
 fi

@@ -466,7 +466,7 @@ printf 'stellarindex_data_freshness_unparseable_lines %s\n' "$DROPPED" >> "$TMP"
 # node_exporter runs unprivileged — mktemp defaults to 0600, so make the
 # rendered file world-readable before the atomic swap or the collector skips it.
 chmod 0644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"
 trap - EXIT
 
 # Published; now be loud. A withheld line is a defect in the SQL above or in what Postgres

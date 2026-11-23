@@ -128,11 +128,11 @@
       ## Login/auth evidence trail
       -w /var/log/auth.log -p wa -k auth-log
 
-      ## Privileged command execution: every execve where a logged-in
-      ## human (auid >= 1000) runs something as root (sudo/su paths).
+      ## Privileged command execution: every execve as root from a login
+      ## session. Admins log in as root (auid 0), so no auid lower bound.
       ## Daemons (auid unset) are excluded — they'd dominate the log.
-      -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k sudo-exec
-      -a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k sudo-exec
+      -a always,exit -F arch=b64 -S execve -F euid=0 -F auid!=unset -k sudo-exec
+      -a always,exit -F arch=b32 -S execve -F euid=0 -F auid!=unset -k sudo-exec
   when: hardening_cis_l2 | bool
   notify: Load audit rules
   tags: [hardening, cis]
