@@ -238,8 +238,8 @@ func TestLiqValuer_AmountAboveInt64IsExact(t *testing.T) {
 }
 
 // TestLiqValuer_ExclusionAndV1AndUnprovenKinds: a fill whose price an excluded bucket would have set is withheld, one priced by a
-// clean bucket newer than the exclusion is not; a V1 fill (no amounts on the wire) is unvalued as a whole; a BLNT user
-// liquidation's legs are leg_kind_unknown until its leg kinds are proven.
+// clean bucket newer than the exclusion is not; a V1 fill (no amounts on the wire) is unvalued as a whole; a BLNT bad-debt
+// fill's legs are leg_kind_unknown, no real one having been observed.
 func TestLiqValuer_ExclusionAndV1AndUnprovenKinds(t *testing.T) {
 	marks := liqTestMarks()
 	marks["CXLM"].withheld = []time.Time{liqFillTime.Add(-10 * time.Minute)}
@@ -266,8 +266,134 @@ func TestLiqValuer_ExclusionAndV1AndUnprovenKinds(t *testing.T) {
 	if v.AmountsRecorded || v.LotUSD != nil || v.BidUSD != nil || liqDeref(v.USDReason) != liqReasonAmountsNotEmitted {
 		t.Errorf("V1 fill = %+v, want unvalued as %s", v, liqReasonAmountsNotEmitted)
 	}
-	v = liqValuer{protocol: blnt.SourceName, marks: liqTestMarks()}.value(liqTestFill())
-	if v.LotUSD != nil || liqDeref(v.Lot[0].Reason) != auctionUSDKindUnknown {
-		t.Errorf("BLNT fill lot = %s %+v, want %s", liqDeref(v.LotUSD), v.Lot[0], auctionUSDKindUnknown)
+	f = liqTestFill()
+	f.AuctionType = 1
+	v = liqValuer{protocol: blnt.SourceName, marks: liqTestMarks()}.value(f)
+	if v.LotUSD != nil || v.BidUSD != nil || v.Lot[0].Kind != auctionLegUnknown || liqDeref(v.Lot[0].Reason) != auctionUSDKindUnknown ||
+		v.Bid[0].Kind != auctionLegUnknown || liqDeref(v.Bid[0].Reason) != auctionUSDKindUnknown {
+		t.Errorf("BLNT bad-debt fill lot %s %+v bid %s %+v, want both %s", liqDeref(v.LotUSD), v.Lot[0], liqDeref(v.BidUSD), v.Bid[0],
+			auctionUSDKindUnknown)
+	}
+}
+
+// The two mainnet BLNT user-liquidation fills (blnt_events, wasm-audits/blnt.md "User-liquidation legs"); tx hashes are stand-ins.
+const (
+	blntPool65260729Bid = "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV"
+	blntPool65260729Lot = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	blntPool65545200Leg = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+)
+
+var (
+	blntFillTx1 = clickhouse.LendingTxRef{Ledger: 65260729, TxHash: "b1"}
+	blntFillTx2 = clickhouse.LendingTxRef{Ledger: 65545200, TxHash: "b2"}
+)
+
+func blntRealFills() []timescale.LendingLiquidationFill {
+	b1, b2 := uint32(65260535), uint32(65545007)
+	return []timescale.LendingLiquidationFill{{
+		LendingEventPos: timescale.LendingEventPos{Ts: liqFillTime, Ledger: 65260729, TxHash: "B1"},
+		AuctionType:     0, User: "GDJSH2", Filler: "GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R", FillPercent: "100",
+		Block: &b1, HasAmounts: true,
+		Bid: map[string]string{blntPool65260729Bid: "23733539"}, Lot: map[string]string{blntPool65260729Lot: "175210638"},
+	}, {
+		LendingEventPos: timescale.LendingEventPos{Ts: liqFillTime, Ledger: 65545200, TxHash: "B2"},
+		AuctionType:     0, User: "GADCU3", Filler: "CD5D72H4BGH5UNXUOPGCTK4WK5OJFJIK5UQLE4L3JLAPRUQYOACNFAVG", FillPercent: "100",
+		Block: &b2, HasAmounts: true,
+		Bid: map[string]string{blntPool65545200Leg: "630807262"}, Lot: map[string]string{blntPool65545200Leg: "639160994"},
+	}}
+}
+
+// blntMarks prices every leg asset at 1 USD an hour before the fills, with the given 12-decimal rates stored by both fills.
+func blntMarks(bRate, dRate *big.Int) map[string]*liqMarks {
+	rd := blend.ReserveData{Version: blend.PoolV2, BRate: bRate, DRate: dRate}
+	out := map[string]*liqMarks{}
+	for _, a := range []string{blntPool65260729Bid, blntPool65260729Lot, blntPool65545200Leg} {
+		out[a] = &liqMarks{
+			scale:  7,
+			prices: []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "1", traded: true}},
+			rates:  map[clickhouse.LendingTxRef]blend.ReserveData{blntFillTx1: rd, blntFillTx2: rd},
+		}
+	}
+	return out
+}
+
+// TestLiqValuer_BLNTUserLiquidationValuedLikeV2: both real BLNT fills value their lot as b-tokens and their bid as d-tokens;
+// at b_rate 1.1 and d_rate 1.25, 175210638 b = 192731701 (floor) and 23733539 d = 29666924 (ceiling), each priced at 1 USD.
+func TestLiqValuer_BLNTUserLiquidationValuedLikeV2(t *testing.T) {
+	lv := liqValuer{protocol: blnt.SourceName, marks: blntMarks(liqRate("1100000000000"), liqRate("1250000000000"))}
+	if got := liquidationAssets(blnt.SourceName, blntRealFills()); len(got) != 3 || !got[blntPool65545200Leg] {
+		t.Fatalf("liquidationAssets = %v, want all three leg assets needing rates", got)
+	}
+	for i, want := range [][4]string{
+		{"192731701", "19.27", "29666924", "2.97"},
+		{"703077093", "70.31", "788509078", "78.85"},
+	} {
+		v := lv.value(blntRealFills()[i])
+		lot, bid := v.Lot[0], v.Bid[0]
+		if lot.Kind != auctionLegBToken || bid.Kind != auctionLegDToken || liqDeref(lot.Underlying) != want[0] ||
+			liqDeref(v.LotUSD) != want[1] || liqDeref(bid.Underlying) != want[2] || liqDeref(v.BidUSD) != want[3] ||
+			v.FillerProfitUSD == nil {
+			t.Errorf("fill %d: lot %+v (%s) bid %+v (%s) profit %s, want b_token %s/%s, d_token %s/%s, a profit", i, lot,
+				liqDeref(v.LotUSD), bid, liqDeref(v.BidUSD), liqDeref(v.FillerProfitUSD), want[0], want[1], want[2], want[3])
+		}
+	}
+}
+
+var liqScalar12 = new(big.Int).Exp(big.NewInt(10), big.NewInt(12), nil)
+
+// blntImpliedRates is the [lo, hi] range of 12-decimal rates under which the chain's own burn of `burnt` tokens for `under` underlying
+// holds: a repay burns floor(under*1e12/rate) d-tokens, a withdraw_collateral burns ceil(under*1e12/rate) b-tokens.
+func blntImpliedRates(t *testing.T, under, burnt int64, ceilBurn bool) [2]*big.Int {
+	t.Helper()
+	ue := new(big.Int).Mul(big.NewInt(under), liqScalar12)
+	var lo, hi *big.Int
+	if ceilBurn { // ceil(ue/r) == burnt  <=>  ue/burnt <= r < ue/(burnt-1)
+		lo = new(big.Int).Quo(new(big.Int).Add(ue, big.NewInt(burnt-1)), big.NewInt(burnt))
+		hi = new(big.Int).Quo(new(big.Int).Sub(ue, big.NewInt(1)), big.NewInt(burnt-1))
+	} else { // floor(ue/r) == burnt  <=>  ue/(burnt+1) < r <= ue/burnt
+		lo = new(big.Int).Add(new(big.Int).Quo(ue, big.NewInt(burnt+1)), big.NewInt(1))
+		hi = new(big.Int).Quo(ue, big.NewInt(burnt))
+	}
+	for _, r := range []*big.Int{lo, hi} {
+		q, m := new(big.Int).QuoRem(ue, r, new(big.Int))
+		if ceilBurn && m.Sign() != 0 {
+			q.Add(q, big.NewInt(1))
+		}
+		if q.Int64() != burnt {
+			t.Fatalf("rate %s burns %s for %d underlying, want %d", r, q, under, burnt)
+		}
+	}
+	return [2]*big.Int{lo, hi}
+}
+
+// TestLiqValuer_BLNTLegsReconcileWithSameTxBurns pins the evidence: under every rate the filler's same-transaction repay and
+// withdraw_collateral admit, the route's underlying is the underlying the chain moved. A d leg rounds up from a burn the chain
+// rounded down, so it serves at most one unit under the repay; a b leg rounds down from a burn rounded up, at most one over.
+func TestLiqValuer_BLNTLegsReconcileWithSameTxBurns(t *testing.T) {
+	fills := blntRealFills()
+	type leg struct {
+		fill           int
+		lot            bool
+		under, burnt   int64
+		minOff, maxOff int64
+	}
+	for name, c := range map[string]leg{
+		"65260729 bid / repay":               {0, false, 23768955, 23733539, -1, 0},
+		"65545200 bid / repay":               {1, false, 632485054, 630807262, -1, 0},
+		"65545200 lot / withdraw_collateral": {1, true, 640102329, 639160994, 0, 1},
+	} {
+		for _, r := range blntImpliedRates(t, c.under, c.burnt, c.lot) {
+			marks := blntMarks(r, r)
+			v := liqValuer{protocol: blnt.SourceName, marks: marks}.value(fills[c.fill])
+			l := v.Bid[0]
+			if c.lot {
+				l = v.Lot[0]
+			}
+			got, ok := new(big.Int).SetString(liqDeref(l.Underlying), 10)
+			off := new(big.Int).Sub(got, big.NewInt(c.under))
+			if !ok || off.Cmp(big.NewInt(c.minOff)) < 0 || off.Cmp(big.NewInt(c.maxOff)) > 0 {
+				t.Errorf("%s at rate %s: underlying %s, want %d within [%+d, %+d]", name, r, liqDeref(l.Underlying), c.under, c.minOff, c.maxOff)
+			}
+		}
 	}
 }

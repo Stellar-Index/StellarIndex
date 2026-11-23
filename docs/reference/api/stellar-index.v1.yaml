@@ -4948,8 +4948,10 @@ paths:
         (`price_thin_market`), as the market-cap chart refuses it, and a
         bucket whose own USD volume is unknown or under the substance
         gate's trailing-window floor values no fill (`price_thin_at_fill`).
-        Leg kinds follow `/auctions`: a BLNT leg is `leg_kind_unknown`, and
-        a backstop-token leg is unvalued
+        Leg kinds follow `/auctions`, except that a BLNT user liquidation
+        is valued as Blend V2's (lot bTokens, bid dTokens, as its fills'
+        same-transaction repay and withdraw_collateral burns show); a BLNT
+        bad-debt leg is `leg_kind_unknown`, and a backstop-token leg is unvalued
         (`backstop_token_not_valued_at_event_time`). A missing value is
         null with a `reason` (`no_price_within_bound`, `price_withheld`,
         `price_thin_market`, `price_thin_at_fill`, `price_unread`, `rate_at_fill_unrecorded`, `rate_unread`,
