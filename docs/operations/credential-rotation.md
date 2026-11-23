@@ -157,7 +157,12 @@ tracked in the private inventory.
    `patronictl list` still works.
 7. **Application secrets.** `vault_dashboard_code_secret` invalidates every live sign-in
    code, login-device proof and passkey ceremony: rotate when no one is mid-sign-in.
-   `vault_webhook_seal_key` rotates in two deploys. (1) Set `vault_webhook_seal_previous_key`
+   `vault_webhook_seal_key` rotates in two deploys, three when more than one API host shares
+   the database. (0, multi-host only) Set `vault_webhook_seal_previous_key` to the NEW value,
+   leaving `vault_webhook_seal_key` unchanged, and deploy to every API host before step (1)
+   starts: step (1)'s first host re-seals every key under the new secret at once, and a host
+   still running without it can open none of them and fails their deliveries terminally
+   (`no_secret`). (1) Set `vault_webhook_seal_previous_key`
    to the current value and `vault_webhook_seal_key` to a new 32+ byte value; deploy. The
    API opens keys under either secret, seals only under the new one, re-seals every old
    key in a background sweep at start, and retries (never fails terminally) a key neither
