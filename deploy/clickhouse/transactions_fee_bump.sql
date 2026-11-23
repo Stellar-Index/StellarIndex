@@ -26,10 +26,11 @@
 --
 -- Populated GO-FORWARD only. A historical fee bump (result_code 1 or -13)
 -- reads ''/0 in these columns, and its inner hash stays unresolvable, until
--- its range is re-derived from archived LCM (ch-rebuild through
--- ExtractLedger). The MV indexes the re-derived rows' inner hashes; for a
--- recreated tx_hash_index, stellarindex-ops ch-txindex-backfill indexes both
--- hashes.
+-- its range is re-derived from archived LCM (stellarindex-ops ch-backfill
+-- -write, through ExtractLedger). The MV indexes the re-derived rows' inner
+-- hashes; for a recreated tx_hash_index, stellarindex-ops ch-txindex-backfill
+-- indexes both hashes. Until then the tx_hash_index_coverage marker vouches
+-- for outer hashes only, and GET /v1/tx/{hash}'s 404 detail says so.
 
 ALTER TABLE stellar.transactions
     ADD COLUMN IF NOT EXISTS inner_tx_hash     String DEFAULT '',

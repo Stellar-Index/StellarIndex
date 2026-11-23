@@ -26,7 +26,7 @@ import { withheldNote } from './headerNotes';
 import {
   isDerivedProvenance,
   provenanceFromBasis,
-  scaleContradicted,
+  resolveScaleRefused,
 } from './priceProvenance';
 
 export type PriceProvenance =
@@ -282,6 +282,21 @@ export function LiveAssetPrice({
 }
 
 /**
+ * True when the asset's per-unit market price is refused for a contradicted
+ * scale. Every surface that draws that price (headline, chart, change strip)
+ * reads this one verdict; /v1/price, /v1/ohlc and /v1/changes never apply it.
+ */
+export function useScaleRefused(
+  assetID: string | undefined,
+  initialScaleMismatch: boolean | undefined,
+): boolean {
+  return resolveScaleRefused(
+    useAsset(assetID).data?.data,
+    initialScaleMismatch,
+  );
+}
+
+/**
  * The page asset's current USD price: the baked seed, replaced by the 60s
  * poll, blanked by a withheld verdict. Every widget on the page that needs
  * "the price now" reads this, so none can keep showing a baked or refused one.
@@ -335,9 +350,7 @@ export function useResolvedAssetPrice(
   const detailRow = detail.data?.data;
   // The build-time verdict stands until the live row answers, so an unread or
   // failed row read never lets the /v1/price figure through.
-  const scaleRefused = detailRow
-    ? scaleContradicted(detailRow)
-    : Boolean(initialScaleMismatch);
+  const scaleRefused = resolveScaleRefused(detailRow, initialScaleMismatch);
   // Under a contradicted scale only the row's whole-token fill may stand.
   const fromAssets = scaleRefused || (derived && (!poll.polled || refused));
   const reread = fromAssets && detailRow != null;

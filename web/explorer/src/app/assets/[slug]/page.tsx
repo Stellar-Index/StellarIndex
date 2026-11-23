@@ -1093,7 +1093,12 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               overview={
                 <OverviewBody coin={coin} detail={detail} headline={headline} />
               }
-              chart={<ChartPanel assetID={coin.asset_id} />}
+              chart={
+                <ChartPanel
+                  assetID={coin.asset_id}
+                  scaleMismatch={headline.scaleMismatch}
+                />
+              }
               markets={
                 <div className="space-y-6">
                   <MarketsTabPanel assetID={coin.asset_id} />
@@ -1661,7 +1666,7 @@ function VerifiedCurrencyView({
       {/* Skip the chart when the asset IS the quote: USD/USD is a
           flat line at 1. */}
       {chartAssetID && chartAssetID !== 'fiat:USD' && (
-        <ChartPanel assetID={chartAssetID} />
+        <ChartPanel assetID={chartAssetID} scaleMismatch={false} />
       )}
 
       {/* Markets panel — surfaces every market the asset trades on
