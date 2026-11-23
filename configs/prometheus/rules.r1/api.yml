@@ -555,8 +555,10 @@ groups:
       # counter per caller until its key map is full, then counts callers
       # against a shared region or overflow bucket. A full map means a
       # flood of distinct addresses, and real users inside a flooded
-      # region share its budget. The counter is unseeded, so the second
-      # arm catches the first burst after a restart.
+      # region share its budget. The counter is a plain Counter, exported at 0
+      # from registration, so the first arm sees a first burst after a
+      # restart; the second only covers a series with no history in the
+      # prior day.
       - alert: stellarindex_ratelimit_inprocess_overflow
         expr: |
           sum(increase(stellarindex_ratelimit_inprocess_overflow_total[10m])) > 0
@@ -1046,9 +1048,13 @@ groups:
       # of both never 429s; this fleet-wide rate is where API-key guessing shows.
       # Counts outcome="rejected" only (throttled attempts are already
       # capped); the per-IP cap holds one source to 0.33/s, so >1/s for 15m
-      # needs more than three sources at their cap, or many under it.
+      # needs more than three sources at their cap, or many under it. The 1h
+      # arm catches guessing pulsed with lulls longer than 5m, which would
+      # otherwise reset the 5m arm's pending state every cycle.
       - alert: stellarindex_failed_auth_rate_high
-        expr: sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m])) > 1
+        expr: |
+          sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m])) > 1
+          or sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[1h])) > 1
         for: 15m
         labels:
           severity: ticket
