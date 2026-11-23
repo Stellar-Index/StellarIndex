@@ -45,11 +45,11 @@ func (s *Server) reservePriceUSD(ctx context.Context, assetC string) reservePric
 		return reservePrice{unread: unread}
 	}
 	var out reservePrice
-	l := s.lookupUSDPriceWithSources(ctx, asset)
+	l := observedUSDPrice(s.lookupUSDPriceWithSources(ctx, asset))
 	if l.price == "" && l.withheld == "" && !l.unread {
 		// A feed keyed by the wrapper's own contract id still prices it.
 		if raw, err := canonical.ParseAsset(assetC); err == nil && !raw.Equal(asset) {
-			l = s.lookupUSDPriceWithSources(ctx, raw)
+			l = observedUSDPrice(s.lookupUSDPriceWithSources(ctx, raw))
 		}
 	}
 	if l.price != "" {
@@ -73,7 +73,15 @@ func (s *Server) reservePriceUSD(ctx context.Context, assetC string) reservePric
 	return out
 }
 
-// reserveTokenAsset resolves a reserve's C-strkey to the asset its prices are keyed by: a verified-catalogue SAC from the cached map,
+// observedUSDPrice drops a declared price: the page values reserves on observations only.
+func observedUSDPrice(l usdPriceLookup) usdPriceLookup {
+	if l.basis != "" {
+		return usdPriceLookup{unread: l.unread}
+	}
+	return l
+}
+
+// reserveTokenAssetresolves a reserve's C-strkey to the asset its prices are keyed by: a verified-catalogue SAC from the cached map,
 // else the lake's SAC check ([Server.unwrapSAC]); ok=false when the id does not parse.
 func (s *Server) reserveTokenAsset(ctx context.Context, assetC string) (asset canonical.Asset, ok, unread bool) {
 	if id, found := s.resolveSACAsset(assetC); found {
