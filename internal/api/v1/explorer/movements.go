@@ -127,15 +127,6 @@ func encodeMovementCursor(r clickhouse.AccountMovementRow, pinnedWatermark uint3
 	return fmt.Sprintf("%d.%s.%d.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex, pinnedWatermark)
 }
 
-// nextMovementCursor leaves the pin off when the page's boundary came from a failed read, not a watermark: a fail-closed 0
-// pinned into the cursor would hold every later page at the static P23 split, unflagged, after the read recovers.
-func nextMovementCursor(r clickhouse.AccountMovementRow, wm uint32, failClosed bool) string {
-	if failClosed {
-		return fmt.Sprintf("%d.%s.%d.%d", r.Ledger, r.TxHash, r.OpIndex, r.LegIndex)
-	}
-	return encodeMovementCursor(r, wm)
-}
-
 // parseMovementCursor decodes the dotted `?cursor=` (tx_hash is fixed 64-char hex, so never contains '.'). An optional 5th segment is
 // the pinned cap67 watermark. Malformed values write a problem+json and return ok=false.
 func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (movementCursorParts, bool) {
@@ -244,16 +235,17 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	}
 	h.assertMovementsNonOverlap(chRows, pgRows, pgFloor)
 
-	merged := mergeAccountMovementRows(chRows, pgRows, limit)
-	if len(merged) == limit && movementsArmMissing(cur, pgFloor, tailFailed, wmFailed) {
-		h.Logger.Warn("explorer AccountMovements: a merge arm failed on a full page; refusing to mint a cursor past its rows", "account", g, "tail_failed", tailFailed, "watermark_failed", wmFailed)
-		w.Header().Set("Retry-After", retryAfterBusy)
+	// A short page carries no next_cursor, which reads as the end of the list, so a missing arm 503s at any page length.
+	if movementsArmMissing(cur, pgFloor, tailFailed, wmFailed) {
+		h.Logger.Warn("explorer AccountMovements: a merge arm failed; refusing to serve a page missing its rows", "account", g, "tail_failed", tailFailed, "watermark_failed", wmFailed)
+		w.Header().Set("Retry-After", retryAfterDependencyDown)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/explorer-unavailable",
 			"Account movements temporarily unavailable", http.StatusServiceUnavailable,
-			"part of this account's movement history could not be read, and a next_cursor past it would "+
+			"part of this account's movement history could not be read, and serving the rest would "+
 				"skip those movements for the rest of the walk; retry shortly")
 		return
 	}
+	merged := mergeAccountMovementRows(chRows, pgRows, limit)
 	out := AccountMovementsView{
 		Account:      g,
 		Movements:    h.accountMovementEntries(ctx, merged),
@@ -264,13 +256,14 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// Pin the boundary this sequence committed to (the live watermark
 		// on page 1, the already-pinned value on continuation pages) so
 		// every subsequent page reuses it.
-		out.NextCursor = nextMovementCursor(merged[len(merged)-1], wm, wmFailed && !cur.HasPinnedWatermark)
+		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed || tailFailed || tailLabelsFailed, time.Time{})
+	// wmFailed here is a pinned page whose pin could not be re-checked against the live watermark.
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed || tailLabelsFailed, time.Time{})
 }
 
-// movementsArmMissing reports that an arm owning part of this page's ledger range failed, so no cursor may be minted from it: the next
-// page would start below that arm's rows and skip them for the rest of the walk. A failed tail owns nothing once the cursor is below
+// movementsArmMissing reports that an arm owning part of this page's ledger range failed, so the page is not a complete merge: a short
+// one would end the walk, a full one would mint a cursor past the arm's rows. A failed tail owns nothing once the cursor is below
 // pgFloor; an unpinned page with a failed watermark read lost the non-watched archive rows above the static P23 split.
 func movementsArmMissing(cur movementCursorParts, pgFloor uint32, tailFailed, wmFailed bool) bool {
 	tailOwnsRange := cur.Ledger == 0 || cur.Ledger >= pgFloor
@@ -339,8 +332,8 @@ func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
 	return lakeStale || (wm > 0 && tip > wm && tip-wm > cap67MovementsStaleLedgers)
 }
 
-// fetchSEP41MovementsTail reads the Postgres recent-tail half of the merge. A non-empty coverageNote (no reader, read failed) degrades
-// rather than fails the request; failed reports a read error, labelsFailed a SAC lookup error that left a row's asset as the raw id.
+// fetchSEP41MovementsTail reads the Postgres recent-tail half of the merge. coverageNote is non-empty when no reader is wired or the read
+// failed; failed reports a read error (the caller 503s if the tail owns the page), labelsFailed a SAC lookup error that left a row's asset as the raw id.
 // Kind filters that cannot match a PG-tail row (all are "transfer") skip it.
 func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) (rows []clickhouse.AccountMovementRow, coverageNote string, failed, labelsFailed bool) {
 	if h.SEP41Movements == nil {

@@ -166,9 +166,15 @@ func (h *Handler) writeUncapturedWasmMiss(ctx context.Context, w http.ResponseWr
 	assetName, found, evErr := h.sacAssetViaEventsChecked(ctx, cid)
 	if evErr != nil && !found {
 		// The probe could not answer, so "not in the lake" would be a claim we did not check.
-		h.Logger.Warn("explorer ContractWasm SAC events probe failed", "err", evErr, "contract", cid)
-		h.writeRetryable(w, r, evErr, "https://api.stellarindex.io/errors/contract-wasm-timeout",
-			"Contract WASM timed out")
+		if retryableColdMiss(ctx, evErr) {
+			h.Logger.Warn("explorer ContractWasm SAC events probe failed", "err", evErr, "contract", cid)
+			h.writeRetryable(w, r, evErr, "https://api.stellarindex.io/errors/contract-wasm-timeout",
+				"Contract WASM timed out")
+			return
+		}
+		h.Logger.Error("explorer ContractWasm SAC events probe failed", "err", evErr, "contract", cid)
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
 	if found {

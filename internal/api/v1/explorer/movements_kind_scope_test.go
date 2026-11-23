@@ -445,9 +445,10 @@ func TestAccountMovements_SACAssetFilterFoldsToTheWrappedClassic(t *testing.T) {
 	}
 }
 
-// On a cap67 watermark read error with a populated archive, the CH arm must be clamped to the static P23 boundary so its
-// post-P23 cap67_derived rows aren't served alongside the Postgres tail's identical rows (wm=0 would double-emit).
-func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
+// With no cap67 watermark yet and a populated archive, the CH arm must be clamped to the static P23 boundary so its post-P23
+// cap67_derived rows aren't served alongside the Postgres tail's identical rows (wm=0 would double-emit). A watermark read error
+// on a first page is a 503 instead (TestAccountMovements_ArmFailureIsRetryable503).
+func TestAccountMovements_AbsentWatermark_DoesNotDoubleServe(t *testing.T) {
 	floor := timescale.SEP41MovementsFloorLedger
 	postP23 := floor + 100 // a real cap67_derived movement above the P23 boundary
 	when := time.Unix(1_700_000_000, 0).UTC()
@@ -455,7 +456,6 @@ func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 	reader := &movementsArmReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
 		wm:        0,
-		wmErr:     errors.New("clickhouse: cap67 watermark: connection reset"),
 		chRows: []clickhouse.AccountMovementRow{{
 			Address:         validTestAccount,
 			Ledger:          postP23,
@@ -485,19 +485,19 @@ func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 
 	for _, m := range view.Movements {
 		if m.Provenance == "cap67_derived" && m.Ledger >= floor {
-			t.Fatalf("post-P23 cap67_derived (ClickHouse) row at ledger %d served during a watermark-read error — "+
+			t.Fatalf("post-P23 cap67_derived (ClickHouse) row at ledger %d served with no watermark — "+
 				"double-listed with the Postgres watched-token tail (W1-chrollup-1)", m.Ledger)
 		}
 	}
 	if len(view.Movements) != 1 {
 		t.Fatalf("expected exactly 1 movement (the Postgres watched-token row); got %d — "+
-			"the CH arm was not clamped to the static P23 boundary on a watermark read error (W1-chrollup-1)",
+			"the CH arm was not clamped to the static P23 boundary with no watermark",
 			len(view.Movements))
 	}
 }
 
-// A watermark read error on a continuation page keeps the cursor's pin (the CH arm still reaches it), and a fail-closed first page
-// does not pin its 0 into next_cursor, so later pages re-read the live watermark instead of inheriting the P23 split unflagged.
+// A watermark read error on a continuation page keeps the cursor's pin (the CH arm still reaches it), and the next cursor carries it.
+// A first page with that error 503s (TestAccountMovements_ArmFailureIsRetryable503), so it mints no cursor at all.
 func TestAccountMovements_WatermarkReadErrorKeepsPin(t *testing.T) {
 	floor := timescale.MovementsFloor()
 	pin := floor + 2_000_000
@@ -512,14 +512,7 @@ func TestAccountMovements_WatermarkReadErrorKeepsPin(t *testing.T) {
 	}
 
 	row := clickhouse.AccountMovementRow{Ledger: floor + 10, TxHash: validTestTxHash}
-	next := nextMovementCursor(row, 0, true)
-	h := newProbeHandler(reader, nil)
-	r := httptest.NewRequest(http.MethodGet, "/v1/accounts/"+validTestAccount+"/movements?cursor="+next, nil)
-	parsed, ok := h.parseMovementCursor(httptest.NewRecorder(), r)
-	if !ok || parsed.HasPinnedWatermark {
-		t.Errorf("fail-closed next_cursor %q pins a watermark (ok=%v, pinned=%v)", next, ok, parsed.HasPinnedWatermark)
-	}
-	if got := nextMovementCursor(row, pin, false); !strings.HasSuffix(got, fmt.Sprintf(".%d", pin)) {
+	if got := encodeMovementCursor(row, pin); !strings.HasSuffix(got, fmt.Sprintf(".%d", pin)) {
 		t.Errorf("next_cursor %q dropped the pin %d", got, pin)
 	}
 }
@@ -633,7 +626,7 @@ func TestAccountMovements_CeilingIsAppliedBeforeTheLimit(t *testing.T) {
 }
 
 // Pins the ceiling's set-signal: with the movements floor at genesis (testnet/futurenet, InstallMovementsFloor(1)) the
-// ceiling is 0 when the watermark is absent or unreadable, and the CH arm must then serve nothing (PG covers the whole
+// ceiling is 0 when the watermark is absent (unreadable is a 503), and the CH arm must then serve nothing (PG covers the whole
 // net). A MaxLedger > 0 sentinel instead of an explicit HasMaxLedger drops the predicate and double-lists.
 func TestAccountMovements_GenesisFloorFailsClosed(t *testing.T) {
 	timescale.InstallMovementsFloor(1)
@@ -645,7 +638,6 @@ func TestAccountMovements_GenesisFloorFailsClosed(t *testing.T) {
 	reader := &movementsArmReader{
 		capReader: &capReader{probe: &deadlineProbe{}},
 		wm:        0,
-		wmErr:     errors.New("clickhouse: cap67 watermark: connection reset"),
 		chRows: []clickhouse.AccountMovementRow{{
 			Address:         validTestAccount,
 			Ledger:          ledger,

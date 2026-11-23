@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -59,12 +62,21 @@ func (t *flakyTail) ListSEP41TransfersByAddress(ctx context.Context, a string, l
 
 func callMovementsPage(t *testing.T, reader ExplorerReader, tail SEP41MovementsReader, limit int, cursor string) (AccountMovementsView, int) {
 	t.Helper()
-	var view AccountMovementsView
+	view, rec, _ := serveMovementsPage(t, reader, tail, limit, cursor)
+	return view, rec.Code
+}
+
+func serveMovementsPage(t *testing.T, reader ExplorerReader, tail SEP41MovementsReader, limit int, cursor string) (view AccountMovementsView, rec *httptest.ResponseRecorder, degraded bool) {
+	t.Helper()
 	h := newProbeHandler(reader, nil)
 	h.SEP41Movements = tail
 	h.ParseLimit = func(http.ResponseWriter, *http.Request, int, int) (int, bool) { return limit, true }
 	h.WriteJSON = func(w http.ResponseWriter, v any, _ bool) {
 		view = v.(AccountMovementsView)
+		w.WriteHeader(http.StatusOK)
+	}
+	h.WriteJSONAt = func(w http.ResponseWriter, v any, _, d bool, _ time.Time) {
+		view, degraded = v.(AccountMovementsView), d
 		w.WriteHeader(http.StatusOK)
 	}
 	q := url.Values{}
@@ -73,9 +85,57 @@ func callMovementsPage(t *testing.T, reader ExplorerReader, tail SEP41MovementsR
 	}
 	r := httptest.NewRequest(http.MethodGet, "/v1/accounts/"+validTestAccount+"/movements?"+q.Encode(), nil)
 	r.SetPathValue("g_strkey", validTestAccount)
-	rec := httptest.NewRecorder()
+	rec = httptest.NewRecorder()
 	h.AccountMovements(rec, r)
-	return view, rec.Code
+	return view, rec, degraded
+}
+
+// A 200 is a complete merge of both arms for its range, so an arm that owns part of the range and failed is a retryable 503 at any
+// page length: a short 200 carries no next_cursor, which the client reads as the end of the list.
+func TestAccountMovements_ArmFailureIsRetryable503(t *testing.T) {
+	floor := timescale.MovementsFloor()
+	wm := floor + 1000
+	pgFloor := wm + 1
+	ch := func(l uint32) clickhouse.AccountMovementRow {
+		return clickhouse.AccountMovementRow{Address: validTestAccount, Ledger: l, TxHash: validTestTxHash, Amount: big.NewInt(1)}
+	}
+	pinned := func(l uint32) string { return fmt.Sprintf("%d.%s.0.0.%d", l, validTestTxHash, wm) }
+	cases := []struct {
+		name      string
+		wmFails   bool
+		tail      SEP41MovementsReader
+		cursor    string
+		want      int
+		wantRetry string
+	}{
+		{name: "page 1, short, tail fails", tail: failingSEP41Tail{}, want: http.StatusServiceUnavailable, wantRetry: retryAfterDependencyDown},
+		{name: "page 1, short, watermark fails", wmFails: true, tail: &stubSEP41Tail{}, want: http.StatusServiceUnavailable, wantRetry: retryAfterDependencyDown},
+		{name: "page 2, cursor at pgFloor, tail fails", tail: failingSEP41Tail{}, cursor: pinned(pgFloor), want: http.StatusServiceUnavailable, wantRetry: retryAfterDependencyDown},
+		{name: "page 2, cursor above pgFloor, tail fails", tail: failingSEP41Tail{}, cursor: pinned(pgFloor + 7), want: http.StatusServiceUnavailable, wantRetry: retryAfterDependencyDown},
+		{name: "page 2, cursor below pgFloor, tail fails (owns nothing)", tail: failingSEP41Tail{}, cursor: pinned(wm), want: http.StatusOK},
+		{name: "page 1, healthy", tail: &stubSEP41Tail{}, want: http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &walkCHReader{movementsArmReader: &movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}, wm: wm}}
+			if tc.wmFails {
+				reader.wmFailures = 1
+			}
+			for i := range uint32(10) {
+				reader.chRows = append(reader.chRows, ch(wm-1-i))
+			}
+			view, rec, degraded := serveMovementsPage(t, reader, tc.tail, 25, tc.cursor)
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d (served %d rows, next_cursor %q)", rec.Code, tc.want, len(view.Movements), view.NextCursor)
+			}
+			if got := rec.Header().Get("Retry-After"); got != tc.wantRetry {
+				t.Errorf("Retry-After = %q, want %q", got, tc.wantRetry)
+			}
+			if tc.want == http.StatusOK && degraded {
+				t.Error("a complete merge was flagged degraded")
+			}
+		})
+	}
 }
 
 // A walk whose first page hits a failed merge arm must still serve every seeded movement exactly once: the failure may cost a
@@ -108,6 +168,30 @@ func TestAccountMovements_WalkSurvivesArmFailure(t *testing.T) {
 			}
 			tail := &flakyTail{failures: 1}
 			tail.rows = []timescale.SEP41TransferRow{pg(wm + 50)}
+			return r, tail
+		}},
+		{"tail read fails on a short page 1", func() (*walkCHReader, *flakyTail) {
+			wm := floor + 1000
+			r := &walkCHReader{movementsArmReader: &movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}, wm: wm}}
+			for i := range uint32(10) {
+				r.chRows = append(r.chRows, ch(wm-i, "native"))
+			}
+			tail := &flakyTail{failures: 1}
+			for i := range uint32(20) {
+				tail.rows = append(tail.rows, pg(wm+1+i))
+			}
+			return r, tail
+		}},
+		{"healthy walk", func() (*walkCHReader, *flakyTail) {
+			wm := floor + 1000
+			r := &walkCHReader{movementsArmReader: &movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}, wm: wm}}
+			for i := range uint32(30) {
+				r.chRows = append(r.chRows, ch(wm-i, "native"))
+			}
+			tail := &flakyTail{}
+			for i := range uint32(20) {
+				tail.rows = append(tail.rows, pg(wm+1+i))
+			}
 			return r, tail
 		}},
 		{"watermark read fails on page 1", func() (*walkCHReader, *flakyTail) {
@@ -199,15 +283,38 @@ func TestAccountMovements_TailSACLookupFailureIsDegraded(t *testing.T) {
 	}
 }
 
-// An uncaptured contract whose SAC events probe errored is unanswered, not "not in the lake": /wasm must 503, never the authoritative 404.
-func TestContractWasm_EventsProbeErrorIsRetryable(t *testing.T) {
-	h := newProbeHandler(&eventsProbeErrReader{capReader: &capReader{probe: &deadlineProbe{}}, evErr: errors.New("connection reset")}, nil)
-	r := httptest.NewRequest(http.MethodGet, "/v1/contracts/"+validTestContract+"/wasm", nil)
-	r.SetPathValue("contract_id", validTestContract)
-	rec := httptest.NewRecorder()
-	h.ContractWasm(rec, r)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503 when the SAC events probe failed", rec.Code)
+// An uncaptured contract whose SAC events probe errored is unanswered, not "not in the lake": never the authoritative 404. A
+// transport or deadline error is a retryable 503; any other error is the 500 internal problem, not a "read budget" claim.
+func TestContractWasm_EventsProbeErrorStatus(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		want     int
+		wantType string
+	}{
+		{"connection reset", &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}, http.StatusServiceUnavailable, "contract-wasm-timeout"},
+		{"deadline", fmt.Errorf("sac events probe: %w", context.DeadlineExceeded), http.StatusServiceUnavailable, "contract-wasm-timeout"},
+		{"schema error", errors.New("code: 47, message: Missing columns: 'topic_3'"), http.StatusInternalServerError, "errors/internal"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newProbeHandler(&eventsProbeErrReader{capReader: &capReader{probe: &deadlineProbe{}}, evErr: tc.err}, nil)
+			var gotType string
+			h.WriteProblem = func(w http.ResponseWriter, _ *http.Request, typeURL, _ string, status int, _ string) {
+				gotType = typeURL
+				w.WriteHeader(status)
+			}
+			r := httptest.NewRequest(http.MethodGet, "/v1/contracts/"+validTestContract+"/wasm", nil)
+			r.SetPathValue("contract_id", validTestContract)
+			rec := httptest.NewRecorder()
+			h.ContractWasm(rec, r)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d when the SAC events probe failed with %v", rec.Code, tc.want, tc.err)
+			}
+			if !strings.HasSuffix(gotType, tc.wantType) {
+				t.Errorf("problem type %q, want suffix %q", gotType, tc.wantType)
+			}
+		})
 	}
 }
 
