@@ -109,6 +109,37 @@ func TestOraclePrices_UnreadLegIsNotStoodInFor(t *testing.T) {
 	}
 }
 
+// TestOraclePrices_ReadLegSurvivesALaterUnreadLeg: a later leg that could not be read stops the walk but does not discard the
+// series an earlier leg already served (only a leg that would stand in for the unread one is refused).
+func TestOraclePrices_ReadLegSurvivesALaterUnreadLeg(t *testing.T) {
+	usdc, usdt := oraclePegs(t)
+	quiet := func(quote string) []v1.PriceSnapshot {
+		return []v1.PriceSnapshot{{
+			AssetID: "native", Quote: quote, Price: "0.29", PriceType: "vwap",
+			ObservedAt: v1.WireTime(time.Now().Add(-30 * time.Minute).UTC()),
+		}}
+	}
+	for name, tc := range map[string]struct {
+		recent map[string][]v1.PriceSnapshot
+		failed string
+	}{
+		"direct read, first peg unread": {
+			recent: map[string][]v1.PriceSnapshot{"native/fiat:USD": quiet("fiat:USD")},
+			failed: "native/" + usdc.String(),
+		},
+		"first peg read, second unread": {
+			recent: map[string][]v1.PriceSnapshot{"native/" + usdc.String(): quiet(usdc.String())},
+			failed: "native/" + usdt.String(),
+		},
+	} {
+		reader := &stubPriceReader{errByPair: map[string]error{tc.failed: errors.New("pool acquire timeout")}, recent: tc.recent}
+		status, data := oraclePricesGet(t, reader, usdc, usdt)
+		if status != http.StatusOK || len(data) != 1 || data[0].Price != "0.29" {
+			t.Errorf("%s: status = %d data = %+v, want 200 with the read leg's 0.29", name, status, data)
+		}
+	}
+}
+
 // TestOraclePrices_ServesTheNewestSeries: a dormant leg is non-empty forever, so the leg with the
 // newest bucket is served, whatever the walk order.
 func TestOraclePrices_ServesTheNewestSeries(t *testing.T) {

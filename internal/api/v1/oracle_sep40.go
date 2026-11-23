@@ -390,8 +390,12 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	for _, peg := range s.usdPegProxyQuotes() {
 		pegSnapshots, pegAt, pegServed, ok := s.oraclePegSeries(ctx, asset, quote, peg, n, &failed)
 		if failed.read != nil {
-			// An unread leg is not a missing one: the next peg's market never stands in for it (walkUSDPegs' rule).
-			return nil, canonical.Asset{}, false, nil, failed.read
+			// An unread leg is not a missing one: the next peg's market never stands in for it, but a leg read before it
+			// still answers (walkUSDPegs' rule).
+			if len(best) == 0 {
+				return nil, canonical.Asset{}, false, nil, failed.read
+			}
+			break
 		}
 		if !ok {
 			continue
