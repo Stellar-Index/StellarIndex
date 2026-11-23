@@ -447,8 +447,8 @@ func emptyHistoryServer(t *testing.T, probe *coverageFloorProbe) *testServer {
 // the coverage-annotated 404.
 type priceAtMissStub struct{}
 
-func (priceAtMissStub) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, error) {
-	return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+func (priceAtMissStub) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, []string, error) {
+	return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 }
 
 // drainedHistoryCursor is a syntactically valid /v1/history cursor —
@@ -870,18 +870,18 @@ type m2PriceAtStub struct {
 	bucketAt   time.Time
 }
 
-func (s m2PriceAtStub) PriceAt(_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, error) {
+func (s m2PriceAtStub) PriceAt(_ context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, []string, error) {
 	key := pair.Base.String() + "/" + pair.Quote.String()
 	if s.histPair != "" && key == s.histPair {
 		if time.Since(ts) < 30*time.Minute {
-			return s.current, s.bucketAt, 60, nil
+			return s.current, s.bucketAt, 60, nil, nil
 		}
-		return s.historical, ts, 60, nil
+		return s.historical, ts, 60, nil, nil
 	}
 	if v, ok := s.byPair[key]; ok {
-		return v, s.bucketAt, 60, nil
+		return v, s.bucketAt, 60, nil, nil
 	}
-	return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+	return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 }
 
 // m2Trade builds a trade for the given pair with raw smallest-unit amounts.

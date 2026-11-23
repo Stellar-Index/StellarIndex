@@ -15,11 +15,12 @@ import (
 // PriceAtReader returns the closed VWAP bucket at-or-before an instant, picking the finest CAGG within the honesty cap; staleness tolerance is a parameter because /v1/price/changes shares it.
 type PriceAtReader interface {
 	// PriceAt returns (vwap decimal string, the bucket's CLOSE time, the serving CAGG resolution in
-	// seconds, error); the resolution lets the caller label window_seconds honestly. Past
+	// seconds, the served bucket's recorded sources (nil when none), error); the resolution lets the
+	// caller label window_seconds honestly and the sources let an exclusion be judged per venue. Past
 	// maxStaleness the reader returns ErrPriceAtUnavailable rather than fabricating continuity
 	// across a dead-market gap; an existing but refused bucket returns ErrPriceWithheld or
 	// ErrPriceAtGuarded.
-	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, err error)
+	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, sources []string, err error)
 }
 
 // ErrPriceAtUnavailable means no closed bucket exists within maxStaleness at-or-before the instant; it never means a bucket exists and was refused.
@@ -153,7 +154,7 @@ func (s *Server) resolvePriceAt(
 // lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is the first
 // ErrPriceWithheld-class error, so the caller picks the right 404 once all orientations are exhausted; err is a reader failure
 // ([isPriceAtMiss] false) and ends the walk (a later hit would stand in for an unknown answer).
-func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error, error) {
+func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time, also ...canonical.Pair) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
@@ -164,7 +165,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			if pairErr != nil {
 				continue
 			}
-			value, bucketAt, resSec, lookErr := s.PriceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
+			value, bucketAt, resSec, lookErr := s.readPriceAt(ctx, pair, ts, priceAtMaxLookback, also...)
 			if lookErr != nil {
 				if failErr := notePriceAtMiss(&withheld, lookErr); failErr != nil {
 					return PriceSnapshot{}, false, nil, failErr
@@ -200,9 +201,16 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, bool, error, error) {
-	var withheld error
+	var (
+		withheld  error
+		requested []canonical.Pair
+	)
+	// An exclusion stored under the fiat pair does not name the peg book, so each bucket is also judged under it.
+	if p, err := canonical.NewPair(asset, quote); err == nil {
+		requested = append(requested, p)
+	}
 	for _, proxied := range s.priceAtUSDPegPairs(asset, quote) {
-		snap, found, w, err := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
+		snap, found, w, err := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts, requested...)
 		if err != nil {
 			return PriceSnapshot{}, false, nil, err
 		}

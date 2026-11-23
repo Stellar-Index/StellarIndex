@@ -4,8 +4,7 @@ package main
 // and every /v1/price/changes horizon, and the thin-market gate must be asked about the window
 // at the served `ts`, not the trailing 24h ending NOW, when serving a past bucket.
 //
-// storePriceAtReader.s is a concrete *timescale.Store, so this package cannot script the read.
-// It need not: the withholding decision is made BEFORE the store is touched, so with a nil store
+// The read need not be scripted: the withholding decision is made BEFORE the store is touched, so with a nil store
 // a withheld read returns v1.ErrPriceWithheld and an allowed read panics on the store, which
 // the helper reports as "reached the store".
 
@@ -56,7 +55,7 @@ func priceAtOutcome(t *testing.T, r storePriceAtReader, pair canonical.Pair, ts 
 			outcome = outcomeReachedStore
 		}
 	}()
-	_, _, _, err := r.PriceAt(context.Background(), pair, ts, 24*time.Hour)
+	_, _, _, _, err := r.PriceAt(context.Background(), pair, ts, 24*time.Hour)
 	if errors.Is(err, v1.ErrPriceWithheld) {
 		return outcomeWithheld
 	}

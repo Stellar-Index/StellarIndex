@@ -166,21 +166,21 @@ func (r *chokepointReader) RecentClosedSnapshots(context.Context, canonical.Asse
 	return nil, nil
 }
 
-func (r *chokepointReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, error) {
+func (r *chokepointReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, _ time.Duration) (string, time.Time, int, []string, error) {
 	if v1.ThinAdmissionFrom(ctx).Requested() && r.secondPassErr != nil {
 		if errors.Is(r.secondPassErr, v1.ErrPriceNotFound) {
-			return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+			return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 		}
-		return "", time.Time{}, 0, r.secondPassErr
+		return "", time.Time{}, 0, nil, r.secondPassErr
 	}
 	price, ok := r.prices[pair.Base.String()+"/"+pair.Quote.String()]
 	if !ok {
-		return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+		return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 	}
 	if w := r.judge(ctx, pair.Base, pair.Quote, pricingguard.Query{PointInTime: true, At: ts}); w != pricingguard.NotWithheld {
-		return "", time.Time{}, 0, v1.PriceWithheldError(w)
+		return "", time.Time{}, 0, nil, v1.PriceWithheldError(w)
 	}
-	return price, ts.Truncate(time.Minute), 60, nil
+	return price, ts.Truncate(time.Minute), 60, nil, nil
 }
 
 func (r *chokepointReader) readCount() int {
