@@ -1095,7 +1095,7 @@ Alert: `stellarindex_login_code_lockout_table_growing` →
 ### `stellarindex_auth_reaper_last_sweep_unix`
 
 Gauge, labelled `reaper` ∈ {`login_code`, `magic_link`, `signup`,
-`session`, `webhook_delivery`}. Set at the end of every completed sweep, including failed ones.
+`session`, `webhook_delivery`, `webhook_previous_key`}. Set at the end of every completed sweep, including failed ones.
 
 A flat rows gauge with a stale sweep timestamp is a dead reaper, not a quiet table.
 
@@ -1108,7 +1108,7 @@ Gauge, labelled `reaper` (same values). Configured sweep cadence; the stalled al
 
 ### `stellarindex_retention_reaper_rows_deleted_total`
 
-Counter, labelled `reaper` ∈ {`session`, `webhook_delivery`}. Sessions ended over 90 days ago and finished webhook deliveries over 30 days old. `audit_log` is not swept.
+Counter, labelled `reaper` ∈ {`session`, `webhook_delivery`, `webhook_previous_key`}. Sessions ended over 90 days ago and finished webhook deliveries over 30 days old. `webhook_previous_key` counts retired webhook signing keys erased (the row stays) an hour after their rotation overlap ends. `audit_log` is not swept.
 
 ### `stellarindex_retention_reaper_errors_total`
 

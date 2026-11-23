@@ -663,6 +663,23 @@ func (c *WebhookStore) SweepFinishedDeliveries(ctx context.Context, olderThan ti
 	return c.s.deleteInBatches(ctx, "postgresstore: SweepFinishedDeliveries", q, olderThan, defaultSweepBatchRows)
 }
 
+// ClearExpiredPreviousSigningKeys erases the retired signing key (raw or sealed) and its expiry from every webhook whose rotation
+// overlap ended before olderThan, returning the count. Reads already ignore an expired key, so this only stops it outliving its use.
+func (c *WebhookStore) ClearExpiredPreviousSigningKeys(ctx context.Context, olderThan time.Time) (int64, error) {
+	res, err := c.s.db.ExecContext(ctx, `
+		UPDATE customer_webhooks
+		   SET previous_secret = NULL, previous_signing_key_sealed = NULL, previous_secret_expires_at = NULL
+		 WHERE previous_secret_expires_at < $1`, olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: ClearExpiredPreviousSigningKeys: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: ClearExpiredPreviousSigningKeys rows affected: %w", err)
+	}
+	return n, nil
+}
+
 // CountDeliveries returns the webhook_deliveries row count, feeding the [obs.RetentionReaperRows] gauge.
 func (c *WebhookStore) CountDeliveries(ctx context.Context) (int64, error) {
 	var n int64
