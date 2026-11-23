@@ -122,11 +122,12 @@ Run/heed these locally before pushing so PRs are green on first push:
 5. **gitleaks history vs worktree:** CI scans full git history
    (`gitleaks detect`, fetch-depth 0); local verify scans only the working
    tree (`--no-git`). A committed-then-removed secret or fixture still reds
-   CI, with one exception: the global `[allowlist]` in `.gitleaks.toml`
-   exempts the per-host inventory paths under `configs/ansible/inventory/`
-   (`*.secrets.yml` and `r*.yml`) from the history scan too, so a force-added
-   file there is NOT caught by CI. Nothing else guards that; never `git add -f`
-   anything in that directory. The two cases are handled differently:
+   CI. The per-host inventory paths under `configs/ansible/inventory/`
+   (`*.secrets.yml`, `r*.yml`) are exempted only in `.gitleaks.worktree.toml`
+   (the `--no-git` scan), so the history scan still flags a committed one.
+   `.gitignore` covers only names ending `.yml` there, so a suffixed copy
+   (`r1.secrets.yml.bak-<date>`) is not ignored and stages without `-f`;
+   keep such copies out of the repo. The two cases are handled differently:
    - **A real credential** (any value that ever authenticated anything):
      treat it as an incident. Revoke and rotate it first and follow
      `SECURITY.md`; the repo is public, so deleting it does not undo the

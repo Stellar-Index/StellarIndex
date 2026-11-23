@@ -82,9 +82,11 @@ number.
 
 - **Registration is per-IP throttled** (~5/hour per IP). Register once and keep the key — don't mint a fresh
   account per session; you'll hit 429 and gain nothing, since one
-  free key already carries the full free-tier budget.
+  free key already carries the full free-tier budget. A key that sends
+  no request for 90 days stops authenticating with a plain `401`.
 - **Registration also has a deployment-wide hourly budget** (default 60),
-  shared by every caller and every sign-up route. Once it is spent,
+  shared by every caller of `POST /v1/register` (and passkey sign-up;
+  email sign-in has its own counter). Once it is spent,
   `POST /v1/register` answers `503` `registration-unavailable` with a
   `Retry-After` up to the top of the hour, even from a fresh IP, and the
   operator's `register_disabled` switch answers `503` too. Honour
