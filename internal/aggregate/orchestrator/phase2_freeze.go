@@ -73,10 +73,9 @@ func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compos
 	switch {
 	case ref.resolved():
 		// Exact Rat compare, matching how the verdict was decided; a float64 compare would put the release boundary of a possibly-manipulated held price at the mercy of binary rounding.
+		// A resolved reference decides alone: the 5% median below would release the +4% venue offset this band exists to hold.
 		band := new(big.Rat).SetFloat64(compositeBandPct / 100.0)
-		if band != nil && ref.deviationRatio != nil && ref.deviationRatio.Cmp(band) <= 0 {
-			return true
-		}
+		return band != nil && ref.deviationRatio != nil && ref.deviationRatio.Cmp(band) <= 0
 	case c.TriangulationChecked && math.Abs(c.TriangulationDivergencePct) <= releaseAgreementMaxPct:
 		return true
 	}

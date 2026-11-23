@@ -148,3 +148,37 @@ func TestReleaseCorroborated_DecidedInExactRatSpace(t *testing.T) {
 		t.Fatalf("did not release at an exact 1%% deviation against a 2%% band")
 	}
 }
+
+// TestReleaseCorroborated_ResolvedReferenceDecidesAlone pins every reference x median combination: a resolved reference's verdict is
+// final, and the 5% cross-oracle median only decides when no current-bucket reference resolved.
+func TestReleaseCorroborated_ResolvedReferenceDecidesAlone(t *testing.T) {
+	agree := compositeReference{verdict: compositeVerdictCorroborated, deviationRatio: big.NewRat(1, 100)}
+	refute := compositeReference{verdict: compositeVerdictRefuted, deviationRatio: big.NewRat(4, 100)}
+	unresolved := compositeReference{verdict: compositeVerdictUnavailable}
+	candidate := big.NewRat(104, 100)
+	medians := map[string]float64{"median agrees": 1.0, "median disagrees": 0.5, "no median": 0}
+	refs := []struct {
+		name string
+		ref  compositeReference
+		// want per median case; nil means "the median decides".
+		want *bool
+	}{
+		{"resolved-agree", agree, ptrBool(true)},
+		{"resolved-refute", refute, ptrBool(false)},
+		{"unresolved", unresolved, nil},
+	}
+	for _, r := range refs {
+		for mName, median := range medians {
+			want := median == 1.0 // |1.04-1.0|/1.0 = 4% <= 5%
+			if r.want != nil {
+				want = *r.want
+			}
+			conf := confidenceComputation{CrossOracleMedian: median}
+			if got := releaseCorroborated(conf, candidate, r.ref, 2.0); got != want {
+				t.Errorf("%s / %s: releaseCorroborated = %v, want %v", r.name, mName, got, want)
+			}
+		}
+	}
+}
+
+func ptrBool(b bool) *bool { return &b }
