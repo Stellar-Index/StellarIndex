@@ -2072,12 +2072,17 @@ export interface paths {
          *
          *     `supplied_usd` / `borrowed_usd` value each point at the USD
          *     price of the bucket it falls in (the seed at the bucket of
-         *     `from`): the VWAP of the newest price bucket starting at or
-         *     before it, at most `price_max_age_hours` (48) earlier, from the
-         *     series `/v1/chart` serves, never a later bucket's or today's
-         *     price. `price_at` is that price bucket's start. Without one
-         *     the USD values are null, `usd_reason` says why, and
-         *     `usd_unvalued_points` counts the point; never 0.
+         *     `from`): the volume-weighted price (VWAP, not the close) of the
+         *     newest price bucket starting at or before it, at most
+         *     `price_max_age_hours` earlier (6 for `1h`, 48 for `1d`), from
+         *     the series `/v1/chart` serves, never a later bucket's or
+         *     today's price. `price_at` is that price bucket's start;
+         *     `price_carried` marks one more than one bucket older. A token
+         *     the live reserve page withholds (a thin market, an operator
+         *     exclusion) is withheld here too. Without a price the USD
+         *     values are null, `usd_reason` says why, and
+         *     `usd_unvalued_points` counts the point; never 0. Clients must
+         *     not carry a USD value forward over a null one.
          */
         get: operations["getLendingReserveHistory"];
         put?: never;
@@ -2106,12 +2111,21 @@ export interface paths {
          *     as that route: at most `price_max_age_hours` before the bucket,
          *     never a later or current price. `tvl_usd` sums the valued
          *     reserves' `supplied_usd`; null when none is valued, never 0.
+         *     A bucket's value is each reserve's end-of-bucket balance times
+         *     that bucket's volume-weighted price, not the close; clients
+         *     must not carry a USD value forward over a null one.
          *     When a reserve present in the bucket is unvalued
-         *     (`unvalued_reserves`) or a pool reserve has no recorded history
-         *     (`omitted_reserves`) a non-null `tvl_usd` is a lower bound and
-         *     `lower_bound` is true. A reserve not yet listed, or removed, at
-         *     a bucket is absent from it. Window, interval and errors as the
-         *     reserve history route.
+         *     (`unvalued_reserves`, including one whose state entry is
+         *     archived, reason `archived`), a pool reserve has no recorded
+         *     history (`omitted_reserves`), or the reserve list is not
+         *     verified complete (`reserves_lower_bound_reason`: the list is
+         *     read from the served positions projection, which is complete
+         *     only when verified from the protocol's genesis), a non-null
+         *     `tvl_usd` is a lower bound and `lower_bound` is true.
+         *     `price_carried_reserves` names valued reserves whose price is
+         *     more than one bucket old. A reserve not yet listed at a bucket
+         *     is absent from it. Window, interval and errors as the reserve
+         *     history route.
          */
         get: operations["getLendingPoolHistory"];
         put?: never;
@@ -19046,16 +19060,21 @@ export interface operations {
                                  */
                                 price_at?: string | null;
                                 /**
-                                 * @description transitive: crossed through XLM; omitted for a directly traded price.
+                                 * @description transitive: crossed through XLM; stablecoin_proxy: from a book quoted in a USD stablecoin; omitted for a price traded against fiat:USD.
                                  * @enum {string}
                                  */
-                                price_basis?: "transitive";
-                                /** @description Why the USD values are null, e.g. no_price_within_bound, unpriced, decimals_unknown, price_scale_mismatch, withheld, price_read_failed; null on a removed point. */
-                                usd_reason?: string | null;
+                                price_basis?: "transitive" | "stablecoin_proxy";
+                                /** @description True when price_at is more than one bucket before this point's bucket; omitted otherwise. */
+                                price_carried?: boolean;
+                                /**
+                                 * @description Why the USD values are null; null when valued. archived: a removed (archived) point. withheld: refused as the live valuation refuses it (operator exclusion, flagged issuer, thin market). price_read_failed: an input could not be read; the body is stale and not cached.
+                                 * @enum {string|null}
+                                 */
+                                usd_reason?: "no_price_within_bound" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "negative_amount" | "withheld" | "price_read_failed" | "archived" | null;
                             }[];
-                            /** @description How far before its bucket a USD price may be. */
+                            /** @description How far before its bucket a USD price may be: 6 for 1h, 48 for 1d. */
                             price_max_age_hours?: number;
-                            /** @description Points (not removed) whose USD values are null. */
+                            /** @description Points whose USD values are null, removed points included. */
                             usd_unvalued_points?: number;
                         };
                     };
@@ -19105,6 +19124,7 @@ export interface operations {
                      *         "history_through_time": "2026-11-15T23:59:58Z",
                      *         "dropped_points": 0,
                      *         "omitted_reserves": [],
+                     *         "reserves_lower_bound_reason": null,
                      *         "points": [
                      *           {
                      *             "t": "2026-08-18T00:00:00Z",
@@ -19112,6 +19132,7 @@ export interface operations {
                      *             "borrowed_usd": "900000.00",
                      *             "lower_bound": false,
                      *             "unvalued_reserves": [],
+                     *             "price_carried_reserves": [],
                      *             "reserves": [
                      *               {
                      *                 "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
@@ -19157,6 +19178,11 @@ export interface operations {
                             dropped_points: number;
                             /** @description Pool reserves with no recorded history. */
                             omitted_reserves: string[];
+                            /**
+                             * @description Set when the reserve list may miss a reserve (its projection is not verified from genesis); every non-null tvl_usd is then a lower bound.
+                             * @enum {string|null}
+                             */
+                            reserves_lower_bound_reason: "history_unverified" | "history_verdict_stale" | "history_verdict_unread" | null;
                             points: {
                                 /**
                                  * Format: date-time
@@ -19168,6 +19194,8 @@ export interface operations {
                                 borrowed_usd: string | null;
                                 lower_bound: boolean;
                                 unvalued_reserves: string[];
+                                /** @description Valued reserves whose price is more than one bucket old. */
+                                price_carried_reserves: string[];
                                 reserves: {
                                     asset: string;
                                     supplied_usd: string | null;
@@ -19176,8 +19204,13 @@ export interface operations {
                                     /** Format: date-time */
                                     price_at: string | null;
                                     /** @enum {string} */
-                                    price_basis?: "transitive";
-                                    usd_reason: string | null;
+                                    price_basis?: "transitive" | "stablecoin_proxy";
+                                    price_carried?: boolean;
+                                    /**
+                                     * @description As the reserve history route's usd_reason.
+                                     * @enum {string|null}
+                                     */
+                                    usd_reason: "no_price_within_bound" | "unpriced" | "decimals_unknown" | "price_scale_mismatch" | "negative_amount" | "withheld" | "price_read_failed" | "archived" | null;
                                 }[];
                             }[];
                         };

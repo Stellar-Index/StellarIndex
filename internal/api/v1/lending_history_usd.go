@@ -15,12 +15,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// lendingUSDPriceMaxAge is how far before a bucket its price may be: two days, as a market-cap day may carry its supply
-// ([marketCapSupplyMaxCarry]), so a thin token that skipped a bucket is still valued. Past it the USD value is null.
-const lendingUSDPriceMaxAge = 48 * time.Hour
+// How far before a bucket its price may be: two days for a daily series, as a market-cap day may carry its supply
+// ([marketCapSupplyMaxCarry]); six hours for an hourly one. Past it the USD value is null.
+const (
+	lendingUSDDailyPriceMaxAge  = 48 * time.Hour
+	lendingUSDHourlyPriceMaxAge = 6 * time.Hour
+)
 
-// lendingUSDNoPriceInBound: the token has a USD series, but no bucket of it within [lendingUSDPriceMaxAge] before this one.
-const lendingUSDNoPriceInBound = "no_price_within_bound"
+const (
+	// lendingUSDNoPriceInBound: the token has a USD series, but no bucket of it within the price-age bound before this one.
+	lendingUSDNoPriceInBound = "no_price_within_bound"
+	// lendingUSDArchived: the reserve's state entry is archived; the pool still holds its tokens, at an unknown amount.
+	lendingUSDArchived = "archived"
+	// priceBasisStablecoinProxy: the price is from a book quoted in a USD stablecoin, not fiat:USD.
+	priceBasisStablecoinProxy = "stablecoin_proxy"
+)
+
+func lendingUSDPriceMaxAge(q clickhouse.LendingHistoryQuery) time.Duration {
+	if q.Daily {
+		return lendingUSDDailyPriceMaxAge
+	}
+	return lendingUSDHourlyPriceMaxAge
+}
 
 // LendingHistoryUSD is an amount pair valued at the USD price of its own bucket; null with usd_reason when it is not valued.
 type LendingHistoryUSD struct {
@@ -29,9 +45,12 @@ type LendingHistoryUSD struct {
 	// PriceUSD is the per-whole-token price used and PriceAt the start of the price bucket it is the VWAP of.
 	PriceUSD *string   `json:"price_usd"`
 	PriceAt  *WireTime `json:"price_at"`
-	// PriceBasis is "transitive" for a price crossed through XLM, omitted for a directly traded one.
-	PriceBasis string  `json:"price_basis,omitempty"`
-	USDReason  *string `json:"usd_reason"`
+	// PriceBasis is "transitive" for a price crossed through XLM, "stablecoin_proxy" for one from a stablecoin-quoted book,
+	// omitted for one traded against fiat:USD.
+	PriceBasis string `json:"price_basis,omitempty"`
+	// PriceCarried: the price bucket is more than one bucket older than this one.
+	PriceCarried bool    `json:"price_carried,omitempty"`
+	USDReason    *string `json:"usd_reason"`
 }
 
 // LendingPoolHistoryView is the GET /v1/lending/pools/{pool}/history body: the pool's USD value at each bucket.
@@ -44,8 +63,10 @@ type LendingPoolHistoryView struct {
 	PriceMaxAgeHours int      `json:"price_max_age_hours"`
 	lendingHistoryCoverageView
 	// OmittedReserves are pool reserves with no recorded history; every non-null tvl_usd is then a lower bound.
-	OmittedReserves []string                  `json:"omitted_reserves"`
-	Points          []LendingPoolHistoryPoint `json:"points"`
+	OmittedReserves []string `json:"omitted_reserves"`
+	// ReservesLowerBoundReason is set when the reserve list may miss a reserve; every non-null tvl_usd is then a lower bound.
+	ReservesLowerBoundReason *string                   `json:"reserves_lower_bound_reason"`
+	Points                   []LendingPoolHistoryPoint `json:"points"`
 }
 
 // LendingPoolHistoryPoint is the pool at the close of one bucket, each reserve's state valued at that bucket's price.
@@ -55,9 +76,11 @@ type LendingPoolHistoryPoint struct {
 	TVLUSD      *string `json:"tvl_usd"`
 	BorrowedUSD *string `json:"borrowed_usd"`
 	// LowerBound: TVLUSD leaves out the unvalued_reserves or the view's omitted_reserves.
-	LowerBound       bool                        `json:"lower_bound"`
-	UnvaluedReserves []string                    `json:"unvalued_reserves"`
-	Reserves         []LendingPoolHistoryReserve `json:"reserves"`
+	LowerBound       bool     `json:"lower_bound"`
+	UnvaluedReserves []string `json:"unvalued_reserves"`
+	// PriceCarriedReserves are the valued reserves whose price is more than one bucket older than this one.
+	PriceCarriedReserves []string                    `json:"price_carried_reserves"`
+	Reserves             []LendingPoolHistoryReserve `json:"reserves"`
 }
 
 // LendingPoolHistoryReserve is one reserve's USD value in a pool history bucket.
@@ -71,6 +94,9 @@ type reserveUSDSeries struct {
 	dec    int
 	points []HistoryPoint // ascending, normalised to the token's price scale
 	basis  string
+	// stableAt are the price buckets whose owning book is quoted in a stablecoin, not fiat:USD.
+	stableAt     map[time.Time]bool
+	maxAge, step time.Duration
 	// reason is set when no bucket can be valued.
 	reason                      string
 	proxied, degraded, withheld bool
@@ -81,6 +107,7 @@ type usdValuation struct {
 	supplied, borrowed *big.Rat
 	price, basis       string
 	at                 time.Time
+	carried            bool
 	reason             string
 }
 
@@ -91,18 +118,18 @@ func (v usdValuation) wire() LendingHistoryUSD {
 	at := WireTime(v.at.UTC())
 	return LendingHistoryUSD{
 		SuppliedUSD: strRef(v.supplied.FloatString(2)), BorrowedUSD: strRef(v.borrowed.FloatString(2)),
-		PriceUSD: strRef(v.price), PriceAt: &at, PriceBasis: v.basis,
+		PriceUSD: strRef(v.price), PriceAt: &at, PriceBasis: v.basis, PriceCarried: v.carried,
 	}
 }
 
-// priceAt is the newest price bucket starting at or before bucket, if it is within [lendingUSDPriceMaxAge].
+// priceAt is the newest price bucket starting at or before bucket, if it is within the series' price-age bound.
 func (u reserveUSDSeries) priceAt(bucket time.Time) (HistoryPoint, bool) {
 	i := sort.Search(len(u.points), func(i int) bool { return u.points[i].Bucket.After(bucket) })
 	if i == 0 {
 		return HistoryPoint{}, false
 	}
 	p := u.points[i-1]
-	return p, bucket.Sub(p.Bucket) <= lendingUSDPriceMaxAge
+	return p, bucket.Sub(p.Bucket) <= u.maxAge
 }
 
 // value prices a reserve state at the bucket starting at bucket, never at a later bucket's price.
@@ -122,7 +149,11 @@ func (u reserveUSDSeries) value(st clickhouse.BlendReserveState, bucket time.Tim
 	case sup.Sign() < 0 || bor.Sign() < 0:
 		return usdValuation{reason: backstopUSDNegativeAmount}
 	}
-	return usdValuation{supplied: sup, borrowed: bor, price: p.VWAP, basis: u.basis, at: p.Bucket}
+	basis := u.basis
+	if basis == "" && u.stableAt[p.Bucket.UTC()] {
+		basis = priceBasisStablecoinProxy
+	}
+	return usdValuation{supplied: sup, borrowed: bor, price: p.VWAP, basis: basis, at: p.Bucket, carried: bucket.Sub(p.Bucket) > u.step}
 }
 
 // reserveUSDSeriesFor reads a reserve token's USD series for q through [Server.reservePriceUSD]'s identity and gates: the SAC
@@ -176,21 +207,50 @@ func (s *Server) walkUSDSeries(ctx context.Context, asset canonical.Asset, q cli
 		return reserveUSDSeries{reason: backstopUSDUnpriced}
 	}
 	gran, step := lendingHistoryGran(q)
+	maxAge := lendingUSDPriceMaxAge(q)
 	read := boundedChartRead(s.chartVWAPReader(gran), q.To.Add(step))
-	pts, res, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: q.From.Add(-lendingUSDPriceMaxAge), gran: gran}, read)
-	switch {
-	case errors.Is(err, ErrPriceWithheld):
-		return reserveUSDSeries{reason: exclusionPriceWithheld}
-	case err != nil:
-		return reserveUSDSeries{reason: exclusionPriceReadFailed, degraded: true}
-	case len(pts) == 0:
-		return reserveUSDSeries{reason: backstopUSDUnpriced, degraded: res.degraded}
+	pts, res, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: q.From.Add(-maxAge), gran: gran}, read)
+	if reason, degraded := s.usdSeriesRefusal(ctx, pair, pts, res, err); reason != "" {
+		return reserveUSDSeries{reason: reason, degraded: degraded}
 	}
-	out := reserveUSDSeries{points: pts, proxied: res.proxied, degraded: res.degraded, withheld: !res.withheldFrom.IsZero()}
+	out := reserveUSDSeries{
+		points: pts, maxAge: maxAge, step: step, proxied: res.proxied, degraded: res.degraded, withheld: !res.withheldFrom.IsZero(),
+	}
 	if len(res.crossLegs) > 0 {
 		out.basis = priceBasisTransitive
 	}
+	for at, book := range res.bookAt {
+		if !book.Quote.Equal(defaultPriceQuote) {
+			if out.stableAt == nil {
+				out.stableAt = map[time.Time]bool{}
+			}
+			out.stableAt[at.UTC()] = true
+		}
+	}
 	return out
+}
+
+// usdSeriesRefusal is why a walked series values nothing: the walk's own refusals, then the market-cap chart's thin-book guard,
+// so history never values a token the live reserve page withholds. An unread input is degraded, not an operator verdict.
+func (s *Server) usdSeriesRefusal(ctx context.Context, pair canonical.Pair, pts []HistoryPoint, res chartWalkResult, err error) (string, bool) {
+	switch {
+	case priceWithheldUnread(err):
+		return exclusionPriceReadFailed, true
+	case errors.Is(err, ErrPriceWithheld):
+		return exclusionPriceWithheld, false
+	case err != nil:
+		return exclusionPriceReadFailed, true
+	case len(pts) == 0:
+		return backstopUSDUnpriced, res.degraded
+	}
+	thin, unmeasured := s.chartLatestThin(ctx, pair, res)
+	switch {
+	case thin:
+		return exclusionPriceWithheld, false
+	case unmeasured:
+		return exclusionPriceReadFailed, true
+	}
+	return "", false
 }
 
 func lendingHistoryGran(q clickhouse.LendingHistoryQuery) (string, time.Duration) {
@@ -223,7 +283,7 @@ func (u reserveUSDSeries) usdFlags(f Flags) Flags {
 
 // valueReserveHistory sets each point's USD values, a point standing for the bucket it falls in (the seed for the first).
 func (s *Server) valueReserveHistory(ctx context.Context, view *LendingReserveHistoryView, h clickhouse.LendingReserveHistory, q clickhouse.LendingHistoryQuery, f Flags) Flags {
-	view.PriceMaxAgeHours = int(lendingUSDPriceMaxAge / time.Hour)
+	view.PriceMaxAgeHours = int(lendingUSDPriceMaxAge(q) / time.Hour)
 	last, ok := lastReserveState(h.Points)
 	if !ok {
 		return f
@@ -232,14 +292,14 @@ func (s *Server) valueReserveHistory(ctx context.Context, view *LendingReserveHi
 	u := s.reserveUSDSeriesFor(ctx, view.Asset, dec, known, q)
 	_, step := lendingHistoryGran(q)
 	for i, p := range h.Points {
-		if p.Removed {
-			continue
-		}
 		at := p.CloseTime
 		if at.Before(q.From) {
 			at = q.From
 		}
-		v := u.value(p.State, at.UTC().Truncate(step))
+		v := usdValuation{reason: lendingUSDArchived}
+		if !p.Removed {
+			v = u.value(p.State, at.UTC().Truncate(step))
+		}
 		view.Points[i].LendingHistoryUSD = v.wire()
 		if v.supplied == nil {
 			view.USDUnvaluedPoints++
@@ -299,7 +359,33 @@ func (s *Server) handleLendingPoolHistory(w http.ResponseWriter, r *http.Request
 	for _, rs := range series {
 		f = rs.usd.usdFlags(f)
 	}
+	f = s.markReserveSetUnverified(ctx, &view, protocol, f)
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: f})
+}
+
+// markReserveSetUnverified makes every valued point a lower bound unless the projection the reserve list is read from is
+// verified from genesis: the served tier names only reserves with a projected position, so an unverified one may miss some.
+func (s *Server) markReserveSetUnverified(ctx context.Context, view *LendingPoolHistoryView, protocol string, f Flags) Flags {
+	source := "blend"
+	if protocol == blnt.SourceName {
+		source = blnt.SourceName
+	}
+	var reason string
+	switch s.projectionHistoryVerdicts(ctx, source)[source] {
+	case historyVerified:
+		return f
+	case historyVerdictStale:
+		reason, f.Stale = earningsReasonHistoryVerdictStale, true
+	case historyVerdictUnread:
+		reason, f.Degraded = earningsReasonHistoryVerdictUnread, true
+	case historyUnverified:
+		reason = earningsReasonHistoryUnverified
+	}
+	view.ReservesLowerBoundReason = strRef(reason)
+	for i := range view.Points {
+		view.Points[i].LowerBound = view.Points[i].TVLUSD != nil
+	}
+	return f
 }
 
 // poolReserveAssets lists the pool's reserve assets from its protocol's source.
@@ -331,7 +417,7 @@ func (s *Server) readPoolReserveSeries(ctx context.Context, hr lendingHistoryRea
 func poolHistoryView(pool, protocol, interval string, q clickhouse.LendingHistoryQuery, series []poolReserveSeries, now time.Time) LendingPoolHistoryView {
 	v := LendingPoolHistoryView{
 		Pool: pool, Protocol: nonEmptyPtr(protocol), Interval: interval, From: WireTime(q.From.UTC()), To: WireTime(q.To.UTC()),
-		PriceMaxAgeHours: int(lendingUSDPriceMaxAge / time.Hour), OmittedReserves: []string{}, Points: []LendingPoolHistoryPoint{},
+		PriceMaxAgeHours: int(lendingUSDPriceMaxAge(q) / time.Hour), OmittedReserves: []string{}, Points: []LendingPoolHistoryPoint{},
 	}
 	var held []poolReserveSeries
 	var cov clickhouse.LendingHistoryCoverage
@@ -362,20 +448,29 @@ func poolHistoryView(pool, protocol, interval string, q clickhouse.LendingHistor
 	return v
 }
 
-// poolHistoryPoint values each reserve's state at the close of bucket b at b's price; a reserve not yet listed or removed is absent.
+// poolHistoryPoint values each reserve's state at the close of bucket b at b's price. A reserve not yet listed is absent; one
+// whose state entry is archived still holds tokens, so it is named unvalued.
 func poolHistoryPoint(b time.Time, step time.Duration, held []poolReserveSeries, omitted bool) LendingPoolHistoryPoint {
-	pt := LendingPoolHistoryPoint{T: WireTime(b), UnvaluedReserves: []string{}, Reserves: []LendingPoolHistoryReserve{}}
+	pt := LendingPoolHistoryPoint{
+		T: WireTime(b), UnvaluedReserves: []string{}, PriceCarriedReserves: []string{}, Reserves: []LendingPoolHistoryReserve{},
+	}
 	var sup, bor []*big.Rat
 	for _, rs := range held {
 		p, ok := stateAtClose(rs.hist.Points, b.Add(step))
-		if !ok || p.Removed {
+		if !ok {
 			continue
 		}
-		v := rs.usd.value(p.State, b)
+		v := usdValuation{reason: lendingUSDArchived}
+		if !p.Removed {
+			v = rs.usd.value(p.State, b)
+		}
 		pt.Reserves = append(pt.Reserves, LendingPoolHistoryReserve{Asset: rs.asset, LendingHistoryUSD: v.wire()})
 		sup, bor = append(sup, v.supplied), append(bor, v.borrowed)
-		if v.supplied == nil {
+		switch {
+		case v.supplied == nil:
 			pt.UnvaluedReserves = append(pt.UnvaluedReserves, rs.asset)
+		case v.carried:
+			pt.PriceCarriedReserves = append(pt.PriceCarriedReserves, rs.asset)
 		}
 	}
 	pt.TVLUSD, pt.LowerBound = reservesTVLUSD(sup)

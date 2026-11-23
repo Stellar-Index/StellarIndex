@@ -11,6 +11,7 @@ const point = (over: Partial<PoolUsdPoint>): PoolUsdPoint => ({
   borrowed_usd: null,
   lower_bound: false,
   unvalued_reserves: [],
+  price_carried_reserves: [],
   reserves: [],
   ...over,
 });
@@ -25,7 +26,7 @@ const reserve = (
   borrowed_usd: borrowed,
   price_usd: null,
   price_at: null,
-  usd_reason: supplied == null ? 'no_price_within_bound' : null,
+  usd_reason: supplied == null ? ('no_price_within_bound' as const) : null,
 });
 
 describe('usdSeries', () => {
