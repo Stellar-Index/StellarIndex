@@ -30,9 +30,12 @@ const readSideNote = "source-exclude: note:\n" +
 	"    /v1/history/since-inception (a covered bucket or fx day is removed, a gap, never a zero; a derived cross loses the day;\n" +
 	"    served uncached; if every observed bucket is withheld the series derived through XLM is served instead, judged under the\n" +
 	"    served pair, marked and flags.triangulated), /v1/assets (every asset_class) and asset detail (a covered price withholds\n" +
-	"    price, cap, FDV, changes, series and ATH as source_excluded; a change, 24h USD volume, series point or ATH whose own span\n" +
-	"    is covered is dropped alone; judged on the asset, XLM and a non-USD peg's fiat; unreadable: every priced row withheld,\n" +
-	"    stale). Every recompute or removal sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
+	"    price, cap, FDV, changes, series and ATH as source_excluded; the headline's minute is not recorded, so any exclusion on\n" +
+	"    its legs in the last 7 days withholds it; a change, 24h USD volume, series point or ATH whose own span is covered is\n" +
+	"    dropped alone; judged on the asset, XLM's USD books and a non-USD peg's fiat: an exclusion naming XLM against a USD\n" +
+	"    proxy (USDC, its SAC, fiat:USD) or a source-wide one withholds every row, XLM's too; one naming XLM against another\n" +
+	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale). Every recompute or removal\n" +
+	"    sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
 	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +

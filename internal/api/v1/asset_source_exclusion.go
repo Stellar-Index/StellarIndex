@@ -18,8 +18,8 @@ const (
 	assetPriceLookback  = 7*24*time.Hour + assetSnapshotMaxAge
 	// assetAnchorMaxAge: an XLM-routed price multiplies by the XLM/USD anchor up to an hour before its own minute.
 	assetAnchorMaxAge = time.Hour
-	assetVolumeSpan   = 24 * time.Hour
-	assetSurfaceSpan  = 7*24*time.Hour + 2*time.Hour
+	assetVolumeSpan   = 24*time.Hour + assetSnapshotMaxAge
+	assetSurfaceSpan  = 7*24*time.Hour + 2*time.Hour + assetSnapshotMaxAge
 	// assetATHSpan brackets an ATH's instant: its bucket grain is not recorded, so the day either side is judged.
 	assetATHSpan = 24 * time.Hour
 )
@@ -82,7 +82,11 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 	for _, c := range []struct {
 		v    **string
 		back time.Duration
-	}{{&d.Change1hPct, time.Hour + 5*time.Minute}, {&d.Change24hPct, 24*time.Hour + 30*time.Minute}, {&d.Change7dPct, assetSurfaceSpan}} {
+	}{
+		{&d.Change1hPct, time.Hour + 5*time.Minute + assetSnapshotMaxAge},
+		{&d.Change24hPct, 24*time.Hour + 30*time.Minute + assetSnapshotMaxAge},
+		{&d.Change7dPct, assetSurfaceSpan},
+	} {
 		if *c.v != nil && covered(now.Add(-c.back), now) {
 			*c.v, removed = nil, true
 		}
@@ -99,6 +103,14 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 		}
 	}
 	return removed
+}
+
+// xlmAnchorQuotes are the USD proxies the XLM/USD anchor is read against (timescale's usdProxyQuotes); XLM's alias forms are
+// matched by the exclusion's own family check.
+var xlmAnchorQuotes = []canonical.Asset{
+	mustParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"),
+	mustParseAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"),
+	defaultPriceQuote,
 }
 
 // rowJudge judges one row's unattributed values on every leg it may be priced through: the asset's own books, XLM's (an
@@ -142,8 +154,11 @@ func (j rowJudge) legsCovered(own, xlm, fx, to time.Time) bool {
 	if !j.xlm && j.set.UnattributedWithholding(j.ctx, j.asset, defaultPriceQuote, own, to) != pricingguard.NotWithheld {
 		return true
 	}
-	if j.set.UnattributedWithholding(j.ctx, canonical.NativeAsset(), defaultPriceQuote, xlm, to) != pricingguard.NotWithheld {
-		return true
+	for _, q := range xlmAnchorQuotes {
+		// The anchor reads XLM's own USD books only, so an exclusion on another XLM market (AQUA/XLM) does not reach it.
+		if j.set.PairWithholding(j.ctx, canonical.NativeAsset(), q, xlm, to) != pricingguard.NotWithheld {
+			return true
+		}
 	}
 	return j.peg != nil && j.set.UnattributedWithholding(j.ctx, *j.peg, defaultPriceQuote, fx, to) != pricingguard.NotWithheld
 }

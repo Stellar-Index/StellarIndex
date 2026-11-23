@@ -61,6 +61,45 @@ func TestAssetRowSeries_PointJudgedOverItsOwnBucket(t *testing.T) {
 	}
 }
 
+// The XLM leg is the XLM/USD anchor, read from XLM's own USD books: an exclusion on AQUA/XLM withholds AQUA alone, one on
+// XLM/USDC (here its SAC form) withholds every XLM-routed row and XLM itself.
+func TestAssetRowXLMLeg_OnlyXLMUSDBooks(t *testing.T) {
+	now := time.Date(2026, 11, 20, 11, 0, 0, 0, time.UTC)
+	xlm := AssetDetail{AssetID: "native", Type: "native", PriceUSD: sptrLocal("0.3")}
+	for _, tc := range []struct {
+		base, quote string
+		want        [3]bool // AQUA, FOO, XLM withheld
+	}{
+		{spanAQUA, "native", [3]bool{true, false, false}},
+		{"native", "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", [3]bool{true, true, true}},
+	} {
+		sc := spanScope(t, now, timescale.SourceExclusion{ID: 1, Source: "soroswap", Base: tc.base, Quote: tc.quote, From: now.Add(-time.Hour)})
+		rows := []AssetDetail{spanRow(spanAQUA), spanRow(spanFOO), xlm}
+		sc.judgeRows(context.Background(), &Server{}, rows, Flags{})
+		for i, r := range rows {
+			if got := r.PriceUSD == nil; got != tc.want[i] {
+				t.Errorf("%s/%s: %s withheld=%v, want %v", tc.base, tc.quote, r.AssetID, got, tc.want[i])
+			}
+		}
+	}
+}
+
+// A change's reference minute is read when the snapshot row was computed, up to 15 minutes before now, so its span reaches
+// that much further back.
+func TestAssetRowChange_SpanIncludesSnapshotAge(t *testing.T) {
+	now := time.Date(2026, 11, 20, 11, 0, 0, 0, time.UTC)
+	sc := spanScope(t, now, timescale.SourceExclusion{
+		ID: 1, Source: "soroswap", Base: spanAQUA, Quote: "fiat:USD", From: now.Add(-75 * time.Minute), Until: now.Add(-70 * time.Minute),
+	})
+	d := spanRow(spanAQUA)
+	d.PriceSources, d.Change1hPct = []string{"sdex"}, sptrLocal("+1.00")
+	rows := []AssetDetail{d}
+	sc.judgeRows(context.Background(), &Server{}, rows, Flags{})
+	if rows[0].PriceUSD == nil || rows[0].Change1hPct != nil {
+		t.Errorf("price %v change_1h %v; want the price served and the 1h change withheld", rows[0].PriceUSD, rows[0].Change1hPct)
+	}
+}
+
 // The snapshot price is the newest traded minute in a 7-day lookback, not a minute from the last 15: a manipulated 10:20
 // print inside a 10:00-10:30 exclusion is still the price at 11:00 when the asset has not traded since, and is withheld. An
 // exclusion that ended before the whole lookback leaves it.

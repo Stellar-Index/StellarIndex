@@ -128,6 +128,19 @@ func (s ExclusionSet) UnattributedWithholding(_ context.Context, base, quote can
 	return NotWithheld
 }
 
+// PairWithholding judges a value read from base/quote's own books without a source list: any un-lifted exclusion overlapping
+// [from, to) that is source-wide or covers the pair, in either direction under any alias form, withholds it. Unlike
+// [ExclusionSet.UnattributedWithholding], an exclusion naming base against another quote does not.
+func (s ExclusionSet) PairWithholding(_ context.Context, base, quote canonical.Asset, from, to time.Time) Withholding {
+	b, q := base.String(), quote.String()
+	for _, e := range s.rows {
+		if inForceOver(e, from, to) && e.CoversPair(b, q) {
+			return WithheldSourceExcluded
+		}
+	}
+	return NotWithheld
+}
+
 // MultiHopWithholding judges a value composed through pivot legs it does not record (a triangulated cache value): any un-lifted
 // exclusion overlapping [from, to) may sit on one of those legs, so any withholds it.
 func (g *SourceExclusionGate) MultiHopWithholding(ctx context.Context, from, to time.Time) Withholding {
