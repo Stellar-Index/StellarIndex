@@ -171,6 +171,25 @@ func judgeBucket(ctx context.Context, j bucketJudge, books []canonical.Pair, sou
 	return pricingguard.NotWithheld
 }
 
+// judgeDirectBucket is [judgeBucket] for a bucket read from the books' own rows (a chart bucket): with no sources recorded
+// (twap_* keeps none) it is judged by exclusions on those books, since no other market fed it.
+func judgeDirectBucket(
+	ctx context.Context, set pricingguard.ExclusionSet, books []canonical.Pair, sources []string, from, to time.Time,
+) pricingguard.Withholding {
+	if len(sources) > 0 {
+		return judgeBucket(ctx, set, books, sources, from, to)
+	}
+	if !from.Before(to) {
+		to = from.Add(time.Nanosecond)
+	}
+	for _, m := range books {
+		if w := set.PairWithholding(ctx, m.Base, m.Quote, from, to); w != pricingguard.NotWithheld {
+			return w
+		}
+	}
+	return pricingguard.NotWithheld
+}
+
 // exclusionSnapshot reads the gate's set once for a many-bucket judgement; ok=false (nothing to judge) without a gate or with
 // an empty set. Any verdict other than NotWithheld is the unread set, which withholds the whole series.
 func (s *Server) exclusionSnapshot(ctx context.Context) (set pricingguard.ExclusionSet, ok bool, v pricingguard.Withholding) {
@@ -208,7 +227,7 @@ func (w *chartWalk) cleanPoints(ctx context.Context, sp canonical.Pair, points [
 	books := appendBook([]canonical.Pair{sp}, append([]canonical.Pair{w.pair}, w.win.servedAs...)...)
 	kept := unowned[:0:0]
 	for _, p := range unowned {
-		if judgeBucket(ctx, set, books, p.Sources, p.Bucket, chartBucketStep(p.Bucket, w.win.gran)) == pricingguard.NotWithheld {
+		if judgeDirectBucket(ctx, set, books, p.Sources, p.Bucket, chartBucketStep(p.Bucket, w.win.gran)) == pricingguard.NotWithheld {
 			kept = append(kept, p)
 		} else {
 			w.res.withheldFrom = earliestWithheld(w.res.withheldFrom, p.Bucket)
