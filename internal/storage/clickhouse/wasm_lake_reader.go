@@ -161,10 +161,20 @@ func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xd
 	// instance entry predates live capture.
 	if r.instanceChangesIndexAvailable(ctx) {
 		h, ok, err := r.contractWasmHashIndexed(ctx, cid)
-		if (err == nil && ok) || errors.Is(err, ErrContractIsSAC) {
-			// Only a positive verdict (a RESOLVED hash or a SAC) is authoritative: the availability probe is a table-global LIMIT-1
-			// check and cannot see partial backfill, so an index miss may only mean "not reached yet".
-			return h, ok, err
+		if errors.Is(err, ErrContractIsSAC) {
+			return h, ok, err // a SAC's executable is fixed, so any indexed row is current
+		}
+		if err == nil && ok {
+			// The availability probe is a table-global LIMIT-1 check and cannot see partial backfill: without the genesis watermark
+			// the hit may predate an unreached in-place upgrade, so live-captured current state wins where it exists.
+			if r.instanceGenesisCovers(ctx, 1) {
+				return h, true, nil
+			}
+			lh, lok, lerr := r.contractWasmHashLegacy(ctx, cid)
+			if lerr != nil || lok {
+				return lh, lok, lerr
+			}
+			return h, true, nil
 		}
 		// Index miss or error: fall back to the legacy read rather than trust an incomplete index.
 	}
