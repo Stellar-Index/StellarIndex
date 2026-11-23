@@ -4,14 +4,31 @@
     src: prometheus.service.j2
     dest: /etc/systemd/system/prometheus.service
     mode: "0644"
+  register: _prometheus_unit_render
   notify: "prometheus unit changed"
+
+# A host that fails a later task runs no handlers, so the markers are written here too.
+- name: persist the prometheus restart for the unit change
+  file:
+    path: /etc/prometheus/.restart-pending
+    state: touch
+    mode: "0600"
+  when: _prometheus_unit_render is changed
 
 - name: render alertmanager systemd unit
   template:
     src: alertmanager.service.j2
     dest: /etc/systemd/system/alertmanager.service
     mode: "0644"
+  register: _alertmanager_unit_render
   notify: "alertmanager unit changed"
+
+- name: persist the alertmanager restart for the unit change
+  file:
+    path: /etc/alertmanager/.restart-pending
+    state: touch
+    mode: "0600"
+  when: _alertmanager_unit_render is changed
 
 # Ansible drops a notification once its handler has run, so a refused or
 # failed restart is re-queued from the handler's marker on the next run.

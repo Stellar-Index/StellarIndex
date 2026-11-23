@@ -108,6 +108,38 @@
 # redis.conf.j2 template references this file iff the flag is set.
 # Opt-in to preserve backward compat for deployments that aren't
 # ready to migrate; R1 should flip this on pre-flip.
+# users.acl carries redis_password, but masterauth and Sentinel's auth-pass are
+# first-run only: writing a rotated password here would split them on the next restart.
+- name: refuse a redis_password the running ACL does not accept
+  shell:
+    cmd: |
+      set -eu
+      IFS= read -r REDISCLI_AUTH; export REDISCLI_AUTH
+      out=$(redis-cli -h {{ ansible_host }} -p {{ redis_port }} --user {{ redis_sentinel_auth_user }} PING 2>&1 < /dev/null || true)
+      case "$out" in
+        *PONG*) echo accepted ;;
+        *WRONGPASS*|*NOAUTH*|*"AUTH failed"*) echo rejected ;;
+        *) echo unreachable ;;
+      esac
+    stdin: "{{ redis_password }}"
+    executable: /bin/bash
+  register: redis_acl_password_probe
+  changed_when: false
+  notify: []
+  when:
+    - redis_acl_lockdown | bool
+    - not (redis_render_configs | bool)
+  no_log: true
+
+- name: assert the running ACL accepts redis_password before users.acl is rewritten
+  assert:
+    that:
+      - redis_acl_password_probe is skipped or redis_acl_password_probe.stdout != 'rejected'
+    fail_msg: >-
+      The running Redis ACL on {{ inventory_hostname }} rejects redis_password, so it was
+      rotated. The role does not rotate it (README, Rolling password rotation): writing
+      users.acl now would split it from masterauth and Sentinel's auth-pass on the next restart.
+
 - name: render /etc/redis/users.acl (lockdown)
   template:
     src: users.acl.j2
@@ -115,10 +147,10 @@
     owner: "{{ redis_user }}"
     group: "{{ redis_group }}"
     mode: "0640"
-  when:
-    - redis_acl_lockdown | bool
-    - redis_render_configs | bool
-  notify: "redis config changed"
+  # Users only, no topology, so it is reconciled every run (not first-run gated)
+  # and loaded live by ACL LOAD instead of restarting each node.
+  when: redis_acl_lockdown | bool
+  notify: "redis acl changed"
 
 # redis.conf is rendered on first run only (above), so a changed
 # redis_maxmemory_policy never reaches a running cluster through the

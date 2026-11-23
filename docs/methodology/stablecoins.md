@@ -42,8 +42,13 @@ All amounts are decimal strings.
 members, leaving out a yield-bearing wrapper whose underlying is in the set.
 It is absent when none is valued. `total.lower_bound` is true when a member
 that should be summed is unvalued, a non-USD or unmapped peg is left out, a
-supply is itself a floor, or `excluded` is non-empty. Every member left out,
-valued or not, is named in `total.not_summed`.
+supply is itself a floor, or `excluded` is non-empty. `total.not_summed`
+names a member left out by a sum rule (wrapper, non-USD or unmapped peg) and
+a USD member whose valuation is withheld. A USD member that is unvalued for
+another reason (`supply_unavailable`, `price_unavailable`, `not_observed`) is
+left out of the sum and counted in `total.assets_unvalued`, but not named in
+`not_summed`; its row's `valuation_status` says why
+(`stablecoinSummarise` in `internal/api/v1/stablecoins.go`).
 
 - Non-USD pegs (EURC) are not summed into the USD total; `by_peg` keeps them
   apart. Each `by_peg` row carries `assets_valued` and its own `lower_bound`,

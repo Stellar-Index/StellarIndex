@@ -10,6 +10,7 @@
     owner: root
     group: root
     mode: "0750"
+    validate: sh -n %s
     content: |
       #!/bin/sh
       # Managed by ansible (haproxy role). Don't edit.
@@ -42,4 +43,6 @@
     owner: root
     group: root
     mode: "0640"
+    # The restart handler goes LB by LB; a config keepalived rejects must not reach either.
+    validate: keepalived -t -f %s
   notify: "keepalived config changed"

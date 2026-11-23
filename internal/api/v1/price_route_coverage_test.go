@@ -207,6 +207,7 @@ var noneValueFieldWhy = map[string]map[string]string{
 	},
 	"GET /v1/methodology":              {"data.aggregation.price_method": "the method's name, a string"},
 	"GET /v1/dashboard/account/export": {"price_alerts": "the caller's own alert rules; threshold is the number they set"},
+	"POST /v1/register":                {"data.limits.max_price_alerts": "a quota count, no figure"},
 }
 
 // specValueFields returns, per GET operation, the value-looking property names (dotted paths) in its 2xx response schemas.
@@ -268,25 +269,28 @@ func specValueFields(t *testing.T) map[string][]string {
 	paths := mapGet(root.Content[0], "paths")
 	for p := 0; paths != nil && p+1 < len(paths.Content); p += 2 {
 		path := paths.Content[p].Value
-		get := mapGet(paths.Content[p+1], "get")
-		if get == nil {
-			continue
-		}
-		out := map[string]bool{}
-		responses := mapGet(get, "responses")
-		for i := 0; responses != nil && i+1 < len(responses.Content); i += 2 {
-			if !strings.HasPrefix(responses.Content[i].Value, "2") {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+			operation := mapGet(paths.Content[p+1], strings.ToLower(method))
+			if operation == nil {
 				continue
 			}
-			content := mapGet(deref(responses.Content[i+1]), "content")
-			for j := 0; content != nil && j+1 < len(content.Content); j += 2 {
-				walk(mapGet(content.Content[j+1], "schema"), "", map[*yaml.Node]bool{}, out)
+			out := map[string]bool{}
+			responses := mapGet(operation, "responses")
+			for i := 0; responses != nil && i+1 < len(responses.Content); i += 2 {
+				if !strings.HasPrefix(responses.Content[i].Value, "2") {
+					continue
+				}
+				content := mapGet(deref(responses.Content[i+1]), "content")
+				for j := 0; content != nil && j+1 < len(content.Content); j += 2 {
+					walk(mapGet(content.Content[j+1], "schema"), "", map[*yaml.Node]bool{}, out)
+				}
 			}
+			op := method + " /v1" + path
+			for f := range out {
+				fields[op] = append(fields[op], f)
+			}
+			sort.Strings(fields[op])
 		}
-		for f := range out {
-			fields["GET /v1"+path] = append(fields["GET /v1"+path], f)
-		}
-		sort.Strings(fields["GET /v1"+path])
 	}
 	return fields
 }
@@ -304,12 +308,18 @@ func mapGet(n *yaml.Node, key string) *yaml.Node {
 }
 
 // TestPriceRouteCoverage_NoneRoutesServeNoValueField reads every "none" route's response schema, so a route that serves a
-// USD figure cannot be filed as serving none without a per-field reason.
+// USD figure cannot be filed as serving none without a per-field reason. An unclassified mutation is presumed to serve none
+// and is scanned too, so a write that returns a price cannot skip the census.
 func TestPriceRouteCoverage_NoneRoutesServeNoValueField(t *testing.T) {
 	fields := specValueFields(t)
 	none := append([]string{}, notPriceServing...)
 	for op, c := range priceRouteCoverage {
 		if c.state == covNone {
+			none = append(none, op)
+		}
+	}
+	for _, op := range specOperations(t) {
+		if _, listed := priceRouteCoverage[op]; !listed && !strings.HasPrefix(op, http.MethodGet+" ") {
 			none = append(none, op)
 		}
 	}

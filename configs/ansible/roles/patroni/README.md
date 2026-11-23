@@ -178,7 +178,8 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
    restoring over it from pgBackRest with
    `patroni_adopt_existing_data_dir: true`. Then the distro's
    `postgresql@<ver>-main` unit is masked on every host. On `db-01`,
-   initialise the cluster (or restore from pgBackRest); on `db-02` /
+   initialise the cluster (a pgBackRest restore is refused; see
+   Restore-from-backup path); on `db-02` /
    `03`, join as replicas and wait until each answers Patroni's
    `/replica` check.
 5. **Firewall** — open 5432 / 8008 / 2379 / 2380 to the internal
@@ -200,6 +201,17 @@ ssh db-01 patronictl -c /etc/patroni/patroni.yml list
   calls `archive-push` on every WAL segment, so preflight refuses a
   host without the `pgbackrest` binary and its config, and 08 runs
   `stanza-create` and `check` on the primary after bootstrap.
+- **Backups** — this role schedules no pgBackRest full or differential
+  backup and has no working restore path; both must come from outside it.
+- **WAL archive across a failover** — `archive_mode` is `on`, so a
+  promoted standby archives only WAL it generates. Segments the failed
+  primary had not yet pushed are never archived, and the pgBackRest chain
+  has a gap a point-in-time restore stops at. Take a full backup after
+  every failover.
+- **Slot-held WAL** — `patroni_max_slot_wal_keep_size` (default `64GB`)
+  caps the WAL a member's replication slot keeps on the primary; preflight
+  refuses an empty or `-1` value. A replica that falls further behind
+  loses its slot and must be rebuilt with `patronictl reinit`.
 
 ## See also
 
