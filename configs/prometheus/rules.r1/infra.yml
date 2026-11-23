@@ -206,17 +206,19 @@ groups:
 
       # The two alerts above read the nvme collector's series and go quiet
       # if those vanish (collector stopped, drive gone from the bus, file
-      # unparsed). Per instance, not a bare absent(): hosts that never
-      # published NVMe series must not alert, and one host dropping out
-      # must not hide behind another's series. A series present at any
-      # point in the last 3d that is gone now is the signal.
+      # unparsed). Per (instance, device), the granularity of the alerts it
+      # guards, not a bare absent(): hosts that never published NVMe series
+      # must not alert, and one drive dropping out must not hide behind its
+      # siblings' series. A series present at any point in the last 14d that
+      # is gone now is the signal; the window keeps the ticket re-notifying
+      # for two weeks instead of resolving while the drive is still unwatched.
       - alert: stellarindex_nvme_health_series_missing
         expr: |
-          count by (instance) (last_over_time(nvme_temperature_celsius[3d]))
-            unless on (instance) nvme_temperature_celsius
+          group by (instance, device) (last_over_time(nvme_temperature_celsius[14d]))
+            unless on (instance, device) nvme_temperature_celsius
           or
-          count by (instance) (last_over_time(nvme_num_err_log_entries_total[3d]))
-            unless on (instance) nvme_num_err_log_entries_total
+          group by (instance, device) (last_over_time(nvme_num_err_log_entries_total[14d]))
+            unless on (instance, device) nvme_num_err_log_entries_total
         for: 30m
         labels:
           severity: ticket
@@ -224,14 +226,16 @@ groups:
           component: infra
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_health_series_missing
-          summary: "NVMe health series disappeared on {{ $labels.instance }}"
+          summary: "NVMe {{ $labels.device }} health series disappeared on {{ $labels.instance }}"
           description: |
-            {{ $labels.instance }} published nvme_temperature_celsius or
-            nvme_num_err_log_entries_total within the last 3 days and no
-            longer does, so stellarindex_nvme_thermal_throttle and
-            stellarindex_nvme_smart_warn cannot fire for it. Restore the
-            nvme collector (nvme.prom in the textfile directory) before
-            trusting drive health again.
+            {{ $labels.device }} on {{ $labels.instance }} published
+            nvme_temperature_celsius or nvme_num_err_log_entries_total
+            within the last 14 days and no longer does, so
+            stellarindex_nvme_thermal_throttle and
+            stellarindex_nvme_smart_warn cannot fire for it. Check that the
+            drive is still on the bus (`nvme list`), then restore the nvme
+            collector (nvme.prom in the textfile directory) before trusting
+            drive health again.
 
       # ── Textfile-collector scrape errors ──
       #

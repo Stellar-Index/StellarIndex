@@ -15,7 +15,7 @@ Alerts from `configs/prometheus/rules.r1/api-security.yml` (mirror: `deploy/moni
 ## stellarindex_api_cors_wildcard_in_prod
 
 **Severity** P3 (ticket). MTTR 10-30 min (config change + redeploy).
-**Trigger** `sum(increase(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[15m])) > 0` for 5m. `STELLARINDEX_ALLOWED_ORIGINS=*` is set on a production api instance and is matching real cross-origin requests. If `auth_mode` is credentialed, any origin can read authenticated responses. Outcomes: `no_origin`, `allowed_origin`, `allowed_wildcard`, `denied`. Boot-time twin: `warnOpenCORS` in `cmd/stellarindex-api/main.go`; decision code in `internal/api/v1/middleware/cors.go`.
+**Trigger** `sum(increase(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[15m])) > 0` for 5m. `STELLARINDEX_ALLOWED_ORIGINS=*` is set on the api instance the alert's `instance` label names and is matching real cross-origin requests; the rule file is shared by every deployment, so check whether that host is production. If `auth_mode` is credentialed, any origin can read authenticated responses. Outcomes: `no_origin`, `allowed_origin`, `allowed_wildcard`, `denied`. Boot-time twin: `warnOpenCORS` in `cmd/stellarindex-api/main.go`; decision code in `internal/api/v1/middleware/cors.go`.
 
 **Diagnose**
 

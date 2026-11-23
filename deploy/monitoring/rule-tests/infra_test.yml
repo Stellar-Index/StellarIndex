@@ -582,19 +582,94 @@ tests:
         exp_alerts:
           - exp_labels:
               instance: r1:9100
+              device: nvme0n1
               severity: ticket
               team: stellarindex
               component: infra
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_health_series_missing
-              summary: "NVMe health series disappeared on r1:9100"
+              summary: "NVMe nvme0n1 health series disappeared on r1:9100"
               description: |
-                r1:9100 published nvme_temperature_celsius or
-                nvme_num_err_log_entries_total within the last 3 days and no
-                longer does, so stellarindex_nvme_thermal_throttle and
-                stellarindex_nvme_smart_warn cannot fire for it. Restore the
-                nvme collector (nvme.prom in the textfile directory) before
-                trusting drive health again.
+                nvme0n1 on r1:9100 published
+                nvme_temperature_celsius or nvme_num_err_log_entries_total
+                within the last 14 days and no longer does, so
+                stellarindex_nvme_thermal_throttle and
+                stellarindex_nvme_smart_warn cannot fire for it. Check that the
+                drive is still on the bus (`nvme list`), then restore the nvme
+                collector (nvme.prom in the textfile directory) before trusting
+                drive health again.
+
+  # One drive of three drops off the bus: its siblings' series on the same
+  # host must not mask it, and only the vanished device is named.
+  - interval: 1m
+    name: one NVMe drive vanishing among healthy siblings raises a ticket for that drive
+    input_series:
+      - series: 'nvme_temperature_celsius{device="nvme0n1",instance="r1:9100"}'
+        values: '40x181'
+      - series: 'nvme_num_err_log_entries_total{device="nvme0n1",instance="r1:9100"}'
+        values: '0x181'
+      - series: 'nvme_temperature_celsius{device="nvme1n1",instance="r1:9100"}'
+        values: '40x181'
+      - series: 'nvme_num_err_log_entries_total{device="nvme1n1",instance="r1:9100"}'
+        values: '0x181'
+      - series: 'nvme_temperature_celsius{device="nvme2n1",instance="r1:9100"}'
+        values: '40x60 _x120'
+      - series: 'nvme_num_err_log_entries_total{device="nvme2n1",instance="r1:9100"}'
+        values: '0x60 _x120'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: stellarindex_nvme_health_series_missing
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              device: nvme2n1
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_health_series_missing
+              summary: "NVMe nvme2n1 health series disappeared on r1:9100"
+              description: |
+                nvme2n1 on r1:9100 published
+                nvme_temperature_celsius or nvme_num_err_log_entries_total
+                within the last 14 days and no longer does, so
+                stellarindex_nvme_thermal_throttle and
+                stellarindex_nvme_smart_warn cannot fire for it. Check that the
+                drive is still on the bus (`nvme list`), then restore the nvme
+                collector (nvme.prom in the textfile directory) before trusting
+                drive health again.
+
+  # A host whose NVMe series all stopped 4 days ago is still unwatched: the
+  # ticket must still be firing, not resolved by the lookback ageing out.
+  - interval: 5m
+    name: NVMe series gone for 4 days still raise the ticket
+    input_series:
+      - series: 'nvme_temperature_celsius{device="nvme0n1",instance="r1:9100"}'
+        values: '40x60'
+      - series: 'nvme_num_err_log_entries_total{device="nvme0n1",instance="r1:9100"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 96h
+        alertname: stellarindex_nvme_health_series_missing
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              device: nvme0n1
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_health_series_missing
+              summary: "NVMe nvme0n1 health series disappeared on r1:9100"
+              description: |
+                nvme0n1 on r1:9100 published
+                nvme_temperature_celsius or nvme_num_err_log_entries_total
+                within the last 14 days and no longer does, so
+                stellarindex_nvme_thermal_throttle and
+                stellarindex_nvme_smart_warn cannot fire for it. Check that the
+                drive is still on the bus (`nvme list`), then restore the nvme
+                collector (nvme.prom in the textfile directory) before trusting
+                drive health again.
 
   - interval: 1m
     name: a host whose NVMe error-log series vanishes raises a ticket
@@ -609,16 +684,19 @@ tests:
         exp_alerts:
           - exp_labels:
               instance: r1:9100
+              device: nvme0n1
               severity: ticket
               team: stellarindex
               component: infra
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_nvme_health_series_missing
-              summary: "NVMe health series disappeared on r1:9100"
+              summary: "NVMe nvme0n1 health series disappeared on r1:9100"
               description: |
-                r1:9100 published nvme_temperature_celsius or
-                nvme_num_err_log_entries_total within the last 3 days and no
-                longer does, so stellarindex_nvme_thermal_throttle and
-                stellarindex_nvme_smart_warn cannot fire for it. Restore the
-                nvme collector (nvme.prom in the textfile directory) before
-                trusting drive health again.
+                nvme0n1 on r1:9100 published
+                nvme_temperature_celsius or nvme_num_err_log_entries_total
+                within the last 14 days and no longer does, so
+                stellarindex_nvme_thermal_throttle and
+                stellarindex_nvme_smart_warn cannot fire for it. Check that the
+                drive is still on the bus (`nvme list`), then restore the nvme
+                collector (nvme.prom in the textfile directory) before trusting
+                drive health again.
