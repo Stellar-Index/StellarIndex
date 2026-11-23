@@ -367,7 +367,9 @@ func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset can
 	if reason := s.liquidationWalkReason(assetC, err, flags); reason != "" {
 		return &liqMarks{priceReason: reason}
 	}
-	flags.Degraded = flags.Degraded || walk.degraded
+	if reason := liquidationPartialWalk(walk, flags); reason != "" {
+		return &liqMarks{priceReason: reason}
+	}
 	if reason := s.liquidationLatestThin(ctx, assetC, pair, walk, flags); reason != "" {
 		return &liqMarks{priceReason: reason}
 	}
@@ -407,6 +409,16 @@ func (s *Server) liquidationWalkReason(assetC string, err error, flags *Flags) s
 	return liqReasonPriceUnread
 }
 
+// liquidationPartialWalk refuses a walk that stopped early: its missing spans can hold the bucket nearest a fill (or today's thin
+// book), so the leg is price_unread rather than valued from an older bucket that only looks contemporaneous.
+func liquidationPartialWalk(walk chartWalkResult, flags *Flags) string {
+	if !walk.degraded {
+		return ""
+	}
+	flags.Degraded = true
+	return liqReasonPriceUnread
+}
+
 // liquidationLatestThin is the market-cap chart's guard on the asset's market today, in a read of its own: the books under the
 // newest bucket of the last day; when none traded, every book the fills' walk served, measured now (where they are thin).
 func (s *Server) liquidationLatestThin(ctx context.Context, assetC string, pair canonical.Pair, fillWalk chartWalkResult, flags *Flags) string {
@@ -415,7 +427,9 @@ func (s *Server) liquidationLatestThin(ctx context.Context, assetC string, pair 
 	if reason := s.liquidationWalkReason(assetC, err, flags); reason != "" {
 		return reason
 	}
-	flags.Degraded = flags.Degraded || walk.degraded
+	if reason := liquidationPartialWalk(walk, flags); reason != "" {
+		return reason
+	}
 	thin, unmeasured := s.chartLatestThin(ctx, pair, walk)
 	if walk.latestAt.IsZero() && len(fillWalk.books) > 0 {
 		ev, u := s.thinMarketMeasure(ctx, pair.Base, pair.Quote, fillWalk.books, "chart")

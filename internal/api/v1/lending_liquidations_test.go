@@ -115,6 +115,41 @@ func TestLendingPoolLiquidations_ThinBucketAtFill(t *testing.T) {
 	}
 }
 
+// liqProxyFailReader serves the asset's own USD series and fails every stablecoin-proxy read, so the chart walk ends degraded
+// with the canonical buckets already merged.
+type liqProxyFailReader struct {
+	*stubHistoryReader
+}
+
+func (r liqProxyFailReader) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, n int) ([]v1.HistoryPoint, error) {
+	if p.Quote.Type != canonical.AssetFiat {
+		return nil, context.DeadlineExceeded
+	}
+	return r.stubHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, n)
+}
+
+// TestLendingPoolLiquidations_PartialWalkIsUnread: a walk that stopped early may be missing the bucket nearest the fill, so no
+// leg is valued from what it did merge; each says price_unread and no side total is claimed.
+func TestLendingPoolLiquidations_PartialWalkIsUnread(t *testing.T) {
+	_, lr, _, deep := liqRouteServer(t)
+	vol := "1000"
+	bucket := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour)
+	pts := []v1.HistoryPoint{{Bucket: bucket, VWAP: "0.50", VolumeUSD: &vol, Sources: []string{"soroswap"}}}
+	ts := startHTTPTest(t, v1.New(v1.Options{
+		Explorer: liqRouteExplorer{&stubExplorerReader{}}, Lending: lr, VerifiedCurrencies: newTestCatalogue(t),
+		History: liqProxyFailReader{&stubHistoryReader{points: pts, twapPoints: pts}},
+	}).Handler())
+	f := liqRouteFirstFill(t, ts)
+	if f["bid_usd"] != nil || f["filler_profit_usd"] != nil {
+		t.Fatalf("bid_usd %v profit %v, want null from a partial walk", f["bid_usd"], f["filler_profit_usd"])
+	}
+	for _, l := range append(f["lot"].([]any), f["bid"].([]any)...) {
+		if leg, _ := l.(map[string]any); leg["asset"] == deep && (leg["usd"] != nil || leg["reason"] != "price_unread") {
+			t.Errorf("deep leg = %v, want usd null with reason price_unread", leg)
+		}
+	}
+}
+
 // liqRangeRecorder records the [from, to) of every hourly series read.
 type liqRangeRecorder struct {
 	*stubHistoryReader
