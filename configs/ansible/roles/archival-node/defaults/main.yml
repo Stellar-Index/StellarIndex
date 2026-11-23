@@ -503,8 +503,8 @@ clickhouse_ops_batch_password: "{{ vault_clickhouse_ops_batch_password | default
 clickhouse_live_daemon_profile_enabled: false
 clickhouse_live_daemon_user: "live_daemon"
 # clickhouse_live_daemon_password ← ansible-vault, vault_clickhouse_live_daemon_password
-# (SHA-256-hashed into the users.d drop-in; plaintext only in
-# /etc/default/stellarindex, mode 0640 root:stellarindex).
+# (SHA-256-hashed into the users.d drop-in; plaintext in /etc/default/stellarindex,
+# and in /etc/default/stellarindex-api only until stellarindex_clickhouse_serving_enabled).
 clickhouse_live_daemon_password: "{{ vault_clickhouse_live_daemon_password | default('') }}"
 
 # ───── ClickHouse ops_monitor / ops_admin identities ───────────────────
