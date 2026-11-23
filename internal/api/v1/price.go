@@ -2121,6 +2121,10 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 	if s.Triangulated == nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 	}
+	// The cache is written with no gate consulted, and the caller's read may have been answered by another pair (a peg leg).
+	if w := withheldBy(r.Context(), s.Substance, s.Scam, pairBase, quote, "frozen_hold"); w != pricingguard.NotWithheld {
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: PriceWithheldError(w)}
+	}
 	for _, window := range frozenHeldWindows {
 		v, found, err := s.lookupCachedVWAP(r.Context(), pairBase, quote, window)
 		if err != nil {
