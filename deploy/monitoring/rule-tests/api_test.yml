@@ -862,13 +862,15 @@ tests:
                 by remote_ip to tell a handful of capped sources from a
                 distributed guess.
 
-  # Guessing pulsed at 100/s for 10m with a 6m lull: the 5m rate drops to 0
-  # every cycle, so only the 1h arm can hold the alert.
+  # Guessing pulsed for 10m with a 6m lull: the 5m rate drops to 0 every cycle,
+  # so only the 1h arm can hold the alert. At 75m the 5m window is quiet and the
+  # hour holds 180000 rejections whichever end of the range a sample falls on:
+  # 50/s under both closed (Prometheus 2) and left-open (3) range selectors.
   - interval: 1m
     name: pulsed distributed failed auth still tickets
     input_series:
       - series: 'stellarindex_failed_auth_total{job="stellarindex_api",instance="r1:8080",outcome="rejected"}'
-        values: '0 6000 12000 18000 24000 30000 36000 42000 48000 54000 60000 60000 60000 60000 60000 60000 60000 66000 72000 78000 84000 90000 96000 102000 108000 114000 120000 120000 120000 120000 120000 120000 120000 126000 132000 138000 144000 150000 156000 162000 168000 174000 180000 180000 180000 180000 180000 180000 180000 186000 192000 198000 204000 210000 216000 222000 228000 234000 240000 240000 240000 240000 240000 240000 240000 246000 252000 258000 264000 270000 276000 282000 288000 294000 300000 300000 300000 300000 300000 300000 300000'
+        values: '0 5900 11800 17700 23600 29500 35400 41300 47200 53100 59000 59000 59000 59000 59000 59000 62000 67900 73800 79700 85600 91500 97400 103300 109200 115100 121000 121000 121000 121000 121000 121000 121000 126900 132800 138700 144600 150500 156400 162300 168200 174100 180000 180000 180000 180000 180000 180000 180000 185900 191800 197700 203600 209500 215400 221300 227200 233100 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000 239000'
 
     alert_rule_test:
       - eval_time: 75m
@@ -880,7 +882,7 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_failed_auth_rate_high
-              summary: "Credentials rejected at 75/s fleet-wide for 15 minutes"
+              summary: "Credentials rejected at 50/s fleet-wide for 15 minutes"
               description: |
                 The API has been rejecting presented credentials at more than
                 one per second, summed across every instance, for 15 minutes.
