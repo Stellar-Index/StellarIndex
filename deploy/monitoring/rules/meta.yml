@@ -342,9 +342,12 @@ groups:
       # silences expire within hours, so one held for a day is forgotten
       # or hostile; Alertmanager's API on r1 is unauthenticated. Counted as a
       # share of the day (259 of 288 samples), not an unbroken run, so
-      # expiring and recreating a silence does not reset it.
+      # expiring and recreating a silence does not reset it. The 7-day arm
+      # (half of 2016 samples) catches a duty cycle held just under 90%.
       - alert: stellarindex_alertmanager_silence_active
-        expr: sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[24h:5m]) >= 259
+        expr: |
+          sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[24h:5m]) >= 259
+          or sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[7d:5m]) >= 1008
         for: 0m
         labels:
           severity: ticket
@@ -355,7 +358,8 @@ groups:
           summary: "An Alertmanager silence has been held for most of a day"
           description: |
             A silence was active at 90% or more of the 5-minute samples
-            in the last 24h, however often it was expired and recreated.
+            in the last 24h, or at half or more of them in the last 7
+            days, however often it was expired and recreated.
             List them with `amtool silence query` and expire any that no
             operator can account for.
 
@@ -374,6 +378,7 @@ groups:
           vector(1)
             unless on() (
               sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[24h:5m]) >= 259
+              or sum_over_time((max(alertmanager_silences{state="active"}) > bool 0)[7d:5m]) >= 1008
             )
         for: 0s
         labels:
