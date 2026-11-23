@@ -1047,6 +1047,44 @@ const q = `SELECT 1`
 GO
 check "a tree naming no lake table fails rather than passing vacuously" 1 "$empty"
 
+# A splice is analysed with the same-package constant it names, wherever in
+# the package that constant is defined.
+aggsplice="$(mk agg-splice)"
+cat > "$aggsplice/$GODIR/flow_cols.go" <<'GO'
+package clickhouse
+
+const flowAggCols = `asset, sum(amount) AS inflow, count() AS n`
+GO
+cat > "$aggsplice/$GODIR/flows.go" <<'GO'
+package clickhouse
+
+const flowTotals = `SELECT ` + flowAggCols + ` FROM stellar.supply_flows WHERE asset = ? GROUP BY asset`
+GO
+catches "an aggregate spliced in from a package constant is caught" "$aggsplice" stellar.supply_flows
+
+legsplice="$(mk legs-splice)"
+cat > "$legsplice/$GODIR/legs.go" <<'GO'
+package clickhouse
+
+const supplyLegs = `SELECT asset, amount FROM stellar.supply_flows WHERE ledger_seq >= ?`
+GO
+cat > "$legsplice/$GODIR/totals.go" <<'GO'
+package clickhouse
+
+const supplyTotal = `SELECT asset, sum(amount) FROM (` + supplyLegs + `) GROUP BY asset`
+GO
+catches "an uncollapsed read in a constant spliced under an aggregate is caught" "$legsplice" stellar.supply_flows
+
+colsplice="$(mk cols-splice)"
+cat > "$colsplice/$GODIR/cols.go" <<'GO'
+package clickhouse
+
+const movementCols = `ledger_seq, tx_index, asset, amount`
+
+const movementRows = `SELECT ` + movementCols + ` FROM stellar.supply_flows WHERE asset = ? LIMIT 50`
+GO
+check "a spliced plain column list stays a detail read" 0 "$colsplice"
+
 echo "----"
 echo "lint-lake-dedup-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

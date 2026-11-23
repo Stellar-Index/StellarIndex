@@ -118,3 +118,61 @@ for var in fake_pagerduty_key fake_discord_webhook_url_pages fake_healthchecks_a
 done
 
 echo "PASS: lint-ansible-secret-diff catches pager keys and webhook or healthcheck URLs"
+
+# A keyword followed by a qualifier is still the secret; the env-var NAME is not.
+for var in fake_pass_core fake_secret_access_key vault_fake_previous_key; do
+  printf 'x = {{ %s }}\n' "$var" > "$TMPDIR/configs/ansible/roles/fakerole/templates/leak.conf.j2"
+  set +e
+  OUTPUT="$(cd "$TMPDIR" && python3 "$LINT" 2>&1)"
+  STATUS=$?
+  set -e
+  if [[ $STATUS -eq 0 || "$OUTPUT" != *"$var"* ]]; then
+    echo "FAIL: lint did not flag a template inlining $var" >&2
+    echo "$OUTPUT" >&2
+    exit 1
+  fi
+done
+printf 'x = {{ fake_secret_key_env }}\n' > "$TMPDIR/configs/ansible/roles/fakerole/templates/leak.conf.j2"
+set +e
+OUTPUT="$(cd "$TMPDIR" && python3 "$LINT" 2>&1)"
+set -e
+if [[ "$OUTPUT" == *"fake_secret_key_env"* ]]; then
+  echo "FAIL: lint flagged the env-var name fake_secret_key_env as a secret" >&2
+  exit 1
+fi
+echo "PASS: lint-ansible-secret-diff catches qualified secret names, not env-var names"
+
+# copy/lineinfile/blockinfile text is templated too; a {# #} comment is not.
+mkdir -p "$TMPDIR/configs/ansible/roles/fakerole/tasks"
+cat > "$TMPDIR/configs/ansible/roles/fakerole/tasks/main.yml" <<'EOF'
+---
+- name: Inline unit with a secret
+  copy:
+    dest: /etc/x.service
+    content: |
+      # Environment=PW={{ fake_redis_password }}
+- name: Inline line with a secret
+  ansible.builtin.lineinfile:
+    path: /etc/x
+    line: "pw={{ fake_line_password }}"
+- name: Inline comment only
+  copy:
+    dest: /etc/y
+    content: "{# {{ fake_hidden_password }} #}"
+EOF
+set +e
+OUTPUT="$(cd "$TMPDIR" && python3 "$LINT" 2>&1)"
+STATUS=$?
+set -e
+for name in "Inline unit with a secret" "Inline line with a secret"; do
+  if [[ $STATUS -eq 0 || "$OUTPUT" != *"fakerole/tasks/main.yml::$name"* ]]; then
+    echo "FAIL: lint did not flag inline-text task '$name'" >&2
+    echo "$OUTPUT" >&2
+    exit 1
+  fi
+done
+if [[ "$OUTPUT" == *"Inline comment only"* ]]; then
+  echo "FAIL: lint flagged a secret inside a Jinja {# #} comment" >&2
+  exit 1
+fi
+echo "PASS: lint-ansible-secret-diff checks copy/lineinfile inline text"

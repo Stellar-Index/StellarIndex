@@ -90,10 +90,9 @@
       Type=simple
       User={{ redis_user }}
       # REDIS_PASSWORD comes from the 0600 /etc/default/redis_exporter
-      # env-file (root-only readable). Inlining it via
-      # `Environment=REDIS_PASSWORD={{ redis_password }}` would expose it:
-      # the unit file is 0644 so any local user could recover the
-      # password.
+      # env-file (root-only readable). Inlining it as an Environment=
+      # line would expose it: the unit file is 0644 so any local user
+      # could recover the password.
       EnvironmentFile=/etc/default/redis_exporter
       {# The exporter user is #}
       {# only meaningful under ACL lockdown — `users.acl.j2` is #}
