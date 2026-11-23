@@ -989,7 +989,7 @@ groups:
             Resolve via:
               stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --source {{ $labels.source }} --output text
             for per-source diagnosis, then for Soroban-derived sources:
-              stellarindex-ops projector-replay --source <name> --from F  (per-source projection cursor rewind; ADR-0032)
+              stellarindex-ops projector-replay --config /etc/stellarindex.toml --source <name> --from F --write  (per-source projection cursor rewind; ADR-0032)
             For non-projected sources (sdex / soroban-events):
               stellarindex-ops backfill -write --source <name> --from F --to T
 

@@ -92,6 +92,9 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+# Creates REPORT_OUTPUT's directory (root, 0755) before the ReadWritePaths
+# below are mounted; a missing entry there fails the unit 226/NAMESPACE.
+StateDirectory=archive-completeness
 ReadWritePaths=/srv/history-archive /var/lib/galexie /var/lib/archive-completeness -/var/lib/node_exporter
 
 # A clean run is fast; a worst-case (lots of fallback chain
