@@ -143,7 +143,7 @@ if ! live=$(newest_ledger local/galexie-live) || ! archive=$(newest_ledger local
     fi
   } > "$TMP"
   chmod 644 "$TMP"
-  mv "$TMP" "$OUT"
+  mv -T "$TMP" "$OUT"
   # A failed oneshot is what systemctl status shows.
   exit 1
 fi
@@ -172,4 +172,4 @@ galexie_archive_tip_lag_ledgers $lag
 galexie_archive_tip_lag_updated_seconds $(date +%s)
 EOF
 chmod 644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"

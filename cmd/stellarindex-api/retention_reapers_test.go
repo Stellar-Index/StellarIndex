@@ -35,6 +35,8 @@ func TestRetentionReaperTargets_WiredDashboardBoundsSessionsAndDeliveries(t *tes
 	want := map[string]time.Duration{
 		obs.AuthReaperSession:         90 * 24 * time.Hour,
 		obs.AuthReaperWebhookDelivery: 30 * 24 * time.Hour,
+		// A retired signing key must not outlive its rotation overlap at rest.
+		obs.AuthReaperWebhookPreviousKey: time.Hour,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("targets = %v, want %v", got, want)

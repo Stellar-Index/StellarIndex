@@ -19,7 +19,7 @@ describe('ShareBars', () => {
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent('Funds');
     expect(items[0]).toHaveTextContent('≥ $900');
-    expect(items[0]).toHaveTextContent('2 unvalued');
+    expect(items[0]).toHaveTextContent('2 assets unvalued');
     expect(items[1]).not.toHaveTextContent('≥');
   });
 
@@ -42,7 +42,11 @@ describe('ShareBars', () => {
     const items = screen.getAllByRole('listitem');
     expect(items[0]).not.toHaveTextContent('≥');
     expect(items[1]).toHaveTextContent('≥ $100');
-    expect(items[1]).toHaveTextContent('floor supply');
+    expect(items[1]).toHaveTextContent('lower bound');
+    expect(items[1]).toHaveAttribute(
+      'title',
+      'At least $100.00. A lower bound: the API flags this reference value as partial.',
+    );
   });
 
   it('shows a value above 2^53 without rounding', () => {
@@ -69,7 +73,37 @@ it('names groups dropped for having no valuation', () => {
       ]}
     />,
   );
-  expect(screen.getByText('1 group with no valuation not shown')).toBeTruthy();
+  expect(
+    screen.getByText('1 group with no reference valuation not shown'),
+  ).toBeTruthy();
+});
+
+it('says what was left out when no group carries a reference valuation', () => {
+  render(
+    <ShareBars
+      ariaLabel="x"
+      rows={[{ key: 'b', label: 'B', usd: null, unvalued: 3 }]}
+    />,
+  );
+  expect(screen.queryByRole('list')).toBeNull();
+  expect(
+    screen.getByText('1 group with no reference valuation not shown'),
+  ).toBeTruthy();
+});
+
+it('names a lower bound as "at least" and counts the unvalued assets', () => {
+  render(
+    <ShareBars
+      ariaLabel="x"
+      rows={[{ key: 'b', label: 'Funds', usd: '900.00', unvalued: 2 }]}
+    />,
+  );
+  const item = screen.getByRole('listitem');
+  expect(item).toHaveTextContent('2 assets unvalued');
+  expect(item).toHaveAttribute(
+    'title',
+    'At least $900.00. A lower bound: 2 assets without a reference valuation are not counted.',
+  );
 });
 
 describe('PremiumBars', () => {

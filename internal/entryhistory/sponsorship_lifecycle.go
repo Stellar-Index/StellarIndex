@@ -41,20 +41,30 @@ type SponsorshipProof struct {
 	DerivedSponsoring  uint64
 	DerivedSponsored   uint64
 	LastModifiedLedger uint32
+	FromLedger         uint32
 	ThroughLedger      uint32
-	// Match is nil when the two are not comparable: the account does not exist, nothing is derived, the entry
-	// was modified after the watermark, or the entry snapshot predates the watermark (or has no vintage).
+	// Match is nil when the two are not comparable: the account does not exist, nothing is derived, the derive
+	// did not start at genesis, the entry was modified after the watermark, or the entry snapshot predates the
+	// watermark (or has no vintage).
 	Match *bool
 }
 
-// ProveSponsorships builds the proof for one account from its entry and the two sides' totals through wm.
-func ProveSponsorships(st clickhouse.AccountState, wm uint32, sponsoring, sponsored clickhouse.SponsorshipTotals) SponsorshipProof {
+// GenesisDeriveFloor is the highest derive floor that misses nothing: ledger 1 is genesis and closes no meta.
+const GenesisDeriveFloor uint32 = 2
+
+// ProveSponsorships builds the proof for one account from its entry and the two sides' totals over [floor, wm];
+// floor 0 means the derive's first ledger was never recorded.
+func ProveSponsorships(st clickhouse.AccountState, floor, wm uint32, sponsoring, sponsored clickhouse.SponsorshipTotals) SponsorshipProof {
 	p := SponsorshipProof{
 		NumSponsoring: st.NumSponsoring, NumSponsored: st.NumSponsored,
 		DerivedSponsoring: sponsoring.InForceReserves, DerivedSponsored: sponsored.InForceReserves,
-		LastModifiedLedger: st.LastModifiedLedger, ThroughLedger: wm,
+		LastModifiedLedger: st.LastModifiedLedger, FromLedger: floor, ThroughLedger: wm,
 	}
 	// A snapshot older than wm can miss a counter change in (AsOfLedger, wm] that the derivation already holds.
+	// The counters count every arrangement since genesis; one in force since below the floor has no derived event.
+	if floor == 0 || floor > GenesisDeriveFloor {
+		return p
+	}
 	if !st.Exists || wm == 0 || st.LastModifiedLedger > wm || st.AsOfLedger < wm {
 		return p
 	}

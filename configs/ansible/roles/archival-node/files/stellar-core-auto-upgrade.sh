@@ -52,7 +52,7 @@ publish() {
     echo "stellarindex_stellar_core_autoupgrade_last_run_timestamp_seconds $now"
   } > "$tmp"
   chmod 0644 "$tmp"
-  mv "$tmp" "$OUT"
+  mv -T "$tmp" "$OUT"
 }
 
 finish() { result="$1"; reason="${2:-}"; publish; echo "stellar-core-auto-upgrade: $result${reason:+ ($reason)} installed=$installed candidate=$candidate"; [[ "$result" == rolled_back || "$result" == failed ]] && exit 1; exit 0; }

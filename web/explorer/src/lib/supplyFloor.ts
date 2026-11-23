@@ -17,21 +17,30 @@ export function supplyIsFloor(a: {
   );
 }
 
+type SupplyFigures = Parameters<typeof supplyIsFloor>[0] & {
+  circulating_supply_lower_bound?: boolean;
+  total_supply?: string | null;
+  circulating_supply?: string | null;
+};
+
+/**
+ * True when the circulating supply (and the market cap built on it) is a
+ * floor. Judged only from the payload that served the figure: another
+ * endpoint's flag describes a different reading.
+ */
+export function circulatingSupplyIsFloor(a: SupplyFigures): boolean {
+  return supplyIsFloor(a) || a.circulating_supply_lower_bound === true;
+}
+
 /**
  * True when the served total is a floor: its own basis says so, or it is the
- * same reading as a circulating figure /v1/assets/{id}/supply calls a floor
- * (a lake-net reading sets total == circulating).
+ * same reading as a circulating figure the payload calls a floor (a lake-net
+ * reading sets total == circulating).
  */
-export function totalSupplyIsFloor(
-  a: Parameters<typeof supplyIsFloor>[0] & {
-    total_supply?: string | null;
-    circulating_supply?: string | null;
-  },
-  onchainCirculatingFloor: boolean,
-): boolean {
+export function totalSupplyIsFloor(a: SupplyFigures): boolean {
   return (
     supplyIsFloor(a) ||
-    (onchainCirculatingFloor &&
+    (a.circulating_supply_lower_bound === true &&
       a.total_supply != null &&
       a.circulating_supply != null &&
       compareDecimalStrings(a.total_supply, a.circulating_supply) === 0)

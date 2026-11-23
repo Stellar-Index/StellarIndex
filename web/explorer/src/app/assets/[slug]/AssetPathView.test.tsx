@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -81,6 +81,23 @@ describe('AssetPathView', () => {
       expect(screen.getByText('$1,000,000T')).toBeInTheDocument(),
     );
   });
+  // The live row and /v1/price never answer; the shell's own verdict must hold.
+  it('withholds the price on the shell detail’s decimals verdict', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      data: {
+        asset_id: 'CTOKEN',
+        type: 'soroban',
+        code: 'TKN',
+        price_usd: null,
+        price_withheld_reason: 'decimals_mismatch',
+      },
+    });
+    renderAtPath('/assets/ctoken');
+    expect(
+      await screen.findByText('withheld · decimals disagree'),
+    ).toBeInTheDocument();
+  });
+
   it('titles a SEP-41 contract token as a Soroban token', async () => {
     vi.mocked(apiGet).mockResolvedValueOnce({
       data: { asset_id: 'CAS3J7GY', type: 'soroban', code: 'BLND' },
@@ -92,7 +109,8 @@ describe('AssetPathView', () => {
   });
 
   it('renders a catalogue slug as its Stellar issuance', async () => {
-    const usdc = 'USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+    const usdc =
+      'USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
     vi.mocked(apiGet).mockImplementation((path: string) => {
       if (path === '/v1/assets/usdc')
         return Promise.resolve({ data: { kind: 'catalogue', slug: 'usdc' } });
@@ -110,5 +128,42 @@ describe('AssetPathView', () => {
     );
     expect(screen.queryByText('Asset not found')).toBeNull();
     vi.mocked(apiGet).mockImplementation(() => new Promise(() => {}));
+  });
+
+  it('shows not found on a 404', async () => {
+    vi.mocked(apiGet).mockRejectedValueOnce(new Error('404 Not Found'));
+    renderAtPath('/assets/nope');
+    expect(await screen.findByText('Asset not found')).toBeInTheDocument();
+    expect(screen.queryByText('Lookup failed')).toBeNull();
+  });
+
+  it('shows not found on a success with no asset_id', async () => {
+    vi.mocked(apiGet).mockResolvedValueOnce({ data: {} });
+    renderAtPath('/assets/empty');
+    expect(await screen.findByText('Asset not found')).toBeInTheDocument();
+  });
+
+  it('shows a retryable lookup failure on a 500, not not-found', async () => {
+    vi.mocked(apiGet).mockRejectedValueOnce(new Error('500 Internal Error'));
+    renderAtPath('/assets/flaky');
+    expect(await screen.findByText('Lookup failed')).toBeInTheDocument();
+    expect(screen.queryByText('Asset not found')).toBeNull();
+
+    vi.mocked(apiGet).mockClear();
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      data: { asset_id: 'FLK-GABC', code: 'FLK' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() =>
+      expect(apiGet).toHaveBeenCalledWith('/v1/assets/flaky'),
+    );
+    expect(await screen.findByText('Canonical asset id')).toBeInTheDocument();
+  });
+
+  it('shows a lookup failure on a 503', async () => {
+    vi.mocked(apiGet).mockRejectedValueOnce(new Error('503 Unavailable'));
+    renderAtPath('/assets/down');
+    expect(await screen.findByText('Lookup failed')).toBeInTheDocument();
+    expect(screen.queryByText('Asset not found')).toBeNull();
   });
 });

@@ -68,4 +68,4 @@ done
 } > "$TMP"
 
 chmod 0644 "$TMP"
-mv -f "$TMP" "$OUT"
+mv -fT "$TMP" "$OUT"

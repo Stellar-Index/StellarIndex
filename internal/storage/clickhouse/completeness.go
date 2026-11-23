@@ -182,8 +182,13 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 }
 
 // substrateProblemOn is SubstrateProblem on a given connection (unit-testable with a fake
-// driver.Conn). addr is used only by the seam-hole fallback, which opens its own connection.
+// driver.Conn). addr is used only by the count-guard fallback, which opens its own connection.
 func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
+	return substrateProblemWindowed(ctx, conn, addr, from, to, substrateWindow)
+}
+
+// substrateProblemWindowed is substrateProblemOn with the walk's window size as a parameter, so tests can cross seams.
+func substrateProblemWindowed(ctx context.Context, conn driver.Conn, addr string, from, to uint32, window uint64) (problem uint32, hasProblem bool, detail string, err error) {
 	const gapQ = `
 		SELECT toUInt64(ifNull((SELECT min(gap_start) FROM (
 			SELECT ledger_seq + 1 AS gap_start
@@ -232,34 +237,11 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 		walkFrom = haveMin
 	}
 
-	for wlo := walkFrom; wlo <= uint64(to); wlo += substrateWindow {
-		whi := wlo + substrateWindow
-		if whi > uint64(to) {
-			whi = uint64(to)
-		}
-		// The window starts one ledger before the span it certifies so the seam pair is
-		// hash-checked and a seam gap is caught.
-		qlo := substrateQueryLo(wlo, walkFrom)
-
-		var firstGap uint64
-		if qerr := conn.QueryRow(ctx, gapQ, qlo, whi).Scan(&firstGap); qerr != nil {
-			return 0, false, "", fmt.Errorf("clickhouse: substrate contiguity [%d,%d]: %w", qlo, whi, qerr)
-		}
-		var firstBreak uint64
-		if qerr := conn.QueryRow(ctx, chainQ, qlo, whi, qlo).Scan(&firstBreak); qerr != nil {
-			return 0, false, "", fmt.Errorf("clickhouse: substrate hash-chain [%d,%d]: %w", qlo, whi, qerr)
-		}
-
-		var p uint64
-		var d string
-		switch {
-		case firstGap == 0 && firstBreak == 0:
-			continue
-		case firstGap != 0 && (firstBreak == 0 || firstGap <= firstBreak):
-			p, d = firstGap, fmt.Sprintf("substrate: missing ledger at %d", firstGap)
-		default:
-			p, d = firstBreak, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak)
-		}
+	p, d, werr := substrateWalk(ctx, conn, walkFrom, uint64(to), window, gapQ, chainQ)
+	if werr != nil {
+		return 0, false, "", werr
+	}
+	if p != 0 {
 		if headHasProblem {
 			return headProblem, true, headDetail + "; also " + d, nil
 		}
@@ -268,15 +250,64 @@ func substrateProblemOn(ctx context.Context, conn driver.Conn, addr string, from
 	if headHasProblem {
 		return headProblem, true, headDetail, nil
 	}
+	// Fail-closed count guard over the present span, run BEFORE the tail return so a short tail can
+	// never mask an earlier hole: every ledger in [from, haveMax] must be present.
+	if !substrateCountIntact(from, uint32(haveMax), present) {
+		return substrateLocateHole(ctx, addr, from, uint32(haveMax))
+	}
 	if haveMax < uint64(to) {
 		return uint32(haveMax + 1), true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
 	}
-	// Total-count guard: a hole spanning both overlap ledgers of a window seam is invisible to
-	// gapQ and chainQ, so compare `present` (uniqExact) against the range size.
-	if !substrateCountIntact(from, to, present) {
-		return substrateLocateHole(ctx, addr, from, to)
-	}
 	return 0, false, "", nil
+}
+
+// substrateWalk returns the earliest missing ledger or hash-chain break in [walkFrom, to] (0 if none), walking
+// windows of the given size. walkFrom must be present. Neighbouring windows overlap only on the seam pair, so a
+// hole covering both seam ledgers is invisible to gapQ in either window; the walk therefore also carries the
+// highest present ledger forward and fails when the next window's lowest present ledger is not its successor.
+func substrateWalk(ctx context.Context, conn driver.Conn, walkFrom, to, window uint64, gapQ, chainQ string) (uint64, string, error) {
+	const boundsQ = `SELECT toUInt64(ifNull(min(ledger_seq),0)) AS win_min, toUInt64(ifNull(max(ledger_seq),0)) AS win_max FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?`
+	lastPresent := walkFrom
+	for wlo := walkFrom; wlo <= to; wlo += window {
+		whi := wlo + window
+		if whi > to {
+			whi = to
+		}
+		// The window starts one ledger before the span it certifies so the seam pair is
+		// hash-checked and a seam gap is caught.
+		qlo := substrateQueryLo(wlo, walkFrom)
+
+		var winMin, winMax uint64
+		if qerr := conn.QueryRow(ctx, boundsQ, wlo, whi).Scan(&winMin, &winMax); qerr != nil {
+			return 0, "", fmt.Errorf("clickhouse: substrate window bounds [%d,%d]: %w", wlo, whi, qerr)
+		}
+		if winMax == 0 {
+			continue // nothing present here; the next present ledger (or the tail check) names lastPresent+1
+		}
+		if winMin > lastPresent+1 {
+			return lastPresent + 1, fmt.Sprintf("substrate: missing ledger at %d (window-seam hole)", lastPresent+1), nil
+		}
+		lastPresent = winMax
+
+		var firstGap uint64
+		if qerr := conn.QueryRow(ctx, gapQ, qlo, whi).Scan(&firstGap); qerr != nil {
+			return 0, "", fmt.Errorf("clickhouse: substrate contiguity [%d,%d]: %w", qlo, whi, qerr)
+		}
+		var firstBreak uint64
+		if qerr := conn.QueryRow(ctx, chainQ, qlo, whi, qlo).Scan(&firstBreak); qerr != nil {
+			return 0, "", fmt.Errorf("clickhouse: substrate hash-chain [%d,%d]: %w", qlo, whi, qerr)
+		}
+
+		switch {
+		case firstGap == 0 && firstBreak == 0:
+			continue
+		case firstGap != 0 && (firstBreak == 0 || firstGap <= firstBreak):
+			return firstGap, fmt.Sprintf("substrate: missing ledger at %d", firstGap), nil
+		default:
+			return firstBreak, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
+		}
+	}
+	return 0, "", nil
 }
 
 // substrateCountIntact is the pure total-count decision (unit-testable without a lake).
@@ -284,8 +315,8 @@ func substrateCountIntact(from, to uint32, present uint64) bool {
 	return present == uint64(to)-uint64(from)+1
 }
 
-// substrateLocateHole finds the first missing ledger once substrateCountIntact proves a
-// seam-straddling hole, using non-overlapping windows (existence is enough).
+// substrateLocateHole finds the first missing ledger once substrateCountIntact proves a hole
+// the walk missed, using non-overlapping windows (existence is enough).
 func substrateLocateHole(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	werr := forEachLedgerWindow(from, to, substrateWindow, func(lo, hi uint32) error {
 		if hasProblem {

@@ -438,7 +438,7 @@ func registerAuthReaperMetrics() {
 		RetentionReaperRowsDeletedTotal,
 		RetentionReaperErrorsTotal,
 	)
-	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery, AuthReaperRegistration} {
+	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery, AuthReaperWebhookPreviousKey, AuthReaperRegistration} {
 		RetentionReaperRowsDeletedTotal.WithLabelValues(reaper)
 		RetentionReaperErrorsTotal.WithLabelValues(reaper)
 	}
@@ -3221,7 +3221,9 @@ const (
 	// internal/retentionreaper instances share these gauges and the stalled alert.
 	AuthReaperSession         = "session"
 	AuthReaperWebhookDelivery = "webhook_delivery"
-	AuthReaperRegistration    = "registration" // unused /v1/register accounts
+	// AuthReaperWebhookPreviousKey counts retired webhook signing keys erased after their rotation overlap.
+	AuthReaperWebhookPreviousKey = "webhook_previous_key"
+	AuthReaperRegistration       = "registration" // unused /v1/register accounts
 )
 
 // AuthReaperLastSweepUnix — see the auth-reaper liveness note above.

@@ -483,6 +483,42 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	}
 }
 
+// A positive index hit is the newest row the backfill has REACHED; without a genesis watermark a later in-place upgrade may be
+// unreached, so the live-captured current state wins where it exists and the index answers only when that has no entry.
+func TestContractWasmHash_PartialIndexHitDefersToCurrentState(t *testing.T) {
+	stale, upgraded := wasmHashN(0xA1), wasmHashN(0xB2)
+	for _, tc := range []struct {
+		name   string
+		legacy [][]any
+		want   xdr.Hash
+	}{
+		{"current state holds the upgrade", [][]any{{instanceEntryB64(t, upgraded)}}, upgraded},
+		{"no current-state entry", nil, stale},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &stubConn{}
+			conn.respond = func(q string) (driver.Rows, error) {
+				switch {
+				case strings.Contains(q, "entry_history_watermark"):
+					return &stubRows{data: [][]any{{uint32(0)}}}, nil
+				case strings.Contains(q, "ledger_entries_current"):
+					return &stubRows{data: tc.legacy}, nil
+				case strings.Contains(q, "contract_instance_changes LIMIT 1"):
+					return &stubRows{data: [][]any{{uint32(1)}}}, nil
+				default:
+					return &stubRows{data: [][]any{{uint8(0), hex.EncodeToString(stale[:])}}}, nil
+				}
+			}
+			var cid xdr.Hash
+			copy(cid[:], []byte("contract-id-32-bytes-padding----"))
+			got, ok, err := (&ExplorerReader{conn: conn}).contractWasmHash(context.Background(), cid)
+			if err != nil || !ok || got != tc.want {
+				t.Fatalf("hash = %x ok=%v err=%v, want %x", got, ok, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestInstanceGenesisCovers_Below(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(string) (driver.Rows, error) { return &stubRows{data: [][]any{{uint32(100)}}}, nil }
@@ -508,6 +544,8 @@ func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
 		case strings.Contains(q, "ledger_entries_current"):
 			t.Fatalf("indexed path must not read ledger_entries_current: %s", q)
 			return nil, nil
+		case strings.Contains(q, "entry_history_watermark"): // the genesis-complete index this test names
+			return &stubRows{data: [][]any{{uint32(64_000_000)}}}, nil
 		case strings.Contains(q, "contract_instance_changes LIMIT 1"): // probe
 			return &stubRows{data: [][]any{{uint32(1)}}}, nil
 		default: // indexed hash lookup
@@ -671,6 +709,14 @@ func (c *wasmFlightConn) Query(ctx context.Context, q string, _ ...any) (driver.
 		c.hashReads.Add(1)
 		return &stubRows{data: [][]any{{uint8(0), c.hashHex}}}, nil
 	}
+}
+
+// QueryRow answers the genesis-watermark read: the index this stub serves is genesis-complete.
+func (c *wasmFlightConn) QueryRow(_ context.Context, q string, _ ...any) driver.Row {
+	if strings.Contains(q, "entry_history_watermark") {
+		return &stubRow{data: []any{uint32(64_000_000)}}
+	}
+	return &stubRow{err: errors.New("unexpected row read: " + q)}
 }
 
 func newWasmFlightConn(t *testing.T) *wasmFlightConn {
