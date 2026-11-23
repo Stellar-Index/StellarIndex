@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -19,13 +20,12 @@ const (
 	assetATHSpan = 24 * time.Hour
 )
 
-// assetExclusionScope is one read of the exclusion set judging an asset listing page or detail on the way out. active: an
-// exclusion may cover a value the response serves, so the response neither reads nor fills the in-process caches.
+// assetExclusionScope is one read of the exclusion set judging an asset listing page or detail on the way out. The in-process
+// caches hold unjudged values, so they are read and filled whatever the set holds and only the way out pays for a judgement.
 type assetExclusionScope struct {
 	set    pricingguard.ExclusionSet
 	judge  bool // a non-empty, readable set
 	unread bool
-	active bool
 	now    time.Time
 }
 
@@ -34,19 +34,24 @@ func (s *Server) assetExclusionScope(ctx context.Context) assetExclusionScope {
 	set, judge, v := s.exclusionSnapshot(ctx)
 	switch {
 	case v != pricingguard.NotWithheld:
-		sc.unread, sc.active = true, true
+		sc.unread = true
 	case judge:
 		sc.set, sc.judge = set, true
-		sc.active = set.MultiHopWithholding(ctx, sc.now.Add(-assetSurfaceSpan), sc.now.Add(time.Nanosecond)) != pricingguard.NotWithheld
 	}
 	return sc
 }
+
+// empty: the set withholds nothing, so a cached body is written byte for byte.
+func (sc assetExclusionScope) empty() bool { return !sc.judge && !sc.unread }
 
 // judgeRows withholds what an exclusion covers on each row and puts it on flags: an unread set withholds every price-derived
 // value (stale, as a transient outage); a removal marks fills_withheld_reason. Either is degraded, so no-store.
 func (sc assetExclusionScope) judgeRows(ctx context.Context, s *Server, rows []AssetDetail, flags Flags) Flags {
 	removed := false
 	for i := range rows {
+		// Judging writes into these in place; the row may share them with a cached entry.
+		rows[i].PriceHistory24h, rows[i].PriceHistory7d = slices.Clone(rows[i].PriceHistory24h), slices.Clone(rows[i].PriceHistory7d)
+		rows[i].TopMarkets = slices.Clone(rows[i].TopMarkets)
 		if sc.unread {
 			removed = withholdAssetRow(&rows[i], withheldReasonFor(pricingguard.WithheldExclusionsUnread)) || removed
 		} else if sc.judge {
@@ -185,7 +190,7 @@ func withholdAssetVolume(d *AssetDetail) bool {
 
 // judgeDetail is [assetExclusionScope.judgeRows] for one detail payload.
 func (sc assetExclusionScope) judgeDetail(ctx context.Context, s *Server, d *AssetDetail, flags Flags) Flags {
-	if !sc.judge && !sc.unread {
+	if sc.empty() {
 		return flags
 	}
 	rows := []AssetDetail{*d}
@@ -194,10 +199,38 @@ func (sc assetExclusionScope) judgeDetail(ctx context.Context, s *Server, d *Ass
 	return flags
 }
 
-// writeAssetListing judges a listing envelope's rows on the way out, after any cache, then writes it.
+// writeDetail writes a detail entry judged on the way out; the entry, cached or not, stays unjudged.
+func (sc assetExclusionScope) writeDetail(ctx context.Context, w http.ResponseWriter, s *Server, e *assetDetailEntry) {
+	if sc.empty() {
+		writeCachedAssetDetail(w, e)
+		return
+	}
+	d := e.detail
+	flags := sc.judgeDetail(ctx, s, &d, e.flags)
+	body, err := renderAssetDetailEnvelope(d, flags)
+	if err != nil {
+		writeJSON(w, d, flags)
+		return
+	}
+	writeCachedAssetDetail(w, newAssetDetailEntry(d, body, flags))
+}
+
+// replayAssetListing writes a cached listing page: its bytes under an empty set, else its unjudged envelope judged.
+func (s *Server) replayAssetListing(w http.ResponseWriter, r *http.Request, sc assetExclusionScope, hit assetListHit) {
+	if sc.empty() {
+		writeCachedAssetList(w, hit.body, hit.stale)
+		return
+	}
+	w.Header().Set("X-Stellarindex-Cache", "HIT")
+	s.writeAssetListing(w, r, sc, hit.env)
+}
+
+// writeAssetListing judges a copy of a listing envelope's rows on the way out, after any cache, then writes it; the rows may be
+// the ones a cache holds.
 func (s *Server) writeAssetListing(w http.ResponseWriter, r *http.Request, sc assetExclusionScope, env Envelope) {
-	if rows, ok := env.Data.([]AssetDetail); ok && (sc.judge || sc.unread) {
-		env.Flags = sc.judgeRows(r.Context(), s, rows, env.Flags)
+	if rows, ok := env.Data.([]AssetDetail); ok && !sc.empty() {
+		rows = slices.Clone(rows)
+		env.Flags, env.Data = sc.judgeRows(r.Context(), s, rows, env.Flags), rows
 	}
 	writeEnvelope(w, env)
 }

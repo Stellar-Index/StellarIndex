@@ -857,11 +857,11 @@ func (s *Server) handleAssetListFromAssets(
 		return
 	}
 	key, excl := assetListCacheKey(r), s.assetExclusionScope(r.Context())
-	if body, stale, refresh, ok := s.assetListCache.lookup(key); ok && !excl.active {
+	if hit, refresh, ok := s.assetListCache.lookup(key); ok {
 		if refresh {
 			s.refreshAssetListPage(r, key, filters, cursor, limit, order) //nolint:contextcheck // the refresh outlives this request on purpose; see its doc.
 		}
-		writeCachedAssetList(w, body, stale)
+		s.replayAssetListing(w, r, excl, hit)
 		return
 	}
 	env, rows, err := s.buildAssetListPage(r, filters, cursor, limit, order)
@@ -877,7 +877,7 @@ func (s *Server) handleAssetListFromAssets(
 	}
 	// A page built on a dead context holds whatever best-effort reads
 	// landed before cancellation; it is answered, never replayed.
-	if r.Context().Err() == nil && assetListPageCacheable(env, rows) && !excl.active {
+	if r.Context().Err() == nil && assetListPageCacheable(env, rows) {
 		if err := s.assetListCache.put(key, env); err != nil {
 			s.logger.Debug("assets listing render for cache failed", "err", err)
 		}
@@ -2259,10 +2259,10 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	includeThin := includeThinRequested(r)
 	cacheKey, excl := assetDetailCacheKey(parsed, includeThin), s.assetExclusionScope(r.Context())
 	// The prewarm always re-renders: served a hit, it would refresh nothing and the entry would lapse
-	// for up to a prewarm cadence once per TTL. Under an exclusion the body is judged fresh and uncached.
-	if !isPrewarmRequest(r) && !excl.active {
+	// for up to a prewarm cadence once per TTL. The entry is unjudged; exclusions are judged on the way out.
+	if !isPrewarmRequest(r) {
 		if entry, ok := s.assetDetailCache.get(cacheKey); ok {
-			writeCachedAssetDetail(w, entry)
+			excl.writeDetail(r.Context(), w, s, entry)
 			return
 		}
 	}
@@ -2375,22 +2375,22 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// degraded snapshot as a fresh 200 for the full TTL, so stamp it stale and skip the cache write.
 	ctxDead := ctx.Err() != nil
 	flags.Stale, flags.Degraded = detailFreshness(flags.Stale, &detail, homeDomainDegraded, ctxDead)
-	flags = excl.judgeDetail(ctx, s, &detail, flags)
-	// Render once, cache, write; see [assetDetailResponseCache].
+	// Render once, cache unjudged, judge on the way out; see [assetDetailResponseCache].
 	body, err := renderAssetDetailEnvelope(detail, flags)
 	if err != nil {
 		// Marshal failure is very rare; fall back to writeJSON rather than a 500.
 		s.logger.Debug("asset detail envelope render failed; falling back to direct write", "asset_id", parsed.String(), "err", err)
-		writeJSON(w, detail, flags)
+		writeJSON(w, detail, excl.judgeDetail(ctx, s, &detail, flags))
 		return
 	}
+	entry := newAssetDetailEntry(detail, body, flags)
 	// A failed decimals, issuer-directory or F2 read is a transient outage, and a dead context means
 	// the body holds only the reads that landed before cancellation; replaying either for the whole
 	// TTL would outlive the outage. Skip the cache write, not the response.
-	if !transientlyDegraded(&detail, ctxDead) && !excl.active {
-		s.assetDetailCache.put(cacheKey, body, flags)
+	if !transientlyDegraded(&detail, ctxDead) {
+		s.assetDetailCache.put(cacheKey, entry)
 	}
-	writeCachedAssetDetail(w, &assetDetailEntry{body: body, cachedAt: time.Now(), degraded: flags.Degraded, stale: flags.Stale})
+	excl.writeDetail(ctx, w, s, entry)
 }
 
 // assetDetailStale reports whether detail rests on a failed, cut-short or

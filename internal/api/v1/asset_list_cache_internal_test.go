@@ -230,7 +230,7 @@ func TestAssetListCache_BoundedEntries(t *testing.T) {
 func TestAssetDetailResponseCache_BoundedUnderIDChurn(t *testing.T) {
 	c := newAssetDetailResponseCache(time.Hour)
 	for i := 0; i < assetDetailCacheMaxEntries+500; i++ {
-		c.put(fmt.Sprintf("classic:FAKE%d-GABCDEF", i), []byte("{}"), Flags{})
+		c.put(fmt.Sprintf("classic:FAKE%d-GABCDEF", i), newAssetDetailEntry(AssetDetail{}, []byte("{}"), Flags{}))
 	}
 
 	c.mu.RLock()
@@ -255,13 +255,13 @@ func TestAssetDetailResponseCache_EvictionPrefersExpired(t *testing.T) {
 	c := newAssetDetailResponseCache(50 * time.Millisecond)
 	// Fill to capacity, then let everything expire.
 	for i := 0; i < assetDetailCacheMaxEntries; i++ {
-		c.put(fmt.Sprintf("stale%d", i), []byte("{}"), Flags{})
+		c.put(fmt.Sprintf("stale%d", i), newAssetDetailEntry(AssetDetail{}, []byte("{}"), Flags{}))
 	}
 	time.Sleep(80 * time.Millisecond) // all entries now past TTL
 
 	// One more put at capacity triggers evictLocked; the expired-purge should
 	// clear the whole stale set, leaving just the new entry.
-	c.put("fresh", []byte("{}"), Flags{})
+	c.put("fresh", newAssetDetailEntry(AssetDetail{}, []byte("{}"), Flags{}))
 
 	c.mu.RLock()
 	n := len(c.entries)
