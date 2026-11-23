@@ -125,6 +125,9 @@ func assemblePoolPositions(ce contractEntries, listVal xdr.ScVal, listOK bool) L
 	}
 	out.Readable, out.Reserves = true, list
 	for k := range ce.archived {
+		if _, decoded := ce.vals[k]; decoded {
+			continue
+		}
 		if _, ok := positionsKeyAccount(k); ok {
 			out.Unreadable++
 		}
