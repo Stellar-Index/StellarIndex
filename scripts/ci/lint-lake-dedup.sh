@@ -71,7 +71,10 @@
 #     baseline entry. A file is a subject when it names a watched table,
 #     `stellar.%s`, or a `FROM %s` verb (outside internal/storage/timescale,
 #     the Postgres tier), so a constant defined in another file cannot hide
-#     its readers.
+#     its readers. A `+ name +` splice of a raw-literal constant from the
+#     same package is analysed with the constant's text. Not seen: a Sprintf
+#     verb in a select list, a function-call splice, and a statement split
+#     across separate builder calls.
 #   * Go `//` comments: prose ABOUT the query beside them, constantly quoting
 #     fragments. Operator recipes live in `.sql` headers, which ARE read (see
 #     deploy/clickhouse/ops_by_source.sql Step 3, whose
@@ -227,6 +230,53 @@ cat > "$canary_file" <<'SQL'
 SELECT count() AS canary FROM stellar.transactions WHERE ledger_seq > 1;
 SQL
 
+# ── Spliced constants ────────────────────────────────────────────────
+#
+# `<dir>\t<name>\t<text>` for every raw-literal `name = `…`` (const, var or :=)
+# in the non-test Go of each subject's package, so `+ aggCols +` is analysed
+# with the SQL it stands for: an aggregate or a lake read held in a constant
+# is judged inside the statement that splices it.
+defs_file="$canary_dir/defs"
+go_dirs="$(for f in "${subjects[@]}"; do case "$f" in (*.go) dirname "${f#>}" ;; esac; done | sort -u)"
+: > "$defs_file"
+if [ -n "$go_dirs" ]; then
+  # shellcheck disable=SC2016  # backticks are Go raw-string delimiters
+  while IFS= read -r d; do
+    find "$d" -maxdepth 1 -type f -name '*.go' ! -name '*_test.go'
+  done <<<"$go_dirs" | sort | LC_ALL=C xargs awk '
+    function cut(s) { if (match(s, /--([ \t]|$)/)) s = substr(s, 1, RSTART - 1); return s }
+    function emit() { gsub(/[\t\r]/, " ", val); print dir "\t" name "\t" val }
+    FNR == 1 { inraw = 0; dir = FILENAME; if (!sub(/\/[^\/]*$/, "", dir)) dir = "." }
+    inraw {
+      j = index($0, "`")
+      if (!j) { val = val " " cut($0); next }
+      val = val " " cut(substr($0, 1, j - 1)); inraw = 0
+      if (substr($0, j + 1) ~ /^[ \t,]*(\/\/.*)?$/) emit()
+      next
+    }
+    match($0, /^[ \t]*((const|var)[ \t]+)?[A-Za-z_][A-Za-z0-9_]*([ \t]+string)?[ \t]*:?=[ \t]*`/) {
+      name = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH + 1)
+      sub(/^[ \t]*((const|var)[ \t]+)?/, "", name); sub(/[^A-Za-z0-9_].*$/, "", name)
+      j = index(rest, "`")
+      if (!j) { val = cut(rest); inraw = 1; next }
+      val = cut(substr(rest, 1, j - 1))
+      if (substr(rest, j + 1) ~ /^[ \t,]*(\/\/.*)?$/) emit()
+    }' > "$defs_file"
+  # A file that splices a constant holding a watched read is a subject too:
+  # its statement is the consumer that may aggregate that read.
+  read_defs="$(awk -F'\t' -v re="stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" 'tolower($3) ~ re { print $2 }' "$defs_file" | sort -u | paste -sd'|' -)"
+  if [ -n "$read_defs" ]; then
+    while IFS= read -r d; do
+      for f in "$d"/*.go; do
+        f="${f#./}"
+        case "$f" in (*_test.go) continue ;; esac
+        case " ${subjects[*]} " in (*" $f "*) continue ;; esac
+        grep -qE "\\+[[:space:]]*(${read_defs})([^A-Za-z0-9_]|\$)" "$f" && subjects+=("$f")
+      done
+    done <<<"$go_dirs"
+  fi
+fi
+
 # ── The analyser ─────────────────────────────────────────────────────
 #
 # Emits one TAB-separated `<file>\t<line>\t<table>\t<snippet>` record per
@@ -234,7 +284,16 @@ SQL
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
   LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" \
-               -v VERB_FILES="$verb_only" -v INTERP_RE="\"[^\"]*(from|join)[ ]+stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" '
+               -v VERB_FILES="$verb_only" -v DEFS="$defs_file" -v INTERP_RE="\"[^\"]*(from|join)[ ]+stellar\\.(${READ_TABLES})([^a-z0-9_]|\$)" '
+    BEGIN {
+      while ((getline dl < DEFS) > 0) {
+        i = index(dl, "\t"); dd = substr(dl, 1, i - 1); dl = substr(dl, i + 1)
+        i = index(dl, "\t"); k = dd SUBSEP substr(dl, 1, i - 1); dv = substr(dl, i + 1)
+        DEF[k] = (k in DEF && DEF[k] != dv) ? DEF[k] " " dv : dv
+      }
+      close(DEFS)
+    }
+
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
@@ -504,6 +563,15 @@ violations="$(
       return out
     }
 
+    # splice_defs - add the text of each same-package constant the glue names.
+    function splice_defs(g,    d, id) {
+      d = FILENAME; if (!sub(/\/[^\/]*$/, "", d)) d = "."
+      while (match(g, /[A-Za-z_][A-Za-z0-9_]*/)) {
+        id = substr(g, RSTART, RLENGTH); g = substr(g, RSTART + RLENGTH)
+        if ((d SUBSEP id) in DEF) add(DEF[d SUBSEP id])
+      }
+    }
+
     # interp - report an unexaminable read: SQL that is not one raw literal.
     function interp() {
       if (FILENAME ~ /_test\.go$/) return
@@ -552,6 +620,7 @@ violations="$(
           if (i < n) {
             # Glue between two literals: `+ ident +` or `+ f(x) +` splices
             # them into one statement, anything else ends it. A spliced
+            # same-package constant contributes its text; any other spliced
             # expression stands in as `?`, so a clause after it (a CTE
             # consumer, a HAVING) is still judged with the read.
             identglue = glue ~ /^[ \t]*\+[ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*\+[ \t]*)*$/
@@ -560,6 +629,7 @@ violations="$(
             tailfrom = 0
             if (U != "" && !splice) flush()
             else if (U != "" && !identglue) add("?")
+            else if (U != "") splice_defs(glue)
             glue = ""
           }
         }
