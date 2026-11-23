@@ -32,8 +32,10 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	var asOf WireTime // zero stamps now on the inline build
 	var flags Flags
 	if entry := s.freshIngestionSnapshot(); entry != nil {
-		// A kept last-good snapshot is re-freshened every tick; its rows date from builtAt.
-		rows, asOf, flags = entry.snap.Sources, WireTime(entry.builtAt.UTC()), ingestionFlags(entry.snap)
+		// Only a kept last-good snapshot (re-freshened each tick, so built before it was computed) is old. A fresh
+		// degraded build failed ledger, cursor or entry-count reads; the source rows use none of them.
+		kept := entry.builtAt.Before(entry.computedAt)
+		rows, asOf, flags = entry.snap.Sources, WireTime(entry.builtAt.UTC()), Flags{Stale: kept, Degraded: kept}
 	}
 	if len(rows) == 0 {
 		asOf, flags = WireTime{}, Flags{}

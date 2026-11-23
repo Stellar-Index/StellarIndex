@@ -12,25 +12,29 @@ import (
 )
 
 // TestHandleSourceHealth_KeptSnapshotIsStale pins that /v1/sources/{name}/health carries the ingestion snapshot's
-// staleness: a kept last-good snapshot (degraded, re-freshened each tick) must not read as the live trailing 24h.
+// staleness: a kept last-good snapshot (degraded, re-freshened each tick) must not read as the live trailing 24h, and a
+// fresh build that is degraded only by reads the source rows do not use must not read as last known.
 func TestHandleSourceHealth_KeptSnapshotIsStale(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		degraded  bool
+		age       time.Duration // computedAt - builtAt; the refresher stamps both with one instant on a fresh build
 		wantStale bool
 	}{
-		{"fresh build", false, false},
-		{"kept last-good snapshot", true, true},
+		{"fresh build", false, 0, false},
+		{"fresh but degraded build", true, 0, false},
+		{"kept last-good snapshot", true, 3 * time.Hour, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := New(Options{})
 			snap := IngestionDiagnostics{degraded: tc.degraded}
 			snap.Ledger.LatestLedger = 1000
 			snap.Sources = []SourceHealthRow{{Name: "binance", TradeCount24h: 41000}}
+			now := time.Now()
 			srv.ingestionSnapshot.Store(&ingestionSnapshotEntry{
 				snap:       snap,
-				computedAt: time.Now(),
-				builtAt:    time.Now().Add(-3 * time.Hour),
+				computedAt: now,
+				builtAt:    now.Add(-tc.age),
 			})
 
 			ts := httptest.NewServer(srv.Handler())
