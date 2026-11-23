@@ -830,6 +830,65 @@ for f in .github/workflows/x.yml .github/workflows/y.yml .github/zizmor.yml; do
   expect "a zizmor waiver in $f fails undeclared" 1 "UNDECLARED GROWTH: $f"
 done
 
+# --- 25i. a .gitattributes `-diff` cannot blind the tripwire, and is itself growth
+mkrepo 0
+change_commit "chore: tidy diffs" \
+  scripts/ci/.gitattributes '# attrs' "$(printf '# attrs\n*.baseline -diff')" \
+  scripts/ci/demo.baseline 'existing-entry' "$(printf 'existing-entry\nhidden-entry')"
+runGate
+expect "a baseline entry behind a -diff attribute fails undeclared" 1 "+ hidden-entry"
+expect "an added -diff attribute fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/.gitattributes"
+
+# --- 25j. Go waiver maps: a := local, a single-line map, an identifier key, a raised count
+mkrepo 0
+change_commit "chore: exempt more" \
+  internal/p/a_test.go "$(printf 'package p\n\nfunc f() {\n\topenBucketExempt := map[string]string{\n\t\t"a": "r",\n\t}\n\t_ = openBucketExempt\n}')" \
+  "$(printf 'package p\n\nfunc f() {\n\topenBucketExempt := map[string]string{\n\t\t"a": "r",\n\t\t"sneak": "r",\n\t}\n\t_ = openBucketExempt\n}')" \
+  internal/p/b_test.go 'var streamAllowed = map[string]bool{"a.go": true}' \
+  'var streamAllowed = map[string]bool{"a.go": true, "trades_writer.go": true}' \
+  internal/p/c_test.go "$(printf 'var reviewedAllowlist = map[string]int{\n\t"supply_reader.go": 1,\n}')" \
+  "$(printf 'var reviewedAllowlist = map[string]int{\n\t"supply_reader.go": 2,\n}')" \
+  internal/p/d_test.go "$(printf 'var kindExempt = map[Kind]string{\n\tKindA: "r",\n}')" \
+  "$(printf 'var kindExempt = map[Kind]string{\n\tKindA: "r",\n\tKindB: "r",\n}')"
+runGate
+for f in a b c d; do
+  expect "a widened Go waiver map in internal/p/${f}_test.go fails undeclared" 1 "UNDECLARED GROWTH: internal/p/${f}_test.go"
+done
+
+# --- 25k. waiver entries in their other spellings: quoted, several per line, indented ids
+mkrepo 0
+change_commit "chore: waive" \
+  scripts/ci/lint-metric-refs.sh 'X=(' "$(printf 'X=(\n  "stellarindex_a_failures_total"  # later\n  stellarindex_b_total stellarindex_c_total\n)')" \
+  scripts/ci/govulncheck-allow.txt '# ids' "$(printf '# ids\n  GO-2026-9999  # indented')"
+runGate
+expect "a quoted metric waiver fails undeclared" 1 '+   "stellarindex_a_failures_total"'
+expect "two metric waivers on one line fail undeclared" 1 "+   stellarindex_b_total stellarindex_c_total"
+expect "an indented govulncheck id fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/govulncheck-allow.txt"
+
+# --- 25l. a DO NOT RUN added to a runbook is growth (lint-migration-commands honours it in docs)
+mkrepo 0
+change_commit "chore: runbook" docs/x.md 'doc' "$(printf 'doc\n-- DO NOT RUN without reading the header\nDELETE FROM trades;')"
+runGate
+expect "a DO NOT RUN in a doc fails undeclared" 1 "UNDECLARED GROWTH: docs/x.md"
+
+# --- 25m. a tool config under another name, or the watched config deleted, is growth
+mkrepo 0
+change_commit "chore: configs" \
+  .golangci.yaml '' "$(printf 'version: "2"\nlinters:\n  default: none')" \
+  zizmor.yml '' 'rules: {}'
+(cd "$TMP/repo" && git rm -q .golangci.yml && git commit -qm "chore: drop config")
+runGate
+for f in .golangci.yaml zizmor.yml .golangci.yml; do
+  expect "an alternate or deleted tool config $f fails undeclared" 1 "UNDECLARED GROWTH: $f"
+done
+
+# --- 25n. a marker trailing a code line governs the next line (cap-ok:, si-swallow-ok:)
+mkrepo 0
+change_commit "chore: another read" internal/s/q.go \
+  "$(printf 'var a = 1 // cap-ok: paged\nvar b = 2')" "$(printf 'var a = 1 // cap-ok: paged\nvar n = 3')"
+runGate
+expect "a line rewritten under a trailing marker fails undeclared" 1 "+ var n = 3"
+
 # --- 26. every marker a lint honours is registered as watched or unwatched
 reg() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$GATE" | tr '|' '\n'; }
 registered="$(reg WATCHED_MARKERS; reg UNWATCHED_MARKERS)"

@@ -4,13 +4,15 @@
 #   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml (exclusions,
 #   settings, run/issues, and linters removed from enable), configs/ansible/.ansible-lint
 #   skip_list, deploy/systemd/ORPHANS, the waiver maps in lint-pk-discriminators,
-#   lint-derive-generation-guard and the Go guard tests (`*Exempt*|*Allowlist*|*Waiver* = map`),
-#   .github/zizmor.yml and zizmor's floor flags in workflows, the inline migration baselines in
-#   lint-migrations.sh, and (mutations only,
+#   lint-derive-generation-guard and the Go guard tests (`*Exempt*|*Allow(ed|list)*|*Waiver*|
+#   *Ignore(d)* (:)= map`), .github/zizmor.yml and zizmor's floor flags in workflows, alternate
+#   golangci/zizmor config files, diff-hiding .gitattributes lines, the inline migration
+#   baselines in lint-migrations.sh, and (mutations only,
 #   since new migrations append freely) scripts/ci/migration-immutability.sha256, the inline
-#   escape markers in WATCHED_MARKERS in any file outside the lints, their self-tests and docs
-#   (the trailer names the file the marker was added to), and the secret scan's inline allow
-#   marker in any file. A lowered count in a counted baseline is a shrink, not growth.
+#   escape markers in WATCHED_MARKERS in any file outside the lints and their self-tests (docs
+#   are read for WATCHED_MARKERS_CASE only; the trailer names the file the marker was added
+#   to), and the secret scan's inline allow marker in any file. A lowered count in a counted
+#   baseline is a shrink, not growth.
 #
 # Linters fail on stale entries, but nothing stopped one commit from growing an allowlist while
 # introducing the violation it hides. Any range that ADDS entries fails unless a commit message
@@ -55,10 +57,14 @@ if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
   exit 0
 fi
 
+# Content diffs ignore .gitattributes: a `-diff`/`binary` attribute would print "Binary files
+# differ" instead of the added lines, and a textconv or external driver would rewrite them.
+GIT_DIFF=(git diff --text --no-textconv --no-ext-diff)
+
 # added_entries <base> <head> <file> <pattern>: non-comment lines added to <file> matching <pattern>.
 added_entries() {
   local base="$1" head="$2" file="$3" pattern="$4"
-  git diff "${base}...${head}" -- "$file" \
+  "${GIT_DIFF[@]}" "${base}...${head}" -- "$file" \
     | grep -E '^\+[^+]' \
     | sed 's/^+//' \
     | grep -vE '^\s*(#|$)' \
@@ -68,7 +74,7 @@ added_entries() {
 # removed_entries <base> <head> <file> <pattern>: added_entries for the lines the range deletes.
 removed_entries() {
   local base="$1" head="$2" file="$3" pattern="$4"
-  git diff "${base}...${head}" -- "$file" \
+  "${GIT_DIFF[@]}" "${base}...${head}" -- "$file" \
     | grep -E '^-[^-]' \
     | sed 's/^-//' \
     | grep -vE '^\s*(#|$)' \
@@ -82,7 +88,7 @@ removed_entries() {
 # it: a new fingerprint at the same or a lower count is a swapped excused set, i.e. growth.
 baseline_added_entries() {
   local base="$1" head="$2" file="$3"
-  git diff "${base}...${head}" -- "$file" | awk '
+  "${GIT_DIFF[@]}" "${base}...${head}" -- "$file" | awk '
     function counted(s,   rest) {
       if (match(s, /[|[:space:]][0-9]+$/) || match(s, /[|[:space:]][0-9]+[[:space:]]+read/)) {
         key = substr(s, 1, RSTART)
@@ -142,19 +148,51 @@ golangci_waiver_added_lines() {
   printf '%s' "$result"
 }
 
-# go_waiver_map_keys <rev> <file>: the keys of every `<x>Exempt…|<x>Allowlist…|<x>Waiver… = map[…]{`
-# literal in a Go file; each key exempts one site from a guard test.
+# go_waiver_map_keys <rev> <file>: the entries of every `<x>Exempt…|<x>Allow(ed|list)…|<x>Waiver…|
+# <x>Ignore(d)… (:)= map[…]{` literal in a Go file; each key exempts one site from a guard test.
+# Every key of the literal is read, any key expression, several per line included. A string or
+# struct value is a reason and is dropped; any other value (a count, a bool) is part of the entry,
+# so raising it is growth.
 go_waiver_map_keys() {
   git show "${1}:${2}" 2>/dev/null | awk '
-    !depth && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow[Ll]ist|[Ww]aiver)[A-Za-z0-9_]*[[:space:]]*=[[:space:]]*map\[/ { inmap = 1 }
-    inmap {
-      if (depth == 1 && match($0, /^[[:space:]]*"[^"]*"[[:space:]]*:/)) {
-        k = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]+/, "", k); print k
+    function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function flush(   k, v) {
+      if (col) {
+        k = trim(substr(unit, 1, col - 1)); v = trim(substr(unit, col + 1))
+        if (v ~ /^["`{&]/ || v == "") print k; else print k " " v
       }
-      line = $0; o = gsub(/[{]/, "", line); c = gsub(/[}]/, "", line)
-      depth += o - c
-      if (depth <= 0) { inmap = 0; depth = 0 }
+      unit = ""; col = 0
     }
+    function scan(s,   i, ch, n) {
+      n = length(s)
+      for (i = 1; i <= n; i++) {
+        ch = substr(s, i, 1)
+        if (instr) {
+          if (depth >= 1) unit = unit ch
+          if (ch == "\\" && q == "\"") { i++; if (depth >= 1) unit = unit substr(s, i, 1); continue }
+          if (ch == q) instr = 0
+          continue
+        }
+        if (ch == "/" && substr(s, i + 1, 1) == "/") break
+        if (ch == "\"" || ch == "`") { instr = 1; q = ch; if (depth >= 1) unit = unit ch; continue }
+        if (ch == "{") { depth++; if (depth == 1) { unit = ""; col = 0; continue } }
+        if (ch == "}") {
+          if (depth == 1) { flush(); depth = 0; inmap = 0; return }
+          depth--
+        }
+        if (depth < 1) continue
+        if (depth == 1 && ch == ",") { flush(); continue }
+        if (depth == 1 && ch == ":" && !col) col = length(unit) + 1
+        unit = unit ch
+      }
+      if (depth >= 1) unit = unit " "
+    }
+    !inmap && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
+      inmap = 1; depth = 0; instr = 0; unit = ""; col = 0
+      s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s); gsub(/struct[[:space:]]*[{][[:space:]]*[}]/, "struct", s)
+      scan(s); next
+    }
+    inmap { scan($0) }
   '
 }
 
@@ -206,8 +244,10 @@ detect_growth() {
   done < <(git diff --name-only "${base}...${head}" -- 'scripts/ci/*.baseline' 2>/dev/null)
 
   # 2) The waiver arrays in lint-metric-refs.sh: match the stellarindex_* name shape, not the
-  #    array, with or without the trailing `# reason` the arrays ask for.
-  added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*(#.*)?$')"
+  #    array, quoted or bare, one or several per line, inline `X=(…)` included, with or without
+  #    the trailing `# reason` the arrays ask for.
+  added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh \
+    "^[[:space:]]*([A-Z_]+\\+?=\\()?[[:space:]]*([\"']?stellarindex_[a-z0-9_]+[\"']?[[:space:]]*)+\\)?[[:space:]]*(#.*)?\$")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-metric-refs.sh "$line"
   done <<<"$added"
@@ -234,7 +274,8 @@ detect_growth() {
   done <<<"$added"
 
   # 5) govulncheck-allow.txt: one accepted-risk id per line (a .txt, so the *.baseline glob misses it).
-  added="$(added_entries "$base" "$head" scripts/ci/govulncheck-allow.txt '^GO-')"
+  #    The gate reads any GO- id outside a comment, indented or not.
+  added="$(added_entries "$base" "$head" scripts/ci/govulncheck-allow.txt '^[^#]*GO-[0-9]{4}-[0-9]+')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/govulncheck-allow.txt "$line"
   done <<<"$added"
@@ -302,27 +343,54 @@ detect_growth() {
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-migrations.sh "$line"
   done <<<"$added"
 
-  # 11) Inline escape markers (WATCHED_MARKERS): each added marker exempts one line. A marker on
-  #     its own comment line governs the line below, so a rewrite of that line is growth too.
-  #     The lints that honour them, their self-tests and the docs only name a marker, so they are
-  #     skipped.
-  git diff -U1 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \
-      ':(exclude)scripts/ci/*-test.sh' 2>/dev/null \
-      | awk -v re="$WATCHED_MARKERS" -v cre="$WATCHED_MARKERS_CASE" '
-    function marked(s) { return tolower(s) ~ re || s ~ cre }
+  # 11) Inline escape markers (WATCHED_MARKERS): each added marker exempts one line. A marker
+  #     governs the line below too (lint-unflagged-limit and lint-ansible-tasks read it on any
+  #     previous line), so a rewrite of that line is growth. The lints that honour them and
+  #     their self-tests only name a marker, so they are skipped.
+  #     Docs are read for the case-sensitive markers only: runbook SQL honours `DO NOT RUN`.
+  # shellcheck disable=SC2016  # an awk program, not a shell expansion
+  local marker_awk='
+    function marked(s) { return (re != "" && tolower(s) ~ re) || s ~ cre }
     /^\+\+\+ / { f = substr($0, 7); prev = ""; next }
     /^(diff --git|index) / || /^@@/ { prev = ""; next }
     /^-/ { next }
     {
       body = substr($0, 2)
-      if (/^\+/ && (marked(body) || (marked(prev) && prev ~ /^[[:space:]]*(\/\/|#|--)/))) print f "\t" body
+      if (/^\+/ && (marked(body) || marked(prev))) print f "\t" body
       prev = body
     }
   '
+  "${GIT_DIFF[@]}" -U1 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \
+      ':(exclude)scripts/ci/*-test.sh' 2>/dev/null \
+      | awk -v re="$WATCHED_MARKERS" -v cre="$WATCHED_MARKERS_CASE" "$marker_awk"
+  "${GIT_DIFF[@]}" -U1 "${base}...${head}" -- '*.md' 2>/dev/null \
+      | awk -v re="" -v cre="$WATCHED_MARKERS_CASE" "$marker_awk"
+
+  # 15) Tool configs under another name: golangci-lint and zizmor also load these spellings, so
+  #     adding one (or deleting the watched file) swaps in a config the steps above never read.
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && printf '%s\t%s\n' "$f" "added alternate tool config"
+  done < <(git diff --name-only --diff-filter=AR "${base}...${head}" -- \
+    ':(glob)**/.golangci.yaml' ':(glob)**/.golangci.toml' ':(glob)**/.golangci.json' \
+    ':(glob)**/zizmor.yml' ':(glob)**/zizmor.yaml' ':(glob)**/.golangci.yml' 2>/dev/null \
+    | grep -vxE '\.golangci\.yml|\.github/zizmor\.yml' || true)
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && printf '%s\t%s\n' "$f" "deleted watched tool config"
+  done < <(git diff --name-only --diff-filter=DR "${base}...${head}" -- .golangci.yml .github/zizmor.yml 2>/dev/null)
+
+  # 16) .gitattributes (any directory): -diff, binary, diff= or a textconv driver hides a
+  #     path's content from reviewers and from the secret scan's history diff.
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    added="$(added_entries "$base" "$head" "$f" '(^|[[:space:]])([-!]diff|binary|diff=|merge=)([[:space:]]|$)')"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
+    done <<<"$added"
+  done < <(git diff --name-only "${base}...${head}" -- ':(glob)**/.gitattributes' 2>/dev/null)
 
   # 13) The secret scan's inline allow marker: gitleaks skips any line carrying it, in any file
   #     type, so one added marker lands a real secret with a green scan.
-  git diff -U0 "${base}...${head}" 2>/dev/null | awk '
+  "${GIT_DIFF[@]}" -U0 "${base}...${head}" 2>/dev/null | awk '
     /^\+\+\+ / { f = substr($0, 7); next }
     /^\+/ && tolower($0) ~ /gitleaks[:]allow/ { print f "\t" substr($0, 2) }
   '
