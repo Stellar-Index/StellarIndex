@@ -1,6 +1,7 @@
 package v1_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -35,6 +38,71 @@ func getRWAAssetsAt(t *testing.T, url string) (rwaAssetsEnvelope, string) {
 		t.Fatalf("assets = %d, want 1", len(env.Data.Assets))
 	}
 	return env, resp.Header.Get("Cache-Control")
+}
+
+// ctxSplitGate answers a request's own reads from serve and the detached view build's from build, so the set a build judged under
+// can disagree with the set the serve re-judges under.
+type ctxSplitGate struct{ build, serve v1.PriceExclusionGate }
+
+func (g ctxSplitGate) pick(ctx context.Context) v1.PriceExclusionGate {
+	if ctx.Value(http.ServerContextKey) != nil {
+		return g.serve
+	}
+	return g.build
+}
+
+func (g ctxSplitGate) Withholding(ctx context.Context, b, q canonical.Asset, src []string, from, to time.Time) pricingguard.Withholding {
+	return g.pick(ctx).Withholding(ctx, b, q, src, from, to)
+}
+
+func (g ctxSplitGate) InstantWithholding(ctx context.Context, b, q canonical.Asset, src string, ts time.Time) pricingguard.Withholding {
+	return g.pick(ctx).InstantWithholding(ctx, b, q, src, ts)
+}
+
+func (g ctxSplitGate) UnattributedWithholding(ctx context.Context, b, q canonical.Asset, from, to time.Time) pricingguard.Withholding {
+	return g.pick(ctx).UnattributedWithholding(ctx, b, q, from, to)
+}
+
+func (g ctxSplitGate) MultiHopWithholding(ctx context.Context, from, to time.Time) pricingguard.Withholding {
+	return g.pick(ctx).MultiHopWithholding(ctx, from, to)
+}
+
+func (g ctxSplitGate) Snapshot(ctx context.Context) (pricingguard.ExclusionSet, pricingguard.Withholding) {
+	return g.pick(ctx).Snapshot(ctx)
+}
+
+// TestRWAAssets_ARebuildTheExclusionsStillContradictIsRefusedAsSuch: a view whose rebuild still disagrees with the exclusion set
+// is a 503 that says so, not one claiming the view is past its maximum age.
+func TestRWAAssets_ARebuildTheExclusionsStillContradictIsRefusedAsSuch(t *testing.T) {
+	gate := ctxSplitGate{
+		build: assetExclGate(exclTable{}),
+		serve: assetExclGate(exclTable{rows: []timescale.SourceExclusion{{
+			ID: 1, Source: "redstone", Base: "rwa:USTRY", Quote: "fiat:USD", From: time.Now().Add(-time.Hour),
+		}}}),
+	}
+	rows := map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.02033610"), 346312)}}
+	srv := v1.New(v1.Options{
+		Listings:     rwaNothingListed,
+		Sep1Cache:    &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")}},
+		Directory:    &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")}},
+		Oracle:       rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "107403800", 8)),
+		AssetsReader: &rwaListStub{stubAssetsReaderExt: &stubAssetsReaderExt{}, byIssuer: rows, supply: rwaSupplyFor(rows)},
+		Exclusions:   gate,
+	})
+	resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/rwa/assets")
+	defer func() { _ = resp.Body.Close() }()
+	var problem struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&problem); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("status = %d Retry-After = %q, want 503 with Retry-After", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+	if !strings.Contains(problem.Detail, "source exclusions changed") || strings.Contains(problem.Detail, "maximum age") {
+		t.Errorf("detail = %q, want it to name the exclusion change, not the view's age", problem.Detail)
+	}
 }
 
 // TestRWAAssets_ASourceExcludedReferenceIsWithheldAndFlagged: an operator exclusion over the oracle that values a member

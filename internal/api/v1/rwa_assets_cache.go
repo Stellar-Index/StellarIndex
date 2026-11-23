@@ -3,7 +3,6 @@ package v1
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -34,7 +33,18 @@ type rwaAssetsBuild struct {
 
 // errRWAViewVerdictsChanged: the exclusion set no longer judges the view's references as its build did, and a rebuild did not
 // catch up, so the view's figures are no longer true.
-var errRWAViewVerdictsChanged = fmt.Errorf("%w: the source exclusions changed under it", errRWAViewTooOld)
+var errRWAViewVerdictsChanged = errors.New("rwa assets view was rebuilt but the source exclusions still judge its references otherwise")
+
+// rwaAssetsUnavailableDetail is the 503 detail for a view the cache refused to serve, or false for any other error.
+func rwaAssetsUnavailableDetail(err error) (string, bool) {
+	switch {
+	case errors.Is(err, errRWAViewVerdictsChanged):
+		return "the source exclusions changed under the assets view and its rebuild does not yet agree with them; retry shortly", true
+	case errors.Is(err, errRWAViewTooOld):
+		return "the last assets view is past its maximum age and its rebuild has not answered; retry shortly", true
+	}
+	return "", false
+}
 
 // cachedRWAAssetsView serves the assembled view, never one whose reference verdicts the current exclusion set contradicts:
 // that view is rebuilt, waiting up to ctx, and refused if the rebuild still disagrees.

@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"net/http"
 	"slices"
@@ -1153,13 +1152,12 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, errRWAViewTooOld) {
+		if detail, ok := rwaAssetsUnavailableDetail(err); ok {
 			s.logger.Warn("rwa assets view unavailable", "err", err)
 			w.Header().Set("Retry-After", rwaSeriesRetryAfter)
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/rwa-assets-unavailable",
-				"RWA assets unavailable", http.StatusServiceUnavailable,
-				"the last assets view is past its maximum age and its rebuild has not answered; retry shortly")
+				"RWA assets unavailable", http.StatusServiceUnavailable, detail)
 			return
 		}
 		s.logger.Error("rwa listing read failed", "err", err)
