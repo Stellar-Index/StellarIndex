@@ -268,38 +268,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 
 	snapshots, served, viaPeg, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		// Substance-gated pair: same 404 verdict as lastprice — a
-		// historical snapshot series is still an aggregated price
-		// claim per bucket.
-		if errors.Is(err, ErrPriceWithheld) {
-			writePriceWithheldProblem(w, r, asset, defaultPriceQuote, priceWithheldReason(err))
-			return
-		}
-		if errors.Is(err, errStablecoinNoOwnSeries) {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/price-not-found",
-				"No price data for asset", http.StatusNotFound,
-				asset.String()+" is a USD stablecoin with no observed fiat:USD series; another stablecoin's book "+
-					"never stands in for its price")
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.logger.Warn("RecentClosedSnapshots (sep40 prices) deadline exceeded",
-				"asset", asset.String(), "records", records)
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/oracle-prices-timeout",
-				"Oracle prices query timed out", http.StatusServiceUnavailable,
-				"the price history read didn't return in 8s; retry shortly.")
-			return
-		}
-		s.logger.Error("RecentClosedSnapshots (sep40 prices) failed",
-			"err", err, "asset", asset.String(), "records", records)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+		s.writeOraclePricesError(ctx, w, r, asset, records, err)
 		return
 	}
 
@@ -329,6 +298,37 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown,
 		FrozenChecked: held.checked && !windowsUnknown,
 	}, excluded))
+}
+
+// writeOraclePricesError answers a prices() series read that served nothing.
+func (s *Server) writeOraclePricesError(
+	ctx context.Context, w http.ResponseWriter, r *http.Request, asset canonical.Asset, records int, err error,
+) {
+	switch {
+	case clientAborted(r, err):
+	case errors.Is(err, ErrPriceWithheld):
+		// Same 404 verdict as lastprice: a snapshot series is still an aggregated price claim per bucket.
+		writePriceWithheldProblem(w, r, asset, defaultPriceQuote, priceWithheldReason(err))
+	case errors.Is(err, errStablecoinNoOwnSeries):
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/price-not-found",
+			"No price data for asset", http.StatusNotFound,
+			asset.String()+" is a USD stablecoin with no observed fiat:USD series; another stablecoin's book "+
+				"never stands in for its price")
+	case handlerTimedOut(ctx, err):
+		s.logger.Warn("RecentClosedSnapshots (sep40 prices) deadline exceeded",
+			"asset", asset.String(), "records", records)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/oracle-prices-timeout",
+			"Oracle prices query timed out", http.StatusServiceUnavailable,
+			"the price history read didn't return in 8s; retry shortly.")
+	default:
+		s.logger.Error("RecentClosedSnapshots (sep40 prices) failed",
+			"err", err, "asset", asset.String(), "records", records)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+	}
 }
 
 // writeFrozenOraclePrices answers prices() for a pair frozen now and reports whether it wrote: it serves only the held value
@@ -382,22 +382,11 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	}
 	// A USD stablecoin's book against another peg would hide a joint depeg (and its own peg is no market).
 	if s.isUSDStablecoin(asset) {
-		if len(best) > 0 {
-			return best, served, false, nil
-		}
-		if err := failed.err(); err != nil {
-			return nil, canonical.Asset{}, false, err
-		}
-		return nil, canonical.Asset{}, false, errStablecoinNoOwnSeries
+		return stablecoinOwnSeries(best, served, failed)
 	}
 	for _, peg := range s.usdPegProxyQuotes() {
-		pegSnapshots, pegAt, pegServed, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
-		if pegErr == nil {
-			pegSnapshots, pegErr = s.pegSeriesClean(ctx, asset, quote, pegSnapshots)
-			pegAt = newestSnapshotTime(pegSnapshots)
-		}
-		if pegErr != nil || len(pegSnapshots) == 0 {
-			failed.note(pegErr)
+		pegSnapshots, pegAt, pegServed, ok := s.oraclePegSeries(ctx, asset, quote, peg, n, &failed)
+		if !ok {
 			continue
 		}
 		if s.oracleSeriesSupersedes(best, bestAt, pegSnapshots, pegAt) {
@@ -414,6 +403,32 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		return best, served, viaPeg, nil
 	}
 	return nil, canonical.Asset{}, false, failed.err()
+}
+
+// stablecoinOwnSeries answers a USD stablecoin from its own series only: a withheld verdict outranks "no series".
+func stablecoinOwnSeries(best []PriceSnapshot, served canonical.Asset, failed oracleLegErrors) ([]PriceSnapshot, canonical.Asset, bool, error) {
+	if len(best) > 0 {
+		return best, served, false, nil
+	}
+	if err := failed.err(); err != nil {
+		return nil, canonical.Asset{}, false, err
+	}
+	return nil, canonical.Asset{}, false, errStablecoinNoOwnSeries
+}
+
+// oraclePegSeries reads asset's series against one peg, judged under the requested pair; a failed or empty leg is noted.
+func (s *Server) oraclePegSeries(
+	ctx context.Context, asset, quote, peg canonical.Asset, n int, failed *oracleLegErrors,
+) ([]PriceSnapshot, time.Time, canonical.Asset, bool) {
+	snaps, _, served, err := s.recentClosedForAliases(ctx, asset, peg, n)
+	if err == nil {
+		snaps, err = s.pegSeriesClean(ctx, asset, quote, snaps)
+	}
+	if err != nil || len(snaps) == 0 {
+		failed.note(err)
+		return nil, time.Time{}, canonical.Asset{}, false
+	}
+	return snaps, newestSnapshotTime(snaps), served, true
 }
 
 // seriesFillsWithheld marks an older series served because an exclusion withheld a newer one: the answer is not what an
