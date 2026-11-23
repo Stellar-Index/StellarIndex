@@ -575,6 +575,10 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 		membership: rwaSeriesMembershipOf(m, now),
 	}
 	out.excluded[RWAHistoryExcludedContract] = len(m.contracts)
+	m, ok := s.rwaSeriesMembers(ctx, m)
+	if !ok {
+		return rwaPremiumHistory{}
+	}
 
 	cands := rwaPremiumCandidates(m, out.excluded)
 	out.bound = len(cands)

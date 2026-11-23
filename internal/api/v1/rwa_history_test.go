@@ -767,3 +767,49 @@ func TestPrewarmRWA_RebuildsFreshHistories(t *testing.T) {
 		t.Errorf("premium history built %d times over two prewarms, want 2", n)
 	}
 }
+
+// rwaHistoryTagSkewServer admits USTRY on an untagged directory entry, then answers every later directory read with dir.
+func rwaHistoryTagSkewServer(t *testing.T, dir *rwaSkewedDirectory) *v1.Server {
+	t.Helper()
+	bound, _, rows := oneBoundMember()
+	dir.membership = recognisedIssuer(rwaGoodIssuer, "Etherfuse")
+	return v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: dir,
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{}, byIssuer: rows, supply: rwaSupplyFor(rows),
+		},
+		TokenSupply: &stubFlowSupply{days: []clickhouse.SupplyFlowDay{
+			histFlow(rwaHistSAC(t, "USTRY", rwaGoodIssuer), 1, "200000000"),
+		}},
+		OracleHistory: &stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+		MarketHistory: &stubMarketHistory{rows: []timescale.MarketDay{premMarket(premAssetID("USTRY", rwaGoodIssuer), 1, "1.08")}},
+	})
+}
+
+// TestRWAHistory_AFlagTaggedAfterMembershipWithholdsTheIssuer: /v1/rwa/assets re-reads the directory at every build, so a
+// series built from the same cached membership must too, or it keeps valuing an issuer the listing already withholds.
+func TestRWAHistory_AFlagTaggedAfterMembershipWithholdsTheIssuer(t *testing.T) {
+	flagged := recognisedIssuer(rwaGoodIssuer, "Etherfuse")
+	flagged.Tags = []string{"issuer", "malicious"}
+	srv := rwaHistoryTagSkewServer(t, &rwaSkewedDirectory{rowFill: flagged})
+	v := getRWAHistory(t, srv, "?timeframe=all")
+	if len(v.Points) != 0 || v.Members != 0 {
+		t.Fatalf("points/members = %+v/%d, want none — the issuer is flagged now", v.Points, v.Members)
+	}
+	if !hasExclusion(v, "issuer_flagged", 1) {
+		t.Fatalf("excluded = %+v, want issuer_flagged×1", v.Excluded)
+	}
+	p := getRWAPremium(t, srv, "?timeframe=all")
+	if len(p.Series) != 0 || premiumExcluded(p, "issuer_flagged") != 1 {
+		t.Fatalf("premium series/excluded = %+v/%+v, want none and issuer_flagged×1", p.Series, p.Excluded)
+	}
+}
+
+// TestRWAHistory_AnUnreadIssuerFlagPublishesNoSeries: the listing withholds a row whose directory read failed, so a
+// series must not value one either.
+func TestRWAHistory_AnUnreadIssuerFlagPublishesNoSeries(t *testing.T) {
+	srv := rwaHistoryTagSkewServer(t, &rwaSkewedDirectory{rowFillErr: errors.New("account_directory: statement timeout")})
+	getRWAUnavailable(t, srv, "/v1/rwa/history")
+	getRWAUnavailable(t, srv, "/v1/rwa/premium")
+}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -656,6 +657,10 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		return rwaValueHistory{}
 	}
 	out := rwaHistorySetOf(m, time.Now().UTC())
+	m, ok := s.rwaSeriesMembers(ctx, m)
+	if !ok {
+		return rwaValueHistory{}
+	}
 
 	cands := rwaHistoryCandidates(m, out.excluded)
 	if len(cands) == 0 {
@@ -704,6 +709,25 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 	out.sources = rwaHistorySources(out.members)
 	out.available = true
 	return out
+}
+
+// rwaSeriesMembers is m with its classic members as /v1/rwa/assets judges them at this build: the issuers' directory
+// tags re-read in one batch, since a tag added after the membership was built must withhold the series too. ok=false
+// when the read failed, as the listing withholds an unchecked issuer's valuation.
+func (s *Server) rwaSeriesMembers(ctx context.Context, m rwaMembership) (rwaMembership, bool) {
+	if s.Directory == nil || len(m.members) == 0 {
+		return m, true
+	}
+	found, err := s.Directory.DirectoryEntriesByAddresses(ctx, rwaMemberIssuers(m))
+	if err != nil {
+		s.logger.Warn("rwa series: issuer directory read failed", "err", err)
+		return m, false
+	}
+	m.members = slices.Clone(m.members)
+	for i := range m.members {
+		m.members[i].dirTags = found[m.members[i].issuer].Tags
+	}
+	return m, true
 }
 
 func rwaHistoryIssuerCount(m rwaMembership) int {
