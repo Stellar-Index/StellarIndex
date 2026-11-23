@@ -8,6 +8,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -674,7 +675,10 @@ func (s *Server) fillContractDirectoryTags(ctx context.Context, rows []AssetDeta
 		if !ok {
 			continue
 		}
-		stampIssuerDirectory(&rows[i], e)
+		// A wrapped issuer's scam flag stamped earlier outranks the contract's own clean entry.
+		if !pricingguard.IsDirectoryScamFlagged(rows[i].IssuerDirectoryTags) || pricingguard.IsDirectoryScamFlagged(e.Tags) {
+			stampIssuerDirectory(&rows[i], e)
+		}
 		suppressScamIssuerPricing(&rows[i])
 	}
 }
