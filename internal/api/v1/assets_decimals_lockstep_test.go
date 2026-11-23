@@ -168,6 +168,11 @@ func TestAssetsF2_DecimalsLockstep_LakeUnavailableUsesProjection(t *testing.T) {
 	if got := assetDetailMismatchVal() - before; got != 0 {
 		t.Errorf("asset_detail mismatch counter delta = %v, want 0", got)
 	}
+	// The lockstep check never ran, so the body cannot vouch that the projection is the token's
+	// scale: a client holding an earlier mismatch verdict must not see it cleared by this read.
+	if !strings.Contains(body, `"stale":true`) {
+		t.Errorf("a failed lake read must mark the body stale (flags.stale): %s", body)
+	}
 }
 
 // Same fallback when the lake is readable but NOT DERIVABLE for this token
