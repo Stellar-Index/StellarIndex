@@ -1161,6 +1161,20 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 
 	// (2) read_rows: one page of 50 via each path.
 	const limit = 50
+	// A page key costs one granule in EVERY part of its partition whose range covers it, and unmerged re-ingest parts
+	// (or a -count rerun) overlap, so the bound is per overlapping part. Counted BEFORE the reads: merges only lower it.
+	pageRows, _, err := er.AccountOperations(ctx, hot, limit, chstore.ExplorerCursor{})
+	if err != nil || len(pageRows) != limit {
+		t.Fatalf("read_rows page preview: %v (%d rows)", err, len(pageRows))
+	}
+	var overlapParts uint64
+	if err := raw.QueryRow(ctx, `SELECT max(c) FROM (SELECT table, count() AS c FROM system.parts
+		WHERE database = 'stellar' AND active AND table IN ('operations', 'transactions')
+		  AND toUInt32(partition) BETWEEN intDiv(?, 1000000) AND intDiv(?, 1000000) GROUP BY table)`,
+		pageRows[limit-1].Seq, pageRows[0].Seq).Scan(&overlapParts); err != nil || overlapParts == 0 {
+		t.Fatalf("count page partition parts: %v (%d parts)", err, overlapParts)
+	}
+	readerBound := 3 * limit * 8192 * overlapParts
 	t0 := time.Now().Add(-time.Second)
 	legacyID := uuid.NewString()
 	_ = legacyPage(clickhouse.Context(ctx, clickhouse.WithQueryID(legacyID)), limit, chstore.ExplorerCursor{})
@@ -1192,15 +1206,17 @@ func TestClickHouseAccountOperationsPageBoundedByPageSize(t *testing.T) {
 	if readerRead == 0 {
 		t.Fatal("no reader statement found in query_log — the log_comment tag did not reach the server")
 	}
-	t.Logf("read_rows: legacy=%d reader=%d (fixture: %d hot op keys, one per 8192-row granule; page %d)",
-		legacyRead, readerRead, len(opsSeen), limit)
-	if legacyRead < uint64(n/stride)*4096 {
-		t.Fatalf("fixture no longer reproduces the pathology: legacy read %d rows, expected ≥ one granule per hot key (~%d) — the differential still holds but the read_rows bound below would be vacuous",
-			legacyRead, (n/stride)*8192)
+	t.Logf("read_rows: legacy=%d reader=%d bound=%d (%d parts overlap the page; fixture: %d hot op keys, one per 8192-row granule; page %d)",
+		legacyRead, readerRead, readerBound, overlapParts, len(opsSeen), limit)
+	// The legacy read is O(history) and shrinks as background merges drop parts, so it is only the pathology witness,
+	// never the denominator: the reader's bound is absolute.
+	if legacyRead <= readerBound {
+		t.Fatalf("fixture no longer reproduces the pathology: legacy read %d rows ≤ the reader bound %d, so a reader that went back to scanning the account's history would pass",
+			legacyRead, readerBound)
 	}
-	if readerRead*4 > legacyRead {
-		t.Fatalf("reader read %d rows vs legacy %d — the page must be bounded by the page size (≤ 3×limit granules), not by the account's history",
-			readerRead, legacyRead)
+	if readerRead > readerBound {
+		t.Fatalf("reader read %d rows > %d (3×limit granules × %d overlapping parts) — the page must be bounded by the page size, not by the account's history",
+			readerRead, readerBound, overlapParts)
 	}
 }
 
