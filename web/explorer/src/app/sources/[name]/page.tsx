@@ -10,7 +10,6 @@ import {
   PageHeader,
   TBody,
   LinkRow,
-  TR,
   Table,
   Td,
   Th,
@@ -18,7 +17,9 @@ import {
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { sourceLabel, sourceUnitsLabel } from '../sourceLabel';
+import { SourceCursorsPanel } from './SourceCursorsPanel';
 import { SourceHealthPanel } from './SourceHealthPanel';
+import { bakedAtDeploy } from '@/app/assets/[slug]/priceProvenance';
 import { SourcePathView } from './SourcePathView';
 import { SourcePeerBars } from './SourcePeerBars';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
@@ -64,14 +65,6 @@ interface Source {
   volume_24h_usd?: string | null;
   markets_count_24h?: number;
   volume_history_24h?: VolumeBucket[];
-}
-
-interface CursorRow {
-  source: string;
-  sub_source?: string;
-  last_ledger: number;
-  last_updated: string;
-  lag_seconds: number;
 }
 
 export async function generateStaticParams() {
@@ -146,11 +139,6 @@ async function fetchSource(name: string): Promise<Source | null> {
   return rows?.find((s) => s.name === name) ?? null;
 }
 
-async function fetchCursors(): Promise<CursorRow[]> {
-  const rows = await buildFetchData<CursorRow[]>('/v1/diagnostics/cursors');
-  return rows ?? [];
-}
-
 type MarketRow = components['schemas']['MarketRow'];
 
 async function fetchSourceMarkets(name: string): Promise<MarketRow[] | null> {
@@ -179,10 +167,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
       </Container>
     );
   }
-  const [source, allCursors] = await Promise.all([
-    fetchSource(name),
-    fetchCursors(),
-  ]);
+  const source = await fetchSource(name);
 
   if (!source) {
     // Real build: this name was promised by generateStaticParams off
@@ -207,18 +192,6 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
       />
     );
   }
-
-  // The cursor's `source` is the cursor TYPE (backfill / projector /
-  // ledgerstream); the venue lives in `sub_source` — projector rows
-  // carry it bare ("soroswap"), backfill rows prefix a ledger range
-  // ("<from-to>:sdex"). Filtering by `source === name`
-  // matches nothing → the panel always read empty.
-  const cursorVenue = (c: { sub_source?: string }): string => {
-    const ss = (c.sub_source ?? '').trim();
-    const colon = ss.lastIndexOf(':');
-    return colon >= 0 ? ss.slice(colon + 1) : ss;
-  };
-  const cursors = allCursors.filter((c) => cursorVenue(c) === name);
 
   // /v1/markets?source= refuses data vendors (their prices are served only
   // blended); the API says which sources it accepts via `selectable`.
@@ -330,59 +303,13 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
 
       {selectable && <SourceTopChart source={name} sourceName={label} />}
 
-      <Panel
-        headingLevel={2}
-        title="Ingest cursors"
-        hint={`${cursors.length} entries · live ingest position per sub-source`}
-        source={asExample('/v1/diagnostics/cursors')}
-        bodyClassName={cursors.length === 0 ? undefined : '-mx-4 -mb-4'}
-      >
-        {cursors.length === 0 ? (
-          <p className="text-ink-muted text-sm">
-            No cursor recorded for this source.
-          </p>
-        ) : (
-          // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
-          // instead of pushing the whole page sideways at 320px.
-          <div className="overflow-x-auto">
-            <Table>
-              <THead>
-                <tr>
-                  <Th>Sub-source</Th>
-                  <Th align="right">Last ledger</Th>
-                  <Th align="right">Updated</Th>
-                  <Th align="right">Lag</Th>
-                </tr>
-              </THead>
-              <TBody>
-                {cursors.map((c, i) => (
-                  <TR key={`${c.sub_source ?? ''}|${i}`}>
-                    <Td className="font-mono text-xs">{c.sub_source || '—'}</Td>
-                    <Td align="right" className="font-mono">
-                      #{c.last_ledger}
-                    </Td>
-                    <Td
-                      align="right"
-                      className="text-ink-muted font-mono text-xs"
-                    >
-                      {c.last_updated.replace('T', ' ').slice(0, 19)} UTC
-                    </Td>
-                    <Td align="right">
-                      <LagBadge seconds={c.lag_seconds} />
-                    </Td>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          </div>
-        )}
-      </Panel>
+      <SourceCursorsPanel source={name} />
 
       {selectable && (
         <Panel
           headingLevel={2}
           title="Top markets via this source"
-          hint={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume`}
+          hint={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume · ${bakedAtDeploy()}`}
           source={asExample('/v1/markets', {
             source: name,
             order_by: 'volume_24h_usd_desc',
@@ -502,21 +429,5 @@ function Fact({
         {value}
       </dd>
     </div>
-  );
-}
-
-function LagBadge({ seconds }: { seconds: number }) {
-  const s = Math.max(0, seconds);
-  const tone = s <= 60 ? 'ok' : s <= 600 ? 'warn' : 'bad';
-  const label =
-    s < 60
-      ? `${s.toFixed(0)}s`
-      : s < 3600
-        ? `${(s / 60).toFixed(1)}m`
-        : `${(s / 3600).toFixed(1)}h`;
-  return (
-    <Badge tone={tone} className="tnum">
-      {label}
-    </Badge>
   );
 }

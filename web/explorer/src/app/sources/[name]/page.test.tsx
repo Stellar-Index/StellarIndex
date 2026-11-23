@@ -13,6 +13,7 @@ vi.mock('@/lib/buildFetch', async () => {
 // Client children of this server page pull their own data; stub them so
 // the assertions below are about the build-time market list only.
 vi.mock('./SourceHealthPanel', () => ({ SourceHealthPanel: () => <div /> }));
+vi.mock('./SourceCursorsPanel', () => ({ SourceCursorsPanel: () => <div /> }));
 vi.mock('../../dexes/[source]/SourceVolumeHistory', () => ({
   SourceVolumeHistory: () => <div />,
 }));
@@ -96,6 +97,24 @@ describe('SourceDetailPage top markets', () => {
       screen.queryByText(/Market list unavailable/),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/0 pairs/)).toBeInTheDocument();
+  });
+
+  it('captions the baked 24h market figures with their build time', async () => {
+    mockFetches([]);
+    await renderPage();
+    expect(
+      screen.getByText(/ranked by 24h USD volume · as baked at deploy/),
+    ).toBeInTheDocument();
+  });
+
+  it('never bakes ingest cursors (their lag is only true when read live)', async () => {
+    mockFetches([]);
+    vi.mocked(buildFetchData).mockClear();
+    await renderPage();
+    const paths = vi.mocked(buildFetchData).mock.calls.map(([p]) => p);
+    expect(paths.some((p) => p.startsWith('/v1/diagnostics/cursors'))).toBe(
+      false,
+    );
   });
 
   it('marks a 24h volume the API flags as a lower bound', async () => {
