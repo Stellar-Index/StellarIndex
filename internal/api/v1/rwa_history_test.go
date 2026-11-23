@@ -574,6 +574,31 @@ func TestRWAHistory_NoFlowsAtAllIsItsOwnReason(t *testing.T) {
 	}
 }
 
+// TestRWAHistory_NoSupplyOnAnyPricedDayIsNotAnOracleGap: the oracle published, but on none of its days was any of the
+// token in circulation (first minted after the last priced day, or redeemed to zero). Calling that no_reference_history
+// would send an operator after an oracle integration that is working.
+func TestRWAHistory_NoSupplyOnAnyPricedDayIsNotAnOracleGap(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	for name, flows := range map[string][]clickhouse.SupplyFlowDay{
+		"minted after the last priced day": {histFlow(sac, 3, "200000000")},
+		"redeemed to zero":                 {histFlow(sac, 1, "200000000"), histFlow(sac, 2, "-200000000")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := rwaHistoryServer(t, bound, dir, rows, &stubFlowSupply{days: flows},
+				&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 2, 107000000)}},
+			)
+			v := getRWAHistory(t, srv, "?timeframe=all")
+			if len(v.Points) != 0 || !hasExclusion(v, "no_same_day_observation", 1) || hasExclusion(v, "no_reference_history", 1) {
+				t.Fatalf("points/excluded = %+v/%+v, want none and no_same_day_observation×1", v.Points, v.Excluded)
+			}
+			if d := exclusionDetail(v, "no_same_day_observation"); !containsFold(d, "supply") {
+				t.Errorf("detail = %q, want the supply-side cause named", d)
+			}
+		})
+	}
+}
+
 // TestRWAHistory_UnboundMemberIsExcludedNotDropped: a member with no curated (code, issuer) to feed binding can't be
 // valued, and the total must say so rather than become a smaller claim under the same label.
 func TestRWAHistory_UnboundMemberIsExcludedNotDropped(t *testing.T) {

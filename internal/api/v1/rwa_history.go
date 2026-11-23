@@ -189,6 +189,7 @@ var rwaHistoryExcludedDetail = map[string]string{
 	RWAHistoryExcludedNoSupplyHistory:    "The lake holds no mint/burn record for this asset's Stellar Asset Contract, so no supply level can be reconstructed for any day. An operator can move this by seeding the contract's flows.",
 	RWAHistoryExcludedSupplyIncomplete:   "The running total of this asset's recorded flows goes negative, which no real token can do. Its flow log is incompletely seeded in the lake, and a series built on it would understate the supply by an unknown amount. An operator can move this by re-seeding the contract.",
 	RWAHistoryExcludedNoReferenceHistory: "The oracles have published no dollar-denominated day bucket for this asset's bound instrument, so there is no value to multiply the supply by.",
+	RWAPremiumExcludedNoOverlap:          "The oracles published day buckets for this asset's bound instrument and the lake holds its supply flows, but on none of those priced days was any supply outstanding: it was first minted after the latest closed priced day, or its supply was zero on every one. It enters the series on the first priced day it has supply.",
 }
 
 // rwaHistoryBasis is the prose on every response: what the number is, what it is not, and the two structural caveats a reader cannot
@@ -692,7 +693,8 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		}
 		days := rwaHistoryMemberDays(levels, series.days, c.decimals)
 		if len(days) == 0 {
-			out.excluded[RWAHistoryExcludedNoReferenceHistory]++
+			// Both legs were read; no priced day held any supply. That is not an oracle gap.
+			out.excluded[RWAPremiumExcludedNoOverlap]++
 			continue
 		}
 		out.members = append(out.members, rwaHistoryMember{
