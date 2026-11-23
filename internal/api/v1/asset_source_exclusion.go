@@ -136,6 +136,8 @@ type rowJudge struct {
 	known bool
 	xlm   bool // the row is XLM itself, so its own leg is the XLM/USD anchor
 	peg   *canonical.Asset
+	// sac is a classic's derived SAC outside its alias family, whose volume [Server.addDerivedSACVolume24h] may merge in.
+	sac *canonical.Asset
 }
 
 func (sc assetExclusionScope) rowJudge(ctx context.Context, s *Server, d *AssetDetail) rowJudge {
@@ -144,6 +146,13 @@ func (sc assetExclusionScope) rowJudge(ctx context.Context, s *Server, d *AssetD
 	j.xlm = j.known && slices.Contains(canonical.AssetAliasStrings(canonical.NativeAsset()), j.asset.String())
 	if peg, ok := s.FiatPeggedClassics[d.AssetID]; ok && !peg.Equal(defaultPriceQuote) {
 		j.peg = &peg
+	}
+	if j.known && j.asset.Type == canonical.AssetClassic {
+		if id, err := j.asset.SacContractID(); err == nil && !slices.Contains(canonical.AssetAliasStrings(j.asset), id) {
+			if sac, err := canonical.NewSorobanAsset(id); err == nil {
+				j.sac = &sac
+			}
+		}
 	}
 	return j
 }
@@ -162,10 +171,12 @@ func (j rowJudge) instantCovered(source string, at time.Time) bool {
 func (j rowJudge) covered(from, to time.Time) bool { return j.legsCovered(from, from, from, to) }
 
 // volumeCovered is [rowJudge.covered] for a USD volume, which sums every pair the asset sits on, base or quote, so an exclusion
-// naming it on either side reaches the volume even for XLM, whose price reads only its USD books.
+// naming it on either side reaches the volume even for XLM, whose price reads only its USD books. A classic's derived SAC is
+// judged whether or not its volume was merged: the cached row does not record the merge, so this withholds on the safe side.
 func (j rowJudge) volumeCovered(from, to time.Time) bool {
 	return j.covered(from, to) ||
-		j.xlm && j.set.UnattributedWithholding(j.ctx, j.asset, defaultPriceQuote, from, to) != pricingguard.NotWithheld
+		j.xlm && j.set.UnattributedWithholding(j.ctx, j.asset, defaultPriceQuote, from, to) != pricingguard.NotWithheld ||
+		j.sac != nil && j.set.UnattributedWithholding(j.ctx, *j.sac, defaultPriceQuote, from, to) != pricingguard.NotWithheld
 }
 
 // volumeCharacterSpan is the trades window the volume-character rollup summed: its window_days (timescale's 14-day default when

@@ -51,6 +51,39 @@ func TestAssetVolume_ExclusionOnAnXLMMarketWithholdsXLMVolume(t *testing.T) {
 	}
 }
 
+// TestAssetVolume_ExclusionOnTheDerivedSACWithholdsClassicVolume: a classic's volume may include its derived SAC's trades, which
+// sit outside the classic's alias family, so an exclusion on the SAC's market withholds the classic's volume, not its price.
+func TestAssetVolume_ExclusionOnTheDerivedSACWithholdsClassicVolume(t *testing.T) {
+	const id = "FOO-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	a, err := canonical.ParseAsset(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac, err := a.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	price, vol := "2.50", "5000.00"
+	foo := v1.AssetDetail{AssetID: id, Type: "classic", Code: "FOO", Decimals: 7, PriceUSD: &price, VolumeUSD24h: &vol}
+	gate := pricingguard.NewSourceExclusionGate(exclTable{rows: []timescale.SourceExclusion{{
+		Source: "soroswap", Base: sac, Quote: canonical.NativeAsset().String(), From: time.Now().Add(-time.Hour),
+	}}}, pricingguard.SourceExclusionGateOptions{})
+	srv := v1.New(v1.Options{
+		Assets:     &stubAssetReader{byID: map[string]v1.AssetDetail{id: foo}, page: []v1.AssetDetail{foo}},
+		Exclusions: gate,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+	for _, path := range []string{"/v1/assets", "/v1/assets/" + id} {
+		body, _ := readAll(mustGet(t, ts.URL+path))
+		if strings.Contains(body, `"volume_24h_usd":"`) || !strings.Contains(body, `"fills_withheld_reason":"source_excluded"`) {
+			t.Errorf("%s serves a volume the SAC exclusion covers, or names no withheld fill: %s", path, body)
+		}
+		if !strings.Contains(body, `"price_usd":"2.50"`) {
+			t.Errorf("%s withheld FOO's price, which an exclusion on its SAC's XLM market does not cover: %s", path, body)
+		}
+	}
+}
+
 // TestAssetDetail_TrustReadsTheJudgedPrice: the trust summary is rebuilt after the exclusion judgement, so a withheld price is
 // not still scored as an observed market price.
 func TestAssetDetail_TrustReadsTheJudgedPrice(t *testing.T) {
