@@ -62,7 +62,8 @@ tests:
               description: |
                 A process in cap67-movements.service has run a /usr/local/bin
                 stellarindex-* or galexie binary for 30 min after that file
-                was replaced (exe link "(deleted)" or a .prev-<tag> name).
+                was replaced (exe link "(deleted)" or a dotted name such as
+                .prev-<tag>, .failed-<tag> or .rolledback-<tag>).
                 It is executing the OLD build: whatever it writes follows
                 the old code, and a fix that was deployed is not in effect.
 
