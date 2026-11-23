@@ -209,7 +209,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		Clamped:             clamped,
 		BelowFloor:          belowFloor,
 		Substance:           substance,
-	}, s.withProxyDeviation(ctx, markFillsWithheld(Flags{Triangulated: triangulated, ThinMarket: substance != nil}, excluded), pair.Quote, to))
+	}, s.withFiatCombineProxyDeviation(ctx, markFillsWithheld(Flags{Triangulated: triangulated, ThinMarket: substance != nil}, excluded), pair.Quote, to, books))
 }
 
 // filterOHLCOutliers applies the single-bar outlier filter; a window with trades but none kept is a 422 (the filter withheld them), not

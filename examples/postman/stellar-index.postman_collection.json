@@ -14149,7 +14149,7 @@
               "request": {
                 "name": "SEP-40 prices-equivalent passthrough (N historical).",
                 "description": {
-                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`prices(asset, records) -> Option<Vec<PriceData>>` — \"the\nlast N price records\". Returns up to `records` most-recent\nCLOSED 1-minute VWAP snapshots for the asset/USD pair,\nnewest first; the in-progress bucket is excluded\n(ADR-0015). 200 with an empty array when the asset has no\nclosed buckets yet. A pair frozen by the anomaly checker\n(ADR-0019) serves one record, the held last-known-good value\n`lastprice` serves, with `flags.frozen` and `flags.degraded`;\nthe closed buckets are not served while the freeze holds, and\na freeze with no held value answers 503.\n",
+                  "content": "HTTP mirror of the SEP-40 oracle contract call\n`prices(asset, records) -> Option<Vec<PriceData>>` — \"the\nlast N price records\". Returns up to `records` most-recent\nCLOSED 1-minute VWAP snapshots for the asset/USD pair,\nnewest first; the in-progress bucket is excluded\n(ADR-0015). 200 with an empty array when the asset has no\nclosed buckets yet. A USD stablecoin (a declared peg, or a\n`crypto:<STABLE>` ticker) is served only from its own observed\nfiat:USD series, never from another stablecoin's book; with\nnone recorded it answers 404 `price-not-found`. A pair frozen by the anomaly checker\n(ADR-0019) serves one record, the held last-known-good value\n`lastprice` serves, with `flags.frozen` and `flags.degraded`;\nthe closed buckets are not served while the freeze holds, and\na freeze with no held value answers 503.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -14291,6 +14291,60 @@
                   },
                   "status": "Bad Request",
                   "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Not found.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "oracle",
+                        "prices"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) ",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "",
+                            "type": "text/plain"
+                          },
+                          "key": "records",
+                          "value": "60"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Not Found",
+                  "code": 404,
                   "header": [
                     {
                       "key": "Content-Type",

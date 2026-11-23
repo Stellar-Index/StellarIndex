@@ -407,6 +407,42 @@ func TestVWAP_ProxyDeviationBand(t *testing.T) {
 	}
 }
 
+// TestFiatCombine_ProxyDeviationChecksAbstractBackers: the fiat combine reads X/crypto:USDT for a fiat:USD answer, so a
+// depegged USDT must raise proxy_deviation even when the only declared classic peg holds.
+func TestFiatCombine_ProxyDeviationChecksAbstractBackers(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
+	xlm, _ := canonical.ParseAsset("native")
+	usdt, _ := canonical.ParseAsset("crypto:USDT")
+	usdtPair, _ := canonical.NewPair(xlm, usdt)
+	trade := canonical.Trade{
+		Source: "binance", Ledger: 1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Now().UTC().Add(-time.Minute),
+		Pair:        usdtPair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(16)),
+	}
+	srv := v1.New(v1.Options{
+		History: &pairAwareHistoryReader{tradesByPair: map[string][]canonical.Trade{
+			"native/crypto:USDT": {trade},
+		}},
+		PriceAt:            &recordingPriceAtReader{byPair: map[string]string{depegUSDCUSDPair: "1.0", "crypto:USDT/fiat:USD": "0.95"}},
+		USDPeggedClassics:  []canonical.Asset{usdc},
+		VerifiedCurrencies: newTestCatalogue(t),
+	})
+	url := startHTTPTest(t, srv.Handler()).URL
+	for _, route := range []string{"/v1/vwap", "/v1/twap", "/v1/ohlc"} {
+		resp := mustGet(t, url+route+"?base=native&quote=fiat:USD")
+		body, _ := readAll(resp)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"triangulated":true`) {
+			t.Fatalf("%s: status %d, body %s", route, resp.StatusCode, body)
+		}
+		if !strings.Contains(string(body), `"proxy_deviation":true`) {
+			t.Errorf("%s: depegged USDT backer fed the answer but proxy_deviation is absent\n%s", route, body)
+		}
+	}
+}
+
 // TestVWAP_NonstandardDecimals_Normalizes: /v1/vwap computes from raw trades, so a confirmed non-7-decimals pair is served at
 // the CORRECTED price (aggregate.AdjustPrice), not declined with 422. Golden case as TestAdjustPrice_Golden18DecimalToken: base
 // 2.5*10^18 (18dp) over quote 1.242*10^7 (USDC 7dp) gives 0.4968.

@@ -25,6 +25,14 @@ func (minuteBucketReader) PriceAt(_ context.Context, pair canonical.Pair, ts tim
 	return "0.25", ts.Truncate(time.Minute), 60, nil, nil
 }
 
+// sourcedMinuteBucketReader is minuteBucketReader with the bucket's recorded sources, as the store reader returns them.
+type sourcedMinuteBucketReader struct{ minuteBucketReader }
+
+func (r sourcedMinuteBucketReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, d time.Duration) (string, time.Time, int, []string, error) {
+	v, at, res, _, err := r.minuteBucketReader.PriceAt(ctx, pair, ts, d)
+	return v, at, res, []string{"soroswap"}, err
+}
+
 func priceAtExclServer(gated bool, rows []timescale.SourceExclusion, err error) *v1.Server {
 	opts := v1.Options{PriceAt: minuteBucketReader{}}
 	if gated {
@@ -109,6 +117,33 @@ func TestHistoryWithholdsPageWithExcludedFill(t *testing.T) {
 	if status, body := exclGet(t, srv(true, nil, errors.New("db down")), path); status != http.StatusNotFound ||
 		!strings.Contains(body, "price-withheld") {
 		t.Errorf("exclusions unread: %d %s, want a withheld 404", status, body)
+	}
+}
+
+// TestPriceChangesPegJudgedUnderRequestedPair: native in fiat:USD is answered from the native/USDC book, so an exclusion
+// stored under native/fiat:USD must reach the anchor and each horizon read through the peg, not only the book's own.
+func TestPriceChangesPegJudgedUnderRequestedPair(t *testing.T) {
+	usdc, _ := canonical.ParseAsset(exclUSDC)
+	srv := func(rows ...timescale.SourceExclusion) *v1.Server {
+		return v1.New(v1.Options{
+			PriceAt: sourcedMinuteBucketReader{}, USDPeggedClassics: []canonical.Asset{usdc},
+			Exclusions: pricingguard.NewSourceExclusionGate(exclTable{rows: rows}, pricingguard.SourceExclusionGateOptions{}),
+		})
+	}
+	fiat := func(from, until time.Time) timescale.SourceExclusion {
+		return timescale.SourceExclusion{ID: 1, Source: "soroswap", Base: "native", Quote: "fiat:USD", From: from, Until: until}
+	}
+	const path = "/v1/price/changes?asset=native&quote=fiat:USD"
+	day := time.Now().UTC().Add(-24 * time.Hour)
+	if status, body := exclGet(t, srv(), path); status != http.StatusOK || strings.Contains(body, `"withheld":true`) {
+		t.Fatalf("no exclusion: %d %s, want every horizon served", status, body)
+	}
+	if status, body := exclGet(t, srv(fiat(day, time.Time{})), path); status != http.StatusNotFound || !strings.Contains(body, `"source_excluded"`) {
+		t.Errorf("fiat-pair exclusion over the anchor: %d %s, want 404 source_excluded", status, body)
+	}
+	status, body := exclGet(t, srv(fiat(day.Add(-10*time.Minute), day.Add(10*time.Minute))), path)
+	if status != http.StatusOK || !strings.Contains(body, `"withheld":true`) || strings.Count(body, `"available":true`) != 3 {
+		t.Errorf("fiat-pair exclusion over the 24h reference: %d %s, want h24 withheld and the rest served", status, body)
 	}
 }
 

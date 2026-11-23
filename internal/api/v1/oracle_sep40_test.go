@@ -906,9 +906,10 @@ func TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm(t *testing.
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset="+pegAliasUSDCSAC)
-	if resp.StatusCode != http.StatusOK {
-		body, _ := readAll(resp)
-		t.Fatalf("status = %d, want 200. Body: %s", resp.StatusCode, body)
+	body, _ := readAll(resp)
+	// No observed fiat:USD series of its own: an explicit 404, never a bare 200 [].
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "price-not-found") {
+		t.Fatalf("status = %d, want 404 price-not-found. Body: %s", resp.StatusCode, body)
 	}
 	reader.mu.Lock()
 	asked := append([]string(nil), reader.calls...)
@@ -917,6 +918,29 @@ func TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm(t *testing.
 		t.Errorf("the requested pair was never read (asked=%v)", asked)
 	}
 	assertNoPegSelfPairRead(t, asked)
+}
+
+// TestOraclePrices_DeclaredPegNeverPricedThroughAnotherPeg: with USDC and USDT both declared, USDT's price is never USDT/USDC
+// relabelled as USD; a joint depeg would read 1.0.
+func TestOraclePrices_DeclaredPegNeverPricedThroughAnotherPeg(t *testing.T) {
+	const usdtID = "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+	usdc := installPegAliasRegistry(t)
+	usdt, err := canonical.ParseAsset(usdtID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Minute)
+	reader := &stubPriceReader{recent: map[string][]v1.PriceSnapshot{
+		usdtID + "/" + pegAliasUSDCClassic: {pegSnap(usdtID, pegAliasUSDCClassic, "1.0001", now.Add(-time.Minute))},
+	}}
+	srv := v1.New(v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdc, usdt}})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset="+usdtID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusNotFound || strings.Contains(string(body), "1.0001") {
+		t.Fatalf("status = %d, want 404 without the USDT/USDC book. Body: %s", resp.StatusCode, body)
+	}
 }
 
 // The SEP-40 single-price surfaces read the same closed prices_1m bucket as /v1/price, so for a frozen pair

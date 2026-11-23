@@ -215,13 +215,18 @@ func (s *Server) priceChangeHorizonThin(
 	ctx context.Context, r *http.Request, asset, quote canonical.Asset, pair canonical.Pair,
 	currentPrice string, target time.Time, tolerance time.Duration,
 ) (PriceChangeHorizon, error) {
+	// A peg-resolved pair is judged under the requested one too: an exclusion stored under the fiat pair names no book.
+	var requested []canonical.Pair
+	if p, perr := canonical.NewPair(asset, quote); perr == nil {
+		requested = append(requested, p)
+	}
 	offCtx, off := WithThinAdmission(ctx, asset, quote, false)
-	h, reason, err := s.priceChangeHorizon(offCtx, pair, currentPrice, target, tolerance)
+	h, reason, err := s.priceChangeHorizon(offCtx, pair, currentPrice, target, tolerance, requested...)
 	if err != nil || !includeThinRequested(r) || !off.ThinWithheld(reason) {
 		return h, err
 	}
 	onCtx, on := WithThinAdmission(ctx, asset, quote, true)
-	thin, _, err := s.priceChangeHorizon(onCtx, pair, currentPrice, target, tolerance)
+	thin, _, err := s.priceChangeHorizon(onCtx, pair, currentPrice, target, tolerance, requested...)
 	if err != nil {
 		s.logger.Warn("include_thin second pass failed; serving the withheld verdict",
 			"err", err, "asset", asset.String(), "quote", quote.String())
@@ -259,13 +264,18 @@ func (s *Server) resolvePriceChangePair(
 	// wins; the response still echoes the requested quote (fiat:USD)
 	// and flags triangulated.
 	if quote.Type == canonical.AssetFiat && quote.Code == "USD" {
+		// An exclusion stored under the fiat pair names no peg book, so each bucket is also judged under it.
+		var requested []canonical.Pair
+		if p, perr := canonical.NewPair(asset, quote); perr == nil {
+			requested = append(requested, p)
+		}
 		for _, peg := range s.USDPeggedClassics {
 			// A peg asked for under any of its spellings — the classic
 			// id or its SAC wrapper — is not a market against itself.
 			if sameAsset(peg, asset) {
 				continue
 			}
-			pair, res, ok, w, err := s.currentPriceForAliases(ctx, asset, peg, now)
+			pair, res, ok, w, err := s.currentPriceForAliases(ctx, asset, peg, now, requested...)
 			if err != nil {
 				return canonical.Pair{}, priceAtResult{}, false, false, nil, err
 			}
@@ -284,7 +294,7 @@ func (s *Server) resolvePriceChangePair(
 // priceChangesCurrentStaleness;
 // withheld is the first ErrPriceWithheld-class error, so the caller picks the right 404.
 func (s *Server) currentPriceForAliases(
-	ctx context.Context, asset, quote canonical.Asset, now time.Time,
+	ctx context.Context, asset, quote canonical.Asset, now time.Time, also ...canonical.Pair,
 ) (canonical.Pair, priceAtResult, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
@@ -296,7 +306,7 @@ func (s *Server) currentPriceForAliases(
 			if pairErr != nil {
 				continue
 			}
-			value, observedAt, resSec, err := s.readPriceAt(ctx, pair, now, priceChangesCurrentStaleness)
+			value, observedAt, resSec, err := s.readPriceAt(ctx, pair, now, priceChangesCurrentStaleness, also...)
 			if err != nil {
 				if failErr := notePriceAtMiss(&withheld, err); failErr != nil {
 					return canonical.Pair{}, priceAtResult{}, false, nil, failErr
@@ -317,9 +327,9 @@ func (s *Server) currentPriceForAliases(
 // yields an all-null horizon; a reader failure is returned as err, since available=false would falsely claim no history. Gates
 // are asked about `target`, not `now`, so one horizon can be withheld while siblings are not.
 func (s *Server) priceChangeHorizon(
-	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
+	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration, also ...canonical.Pair,
 ) (PriceChangeHorizon, PriceWithheldReason, error) {
-	value, observedAt, resSec, err := s.readPriceAt(ctx, pair, target, tolerance)
+	value, observedAt, resSec, err := s.readPriceAt(ctx, pair, target, tolerance, also...)
 	if err != nil {
 		if !isPriceAtMiss(err) {
 			return PriceChangeHorizon{}, "", err
