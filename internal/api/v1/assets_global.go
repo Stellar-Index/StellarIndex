@@ -360,9 +360,15 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // the ECB calendar leaves (Thursday's rate is still current on the Tuesday after Easter).
 const fiatRateStaleAfter = 6 * 24 * time.Hour
 
-// fiatUSDPriceFor is the UNJUDGED rate for the declared-peg fill, whose row is cached and judged on the way out
-// ([rowJudge.legsCovered] covers the peg's FX pair over the fill's whole window, on any vendor). Never serve it unjudged.
+// fiatUSDPriceFor is the declared-peg fill's rate, judged: ok is false both when no rate exists and when [Server.fiatUSDRate]
+// withheld it, so a route with no outbound judge cannot serve an excluded rate.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, ok bool) {
+	rate, w := s.fiatUSDRate(ctx, ticker)
+	return rate.price, rate.asOf, w == pricingguard.NotWithheld && rate.price != ""
+}
+
+// fiatUSDPriceUnjudged is [Server.fiatUSDPriceFor] without the exclusion judgement; read only through the RowJudge fills.
+func (s *Server) fiatUSDPriceUnjudged(ctx context.Context, ticker string) (price string, asOf time.Time, ok bool) {
 	rate, ok := s.readFiatUSDRate(ctx, ticker)
 	return rate.price, rate.asOf, ok
 }

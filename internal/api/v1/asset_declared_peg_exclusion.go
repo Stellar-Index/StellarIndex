@@ -1,5 +1,26 @@
 package v1
 
+import (
+	"context"
+	"time"
+)
+
+// fiatUSDRead resolves 1 unit of a fiat in USD for the declared-peg fill.
+type fiatUSDRead func(ctx context.Context, ticker string) (price string, asOf time.Time, ok bool)
+
+// fillDeclaredPegPricesForRowJudge is [Server.fillDeclaredPegPricesInListing] on the unjudged rate, for the /v1/assets listing
+// only: its rows are cached unjudged and judged on the way out by [assetExclusionScope.judgeRows] (writeAssetListing), whose
+// [rowJudge.peg] covers the peg's fiat/USD pair over the fill's whole window, so a lifted exclusion serves on the next request.
+func (s *Server) fillDeclaredPegPricesForRowJudge(ctx context.Context, rows []AssetDetail) {
+	s.fillDeclaredPegRows(ctx, rows, s.fiatUSDPriceUnjudged)
+}
+
+// fillDeclaredPegPriceForRowJudge is [Server.fillDeclaredPegPrice] on the unjudged rate, for /v1/assets/{id} only, judged on the
+// way out by [assetExclusionScope.judgeDetail] (writeDetail) as fillDeclaredPegPricesForRowJudge is.
+func (s *Server) fillDeclaredPegPriceForRowJudge(ctx context.Context, row *AssetDetail) {
+	s.fillDeclaredPegPriceWith(ctx, row, nil, s.fiatUSDPriceUnjudged)
+}
+
 // priceFill names a producer that may set price_usd after the direct read declined or withheld it.
 type priceFill int
 
