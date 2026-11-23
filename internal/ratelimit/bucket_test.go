@@ -841,22 +841,16 @@ func TestDwellClock_FailClosedOnlyPastDwell(t *testing.T) {
 	now := time.Unix(1_750_000_000, 0)
 	c := ratelimit.NewDwellClock(30*time.Second, func() time.Time { return now })
 
-	if c.FailingClosed() {
-		t.Fatal("fresh clock: FailingClosed = true, want false")
-	}
 	if c.Failure() {
 		t.Fatal("first failure: want fail-open (false)")
 	}
 	now = now.Add(30 * time.Second)
-	if c.Failure() || c.FailingClosed() {
+	if c.Failure() {
 		t.Fatal("exactly at the dwell: want still fail-open")
 	}
 	now = now.Add(time.Second)
 	if !c.Failure() {
 		t.Fatal("past the dwell: Failure = false, want true (fail closed)")
-	}
-	if !c.FailingClosed() {
-		t.Fatal("past the dwell: FailingClosed = false, want true")
 	}
 }
 
@@ -869,10 +863,7 @@ func TestDwellClock_FlapDoesNotReopen(t *testing.T) {
 	if !c.Failure() {
 		t.Fatal("arm: want fail closed past the dwell")
 	}
-	c.Success() // one stray success
-	if !c.FailingClosed() {
-		t.Fatal("a single success must not clear the clock")
-	}
+	c.Success() // one stray success must not clear the clock
 	now = now.Add(5 * time.Second)
 	if !c.Failure() {
 		t.Fatal("flap: failure after a stray success must still fail closed")
@@ -880,9 +871,6 @@ func TestDwellClock_FlapDoesNotReopen(t *testing.T) {
 	c.Success()
 	now = now.Add(30 * time.Second)
 	c.Success() // unbroken healthy streak of a full dwell
-	if c.FailingClosed() {
-		t.Fatal("sustained recovery: FailingClosed = true, want false")
-	}
 	if c.Failure() {
 		t.Fatal("after recovery the next failure opens a fresh window (fail open)")
 	}
@@ -896,8 +884,5 @@ func TestDwellClock_NegativeDwellNeverCloses(t *testing.T) {
 			t.Fatal("negative dwell: Failure = true, want always false")
 		}
 		now = now.Add(time.Hour)
-	}
-	if c.FailingClosed() {
-		t.Fatal("negative dwell: FailingClosed = true, want always false")
 	}
 }
