@@ -76,6 +76,19 @@ Observed fixture range: ledgers 65,134,362 through 65,509,066. Fixtures are
 regression evidence, not the lineage authority; the production replay gate
 queries contract instance history for the requested range.
 
+## User-liquidation legs
+
+`fill_auction` with `auction_type` 0 has the Blend V2 leg kinds: the lot is
+collateral b-tokens and the bid liability d-tokens. Evidence is the only two
+such fills on mainnet (ledgers 65,260,729 and 65,545,200). Each bid amount
+equals the d-tokens burned by the filler's `repay` in the same transaction
+(23,733,539 and 630,807,262), and the second fill's lot equals the b-tokens
+burned by its `withdraw_collateral` (639,160,994). The pool liquidations
+route (`/v1/lending/pools/{pool}/liquidations`) values these legs; `/auctions`
+and type 1 (bad debt, never observed) stay `leg_kind_unknown`. Both fills were `fill_percent` 100, so
+partial-fill scaling is unobserved. The reconciliation is pinned by
+`TestLiqValuer_BLNTLegsReconcileWithSameTxBurns`.
+
 ## Decision
 
 All six deployed lineages match the role-specific decoder and have real-lake

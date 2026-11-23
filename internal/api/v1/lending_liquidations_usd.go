@@ -122,6 +122,15 @@ func (m *liqMarks) underlying(kind string, tx clickhouse.LendingTxRef, amount *b
 	return nil, liqReasonRateUnrecorded
 }
 
+// liquidationLegKinds is auctionLegKinds plus BLNT user liquidation, proven from the two mainnet fills (wasm-audits/blnt.md
+// "User-liquidation legs"): its bid is the d-tokens the filler's repay burns, its lot the b-tokens withdraw_collateral burns.
+func liquidationLegKinds(protocol string, auctionType uint32) (bid, lot string) {
+	if protocol == blnt.SourceName && auctionType == 0 {
+		return auctionLegDToken, auctionLegBToken
+	}
+	return auctionLegKinds(protocol, auctionType)
+}
+
 // liqValuer values a page's fills against per-asset marks.
 type liqValuer struct {
 	protocol string
@@ -199,7 +208,7 @@ func (lv liqValuer) value(f timescale.LendingLiquidationFill) LendingLiquidation
 		v.USDReason = strRef(liqReasonAmountsNotEmitted)
 		return v
 	}
-	bidKind, lotKind := auctionLegKinds(lv.protocol, f.AuctionType)
+	bidKind, lotKind := liquidationLegKinds(lv.protocol, f.AuctionType)
 	var lot, bid *big.Rat
 	v.Lot, lot, v.LotUSDLowerBound = lv.side(lotKind, f.Lot, f)
 	v.Bid, bid, v.BidUSDLowerBound = lv.side(bidKind, f.Bid, f)
@@ -254,7 +263,7 @@ func liquidationAssets(protocol string, fills []timescale.LendingLiquidationFill
 	}
 	for _, f := range fills {
 		if f.HasAmounts {
-			bidKind, lotKind := auctionLegKinds(protocol, f.AuctionType)
+			bidKind, lotKind := liquidationLegKinds(protocol, f.AuctionType)
 			add(bidKind, f.Bid)
 			add(lotKind, f.Lot)
 		}
