@@ -877,10 +877,10 @@ done
 # --- 25k. waiver entries in their other spellings: quoted, several per line, indented ids
 mkrepo 0
 change_commit "chore: waive" \
-  scripts/ci/lint-metric-refs.sh 'X=(' "$(printf 'X=(\n  "stellarindex_a_failures_total"  # later\n  stellarindex_b_total stellarindex_c_total\n)')" \
+  scripts/ci/lint-metric-refs.sh 'X=(' "$(printf 'X=(\n  "stellarindex_a_total"  # later\n  stellarindex_b_total stellarindex_c_total\n)')" \
   scripts/ci/govulncheck-allow.txt '# ids' "$(printf '# ids\n  GO-2026-9999  # indented')"
 runGate
-expect "a quoted metric waiver fails undeclared" 1 '+   "stellarindex_a_failures_total"'
+expect "a quoted metric waiver fails undeclared" 1 '+   "stellarindex_a_total"'
 expect "two metric waivers on one line fail undeclared" 1 "+   stellarindex_b_total stellarindex_c_total"
 expect "an indented govulncheck id fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/govulncheck-allow.txt"
 
