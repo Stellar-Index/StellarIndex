@@ -8,7 +8,19 @@ probe="$here/configs/ansible/roles/archival-node/files/catchup-lanes.sh"
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail=0
 check() { if grep -qx "$2" "$t/tf/catchup_lanes.prom"; then echo "ok: $1"; else echo "FAIL: $1 (want: $2)"; fail=1; fi; }
-mkdir -p "$t/c"
+mkdir -p "$t/c" "$t/bin"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$t/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$t/bin/mv"
+fi
+export PATH="$t/bin:$PATH"
 printf 'one\tcmd1\ntwo\tcmd2\n#held\tcmd3\nthree\tcmd4\n' >"$t/c/a.queue"
 printf 'one\n' >"$t/c/a.done"
 printf '2026-10-21T22:42:04Z START two\n' >"$t/c/a.log"

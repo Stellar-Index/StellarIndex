@@ -60,6 +60,17 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 # The genesis partition plus a five-partition tail from ARCHIVE_FROM,
 # i.e. the declared coverage on r1 in miniature.
 mkdir -p "$TMP/bin" "$TMP/textfile"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$TMP/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/bin/mv"
+fi
 cat > "$TMP/bin/mc" <<'SH'
 #!/usr/bin/env bash
 row() { printf '[2026-09-05 10:00:00 UTC]     0B %08x--%s-%s/\n' "$3" "$1" "$2"; }
