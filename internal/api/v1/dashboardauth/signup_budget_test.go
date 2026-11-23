@@ -133,6 +133,28 @@ func TestEmailSignIn_FirstSignInPerIPCapSpendsNoBudget(t *testing.T) {
 	}
 }
 
+// Invariant: each sign-up route has its own per-IP cap, so free passkey begin-signups from an address cannot refuse an
+// email-proven first sign-in from it.
+func TestEmailSignIn_PasskeyBeginsDoNotExhaustEmailPerIPCap(t *testing.T) {
+	rig := newPasskeyRig(t)
+	for i := range passkeySignupMaxPerIP + 1 {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-signup", nil)
+		req.RemoteAddr = "203.0.113.9:1"
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyBeginSignup(w, req)
+		want := http.StatusOK
+		if i == passkeySignupMaxPerIP {
+			want = http.StatusTooManyRequests
+		}
+		if w.Code != want {
+			t.Fatalf("begin %d: status = %d, want %d", i+1, w.Code, want)
+		}
+	}
+	if w := rig.signInByCode(t, "first@example.com"); w.Code != http.StatusOK || !sessionCookieSet(w) {
+		t.Fatalf("email first sign-in after passkey begins exhausted their cap: status = %d, want 200 and a session", w.Code)
+	}
+}
+
 // registerKeyStub mints the key /v1/register issues; register calls nothing else on it.
 type registerKeyStub struct{ platform.APIKeyStore }
 
