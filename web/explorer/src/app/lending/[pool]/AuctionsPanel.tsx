@@ -25,7 +25,7 @@ interface Page {
 
 const LIMIT = 25;
 
-function AccountLink({ id }: { id: string }) {
+export function AccountLink({ id }: { id: string }) {
   return (
     <Link
       href={`/${id.startsWith('C') ? 'contracts' : 'accounts'}/${encodeURIComponent(id)}/`}

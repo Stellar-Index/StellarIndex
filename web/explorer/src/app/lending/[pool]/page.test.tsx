@@ -17,6 +17,7 @@ vi.mock('./ConfigHistory', () => ({ ConfigHistory: () => <div /> }));
 vi.mock('./BackstopPanel', () => ({ BackstopPanel: () => <div /> }));
 vi.mock('./EmissionsPanel', () => ({ EmissionsPanel: () => <div /> }));
 vi.mock('./AuctionsPanel', () => ({ AuctionsPanel: () => <div /> }));
+vi.mock('./TopAccountsPanel', () => ({ TopAccountsPanel: () => <div /> }));
 vi.mock('./PoolHeadlineStats', () => ({ PoolHeadlineStats: () => <div /> }));
 
 import { buildFetchData } from '@/lib/buildFetch';

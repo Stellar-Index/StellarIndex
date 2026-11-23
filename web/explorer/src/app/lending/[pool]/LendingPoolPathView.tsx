@@ -12,6 +12,7 @@ import { EmissionsPanel } from './EmissionsPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
+import { TopAccountsPanel } from './TopAccountsPanel';
 import { hrefFor } from '@/lib/hrefFor';
 
 /**
@@ -53,6 +54,7 @@ export function LendingPoolPathView() {
       )}
       {pool && <PoolDetails pool={pool} />}
       {pool && <PoolReserves pool={pool} />}
+      {pool && <TopAccountsPanel pool={pool} />}
       {pool && <BackstopPanel pool={pool} />}
       {pool && <EmissionsPanel pool={pool} />}
       {pool && <AuctionsPanel pool={pool} />}
