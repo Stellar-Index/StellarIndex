@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
@@ -65,6 +66,65 @@ func TestAssetDetail_DeclarationValuesNoCap(t *testing.T) {
 	}
 	if strings.Contains(body, `"market_cap_usd":"`) || strings.Contains(body, `"fdv_usd":"`) {
 		t.Errorf("market cap or FDV built on the declared peg: %s", body)
+	}
+}
+
+// TestAssetDetail_GlobalMarketFillsAheadOfTheUSDDeclaration: a USD-peg declaration with no market price and a fresh vetted global
+// reference serves the reference as global_market, so a global depeg reaches price_usd; without it, the bare declaration. Neither
+// builds a cap, FDV or change on the whole-token price.
+func TestAssetDetail_GlobalMarketFillsAheadOfTheUSDDeclaration(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peg := mustAsset(t, globalTestUSDC)
+	for name, tc := range map[string]struct {
+		streams []canonical.OracleUpdate
+		want    []string
+		absent  []string
+	}{
+		"fresh global reference": {
+			streams: []canonical.OracleUpdate{refUpdate(t, "coingecko", "crypto:USDC", "fiat:USD", "97000000", 8, time.Now().Add(-5*time.Minute))},
+			want:    []string{`"price_usd":"0.97`, `"price_basis":"global_market"`, `"global_market":{`},
+			absent:  []string{`"price_basis":"declared_peg"`, `"price_usd":"` + declaredPegPrice + `"`},
+		},
+		"no reference": {
+			want:   []string{`"price_usd":"` + declaredPegPrice + `"`, `"price_basis":"declared_peg"`},
+			absent: []string{`"global_market":{`, `"change_24h_pct":"`, `"change_1h_pct":"`, `"change_7d_pct":"`},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := New(Options{
+				Assets:             pegAssetReader{d: AssetDetail{AssetID: peg.String(), Type: "classic", Code: peg.Code, Decimals: 7}},
+				Prices:             withheldUSDReader{},
+				USDPeggedClassics:  []canonical.Asset{peg},
+				VerifiedCurrencies: cat,
+				Oracle:             &streamOracle{streams: tc.streams},
+				Change24h:          stubChange24h{then: "0.90"},
+				Supply: capSupplyStub{snap: supply.Supply{
+					CirculatingSupply: big.NewInt(50_000_000_000_000_000), MaxSupply: big.NewInt(90_000_000_000_000_000), ObservedAt: time.Now(),
+				}},
+			})
+			ts := httptest.NewServer(srv.Handler())
+			t.Cleanup(ts.Close)
+			resp, err := http.Get(ts.URL + "/v1/assets/" + peg.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			body := string(b)
+			for _, w := range tc.want {
+				if !strings.Contains(body, w) {
+					t.Errorf("missing %s: %s", w, body)
+				}
+			}
+			for _, a := range append(tc.absent, `"market_cap_usd":"`, `"fdv_usd":"`) {
+				if strings.Contains(body, a) {
+					t.Errorf("served %s on a whole-token fill: %s", a, body)
+				}
+			}
+		})
 	}
 }
 
