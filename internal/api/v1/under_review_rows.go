@@ -23,7 +23,7 @@ func (s *Server) underReviewRows(h http.HandlerFunc) http.HandlerFunc {
 		h(rec, r)
 		body := rec.body.Bytes()
 		if rec.status == http.StatusOK {
-			if marked, ok := markRowsUnderReview(*list, body); ok {
+			if marked, ok := markRowsUnderReview(*list, s.listingLedger(r, *list), body); ok {
 				body = marked
 			}
 		}
@@ -33,8 +33,20 @@ func (s *Server) underReviewRows(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// listingLedger is "now" for listing rows, which carry no ledger: the cached lake watermark, read only when a hold is ledger-ranged;
+// 0 (no watermark) leaves only holds with no ledger_to covering the rows.
+func (s *Server) listingLedger(r *http.Request, list []holds.Hold) uint32 {
+	for _, h := range list {
+		if h.LedgerFrom != 0 || h.LedgerTo != 0 {
+			ledger, _, _ := s.lakeWatermark(r.Context())
+			return ledger
+		}
+	}
+	return 0
+}
+
 // markRowsUnderReview returns the envelope with every held row of its data array marked, or false when nothing is held.
-func markRowsUnderReview(list []holds.Hold, body []byte) ([]byte, bool) {
+func markRowsUnderReview(list []holds.Hold, ledger uint32, body []byte) ([]byte, bool) {
 	var env map[string]json.RawMessage
 	if json.Unmarshal(body, &env) != nil {
 		return nil, false
@@ -45,7 +57,9 @@ func markRowsUnderReview(list []holds.Hold, body []byte) ([]byte, bool) {
 	}
 	hit := false
 	for i, raw := range rows {
-		hold, held := holds.Match(list, subjectOf("", raw))
+		sub := subjectOf("", raw)
+		sub.Ledger, sub.Current = ledger, true
+		hold, held := holds.Match(list, sub)
 		if !held {
 			continue
 		}

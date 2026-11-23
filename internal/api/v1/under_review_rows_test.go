@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -69,5 +71,46 @@ func TestUnderReview_ListingMarksEachHeldRow(t *testing.T) {
 	s.SetHolds(nil)
 	if _, rows := listingRowsByID(t, s); rows[heldListingAsset]["under_review"] != nil {
 		t.Fatalf("hold lifted but row still marked: %s", rows[heldListingAsset])
+	}
+
+	asset, err := canonical.ParseAsset(heldListingAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac, err := asset.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Listing rows serve current state, so a ledger-ranged hold is judged at the lake watermark (1000 here), or with no
+	// watermark by whether the hold is still open.
+	for _, tc := range []struct {
+		name      string
+		watermark uint32
+		hold      holds.Hold
+		marked    bool
+	}{
+		{"bare asset", 1000, holds.Hold{Asset: heldListingAsset}, true},
+		{"by SAC address", 1000, holds.Hold{ContractID: sac}, true},
+		{"ledger_from only", 1000, holds.Hold{Asset: heldListingAsset, LedgerFrom: 500}, true},
+		{"ledger_to at the tip", 1000, holds.Hold{Asset: heldListingAsset, LedgerFrom: 500, LedgerTo: 1000}, true},
+		{"ledger_to in the past", 1000, holds.Hold{Asset: heldListingAsset, LedgerFrom: 500, LedgerTo: 900}, false},
+		{"ledger_from after the tip", 1000, holds.Hold{Asset: heldListingAsset, LedgerFrom: 2000}, false},
+		{"no watermark, ledger_from only", 0, holds.Hold{Asset: heldListingAsset, LedgerFrom: 500}, true},
+		{"no watermark, ledger_to set", 0, holds.Hold{Asset: heldListingAsset, LedgerFrom: 500, LedgerTo: 900}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := shippedServer(t, &armFilteringAssets{rows: []timescale.AssetRow{
+				{AssetID: heldListingAsset, Code: "FOO", IssuerGStrkey: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", Volume24hUSD: strp("10")},
+			}})
+			if tc.watermark != 0 {
+				s.LakeWatermark = &stubWatermark{ledger: tc.watermark, closedAt: time.Now()}
+			}
+			tc.hold.Reason = "held"
+			s.SetHolds([]holds.Hold{tc.hold})
+			_, rows := listingRowsByID(t, s)
+			if got := string(rows[heldListingAsset]["under_review"]) == "true"; got != tc.marked {
+				t.Fatalf("under_review = %s, want marked=%v", rows[heldListingAsset]["under_review"], tc.marked)
+			}
+		})
 	}
 }
