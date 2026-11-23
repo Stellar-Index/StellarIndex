@@ -59,7 +59,10 @@ func TestResolveClassicSlug_ExactCodeWinsElseTheOneVariant(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{Options: Options{Assets: registrySlugResolver{ids: tc.ids}}}
 			s.logger = discardLogger()
-			got, ok := s.resolveClassicSlug(context.Background(), tc.raw)
+			got, ok, err := s.resolveClassicSlug(context.Background(), tc.raw)
+			if err != nil {
+				t.Fatalf("%s: unexpected read error %v", tc.raw, err)
+			}
 			if tc.want == "" {
 				if ok {
 					t.Errorf("%s resolved to %q, want refused", tc.raw, got.String())

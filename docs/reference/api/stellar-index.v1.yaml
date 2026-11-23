@@ -970,6 +970,7 @@ paths:
                   - $ref: "#/components/schemas/GlobalAssetEnvelope"
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /assets/{asset_id}/metadata:
     get:

@@ -32,9 +32,30 @@ func issuerFoldedSlug(raw string) string {
 	return asset.String()
 }
 
-// resolveClassicSlug maps a classic-asset slug to (code, issuer). A lookup error logs and reads as a miss (caller 400s), never
-// a 500.
-func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.Asset, bool) {
+// resolveSlugOrProblem resolves a non-canonical asset_id as a classic slug. ok=false means problem+json was written: 503 when
+// the registry could not be read (the id may well exist), 400 when it was read and holds no such slug.
+func (s *Server) resolveSlugOrProblem(w http.ResponseWriter, r *http.Request, rawID string) (canonical.Asset, bool) {
+	resolved, ok, err := s.resolveClassicSlug(r.Context(), rawID)
+	if ok {
+		return resolved, true
+	}
+	if err != nil {
+		w.Header().Set("Retry-After", "5")
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/asset-slug-unavailable",
+			"Asset slug lookup unavailable", http.StatusServiceUnavailable,
+			"could not read the asset registry to resolve this slug; retry")
+		return canonical.Asset{}, false
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/invalid-asset-id",
+		"Invalid asset identifier", http.StatusBadRequest,
+		"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, issuer in any case)")
+	return canonical.Asset{}, false
+}
+
+// resolveClassicSlug maps a classic-asset slug to (code, issuer); err is a failed registry read, never a miss.
+func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.Asset, bool, error) {
 	// Two reader seams exist (`assets` and `assetsReader`); binaries wire the same adapter behind
 	// both but a test may wire only one, so probe both.
 	res, ok := s.Assets.(classicSlugResolver)
@@ -42,22 +63,22 @@ func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.
 		res, ok = s.AssetsReader.(classicSlugResolver)
 	}
 	if !ok {
-		return canonical.Asset{}, false
+		return canonical.Asset{}, false, nil
 	}
 	code, issuer, found, err := res.ClassicAssetBySlug(ctx, issuerFoldedSlug(raw))
 	if err != nil {
 		s.logger.Warn("classic slug lookup failed", "slug", raw, "err", err)
-		return canonical.Asset{}, false
+		return canonical.Asset{}, false, err
 	}
 	if !found {
-		return canonical.Asset{}, false
+		return canonical.Asset{}, false, nil
 	}
 	asset, err := canonical.NewClassicAsset(code, issuer)
 	if err != nil {
 		s.logger.Warn("classic slug resolved to unbuildable asset", "slug", raw, "code", code, "err", err)
-		return canonical.Asset{}, false
+		return canonical.Asset{}, false, nil
 	}
-	return asset, true
+	return asset, true, nil
 }
 
 // resolveSACToClassic maps a SAC address to the classic (or native) asset it wraps; the resolved asset's deterministic SAC

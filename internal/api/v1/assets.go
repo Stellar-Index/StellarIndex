@@ -2520,14 +2520,7 @@ func (s *Server) tryServeGlobalAsset(w http.ResponseWriter, r *http.Request, raw
 func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID string) (canonical.Asset, bool) {
 	parsed, err := canonical.ParseAsset(rawID)
 	if err != nil {
-		if resolved, ok := s.resolveClassicSlug(r.Context(), rawID); ok {
-			return resolved, true
-		}
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, issuer in any case)")
-		return canonical.Asset{}, false
+		return s.resolveSlugOrProblem(w, r, rawID)
 	}
 	if err := parsed.Validate(); err != nil {
 		writeProblem(w, r,
