@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -31,6 +32,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
@@ -973,6 +975,37 @@ func TestAPIKeyIndex_RealRedisACL(t *testing.T) {
 		}
 		if rep, err := store.BackfillAncestorHashes(ctx, false); err != nil || len(rep.LineageMissing) != 0 {
 			t.Fatalf("dry run after -write: missing=%v err=%v; want 0", rep.LineageMissing, err)
+		}
+		// A fresh validator, so the slide the denied Lookup throttled runs now: EXPIRE XX and EXPIRE GT.
+		slides := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpSlide))
+		if _, err := auth.NewRedisAPIKeyValidator(app).Lookup(ctx, childPlain); err != nil {
+			t.Fatalf("child Lookup after the grant: %v", err)
+		}
+		if got := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpSlide)); got != slides {
+			t.Fatalf("slide failures %v -> %v after the grant: the shipped ACL refuses the slide", slides, got)
+		}
+		// Erasure under the shipped ACL: the credentials, then the owner set's page script.
+		const erased = "account:lineage-erase"
+		_, erasedPlain, err := store.Create(ctx, auth.CreateAPIKeyRequest{Identifier: erased, SelfService: true})
+		if err != nil {
+			t.Fatalf("Create after the grant: %v", err)
+		}
+		erasedSub, err := validator.Lookup(ctx, erasedPlain)
+		if err != nil {
+			t.Fatalf("Lookup after the grant: %v", err)
+		}
+		if _, _, err := store.Create(ctx, auth.ChildKeyRequest(erasedSub, "c", nil)); err != nil {
+			t.Fatalf("delegated Create after the grant: %v", err)
+		}
+		deletes := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete))
+		if ids, err := store.DeleteKeysForIdentifier(ctx, erased); err != nil || len(ids) != 2 {
+			t.Fatalf("DeleteKeysForIdentifier after the grant: %v, err %v; want both keys", ids, err)
+		}
+		if got := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete)); got != deletes {
+			t.Fatalf("lineage delete failures %v -> %v: the shipped ACL refuses the erasure's lineage deletes", deletes, got)
+		}
+		if n, err := admin.Exists(ctx, cachekeys.APIKeyLineageOwner(erased).String()).Result(); err != nil || n != 0 {
+			t.Fatalf("erased account's owner set exists=%d err=%v, want gone", n, err)
 		}
 		if err := store.RevokeKeyByID(ctx, owner, root.KeyID); err != nil {
 			t.Fatalf("revoke after the grant: %v", err)
