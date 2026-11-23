@@ -174,6 +174,26 @@ func TestPriceWithholdingUnchangedByJudge(t *testing.T) {
 	}
 }
 
+// The bool/Withholding convenience methods feed push surfaces (webhooks, price alerts) that drop
+// Verdict.Unmeasured, so an unmeasured pair must come back withheld, not as cleared.
+func TestPriceWithholdingWithholdsUnmeasured(t *testing.T) {
+	ctx := context.Background()
+	_, _, base, quote := thinGate(t, dustSubstance)
+	g := Gate{Substance: NewSubstanceGate(&fakeSubstanceReader{err: errors.New("db down")}, SubstanceGateOptions{Policy: testPolicy()})}
+	if got := g.PriceWithholding(ctx, base, quote, "x"); got != WithheldThinMarket {
+		t.Errorf("PriceWithholding on an unmeasured pair = %q, want %q", got, WithheldThinMarket)
+	}
+	if got := g.PriceWithholdingAt(ctx, base, quote, gateNow, "x"); got != WithheldThinMarket {
+		t.Errorf("PriceWithholdingAt on an unmeasured pair = %q, want %q", got, WithheldThinMarket)
+	}
+	if !g.PriceWithheld(ctx, base, quote, "x") {
+		t.Error("PriceWithheld on an unmeasured pair = false, want true")
+	}
+	if v := g.Judge(ctx, base, quote, "x", Query{}); v.Withholding != NotWithheld || !v.Unmeasured {
+		t.Errorf("Judge = %+v, want the readable fail-open (NotWithheld, Unmeasured)", v)
+	}
+}
+
 func TestAssetSubstanceVerdictThinServedCounts(t *testing.T) {
 	const surface = "thin_served_test"
 	asset := mustAsset(t, "THIN-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")

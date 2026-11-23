@@ -197,12 +197,20 @@ const (
 
 // PriceWithholding is [Gate.PriceWithheld] reporting WHICH gate fired.
 func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset, surface string) Withholding {
-	return g.Judge(ctx, base, quote, surface, Query{}).Withholding
+	return g.Judge(ctx, base, quote, surface, Query{}).pushWithholding()
+}
+
+// pushWithholding withholds an unmeasured pair: these callers keep no Unmeasured flag and deliver to every subscriber, so the fail-open single-lookup default would read as cleared.
+func (v Verdict) pushWithholding() Withholding {
+	if v.Unmeasured && v.Withholding == NotWithheld {
+		return WithheldThinMarket
+	}
+	return v.Withholding
 }
 
 // PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read: the substance half is asked about the instant served, but the scam half is deliberately NOT moved in time (an issuer flag withholds its history too).
 func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) Withholding {
-	return g.Judge(ctx, base, quote, surface, Query{PointInTime: true, At: at}).Withholding
+	return g.Judge(ctx, base, quote, surface, Query{PointInTime: true, At: at}).pushWithholding()
 }
 
 // AssetValueWithholding is the gate's answer for an ASSET's USD value rather than one pair: withheld when its issuer is flagged, or when no backing quote ([AssetSubstanceVerdict]) clears the substance floor.
