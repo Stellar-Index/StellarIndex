@@ -47,13 +47,15 @@ groups:
             wildcard with an explicit allow-list.
 
       # Every lineage write is best-effort, so a failure never reaches a
-      # request; this is the only signal. Held 30m so a single Redis blip
-      # resolves on its own while a missing ACL grant (every write NOPERM)
-      # fires. The counter is pre-initialised per op, so increase() sees
-      # the first failure.
+      # request; this is the only signal. A single Redis blip resolves on
+      # its own while a missing ACL grant (every write NOPERM) fires. The
+      # window outlasts for: so a quiet host whose key is called every 20
+      # minutes still fires: 1h would hold only 2 such failures at some
+      # minutes and reset for:. The counter is pre-initialised per op, so
+      # increase() sees the first failure.
       - alert: stellarindex_apikey_lineage_write_failures
         expr: |
-          sum by (op) (increase(stellarindex_apikey_lineage_write_failures_total[15m])) > 0
+          sum by (op) (increase(stellarindex_apikey_lineage_write_failures_total[90m])) >= 3
         for: 30m
         labels:
           severity: ticket
@@ -64,7 +66,7 @@ groups:
           summary: "API-key lineage writes (op={{ $labels.op }}) have failed for 30 minutes (P3)"
           description: |
             stellarindex_apikey_lineage_write_failures_total{op="{{ $labels.op }}"} has
-            increased in every 15-minute window for 30 minutes. No request
-            fails, but lineage records go unwritten or undeleted. Check first
-            that the redis-sentinel role was applied after the binary: the
-            ACL must grant ~apikey-lineage:*.
+            increased at least 3 times in every 90-minute window for 30 minutes.
+            No request fails, but lineage records go unwritten or undeleted.
+            Check first that the redis-sentinel role was applied after the
+            binary: the ACL must grant ~apikey-lineage:*.

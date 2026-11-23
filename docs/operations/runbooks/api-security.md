@@ -37,7 +37,7 @@ curl -fs http://localhost:9464/metrics | grep stellarindex_api_cors_decisions_to
 ## stellarindex_apikey_lineage_write_failures
 
 **Severity** P3 (ticket). MTTR 10-30 min (apply one role).
-**Trigger** `sum by (op) (increase(stellarindex_apikey_lineage_write_failures_total[15m])) > 0` for 30m. Lineage writes for `op` (`mint`, `slide` or `delete`) have kept failing. No request fails and no authentication decision changes, but [lineage records](#lineage-records-step-2) go unwritten (mint, slide) or undeleted (delete). Code: `internal/auth/apikey_lineage_record.go`.
+**Trigger** `sum by (op) (increase(stellarindex_apikey_lineage_write_failures_total[90m])) >= 3` for 30m. Lineage writes for `op` (`mint`, `slide` or `delete`) have kept failing. No request fails and no authentication decision changes, but [lineage records](#lineage-records-step-2) go unwritten (mint, slide) or undeleted (delete). Code: `internal/auth/apikey_lineage_record.go`.
 
 **Diagnose**
 
@@ -53,7 +53,7 @@ If the grant is there, look for Redis refusing writes (`used_memory` against `ma
 
 1. Grant missing: apply the `redis-sentinel` role to the host.
 2. Then run `stellarindex-ops apikey-lineage-backfill -config /etc/stellarindex.toml -dry-run` and `-write` as in [Lineage records](#lineage-records-step-2): it creates the records the failed mints and slides missed, and deletes the records and the `apikey-lineage:owner:` sets that failed deletes left (an owner set goes once none of its members has a lineage record or a credential).
-3. Verify: the counter stops increasing and the alert resolves within 45 minutes.
+3. Verify: the counter stops increasing and the alert resolves within 90 minutes.
 
 ## Operator-issued API keys
 
