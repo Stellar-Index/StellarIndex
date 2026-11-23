@@ -228,7 +228,7 @@ published the spike; its value carries no weight here (Layer 2).
 |---|---|---|
 | Liquidity floor per source per bucket (Layer 3) | not built | — |
 | Auto-exclude the offending source on an outlier storm | not built; trimming is per print, not per source | — |
-| Per-source kill switch on the served price | not built; see [Excluding a bad source](#excluding-a-bad-source) | — |
+| Per-source kill switch on the served price | built (`source-exclude`) for the surfaces listed in [Excluding a bad source](#excluding-a-bad-source); not for history, charts, OHLC, price-at, TVL, lending and the rest of its "Not covered" list | — |
 | Stablecoin-depeg auto-gating (a depegged stablecoin used as collateral) | not built; manual policy through the class system | INV-1122 |
 | Adversarial-testing exercises (below) | recommended, not scheduled | INV-1123 |
 | Production-quality divergence coverage for the Phase 3 factor | wired; coverage tuning post-launch | — |
@@ -238,24 +238,27 @@ Adversarial exercises (INV-1123), each with its pass condition: a thin-pool spik
 
 ### Excluding a bad source
 
-No control removes one source from the price `/v1/price` serves. That price
-is the latest closed bucket of the `prices_1m` continuous aggregate
-(`StorePriceReader.LatestPrice`, `cmd/stellarindex-api/internal/wiring/prices.go`),
-which pools every source in `trades` with no source predicate; the Redis
-aggregator VWAP is the fallback only for a pair with no `prices_1m` rows.
-What an operator can do:
+The served price is the latest closed bucket of the `prices_1m` continuous
+aggregate (`StorePriceReader.LatestPrice`,
+`cmd/stellarindex-api/internal/wiring/prices.go`), which pools every source in
+`trades` with no source predicate; the Redis aggregator VWAP is the fallback
+only for a pair with no `prices_1m` rows. What an operator can do:
 
-1. External venue: set `[external.<venue>] enabled = false` and restart
-   `stellarindex-indexer`, the binary that runs the off-chain connectors
-   (`startExternalConnectors`, `cmd/stellarindex-indexer/main.go`);
-   restarting the aggregator does not stop them. New `prices_1m` buckets
-   no longer contain the venue. An on-chain source has no per-source switch.
-2. Add the source to `aggregate.excluded_sources` and restart the
+1. Withhold it from the served surfaces: `stellarindex-ops source-exclude
+   -source <name> [-pair ...] -from <t> -reason ... -write` (any source in
+   `external.Registry`, on-chain venues included; effects, delay and gaps
+   below).
+2. Stop new rows. External venue: set `[external.<venue>] enabled = false`
+   and restart `stellarindex-indexer`, the binary that runs the off-chain
+   connectors (`startExternalConnectors`, `cmd/stellarindex-indexer/main.go`);
+   restarting the aggregator does not stop them. An on-chain source has no
+   switch that stops its rows.
+3. Add the source to `aggregate.excluded_sources` and restart the
    aggregator. This drops its stored trades from the aggregator's VWAP
    windows only; the API binary does not read the setting.
-3. Rows already stored stay in `prices_1m`. `/v1/price` serves the bad
-   bucket until a newer closed bucket exists for the pair, and history
-   (`/v1/price/at`, SEP-40 `prices`, the 24h change anchor) keeps it.
+4. Rows already stored stay in `prices_1m` and on the surfaces under "Not
+   covered" below (`/v1/price/at`, history, charts). The covered surfaces
+   withhold them while an exclusion is in force.
    `GuardServedVWAP1mConfidence` substitutes last-known-good only for a
    bucket grossly off its trailing buckets, so a sustained mis-scale passes.
 

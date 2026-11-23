@@ -28,16 +28,24 @@ path; open ones are tracked in
 
 In:
 
-- 3 scenarios against the local docker-compose dev stack
+- 4 scenarios against the local docker-compose dev stack
   (`make dev`):
-  - `01-redis-down.sh` — full Redis container stop. Exercises the
-    rate-limit middleware's fail-open behaviour and the
-    Postgres-fed read fallback.
+  - `01-redis-down.sh` — full Redis container stop. Probes only
+    `/v1/healthz`, a liveness check that touches neither Redis nor
+    Postgres, so it checks that the process stays up and recovers. It
+    does not exercise the real Redis-down behaviour: rate-limited routes
+    fail open for `api.rate_limit_dwell` (30s), then answer 503, with no
+    Postgres read fallback for them (ha-plan.md §5).
   - `02-timescale-down.sh` — full Timescale stop. Exercises the
     "fail loud, never silent-empty" contract on `/v1/markets`.
   - `03-redis-network-partition.sh` — Redis container reachable but
     silent (network partition / pumba pause). Exercises go-redis's
-    timeout path, distinct from connection-refused.
+    timeout path, distinct from connection-refused. Like 01 it samples
+    only `/v1/healthz`.
+  - `04-redis-misconf.sh` — Redis in MISCONF (reads served, writes
+    refused). The one scenario that asserts the rate limiter's dwell
+    policy: fail open inside `api.rate_limit_dwell`, then 503
+    `throttle-unavailable` with `Retry-After`.
 - Bash runner `run.sh` with a production-safety guard, shared `lib/common.sh`, gitignored reports under `reports/`.
 
 Out (deferred to Wave 2): HA-shaped scenarios (Patroni promotion, Sentinel failover, VRRP VIP flip; they need the staging bare-metal stack), cross-region chaos, API mid-stream kill with cursor resume, and aggregator tick stall with alert fire-time measurement (needs Prometheus and AlertManager in the dev stack).
@@ -53,7 +61,8 @@ Docker and pumba operations are shell-shaped (a Go test would be `exec.Command` 
 | 01 | Redis container stop | 1 | `docker stop` | API healthz 200/503; recovers in 30s |
 | 02 | Timescale container stop | 1 | `docker stop` | API fails loud (5xx OR cached); recovers in 60s |
 | 03 | Redis network partition | 1 | `pumba pause` / `docker network disconnect` | ≤ 1 transient failure across 30s |
-| 04 | Postgres primary kill (HA) | 2 | ansible inventory + `pkill postgres` | Patroni promotes replica within 30 s |
+| 04 | Redis MISCONF (`04-redis-misconf.sh`) | 1 | `docker exec` (chmod + BGSAVE) | Fail open inside the dwell; 503 throttle-unavailable + `Retry-After` after it |
+| — | Postgres primary kill (HA) | 2 | ansible inventory + `pkill postgres` | Patroni promotes replica within 30 s |
 | 05 | Redis Sentinel master kill | 2 | systemd kill on r1 | Sentinel quorum elects new master ≤ 10 s; clients reconnect ≤ 30 s |
 | 06 | HAProxy + keepalived VIP flip | 2 | systemctl stop haproxy on owner | VIP migrates ≤ 5 s; in-flight requests retry-OK |
 | 07 | Galexie / MinIO node failure | 2 | docker stop / systemctl stop | erasure-coded reads keep serving |
