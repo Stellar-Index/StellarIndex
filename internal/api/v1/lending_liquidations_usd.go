@@ -100,9 +100,9 @@ func (m *liqMarks) priceAt(t time.Time) (liqPrice, string) {
 	return m.prices[i], ""
 }
 
-// underlying converts a b/dToken amount with the reserve state the fill's own transaction stored. The fill accrues the reserve
-// before moving positions and stores it after, and moving positions changes no rate, so that image carries the fill's rate. An
-// earlier write lacks the fill's accrual; a later transaction in the same ledger may default debt (b_rate falls).
+// underlying converts a b/dToken amount with the last reserve image the fill's own transaction stored: the fill accrues before
+// moving positions, which changes no rate. A bad-debt write-off later in the same transaction would lower b_rate (unverified
+// whether Blend V2 allows one there); an earlier write lacks the accrual, a later transaction may default debt.
 func (m *liqMarks) underlying(kind string, tx clickhouse.LendingTxRef, amount *big.Int) (*big.Int, string) {
 	if kind == auctionLegUnderlying {
 		return amount, ""
@@ -269,9 +269,18 @@ func (s *Server) liquidationMarks(ctx context.Context, pool, protocol, model str
 	if len(assets) == 0 {
 		return out
 	}
+	oldest, newest := fills[0].Ts, fills[0].Ts
+	for _, f := range fills {
+		if f.Ts.Before(oldest) {
+			oldest = f.Ts
+		}
+		if f.Ts.After(newest) {
+			newest = f.Ts
+		}
+	}
 	var rateAssets []string
 	for asset, needRate := range assets {
-		out[asset] = s.liquidationPrices(ctx, asset, fills[len(fills)-1].Ts, flags)
+		out[asset] = s.liquidationPrices(ctx, asset, oldest, newest, flags)
 		if needRate {
 			rateAssets = append(rateAssets, asset)
 		}
@@ -311,9 +320,9 @@ func liquidationStateModel(protocol, lineageReason string) string {
 	return ""
 }
 
-// liquidationPrices reads the asset's closed hourly USD series from before the oldest fill through the chart walk (alias spellings,
-// stablecoin proxies, source exclusions) after the reserve page's SAC and issuer gates.
-func (s *Server) liquidationPrices(ctx context.Context, assetC string, oldest time.Time, flags *Flags) *liqMarks {
+// liquidationPrices reads the asset's closed hourly USD series from before the oldest fill to the newest through the chart walk
+// (alias spellings, stablecoin proxies, source exclusions) after the reserve page's SAC and issuer gates.
+func (s *Server) liquidationPrices(ctx context.Context, assetC string, oldest, newest time.Time, flags *Flags) *liqMarks {
 	asset, ok, unread := s.reserveTokenAsset(ctx, assetC)
 	switch {
 	case unread:
@@ -328,39 +337,30 @@ func (s *Server) liquidationPrices(ctx context.Context, assetC string, oldest ti
 	} else if flagged {
 		return &liqMarks{priceReason: liqReasonPriceWithheld}
 	}
-	return s.liquidationSeries(ctx, assetC, asset, oldest, flags)
+	return s.liquidationSeries(ctx, assetC, asset, oldest, newest, flags)
 }
 
-// liquidationSeries is the walk itself, refused whole when its latest bucket stands on a thin book (the market-cap chart's guard):
-// a dust market the live page will not price values no fill either.
-func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset canonical.Asset, oldest time.Time, flags *Flags) *liqMarks {
+// liquidationSeries is the walk itself, read only up to the bucket after the newest fill, and refused whole when today's market
+// stands on a thin book (the market-cap chart's guard): a dust market the live page will not price values no fill either.
+func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset canonical.Asset, oldest, newest time.Time, flags *Flags) *liqMarks {
 	usd, err := canonical.NewFiatAsset("USD")
 	pair, perr := canonical.NewPair(asset, usd)
 	if s.History == nil || err != nil || perr != nil {
 		return &liqMarks{priceReason: liqReasonNoPrice}
 	}
 	from := oldest.Add(-liquidationPriceMaxAge)
-	gran := chartFitGranularity(chartVWAPGranularityLadder, string(timescale.Granularity1h), s.now().Sub(from))
+	gran := chartFitGranularity(chartVWAPGranularityLadder, string(timescale.Granularity1h), newest.Sub(from)+time.Hour)
 	width, fixed := chartFixedBucketWidth(gran)
 	if !fixed || width > liquidationPriceMaxAge {
 		return &liqMarks{priceReason: liqReasonNoPrice}
 	}
-	points, walk, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
-	switch {
-	case errors.Is(err, ErrPriceWithheld):
-		return &liqMarks{priceReason: liqReasonPriceWithheld}
-	case err != nil:
-		s.logger.Warn("lending liquidations: price read failed", "asset", assetC, "err", err)
-		flags.Degraded = true
-		return &liqMarks{priceReason: liqReasonPriceUnread}
+	points, walk, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: from, gran: gran}, liqReadBefore(s.chartVWAPReader(gran), newest.Add(width)))
+	if reason := s.liquidationWalkReason(assetC, err, flags); reason != "" {
+		return &liqMarks{priceReason: reason}
 	}
 	flags.Degraded = flags.Degraded || walk.degraded
-	switch thin, unmeasured := s.chartLatestThin(ctx, pair, walk); {
-	case thin:
-		return &liqMarks{priceReason: liqReasonPriceThin}
-	case unmeasured:
-		flags.Degraded = true
-		return &liqMarks{priceReason: liqReasonPriceUnread}
+	if reason := s.liquidationLatestThin(ctx, assetC, pair, walk, flags); reason != "" {
+		return &liqMarks{priceReason: reason}
 	}
 	m := &liqMarks{scale: aggregate.ResolveDecimals(s.NonstandardDecimals, asset), cappedAt: walk.cappedAt}
 	floor := s.substanceMinVolumeUSD()
@@ -373,6 +373,53 @@ func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset can
 	sort.Slice(m.prices, func(i, j int) bool { return m.prices[i].close.Before(m.prices[j].close) })
 	slices.SortFunc(m.withheld, time.Time.Compare)
 	return m
+}
+
+// liqReadBefore bounds a chart read's bucket range [from, to) above at `before`, so a page of old fills reads no series up to now.
+func liqReadBefore(read chartRead, before time.Time) chartRead {
+	return func(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]HistoryPoint, error) {
+		if to.IsZero() || to.After(before) {
+			to = before
+		}
+		return read(ctx, p, from, to, limit)
+	}
+}
+
+// liquidationWalkReason is why a failed chart walk values nothing.
+func (s *Server) liquidationWalkReason(assetC string, err error, flags *Flags) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrPriceWithheld):
+		return liqReasonPriceWithheld
+	}
+	s.logger.Warn("lending liquidations: price read failed", "asset", assetC, "err", err)
+	flags.Degraded = true
+	return liqReasonPriceUnread
+}
+
+// liquidationLatestThin is the market-cap chart's guard on the asset's market today, in a read of its own: the books under the
+// newest bucket of the last day; when none traded, every book the fills' walk served, measured now (where they are thin).
+func (s *Server) liquidationLatestThin(ctx context.Context, assetC string, pair canonical.Pair, fillWalk chartWalkResult, flags *Flags) string {
+	gran := string(timescale.Granularity1h)
+	_, walk, err := s.chartSeriesPoints(ctx, pair, chartWindow{from: s.now().Add(-liquidationPriceMaxAge), gran: gran}, s.chartVWAPReader(gran))
+	if reason := s.liquidationWalkReason(assetC, err, flags); reason != "" {
+		return reason
+	}
+	flags.Degraded = flags.Degraded || walk.degraded
+	thin, unmeasured := s.chartLatestThin(ctx, pair, walk)
+	if walk.latestAt.IsZero() && len(fillWalk.books) > 0 {
+		ev, u := s.thinMarketMeasure(ctx, pair.Base, pair.Quote, fillWalk.books, "chart")
+		thin, unmeasured = ev != nil, u
+	}
+	switch {
+	case thin:
+		return liqReasonPriceThin
+	case unmeasured:
+		flags.Degraded = true
+		return liqReasonPriceUnread
+	}
+	return ""
 }
 
 // lendingTxReserveReader reads the reserve state given transactions stored, batched over a page.

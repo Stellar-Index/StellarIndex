@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -111,6 +112,55 @@ func TestLendingPoolLiquidations_ThinBucketAtFill(t *testing.T) {
 		if leg, _ := l.(map[string]any); leg["asset"] == deep && (leg["usd"] != nil || leg["reason"] != "price_thin_at_fill") {
 			t.Errorf("deep leg = %v, want usd null with reason price_thin_at_fill", leg)
 		}
+	}
+}
+
+// liqRangeRecorder records the [from, to) of every hourly series read.
+type liqRangeRecorder struct {
+	*stubHistoryReader
+	spans [][2]time.Time
+}
+
+func (r *liqRangeRecorder) HistoryPointsInRange(ctx context.Context, p canonical.Pair, g string, from, to time.Time, n int) ([]v1.HistoryPoint, error) {
+	r.spans = append(r.spans, [2]time.Time{from, to})
+	return r.stubHistoryReader.HistoryPointsInRange(ctx, p, g, from, to, n)
+}
+
+// TestLendingPoolLiquidations_ReadStopsAtNewestFill: a page of fills three days old reads its pricing series only up to the
+// bucket after the newest fill, while today's market is read on its own and still refuses the thin asset.
+func TestLendingPoolLiquidations_ReadStopsAtNewestFill(t *testing.T) {
+	thin, deep := mkCStrkey(t, 3), mkCStrkey(t, 4)
+	newest := time.Now().UTC().Add(-72 * time.Hour).Truncate(time.Second)
+	lr := &stubLiquidationReader{fills: []timescale.LendingLiquidationFill{{
+		LendingEventPos: timescale.LendingEventPos{Ts: newest, Ledger: 100, TxHash: liqTxA},
+		User:            mkCStrkey(t, 6), Filler: mkCStrkey(t, 7), FillPercent: "100", HasAmounts: true,
+		Lot: map[string]string{thin: "1000000000", deep: "1000000000"}, Bid: map[string]string{deep: "1000000000"},
+	}}}
+	vol := "1000"
+	pts := []v1.HistoryPoint{{Bucket: newest.Add(-2 * time.Hour).Truncate(time.Hour), VWAP: "0.50", VolumeUSD: &vol}}
+	rec := &liqRangeRecorder{stubHistoryReader: &stubHistoryReader{points: pts, twapPoints: pts}}
+	ts := startHTTPTest(t, v1.New(v1.Options{
+		Explorer: liqRouteExplorer{&stubExplorerReader{}}, Lending: lr, History: rec, VerifiedCurrencies: newTestCatalogue(t),
+		Substance: pricingguard.NewSubstanceGate(thinStore{thin: map[string]bool{thin: true}}, pricingguard.SubstanceGateOptions{}),
+	}).Handler())
+	f := liqRouteFirstFill(t, ts)
+	if f["bid_usd"] != "50.00" || f["lot_usd"] != "50.00" || f["lot_usd_lower_bound"] != true {
+		t.Fatalf("bid_usd %v lot_usd %v lower_bound %v, want 50.00 50.00 true (thin asset refused today)", f["bid_usd"], f["lot_usd"], f["lot_usd_lower_bound"])
+	}
+	bound, bounded, today := newest.Add(time.Hour), 0, 0
+	for _, sp := range rec.spans {
+		from, to := sp[0], sp[1]
+		switch {
+		case from.After(bound):
+			today++ // today's market, read from a day ago
+		case to.IsZero() || to.After(bound):
+			t.Errorf("a fill series read [%s, %s) runs past the bucket after the newest fill (%s)", from, to, bound)
+		case to.Equal(bound):
+			bounded++
+		}
+	}
+	if bounded == 0 || today == 0 {
+		t.Fatalf("reads %v: want fill reads bounded at %s and a separate read of today's market", rec.spans, bound)
 	}
 }
 
