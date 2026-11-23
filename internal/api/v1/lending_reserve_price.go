@@ -81,7 +81,7 @@ func observedUSDPrice(l usdPriceLookup) usdPriceLookup {
 	return l
 }
 
-// reserveTokenAssetresolves a reserve's C-strkey to the asset its prices are keyed by: a verified-catalogue SAC from the cached map,
+// reserveTokenAsset resolves a reserve's C-strkey to the asset its prices are keyed by: a verified-catalogue SAC from the cached map,
 // else the lake's SAC check ([Server.unwrapSAC]); ok=false when the id does not parse.
 func (s *Server) reserveTokenAsset(ctx context.Context, assetC string) (asset canonical.Asset, ok, unread bool) {
 	if id, found := s.resolveSACAsset(assetC); found {
