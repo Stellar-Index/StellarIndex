@@ -274,11 +274,11 @@ type AssetDetail struct {
 	thinFloor pricingguard.SubstanceFloor
 
 	capPending *pendingMarketCap
+	// declaredUSDPeg is the USD-peg declaration the F2 lookup found, held back for [Server.fillDeclaredPegs].
+	declaredUSDPeg string
 
-	// Change1hPct / Change7dPct round out the trailing-window set
-	// alongside Change24hPct. Same shape — signed percentage with
-	// two fractional digits, null when no past-bucket snapshot
-	// exists within the window's tolerance.
+	// Change1hPct / Change7dPct round out the trailing-window set alongside Change24hPct. Same shape — signed percentage with two
+	// fractional digits, null when no past-bucket snapshot exists within the window's tolerance.
 	Change1hPct *string `json:"change_1h_pct,omitempty"`
 	Change7dPct *string `json:"change_7d_pct,omitempty"`
 
@@ -929,7 +929,7 @@ func (s *Server) buildAssetListPage(
 	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// After the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	s.fillDeclaredPegPricesInListing(valCtx, out)
+	s.fillDeclaredPegPricesForRowJudge(valCtx, out)
 	// One batch query (no N+1) for the page's issuer labels. Must run before the listing-valuation
 	// arm: that arm refuses scam-tagged issuers using a field only this call populates, so run
 	// first it would publish a dollar figure under a nulled price_usd. Every price producer runs
@@ -1236,10 +1236,14 @@ const priceBasisTransitive = "transitive"
 // leaves the price nil.
 const declaredPegFXMaxAge = 7 * 24 * time.Hour
 
-// fillDeclaredPegPricesInListing applies [Server.fillDeclaredPegPrice] per row, memoising FX per fiat ticker. Order is
-// load-bearing: after applySubstanceGateToListing (which nils PriceUSD and would strip the fill) and after
+// fillDeclaredPegPricesInListing applies [Server.fillDeclaredPegPrice] per row on the judged rate, memoising FX per fiat ticker.
+// Order is load-bearing: after applySubstanceGateToListing (which nils PriceUSD and would strip the fill) and after
 // fillMarketCapsFromSupply, so a peg-filled row keeps market_cap null.
 func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []AssetDetail) {
+	s.fillDeclaredPegRows(ctx, rows, s.fiatUSDPriceFor)
+}
+
+func (s *Server) fillDeclaredPegRows(ctx context.Context, rows []AssetDetail, fx fiatUSDRead) {
 	withholdContradictedScalePrices(rows) // before the whole-token fills, as on the detail path
 	refs := s.globalMarketRefs(ctx, rows)
 	if len(s.FiatPeggedClassics) == 0 && refs == nil {
@@ -1249,22 +1253,27 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 	memo := make(map[string]*string, 1)
 	for i := range rows {
 		s.applyGlobalMarket(ctx, &rows[i], refs, now)
-		s.fillFixedPegPrice(ctx, &rows[i], memo)
+		s.fillFixedPegPrice(ctx, &rows[i], memo, fx)
 		nameLateCapRefusal(&rows[i])
 	}
 }
 
 // fillDeclaredPegPrice fills PriceUSD from the declared fiat peg (pricing_guard.fiat_pegged_classic_assets) only when no market price
-// survived, stamping PriceBasis="declared_peg". memo caches fiat ticker to price per request (nil value = unavailable); nil on single-row
-// paths. A vetted global ticker's market price ([Server.applyGlobalMarket]) fills first: a fixed peg would hide a depeg.
+// survived, stamping PriceBasis="declared_peg", on the judged rate. memo caches fiat ticker to price per request (nil value =
+// unavailable); nil on single-row paths. A vetted global ticker's market price ([Server.applyGlobalMarket]) fills first: a fixed peg
+// would hide a depeg.
 func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
+	s.fillDeclaredPegPriceWith(ctx, row, memo, s.fiatUSDPriceFor)
+}
+
+func (s *Server) fillDeclaredPegPriceWith(ctx context.Context, row *AssetDetail, memo map[string]*string, fx fiatUSDRead) {
 	withholdContradictedScalePrice(row) // after every market producer, before the whole-token fills and their divergence
 	s.applyGlobalMarket(ctx, row, s.globalMarketRefs(ctx, []AssetDetail{*row}), time.Now())
-	s.fillFixedPegPrice(ctx, row, memo)
+	s.fillDeclaredPegs(ctx, row, memo, fx)
 }
 
 // fillFixedPegPrice is the declared fiat peg × FX fill.
-func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
+func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string, fx fiatUSDRead) {
 	if len(s.FiatPeggedClassics) == 0 || (row.PriceUSD != nil && !row.ThinMarket) || !fillMayReplace(row.PriceWithheldReason, fillDeclaredPeg) {
 		return
 	}
@@ -1274,7 +1283,7 @@ func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo m
 	}
 	price, hit := memo[fiat.Code]
 	if !hit {
-		price = s.declaredPegUSDPrice(ctx, fiat)
+		price = declaredPegUSDPrice(ctx, fiat, fx)
 		if memo != nil {
 			memo[fiat.Code] = price
 		}
@@ -1289,14 +1298,14 @@ func (s *Server) fillFixedPegPrice(ctx context.Context, row *AssetDetail, memo m
 	row.ThinMarket = false
 }
 
-// declaredPegUSDPrice resolves 1 unit of the peg currency in USD, nil without a fresh rate. Reuses [Server.fiatUSDPriceFor] so
-// resolvers cannot drift; the price is the rate string verbatim (declared 1:1), so no float arithmetic touches money.
-func (s *Server) declaredPegUSDPrice(ctx context.Context, fiat canonical.Asset) *string {
+// declaredPegUSDPrice resolves 1 unit of the peg currency in USD through fx, nil without a fresh rate; the price is the rate
+// string verbatim (declared 1:1), so no float arithmetic touches money.
+func declaredPegUSDPrice(ctx context.Context, fiat canonical.Asset, fx fiatUSDRead) *string {
 	if fiat.Code == "USD" {
 		one := "1.00000000000000"
 		return &one
 	}
-	price, asOf, _, ok := s.fiatUSDPriceFor(ctx, fiat.Code)
+	price, asOf, ok := fx(ctx, fiat.Code)
 	if !ok || time.Since(asOf) > declaredPegFXMaxAge {
 		return nil
 	}
@@ -1622,9 +1631,10 @@ func (s *Server) handleAssetListFromCatalogue(
 	// asset_class=fiat yields nothing here (fiat lives on
 	// /v1/external/assets); stablecoin/crypto yield only Stellar-issued rows.
 	matched := filterCatalogueByClass(s.VerifiedCurrencies.StellarIssued(), currency.AssetClass(class))
-	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
+	capCtx, capReads := withReadReport(r.Context())
+	caps := s.computeAllCatalogueMarketCaps(capCtx, matched) // matched is one class: fiat rows only when class is
 	rows := s.projectCatalogueRows(r.Context(), matched, caps)
-	s.writeCataloguePage(w, r, rows, limit, cursor, flags)
+	s.writeCataloguePage(w, r, rows, limit, cursor, markFillsWithheld(flags, capReads.withheld.Load()))
 }
 
 // handleExternalAssetList serves GET /v1/external/assets: non-Stellar assets (fiat and reference-only coins), optional
@@ -1664,11 +1674,12 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 	if class == "fiat" || class == "stablecoin" || class == "crypto" {
 		entries = filterCatalogueByClass(entries, currency.AssetClass(class))
 	}
-	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
+	capCtx, capReads := withReadReport(r.Context())
+	caps := s.computeAllCatalogueMarketCaps(capCtx, entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	// /v1/external/assets reads no row filters at all, so it has none to
 	// report as dropped.
-	s.writeCataloguePage(w, r, rows, limit, cursor, Flags{})
+	s.writeCataloguePage(w, r, rows, limit, cursor, markFillsWithheld(Flags{}, capReads.withheld.Load()))
 }
 
 // filterCatalogueByClass returns the catalogue entries of the target class in source order.
@@ -1680,25 +1691,6 @@ func filterCatalogueByClass(entries []*currency.VerifiedCurrency, target currenc
 		}
 	}
 	return out
-}
-
-// computeCatalogueMarketCaps returns a parallel-indexed market_cap_usd slice; only fiat rows (M2 x FX rate) carry one, others
-// stay empty.
-func (s *Server) computeCatalogueMarketCaps(ctx context.Context, matched []*currency.VerifiedCurrency, class string) []string {
-	caps := make([]string, len(matched))
-	if class != "fiat" {
-		return caps
-	}
-	forEachBounded(s.logger, len(matched), readFanoutConcurrency, func(i int) {
-		vc := matched[i]
-		if vc.CirculatingSupply == "" {
-			return
-		}
-		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-			caps[i] = *capStr
-		}
-	})
-	return caps
 }
 
 // projectCatalogueRows projects the matched rows with their market caps and overlays the SEP-1 logo from the cached CODE-ISSUER
@@ -1759,6 +1751,7 @@ func (s *Server) writeCataloguePage(
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
 	unmeasured = unmeasured || reads.unread.Load()
+	flags = markFillsWithheld(flags, reads.withheld.Load())
 	flags.Stale = flags.Stale || unmeasured || stale
 	flags.Degraded = flags.Degraded || unmeasured || anyDirectoryUnchecked(page)
 	env := Envelope{Data: page, Flags: flags}
@@ -1981,7 +1974,8 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Narrow BEFORE the market-cap fan-out: a filtered-out entry would otherwise cost a supply and
 	// FX read for a row that can never be served.
 	entries := filterCatalogueEntries(s.VerifiedCurrencies.StellarIssued(), filters)
-	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
+	ctx, reads := withReadReport(r.Context()) // one report for the caps and the price fill below
+	caps := s.computeAllCatalogueMarketCaps(ctx, entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	// q= over the catalogue phase (the classic phase filters in SQL). It is applied to the rows,
 	// not the entries, because it also matches the projected name.
@@ -2000,13 +1994,13 @@ func (s *Server) serveCatalogueUnifiedPage(
 	}
 	// Price + twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
-	ctx, reads := withReadReport(r.Context())
 	excl, unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
 	unmeasured = unmeasured || reads.unread.Load()
 	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured || stale, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
+	env.Flags = markFillsWithheld(env.Flags, reads.withheld.Load())
 	if end < len(rows) {
 		for _, row := range page {
 			served = append(served, row.Slug)
@@ -2166,7 +2160,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	unmeasured = s.fillMarketCapsFromSupply(valCtx, out, assetRowSourceCounts(rows)) || unmeasured
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
-	s.fillDeclaredPegPricesInListing(valCtx, out)
+	s.fillDeclaredPegPricesForRowJudge(valCtx, out)
 	// Curated issuer label (account_directory), one batch query per page. Scam-class tags withhold
 	// the row's price and market cap (suppressScamIssuerPricing).
 	//
@@ -2198,21 +2192,6 @@ func (s *Server) fetchClassicUnifiedRows(
 	return classicUnifiedRows{
 		rows: out, next: nextInner, unmeasured: unmeasured, cacheStale: cacheStale, observedAt: observedAt,
 	}, true
-}
-
-// computeAllCatalogueMarketCaps returns market_cap_usd parallel to entries; only fiat rows (M2 x FX rate) carry one.
-func (s *Server) computeAllCatalogueMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency) []string {
-	caps := make([]string, len(entries))
-	forEachBounded(s.logger, len(entries), readFanoutConcurrency, func(i int) {
-		vc := entries[i]
-		if vc.Class != currency.ClassFiat || vc.CirculatingSupply == "" {
-			return
-		}
-		if capStr := s.fiatMarketCapUSD(ctx, vc); capStr != nil {
-			caps[i] = *capStr
-		}
-	})
-	return caps
 }
 
 // normaliseAssetIDInput rescues uppercase "NATIVE" (canonical is lowercase, ADR-0010). Compound forms stay case-significant:
@@ -2336,7 +2315,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		s.thinDetailPricePass(ctx, &detail, parsed, off)
 	}
 	pegCtx, pegReads := withReadReport(ctx)
-	s.fillDeclaredPegPrice(pegCtx, &detail, nil)
+	s.fillDeclaredPegPriceForRowJudge(pegCtx, &detail)
 	detail.f2ReadFailed = detail.f2ReadFailed || pegReads.unread.Load()
 	detail.priceStale = detail.priceStale || pegReads.stale.Load()
 
