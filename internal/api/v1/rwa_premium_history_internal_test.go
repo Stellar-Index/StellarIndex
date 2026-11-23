@@ -434,7 +434,7 @@ func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *
 func TestRWAPremiumAnchor_RefusesAValueOlderThanTheLiveSurfaceDoes(t *testing.T) {
 	published := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
 	ref := &rwaFeedSeries{days: map[time.Time]*big.Rat{published: big.NewRat(107, 100)}}
-	days := rwaPremiumRefDays(ref)
+	days := rwaPremiumRefDays(ref, nil)
 	if got := rwaPremiumAnchor(ref, days, published.Add(rwaReferenceMaxAge)); got == nil || got.Cmp(big.NewRat(107, 100)) != 0 {
 		t.Errorf("anchor at exactly the max age = %v, want 1.07", got)
 	}

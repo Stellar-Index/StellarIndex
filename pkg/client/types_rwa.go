@@ -112,6 +112,9 @@ type RWAPremiumSeries struct {
 	// SourceExcludedDays those absent under an operator source exclusion. Neither is in MarketWithheldDays.
 	PegOutsideBandDays int `json:"peg_outside_band_days,omitempty"`
 	SourceExcludedDays int `json:"source_excluded_days,omitempty"`
+	// PegUnobservedDays counts cleared days absent because a pooled dollar stablecoin, from its first observed day on,
+	// had no usable dollar day of its own. Not in MarketWithheldDays.
+	PegUnobservedDays int `json:"peg_unobserved_days,omitempty"`
 }
 
 // RWAPremiumHistoryPoint is one day of one member's premium; both prices travel beside the ratio so a reader can tell which side moved.

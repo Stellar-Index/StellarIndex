@@ -320,3 +320,16 @@ func TestRWAPremiumJoin_AScatteredRefusedRunIsNotARepricing(t *testing.T) {
 		t.Errorf("the honest day after the run was withheld: withheld = %v", got.withheld)
 	}
 }
+
+// TestRWAPremiumJoin_AnExcludedReferenceDayAnchorsNoBand: day 1's value is under an exclusion, so day 2 (no value of its
+// own) has no anchor and is no overlap, not a market off the band around an excluded value.
+func TestRWAPremiumJoin_AnExcludedReferenceDayAnchorsNoBand(t *testing.T) {
+	guard := &rwaPremiumMemberGuard{refExcluded: func(day time.Time) bool { return day.Equal(premDay(1)) }}
+	got := rwaPremiumJoin(premCand(), premRefDays(1), []timescale.MarketDay{premGoodDay(2, "5.00")}, premDefaultFloor(), guard)
+	if got.offBand != 0 || len(got.withheld) != 0 {
+		t.Errorf("offBand = %d withheld = %v, want none: the only anchor was excluded", got.offBand, got.withheld)
+	}
+	if got := rwaPremiumJoin(premCand(), premRefDays(1), []timescale.MarketDay{premGoodDay(2, "5.00")}, premDefaultFloor(), nil); got.offBand != 1 {
+		t.Errorf("unexcluded anchor: offBand = %d, want 1", got.offBand)
+	}
+}

@@ -4007,7 +4007,13 @@ export interface paths {
          *     exclusion covers, on the token's dollar markets or on the oracle
          *     series, is absent and counted in `source_excluded_days`, and the
          *     response carries `flags.fills_withheld_reason: source_excluded`.
-         *     A stablecoin with no observed dollar market is not judged.
+         *     From a stablecoin's first observed dollar day on, a day on
+         *     which its own market has no usable day (no trades, below the
+         *     same thin-market floor, or under an operator exclusion) is
+         *     absent and counted in `peg_unobserved_days`, never treated as
+         *     $1. Days before that first observed day, and every day of a
+         *     stablecoin with no observed dollar market, are not judged
+         *     against it.
          *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a
@@ -9644,7 +9650,7 @@ export interface components {
          */
         RWAHistoryExcluded: {
             /** @enum {string} */
-            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "reference_isin_mismatch" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation" | "peg_outside_band" | "source_excluded";
+            reason: "not_bound" | "contract_not_bound" | "issuer_flagged" | "no_reference_history" | "reference_isin_mismatch" | "no_supply_history" | "supply_incomplete" | "no_market_history" | "market_below_floor" | "market_outside_band" | "no_same_day_observation" | "peg_outside_band" | "peg_unobserved" | "source_excluded";
             /** @description How many set members this reason accounts for. */
             assets: number;
             /** @description What the reason means and, where it matters, who can move it. */
@@ -9784,6 +9790,15 @@ export interface components {
              *     `market_withheld_days`.
              */
             source_excluded_days?: number;
+            /**
+             * @description Days inside the window that cleared the floor and are absent
+             *     because a dollar stablecoin the market leg pools, from its
+             *     first observed dollar day on, had no usable day of its own
+             *     (no trades, too thin, or under an operator exclusion), so
+             *     the price could not be shown to be in dollars. Not in
+             *     `market_withheld_days`.
+             */
+            peg_unobserved_days?: number;
         };
         /**
          * @description One day of one member's premium. Both prices are served beside
