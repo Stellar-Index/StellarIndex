@@ -79,15 +79,16 @@ if [ -n "$BASE" ]; then
     echo "lint-migration-immutability ❌ cannot list ${MIGRATIONS_DIR} at ${BASE}; refusing (fail-closed)." >&2
     exit 1
   }
-  # A rollback checks out a release older than BASE, so BASE's newer
-  # migrations are legitimately absent. Only allowed when the deploy skips
-  # migrate (MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true): the old binary
-  # must not run `migrate up` against a database past its own head.
+  # A rollback, or a hotfix cut from an older release tag, is a release that
+  # does not descend from BASE, so BASE's newer migrations are legitimately
+  # absent if this release's history never had them. Only allowed when the
+  # deploy skips migrate (MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true):
+  # the old binary must not run `migrate up` against a database past its head.
   rollback=0
   head_sha="$(git -C "$MIGRATIONS_DIR" rev-parse -q --verify HEAD 2>/dev/null || true)"
   base_sha="$(git -C "$MIGRATIONS_DIR" rev-parse -q --verify "${BASE}^{commit}" 2>/dev/null || true)"
   if [ -n "$head_sha" ] && [ -n "$base_sha" ] && [ "$head_sha" != "$base_sha" ] \
-    && git -C "$MIGRATIONS_DIR" merge-base --is-ancestor "$head_sha" "$base_sha" 2>/dev/null; then
+    && ! git -C "$MIGRATIONS_DIR" merge-base --is-ancestor "$base_sha" "$head_sha" 2>/dev/null; then
     rollback=1
   fi
   tree_max=0
@@ -105,7 +106,8 @@ if [ -n "$BASE" ]; then
     n="$(printf '%s' "$name" | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//')"
     if [ ! -f "$MIGRATIONS_DIR/$name" ] && [ "$rollback" -eq 1 ] \
       && [ -n "$n" ] && [ "$n" -gt "$tree_max" ] \
-      && ! git -C "$MIGRATIONS_DIR" cat-file -e "${head_sha}:./${name}" 2>/dev/null; then
+      && ! git -C "$MIGRATIONS_DIR" cat-file -e "${head_sha}:./${name}" 2>/dev/null \
+      && [ -z "$(git -C "$MIGRATIONS_DIR" log -1 --format=%H "$head_sha" -- "./${name}")" ]; then
       if [ "${MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED:-}" = "true" ]; then
         echo "lint-migration-immutability: ${MIGRATIONS_DIR}/${name}: newer than this release (rollback from ${BASE}); migrations are skipped."
         continue
