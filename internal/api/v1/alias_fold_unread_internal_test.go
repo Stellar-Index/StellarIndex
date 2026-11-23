@@ -6,7 +6,12 @@ package v1
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // sacLookupExplorer answers every SAC-metadata lookup with err (nil: a definite "not a SAC").
@@ -46,6 +51,36 @@ func TestFoldAliasTwins_FailedSACLookupIsUnread(t *testing.T) {
 			}
 			if rep.unread.Load() != tc.unread {
 				t.Errorf("unread = %v, want %v", rep.unread.Load(), tc.unread)
+			}
+		})
+	}
+}
+
+// A contract row carries no code, issuer or name, so a failed SAC lookup leaves nothing to tell a plain SEP-41 token from an
+// unfolded SAC: an unfiltered page withholds it too, and that omission must reach the wire flagged and uncached.
+func TestClassicUnifiedPage_UnconfirmedContractRowIsWithheldFlagged(t *testing.T) {
+	const sep41 = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	for name, tc := range map[string]struct {
+		err      error
+		withheld bool
+	}{
+		"lookup answered not-a-SAC": {nil, false},
+		"lookup failed":             {errors.New("lake read timed out"), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &Server{Options: Options{
+				AssetsReader: &classicPageReader{rows: []timescale.AssetRow{{AssetID: sep41, Slug: sep41}}},
+				Explorer:     sacLookupExplorer{err: tc.err},
+			}}
+			s.logger = discardLogger()
+			rec := httptest.NewRecorder()
+			s.serveClassicUnifiedPage(rec, httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=all&cursor=classic:", nil),
+				assetListFilters{}, 10, "")
+			if served := strings.Contains(rec.Body.String(), sep41); served == tc.withheld {
+				t.Fatalf("served = %v, want %v: %s", served, !tc.withheld, rec.Body.String())
+			}
+			if f := decodeFlags(t, rec); tc.withheld && (!f.Stale || !noStore(rec)) {
+				t.Errorf("withheld row: stale = %v, no-store = %v; want both", f.Stale, noStore(rec))
 			}
 		})
 	}
