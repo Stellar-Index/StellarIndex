@@ -361,11 +361,11 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 // the ECB calendar leaves (Thursday's rate is still current on the Tuesday after Easter).
 const fiatRateStaleAfter = 6 * 24 * time.Hour
 
-// fiatUSDPriceFor resolves a non-USD fiat's USD price, shared by the LISTING and DETAIL paths so they cannot drift; ok is false
-// both when no rate exists and when [Server.fiatUSDRate] withheld it, so no caller can serve an excluded rate.
+// fiatUSDPriceFor is the UNJUDGED rate for the declared-peg fill, whose row is cached and judged on the way out
+// ([rowJudge.legsCovered] covers the peg's FX pair over the fill's whole window, on any vendor). Never serve it unjudged.
 func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, ok bool) {
-	rate, w := s.fiatUSDRate(ctx, ticker)
-	return rate.price, rate.asOf, w == pricingguard.NotWithheld && rate.price != ""
+	rate, ok := s.readFiatUSDRate(ctx, ticker)
+	return rate.price, rate.asOf, ok
 }
 
 // fiatUSDRate is one reading of a fiat's USD rate. judgedSources is what an exclusion is matched on: the fx_quotes row's own
@@ -383,10 +383,7 @@ type fiatUSDRate struct {
 // fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use InverseUSD ("1 unit in
 // USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
 func (s *Server) fiatUSDRate(ctx context.Context, ticker string) (fiatUSDRate, pricingguard.Withholding) {
-	rate, ok, fxSilent := s.fiatUSDPriceFromFX(ctx, ticker)
-	if !ok {
-		rate, ok = s.fiatUSDPriceFromReader(ctx, ticker, fxSilent)
-	}
+	rate, ok := s.readFiatUSDRate(ctx, ticker)
 	if !ok {
 		return fiatUSDRate{}, pricingguard.NotWithheld
 	}
@@ -398,6 +395,15 @@ func (s *Server) fiatUSDRate(ctx context.Context, ticker string) (fiatUSDRate, p
 		return fiatUSDRate{}, w
 	}
 	return rate, pricingguard.NotWithheld
+}
+
+// readFiatUSDRate resolves the rate, fx_quotes then the PriceReader fallback, unjudged.
+func (s *Server) readFiatUSDRate(ctx context.Context, ticker string) (fiatUSDRate, bool) {
+	rate, ok, fxSilent := s.fiatUSDPriceFromFX(ctx, ticker)
+	if !ok {
+		rate, ok = s.fiatUSDPriceFromReader(ctx, ticker, fxSilent)
+	}
+	return rate, ok
 }
 
 // fiatUSDPriceFromReader is path 2, the PriceReader fallback, judged at its observation instant on the sources it reports.
