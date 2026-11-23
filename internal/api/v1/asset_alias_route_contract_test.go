@@ -17,13 +17,14 @@ var assetParamNames = map[string]bool{
 // most routes, a SAC folding to its wrapped classic for the movements and holders routes. The named test must exist in this package
 // or in explorer/.
 var aliasSpellingTests = map[string]string{
-	"/price":                         "TestPrice_XLMQuoteAlias",
-	"/divergence/series":             "TestDivergenceSeries_EveryXLMSpellingReachesTheStoredPair",
-	"/accounts/{g_strkey}/movements": "TestAccountMovements_SACAssetFilterFoldsToTheWrappedClassic",
-	"/assets/{asset_id}/holders":     "TestAssetHolders_SACFoldsToTheWrappedAssetsBoard",
-	"/price/tip":                     "TestPriceTip_AliasResolvesXLM",
-	"/price/batch":                   "TestPriceBatch_AliasResolvesXLM",
-	"/price/stream":                  "TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes",
+	"/price":                             "TestPrice_XLMQuoteAlias",
+	"/divergence/series":                 "TestDivergenceSeries_EveryXLMSpellingReachesTheStoredPair",
+	"/accounts/{g_strkey}/movements":     "TestAccountMovements_SACAssetFilterFoldsToTheWrappedClassic",
+	"/assets/{asset_id}/holders":         "TestAssetHolders_SACFoldsToTheWrappedAssetsBoard",
+	"/price/tip":                         "TestPriceTip_AliasResolvesXLM",
+	"/price/batch":                       "TestPriceBatch_AliasResolvesXLM",
+	"/price/stream":                      "TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes",
+	"/lending/pools/{pool}/top-accounts": "TestLendingTopAccounts_XLMSpellingsReadTheSACOrAreRejected",
 }
 
 // aliasSpellingDebt lists asset-taking routes with no spelling-equivalence test yet. Debt: shrink it by adding a test above; a

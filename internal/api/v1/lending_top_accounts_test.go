@@ -118,6 +118,20 @@ func TestLendingTopAccounts_AssetFilterRanksByAmountAndKeepsUnpricedRows(t *test
 	}
 }
 
+// TestLendingTopAccounts_XLMSpellingsReadTheSACOrAreRejected: the filter is the reserve's own key, XLM's SAC, which reads every
+// XLM position priced at native's USD rate; the other XLM spellings are refused with 400, never served as an empty ranking.
+func TestLendingTopAccounts_XLMSpellingsReadTheSACOrAreRejected(t *testing.T) {
+	pool, sac, _, _, srv := topAccountsFixture(t)
+	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
+	if got.Accounts != 2 || len(got.Rows) != 2 || got.Rows[0].Account != "GA" || got.Rows[1].Account != "GB" ||
+		strOrNull(got.Rows[1].ValueUSD) != "660.00" {
+		t.Fatalf("SAC filter = %+v", got)
+	}
+	for _, spelling := range []string{"native", "crypto:XLM", "XLM"} {
+		getTopAccounts(t, srv, pool, "?side=supply&asset="+spelling, http.StatusBadRequest)
+	}
+}
+
 // TestLendingTopAccounts_BorrowSideLimitAndCache: the borrow side reads d-tokens only; limit caps rows; a second request is
 // served from the per-pool cache without a second lake read.
 func TestLendingTopAccounts_BorrowSideLimitAndCache(t *testing.T) {

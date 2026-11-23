@@ -85,6 +85,7 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/lending/accounts/{account}/earnings":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/auctions":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/emissions":                lendingUncovered,
+	"GET /v1/lending/pools/{pool}/top-accounts":             lendingUncovered,
 	"GET /v1/aggregators":                                   uncovered("aggregator reference prices"),
 	"GET /v1/divergence":                                    uncovered("our price against references"),
 	"GET /v1/divergence/series":                             uncovered("our price against references"),
