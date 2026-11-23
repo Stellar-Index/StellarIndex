@@ -2023,8 +2023,8 @@ func (s *Server) serveCatalogueUnifiedPage(
 		}
 		nextInner := classic.next
 		env.Data = append(page, classic.rows...)
-		// A fill that added no row does not date or stale the catalogue rows above it.
-		if len(classic.rows) > 0 {
+		// A fill that added no row neither dates nor stales the rows above it, unless it withheld rows it could not judge.
+		if len(classic.rows) > 0 || classic.unmeasured {
 			env.Flags.Stale = env.Flags.Stale || classic.stale()
 			env.Flags.Degraded = env.Flags.Degraded || classic.stale() || anyDirectoryUnchecked(classic.rows)
 			env.AsOf = classic.asOf()
