@@ -164,10 +164,12 @@ playbook).
 - **Health check:** `GET /v1/readyz`, `inter 5s fall 3 rise 2 slowstart 10s`
   (`templates/haproxy.cfg.j2`). Postgres is critical (503); Redis and
   ClickHouse are non-critical (200 with `status="degraded"`), so a cache or
-  lake outage does not drain the pool. For Redis that is a gap, not a
-  feature: past `api.rate_limit_dwell` the API answers 503 on every
-  rate-limited route while `/v1/readyz` still reads 200, so this check keeps
-  routing to a backend that is failing every data request. `GET /v1/livez/lake` is the
+  lake outage does not drain the pool. When a Redis-backed rate limiter is
+  configured, the critical `redis_outage` check turns `/v1/readyz` into 503
+  once Redis has been unreachable for `api.rate_limit_dwell`, the point at
+  which every rate-limited route answers 503; readiness pings drive its
+  clock, so a drained backend rejoins on the first round after Redis answers.
+  `GET /v1/livez/lake` is the
   lake-only signal (503 while ClickHouse is unreachable) for steering lake
   routes separately.
 - **Failover:** API instance down: ejected after ~15 s; HAProxy host or
@@ -427,7 +429,7 @@ order:
 |---|---|---|
 | API process | systemd restarts in ~5 s; full outage meanwhile | HAProxy ejects it within ~15 s; the other instances serve |
 | Edge | Caddy down = full outage | HAProxy host → VIP moves in 1–4 s; region → Cloudflare fails over to another region |
-| Redis | Keyed requests fail at once (503 `auth-key-store-unavailable`); after `api.rate_limit_dwell` (30 s) every rate-limited route answers 503 `throttle-unavailable`, pricing included; `/readyz` stays 200 `degraded`, so a readyz check does not see it | Sentinel failover 15–30 s, inside the dwell for the limiter |
+| Redis | Keyed requests fail at once (503 `auth-key-store-unavailable`); after `api.rate_limit_dwell` (30 s) every rate-limited route answers 503 `throttle-unavailable`, pricing included; `/readyz` is 200 `degraded` inside the dwell and 503 once Redis has been unreachable for `api.rate_limit_dwell` | Sentinel failover 15–30 s, inside the dwell for the limiter |
 | Postgres | Full outage of served data; restore from pgBackRest (§8) | Patroni promotes a replica, 30–60 s |
 | ClickHouse | Lake routes 503; pricing unaffected | Same in-region; other regions keep serving recent data and lose deep history until R1 returns |
 | Galexie / captive core | Ingest stops; API serves stale-flagged data; systemd restart + catch-up | Same per region; other regions unaffected |
@@ -614,7 +616,7 @@ good, decide accordingly".
 |---|---|
 | Ingest down in a region | Pricing serves the last closed buckets with `stale: true` until ingest catches up |
 | ClickHouse down | Lake routes 503; pricing and `/readyz` (200 `degraded`) unaffected |
-| Redis down | Keyed requests 503 at once; every rate-limited route 503s after `api.rate_limit_dwell` (30 s) until Redis has been healthy for the dwell; only health and metrics routes answer. Reads do not fall through to Postgres |
+| Redis down | Keyed requests 503 at once; every rate-limited route 503s after `api.rate_limit_dwell` (30 s) until Redis has been healthy for the dwell; only health and metrics routes answer, and `/readyz` is 503 once Redis has been unreachable for `api.rate_limit_dwell`. Reads do not fall through to Postgres |
 | R1 down (multi-region) | R2/R3 serve pricing from local stores; lake routes read the object-storage fallback; authenticated traffic fails until control-plane replication exists (§3.3) |
 | Reconnecting SSE client | Ledger and observation streams have no replay (gap on reconnect); price-stream resume tokens are per region |
 

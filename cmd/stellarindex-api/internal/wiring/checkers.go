@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -42,13 +43,47 @@ func (c SchemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, 
 	return version, dirty, nil
 }
 
-// RedisChecker adapts redis.UniversalClient to v1.ReadyChecker; Redis is non-critical, so an outage reads status="degraded" (200), not 503.
+// RedisChecker adapts redis.UniversalClient to v1.ReadyChecker and feeds dependency_up{redis}; non-critical, so a Redis failure
+// inside api.rate_limit_dwell reads status="degraded" (200). [RedisOutageChecker] owns the 503 once the dwell has passed.
 type RedisChecker struct{ RDB redis.UniversalClient }
 
 func (c RedisChecker) Name() string   { return "redis" }
 func (c RedisChecker) Critical() bool { return false }
 func (c RedisChecker) Ping(ctx context.Context) error {
 	return c.RDB.Ping(ctx).Err()
+}
+
+// redisOutageDetail is the public readyz text for a Redis outage past the dwell.
+const redisOutageDetail = "redis unreachable longer than api.rate_limit_dwell: keyed and rate-limited routes answer 503"
+
+// RedisOutageChecker is critical and fails only while its DwellClock is failing closed, i.e. when the Redis-backed limiters answer
+// 503. Its clock is fed by readiness pings alone, so a drained instance, which gets no traffic, still sees Redis recover.
+type RedisOutageChecker struct {
+	RDB   redis.UniversalClient
+	Clock *ratelimit.DwellClock
+}
+
+func (RedisOutageChecker) Name() string   { return "redis_outage" }
+func (RedisOutageChecker) Critical() bool { return true }
+func (c RedisOutageChecker) Ping(ctx context.Context) error {
+	if err := c.RDB.Ping(ctx).Err(); err != nil {
+		c.Clock.Failure()
+		if c.Clock.FailingClosed() {
+			return v1.NewReadyzPublicError(redisOutageDetail)
+		}
+		return nil
+	}
+	c.Clock.Success()
+	return nil
+}
+
+// RedisOutageReadyChecks returns the outage checker only when Redis is configured and a Redis-backed limiter exists; without one, a
+// Redis loss closes no route, so readiness must not drain on it.
+func RedisOutageReadyChecks(rdb redis.UniversalClient, redisLimited bool, dwell time.Duration) []v1.ReadyChecker {
+	if rdb == nil || !redisLimited {
+		return nil
+	}
+	return []v1.ReadyChecker{RedisOutageChecker{RDB: rdb, Clock: ratelimit.NewDwellClock(dwell, nil)}}
 }
 
 // NonstandardDecimalsRefreshTimeout bounds each nonstandard-decimals cache load, the blocking startup one included.

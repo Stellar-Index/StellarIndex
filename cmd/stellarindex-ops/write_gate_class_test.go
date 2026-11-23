@@ -36,15 +36,16 @@ func exemptBecause(why string) subcommandClass { return subcommandClass{class: e
 // subcommandClasses classifies every dispatchable stellarindex-ops command by
 // how it writes. A namespace's sub-verbs are keyed "namespace verb".
 var subcommandClasses = map[string]subcommandClass{
-	"docs-config":           ro(),
-	"mint-key":              gate(),
-	"upgrade-key":           gate(),
-	"emit-incident":         gate(),
-	"usage-rollup-backfill": gate(),
-	"freeze-unfreeze":       gate(),
-	"account-erase":         gate(),
-	"change-summary-reset":  gate(),
-	"source-exclude":        gate(),
+	"docs-config":             ro(),
+	"mint-key":                gate(),
+	"upgrade-key":             gate(),
+	"apikey-lineage-backfill": gate(),
+	"emit-incident":           gate(),
+	"usage-rollup-backfill":   gate(),
+	"freeze-unfreeze":         gate(),
+	"account-erase":           gate(),
+	"change-summary-reset":    gate(),
+	"source-exclude":          gate(),
 
 	"rpc-probe":             ro(),
 	"verify-decoders":       ro(),
