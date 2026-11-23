@@ -379,6 +379,13 @@ func TestRWAContracts_ABadChecksumAddressIsAFunnelDrop(t *testing.T) {
 	))
 	assertContractStage(t, view, "contract_candidates_evaluated", 2)
 	assertContractDrop(t, view, "contract_candidates_evaluated", "not_a_contract_address", 1)
+	for _, s := range view.Funnel.Stages {
+		for _, d := range s.Dropped {
+			if d.Reason == "not_a_contract_address" && d.Actor != "definition" {
+				t.Errorf("not_a_contract_address actor = %q, want definition: the directory's defect, not an operator's", d.Actor)
+			}
+		}
+	}
 	assertContractStage(t, view, "contract_assets_admitted", 1)
 	if !view.Funnel.Balanced {
 		t.Errorf("funnel unbalanced by a C1 refusal:\n%s", funnelDump(view))

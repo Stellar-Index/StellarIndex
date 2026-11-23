@@ -22211,7 +22211,8 @@ components:
             vocabulary proves too narrow.
             `not_a_contract_address` — requirement C1: the directory
             row is shaped like a contract address but fails its strkey
-            checksum, an upstream data defect (`operator`).
+            checksum, a defect in the third-party directory that no
+            operator here can correct (`definition`).
             `no_real_world_instrument_basis_for_contract` — requirement
             C4: neither a curated binding nor an oracle-priced symbol.
             `contract_is_classic_member_sac` — the address is the SAC of

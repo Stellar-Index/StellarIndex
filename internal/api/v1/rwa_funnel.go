@@ -549,14 +549,15 @@ func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 // rwaContractCandidateDropActors orders the directory arm's refusals. C1 is reachable: the directory sync and the table CHECK test
 // an address's shape, not its strkey checksum, so a mistyped address reaches the evaluation.
 var rwaContractCandidateDropActors = []struct{ reason, actor string }{
-	{rwa.RejectNotContract, rwaActorOperator},
+	{rwa.RejectNotContract, rwaActorDefinition},
 	{rwa.RejectNoContractBasis, rwaActorDefinition},
 	{rwa.RejectContractIsClassicMemberSAC, rwaActorDefinition},
 }
 
 // rwaContractCandidateDrops is what happened to contracts that reached the full ordered evaluation: every refusal in the directory
-// arm's own tally (a reason outside the known order is listed under operator so it cannot unbalance the funnel silently), then the
-// structural non-refusal drop. Not the merged refusals: the listing arm can emit the same reason.
+// arm's own tally (a reason outside the known order is listed under definition, the evaluator that emitted it, so it cannot
+// unbalance the funnel silently and is not claimed as an operator decision), then the structural non-refusal drop. Not the
+// merged refusals: the listing arm can emit the same reason.
 func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, len(m.contractRefusals)+1)
 	seen := make(map[string]struct{}, len(rwaContractCandidateDropActors))
@@ -574,7 +575,7 @@ func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	}
 	sort.Strings(unknown)
 	for _, reason := range unknown {
-		out = append(out, RWAFunnelDrop{Reason: reason, Count: m.contractRefusals[reason], Actor: rwaActorOperator})
+		out = append(out, RWAFunnelDrop{Reason: reason, Count: m.contractRefusals[reason], Actor: rwaActorDefinition})
 	}
 	if n := m.contractCensus.duplicates; n > 0 {
 		out = append(out, RWAFunnelDrop{Reason: rwaDropDuplicateContractEntry, Count: n, Actor: rwaActorOperator})
