@@ -264,6 +264,7 @@ func (s *RedisAPIKeyStore) create(ctx context.Context, req CreateAPIKeyRequest) 
 		KeyPrefix:       KeyPrefix(plaintext),
 		ParentKeyID:     req.ParentKeyID,
 		AncestorKeyIDs:  parent.lineage(),
+		AncestorHashes:  parent.lineageHashes(),
 		Tier:            tier,
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
@@ -371,11 +372,15 @@ func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyR
 	if !live {
 		return req, ownedRecord{}, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMinterNotLive, req.ParentKeyID)
 	}
-	ancestors, err := s.storedAncestors(ctx, parent)
+	ancestors, hashes, err := s.storedAncestors(ctx, parent)
 	if err != nil {
 		return req, ownedRecord{}, err
 	}
+	if len(ancestors)+1 > MaxDelegationDepth {
+		return req, ownedRecord{}, fmt.Errorf("%w: a key minted here would have %d ancestors, more than %d", ErrMintExceedsCaller, len(ancestors)+1, MaxDelegationDepth)
+	}
 	parent.AncestorKeyIDs = ancestors
+	parent.AncestorHashes = hashes
 	stored := ownedRecord{hash: hash, rec: parent}
 	if req.MintedBy == nil {
 		return req, stored, nil
@@ -392,31 +397,75 @@ func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyR
 	return req, stored, nil
 }
 
-// maxLegacyDelegationWalk bounds the ParentKeyID walk over records minted before chains were stored.
-const maxLegacyDelegationWalk = 64
+// MaxDelegationDepth is the most ancestors a key may have; a mint that would exceed it is refused.
+const MaxDelegationDepth = 64
 
-// storedAncestors returns rec's ancestors, root first: its stored chain or, for a record minted before chains were
-// stored, the one found by walking ParentKeyID through stored records. A missing link refuses: a partial chain
-// would put the new key outside a revoke of the missing key's ancestors.
-func (s *RedisAPIKeyStore) storedAncestors(ctx context.Context, rec APIKeyRecord) ([]string, error) {
-	var walked []string // nearest first
+// maxLegacyDelegationWalk bounds the ParentKeyID walk over records minted before chains were stored.
+const maxLegacyDelegationWalk = MaxDelegationDepth
+
+// recordLookup resolves a KeyID to its record and hash.
+type recordLookup func(ctx context.Context, keyID string) (hash string, rec APIKeyRecord, found bool, err error)
+
+// storedAncestors returns rec's ancestors and their record hashes, root first: its stored chain or, for a record
+// minted before chains were stored, the one found by walking ParentKeyID through stored records. A missing link
+// refuses: a partial chain would put the new key outside a revoke of the missing key's ancestors.
+func (s *RedisAPIKeyStore) storedAncestors(ctx context.Context, rec APIKeyRecord) (ids, hashes []string, err error) {
+	return resolveLineage(ctx, rec, s.findRecordByKeyID)
+}
+
+// resolveLineage is storedAncestors over any KeyID lookup (the backfill resolves through its own walk).
+func resolveLineage(ctx context.Context, rec APIKeyRecord, lookup recordLookup) (ids, hashes []string, err error) {
+	var walkedIDs, walkedHashes []string // nearest first
 	cur := rec
-	for range maxLegacyDelegationWalk {
+	// One round per ancestor walked, plus the round that reaches the root or a stored chain.
+	for range maxLegacyDelegationWalk + 1 {
 		if len(cur.AncestorKeyIDs) > 0 || cur.ParentKeyID == "" {
-			slices.Reverse(walked)
-			return append(slices.Clone(cur.AncestorKeyIDs), walked...), nil
+			ids, hashes, err := chainHashes(ctx, cur, rec.Identifier, lookup)
+			if err != nil {
+				return nil, nil, err
+			}
+			slices.Reverse(walkedIDs)
+			slices.Reverse(walkedHashes)
+			return append(ids, walkedIDs...), append(hashes, walkedHashes...), nil
 		}
-		_, next, found, err := s.findRecordByKeyID(ctx, cur.ParentKeyID)
+		hash, next, err := lookupAncestor(ctx, cur.ParentKeyID, rec.Identifier, lookup)
 		if err != nil {
-			return nil, fmt.Errorf("read ancestor %s: %w", cur.ParentKeyID, err)
+			return nil, nil, err
 		}
-		if !found || next.Identifier != rec.Identifier {
-			return nil, fmt.Errorf("%w: ancestor %s of the minting key has no record, so its chain is unknown", ErrMinterNotLive, cur.ParentKeyID)
-		}
-		walked = append(walked, cur.ParentKeyID)
+		walkedIDs = append(walkedIDs, cur.ParentKeyID)
+		walkedHashes = append(walkedHashes, hash)
 		cur = next
 	}
-	return nil, fmt.Errorf("%w: the minting key's delegation chain is deeper than %d", ErrMintExceedsCaller, maxLegacyDelegationWalk)
+	return nil, nil, fmt.Errorf("%w: the minting key's delegation chain is deeper than %d", ErrMintExceedsCaller, maxLegacyDelegationWalk)
+}
+
+// chainHashes returns rec's stored chain with its hashes, resolving each id when the record predates stored hashes.
+func chainHashes(ctx context.Context, rec APIKeyRecord, identifier string, lookup recordLookup) (ids, hashes []string, err error) {
+	ids = slices.Clone(rec.AncestorKeyIDs)
+	if len(rec.AncestorHashes) == len(ids) {
+		return ids, slices.Clone(rec.AncestorHashes), nil
+	}
+	hashes = make([]string, 0, len(ids))
+	for _, id := range ids {
+		hash, _, err := lookupAncestor(ctx, id, identifier, lookup)
+		if err != nil {
+			return nil, nil, err
+		}
+		hashes = append(hashes, hash)
+	}
+	return ids, hashes, nil
+}
+
+// lookupAncestor resolves one ancestor, refusing one with no record on identifier.
+func lookupAncestor(ctx context.Context, keyID, identifier string, lookup recordLookup) (string, APIKeyRecord, error) {
+	hash, rec, found, err := lookup(ctx, keyID)
+	if err != nil {
+		return "", APIKeyRecord{}, fmt.Errorf("read ancestor %s: %w", keyID, err)
+	}
+	if !found || rec.Identifier != identifier {
+		return "", APIKeyRecord{}, fmt.Errorf("%w: ancestor %s of the minting key has no record, so its chain is unknown", ErrMinterNotLive, keyID)
+	}
+	return hash, rec, nil
 }
 
 // mintableTier reports whether a minted record may carry t. Anonymous is

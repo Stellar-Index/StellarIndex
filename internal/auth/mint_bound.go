@@ -56,6 +56,7 @@ var mintBoundRules = map[string]mintBound{
 	"Identifier":       boundIdentifier,
 	"ParentKeyID":      boundParentKeyID,
 	"AncestorKeyIDs":   boundAncestorKeyIDs,
+	"AncestorHashes":   boundAncestorHashes,
 	"Tier":             boundTier,
 	"Scopes":           boundScopes,
 	"RateLimitPerMin":  boundRateLimit,
@@ -113,6 +114,14 @@ func boundParentKeyID(m Subject, rec APIKeyRecord) error {
 func boundAncestorKeyIDs(m Subject, rec APIKeyRecord) error {
 	if !slices.Equal(rec.AncestorKeyIDs, lineageOf(m, rec.ParentKeyID)) {
 		return exceeds("must be exactly this key's own ancestors followed by this key")
+	}
+	return nil
+}
+
+// The store resolves the hashes from stored records; the minter's Subject never carries them.
+func boundAncestorHashes(_ Subject, rec APIKeyRecord) error {
+	if len(rec.AncestorHashes) != len(rec.AncestorKeyIDs) {
+		return exceeds("must hold one record hash per ancestor")
 	}
 	return nil
 }
