@@ -9,6 +9,7 @@ package pricingguard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -165,6 +166,27 @@ func (g *SourceExclusionGate) CleanBuckets(ctx context.Context, base, quote cano
 	return out, NotWithheld
 }
 
+// SourceExclusionRefreshCadence is how often [SourceExclusionGate.Run] polls: a read lands within this of the cache TTL.
+const SourceExclusionRefreshCadence = exclusionRetryInterval
+
+// Run reads the exclusions now and then whenever the cached read ages past its TTL, polling every `every` until ctx
+// ends, so the active gauge and the read-failure counter stay current when no price request arrives.
+func (g *SourceExclusionGate) Run(ctx context.Context, every time.Duration) {
+	if g == nil {
+		return
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		g.snapshot(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
 // snapshot holds g.mu only to read or replace state. One refresh runs at a time: its caller waits for it, as does any caller
 // with no usable last read; everyone else serves the last good read. Attempts are spaced by exclusionRetryInterval, so a
 // down store costs one query (and one log line) per interval rather than one per request.
@@ -221,11 +243,15 @@ func (g *SourceExclusionGate) refresh(ctx context.Context, done chan struct{}) {
 		case err == nil:
 			g.rows, g.readAt = rows, now
 			obs.PriceSourceExclusionsActive.Set(float64(inForceCount(rows, now)))
+			return
+		case errors.Is(err, context.Canceled):
+			return
 		case !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionMaxStale:
 			g.logger.Warn("source exclusions unreadable; serving under the last good read", "err", err, "read_at", g.readAt)
 		default:
 			g.logger.Error("source exclusions unreadable; withholding prices until they can be read", "err", err)
 		}
+		obs.PriceSourceExclusionReadFailuresTotal.Inc()
 	}()
 	ctx, cancel := context.WithTimeout(ctx, exclusionReadTimeout)
 	defer cancel()

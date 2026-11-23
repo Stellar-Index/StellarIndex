@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 324 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 325 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -517,6 +517,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_usage_write_failing` | `rate(usage_units_dropped_total{counter="billable"}[5m])` | > 0 for 10 min (units dropped silently; quota gate sees no error) | ticket | [usage-write-failing](runbooks/api.md#stellarindex_usage_write_failing) |
 | `stellarindex_after_response_tasks_dropping` | `rate(after_response_tasks_dropped_total[5m])` | > 0 for 10 min (post-response worker queue full) | ticket | [after-response-tasks-dropping](runbooks/api.md#stellarindex_after_response_tasks_dropping) |
 | `stellarindex_price_source_exclusion_active` | `max(price_source_exclusions_active)` | > 0 for 15 min (an operator source exclusion is in force: covered price routes withhold, uncovered ones still serve the source) | ticket | [price-source-exclusion-active](runbooks/api.md#stellarindex_price_source_exclusion_active) |
+| `stellarindex_price_source_exclusion_read_failing` | `increase(price_source_exclusion_read_failures_total[2m])` | > 0 for 5 min (the gate cannot read `source_exclusions`; past 60s it fails closed and withholds every covered price) | ticket | [price-source-exclusion-read-failing](runbooks/api.md#stellarindex_price_source_exclusion_read_failing) |
 | `stellarindex_scam_gate_fail_open` | `rate(scam_gate_lookup_failures_total[5m])` per surface | > 0 for 5 min (flagged issuers priced after a directory lookup error) | ticket | [scam-gate-fail-open](runbooks/api.md#stellarindex_scam_gate_fail_open) |
 | `stellarindex_price_serve_substance_fail_open` | `rate(price_serve_substance_unmeasured_total[5m])` per surface | > 0 for 5 min (dust-seeded markets priced on single lookups after a substance-scan error) | ticket | [substance-fail-open](runbooks/api.md#stellarindex_price_serve_substance_fail_open) |
 | `stellarindex_api_sse_streams_rejected` | `increase(api_sse_streams_rejected_total{reason=~"global_cap\|topic_cap"}[10m])` per reason | > 0 (a shared stream budget is full; new streams refused) | ticket | [sse-streams-rejected](runbooks/api.md#stellarindex_api_sse_streams_rejected) |

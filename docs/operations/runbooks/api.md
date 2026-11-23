@@ -935,7 +935,7 @@ ORDER BY ts DESC;
 
 ## stellarindex_price_source_exclusion_active
 
-**Trigger.** `max(stellarindex_price_source_exclusions_active) > 0` for 15m, P3. The gauge is the number of `source_exclusions` rows in force at the API's last successful read (on demand, at most every 15 s), so it can lag a lift on an idle API until the next price request. An exclusion is deliberate; this ticket keeps one from outliving its incident.
+**Trigger.** `max(stellarindex_price_source_exclusions_active) > 0` for 15m, P3. The gauge is the number of `source_exclusions` rows in force at the API's last successful read. The API reads at startup and re-reads within 5 s of each 15 s cache expiry whether or not price requests arrive, so a lift clears it within about 20 s. An exclusion is deliberate; this ticket keeps one from outliving its incident.
 
 **Check.**
 
@@ -948,6 +948,22 @@ ORDER BY ts DESC;
 2. Over: `stellarindex-ops source-exclude -config /etc/stellarindex/stellarindex.toml -lift -id N -reason "..." -write`.
 
 **Escalate:** none; related [oracle-manipulation defense](../../architecture/oracle-manipulation-defense.md).
+
+## stellarindex_price_source_exclusion_read_failing
+
+**Trigger.** `sum(increase(stellarindex_price_source_exclusion_read_failures_total[2m])) > 0` for 5m, P3. The API's source-exclusion gate could not read `source_exclusions` (a store error or its 2 s read timeout; cancellation is not counted). The gate fails CLOSED: it serves under the last good read for 60 s, then every route it covers withholds its value (withheld reason `unattributed`). The active-exclusions gauge keeps its last value meanwhile, so it cannot show this. Reads retry every 5 s, with or without traffic.
+
+**Check.**
+
+1. The API log: `source exclusions unreadable; withholding prices until they can be read` (ERROR) or `... serving under the last good read` (WARN), with the store error.
+2. Whether Postgres is reachable from the API: `stellarindex_dependency_up{dependency="postgres"}` and `/v1/readyz` ([dependency-down](dependency-down.md)).
+3. `curl /v1/price` for any pair: a withheld answer with reason `unattributed` confirms prices are being withheld.
+
+**Fix.**
+
+1. Restore the Postgres read (connection pool, statement timeout, a lock on `source_exclusions`). Prices return on the next good read; no restart is needed.
+
+**Escalate:** none; related [price-source-exclusion-active](#stellarindex_price_source_exclusion_active).
 
 ## stellarindex_price_serve_substance_fail_open
 

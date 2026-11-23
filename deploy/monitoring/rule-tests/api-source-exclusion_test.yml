@@ -42,6 +42,46 @@ tests:
                 is over.
 
   - interval: 1m
+    name: sustained exclusion read failures open a ticket
+    input_series:
+      # One failed read per 5s retry: 12 a minute.
+      - series: 'stellarindex_price_source_exclusion_read_failures_total{instance="api-1:9464",job="stellarindex-api"}'
+        values: '0+12x30'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: stellarindex_price_source_exclusion_read_failing
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: stellarindex_price_source_exclusion_read_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_price_source_exclusion_read_failing
+              summary: "Source exclusions unreadable: covered prices withheld"
+              description: |
+                The API has failed to read source_exclusions for 5 minutes.
+                The gate fails closed: past 60s without a good read, every
+                price route it covers withholds its value (reason
+                unattributed). Restore the Postgres read; prices return on
+                the next good read.
+
+  - interval: 1m
+    name: a single failed exclusion read stays silent
+    input_series:
+      - series: 'stellarindex_price_source_exclusion_read_failures_total{instance="api-1:9464",job="stellarindex-api"}'
+        values: '0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_price_source_exclusion_read_failing
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: stellarindex_price_source_exclusion_read_failing
+        exp_alerts: []
+
+  - interval: 1m
     name: no exclusion in force stays silent
     input_series:
       - series: 'stellarindex_price_source_exclusions_active{instance="api-1:9464",job="stellarindex-api"}'
