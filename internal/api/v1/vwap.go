@@ -185,8 +185,17 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 // measured thin book makes the answer thin: its rows move the combined price whatever a deep neighbour reads. An unmeasured book is
 // skipped, never counted as clearing.
 func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, books []canonical.Pair, surface string) *SubstanceEvidence {
+	ev, _ := s.thinMarketMeasure(ctx, base, quote, books, surface)
+	return ev
+}
+
+// thinMarketMeasure is [Server.thinMarketEvidence] plus whether a book's substance read failed: a surface that refuses on
+// thinness (a valuation) must treat that as unread, not cleared.
+func (s *Server) thinMarketMeasure(
+	ctx context.Context, base, quote canonical.Asset, books []canonical.Pair, surface string,
+) (ev *SubstanceEvidence, unmeasured bool) {
 	if s.Substance == nil {
-		return nil
+		return nil, false
 	}
 	if len(books) == 0 {
 		books = []canonical.Pair{{Base: base, Quote: quote}}
@@ -196,10 +205,11 @@ func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.A
 		admCtx, adm := WithThinAdmission(ctx, m.Base, m.Quote, true)
 		withheldBy(admCtx, s.Substance, nil, m.Base, m.Quote, surface)
 		if adm.Admitted() {
-			return substanceEvidenceWire(adm.Evidence())
+			return substanceEvidenceWire(adm.Evidence()), false
 		}
+		unmeasured = unmeasured || adm.Unmeasured()
 	}
-	return nil
+	return nil, unmeasured
 }
 
 // parseVWAPParams parses ?outlier_sigma= then ?breakdown= / ?interval=.

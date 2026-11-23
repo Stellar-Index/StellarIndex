@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,11 +34,20 @@ func chBackfill(args []string) error {
 	parallel := fs.Int("parallel", 1, "number of concurrent range-walkers")
 	changesOnly := fs.Bool("changes-only", false, "write only the ledgers row (the per-ledger commit marker) and ledger_entry_changes; skips txs/ops/results/participants/events/supply flows. For re-deriving entry-change ordinals without rewriting the other Tier-1 tables")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/progress gauges (C6-020). Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch_backfill.prom when that directory exists (r1), otherwise no heartbeat at all")
+	ledgersFile := fs.String("ledgers", "", "file of ledger sequences to re-derive instead of -from/-to: one per line, # comments, each >= 2, at most "+strconv.Itoa(maxTargetedLedgers)+" distinct. Only the listed ledgers are written; neighbours sharing a galexie object are decoded and skipped")
+	listUpgrades := fs.Bool("list-upgrade-ledgers", false, "with -dry-run: print to stdout, in -ledgers file format, every walked ledger (-from/-to or -ledgers) whose close meta carries a ledger upgrade, each annotated with its upgrade entry-change count. Writes nothing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
-		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
+	if *parallel < 1 {
+		*parallel = 1
+	}
+	plan, err := resolveBackfillPlan(*from, *to, *ledgersFile, *parallel)
+	if err != nil {
+		return err
+	}
+	if *cfgPath == "" {
+		return errors.New("-config is required")
 	}
 	if err := gate.RequireStatedMode(); err != nil {
 		return fmt.Errorf("ch-backfill: %w", err)
@@ -45,8 +55,8 @@ func chBackfill(args []string) error {
 	// A dry run still fetches + decodes every ledger and opens no Sink: the
 	// ADR-0043 §2.2 restore-drill mode, measuring RTO without adding rows.
 	dryRun := gate.DryRun()
-	if *parallel < 1 {
-		*parallel = 1
+	if err := listModeAllowed(*listUpgrades, dryRun, *changesOnly); err != nil {
+		return fmt.Errorf("ch-backfill: %w", err)
 	}
 	gate.Banner()
 
@@ -58,33 +68,44 @@ func chBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	streamBucket, berr := backfillBucket(cfg, *bucket, uint32(*from), uint32(*to))
+	streamBucket, berr := backfillBucket(cfg, *bucket, plan.lo, plan.hi)
 	if berr != nil {
 		return fmt.Errorf("ch-backfill: %w", berr)
 	}
 	lsCfg := backfillStreamConfig(cfg, streamBucket, *parallel)
-	passphrase := cfg.Stellar.Passphrase()
-
-	chunks := opsutil.SplitRange(uint32(*from), uint32(*to), *parallel)
-	sinkDesc := fmt.Sprintf("ClickHouse %s", *chAddr)
-	if dryRun {
-		sinkDesc = "DRY RUN (decode only, nothing written)"
-	} else if *changesOnly {
-		sinkDesc += " (ledgers + ledger_entry_changes only)"
-	}
-	fmt.Fprintf(os.Stderr, "ch-backfill: streaming ledgers %d..%d from %q -> %s (%d worker(s))\n",
-		*from, *to, streamBucket, sinkDesc, len(chunks))
 
 	prog := newBackfillProgress(*heartbeat)
 	defer prog.stop()
+	if *listUpgrades {
+		return runListUpgradeLedgers(ctx, lsCfg, plan, *parallel, streamBucket, prog)
+	}
 
-	loss := &extractLoss{}
+	worker := backfillWorker{
+		stream: ledgerstream.Stream, lsCfg: lsCfg, passphrase: cfg.Stellar.Passphrase(),
+		changesOnly: *changesOnly, plan: plan, loss: &extractLoss{}, logProgress: prog.record,
+	}
+	sinkDesc := "DRY RUN (decode only, nothing written)"
+	if !dryRun {
+		worker.openSink = clickhouseSinkOpener(*chAddr, *flushEvery)
+		sinkDesc = fmt.Sprintf("ClickHouse %s", *chAddr)
+		if *changesOnly {
+			sinkDesc += " (ledgers + ledger_entry_changes only)"
+		}
+	}
+	shares := assignRanges(plan.ranges, *parallel)
+	fmt.Fprintf(os.Stderr, "ch-backfill: streaming %s from %q -> %s (%d worker(s))\n",
+		plan.label(), streamBucket, sinkDesc, len(shares))
+	return runBackfillWalk(ctx, worker, shares, streamBucket, prog, dryRun)
+}
+
+// runBackfillWalk runs the workers and fails closed on a short walk or an extract undercount.
+func runBackfillWalk(ctx context.Context, worker backfillWorker, shares [][]opsutil.RangeChunk, streamBucket string,
+	prog *backfillProgress, dryRun bool,
+) error {
+	plan := worker.plan
 	g, gctx := errgroup.WithContext(ctx)
-	for i, chunk := range chunks {
-		i, chunk := i, chunk // capture
-		g.Go(func() error {
-			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, dryRun, *changesOnly, loss, prog.record)
-		})
+	for i, share := range shares {
+		g.Go(func() error { return worker.run(gctx, i, share) })
 	}
 	walkErr := g.Wait()
 
@@ -95,9 +116,10 @@ func chBackfill(args []string) error {
 	prog.reportRate()
 	// A walk that did not cover its range must NOT exit 0 — see
 	// backfillCoverage.
-	if cerr := backfillCoverage(uint32(*from), uint32(*to), total, streamBucket, ctx.Err() != nil); cerr != nil {
+	if cerr := plan.coverage(total, streamBucket, ctx.Err() != nil); cerr != nil {
 		return fmt.Errorf("ch-backfill: %w", cerr)
 	}
+	loss := worker.loss
 	if s := loss.supplySkipSummary(); s != "" {
 		fmt.Fprintf(os.Stderr, "ch-backfill: %s\n", s)
 	}
@@ -106,10 +128,10 @@ func chBackfill(args []string) error {
 	}
 	prog.markOK()
 	if dryRun {
-		fmt.Fprintf(os.Stderr, "ch-backfill: done — [%d,%d] re-derived from %q (DRY RUN, nothing written)\n", *from, *to, streamBucket)
+		fmt.Fprintf(os.Stderr, "ch-backfill: done — %s re-derived from %q (DRY RUN, nothing written)\n", plan.label(), streamBucket)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "ch-backfill: done — [%d,%d] complete from %q\n", *from, *to, streamBucket)
+	fmt.Fprintf(os.Stderr, "ch-backfill: done — %s complete from %q\n", plan.label(), streamBucket)
 	return nil
 }
 
@@ -226,62 +248,90 @@ func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupte
 	return nil
 }
 
-// chBackfillChunk walks one chunk with its own Sink; a ClickHouse write failure is fatal so errgroup cancels siblings.
-// dryRun opens no Sink but still decodes every ledger (ADR-0043 drill: clickhouse.Open pins the stellar database).
-func chBackfillChunk(
-	ctx context.Context,
-	idx int,
-	chunk opsutil.RangeChunk,
-	lsCfg ledgerstream.Config,
-	passphrase, chAddr string,
-	flushEvery int,
-	dryRun, changesOnly bool,
-	loss *extractLoss,
-	logProgress func(workerIdx int, seq uint32, supplySkips map[string]int),
-) error {
-	var sink *clickhouse.Sink
-	if !dryRun {
-		opened, err := clickhouse.Open(ctx, chAddr, flushEvery)
+// streamFunc is ledgerstream.Stream's shape, a seam so a worker's walk can be driven without a bucket.
+type streamFunc func(ctx context.Context, cfg ledgerstream.Config, from, to uint32, callback func(sdkxdr.LedgerCloseMeta) error) error
+
+// extractSink is the part of *clickhouse.Sink a worker writes through.
+type extractSink interface {
+	Add(ctx context.Context, e clickhouse.LedgerExtract) error
+	Flush(ctx context.Context) error
+	Close(ctx context.Context) error
+}
+
+// clickhouseSinkOpener opens one Sink per worker; clickhouse.Open pins the stellar database.
+func clickhouseSinkOpener(chAddr string, flushEvery int) func(context.Context) (extractSink, error) {
+	return func(ctx context.Context) (extractSink, error) {
+		s, err := clickhouse.Open(ctx, chAddr, flushEvery)
+		if err != nil {
+			return nil, err
+		}
+		return s, nil
+	}
+}
+
+// backfillWorker walks its share of the plan with one Sink; a ClickHouse write failure is fatal so errgroup cancels
+// siblings. A nil openSink is the dry run: every planned ledger is still decoded (ADR-0043 drill).
+type backfillWorker struct {
+	stream      streamFunc
+	openSink    func(context.Context) (extractSink, error)
+	lsCfg       ledgerstream.Config
+	passphrase  string
+	changesOnly bool
+	plan        backfillPlan
+	loss        *extractLoss
+	logProgress func(workerIdx int, seq uint32, supplySkips map[string]int)
+}
+
+// run walks ranges in order, then flushes the tail before Close so the final partial batch lands.
+func (w backfillWorker) run(ctx context.Context, idx int, ranges []opsutil.RangeChunk) error {
+	var sink extractSink
+	if w.openSink != nil {
+		opened, err := w.openSink(ctx)
 		if err != nil {
 			return err
 		}
 		sink = opened
 		defer func() { _ = sink.Close(ctx) }()
 	}
-
-	walkErr := ledgerstream.Stream(ctx, lsCfg, chunk.From, chunk.To,
-		func(lcm sdkxdr.LedgerCloseMeta) error {
-			ext, eerr := clickhouse.ExtractLedger(lcm, passphrase)
-			if eerr != nil {
-				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d extract ledger %d: %v\n", idx, lcm.LedgerSequence(), eerr)
-				return nil
-			}
-			if loss.record(ext, changesOnly) {
-				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d\n",
-					idx, lcm.LedgerSequence(), ext.TxReadErrors, ext.TxEventReadErrors, ext.EntryMetaUnsupported,
-					ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable)
-			}
-			if changesOnly {
-				ext = changesOnlyExtract(ext)
-			}
-			if sink != nil {
-				if aerr := sink.Add(ctx, ext); aerr != nil {
-					return aerr // a ClickHouse write failure is fatal; retry the range
-				}
-			}
-			logProgress(idx, lcm.LedgerSequence(), ext.SupplyFlowSkips)
-			return nil
-		},
-	)
-	if walkErr != nil {
-		return walkErr
+	for _, r := range ranges {
+		err := w.stream(ctx, w.lsCfg, r.From, r.To, func(lcm sdkxdr.LedgerCloseMeta) error {
+			return w.ledger(ctx, idx, sink, lcm)
+		})
+		if err != nil {
+			return err
+		}
 	}
 	if sink == nil {
 		return nil
 	}
-	// Clean completion: flush the chunk's tail before Close so the final
-	// partial batch lands.
 	return sink.Flush(ctx)
+}
+
+// ledger extracts and writes one ledger; a ledger outside a -ledgers list is skipped before extraction.
+func (w backfillWorker) ledger(ctx context.Context, idx int, sink extractSink, lcm sdkxdr.LedgerCloseMeta) error {
+	if !w.plan.writes(lcm.LedgerSequence()) {
+		return nil
+	}
+	ext, eerr := clickhouse.ExtractLedger(lcm, w.passphrase)
+	if eerr != nil {
+		fmt.Fprintf(os.Stderr, "ch-backfill: worker %d extract ledger %d: %v\n", idx, lcm.LedgerSequence(), eerr)
+		return nil
+	}
+	if w.loss.record(ext, w.changesOnly) {
+		fmt.Fprintf(os.Stderr, "ch-backfill: worker %d ledger %d extracted with a read undercount: tx_read=%d tx_event_read=%d entry_meta_unsupported=%d soroban_fee_meta_unsupported=%d evicted_keys_unreadable=%d entry_changes_unencodable=%d\n",
+			idx, lcm.LedgerSequence(), ext.TxReadErrors, ext.TxEventReadErrors, ext.EntryMetaUnsupported,
+			ext.SorobanFeeMetaUnsupported, ext.EvictedKeysUnreadable, ext.EntryChangesUnencodable)
+	}
+	if w.changesOnly {
+		ext = changesOnlyExtract(ext)
+	}
+	if sink != nil {
+		if aerr := sink.Add(ctx, ext); aerr != nil {
+			return aerr // a ClickHouse write failure is fatal; retry the range
+		}
+	}
+	w.logProgress(idx, lcm.LedgerSequence(), ext.SupplyFlowSkips)
+	return nil
 }
 
 // extractLoss tallies what ExtractLedger read short across every worker. The ledger is still written to keep the lake

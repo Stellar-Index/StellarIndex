@@ -42,8 +42,17 @@ var stablecoinPegs = map[string]string{
 	"USDC": "USD", "PYUSD": "USD", "USDT0": "USD", "YUSDC": "USD", "EURC": "EUR",
 }
 
-// stablecoinYieldBearing marks wrappers whose price is not meant to sit at the peg.
-var stablecoinYieldBearing = map[string]bool{"YUSDC": true}
+// stablecoinUnderlying maps each wrapper whose price is not meant to sit at the peg to the asset id of its underlying.
+var stablecoinUnderlying = map[string]string{"YUSDC": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}
+
+// stablecoinYieldBearing marks the wrappers in [stablecoinUnderlying].
+var stablecoinYieldBearing = func() map[string]bool {
+	m := make(map[string]bool, len(stablecoinUnderlying))
+	for ticker := range stablecoinUnderlying {
+		m[ticker] = true
+	}
+	return m
+}()
 
 // StablecoinsView is the GET /v1/stablecoins data object.
 type StablecoinsView struct {
@@ -72,7 +81,7 @@ type StablecoinPegTotal struct {
 	SupplyUSD    *string `json:"supply_usd,omitempty"`
 	Assets       int     `json:"assets"`
 	AssetsValued int     `json:"assets_valued"`
-	// LowerBound: a member is unvalued, a summed supply is a floor, or the member list was truncated.
+	// LowerBound: a member the row sums is unvalued, a summed supply is a floor, or the member list was truncated.
 	LowerBound bool `json:"lower_bound"`
 }
 
@@ -220,28 +229,82 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 	return a
 }
 
+// stablecoinSumRule is the one summation rule for the headline and the by_peg rows: reason is why a valued member is left out of the
+// USD total ("" = summed), inPeg whether it counts toward its own peg row. A wrapper whose underlying is in the set (asset ids in members)
+// is in neither: its backing is already that underlying's supply. A wrapper of an asset outside the set is an ordinary member.
+func stablecoinSumRule(a StablecoinAsset, members map[string]bool) (reason string, inPeg bool) {
+	switch {
+	case a.YieldBearing && members[stablecoinUnderlying[strings.ToUpper(a.Ticker)]]:
+		return stablecoinReasonYield, false
+	case a.Peg == "unknown":
+		return stablecoinReasonPegUnknown, true
+	case a.Peg != "USD":
+		return stablecoinReasonNonUSD, true
+	}
+	return "", true
+}
+
 // stablecoinSummarise totals the rows over their PUBLISHED per-asset strings,
 // so a reader re-adding the rows reaches the same figure.
 func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusion, truncated bool) (StablecoinTotal, []StablecoinPegTotal) {
 	t := StablecoinTotal{Assets: len(assets), NotSummed: []StablecoinExclusion{}, Basis: stablecoinBasis}
+	members := make(map[string]bool, len(assets))
+	for _, a := range assets {
+		members[a.AssetID] = true
+	}
 	sum := new(big.Rat)
 	summed := false
-	pegSum := map[string]*big.Rat{}
-	pegN := map[string]int{}
-	pegValued := map[string]int{}
-	pegFloor := map[string]bool{}
-	floor := false
+	// short: the total is below the value of every Stellar stablecoin. A wrapper left out is not, its backing being summed.
+	short := false
 	for _, a := range assets {
-		pegN[a.Peg]++
+		reason, _ := stablecoinSumRule(a, members)
 		if a.SupplyUSD == nil {
-			pegFloor[a.Peg] = true
 			t.AssetsUnvalued++
+		} else {
+			t.AssetsValued++
+		}
+		switch {
+		case reason != "":
+			t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: reason})
+			short = short || reason != stablecoinReasonYield
+			continue
+		case a.SupplyUSD == nil:
+			// Unvalued, not zero: a member that should be summed and is not is why the total is a floor.
+			short = true
 			if a.ValuationStatus == stablecoinWithheld {
 				t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: stablecoinReasonMCapNull})
 			}
 			continue
 		}
-		t.AssetsValued++
+		v, _ := new(big.Rat).SetString(*a.SupplyUSD)
+		sum.Add(sum, v)
+		summed = true
+		short = short || a.CirculatingSupplyLowerBound
+	}
+	if summed {
+		s := sum.FloatString(2)
+		t.SupplyUSD = &s
+	}
+	t.LowerBound = len(excluded) > 0 || short || truncated
+	return t, stablecoinPegRows(assets, members, truncated)
+}
+
+// stablecoinPegRows builds the by_peg rows under [stablecoinSumRule], so a row cannot sum a member the headline leaves out for
+// double counting.
+func stablecoinPegRows(assets []StablecoinAsset, members map[string]bool, truncated bool) []StablecoinPegTotal {
+	pegSum := map[string]*big.Rat{}
+	pegN := map[string]int{}
+	pegValued := map[string]int{}
+	pegFloor := map[string]bool{}
+	for _, a := range assets {
+		pegN[a.Peg]++
+		if _, inPeg := stablecoinSumRule(a, members); !inPeg {
+			continue
+		}
+		if a.SupplyUSD == nil {
+			pegFloor[a.Peg] = true
+			continue
+		}
 		pegValued[a.Peg]++
 		pegFloor[a.Peg] = pegFloor[a.Peg] || a.CirculatingSupplyLowerBound
 		v, _ := new(big.Rat).SetString(*a.SupplyUSD)
@@ -249,25 +312,7 @@ func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusio
 			pegSum[a.Peg] = new(big.Rat)
 		}
 		pegSum[a.Peg].Add(pegSum[a.Peg], v)
-		switch {
-		case a.Peg == "unknown":
-			t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: stablecoinReasonPegUnknown})
-		case a.Peg != "USD":
-			t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: stablecoinReasonNonUSD})
-		case a.YieldBearing:
-			t.NotSummed = append(t.NotSummed, StablecoinExclusion{Ticker: a.Ticker, Reason: stablecoinReasonYield})
-		default:
-			sum.Add(sum, v)
-			summed = true
-			floor = floor || a.CirculatingSupplyLowerBound
-		}
 	}
-	if summed {
-		s := sum.FloatString(2)
-		t.SupplyUSD = &s
-	}
-	// An unvalued member is unvalued, not zero: it is why the total is a floor.
-	t.LowerBound = len(excluded) > 0 || t.AssetsUnvalued > 0 || len(t.NotSummed) > 0 || floor || truncated
 	pegs := make([]StablecoinPegTotal, 0, len(pegN))
 	for peg, n := range pegN {
 		p := StablecoinPegTotal{Peg: peg, Assets: n, AssetsValued: pegValued[peg], LowerBound: pegFloor[peg] || truncated}
@@ -278,7 +323,7 @@ func stablecoinSummarise(assets []StablecoinAsset, excluded []StablecoinExclusio
 		pegs = append(pegs, p)
 	}
 	sort.Slice(pegs, func(i, j int) bool { return pegs[i].Peg < pegs[j].Peg })
-	return t, pegs
+	return pegs
 }
 
 func stablecoinSortAssets(assets []StablecoinAsset) {

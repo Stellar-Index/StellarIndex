@@ -38,7 +38,8 @@ func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool)
 	return boughtAsset, bought, known
 }
 
-// IsRealTrade reports whether sdex.decodeClaimAtom would return a Trade for a ClaimAtom: the single predicate both count oracles share, so they equal the decoder's output.
+// IsRealTrade reports whether sdex.decodeClaimAtom would return a Trade for a ClaimAtom: the single predicate both count oracles share.
+// It does not see the atom's position, so it counts atoms at index 1024 and above that the decoder drops (ErrClaimIndexOverflow).
 // It drops unknown atom types, both-legs-zero (one-side-zero is kept), assets AssetFromXDR rejects, and self-crosses; the writer's Validate drops more (see chops.sdexServedCensus).
 func IsRealTrade(a xdr.ClaimAtom) bool {
 	sold, bought, soldAsset, boughtAsset, known := parts(a)

@@ -742,6 +742,47 @@ groups:
             look for lock contention from directory-sync or pool
             exhaustion in the gate's WARN line.
 
+      # An operator source exclusion is a deliberate kill switch, so its
+      # being on is not a fault; the ticket keeps one from being forgotten.
+      - alert: stellarindex_price_source_exclusion_active
+        expr: max(stellarindex_price_source_exclusions_active) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_price_source_exclusion_active
+          summary: "Price kill switch on: {{ $value | humanize }} source exclusion(s) in force"
+          description: |
+            At least one operator source exclusion (stellarindex-ops
+            source-exclude) has been in force for 15 minutes. Covered
+            price routes withhold every value that depends on the
+            excluded source (404 source_excluded), and the routes the
+            operator note lists as NOT COVERED still serve it. Confirm
+            the exclusion is still wanted and lift it when the incident
+            is over.
+
+      # The exclusion gate fails CLOSED: once reads fail past its 60s stale
+      # bound it withholds every covered price, which the active gauge
+      # cannot show. A 2m window ignores a single failed read.
+      - alert: stellarindex_price_source_exclusion_read_failing
+        expr: sum(increase(stellarindex_price_source_exclusion_read_failures_total[2m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_price_source_exclusion_read_failing
+          summary: "Source exclusions unreadable: covered prices withheld"
+          description: |
+            The API has failed to read source_exclusions for 5 minutes.
+            The gate fails closed: past 60s without a good read, every
+            price route it covers withholds its value (reason
+            unattributed). Restore the Postgres read; prices return on
+            the next good read.
+
       # The substance gate fails OPEN when its 24h prices_1m scan errors or
       # times out: single lookups then serve a dust-seeded market's price.
       # A different, heavier read than the scam gate's, so that alert stays

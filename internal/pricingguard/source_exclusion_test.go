@@ -3,10 +3,15 @@ package pricingguard
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -108,6 +113,108 @@ func TestSourceExclusionGate_UnreadableFailsClosed(t *testing.T) {
 	if got, w := g.CleanBuckets(context.Background(), base, quote, []timescale.Vwap1mRow{row}); w != WithheldExclusionsUnread || got != nil {
 		t.Fatalf("CleanBuckets unread = %v, %q", got, w)
 	}
+}
+
+// The active-exclusions gauge counts only rows in force at the read, so an expired or not-yet-started exclusion does not
+// read as the kill switch being on.
+func TestSourceExclusionGate_ActiveGaugeCountsInForceRows(t *testing.T) {
+	base, quote := exclPair(t)
+	row := timescale.Vwap1mRow{Bucket: exclBucket, Sources: []string{"kraken"}}
+	now := exclBucket
+	f := &fakeExclusions{rows: []timescale.SourceExclusion{
+		{Source: "kraken", From: exclBucket.Add(-time.Hour)},
+		{Source: "binance", From: exclBucket.Add(-2 * time.Hour), Until: exclBucket.Add(-time.Hour)},
+		{Source: "bitstamp", From: exclBucket.Add(time.Hour)},
+	}}
+	g := exclGate(f, &now)
+	obs.PriceSourceExclusionsActive.Set(-1)
+	g.BucketWithholding(context.Background(), base, quote, row)
+	if got := testutil.ToFloat64(obs.PriceSourceExclusionsActive); got != 1 {
+		t.Fatalf("stellarindex_price_source_exclusions_active = %v, want 1 (one in force, one expired, one future)", got)
+	}
+	f.rows = nil
+	now = now.Add(exclusionCacheTTL + time.Second)
+	g.BucketWithholding(context.Background(), base, quote, row)
+	if got := testutil.ToFloat64(obs.PriceSourceExclusionsActive); got != 0 {
+		t.Fatalf("after lift: gauge = %v, want 0", got)
+	}
+}
+
+// A failed read counts toward stellarindex_price_source_exclusion_read_failures_total; a cancelled one does not.
+func TestSourceExclusionGate_ReadFailuresCounted(t *testing.T) {
+	base, quote := exclPair(t)
+	row := timescale.Vwap1mRow{Bucket: exclBucket, Sources: []string{"sdex"}}
+	now := exclBucket
+	f := &fakeExclusions{err: context.Canceled}
+	g := exclGate(f, &now)
+	before := testutil.ToFloat64(obs.PriceSourceExclusionReadFailuresTotal)
+	g.BucketWithholding(context.Background(), base, quote, row)
+	if got := testutil.ToFloat64(obs.PriceSourceExclusionReadFailuresTotal) - before; got != 0 {
+		t.Fatalf("cancelled read counted %v failures, want 0", got)
+	}
+	f.err = errors.New("db down")
+	now = now.Add(exclusionRetryInterval)
+	g.BucketWithholding(context.Background(), base, quote, row)
+	if got := testutil.ToFloat64(obs.PriceSourceExclusionReadFailuresTotal) - before; got != 1 {
+		t.Fatalf("failed read counted %v failures, want 1", got)
+	}
+}
+
+// syncExclusions is a reader safe for a background poller; each read is announced on reads.
+type syncExclusions struct {
+	mu    sync.Mutex
+	rows  []timescale.SourceExclusion
+	reads chan struct{}
+}
+
+func (s *syncExclusions) UnliftedSourceExclusions(context.Context) ([]timescale.SourceExclusion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case s.reads <- struct{}{}:
+	default:
+	}
+	return s.rows, nil
+}
+
+// Run keeps the active gauge current with no price request: it reads at start, re-reads once the TTL has passed (a
+// lift shows), and returns when its context ends.
+func TestSourceExclusionGate_RunReadsWithoutTraffic(t *testing.T) {
+	var clock atomic.Int64
+	clock.Store(exclBucket.UnixNano())
+	r := &syncExclusions{rows: []timescale.SourceExclusion{{Source: "kraken", From: exclBucket.Add(-time.Hour)}}, reads: make(chan struct{}, 1)}
+	g := NewSourceExclusionGate(r, SourceExclusionGateOptions{})
+	g.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	obs.PriceSourceExclusionsActive.Set(-1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); g.Run(ctx, time.Millisecond) }()
+	defer func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+			t.Error("Run did not return after its context ended")
+		}
+	}()
+
+	waitGauge := func(want float64, what string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for testutil.ToFloat64(obs.PriceSourceExclusionsActive) != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: gauge = %v, want %v", what, testutil.ToFloat64(obs.PriceSourceExclusionsActive), want)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	waitGauge(1, "startup read")
+	r.mu.Lock()
+	r.rows = nil
+	r.mu.Unlock()
+	clock.Add(int64(exclusionCacheTTL + time.Second))
+	waitGauge(0, "after a lift with no traffic")
 }
 
 func TestSourceExclusionGate_CachesWithinTTL(t *testing.T) {

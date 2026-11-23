@@ -9,12 +9,14 @@ package pricingguard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -126,6 +128,16 @@ func inForceOver(e timescale.SourceExclusion, from, to time.Time) bool {
 	return !e.Lifted() && e.From.Before(to) && (e.Until.IsZero() || e.Until.After(from))
 }
 
+func inForceCount(rows []timescale.SourceExclusion, at time.Time) int {
+	n := 0
+	for _, e := range rows {
+		if inForceOver(e, at, at.Add(time.Nanosecond)) {
+			n++
+		}
+	}
+	return n
+}
+
 // BucketWithholding is [SourceExclusionGate.Withholding] for one closed 1m bucket and the sources it pooled.
 func (g *SourceExclusionGate) BucketWithholding(ctx context.Context, base, quote canonical.Asset, row timescale.Vwap1mRow) Withholding {
 	return g.Withholding(ctx, base, quote, row.Sources, row.Bucket, row.Bucket.Add(time.Minute))
@@ -152,6 +164,27 @@ func (g *SourceExclusionGate) CleanBuckets(ctx context.Context, base, quote cano
 		}
 	}
 	return out, NotWithheld
+}
+
+// SourceExclusionRefreshCadence is how often [SourceExclusionGate.Run] polls: a read lands within this of the cache TTL.
+const SourceExclusionRefreshCadence = exclusionRetryInterval
+
+// Run reads the exclusions now and then whenever the cached read ages past its TTL, polling every `every` until ctx
+// ends, so the active gauge and the read-failure counter stay current when no price request arrives.
+func (g *SourceExclusionGate) Run(ctx context.Context, every time.Duration) {
+	if g == nil {
+		return
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		g.snapshot(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // snapshot holds g.mu only to read or replace state. One refresh runs at a time: its caller waits for it, as does any caller
@@ -209,11 +242,16 @@ func (g *SourceExclusionGate) refresh(ctx context.Context, done chan struct{}) {
 		switch {
 		case err == nil:
 			g.rows, g.readAt = rows, now
+			obs.PriceSourceExclusionsActive.Set(float64(inForceCount(rows, now)))
+			return
+		case errors.Is(err, context.Canceled):
+			return
 		case !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionMaxStale:
 			g.logger.Warn("source exclusions unreadable; serving under the last good read", "err", err, "read_at", g.readAt)
 		default:
 			g.logger.Error("source exclusions unreadable; withholding prices until they can be read", "err", err)
 		}
+		obs.PriceSourceExclusionReadFailuresTotal.Inc()
 	}()
 	ctx, cancel := context.WithTimeout(ctx, exclusionReadTimeout)
 	defer cancel()
