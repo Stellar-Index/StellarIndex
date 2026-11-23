@@ -54,8 +54,8 @@ type AssetSupply struct {
 	// CirculatingSupplyLowerBound is true when TotalSupply is a PROVABLE FLOOR and must not be
 	// presented as exact. Set for "contract_storage_balances": that reading sees only entries the
 	// current-state projection captured, so one dormant since before coverage is absent. Set for
-	// "mint_burn_flows" when storage holds a balance entry the reader cannot decode, so the check
-	// that would prove the event net short could not run.
+	// "mint_burn_flows" when storage holds an undecodable balance entry, or (classic_lake_flows)
+	// when the trustline sum exceeds the event net.
 	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 
 	// BalanceEntries is how many per-holder entries were summed ("contract_storage_balances" only).
