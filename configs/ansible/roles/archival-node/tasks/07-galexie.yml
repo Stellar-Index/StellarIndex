@@ -516,6 +516,8 @@
     owner: stellar
     group: galexie
     mode: "0640"
+  # The shared template carries the full-mode DATABASE password.
+  diff: false
   vars:
     cfg_mode: captive
     captive_peer_port: "{{ captive_peer_port_galexie }}"
@@ -544,6 +546,8 @@
     owner: stellar
     group: galexie
     mode: "0640"
+  # The shared template carries the full-mode DATABASE password.
+  diff: false
   vars:
     cfg_mode: captive
     captive_peer_port: "{{ captive_peer_port_backfill }}"

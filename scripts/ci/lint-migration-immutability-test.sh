@@ -153,6 +153,18 @@ rm "$REPO/migrations/0002_v.up.sql"
 MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
 expect 'base mode: deleting the newest shipped up is not a rollback and FAILS' 1 'missing here'
 
+# 9. A hotfix cut from an older release tag is a sibling of BASE, not its
+#    ancestor: the same rollback rules apply.
+g checkout -q -- migrations && g checkout -q "$base"
+printf 'fix\n' > "$REPO/HOTFIX" && g add HOTFIX && g commit -q -m hotfix
+MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
+expect 'base mode: a hotfix sibling of BASE with migrations skipped passes' 0 'migrations are skipped'
+runbase "$newer"
+expect 'base mode: a hotfix sibling of BASE without migrations_skip FAILS' 1 'migrations_skip=true'
+g rm -q migrations/0001_t.up.sql && g commit -q -m drop
+MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
+expect 'base mode: a hotfix that deletes a shipped up still FAILS' 1 'missing here'
+
 echo
 echo "lint-migration-immutability-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

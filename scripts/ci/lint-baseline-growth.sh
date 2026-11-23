@@ -135,7 +135,9 @@ golangci_waiver_surface() {
   '
 }
 
-# golangci_waiver_added_lines <base> <head>: waiver-surface lines added, plus enabled linters removed.
+# golangci_waiver_added_lines <base> <head>: waiver-surface lines added, enabled linters removed,
+# and removed qualifiers: without `generated:` the default skips every generated-banner file, and
+# an exclusion rule without its path/text/source/linters key matches more.
 golangci_waiver_added_lines() {
   local base="$1" head="$2" b h result
   b="$(mktemp)"; h="$(mktemp)"
@@ -144,13 +146,15 @@ golangci_waiver_added_lines() {
   result="$(diff "$b" "$h" 2>/dev/null | awk '
     /^> / && $2 != "ENABLE" { print substr($0, 3) }
     /^< ENABLE / { print "removed from linters.enable: " $3 }
+    /^< [a-z]+: (- )?(generated|path|path-except|text|source|linters):/ { print "removed qualifier: " substr($0, 3) }
   ' || true)"
   rm -f "$b" "$h"
   printf '%s' "$result"
 }
 
 # go_waiver_map_keys <rev> <file>: the entries of every `<x>Exempt…|<x>Allow(ed|list)…|<x>Waiver…|
-# <x>Ignore(d)… (:)= map[…]{` literal in a Go file; each key exempts one site from a guard test.
+# <x>Ignore(d)…|<x>Exclu(de|ded|sion)…|<x>Exception… (:)= map[…]{` literal in a Go file; each key
+# exempts one site from a guard test.
 # Every key of the literal is read, any key expression, several per line included. A string or
 # struct value is a reason and is dropped; any other value (a count, a bool) is part of the entry,
 # so raising it is growth.
@@ -188,7 +192,8 @@ go_waiver_map_keys() {
       }
       if (depth >= 1) unit = unit " "
     }
-    !inmap && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
+    # A map named …Proof(s) lists evidence (a test per covered site): growing it tightens a guard.
+    !inmap && $0 !~ /Proofs?[[:space:]]*:?=/ && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?|[Ee]xclu(de|ded|sions?)|[Ee]xceptions?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
       inmap = 1; depth = 0; instr = 0; unit = ""; col = 0
       s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s)
       # Collapse struct{…}/interface{…} in the value TYPE, innermost first, so the literal opens
@@ -427,22 +432,22 @@ detect_growth() {
 
   # 11) Inline escape markers (WATCHED_MARKERS): each added marker exempts one line. A marker
   #     governs the line below too (lint-unflagged-limit and lint-ansible-tasks read it on any
-  #     previous line), so a rewrite of that line is growth. The lints that honour them and
+  #     previous line), so any line added below one is growth. The lints that honour them and
   #     their self-tests only name a marker, so they are skipped.
   #     Docs are read for the case-sensitive markers only: runbook SQL honours `DO NOT RUN`.
   # shellcheck disable=SC2016  # an awk program, not a shell expansion
   local marker_awk='
     function marked(s) { return (re != "" && tolower(s) ~ re) || s ~ cre }
     function comment(s) { return s ~ /^[[:space:]]*(\/\/|#|--)/ }
-    /^\+\+\+ / { f = substr($0, 7); prev = ""; prevadd = rm = 0; next }
-    /^(diff --git|index) / || /^@@/ { prev = ""; prevadd = rm = 0; next }
-    /^-/ { rm = 1; next }
+    /^\+\+\+ / { f = substr($0, 7); prev = ""; next }
+    /^(diff --git|index) / || /^@@/ { prev = ""; next }
+    /^-/ { next }
     {
       body = substr($0, 2); add = /^\+/
-      # Under a marker: a standalone comment governs any added line; a trailing marker only one
-      # it was added with, or one that replaced the line it governed.
-      if (add && (marked(body) || (marked(prev) && (comment(prev) || prevadd || rm)))) print f "\t" body
-      prev = body; prevadd = add; rm = 0
+      # Any added non-blank line directly under a marker is governed by it, whether the marker
+      # line is a comment or code, added or untouched context.
+      if (add && (marked(body) || (marked(prev) && body !~ /^[[:space:]]*$/))) print f "\t" body
+      prev = body
     }
   '
   "${GIT_DIFF[@]}" -U1 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \

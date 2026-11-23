@@ -113,6 +113,21 @@ SQL
 catches "Nullable(Float64) money column added by ALTER TABLE is caught" "$d" \
   "money column stellar.transactions.fee_usd is a float"
 
+for ty in Double 'DOUBLE PRECISION' 'Nullable(Double)' 'LowCardinality(Float64)' Float REAL; do
+  d="$(mk "float-alias-${ty//[^A-Za-z0-9]/_}" alias.sql <<SQL
+-- si-apply-scope: operator
+CREATE TABLE IF NOT EXISTS stellar.asset_alias_prices
+(
+    asset     String,
+    price_usd ${ty}
+)
+ENGINE = MergeTree ORDER BY asset;
+SQL
+)"
+  catches "a ${ty} money column (a ClickHouse float alias) is caught" "$d" \
+    "money column stellar.asset_alias_prices.price_usd is a float"
+done
+
 d="$(mk exact ok.sql <<'SQL'
 -- si-apply-scope: fresh-host
 -- volume_usd Float64 in a comment is not a column.
