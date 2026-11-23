@@ -61,8 +61,9 @@ pnpm-lock.yaml                          linguist-generated=true
 web/*/pnpm-lock.yaml                    linguist-generated=true
 
 # Lock files should still MERGE sanely rather than conflict per line.
+# Never mark a text file `-diff`: gitleaks reads `git log -p` and skips
+# anything git reports as binary, so the file would leave the secret scan.
 go.sum                                  merge=union
-pnpm-lock.yaml                          -diff
 
 # ── Not the project's source language ───────────────────────────────────
 # Migrations are schema, not application code; docs are docs. Both are
