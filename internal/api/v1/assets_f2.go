@@ -366,11 +366,26 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	if l.price == "" {
 		return 0
 	}
+	if l.basis == priceBasisDeclaredPeg {
+		// A declaration observed no market: held back so no cap, FDV or change pill is built on it and a vetted global_market
+		// price, which fills before the declared pegs, can still take its place.
+		detail.declaredUSDPeg = l.price
+		return 0
+	}
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
 	detail.PriceBasis = l.basis
 	detail.priceStale = l.stale
 	return l.sources
+}
+
+// fillDeclaredPegs is the detail's declared fills, after every market producer and the global-market fill: the USD-peg
+// declaration [Server.populatePriceUSD] held back, then the fiat peg x FX.
+func (s *Server) fillDeclaredPegs(ctx context.Context, row *AssetDetail, memo map[string]*string) {
+	if p := row.declaredUSDPeg; p != "" && (row.PriceUSD == nil || row.ThinMarket) && fillMayReplace(row.PriceWithheldReason, fillDeclaredPeg) {
+		row.PriceUSD, row.PriceBasis, row.PriceWithheldReason, row.ThinMarket, row.Substance = &p, priceBasisDeclaredPeg, "", false, nil
+	}
+	s.fillFixedPegPrice(ctx, row, memo)
 }
 
 // assetDetailCacheKey keys the opt-in apart: its body can carry a thin

@@ -273,11 +273,11 @@ type AssetDetail struct {
 	thinFloor pricingguard.SubstanceFloor
 
 	capPending *pendingMarketCap
+	// declaredUSDPeg is the USD-peg declaration the F2 lookup found, held back for [Server.fillDeclaredPegs].
+	declaredUSDPeg string
 
-	// Change1hPct / Change7dPct round out the trailing-window set
-	// alongside Change24hPct. Same shape — signed percentage with
-	// two fractional digits, null when no past-bucket snapshot
-	// exists within the window's tolerance.
+	// Change1hPct / Change7dPct round out the trailing-window set alongside Change24hPct. Same shape — signed percentage with two
+	// fractional digits, null when no past-bucket snapshot exists within the window's tolerance.
 	Change1hPct *string `json:"change_1h_pct,omitempty"`
 	Change7dPct *string `json:"change_7d_pct,omitempty"`
 
@@ -1259,7 +1259,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 func (s *Server) fillDeclaredPegPrice(ctx context.Context, row *AssetDetail, memo map[string]*string) {
 	withholdContradictedScalePrice(row) // after every market producer, before the whole-token fills and their divergence
 	s.applyGlobalMarket(ctx, row, s.globalMarketRefs(ctx, []AssetDetail{*row}), time.Now())
-	s.fillFixedPegPrice(ctx, row, memo)
+	s.fillDeclaredPegs(ctx, row, memo)
 }
 
 // fillFixedPegPrice is the declared fiat peg × FX fill.
