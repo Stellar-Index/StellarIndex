@@ -38,6 +38,7 @@ Soroswap keeps its own `soroswap_pairs` registry, which also carries token ident
 - Coverage is a hard function of registry completeness. An unseeded real child is dropped, which is silent under-capture traded for silent over-capture. The factory seed is provable because the creation events are themselves in the hash-chained lake (ADR-0033). Children not created by a factory need ADR-0040.
 - Rows written under topic-only matching are phantoms once a gate lands. `projector-replay` and `projected-rebuild` are upsert-only and never delete them, so a gated source also needs a `contract_id`-scoped DELETE of the foreign emitters' rows (as in `docs/protocols/aquarius.md`), or the clean-slate `scripts/ops/ch-rebuild-projected.sh`; the reconcile reports them until then. Gate code must not deploy before its seed exists, or live ingest fail-closes on every pool.
 - A factory deployed after enumeration is a residual risk, mitigated by re-running the creation-event enumeration.
+- Status note (2026-11-23): `trades` has no `contract_id` column, so the DELETE above is keyed on the foreign emitters' trade identities `(ledger, tx_hash, op_index)` exported from the lake, as `docs/protocols/aquarius.md` does. A manual DELETE refreshes no continuous aggregate, and their policies never look back that far, so it must be followed by `stellarindex-ops trades-cagg-refresh` over the deleted ledger range (`cmd/stellarindex-ops/help.go`); `scripts/ops/ch-rebuild-projected.sh` does this itself.
 
 ## Evidence
 
