@@ -5203,14 +5203,7 @@ paths:
                           lower_bound: { type: boolean }
                           excluded:
                             type: array
-                            items:
-                              type: object
-                              properties:
-                                kind: { type: string, enum: [supply, borrow] }
-                                pool: { type: [string, "null"] }
-                                asset: { type: [string, "null"], description: "The reserve left out; null for a pool-wide exclusion." }
-                                reason: { type: string, enum: [unpriced, withheld, rate_unread, positions_unreadable, positions_truncated, positions_unreconciled, reserve_list_unreadable] }
-                              required: [kind, pool, asset, reason]
+                            items: { $ref: "#/components/schemas/LendingTopAccountsExclusion" }
                           rows:
                             type: array
                             items:
@@ -16608,6 +16601,25 @@ components:
             - token_read_failed
             - withheld
             - unpriced
+      required: [kind, pool, asset, reason]
+    LendingTopAccountsExclusion:
+      type: object
+      description: A position set a pool's top-accounts ranking leaves out, and why.
+      properties:
+        kind:   { type: string, enum: [supply, borrow] }
+        pool:   { type: [string, "null"] }
+        asset:  { type: [string, "null"], description: "The reserve left out; null for a pool-wide exclusion." }
+        reason:
+          type: string
+          description: "Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_unreconciled`: the reserve's read positions do not sum to its `b_supply`/`d_supply`, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read."
+          enum:
+            - unpriced
+            - withheld
+            - rate_unread
+            - positions_unreadable
+            - positions_truncated
+            - positions_unreconciled
+            - reserve_list_unreadable
       required: [kind, pool, asset, reason]
     LendingReserveConfig:
       type: object

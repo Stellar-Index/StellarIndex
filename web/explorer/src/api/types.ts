@@ -6959,6 +6959,19 @@ export interface components {
              */
             reason: "pool_list_read_failed" | "pool_read_failed" | "reserves_read_failed" | "reserves_read_failed_recently" | "reserves_read_timed_out" | "pool_lineage_unknown" | "no_decoded_reserve_state" | "reserve_archived" | "decode_failed" | "not_captured" | "no_usd_value" | "price_read_failed" | "backstop_reader_unavailable" | "backstop_read_failed" | "blend_v1_unsupported" | "pool_instance_unavailable" | "backstop_balance_unavailable" | "token_not_in_catalogue" | "token_read_failed" | "withheld" | "unpriced";
         };
+        /** @description A position set a pool's top-accounts ranking leaves out, and why. */
+        LendingTopAccountsExclusion: {
+            /** @enum {string} */
+            kind: "supply" | "borrow";
+            pool: string | null;
+            /** @description The reserve left out; null for a pool-wide exclusion. */
+            asset: string | null;
+            /**
+             * @description Why the ranking is a floor. `unpriced`: the reserve has no USD price on `/reserves`, so it cannot rank by value (pass `asset` to rank it by amount). `withheld`: a price gate refused the reserve's price. `rate_unread`: the reserve's b/d rate is not read, so tokens cannot be converted. `positions_unreadable`: Positions entries did not decode. `positions_truncated`: the read reached its 50,000-entry cap and no rank is served. `positions_unreconciled`: the reserve's read positions do not sum to its `b_supply`/`d_supply`, so it is left out. `reserve_list_unreadable`: the pool's reserve list could not be read.
+             * @enum {string}
+             */
+            reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_unreconciled" | "reserve_list_unreadable";
+        };
         /**
          * @description A lending reserve's ReserveConfig. The fractions are the contract's
          *     raw fixed-point integers as decimal strings at `config_decimals`
@@ -19944,15 +19957,7 @@ export interface operations {
                             /** @description Distinct accounts with a non-zero position on the side; a floor when `lower_bound`. */
                             accounts: number;
                             lower_bound: boolean;
-                            excluded: {
-                                /** @enum {string} */
-                                kind: "supply" | "borrow";
-                                pool: string | null;
-                                /** @description The reserve left out; null for a pool-wide exclusion. */
-                                asset: string | null;
-                                /** @enum {string} */
-                                reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_unreconciled" | "reserve_list_unreadable";
-                            }[];
+                            excluded: components["schemas"]["LendingTopAccountsExclusion"][];
                             rows: {
                                 rank: number;
                                 /** @description G- or C-strkey. */
