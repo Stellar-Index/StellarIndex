@@ -145,8 +145,13 @@ func (h *Handler) accountSponsorshipsPage(ctx context.Context, account, directio
 		resume                clickhouse.SponsorshipKey
 		sponsoring, sponsored clickhouse.SponsorshipTotals
 		st                    clickhouse.AccountState
+		floor                 uint32
 	)
 	g, gctx := errgroup.WithContext(ctx)
+	h.goSponsorshipRead(g, "derive floor", func() (err error) {
+		floor, err = h.Reader.EntryHistoryFloor(gctx)
+		return err
+	})
 	h.goSponsorshipRead(g, "arrangements", func() (err error) {
 		arrangements, resume, err = h.Reader.AccountSponsorships(gctx, account, side, state == sponsorshipStateInForce, cur, wm, limit+1)
 		return err
@@ -181,12 +186,12 @@ func (h *Handler) accountSponsorshipsPage(ctx context.Context, account, directio
 	for _, a := range arrangements {
 		out.Arrangements = append(out.Arrangements, sponsorshipArrangementView(a))
 	}
-	proof := entryhistory.ProveSponsorships(st, wm, sponsoring, sponsored)
+	proof := entryhistory.ProveSponsorships(st, floor, wm, sponsoring, sponsored)
 	out.Proof = SponsorshipProofView{
 		AccountLedger: proof.LastModifiedLedger, NumSponsoring: proof.NumSponsoring, NumSponsored: proof.NumSponsored,
 		DerivedSponsoring: proof.DerivedSponsoring, DerivedSponsored: proof.DerivedSponsored, Match: proof.Match,
 	}
-	out.CoverageNote = accountSponsorshipsNote(wm, proof.Match)
+	out.CoverageNote = accountSponsorshipsNote(floor, wm, proof.Match)
 	return out, nil
 }
 
@@ -273,9 +278,17 @@ func (h *Handler) parseSponsorshipCursor(w http.ResponseWriter, r *http.Request)
 	return clickhouse.SponsorshipKey{Sponsor: parts[0], Sponsored: parts[1], Kind: parts[2], KeyID: parts[3]}, true
 }
 
-func accountSponsorshipsNote(wm uint32, match *bool) string {
+func accountSponsorshipsNote(floor, wm uint32, match *bool) string {
 	note := fmt.Sprintf("sponsorship arrangements derived from the lake's ledger-entry changes through ledger %d; "+
 		"an arrangement that began below the derivation floor is listed without a start", wm)
+	if floor == 0 || floor > entryhistory.GenesisDeriveFloor {
+		from := "an unrecorded ledger"
+		if floor > 0 {
+			from = fmt.Sprintf("ledger %d", floor)
+		}
+		return note + "; the derivation starts at " + from + ", not genesis, so an arrangement in force since before it " +
+			"is neither listed nor counted: the in-force totals are a lower bound and the proof is not comparable"
+	}
 	switch {
 	case match == nil:
 		return note + "; the proof is not comparable: the account entry changed after that ledger, was read before it, or does not exist"

@@ -1263,6 +1263,29 @@ groups:
             bound; it is either outpaced or failing.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_magic_link_token_table_growing
 
+      # webhook_deliveries is filled by customer-configured fan-out (cheap
+      # self-registered accounts, each with webhooks and price alerts) and
+      # bounded only by the 30-day retention sweep. A sweep that succeeds but
+      # is outpaced trips neither retention_reaper_failing nor
+      # auth_reaper_stalled. 1M rows is ~33k deliveries/day held for 30 days.
+      - alert: stellarindex_webhook_delivery_table_growing
+        expr: stellarindex_retention_reaper_rows{reaper="webhook_delivery"} > 1000000
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_webhook_delivery_table_growing
+          summary: "webhook_deliveries has {{ $value | humanize }} rows on {{ $labels.instance }} (bound 1000000)"
+          description: |
+            `webhook_deliveries` has stayed above 1M rows for 30+ minutes.
+            Customer webhooks and price alerts write it, and the 30-day
+            retention sweep is its only bound; it is either outpaced by a
+            delivery flood or failing. Each row holds a payload, so growth
+            ends as disk pressure on Postgres if nothing names it first.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_webhook_delivery_table_growing
+
       # Auth-reaper liveness: other metrics say WHAT the reapers did; this
       # says THAT they ran. A dead reaper freezes every rows gauge at a
       # healthy-looking value, so login_code_lockout_table_growing can never

@@ -22,6 +22,8 @@ ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
 mkdir -p "$TMP/bin" "$TMP/remote" "$TMP/src/etc/stellarindex"
+# shellcheck source=scripts/ci/lib/gnu-mv-shim.sh
+. "$PWD/scripts/ci/lib/gnu-mv-shim.sh"; gnu_mv_shim "$TMP/bin"
 echo "secret = 1" > "$TMP/src/etc/stellarindex/app.toml"
 
 cat > "$TMP/bin/age" <<'STUB'

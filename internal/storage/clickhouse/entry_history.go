@@ -293,17 +293,33 @@ var ErrSponsorshipAheadOfEntryIndex = errors.New("clickhouse: sponsorship window
 
 // entryWatermarkOn reads one named row of stellar.entry_history_watermark; max() collapses unmerged duplicates since a watermark only ever advances.
 func entryWatermarkOn(ctx context.Context, conn driver.Conn, name string) (uint32, error) {
+	wm, err := entryWatermarkRow(ctx, conn, name)
+	if err == nil {
+		observeWatermark(name, wm)
+	}
+	return wm, err
+}
+
+// entryWatermarkRow is entryWatermarkOn without the completeness gauge, for rows that are not watermarks.
+func entryWatermarkRow(ctx context.Context, conn driver.Conn, name string) (uint32, error) {
 	const q = `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = ?`
 	var wm uint32
 	if err := conn.QueryRow(ctx, q, name).Scan(&wm); err != nil {
 		if isSchemaAbsent(err) {
-			observeWatermark(name, 0)
 			return 0, nil
 		}
 		return 0, fmt.Errorf("clickhouse: %s watermark: %w", name, err)
 	}
-	observeWatermark(name, wm)
 	return wm, nil
+}
+
+// sponsorshipFloorName's row holds the first ledger the sponsorship derive covered; max() over unmerged rows can only
+// raise it, which leaves the proof open rather than claiming genesis.
+const sponsorshipFloorName = "sponsorship_events_floor"
+
+// EntryHistoryFloor is the first ledger the sponsorship derive covered (0 = not recorded).
+func (r *ExplorerReader) EntryHistoryFloor(ctx context.Context) (uint32, error) {
+	return entryWatermarkRow(ctx, r.conn, sponsorshipFloorName)
 }
 
 // observeWatermark exports a derived index's completeness watermark as last read; 0 (absent) pages, since every
@@ -322,6 +338,15 @@ func SetSponsorshipWatermark(ctx context.Context, addr string, from, thru uint32
 		}
 		if idx < thru {
 			return fmt.Errorf("%w: [%d,%d] but the index stops at %d", ErrSponsorshipAheadOfEntryIndex, from, thru, idx)
+		}
+		wm, err := entryWatermarkOn(ctx, conn, sponsorshipWatermarkName)
+		if err != nil || wm > 0 {
+			return err
+		}
+		// Written before the first advance, so a watermark never stands without its floor.
+		if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`,
+			sponsorshipFloorName, from); err != nil {
+			return fmt.Errorf("clickhouse: record sponsorship derive floor %d: %w", from, err)
 		}
 		return nil
 	})

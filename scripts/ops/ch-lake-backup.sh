@@ -128,7 +128,12 @@ write_metrics() {
     fi
   } > "$tmp"
   chmod 644 "$tmp"
-  mv "$tmp" "$out"
+  # -T: a directory, or a link to one, planted at $out must not receive the file.
+  if ! mv -T "$tmp" "$out"; then
+    rm -f "$tmp"
+    note "cannot publish $out"
+    return 1
+  fi
 }
 
 # Prints "full" or "incremental <base-path>". A chain file that is missing,
@@ -402,7 +407,7 @@ main() {
   fi
   chain_len="$(grep -c . "$chain_file")"
   note "backup $path created ($bytes bytes written; chain length $chain_len)"
-  write_metrics
+  if ! write_metrics && [[ "$rc" -eq 0 ]]; then rc=1; fi
   return "$rc"
 }
 

@@ -339,7 +339,8 @@
         fi
       fi
 
-      TMP=$(mktemp)
+      # Beside the target: a rename from /tmp is a cross-filesystem copy, not atomic.
+      TMP=$(mktemp "$DIR/galexie_catchup.prom.XXXXXX")
       trap 'rm -f "$TMP"' EXIT
       {
         echo "# HELP stellarindex_galexie_catchup_refusals_5m 'History: Skipping catchup' journal lines in the last 5 minutes."
@@ -1173,7 +1174,8 @@
       # environment, so a real run always takes the default.
       DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
       mkdir -p "$DIR"
-      TMP=$(mktemp)
+      # Beside the target: a rename from /tmp is a cross-filesystem copy, not atomic.
+      TMP=$(mktemp "$DIR/timescale_jobs.prom.XXXXXX")
       HEALTH=$(mktemp)
       trap 'rm -f "$TMP" "$HEALTH"' EXIT
 

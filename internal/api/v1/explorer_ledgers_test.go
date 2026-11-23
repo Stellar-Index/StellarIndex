@@ -355,6 +355,10 @@ func (s *stubExplorerReader) EntryHistoryWatermark(context.Context) (uint32, err
 	return 0, s.err
 }
 
+func (s *stubExplorerReader) EntryHistoryFloor(context.Context) (uint32, error) {
+	return 0, s.err
+}
+
 func (s *stubExplorerReader) EntryIndexWatermark(context.Context) (uint32, error) {
 	return 0, s.err
 }
