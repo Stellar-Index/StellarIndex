@@ -6,13 +6,17 @@
     daemon_reload: yes
   listen: "haproxy config changed"
 
+# One LB at a time, or both release the VIP together. throttle alone still restarts
+# the next LB after one fails to come back, so a failure here ends the play.
 - name: restart keepalived
-  systemd:
-    name: keepalived
-    state: restarted
-    daemon_reload: yes
-  # One LB at a time, or both release the VIP together.
+  shell: |
+    set -eu
+    systemctl daemon-reload
+    systemctl restart keepalived
+    sleep 3
+    systemctl is-active --quiet keepalived
   throttle: 1
+  any_errors_fatal: true
   listen: "keepalived config changed"
 
 - name: reload firewall
