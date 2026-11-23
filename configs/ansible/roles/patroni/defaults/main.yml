@@ -36,6 +36,9 @@ patroni_rest_basic_auth_password: ""
 # ── Replication ────────────────────────────────────────────────
 patroni_synchronous_mode: true
 patroni_synchronous_node_count: 1   # ANY 1 of 2 replicas
+# Cap on WAL a replication slot may hold on the primary (max_slot_wal_keep_size). Keep it well
+# below the data volume's free space; a replica past it loses its slot and needs `patronictl reinit`.
+patroni_max_slot_wal_keep_size: 64GB
 
 # ── DCS (etcd) ─────────────────────────────────────────────────
 etcd_data_dir: /var/lib/etcd

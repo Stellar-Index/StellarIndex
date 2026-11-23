@@ -93,6 +93,17 @@ chmod +x "$PROBE"
 # actually produces: twelve consecutive 5-minute buckets on r1
 # returned 364-409 lines, so `healthy` emits 364.
 mkdir -p "$TMP/bin" "$TMP/textfile"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$TMP/bin/mv" <<'MV'
+#!/usr/bin/env bash
+[ "$1" = -T ] || exec /bin/mv "$@"
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/bin/mv"
+fi
 cat > "$TMP/bin/journalctl" <<'SH'
 #!/usr/bin/env bash
 # `journalctl -u galexie --since -5min --no-pager`

@@ -33,6 +33,17 @@ ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
 mkdir -p "$TMP/bin" "$TMP/textfile"
+# BSD mv has no -T: emulate GNU's refusal to move into an existing directory.
+if [[ "$(mv --version 2>/dev/null)" != *GNU* ]]; then
+  cat > "$TMP/bin/mv" <<'MV'
+#!/usr/bin/env bash
+case "$1" in -T|-fT) ;; *) exec /bin/mv "$@";; esac
+shift; [ "$1" = -- ] && shift
+[ -d "$2" ] && { echo "mv: cannot overwrite directory '$2'" >&2; exit 1; }
+exec /bin/mv -- "$1" "$2"
+MV
+  chmod +x "$TMP/bin/mv"
+fi
 # journalctl stub; all three probed units get the same scenario per run.
 cat > "$TMP/bin/journalctl" <<'SH'
 #!/usr/bin/env bash

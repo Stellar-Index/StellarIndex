@@ -135,10 +135,12 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	displays, displaysOK := s.poolReservesDisplays(ctx, states)
 
 	out := make([]PoolReservesRow, 0, len(states))
+	var unread []string
 	for _, pair := range pairs {
 		st, ok := states[pair]
 		if !ok {
-			continue // instance not captured / layout mismatch — absent, never zero
+			unread = append(unread, pair) // instance not captured / layout mismatch — absent, never zero
+			continue
 		}
 		out = append(out, buildPoolReservesRow(st, displays, displaysOK))
 	}
@@ -154,7 +156,11 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	// reflects lake freshness, since a wedged sink makes EVERY reserve read stale whatever a
 	// pool's last change. Stamp it from the cached watermark the other current-state reads use.
 	_, stale, _ := s.lakeWatermark(ctx)
-	writeJSON(w, out, Flags{Stale: stale, Degraded: !displaysOK}, sourceSoroswap)
+	sort.Strings(unread)
+	writeEnvelope(w, Envelope{
+		Data: out, AsOf: WireTime(time.Now().UTC()), Unread: unread,
+		Sources: []string{sourceSoroswap}, Flags: Flags{Stale: stale, Degraded: !displaysOK},
+	})
 }
 
 // parsePoolReservesQuery validates ?source= and ?pool=. ok=false after

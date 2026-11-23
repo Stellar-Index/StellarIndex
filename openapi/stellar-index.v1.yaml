@@ -970,6 +970,7 @@ paths:
                   - $ref: "#/components/schemas/GlobalAssetEnvelope"
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /assets/{asset_id}/metadata:
     get:
@@ -3038,8 +3039,10 @@ paths:
           description: |
             Single-bar mode only — no trades in window. Series mode
             returns 200 with `intervals: []` instead. Both modes return
-            a `price-withheld` 404 when the base's issuer carries a
-            scam-class directory tag, as `/v1/chart` and `/v1/vwap` do.
+            a `price-withheld` 404 when the base or quote issuer carries a
+            scam-class directory tag (as `/v1/chart` and `/v1/vwap` do),
+            and when a source exclusion covers the window (single bar) or
+            any returned bar (series); the problem's `reason` names which.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -3441,8 +3444,10 @@ paths:
         whose AVERAGE execution price stays within the tier of the mid
         price, and its output. It assumes no other trade lands first —
         it is not an order book. Pools whose contract-storage entry
-        isn't captured in the lake are absent from the listing (absent,
-        never zero); a pool with an empty side reports its reserves but
+        isn't captured in the lake are absent from `data` (absent, never
+        zero) and named in the envelope's `unread`, so a listing with
+        `unread` is not the complete set of registered pools; a pool
+        with an empty side reports its reserves but
         no mid price / depth.
       parameters:
         - name: pool
@@ -3450,9 +3455,10 @@ paths:
           schema: { type: string }
           description: |
             Optional. A pool (pair) contract C-strkey; restricts the
-            response to that pool. 404 when the contract is not a
-            registered Soroswap pair — unknown pools are refused, not
-            silently empty.
+            response to that pool. 404 `unknown-pool` when the contract
+            is not a registered Soroswap pair; 404
+            `pool-reserves-unreadable` when it is registered but has no
+            readable current state. A named pool is never an empty list.
         - name: source
           in: query
           schema: { type: string, enum: [soroswap] }
@@ -3520,6 +3526,10 @@ paths:
                       data:
                         type: array
                         items: { $ref: "#/components/schemas/PoolReservesRow" }
+                      unread:
+                        type: array
+                        items: { type: string }
+                        description: "Registered pool contracts (C-strkeys, sorted) omitted from `data` because their current state could not be read from the lake (not captured, archived, or a storage layout the decoder does not recognise): unknown, not empty. Absent when every matching pool was read."
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -7042,6 +7052,8 @@ paths:
                                 volume_24h_usd:    { type: string }
                                 volume_lower_bound: { type: boolean, description: "true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources)." }
                                 markets_count_24h: { type: integer, format: int64 }
+                                entries_24h_unmeasured: { type: boolean, description: "true when the event counter could not be read, so entries_24h 0 means unknown, not idle. Omitted when read." }
+                                trade_stats_unmeasured: { type: boolean, description: "true when the trades aggregation could not be read, so trade_count_24h, markets_count_24h and volume_24h_usd are unknown, not zero. Omitted when read." }
                     required: [data]
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -8856,6 +8868,8 @@ paths:
                           volume_24h_usd: { type: string }
                           volume_lower_bound: { type: boolean, description: "true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources)." }
                           markets_count_24h: { type: integer, format: int64 }
+                          entries_24h_unmeasured: { type: boolean, description: "true when the event counter could not be read, so entries_24h 0 means unknown, not idle. Omitted when read." }
+                          trade_stats_unmeasured: { type: boolean, description: "true when the trades aggregation could not be read, so trade_count_24h, markets_count_24h and volume_24h_usd are unknown, not zero. Omitted when read." }
         "404":
           description: No registered source with that name.
           content:
@@ -12315,6 +12329,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/verify-code:
@@ -12402,6 +12417,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/logout:
@@ -13878,6 +13894,7 @@ paths:
                           ttl: { $ref: "#/components/schemas/ContractTTL" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /contracts/{contract_id}/interactions:
@@ -18718,8 +18735,9 @@ components:
             only the code has no observed market. A non-USD fiat answer (served
             through that fiat's stablecoins, e.g. crypto:EURC, or a USD anchor)
             also checks each of that fiat's stablecoins against the fiat.
-            Omitted when false. Meaningful only when
-            `proxy_deviation_unchecked` is absent.
+            Omitted when false. A true value is a depeg warning even beside
+            `proxy_deviation_unchecked` (it may rest on a stale reading);
+            when that flag is set, only its absence is no "peg holds" verdict.
         proxy_deviation_unchecked:
           type: boolean
           default: false
@@ -19621,7 +19639,8 @@ components:
           format: date-time
           description: |
             The first full day for which the served price history holds
-            a dollar-quoted trade of any asset. No series starts before
+            an on-chain trade quoted in dollars (native, classic or SAC
+            assets; CEX and vendor buckets do not count). No series starts before
             it, and `no_market_history` means no dollar-quoted trade
             since it — trading before this day is not read here. A venue
             whose served history starts later is covered only from its
@@ -22743,7 +22762,7 @@ components:
         change_24h_pct:     { type: [string, "null"], description: "Trailing-24h price change as a signed decimal percentage with two fractional digits (e.g. \"+1.27\", \"-0.05\", \"0.00\"). Null when the asset has no current USD price or no closed comparison bucket no more than 30 minutes before 24h ago." }
         market_cap_usd:     { type: [string, "null"], description: "circulating_supply × USD price / 10^decimals, two fractional digits. Null when supply or USD price is unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
         fdv_usd:            { type: [string, "null"], description: "max_supply × USD price / 10^decimals, two fractional digits. Null when max_supply is null, USD price unavailable, when suppressed as dust-liquidity (see market_cap_low_liquidity), OR when refused because the two decimals resolvers disagreed for this token (see market_cap_decimals_mismatch). Also null, with flags.stale true, when the supply observation is older than six hours (see supply_as_of) or when a Soroban token's decimals() read failed and no confirmed value vouches for the scale." }
-        market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Three independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). SUBSTANCE (catalogue rows of the unified and class-scoped listings): the row's Stellar twin's on-chain price was withheld by the thin-market substance gate, so no on-chain price backs a cap, while price_usd is the global-tier price. Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Omitted when a cap is present." }
+        market_cap_low_liquidity: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately suppressed (served null) because the observed market cannot support the figure. Three independent guards set it. FLOOR: the backing price came from a single venue AND trailing-24h USD volume is below the server's aggregate.min_market_cap_volume_usd — trading is negligible in absolute terms. CEILING: the computed cap exceeds aggregate.max_market_cap_volume_ratio times the asset's own trailing-24h volume — the claim is large against whatever trading there is, which an absolute floor cannot detect (measured 2026-09-15, two assets published $5.89B of this surface's headline total on $6,759 of combined daily volume while clearing the floor). SUBSTANCE (catalogue rows of the unified and class-scoped listings): the row's Stellar twin's on-chain price was withheld by the thin-market substance gate, so no on-chain price backs a cap, while price_usd is the global-tier price. Disambiguates 'suppressed on purpose' from 'no supply/price data'; price_usd and circulating_supply both still serve — the guard is on the valuation, not on the facts behind it. Beside a served cap it means fdv_usd alone breached the ceiling (see fdv_withheld_reason); omitted when neither figure was suppressed." }
         market_cap_lower_bound: { type: boolean, description: "True when market_cap_usd was built on a circulating supply that is a provable floor, so the cap is a lower bound, not a total. On a listing row the floor is a `supply_basis` that is a trustline or held-balance sum, which leaves out liquidity-pool reserves and claimable balances. On the detail route it is a Soroban token's event-flow net (`supply_basis` `sep41_lake_flows`) that the contract's storage could not be checked against (an undecodable balance entry, more balance entries than the reader sums, or no captured instance entry), so circulating_supply is a floor too. Says nothing about the supply when no cap is built; see circulating_supply_lower_bound. The detail route builds no cap on a held-balance floor." }
         circulating_supply_lower_bound: { type: boolean, description: "True when circulating_supply is a provable floor, whether or not a market cap is built on it: a trustline or held-balance sum `supply_basis`, or (detail route) a Soroban token's event-flow net that the contract's storage could not be checked against. Absent when the supply is a full reading or absent." }
         market_cap_decimals_mismatch: { type: boolean, description: "True when market_cap_usd and fdv_usd were deliberately REFUSED (served null) because the two decimals resolvers this response depends on disagreed for a Soroban token at request time: the lake's on-chain decimals() — which `decimals` reports and the supply divisor uses — versus the nonstandard_decimals_assets projection every price-shaped path normalises the USD price through. Either the projection carries a different value, or the lake reads non-7 and the projection has no row yet, so supply and price sit on different scales and their product is wrong by a power of ten. Not a liquidity verdict (market_cap_low_liquidity stays unset). price_usd, circulating_supply and decimals all still serve — each is a fact on its own scale; only the cross-scale product is withheld. Self-clearing: the aggregator's lockstep reconcile repairs the projection toward the lake on its next tick (runbook dex.md#dex-nonstandard-decimals). Omitted when the resolvers agree." }
@@ -22752,7 +22771,7 @@ components:
           enum: [substance, scam_issuer, upstream_leg, unattributed, manipulation_guard, fx_leg_unavailable, source_excluded, price_unread, supply_stale, decimals_unknown, decimals_mismatch, ticker_collision, low_liquidity, supply_floor, thin_market, price_basis]
           description: |
             Why market_cap_usd is null beside a served price_usd and circulating_supply; fdv_usd is null for the same reason when it is. Present ONLY then: omitted when a cap is served, and when there is no price or no supply to value. The booleans above still serve unchanged.
-            It explains market_cap_usd only. fdv_usd can be null beside a served cap (the turnover ceiling tests each figure), which market_cap_low_liquidity flags.
+            It explains market_cap_usd only. fdv_usd can be null beside a served cap (the turnover ceiling tests each figure); fdv_withheld_reason then says why.
             Absent beside a null cap, a served price and a served supply, it means the figure could not be computed from the served inputs: a data or compute gap, not a guard verdict.
             `substance`, `scam_issuer`, `upstream_leg`, `unattributed`, `manipulation_guard`, `fx_leg_unavailable`, `source_excluded`: the asset's direct market price was withheld for that `price_withheld_reason`, and price_usd is a later fill (see price_basis) that values no cap.
             `price_unread`: the direct price could not be read, so a fill cannot stand in for it.
@@ -22764,6 +22783,13 @@ components:
             `supply_floor`: the supply is a floor of held balances (supply_basis), which values no cap.
             `thin_market`: price_usd is a thin price, which values nothing.
             `price_basis`: price_usd is a declared_peg or global_market fill, which values no cap here.
+        fdv_withheld_reason:
+          type: string
+          enum: [low_liquidity]
+          description: |
+            Why fdv_usd is null beside a served market_cap_usd, price_usd and max_supply; values as market_cap_withheld_reason.
+            Present ONLY then: when market_cap_usd is null too, market_cap_withheld_reason explains both and this is omitted.
+            `low_liquidity`: fdv_usd, computed over max_supply, breached the turnover ceiling the cap cleared (market_cap_low_liquidity is set).
         global_market:      { $ref: "#/components/schemas/AssetGlobalMarket" }
         issuer_behaviour:   { $ref: "#/components/schemas/AssetIssuerBehaviour" }
         listing_reference:  { $ref: "#/components/schemas/AssetListingReference" }

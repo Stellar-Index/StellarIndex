@@ -289,7 +289,14 @@ What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`
   bar the exclusion covers withholds the series), and the asset headline price (VWAP, aggregator and
   triangulated tiers, global-market reference). A withheld headline never
   falls back to the listing price, and the declared USD-peg fill does not
-  replace a `source_excluded` withholding.
+  replace a `source_excluded` withholding. The asset listing (`/v1/assets`,
+  every `asset_class`) and detail judge each row on the way out, after the
+  caches: a covered price withholds price, market cap, FDV, changes, series
+  and ATH as `source_excluded`; a change, the 24h USD volume, a series point
+  or the ATH whose own span the exclusion covers is dropped alone; either
+  sets `flags.fills_withheld_reason`. Values without sources are judged on the
+  asset, XLM (the listing's XLM arm) and a non-USD peg's fiat. An unreadable
+  table withholds every priced row, `stale`, never refusing the page.
 - **Exclusions are blunt on cached values**, which record no sources: ANY
   in-force exclusion, pair-scoped too, withholds every cached multi-hop
   (triangulated) price and every closed-bucket stream frame; a pair-scoped
@@ -306,14 +313,14 @@ What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`
   Worst case, healthy: `/v1/price`, batch, SEP-40, `/v1/vwap` and `/v1/twap`
   45 s (15 s gate plus `max-age=30`); 90 s while the table is unreadable;
   tip 15 s; tip stream one tick more; closed-bucket stream until the next
-  closed bucket; asset detail about 225 s (120 s in-process cache, 60 s edge,
-  30 s client). A detail read while the table is unreadable is not cached.
+  closed bucket; asset detail and listing 15 s, then their in-process caches
+  are bypassed and unfilled while an exclusion overlaps the last 7 days 2 hours;
+  a body already at the edge or client keeps its cache life there (detail:
+  60 s edge, 30 s client).
 - **Not covered** (keep serving values that may include the excluded source
   until it is lifted or the data ages out): `/v1/price/at`, `/v1/price/changes`,
-  `/v1/depeg`, history, since-inception, chart, asset listing
-  `price_usd`, sparkline, ATH, transitive price fill, RWA
-  assets/history/premium; a fiat asset's headline and a non-USD declared peg
-  (FX via `fiatUSDPriceFor`, ungated); `/v1/observations` and its stream
+  `/v1/depeg`, history, since-inception, chart, RWA
+  assets/history/premium; `/v1/observations` and its stream
   (raw trades), `/v1/oracle/latest`, `/v1/oracle/streams`, `/v1/markets`,
   `/v1/pairs`, `/v1/protocols` and per-protocol TVL USD, `/v1/lending/*` USD
   (gated reader first, ungated catalogue price as fallback),
