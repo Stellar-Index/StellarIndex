@@ -207,7 +207,8 @@ func (s *Server) applySupplyAndMarketCap(ctx context.Context, detail *AssetDetai
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	failed = s.populateOwnVolume24h(ctx, detail, asset)
 	if detail.VolumeUSD24h != nil {
-		// A pre-filled figure standing in for a failed read omits the derived SAC's volume as the plain read does.
+		// A pre-filled figure standing in for a failed read omits the derived SAC's volume as the plain read does: timescale's
+		// getAssetBySlugSQL (per_asset_24h_vol) and asset_volume_24h both sum prices_1m for the one asset_id, never its SAC.
 		failed = s.addDerivedSACVolume24h(ctx, detail, asset) || failed
 	}
 	return failed
