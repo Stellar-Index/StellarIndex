@@ -1295,7 +1295,7 @@ func (s *Server) declaredPegUSDPrice(ctx context.Context, fiat canonical.Asset) 
 		one := "1.00000000000000"
 		return &one
 	}
-	price, asOf, _, ok := s.fiatUSDPriceFor(ctx, fiat.Code)
+	price, asOf, ok := s.fiatUSDPriceFor(ctx, fiat.Code)
 	if !ok || time.Since(asOf) > declaredPegFXMaxAge {
 		return nil
 	}

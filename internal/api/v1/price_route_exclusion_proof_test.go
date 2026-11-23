@@ -30,6 +30,8 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/history/since-inception":           {TestChartSeriesWithholdsExcludedBuckets},
 	"GET /v1/chart":                             {TestChartSeriesWithholdsExcludedBuckets},
 	"GET /v1/assets":                            {TestAssetListing_SourceExclusionWithholdsCoveredRows, v1.TestAssetRoutes_ExclusionGatesEveryVariant},
+	"GET /v1/assets/verified":                   {TestGlobalAssetFXSourceExclusionWithholdsFiatRate},
+	"GET /v1/external/assets/{slug}":            {TestGlobalAssetFXSourceExclusionWithholdsFiatRate},
 }
 
 // TestPriceRouteCoverage_GatedRoutesHaveExclusionProof: a route filed gated must cite a behavioural exclusion test, and a
