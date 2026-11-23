@@ -204,7 +204,7 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 }
 
 // ungatedPriceRoutes ratchets the kill switch's known gaps: an operator exclusion does not reach these routes' figures.
-const ungatedPriceRoutes = 48
+const ungatedPriceRoutes = 47
 
 // GatedPriceRoutes returns the census's gated rows for the external-package proof check.
 func GatedPriceRoutes() []string {

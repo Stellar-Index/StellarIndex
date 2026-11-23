@@ -21,6 +21,7 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/oracle/lastprice":        {TestPriceSourceExclusion_SEP40FrozenHeldValue},
 	"GET /v1/oracle/prices":           {TestPriceSourceExclusion_SEP40FrozenHeldValue},
 	"GET /v1/oracle/x_last_price":     {TestPriceSourceExclusion_SEP40FrozenHeldValue},
+	"GET /v1/rwa/premium":             {TestRWAPremium_ASourceExcludedDayIsWithheldAndFlagged},
 	"GET /v1/assets/{asset_id}":       {TestAssetDetail_SourceExclusionWithholdsCataloguePrice, v1.TestAssetRoutes_ExclusionGatesEveryVariant},
 	"GET /v1/price/at":                {TestPriceAtWithholdsExcludedBucket, TestPriceAtJudgesBucketSources},
 	"GET /v1/price/changes":           {TestPriceChangesWithholdsExcludedHorizon, TestPriceChangesJudgesBucketSources},
