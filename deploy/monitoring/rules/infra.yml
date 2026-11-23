@@ -321,6 +321,25 @@ groups:
             reading a frozen file, not live VRRP state. `systemctl
             status keepalived-textfile-scraper.timer`.
 
+      # Both LBs MASTER (VRRP dropped) or neither holding the VIP leaves
+      # every LB's own health green. 2m rides out a normal VRRP failover.
+      # Empty, so silent, on a host with no keepalived.prom.
+      - alert: stellarindex_haproxy_vip_owner_count_wrong
+        expr: sum(stellarindex_haproxy_vip_owner) != 1
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_haproxy_vip_owner_count_wrong
+          summary: "{{ $value }} load balancers hold the VIP, want 1"
+          description: |
+            Summed over every LB's keepalived.prom, the number of hosts
+            holding the VIP is not 1. 0 = API traffic has no entry point;
+            2 = VRRP split brain, traffic flaps between LBs. `journalctl
+            -u keepalived -n 100` on both.
+
       # census-rollup.timer fires every 30m and writes the table behind
       # /v1/contracts/stats; a timer that stopped firing leaves no failed unit,
       # so stellarindex_systemd_unit_failed stays silent while the page serves

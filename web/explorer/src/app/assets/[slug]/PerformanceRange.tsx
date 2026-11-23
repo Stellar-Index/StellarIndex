@@ -17,6 +17,7 @@ export function PerformanceRange({
   priceUSD,
   priceProvenance,
   priceStale,
+  priceScaleMismatch,
   points,
   source,
 }: {
@@ -24,6 +25,7 @@ export function PerformanceRange({
   priceUSD: string | null;
   priceProvenance: PriceProvenance;
   priceStale?: boolean;
+  priceScaleMismatch?: boolean;
   points: { t: string; p?: string | null }[];
   source: RequestExample;
 }) {
@@ -32,6 +34,7 @@ export function PerformanceRange({
     priceUSD,
     priceProvenance,
     priceStale,
+    priceScaleMismatch,
   );
   const live = resolved.withheld ? null : positiveDecimal(resolved.price);
   if (live == null) return null;

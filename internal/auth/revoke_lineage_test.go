@@ -96,7 +96,7 @@ func (f *lineageFixture) mint(t *testing.T, req CreateAPIKeyRequest) (APIKeyReco
 func (f *lineageFixture) legacyChild(t *testing.T, parent Subject) (APIKeyRecord, string, Subject) {
 	t.Helper()
 	rec, plain, _ := f.mint(t, CreateAPIKeyRequest{Identifier: parent.Identifier, ParentKeyID: parent.KeyID})
-	rec.AncestorKeyIDs = nil
+	rec.AncestorKeyIDs, rec.AncestorHashes = nil, nil
 	body, err := json.Marshal(rec)
 	if err != nil {
 		t.Fatal(err)

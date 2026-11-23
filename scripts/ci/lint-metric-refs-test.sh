@@ -381,6 +381,9 @@ package internal
 
 var _ = []string{
 	"stellarindex_fixture_boom_errors_total",
+	"stellarindex_fixture_streams_rejected_total",
+	"stellarindex_fixture_gate_unmeasured_total",
+	"stellarindex_fixture_gate_fail_open_total",
 	"stellarindex_fixture_dashboard_total",
 	"stellarindex_redis_command_errors_total",
 }
@@ -405,6 +408,9 @@ expect_fail_line() { # <name> <pattern> <present|absent>
   echo "ok: $1"; pass=$((pass + 1))
 }
 expect_fail_line 'an unalerted error counter fails the gate' "UNALERTED-FAILURE: 'stellarindex_fixture_boom_errors_total'" present
+expect_fail_line 'an unalerted refusal counter fails the gate' "UNALERTED-FAILURE: 'stellarindex_fixture_streams_rejected_total'" present
+expect_fail_line 'an unalerted unmeasured-guard counter fails the gate' "UNALERTED-FAILURE: 'stellarindex_fixture_gate_unmeasured_total'" present
+expect_fail_line 'an unalerted fail-open counter fails the gate' "UNALERTED-FAILURE: 'stellarindex_fixture_gate_fail_open_total'" present
 expect_fail_line 'an unalerted dashboard metric stays advisory' "UNALERTED (advisory): 'stellarindex_fixture_dashboard_total'" present
 expect_fail_line 'a dashboard metric is not failure-class' "UNALERTED-FAILURE: 'stellarindex_fixture_dashboard_total'" absent
 expect_fail_line 'a waived metric that gained a rule is stale' "STALE-UNALERTED: 'stellarindex_redis_command_errors_total'" present
