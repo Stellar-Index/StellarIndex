@@ -58,6 +58,11 @@ func TestWithProxyDeviation_StaleReadingOnlyAddsDoubt(t *testing.T) {
 		{"out of band, fresh", depegProbeReader{value: "0.88"}, true, false},
 		{"out of band but stale", depegProbeReader{value: "0.88", age: 23 * time.Hour}, true, true},
 		{"in band but stale", depegProbeReader{value: "1.0001", age: 23 * time.Hour}, false, true},
+		// The price-at ladder serves a feed dead for a day from its 1d rung; a bucket that opened ~47h ago is no all-clear.
+		{"in band, 1d bucket closed 23h ago", depegProbeReader{value: "1.0001", age: 23 * time.Hour, width: 86400}, false, true},
+		{"in band, 1d bucket closing now", depegProbeReader{value: "1.0001", width: 86400}, false, true},
+		{"in band, 15m bucket closed 1m ago", depegProbeReader{value: "1.0001", age: time.Minute, width: 900}, false, false},
+		{"in band, 15m bucket closed 3m ago", depegProbeReader{value: "1.0001", age: 3 * time.Minute, width: 900}, false, true},
 	} {
 		s := &Server{Options: Options{PriceAt: c.reader, USDPeggedClassics: []canonical.Asset{peg}, VerifiedCurrencies: mustEmbeddedCatalogue(t)}}
 		f := s.withProxyDeviation(context.Background(), Flags{Triangulated: true}, usdQuote(t), time.Now())

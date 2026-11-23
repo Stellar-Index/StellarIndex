@@ -121,16 +121,18 @@ func (s *Server) proxyDeviationChecked(ctx context.Context, quote canonical.Asse
 	return deviated, unchecked, failed
 }
 
-// pegEvidenceGrace is how far past one bucket of its serving resolution a peg reading may close before `at` and still count
-// as an observation at `at`: a stalled feed's last in-band bucket is not evidence that the peg holds now.
-const pegEvidenceGrace = 15 * time.Minute
+// pegEvidenceMaxAge is how long before `at` a peg reading's bucket may have OPENED and still count as an observation at `at`:
+// one 1m bucket plus 15m grace past its close, whatever rung served it. A stalled feed's last in-band bucket (often a 1d
+// rung the price-at ladder falls back to) is not evidence that the peg holds now.
+const pegEvidenceMaxAge = 17 * time.Minute
 
 // pegReadingCurrent reports whether a reading that closed at observedAt, from a resolutionSeconds-wide bucket, observes `at`.
 func pegReadingCurrent(at, observedAt time.Time, resolutionSeconds int) bool {
 	if observedAt.IsZero() {
 		return false
 	}
-	return at.Sub(observedAt) <= time.Duration(resolutionSeconds)*time.Second+pegEvidenceGrace
+	opened := observedAt.Add(-time.Duration(resolutionSeconds) * time.Second)
+	return at.Sub(opened) <= pegEvidenceMaxAge
 }
 
 // observePeg reads one peg's observed price under the first alias form that answers currently. When only a reading too old
