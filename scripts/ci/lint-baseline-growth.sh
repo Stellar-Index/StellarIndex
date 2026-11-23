@@ -221,14 +221,18 @@ go_waiver_map_added_keys() {
 }
 
 # imports_allow_entries <rev>: "<rule> <entry>" for each string in an `"allow"`/`"allow_internal"`
-# list of lint-imports.sh's RULES, so a new entry or one moved to another rule reads as new.
+# list of lint-imports.sh's RULES, and "<rule> exempt_importers <entry>" for each in a layering
+# rule's `"exempt_importers"`, so a new entry or one moved to another rule reads as new.
 imports_allow_entries() {
   git show "${1}:scripts/ci/lint-imports.sh" 2>/dev/null | awk '
     { s = $0; sub(/#.*$/, "", s) }
     match(s, /"name"[[:space:]]*:[[:space:]]*"[^"]*"/) { r = substr(s, RSTART, RLENGTH); sub(/^[^:]*:[[:space:]]*/, "", r); rule = r }
-    !inblk && s ~ /"allow(_internal)?"[[:space:]]*:/ { inblk = 1; s = substr(s, index(s, ":") + 1) }
+    !inblk && s ~ /"(allow(_internal)?|exempt_importers)"[[:space:]]*:/ {
+      inblk = 1; tag = (s ~ /"exempt_importers"/) ? " exempt_importers" : ""
+      s = substr(s, index(s, ":") + 1)
+    }
     inblk {
-      while (match(s, /"[^"]*"/)) { print rule " " substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) }
+      while (match(s, /"[^"]*"/)) { print rule tag " " substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) }
       if (index(s, "]") || index(s, "}") || index(s, "set()")) inblk = 0
     }
   '
@@ -239,6 +243,22 @@ imports_allow_added() {
   local b
   b="$(imports_allow_entries "$1")"
   imports_allow_entries "$2" | old="$b" awk '
+    BEGIN { n = split(ENVIRON["old"], o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
+    !($0 in seen) { print }
+  '
+}
+
+# api_env_allow_words <rev>: the names in lint-systemd-hardening.sh's inline API_ENV_ALLOW list.
+api_env_allow_words() {
+  git show "${1}:scripts/ci/lint-systemd-hardening.sh" 2>/dev/null \
+    | sed -nE 's/^[[:space:]]*API_ENV_ALLOW="([^"]*)".*/\1/p' | tr -s ' ' '\n' | grep -v '^$' || true
+}
+
+# api_env_allow_added <base> <head>: names in <head>'s API_ENV_ALLOW absent from <base>'s.
+api_env_allow_added() {
+  local b
+  b="$(api_env_allow_words "$1")"
+  api_env_allow_words "$2" | old="$b" awk '
     BEGIN { n = split(ENVIRON["old"], o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
     !($0 in seen) { print }
   '
@@ -376,6 +396,12 @@ detect_growth() {
   added="$(imports_allow_added "$base" "$head")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-imports.sh "$line"
+  done <<<"$added"
+
+  # 10e) the environment names the API process may see: growing the inline list admits a credential.
+  added="$(api_env_allow_added "$base" "$head")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-systemd-hardening.sh "$line"
   done <<<"$added"
 
   # 14) zizmor: its config file waives audits repo-wide, and the workflow step sets its floor.
