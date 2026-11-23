@@ -2712,27 +2712,8 @@ type Sep1CurrencyAuthority struct {
 	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 }
 
-// handleAssetMetadata serves GET /v1/assets/{asset_id}/metadata (SEP-1 fields only): 404 when not indexed, else 200 with
-// sep1_status. Never 503: resolver failure shows in sep1_status, as on /v1/assets/{id}.
-func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
-	rawID := normaliseAssetIDInput(r.PathValue("asset_id"))
-
-	parsed, err := canonical.ParseAsset(rawID)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE>")
-		return
-	}
-	if err := parsed.Validate(); err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			err.Error())
-		return
-	}
-
+// assetMetadataBody serves the metadata route for an id already resolved as the detail resolves it.
+func (s *Server) assetMetadataBody(w http.ResponseWriter, r *http.Request, parsed canonical.Asset, wrapperUnread bool) {
 	reader := s.assetReaderOrNil()
 	var detail AssetDetail
 	if reader != nil {
@@ -2789,10 +2770,10 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 
 		Sep1CurrencyAuthority: detail.Sep1CurrencyAuthority,
 	}
-	writeJSON(w, out, Flags{
-		Stale:    homeDomainDegraded || detail.issuerDirectoryUnchecked || detail.sep1Unread,
-		Degraded: detail.issuerDirectoryUnchecked || detail.sep1Unread,
-	})
+	flags := s.verifiedCurrencyFlags(&detail, parsed)
+	flags.Stale = homeDomainDegraded || detail.issuerDirectoryUnchecked || detail.sep1Unread || wrapperUnread
+	flags.Degraded = detail.issuerDirectoryUnchecked || detail.sep1Unread || wrapperUnread
+	writeJSON(w, out, flags)
 }
 
 // sep1StatusForNoPayload separates two opposite findings for an issuer with no SEP-1 payload: `not_fetched` is ours (nothing has run, or
