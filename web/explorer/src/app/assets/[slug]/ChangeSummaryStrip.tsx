@@ -83,15 +83,18 @@ export function buildChangeWindows(s: ChangeSummary): DeltaWindow[] {
  */
 export function ChangeSummaryStrip({
   assetID,
+  scaleRefused,
   className,
 }: {
   assetID: string;
+  /** The page's scale verdict ([useScaleRefused]); /v1/changes never applies it. */
+  scaleRefused: boolean;
   className?: string;
 }) {
   const q = useChangeSummary('coin', assetID);
   // A failed refetch (a price-withheld 404 included) keeps the last good
   // `data`; showing it would keep moves and a USD low for a refused price.
-  if (q.isError) return null;
+  if (q.isError || scaleRefused) return null;
   const summary = unwrapChangeSummary(q.data);
   if (!summary) return null;
 

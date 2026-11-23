@@ -27,6 +27,9 @@ const (
 	// the customer-visible delivery log. The last retry lands ~4–8 h
 	// after the first failure, so a row this old is long settled.
 	WebhookDeliveryRetention = 30 * 24 * time.Hour
+	// WebhookPreviousKeyRetention is how long past its overlap expiry a retired webhook signing key is kept. Reads ignore it from
+	// expiry, so the hour only keeps the sweep clear of clock skew; the customer was told the key is retired.
+	WebhookPreviousKeyRetention = time.Hour
 )
 
 // SweepFunc deletes terminal rows older than olderThan and returns the count removed; it must never delete a row that is still live.

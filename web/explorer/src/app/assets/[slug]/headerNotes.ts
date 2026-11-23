@@ -60,13 +60,35 @@ export function capWithheldNote(
   return reason ? CAP_WITHHELD[reason] : undefined;
 }
 
-// A null market cap with no withheld price still has a served reason.
-export function marketCapNote(a: {
+type CapVerdict = {
   price_withheld_reason?: Reason | null;
   market_cap_withheld_reason?: CapReason | null;
   market_cap_decimals_mismatch?: boolean;
   market_cap_low_liquidity?: boolean;
-}): string | undefined {
+};
+
+// Reasons about the current read only; every other refusal is about the
+// asset itself and so holds for its cap history too.
+const CAP_REASON_OF_THE_MOMENT: ReadonlySet<CapReason> = new Set<CapReason>([
+  'price_unread',
+  'supply_stale',
+  'fx_leg_unavailable',
+]);
+
+/** Why the detail's refusal of the market cap also withholds its history, or undefined. */
+export function capHistoryWithheldNote(a: CapVerdict): string | undefined {
+  const reason = a.market_cap_withheld_reason;
+  if (
+    reason &&
+    CAP_REASON_OF_THE_MOMENT.has(reason) &&
+    !a.price_withheld_reason
+  )
+    return undefined;
+  return marketCapNote(a);
+}
+
+// A null market cap with no withheld price still has a served reason.
+export function marketCapNote(a: CapVerdict): string | undefined {
   return (
     withheldNote(a.price_withheld_reason) ??
     capWithheldNote(a.market_cap_withheld_reason) ??

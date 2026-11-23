@@ -147,6 +147,14 @@ check_case() { # check_case <label> <serving_enabled> <live_enabled>
   else
     ok "$label: the API's serving pair is set together or not at all (user='$su')"
   fi
+
+  # With the flip on the API reads as api_serving; the write-capable
+  # live_daemon / ops_batch pairs must not sit in its environment.
+  if [ "$2" = true ] && grep -qE '^STELLARINDEX_CLICKHOUSE_(LIVE|OPS)_' "$TMP/api.env"; then
+    bad "$label: serving flip on but the API env carries a write-capable ClickHouse identity: $(grep -oE '^STELLARINDEX_CLICKHOUSE_(LIVE|OPS)_[A-Z]+' "$TMP/api.env" | tr '\n' ' ')"
+  elif [ "$2" = true ]; then
+    ok "$label: no live_daemon or ops_batch ClickHouse identity in the API env"
+  fi
 }
 
 check_case "serving off, live identity off" false false

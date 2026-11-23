@@ -375,6 +375,6 @@ else
 fi
 
 chmod 644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
 exit "$fails"
