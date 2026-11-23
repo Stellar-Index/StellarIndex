@@ -76,23 +76,7 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 						"module — there is no WASM bytecode to show")
 				return
 			}
-			// Event-derived SAC identification: many SACs have no captured instance (deployed
-			// pre-lake or TTL-evicted before every checkpoint). Their CAP-67 events carry the
-			// wrapped asset in the trailing sep0011 topic; the derivation cross-check makes it
-			// spoof-proof, since a fake contract can emit the topic but not occupy the derived address.
-			if assetName, found := h.sacAssetViaEvents(ctx, cid); found {
-				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
-					"Stellar Asset Contract — no WASM", http.StatusNotFound,
-					"this contract is the Stellar Asset Contract for "+assetName+
-						" — built-in SAC host logic, not a user-uploaded WASM module; "+
-						"there is no bytecode to show. Asset detail: /v1/assets/"+assetName)
-				return
-			}
-			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-wasm-not-found",
-				"Contract WASM not found", http.StatusNotFound,
-				"the contract's wasm could not be assembled from the lake — its "+
-					"contract-instance or contract-code entry isn't in the captured "+
-					"ledger-entry window")
+			h.writeUncapturedWasmMiss(ctx, w, r, cid)
 			return
 		}
 		if retryableColdMiss(ctx, err) {
@@ -175,14 +159,36 @@ func nonNilStrings(s []string) []string {
 	return s
 }
 
-// sacAssetViaEvents resolves an uncaptured-instance contract to the classic asset whose SAC it is, via the event-topic hint plus the
-// deterministic-derivation cross-check (never trust the topic alone). Returns canonical CODE-GISSUER (or "native").
-func (h *Handler) sacAssetViaEvents(ctx context.Context, contractID string) (string, bool) {
-	name, found, _ := h.sacAssetViaEventsChecked(ctx, contractID)
-	return name, found
+// writeUncapturedWasmMiss answers a contract with no captured instance. Event-derived SAC identification: many SACs have no captured
+// instance (deployed pre-lake or TTL-evicted), but their CAP-67 events carry the wrapped asset in the trailing sep0011 topic; the
+// derivation cross-check makes it spoof-proof, since a fake contract can emit the topic but not occupy the derived address.
+func (h *Handler) writeUncapturedWasmMiss(ctx context.Context, w http.ResponseWriter, r *http.Request, cid string) {
+	assetName, found, evErr := h.sacAssetViaEventsChecked(ctx, cid)
+	if evErr != nil && !found {
+		// The probe could not answer, so "not in the lake" would be a claim we did not check.
+		h.Logger.Warn("explorer ContractWasm SAC events probe failed", "err", evErr, "contract", cid)
+		h.writeRetryable(w, r, evErr, "https://api.stellarindex.io/errors/contract-wasm-timeout",
+			"Contract WASM timed out")
+		return
+	}
+	if found {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
+			"Stellar Asset Contract — no WASM", http.StatusNotFound,
+			"this contract is the Stellar Asset Contract for "+assetName+
+				" — built-in SAC host logic, not a user-uploaded WASM module; "+
+				"there is no bytecode to show. Asset detail: /v1/assets/"+assetName)
+		return
+	}
+	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-wasm-not-found",
+		"Contract WASM not found", http.StatusNotFound,
+		"the contract's wasm could not be assembled from the lake — its "+
+			"contract-instance or contract-code entry isn't in the captured "+
+			"ledger-entry window")
 }
 
-// sacAssetViaEventsChecked is sacAssetViaEvents that also returns the probe's read error, so a failed read is not taken for "not a SAC".
+// sacAssetViaEventsChecked resolves an uncaptured-instance contract to the classic asset whose SAC it is, via the event-topic hint plus
+// the deterministic-derivation cross-check (never trust the topic alone). Returns canonical CODE-GISSUER (or "native"), and the probe's
+// read error so a failed read is not taken for "not a SAC".
 func (h *Handler) sacAssetViaEventsChecked(ctx context.Context, contractID string) (string, bool, error) {
 	name, found, err := h.Reader.SACAssetFromEvents(ctx, contractID)
 	if err != nil || !found {

@@ -236,7 +236,7 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pgRows, tailNote, tailFailed := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
+	pgRows, tailNote, tailFailed, tailLabelsFailed := h.fetchSEP41MovementsTail(ctx, g, limit, cur, filter, pgFloor)
 	supply := h.movementsSupplyRange(ctx, wm)
 	coverageNote := movementsCoverageNote(wm, tailNote, supply)
 	if filter.Kind != "" && filter.Kind != "transfer" {
@@ -245,6 +245,15 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	h.assertMovementsNonOverlap(chRows, pgRows, pgFloor)
 
 	merged := mergeAccountMovementRows(chRows, pgRows, limit)
+	if len(merged) == limit && movementsArmMissing(cur, pgFloor, tailFailed, wmFailed) {
+		h.Logger.Warn("explorer AccountMovements: a merge arm failed on a full page; refusing to mint a cursor past its rows", "account", g, "tail_failed", tailFailed, "watermark_failed", wmFailed)
+		w.Header().Set("Retry-After", retryAfterBusy)
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/explorer-unavailable",
+			"Account movements temporarily unavailable", http.StatusServiceUnavailable,
+			"part of this account's movement history could not be read, and a next_cursor past it would "+
+				"skip those movements for the rest of the walk; retry shortly")
+		return
+	}
 	out := AccountMovementsView{
 		Account:      g,
 		Movements:    h.accountMovementEntries(ctx, merged),
@@ -257,8 +266,15 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// every subsequent page reuses it.
 		out.NextCursor = nextMovementCursor(merged[len(merged)-1], wm, wmFailed && !cur.HasPinnedWatermark)
 	}
-	// A failed tail read makes next_cursor skip the tail rows above the archive ceiling; degraded is the client's only signal.
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed || tailFailed, time.Time{})
+	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), wmFailed || assetLookupFailed || tailFailed || tailLabelsFailed, time.Time{})
+}
+
+// movementsArmMissing reports that an arm owning part of this page's ledger range failed, so no cursor may be minted from it: the next
+// page would start below that arm's rows and skip them for the rest of the walk. A failed tail owns nothing once the cursor is below
+// pgFloor; an unpinned page with a failed watermark read lost the non-watched archive rows above the static P23 split.
+func movementsArmMissing(cur movementCursorParts, pgFloor uint32, tailFailed, wmFailed bool) bool {
+	tailOwnsRange := cur.Ledger == 0 || cur.Ledger >= pgFloor
+	return (tailFailed && tailOwnsRange) || (wmFailed && !cur.HasPinnedWatermark)
 }
 
 // movementsWatermark resolves the cap67 watermark splitting a page between the CH archive and the PG tail, so arms stay gap- and double-
@@ -324,22 +340,24 @@ func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
 }
 
 // fetchSEP41MovementsTail reads the Postgres recent-tail half of the merge. A non-empty coverageNote (no reader, read failed) degrades
-// rather than fails the request; failed reports a read error. Kind filters that cannot match a PG-tail row (all are "transfer") skip it.
-func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) (rows []clickhouse.AccountMovementRow, coverageNote string, failed bool) {
+// rather than fails the request; failed reports a read error, labelsFailed a SAC lookup error that left a row's asset as the raw id.
+// Kind filters that cannot match a PG-tail row (all are "transfer") skip it.
+func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, limit int, cur movementCursorParts, filter clickhouse.AccountMovementFilter, floorLedger uint32) (rows []clickhouse.AccountMovementRow, coverageNote string, failed, labelsFailed bool) {
 	if h.SEP41Movements == nil {
-		return nil, fmt.Sprintf("this deployment has not wired the recent Postgres tail reader; showing only the movement archive, which ends before ledger %d", floorLedger), false
+		return nil, fmt.Sprintf("this deployment has not wired the recent Postgres tail reader; showing only the movement archive, which ends before ledger %d", floorLedger), false, false
 	}
 	if filter.Kind != "" && filter.Kind != "transfer" {
-		return nil, "", false
+		return nil, "", false, false
 	}
 	pgCur := timescale.SEP41TransferCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, EventIndex: cur.LegIndex}
 	scopeContract, _ := sep41AssetScope(filter.Asset)
 	pgRows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), scopeContract, floorLedger)
 	if err != nil {
 		h.Logger.Error("explorer AccountMovements (Postgres recent tail) failed", "err", err, "account", address)
-		return nil, fmt.Sprintf("the recent tail is temporarily unavailable; showing only the movement archive, which ends before ledger %d", floorLedger), true
+		return nil, fmt.Sprintf("the recent tail is temporarily unavailable; showing only the movement archive, which ends before ledger %d", floorLedger), true, false
 	}
-	return h.mapSEP41RowsToMovements(ctx, address, pgRows, filter.Asset), "", false
+	rows, labelsFailed = h.mapSEP41RowsToMovements(ctx, address, pgRows, filter.Asset)
+	return rows, "", false, labelsFailed
 }
 
 // movementsCoverageNote is the feed's honest-scope statement by cap67 watermark; tailNote (a tail failure) wins. wm == 0: only the
@@ -461,20 +479,23 @@ func movementsArchiveNote(wm uint32, tailNote string) string {
 }
 
 // mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows to clickhouse.AccountMovementRow. Each DISTINCT contract_id resolves
-// to the CH canonical asset form; a non-empty assetFilter is re-checked, so a raw C... filter naming a SAC matches nothing.
-func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, rows []timescale.SEP41TransferRow, assetFilter string) []clickhouse.AccountMovementRow {
+// to the CH canonical asset form; a non-empty assetFilter is re-checked, so a raw C... filter naming a SAC matches nothing. lookupFailed
+// reports a row whose asset stayed the raw id because the SAC lookup errored.
+func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, rows []timescale.SEP41TransferRow, assetFilter string) (out []clickhouse.AccountMovementRow, lookupFailed bool) {
 	if len(rows) == 0 {
-		return nil
+		return nil, false
 	}
 	assetNames := make(map[string]string, len(rows))
 	if sac, label := sep41AssetScope(assetFilter); label != "" {
 		assetNames[sac] = label
 	}
-	out := make([]clickhouse.AccountMovementRow, 0, len(rows))
+	out = make([]clickhouse.AccountMovementRow, 0, len(rows))
 	for _, tr := range rows {
 		asset, ok := assetNames[tr.ContractID]
 		if !ok {
-			asset = h.resolveSEP41MovementAsset(ctx, tr.ContractID)
+			var failed bool
+			asset, failed = h.resolveSEP41MovementAssetChecked(ctx, tr.ContractID)
+			lookupFailed = lookupFailed || failed
 			assetNames[tr.ContractID] = asset
 		}
 		if assetFilter != "" && asset != assetFilter {
@@ -510,18 +531,13 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 		}
 		out = append(out, row)
 	}
-	return out
+	return out, lookupFailed
 }
 
-// resolveSEP41MovementAsset resolves a SEP-41 contract_id to its display form: a SAC's wrapped asset name, else the raw id. The event-topic
-// fallback is attacker-influenceable (a hostile token can claim USDC): trusted only when the re-derived SAC address equals contractID.
-func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
-	name, _ := h.resolveSEP41MovementAssetChecked(ctx, contractID)
-	return name
-}
-
-// resolveSEP41MovementAssetChecked also reports lookupFailed: the SAC metadata read errored and no event-topic proof recovered, so the
-// returned contract id may be a SAC we could not fold, not a proven non-SAC.
+// resolveSEP41MovementAssetChecked resolves a SEP-41 contract_id to its display form: a SAC's wrapped asset name, else the raw id. The
+// event-topic fallback is attacker-influenceable (a hostile token can claim USDC): trusted only when the re-derived SAC address equals
+// contractID. lookupFailed: the SAC metadata read errored and no event-topic proof recovered, so the returned contract id may be a SAC
+// we could not fold, not a proven non-SAC.
 func (h *Handler) resolveSEP41MovementAssetChecked(ctx context.Context, contractID string) (name string, lookupFailed bool) {
 	if name, ok := h.sacNames.get(contractID); ok {
 		return name, false

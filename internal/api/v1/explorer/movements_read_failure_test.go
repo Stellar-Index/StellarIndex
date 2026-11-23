@@ -58,7 +58,8 @@ func (failingSEP41Tail) ListSEP41TransfersByAddress(context.Context, string, int
 	return nil, errors.New("statement timeout")
 }
 
-// A failed Postgres tail read serves the archive alone, and next_cursor then lands below the tail: the page must be degraded.
+// A failed Postgres tail read on a short (cursorless) page serves the archive alone: the page must be degraded. A full page 503s
+// instead (TestAccountMovements_WalkSurvivesArmFailure).
 func TestAccountMovements_TailReadFailureIsDegraded(t *testing.T) {
 	wm := timescale.MovementsFloor() + 1000
 	reader := &movementsArmReader{capReader: &capReader{probe: &deadlineProbe{}}, wm: wm}

@@ -311,7 +311,9 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		// The resolver and folds must run on the REFRESH context: binding either to a request that
 		// may be gone would silently produce a half-resolved payload.
 		var cov positionsCoverage
-		positions := h.collectPositions(rctx, g, h.newPositionAssetResolver(rctx), &cov)
+		var labelsFailed bool
+		positions := h.collectPositions(rctx, g, h.newPositionAssetResolver(rctx, &labelsFailed), &cov)
+		cov.labelsUnresolved = cov.labelsUnresolved || labelsFailed
 		return accountPositionsSnapshot{positions: positions, coverageNote: cov.note(), labelsUnresolved: cov.labelsUnresolved}, nil
 	})
 	if err != nil {
@@ -356,9 +358,9 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 
 // ─── asset / venue display-label resolution ──────────────────────────
 
-// newPositionAssetResolver returns a per-request memoized contract-id -> label resolver over resolveSEP41MovementAsset; it never fails
-// (degrades to a truncated id). Its dependency is h.Positions, not h.Reader, so without a Reader the label is the raw id.
-func (h *Handler) newPositionAssetResolver(ctx context.Context) positionAssetResolver {
+// newPositionAssetResolver returns a per-request memoized contract-id -> label resolver over resolveSEP41MovementAssetChecked; it degrades
+// to a truncated id and sets *labelsFailed (when non-nil) if a SAC lookup errored. Without a Reader the label is the raw id.
+func (h *Handler) newPositionAssetResolver(ctx context.Context, labelsFailed *bool) positionAssetResolver {
 	// MUST be concurrency-safe: the parallel folds share this resolver, and concurrent map writes
 	// are a FATAL runtime throw that no recover() catches. The lock is held across the resolve
 	// (which may hit the lake) on purpose, so a contract is resolved once per request, not per fold.
@@ -375,7 +377,11 @@ func (h *Handler) newPositionAssetResolver(ctx context.Context) positionAssetRes
 		}
 		resolved := contractID
 		if h.Reader != nil {
-			resolved = h.resolveSEP41MovementAsset(ctx, contractID)
+			var failed bool
+			resolved, failed = h.resolveSEP41MovementAssetChecked(ctx, contractID)
+			if failed && labelsFailed != nil {
+				*labelsFailed = true // under mu; read by the caller only after every fold has returned
+			}
 		}
 		v := assetDisplayLabel(resolved)
 		cache[contractID] = v
