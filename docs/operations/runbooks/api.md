@@ -935,7 +935,7 @@ ORDER BY ts DESC;
 
 ## stellarindex_price_serve_substance_fail_open
 
-**Trigger.** `sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0` for 5m (or the series' first increment), P3. `internal/pricingguard.SubstanceGate` reads 24h of `prices_1m` per pair; on a store error or deadline it has no verdict and single lookups serve the price unguarded, so a dust-seeded market can be priced. Shared and cached reads fail closed (withheld). A deadline writes no WARN line.
+**Trigger.** `sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0` for 5m (or the series' first increment), P3. `internal/pricingguard.SubstanceGate` reads 24h of `prices_1m` per pair; on a store error or deadline it has no verdict and single lookups serve the price unguarded, so a dust-seeded market can be priced. Shared and cached reads fail closed (withheld). The three push surfaces never send unguarded: a `divergence_webhook` episode retries on the next firing refresh, a `price_alert` counts as a failed read and retries next sweep, and a `freeze_webhook` re-reads once, then is lost and counted as `stellarindex_customer_webhook_fanout_failures_total{reason="price_unmeasured"}`. A deadline writes no WARN line.
 
 **Check.**
 

@@ -19,6 +19,8 @@ package pricingguard
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -116,11 +118,6 @@ type Gate struct {
 	Scam      *ScamGate      // nil → no scam-issuer gate
 }
 
-// PriceWithheld reports whether the pair's aggregated price must not be published.
-func (g Gate) PriceWithheld(ctx context.Context, base, quote canonical.Asset, surface string) bool {
-	return g.PriceWithholding(ctx, base, quote, surface) != NotWithheld
-}
-
 // Query names what a [Gate.Judge] call is asked about.
 type Query struct {
 	// PointInTime asks the substance half about At instead of now.
@@ -195,22 +192,21 @@ const (
 	WithheldExclusionsUnread Withholding = "source_exclusions_unread"
 )
 
-// PriceWithholding is [Gate.PriceWithheld] reporting WHICH gate fired.
-func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset, surface string) Withholding {
-	return g.Judge(ctx, base, quote, surface, Query{}).pushWithholding()
-}
+// ErrSubstanceUnmeasured means the substance read failed, so a push surface has no verdict to send under.
+var ErrSubstanceUnmeasured = errors.New("pricingguard: market substance unmeasured")
 
-// pushWithholding withholds an unmeasured pair: these callers keep no Unmeasured flag and deliver to every subscriber, so the fail-open single-lookup default would read as cleared.
-func (v Verdict) pushWithholding() Withholding {
+// PushWithholding is the gate's answer for a push surface (webhook, price alert), which cannot carry
+// doubt to its reader: an unmeasured pair that no gate withheld returns [ErrSubstanceUnmeasured]
+// (wrapping ctx's error when ctx ended) so the caller retries instead of sending or dropping it.
+func (g Gate) PushWithholding(ctx context.Context, base, quote canonical.Asset, surface string) (Withholding, error) {
+	v := g.Judge(ctx, base, quote, surface, Query{})
 	if v.Unmeasured && v.Withholding == NotWithheld {
-		return WithheldThinMarket
+		if cerr := ctx.Err(); cerr != nil {
+			return NotWithheld, fmt.Errorf("%w: %w", ErrSubstanceUnmeasured, cerr)
+		}
+		return NotWithheld, ErrSubstanceUnmeasured
 	}
-	return v.Withholding
-}
-
-// PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read: the substance half is asked about the instant served, but the scam half is deliberately NOT moved in time (an issuer flag withholds its history too).
-func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) Withholding {
-	return g.Judge(ctx, base, quote, surface, Query{PointInTime: true, At: at}).pushWithholding()
+	return v.Withholding, nil
 }
 
 // AssetValueWithholding is the gate's answer for an ASSET's USD value rather than one pair: withheld when its issuer is flagged, or when no backing quote ([AssetSubstanceVerdict]) clears the substance floor.

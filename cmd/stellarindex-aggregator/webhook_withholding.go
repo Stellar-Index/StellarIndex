@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -23,6 +24,9 @@ const (
 	divergenceWebhookGateSurface = "divergence_webhook"
 )
 
+// freezeGateRetryTimeout bounds the freeze hook's one re-read of an unmeasured substance verdict.
+const freezeGateRetryTimeout = 5 * time.Second
+
 // webhookPublisher is the fan-out seam the webhook hooks publish through.
 // *customerwebhook.Fanout satisfies it.
 type webhookPublisher interface {
@@ -34,9 +38,23 @@ type webhookPublisher interface {
 // (the freeze stays durable in freeze_events; only the customer copy carrying the price is skipped).
 func anomalyFreezeHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) timescale.FreezeHook {
 	return func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
-		if gates.PriceWithheld(ctx, asset, quote, freezeWebhookGateSurface) {
+		withheld, err := gates.PushWithholding(ctx, asset, quote, freezeWebhookGateSurface)
+		if err != nil {
+			// The hook runs once per freeze, so one retry on a budget the caller's cancellation cannot cut.
+			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), freezeGateRetryTimeout)
+			withheld, err = gates.PushWithholding(rctx, asset, quote, freezeWebhookGateSurface)
+			cancel()
+		}
+		if err != nil {
+			obs.CustomerWebhookFanoutFailuresTotal.WithLabelValues(
+				string(platform.WebhookEventAnomalyFreeze), obs.FanoutFailurePriceUnmeasured).Inc()
+			logger.Error("anomaly.freeze webhook lost: pair's market substance is unmeasured, notification not sent",
+				"err", err, "asset", asset.String(), "quote", quote.String())
+			return
+		}
+		if withheld != pricingguard.NotWithheld {
 			logger.Info("anomaly.freeze webhook withheld: pair's price is withheld by pricing_guard",
-				"asset", asset.String(), "quote", quote.String())
+				"asset", asset.String(), "quote", quote.String(), "reason", string(withheld))
 			return
 		}
 		at := time.Now().UTC().Format(time.RFC3339Nano)
@@ -169,9 +187,18 @@ func (p *offTickPublisher) publish(ctx context.Context, j offTickJob) {
 // as in anomalyFreezeHook.
 func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates pricingguard.Gate) divergence.WarningHook {
 	return func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) error {
-		if gates.PriceWithheld(ctx, pair.Base, pair.Quote, divergenceWebhookGateSurface) {
+		withheld, err := gates.PushWithholding(ctx, pair.Base, pair.Quote, divergenceWebhookGateSurface)
+		if err != nil {
+			// The error releases the worker's edge latch, so the next firing refresh retries the episode.
+			if ctx.Err() == nil {
+				logger.Warn("divergence.firing webhook delayed: pair's market substance is unmeasured, retrying next refresh",
+					"err", err, "pair", pair.String())
+			}
+			return fmt.Errorf("divergence.firing webhook for %s: %w", pair, err)
+		}
+		if withheld != pricingguard.NotWithheld {
 			logger.Info("divergence.firing webhook withheld: pair's price is withheld by pricing_guard",
-				"pair", pair.String())
+				"pair", pair.String(), "reason", string(withheld))
 			return nil
 		}
 		payload := customerwebhook.MarshalPayload(logger, divergenceFiringWebhookPayload{

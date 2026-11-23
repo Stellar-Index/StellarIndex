@@ -910,7 +910,7 @@ Alert: `stellarindex_customer_webhook_worker_stalled` →
 
 Counter, labels `event_type` (`incident.sev1` / `incident.resolved` /
 `anomaly.freeze` / `divergence.firing` / `price.alert`) × `reason`
-(`invalid_payload` / `list_subscribers` / `enqueue`).
+(`invalid_payload` / `list_subscribers` / `enqueue` / `queue_full` / `price_unmeasured`).
 
 Producer-side counterpart to the delivery-attempts counter: events that never became a delivery row. No retry, no dead-letter; the customer has lost the event.
 

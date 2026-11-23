@@ -135,7 +135,7 @@ func emittedSurfaceLabels(t *testing.T, roots ...string) []string {
 					return true
 				}
 				// A name can carry several surface positions (pricingguard's
-				// Gate.PriceWithheld and wiring.PriceWithheld differ); one must resolve.
+				// Gate.PushWithholding and wiring.PriceWithheld differ); one must resolve.
 				var unresolved string
 				resolved := false
 				for _, idx := range params[calleeName(call)] {
