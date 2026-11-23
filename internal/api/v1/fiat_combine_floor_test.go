@@ -51,6 +51,26 @@ func fetchOneFloorBar(t *testing.T, ts *testServer, base string, t0 time.Time) v
 	return env.Data.Intervals[0]
 }
 
+// TestFiatSeries_NonstandardDecimalsAdjustsBeforeRendering: a 9dp token's raw ratio 0.000001234567891 is 100x that in price.
+// Rendering the raw ratio first keeps five significant digits (0.0000012345) that the adjustment then scales into 0.0001234500.
+func TestFiatSeries_NonstandardDecimalsAdjustsBeforeRendering(t *testing.T) {
+	usdc := mustParseAsset(t, usdcClassicID)
+	bookPair, _ := canonical.NewPair(mustParseAsset(t, flaggedAsset), usdc)
+	t0 := fiatParityBucketStart()
+	reader := &floorBarsReader{bars: map[string][]v1.OHLCSeriesBar{fiatParityPairKey(bookPair): {floorBar(t0,
+		"0.000001234567891", "0.000001234567891", "0.000001234567891", "0.000001234567891", "10000000000000", "12345678", 40, false)}}}
+	ts := httpTestServer(t, v1.New(v1.Options{
+		History: reader, USDPeggedClassics: []canonical.Asset{usdc}, NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
+	}))
+
+	bar := fetchOneFloorBar(t, ts, flaggedAsset, t0)
+	for name, got := range map[string]string{"o": bar.O, "h": bar.H, "l": bar.L, "c": bar.C} {
+		if got != "0.0001234567" {
+			t.Errorf("%s = %s, want 0.0001234567 (the exact adjusted price, rendered once)", name, got)
+		}
+	}
+}
+
 // TestFiatSeries_DustConstituentSetsNoWick: native/USDC trades at about 0.18; the direct native/fiat:USD
 // market holds only a crumb at 7.5 in the same hour. The served high must stay the book's, not 7.5.
 func TestFiatSeries_DustConstituentSetsNoWick(t *testing.T) {
