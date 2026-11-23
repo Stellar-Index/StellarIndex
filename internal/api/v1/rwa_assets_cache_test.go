@@ -105,6 +105,32 @@ func TestRWAAssets_AVerdictRebuildPastTheDeadlineIsRefusedAsSuch(t *testing.T) {
 	}
 }
 
+// TestRWAAssets_ALiftedExclusionRepublishesTheReference: once the exclusion over a member's oracle is lifted, the next request
+// publishes its reference again with neither the withheld flag nor no-store, though the cached view was built under it.
+func TestRWAAssets_ALiftedExclusionRepublishesTheReference(t *testing.T) {
+	gate := &swapGate{g: ustryExcluded()}
+	srv, _ := newRWAAssetsCacheServer(t, gate)
+	url := httpTestServer(t, srv).URL
+
+	env, cc := getRWAAssetsAt(t, url)
+	if a := env.Data.Assets[0]; a.Reference != nil || env.Flags.FillsWithheldReason != "source_excluded" || !strings.Contains(cc, "no-store") {
+		t.Fatalf("excluded: reference = %+v, fills_withheld_reason = %q, Cache-Control = %q; want withheld, source_excluded, no-store",
+			a.Reference, env.Flags.FillsWithheldReason, cc)
+	}
+
+	gate.set(assetExclGate(exclTable{}))
+	env, cc = getRWAAssetsAt(t, url)
+	a := env.Data.Assets[0]
+	if a.Reference == nil || a.ReferenceValuation.ValueUSD == nil || a.Premium.Status != v1.RWAPremiumPublished {
+		t.Errorf("lifted: reference = %+v, valuation = %v, premium = %q; want the oracle figure published", a.Reference,
+			a.ReferenceValuation.ValueUSD, a.Premium.Status)
+	}
+	if env.Flags.FillsWithheldReason != "" || env.Flags.Stale || strings.Contains(cc, "no-store") {
+		t.Errorf("lifted: fills_withheld_reason = %q, stale = %v, Cache-Control = %q; want none", env.Flags.FillsWithheldReason,
+			env.Flags.Stale, cc)
+	}
+}
+
 // TestRWAAssets_AVerdictMismatchServesAnAgreeingViewThatLanded: a request that refused the cached view serves the view another
 // request's rebuild has since cached, when that one agrees with the set, rather than building a second.
 func TestRWAAssets_AVerdictMismatchServesAnAgreeingViewThatLanded(t *testing.T) {
