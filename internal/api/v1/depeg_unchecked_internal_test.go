@@ -46,6 +46,51 @@ func TestWithProxyDeviation_UncheckedPegIsOnTheWire(t *testing.T) {
 	}
 }
 
+// TestPegObservationMarkets_CoverFiatCombineBooks: every non-literal quote the fiat combine may read must have its peg
+// checked (or be a declared peg counted as unbound), so a new backer cannot feed an answer whose depeg check skips it.
+func TestPegObservationMarkets_CoverFiatCombineBooks(t *testing.T) {
+	s := &Server{Options: Options{USDPeggedClassics: []canonical.Asset{mustAsset(t, withheldTestPegIssuer)}, VerifiedCurrencies: mustEmbeddedCatalogue(t)}}
+	for _, code := range []string{"USD", "EUR"} {
+		quote, err := canonical.NewFiatAsset(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pair, err := canonical.NewPair(mustAsset(t, "native"), quote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		established, heldBack := s.usdPeggedConstituentSets(pair)
+		for _, book := range append(established, heldBack...) {
+			q := book.Quote
+			if q.Equal(quote) {
+				continue
+			}
+			markets, _ := s.pegObservationMarkets(quote, []canonical.Pair{book})
+			checked := map[string]bool{}
+			for _, forms := range markets {
+				for _, p := range forms {
+					checked[p.Base.String()] = true
+				}
+			}
+			if ticker, ok := s.verifiedPegTicker(q); ok {
+				q = ticker
+			} else if q.Type == canonical.AssetClassic {
+				continue // a declared peg with no verified ticker is counted unbound, so the answer reads unchecked
+			}
+			if !checked[q.String()] {
+				t.Errorf("%s: combine reads %s/%s but the depeg check never observes %s", code, book.Base, book.Quote, q)
+			}
+		}
+	}
+	// Plain triangulation (no combine books) never reads X/crypto:USDT, so it does not answer for USDT's peg.
+	plain, _ := s.pegObservationMarkets(mustAsset(t, "fiat:USD"), nil)
+	for _, forms := range plain {
+		if forms[0].Base.String() == "crypto:USDT" {
+			t.Errorf("depeg check without combine books observes crypto:USDT")
+		}
+	}
+}
+
 // TestWithProxyDeviation_StaleReadingOnlyAddsDoubt: a feed that halts mid-depeg must keep the warning; staleness adds
 // proxy_deviation_unchecked and never clears proxy_deviation.
 func TestWithProxyDeviation_StaleReadingOnlyAddsDoubt(t *testing.T) {
