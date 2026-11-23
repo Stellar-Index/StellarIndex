@@ -19,6 +19,7 @@ import {
   assetIssuer,
   missingPriceNote,
   rankSwapTokens,
+  typedAmount,
   type SwapToken,
 } from './AssetSwap';
 import { LiveAssetPrice } from './LiveAssetPrice';
@@ -883,5 +884,45 @@ describe('missingPriceNote', () => {
       'AAA has no USD price: withheld by the server (thin market). BBB has no USD price available',
     );
     expect(missingPriceNote([])).toBeNull();
+  });
+});
+
+// A comma-locale decimal keypad has a ',' key and no '.'; stripping the
+// comma turned "0,5" into 5, ten times the amount meant.
+describe('AssetSwap comma decimal input', () => {
+  function commaLocale() {
+    vi.spyOn(Intl.NumberFormat.prototype, 'formatToParts').mockReturnValue([
+      { type: 'integer', value: '1' },
+      { type: 'decimal', value: ',' },
+      { type: 'fraction', value: '5' },
+    ]);
+  }
+  const typed = (value: string) => {
+    const field = screen.getAllByRole('textbox')[1] as HTMLInputElement;
+    fireEvent.change(field, { target: { value } });
+    return field.value;
+  };
+
+  it('reads a comma as the decimal mark in a comma locale', () => {
+    stubApi();
+    commaLocale();
+    renderSwap();
+    expect(typed('0,5')).toBe('0.5');
+    expect(typed('12,75')).toBe('12.75');
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('reads the later separator as the decimal mark in any locale', () => {
+    stubApi();
+    renderSwap();
+    expect(typed('1.234,56')).toBe('1234.56');
+    expect(typed('1,234.56')).toBe('1234.56');
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps commas as grouping in a dot locale', () => {
+    expect(typedAmount('1,000', '.')).toBe('1000');
+    expect(typedAmount('1,', ',')).toBe('1.');
   });
 });
