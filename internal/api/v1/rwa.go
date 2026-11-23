@@ -1201,6 +1201,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// valuation budget; a cut (not failed) valuation is served under flags.stale.
 	vctx, cancel := context.WithTimeout(ctx, rwaContractValuationBudget)
 	defer cancel()
+	vctx, valReads := withReadReport(vctx) // the contract arms' peg fill reports a withheld or unjudgeable rate here
 	contractRows, degraded, err := s.rwaContractListingRows(vctx, m.contracts)
 	if err != nil {
 		return rwaAssetsBuild{}, err
@@ -1240,12 +1241,12 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// The curated arm runs LAST, over the finished verified view, so it can say which of its rows
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
-	stale := degraded || curatedDegraded || join.unanswered || rwaReferencesUnanswered(view.Assets)
+	stale := degraded || curatedDegraded || join.unanswered || valReads.unread.Load() || rwaReferencesUnanswered(view.Assets)
 	ms := m.serveFlags()
 	flags := Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0}
 	return rwaAssetsBuild{
 		view:        view,
-		flags:       markFillsWithheld(flags, rwaReferencesExcluded(view.Assets)),
+		flags:       markFillsWithheld(flags, rwaReferencesExcluded(view.Assets) || listReads.withheld.Load() || valReads.withheld.Load()),
 		builtAt:     now,
 		observedAt:  observedAt,
 		refVerdicts: refVerdicts,

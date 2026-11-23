@@ -20,6 +20,20 @@ func ProcessLedger(
 	logger *slog.Logger,
 	lcm sdkxdr.LedgerCloseMeta,
 	networkPassphrase string,
+) error {
+	return ProcessLedgerMarked(ctx, disp, events, logger, lcm, networkPassphrase, nil)
+}
+
+// ProcessLedgerMarked is [ProcessLedger] that also counts each event against marks, so a caller can checkpoint at
+// [LedgerMarks.DurableThrough] instead of at the enqueued ledger.
+func ProcessLedgerMarked(
+	ctx context.Context,
+	disp *dispatcher.Dispatcher,
+	events chan<- consumer.Event,
+	logger *slog.Logger,
+	lcm sdkxdr.LedgerCloseMeta,
+	networkPassphrase string,
+	marks *LedgerMarks,
 ) (err error) {
 	before := disp.Stats()
 	defer func() {
@@ -40,14 +54,7 @@ func ProcessLedger(
 		)
 		return err
 	}
-	for _, ev := range outputs {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case events <- withLedger(ev, lcm.LedgerSequence()):
-		}
-	}
-	return nil
+	return enqueueLedger(ctx, events, outputs, lcm.LedgerSequence(), marks)
 }
 
 func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {

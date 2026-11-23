@@ -56,9 +56,9 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/history/since-inception":       gated,
 	"GET /v1/chart":                         gated,
 	"GET /v1/assets":                        gated,
-	"GET /v1/assets/verified":               uncovered("listing prices"),
+	"GET /v1/assets/verified":               gated,
 	"GET /v1/external/assets":               uncovered("external asset prices"),
-	"GET /v1/external/assets/{slug}":        uncovered("external asset prices"),
+	"GET /v1/external/assets/{slug}":        gated,
 	"GET /v1/rwa/assets":                    uncovered("RWA market prices; the oracle and fund-NAV reference is judged"),
 	"GET /v1/rwa/history":                   uncovered("RWA price history"),
 	"GET /v1/rwa/premium":                   gated,
@@ -207,7 +207,7 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 }
 
 // ungatedPriceRoutes ratchets the kill switch's known gaps: an operator exclusion does not reach these routes' figures.
-const ungatedPriceRoutes = 47
+const ungatedPriceRoutes = 45
 
 // GatedPriceRoutes returns the census's gated rows for the external-package proof check.
 func GatedPriceRoutes() []string {

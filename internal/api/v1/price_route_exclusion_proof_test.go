@@ -31,6 +31,8 @@ var gatedRouteExclusionProof = map[string][]func(*testing.T){
 	"GET /v1/history/since-inception":           {TestChartSeriesWithholdsExcludedBuckets},
 	"GET /v1/chart":                             {TestChartSeriesWithholdsExcludedBuckets},
 	"GET /v1/assets":                            {TestAssetListing_SourceExclusionWithholdsCoveredRows, v1.TestAssetRoutes_ExclusionGatesEveryVariant},
+	"GET /v1/assets/verified":                   {TestGlobalAssetFXSourceExclusionWithholdsFiatRate},
+	"GET /v1/external/assets/{slug}":            {TestGlobalAssetFXSourceExclusionWithholdsFiatRate},
 
 	"GET /v1/lending/pools/{pool}/reserves/{asset}/history": {TestLendingHistory_ExcludedSourceDoesNotValueBucket},
 }

@@ -264,7 +264,7 @@ func TestFiatUSDPriceFor_SilentFeedIsReportedStale(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := &Server{Options: Options{FXHistory: windowedFXHistory{points: tc.points}}, logger: discardLogger()}
 			ctx, rep := withReadReport(context.Background())
-			_, _, _, ok := s.fiatUSDPriceFor(ctx, "EUR")
+			_, _, ok := s.fiatUSDPriceFor(ctx, "EUR")
 			if ok != tc.ok || rep.stale.Load() != tc.stale || rep.unread.Load() {
 				t.Errorf("ok = %v, stale = %v, unread = %v; want %v, %v, false", ok, rep.stale.Load(), rep.unread.Load(), tc.ok, tc.stale)
 			}

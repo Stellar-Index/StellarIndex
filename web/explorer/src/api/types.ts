@@ -13059,10 +13059,10 @@ export interface components {
             /** @description USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead. */
             price_usd?: string | null;
             /**
-             * @description Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`), the entry's Stellar issuer is flagged in the directory or the curated scam list (`scam_issuer`, as on the listing's catalogue row), or the exclusion set or the issuer's directory entry could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline.
+             * @description Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`; for fiat, the FX feed that published the rate is excluded), the global tier's market is below the serve floor (`substance`, as `/v1/price` withholds it), the entry's Stellar issuer is flagged in the directory or the curated scam list (`scam_issuer`, as on the listing's catalogue row), or the exclusion set or the issuer's directory entry could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline.
              * @enum {string}
              */
-            price_withheld_reason?: "source_excluded" | "unattributed" | "scam_issuer";
+            price_withheld_reason?: "source_excluded" | "unattributed" | "scam_issuer" | "substance";
             /**
              * @description What produced `price_usd`. The first three are the tiers of the
              *     fallback chain, in trust order; each of the first two is held to
