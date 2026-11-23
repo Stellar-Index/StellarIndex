@@ -66,6 +66,12 @@ user default off nopass nocommands
 {#   never GETs a hash. Omit it and every index access is NOPERM: issuance #}
 {#   writes the record alone and lookups keep walking the keyspace. The API #}
 {#   builds the index itself on the first lookup after this is applied. #}
+{# - `apikey-lineage:*` holds one `{key_id, identifier}` record per API key #}
+{#   (no key material), proving an ancestor still stands while its #}
+{#   descendants are in use. `~apikey:*` does NOT cover it. Omit it and #}
+{#   every lineage write is NOPERM: authentication, mint, revoke and #}
+{#   erasure are unaffected, but no record is written until this is #}
+{#   applied and `stellarindex-ops apikey-lineage-backfill -write` runs. #}
 {# - `signup:lock:*` is the SETNX per-email serialisation namespace the #}
 {#   dashboardauth callback acquires before Account.Create to keep #}
 {#   concurrent first-login callbacks from racing. #}
@@ -86,7 +92,7 @@ user default off nopass nocommands
 {#   freeze writes and the usage counters are transactions. #}
 {# - The channel is `stellarindex:closed-bucket:v1`, the aggregator's #}
 {#   closed-bucket feed the API's SSE streams subscribe to. #}
-user stellarindex on >{{ redis_password }} -@all +@read +@write +@scripting +@pubsub +@connection +@transaction -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* ~health:* ~oracle:* ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* ~assets:list:* ~assets:listing-snapshot:* ~markets:list:* ~login-throttle:* ~mev:* &stellarindex:closed-bucket:* &closed-bucket-* &stream-*
+user stellarindex on >{{ redis_password }} -@all +@read +@write +@scripting +@pubsub +@connection +@transaction -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* ~apikey-lineage:* ~health:* ~oracle:* ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* ~assets:list:* ~assets:listing-snapshot:* ~markets:list:* ~login-throttle:* ~mev:* &stellarindex:closed-bucket:* &closed-bucket-* &stream-*
 
 {# Exporter user — narrow command set the oliver006/redis_exporter #}
 {# binary needs for INFO / CLIENT / CLUSTER / CONFIG GET / DBSIZE / #}

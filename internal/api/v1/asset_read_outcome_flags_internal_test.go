@@ -272,14 +272,15 @@ func TestFiatUSDPriceFor_SilentFeedIsReportedStale(t *testing.T) {
 	}
 }
 
-// A broad trustline-sum read that did not answer leaves a priced row with no cap; the listing must report it unread.
+// A broad trustline-sum read that did not answer leaves a priced row with no cap, or a lake net unchecked against the floor
+// that may exceed it; either way the listing must report it unread.
 func TestFillMarketCapsFromSupply_FailedBroadArmIsUnread(t *testing.T) {
 	for name, tc := range map[string]struct {
 		lake string
 		want bool
 	}{
 		"no other arm answers": {"", true},
-		"lake arm answers":     {"400000000", false},
+		"lake arm answers":     {"400000000", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, _ := lakeSupplyServer(t, tc.lake)

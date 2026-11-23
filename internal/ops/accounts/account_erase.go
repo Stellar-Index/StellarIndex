@@ -125,6 +125,7 @@ func runAccountEraseWith(
 		}
 		_, _ = fmt.Fprintf(out, "account-erase: finished slug %q: %d Redis key record(s), %d other Redis key(s), %d late usage row(s)\n",
 			finish, rep.RedisKeys, rep.RedisDeleted, rep.LateUsageRows)
+		printLineageLeft(out, rep)
 		return nil
 	}
 	rep, err := run.Erase(ctx, id, platform.ActorStaff)
@@ -138,5 +139,14 @@ func runAccountEraseWith(
 	c := rep.Counts
 	_, _ = fmt.Fprintf(out, "account-erase: erased %s: %d user(s), %d key(s), %d webhook(s), %d audit row(s) scrubbed, "+
 		"%d Redis key record(s)\n", id, c.Users, c.APIKeys, c.Webhooks, c.AuditRowsScrubbed, rep.RedisKeys)
+	printLineageLeft(out, rep)
 	return nil
+}
+
+// printLineageLeft tells the operator to sweep when a lineage delete failed; the erasure itself stands.
+func printLineageLeft(out io.Writer, rep accounterasure.Report) {
+	if rep.LineageDeleteFailed {
+		_, _ = fmt.Fprintln(out, "account-erase: some api-key lineage records were not deleted; "+
+			"run stellarindex-ops apikey-lineage-backfill -dry-run, then -write")
+	}
 }

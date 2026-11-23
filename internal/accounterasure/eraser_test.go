@@ -125,6 +125,69 @@ func TestErase_SecondPassCatchesAnInFlightMint(t *testing.T) {
 	}
 }
 
+// lineageDelFailer fails, with OOM, every lineage delete (the scripts and DEL naming an apikey-lineage: key).
+type lineageDelFailer struct{}
+
+func (lineageDelFailer) fails(cmd redis.Cmder) bool {
+	switch strings.ToLower(cmd.Name()) {
+	case "del", "evalsha", "eval":
+	default:
+		return false
+	}
+	for _, a := range cmd.Args() {
+		if s, ok := a.(string); ok && strings.HasPrefix(s, "apikey-lineage:") {
+			cmd.SetErr(errors.New("OOM command not allowed"))
+			return true
+		}
+	}
+	return false
+}
+
+func (lineageDelFailer) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h lineageDelFailer) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.fails(cmd) {
+			return cmd.Err()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h lineageDelFailer) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if h.fails(cmd) {
+				return cmd.Err()
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// A failed lineage delete never fails the erasure or keeps a key authenticating, and the report says so.
+func TestErase_ReportsAFailedLineageDelete(t *testing.T) {
+	for name, fail := range map[string]bool{"lineage delete fails": true, "lineage delete succeeds": false} {
+		t.Run(name, func(t *testing.T) {
+			e, st, rdb, _ := newRig(t)
+			_, plaintext := mint(t.Context(), t, rdb, "john")
+			if fail {
+				rdb.AddHook(lineageDelFailer{})
+			}
+			rep, err := e.Erase(t.Context(), st.plan.AccountID, platform.ActorUser)
+			if err != nil {
+				t.Fatalf("Erase: %v", err)
+			}
+			if authenticates(rdb, plaintext) {
+				t.Error("the key still authenticates")
+			}
+			if rep.LineageDeleteFailed != fail {
+				t.Errorf("LineageDeleteFailed = %v, want %v", rep.LineageDeleteFailed, fail)
+			}
+		})
+	}
+}
+
 // TestErase_UsageCountersAndOtherAccountsKeys — the account's usage
 // counters go; another account's key and counters stay.
 func TestErase_UsageCountersAndOtherAccountsKeys(t *testing.T) {

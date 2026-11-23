@@ -60,6 +60,8 @@ type classicLakeSupplyReader interface {
 	TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]clickhouse.TokenSupply, error)
 }
 
+var _ classicLakeSupplyReader = (*TokenSupplyCache)(nil)
+
 // lakeSupplyEntry is one asset's cached lake-flows reading. An empty value is a negative cache
 // ("asked, and the lake had no usable answer"), so unanswerable assets are not re-queried per request.
 type lakeSupplyEntry struct {

@@ -144,8 +144,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// (stellar.supply_flows: mint minus burn minus clawback) that /v1/assets/{id}/supply uses.
 	// The ClickHouse read is Soroban-only; a stale snapshot yields to the lake reading.
 	now := time.Now()
-	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		snap, haveSnap, supplyFailed, detail.supplyFloor = s.withContractSupply(ctx, asset.ContractID, snap, haveSnap, supplyFailed)
+	if !haveSnap || supplyObservationStale(snap, now) {
+		snap, haveSnap, supplyFailed = s.withLakeSupply(ctx, detail, asset, key, keyErr, snap, haveSnap, supplyFailed)
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed || detail.priceUnread
 

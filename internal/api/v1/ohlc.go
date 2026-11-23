@@ -179,7 +179,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	volumeDecimals := commonAmountScaleDecimals(window)
 	sources := tradeSources(window.Trades())
 
-	if window, ok = s.writeExclusionCleanWindow(w, r, base, quote, window); !ok {
+	window, excluded, ok := s.writeExclusionCleanWindow(w, r, base, quote, window)
+	if !ok {
 		return
 	}
 	if window, ok = filterOHLCOutliers(w, r, window, sigma); !ok {
@@ -208,7 +209,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		Clamped:             clamped,
 		BelowFloor:          belowFloor,
 		Substance:           substance,
-	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, pair.Quote, to))
+	}, s.withProxyDeviation(ctx, markFillsWithheld(Flags{Triangulated: triangulated, ThinMarket: substance != nil}, excluded), pair.Quote, to))
 }
 
 // filterOHLCOutliers applies the single-bar outlier filter; a window with trades but none kept is a 422 (the filter withheld them), not

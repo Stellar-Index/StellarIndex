@@ -64,7 +64,7 @@ func TestFillImagesFromSep1_Overlay(t *testing.T) {
 	preset := "https://preset.example/logo.png"
 	rows := []AssetDetail{
 		{AssetID: "USDC-" + imgIssuerUSDC, Type: "classic", Code: "USDC", Issuer: ptr(imgIssuerUSDC)},
-		// Lower-case code must still match (case-insensitive code join).
+		// A lower-case code is another asset, and no chain reader confirms a fold: no AQUA logo.
 		{AssetID: "aqua-" + imgIssuerAQUA, Type: "classic", Code: "aqua", Issuer: ptr(imgIssuerAQUA)},
 		// Row already carrying an image must be left untouched.
 		{AssetID: "USDC-x", Type: "classic", Code: "USDC", Issuer: ptr(imgIssuerUSDC), Image: ptr(preset)},
@@ -86,8 +86,8 @@ func TestFillImagesFromSep1_Overlay(t *testing.T) {
 	if rows[0].Image == nil || *rows[0].Image != "https://circle.com/usdc.svg" {
 		t.Errorf("row0 USDC image = %v, want circle logo", rows[0].Image)
 	}
-	if rows[1].Image == nil || *rows[1].Image != "https://aqua.network/aqua.png" {
-		t.Errorf("row1 aqua (lowercase code) image = %v, want aqua logo", rows[1].Image)
+	if rows[1].Image != nil {
+		t.Errorf("row1 aqua (lowercase code) borrowed the AQUA logo %s", *rows[1].Image)
 	}
 	if rows[2].Image == nil || *rows[2].Image != preset {
 		t.Errorf("row2 preset image overwritten: %v", rows[2].Image)
@@ -209,7 +209,7 @@ func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 }
 
 // TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo: asset codes are case-sensitive, so USDX and usdx each keep the logo their own
-// [[CURRENCIES]] entry declares; a mis-cased row borrows a logo only when exactly one entry could be meant.
+// [[CURRENCIES]] entry declares; a case variant borrows neither.
 func TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo(t *testing.T) {
 	const upper, lower = "https://x.example/USDX.png", "https://x.example/usdx.png"
 	s := discardServer(&stubSep1ImagesReader{imgs: []timescale.Sep1Image{
@@ -231,6 +231,25 @@ func TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo(t *testing.T) {
 	}
 	if rows[2].Image != nil {
 		t.Errorf("Usdx matches two entries case-insensitively and must get neither logo, got %s", *rows[2].Image)
+	}
+}
+
+// TestFillImagesFromSep1_CaseVariantNeverBorrowsTheLogo: with only `USDC` declared, a trustline-only `usdc` under the same
+// issuer is another asset and must not wear the issuer's logo.
+func TestFillImagesFromSep1_CaseVariantNeverBorrowsTheLogo(t *testing.T) {
+	const logo = "https://circle.com/usdc.svg"
+	s := discardServer(&stubSep1ImagesReader{imgs: []timescale.Sep1Image{{Code: "USDC", Issuer: imgIssuerUSDC, Image: logo}}})
+	s.PrewarmSep1Images(context.Background())
+	rows := []AssetDetail{
+		{AssetID: "usdc-" + imgIssuerUSDC, Type: "classic", Code: "usdc", Issuer: ptr(imgIssuerUSDC)},
+		{AssetID: "USDC-" + imgIssuerUSDC, Type: "classic", Code: "USDC", Issuer: ptr(imgIssuerUSDC)},
+	}
+	s.fillImagesFromSep1(context.Background(), rows)
+	if rows[0].Image != nil {
+		t.Errorf("usdc borrowed the USDC logo %s", *rows[0].Image)
+	}
+	if rows[1].Image == nil || *rows[1].Image != logo {
+		t.Errorf("USDC image = %v, want %s", rows[1].Image, logo)
 	}
 }
 

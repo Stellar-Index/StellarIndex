@@ -125,6 +125,36 @@ func TestHistoryPagesPastExcludedFills(t *testing.T) {
 	}
 }
 
+// TestHistoryCSVCarriesFillsWithheldReason: the CSV form lists the JSON's flags in X-StellarIndex-Flags, so a page with fills
+// removed says why there too; an untouched page lists no reason.
+func TestHistoryCSVCarriesFillsWithheldReason(t *testing.T) {
+	soroswapWide := []timescale.SourceExclusion{{ID: 1, Source: "soroswap", From: time.Unix(1_000_000_000, 0)}}
+	csvFlags := func(rows []canonical.Trade) string {
+		srv := v1.New(v1.Options{
+			History:    &pagedHistoryReader{rows: rows},
+			Exclusions: pricingguard.NewSourceExclusionGate(exclTable{rows: soroswapWide}, pricingguard.SourceExclusionGateOptions{}),
+		})
+		ts := startHTTPTest(t, srv.Handler())
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/history?base=native&quote=fiat:USD&from=2026-01-01T00:00:00Z&to=2027-01-01T00:00:00Z", nil)
+		req.Header.Set("Accept", "text/csv")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("csv status %d", resp.StatusCode)
+		}
+		return resp.Header.Get("X-StellarIndex-Flags")
+	}
+	if got := csvFlags(histFills(3, 1)); got != "degraded, fills_withheld_reason=source_excluded" {
+		t.Fatalf("X-StellarIndex-Flags = %q, want the fills-withheld reason listed", got)
+	}
+	if got := csvFlags(histFills(3)); got != "" {
+		t.Fatalf("untouched page X-StellarIndex-Flags = %q, want none", got)
+	}
+}
+
 func equalLedgers(got []uint32, want ...uint32) bool {
 	if len(got) != len(want) {
 		return false

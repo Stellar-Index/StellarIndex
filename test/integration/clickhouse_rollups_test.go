@@ -536,7 +536,7 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 			t.Fatalf("NewExplorerReader: %v", err)
 		}
 		defer func() { _ = r.Close() }()
-		m, err := r.ClassicCirculatingSupply(ctx)
+		m, _, err := r.ClassicCirculatingSupply(ctx)
 		if err != nil {
 			t.Fatalf("ClassicCirculatingSupply: %v", err)
 		}

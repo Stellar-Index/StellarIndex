@@ -296,17 +296,22 @@ func TestFindMatchingCachedCurrency_emptyCodeOrIssuerRejected(t *testing.T) {
 	}
 }
 
-func TestFindMatchingCachedCurrency_caseInsensitiveCode(t *testing.T) {
+// A trustline-only `usdc` under Circle's issuer must not inherit the verification its stellar.toml grants `USDC`.
+func TestFindMatchingCachedCurrency_caseVariantNeverInherits(t *testing.T) {
 	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	sep := &timescale.IssuerSep1Cached{Currencies: []timescale.IssuerSep1Currency{
-		{Code: "usdc", Issuer: issuer},
+		{Code: "USDC", Issuer: issuer, Name: "USD Coin"},
 	}}
-	a, err := canonical.NewClassicAsset("USDC", issuer)
+	variant, err := canonical.NewClassicAsset("usdc", issuer)
 	if err != nil {
 		t.Fatalf("NewClassicAsset: %v", err)
 	}
-	if got := findMatchingCachedCurrency(sep, a); got == nil {
-		t.Error("expected case-insensitive match, got nil")
+	if got := findMatchingCachedCurrency(sep, variant); got != nil {
+		t.Errorf("usdc inherited the USDC entry %+v", got)
+	}
+	exact, _ := canonical.NewClassicAsset("USDC", issuer)
+	if got := findMatchingCachedCurrency(sep, exact); got == nil || got.Name != "USD Coin" {
+		t.Errorf("USDC matched %+v, want its own entry", got)
 	}
 }
 

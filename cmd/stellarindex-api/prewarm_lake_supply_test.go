@@ -40,6 +40,24 @@ func (bulkLakeStub) TokenSupplyForContracts(
 	return map[string]clickhouse.TokenSupply{}, nil
 }
 
+// The classic floor and lake-net seams are capabilities type-asserted off the readers main.go wires; a signature drift
+// would leave them nil, and every classic supply unchecked against its trustline floor, with nothing failing.
+func TestClassicSupplySeams_ProductionReadersCarryThem(t *testing.T) {
+	t.Parallel()
+	var lake v1.TokenSupplyReader = v1.NewTokenSupplyCache(&clickhouse.SupplyReader{})
+	if _, ok := lake.(interface {
+		TokenSupplyForContracts(context.Context, []string) (map[string]clickhouse.TokenSupply, error)
+	}); !ok {
+		t.Error("the wired token-supply reader lost its bulk lake-net read")
+	}
+	var floor v1.ExplorerReader = &clickhouse.ExplorerReader{}
+	if _, ok := floor.(interface {
+		ClassicCirculatingSupply(context.Context) (map[string]string, time.Time, error)
+	}); !ok {
+		t.Error("the wired explorer reader lost its trustline-floor read")
+	}
+}
+
 // listingShapeRecorder answers the listing read the lake prewarm uses to
 // discover its population, recording the exact options tuple. It serves no
 // rows: this test is about the arguments, not the fill.

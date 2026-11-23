@@ -1,6 +1,6 @@
 ---
-# API-plane security tripwires. Currently one: the CORS wildcard-in-prod
-# guard.
+# API-plane security tripwires: the CORS wildcard-in-prod guard and
+# API-key lineage write failures.
 #
 # stellarindex_api_cors_decisions_total (internal/obs/metrics.go) counts
 # every per-request CORS decision by outcome (no_origin | allowed_origin |
@@ -45,3 +45,28 @@ groups:
             Check the api instance's STELLARINDEX_ALLOWED_ORIGINS env
             var and auth_mode; if credentials are in play, replace the
             wildcard with an explicit allow-list.
+
+      # Every lineage write is best-effort, so a failure never reaches a
+      # request; this is the only signal. A single Redis blip resolves on
+      # its own while a missing ACL grant (every write NOPERM) fires. The
+      # window outlasts for: so a quiet host whose key is called every 20
+      # minutes still fires: 1h would hold only 2 such failures at some
+      # minutes and reset for:. The counter is pre-initialised per op, so
+      # increase() sees the first failure.
+      - alert: stellarindex_apikey_lineage_write_failures
+        expr: |
+          sum by (op) (increase(stellarindex_apikey_lineage_write_failures_total[90m])) >= 3
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-security.md#stellarindex_apikey_lineage_write_failures
+          summary: "API-key lineage writes (op={{ $labels.op }}) have failed for 30 minutes (P3)"
+          description: |
+            stellarindex_apikey_lineage_write_failures_total{op="{{ $labels.op }}"} has
+            increased at least 3 times in every 90-minute window for 30 minutes.
+            No request fails, but lineage records go unwritten or undeleted.
+            Check first that the redis-sentinel role was applied after the
+            binary: the ACL must grant ~apikey-lineage:*.

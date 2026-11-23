@@ -283,8 +283,8 @@ type scFailingClassic struct {
 	v1.ExplorerReader // nil: only ClassicCirculatingSupply is called
 }
 
-func (scFailingClassic) ClassicCirculatingSupply(context.Context) (map[string]string, error) {
-	return nil, errors.New("classic supply GROUP BY exceeded its budget")
+func (scFailingClassic) ClassicCirculatingSupply(context.Context) (map[string]string, time.Time, error) {
+	return nil, time.Time{}, errors.New("classic supply GROUP BY exceeded its budget")
 }
 
 // A market cap built from a broad supply map past its TTL (refresh failing) is served flagged stale, never as fresh.

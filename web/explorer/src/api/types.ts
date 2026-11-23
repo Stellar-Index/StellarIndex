@@ -1283,7 +1283,8 @@ export interface paths {
          *     `price` the decimal string, never floats; an absent `price` or
          *     `routed_via` is an empty cell. The next page is the `Link` header's
          *     `rel="next"`, `coverage_from` is `X-StellarIndex-Coverage-From`, and
-         *     `outside_coverage` is listed in `X-StellarIndex-Flags`. A cell a
+         *     `outside_coverage`, `stale`, `degraded` and
+         *     `fills_withheld_reason=<reason>` are listed in `X-StellarIndex-Flags`. A cell a
          *     spreadsheet would evaluate as a formula (leading `=`, `+`, `-`, `@`, tab or CR, unless it is a plain
          *     number) is prefixed with `'`. JSON stays the default; both
          *     representations send `Vary: Accept`, and the CSV is
@@ -9022,7 +9023,7 @@ export interface components {
             /** @description Names of the `include` sections this response was asked for and could not read (a failed or timed-out read). The fields of a named section are absent from every row, which is otherwise the same body as rows with nothing to report: on `/v1/sources`, a source whose stats were not read and a source with no trades in 24h; on `/v1/markets`, `sparkline` or `inception` rows whose enrichment batch failed. Absent when every requested section was read. A response carrying it is sent `Cache-Control: no-store`; the next request retries. */
             includes_unread?: string[];
             /**
-             * @description Set on `/v1/history` when fills were removed from this page: `source_excluded` means an operator excluded the source that made them (the same reason a `price-withheld` 404 carries). The page is thinner than the market was, not a quiet market; it may be empty with `pagination.next` still continuing the tape. A response carrying it is sent `Cache-Control: no-store`. Absent when no fill was removed.
+             * @description Set when fills, or the buckets built from them, were removed from this answer: `source_excluded` means an operator excluded the source that made them (the same reason a `price-withheld` 404 carries). On `/v1/history` the page is thinner than the market was, not a quiet market; it may be empty with `pagination.next` still continuing the tape. On `/v1/vwap`, `/v1/twap` and single-bar `/v1/ohlc` the value is recomputed from the other sources' trades. On `/v1/chart` and `/v1/history/since-inception` each covered point is absent (a gap, never a zero), and a derived cross loses the point either leg lost. A response carrying it is sent `Cache-Control: no-store`. Absent when nothing was removed.
              * @enum {string}
              */
             fills_withheld_reason?: "source_excluded";
@@ -12323,7 +12324,7 @@ export interface components {
             approval_criteria?: string | null;
             /** @description Raw integer in asset's smallest unit (per ADR-0011 supply derivation). Issuer and locked-set balances are netted out only under an exclusion basis; under `classic_lake_flows`, `classic_trustline_sum` and `sep41_lake_flows` it is the un-excluded total (see supply_basis). Null when no snapshot exists. */
             circulating_supply?: string | null;
-            /** @description Raw integer in asset's smallest unit. Null when no snapshot exists. */
+            /** @description Raw integer in asset's smallest unit. Null when no snapshot exists, and when the supply is a provable floor (`circulating_supply_lower_bound`), which is not served as an exact total. */
             total_supply?: string | null;
             /** @description Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration. */
             max_supply?: string | null;
@@ -12728,10 +12729,10 @@ export interface components {
             /** @description USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead. */
             price_usd?: string | null;
             /**
-             * @description Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`), or the exclusion set could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline.
+             * @description Present ONLY when price_usd is null because a tier held a price that an operator source exclusion refused (`source_excluded`), the entry's Stellar issuer is flagged in the directory or the curated scam list (`scam_issuer`, as on the listing's catalogue row), or the exclusion set or the issuer's directory entry could not be read (`unattributed`; flags.stale and flags.degraded are true and the body is transient). The on-chain listing fallback does not fill a withheld headline.
              * @enum {string}
              */
-            price_withheld_reason?: "source_excluded" | "unattributed";
+            price_withheld_reason?: "source_excluded" | "unattributed" | "scam_issuer";
             /**
              * @description What produced `price_usd`. The first three are the tiers of the
              *     fallback chain, in trust order; each of the first two is held to
@@ -12900,11 +12901,11 @@ export interface components {
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
             /**
-             * @description Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is not a lower bound either. Omitted for every other source.
+             * @description Which event log a source=mint_burn_flows total_supply was summed from, in the vocabulary Asset.supply_basis uses. `sep41_lake_flows`: the requested Soroban contract's own mint/burn/clawback events. `classic_lake_flows`: a classic CODE-ISSUER asset's net over its derived Stellar Asset Contract's unified (CAP-67) mint/burn/clawback events. That is a derived reading, not an issuer-authoritative supply, and an UPPER reading rather than a certified one: it is only as complete as the replayed flow history, and a replayed historical mint with no matching burn inflates it. It is the on-chain event net, marked a lower bound when the trustline sum exceeds it. Omitted for every other source.
              * @enum {string}
              */
             supply_basis?: "sep41_lake_flows" | "classic_lake_flows";
-            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Also set for source=mint_burn_flows when the token's storage holds a balance entry the reader cannot decode: the storage cross-check that would prove the event net short could not run, so the net is a floor. Omitted when false. */
+            /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only the balance entries the lake's current-state projection captured, so an entry dormant since before its coverage began is absent. Also set for source=mint_burn_flows when the token's storage holds a balance entry the reader cannot decode: the storage cross-check that would prove the event net short could not run, so the net is a floor. Also set for a classic asset's supply_basis=classic_lake_flows when its trustline sum, a provable floor, exceeds the net: total_supply stays the net so mint_total − burn_total − clawback_total adds up, but holders provably hold more, and /v1/assets serves that trustline sum as circulating_supply. Omitted when false. */
             circulating_supply_lower_bound?: boolean;
             /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. A temporary entry whose TTL lapsed has been deleted by the network and is not counted. */
             balance_entries?: number;
@@ -17213,7 +17214,7 @@ export interface operations {
                 headers: {
                     /** @description text/csv only: `</v1/history?cursor=…>; rel="next"` when another page exists. */
                     Link?: string;
-                    /** @description text/csv only: `outside_coverage` when that flag is true; absent otherwise. */
+                    /** @description text/csv only: comma-separated `outside_coverage`, `stale`, `degraded` and `fills_withheld_reason=<reason>`, each when set; absent when none is. */
                     "X-StellarIndex-Flags"?: string;
                     /** @description text/csv only: the JSON's `coverage_from`; absent when the JSON omits it. */
                     "X-StellarIndex-Coverage-From"?: string;

@@ -28,6 +28,8 @@ type PostgresAPIKeyValidator struct {
 	// cannot carry a later suspension, and a canonical `apikey:` record
 	// may have no api_keys row for a PATCH eviction to find.
 	status accountStatusGate
+
+	lineage lineageSlider
 }
 
 // PostgresValidatorOptions configures a [PostgresAPIKeyValidator].
@@ -202,6 +204,7 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 		// Self-service and register-mirrored records have no api_keys row to fall back to: without the
 		// refresh a key in daily use dies when its idle window lapses.
 		refreshIdleTTL(ctx, v.cache, hexHash, MirroredKeyIdleTTL)
+		v.lineage.slide(ctx, v.cache, hexHash, rec, MirroredKeyIdleTTL, v.now())
 	}
 	return sub, true, nil
 }
