@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
 // cursorWriter is what [durableCursor] needs from [timescale.Store]; narrow so the checkpoint rules run without a database.
@@ -18,6 +19,7 @@ type cursorWriter interface {
 type durableMarks interface {
 	Processed() uint32
 	DurableThrough() uint32
+	AllLanded()
 }
 
 // durableCursor commits the ledgerstream cursor and the observer watermarks at the marks' durable ledger, never at the
@@ -29,6 +31,15 @@ type durableCursor struct {
 	logger                                       *slog.Logger
 	accountObserverActive, classicObserverActive bool
 	written                                      uint32 // last ledger committed by this process, or the resume cursor
+}
+
+// finalCommit runs after the sink lane returned. Workers stop acking at cancel, so the durable mark sits below the
+// drained tail; only a closed channel (safeToClose) drained with nothing abandoned proves every processed ledger landed.
+func (c *durableCursor) finalCommit(ctx context.Context, loss pipeline.ShutdownLoss, safeToClose bool) {
+	if safeToClose && loss.Rows == 0 {
+		c.marks.AllLanded()
+		c.checkpoint(ctx)
+	}
 }
 
 // checkpoint commits the durable ledger if it moved. Best-effort: a failed write lags the cursor, which the next ledger

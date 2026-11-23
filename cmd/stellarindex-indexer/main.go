@@ -830,12 +830,7 @@ func run(cfgPath string, dryRun bool) error {
 		// the loss's only fix.
 		rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
 		lossCovered = rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
-		// Workers stop acking at cancel, so the cursor sits below the drained tail. A closed, fully drained channel with
-		// nothing abandoned means every processed ledger landed; commit it so a clean restart re-walks nothing.
-		if safeToClose && sinkLoss.Rows == 0 {
-			marks.AllLanded()
-			cursor.checkpoint(rctx) //nolint:contextcheck // deliberate fresh ctx, see above
-		}
+		cursor.finalCommit(rctx, sinkLoss, safeToClose)                                    //nolint:contextcheck // deliberate fresh ctx, see above
 		rcancel()
 	case <-shutdownCtx.Done():
 		// No rewind is needed: the cursor was only ever committed at the durable ledger, so it is already below

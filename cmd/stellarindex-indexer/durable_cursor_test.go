@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
 // fakeCursorWriter keeps the highest value each forward-only upsert would leave, as the store's WHERE guards do.
@@ -37,6 +38,7 @@ type fixedMarks struct{ processed, durable uint32 }
 
 func (m *fixedMarks) Processed() uint32      { return m.processed }
 func (m *fixedMarks) DurableThrough() uint32 { return m.durable }
+func (m *fixedMarks) AllLanded()             { m.durable = m.processed }
 
 // Ledgers 101..105 are processed but a row of 103 has not landed: the cursor and both observer watermarks must stop at
 // 102, or a crash now resumes at 106 and 103's row is never written.
@@ -84,5 +86,36 @@ func TestDurableCursor_InactiveObserversStayPut(t *testing.T) {
 	c.checkpoint(context.Background())
 	if store.cursor != 7 || store.account != 0 || store.classic != 0 {
 		t.Fatalf("cursor=%d account=%d classic=%d, want 7/0/0", store.cursor, store.account, store.classic)
+	}
+}
+
+// Ledgers 101..105 are processed and the durable mark is 102 when the sink lane returns. Only a closed channel drained
+// with nothing abandoned may commit 105; otherwise the cursor stays at 102 so the restart re-walks 103..105.
+func TestDurableCursor_FinalCommit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		loss        pipeline.ShutdownLoss
+		safeToClose bool
+		want        uint32
+	}{
+		{"abandoned rows keep the durable mark", pipeline.ShutdownLoss{Rows: 1, MinLedger: 104}, true, 102},
+		{"channel left open keeps the durable mark", pipeline.ShutdownLoss{}, false, 102},
+		{"clean drain commits the processed ledger", pipeline.ShutdownLoss{}, true, 105},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeCursorWriter{}
+			marks := &fixedMarks{processed: 105, durable: 102}
+			c := &durableCursor{
+				store: store, marks: marks, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), written: 100,
+				accountObserverActive: true, classicObserverActive: true,
+			}
+			c.checkpoint(context.Background())
+
+			c.finalCommit(context.Background(), tc.loss, tc.safeToClose)
+
+			if store.cursor != tc.want || store.account != tc.want || store.classic != tc.want {
+				t.Fatalf("cursor=%d account=%d classic=%d, want %d each", store.cursor, store.account, store.classic, tc.want)
+			}
+		})
 	}
 }
