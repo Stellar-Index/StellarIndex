@@ -2121,9 +2121,10 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 	if s.Triangulated == nil {
 		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 	}
-	// The cache is written with no gate consulted, and the caller's read may have been answered by another pair (a peg leg).
-	if w := withheldBy(r.Context(), s.Substance, s.Scam, pairBase, quote, "frozen_hold"); w != pricingguard.NotWithheld {
-		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: PriceWithheldError(w)}
+	// The cache is written with no gate consulted. Scam only, as in [Server.priceFallback]: a triangulated pair has no literal
+	// rows, so the substance floor would refuse every held value; a caller whose direct read was refused says so via refusedBy.
+	if scamWithheld(r.Context(), s.Scam, pairBase, quote, "frozen_hold") {
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked, withheld: newPriceWithheld(PriceWithheldScamIssuer)}
 	}
 	for _, window := range frozenHeldWindows {
 		v, found, err := s.lookupCachedVWAP(r.Context(), pairBase, quote, window)
@@ -2159,6 +2160,15 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		}
 	}
 	return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
+}
+
+// refusedBy withdraws a held value when the caller's own read of the pair was withheld (directWithheld non-nil): the pair has a
+// market of its own and it was refused, so the ungated cache must not publish it in its place.
+func (f frozenResolution) refusedBy(directWithheld error) frozenResolution {
+	if f.outcome != frozenServeHeld || directWithheld == nil {
+		return f
+	}
+	return frozenResolution{outcome: frozenServeNothingHeld, checked: f.checked, withheld: directWithheld}
 }
 
 // resolveFrozenServeFor is [Server.resolveFrozenServe] for the snapshot in hand. An ADR-0051 cross is governed by its USD leg's marker

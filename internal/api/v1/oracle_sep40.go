@@ -266,13 +266,13 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	snapshots, served, viaPeg, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
+	snapshots, served, viaPeg, directWithheld, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
 	if err != nil {
 		s.writeOraclePricesError(ctx, w, r, asset, records, err)
 		return
 	}
 
-	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote)
+	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(directWithheld)
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
@@ -363,26 +363,29 @@ const oracleLiveWindow = 10 * time.Minute
 // (viaPeg=true marks the envelope stale and triangulated). A dormant book is non-empty forever, so
 // "first non-empty" would serve months-old records beside a live series.
 // With nothing to serve, a withheld verdict wins, then the first read error: neither is 200 [].
-// served is the spelling of asset whose series was chosen (it governs the freeze check).
+// served is the spelling of asset whose series was chosen (it governs the freeze check); directWithheld is the refusal of the
+// asset's own quote series when a peg book answered in its place.
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
-) (snapshots []PriceSnapshot, served canonical.Asset, viaPeg bool, err error) {
+) (snapshots []PriceSnapshot, served canonical.Asset, viaPeg bool, directWithheld, err error) {
 	usdQuote := quote.Type == canonical.AssetFiat && quote.Code == "USD"
 	best, bestAt, served, err := s.recentClosedForAliases(ctx, asset, quote, n)
 	var failed oracleLegErrors
 	if err != nil {
 		// A direct series the exclusion withheld is no direct series: a clean peg book may still answer.
 		if !usdQuote || !errors.Is(err, ErrPriceWithheld) {
-			return nil, canonical.Asset{}, false, err
+			return nil, canonical.Asset{}, false, nil, err
 		}
 		failed.note(err)
+		directWithheld = err
 	}
 	if !usdQuote || s.oracleSeriesLive(best, bestAt) {
-		return best, served, false, nil
+		return best, served, false, nil, nil
 	}
 	// A USD stablecoin's book against another peg would hide a joint depeg (and its own peg is no market).
 	if s.isUSDStablecoin(asset) {
-		return stablecoinOwnSeries(best, served, failed)
+		snapshots, served, err = stablecoinOwnSeries(best, served, failed)
+		return snapshots, served, false, nil, err
 	}
 	for _, peg := range s.usdPegProxyQuotes() {
 		pegSnapshots, pegAt, pegServed, ok := s.oraclePegSeries(ctx, asset, quote, peg, n, &failed)
@@ -400,20 +403,20 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		if failed.withheld != nil && !s.oracleSeriesLive(best, bestAt) {
 			best = seriesFillsWithheld(best)
 		}
-		return best, served, viaPeg, nil
+		return best, served, viaPeg, directWithheld, nil
 	}
-	return nil, canonical.Asset{}, false, failed.err()
+	return nil, canonical.Asset{}, false, nil, failed.err()
 }
 
 // stablecoinOwnSeries answers a USD stablecoin from its own series only: a withheld verdict outranks "no series".
-func stablecoinOwnSeries(best []PriceSnapshot, served canonical.Asset, failed oracleLegErrors) ([]PriceSnapshot, canonical.Asset, bool, error) {
+func stablecoinOwnSeries(best []PriceSnapshot, served canonical.Asset, failed oracleLegErrors) ([]PriceSnapshot, canonical.Asset, error) {
 	if len(best) > 0 {
-		return best, served, false, nil
+		return best, served, nil
 	}
 	if err := failed.err(); err != nil {
-		return nil, canonical.Asset{}, false, err
+		return nil, canonical.Asset{}, err
 	}
-	return nil, canonical.Asset{}, false, errStablecoinNoOwnSeries
+	return nil, canonical.Asset{}, errStablecoinNoOwnSeries
 }
 
 // oraclePegSeries reads asset's series against one peg, judged under the requested pair; a failed or empty leg is noted.
