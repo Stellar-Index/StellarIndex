@@ -47,17 +47,25 @@ func rwaAssetsUnavailableDetail(err error) (string, bool) {
 }
 
 // cachedRWAAssetsView serves the assembled view, never one whose reference verdicts the current exclusion set contradicts:
-// that view is rebuilt, waiting up to ctx, and refused if the rebuild still disagrees.
+// that view is rebuilt, waiting up to ctx, and refused if the rebuild still disagrees or does not answer in time.
 func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error) {
-	b, err := s.cachedRWAAssetsViewOnce(ctx, false)
-	if err != nil || s.rwaRefVerdictsHold(ctx, b.refVerdicts) {
-		return b, err
+	refused, err := s.cachedRWAAssetsViewOnce(ctx, false)
+	if err != nil || s.rwaRefVerdictsHold(ctx, refused.refVerdicts) {
+		return refused, err
 	}
-	b, err = s.cachedRWAAssetsViewOnce(ctx, true)
-	if err != nil || s.rwaRefVerdictsHold(ctx, b.refVerdicts) {
-		return b, err
+	// A build that landed since the read may already agree, so only the refused view itself is rebuilt.
+	if cur, err := s.cachedRWAAssetsViewOnce(ctx, false); err == nil && !cur.builtAt.Equal(refused.builtAt) &&
+		s.rwaRefVerdictsHold(ctx, cur.refVerdicts) {
+		return cur, nil
 	}
-	return rwaAssetsBuild{}, errRWAViewVerdictsChanged
+	b, err := s.cachedRWAAssetsViewOnce(ctx, true)
+	switch {
+	case err == nil && s.rwaRefVerdictsHold(ctx, b.refVerdicts):
+		return b, nil
+	case err == nil, errors.Is(err, context.DeadlineExceeded):
+		return rwaAssetsBuild{}, errors.Join(errRWAViewVerdictsChanged, err)
+	}
+	return rwaAssetsBuild{}, err
 }
 
 // cachedRWAAssetsViewOnce serves the assembled view, stale-while-revalidate: past expiry it is served under flags.stale and
