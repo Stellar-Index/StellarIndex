@@ -4,8 +4,9 @@
 # Queries recent completed runs of the `ci` workflow on `main` and decides
 # whether main has been red past a threshold: consecutive failures OR
 # wall-clock age since the last green run. Full-suite runs (schedule,
-# workflow_dispatch) are also judged as their own stream, so a diff-scoped
-# push green cannot clear a red full run. Decision core of
+# workflow_dispatch, for a workflow with a schedule) and push runs are also
+# judged as their own streams, so a diff-scoped push green cannot clear a
+# red full run, nor a nightly that skips push-only jobs a red push. Decision core of
 # .github/workflows/ci-health.yml, which turns RED into a tracking issue and
 # a failed run.
 #
@@ -44,9 +45,18 @@ JQ_FILTER='.workflow_runs[]
   | @tsv'
 
 # full_runs <runs> — the schedule/workflow_dispatch runs. A push run tests
-# only what its diff reaches, so its green cannot clear a red full run.
+# only what its diff reaches, so its green cannot clear a red full run. A
+# workflow with no scheduled run has no full suite: its dispatch is the same
+# check aimed elsewhere (api-audit's api_base_url), so nothing is returned.
 full_runs() {
+  grep -q $'\tschedule$' <<<"$1" || return 0
   awk -F'\t' '$5 == "schedule" || $5 == "workflow_dispatch"' <<<"$1"
+}
+
+# push_runs <runs> — the push runs. A full run skips the push-only jobs
+# (branch-protection-status), so its green cannot clear a red push run.
+push_runs() {
+  awk -F'\t' '$5 == "push"' <<<"$1"
 }
 
 # settled <runs> — the stream's tip verdict is decidable from what is held.
@@ -104,7 +114,7 @@ collect_runs() {
       runs="${runs:+${runs}${NL}}${page_runs}"
     fi
     signal_count="$(grep -c . <<<"$runs" || true)"
-    if { settled "$runs" && settled "$(full_runs "$runs")"; } \
+    if { settled "$runs" && settled "$(full_runs "$runs")" && settled "$(push_runs "$runs")"; } \
         || [ "$page_count" -lt "$PER_PAGE" ]; then
       break
     fi
@@ -213,12 +223,16 @@ EOF
   return 0
 }
 
-# Judge every run, then the full-suite runs on their own when push runs
-# are mixed in.
+# Judge every run, then the push and full-suite runs each on their own when
+# the other kind is mixed in, so neither kind's green clears the other's red.
 rc=0
 judge "" "$runs" || rc=1
 full="$(full_runs "$runs")"
 if [ -n "$full" ] && [ "$full" != "$runs" ]; then
   judge "full-suite " "$full" || rc=1
+fi
+push="$(push_runs "$runs")"
+if [ -n "$push" ] && [ "$push" != "$runs" ]; then
+  judge "push " "$push" || rc=1
 fi
 exit "$rc"
