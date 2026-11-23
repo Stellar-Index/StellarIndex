@@ -2476,8 +2476,15 @@ export interface paths {
          *     whenever `excluded` is non-empty: a reserve whose rate is not read
          *     (`rate_unread`), Positions entries that are TTL-archived or did not
          *     decode (`positions_unreadable`), a read that reached its 50,000-entry
-         *     cap (`positions_truncated`), or a pool reserve list that could not be
+         *     cap (`positions_truncated`), a reserve whose read positions do not
+         *     sum exactly to its `b_supply` (supply) or `d_supply` (borrow)
+         *     (`positions_unreconciled`), or a pool reserve list that could not be
          *     read (`reserve_list_unreadable`).
+         *
+         *     A rank is never served when an account could be missing from it. A
+         *     truncated read serves `rows: []`; an unreconciled reserve's
+         *     positions are left out of the ranking and named, so with `asset`
+         *     set to that reserve `rows` is empty. `accounts` is then a floor.
          *
          *     The pool's positions are one primary-key range read of its
          *     Positions entries, cached per pool for one minute.
@@ -19937,7 +19944,7 @@ export interface operations {
                                 /** @description The reserve left out; null for a pool-wide exclusion. */
                                 asset: string | null;
                                 /** @enum {string} */
-                                reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "reserve_list_unreadable";
+                                reason: "unpriced" | "withheld" | "rate_unread" | "positions_unreadable" | "positions_truncated" | "positions_unreconciled" | "reserve_list_unreadable";
                             }[];
                             rows: {
                                 rank: number;

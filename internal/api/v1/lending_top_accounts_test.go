@@ -27,27 +27,31 @@ func (e *stubTopAccountsExplorer) LendingPoolPositions(context.Context, string) 
 	return e.positions, nil
 }
 
-func topReserve(pool, asset string, bRate int64) clickhouse.BlendReserveState {
+// topReserve is a reserve whose b_supply and d_supply are the totals the fixture's positions must sum to.
+func topReserve(pool, asset string, bRate int64, bSupply, dSupply *big.Int) clickhouse.BlendReserveState {
 	return clickhouse.BlendReserveState{
 		Pool: pool, Asset: asset, Decimals: 7, DecimalsFound: true,
 		Data: blend.ReserveData{
 			BRate: big.NewInt(bRate), DRate: big.NewInt(1_000_000_000_000),
-			IRMod: new(big.Int), BSupply: new(big.Int), DSupply: new(big.Int), BackstopCredit: new(big.Int), Version: blend.PoolV2,
+			IRMod: new(big.Int), BSupply: bSupply, DSupply: dSupply, BackstopCredit: new(big.Int), Version: blend.PoolV2,
 		},
 		Metrics: blend.ReserveMetrics{SuppliedUnderlying: big.NewInt(1_000 * xlm), BorrowedUnderlying: big.NewInt(500 * xlm)},
 	}
 }
 
 // topAccountsFixture is a Blend pool with XLM (priced $2, b_rate 1.1) and an unpriced reserve, and four accounts: one holding
-// 2^64 XLM b-tokens, one 300 XLM, one only the unpriced token (more units than anyone), one a borrower.
+// 2^64 XLM b-tokens, one 300 XLM, one only the unpriced token (more units than anyone), one a borrower. Each reserve's
+// b_supply and d_supply equal its positions' sums, so the read reconciles.
 func topAccountsFixture(t *testing.T) (pool, sac, unpriced string, ex *stubTopAccountsExplorer, srv *v1.Server) {
 	t.Helper()
 	pool, sac, unpriced = mkCStrkey(t, 1), nativeSAC(t), mkCStrkey(t, 5)
+	sacSupply := new(big.Int).Add(bigStr(t, "18446744073709551616"), big.NewInt(300*xlm))
 	ex = &stubTopAccountsExplorer{
 		stubBLNTExplorer: &stubBLNTExplorer{stubExplorerReader: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{
-			topReserve(pool, sac, 1_100_000_000_000), topReserve(pool, unpriced, 1_000_000_000_000),
+			topReserve(pool, sac, 1_100_000_000_000, sacSupply, big.NewInt(50*xlm)),
+			topReserve(pool, unpriced, 1_000_000_000_000, bigStr(t, "99999999999999999999999"), new(big.Int)),
 		}}},
-		positions: clickhouse.LendingPoolPositions{Readable: true, Accounts: []clickhouse.LendingPoolPosition{
+		positions: clickhouse.LendingPoolPositions{Readable: true, Reserves: []string{sac, unpriced}, Accounts: []clickhouse.LendingPoolPosition{
 			{Account: "GA", Supply: map[string]*big.Int{sac: bigStr(t, "18446744073709551616")}, Ledger: 10},
 			{Account: "GB", Supply: map[string]*big.Int{sac: big.NewInt(300 * xlm)}, Ledger: 11},
 			{Account: "GC", Supply: map[string]*big.Int{unpriced: bigStr(t, "99999999999999999999999")}, Ledger: 12},
@@ -149,14 +153,70 @@ func TestLendingTopAccounts_BorrowSideLimitAndCache(t *testing.T) {
 	}
 }
 
-// TestLendingTopAccounts_PartialReadIsALowerBound: a truncated read or an unreadable entry makes rows and accounts a floor.
-func TestLendingTopAccounts_PartialReadIsALowerBound(t *testing.T) {
+// TestLendingTopAccounts_TruncatedReadServesNoRanking: a read cut at its cap may lack the largest account, so no row is
+// ranked; accounts is a floor and the response names why.
+func TestLendingTopAccounts_TruncatedReadServesNoRanking(t *testing.T) {
 	pool, sac, _, ex, srv := topAccountsFixture(t)
 	ex.positions.Truncated, ex.positions.Unreadable = true, 2
+	for _, q := range []string{"?side=supply&asset=" + sac, "?side=supply"} {
+		got, _ := getTopAccounts(t, srv, pool, q, http.StatusOK)
+		if !got.LowerBound || len(got.Rows) != 0 || got.Accounts == 0 || !topExcluded(got, "null", "positions_truncated") ||
+			!topExcluded(got, "null", "positions_unreadable") {
+			t.Fatalf("%s: view = %+v", q, got)
+		}
+	}
+}
+
+func topExcluded(v v1.LendingTopAccountsView, asset, reason string) bool {
+	for _, e := range v.Excluded {
+		if strOrNull(e.Asset) == asset && e.Reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLendingTopAccounts_ReconciledReadIsComplete: positions summing exactly to each reserve's b_supply and d_supply are a
+// complete ranking on both sides.
+func TestLendingTopAccounts_ReconciledReadIsComplete(t *testing.T) {
+	pool, sac, _, _, srv := topAccountsFixture(t)
+	for _, q := range []string{"?side=supply&asset=" + sac, "?side=borrow&asset=" + sac, "?side=borrow"} {
+		if got, _ := getTopAccounts(t, srv, pool, q, http.StatusOK); got.LowerBound || len(got.Rows) == 0 {
+			t.Fatalf("%s: view = %+v", q, got)
+		}
+	}
+}
+
+// TestLendingTopAccounts_NoPositionsAgainstANonZeroReserveIsUnreconciled: a read that finds no Positions entries while the
+// reserve holds b-tokens (as a key layout the reader does not match would) is never served as a clean "0 accounts".
+func TestLendingTopAccounts_NoPositionsAgainstANonZeroReserveIsUnreconciled(t *testing.T) {
+	pool, sac, unpriced, ex, srv := topAccountsFixture(t)
+	ex.positions.Accounts = nil
 	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
-	if !got.LowerBound || len(got.Excluded) != 2 || got.Excluded[0].Reason != "positions_truncated" ||
-		got.Excluded[1].Reason != "positions_unreadable" || len(got.Rows) != 2 {
+	if !got.LowerBound || len(got.Rows) != 0 || !topExcluded(got, sac, "positions_unreconciled") {
 		t.Fatalf("view = %+v", got)
+	}
+	got, _ = getTopAccounts(t, srv, pool, "?side=supply", http.StatusOK)
+	if !got.LowerBound || !topExcluded(got, sac, "positions_unreconciled") || !topExcluded(got, unpriced, "positions_unreconciled") {
+		t.Fatalf("all reserves = %+v", got)
+	}
+}
+
+// TestLendingTopAccounts_UnreconciledReserveIsNotRanked: a reserve whose positions sum short of (or past) its b_supply is
+// left out of the ranking and named; the reconciled reserves still rank, as a lower bound. A position holding more than
+// the reserve's total can then never be served with a share above 1.
+func TestLendingTopAccounts_UnreconciledReserveIsNotRanked(t *testing.T) {
+	pool, sac, _, ex, srv := topAccountsFixture(t)
+	ex.positions.Accounts = append(ex.positions.Accounts, clickhouse.LendingPoolPosition{
+		Account: "GE", Supply: map[string]*big.Int{sac: bigStr(t, "36893488147419103232")}, Ledger: 14,
+	})
+	got, _ := getTopAccounts(t, srv, pool, "?side=supply&asset="+sac, http.StatusOK)
+	if !got.LowerBound || len(got.Rows) != 0 || !topExcluded(got, sac, "positions_unreconciled") {
+		t.Fatalf("view = %+v", got)
+	}
+	got, _ = getTopAccounts(t, srv, pool, "?side=borrow&asset="+sac, http.StatusOK)
+	if got.LowerBound || len(got.Rows) != 1 {
+		t.Fatalf("borrow side reconciles on d_supply alone: %+v", got)
 	}
 }
 
@@ -168,10 +228,10 @@ func TestLendingTopAccounts_BLNTPool(t *testing.T) {
 		stubBLNTExplorer: &stubBLNTExplorer{stubExplorerReader: &stubExplorerReader{}, data: map[string]blnt.ReserveData{
 			asset: {
 				BRate: big.NewInt(2_000_000_000_000), DRate: big.NewInt(1_000_000_000_000), IRMod: new(big.Int),
-				BSupply: new(big.Int), DSupply: new(big.Int), BackstopCredit: new(big.Int),
+				BSupply: big.NewInt(7), DSupply: new(big.Int), BackstopCredit: new(big.Int),
 			},
 		}},
-		positions: clickhouse.LendingPoolPositions{Readable: true, Accounts: []clickhouse.LendingPoolPosition{
+		positions: clickhouse.LendingPoolPositions{Readable: true, Reserves: []string{asset}, Accounts: []clickhouse.LendingPoolPosition{
 			{Account: "GA", Supply: map[string]*big.Int{asset: big.NewInt(7)}},
 		}},
 	}

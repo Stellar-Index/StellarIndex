@@ -27,6 +27,8 @@ type LendingPoolPosition struct {
 type LendingPoolPositions struct {
 	// Readable is false when the pool's ResList is absent, archived or undecodable; Accounts is then empty and means nothing.
 	Readable bool
+	// Reserves is the pool's ResList, in reserve-index order; empty unless Readable.
+	Reserves []string
 	Accounts []LendingPoolPosition
 	// Unreadable counts present entries left out of Accounts as archived or undecodable: positions the chain still holds.
 	Unreadable int
@@ -35,10 +37,11 @@ type LendingPoolPositions struct {
 }
 
 // poolPositionsQuery reads every current PoolDataKey::Positions(*) entry of one pool as a primary-key range: the table is
-// ORDER BY (entry_type, key_xdr) and every such key starts with the same encoded bytes (positionsKeyPrefix).
+// ORDER BY (entry_type, key_xdr) and every such key starts with the same encoded bytes (positionsKeyPrefix). Removed entries
+// are filtered after the FINAL collapse (hence optimize_move_to_prewhere_if_final = 0) so they never count toward LIMIT.
 const poolPositionsQuery = `SELECT key_xdr, entry_xdr, ledger_seq
 	FROM stellar.ledger_entries_current FINAL
-	WHERE entry_type = 'contract_data' AND startsWith(key_xdr, ?)
+	WHERE entry_type = 'contract_data' AND startsWith(key_xdr, ?) AND entry_xdr != ''
 	LIMIT ?
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
 
@@ -118,7 +121,7 @@ func assemblePoolPositions(ce contractEntries, listVal xdr.ScVal, listOK bool) L
 	if err != nil {
 		return out
 	}
-	out.Readable = true
+	out.Readable, out.Reserves = true, list
 	for k := range ce.archived {
 		if _, ok := positionsKeyAccount(k); ok {
 			out.Unreadable++

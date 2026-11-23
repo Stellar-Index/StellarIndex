@@ -72,7 +72,7 @@ func TestAssemblePoolPositions_DecodesEachAccountAndCountsUnreadable(t *testing.
 		ledger:   map[string]uint32{k1: 100, k2: 101, k3: 102},
 	}
 	got := assemblePoolPositions(ce, reserveListVal(t, a0), true)
-	if !got.Readable || got.Unreadable != 2 || len(got.Accounts) != 1 {
+	if !got.Readable || got.Unreadable != 2 || len(got.Accounts) != 1 || len(got.Reserves) != 1 || got.Reserves[0] != s0 {
 		t.Fatalf("got %+v", got)
 	}
 	if a := got.Accounts[0]; a.Account != g1 || a.Supply[s0].String() != "18446744073709551616" || a.Borrow[s0].String() != "3" || a.Ledger != 100 {
