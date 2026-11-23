@@ -34,7 +34,9 @@ const readSideNote = "source-exclude: note:\n" +
 	"    its legs in the last 7 days withholds it; a change, 24h USD volume, series point or ATH whose own span is covered is\n" +
 	"    dropped alone; judged on the asset, XLM's USD books and a non-USD peg's fiat: an exclusion naming XLM against a USD\n" +
 	"    proxy (USDC, its SAC, fiat:USD) or a source-wide one withholds every row, XLM's too; one naming XLM against another\n" +
-	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale). Every recompute or removal\n" +
+	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale), /v1/rwa/premium (a day an\n" +
+	"    exclusion covers on the token's dollar books or its oracle series is removed and counted in source_excluded_days; seen\n" +
+	"    on the next assembly rebuild; unreadable: the assembly is not rebuilt). Every recompute or removal\n" +
 	"    sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
@@ -49,7 +51,7 @@ const readSideNote = "source-exclude: note:\n" +
 	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset listing and\n" +
 	"    detail 15s, then uncached while an exclusion overlaps the last 7d2h, plus the edge/client life of a body served before;\n" +
 	"    /v1/price/at, /changes, /v1/history, /v1/ohlc, /v1/chart, since-inception: the 15s re-read plus a 30s client / 5s CDN cache.\n" +
-	"  NOT COVERED (may still include the source until lifted or aged out): /depeg, RWA assets/history/premium,\n" +
+	"  NOT COVERED (may still include the source until lifted or aged out): /depeg, RWA assets/history,\n" +
 	"    /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
 	"    /v1/protocols + tvl USD, /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
 	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +

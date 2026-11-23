@@ -61,7 +61,7 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/external/assets/{slug}":        uncovered("external asset prices"),
 	"GET /v1/rwa/assets":                    uncovered("RWA prices"),
 	"GET /v1/rwa/history":                   uncovered("RWA price history"),
-	"GET /v1/rwa/premium":                   uncovered("RWA premium over the served price"),
+	"GET /v1/rwa/premium":                   gated,
 	"GET /v1/stablecoins":                   uncovered("stablecoin USD valuation"),
 	"GET /v1/observations":                  uncovered("raw per-source observations"),
 	"GET /v1/observations/stream":           uncovered("raw per-source observations"),

@@ -37,7 +37,7 @@ func TestRWAPremiumJoin_AnOffMarketDayIsWithheld(t *testing.T) {
 	}
 	market = append(market, premGoodDay(7, "4.00"), premGoodDay(8, "1.08"))
 
-	got := rwaPremiumJoin(premCand(), premRefDays(8), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), premRefDays(8), market, premDefaultFloor(), nil)
 	if premPublished(got, 7) {
 		t.Fatal("day 7 published a premium from a price 3.7x off the six days before it")
 	}
@@ -60,7 +60,7 @@ func TestRWAPremiumJoin_FirstDayIsJudgedAgainstThePublishedValue(t *testing.T) {
 		{"12.00", false},
 		{"0.09", false},
 	} {
-		got := rwaPremiumJoin(premCand(), premRefDays(1), []timescale.MarketDay{premGoodDay(1, tc.vwap)}, premDefaultFloor())
+		got := rwaPremiumJoin(premCand(), premRefDays(1), []timescale.MarketDay{premGoodDay(1, tc.vwap)}, premDefaultFloor(), nil)
 		if premPublished(got, 1) != tc.published {
 			t.Errorf("vwap %s: published = %v, want %v", tc.vwap, !tc.published, tc.published)
 		}
@@ -101,7 +101,7 @@ func TestRWAPremiumJoin_WashPrintsCannotMoveTheCentreOffThePublishedValue(t *tes
 		for i, v := range prints {
 			market = append(market, premGoodDay(i+1, v))
 		}
-		got := rwaPremiumJoin(premCand(), premRefDays(len(prints)), market, premDefaultFloor())
+		got := rwaPremiumJoin(premCand(), premRefDays(len(prints)), market, premDefaultFloor(), nil)
 		for i, v := range prints {
 			if v == "1.07" && !premPublished(got, i+1) {
 				t.Errorf("%s: day %d at the published value was withheld", name, i+1)
@@ -136,7 +136,7 @@ func TestRWAPremiumJoin_ARefusedPrintIsNotTheNextDaysBaseline(t *testing.T) {
 				"every day published":   premRefDays(days),
 				"first day unpublished": withoutDay(days, 1),
 			} {
-				got := rwaPremiumJoin(premCand(), ref, market, premDefaultFloor())
+				got := rwaPremiumJoin(premCand(), ref, market, premDefaultFloor(), nil)
 				if len(got.published) != 0 {
 					t.Errorf("%d day(s) at %s, %s: published %v, want none", days, vwap, name, got.published)
 				}
@@ -146,7 +146,7 @@ func TestRWAPremiumJoin_ARefusedPrintIsNotTheNextDaysBaseline(t *testing.T) {
 
 	// Two honest days, a weekend with no published value, then the print: Friday's value still anchors it.
 	market := []timescale.MarketDay{premGoodDay(1, "1.08"), premGoodDay(2, "1.08"), premGoodDay(3, "12.00"), premGoodDay(4, "12.00")}
-	got := rwaPremiumJoin(premCand(), withoutDay(4, 3), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), withoutDay(4, 3), market, premDefaultFloor(), nil)
 	if premPublished(got, 3) || premPublished(got, 4) {
 		t.Errorf("published = %v, want days 3 and 4 refused", got.published)
 	}
@@ -166,7 +166,7 @@ func TestRWAPremiumJoin_AMixedRefusedRunIsNotARepricing(t *testing.T) {
 		for i, v := range seq {
 			market = append(market, premGoodDay(7+i, v))
 		}
-		got := rwaPremiumJoin(premCand(), premRefDays(12), market, premDefaultFloor())
+		got := rwaPremiumJoin(premCand(), premRefDays(12), market, premDefaultFloor(), nil)
 		for d := 7; d <= 12; d++ {
 			if premPublished(got, d) {
 				t.Errorf("%v: day %d published", seq, d)
@@ -182,7 +182,7 @@ func TestRWAPremiumJoin_AThinHistoryCannotRatchetAwayFromThePublishedValue(t *te
 	for i, v := range []string{"9.00", "40.00", "85.00", "240.00", "600.00"} {
 		market = append(market, premGoodDay(1+i, v))
 	}
-	got := rwaPremiumJoin(premCand(), premRefDays(5), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), premRefDays(5), market, premDefaultFloor(), nil)
 	for d := 2; d <= 5; d++ {
 		if premPublished(got, d) {
 			t.Errorf("day %d published, more than 10x the published value", d)
@@ -193,7 +193,7 @@ func TestRWAPremiumJoin_AThinHistoryCannotRatchetAwayFromThePublishedValue(t *te
 // TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay: the mirror of the case above.
 func TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay(t *testing.T) {
 	market := []timescale.MarketDay{premGoodDay(1, "12.00"), premGoodDay(2, "1.08"), premGoodDay(3, "1.09")}
-	got := rwaPremiumJoin(premCand(), premRefDays(3), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), premRefDays(3), market, premDefaultFloor(), nil)
 	if premPublished(got, 1) || !premPublished(got, 2) || !premPublished(got, 3) {
 		t.Errorf("published = %v, want days 2 and 3 only", got.published)
 	}
@@ -205,7 +205,11 @@ func TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay(t *testing.T)
 // TestDailyMarketDaysHasOneGuardedCaller: the daily prices_1h VWAP carries no anomaly filter of its own, so a second reader
 // would publish it unjudged. A new caller must add its own guard and be named here.
 func TestDailyMarketDaysHasOneGuardedCaller(t *testing.T) {
-	guarded := map[string]bool{filepath.Join("internal", "api", "v1", "rwa_premium_history.go"): true}
+	guarded := map[string]bool{
+		filepath.Join("internal", "api", "v1", "rwa_premium_history.go"): true,
+		// Reads each dollar peg's own day only to withhold premium days outside depegBand; nothing it reads is published.
+		filepath.Join("internal", "api", "v1", "rwa_premium_peg.go"): true,
+	}
 	root := filepath.Join("..", "..", "..")
 	callers := 0
 	for _, dir := range []string{"internal", "cmd"} {
@@ -248,7 +252,7 @@ func TestRWAPremiumJoin_AStaleBaselineGivesWayToThePublishedValue(t *testing.T) 
 	}
 	market = append(market, premGoodDay(60, "1.08"), premGoodDay(61, "12.00"))
 
-	got := rwaPremiumJoin(premCand(), premRefDays(61), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), premRefDays(61), market, premDefaultFloor(), nil)
 	if !premPublished(got, 60) {
 		t.Errorf("day 60 at the published value was refused against days 54+ days old; withheld = %v", got.withheld)
 	}
@@ -265,7 +269,7 @@ func TestRWAPremiumJoin_ALastingPrintFarFromThePublishedValueNeverPublishes(t *t
 		for d := 1; d <= 15; d++ {
 			market = append(market, premGoodDay(d, vwap))
 		}
-		got := rwaPremiumJoin(premCand(), premRefDays(15), market, premDefaultFloor())
+		got := rwaPremiumJoin(premCand(), premRefDays(15), market, premDefaultFloor(), nil)
 		if len(got.published) != 0 {
 			t.Errorf("%s every day against 1.07: published %v, want none", vwap, got.published)
 		}
@@ -286,7 +290,7 @@ func TestRWAPremiumJoin_ADeepHistoryCannotRatchetAwayFromThePublishedValue(t *te
 			day++
 		}
 	}
-	got := rwaPremiumJoin(premCand(), premRefDays(day), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), premRefDays(day), market, premDefaultFloor(), nil)
 	limit := premRat("107/10")
 	for _, p := range got.days {
 		if premRat(p.market).Cmp(limit) > 0 {
@@ -306,7 +310,7 @@ func TestRWAPremiumJoin_AScatteredRefusedRunIsNotARepricing(t *testing.T) {
 		market = append(market, premGoodDay(6+i, v))
 	}
 	market = append(market, premGoodDay(12, "1.08"))
-	got := rwaPremiumJoin(premCand(), premRefDays(12), market, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), premRefDays(12), market, premDefaultFloor(), nil)
 	for d := 6; d <= 11; d++ {
 		if premPublished(got, d) {
 			t.Errorf("day %d published from a run spread %s", d, "3.50..10.60")

@@ -155,6 +155,11 @@ type RWAPremiumSeries struct {
 	// and never on a day already in MarketWithheldDays: earlier, "did not trade" and "aggregate does
 	// not reach back" are indistinguishable.
 	ReferenceOnlyDays int `json:"reference_only_days,omitempty"`
+	// PegOutsideBandDays counts days that cleared the floor and are absent because a dollar-pegged quote traded outside
+	// [depegBand] that day; SourceExcludedDays those absent under an operator source exclusion. Neither is in
+	// MarketWithheldDays.
+	PegOutsideBandDays int `json:"peg_outside_band_days,omitempty"`
+	SourceExcludedDays int `json:"source_excluded_days,omitempty"`
 }
 
 // RWAPremiumHistoryPoint is one day of one member's premium, with both prices served beside the ratio so a reader can tell which side moved.
@@ -202,6 +207,12 @@ const (
 	// RWAPremiumExcludedNoOverlap — both legs exist and never on the same day. A ratio needs one
 	// clock; interpolating either side onto the other's days is the fabrication this surface refuses.
 	RWAPremiumExcludedNoOverlap = "no_same_day_observation"
+	// RWAPremiumExcludedPegOutsideBand — every day that cleared the floor was one on which a dollar-pegged quote the market
+	// leg pools traded outside [depegBand] of $1, so the market price was not in dollars.
+	RWAPremiumExcludedPegOutsideBand = "peg_outside_band"
+	// RWAPremiumExcludedSourceExcluded — every day that cleared the floor fell under an operator source exclusion on
+	// either leg.
+	RWAPremiumExcludedSourceExcluded = "source_excluded"
 )
 
 var rwaPremiumExcludedDetail = map[string]string{
@@ -214,6 +225,8 @@ var rwaPremiumExcludedDetail = map[string]string{
 	RWAPremiumExcludedMarketBelowFloor:   "Trades exist, but no single day cleared the thin-market floor a published price claim requires, so no day may carry one. Honest low volume is fully visible through the raw trade surfaces; what is withheld here is only the aggregated claim that the price of this token WAS some number on that day.",
 	RWAPremiumExcludedMarketOutsideBand:  "Days with enough trading to clear the thin-market floor exist, but every one of them priced the token outside the band around the instrument's published value, so no day may carry a premium. This is a market far from its reference, not a thin one; the trades are fully visible through the raw trade surfaces.",
 	RWAPremiumExcludedNoOverlap:          "A market price and a published value both exist for this asset, but never on the same day, and neither may be carried across a day it was not observed on. A premium needs both legs struck on one clock.",
+	RWAPremiumExcludedPegOutsideBand:     "Every day with enough trading to clear the thin-market floor was a day on which a dollar stablecoin the token is quoted in traded more than 2% away from $1 on its own observed market, so the token's price in that stablecoin was not its price in dollars and no premium is computed from it.",
+	RWAPremiumExcludedSourceExcluded:     "Every day with enough trading to clear the thin-market floor falls under an operator source exclusion on the token's dollar markets or on the oracle series it is compared with, so no premium is computed from it until the exclusion is lifted or ends.",
 }
 
 // rwaPremiumBasis travels with every response.
@@ -243,15 +256,17 @@ type rwaPremiumDay struct {
 
 // rwaPremiumMember is one constituent's assembled series.
 type rwaPremiumMember struct {
-	assetID   string
-	code      string
-	issuer    string
-	label     string
-	feed      string
-	source    string
-	days      []rwaPremiumDay
-	withheld  []time.Time
-	offBand   int
+	assetID  string
+	code     string
+	issuer   string
+	label    string
+	feed     string
+	source   string
+	days     []rwaPremiumDay
+	withheld []time.Time
+	offBand  int
+	// refused holds the cleared days a [rwaPremiumRefusal] withheld, by reason.
+	refused   map[string][]time.Time
 	refOnly   []time.Time
 	published map[time.Time]struct{}
 }
@@ -272,6 +287,8 @@ type rwaPremiumHistory struct {
 	// stale marks a cached assembly served past its TTL because the
 	// rebuild failed or has not answered; builtAt is then its real age.
 	stale bool
+	// sourceExcluded marks an assembly from which an operator source exclusion removed a day.
+	sourceExcluded bool
 }
 
 // ─── handler ────────────────────────────────────────────────────────
@@ -316,7 +333,8 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 	// on `assets`; a narrower window may leave `series` shorter without the account lying.
 	view.Members = len(hist.members)
 	view.Coverage = rwaPremiumCoverage(view.Series, hist.setAssets)
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: hist.membership.envelopeFlags(hist.stale)})
+	flags := markFillsWithheld(hist.membership.envelopeFlags(hist.stale), hist.sourceExcluded)
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: flags})
 }
 
 // parseRWAPremiumParams validates `timeframe` against [rwaHistoryTimeframes] verbatim: the same
@@ -376,6 +394,8 @@ func rwaPremiumSeriesRows(members []rwaPremiumMember, from time.Time) ([]RWAPrem
 			Points:             pts,
 			MarketWithheldDays: countFrom(m.withheld, from),
 			ReferenceOnlyDays:  countFrom(m.refOnly, from),
+			PegOutsideBandDays: countFrom(m.refused[RWAPremiumExcludedPegOutsideBand], from),
+			SourceExcludedDays: countFrom(m.refused[RWAPremiumExcludedSourceExcluded], from),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -585,6 +605,10 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 		// Rounded up: the day the first bucket falls in is only partly held.
 		out.marketFrom = at.UTC().Add(24*time.Hour - time.Nanosecond).Truncate(24 * time.Hour)
 	}
+	guard, ok := s.rwaPremiumDayGuard(ctx, to)
+	if !ok {
+		return rwaPremiumHistory{}
+	}
 
 	for _, c := range cands {
 		series := prices[c.feed]
@@ -597,18 +621,10 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 			out.excluded[RWAPremiumExcludedNoMarketHistory]++
 			continue
 		}
-		member := rwaPremiumJoin(c, series, days, floor)
+		member := rwaPremiumJoin(c, series, days, floor, guard.refusal(c, series.source))
+		out.sourceExcluded = out.sourceExcluded || len(member.refused[RWAPremiumExcludedSourceExcluded]) > 0
 		if len(member.days) == 0 {
-			// Trades existed: say whether every day failed the floor or the days that cleared it
-			// never coincided with a published value.
-			switch {
-			case len(member.withheld) == len(days) && member.offBand > 0:
-				out.excluded[RWAPremiumExcludedMarketOutsideBand]++
-			case len(member.withheld) == len(days):
-				out.excluded[RWAPremiumExcludedMarketBelowFloor]++
-			default:
-				out.excluded[RWAPremiumExcludedNoOverlap]++
-			}
+			out.excluded[rwaPremiumUnpublishedReason(member, len(days))]++
 			continue
 		}
 		out.members = append(out.members, member)
@@ -616,6 +632,26 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	out.sources = rwaPremiumSources(out.members)
 	out.available = true
 	return out
+}
+
+// rwaPremiumUnpublishedReason names why a member whose market had days published none: every day refused (an operator
+// exclusion first, then a depegged dollar), every day off the floor or band, or the cleared days never met a published value.
+func rwaPremiumUnpublishedReason(m rwaPremiumMember, marketDays int) string {
+	peg := len(m.refused[RWAPremiumExcludedPegOutsideBand])
+	excl := len(m.refused[RWAPremiumExcludedSourceExcluded])
+	allRefused := len(m.withheld)+peg+excl == marketDays
+	switch {
+	case allRefused && excl > 0:
+		return RWAPremiumExcludedSourceExcluded
+	case allRefused && peg > 0:
+		return RWAPremiumExcludedPegOutsideBand
+	case len(m.withheld) == marketDays && m.offBand > 0:
+		return RWAPremiumExcludedMarketOutsideBand
+	case len(m.withheld) == marketDays:
+		return RWAPremiumExcludedMarketBelowFloor
+	default:
+		return RWAPremiumExcludedNoOverlap
+	}
 }
 
 // rwaPremiumCandidates applies the gates that need no read: scam-flag suppression FIRST, then the curated (code, issuer) to feed binding;
@@ -729,9 +765,10 @@ func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 // a day failing [Server.rwaPremiumDayFloorFor] is recorded as WITHHELD, not skipped: "too thin to publish" and "no market" differ.
 func rwaPremiumJoin(
 	c rwaHistoryCandidate, ref *rwaFeedSeries, market []timescale.MarketDay,
-	floor rwaPremiumDayFloor,
+	floor rwaPremiumDayFloor, refuse rwaPremiumRefusal,
 ) rwaPremiumMember {
 	out := rwaPremiumMember{
+		refused:   map[string][]time.Time{},
 		assetID:   c.assetID,
 		code:      c.code,
 		issuer:    c.issuer,
@@ -746,9 +783,17 @@ func rwaPremiumJoin(
 		return out
 	}
 	refDays := rwaPremiumRefDays(ref)
+	var refusedDays []time.Time
 	for _, d := range market {
 		if !rwaPremiumDayClears(d, floor) {
 			out.withheld = append(out.withheld, d.Day)
+			continue
+		}
+		// Judged before the band: a day whose dollar was not a dollar, or whose inputs an operator excluded, has no
+		// trustworthy price to place in it.
+		if why := refuse.of(d.Day); why != "" {
+			out.refused[why] = append(out.refused[why], d.Day)
+			refusedDays = append(refusedDays, d.Day)
 			continue
 		}
 		price, priced := new(big.Rat).SetString(d.VWAP)
@@ -765,7 +810,7 @@ func rwaPremiumJoin(
 		out.days = append(out.days, day)
 		out.published[d.Day] = struct{}{}
 	}
-	out.refOnly = rwaPremiumReferenceOnlyDays(ref, out.published, out.withheld,
+	out.refOnly = rwaPremiumReferenceOnlyDays(ref, out.published, append(refusedDays, out.withheld...),
 		rwaPremiumFirstObserved(market))
 
 	sortDays := func(d []time.Time) {

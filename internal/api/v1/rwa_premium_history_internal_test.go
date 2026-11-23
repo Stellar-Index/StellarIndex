@@ -194,7 +194,7 @@ func TestRWAPremiumJoin_PublishesOnlyDaysBothLegsWereObserved(t *testing.T) {
 	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{
 		premGoodDay(1, "1.08"),
 		premGoodDay(2, "1.08"),
-	}, premDefaultFloor())
+	}, premDefaultFloor(), nil)
 	if len(got.days) != 1 {
 		t.Fatalf("days = %+v, want exactly the one day both legs answered", got.days)
 	}
@@ -218,7 +218,7 @@ func TestRWAPremiumJoin_AThinDayIsWithheldNotPriced(t *testing.T) {
 	}}
 	thin := premGoodDay(1, "9.99")
 	thin.VolumeUSD, thin.Hours, thin.SpanSeconds = "8.57", 1, 120
-	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{thin}, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{thin}, premDefaultFloor(), nil)
 	if len(got.days) != 0 {
 		t.Fatalf("days = %+v, want none — a dust day may not carry a price claim", got.days)
 	}
@@ -240,7 +240,7 @@ func TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket(t *test
 	}}
 	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{
 		premGoodDay(4, "1.08"),
-	}, premDefaultFloor())
+	}, premDefaultFloor(), nil)
 	if len(got.days) != 1 {
 		t.Fatalf("days = %+v, want 1", got.days)
 	}
@@ -258,7 +258,7 @@ func TestRWAPremiumJoin_NoMarketDaysCountsNothing(t *testing.T) {
 		premDay(1): premRat("107/100"),
 		premDay(2): premRat("107/100"),
 	}}
-	got := rwaPremiumJoin(premCand(), ref, nil, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), ref, nil, premDefaultFloor(), nil)
 	if len(got.days) != 0 || len(got.refOnly) != 0 || len(got.withheld) != 0 {
 		t.Errorf("got days=%v refOnly=%v withheld=%v, want all empty",
 			got.days, got.refOnly, got.withheld)
@@ -277,7 +277,7 @@ func TestRWAPremiumJoin_AWithheldDayIsNotAlsoCountedAsUntraded(t *testing.T) {
 	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{
 		premGoodDay(1, "1.08"),
 		thin,
-	}, premDefaultFloor())
+	}, premDefaultFloor(), nil)
 	if len(got.days) != 1 {
 		t.Fatalf("days = %+v, want 1", got.days)
 	}
@@ -298,7 +298,7 @@ func TestRWAPremiumJoin_AnUnparseableVolumeFailsClosed(t *testing.T) {
 	}}
 	bad := premGoodDay(1, "1.08")
 	bad.VolumeUSD = "not-a-number"
-	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{bad}, premDefaultFloor())
+	got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{bad}, premDefaultFloor(), nil)
 	if len(got.days) != 0 {
 		t.Fatalf("days = %+v, want none — an unverifiable volume must fail closed", got.days)
 	}
@@ -323,7 +323,7 @@ func TestRWAPremiumJoin_SignAndScale(t *testing.T) {
 			ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 				premDay(1): premRat(tc.ref),
 			}}
-			got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{premGoodDay(1, tc.market)}, premDefaultFloor())
+			got := rwaPremiumJoin(premCand(), ref, []timescale.MarketDay{premGoodDay(1, tc.market)}, premDefaultFloor(), nil)
 			if len(got.days) != 1 {
 				t.Fatalf("days = %+v, want 1", got.days)
 			}
