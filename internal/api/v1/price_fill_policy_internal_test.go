@@ -61,20 +61,35 @@ func TestPriceFills_HonourEveryWithholding(t *testing.T) {
 			globalMarketServer(t).fillFixedPegPrice(ctx, d, nil)
 		},
 	}
-	// Columns: catalogue row, transitive, global market, declared peg.
-	want := map[PriceWithheldReason][4]bool{
-		"":                             {true, true, true, true},
-		PriceWithheldSubstance:         {true, true, true, true},
-		PriceWithheldUpstreamLeg:       {false, false, true, true},
-		PriceWithheldDecimalsMismatch:  {false, false, true, true},
-		PriceWithheldManipulationGuard: {false, false, true, true},
-		PriceWithheldFXLeg:             {false, false, true, false},
-		PriceWithheldScamIssuer:        {false, false, false, false},
-		PriceWithheldUnattributed:      {false, false, false, false},
-		PriceWithheldSourceExcluded:    {false, false, false, false},
+	// The include_thin second pass over the transitive route, with a held thin leg measured on the asset's own market.
+	fills[fillThinRelease] = func(_ *testing.T, d *AssetDetail) {
+		d.AssetID = fillTestSoroban
+		_, off := WithThinAdmission(ctx, soroban, defaultPriceQuote, true)
+		off.Merge(false, &pricingguard.SubstanceEvidence{Base: soroban, Quote: defaultPriceQuote})
+		fillTestTransitiveServer().thinDetailPricePass(ctx, d, soroban, off)
+	}
+	// Columns: catalogue row, transitive, global market, declared peg, thin release.
+	want := map[PriceWithheldReason][5]bool{
+		"":                             {true, true, true, true, true},
+		PriceWithheldSubstance:         {true, true, true, true, true},
+		PriceWithheldUpstreamLeg:       {false, false, true, true, true},
+		PriceWithheldDecimalsMismatch:  {false, false, true, true, false},
+		PriceWithheldManipulationGuard: {false, false, true, true, false},
+		PriceWithheldFXLeg:             {false, false, true, false, false},
+		PriceWithheldScamIssuer:        {false, false, false, false, false},
+		PriceWithheldUnattributed:      {false, false, false, false, false},
+		PriceWithheldSourceExcluded:    {false, false, false, false, false},
+	}
+	if len(want) != len(priceWithheldReasons)+1 {
+		t.Errorf("want has %d rows, want one per priceWithheldReasons entry plus the empty reason (%d)", len(want), len(priceWithheldReasons)+1)
+	}
+	for _, reason := range priceWithheldReasons {
+		if _, ok := want[reason]; !ok {
+			t.Errorf("PriceWithheldReason %q has no row: classify it in fillMayReplace and here", reason)
+		}
 	}
 	for reason, row := range want {
-		for col, f := range []priceFill{fillCatalogueRow, fillTransitive, fillGlobalMarket, fillDeclaredPeg} {
+		for col, f := range []priceFill{fillCatalogueRow, fillTransitive, fillGlobalMarket, fillDeclaredPeg, fillThinRelease} {
 			d := AssetDetail{PriceWithheldReason: reason}
 			fills[f](t, &d)
 			if filled := d.PriceUSD != nil; filled != row[col] {
@@ -86,11 +101,6 @@ func TestPriceFills_HonourEveryWithholding(t *testing.T) {
 			if got := fillMayReplace(reason, f); got != row[col] {
 				t.Errorf("fillMayReplace(%q, %d) = %v, want %v", reason, f, got, row[col])
 			}
-		}
-		// The thin release re-reads the same markets with thin legs admitted: it answers only a thinness verdict.
-		thin := reason == "" || reason == PriceWithheldSubstance || reason == PriceWithheldUpstreamLeg
-		if got := fillMayReplace(reason, fillThinRelease); got != thin {
-			t.Errorf("fillMayReplace(%q, thin) = %v, want %v", reason, got, thin)
 		}
 	}
 	if fillMayReplace("a_reason_added_later", fillGlobalMarket) {

@@ -94,6 +94,12 @@ const (
 	PriceWithheldSourceExcluded PriceWithheldReason = "source_excluded"
 )
 
+// priceWithheldReasons lists every PriceWithheldReason constant above; add a new one here too, which the fill-policy table reads.
+var priceWithheldReasons = []PriceWithheldReason{
+	PriceWithheldSubstance, PriceWithheldScamIssuer, PriceWithheldUpstreamLeg, PriceWithheldUnattributed,
+	PriceWithheldManipulationGuard, PriceWithheldFXLeg, PriceWithheldDecimalsMismatch, PriceWithheldSourceExcluded,
+}
+
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
 type withheldError struct {
 	reason PriceWithheldReason
