@@ -67,7 +67,12 @@ func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) 
 	if !parsed {
 		return supply.Supply{}, false, false, false
 	}
-	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, floor, true, false
+	snap = supply.Supply{AssetKey: contractID, CirculatingSupply: total, Basis: basis}
+	// total_supply carries no floor qualifier: a floor is left absent there rather than served as an exact total.
+	if !floor && !basis.LowerBound() {
+		snap.TotalSupply = total
+	}
+	return snap, floor, true, false
 }
 
 // withContractSupply replaces a missing or stale observer snapshot with the contract's own reading when there
@@ -657,6 +662,8 @@ type usdPriceLookup struct {
 	stale bool
 	// unread: a price read failed, so an empty price is not "no market".
 	unread bool
+	// anchor is the alias whose market served price; a trailing comparison must read the same market.
+	anchor canonical.Asset
 }
 
 // usdProxyFreshness matches the price reader's default closed-bucket freshness.
@@ -679,7 +686,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	// and `crypto:XLM`) and the aggregator writes the fresh CEX VWAP under whichever matches its
 	// pair set; a bare LatestPrice(native, fiat:USD) would miss it and fall to the SDEX proxy,
 	// diverging /v1/assets/native from /v1/price by ~0.2%. Non-aliased assets are unaffected.
-	snap, sources, stale, err := s.readPriceWithAliases(ctx, s.Prices, asset, defaultPriceQuote)
+	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.Prices, asset, defaultPriceQuote)
 	if errors.Is(err, ErrPriceWithheld) {
 		// Withheld beats every fallback, as on /v1/price: the proxy below
 		// would re-serve the refused market through a side door.
@@ -691,7 +698,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		// fixes each at once; it is a no-op for a 7dp asset. The proxy branch below normalizes
 		// itself.
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
-		return usdPriceLookup{price: snap.Price, sources: len(sources), stale: stale}
+		return usdPriceLookup{price: snap.Price, sources: len(sources), stale: stale, anchor: served}
 	}
 	unread := err != nil && (isPriceReadFailure(err) || aliasUnread(err) != nil)
 	if unread && ctx.Err() == nil {
@@ -710,7 +717,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	if ok && proxy.Price != "" {
 		// A declaration (no sources) is not an observation and has no age.
 		old := len(proxySources) > 0 && s.now().Sub(proxy.ObservedAt.Time()) > usdProxyFreshness
-		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old, unread: unread}
+		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old, unread: unread, anchor: asset}
 	}
 	if withheld != "" {
 		// The walk's own verdict, so the detail agrees with the listing: this asset's thin market is
@@ -726,11 +733,12 @@ func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, ass
 	if s.Change24h == nil {
 		return false
 	}
-	currStr, ok := s.lookupUSDPrice(ctx, asset)
-	if !ok {
+	l := s.lookupUSDPriceWithSources(ctx, asset)
+	if l.price == "" {
 		return false
 	}
-	thenStr, err := s.Change24h.USDPrice24hAgo(ctx, asset)
+	currStr := l.price
+	thenStr, err := s.Change24h.USDPrice24hAgo(ctx, l.anchor)
 	if errors.Is(err, ErrChange24hUnavailable) {
 		// Asset first traded < 24h ago, or retention pruned the row.
 		// Silent — feature unavailable for this asset.

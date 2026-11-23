@@ -28,6 +28,8 @@ type batchRowResult struct {
 	frozen       bool
 	triangulated bool
 	asset        canonical.Asset
+	// changeAnchor is the alias a direct read served from; change_24h_pct anchors on its market (zero: asset).
+	changeAnchor canonical.Asset
 
 	ok   bool // a real price row — include in the envelope
 	skip bool // per-asset miss — omit, do NOT 404 the batch
@@ -103,7 +105,11 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	}
 	// No derived change from a thin price (ADR-0018); computed on the final (possibly held) snapshot.
 	if row.ok && !row.thin {
-		row.snap.Change24hPct = s.batchChange24h(ctx, asset, quote, row.snap.Price)
+		anchor := row.changeAnchor
+		if anchor.IsZero() {
+			anchor = asset
+		}
+		row.snap.Change24hPct = s.batchChange24h(ctx, anchor, quote, row.snap.Price)
 	}
 	return row
 }
@@ -159,7 +165,7 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 	s.normalizeRawPriceSnapshot(&snap, asset, quote)
 	// A frozen row carries the held value, not the raw bucket just read.
 	return s.holdFrozenBatchRow(r, batchRowResult{
-		snap: snap, sources: sources, stale: stale, asset: asset, ok: true,
+		snap: snap, sources: sources, stale: stale, asset: asset, changeAnchor: served, ok: true,
 	}, served, quote)
 }
 

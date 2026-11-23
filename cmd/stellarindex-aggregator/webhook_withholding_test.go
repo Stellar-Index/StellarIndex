@@ -248,7 +248,7 @@ func webhookPublishAndGate(body *ast.BlockStmt) (publishes, gated bool) {
 		switch fun := call.Fun.(type) {
 		case *ast.SelectorExpr:
 			switch fun.Sel.Name {
-			case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
+			case "PushWithholding":
 				gated = true
 			case "Publish", "PublishOnce":
 				publishes = publishes || passesWebhookEvent(call)
@@ -302,8 +302,8 @@ func ruleWebhookPublishScanCatchesMethodValues(t *testing.T) {
 		{"direct call", `pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
 		{"method value", `send := pub.PublishOnce; send(ctx, platform.WebhookEventDivergenceFiring, k, p)`, true, false},
 		{"publisher alias", `q := pub; q.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
-		{"gated", `if g.PriceWithheld(ctx, a, b, "x") { return }; pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, true},
-		{"bare gate reference is not a gate", `_ = g.PriceWithheld; pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
+		{"gated", `if w, _ := g.PushWithholding(ctx, a, b, "x"); w != "" { return }; pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, true},
+		{"bare gate reference is not a gate", `_ = g.PushWithholding; pub.Publish(ctx, platform.WebhookEventAnomalyFreeze, p)`, true, false},
 		{"non-webhook publish", `send := stream.Publish; send(ctx, "channel", p)`, false, false},
 	}
 	for _, c := range cases {

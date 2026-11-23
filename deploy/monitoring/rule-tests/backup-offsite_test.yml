@@ -130,3 +130,76 @@ tests:
       - eval_time: 250h
         alertname: stellarindex_backup_offsite_stale
         exp_alerts: []
+
+  # ── repo2's last run failed, two days into a fresh TSDB ──
+  # With under 8 d of history the series-identity rule is quiet; the
+  # wrapper's own rc stamp still tickets after the 1h `for`.
+  - interval: 1h
+    name: repo2 last run failed tickets without 8 days of history
+    input_series:
+      - series: 'up{job="pgbackrest_exporter",instance="r1:9854"}'
+        values: '1x48'
+      - series: 'pgbackrest_backup_info{stanza="stellarindex",repo_key="2",backup_type="full",backup_name="20260819-020001F",instance="r1:9854",job="pgbackrest_exporter"}'
+        values: '1x48'
+      - series: 'stellarindex_pgbackrest_backup_last_rc{repo="2",instance="r1:9100",job="node_exporter"}'
+        values: '0x40 2x8'
+      - series: 'stellarindex_pgbackrest_backup_last_success_unix{repo="2",instance="r1:9100",job="node_exporter"}'
+        values: '144000x48'
+    alert_rule_test:
+      - eval_time: 48h
+        alertname: stellarindex_backup_offsite_stale
+        exp_alerts: []
+      - eval_time: 48h
+        alertname: stellarindex_backup_offsite_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: node_exporter
+              instance: r1:9100
+              repo: "2"
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite.md#stellarindex_backup_offsite_failed
+              summary: "The off-site (repo2) pgBackRest backup failed or has not succeeded in 36 h on r1:9100"
+              description: |
+                The nightly backup wrapper recorded a non-zero exit for repo2
+                (the encrypted S3 off-site copy), or its last repo2 success
+                is more than 36 hours old. repo1 may be fresh, so the
+                cross-repo backup alerts stay green. Check `journalctl -u
+                pgbackrest-backup.service -n 100` for repo2 errors and
+                `sudo -u postgres pgbackrest --stanza=stellarindex info --repo=2`.
+
+  # ── repo2 rc 0 but its last success is 40h old (runs stopped) ──
+  - interval: 1h
+    name: repo2 success older than 36h tickets; a fresh one does not
+    input_series:
+      - series: 'stellarindex_pgbackrest_backup_last_rc{repo="2",instance="r1:9100",job="node_exporter"}'
+        values: '0x48'
+      - series: 'stellarindex_pgbackrest_backup_last_success_unix{repo="2",instance="r1:9100",job="node_exporter"}'
+        values: '28800x48'
+      - series: 'stellarindex_pgbackrest_backup_last_rc{repo="2",instance="r2:9100",job="node_exporter"}'
+        values: '0x48'
+      - series: 'stellarindex_pgbackrest_backup_last_success_unix{repo="2",instance="r2:9100",job="node_exporter"}'
+        values: '165600x48'
+    alert_rule_test:
+      - eval_time: 48h
+        alertname: stellarindex_backup_offsite_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: node_exporter
+              instance: r1:9100
+              repo: "2"
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-offsite.md#stellarindex_backup_offsite_failed
+              summary: "The off-site (repo2) pgBackRest backup failed or has not succeeded in 36 h on r1:9100"
+              description: |
+                The nightly backup wrapper recorded a non-zero exit for repo2
+                (the encrypted S3 off-site copy), or its last repo2 success
+                is more than 36 hours old. repo1 may be fresh, so the
+                cross-repo backup alerts stay green. Check `journalctl -u
+                pgbackrest-backup.service -n 100` for repo2 errors and
+                `sudo -u postgres pgbackrest --stanza=stellarindex info --repo=2`.

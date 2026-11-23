@@ -11,8 +11,6 @@ package timescale
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -175,23 +173,40 @@ func (s *Store) registerIssuerSeen(ctx context.Context, gStrkey string) error {
 	return nil
 }
 
-// ClassicAssetBySlug resolves a public slug (the fully-qualified asset_id) to its classic (code, issuer), serving case-mangled URLs; exact match beats case-folded and ok=false (not an error) when none matches.
+// ClassicAssetBySlug resolves a public slug (the fully-qualified asset_id) to its classic (code, issuer), serving case-mangled
+// URLs: the exact slug wins, else the one case-folded match. ok=false (not an error) when none matches, or when several case
+// variants match and none exactly: classic codes are case-significant, so picking one would name an arbitrary asset.
 func (s *Store) ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error) {
 	const q = `
-		SELECT code, issuer_g_strkey
+		SELECT slug, code, issuer_g_strkey
 		  FROM classic_assets
 		 WHERE slug = $1 OR lower(slug) = lower($1)
 		 ORDER BY (slug = $1) DESC
-		 LIMIT 1
+		 LIMIT 2
 	`
-	err = s.db.QueryRowContext(ctx, q, slug).Scan(&code, &issuer)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", false, nil
-	}
+	rows, err := s.db.QueryContext(ctx, q, slug)
 	if err != nil {
 		return "", "", false, fmt.Errorf("timescale: ClassicAssetBySlug %q: %w", slug, err)
 	}
-	return code, issuer, true, nil
+	defer func() { _ = rows.Close() }()
+	var matched, exact bool
+	for rows.Next() {
+		var gotSlug, gotCode, gotIssuer string
+		if err := rows.Scan(&gotSlug, &gotCode, &gotIssuer); err != nil {
+			return "", "", false, fmt.Errorf("timescale: ClassicAssetBySlug %q: %w", slug, err)
+		}
+		if matched {
+			if !exact {
+				return "", "", false, nil
+			}
+			break
+		}
+		matched, exact, code, issuer = true, gotSlug == slug, gotCode, gotIssuer
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", false, fmt.Errorf("timescale: ClassicAssetBySlug %q: %w", slug, err)
+	}
+	return code, issuer, matched, nil
 }
 
 // ─── holdings-fed registration ──────────────────────────────────────────

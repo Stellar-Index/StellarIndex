@@ -65,7 +65,7 @@ func rulePriceAlertSeamIsGated(t *testing.T) {
 }
 
 // callsWithholdingChokepoint reports whether fn asks a pricingguard.Gate.
-// Call-only on purpose: a bare reference to PriceWithheld asks nothing.
+// Call-only on purpose: a bare reference to PushWithholding asks nothing.
 func callsWithholdingChokepoint(fn *ast.FuncDecl) bool {
 	found := false
 	ast.Inspect(fn, func(n ast.Node) bool {
@@ -78,7 +78,7 @@ func callsWithholdingChokepoint(fn *ast.FuncDecl) bool {
 			return true
 		}
 		switch sel.Sel.Name {
-		case "PriceWithheld", "PriceWithholding", "PriceWithholdingAt":
+		case "PushWithholding":
 			found = true
 			return false
 		}

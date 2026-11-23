@@ -580,7 +580,7 @@ func seedBoundedLabelSeries() {
 	} {
 		for _, reason := range []string{
 			FanoutFailureInvalidPayload, FanoutFailureListSubscribers, FanoutFailureEnqueue,
-			FanoutFailureQueueFull,
+			FanoutFailureQueueFull, FanoutFailurePriceUnmeasured,
 		} {
 			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
 		}
@@ -2201,7 +2201,7 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 )
 
 // Reason labels on [CustomerWebhookFanoutFailuresTotal]. Bounded set
-// of four — one per way a producer-side fan-out can lose a customer's
+// of five — one per way a producer-side fan-out can lose a customer's
 // event before a delivery row exists.
 const (
 	// FanoutFailureInvalidPayload — the caller handed Publish bytes
@@ -2215,6 +2215,8 @@ const (
 	FanoutFailureEnqueue = "enqueue"
 	// FanoutFailureQueueFull — the producer's off-tick queue had no room, so the fan-out never started.
 	FanoutFailureQueueFull = "queue_full"
+	// FanoutFailurePriceUnmeasured — a one-shot event's pricing_guard substance read failed twice, so it was not sent.
+	FanoutFailurePriceUnmeasured = "price_unmeasured"
 )
 
 // CustomerWebhookFanoutFailuresTotal counts customer events that never became a delivery row and are permanently lost, by reason; the producer-side counterpart of [CustomerWebhookDeliveryAttemptsTotal].
@@ -2316,7 +2318,7 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	[]string{"surface", "floor"},
 )
 
-// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline); single lookups then serve unguarded (ADR-0018). Expected zero; read by stellarindex_price_serve_substance_fail_open.
+// PriceServeSubstanceUnmeasuredTotal counts substance verdicts not reached (read error or deadline); single lookups then serve unguarded (ADR-0018), while push surfaces (freeze/divergence webhooks, price alerts) retry instead of sending. Expected zero; read by stellarindex_price_serve_substance_fail_open.
 var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_unmeasured_total",

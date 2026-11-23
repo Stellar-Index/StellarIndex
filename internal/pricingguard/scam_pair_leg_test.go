@@ -136,17 +136,17 @@ func TestPriceWithheldChokepoint(t *testing.T) {
 	flagged, _, native := pairLegAssets(t)
 	ctx := context.Background()
 
-	if (Gate{}).PriceWithheld(ctx, native, flagged, "price_alert") {
+	if w, err := (Gate{}).PushWithholding(ctx, native, flagged, "price_alert"); w != NotWithheld || err != nil {
 		t.Error("nil gates must allow — a disabled [pricing_guard] must not withhold every price")
 	}
 
 	dir := &pairLegDirectory{flagged: map[string]bool{pairLegFlaggedIssuer: true}}
 	g := NewScamGate(dir, ScamGateOptions{})
-	if !(Gate{Scam: g}).PriceWithheld(ctx, native, flagged, "price_alert") {
+	if w, _ := (Gate{Scam: g}).PushWithholding(ctx, native, flagged, "price_alert"); w != WithheldFlaggedIssuer {
 		t.Error("the chokepoint served a pair whose QUOTE leg is directory-flagged — " +
 			"every consumer of this function inherits that hole")
 	}
-	if (Gate{Scam: g}).PriceWithheld(ctx, native, canonical.NativeAsset(), "price_alert") {
+	if w, err := (Gate{Scam: g}).PushWithholding(ctx, native, canonical.NativeAsset(), "price_alert"); w != NotWithheld || err != nil {
 		t.Error("the chokepoint withheld a pair with no flagged leg")
 	}
 }

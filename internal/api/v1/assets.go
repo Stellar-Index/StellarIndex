@@ -714,11 +714,10 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// Row filters (type / code / issuer). Validated BEFORE the
 	// asset_class dispatch so malformed input 400s on every path,
 	// not just the assetsReader-backed one.
-	filters, ok := parseAssetListFilters(w, r)
+	filters, ok := s.parseAssetListQuery(w, r)
 	if !ok {
 		return
 	}
-	filters.q = s.sacSearchAsClassic(r, filters.q)
 
 	// order_by is validated here so an unrecognised value 400s on every path, not only the one
 	// that reads it.
@@ -2609,7 +2608,7 @@ func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID s
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
 			"Invalid asset identifier", http.StatusBadRequest,
-			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, any casing)")
+			"asset_id must match: native | <code>-<G-issuer> | <C-contract> | fiat:<CODE> | a classic asset slug (the full asset_id, issuer in any case)")
 		return canonical.Asset{}, false
 	}
 	if err := parsed.Validate(); err != nil {
@@ -2620,40 +2619,6 @@ func (s *Server) parseAssetGetID(w http.ResponseWriter, r *http.Request, rawID s
 		return canonical.Asset{}, false
 	}
 	return parsed, true
-}
-
-// classicSlugResolver is the optional reader capability behind /v1/assets/{slug} classic-slug
-// resolution (the proxyPairGate idiom); a reader without it answers 400 on non-canonical ids.
-type classicSlugResolver interface {
-	ClassicAssetBySlug(ctx context.Context, slug string) (code, issuer string, ok bool, err error)
-}
-
-// resolveClassicSlug maps a classic-asset slug to (code, issuer). A lookup error logs and reads as a miss (caller 400s), never
-// a 500.
-func (s *Server) resolveClassicSlug(ctx context.Context, raw string) (canonical.Asset, bool) {
-	// Two reader seams exist (`assets` and `assetsReader`); binaries wire the same adapter behind
-	// both but a test may wire only one, so probe both.
-	res, ok := s.Assets.(classicSlugResolver)
-	if !ok {
-		res, ok = s.AssetsReader.(classicSlugResolver)
-	}
-	if !ok {
-		return canonical.Asset{}, false
-	}
-	code, issuer, found, err := res.ClassicAssetBySlug(ctx, raw)
-	if err != nil {
-		s.logger.Warn("classic slug lookup failed", "slug", raw, "err", err)
-		return canonical.Asset{}, false
-	}
-	if !found {
-		return canonical.Asset{}, false
-	}
-	asset, err := canonical.NewClassicAsset(code, issuer)
-	if err != nil {
-		s.logger.Warn("classic slug resolved to unbuildable asset", "slug", raw, "code", code, "err", err)
-		return canonical.Asset{}, false
-	}
-	return asset, true
 }
 
 // lookupCatalogue resolves a slug OR ticker to a verified currency (slug wins),
@@ -3101,59 +3066,6 @@ func isSafeImageURL(s string) bool {
 	})
 }
 
-// resolveSACToClassic maps a SAC address to the classic (or native) asset it wraps; the resolved asset's deterministic SAC
-// address must equal the queried contract, so spoofed metadata cannot redirect pricing.
-func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (canonical.Asset, bool) {
-	asset, ok, _ := s.resolveSAC(ctx, contractID)
-	return asset, ok
-}
-
-// resolveSAC is [Server.resolveSACToClassic] that also returns the lake read error, so "not a SAC" is told apart from "unknown".
-func (s *Server) resolveSAC(ctx context.Context, contractID string) (canonical.Asset, bool, error) {
-	name, found, err := s.Explorer.SACClassicAssetName(ctx, contractID)
-	if err != nil {
-		return canonical.Asset{}, false, err
-	}
-	if !found {
-		return canonical.Asset{}, false, nil
-	}
-	asset, ok := sacNameVerified(name, contractID)
-	return asset, ok, nil
-}
-
-// sacNameVerified parses the lake's wrapped-asset name and keeps it only if its derived SAC address is contractID; metadata
-// that fails either test is a definite "not this SAC", not a read error.
-func sacNameVerified(name, contractID string) (canonical.Asset, bool) {
-	asset := canonical.NativeAsset()
-	if name != "native" {
-		code, issuer, ok := strings.Cut(name, ":")
-		if !ok {
-			return canonical.Asset{}, false
-		}
-		var err error
-		if asset, err = canonical.NewClassicAsset(code, issuer); err != nil {
-			return canonical.Asset{}, false
-		}
-	}
-	derived, err := asset.SacContractID()
-	if err != nil || derived != contractID {
-		return canonical.Asset{}, false
-	}
-	return asset, true
-}
-
-// sacSearchAsClassic rewrites a q that is a classic asset's SAC address to that asset's id, so the C-form finds the rows its
-// asset_id does; the SAC's own listing row carries no code or issuer to match on.
-func (s *Server) sacSearchAsClassic(r *http.Request, q string) string {
-	if s.Explorer == nil || !canonical.IsContractID(q) {
-		return q
-	}
-	if classic, ok := s.resolveSACToClassic(r.Context(), q); ok && classic.Type == canonical.AssetClassic {
-		return classic.String()
-	}
-	return q
-}
-
 // attachSparklinesIfRequested honours ?include=sparkline24h and ?include=sparkline7d, one batch read each; it runs in every phase, so it must be safe on mixed pages.
 // (1) Key on the row's Stellar asset id, never the wire asset_id (a catalogue slug matches no prices_1m row and reads as "never traded").
 // (2) No published price means no chart: withheld, scam-suppressed and declared-peg rows would republish the number we declined to publish.
@@ -3404,8 +3316,8 @@ func (s *Server) foldAliasTwins(ctx context.Context, rows []AssetDetail, keepLon
 }
 
 // listingCanonicalIDs maps each row to its class's canonical asset_id: the alias registry's, else, for a contract row, the asset it
-// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself
-// and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
+// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup maps the row to its own
+// [unconfirmedSACClass] and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
 func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []string {
 	ids := make([]string, len(rows))
 	bySAC := make(map[string]string)
@@ -3437,12 +3349,20 @@ func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []
 		if err != nil {
 			reportUnreadRead(ctx)
 		}
-		if ok {
+		switch {
+		case ok:
 			ids[i] = wrapped
+		case err != nil:
+			// A class no row is primary of, so an unfiltered page drops the row: the page holding its classic row may add
+			// its volume, and serving it here as well would count it twice across pages.
+			ids[i] = unconfirmedSACClass + rows[i].AssetID
 		}
 	})
 	return ids
 }
+
+// unconfirmedSACClass prefixes the fold class of a contract row whose SAC lookup failed; no asset_id starts with it.
+const unconfirmedSACClass = "unconfirmed-sac:"
 
 // derivedSAC is a classic asset_id's SAC address.
 func derivedSAC(assetID string) (string, bool) {
