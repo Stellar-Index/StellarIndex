@@ -40,17 +40,20 @@ check_quoted() {
 check_quoted "restapi.authentication.username" "username: .*patroni_rest_basic_auth_user"
 check_quoted "restapi.authentication.password" "password: .*patroni_rest_basic_auth_password"
 
-# patroni_postgres_password is used for both the bootstrap admin user and
-# the postgresql superuser block; isolate the admin one by context so a
-# still-quoted superuser line can't mask an unquoted admin line.
-admin_line="$(grep -A1 '^\s*admin:' "$TPL" | grep 'password:')"
-if grep -Eq "'\{\{[^}]*patroni_postgres_password[^}]*\}\}'" <<<"$admin_line"; then
-  echo "ok: bootstrap.users.admin.password is single-quoted"
-  pass=$((pass + 1))
-else
-  echo "FAIL: bootstrap.users.admin.password is unquoted: $admin_line" >&2
-  fail=$((fail + 1))
-fi
+check_quoted "postgresql.authentication.replication.password" "password: .*patroni_replicator_password"
+check_quoted "postgresql.authentication.superuser.password" "password: .*patroni_postgres_password"
+
+# Every templated username/password line, so a credential added later is
+# covered without a new check_quoted line.
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  if grep -Eq ":[[:space:]]*'\{\{[^}]*\}\}'[[:space:]]*$" <<<"$line"; then
+    pass=$((pass + 1))
+  else
+    echo "FAIL: templated credential is not single-quoted: $line" >&2
+    fail=$((fail + 1))
+  fi
+done < <(grep -nE '^[[:space:]]*(username|password):.*\{\{' "$TPL")
 
 echo
 echo "lint-patroni-basic-auth-quoting-test: $pass passed, $fail failed"

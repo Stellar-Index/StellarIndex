@@ -45,7 +45,8 @@ sentinel parallel-syncs {{ redis_sentinel_master_name }} {{ redis_sentinel_paral
 # last-known primary). Lives under redis_sentinel_data_dir.
 dir {{ redis_sentinel_data_dir }}
 
-logfile {{ redis_log_dir }}/redis-sentinel.log
+# Empty logfile = stdout, i.e. the journal promtail ships to Loki.
+logfile ""
 
 # Resolve hostnames on startup; without this, hostname-based
 # `sentinel monitor` directives fail in some Ubuntu defaults.

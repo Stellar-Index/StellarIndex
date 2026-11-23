@@ -55,7 +55,8 @@ replica-serve-stale-data yes
 
 # Logging
 loglevel notice
-logfile {{ redis_log_dir }}/redis-server.log
+# Empty logfile = stdout, i.e. the journal promtail ships to Loki.
+logfile ""
 
 # Working directory for RDB snapshots
 dir {{ redis_data_dir }}

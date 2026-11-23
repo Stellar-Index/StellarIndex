@@ -52,10 +52,10 @@ loki_s3_secret_key_env: STELLARINDEX_S3_SECRET_KEY
 promtail_data_dir: /var/lib/promtail
 promtail_listen_port: 9080
 promtail_user: promtail
-# How far back Promtail reads journal on first run. 12h is a
-# reasonable balance — enough to catch a recent incident without
-# replaying weeks of bootlog noise.
-promtail_journal_max_age: "12h"
+# How far back Promtail reads the journal on first run AND after any restart
+# (an older saved cursor is dropped). Matches Loki's reject_old_samples_max_age
+# so an outage backlog Loki would still accept is never skipped.
+promtail_journal_max_age: "168h"
 
 # Where the agent ships logs. On the aggregator itself this is the
 # address Loki binds (loopback by default); elsewhere it is the first

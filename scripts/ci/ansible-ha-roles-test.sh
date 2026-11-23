@@ -77,6 +77,21 @@ cfg = code("loki/templates/loki-config.yaml.j2")
 check("shared_store" not in cfg and "boltdb" not in cfg, "loki config has no 2.x shared_store / boltdb keys")
 check("store: tsdb" in cfg and "schema: v13" in cfg and "tsdb_shipper:" in cfg, "loki config uses tsdb schema v13")
 check("delete_request_store: s3" in cfg, "loki compactor names a delete_request_store")
+# A promtail restart drops a saved journal cursor older than max_age, so a
+# max_age shorter than Loki's reject window loses a backlog Loki would accept.
+def hours(v):
+    m = re.fullmatch(r"(\d+)([hd])", str(v).strip())
+    return int(m.group(1)) * (24 if m.group(2) == "d" else 1) if m else -1
+reject = re.search(r"reject_old_samples_max_age:\s*(\S+)", cfg)
+check(reject is not None and hours(yaml.safe_load(text("loki/defaults/main.yml"))["promtail_journal_max_age"]) >= hours(reject.group(1)) > 0,
+      "promtail journal max_age is at least Loki's reject_old_samples_max_age")
+# promtail ships only the journal: an HA daemon that logs to a file never reaches Loki.
+pt = code("loki/templates/promtail-config.yaml.j2")
+if "__path__" not in pt:
+    for f in ("redis-sentinel/templates/redis.conf.j2", "redis-sentinel/templates/sentinel.conf.j2"):
+        check(re.search(r'^logfile ""\s*$', text(f), re.M) is not None, f"{f} logs to the journal (logfile \"\")")
+    check(not re.search(r"^log:\s*\n(?:[ \t]+.*\n)*?[ \t]+dir:", text("patroni/templates/patroni.yml.j2"), re.M),
+          "patroni.yml sets no log.dir, so Patroni logs to the journal")
 check(any("uri" in t and "/ready" in t["uri"]["url"] for t in tasks("loki/tasks/server-04-systemd.yml")),
       "loki start is followed by a /ready wait")
 
@@ -681,6 +696,24 @@ for role in sorted(os.listdir(roles)):
         stat_regs = [t.get("register") for t in rtasks if isinstance(t.get("stat"), dict) and t["stat"].get("path") == path]
         check(any(t.get("notify") == topic and any(r and r in str(t.get("when")) for r in stat_regs) for t in rtasks),
               f"{role} re-notifies '{topic}' from {path} on the next run")
+
+# haproxy: VIP ownership is a whole-address match; a host address that extends the VIP's digits is not the VIP.
+scraper = next(t for t in tasks("haproxy/tasks/07-monitoring.yml") if "keepalived.prom" in str(t.get("copy", {}).get("content", "")))
+for vip, addrs, want in (("10.0.0.10", ["10.0.0.101/24"], "0"), ("10.0.0.10", ["10.0.0.101/24", "10.0.0.10/32"], "1"),
+                         ("10.0.0.10", ["10.0.0.110/24"], "0"), ("fd00::10", ["fd00::100/64"], "0"), ("fd00::10", ["fd00::10/128"], "1")):
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f"{d}/bin")
+        lines = "".join(f"2: eth0    {'inet6' if ':' in a else 'inet'} {a} scope global eth0\\       valid_lft forever\n" for a in addrs)
+        stubs = {"ip": f"#!/bin/sh\nprintf '%s' '{lines}'\n", "systemctl": "#!/bin/sh\nexit 0\n"}
+        for n, body in stubs.items():
+            with open(f"{d}/bin/{n}", "w") as fh:
+                fh.write(body)
+            os.chmod(f"{d}/bin/{n}", 0o755)
+        script = jinja2.Environment().from_string(scraper["copy"]["content"]).render(
+            haproxy_node_exporter_textfile_dir=d, keepalived_iface="eth0", haproxy_vip=vip)
+        subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}"}, check=False)
+        prom = open(f"{d}/keepalived.prom").read() if os.path.exists(f"{d}/keepalived.prom") else ""
+        check(f"stellarindex_haproxy_vip_owner {want}\n" in prom, f"keepalived scraper reports owner={want} for VIP {vip} on {addrs}")
 
 # A task failure before the handler flush drops every queued notification unless the play forces handlers.
 pdir = os.path.join(roles, "..", "playbooks")

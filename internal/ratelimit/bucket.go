@@ -18,7 +18,7 @@ const DefaultDwellTime = 30 * time.Second
 // ErrThrottleUnavailable signals Redis has failed longer than the dwell-time and the caller should fail CLOSED (503 + Retry-After); [Bucket.Take] and [Bucket.Charge] return it in place of the wrapped error, which within the window keeps the fail-open branch.
 var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (sustained backend errors)")
 
-// Bucket is a per-(client x window) counter, safe for concurrent use (one shared instance); Take returns a wrapped Redis error inside the dwell window (callers fail open), then [ErrThrottleUnavailable] (fail CLOSED), and only sustained recovery resets the clock, not a stray success (see healthySince).
+// Bucket is a per-(client x window) counter, safe for concurrent use (one shared instance); Take returns a wrapped Redis error inside the dwell window (callers fail open), then [ErrThrottleUnavailable] (fail CLOSED), and only sustained recovery resets the clock, not a stray success (see [DwellClock]).
 type Bucket struct {
 	rdb    redis.Cmdable
 	max    int
@@ -41,15 +41,79 @@ type Bucket struct {
 	// when Redis is absent at boot. See [localStore].
 	local *localStore
 
+	dwell *DwellClock
+}
+
+// DwellClock tracks how long Redis has been failing against a dwell window, safe for concurrent use; [Bucket] and the readiness
+// probe each own one, so the probe can report fail-closed without depending on request traffic.
+type DwellClock struct {
+	dwell time.Duration
+	now   func() time.Time
+
 	mu              sync.Mutex
 	redisErrorSince time.Time
 	// healthySince starts the CURRENT unbroken run of successes; any failure resets it.
-	// redisErrorSince clears only after a full dwellTime streak, or a flapping Redis would leave
+	// redisErrorSince clears only after a full dwell streak, or a flapping Redis would leave
 	// the throttles fail-open while effectively down.
 	healthySince time.Time
-	// lastFailure lets a success that follows a failure-free dwellTime clear
+	// lastFailure lets a success that follows a failure-free dwell clear
 	// the clock, so a long-ago outage cannot make the next blip fail closed.
 	lastFailure time.Time
+}
+
+// NewDwellClock returns a clock with the given dwell (negative disables fail-closed); a nil now defaults to [time.Now].
+func NewDwellClock(dwell time.Duration, now func() time.Time) *DwellClock {
+	if now == nil {
+		now = time.Now
+	}
+	return &DwellClock{dwell: dwell, now: now}
+}
+
+// Failure stamps a Redis failure and reports whether the dwell has elapsed: true maps to [ErrThrottleUnavailable], false surfaces
+// the wrapped Redis error and the caller falls open. A negative dwell disables it (always false).
+func (c *DwellClock) Failure() bool {
+	if c.dwell < 0 {
+		return false
+	}
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.healthySince = time.Time{} // any failure breaks the recovery streak
+	c.lastFailure = now
+	if c.redisErrorSince.IsZero() {
+		c.redisErrorSince = now
+		return false
+	}
+	return now.Sub(c.redisErrorSince) > c.dwell
+}
+
+// Success advances the recovery streak. The clock clears only after dwell of UNBROKEN successes, so a flapping Redis trips
+// fail-CLOSED; a success after dwell with no failure also clears it, so an old outage cannot fail an unrelated blip closed.
+func (c *DwellClock) Success() {
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.redisErrorSince.IsZero() {
+		return // not in the error state; nothing to recover
+	}
+	if c.healthySince.IsZero() {
+		c.healthySince = now
+	}
+	if now.Sub(c.healthySince) >= c.dwell || now.Sub(c.lastFailure) > c.dwell {
+		c.redisErrorSince = time.Time{}
+		c.healthySince = time.Time{}
+	}
+}
+
+// FailingClosed reports whether a Redis failure now would fail closed: the error clock has run longer than the dwell.
+func (c *DwellClock) FailingClosed() bool {
+	if c.dwell < 0 {
+		return false
+	}
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.redisErrorSince.IsZero() && now.Sub(c.redisErrorSince) > c.dwell
 }
 
 // Option configures a Bucket at construction.
@@ -116,48 +180,12 @@ func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bu
 	if rdb == nil {
 		b.local = newLocalStore()
 	}
+	b.dwell = NewDwellClock(b.dwellTime, b.nowFn)
 	return b
 }
 
 // InProcess reports whether the Bucket runs on the in-process fallback (rdb was nil) rather than Redis, so the binary can log the enforcing backend.
 func (b *Bucket) InProcess() bool { return b.local != nil }
-
-// observeRedisFailure stamps the dwell-time clock and reports whether it has elapsed: true maps to [ErrThrottleUnavailable], false
-// surfaces the wrapped Redis error and the handler falls open. A negative dwellTime disables it (always false).
-func (b *Bucket) observeRedisFailure() bool {
-	if b.dwellTime < 0 {
-		return false
-	}
-	now := b.nowFn()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.healthySince = time.Time{} // any failure breaks the recovery streak
-	b.lastFailure = now
-	if b.redisErrorSince.IsZero() {
-		b.redisErrorSince = now
-		return false
-	}
-	return now.Sub(b.redisErrorSince) > b.dwellTime
-}
-
-// observeRedisSuccess advances the recovery streak. The fail-closed clock clears only after dwellTime of UNBROKEN successes, so a
-// flapping Redis trips fail-CLOSED; a success after dwellTime with no failure also clears it, so an old outage cannot fail an
-// unrelated blip closed.
-func (b *Bucket) observeRedisSuccess() {
-	now := b.nowFn()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.redisErrorSince.IsZero() {
-		return // not in the error state; nothing to recover
-	}
-	if b.healthySince.IsZero() {
-		b.healthySince = now
-	}
-	if now.Sub(b.healthySince) >= b.dwellTime || now.Sub(b.lastFailure) > b.dwellTime {
-		b.redisErrorSince = time.Time{}
-		b.healthySince = time.Time{}
-	}
-}
 
 // Max returns the configured per-window limit, for surfacing in response headers.
 func (b *Bucket) Max() int { return b.max }
@@ -227,12 +255,12 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 		if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
 			return Result{}, fmt.Errorf("ratelimit: eval: %w", err)
 		}
-		if b.observeRedisFailure() {
+		if b.dwell.Failure() {
 			return Result{}, ErrThrottleUnavailable
 		}
 		return Result{}, fmt.Errorf("ratelimit: eval: %w", err)
 	}
-	b.observeRedisSuccess()
+	b.dwell.Success()
 
 	arr, ok := resRaw.([]any)
 	if !ok || len(arr) != 2 {
