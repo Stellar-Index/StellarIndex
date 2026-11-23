@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"reflect"
 	"slices"
@@ -563,6 +564,86 @@ func TestRevoke_CredentialDeleteFailureStillFailsTheRevoke(t *testing.T) {
 	}
 	if !f.mr.Exists(cachekeys.APIKey(rootHash).String()) {
 		t.Fatal("credential gone although its delete failed")
+	}
+}
+
+// removesCredential reports whether cmd is the indexed-record removal of the credential at hash.
+func removesCredential(cmd redis.Cmder, hash string) bool {
+	return names(cmd, cachekeys.APIKeyIndex().String(), "evalsha", "eval") &&
+		slices.Contains(cmd.Args(), any(cachekeys.APIKey(hash).String()))
+}
+
+// A revoke that fails part-way, at a middle key or at the root, keeps the lineage record of every key whose
+// credential still exists; the retry that succeeds deletes them all, and the owner set with them.
+func TestRevoke_PartialFailureKeepsLineageOfLiveKeys(t *testing.T) {
+	for _, failAt := range []string{"mid", "root"} {
+		t.Run(failAt, func(t *testing.T) {
+			ctx := context.Background()
+			f := newLineageRecFixture(t)
+			rootHash, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+			midHash, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+			leafHash, _ := f.mint(t, ChildKeyRequest(midSub, "leaf", nil))
+			target := map[string]string{"mid": midHash, "root": rootHash}[failAt]
+			var armed atomic.Bool
+			armed.Store(true)
+			f.rdb.AddHook(cmdFailer{fail: func(cmd redis.Cmder) bool { return armed.Load() && removesCredential(cmd, target) }})
+			if err := f.store.RevokeKeyByID(ctx, "acct-x", rootSub.KeyID); err == nil {
+				t.Fatal("revoke with a failing credential delete returned nil")
+			}
+			for name, h := range map[string]string{"root": rootHash, "mid": midHash, "leaf": leafHash} {
+				if f.mr.Exists(cachekeys.APIKey(h).String()) && !f.lineageExists(h) {
+					t.Errorf("%s: credential stands but its lineage record was deleted", name)
+				}
+			}
+			armed.Store(false)
+			if err := f.store.RevokeKeyByID(ctx, "acct-x", rootSub.KeyID); err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+			if left, set := f.lineageOf(t, "acct-x"); len(left) != 0 || set {
+				t.Errorf("after the retry: %d lineage records, owner set %v; want none", len(left), set)
+			}
+		})
+	}
+}
+
+// Erasure walks the owner set with SSCAN, never SMEMBERS, and across more than one batch drops every member
+// whose key is gone (with or without a lineage record) while a key whose credential exists keeps both.
+func TestErasure_WalksTheOwnerSetInBatchesAndSparesLiveKeys(t *testing.T) {
+	ctx := context.Background()
+	f := newLineageRecFixture(t)
+	liveHash, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+	owner := cachekeys.APIKeyLineageOwner("acct-x").String()
+	body, _ := json.Marshal(lineageRecord{KeyID: "kid_old", Identifier: "acct-x"})
+	for i := range 3*lineageDeleteBatch + 7 {
+		h := fmt.Sprintf("stale%04d", i)
+		if _, err := f.mr.SAdd(owner, h); err != nil {
+			t.Fatal(err)
+		}
+		if i%2 == 0 {
+			if err := f.mr.Set(cachekeys.APIKeyLineage(h).String(), string(body)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var seen []string
+	f.rdb.AddHook(cmdFailer{fail: func(cmd redis.Cmder) bool { seen = append(seen, strings.ToLower(cmd.Name())); return false }})
+	if !deleteAccountLineage(ctx, f.rdb, "acct-x") {
+		t.Fatal("deleteAccountLineage reported a failure")
+	}
+	pages := 0
+	for _, c := range seen {
+		if c == "evalsha" || c == "eval" {
+			pages++
+		}
+	}
+	if slices.Contains(seen, "smembers") || pages < 2 {
+		t.Errorf("commands %v; want the set paged by script calls and no SMEMBERS", seen)
+	}
+	if left, _ := f.lineageOf(t, "acct-x"); !slices.Equal(left, []string{liveHash}) {
+		t.Errorf("lineage records left %d; want only the live key's", len(left))
+	}
+	if members, err := f.mr.Members(owner); err != nil || !slices.Equal(members, []string{liveHash}) {
+		t.Errorf("owner set has %d members (err %v); want only the live key", len(members), err)
 	}
 }
 

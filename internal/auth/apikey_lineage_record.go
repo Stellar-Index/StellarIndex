@@ -6,8 +6,8 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -108,48 +108,103 @@ func DeleteLineageRecords(ctx context.Context, rdb redis.Cmdable, identifier str
 	return true
 }
 
-// deleteOwnedLineage is [DeleteLineageRecords] for only those of hashes whose lineage record names identifier,
-// so a chain read from one account's records never deletes another account's record.
-func deleteOwnedLineage(ctx context.Context, rdb redis.Cmdable, identifier string, hashes ...string) bool {
-	if len(hashes) == 0 {
-		return true
-	}
-	gets := make([]*redis.StringCmd, len(hashes))
-	_, _ = rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for i, h := range hashes {
-			gets[i] = p.Get(ctx, cachekeys.APIKeyLineage(h).String())
+// dropGoneLineageLua: for a hash whose credential is absent, delete its lineage record if the record names the
+// identifier and drop the hash from the owner set; a key whose credential exists keeps both.
+// ARGV: identifier, credential prefix, lineage prefix, ...
+const dropGoneLineageLua = `
+local function drop(owner, h)
+	if redis.call('EXISTS', ARGV[2] .. h) == 1 then
+		return 0
+	end
+	local body = redis.call('GET', ARGV[3] .. h)
+	if body then
+		local ok, rec = pcall(cjson.decode, body)
+		if ok and type(rec) == 'table' and rec.identifier == ARGV[1] then
+			redis.call('DEL', ARGV[3] .. h)
+		end
+	end
+	return redis.call('SREM', owner, h)
+end
+`
+
+// deleteGoneLineageScript runs drop over the hashes in ARGV[4..]. KEYS: owner set.
+var deleteGoneLineageScript = redis.NewScript(dropGoneLineageLua + `
+for i = 4, #ARGV do
+	drop(KEYS[1], ARGV[i])
+end
+return 0
+`)
+
+// deleteOwnerPageScript runs drop over one SSCAN page of the owner set and returns the next cursor and how many
+// members it dropped, so the page read and its deletes are one atomic step. KEYS: owner set. ARGV[4]: cursor,
+// ARGV[5]: page size.
+var deleteOwnerPageScript = redis.NewScript(dropGoneLineageLua + `
+local page = redis.call('SSCAN', KEYS[1], ARGV[4], 'COUNT', ARGV[5])
+local dropped = 0
+for _, h in ipairs(page[2]) do
+	dropped = dropped + drop(KEYS[1], h)
+end
+return {page[1], dropped}
+`)
+
+// lineageDeleteBatch bounds the hashes one lineage-delete script call handles.
+const lineageDeleteBatch = 100
+
+func goneLineageArgs(identifier string) []any {
+	return []any{identifier, cachekeys.APIKey("").String(), cachekeys.APIKeyLineage("").String()}
+}
+
+// deleteGoneLineage deletes the lineage records naming identifier at hashes whose credentials are gone, in
+// batches and best-effort (counted, never returned). A record is never deleted while its credential exists,
+// so a revoke that fails part-way leaves every still-live key's record standing.
+func deleteGoneLineage(ctx context.Context, rdb redis.Cmdable, identifier string, hashes ...string) bool {
+	owner := cachekeys.APIKeyLineageOwner(identifier).String()
+	for batch := range slices.Chunk(hashes, lineageDeleteBatch) {
+		args := goneLineageArgs(identifier)
+		for _, h := range batch {
+			args = append(args, h)
 		}
-		return nil
-	})
-	var owned []string
-	for i, h := range hashes {
-		if err := gets[i].Err(); err != nil && !errors.Is(err, redis.Nil) {
+		if err := deleteGoneLineageScript.Run(ctx, rdb, []string{owner}, args...).Err(); err != nil {
 			obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete).Inc()
 			return false
 		}
-		var rec lineageRecord
-		if gets[i].Err() == nil && json.Unmarshal([]byte(gets[i].Val()), &rec) == nil && rec.Identifier == identifier {
-			owned = append(owned, h)
-		}
 	}
-	return DeleteLineageRecords(ctx, rdb, identifier, owned...)
+	return true
 }
 
-// deleteAccountLineage deletes every lineage record identifier's owner set lists, then the set, best-effort.
-// It reaches the records of keys whose credentials have already idled out.
-func deleteAccountLineage(ctx context.Context, rdb redis.Cmdable, identifier string) {
+// deleteAccountLineage deletes, as [deleteGoneLineage] does, every gone key's lineage record identifier's owner
+// set lists, a bounded page per call; the set disappears with its last member. It reaches the records of keys
+// whose credentials have already idled out. A pass that dropped members is repeated: SSCAN promises only the
+// members present throughout, and the drops change the set under the cursor.
+func deleteAccountLineage(ctx context.Context, rdb redis.Cmdable, identifier string) bool {
 	owner := cachekeys.APIKeyLineageOwner(identifier).String()
-	hashes, err := rdb.SMembers(ctx, owner).Result()
-	if err != nil {
-		obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete).Inc()
-		return
+	for dropped := int64(1); dropped > 0; {
+		dropped = 0
+		for cursor := "0"; ; {
+			page, err := deleteOwnerPageScript.Run(ctx, rdb, []string{owner},
+				append(goneLineageArgs(identifier), cursor, lineageDeleteBatch)...).Slice()
+			next, ok := pageCursor(page)
+			if err != nil || !ok {
+				obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete).Inc()
+				return false
+			}
+			dropped += page[1].(int64)
+			if cursor = next; cursor == "0" {
+				break
+			}
+		}
 	}
-	if !deleteOwnedLineage(ctx, rdb, identifier, hashes...) {
-		return
+	return true
+}
+
+// pageCursor reads deleteOwnerPageScript's {cursor, dropped} reply.
+func pageCursor(page []any) (string, bool) {
+	if len(page) != 2 {
+		return "", false
 	}
-	if err := rdb.Del(ctx, owner).Err(); err != nil {
-		obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpDelete).Inc()
-	}
+	cursor, ok := page[0].(string)
+	_, isInt := page[1].(int64)
+	return cursor, ok && isInt
 }
 
 // lineageSlider throttles lineage slides to one per authenticating key per lineageSlideInterval in this

@@ -89,6 +89,9 @@ type Report struct {
 	// LateUsageRows is how many usage_daily rows the post-commit rename
 	// found under the old subjects.
 	LateUsageRows int64
+	// LineageDeleteFailed is true when an api-key lineage delete failed; the erasure still stands, and
+	// stellarindex-ops apikey-lineage-backfill -write removes what was left.
+	LineageDeleteFailed bool
 }
 
 // Erase erases the account; a repeat reports AlreadyErased. An error before the commit leaves the account untouched; one after it wraps ErrCleanupIncomplete, carries the full Report, and leaves Redis state for FinishBySlug.
@@ -175,7 +178,8 @@ func (e *Eraser) erase(
 	e.logger().Info("account erased",
 		"account_id", plan.AccountID, "actor", actor,
 		"users", rep.Counts.Users, "api_keys", rep.Counts.APIKeys, "redis_keys", rep.RedisKeys,
-		"audit_rows_scrubbed", rep.Counts.AuditRowsScrubbed, "late_usage_rows", rep.LateUsageRows)
+		"audit_rows_scrubbed", rep.Counts.AuditRowsScrubbed, "late_usage_rows", rep.LateUsageRows,
+		"lineage_delete_failed", rep.LineageDeleteFailed)
 	return rep, nil
 }
 
@@ -234,12 +238,14 @@ func (e *Eraser) afterCommit(
 			if pass == 1 && e.betweenPasses != nil {
 				e.betweenPasses()
 			}
-			n, del, err := e.deleteRedis(ctx, slug, subjects, keyHashes)
+			n, del, lineageDeleted, err := e.deleteRedis(ctx, slug, subjects, keyHashes)
 			if err != nil {
 				return fmt.Errorf("account erasure: redis pass %d: %w", pass+1, err)
 			}
 			rep.RedisKeys += n
 			rep.RedisDeleted += del
+			// Each pass retries every lineage delete, so the last pass's outcome is the erasure's.
+			rep.LineageDeleteFailed = !lineageDeleted
 		}
 	}
 	late, err := e.Store.RenameUsageSubjects(ctx, subjects, erased)
@@ -254,10 +260,10 @@ func (e *Eraser) afterCommit(
 // every usage counter. Rate-limit and touch-debounce keys expire within minutes, so they are left to their TTL.
 func (e *Eraser) deleteRedis(
 	ctx context.Context, slug string, subjects, keyHashes []string,
-) (keys int, deleted int64, err error) {
-	ids, err := auth.NewRedisAPIKeyStore(e.Redis).DeleteKeysForIdentifier(ctx, auth.AccountIdentifier(slug))
+) (keys int, deleted int64, lineageDeleted bool, err error) {
+	ids, lineageDeleted, err := auth.NewRedisAPIKeyStore(e.Redis).EraseKeysForIdentifier(ctx, auth.AccountIdentifier(slug))
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	keys = len(ids)
 	if len(keyHashes) > 0 {
@@ -267,22 +273,22 @@ func (e *Eraser) deleteRedis(
 		}
 		n, err := e.Redis.Del(ctx, names...).Result()
 		if err != nil {
-			return keys, 0, fmt.Errorf("delete key records: %w", err)
+			return keys, 0, false, fmt.Errorf("delete key records: %w", err)
 		}
 		deleted += n
 		// Best-effort and separate from the DEL above, so a lineage failure cannot fail the pass; both
 		// passes try, and apikey-lineage-backfill -write removes what both missed.
-		auth.DeleteLineageRecords(ctx, e.Redis, auth.AccountIdentifier(slug), keyHashes...)
+		lineageDeleted = auth.DeleteLineageRecords(ctx, e.Redis, auth.AccountIdentifier(slug), keyHashes...) && lineageDeleted
 	}
 	counter := usage.New(e.Redis)
 	for _, s := range subjects {
 		n, err := counter.DeleteSubject(ctx, s)
 		if err != nil {
-			return keys, deleted, err
+			return keys, deleted, false, err
 		}
 		deleted += n
 	}
-	return keys, deleted, nil
+	return keys, deleted, lineageDeleted, nil
 }
 
 // AbandonedRegistrationRetention is how long an unused /v1/register account lives, equal to the validator record's idle TTL so on the redis auth backend the reap removes only dead rows. The postgres backend falls back to the never-expiring api_keys row, so the sweep must not run there.

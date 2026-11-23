@@ -454,27 +454,36 @@ func (s *RedisAPIKeyStore) recordsForIdentifier(ctx context.Context, identifier 
 
 // DeleteKeysForIdentifier deletes every record identifier owns with its index entries and returns the deleted KeyIDs; a leftover record would authenticate as the next holder of the identifier.
 func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifier string) ([]string, error) {
+	deleted, _, err := s.EraseKeysForIdentifier(ctx, identifier)
+	return deleted, err
+}
+
+// EraseKeysForIdentifier is [RedisAPIKeyStore.DeleteKeysForIdentifier] that also reports whether every lineage
+// delete succeeded. A false never fails the call; apikey-lineage-backfill -write removes what was left.
+func (s *RedisAPIKeyStore) EraseKeysForIdentifier(ctx context.Context, identifier string) (deleted []string, lineageDeleted bool, err error) {
 	if identifier == "" {
-		return nil, errors.New("auth: DeleteKeysForIdentifier: identifier is required")
+		return nil, false, errors.New("auth: DeleteKeysForIdentifier: identifier is required")
 	}
 	owned, err := s.recordsForIdentifier(ctx, identifier)
 	if err != nil {
-		return nil, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
+		return nil, false, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
 	}
-	deleted := make([]string, 0, len(owned))
+	deleted = make([]string, 0, len(owned))
 	var chains []string
+	lineageDeleted = true
 	for _, o := range owned {
-		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
-			return deleted, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
+		if err := s.removeCredential(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
+			return deleted, false, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
 		}
+		lineageDeleted = DeleteLineageRecords(ctx, s.rdb, identifier, o.hash) && lineageDeleted
 		deleted = append(deleted, o.rec.KeyID)
 		chains = append(chains, o.rec.AncestorHashes...)
 	}
 	// Best-effort, like removeRecord's: ancestors whose credentials idled out, then whatever the owner set
 	// still lists (an account none of whose credentials is left).
-	deleteOwnedLineage(ctx, s.rdb, identifier, chains...)
-	deleteAccountLineage(ctx, s.rdb, identifier)
-	return deleted, nil
+	lineageDeleted = deleteGoneLineage(ctx, s.rdb, identifier, chains...) && lineageDeleted
+	lineageDeleted = deleteAccountLineage(ctx, s.rdb, identifier) && lineageDeleted
+	return deleted, lineageDeleted, nil
 }
 
 // RevokeKeyByID deletes the key keyID constrained to identifier (ownership checked against the RECORD); ErrKeyNotFound covers missing and foreign keys alike (no existence oracle) and is never nil on a miss.
@@ -641,7 +650,7 @@ func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, ke
 	// Keys between keyID and a removed descendant whose credentials idled out, and keyID itself when its
 	// own record is gone, are reachable only through the descendants' chains.
 	var chains []string
-	defer func() { deleteOwnedLineage(ctx, s.rdb, identifier, chains...) }()
+	defer func() { deleteGoneLineage(ctx, s.rdb, identifier, chains...) }()
 	for _, o := range doomed {
 		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
 			return removed, err
