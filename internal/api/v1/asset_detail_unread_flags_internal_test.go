@@ -193,7 +193,7 @@ func TestFillAndRankCatalogueRows_OldVWAPIsReportedStale(t *testing.T) {
 	s.globalPrice = oldVWAPReader{age: 3 * time.Hour}
 	s.globalPriceOpts = aggregate.GlobalPriceOptions{MaxVWAPAge: 10 * time.Minute}
 	rows := []AssetDetail{{Slug: vc.Slug}}
-	unmeasured, stale := s.fillAndRankCatalogueRows(context.Background(), rows, assetListFilters{})
+	_, unmeasured, stale := s.fillAndRankCatalogueRows(context.Background(), rows, assetListFilters{})
 	if rows[0].PriceUSD == nil {
 		t.Fatal("row not priced")
 	}

@@ -125,8 +125,8 @@ func (s *Server) sacSearchAsClassic(w http.ResponseWriter, r *http.Request, q st
 		if !clientAborted(r, err) {
 			s.logger.Warn("SAC search lookup failed", "q", q, "err", err)
 		}
-		if body, stale, _, hit := s.assetListCache.lookup(assetListCacheKey(r)); hit {
-			writeCachedAssetList(w, body, stale)
+		if hit, _, ok := s.assetListCache.lookup(assetListCacheKey(r)); ok {
+			s.replayAssetListing(w, r, s.assetExclusionScope(r.Context()), hit)
 			return "", false
 		}
 		w.Header().Set("Retry-After", "5")

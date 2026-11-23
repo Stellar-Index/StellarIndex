@@ -12,9 +12,12 @@ import (
 )
 
 // assetDetailEntry holds a fully-rendered /v1/assets/{id} response (post-render JSON bytes, flags already encoded) plus its
-// cache time, skipping the handler chain and overlays on a hit.
+// cache time, skipping the handler chain and overlays on a hit. body, detail and flags are as built, before any exclusion
+// judgement: a hit under an empty exclusion set writes body, otherwise it judges detail.
 type assetDetailEntry struct {
 	body     []byte
+	detail   AssetDetail
+	flags    Flags
 	cachedAt time.Time
 	// degraded: the body was built over a failed or slow read, so a replay
 	// must not carry the route's shared-cache band.
@@ -60,9 +63,14 @@ func (c *assetDetailResponseCache) get(assetID string) (*assetDetailEntry, bool)
 // crawler walking the ~10^5 real ids would slowly OOM. Engages only under id churn.
 const assetDetailCacheMaxEntries = 4096
 
-// put stores a rendered response under assetID, last-write-wins: concurrent writers are accepted as a stampede cost over a
+// newAssetDetailEntry is the entry for one built detail and its rendered body.
+func newAssetDetailEntry(detail AssetDetail, body []byte, flags Flags) *assetDetailEntry {
+	return &assetDetailEntry{body: body, detail: detail, flags: flags, cachedAt: time.Now(), degraded: flags.Degraded, stale: flags.Stale}
+}
+
+// put stores an entry under assetID, last-write-wins: concurrent writers are accepted as a stampede cost over a
 // single-flight layer. Callers pass marshalled bytes so the lock is not held during encoding.
-func (c *assetDetailResponseCache) put(assetID string, body []byte, flags Flags) {
+func (c *assetDetailResponseCache) put(assetID string, e *assetDetailEntry) {
 	if c == nil || c.ttl <= 0 {
 		return
 	}
@@ -71,12 +79,7 @@ func (c *assetDetailResponseCache) put(assetID string, body []byte, flags Flags)
 	if _, exists := c.entries[assetID]; !exists && len(c.entries) >= assetDetailCacheMaxEntries {
 		c.evictLocked()
 	}
-	c.entries[assetID] = &assetDetailEntry{
-		body:     body,
-		cachedAt: time.Now(),
-		degraded: flags.Degraded,
-		stale:    flags.Stale,
-	}
+	c.entries[assetID] = e
 }
 
 // evictLocked reclaims room at capacity: drop every expired entry, else the single oldest. O(n) with n capped, only at

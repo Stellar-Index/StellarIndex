@@ -25,13 +25,22 @@ const assetListCacheMaxAge = 2 * time.Minute
 // `q` and cursors, so without a cap a crawler grows it without limit.
 const assetListCacheMaxEntries = 512
 
-// assetListEntry holds one rendered listing page twice: as built, and with
-// flags.stale set for replays past the TTL, so a hit never re-encodes.
+// assetListEntry holds one listing page as built, before any exclusion judgement: rendered twice (as built, and with
+// flags.stale set for replays past the TTL, so a hit under an empty exclusion set never re-encodes) and as the envelope a
+// hit judges when the set is not empty.
 type assetListEntry struct {
 	fresh    []byte
 	stale    []byte
+	env      Envelope
 	cachedAt time.Time
 	flight   bool
+}
+
+// assetListHit is one cache replay: body to write as it is, or env to judge first.
+type assetListHit struct {
+	body  []byte
+	env   Envelope
+	stale bool
 }
 
 // assetListResponseCache caches the rendered default /v1/assets listing (handleAssetListFromAssets), covering all the
@@ -55,26 +64,28 @@ func newAssetListResponseCache(ttl, maxAge time.Duration) *assetListResponseCach
 
 // lookup returns the body to replay for key. Past the TTL it returns the stale-flagged body and refresh=true to exactly one
 // caller until the refresh settles; past maxAge it misses.
-func (c *assetListResponseCache) lookup(key string) (body []byte, stale, refresh, ok bool) {
+func (c *assetListResponseCache) lookup(key string) (hit assetListHit, refresh, ok bool) {
 	if c == nil || c.ttl <= 0 {
-		return nil, false, false, false
+		return hit, false, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, found := c.entries[key]
 	if !found {
-		return nil, false, false, false
+		return hit, false, false
 	}
 	age := c.now().Sub(e.cachedAt)
 	switch {
 	case age < c.ttl:
-		return e.fresh, false, false, true
+		return assetListHit{body: e.fresh, env: e.env}, false, true
 	case age <= c.maxAge:
 		refresh = !e.flight
 		e.flight = true
-		return e.stale, true, refresh, true
+		env := e.env
+		env.Flags.Stale = true
+		return assetListHit{body: e.stale, env: env, stale: true}, refresh, true
 	default:
-		return nil, false, false, false
+		return hit, false, false
 	}
 }
 
@@ -83,10 +94,14 @@ func (c *assetListResponseCache) put(key string, env Envelope) error {
 	if c == nil || c.ttl <= 0 {
 		return nil
 	}
+	if env.AsOf.IsZero() {
+		env.AsOf = WireTime(time.Now().UTC())
+	}
 	fresh, err := renderEnvelope(env)
 	if err != nil {
 		return err
 	}
+	built := env
 	env.Flags.Stale = true
 	stale, err := renderEnvelope(env)
 	if err != nil {
@@ -97,7 +112,7 @@ func (c *assetListResponseCache) put(key string, env Envelope) error {
 	if _, exists := c.entries[key]; !exists && len(c.entries) >= assetListCacheMaxEntries {
 		c.evictLocked()
 	}
-	c.entries[key] = &assetListEntry{fresh: fresh, stale: stale, cachedAt: c.now()}
+	c.entries[key] = &assetListEntry{fresh: fresh, stale: stale, env: built, cachedAt: c.now()}
 	return nil
 }
 
