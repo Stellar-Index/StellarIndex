@@ -502,45 +502,29 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 
 	// Both legs walk their XLM/SAC spellings, as handlePrice does, so `x_last_price(native, fiat:USD)` finds the
 	// crypto:XLM book and quote=crypto:XLM or the XLM SAC reads the book stored under native.
-	snapshot, sources, stale, served, market, err := s.readPriceWithQuoteAliasesServed(ctx, reader, base, quote)
-	// Substance-gated pair: withheld beats the fallback chain — same
-	// rationale as handleOracleLastPrice above.
-	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(err))
+	// Each spelling runs the closed read then the fallback chain (Redis VWAP cache, stablecoin-fiat proxy, fiat cross-rate), the
+	// walk /v1/price takes, so both closed surfaces serve one number; the thin second pass is /v1/price's opt-in only.
+	ps, _, market := walkQuoteAliases(base, quote, func(q canonical.Asset) (priceServe, *ThinAdmission) {
+		return s.resolvePriceServe(ctx, reader, base, q), nil
+	})
+	// Substance-gated pair: withheld beats the fallback chain — same rationale as handleOracleLastPrice above.
+	if errors.Is(ps.err, ErrPriceWithheld) {
+		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(ps.err))
 		return
 	}
-	// viaFallback mirrors handlePrice / handleOracleLastPrice: the
-	// normalizeRawPriceSnapshot below must run ONLY on the RAW closed-1m-bucket
-	// read, never on a priceFallback result (already normalized at its own
-	// source) — see normalizeRawPriceSnapshot's doc comment.
-	viaFallback := false
-	// triangulated rides with the value — see handleOracleLastPrice.
-	triangulated := false
-	if errors.Is(err, ErrPriceNotFound) {
-		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
-		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
-		// cross-rate, for the reason /v1/oracle/lastprice gives — see
-		// that handler's comment.
-		viaFallback = true
-		fb := s.priceFallback(ctx, base, quote, err)
-		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
-		ok := fb.ok
-		// A withheld proxy-leg verdict is reported as withheld, as above.
-		if !ok && (fb.withheld != "" || fb.err != nil) {
-			s.writeFallbackMiss(w, r, base, quote, fb, nil)
-			return
-		}
-		// Fallback responses surface flags.stale=true: the chain itself
-		// is the staleness signal.
-		stale = fb.stale
-		if !ok || isDeclaredPeg(snapshot) {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/price-not-found",
-				"No price data for pair", http.StatusNotFound,
-				"no observation for "+base.String()+" / "+quote.String())
-			return
-		}
-		err = nil
+	// A withheld proxy-leg verdict is reported as withheld, as above.
+	if ps.miss != nil && (ps.miss.withheld != "" || ps.miss.err != nil) {
+		s.writeFallbackMiss(w, r, base, quote, *ps.miss, nil)
+		return
+	}
+	// viaFallback: normalizeRawPriceSnapshot runs only on the raw closed-bucket read, never on a priceFallback result.
+	snapshot, sources, stale, served, triangulated, viaFallback, err := ps.snap, ps.sources, ps.stale, ps.served, ps.triangulated, ps.viaFallback, ps.err
+	if ps.miss != nil || (viaFallback && isDeclaredPeg(snapshot)) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/price-not-found",
+			"No price data for pair", http.StatusNotFound,
+			"no observation for "+base.String()+" / "+quote.String())
+		return
 	}
 	if err != nil {
 		if clientAborted(r, err) {
@@ -582,30 +566,6 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		snapshot: snapshot, sources: sources, stale: stale, triangulated: triangulated, viaFallback: viaFallback,
 	}, held)
 	writeJSON(w, out, flags, sources...)
-}
-
-// readPriceWithQuoteAliasesServed is [Server.readPriceWithAliasesServed] over each spelling of quote in alias priority order, the
-// walk [Server.resolvePriceServeQuoteAliases] gives /v1/price: a hit, a withheld verdict or a read failure ends it. market is the
-// spelling that answered, or quote on a miss.
-func (s *Server) readPriceWithQuoteAliasesServed(ctx context.Context, reader PriceReader, base, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, canonical.Asset, error) {
-	var miss error
-	for _, q := range assetAliases(quote) {
-		if q.Equal(base) {
-			continue
-		}
-		snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, q)
-		if !errors.Is(err, ErrPriceNotFound) {
-			return snap, sources, stale, served, q, err
-		}
-		if miss == nil {
-			miss = err
-		}
-	}
-	if miss == nil {
-		snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, base, quote)
-		return snap, sources, stale, served, quote, err
-	}
-	return PriceSnapshot{}, nil, false, canonical.Asset{}, quote, miss
 }
 
 // parseXLastPriceBaseQuote validates the x_last_price base/quote pair; ok=false after writing a problem response.

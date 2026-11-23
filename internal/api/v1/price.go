@@ -657,23 +657,31 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 // spelling of an XLM or SAC-wrapped quote reads the same book. market is the spelling that answered (the first on a miss); every
 // per-pair marker is keyed on it. A withheld verdict or read failure ends the walk, as in [Server.readPriceWithAliasesServedOnce].
 func (s *Server) resolvePriceServeQuoteAliases(r *http.Request, reader PriceReader, asset, quote canonical.Asset) (priceServe, *ThinAdmission, canonical.Asset) {
+	return walkQuoteAliases(asset, quote, func(q canonical.Asset) (priceServe, *ThinAdmission) {
+		return s.resolvePriceServeThin(r, reader, asset, q)
+	})
+}
+
+// walkQuoteAliases runs resolve over each spelling of quote; the first that prices, withholds or fails answers, else the first
+// spelling's miss. Shared by /v1/price and SEP-40 x_last_price so the two closed surfaces walk identically.
+func walkQuoteAliases(asset, quote canonical.Asset, resolve func(canonical.Asset) (priceServe, *ThinAdmission)) (priceServe, *ThinAdmission, canonical.Asset) {
 	var first priceServe
 	var firstAdm *ThinAdmission
-	firstMarket := quote
+	firstMarket, tried := quote, false
 	for _, q := range assetAliases(quote) {
 		if q.Equal(asset) {
 			continue
 		}
-		ps, adm := s.resolvePriceServeThin(r, reader, asset, q)
+		ps, adm := resolve(q)
 		if ps.miss == nil || ps.miss.err != nil || ps.miss.withheld != "" {
 			return ps, adm, q
 		}
-		if firstAdm == nil {
-			first, firstAdm, firstMarket = ps, adm, q
+		if !tried {
+			first, firstAdm, firstMarket, tried = ps, adm, q, true
 		}
 	}
-	if firstAdm == nil {
-		ps, adm := s.resolvePriceServeThin(r, reader, asset, quote)
+	if !tried {
+		ps, adm := resolve(quote)
 		return ps, adm, quote
 	}
 	return first, firstAdm, firstMarket
