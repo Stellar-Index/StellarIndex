@@ -403,7 +403,7 @@ write_metrics() {
     echo "stellarindex_zfs_snapshot_last_run_unix $(date +%s)"
   } > "$tmp"
   chmod 644 "$tmp"
-  mv -T "$tmp" "$out"
+  mv -T "$tmp" "$out" || { log "cannot publish $out"; exit 1; }
   METRICS_TMP=""       # renamed into place: nothing left to clean up
   rm -f "$TEXTFILE_DIR/zfs_snapshot_error.prom"
 }

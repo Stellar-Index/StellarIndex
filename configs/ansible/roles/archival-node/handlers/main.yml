@@ -82,19 +82,6 @@
     state: restarted
   when: not ansible_check_mode  # role-installed unit; see the note above
 
-# Runs right after the restart above (same notify name, defined next): a
-# restart that never comes back fails the play instead of passing silently.
-- name: Wait for stellarindex-api readiness after its restart
-  listen: Restart stellarindex-api
-  when: not ansible_check_mode
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ stellarindex_api_listen_addr.split(':') | last }}/v1/readyz"
-    status_code: 200
-  register: stellarindex_api_handler_ready
-  until: stellarindex_api_handler_ready.status == 200
-  retries: 30
-  delay: 2
-
 # Timer-driven oneshot units (verify-archive-tier-a /
 # archive-completeness / supply-snapshot): a unit-file change is
 # picked up on the next timer fire after a daemon-reload — the
@@ -250,3 +237,18 @@
     state: restarted
     daemon_reload: true
   when: not ansible_check_mode  # role-installed unit; see the note above
+
+# Kept LAST: a failed handler ends the rest of the host's handlers, so a slow readyz must not
+# leave the firewall, proxy or exporter handlers above unapplied.
+# Same notify name as the API restart: a restart that never comes back fails the play
+# instead of passing silently.
+- name: Wait for stellarindex-api readiness after its restart
+  listen: Restart stellarindex-api
+  when: not ansible_check_mode
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ stellarindex_api_listen_addr.split(':') | last }}/v1/readyz"
+    status_code: 200
+  register: stellarindex_api_handler_ready
+  until: stellarindex_api_handler_ready.status == 200
+  retries: 30
+  delay: 2
