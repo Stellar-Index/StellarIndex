@@ -933,6 +933,22 @@ ORDER BY ts DESC;
 
 **Escalate:** none; related [directory_sync_unflagged](#stellarindex_directory_sync_unflagged), `stellarindex_price_serve_scam_withheld_total` (dropping to zero while this fires is the same outage), [metrics reference](../../reference/metrics/README.md).
 
+## stellarindex_price_source_exclusion_active
+
+**Trigger.** `max(stellarindex_price_source_exclusions_active) > 0` for 15m, P3. The gauge is the number of `source_exclusions` rows in force at the API's last successful read (on demand, at most every 15 s), so it can lag a lift on an idle API until the next price request. An exclusion is deliberate; this ticket keeps one from outliving its incident.
+
+**Check.**
+
+1. `stellarindex-ops source-exclude -config /etc/stellarindex/stellarindex.toml -list` lists each row with its state (pending, in-force, expired, lifted).
+2. Routes covered by the gate answer 404 `source_excluded` for the affected pair; the operator note printed by `source-exclude` lists the routes NOT COVERED, which still serve the source. The reviewed route table is `priceRouteCoverage` in `internal/api/v1/price_route_coverage_test.go`.
+
+**Fix.**
+
+1. Still needed: leave it and acknowledge the ticket.
+2. Over: `stellarindex-ops source-exclude -config /etc/stellarindex/stellarindex.toml -lift -id N -reason "..." -write`.
+
+**Escalate:** none; related [oracle-manipulation defense](../../architecture/oracle-manipulation-defense.md).
+
 ## stellarindex_price_serve_substance_fail_open
 
 **Trigger.** `sum by (surface) (rate(stellarindex_price_serve_substance_unmeasured_total[5m])) > 0` for 5m (or the series' first increment), P3. `internal/pricingguard.SubstanceGate` reads 24h of `prices_1m` per pair; on a store error or deadline it has no verdict and single lookups serve the price unguarded, so a dust-seeded market can be priced. Shared and cached reads fail closed (withheld). A deadline writes no WARN line.

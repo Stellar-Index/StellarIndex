@@ -1,0 +1,52 @@
+---
+# promtool unit test for api.yml's stellarindex_price_source_exclusion_active.
+#
+#   promtool test rules deploy/monitoring/rule-tests/api-source-exclusion_test.yml
+#
+# The r1 copy is identical (lint-rule-equivalence), so this file proves both.
+
+rule_files:
+  - ../rules/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: an exclusion in force for 15 minutes opens a ticket
+    input_series:
+      - series: 'stellarindex_price_source_exclusions_active{instance="api-1:9464",job="stellarindex-api"}'
+        values: '1x30'
+      - series: 'stellarindex_price_source_exclusions_active{instance="api-2:9464",job="stellarindex-api"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_price_source_exclusion_active
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_price_source_exclusion_active
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_price_source_exclusion_active
+              summary: "Price kill switch on: 1 source exclusion(s) in force"
+              description: |
+                At least one operator source exclusion (stellarindex-ops
+                source-exclude) has been in force for 15 minutes. Covered
+                price routes withhold every value that depends on the
+                excluded source (404 source_excluded), and the routes the
+                operator note lists as NOT COVERED still serve it. Confirm
+                the exclusion is still wanted and lift it when the incident
+                is over.
+
+  - interval: 1m
+    name: no exclusion in force stays silent
+    input_series:
+      - series: 'stellarindex_price_source_exclusions_active{instance="api-1:9464",job="stellarindex-api"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_price_source_exclusion_active
+        exp_alerts: []

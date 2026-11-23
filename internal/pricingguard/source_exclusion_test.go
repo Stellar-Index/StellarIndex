@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -107,6 +110,31 @@ func TestSourceExclusionGate_UnreadableFailsClosed(t *testing.T) {
 	}
 	if got, w := g.CleanBuckets(context.Background(), base, quote, []timescale.Vwap1mRow{row}); w != WithheldExclusionsUnread || got != nil {
 		t.Fatalf("CleanBuckets unread = %v, %q", got, w)
+	}
+}
+
+// The active-exclusions gauge counts only rows in force at the read, so an expired or not-yet-started exclusion does not
+// read as the kill switch being on.
+func TestSourceExclusionGate_ActiveGaugeCountsInForceRows(t *testing.T) {
+	base, quote := exclPair(t)
+	row := timescale.Vwap1mRow{Bucket: exclBucket, Sources: []string{"kraken"}}
+	now := exclBucket
+	f := &fakeExclusions{rows: []timescale.SourceExclusion{
+		{Source: "kraken", From: exclBucket.Add(-time.Hour)},
+		{Source: "binance", From: exclBucket.Add(-2 * time.Hour), Until: exclBucket.Add(-time.Hour)},
+		{Source: "bitstamp", From: exclBucket.Add(time.Hour)},
+	}}
+	g := exclGate(f, &now)
+	obs.PriceSourceExclusionsActive.Set(-1)
+	g.BucketWithholding(context.Background(), base, quote, row)
+	if got := testutil.ToFloat64(obs.PriceSourceExclusionsActive); got != 1 {
+		t.Fatalf("stellarindex_price_source_exclusions_active = %v, want 1 (one in force, one expired, one future)", got)
+	}
+	f.rows = nil
+	now = now.Add(exclusionCacheTTL + time.Second)
+	g.BucketWithholding(context.Background(), base, quote, row)
+	if got := testutil.ToFloat64(obs.PriceSourceExclusionsActive); got != 0 {
+		t.Fatalf("after lift: gauge = %v, want 0", got)
 	}
 }
 

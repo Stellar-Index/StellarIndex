@@ -134,6 +134,7 @@ func registerPricingMetrics() {
 		PriceServeSubstanceUnmeasuredTotal,
 		PriceServeThinAdmittedTotal,
 		PriceServeScamWithheldTotal,
+		PriceSourceExclusionsActive,
 		PricingGuardTrailingFetchFailedTotal,
 
 		SupplyCrossCheckDivergenceStroops,
@@ -2339,6 +2340,15 @@ var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 		Help: "Aggregated price serves withheld by the scam-pricing gate (directory-flagged issuer), labelled by serving surface.",
 	},
 	[]string{"surface"},
+)
+
+// PriceSourceExclusionsActive is the number of operator source exclusions in force at the API's last successful read of
+// source_exclusions (alert: stellarindex_price_source_exclusion_active).
+var PriceSourceExclusionsActive = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_price_source_exclusions_active",
+		Help: "Operator price-source exclusions (source-exclude) in force at the API's last successful read of source_exclusions; re-read on demand at most every 15s. > 0 means the kill switch is withholding prices.",
+	},
 )
 
 // ScamGateLookupFailuresTotal counts scam-gate lookups that errored so the gate FAILED OPEN and the price served unguarded (alert: stellarindex_scam_gate_fail_open); same `surface` labels.

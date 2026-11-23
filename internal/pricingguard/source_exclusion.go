@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -126,6 +127,16 @@ func inForceOver(e timescale.SourceExclusion, from, to time.Time) bool {
 	return !e.Lifted() && e.From.Before(to) && (e.Until.IsZero() || e.Until.After(from))
 }
 
+func inForceCount(rows []timescale.SourceExclusion, at time.Time) int {
+	n := 0
+	for _, e := range rows {
+		if inForceOver(e, at, at.Add(time.Nanosecond)) {
+			n++
+		}
+	}
+	return n
+}
+
 // BucketWithholding is [SourceExclusionGate.Withholding] for one closed 1m bucket and the sources it pooled.
 func (g *SourceExclusionGate) BucketWithholding(ctx context.Context, base, quote canonical.Asset, row timescale.Vwap1mRow) Withholding {
 	return g.Withholding(ctx, base, quote, row.Sources, row.Bucket, row.Bucket.Add(time.Minute))
@@ -209,6 +220,7 @@ func (g *SourceExclusionGate) refresh(ctx context.Context, done chan struct{}) {
 		switch {
 		case err == nil:
 			g.rows, g.readAt = rows, now
+			obs.PriceSourceExclusionsActive.Set(float64(inForceCount(rows, now)))
 		case !g.readAt.IsZero() && now.Sub(g.readAt) < exclusionMaxStale:
 			g.logger.Warn("source exclusions unreadable; serving under the last good read", "err", err, "read_at", g.readAt)
 		default:
