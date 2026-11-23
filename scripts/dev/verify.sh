@@ -585,6 +585,7 @@ lane_d() { # everything else
     echo "=== Ansible env-file secret guard self-test ===" && ./scripts/ci/ansible-envfile-secret-guard-test.sh
     echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
+    echo "=== Off-host edge probe self-test ===" && ./scripts/ci/edge-probe-test.sh
     echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh
     # CI's repo-gates job runs these gate scripts too; verify.sh must mirror
     # them or it issues a green CI won't honour (enforced by the parity

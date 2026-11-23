@@ -1,6 +1,6 @@
 ---
 title: SLA probe — periodic per-endpoint evidence trail
-last_verified: 2026-09-05
+last_verified: 2026-11-23
 status: living procedure
 ---
 
@@ -70,9 +70,10 @@ HEALTHCHECKS_URL_SLA_PROBE=…                 # ping URL
 > Caddy, TLS, DNS and the network. Right for latency (isolates
 > application time); **wrong** for availability: it cannot see a proxy
 > failure, expired certificate, DNS fault or DC-network outage. Pointing
-> it at the public URL from R1 still hairpins through the box. Until an
-> off-host probe exists, the availability row is an objective, not a
-> measurement — say so anywhere it is published.
+> it at the public URL from R1 still hairpins through the box. The
+> [off-host edge probe](#off-host-edge-probe) below is the check that sees
+> those failures; until one is running for a deployment, the availability row
+> is an objective, not a measurement — say so anywhere it is published.
 
 To probe more pairs, run the binary directly with repeated `-pair` flags;
 each repeats the chart, price and oracle-latest probes for that pair.
@@ -170,6 +171,58 @@ breach on three channels:
 
 The wrapper **always exits 0**, so `systemctl is-failed` will NOT show a
 breach; a missing or non-executable probe binary is also pinged as a fail.
+
+## Off-host edge probe
+
+Every on-host probe (this one, the smoke test, the heartbeats) runs on the
+production box against `localhost`, so none of them can see a dead public
+address, DNS, TLS certificate, proxy or the host itself. The edge probe
+(`configs/healthchecks/edge-probe.sh`, units `stellarindex-edge-probe@<name>`)
+runs somewhere else and probes the public hostname.
+
+**Where it runs.** On a host that already runs the archival-node role, in a
+different data centre from the deployment it probes: a test-net node probing
+production's public API. Not on the probed host, and not behind the same
+network path.
+
+**What it checks, once a minute.** Over TLS with verification on, never
+following a redirect: `GET /v1/readyz` is 200; `GET /v1/assets?limit=1` is 200
+with a non-empty `data` array (the same route `scripts/dev/r1-smoke.sh` asserts,
+chosen because it needs the database, so a proxy in front of a dead backend
+fails); and the served certificate has more than `edge_probe_cert_min_days`
+(default 7) left. A failed request is retried once after 5 s, so one blip does
+not page. A pass pings the Healthchecks.io check; a failure pings `/fail` with a
+one-line reason (status code or curl exit meaning, never a body or header).
+
+**Variables** (all on the probing host; the feature is off while
+`edge_probe_targets` is empty):
+
+```yaml
+edge_probe_targets:
+  - name: prod-api                       # [a-z0-9-]+, names the unit and env file
+    base_url: https://api.example.org    # https only
+    ping_url_var: vault_edge_probe_prod_api_ping_url
+    # cert_min_days: 7                   # optional; default edge_probe_cert_min_days
+    # data_path: /v1/assets?limit=1      # optional
+# in the vault, one Healthchecks.io check per target (period 1 min, grace ~3 min):
+vault_edge_probe_prod_api_ping_url: https://hc-ping.example.org/<check-uuid>
+```
+
+The role fails at apply time, naming the variable, if a target's ping URL is
+unset or not an `https://` URL. The URL is written only to
+`/etc/default/stellarindex-edge-probe-<name>` (root, 0600), is fed to curl on
+stdin, and is never in a unit file, argv or the journal.
+
+**What an alert means.** `/fail` with a reason: the edge answered wrongly
+(status or transport failure named in the reason) or the certificate is inside
+its window. No ping at all (the check goes down on grace expiry) means the
+probe is not running or cannot reach Healthchecks.io: look at
+`systemctl status stellarindex-edge-probe@<name>.timer` on the probing host
+first, then at whether the probed deployment is reachable from elsewhere.
+
+**Removal.** Delete the entry; the next apply stops its timer and removes its
+env file. Emptying the list also removes the script and unit templates. Pause
+or delete the Healthchecks.io check too, or its grace expiry alerts.
 
 ## Pre-flight: spot-check from the operator's laptop
 

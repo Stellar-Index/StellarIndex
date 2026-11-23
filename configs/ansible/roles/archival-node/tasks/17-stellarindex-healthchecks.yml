@@ -239,3 +239,124 @@
   when:
     # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
     - not (ansible_check_mode and stellarindex_sla_probe_timer_unit is changed)
+
+# ── Off-host edge probe (opt-in) ──────────────────────────────
+#
+# Probes another deployment's PUBLIC edge from this host; see
+# docs/operations/sla-probe.md. Everything installing or enabling is gated on
+# edge_probe_targets, so a host that sets none renders exactly what it did
+# before. Only the retire block below runs unconditionally, and it changes
+# nothing where no probe was ever installed.
+
+- name: Refuse an edge probe target that is not well formed
+  ansible.builtin.fail:
+    msg: >-
+      edge_probe_targets entry '{{ item.name | default('?') }}' needs a name matching
+      ^[a-z0-9-]+$ and a base_url starting https://
+  loop: "{{ edge_probe_targets }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+  when: >-
+    not (item.name | default('') | regex_search('^[a-z0-9-]+$'))
+    or not (item.base_url | default('') | regex_search('^https://[^ \"$`\\\\]+$'))
+
+- name: Refuse an edge probe target whose ping URL is not set
+  ansible.builtin.fail:
+    msg: >-
+      edge_probe_targets entry '{{ item.name }}' has no ping URL: set the vault variable named
+      by its ping_url_var ('{{ item.ping_url_var | default('<ping_url_var missing>') }}') to the
+      check's https:// Healthchecks.io URL
+  loop: "{{ edge_probe_targets }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+  when: >-
+    (item.ping_url_var | default('') | length == 0)
+    or not (lookup('vars', item.ping_url_var, default='') | regex_search('^https://[^ \"$`\\\\]+$'))
+
+- name: Install edge-probe.sh
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../configs/healthchecks/edge-probe.sh"
+    dest: /opt/stellarindex/healthchecks/edge-probe.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: edge_probe_targets | length > 0
+
+- name: Install stellarindex-edge-probe@.service and @.timer
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../configs/healthchecks/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - stellarindex-edge-probe@.service
+    - stellarindex-edge-probe@.timer
+  when: edge_probe_targets | length > 0
+  notify: Reload systemd
+  register: stellarindex_edge_probe_units
+
+# The ping URL is the check's secret: root 0600, never in a unit file or argv.
+- name: Install the per-target edge probe env files
+  ansible.builtin.template:
+    src: stellarindex-edge-probe.env.j2
+    dest: "/etc/default/stellarindex-edge-probe-{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ edge_probe_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Enable + start the edge probe timers
+  ansible.builtin.systemd:
+    name: "stellarindex-edge-probe@{{ item.name }}.timer"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: "{{ edge_probe_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and stellarindex_edge_probe_units is changed)
+
+# Ansible does not remove what it stops templating: a target dropped from the
+# list would keep probing, and pinging, forever.
+- name: Find installed edge probe env files
+  ansible.builtin.find:
+    paths: /etc/default
+    patterns: "stellarindex-edge-probe-*"
+  register: edge_probe_installed
+
+- name: Stop and disable edge probe timers no longer in edge_probe_targets
+  ansible.builtin.systemd:
+    name: "stellarindex-edge-probe@{{ item.path | basename | regex_replace('^stellarindex-edge-probe-', '') }}.timer"
+    state: stopped
+    enabled: false
+  loop: "{{ edge_probe_installed.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (item.path | basename | regex_replace('^stellarindex-edge-probe-', '')) not in (edge_probe_targets | map(attribute='name') | list)
+  failed_when: false  # si-swallow-ok: the timer may already be gone; the env file is removed next
+
+- name: Remove env files of edge probe targets no longer in edge_probe_targets
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ edge_probe_installed.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: (item.path | basename | regex_replace('^stellarindex-edge-probe-', '')) not in (edge_probe_targets | map(attribute='name') | list)
+
+- name: Remove the edge probe script and unit templates when no target is set
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /opt/stellarindex/healthchecks/edge-probe.sh
+    - /etc/systemd/system/stellarindex-edge-probe@.service
+    - /etc/systemd/system/stellarindex-edge-probe@.timer
+  when: edge_probe_targets | length == 0
+  notify: Reload systemd
