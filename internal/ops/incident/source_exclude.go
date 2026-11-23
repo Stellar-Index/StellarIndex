@@ -35,8 +35,10 @@ const readSideNote = "source-exclude: note:\n" +
 	"    dropped alone; judged on the asset, XLM's USD books and a non-USD peg's fiat: an exclusion naming XLM against a USD\n" +
 	"    proxy (USDC, its SAC, fiat:USD) or a source-wide one withholds every row, XLM's too; one naming XLM against another\n" +
 	"    asset (AQUA/XLM) withholds only that asset; unreadable: every priced row withheld, stale), /v1/rwa/premium (a day an\n" +
-	"    exclusion covers on the token's dollar books or its oracle series is removed and counted in source_excluded_days; seen\n" +
-	"    on the next assembly rebuild; unreadable: the assembly is not rebuilt). Every recompute or removal\n" +
+	"    exclusion covers on the token's dollar books or its oracle series is removed and counted in source_excluded_days; an\n" +
+	"    exclusion on a stablecoin's own fiat:USD book removes every member's day, counted in peg_unobserved_days; a new\n" +
+	"    exclusion can take the premium cache TTL, 10 minutes, plus the re-read and a rebuild to show; unreadable: the previous body keeps serving with\n" +
+	"    flags.stale until the set reads again, 503 if none was ever built). Every recompute or removal\n" +
 	"    sets flags.fills_withheld_reason (CSV: X-StellarIndex-Flags).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
