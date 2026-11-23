@@ -1753,7 +1753,7 @@ func (s *Server) writeCataloguePage(
 	// parameters in the spec), so no arm has been selected away and the
 	// cross-arm total is the only figure a row here can honestly carry.
 	ctx, reads := withReadReport(r.Context())
-	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, assetListFilters{})
+	excl, unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, assetListFilters{})
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
@@ -1767,7 +1767,7 @@ func (s *Server) writeCataloguePage(
 		}
 		env.Pagination = &Pagination{Next: encodeCatalogueServedCursor(served)}
 	}
-	s.writeAssetListing(w, r, s.assetExclusionScope(r.Context()), env)
+	s.writeAssetListing(w, r, excl, env)
 }
 
 // encodeCatalogueServedCursor / parseCatalogueServedCursor: the cursor is base64url of the served slugs as a JSON array, so no
@@ -1813,15 +1813,15 @@ func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail 
 	})
 }
 
-// fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge) and only then ranks by market cap, so
-// order follows published figures; ranking first would rank Stellar-issued rows on nil caps. unmeasured is
+// fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge) and only then ranks by the market cap
+// served after judging ([Server.rankCatalogueRows]), whose exclusion scope it returns for the write. unmeasured is
 // fillCatalogueStatsForPage's; stale: a row was priced from a read past its freshness ceiling.
-func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured, stale bool) {
+func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (excl assetExclusionScope, unmeasured, stale bool) {
 	ctx, rep := withReadReport(ctx)
 	s.fillCataloguePricesForPage(ctx, rows)
 	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
-	sortAssetDetailsByMarketCapDesc(rows)
-	return unmeasured || rep.unread.Load(), rep.stale.Load()
+	excl = s.rankCatalogueRows(ctx, rows)
+	return excl, unmeasured || rep.unread.Load(), rep.stale.Load()
 }
 
 // fillCataloguePricesForPage resolves each row's headline USD price through buildGlobalAssetView's fallback chain so listing
@@ -2000,7 +2000,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Price + twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
 	ctx, reads := withReadReport(r.Context())
-	unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
+	excl, unmeasured, stale := s.fillAndRankCatalogueRows(ctx, rows, filters)
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(ctx, r, page)
@@ -2011,7 +2011,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 			served = append(served, row.Slug)
 		}
 		env.Pagination = &Pagination{Next: "catalogue:" + encodeCatalogueServedCursor(served)}
-		s.writeAssetListing(w, r, s.assetExclusionScope(r.Context()), env)
+		s.writeAssetListing(w, r, excl, env)
 		return
 	}
 	// Catalogue exhausted below the limit: fill the rest of the page from the classic stream, or
@@ -2034,12 +2034,12 @@ func (s *Server) serveCatalogueUnifiedPage(
 		} else {
 			env.Pagination = nil
 		}
-		s.writeAssetListing(w, r, s.assetExclusionScope(r.Context()), env)
+		s.writeAssetListing(w, r, excl, env)
 		return
 	}
 	// Exact-boundary page: next page picks up classic from the top.
 	env.Pagination = &Pagination{Next: "classic:"}
-	s.writeAssetListing(w, r, s.assetExclusionScope(r.Context()), env)
+	s.writeAssetListing(w, r, excl, env)
 }
 
 // serveClassicUnifiedPage serves the classic phase through the AssetsReader path in volume order, prefixing the inner

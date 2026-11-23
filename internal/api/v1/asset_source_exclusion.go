@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -240,6 +241,29 @@ func withholdAssetVolume(d *AssetDetail) bool {
 		d.TopMarkets[i].Volume24hUSD = nil
 	}
 	return had
+}
+
+// rankCatalogueRows reads the request's exclusion scope and ranks catalogue rows by market cap as they will be served, so a row
+// the scope withholds ranks as an uncapped row does rather than in the slot its hidden cap earned. The served-slug cursor drops
+// what a prior page served before this rank, so the re-rank neither repeats nor skips a row across pages.
+func (s *Server) rankCatalogueRows(ctx context.Context, rows []AssetDetail) assetExclusionScope {
+	sc := s.assetExclusionScope(ctx)
+	if sc.empty() {
+		sortAssetDetailsByMarketCapDesc(rows)
+		return sc
+	}
+	judged := slices.Clone(rows)
+	sc.judgeRows(ctx, s, judged, Flags{})
+	orig := slices.Clone(rows)
+	for i := range judged {
+		judged[i].Slug = strconv.Itoa(i) // the judged copy is discarded; its slug carries the row's place in orig
+	}
+	sortAssetDetailsByMarketCapDesc(judged)
+	for i := range judged {
+		at, _ := strconv.Atoi(judged[i].Slug)
+		rows[i] = orig[at]
+	}
+	return sc
 }
 
 // judgeDetail is [assetExclusionScope.judgeRows] for one detail payload.

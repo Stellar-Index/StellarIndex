@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -344,6 +345,11 @@ func TestAssetRoutes_ExclusionGatesEveryVariant(t *testing.T) {
 				return
 			}
 			clean := map[string]string{}
+			if strings.Contains(tc.path, "asset_class=all") {
+				// A withheld row ranks lower, so a clean row from the next ungated page can move onto this one.
+				all, _ := rtDecode(t, newRTServer(t, false, nil).get(t, "/v1/assets?asset_class=all"))
+				cleanRows = append(all, cleanRows...)
+			}
 			for _, r := range cleanRows {
 				clean[r["asset_id"].(string)] = rtJSON(t, r)
 			}
@@ -368,5 +374,42 @@ func TestAssetRoutes_ExclusionGatesEveryVariant(t *testing.T) {
 				t.Fatalf("page holds no excluded and clean pair (A %v, B %v): %s", seenA, seenB, body)
 			}
 		})
+	}
+}
+
+// TestCatalogueRanking_WithheldRowRanksAsUnpriced: a catalogue row whose cap an exclusion withholds ranks with the rows that
+// have none, not in the slot the hidden cap earned; paging by the served-slug cursor still serves every row exactly once.
+func TestCatalogueRanking_WithheldRowRanksAsUnpriced(t *testing.T) {
+	srv := newRTServer(t, false, rtExclusions(time.Now(), rtAQUA, rtBAR, rtQUX))
+	page := func(path string) (ids []string, next string) {
+		var env struct {
+			Data       []map[string]any `json:"data"`
+			Pagination *struct {
+				Next string `json:"next"`
+			} `json:"pagination"`
+		}
+		if err := json.Unmarshal([]byte(srv.get(t, path)), &env); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range env.Data {
+			ids = append(ids, r["asset_id"].(string))
+		}
+		if env.Pagination != nil {
+			next = env.Pagination.Next
+		}
+		return ids, next
+	}
+	if got, _ := page("/v1/assets?asset_class=stablecoin"); !slices.Equal(got, []string{"rt-foo", "rt-aqua"}) {
+		t.Errorf("stablecoin order = %v, want the withheld rt-aqua after the priced rt-foo", got)
+	}
+	var served []string
+	path := "/v1/assets?asset_class=all&limit=1"
+	for range 4 {
+		ids, next := page(path)
+		served = append(served, ids...)
+		path = "/v1/assets?asset_class=all&limit=1&cursor=" + url.QueryEscape(next)
+	}
+	if want := []string{"rt-foo", "rt-baz", "rt-aqua", "rt-bar"}; !slices.Equal(served, want) {
+		t.Errorf("catalogue pages served %v, want %v (priced by cap, then withheld in catalogue order, each once)", served, want)
 	}
 }
