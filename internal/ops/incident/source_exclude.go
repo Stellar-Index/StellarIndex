@@ -25,12 +25,13 @@ const readSideNote = "source-exclude: note:\n" +
 	"    /v1/price/tip + stream, closed-bucket price stream, SEP-40, /v1/vwap, /v1/twap, /v1/ohlc (a covered series bar\n" +
 	"    withholds the series; a fiat series is judged on each stablecoin market it pools), asset headline (three tiers, global-market\n" +
 	"    reference; never falls back to the listing price; a declared USD peg does not replace it), /v1/price/at and\n" +
-	"    /v1/price/changes (a covered bucket withholds the point; a covered horizon reads withheld:true), /v1/history (a page\n" +
-	"    holding a covered fill withholds the page; ?source= another venue still pages).\n" +
+	"    /v1/price/changes (a covered bucket withholds the point; a covered horizon reads withheld:true), /v1/history (a covered\n" +
+	"    fill is removed from its page, served degraded and uncached; paging continues past the window).\n" +
 	"  BLUNT: cached values record no sources. ANY exclusion, pair-scoped too, withholds every cached multi-hop price and every\n" +
 	"    closed-bucket stream; a pair-scoped one also withholds every cached direct price whose base is either leg; a source-wide one\n" +
 	"    withholds every cache-served price. Use the narrowest exclusion, and expect wide withholding of default-quote prices anyway.\n" +
-	"    Historical buckets record no sources: any exclusion naming the asset withholds /v1/price/at and /changes in its window.\n" +
+	"    /v1/price/at and /changes withhold a bucket WHOLE, and any exclusion naming the asset withholds it: 1m for instants\n" +
+	"    under 48h old, hourly up to 45 days, daily beyond; /changes 7d/30d read hourly/4-hourly buckets.\n" +
 	"    A source-wide exclusion with no -until withholds every /v1/ohlc series with a bar containing that source until it is lifted.\n" +
 	"  DELAY: re-read every 15s; an unreadable table keeps the last good set up to 60s, then withholds everything gated.\n" +
 	"    /v1/price, batch, SEP-40, vwap, twap 45s (90s while unreadable); tip 15s; tip stream +1 tick; asset detail ~225s;\n" +

@@ -137,12 +137,32 @@ func (s *Server) ohlcSeriesWithheld(ctx context.Context, pair canonical.Pair, ba
 	return nil
 }
 
-// readPriceAt is the [PriceAtReader] read every point-in-time walk makes, with a bucket an exclusion covers returned as a
-// withheld-class miss.
-func (s *Server) readPriceAt(ctx context.Context, book canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, error) {
-	value, observedAt, resSec, err := s.PriceAt.PriceAt(ctx, book, ts, maxStaleness)
-	if err == nil {
-		err = s.priceAtWithheld(ctx, book, observedAt, resSec)
+// priceAtSourcesReader is a [PriceAtReader] that also returns the served bucket's recorded sources.
+type priceAtSourcesReader interface {
+	PriceAtSources(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, []string, error)
+}
+
+// readPriceAt is the [PriceAtReader] read every point-in-time walk makes, with a bucket an exclusion covers, on book or on any
+// of also (the requested pair a stablecoin fallback stands in for), returned as a withheld-class miss.
+func (s *Server) readPriceAt(
+	ctx context.Context, book canonical.Pair, ts time.Time, maxStaleness time.Duration, also ...canonical.Pair,
+) (string, time.Time, int, error) {
+	var (
+		value      string
+		observedAt time.Time
+		resSec     int
+		sources    []string
+		err        error
+	)
+	if sr, ok := s.PriceAt.(priceAtSourcesReader); ok {
+		value, observedAt, resSec, sources, err = sr.PriceAtSources(ctx, book, ts, maxStaleness)
+	} else {
+		value, observedAt, resSec, err = s.PriceAt.PriceAt(ctx, book, ts, maxStaleness)
+	}
+	for _, p := range append([]canonical.Pair{book}, also...) {
+		if err == nil {
+			err = s.priceAtWithheld(ctx, p, observedAt, resSec, sources)
+		}
 	}
 	if err != nil {
 		return "", time.Time{}, 0, err
@@ -150,9 +170,9 @@ func (s *Server) readPriceAt(ctx context.Context, book canonical.Pair, ts time.T
 	return value, observedAt, resSec, nil
 }
 
-// priceAtWithheld judges a point-in-time CAGG bucket read from book and closing at observedAt over the span it pooled. The
-// bucket records no sources, so any exclusion touching the book in that span withholds it.
-func (s *Server) priceAtWithheld(ctx context.Context, book canonical.Pair, observedAt time.Time, resSec int) error {
+// priceAtWithheld judges a point-in-time CAGG bucket closing at observedAt under pair over the whole span it pooled, on the
+// bucket's sources; a bucket with none recorded cannot be checked source by source, so any exclusion touching the pair withholds it.
+func (s *Server) priceAtWithheld(ctx context.Context, pair canonical.Pair, observedAt time.Time, resSec int, sources []string) error {
 	if s.Exclusions == nil {
 		return nil
 	}
@@ -160,7 +180,11 @@ func (s *Server) priceAtWithheld(ctx context.Context, book canonical.Pair, obser
 	if !from.Before(to) {
 		to = from.Add(time.Nanosecond)
 	}
-	if w := s.Exclusions.UnattributedWithholding(ctx, book.Base, book.Quote, from, to); w != pricingguard.NotWithheld {
+	w := s.Exclusions.UnattributedWithholding(ctx, pair.Base, pair.Quote, from, to)
+	if len(sources) > 0 {
+		w = s.Exclusions.Withholding(ctx, pair.Base, pair.Quote, sources, from, to)
+	}
+	if w != pricingguard.NotWithheld {
 		return PriceWithheldError(w)
 	}
 	return nil

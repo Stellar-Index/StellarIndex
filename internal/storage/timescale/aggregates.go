@@ -859,6 +859,7 @@ type VWAPAtRow struct {
 	VWAP       string
 	Bucket     time.Time
 	Resolution HistoryGranularity
+	Sources    []string // sorted union of both direction rows' `sources`; nil when none recorded
 }
 
 // PriceAtMinuteRungMaxAge is how far behind now a point-in-time lookup may be and still be served from raw prices_1m; exported because the thin-market gate (pricingguard.SubstanceGate.AllowedAt) keys its floors on the same boundary.
@@ -884,15 +885,15 @@ func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts t
 		age = 0
 	}
 	for _, g := range priceAtResolutionLadder(age) {
-		bucket, vwap, found, err := s.closedVWAPAtOrBeforeRes(ctx, p, ts, maxStaleness, g)
+		row, found, err := s.closedVWAPAtOrBeforeRes(ctx, p, ts, maxStaleness, g)
 		if err != nil {
 			return VWAPAtRow{}, err
 		}
 		if !found {
 			continue
 		}
-		if ts.Sub(bucket.Add(g.BucketDuration())) <= maxStaleness {
-			return VWAPAtRow{VWAP: vwap, Bucket: bucket, Resolution: g}, nil
+		if ts.Sub(row.Bucket.Add(g.BucketDuration())) <= maxStaleness {
+			return row, nil
 		}
 	}
 	return VWAPAtRow{}, sql.ErrNoRows
@@ -918,21 +919,21 @@ const closedVWAPAtOrBeforeQueryTemplate = `
         ) u
     ),
     r AS (
-        SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced
+        SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced, sources
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
            AND base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
         UNION ALL
-        SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced
+        SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced, sources
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
            AND base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
     )
-    SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced
+    SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced, sources
       FROM r
 `
 
@@ -940,9 +941,9 @@ const closedVWAPAtOrBeforeQueryTemplate = `
 // coarser.
 func (s *Store) closedVWAPAtOrBeforeRes(
 	ctx context.Context, p canonical.Pair, ts time.Time, maxStaleness time.Duration, g HistoryGranularity,
-) (time.Time, string, bool, error) {
+) (VWAPAtRow, bool, error) {
 	if err := g.Validate(); err != nil {
-		return time.Time{}, "", false, err
+		return VWAPAtRow{}, false, err
 	}
 	res := g.BucketDuration()
 	// Closed-bucket guard, sargable form: bucket + res <= ts  ⇒  bucket <= ts − res.
@@ -960,29 +961,35 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 
 	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), nonVWAPSourcesArg())
 	if err != nil {
-		return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s]: %w", g, err)
+		return VWAPAtRow{}, false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s]: %w", g, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	base := p.Base.String()
-	var bucket time.Time
+	out := VWAPAtRow{Resolution: g}
 	dirs := make([]dirVWAP, 0, 2)
 	for rows.Next() {
-		var rowBase, vwap, volume string
-		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume); err != nil {
-			return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s] scan: %w", g, err)
+		var (
+			rowBase, vwap, volume string
+			src                   stringArray
+		)
+		if err := rows.Scan(&out.Bucket, &rowBase, &vwap, &volume, &src); err != nil {
+			return VWAPAtRow{}, false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s] scan: %w", g, err)
 		}
 		dirs = append(dirs, dirVWAP{vwapText: vwap, volumeText: volume, flipped: rowBase != base})
+		out.Sources = appendSources(out.Sources, src)
 	}
 	if err := rows.Err(); err != nil {
-		return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s] rows: %w", g, err)
+		return VWAPAtRow{}, false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s] rows: %w", g, err)
 	}
 	vwap, ok := combineDirVWAP(dirs)
 	if !ok {
 		// No bucket on this rung, or one with no usable price/volume: no data, fall to a coarser rung.
-		return time.Time{}, "", false, nil
+		return VWAPAtRow{}, false, nil
 	}
-	return bucket, vwap, true, nil
+	out.VWAP = vwap
+	sort.Strings(out.Sources)
+	return out, true, nil
 }
 
 // LatestClosedVWAP1mForPair returns the newest CLOSED 1-minute prices_1m bucket for the pair, excluding the in-progress one; [sql.ErrNoRows] when none exists yet.

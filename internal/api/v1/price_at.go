@@ -153,7 +153,7 @@ func (s *Server) resolvePriceAt(
 // lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is the first
 // ErrPriceWithheld-class error, so the caller picks the right 404 once all orientations are exhausted; err is a reader failure
 // ([isPriceAtMiss] false) and ends the walk (a later hit would stand in for an unknown answer).
-func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error, error) {
+func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time, also ...canonical.Pair) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
@@ -164,7 +164,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			if pairErr != nil {
 				continue
 			}
-			value, bucketAt, resSec, lookErr := s.readPriceAt(ctx, pair, ts, priceAtMaxLookback)
+			value, bucketAt, resSec, lookErr := s.readPriceAt(ctx, pair, ts, priceAtMaxLookback, also...)
 			if lookErr != nil {
 				if failErr := notePriceAtMiss(&withheld, lookErr); failErr != nil {
 					return PriceSnapshot{}, false, nil, failErr
@@ -200,9 +200,16 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, bool, error, error) {
-	var withheld error
+	var (
+		withheld  error
+		requested []canonical.Pair
+	)
+	// An exclusion stored under the fiat pair does not name the peg book, so each bucket is also judged under it.
+	if p, err := canonical.NewPair(asset, quote); err == nil {
+		requested = append(requested, p)
+	}
 	for _, proxied := range s.priceAtUSDPegPairs(asset, quote) {
-		snap, found, w, err := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
+		snap, found, w, err := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts, requested...)
 		if err != nil {
 			return PriceSnapshot{}, false, nil, err
 		}
