@@ -26,6 +26,10 @@ func TestWithProxyDeviation_UncheckedPegIsOnTheWire(t *testing.T) {
 		{"no observation", depegProbeReader{err: ErrPriceAtUnavailable}, true, false},
 		{"guarded", depegProbeReader{err: ErrPriceAtGuarded}, true, false},
 		{"in band", depegProbeReader{value: "1.0001"}, false, false},
+		{"in band, closed within grace", depegProbeReader{value: "1.0001", age: 10 * time.Minute}, false, false},
+		// A stalled peg feed's last in-band bucket is not evidence the peg holds now.
+		{"in band but stale", depegProbeReader{value: "1.0001", age: 23 * time.Hour}, true, false},
+		{"in band, closed 17m before at", depegProbeReader{value: "1.0001", age: 17 * time.Minute}, true, false},
 	} {
 		s := &Server{Options: Options{PriceAt: c.reader, USDPeggedClassics: []canonical.Asset{peg}, VerifiedCurrencies: mustEmbeddedCatalogue(t)}}
 		f := s.withProxyDeviation(context.Background(), Flags{Triangulated: true}, usdQuote(t), time.Now())

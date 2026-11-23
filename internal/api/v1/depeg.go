@@ -116,13 +116,28 @@ func (s *Server) proxyDeviationChecked(ctx context.Context, quote canonical.Asse
 	return false, unchecked, failed
 }
 
-// observePeg reads one peg's observed price under the first alias form that answers.
+// pegEvidenceGrace is how far past one bucket of its serving resolution a peg reading may close before `at` and still count
+// as an observation at `at`: a stalled feed's last in-band bucket is not evidence that the peg holds now.
+const pegEvidenceGrace = 15 * time.Minute
+
+// pegReadingCurrent reports whether a reading that closed at observedAt, from a resolutionSeconds-wide bucket, observes `at`.
+func pegReadingCurrent(at, observedAt time.Time, resolutionSeconds int) bool {
+	if observedAt.IsZero() {
+		return false
+	}
+	return at.Sub(observedAt) <= time.Duration(resolutionSeconds)*time.Second+pegEvidenceGrace
+}
+
+// observePeg reads one peg's observed price under the first alias form that answers. A reading too old to observe `at` is
+// not an observation, and a fresher alias form may still answer.
 func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time.Time) (value string, observed, readFailed bool) {
 	for _, pair := range forms {
-		v, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
+		v, observedAt, resolution, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
 		switch {
-		case err == nil:
+		case err == nil && pegReadingCurrent(at, observedAt, resolution):
 			return v, true, false
+		case err == nil:
+			continue
 		case !isPriceAtMiss(err):
 			readFailed = true
 		}
