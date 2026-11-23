@@ -41,12 +41,14 @@
 -- (extract_entry_changes.go), so two transactions in one ledger writing the
 -- same contract's instance share it; keyed on it alone the RMT would merge
 -- them. (tx_hash, change_index) is the change's identity: unique within a
--- ledger, stable across re-ingest and dispatcher.EntryWalkVersion
--- renumbering, and populated on legacy rows whose intra_ledger_seq is 0.
+-- ledger, stable across re-ingest, and populated on legacy rows whose
+-- intra_ledger_seq is 0. A dispatcher.EntryWalkVersion renumbering MOVES
+-- change_index on P23+ ledgers: the re-derive does not replace the old rows,
+-- which survive FINAL as orphans at their old intra_ledger_seq and must be
+-- deleted (docs/operations/runbooks/entry-walk-renumbering.md).
 -- intra_ledger_seq is carried but NOT keyed: it is the READ order
 -- (ledger_seq, intra_ledger_seq, change_index), which puts the ledger-final
--- write last, and keying on it would stop a renumbering re-derive from
--- replacing the rows it supersedes. Legacy rows (0) order across
+-- write last. Legacy rows (0) order across
 -- transactions only by change_index until ledger_entry_changes is
 -- re-derived; seed rows (4294967295) are ledger-final by construction.
 --

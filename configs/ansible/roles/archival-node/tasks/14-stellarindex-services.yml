@@ -288,32 +288,6 @@
   notify: Restart stellarindex-api
   register: stellarindex_api_env
 
-# Seeded before the TOML points the API at the new path, so
-# /v1/diagnostics/archive never 404s between the restart and the next daily run.
-- name: Look for the archive report at its old path under /var/lib/galexie
-  ansible.builtin.stat:
-    path: /var/lib/galexie/last-completeness-report.json
-  register: archive_completeness_old_report
-
-- name: Look for the archive-completeness report dir
-  ansible.builtin.stat:
-    path: /var/lib/archive-completeness
-  register: archive_completeness_report_dir
-
-- name: Seed the archive report at its new path once
-  # The dir may not exist yet in --check on a first run (04-users only previews it).
-  when:
-    - archive_completeness_old_report.stat.exists
-    - archive_completeness_report_dir.stat.exists
-  ansible.builtin.copy:
-    src: /var/lib/galexie/last-completeness-report.json
-    dest: /var/lib/archive-completeness/last-completeness-report.json
-    remote_src: true
-    force: false
-    owner: root
-    group: root
-    mode: "0644"
-
 - name: Template /etc/stellarindex.toml
   # The on-disk config carries everything except secrets. Secrets
   # come from /etc/default/stellarindex via EnvironmentFile (the

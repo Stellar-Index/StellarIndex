@@ -1432,11 +1432,12 @@ AS stellar.account_cohort_positions;
 -- THE KEY: change_index restarts at 0 on every TRANSACTION, so two transactions in
 -- one ledger writing the same contract's instance share it and would merge into one
 -- row. (tx_hash, change_index) is the change's identity: unique within a ledger,
--- stable across re-ingest and dispatcher.EntryWalkVersion renumbering, and
--- populated on legacy rows whose intra_ledger_seq is still 0. intra_ledger_seq is
--- carried but NOT keyed: it is the READ order (ledger_seq, intra_ledger_seq,
--- change_index), which puts the ledger-final write last; keying on it would stop a
--- renumbering re-derive from replacing the rows it supersedes. Legacy rows
+-- stable across re-ingest, and populated on legacy rows whose intra_ledger_seq is
+-- still 0. A dispatcher.EntryWalkVersion renumbering MOVES change_index on P23+
+-- ledgers: the re-derive does not replace the old rows, which survive FINAL as
+-- orphans and must be deleted (docs/operations/runbooks/entry-walk-renumbering.md).
+-- intra_ledger_seq is carried but NOT keyed: it is the READ order (ledger_seq,
+-- intra_ledger_seq, change_index), which puts the ledger-final write last. Legacy rows
 -- (intra_ledger_seq 0) order across transactions only by change_index until
 -- ledger_entry_changes is re-derived; seed rows (4294967295) are ledger-final by
 -- construction.
@@ -1520,7 +1521,7 @@ WHERE entry_type = 'contract_data'
 --
 --   /usr/local/sbin/run-heavy-job.sh census-rollup-backfill \
 --     /usr/local/bin/stellarindex-ops ch-census-rollup \
---     -ch-addr 127.0.0.1:9300 -backfill
+--     -ch-addr 127.0.0.1:9300 -backfill -write
 --
 -- and install the 30-min timer for the incremental cycle.
 

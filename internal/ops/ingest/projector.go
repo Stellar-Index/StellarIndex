@@ -54,6 +54,9 @@ func projectorReplay(w io.Writer, args []string) error {
 	if err := checkReplayBackfillSafe(*source, uint32(*from)); err != nil {
 		return err
 	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("projector-replay: %w", err)
+	}
 	gate.Banner()
 	dryRun := gate.DryRun()
 
@@ -104,17 +107,9 @@ func projectorReplay(w io.Writer, args []string) error {
 	if rewindTo > 0 {
 		rewindTo--
 	}
+	follow := replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout}
 	if dryRun {
-		_, _ = fmt.Fprintf(w,
-			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then RewindCursor(projector, %q, %d)\n",
-			*source, target, currentLedger, *source, rewindTo)
-		if *refreshCAGGs && *catchUp {
-			_, _ = fmt.Fprintf(w,
-				"dry-run: would then wait up to %s for the projector cursor to reach %d and refresh the price CAGGs over ledgers [%d,%d]\n",
-				*catchUpTimeout, currentLedger, target, currentLedger)
-		}
-		printSEP41ReplayDryRunNote(w, *source)
-		_, _ = fmt.Fprint(w, replayGenerationNote)
+		printReplayDryRun(w, *source, target, currentLedger, rewindTo, follow)
 		return nil
 	}
 	rewoundFrom, err := rewindRecordingDirtyWindow(ctx, w, store, *source, target, currentLedger)
@@ -129,8 +124,21 @@ func projectorReplay(w io.Writer, args []string) error {
 	return rematerializeReplayedRange(
 		w, slog.New(slog.NewTextHandler(w, nil)), store, *source,
 		chunkRange{from: target, to: rewoundFrom},
-		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
+		follow,
 	)
+}
+
+func printReplayDryRun(w io.Writer, source string, target, currentLedger, rewindTo uint32, follow replayFollowUp) {
+	_, _ = fmt.Fprintf(w,
+		"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then RewindCursor(projector, %q, %d)\n",
+		source, target, currentLedger, source, rewindTo)
+	if follow.refreshCAGGs && follow.wait {
+		_, _ = fmt.Fprintf(w,
+			"dry-run: would then wait up to %s for the projector cursor to reach %d and refresh the price CAGGs over ledgers [%d,%d]\n",
+			follow.waitTimeout, currentLedger, target, currentLedger)
+	}
+	printSEP41ReplayDryRunNote(w, source)
+	_, _ = fmt.Fprint(w, replayGenerationNote)
 }
 
 // gateProjectorReplay runs the per-WASM audit gate on its own context: the
@@ -194,6 +202,9 @@ func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRe
 func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
 	if to == 0 || to < from {
 		return errors.New("-refresh-only requires -refresh-to >= -from")
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return fmt.Errorf("projector-replay: %w", err)
 	}
 	gate.Banner()
 	if gate.DryRun() {
