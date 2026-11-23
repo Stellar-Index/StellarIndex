@@ -90,6 +90,55 @@ func TestGlobalAssetHeadline_ExcludedTwinIsNotServed(t *testing.T) {
 	}
 }
 
+// TestGlobalAssetHeadline_OnChainFallbackJudgedOverItsReadWindow: the per-asset reader's price may come from any bucket in its
+// 7-day window, so an exclusion that ended days ago still withholds it on /v1/assets/{slug}; one that ended before the window
+// does not.
+func TestGlobalAssetHeadline_OnChainFallbackJudgedOverItsReadWindow(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vc, ok := cat.LookupBySlug("usdc")
+	if !ok || vc.StellarEntry() == nil {
+		t.Fatal("embedded catalogue has no usdc Stellar issuance")
+	}
+	twin := vc.StellarEntry().AssetID
+	listing := "0.4321"
+	day := 24 * time.Hour
+	for _, tc := range []struct {
+		name     string
+		from, to time.Duration
+		withheld bool
+	}{
+		{name: "ended four days ago", from: 5 * day, to: 4 * day, withheld: true},
+		{name: "ended before the window", from: 10 * day, to: 9 * day},
+	} {
+		rows := []timescale.SourceExclusion{{
+			ID: 1, Source: "sdex", Base: twin, Quote: "native", From: time.Now().Add(-tc.from), Until: time.Now().Add(-tc.to),
+		}}
+		srv := New(Options{
+			VerifiedCurrencies: cat,
+			GlobalPrice:        newWithheldTierReader(nil),
+			AssetsReader:       onChainPriceReader{row: timescale.AssetRow{PriceUSD: &listing}},
+			Exclusions:         pricingguard.NewSourceExclusionGate(globalExclTable{rows: rows}, pricingguard.SourceExclusionGateOptions{}),
+		})
+		ts := httptest.NewServer(srv.Handler())
+		resp, err := http.Get(ts.URL + "/v1/assets/usdc") //nolint:noctx // test-local server
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		ts.Close()
+		body := string(b)
+		served := strings.Contains(body, `"price_usd":"0.4321"`)
+		named := strings.Contains(body, `"price_withheld_reason":"source_excluded"`)
+		if resp.StatusCode != http.StatusOK || served == tc.withheld || named != tc.withheld {
+			t.Errorf("%s: %d %s, want withheld=%v", tc.name, resp.StatusCode, body, tc.withheld)
+		}
+	}
+}
+
 // refuseGlobalTierGate refuses only the off-chain crypto:TICKER/fiat:USD market, so every on-chain leg passes.
 type refuseGlobalTierGate struct{}
 

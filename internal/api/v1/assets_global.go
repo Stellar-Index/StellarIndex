@@ -211,9 +211,6 @@ func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAsse
 	return view
 }
 
-// onChainListingWindow is the span the per-asset reader pools prices_1m buckets over for its price.
-const onChainListingWindow = 24 * time.Hour
-
 // onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID, nil when absent or refused, with
 // the refusal's reason when an exclusion caused it. It passes the same fail-closed substance gate as the classic row, so a dust
 // market cannot price a row /v1/price withholds.
@@ -256,9 +253,10 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) (*s
 }
 
 // onChainListingLegsWithheld judges the per-asset price, a pooled ratio with no source list read either direct against a USD proxy or
-// against XLM times the XLM/USD anchor. Which arm priced it is not returned, so both legs it may rest on are judged.
+// against XLM times the XLM/USD anchor. Which arm priced it is not returned, so both legs it may rest on are judged, over the
+// reader's whole 7-day window (assetPriceLookback, as the classic row's judge uses): the price may come from any bucket in it.
 func (s *Server) onChainListingLegsWithheld(ctx context.Context, asset canonical.Asset) pricingguard.Withholding {
-	from := time.Now().Add(-onChainListingWindow)
+	from := time.Now().Add(-assetPriceLookback)
 	if w := s.unattributedWithheld(ctx, asset, defaultPriceQuote, from, false); w != pricingguard.NotWithheld || sameAsset(asset, canonical.NativeAsset()) {
 		return w
 	}
