@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -156,10 +159,37 @@ func renderEnvelope(env Envelope) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// assetListCacheKey keys a page on its whole query string, canonically
-// ordered, so any parameter that shapes the page also separates the slot.
+// assetListCacheKey keys a page on the inputs the listing reads, each in its parsed form, so a parameter the handler ignores
+// cannot mint a slot (and evict a prewarmed page) while every input that shapes the page still separates one. q is the
+// client's form, before any SAC rewrite, so an unread SAC lookup can find the page a resolved one cached.
 func assetListCacheKey(r *http.Request) string {
-	return r.URL.Query().Encode()
+	q := r.URL.Query()
+	limit := strings.TrimSpace(q.Get("limit"))
+	if limit == "" {
+		limit = "100"
+	} else if n, err := strconv.Atoi(limit); err == nil {
+		limit = strconv.Itoa(n)
+	}
+	typ := strings.TrimSpace(q.Get("type"))
+	if typ == "any" {
+		typ = ""
+	}
+	order := q.Get("order_by")
+	if order == "" {
+		order = "observation_count_desc"
+	}
+	return url.Values{
+		"asset_class":  {normaliseAssetClass(q.Get("asset_class"))},
+		"code":         {strings.TrimSpace(q.Get("code"))},
+		"cursor":       {q.Get("cursor")},
+		"include":      {strings.Join(requestedSparklines(q.Get("include")), ",")},
+		"include_thin": {strconv.FormatBool(includeThinRequested(r))},
+		"issuer":       {strings.TrimSpace(q.Get("issuer"))},
+		"limit":        {limit},
+		"order_by":     {order},
+		"q":            {strings.TrimSpace(q.Get("q"))},
+		"type":         {typ},
+	}.Encode()
 }
 
 // assetListPageCacheable reports whether a built page may be replayed: a stale-flagged page or one with a transient read

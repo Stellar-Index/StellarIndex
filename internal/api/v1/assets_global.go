@@ -164,7 +164,12 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 	// The same substance/scam gate as the /v1/assets listing and /v1/price. This tier has no
 	// other gate, so without it a scam-flagged issuer or dust-thin market withheld elsewhere
 	// could headline here.
-	if withheldBy(ctx, s.Substance, s.Scam, base, quote, "global_asset") != pricingguard.NotWithheld {
+	// A refusal is named, which also blocks the on-chain fallback, as for a TierWithheldError above.
+	if w := withheldBy(ctx, s.Substance, s.Scam, base, quote, "global_asset"); w != pricingguard.NotWithheld {
+		view.PriceWithheldReason = withheldReasonFor(w)
+		if w == pricingguard.WithheldExclusionsUnread {
+			reportUnreadRead(ctx)
+		}
 		return view
 	}
 
