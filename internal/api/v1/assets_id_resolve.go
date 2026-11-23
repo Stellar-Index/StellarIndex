@@ -105,6 +105,17 @@ func sacNameVerified(name, contractID string) (canonical.Asset, bool) {
 	return asset, true
 }
 
+// parseAssetListQuery is parseAssetListFilters with a SAC-address q rewritten to its classic asset; ok=false means a problem
+// was written.
+func (s *Server) parseAssetListQuery(w http.ResponseWriter, r *http.Request) (assetListFilters, bool) {
+	filters, ok := parseAssetListFilters(w, r)
+	if !ok {
+		return filters, false
+	}
+	filters.q, ok = s.sacSearchAsClassic(w, r, filters.q)
+	return filters, ok
+}
+
 // sacSearchAsClassic rewrites a q that is a classic asset's SAC address to that asset's id, so the C-form finds the rows its
 // asset_id does; the SAC's own listing row carries no code or issuer to match on. ok=false means a 503 was written: an
 // unread lookup leaves the query's meaning unknown, and searching the raw address would serve and cache a wrong page.

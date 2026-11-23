@@ -714,11 +714,8 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// Row filters (type / code / issuer). Validated BEFORE the
 	// asset_class dispatch so malformed input 400s on every path,
 	// not just the assetsReader-backed one.
-	filters, ok := parseAssetListFilters(w, r)
+	filters, ok := s.parseAssetListQuery(w, r)
 	if !ok {
-		return
-	}
-	if filters.q, ok = s.sacSearchAsClassic(w, r, filters.q); !ok {
 		return
 	}
 
