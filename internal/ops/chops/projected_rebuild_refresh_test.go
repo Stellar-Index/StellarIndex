@@ -55,7 +55,8 @@ var opsTradeWriteMarkers = []string{"pipeline.HandleEvent(", ".InsertTrade(", ".
 
 // opsTradeWriterRefreshExempt names the writer files that register no default-on -refresh-caggs themselves, and why.
 var opsTradeWriterRefreshExempt = map[string]string{
-	"ingest/backfill_external.go": "a writer seam of the backfill verb, whose -refresh-caggs (backfill.go) refreshes every chunk it writes",
+	"ingest/backfill_external.go":  "a writer seam of the backfill verb, whose -refresh-caggs (backfill.go) refreshes every chunk it writes",
+	"ingest/backfill_coingecko.go": "refreshes the oracle aggregates over its window after every -write, with no switch to turn that off",
 }
 
 // Every ops command that rewrites trade or oracle rows behind the refresh policies' lookback refreshes the aggregates

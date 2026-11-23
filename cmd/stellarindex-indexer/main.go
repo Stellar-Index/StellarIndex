@@ -1714,33 +1714,7 @@ func aggregatorPairsFromCatalogue(cat *currency.Catalogue, logger *slog.Logger) 
 	if cat == nil {
 		return nil
 	}
-	cgIDs := cat.CoinGeckoIDs()
-	if len(cgIDs) == 0 {
-		return nil
-	}
-	fiats := []string{"USD", "EUR", "GBP"}
-	out := make([]canonical.Pair, 0, len(cgIDs)*len(fiats))
-	var skipped []string
-	for ticker := range cgIDs {
-		ca, err := canonical.NewCryptoAsset(ticker)
-		if err != nil {
-			// Ticker not on the canonical crypto allow-list (e.g. a future entry not yet added). Skip: adding to the allow-list
-			// is a separate, deliberate change. Recorded below so the gap is visible instead of a silent drop.
-			skipped = append(skipped, ticker)
-			continue
-		}
-		for _, f := range fiats {
-			fa, err := canonical.NewFiatAsset(f)
-			if err != nil {
-				continue
-			}
-			p, err := canonical.NewPair(ca, fa)
-			if err != nil {
-				continue
-			}
-			out = append(out, p)
-		}
-	}
+	out, skipped := external.CatalogueAggregatorPairs(cat.CoinGeckoIDs())
 	reportSkippedAggregatorTickers(skipped, logger)
 	return out
 }
@@ -1761,51 +1735,13 @@ func reportSkippedAggregatorTickers(skipped []string, logger *slog.Logger) {
 // the
 // fallback, so a hardcoded ticker without a coingecko_id keeps its coverage.
 func mergeAggregatorPairs(catalogue, defaults []canonical.Pair) []canonical.Pair {
-	out := make([]canonical.Pair, 0, len(catalogue)+len(defaults))
-	seen := make(map[string]struct{}, len(catalogue)+len(defaults))
-	for _, sets := range [][]canonical.Pair{catalogue, defaults} {
-		for _, p := range sets {
-			key := p.String()
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			out = append(out, p)
-		}
-	}
-	return out
+	return external.MergeAggregatorPairs(catalogue, defaults)
 }
 
 // defaultAggregatorPairs is the fallback pair set aggregators query for cross-check when the catalogue isn't wired; add entries to
 // `internal/currency/data/seed.yaml`, the canonical source.
 func defaultAggregatorPairs() []canonical.Pair {
-	// Anchors + top-cap globals. XLM first per its product-special
-	// status; the rest in alphabetical order to keep diffs minimal.
-	cryptos := []string{
-		"XLM", "BTC", "ETH",
-		"ADA", "ATOM", "AVAX", "BCH", "BNB", "DASH", "DOGE", "DOT",
-		"LINK", "LTC", "NEAR", "SHIB", "SOL", "TON", "TRX", "UNI", "XRP",
-	}
-	fiats := []string{"USD", "EUR", "GBP"}
-	out := make([]canonical.Pair, 0, len(cryptos)*len(fiats))
-	for _, c := range cryptos {
-		ca, err := canonical.NewCryptoAsset(c)
-		if err != nil {
-			continue
-		}
-		for _, f := range fiats {
-			fa, err := canonical.NewFiatAsset(f)
-			if err != nil {
-				continue
-			}
-			p, err := canonical.NewPair(ca, fa)
-			if err != nil {
-				continue
-			}
-			out = append(out, p)
-		}
-	}
-	return out
+	return external.DefaultAggregatorPairs()
 }
 
 // defaultFXPairs returns the G10-ish fiat cross-rate set against base; all FX pollers share this target list (override per poller via
