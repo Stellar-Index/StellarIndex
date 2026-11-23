@@ -684,7 +684,8 @@ func (h *Handlers) signInProvenEmail(w http.ResponseWriter, r *http.Request, ema
 	return false
 }
 
-// errSignupRefused: the email has no account and sign-up is switched off or out of budget; the 503 is already written.
+// errSignupRefused: the email has no account and sign-up is switched off, out of budget (503) or over the per-IP cap (429); the
+// response is already written.
 var errSignupRefused = errors.New("sign-up refused")
 
 // startSessionForEmail finds-or-creates the user for a just-verified email and mints a session. It writes only Set-Cookie,
@@ -698,7 +699,9 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		// Only after the email is proven, so the refusal tells nobody but its owner that it has no account.
 		// The proven mailbox is the per-account cost, so this draws on its own budget, not the one /v1/register can drain.
 		// A catch-all domain mints mailboxes freely, so the per-IP cap runs first and one address cannot drain that budget.
-		if !h.signupEnabled(w, r) || !h.signupIPAllowed(w, r, "email", "too many sign-ups; retry later") ||
+		// The link or code is already consumed here, so the 429 must tell its owner to request a new one.
+		if !h.signupEnabled(w, r) || !h.signupIPAllowed(w, r, "email",
+			"too many sign-ups from this address; this sign-in link or code has been used; request a new one after the Retry-After wait") ||
 			!h.signupBudgetOK(w, r, h.cfg.SignupBudget.EmailProven(), obs.RegistrationPoolEmailProven) {
 			return errSignupRefused
 		}

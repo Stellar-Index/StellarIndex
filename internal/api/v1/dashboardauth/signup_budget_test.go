@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -124,6 +125,9 @@ func TestEmailSignIn_FirstSignInPerIPCapSpendsNoBudget(t *testing.T) {
 	if w.Code != http.StatusTooManyRequests || sessionCookieSet(w) || r.accountCount() != accounts {
 		t.Fatalf("sign-up past the per-IP cap: status = %d, session = %v, accounts +%d; want 429, none, none",
 			w.Code, sessionCookieSet(w), r.accountCount()-accounts)
+	}
+	if !strings.Contains(w.Body.String(), "has been used; request a new one") {
+		t.Errorf("429 detail does not say the spent link or code must be re-requested: %s", w.Body.String())
 	}
 	if budget.calls != passkeySignupMaxPerIP {
 		t.Errorf("budget spends = %d, want %d (the refused sign-up spends none)", budget.calls, passkeySignupMaxPerIP)
