@@ -9,7 +9,16 @@
     src: patroni.service.j2
     dest: /etc/systemd/system/patroni.service
     mode: '0644'
+  register: _patroni_unit_render
   notify: "patroni config changed"
+
+# Written here as well as by the handler: a host that fails a later task runs no handlers.
+- name: persist the Patroni restart for the unit change
+  file:
+    path: /etc/patroni/.restart-pending
+    state: touch
+    mode: '0600'
+  when: _patroni_unit_render is changed
 
 # Patroni runs postgres itself; the distro unit would fight it for the data dir.
 # The data-dir gate's check is repeated here because --start-at-task skips

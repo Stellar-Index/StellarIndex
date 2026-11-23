@@ -79,7 +79,7 @@ fail_run() {
     grep -E '^stellarindex_pg_(compressed_chunk|chunk_scan_last_success)' "$OUT" 2>/dev/null
   } >"$TMP"
   chmod 0644 "$TMP"
-  mv "$TMP" "$OUT"
+  mv -T "$TMP" "$OUT"
   exit 1
 }
 
@@ -263,5 +263,5 @@ now=$(date +%s)
   echo "stellarindex_pg_chunk_scan_last_success_timestamp_seconds $now"
 } >"$TMP"
 chmod 0644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"
 echo "pg-chunk-scan: scanned=$scanned unreadable=$nbad undecided=$skipped index_bloated=$nbloat full=$FULL partial=$partial"

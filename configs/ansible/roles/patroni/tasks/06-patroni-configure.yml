@@ -76,7 +76,17 @@
     label: "{{ item.name }}"
   when: etcd_tls_enabled
   no_log: true
+  register: _patroni_tls_install
   notify: "patroni config changed"
+
+# A notification lives only in this play's memory, and a host that fails a later
+# task runs no handlers, so the marker is written here, not only by the handler.
+- name: persist the Patroni restart for the TLS change
+  file:
+    path: /etc/patroni/.restart-pending
+    state: touch
+    mode: '0600'
+  when: _patroni_tls_install is changed
 
 - name: detect a Patroni restart an earlier run refused or did not finish
   stat:
@@ -109,7 +119,15 @@
     mode: '0640'
   when:
     - _patroni_state.status != 200 or not patroni_first_run_only
+  register: _patroni_conf_render
   notify: "patroni config changed"
+
+- name: persist the Patroni restart for the patroni.yml change
+  file:
+    path: /etc/patroni/.restart-pending
+    state: touch
+    mode: '0600'
+  when: _patroni_conf_render is changed
 
 - name: warn when skipping config rewrite (cluster already running)
   debug:

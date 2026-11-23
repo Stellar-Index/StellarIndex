@@ -45,4 +45,4 @@ trap 'rm -f "$TMP"' EXIT
   echo "stellarindex_catchup_lanes_stopped $stop"
 } >"$TMP"
 chmod 0644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"

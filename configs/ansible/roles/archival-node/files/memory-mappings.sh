@@ -295,5 +295,5 @@ fi
 # node_exporter runs unprivileged and mktemp defaults to 0600: make the file world-readable
 # before the atomic swap or the collector skips it.
 chmod 0644 "$TMP"
-mv "$TMP" "$OUT"
+mv -T "$TMP" "$OUT"
 trap - EXIT

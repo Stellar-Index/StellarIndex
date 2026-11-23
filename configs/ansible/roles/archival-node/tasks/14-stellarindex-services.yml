@@ -621,11 +621,13 @@
       # fs.protected_regular.
       # The lock dir is group-writable, so a link planted between the check
       # and the create must not be followed: link(2) never follows its target.
+      # A lost creation race (EEXIST) is not an error here: lock_path_ok
+      # then judges the winner's file.
       lock_file_prep() {
         [ -e "$1" ] || [ -L "$1" ] && return 0
         local t
         t="$(mktemp "$1.XXXXXX" 2>/dev/null)" || return 0
-        chmod 640 "$t" && ln "$t" "$1" 2>/dev/null
+        { chmod 640 "$t" && ln "$t" "$1"; } 2>/dev/null || :
         rm -f "$t"
         return 0
       }

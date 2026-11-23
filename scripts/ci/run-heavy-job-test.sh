@@ -673,6 +673,20 @@ mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 PATH="$TMP/lockbin:$TMP/rootbin:$PATH" run_lock_cases "root (id stubbed)"
 
+# Two same-name launches racing to create an absent lock: the loser's
+# link(2) gets EEXIST. Under set -e that must not end the wrapper silently.
+echo "  [lock-creation race]"
+mkdir -p "$TMP/racebin"
+cat > "$TMP/racebin/ln" <<'LN'
+#!/usr/bin/env bash
+: > "${@: -1}"
+exit 1
+LN
+chmod +x "$TMP/racebin/ln"
+rm -f "$TMP/lock/stellarindex/stellarindex-heavy-race-job.lock"
+PATH="$TMP/racebin:$TMP/lockbin:$TMP/rootbin:$PATH" lrun race-job ""
+if [ "$rc" -eq 0 ] && ran && [ -z "$(find "$TMP/lock" -name '*.lock.??????')" ]; then ok "losing the lock-creation race runs the job against the winner's lock, no temp file left"; else bad "lost lock-creation race not handled (rc=$rc, err='$(errs)', strays='$(find "$TMP/lock" -name '*.lock.??????' | tr '\n' ' ')')"; fi
+
 # ── 12. the lock modes and owners boot creates ───────────────────────
 # Only root and stellarindex run the wrapper; any other uid that can open a
 # lock can hold it and starve every job.

@@ -317,7 +317,8 @@ pgroups = {"postgres_cluster": ["db-01", "db-02", "db-03"]}
 for host, want in (("db-01", True), ("db-02", False)):
     conf = yaml.safe_load(penv.from_string(text("patroni/templates/patroni.yml.j2")).render(
         inventory_hostname=host, groups=pgroups, hostvars={h: {"ansible_host": "10.0.0.1"} for h in pgroups["postgres_cluster"]},
-        patroni_internal_cidrs=["10.0.0.0/24"], patroni_synchronous_node_count=1, etcd_tls_enabled=False))
+        patroni_internal_cidrs=["10.0.0.0/24"], patroni_synchronous_node_count=1, etcd_tls_enabled=False,
+        patroni_max_slot_wal_keep_size=yaml.safe_load(text("patroni/defaults/main.yml"))["patroni_max_slot_wal_keep_size"]))
     check(("bootstrap" in conf) == want, f"patroni.yml for {host} has a bootstrap section: {want}")
     if want:
         initdb = conf["bootstrap"]["initdb"]
@@ -333,6 +334,11 @@ for host, want in (("db-01", True), ("db-02", False)):
                   and "patroni_archive_command | trim | length > 0" in str(t.get("assert", {}).get("that"))
                   for t in tasks("patroni/tasks/01-preflight.yml")),
               "archive_mode on is paired with a preflight proving archive_command can run")
+        # A slot per member and no cap: one stuck replica fills the primary's disk.
+        check(re.fullmatch(r"[1-9][0-9]*(MB|GB|TB)", str(dcs_pg.get("max_slot_wal_keep_size", ""))) is not None
+              and any("patroni_max_slot_wal_keep_size" in str(t.get("assert", {}).get("that"))
+                      for t in tasks("patroni/tasks/01-preflight.yml")),
+              "patroni caps slot-held WAL (max_slot_wal_keep_size), and preflight refuses no cap")
 boot = tasks("patroni/tasks/08-patroni-bootstrap.yml")
 bnames = [t.get("name", "") for t in boot]
 hi = next((i for i, t in enumerate(boot) if str(t.get("uri", {}).get("url", "")).endswith("/health")), None)
@@ -350,6 +356,46 @@ for f, copy_name in (("03-etcd-configure.yml", "install etcd TLS material"),
 vt = code("patroni/tasks/verify-tls.yml")
 check("openssl verify -CAfile" in vt and "-pubkey" in vt and "-pubout" in vt and "stdin:" in vt,
       "verify-tls checks the chain and the key match, with the PEMs on stdin, not argv")
+# Execute the verifier itself: string checks passed while its PEM splitter failed every converge.
+if not shutil.which("openssl"):
+    check(os.environ.get("CI") != "true", "openssl present to execute verify-tls (required in CI)")
+else:
+    vt_sh = tasks("patroni/tasks/verify-tls.yml")[0]["shell"]
+    with tempfile.TemporaryDirectory() as td:
+        with open(f"{td}/x.cnf", "w") as fh:
+            fh.write("[req]\ndistinguished_name=dn\n[dn]\n[ca]\nbasicConstraints=critical,CA:TRUE\n"
+                     "keyUsage=critical,keyCertSign,cRLSign\n[leaf]\nbasicConstraints=CA:FALSE\n")
+
+        def ossl(*a):
+            subprocess.run(["openssl", *a], cwd=td, check=True, capture_output=True)
+
+        def cert(name, issuer=None, ext="leaf"):
+            ossl("genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", f"{name}.key")
+            if issuer is None:
+                ossl("req", "-x509", "-new", "-key", f"{name}.key", "-subj", f"/CN={name}", "-days", "2",
+                     "-config", "x.cnf", "-extensions", "ca", "-out", f"{name}.pem")
+                return
+            ossl("req", "-new", "-key", f"{name}.key", "-subj", f"/CN={name}", "-config", "x.cnf", "-out", f"{name}.csr")
+            ossl("x509", "-req", "-in", f"{name}.csr", "-CA", f"{issuer}.pem", "-CAkey", f"{issuer}.key",
+                 "-set_serial", "1", "-days", "2", "-extfile", "x.cnf", "-extensions", ext, "-out", f"{name}.pem")
+
+        def pem(*names):
+            return "".join(open(f"{td}/{n}").read() for n in names)
+
+        for args in (("root",), ("other",), ("inter", "root", "ca"), ("leaf", "root"), ("deep", "inter"),
+                     ("foreign", "other")):
+            cert(*args)
+
+        def verify(ca, crt, key):
+            rc = subprocess.run(["bash", "-c", vt_sh], input=f"{ca.strip()}\n--split--\n{crt.strip()}\n--split--\n{key.strip()}",
+                                capture_output=True, text=True).returncode
+            return rc == 0
+
+        check(verify(pem("root.pem"), pem("leaf.pem"), pem("leaf.key")), "verify-tls passes a cert from the CA with its own key")
+        check(not verify(pem("root.pem"), pem("leaf.pem"), pem("deep.key")), "verify-tls refuses a key from another pair")
+        check(not verify(pem("root.pem"), pem("foreign.pem"), pem("foreign.key")), "verify-tls refuses a cert from another CA")
+        check(verify(pem("root.pem"), pem("deep.pem", "inter.pem"), pem("deep.key")),
+              "verify-tls passes a leaf+intermediate cert file under a root-only CA")
 join = tasks("patroni/tasks/09-patroni-join.yml")
 names = [t.get("name", "") for t in join]
 wait_i = next((i for i, t in enumerate(join) if "/initialize" in str(t.get("command", ""))), None)
@@ -368,6 +414,20 @@ conf = env.from_string(text("redis-sentinel/templates/redis.conf.j2")).render(
        "redis_log_dir": "/l", "redis_data_dir": "/d", "ansible_host": "10.0.0.22",
        "redis_effective_primary_host": "10.0.0.22"})
 check("min-replicas-to-write 1" in conf, "redis.conf renders min-replicas-to-write")
+
+# redis: users.acl is policy, not topology: reconciled every run and loaded live, after a password check.
+r03 = tasks("redis-sentinel/tasks/03-redis-configure.yml")
+r03n = [t.get("name", "") for t in r03]
+acl_i = r03n.index("render /etc/redis/users.acl (lockdown)")
+check("redis_render_configs" not in str(r03[acl_i].get("when")) and r03[acl_i].get("notify") == "redis acl changed",
+      "users.acl renders on a configured host too and notifies the ACL reload, not a restart")
+pw_i = next((i for i, t in enumerate(r03) if "redis_acl_password_probe" in str(t.get("assert", {}).get("that"))), None)
+check(pw_i is not None and pw_i < acl_i, "a rotated redis_password fails the play before users.acl is rewritten")
+rh = tasks("redis-sentinel/handlers/main.yml")
+rhn = {h.get("listen"): i for i, h in enumerate(rh)}
+check("redis acl changed" in rhn and "ACL LOAD" in str(rh[rhn["redis acl changed"]].get("shell"))
+      and rhn["redis acl changed"] > rhn["redis config changed"],
+      "an ACL change is applied with ACL LOAD, after any first-run restart")
 
 # redis: a fresh or replaced host must hear the surviving Sentinels.
 peer = next(t for t in tasks("redis-sentinel/tasks/03-redis-configure.yml") if t.get("name", "").startswith("ask the other Sentinels"))
@@ -656,6 +716,15 @@ check(vrrp == ['ip protocol vrrp ip saddr 10.0.0.22 accept comment "vrrp-peer"',
                'ip6 nexthdr vrrp ip6 saddr fd00::22 accept comment "vrrp-peer"'],
       f"haproxy firewall accepts VRRP from the unicast peers only: {vrrp}")
 
+# keepalived: a rejected config is refused at render, and a failed restart stops the other LB's.
+k04 = {t.get("name"): t for t in tasks("haproxy/tasks/04-keepalived-configure.yml")}
+check(str(k04["render /etc/keepalived/keepalived.conf"]["template"].get("validate", "")).startswith("keepalived -t -f %s")
+      and k04["install chk_haproxy.sh (backend-pool reachability probe)"]["copy"].get("validate") == "sh -n %s",
+      "keepalived.conf and its check script are validated before they replace the live files")
+kh = next(h for h in tasks("haproxy/handlers/main.yml") if h.get("listen") == "keepalived config changed")
+check(kh.get("throttle") == 1 and kh.get("any_errors_fatal") is True and "is-active" in str(kh.get("shell")),
+      "keepalived restarts one LB at a time and a failed restart ends the play before the next LB")
+
 # alertmanager: gossip is unauthenticated, so only the other prometheus_pair host may reach it.
 pfw = next(t for t in tasks("prometheus/tasks/06-firewall.yml") if "copy" in t)["copy"]["content"]
 pfwr = jinja2.Environment(trim_blocks=True, undefined=jinja2.ChainableUndefined).from_string(pfw).render(
@@ -696,6 +765,15 @@ for role in sorted(os.listdir(roles)):
         stat_regs = [t.get("register") for t in rtasks if isinstance(t.get("stat"), dict) and t["stat"].get("path") == path]
         check(any(t.get("notify") == topic and any(r and r in str(t.get("when")) for r in stat_regs) for t in rtasks),
               f"{role} re-notifies '{topic}' from {path} on the next run")
+        # A host that fails a later task runs no handlers, so each change writes the marker itself.
+        for k, t in enumerate(rtasks):
+            if (t.get("notify") != topic or "import_tasks" in t
+                    or any(r and r in str(t.get("when")) for r in stat_regs)):
+                continue
+            nxt = rtasks[k + 1] if k + 1 < len(rtasks) else {}
+            check(bool(t.get("register")) and isinstance(nxt.get("file"), dict) and nxt["file"].get("path") == path
+                  and nxt["file"].get("state") == "touch" and f"{t.get('register')} is changed" in str(nxt.get("when")),
+                  f"{role} '{t.get('name')}' writes {path} itself before a later task can fail")
 
 # haproxy: VIP ownership is a whole-address match; a host address that extends the VIP's digits is not the VIP.
 scraper = next(t for t in tasks("haproxy/tasks/07-monitoring.yml") if "keepalived.prom" in str(t.get("copy", {}).get("content", "")))
@@ -714,6 +792,31 @@ for vip, addrs, want in (("10.0.0.10", ["10.0.0.101/24"], "0"), ("10.0.0.10", ["
         subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}"}, check=False)
         prom = open(f"{d}/keepalived.prom").read() if os.path.exists(f"{d}/keepalived.prom") else ""
         check(f"stellarindex_haproxy_vip_owner {want}\n" in prom, f"keepalived scraper reports owner={want} for VIP {vip} on {addrs}")
+
+# redis: the primary gauge is the host's own Redis role; its Sentinel being down is not "no primary".
+rscr = next(t for t in tasks("redis-sentinel/tasks/07-monitoring.yml")
+            if "redis_sentinel.prom" in str(t.get("copy", {}).get("content", "")))["copy"]["content"]
+for role, sentinel, want_primary, want_up in (("master", "", "1", "0"), ("slave", "10.0.0.21", "0", "1"),
+                                              ("master", "10.0.0.21", "1", "1"), (None, "10.0.0.21", None, "1")):
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(f"{d}/bin")
+        info = f"# Replication\\r\\nrole:{role}\\r\\n" if role else ""
+        with open(f"{d}/bin/redis-cli", "w") as fh:
+            fh.write(f"#!/bin/sh\ncase \"$*\" in *SENTINEL*) printf '%s' '{sentinel and sentinel + chr(10) + '6379' + chr(10)}' ;;"
+                     f" *INFO*) [ -n '{info}' ] || exit 1; printf '{info}' ;; esac\n")
+        os.chmod(f"{d}/bin/redis-cli", 0o755)
+        renv = jinja2.Environment()
+        renv.filters["bool"] = bool
+        script = renv.from_string(rscr).render(
+            redis_node_exporter_textfile_dir=d, ansible_host="10.0.0.21", redis_port=6379, redis_acl_lockdown=False,
+            redis_sentinel_port=26379, redis_sentinel_master_name="m")
+        r = subprocess.run(["bash", "-c", script], env={**os.environ, "PATH": f"{d}/bin:{os.environ['PATH']}",
+                                                         "REDIS_PASSWORD": "x"}, capture_output=True, text=True)
+        prom = open(f"{d}/redis_sentinel.prom").read() if os.path.exists(f"{d}/redis_sentinel.prom") else ""
+        got_primary = re.search(r"^stellarindex_redis_sentinel_primary (\d)$", prom, re.M)
+        check(r.returncode == 0 and (got_primary.group(1) if got_primary else None) == want_primary
+              and f"stellarindex_redis_sentinel_up {want_up}\n" in prom,
+              f"redis scraper: role={role} sentinel={'up' if sentinel else 'down'} -> primary={want_primary} up={want_up}")
 
 # A task failure before the handler flush drops every queued notification unless the play forces handlers.
 pdir = os.path.join(roles, "..", "playbooks")
