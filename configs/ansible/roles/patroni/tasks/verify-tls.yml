@@ -9,8 +9,9 @@
     umask 077
     d=$(mktemp -d)
     trap 'rm -rf "$d"' EXIT
-    awk -v d="$d" '/^--split--$/ { n++; next } { print > (d "/" n) }'
-    openssl verify -CAfile "$d/0" "$d/1" >/dev/null
+    awk -v d="$d" 'BEGIN { n = 0 } /^--split--$/ { n++; next } { print > (d "/" n) }'
+    # openssl verify reads only the first cert of a file; -untrusted admits the rest as the chain.
+    openssl verify -CAfile "$d/0" -untrusted "$d/1" "$d/1" >/dev/null
     [ "$(openssl x509 -in "$d/1" -noout -pubkey)" = "$(openssl pkey -in "$d/2" -pubout)" ]
   args:
     executable: /bin/bash

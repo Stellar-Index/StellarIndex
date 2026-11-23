@@ -317,7 +317,8 @@ pgroups = {"postgres_cluster": ["db-01", "db-02", "db-03"]}
 for host, want in (("db-01", True), ("db-02", False)):
     conf = yaml.safe_load(penv.from_string(text("patroni/templates/patroni.yml.j2")).render(
         inventory_hostname=host, groups=pgroups, hostvars={h: {"ansible_host": "10.0.0.1"} for h in pgroups["postgres_cluster"]},
-        patroni_internal_cidrs=["10.0.0.0/24"], patroni_synchronous_node_count=1, etcd_tls_enabled=False))
+        patroni_internal_cidrs=["10.0.0.0/24"], patroni_synchronous_node_count=1, etcd_tls_enabled=False,
+        patroni_max_slot_wal_keep_size=yaml.safe_load(text("patroni/defaults/main.yml"))["patroni_max_slot_wal_keep_size"]))
     check(("bootstrap" in conf) == want, f"patroni.yml for {host} has a bootstrap section: {want}")
     if want:
         initdb = conf["bootstrap"]["initdb"]
@@ -333,6 +334,11 @@ for host, want in (("db-01", True), ("db-02", False)):
                   and "patroni_archive_command | trim | length > 0" in str(t.get("assert", {}).get("that"))
                   for t in tasks("patroni/tasks/01-preflight.yml")),
               "archive_mode on is paired with a preflight proving archive_command can run")
+        # A slot per member and no cap: one stuck replica fills the primary's disk.
+        check(re.fullmatch(r"[1-9][0-9]*(MB|GB|TB)", str(dcs_pg.get("max_slot_wal_keep_size", ""))) is not None
+              and any("patroni_max_slot_wal_keep_size" in str(t.get("assert", {}).get("that"))
+                      for t in tasks("patroni/tasks/01-preflight.yml")),
+              "patroni caps slot-held WAL (max_slot_wal_keep_size), and preflight refuses no cap")
 boot = tasks("patroni/tasks/08-patroni-bootstrap.yml")
 bnames = [t.get("name", "") for t in boot]
 hi = next((i for i, t in enumerate(boot) if str(t.get("uri", {}).get("url", "")).endswith("/health")), None)
@@ -350,6 +356,46 @@ for f, copy_name in (("03-etcd-configure.yml", "install etcd TLS material"),
 vt = code("patroni/tasks/verify-tls.yml")
 check("openssl verify -CAfile" in vt and "-pubkey" in vt and "-pubout" in vt and "stdin:" in vt,
       "verify-tls checks the chain and the key match, with the PEMs on stdin, not argv")
+# Execute the verifier itself: string checks passed while its PEM splitter failed every converge.
+if not shutil.which("openssl"):
+    check(os.environ.get("CI") != "true", "openssl present to execute verify-tls (required in CI)")
+else:
+    vt_sh = tasks("patroni/tasks/verify-tls.yml")[0]["shell"]
+    with tempfile.TemporaryDirectory() as td:
+        with open(f"{td}/x.cnf", "w") as fh:
+            fh.write("[req]\ndistinguished_name=dn\n[dn]\n[ca]\nbasicConstraints=critical,CA:TRUE\n"
+                     "keyUsage=critical,keyCertSign,cRLSign\n[leaf]\nbasicConstraints=CA:FALSE\n")
+
+        def ossl(*a):
+            subprocess.run(["openssl", *a], cwd=td, check=True, capture_output=True)
+
+        def cert(name, issuer=None, ext="leaf"):
+            ossl("genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256", "-out", f"{name}.key")
+            if issuer is None:
+                ossl("req", "-x509", "-new", "-key", f"{name}.key", "-subj", f"/CN={name}", "-days", "2",
+                     "-config", "x.cnf", "-extensions", "ca", "-out", f"{name}.pem")
+                return
+            ossl("req", "-new", "-key", f"{name}.key", "-subj", f"/CN={name}", "-config", "x.cnf", "-out", f"{name}.csr")
+            ossl("x509", "-req", "-in", f"{name}.csr", "-CA", f"{issuer}.pem", "-CAkey", f"{issuer}.key",
+                 "-set_serial", "1", "-days", "2", "-extfile", "x.cnf", "-extensions", ext, "-out", f"{name}.pem")
+
+        def pem(*names):
+            return "".join(open(f"{td}/{n}").read() for n in names)
+
+        for args in (("root",), ("other",), ("inter", "root", "ca"), ("leaf", "root"), ("deep", "inter"),
+                     ("foreign", "other")):
+            cert(*args)
+
+        def verify(ca, crt, key):
+            rc = subprocess.run(["bash", "-c", vt_sh], input=f"{ca.strip()}\n--split--\n{crt.strip()}\n--split--\n{key.strip()}",
+                                capture_output=True, text=True).returncode
+            return rc == 0
+
+        check(verify(pem("root.pem"), pem("leaf.pem"), pem("leaf.key")), "verify-tls passes a cert from the CA with its own key")
+        check(not verify(pem("root.pem"), pem("leaf.pem"), pem("deep.key")), "verify-tls refuses a key from another pair")
+        check(not verify(pem("root.pem"), pem("foreign.pem"), pem("foreign.key")), "verify-tls refuses a cert from another CA")
+        check(verify(pem("root.pem"), pem("deep.pem", "inter.pem"), pem("deep.key")),
+              "verify-tls passes a leaf+intermediate cert file under a root-only CA")
 join = tasks("patroni/tasks/09-patroni-join.yml")
 names = [t.get("name", "") for t in join]
 wait_i = next((i for i, t in enumerate(join) if "/initialize" in str(t.get("command", ""))), None)
@@ -696,6 +742,15 @@ for role in sorted(os.listdir(roles)):
         stat_regs = [t.get("register") for t in rtasks if isinstance(t.get("stat"), dict) and t["stat"].get("path") == path]
         check(any(t.get("notify") == topic and any(r and r in str(t.get("when")) for r in stat_regs) for t in rtasks),
               f"{role} re-notifies '{topic}' from {path} on the next run")
+        # A host that fails a later task runs no handlers, so each change writes the marker itself.
+        for k, t in enumerate(rtasks):
+            if (t.get("notify") != topic or "import_tasks" in t
+                    or any(r and r in str(t.get("when")) for r in stat_regs)):
+                continue
+            nxt = rtasks[k + 1] if k + 1 < len(rtasks) else {}
+            check(bool(t.get("register")) and isinstance(nxt.get("file"), dict) and nxt["file"].get("path") == path
+                  and nxt["file"].get("state") == "touch" and f"{t.get('register')} is changed" in str(nxt.get("when")),
+                  f"{role} '{t.get('name')}' writes {path} itself before a later task can fail")
 
 # haproxy: VIP ownership is a whole-address match; a host address that extends the VIP's digits is not the VIP.
 scraper = next(t for t in tasks("haproxy/tasks/07-monitoring.yml") if "keepalived.prom" in str(t.get("copy", {}).get("content", "")))

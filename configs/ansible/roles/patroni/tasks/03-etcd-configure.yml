@@ -75,7 +75,17 @@
     label: "{{ item.name }}"
   when: etcd_tls_enabled
   no_log: true
+  register: _etcd_tls_install
   notify: "etcd config changed"
+
+# A notification lives only in this play's memory, and a host that fails a later
+# task runs no handlers, so the marker is written here, not only by the handler.
+- name: persist the etcd restart for the TLS change
+  file:
+    path: /etc/default/.etcd-restart-pending
+    state: touch
+    mode: '0600'
+  when: _etcd_tls_install is changed
 
 # etcd reads ETCD_INITIAL_CLUSTER_STATE only on an empty data dir. "new" there
 # while a peer quorum exists bootstraps a fresh raft log under the member id the
@@ -192,4 +202,12 @@
     owner: root
     group: etcd
     backup: yes
+  register: _etcd_env_render
   notify: "etcd config changed"
+
+- name: persist the etcd restart for the /etc/default/etcd change
+  file:
+    path: /etc/default/.etcd-restart-pending
+    state: touch
+    mode: '0600'
+  when: _etcd_env_render is changed
