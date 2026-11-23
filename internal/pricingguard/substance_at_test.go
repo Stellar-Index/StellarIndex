@@ -64,7 +64,7 @@ func scamPair(t *testing.T) (canonical.Asset, canonical.Asset) {
 	return mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"), mustAsset(t, "native")
 }
 
-// Gate.PriceWithholdingAt is one expression over both gates; the substance half
+// A point-in-time Judge is one expression over both gates; the substance half
 // is the point-in-time one.
 func TestPriceWithheldAt_UsesThePointInTimeSubstanceVerdict(t *testing.T) {
 	base, quote := scamPair(t)
@@ -73,13 +73,15 @@ func TestPriceWithheldAt_UsesThePointInTimeSubstanceVerdict(t *testing.T) {
 		at:   func(time.Time) timescale.MarketSubstance { return dustSubstance },
 	}
 	gate := newTimedGate(r)
-	if (Gate{Substance: gate}).PriceWithheld(context.Background(), base, quote, "test") {
+	ctx := context.Background()
+	if (Gate{Substance: gate}).Judge(ctx, base, quote, "test", Query{}).Withholding != NotWithheld {
 		t.Fatal("fixture: the live read must not be withheld")
 	}
-	if (Gate{Substance: gate}).PriceWithholdingAt(context.Background(), base, quote, time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC), "test") == NotWithheld {
-		t.Fatal("PriceWithholdingAt did not withhold a dust instant")
+	at := Query{PointInTime: true, At: time.Date(2021, 3, 1, 9, 0, 0, 0, time.UTC)}
+	if (Gate{Substance: gate}).Judge(ctx, base, quote, "test", at).Withholding == NotWithheld {
+		t.Fatal("a point-in-time Judge did not withhold a dust instant")
 	}
-	if (Gate{}).PriceWithholdingAt(context.Background(), base, quote, gateNow, "test") != NotWithheld {
+	if (Gate{}).Judge(ctx, base, quote, "test", Query{PointInTime: true, At: gateNow}).Withholding != NotWithheld {
 		t.Error("nil gates must allow")
 	}
 }

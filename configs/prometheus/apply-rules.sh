@@ -12,7 +12,8 @@
 #   apply-rules.sh --check-only [SRC_DIR]   validate only; no install
 #   apply-rules.sh --live-check [SRC_DIR]   validate + diff SRC_DIR against the
 #                                            alerts $PROM_URL has loaded RIGHT
-#                                            NOW; no install. For a scheduled
+#                                            NOW and byte-compare it with the
+#                                            files in $RULES_DEST; no install. For a scheduled
 #                                            reconciliation on the host: apply,
 #                                            ci.yml's --check-only and the verify
 #                                            step below only run AT deploy time,
@@ -184,6 +185,26 @@ if [ "$LIVE_CHECK" = "1" ]; then
     echo "apply-rules: live-check: loaded on $PROM_URL but NOT in the repo (stale host or out-of-band change):" >&2
     printf '  %s\n' "$extra" >&2
     status=1
+  fi
+  # Names alone pass a weakened expr/for/threshold under the same alert name; the installed bytes must be the repo's.
+  if [ ! -d "$DEST" ]; then
+    echo "apply-rules: live-check: $DEST not found — cannot compare the installed rule files" >&2
+    status=1
+  else
+    for f in "${src_files[@]}"; do
+      if ! cmp -s -- "$f" "$DEST/${f##*/}"; then
+        echo "apply-rules: live-check: $DEST/${f##*/} is missing or differs from the repo's ${f##*/}" >&2
+        status=1
+      fi
+    done
+    shopt -s nullglob
+    for f in "$DEST"/*.yml; do
+      if [ ! -e "$SRC/${f##*/}" ]; then
+        echo "apply-rules: live-check: $f is installed but NOT in the repo" >&2
+        status=1
+      fi
+    done
+    shopt -u nullglob
   fi
   expected_record_count="$(printf '%s\n' "$expected_records" | grep -c . || true)"
   [ "$status" = 0 ] && echo "apply-rules: live-check OK — $PROM_URL matches the repo ($expected_count alert(s), $expected_record_count recording rule(s))"

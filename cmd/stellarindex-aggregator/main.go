@@ -2200,9 +2200,10 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			// Price-withholding chokepoint ([pricing_guard]), the expression the API serves under: an
 			// alert must never fire off a thin market or a scam-flagged issuer on EITHER leg.
 			// Withheld means ok=false and sticky (no other spelling is tried); the gate is
-			// alias-invariant, so the requested pair's verdict is every spelling's.
-			if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
-				return "", time.Time{}, false, nil
+			// alias-invariant, so the requested pair's verdict is every spelling's. Unmeasured is a
+			// read failure the worker retries next sweep, never a benign no-price.
+			if withheld, err := r.gate.PushWithholding(ctx, base, quote, "price_alert"); err != nil || withheld != pricingguard.NotWithheld {
+				return "", time.Time{}, false, err
 			}
 			// Serving-sanity guard, in this body so the raw read and its guard cannot drift apart.
 			served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
