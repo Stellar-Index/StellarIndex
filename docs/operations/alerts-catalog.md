@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 329 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 330 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -505,7 +505,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_assets_popular_priceless` | `assets_popular_priceless` (popular, priceless, non-withheld; single-account wash excluded) | > 0 for 1 h | ticket | [assets-popular-priceless](runbooks/data-freshness.md#stellarindex_assets_popular_priceless) |
 | `stellarindex_priceless_coverage_check_stale` | `time() - priceless_coverage_check_last_success_unix{job="stellarindex_aggregator"}` | > 1800 s, 30 min (tripwire wedged) | ticket | [assets-popular-priceless](runbooks/data-freshness.md#stellarindex_assets_popular_priceless) |
 | `stellarindex_priceless_coverage_check_errors` | `increase(priceless_coverage_check_runs_total{outcome="error"}[15m])` | > 0 for 15 min | ticket | [assets-popular-priceless](runbooks/data-freshness.md#stellarindex_assets_popular_priceless) |
-| `stellarindex_api_cors_wildcard_in_prod` | `increase(api_cors_decisions_total{outcome="allowed_wildcard"}[15m])` | > 0 for 5 min (wildcard CORS matching real traffic on r1) | ticket | [api-cors-wildcard](runbooks/api-security.md#stellarindex_api_cors_wildcard_in_prod) |
+| `stellarindex_api_cors_wildcard_in_prod` | `increase(api_cors_decisions_total{outcome="allowed_wildcard"}[15m])` | > 0 for 5 min per instance (wildcard CORS matching real traffic on the named host) | ticket | [api-cors-wildcard](runbooks/api-security.md#stellarindex_api_cors_wildcard_in_prod) |
 | `stellarindex_apikey_lineage_write_failures` | `sum by (op) (increase(apikey_lineage_write_failures_total[90m]))` | >= 3 for 30 min (sustained, per op; a missing ACL grant fires, so do sparse failures on a quiet host) | ticket | [apikey-lineage-write-failures](runbooks/api-security.md#stellarindex_apikey_lineage_write_failures) |
 | `stellarindex_cross_region_divergence` | `rate(cross_region_divergences_total[15m])` per (pair, metric) | > 0 for 5 min (regions disagree on a closed bucket) | ticket | [cross-region-divergence](runbooks/cross-region.md#stellarindex_cross_region_divergence) |
 | `stellarindex_cross_region_fetch_errors` | `rate(cross_region_fetch_errors_total[15m])` per (region, pair, metric) | > 0 for 10 min (that region not compared) | ticket | [cross-region-divergence](runbooks/cross-region.md#stellarindex_cross_region_fetch_errors) |
@@ -535,6 +535,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_api_degraded_responses_sustained` | `flagged_responses_total{flag="degraded"}` / `http_requests_total` per route, 15 min rate | > 10% for 30 min | ticket | [api](runbooks/api.md#stellarindex_api_degraded_responses_sustained) |
 | `stellarindex_failed_auth_rate_high` | `rate(failed_auth_total{outcome="rejected"}[5m])` | > 1/s for 15 min (distributed guessing under per-IP caps) | ticket | [failed-auth-rate-high](runbooks/api.md#stellarindex_failed_auth_rate_high) |
 | `stellarindex_magic_link_token_table_growing` | `stellarindex_magic_link_token_rows` | > 10000 for 30 min | ticket | [auth-reaper-stalled](runbooks/api.md#stellarindex_magic_link_token_table_growing) |
+| `stellarindex_webhook_delivery_table_growing` | `retention_reaper_rows{reaper="webhook_delivery"}` | > 1000000 for 30 min (retention sweep outpaced by delivery fan-out) | ticket | [webhook-delivery-table-growing](runbooks/api.md#stellarindex_webhook_delivery_table_growing) |
 | `stellarindex_login_code_lockout_table_growing` | `login_code_lockout_rows`, `login_code_lockout_errors_total{op="status_check"}` | rows > 10000 or any fail-open, 30 min | ticket | [login-code-lockout-table-growing](runbooks/api.md#stellarindex_login_code_lockout_table_growing) |
 | `stellarindex_login_code_guessing` | `increase(login_code_failures_total{outcome}[1h])` | any `lockout_engaged`, or > 50 `wrong_code`, for 5 min (email-code guessing, which `failed_auth_total` never sees) | ticket | [login-code-guessing](runbooks/api.md#stellarindex_login_code_guessing) |
 | `stellarindex_registration_table_growing` | `increase(registrations_total{outcome="created"})` over 6 h or 7 d | > 50 in 6 h or > 100 in 7 d, for 30 min (open registration leaves permanent rows and live keys) | ticket | [registration-table-growing](runbooks/api.md#stellarindex_registration_table_growing) |
@@ -586,7 +587,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_zfs_pool_fill_90pct_within_7d` | same | < 10 % free in 7 d, 30 min | page | [infra](runbooks/infra.md#stellarindex_zfs_pool_fill_90pct_within_7d) |
 | `stellarindex_nvme_smart_warn` | `increase(nvme_num_err_log_entries_total[1h])` | > 0 for > 5 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_smart_warn) |
 | `stellarindex_nvme_thermal_throttle` | `nvme_temperature_celsius` | > 70 °C for > 5 min | page | [infra](runbooks/infra.md#stellarindex_nvme_thermal_throttle) |
-| `stellarindex_nvme_health_series_missing` | `nvme_temperature_celsius` / `nvme_num_err_log_entries_total` seen in the last 3 d, now absent per instance | any, for 30 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_health_series_missing) |
+| `stellarindex_nvme_health_series_missing` | `nvme_temperature_celsius` / `nvme_num_err_log_entries_total` seen in the last 14 d, now absent per (instance, device) | any, for 30 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_health_series_missing) |
 | `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | ticket | [infra](runbooks/infra.md#stellarindex_nvme_wear_high) |
 | `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | page | [infra](runbooks/infra.md#stellarindex_nvme_spare_low) |
 | `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | ticket | [infra](runbooks/infra.md#stellarindex_nvme_media_errors) |

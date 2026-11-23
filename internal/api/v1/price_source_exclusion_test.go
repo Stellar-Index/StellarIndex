@@ -122,6 +122,34 @@ func TestPriceSourceExclusion_RedisLayer(t *testing.T) {
 	}
 }
 
+// TestPriceSourceExclusion_BatchPost: the POST batch withholds an excluded id exactly as the GET batch does.
+func TestPriceSourceExclusion_BatchPost(t *testing.T) {
+	for _, tc := range exclCases() {
+		srv := v1.New(v1.Options{Prices: &stubPriceReader{}, Triangulated: exclCache{value: "0.2468", direct: true}, Exclusions: tc.gate})
+		ts := startHTTPTest(t, srv.Handler())
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/v1/price/batch",
+			strings.NewReader(`{"asset_ids":["native"],"quote":"fiat:USD"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		body := string(raw)
+		withheld := strings.Contains(body, `"withheld":["native"]`) && !strings.Contains(body, "0.2468")
+		if served := resp.StatusCode == http.StatusOK && strings.Contains(body, "0.2468"); tc.withheld == "" && !served {
+			t.Errorf("%s: %d %s, want native served", tc.name, resp.StatusCode, body)
+		}
+		if tc.withheld != "" && !withheld {
+			t.Errorf("%s: %d %s, want native withheld with no price", tc.name, resp.StatusCode, body)
+		}
+	}
+}
+
 func exclRedisLayerCase(t *testing.T, quote, path string, direct bool) {
 	t.Helper()
 	newSrv := func(g v1.PriceExclusionGate) *v1.Server {

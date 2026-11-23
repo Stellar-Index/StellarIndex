@@ -200,6 +200,16 @@ run healthy
 expect stellarindex_galexie_catchup_refusals_5m 0 "a clean quiet run publishes the zero it measured"
 expect stellarindex_galexie_catchup_probe_read_ok 1 "a clean quiet run reports read_ok 1"
 expect stellarindex_galexie_catchup_probe_journal_lines 364 "a clean quiet run reports the lines it read"
+# The temp file is renamed from beside the target: a rename from /tmp is a
+# cross-filesystem copy, so a scrape can read a half-written file.
+mkdir -p "$TMP/mvrec"
+# shellcheck disable=SC2016  # the stub's own $@/$PATH, expanded when it runs
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "${@: -2:1}" >> "%s"\nPATH="${PATH#*:}" exec mv "$@"\n' "$TMP/mvrec.log" > "$TMP/mvrec/mv"
+chmod +x "$TMP/mvrec/mv"; : > "$TMP/mvrec.log"
+PATH="$TMP/mvrec:$PATH" run healthy
+src="$(tail -n 1 "$TMP/mvrec.log")"
+[[ "$RC" -eq 0 && "${src%/*}" == "$TEXTFILE_DIR" ]] && ok "the textfile is renamed from a temp beside it" || bad "the textfile was renamed from '${src:-<no mv>}' (rc $RC), not from $TEXTFILE_DIR"
+expect stellarindex_galexie_catchup_refusals_5m 0 "the measurement is still published"
 
 # ─── 3. the read failed outright ────────────────────────────────────
 #
