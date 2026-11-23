@@ -237,13 +237,22 @@ for f in dispatcher_adapter.go abi.go; do
   expect "$f change without a plan fails" 1 "~ internal/sources/demo/$f"
 done
 
-# --- 2f. off-chain venue parsers, pollers and backfills set recorded trade and price values
-for f in parse.go poller.go rates.go fixings.go openexchangerates.go backfill_trades.go; do
+# --- 2f. off-chain venue parsers and rate fixings set recorded trade and price values
+for f in parse.go rates.go fixings.go; do
   mkrepo 0
   mkdir -p "$TMP/repo/internal/sources/external/venue"
   touch_commit "internal/sources/external/venue/$f" "fix(venue): change what $f records"
   runGate
   expect "external $f change without a plan fails" 1 "~ internal/sources/external/venue/$f"
+done
+
+# --- 2g. HTTP/retry plumbing records nothing, so it demands no plan
+for f in poller.go backfill.go backfill_trades.go openexchangerates.go; do
+  mkrepo 0
+  mkdir -p "$TMP/repo/internal/sources/external/venue"
+  touch_commit "internal/sources/external/venue/$f" "fix(venue): retry timing in $f"
+  runGate
+  expect "external $f change without a plan passes" 0 "nothing to declare"
 done
 
 # --- 3. declared plan passes ------------------------------------------
