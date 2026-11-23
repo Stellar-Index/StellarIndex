@@ -694,6 +694,15 @@ Subcommands:
                           -changes-only writes just the ledgers row (commit
                           marker) and ledger_entry_changes: re-derives entry
                           ordinals without rewriting the other tables.
+  ch-backfill -config PATH -ledgers FILE [-bucket NAME] [-ch-addr H:P] [-parallel N] [-changes-only] (-write | -dry-run)
+                          Targeted form: re-derive only the ledgers listed in
+                          FILE (one per line, # comments, each >= 2, at most
+                          2000; refuses -from/-to). Neighbours sharing a galexie
+                          object are decoded and skipped, never written.
+                          -list-upgrade-ledgers -dry-run (over -from/-to or
+                          -ledgers) is a read-only walk printing every ledger
+                          whose close meta carries a ledger upgrade, as a
+                          -ledgers file annotated with its upgrade-row count.
   ch-gate -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-project-to TIP]
                           backfill acceptance gates over a backfilled range:
                           recompute the census + structural extract from
