@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -30,11 +31,41 @@ func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, 
 		return "", false, true
 	}
 	for _, tp := range candidates {
+		switch s.transitiveLegsWithheld(ctx, asset, tp) {
+		case pricingguard.NotWithheld:
+		case pricingguard.WithheldExclusionsUnread:
+			return "", false, true
+		default:
+			continue
+		}
 		if s.transitiveCandidateAllowed(ctx, asset, tp) {
 			return s.normalizeTransitiveUSD(tp.PriceUSD, asset), true, false
 		}
 	}
 	return "", false, false
+}
+
+// transitiveWindow is the span the candidate SQL pools each leg's prices_1m buckets over.
+const transitiveWindow = 24 * time.Hour
+
+// transitiveLegsWithheld is the exclusion verdict on both legs of a candidate. prices_1m pools every source with none recorded,
+// so any exclusion touching a leg's pair over the window withholds it; an unparseable leg is left to the substance gate.
+func (s *Server) transitiveLegsWithheld(ctx context.Context, asset canonical.Asset, tp timescale.TransitivePrice) pricingguard.Withholding {
+	hop, err := canonical.ParseAsset(tp.Hop)
+	if err != nil {
+		return pricingguard.NotWithheld
+	}
+	farQuote := defaultPriceQuote
+	if tp.HopQuote != "" {
+		if farQuote, err = canonical.ParseAsset(tp.HopQuote); err != nil {
+			return pricingguard.NotWithheld
+		}
+	}
+	from := time.Now().Add(-transitiveWindow)
+	if w := s.unattributedWithheld(ctx, asset, hop, from, false); w != pricingguard.NotWithheld {
+		return w
+	}
+	return s.unattributedWithheld(ctx, hop, farQuote, from, false)
 }
 
 // transitiveCandidateAllowed reports whether one candidate hop's price

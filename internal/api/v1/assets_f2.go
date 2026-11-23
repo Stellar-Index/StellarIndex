@@ -387,12 +387,7 @@ func clearThinWhenUnpriced(d *AssetDetail) {
 // only price producers, never applyF2Fields, so no market cap, FDV or change derives from a thin price. "unattributed" is
 // excluded: on detail it labels issuer suppression, which no thin release may override.
 func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, asset canonical.Asset, off *ThinAdmission) {
-	if detail.PriceUSD != nil || off.Evidence() == nil {
-		return
-	}
-	switch detail.PriceWithheldReason {
-	case "", PriceWithheldSubstance, PriceWithheldUpstreamLeg:
-	default:
+	if detail.PriceUSD != nil || off.Evidence() == nil || !fillMayReplace(detail.PriceWithheldReason, fillThinRelease) {
 		return
 	}
 	onCtx, on := WithThinAdmission(ctx, asset, defaultPriceQuote, true)
