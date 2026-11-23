@@ -3319,8 +3319,8 @@ func (s *Server) foldAliasTwins(ctx context.Context, rows []AssetDetail, keepLon
 }
 
 // listingCanonicalIDs maps each row to its class's canonical asset_id: the alias registry's, else, for a contract row, the asset it
-// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself
-// and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
+// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup maps the row to its own
+// [unconfirmedSACClass] and is reported unread on ctx's [readReport]: the row may be an unfolded alias.
 func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []string {
 	ids := make([]string, len(rows))
 	bySAC := make(map[string]string)
@@ -3352,12 +3352,20 @@ func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []
 		if err != nil {
 			reportUnreadRead(ctx)
 		}
-		if ok {
+		switch {
+		case ok:
 			ids[i] = wrapped
+		case err != nil:
+			// A class no row is primary of, so an unfiltered page drops the row: the page holding its classic row may add
+			// its volume, and serving it here as well would count it twice across pages.
+			ids[i] = unconfirmedSACClass + rows[i].AssetID
 		}
 	})
 	return ids
 }
+
+// unconfirmedSACClass prefixes the fold class of a contract row whose SAC lookup failed; no asset_id starts with it.
+const unconfirmedSACClass = "unconfirmed-sac:"
 
 // derivedSAC is a classic asset_id's SAC address.
 func derivedSAC(assetID string) (string, bool) {
