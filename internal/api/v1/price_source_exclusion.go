@@ -18,6 +18,14 @@ type PriceExclusionGate interface {
 	InstantWithholding(ctx context.Context, base, quote canonical.Asset, source string, ts time.Time) pricingguard.Withholding
 	UnattributedWithholding(ctx context.Context, base, quote canonical.Asset, from, to time.Time) pricingguard.Withholding
 	MultiHopWithholding(ctx context.Context, from, to time.Time) pricingguard.Withholding
+	// Snapshot is one read of the set, for a walk judging many buckets.
+	Snapshot(ctx context.Context) (pricingguard.ExclusionSet, pricingguard.Withholding)
+}
+
+// bucketJudge is what [judgeBucket] needs: the gate, or one [pricingguard.ExclusionSet] read from it.
+type bucketJudge interface {
+	Withholding(ctx context.Context, base, quote canonical.Asset, sources []string, from, to time.Time) pricingguard.Withholding
+	UnattributedWithholding(ctx context.Context, base, quote canonical.Asset, from, to time.Time) pricingguard.Withholding
 }
 
 // exclusionCleanTrades drops trades from an excluded source; the survivors are each one venue's own fill, so a VWAP over them
@@ -141,13 +149,20 @@ func (s *Server) bucketWithholding(
 	if s.Exclusions == nil {
 		return pricingguard.NotWithheld
 	}
+	return judgeBucket(ctx, s.Exclusions, books, sources, from, to)
+}
+
+// judgeBucket is [Server.bucketWithholding] against j.
+func judgeBucket(ctx context.Context, j bucketJudge, books []canonical.Pair, sources []string, from, to time.Time) pricingguard.Withholding {
 	if !from.Before(to) {
 		to = from.Add(time.Nanosecond)
 	}
 	for _, m := range books {
-		w := s.Exclusions.UnattributedWithholding(ctx, m.Base, m.Quote, from, to)
+		var w pricingguard.Withholding
 		if len(sources) > 0 {
-			w = s.Exclusions.Withholding(ctx, m.Base, m.Quote, sources, from, to)
+			w = j.Withholding(ctx, m.Base, m.Quote, sources, from, to)
+		} else {
+			w = j.UnattributedWithholding(ctx, m.Base, m.Quote, from, to)
 		}
 		if w != pricingguard.NotWithheld {
 			return w
@@ -156,50 +171,90 @@ func (s *Server) bucketWithholding(
 	return pricingguard.NotWithheld
 }
 
+// exclusionSnapshot reads the gate's set once for a many-bucket judgement; ok=false (nothing to judge) without a gate or with
+// an empty set. Any verdict other than NotWithheld is the unread set, which withholds the whole series.
+func (s *Server) exclusionSnapshot(ctx context.Context) (set pricingguard.ExclusionSet, ok bool, v pricingguard.Withholding) {
+	if s.Exclusions == nil {
+		return set, false, pricingguard.NotWithheld
+	}
+	set, v = s.Exclusions.Snapshot(ctx)
+	return set, v == pricingguard.NotWithheld && !set.Empty(), v
+}
+
 // cleanPoints drops each chart bucket an exclusion covers over its own span, under the book it was read from and the walk's
-// pair, so a gap stands where it was; any other verdict (the exclusion set unread) refuses the series.
+// pair, so a gap stands where it was; the unread set refuses the series. A bucket another source already owns is never
+// served from this one, so it is dropped unjudged and cannot mark the response.
 func (w *chartWalk) cleanPoints(ctx context.Context, sp canonical.Pair, points []HistoryPoint) []HistoryPoint {
 	if w.s.Exclusions == nil {
 		return points
 	}
-	books := appendBook([]canonical.Pair{sp}, append([]canonical.Pair{w.pair}, w.win.servedAs...)...)
-	kept := points[:0:0]
+	unowned := points[:0:0]
 	for _, p := range points {
-		switch v := w.s.bucketWithholding(ctx, books, p.Sources, p.Bucket, chartBucketStep(p.Bucket, w.win.gran)); v {
-		case pricingguard.NotWithheld:
+		if !w.merge.holds(p.Bucket) {
+			unowned = append(unowned, p)
+		}
+	}
+	if len(unowned) == 0 {
+		return unowned
+	}
+	set, judge, v := w.s.exclusionSnapshot(ctx)
+	if v != pricingguard.NotWithheld {
+		w.res.refused = v
+		return nil
+	}
+	if !judge {
+		return unowned
+	}
+	books := appendBook([]canonical.Pair{sp}, append([]canonical.Pair{w.pair}, w.win.servedAs...)...)
+	kept := unowned[:0:0]
+	for _, p := range unowned {
+		if judgeBucket(ctx, set, books, p.Sources, p.Bucket, chartBucketStep(p.Bucket, w.win.gran)) == pricingguard.NotWithheld {
 			kept = append(kept, p)
-		case pricingguard.WithheldSourceExcluded:
-			w.res.withheld = true
-		default:
-			w.res.refused = v
+		} else {
+			w.res.withheldFrom = earliestWithheld(w.res.withheldFrom, p.Bucket)
 		}
 	}
 	return kept
 }
 
-// fxSeriesClean drops each daily fx_quotes point an exclusion covers, judged on its vendor over its day (none recorded: any
-// exclusion naming the ticker); withheld reports one was. Any other verdict is a withheld error for the whole series.
-func (s *Server) fxSeriesClean(ctx context.Context, ticker string, points []FXQuotePoint) (kept []FXQuotePoint, withheld bool, err error) {
-	if s.Exclusions == nil || ticker == "USD" {
-		return points, false, nil
+// earliestWithheld is the earlier of two withheld-bucket starts, zero meaning none.
+func earliestWithheld(a, b time.Time) time.Time {
+	if a.IsZero() || (!b.IsZero() && b.Before(a)) {
+		return b
 	}
-	book := []canonical.Pair{{Base: canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, Quote: defaultPriceQuote}}
+	return a
+}
+
+// fxSeriesClean drops each daily fx_quotes point an exclusion covers, judged on its vendor over its day (none recorded: any
+// exclusion naming the ticker) under ticker/USD and each of also (the pair a cross is served as); withheldFrom is the first
+// day dropped, zero when none was. The unread set is a withheld error for the whole series.
+func (s *Server) fxSeriesClean(
+	ctx context.Context, ticker string, points []FXQuotePoint, also ...canonical.Pair,
+) (kept []FXQuotePoint, withheldFrom time.Time, err error) {
+	if ticker == "USD" || len(points) == 0 {
+		return points, time.Time{}, nil
+	}
+	set, judge, v := s.exclusionSnapshot(ctx)
+	if v != pricingguard.NotWithheld {
+		return nil, time.Time{}, PriceWithheldError(v)
+	}
+	if !judge {
+		return points, time.Time{}, nil
+	}
+	books := appendBook([]canonical.Pair{{Base: canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, Quote: defaultPriceQuote}}, also...)
 	kept = points[:0:0]
 	for _, p := range points {
 		var sources []string
 		if p.Source != "" {
 			sources = []string{p.Source}
 		}
-		switch v := s.bucketWithholding(ctx, book, sources, p.Bucket, p.Bucket.Add(24*time.Hour)); v {
-		case pricingguard.NotWithheld:
+		if judgeBucket(ctx, set, books, sources, p.Bucket, p.Bucket.Add(24*time.Hour)) == pricingguard.NotWithheld {
 			kept = append(kept, p)
-		case pricingguard.WithheldSourceExcluded:
-			withheld = true
-		default:
-			return nil, false, PriceWithheldError(v)
+		} else {
+			withheldFrom = earliestWithheld(withheldFrom, p.Bucket)
 		}
 	}
-	return kept, withheld, nil
+	return kept, withheldFrom, nil
 }
 
 // markFillsWithheld puts an exclusion's removal of fills, or of the buckets built from them, on the wire; without it the answer

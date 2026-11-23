@@ -64,15 +64,35 @@ func NewSourceExclusionGate(r SourceExclusionReader, opts SourceExclusionGateOpt
 // Withholding reports [WithheldSourceExcluded] when an un-lifted exclusion covers any of sources for base/quote over
 // [from, to), [WithheldExclusionsUnread] when the exclusions cannot be read, else [NotWithheld].
 func (g *SourceExclusionGate) Withholding(ctx context.Context, base, quote canonical.Asset, sources []string, from, to time.Time) Withholding {
+	set, w := g.Snapshot(ctx)
+	if w != NotWithheld {
+		return w
+	}
+	return set.Withholding(ctx, base, quote, sources, from, to)
+}
+
+// ExclusionSet is one read of the un-lifted exclusions, judged without the gate's lock; its methods match the gate's.
+type ExclusionSet struct{ rows []timescale.SourceExclusion }
+
+// Snapshot returns the current exclusion set, or [WithheldExclusionsUnread] when it cannot be read. A nil gate holds none.
+func (g *SourceExclusionGate) Snapshot(ctx context.Context) (ExclusionSet, Withholding) {
 	if g == nil {
-		return NotWithheld
+		return ExclusionSet{}, NotWithheld
 	}
 	rows, ok := g.snapshot(ctx)
 	if !ok {
-		return WithheldExclusionsUnread
+		return ExclusionSet{}, WithheldExclusionsUnread
 	}
+	return ExclusionSet{rows: rows}, NotWithheld
+}
+
+// Empty reports whether the set holds no exclusion, so it withholds nothing.
+func (s ExclusionSet) Empty() bool { return len(s.rows) == 0 }
+
+// Withholding is [SourceExclusionGate.Withholding] against this set.
+func (s ExclusionSet) Withholding(_ context.Context, base, quote canonical.Asset, sources []string, from, to time.Time) Withholding {
 	b, q := base.String(), quote.String()
-	for _, e := range rows {
+	for _, e := range s.rows {
 		for _, src := range sources {
 			if e.CoversSpan(src, b, q, from, to) {
 				return WithheldSourceExcluded
@@ -86,15 +106,17 @@ func (g *SourceExclusionGate) Withholding(ctx context.Context, base, quote canon
 // triangulated VWAP): any un-lifted exclusion overlapping [from, to) that is source-wide, covers the pair, or names the base
 // on either side of its own pair withholds it, since the value's legs and sources cannot be checked.
 func (g *SourceExclusionGate) UnattributedWithholding(ctx context.Context, base, quote canonical.Asset, from, to time.Time) Withholding {
-	if g == nil {
-		return NotWithheld
+	set, w := g.Snapshot(ctx)
+	if w != NotWithheld {
+		return w
 	}
-	rows, ok := g.snapshot(ctx)
-	if !ok {
-		return WithheldExclusionsUnread
-	}
+	return set.UnattributedWithholding(ctx, base, quote, from, to)
+}
+
+// UnattributedWithholding is [SourceExclusionGate.UnattributedWithholding] against this set.
+func (s ExclusionSet) UnattributedWithholding(_ context.Context, base, quote canonical.Asset, from, to time.Time) Withholding {
 	b, q := base.String(), quote.String()
-	for _, e := range rows {
+	for _, e := range s.rows {
 		if !inForceOver(e, from, to) {
 			continue
 		}

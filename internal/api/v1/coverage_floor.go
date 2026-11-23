@@ -350,7 +350,7 @@ func (s *Server) writeChartSeries(
 ) {
 	series.markDiscontinuity()
 	coverageFrom, outside := s.coverageAnnotationIfEmpty(
-		r.Context(), s.chartCoverageSet(pair), time.Now().UTC(), len(series.Points) == 0 && !walk.withheld)
+		r.Context(), s.chartCoverageSet(pair), time.Now().UTC(), len(series.Points) == 0 && walk.withheldFrom.IsZero())
 	writeJSONCoverage(w, series, walk.markWithheld(Flags{
 		Triangulated:    walk.proxied,
 		Stale:           walk.degraded,
