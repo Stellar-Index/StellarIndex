@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { LiquidationsPanel } from './LiquidationsPanel';
@@ -192,6 +198,67 @@ describe('LiquidationsPanel', () => {
     expect(
       await screen.findByText(/No liquidation fill recorded/),
     ).toBeTruthy();
+  });
+
+  it('explains a thin bucket at the fill and a missing profit in words', async () => {
+    respond({
+      '': {
+        fills: [
+          fill({
+            lot: [
+              leg({
+                usd: null,
+                price_usd: null,
+                price_at: null,
+                reason: 'price_thin_at_fill',
+              }),
+            ],
+            lot_usd: null,
+            filler_profit_usd: null,
+            filler_profit_reason: 'inputs_partial',
+          }),
+          fill({
+            tx_hash: 'c'.repeat(64),
+            filler_profit_usd: null,
+            filler_profit_reason: 'prices_not_contemporaneous',
+          }),
+        ],
+      },
+    });
+    wrap(<LiquidationsPanel pool={POOL} />);
+    const lot = await screen.findByTestId('liq-lot-0');
+    expect(within(lot).getByText('—').getAttribute('title')).toMatch(
+      /Too little traded in the hour that priced the fill/,
+    );
+    const profitTitle = (i: number) =>
+      within(screen.getByTestId(`liq-profit-${i}`))
+        .getByText('—')
+        .getAttribute('title');
+    expect(profitTitle(0)).toMatch(
+      /Part of the collateral or the debt has no USD value/,
+    );
+    expect(profitTitle(1)).toMatch(/priced more than an hour apart/);
+  });
+
+  it('marks the oldest loaded day partial while more pages exist', async () => {
+    respond({
+      '': {
+        fills: [
+          fill({}),
+          fill({ time: '2026-07-02T10:00:00Z', tx_hash: 'b'.repeat(64) }),
+        ],
+        next: 'c1',
+      },
+      c1: { fills: [] },
+    });
+    wrap(<LiquidationsPanel pool={POOL} />);
+    expect(await screen.findByText('≥$30.00')).toBeTruthy();
+    expect(
+      screen.getByTitle(/older fills that day are not loaded/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByText('Load more'));
+    await waitFor(() => expect(screen.queryByText('Load more')).toBeNull());
+    expect(screen.queryByText('≥$30.00')).toBeNull();
   });
 
   it('loads more with the cursor and recounts the per-day chart', async () => {

@@ -12,6 +12,7 @@ import {
   dailyDebtRepaid,
   fetchLiquidations,
   liquidationReasonText,
+  type DailyRepaid,
   type Liquidation,
   type LiquidationLeg,
   type LiquidationsPage,
@@ -106,8 +107,22 @@ function Side({
   );
 }
 
-function DailyChart({ fills }: { fills: Liquidation[] }) {
-  const days = dailyDebtRepaid(fills);
+function dayTitle(d: DailyRepaid) {
+  const exact = `$${formatDecimalAmount(d.usd, 2)}`;
+  if (d.cutOff) return `At least ${exact}: older fills that day are not loaded`;
+  if (d.lowerBound)
+    return `At least ${exact}: some debt repaid that day has no USD value`;
+  return exact;
+}
+
+function DailyChart({
+  fills,
+  morePages,
+}: {
+  fills: Liquidation[];
+  morePages: boolean;
+}) {
+  const days = dailyDebtRepaid(fills, morePages);
   if (days.length === 0) return null;
   const n = fills.length;
   return (
@@ -122,14 +137,15 @@ function DailyChart({ fills }: { fills: Liquidation[] }) {
           label: d.day,
           value: d.value,
           display: d.display,
-          title: d.lowerBound
-            ? `At least $${formatDecimalAmount(d.usd, 2)}: some debt repaid that day has no USD value`
-            : `$${formatDecimalAmount(d.usd, 2)}`,
+          title: dayTitle(d),
         }))}
       />
       {days.some((d) => d.lowerBound) && (
         <p className="text-ink-muted text-xs">
-          ≥ marks a day where some debt repaid has no USD value at the fill.
+          ≥ marks a day where some debt repaid has no USD value at the fill
+          {days.some((d) => d.cutOff) &&
+            ', or whose older fills are not loaded yet'}
+          .
         </p>
       )}
     </div>
@@ -182,7 +198,7 @@ function LiquidationsList({ pool }: { pool: string }) {
           No liquidation fill recorded for this pool.
         </p>
       )}
-      {rows.length > 0 && <DailyChart fills={rows} />}
+      {rows.length > 0 && <DailyChart fills={rows} morePages={q.hasNextPage} />}
       {rows.length > 0 && (
         <div className="overflow-x-auto">
           <Table>
@@ -246,13 +262,19 @@ function LiquidationsList({ pool }: { pool: string }) {
                       Amounts not recorded
                     </Td>
                   )}
-                  <Td align="right" className="whitespace-nowrap">
+                  <Td
+                    align="right"
+                    className="whitespace-nowrap"
+                    data-testid={`liq-profit-${i}`}
+                  >
                     <UsdFigure
                       value={f.filler_profit_usd}
                       reason={
-                        f.amounts_recorded
-                          ? 'Shown only when both sides are fully valued at the fill.'
-                          : liquidationReasonText(f.usd_reason)
+                        !f.amounts_recorded
+                          ? liquidationReasonText(f.usd_reason)
+                          : f.filler_profit_reason
+                            ? liquidationReasonText(f.filler_profit_reason)
+                            : 'Shown only when both sides are fully valued at the fill.'
                       }
                     />
                   </Td>
