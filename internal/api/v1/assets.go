@@ -990,7 +990,7 @@ func (s *Server) fillMarketCapsWith(
 	broad, broadUnread := s.classicSupplyMap(ctx)
 	// A failed broad read leaves a priced row without the supply its cap needs; that hole is ours, not the token's.
 	defer func() {
-		if broadUnread && anyPricedRowWithoutSupply(rows) {
+		if broadUnread && (anyPricedRowWithoutSupply(rows) || anyLakeRowUnchecked(rows)) {
 			reportUnreadRead(ctx)
 		}
 	}()

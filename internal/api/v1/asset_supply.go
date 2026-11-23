@@ -179,7 +179,10 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, stale := s.flowsSupplyResponse(ctx, assetID, contractID, sup, verdict)
-	writeJSON(w, resp, Flags{Stale: stale || reads.stale.Load()})
+	// The net stays total_supply so mint − burn − clawback adds up; holders provably holding more makes it a floor.
+	below, floorUnread := s.classicNetBelowFloor(ctx, assetID, sup.Total)
+	resp.CirculatingSupplyLowerBound = resp.CirculatingSupplyLowerBound || below
+	writeJSON(w, resp, Flags{Stale: stale || floorUnread || reads.stale.Load(), Degraded: floorUnread})
 }
 
 // flowsSupplyResponse renders the event net when storage did not supersede it; stale is the lake watermark's verdict.
