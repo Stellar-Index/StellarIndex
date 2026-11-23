@@ -339,6 +339,8 @@ type PriceSnapshot struct {
 	PegUnchecked bool `json:"-"`
 	// PegReadFailed: a peg read errored (not merely missed), so the answer is degraded and not cached.
 	PegReadFailed bool `json:"-"`
+	// FillsWithheld: a source exclusion removed buckets from the series this snapshot was served in; never on the wire.
+	FillsWithheld bool `json:"-"`
 
 	// FXRate is the USD→quote fixing a closed USD-anchored cross converted
 	// at: the vendor bar's exact close, quote units per 1 USD.

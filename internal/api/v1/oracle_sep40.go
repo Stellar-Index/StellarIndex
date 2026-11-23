@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
@@ -296,6 +298,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
+	excluded := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsWithheld })
 	snapshots, dropped, windowsUnknown := s.dropFrozenBuckets(ctx, asset, snapshots)
 
 	out := make([]SEP40Price, len(snapshots))
@@ -313,10 +316,10 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	// A peg-proxied series is not a print of the fiat:USD pair and sits
 	// below the surface's baseline: stale as well as triangulated, the
 	// rule lastprice/x_last_price follow. A series short of the buckets a recovered freeze refused is a partial answer.
-	writeJSON(w, out, Flags{
+	writeJSON(w, out, markFillsWithheld(Flags{
 		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown,
 		FrozenChecked: held.checked && !windowsUnknown,
-	})
+	}, excluded))
 }
 
 // writeFrozenOraclePrices answers prices() for a pair frozen now and reports whether it wrote: it serves only the held value
@@ -370,6 +373,10 @@ func (s *Server) recentClosedWithStablecoinFallback(
 			continue
 		}
 		pegSnapshots, pegAt, pegServed, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
+		if pegErr == nil {
+			pegSnapshots, pegErr = s.pegSeriesClean(ctx, asset, quote, pegSnapshots)
+			pegAt = newestSnapshotTime(pegSnapshots)
+		}
 		if pegErr != nil || len(pegSnapshots) == 0 {
 			failed.note(pegErr)
 			continue
@@ -385,6 +392,32 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		return best, served, viaPeg, nil
 	}
 	return nil, canonical.Asset{}, false, failed.err()
+}
+
+// pegSeriesClean judges each bucket of a peg book's series, served as asset/quote, under that requested pair: the reader judged
+// only the book, and an exclusion stored under the fiat pair names no book. Survivors are marked FillsWithheld when any bucket
+// was dropped; a series the exclusion empties is withheld rather than read as a quiet market.
+func (s *Server) pegSeriesClean(ctx context.Context, asset, quote canonical.Asset, snaps []PriceSnapshot) ([]PriceSnapshot, error) {
+	kept := snaps[:0:0]
+	for _, snap := range snaps {
+		switch w := s.pegBucketWithheld(ctx, asset, quote, snap, nil); w {
+		case pricingguard.NotWithheld:
+			kept = append(kept, snap)
+		case pricingguard.WithheldSourceExcluded:
+		default:
+			return nil, PriceWithheldError(w)
+		}
+	}
+	if len(kept) == len(snaps) {
+		return snaps, nil
+	}
+	if len(kept) == 0 {
+		return nil, PriceWithheldError(pricingguard.WithheldSourceExcluded)
+	}
+	for i := range kept {
+		kept[i].FillsWithheld = true
+	}
+	return kept, nil
 }
 
 // oracleLegErrors keeps what the peg walk's failed legs said: a withheld verdict outranks the
