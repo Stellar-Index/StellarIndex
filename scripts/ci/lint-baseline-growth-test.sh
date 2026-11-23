@@ -839,6 +839,16 @@ runGate
 expect "a baseline entry behind a -diff attribute fails undeclared" 1 "+ hidden-entry"
 expect "an added -diff attribute fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/.gitattributes"
 
+mkrepo 0
+change_commit "chore: tidy diffs" \
+  internal/a/.gitattributes '# attrs' "$(printf '# attrs\n*.go diff=foo')" \
+  internal/b/.gitattributes '# attrs' "$(printf '# attrs\n*.sql merge=union')" \
+  internal/c/.gitattributes '# attrs' "$(printf '# attrs\n*.pb.go linguist-generated')"
+runGate
+for f in a b c; do
+  expect "a diff=/merge=/linguist-generated attribute in internal/$f fails undeclared" 1 "UNDECLARED GROWTH: internal/$f/.gitattributes"
+done
+
 # --- 25j. Go waiver maps: a := local, a single-line map, an identifier key, a raised count
 mkrepo 0
 change_commit "chore: exempt more" \
@@ -849,9 +859,18 @@ change_commit "chore: exempt more" \
   internal/p/c_test.go "$(printf 'var reviewedAllowlist = map[string]int{\n\t"supply_reader.go": 1,\n}')" \
   "$(printf 'var reviewedAllowlist = map[string]int{\n\t"supply_reader.go": 2,\n}')" \
   internal/p/d_test.go "$(printf 'var kindExempt = map[Kind]string{\n\tKindA: "r",\n}')" \
-  "$(printf 'var kindExempt = map[Kind]string{\n\tKindA: "r",\n\tKindB: "r",\n}')"
+  "$(printf 'var kindExempt = map[Kind]string{\n\tKindA: "r",\n\tKindB: "r",\n}')" \
+  internal/p/e_test.go 'var fooExempt = map[string]interface{}{"a": nil}' \
+  'var fooExempt = map[string]interface{}{"a": nil, "b": nil}' \
+  internal/p/f_test.go 'var barAllowlist = map[string]struct{ why string }{"c": {why: "x"}}' \
+  'var barAllowlist = map[string]struct{ why string }{"c": {why: "x"}, "d": {why: "y"}}' \
+  internal/p/g_test.go "$(printf 'var bazWaiver = map[string]struct{ m struct{ x int } }{\n\t"e": {m: struct{ x int }{1}},\n}')" \
+  "$(printf 'var bazWaiver = map[string]struct{ m struct{ x int } }{\n\t"e": {m: struct{ x int }{1}},\n\t"f": {m: struct{ x int }{2}},\n}')" \
+  internal/p/h_test.go "$(printf 'var quoteExempt = map[string]bool{\n\t"a\\"b": true,\n\t"c\\td": true,\n}')" \
+  "$(printf 'var quoteExempt = map[string]bool{\n\t"a\\"b": true,\n\t"c\\td": true,\n\t"e": true,\n}')"
 runGate
-for f in a b c d; do
+expect "a widened waiver map is reported by key" 1 '+ "f"'
+for f in a b c d e f g h; do
   expect "a widened Go waiver map in internal/p/${f}_test.go fails undeclared" 1 "UNDECLARED GROWTH: internal/p/${f}_test.go"
 done
 
@@ -888,6 +907,20 @@ change_commit "chore: another read" internal/s/q.go \
   "$(printf 'var a = 1 // cap-ok: paged\nvar b = 2')" "$(printf 'var a = 1 // cap-ok: paged\nvar n = 3')"
 runGate
 expect "a line rewritten under a trailing marker fails undeclared" 1 "+ var n = 3"
+
+mkrepo 0
+change_commit "chore: tidy" internal/s/q.go \
+  "$(printf 'func g() int {\n\ta := 1 // cap-ok: paged\n\treturn a\n}')" \
+  "$(printf 'func g() int {\n\ta := 1 // cap-ok: paged\n\n\treturn a\n\t// done\n}')"
+runGate
+expect "lines added near an unchanged trailing marker are not growth" 0 "no undeclared"
+
+mkrepo 0
+change_commit "chore: refactor" internal/api/l.go \
+  "$(printf 'type R struct {\n\t// floatmoney:ok rate, not an amount\n\tSupplyAPR *float64\n}')" \
+  "$(printf 'type R struct {\n\t// floatmoney:ok rate, not an amount\n\tSuppliedUSD *float64\n\tSupplyAPR *float64\n}')"
+runGate
+expect "a line inserted under an unchanged standalone marker fails undeclared" 1 "+ SuppliedUSD *float64"
 
 # --- 26. every marker a lint honours is registered as watched or unwatched
 reg() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$GATE" | tr '|' '\n'; }

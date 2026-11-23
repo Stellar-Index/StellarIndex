@@ -189,7 +189,14 @@ go_waiver_map_keys() {
     }
     !inmap && /^[[:space:]]*(var[[:space:]]+)?[A-Za-z0-9_]*([Ee]xempt|[Aa]llow(ed|[Ll]ist)?|[Ww]aiver|[Ii]gnored?)[A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*map\[/ {
       inmap = 1; depth = 0; instr = 0; unit = ""; col = 0
-      s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s); gsub(/struct[[:space:]]*[{][[:space:]]*[}]/, "struct", s)
+      s = $0; sub(/^[^=]*=[[:space:]]*map\[/, "", s)
+      # Collapse struct{…}/interface{…} in the value TYPE, innermost first, so the literal opens
+      # at the first remaining `{`; groups after that brace are values and are left alone.
+      while (match(s, /(struct|interface)[[:space:]]*[{][^{}]*[}]/)) {
+        pre = substr(s, 1, RSTART - 1); gsub(/(struct|interface)[[:space:]]*[{]/, "", pre)
+        if (pre ~ /[{]/) break
+        s = substr(s, 1, RSTART - 1) "T" substr(s, RSTART + RLENGTH)
+      }
       scan(s); next
     }
     inmap { scan($0) }
@@ -200,8 +207,9 @@ go_waiver_map_keys() {
 go_waiver_map_added_keys() {
   local b
   b="$(go_waiver_map_keys "$1" "$3")"
-  go_waiver_map_keys "$2" "$3" | awk -v old="$b" '
-    BEGIN { n = split(old, o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
+  # Through the environment: -v aborts on a quote plus newline and expands backslashes in keys.
+  go_waiver_map_keys "$2" "$3" | old="$b" awk '
+    BEGIN { n = split(ENVIRON["old"], o, "\n"); for (i = 1; i <= n; i++) seen[o[i]] = 1 }
     !($0 in seen) { print }
   '
 }
@@ -351,13 +359,16 @@ detect_growth() {
   # shellcheck disable=SC2016  # an awk program, not a shell expansion
   local marker_awk='
     function marked(s) { return (re != "" && tolower(s) ~ re) || s ~ cre }
-    /^\+\+\+ / { f = substr($0, 7); prev = ""; next }
-    /^(diff --git|index) / || /^@@/ { prev = ""; next }
-    /^-/ { next }
+    function comment(s) { return s ~ /^[[:space:]]*(\/\/|#|--)/ }
+    /^\+\+\+ / { f = substr($0, 7); prev = ""; prevadd = rm = 0; next }
+    /^(diff --git|index) / || /^@@/ { prev = ""; prevadd = rm = 0; next }
+    /^-/ { rm = 1; next }
     {
-      body = substr($0, 2)
-      if (/^\+/ && (marked(body) || marked(prev))) print f "\t" body
-      prev = body
+      body = substr($0, 2); add = /^\+/
+      # Under a marker: a standalone comment governs any added line; a trailing marker only one
+      # it was added with, or one that replaced the line it governed.
+      if (add && (marked(body) || (marked(prev) && (comment(prev) || prevadd || rm)))) print f "\t" body
+      prev = body; prevadd = add; rm = 0
     }
   '
   "${GIT_DIFF[@]}" -U1 "${base}...${head}" -- . ':(exclude)*.md' ':(exclude)scripts/ci/lint-*' \
@@ -382,7 +393,7 @@ detect_growth() {
   #     path's content from reviewers and from the secret scan's history diff.
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
-    added="$(added_entries "$base" "$head" "$f" '(^|[[:space:]])([-!]diff|binary|diff=|merge=)([[:space:]]|$)')"
+    added="$(added_entries "$base" "$head" "$f" '(^|[[:space:]])([-!]diff|binary|(diff|merge|linguist-generated)(=[^[:space:]]*)?)([[:space:]]|$)')"
     while IFS= read -r line; do
       [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
     done <<<"$added"

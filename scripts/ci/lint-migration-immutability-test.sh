@@ -137,6 +137,17 @@ runbase "$newer"
 expect 'base mode: rollback past a newer migration without migrations_skip FAILS' 1 'migrations_skip=true'
 MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
 expect 'base mode: rollback with migrations skipped passes' 0 'unchanged'
+MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=True runbase "$newer"
+expect 'base mode: a skip flag that is not exactly "true" takes the strict path' 1 'migrations_skip=true'
+printf '%s\n' 'CREATE TABLE w (a int);' > "$REPO/migrations/0003_w.up.sql"
+g add . && g commit -q -m w
+mid="$(g rev-parse HEAD)"
+printf '%s\n' 'CREATE TABLE v (a int);' > "$REPO/migrations/0002_v.up.sql"
+g add . && g commit -q -m late
+late="$(g rev-parse HEAD)"
+g checkout -q "$mid"
+MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$late"
+expect 'base mode: a gap below the tree'"'"'s newest migration FAILS under skip' 1 'missing here'
 g checkout -q "$newer"
 rm "$REPO/migrations/0002_v.up.sql"
 MIGRATION_IMMUTABILITY_MIGRATIONS_SKIPPED=true runbase "$newer"
