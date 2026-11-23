@@ -5,11 +5,13 @@ import (
 	"errors"
 	"math/big"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -44,7 +46,7 @@ type liqMarks struct {
 	withheldFrom time.Time
 	// cappedAt: the series is incomplete after it.
 	cappedAt   time.Time
-	rates      map[uint32]blend.ReserveData // reserve state written in each ledger
+	rates      map[clickhouse.LendingTxRef]blend.ReserveData // reserve state each fill's transaction stored
 	rateReason string
 }
 
@@ -67,16 +69,17 @@ func (m *liqMarks) priceAt(t time.Time) (liqPrice, string) {
 	return m.prices[i], ""
 }
 
-// underlying converts a b/dToken amount with the reserve state written in the fill's own ledger: the contract accrues before a
-// fill and stores the reserve after, so that state carries the rate the fill used. Any other ledger's rate is not the fill's.
-func (m *liqMarks) underlying(kind string, ledger uint32, amount *big.Int) (*big.Int, string) {
+// underlying converts a b/dToken amount with the reserve state the fill's own transaction stored. The fill accrues the reserve
+// before moving positions and stores it after, and moving positions changes no rate, so that image carries the fill's rate. An
+// earlier write lacks the fill's accrual; a later transaction in the same ledger may default debt (b_rate falls).
+func (m *liqMarks) underlying(kind string, tx clickhouse.LendingTxRef, amount *big.Int) (*big.Int, string) {
 	if kind == auctionLegUnderlying {
 		return amount, ""
 	}
 	if m == nil || m.rateReason != "" {
 		return nil, auctionUSDRateUnread
 	}
-	d, ok := m.rates[ledger]
+	d, ok := m.rates[tx]
 	switch {
 	case !ok:
 		return nil, liqReasonRateUnrecorded
@@ -112,7 +115,7 @@ func (lv liqValuer) leg(kind, asset, amount string, f timescale.LendingLiquidati
 		return fail(liqReasonUnparseable)
 	}
 	m := lv.marks[asset]
-	u, reason := m.underlying(kind, f.Ledger, n)
+	u, reason := m.underlying(kind, liqTxRef(f), n)
 	if u == nil {
 		return fail(reason)
 	}
@@ -202,22 +205,53 @@ func liquidationAssets(protocol string, fills []timescale.LendingLiquidationFill
 	return out
 }
 
-// liquidationMarks reads each asset's marks over the page's window: one price series and one reserve history read per asset.
-func (s *Server) liquidationMarks(ctx context.Context, pool, protocol string, fills []timescale.LendingLiquidationFill, flags *Flags) map[string]*liqMarks {
+// liquidationMarks reads each asset's marks over the page's window: one price series per asset and one reserve read for the page.
+func (s *Server) liquidationMarks(ctx context.Context, pool, protocol, model string, fills []timescale.LendingLiquidationFill, flags *Flags) map[string]*liqMarks {
 	assets := liquidationAssets(protocol, fills)
 	out := make(map[string]*liqMarks, len(assets))
 	if len(assets) == 0 {
 		return out
 	}
-	oldest, newest := fills[len(fills)-1].Ts, fills[0].Ts
+	var rateAssets []string
 	for asset, needRate := range assets {
-		m := s.liquidationPrices(ctx, asset, oldest, flags)
+		out[asset] = s.liquidationPrices(ctx, asset, fills[len(fills)-1].Ts, flags)
 		if needRate {
-			m.rates, m.rateReason = s.liquidationRates(ctx, pool, asset, oldest, newest, flags)
+			rateAssets = append(rateAssets, asset)
 		}
-		out[asset] = m
+	}
+	if len(rateAssets) == 0 {
+		return out
+	}
+	rates, reason := s.liquidationRates(ctx, pool, model, rateAssets, fills, flags)
+	for _, asset := range rateAssets {
+		m := out[asset]
+		m.rateReason = reason
+		m.rates = map[clickhouse.LendingTxRef]blend.ReserveData{}
+		for k, d := range rates {
+			if k.Asset == asset {
+				m.rates[k.LendingTxRef] = d
+			}
+		}
 	}
 	return out
+}
+
+// liqTxRef is the fill's transaction as the lake keys it.
+func liqTxRef(f timescale.LendingLiquidationFill) clickhouse.LendingTxRef {
+	return clickhouse.LendingTxRef{Ledger: f.Ledger, TxHash: strings.ToLower(f.TxHash)}
+}
+
+// liquidationStateModel is the lake reserve model of a pool's lineage; "" when none is known.
+func liquidationStateModel(protocol, lineageReason string) string {
+	switch {
+	case protocol == blnt.SourceName:
+		return clickhouse.LendingBLNT
+	case protocol == blend.SourceName && lineageReason == backstopReasonV1:
+		return clickhouse.LendingBlendV1
+	case protocol == blend.SourceName:
+		return clickhouse.LendingBlendV2
+	}
+	return ""
 }
 
 // liquidationPrices reads the asset's closed hourly USD series from before the oldest fill through the chart walk (alias spellings,
@@ -279,28 +313,28 @@ func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset can
 	return m
 }
 
-// liquidationRates reads the reserve's hourly state history over the fills' window and keeps each state by the ledger that wrote it.
-func (s *Server) liquidationRates(ctx context.Context, pool, asset string, oldest, newest time.Time, flags *Flags) (map[uint32]blend.ReserveData, string) {
-	hr, ok := s.Explorer.(lendingHistoryReader)
-	if !ok {
+// lendingTxReserveReader reads the reserve state given transactions stored, batched over a page.
+type lendingTxReserveReader interface {
+	LendingReservesAtTxs(ctx context.Context, pool, protocol string, assets []string, txs []clickhouse.LendingTxRef) (map[clickhouse.LendingTxReserve]blend.ReserveData, error)
+}
+
+var _ lendingTxReserveReader = (*clickhouse.ExplorerReader)(nil)
+
+// liquidationRates reads, in one lake query, the reserve state each fill's transaction stored for each asset.
+func (s *Server) liquidationRates(ctx context.Context, pool, model string, assets []string, fills []timescale.LendingLiquidationFill, flags *Flags) (map[clickhouse.LendingTxReserve]blend.ReserveData, string) {
+	rr, ok := s.Explorer.(lendingTxReserveReader)
+	if !ok || model == "" {
 		return nil, auctionUSDRateUnread
 	}
-	to := newest.Add(time.Hour)
-	from := oldest
-	if to.Sub(from) > lendingHistoryMaxHourlyWindow {
-		from = to.Add(-lendingHistoryMaxHourlyWindow) // older fills find no state: rate_at_fill_unrecorded
+	txs := make([]clickhouse.LendingTxRef, 0, len(fills))
+	for _, f := range fills {
+		txs = append(txs, liqTxRef(f))
 	}
-	h, err := hr.LendingReserveHistory(ctx, pool, asset, clickhouse.LendingHistoryQuery{From: from, To: to, MaxPoints: lendingHistoryMaxPoints})
+	out, err := rr.LendingReservesAtTxs(ctx, pool, model, assets, txs)
 	if err != nil {
-		s.logger.Warn("lending liquidations: reserve history read failed", "pool", pool, "asset", asset, "err", err)
+		s.logger.Warn("lending liquidations: reserve state read failed", "pool", pool, "err", err)
 		flags.Degraded = true
 		return nil, auctionUSDRateUnread
-	}
-	out := make(map[uint32]blend.ReserveData, len(h.Points))
-	for _, p := range h.Points {
-		if !p.Removed {
-			out[p.StateLedger] = p.State.Data
-		}
 	}
 	return out, ""
 }

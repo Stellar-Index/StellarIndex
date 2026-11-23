@@ -1,12 +1,14 @@
 package v1
 
 import (
+	"context"
 	"math/big"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -14,21 +16,24 @@ var liqFillTime = time.Date(2026, 3, 4, 10, 30, 0, 0, time.UTC)
 
 const liqFillLedger = 61_000_000
 
+// liqFillTx is the test fill's transaction; its hash is upper-cased on the fill to prove the lake key is lowercase hex.
+var liqFillTx = clickhouse.LendingTxRef{Ledger: liqFillLedger, TxHash: "ab"}
+
 func liqRate(s string) *big.Int { n, _ := new(big.Int).SetString(s, 10); return n }
 
-// liqTestMarks: USDC b_rate 1.1 and XLM d_rate 1.25 written in the fill's ledger; USDC at 0.90 an hour before the fill and 1.50
-// after it, XLM at 0.30 before and 0.60 after.
+// liqTestMarks: USDC b_rate 1.1 and XLM d_rate 1.25 stored by the fill's transaction; USDC at 0.90 an hour before the fill and
+// 1.50 after it, XLM at 0.30 before and 0.60 after.
 func liqTestMarks() map[string]*liqMarks {
 	return map[string]*liqMarks{
 		"CUSDC": {
 			scale:  7,
 			prices: []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "0.90"}, {close: liqFillTime.Add(time.Hour), price: "1.50"}},
-			rates:  map[uint32]blend.ReserveData{liqFillLedger: {Version: blend.PoolV2, BRate: liqRate("1100000000000"), DRate: liqRate("1000000000000")}},
+			rates:  map[clickhouse.LendingTxRef]blend.ReserveData{liqFillTx: {Version: blend.PoolV2, BRate: liqRate("1100000000000"), DRate: liqRate("1000000000000")}},
 		},
 		"CXLM": {
 			scale:  7,
 			prices: []liqPrice{{close: liqFillTime.Add(-30 * time.Minute), price: "0.30"}, {close: liqFillTime.Add(30 * time.Minute), price: "0.60"}},
-			rates:  map[uint32]blend.ReserveData{liqFillLedger: {Version: blend.PoolV2, BRate: liqRate("1000000000000"), DRate: liqRate("1250000000000")}},
+			rates:  map[clickhouse.LendingTxRef]blend.ReserveData{liqFillTx: {Version: blend.PoolV2, BRate: liqRate("1000000000000"), DRate: liqRate("1250000000000")}},
 		},
 	}
 }
@@ -36,7 +41,7 @@ func liqTestMarks() map[string]*liqMarks {
 // liqTestFill is a Blend V2 user liquidation fill: the filler takes 100 USDC b-tokens and repays 100 XLM d-tokens.
 func liqTestFill() timescale.LendingLiquidationFill {
 	return timescale.LendingLiquidationFill{
-		LendingEventPos: timescale.LendingEventPos{Ts: liqFillTime, Ledger: liqFillLedger, TxHash: "ab"},
+		LendingEventPos: timescale.LendingEventPos{Ts: liqFillTime, Ledger: liqFillLedger, TxHash: "AB"},
 		AuctionType:     0, User: "GUSER", Filler: "GFILLER", FillPercent: "100", HasAmounts: true,
 		Lot: map[string]string{"CUSDC": "1000000000"}, Bid: map[string]string{"CXLM": "1000000000"},
 	}
@@ -77,14 +82,61 @@ func TestLiqValuer_MissingPriceIsNullWithReason(t *testing.T) {
 	}
 }
 
-// TestLiqValuer_RateOnlyFromFillLedger: a reserve state from any other ledger is not the fill's rate; the token amount is still served.
-func TestLiqValuer_RateOnlyFromFillLedger(t *testing.T) {
-	marks := liqTestMarks()
-	marks["CUSDC"].rates = map[uint32]blend.ReserveData{liqFillLedger + 5: {Version: blend.PoolV2, BRate: liqRate("2000000000000")}}
-	v := liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
-	l := v.Lot[0]
-	if l.Underlying != nil || l.USD != nil || liqDeref(l.Reason) != liqReasonRateUnrecorded || l.Amount != "1000000000" {
-		t.Fatalf("lot leg = %+v, want amount served, underlying and usd null, %s", l, liqReasonRateUnrecorded)
+// TestLiqValuer_RateOnlyFromFillTransaction: a state stored by another transaction — an earlier ledger (no fill accrual) or a
+// later transaction in the fill's own ledger — is not the fill's rate; the token amount is still served.
+func TestLiqValuer_RateOnlyFromFillTransaction(t *testing.T) {
+	for name, other := range map[string]clickhouse.LendingTxRef{
+		"earlier ledger":        {Ledger: liqFillLedger - 1, TxHash: "ab"},
+		"same ledger, other tx": {Ledger: liqFillLedger, TxHash: "cd"},
+	} {
+		marks := liqTestMarks()
+		marks["CUSDC"].rates = map[clickhouse.LendingTxRef]blend.ReserveData{other: {Version: blend.PoolV2, BRate: liqRate("2000000000000")}}
+		v := liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
+		l := v.Lot[0]
+		if l.Underlying != nil || l.USD != nil || liqDeref(l.Reason) != liqReasonRateUnrecorded || l.Amount != "1000000000" {
+			t.Fatalf("%s: lot leg = %+v, want amount served, underlying and usd null, %s", name, l, liqReasonRateUnrecorded)
+		}
+	}
+}
+
+// liqTxReserves is a lendingTxReserveReader returning fixed states and recording each call.
+type liqTxReserves struct {
+	ExplorerReader
+	states map[clickhouse.LendingTxReserve]blend.ReserveData
+	calls  int
+	model  string
+	txs    []clickhouse.LendingTxRef
+}
+
+func (r *liqTxReserves) LendingReservesAtTxs(_ context.Context, _, model string, _ []string, txs []clickhouse.LendingTxRef) (map[clickhouse.LendingTxReserve]blend.ReserveData, error) {
+	r.calls++
+	r.model, r.txs = model, txs
+	return r.states, nil
+}
+
+// TestLiquidationRates_OneBatchedReadKeyedByFillTransaction: two fills in two transactions of one ledger each get the state
+// their own transaction stored, from one read for the whole page, under the V2 rate model.
+func TestLiquidationRates_OneBatchedReadKeyedByFillTransaction(t *testing.T) {
+	second := liqTestFill()
+	second.TxHash, second.Ts = "EF", liqFillTime.Add(-time.Minute)
+	ef := clickhouse.LendingTxRef{Ledger: liqFillLedger, TxHash: "ef"}
+	rr := &liqTxReserves{states: map[clickhouse.LendingTxReserve]blend.ReserveData{
+		{LendingTxRef: liqFillTx, Asset: "CUSDC"}: {Version: blend.PoolV2, BRate: liqRate("1100000000000")},
+		{LendingTxRef: ef, Asset: "CUSDC"}:        {Version: blend.PoolV2, BRate: liqRate("1200000000000")},
+	}}
+	s := &Server{Explorer: rr, logger: discardLogger()}
+	var flags Flags
+	model := liquidationStateModel(blend.SourceName, "")
+	marks := s.liquidationMarks(t.Context(), "CPOOL", blend.SourceName, model, []timescale.LendingLiquidationFill{liqTestFill(), second}, &flags)
+	if rr.calls != 1 || rr.model != clickhouse.LendingBlendV2 || len(rr.txs) != 2 {
+		t.Fatalf("calls %d model %q txs %v, want one V2 read naming both transactions", rr.calls, rr.model, rr.txs)
+	}
+	m := marks["CUSDC"]
+	for tx, want := range map[clickhouse.LendingTxRef]string{liqFillTx: "1100000000", ef: "1200000000"} {
+		u, reason := m.underlying(auctionLegBToken, tx, liqRate("1000000000"))
+		if u == nil || u.String() != want {
+			t.Errorf("tx %v: underlying %v (%s), want %s", tx, u, reason, want)
+		}
 	}
 }
 
@@ -104,7 +156,7 @@ func TestLiqValuer_PartialSideIsLowerBound(t *testing.T) {
 // TestLiqValuer_AmountAboveInt64IsExact: a 2^65+1 lot keeps every digit through the rate and the USD product.
 func TestLiqValuer_AmountAboveInt64IsExact(t *testing.T) {
 	marks := liqTestMarks()
-	marks["CUSDC"].rates[liqFillLedger] = blend.ReserveData{Version: blend.PoolV2, BRate: liqRate("1000000000000"), DRate: liqRate("1000000000000")}
+	marks["CUSDC"].rates[liqFillTx] = blend.ReserveData{Version: blend.PoolV2, BRate: liqRate("1000000000000"), DRate: liqRate("1000000000000")}
 	marks["CUSDC"].prices = []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "1"}}
 	f := liqTestFill()
 	f.Lot = map[string]string{"CUSDC": "36893488147419103233"}

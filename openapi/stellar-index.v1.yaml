@@ -5040,6 +5040,7 @@ paths:
                       pagination: { $ref: "#/components/schemas/Pagination" }
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /lending/pools/{pool}/emissions:

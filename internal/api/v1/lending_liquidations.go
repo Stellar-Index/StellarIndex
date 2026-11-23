@@ -111,6 +111,11 @@ func (s *Server) handleLendingPoolLiquidations(w http.ResponseWriter, r *http.Re
 		s.writeLendingLookupError(ctx, w, r, "LendingLiquidations", pool, err)
 		return
 	}
+	protocol, lineage, lerr := s.backstopLineage(ctx, pool)
+	if lerr == nil && protocol == "" && len(rows) == 0 {
+		writeLendingPoolNotFound(w, r)
+		return
+	}
 	view := LendingLiquidationsView{
 		Pool: pool, ValuedAt: liquidationValuedAt, PriceMaxAge: int(liquidationPriceMaxAge / time.Second),
 		Liquidations: make([]LendingLiquidationView, 0, len(rows)),
@@ -123,13 +128,13 @@ func (s *Server) handleLendingPoolLiquidations(w http.ResponseWriter, r *http.Re
 			Ts: last.Ts, Ledger: last.Ledger, TxHash: last.TxHash, OpIndex: last.OpIndex, EventIndex: last.EventIndex, Kind: liquidationCursorKind,
 		})}
 	}
+	if lerr != nil {
+		s.logger.Warn("lending liquidations: lineage read failed", "pool", pool, "err", lerr)
+		env.Flags.Degraded = true
+	}
 	if len(rows) > 0 {
-		protocol, _, lerr := s.backstopLineage(ctx, pool)
-		if lerr != nil {
-			s.logger.Warn("lending liquidations: lineage read failed", "pool", pool, "err", lerr)
-			env.Flags.Degraded = true
-		}
-		lv := liqValuer{protocol: protocol, marks: s.liquidationMarks(ctx, pool, protocol, rows, &env.Flags)}
+		model := liquidationStateModel(protocol, lineage)
+		lv := liqValuer{protocol: protocol, marks: s.liquidationMarks(ctx, pool, protocol, model, rows, &env.Flags)}
 		for _, f := range rows {
 			view.Liquidations = append(view.Liquidations, lv.value(f))
 		}
