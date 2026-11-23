@@ -267,6 +267,19 @@ Fix (a deterministic panic needs a code fix):
 
 See also [worker-panicked](infra.md#stellarindex_worker_panicked) (a panicking background worker stops; here one input is skipped) and [cursor-stuck](ledger-ingest.md#stellarindex_ingestion_cursor_stuck) if the cursor is NOT advancing.
 
+## stellarindex_source_amount_degraded
+
+Ticket: `stellarindex_source_amount_degraded_total > 0`. A decoder could not parse a money field and kept the row with that amount NULL, so every served sum over the field is short. Today only sorocredit's settlement decoder emits it (`field="settled_amount"`). It clears only on restart; the NULL rows stay until the window is re-derived.
+
+Check:
+
+```sh
+# Which source and field, and how many rows?
+ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=stellarindex_source_amount_degraded_total" | python3 -m json.tool | grep -E "source|field|value"'
+```
+
+Fix the decoder's parse of that field, ship the binary, then re-derive the affected range with `projector-replay` (projected source) or `ch-rebuild` (dispatcher-written source), as for [decoder-panicked](#stellarindex_decoder_panicked). The raw event is in the lake, so nothing is lost permanently.
+
 ## stellarindex_ingestion_lag_high
 
 Retired: no rule in either tree defines this alert and the per-source lag gauge no longer exists (the current `ledgerstream -> dispatcher` indexer does not emit one). Per-source freshness now comes from `data-freshness.sh` and `source_coverage_snapshots`. Kept as operator context for a source that is behind but not stopped (`source_last_event_unix` still advancing).

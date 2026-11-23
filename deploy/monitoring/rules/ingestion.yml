@@ -297,6 +297,24 @@ groups:
             op_index / stack), fix the decoder, then re-derive the window
             with projector-replay or ch-rebuild.
 
+      # A money field written NULL leaves every sum over it short until the window is
+      # re-derived. Raw value, as for decoder panics: one bad event is born at 1.
+      - alert: stellarindex_source_amount_degraded
+        expr: stellarindex_source_amount_degraded_total > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_source_amount_degraded
+          summary: "{{ $labels.source }} wrote {{ $labels.field }} NULL — served sums under-report"
+          description: |
+            The {{ $labels.source }} decoder could not parse {{ $labels.field }}
+            and kept the row with that amount NULL. Every served total over
+            that field is short by the lost amount until the decoder is
+            fixed and the window re-derived.
+
       # Oracle capture-totality (docs/design/oracle-capture-totality-design.md): a
       # Reflector / RedStone / Band symbol or feed_id the allow-list does not map is
       # stored as `raw:` rows, so nothing is lost; only a code change closes the gap.
