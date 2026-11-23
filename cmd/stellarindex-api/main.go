@@ -326,6 +326,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				"failed_auth_per_min", cfg.API.FailedAuthRateLimitPerMin)
 		}
 	}
+	// Past the dwell the Redis-backed limiters answer 503, so readiness must drain this instance too.
+	checks = append(checks, wiring.RedisOutageReadyChecks(rdb, rateLimit != nil || failedAuthLimiter != nil, cfg.API.RateLimitDwell)...)
 
 	// Per-account usage counter, built only with Redis; a nil counter disables it. Month-to-date
 	// reconciles against usage_daily so an evicted Redis day key cannot read as a quiet day.
