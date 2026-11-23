@@ -9022,6 +9022,11 @@ export interface components {
             /** @description Names of the `include` sections this response was asked for and could not read (a failed or timed-out read). The fields of a named section are absent from every row, which is otherwise the same body as rows with nothing to report: on `/v1/sources`, a source whose stats were not read and a source with no trades in 24h; on `/v1/markets`, `sparkline` or `inception` rows whose enrichment batch failed. Absent when every requested section was read. A response carrying it is sent `Cache-Control: no-store`; the next request retries. */
             includes_unread?: string[];
             /**
+             * @description Set on `/v1/history` when fills were removed from this page: `source_excluded` means an operator excluded the source that made them (the same reason a `price-withheld` 404 carries). The page is thinner than the market was, not a quiet market; it may be empty with `pagination.next` still continuing the tape. A response carrying it is sent `Cache-Control: no-store`. Absent when no fill was removed.
+             * @enum {string}
+             */
+            fills_withheld_reason?: "source_excluded";
+            /**
              * @description Set on an EMPTY response from /v1/ohlc, /v1/history, /v1/chart or /v1/price/at when the requested range ends at or before the envelope's `coverage_from` — the window predates the history this deployment holds for the pair, so nothing was there to return. Never set on a range that straddles the floor, and never set when the floor could not be established. Omitted when false.
              * @default false
              */

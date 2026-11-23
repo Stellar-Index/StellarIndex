@@ -326,6 +326,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// Pagination: next comes from the read itself, not from len(trades) == limit, because the
 	// two-direction merge can cut a page short with rows still behind it.
 	env := Envelope{Data: rows, Flags: Flags{Stale: unread, Degraded: unread || excludedFills}}
+	if excludedFills {
+		env.Flags.FillsWithheldReason = PriceWithheldSourceExcluded
+	}
 	// The coverage probe spans both legs' alias families and both stored directions, exactly
 	// what the page read spans (see historyCoverageSet), so the floor describes returnable rows.
 	coverageFrom, outsideCoverage := s.coverageAnnotationIfEmpty(

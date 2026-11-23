@@ -41,6 +41,8 @@ type histPage struct {
 	cache   string
 	ledgers []uint32
 	next    string
+	// withheld is flags.fills_withheld_reason.
+	withheld string
 }
 
 func histPageGet(t *testing.T, srv *v1.Server, path string) histPage {
@@ -52,9 +54,12 @@ func histPageGet(t *testing.T, srv *v1.Server, path string) histPage {
 	var body struct {
 		Data       []struct{ Ledger uint32 }
 		Pagination *struct{ Next string }
+		Flags      struct {
+			FillsWithheldReason string `json:"fills_withheld_reason"`
+		}
 	}
 	_ = json.Unmarshal(raw, &body)
-	p := histPage{status: resp.StatusCode, cache: resp.Header.Get("Cache-Control")}
+	p := histPage{status: resp.StatusCode, cache: resp.Header.Get("Cache-Control"), withheld: body.Flags.FillsWithheldReason}
 	for _, d := range body.Data {
 		p.ledgers = append(p.ledgers, d.Ledger)
 	}
@@ -94,18 +99,24 @@ func TestHistoryPagesPastExcludedFills(t *testing.T) {
 	// Covered fills in the middle (11) and at the END (13) of page 1.
 	s := srv(histFills(6, 1, 3, 5))
 	p1 := histPageGet(t, s, path)
-	if p1.status != http.StatusOK || p1.cache != "no-store" || !equalLedgers(p1.ledgers, 10, 12) || p1.next == "" {
-		t.Fatalf("page 1 = %+v, want 200 no-store [10 12] with a cursor", p1)
+	if p1.status != http.StatusOK || p1.cache != "no-store" || !equalLedgers(p1.ledgers, 10, 12) || p1.next == "" ||
+		p1.withheld != "source_excluded" {
+		t.Fatalf("page 1 = %+v, want 200 no-store [10 12] with a cursor, fills withheld for source_excluded", p1)
 	}
 	p2 := histPageGet(t, s, path+"&cursor="+url.QueryEscape(p1.next))
-	if p2.status != http.StatusOK || !equalLedgers(p2.ledgers, 14) || p2.next != "" {
-		t.Fatalf("page 2 = %+v, want [14] (the fill right after page 1's last raw row 13), terminal", p2)
+	if p2.status != http.StatusOK || !equalLedgers(p2.ledgers, 14) || p2.next != "" || p2.withheld != "source_excluded" {
+		t.Fatalf("page 2 = %+v, want [14] (the fill right after page 1's last raw row 13), terminal, fills withheld", p2)
+	}
+	if u := histPageGet(t, srv(histFills(3)), path); u.status != http.StatusOK || !equalLedgers(u.ledgers, 10, 11, 12) ||
+		u.withheld != "" || u.cache == "no-store" {
+		t.Fatalf("untouched page = %+v, want every fill, no withheld marker, cacheable", u)
 	}
 
 	// A page the exclusion empties keeps its cursor; the emptied terminal page behind it is withheld.
 	s = srv(histFills(6, 0, 1, 2, 3, 5))
-	if e := histPageGet(t, s, path); e.status != http.StatusOK || e.cache != "no-store" || len(e.ledgers) != 0 || e.next == "" {
-		t.Fatalf("emptied page = %+v, want 200 no-store, no rows, a cursor", e)
+	if e := histPageGet(t, s, path); e.status != http.StatusOK || e.cache != "no-store" || len(e.ledgers) != 0 || e.next == "" ||
+		e.withheld != "source_excluded" {
+		t.Fatalf("emptied page = %+v, want 200 no-store, no rows, a cursor, fills withheld for source_excluded", e)
 	} else if p := histPageGet(t, s, path+"&cursor="+url.QueryEscape(e.next)); p.status != http.StatusOK || !equalLedgers(p.ledgers, 14) {
 		t.Fatalf("after the emptied page = %+v, want [14]", p)
 	}
