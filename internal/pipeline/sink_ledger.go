@@ -16,10 +16,20 @@ import (
 type ledgerEvent struct {
 	consumer.Event
 	ledger uint32
+	// marks, when set, is told once the event's row has landed (see [LedgerMarks]).
+	marks *LedgerMarks
 }
 
 func withLedger(ev consumer.Event, ledger uint32) consumer.Event {
 	return ledgerEvent{Event: ev, ledger: ledger}
+}
+
+// eventMarks returns the [LedgerMarks] the producer counted ev against, nil for an untracked event.
+func eventMarks(ev consumer.Event) *LedgerMarks {
+	if le, ok := ev.(ledgerEvent); ok {
+		return le.marks
+	}
+	return nil
 }
 
 // eventLedger returns the event as its producer made it and its ledger, 0 for an event that was never tagged.
