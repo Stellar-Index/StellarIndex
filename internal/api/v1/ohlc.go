@@ -179,6 +179,9 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	volumeDecimals := commonAmountScaleDecimals(window)
 	sources := tradeSources(window.Trades())
 
+	if window, ok = s.writeExclusionCleanWindow(w, r, base, quote, window); !ok {
+		return
+	}
 	if window, ok = filterOHLCOutliers(w, r, window, sigma); !ok {
 		return
 	}

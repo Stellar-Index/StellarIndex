@@ -94,6 +94,29 @@ func (s *Server) pegBucketWithheld(ctx context.Context, asset, quote canonical.A
 	return s.Exclusions.Withholding(ctx, asset, quote, sources, from, to)
 }
 
+// ohlcSeriesWithheld judges each bar under the requested pair over its own bucket. A bar pools its sources and cannot be
+// recomputed without one, so any covered bar withholds the series rather than serving a gap that reads as a quiet market.
+func (s *Server) ohlcSeriesWithheld(ctx context.Context, pair canonical.Pair, bars []OHLCSeriesBar, interval ohlcInterval) error {
+	if s.Exclusions == nil {
+		return nil
+	}
+	for _, b := range bars {
+		from := b.T.Time()
+		to := from.Add(interval.duration())
+		if interval == ohlcInterval1mo {
+			to = from.AddDate(0, 1, 0)
+		}
+		w := s.Exclusions.UnattributedWithholding(ctx, pair.Base, pair.Quote, from, to)
+		if len(b.Sources) > 0 {
+			w = s.Exclusions.Withholding(ctx, pair.Base, pair.Quote, b.Sources, from, to)
+		}
+		if w != pricingguard.NotWithheld {
+			return PriceWithheldError(w)
+		}
+	}
+	return nil
+}
+
 // fxRateWithheld judges one FX rate, source's own reading of ticker per USD over [from, to); nil when no exclusion covers it.
 func (s *Server) fxRateWithheld(ctx context.Context, ticker, source string, from, to time.Time) error {
 	if s.Exclusions == nil || ticker == "USD" {

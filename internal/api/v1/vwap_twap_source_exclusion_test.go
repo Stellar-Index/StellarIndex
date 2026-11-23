@@ -31,7 +31,7 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 		return v1.New(v1.Options{History: &stubHistoryReader{trades: trades}, Exclusions: g, USDPeggedClassics: []canonical.Asset{usdc}})
 	}
 	strip := func(s string) string { return exclAsOf.ReplaceAllString(s, "") }
-	for _, path := range []string{"/v1/vwap?base=native&quote=" + exclUSDC, "/v1/twap?base=native&quote=" + exclUSDC} {
+	for _, path := range []string{"/v1/vwap?base=native&quote=" + exclUSDC, "/v1/twap?base=native&quote=" + exclUSDC, "/v1/ohlc?base=native&quote=" + exclUSDC} {
 		status, baseline := exclGet(t, newSrv(nil, soroswap, sdex), path)
 		if status != http.StatusOK || !strings.Contains(baseline, `"price":"15.0000000000"`) && strings.HasPrefix(path, "/v1/vwap") {
 			t.Fatalf("%s: ungated %d %s, want 200 over both sources", path, status, baseline)
@@ -56,7 +56,7 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 
 	// A fiat-quoted window pools the stablecoin books, so an exclusion stored under the requested pair drops the source's trades
 	// on every pooled book, not only on a book literally named native/fiat:USD.
-	for _, path := range []string{"/v1/vwap?base=native&quote=fiat:USD", "/v1/twap?base=native&quote=fiat:USD"} {
+	for _, path := range []string{"/v1/vwap?base=native&quote=fiat:USD", "/v1/twap?base=native&quote=fiat:USD", "/v1/ohlc?base=native&quote=fiat:USD"} {
 		status, baseline := exclGet(t, newSrv(nil, soroswap, sdex), path)
 		if status != http.StatusOK {
 			t.Fatalf("%s: ungated %d %s, want 200", path, status, baseline)
@@ -69,5 +69,31 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 		if status, body := exclGet(t, newSrv(fiatScoped, soroswap, sdex), path); status != http.StatusOK || strip(body) != strip(soroswapOnly) {
 			t.Fatalf("%s: sdex excluded on the fiat pair %d %s, want exactly the soroswap-only answer %s", path, status, body, soroswapOnly)
 		}
+	}
+}
+
+// TestOHLCSeriesWithholdsExcludedBars: a CAGG bar pools its sources, so a bar an exclusion covers withholds the series
+// (a dropped bar would read as a quiet bucket); a bar outside the exclusion's window serves.
+func TestOHLCSeriesWithholdsExcludedBars(t *testing.T) {
+	bucket := time.Now().UTC().Truncate(time.Hour).Add(-3 * time.Hour)
+	bars := []v1.OHLCSeriesBar{{T: v1.WireTime(bucket), O: "1", H: "1", L: "1", C: "1", VBase: "1", VQuote: "1", N: 1, Sources: []string{"soroswap"}}}
+	srv := func(rows []timescale.SourceExclusion, err error) *v1.Server {
+		g := pricingguard.NewSourceExclusionGate(exclTable{rows: rows, err: err}, pricingguard.SourceExclusionGateOptions{})
+		return v1.New(v1.Options{History: &stubHistoryReader{ohlcBars: bars}, Exclusions: g})
+	}
+	path := "/v1/ohlc?base=native&quote=" + exclUSDC + "&interval=1h"
+	if status, body := exclGet(t, srv(nil, nil), path); status != http.StatusOK || !strings.Contains(body, `"soroswap"`) {
+		t.Fatalf("no exclusions: %d %s, want the bar served", status, body)
+	}
+	later := []timescale.SourceExclusion{{ID: 1, Source: "soroswap", From: bucket.Add(2 * time.Hour)}}
+	if status, body := exclGet(t, srv(later, nil), path); status != http.StatusOK {
+		t.Fatalf("exclusion after the bar: %d %s, want 200", status, body)
+	}
+	covering := []timescale.SourceExclusion{{ID: 1, Source: "soroswap", From: bucket.Add(-time.Hour)}}
+	if status, body := exclGet(t, srv(covering, nil), path); status != http.StatusNotFound || !strings.Contains(body, `"source_excluded"`) {
+		t.Fatalf("soroswap excluded over the bar: %d %s, want 404 source_excluded", status, body)
+	}
+	if status, body := exclGet(t, srv(nil, errors.New("db down")), path); status != http.StatusNotFound {
+		t.Fatalf("exclusions unread: %d %s, want a withheld 404, never a bar", status, body)
 	}
 }

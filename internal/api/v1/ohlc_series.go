@@ -210,6 +210,10 @@ func (s *Server) handleOHLCSeries(
 	}
 
 	bars = capOHLCSeriesNewest(bars, limit)
+	if err := s.ohlcSeriesWithheld(hCtx, pair, bars, interval); err != nil {
+		writePriceWithheldProblem(w, r, pair.Base, pair.Quote, priceWithheldReason(err))
+		return
+	}
 	bars = withoutVendorVolumes(bars)
 
 	// dex-nonstandard-decimals forward normalization: K = 10^(baseDec-quoteDec) is constant for the
