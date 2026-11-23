@@ -6,8 +6,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { EmptyState, PageHeader, Skeleton } from '@/components/ui';
+import { Button, EmptyState, PageHeader, Skeleton } from '@/components/ui';
 import { offChainAssetHref, sacRedirectHref } from '@/lib/assetRoute';
+import { errorStatus } from '@/lib/error-status';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
@@ -15,7 +16,11 @@ import { AssetScamCallout } from './AssetScamCallout';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { LiveAssetPrice } from './LiveAssetPrice';
 import { SacRedirect } from './SacRedirect';
-import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
+import {
+  type PriceBasis,
+  provenanceFromBasis,
+  scaleContradicted,
+} from './priceProvenance';
 import { formatCompactUnits } from '@/lib/format';
 import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
@@ -35,6 +40,8 @@ interface AssetShellDetail {
   price_usd?: string | null;
   /** Absent = direct market. See the OpenAPI enum for the other values. */
   price_basis?: PriceBasis;
+  price_withheld_reason?: string | null;
+  market_cap_decimals_mismatch?: boolean;
   unverified_ticker_collision?: boolean;
   unverified_warning?: { note?: string } | null;
   /**
@@ -127,7 +134,30 @@ export function AssetPathView() {
 
   const sacHref = slug ? sacRedirectHref(slug, d) : null;
   if (sacHref) return <SacRedirect href={sacHref} />;
-  if (detail.isError || !d?.asset_id) {
+  // Only a 404 (or a success with no asset_id) is a verdict; any other
+  // failure is transient and must not read as "the asset does not exist".
+  const failed = detail.isError ? detail : issuance.isError ? issuance : null;
+  if (failed && errorStatus(failed.error) !== 404) {
+    return (
+      <EmptyState
+        title="Lookup failed"
+        description={`Lookup failed: ${failed.error instanceof Error ? failed.error.message : 'unknown error'}.`}
+        action={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              if (detail.isError) void detail.refetch();
+              if (issuance.isError) void issuance.refetch();
+            }}
+          >
+            Retry
+          </Button>
+        }
+      />
+    );
+  }
+  if (failed || !d?.asset_id) {
     return (
       <EmptyState
         title="Asset not found"
@@ -183,6 +213,7 @@ export function AssetPathView() {
           assetID={d.asset_id}
           initialPrice={d.price_usd ?? null}
           initialProvenance={provenanceFromBasis(d.price_basis, 'vwap1m')}
+          initialScaleMismatch={scaleContradicted(d)}
         />
         {d.unverified_warning?.note && (
           <p className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm">

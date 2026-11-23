@@ -49,11 +49,17 @@ func (c substrateProblemFakeConn) QueryRow(_ context.Context, query string, args
 	switch {
 	case strings.Contains(query, "uniqExact"):
 		rows := c.presentIn(0, uint64(c.to))
-		var hi uint64
+		var lo, hi uint64
 		if len(rows) > 0 {
-			hi = rows[len(rows)-1]
+			lo, hi = rows[0], rows[len(rows)-1]
 		}
-		return substrateProblemFakeRow{vals: []uint64{c.haveMin, hi, uint64(len(rows))}}
+		return substrateProblemFakeRow{vals: []uint64{lo, hi, uint64(len(rows))}}
+	case strings.Contains(query, "win_min"):
+		rows := c.presentIn(args[0].(uint64), args[1].(uint64))
+		if len(rows) == 0 {
+			return substrateProblemFakeRow{vals: []uint64{0, 0}}
+		}
+		return substrateProblemFakeRow{vals: []uint64{rows[0], rows[len(rows)-1]}}
 	case strings.Contains(query, "gap_start"):
 		lo, hi := args[0].(uint64), args[1].(uint64)
 		rows := c.presentIn(lo, hi)
@@ -126,6 +132,59 @@ func TestSubstrateProblem_ReportsEarliestMissingLedger(t *testing.T) {
 		if has != (want != 0) || got != want {
 			t.Fatalf("case %d [%d,%d] haveMin=%d lakeMax=%d missing=%v: got (%d,%v,%q), want first missing %d",
 				i, from, to, conn.haveMin, conn.to, conn.missing, got, has, detail, want)
+		}
+	}
+}
+
+// TestSubstrateProblem_SeamHoleBehindShortTail: a hole covering both seam ledgers (8,9) of a 7-ledger window
+// walk, with the lake tail also short. The answer is the hole's first ledger, never the tail's haveMax+1.
+func TestSubstrateProblem_SeamHoleBehindShortTail(t *testing.T) {
+	conn := substrateProblemFakeConn{to: 50, haveMin: 2, missing: map[uint64]bool{8: true, 9: true, 10: true}}
+	got, has, detail, err := substrateProblemWindowed(context.Background(), conn, "", 2, 60, 7)
+	if err != nil {
+		t.Fatalf("substrateProblemWindowed: %v", err)
+	}
+	if !has || got != 8 {
+		t.Fatalf("got (%d,%v,%q), want problem 8 — the first missing ledger, not the short tail", got, has, detail)
+	}
+}
+
+// TestSubstrateProblem_EarliestMissingAcrossSeams is the property test with a small window so runs of missing
+// ledgers straddle seams, combined with head and tail truncation. The walk alone must find every hole: the
+// count-guard fallback needs a live lake and errors here.
+func TestSubstrateProblem_EarliestMissingAcrossSeams(t *testing.T) {
+	rng := rand.New(rand.NewSource(11)) //nolint:gosec // deterministic fixture, not crypto
+	for i := 0; i < 2000; i++ {
+		window := uint64(2 + rng.Intn(8))
+		from := uint32(2 + rng.Intn(20))
+		to := from + uint32(rng.Intn(120))
+		conn := substrateProblemFakeConn{to: to, haveMin: uint64(from), missing: map[uint64]bool{}}
+		if rng.Intn(4) == 0 {
+			conn.haveMin = uint64(from) + uint64(rng.Intn(int(to-from)+1))
+		}
+		if rng.Intn(2) == 0 {
+			conn.to = from + uint32(rng.Intn(int(to-from)+1))
+		}
+		for g := rng.Intn(3); g > 0; g-- {
+			start := uint64(from) + uint64(rng.Intn(int(to-from)+1))
+			for s := start; s < start+uint64(1+rng.Intn(int(window)+3)); s++ {
+				conn.missing[s] = true
+			}
+		}
+		var want uint32
+		for s := uint64(from); s <= uint64(to); s++ {
+			if !conn.present(s) {
+				want = uint32(s)
+				break
+			}
+		}
+		got, has, detail, err := substrateProblemWindowed(context.Background(), conn, "", from, to, window)
+		if err != nil {
+			t.Fatalf("case %d window=%d [%d,%d] haveMin=%d lakeMax=%d missing=%v: %v", i, window, from, to, conn.haveMin, conn.to, conn.missing, err)
+		}
+		if has != (want != 0) || got != want {
+			t.Fatalf("case %d window=%d [%d,%d] haveMin=%d lakeMax=%d missing=%v: got (%d,%v,%q), want first missing %d",
+				i, window, from, to, conn.haveMin, conn.to, conn.missing, got, has, detail, want)
 		}
 	}
 }

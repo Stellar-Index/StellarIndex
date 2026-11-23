@@ -96,8 +96,12 @@ func (c *contractDetailCache) get(key string) (e contractDetailEntry, ok, fresh 
 	if !ok {
 		return contractDetailEntry{}, false, false
 	}
-	return e, true, time.Since(e.cachedAt) <= detailTTLForKey(key)
+	p, provisional := e.v.(provisionalPayload)
+	return e, true, time.Since(e.cachedAt) <= detailTTLForKey(key) && (!provisional || !p.provisional())
 }
+
+// provisionalPayload is a cached payload that can declare itself stale on arrival (served, then refreshed on the next read).
+type provisionalPayload interface{ provisional() bool }
 
 func (c *contractDetailCache) put(key string, v any) {
 	c.mu.Lock()

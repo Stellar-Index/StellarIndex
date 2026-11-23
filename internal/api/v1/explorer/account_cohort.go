@@ -501,7 +501,7 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 			if resolve == nil {
 				resolve = h.newPositionAssetResolver(ctx, nil) // Asset carries the identity; a failed lookup only shortens the label
 			}
-			v.AssetLabel = assetDisplayLabel(resolve(p.Asset))
+			v.AssetLabel = resolve(p.Asset).Label
 		}
 		out = append(out, v)
 	}

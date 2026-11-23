@@ -3,7 +3,7 @@
 import Link from 'next/link';
 
 import { asExample } from '@/api/client';
-import { useAsset, useAssetSupply } from '@/api/hooks';
+import { useAsset } from '@/api/hooks';
 import { Panel } from '@/components/reveal';
 import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -12,16 +12,20 @@ import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
-import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+import {
+  LiveAssetPrice,
+  type PriceProvenance,
+  useScaleRefused,
+} from './LiveAssetPrice';
 import { PerformanceRange } from './PerformanceRange';
 import { marketCapNote } from './headerNotes';
 import { bakedAtDeploy } from './priceProvenance';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 import {
   VOLUME_FLOOR_HINT,
+  circulatingSupplyIsFloor,
   supplyHint,
   supplyIsDerived,
-  supplyIsFloor,
   supplyMark,
   totalSupplyIsFloor,
 } from '@/lib/supplyFloor';
@@ -52,6 +56,7 @@ export interface SidebarCoin {
   supply_basis?: string | null;
   value_lower_bound?: boolean;
   market_cap_lower_bound?: boolean;
+  circulating_supply_lower_bound?: boolean;
   change_24h_pct?: string | null;
   trade_count_24h?: number | null;
   observation_count: number;
@@ -70,6 +75,7 @@ export interface SidebarDetail {
   volume_24h_usd?: string | null;
   volume_lower_bound?: boolean;
   market_cap_lower_bound?: boolean;
+  circulating_supply_lower_bound?: boolean;
   supply_basis?: string | null;
   home_domain?: string | null;
 }
@@ -115,6 +121,7 @@ export function AssetIdentityCard({
   // Native (and a few sparse rows) can arrive without a `code` — fall
   // back to the slug so the avatar glyph + labels never crash on slice.
   const code = coin.code || coin.slug || '—';
+  const scaleRefused = useScaleRefused(coin.asset_id, priceScaleMismatch);
   return (
     <div className="rounded-card border-line bg-surface border p-4">
       <div className="flex items-start justify-between gap-2">
@@ -143,7 +150,11 @@ export function AssetIdentityCard({
         initialScaleMismatch={priceScaleMismatch}
         initialChangePct={num(coin.change_24h_pct)}
       />
-      <ChangeSummaryStrip assetID={coin.asset_id} className="mt-3" />
+      <ChangeSummaryStrip
+        assetID={coin.asset_id}
+        scaleRefused={scaleRefused}
+        className="mt-3"
+      />
     </div>
   );
 }
@@ -206,17 +217,16 @@ export function AssetSidebar({
     vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
   // Floors come from the same payload as the figure they qualify.
   const volFloor = (detail ?? coin).volume_lower_bound === true;
-  // Same query key as the Supply tab, so both panels mark one verdict.
-  const onchainFloor =
-    useAssetSupply(coin.asset_id).data?.data?.circulating_supply_lower_bound ===
-    true;
-  const capFloor = totalSupplyIsFloor(detail ?? coin, onchainFloor);
+  // The Supply tab judges these figures with the same helpers, so both panels mark one verdict.
+  const capFloor = circulatingSupplyIsFloor(detail ?? coin);
+  const totalFloor = totalSupplyIsFloor(detail ?? coin);
   const circSrc = detail?.circulating_supply != null ? detail : coin;
-  const circFloor = supplyIsFloor(circSrc) || onchainFloor;
+  const circFloor = circulatingSupplyIsFloor(circSrc);
   const circDerived = !circFloor && supplyIsDerived(circSrc);
   // A floor over an exact cap is "at least", an exact volume over a floor
   // cap is "at most"; with both floors the ratio is bounded on neither side.
   const derived = !capFloor && supplyIsDerived(detail ?? coin);
+  const totalDerived = !totalFloor && supplyIsDerived(detail ?? coin);
   const ratioMark =
     volFloor && capFloor
       ? null
@@ -274,8 +284,8 @@ export function AssetSidebar({
         <StatRow label="FDV" value={usd(fdv)} />
         <StatRow
           label="Total supply"
-          value={floorMark(supply(total, code), capFloor, derived)}
-          title={capTitle}
+          value={floorMark(supply(total, code), totalFloor, totalDerived)}
+          title={supplyHint(totalFloor, totalDerived)}
         />
         <StatRow
           label="Max supply"

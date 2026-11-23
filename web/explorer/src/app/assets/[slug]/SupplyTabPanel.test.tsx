@@ -44,6 +44,7 @@ vi.mock('@/api/hooks', async () => {
 });
 
 import { apiGet } from '@/api/client';
+import { SUPPLY_FLOOR_HINT } from '@/lib/supplyFloor';
 import { SupplyTabPanel } from './SupplyTabPanel';
 
 function renderPanel() {
@@ -282,10 +283,23 @@ describe('SupplyTabPanel marks floor and derived figures', () => {
     expect(screen.getAllByText('≥ 100')).toHaveLength(2);
   });
 
-  it('marks a lake-net total with the on-chain floor, as circulating is', () => {
+  it('marks a lake-net total with the detail’s own floor, as circulating is', () => {
     assetExtra.fields = {
       supply_basis: 'sep41_lake_flows',
       total_supply: '1000000000',
+      circulating_supply_lower_bound: true,
+    };
+    renderPanel();
+    expect(screen.getAllByText('≥ 100')).toHaveLength(2);
+    expect(screen.queryByText('100')).toBeNull();
+  });
+
+  // /supply serves the lake net; the snapshot here is the observer's figure.
+  it('never borrows the on-chain read’s floor for the snapshot figures', () => {
+    assetExtra.fields = {
+      supply_basis: 'issuer_exclusion',
+      total_supply: '1000000000',
+      market_cap_usd: '5000000',
     };
     supplyQuery.data = {
       data: {
@@ -298,7 +312,19 @@ describe('SupplyTabPanel marks floor and derived figures', () => {
       },
     };
     renderPanel();
-    expect(screen.getAllByText('≥ 100')).toHaveLength(2);
+    expect(screen.getAllByText('100')).toHaveLength(2);
+    expect(screen.getByText('$5M')).toBeInTheDocument();
+    expect(screen.queryByText('≥ 100')).toBeNull();
+    expect(screen.queryByText('≥ $5M')).toBeNull();
+  });
+
+  it('marks a circulating supply the detail calls a floor when /supply has not answered', () => {
+    assetExtra.fields = {
+      supply_basis: 'sep41_lake_flows',
+      circulating_supply_lower_bound: true,
+    };
+    renderPanel();
+    expect(screen.getByText('≥ 100')).toBeInTheDocument();
     expect(screen.queryByText('100')).toBeNull();
   });
 
@@ -309,6 +335,47 @@ describe('SupplyTabPanel marks floor and derived figures', () => {
     };
     renderPanel();
     expect(screen.getAllByText('≤ 100')).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      { market_cap_withheld_reason: 'supply_floor' },
+      'not valued · supply is a floor',
+    ],
+    [
+      { market_cap_withheld_reason: 'ticker_collision' },
+      'not valued · ticker look-alike',
+    ],
+    [{ market_cap_decimals_mismatch: true }, 'refused · decimals disagree'],
+    [
+      { price_withheld_reason: 'decimals_mismatch' },
+      'withheld · decimals disagree',
+    ],
+  ])('withholds the cap history the detail refuses (%o)', (fields, note) => {
+    vi.mocked(apiGet).mockClear();
+    assetExtra.fields = fields;
+    renderPanel();
+    expect(
+      screen.getByText(`Market-cap history withheld: ${note}.`),
+    ).toBeInTheDocument();
+    expect(apiGet).not.toHaveBeenCalledWith('/v1/chart', expect.anything());
+  });
+
+  it('draws the cap history under a transient cap refusal', () => {
+    vi.mocked(apiGet).mockClear();
+    assetExtra.fields = { market_cap_withheld_reason: 'supply_stale' };
+    renderPanel();
+    expect(apiGet).toHaveBeenCalledWith('/v1/chart', expect.anything());
+    expect(screen.queryByText(/Market-cap history withheld/)).toBeNull();
+  });
+
+  it('marks the cap history of a floor supply as a lower bound', () => {
+    assetExtra.fields = { supply_basis: 'classic_trustline_sum' };
+    renderPanel();
+    expect(screen.getByText(/Market-cap timeline · at least/)).toHaveAttribute(
+      'title',
+      SUPPLY_FLOOR_HINT,
+    );
   });
 
   it('leaves an exact supply unmarked', () => {
