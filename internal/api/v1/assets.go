@@ -1943,42 +1943,6 @@ func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedC
 	return s.buildGlobalAssetView(ctx, vc)
 }
 
-// onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID, nil when absent. It passes
-// the same fail-closed substance gate as the classic row, so a dust market cannot price a row /v1/price withholds.
-func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
-	if s.AssetsReader == nil || assetID == "" {
-		return nil
-	}
-	row, err := s.AssetsReader.GetAssetByAssetID(ctx, assetID)
-	if err != nil || row.PriceUSD == nil {
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			reportUnreadRead(ctx)
-		}
-		return nil
-	}
-	if s.Substance != nil {
-		asset, err := canonical.ParseAsset(assetID)
-		if err != nil {
-			return nil
-		}
-		if allowed, unread := s.catalogueRowPriceAllowed(ctx, asset); !allowed {
-			if unread {
-				reportUnreadRead(ctx)
-			}
-			return nil
-		}
-	}
-	// The per-asset reader's price is a RAW prices_1m ratio (it is not
-	// the writer-normalised listing rollup, whatever this function's name
-	// suggests), so it takes the same correction the detail page gives
-	// the same row. Withheld means unpriced, never raw.
-	price, ok := s.normalizeCatalogueReadUSDByID(*row.PriceUSD, assetID)
-	if !ok {
-		return nil
-	}
-	return &price
-}
-
 // assetTypeGlobal is [AssetDetail.Type] on a catalogue-projected row; such rows are keyed by slug, so on-chain reads must
 // resolve the Stellar twin first ([Server.seriesAssetIDForRow]).
 const assetTypeGlobal = "global"
