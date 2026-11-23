@@ -461,3 +461,61 @@ describe('formatPremiumPct', () => {
     expect(format.formatPremiumPct(-0.00004)).toBe('-<0.0001');
   });
 });
+
+// One reading in every browser: the separators' shape decides, never the locale.
+describe('parseAmountInput', () => {
+  it.each([
+    // both marks: the later is the decimal
+    ['1.234,56', '1234.56'],
+    ['1,234.56', '1234.56'],
+    ['1,00,000.5', '100000.5'],
+    // commas only: a three-digit group is grouping, else a decimal mark
+    ['1,000', '1000'],
+    ['12,345', '12345'],
+    ['1,234,567', '1234567'],
+    ['0,5', '0.5'],
+    [',5', '0.5'],
+    ['1,5', '1.5'],
+    ['12,75', '12.75'],
+    ['1,00', '1.00'],
+    ['1,0000', '1.0000'],
+    [',000', '0.000'],
+    ['1,', '1'],
+    // dots only: one is a decimal, several three-digit groups are grouping
+    ['1.000', '1.000'],
+    ['1.5', '1.5'],
+    ['.5', '0.5'],
+    ['1.', '1'],
+    ['1.234.567', '1234567'],
+    // spaces of any kind between digits group
+    ['1 234,56', '1234.56'],
+    ['1 000,5', '1000.5'],
+    ['1 234 567,5', '1234567.5'],
+    ['1 000', '1000'],
+    [' 42 ', '42'],
+    ['007', '007'],
+  ])('%j reads as %s', (raw, want) => {
+    expect(format.parseAmountInput(raw)).toBe(want);
+  });
+
+  it.each([
+    '',
+    ' ',
+    ',',
+    '.',
+    '1,2,3',
+    '1,23,4',
+    '1.2.3',
+    '1.234.56',
+    '1,,000.5',
+    '1,.5',
+    '1.234,5.6',
+    '1 ,5',
+    '-1',
+    '1e5',
+    'abc',
+    '1a',
+  ])('%j is not a number', (raw) => {
+    expect(format.parseAmountInput(raw)).toBeNull();
+  });
+});

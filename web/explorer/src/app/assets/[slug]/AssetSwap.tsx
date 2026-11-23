@@ -22,6 +22,7 @@ import {
   convertDecimalAmount,
   formatPriceSmall,
   formatRelative,
+  parseAmountInput,
   positiveDecimal,
   truncateMiddle,
 } from '@/lib/format';
@@ -440,7 +441,7 @@ export function AssetSwap({
     legNote(toToken, toRate, toThin),
   ]);
 
-  const input = normalizeAmount(amount);
+  const input = parseAmountInput(amount);
 
   // The computed counter value for the non-edited field: exact decimal
   // arithmetic, rounded once to the output leg's precision.
@@ -504,7 +505,9 @@ export function AssetSwap({
 
   function onEdit(side: 'from' | 'to', raw: string) {
     setEdited(side);
-    setAmount(typedAmount(raw, localeDecimalSeparator()));
+    // The field keeps the typed separators: rewriting "1," as "1." would turn
+    // a keystroke-by-keystroke "1,000" into 1.000.
+    setAmount(raw.replace(/[^\d.,\s]/g, ''));
   }
 
   return (
@@ -1053,36 +1056,6 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────
-function localeDecimalSeparator(): string {
-  return (
-    new Intl.NumberFormat().formatToParts(1.5).find((p) => p.type === 'decimal')
-      ?.value ?? '.'
-  );
-}
-
-/**
- * A typed amount as digits and at most one '.'. A comma is the decimal mark
- * when it follows the last '.' ("1.234,56") or the locale writes decimals with
- * one, whose decimal keypad has no '.' key; otherwise commas are grouping.
- */
-export function typedAmount(raw: string, localeDecimal: string): string {
-  const comma = raw.lastIndexOf(',');
-  const dot = raw.lastIndexOf('.');
-  if (comma > dot && (dot >= 0 || localeDecimal === ',')) {
-    const digits = (s: string) => s.replace(/\D/g, '');
-    return `${digits(raw.slice(0, comma))}.${digits(raw.slice(comma + 1))}`;
-  }
-  return raw.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
-}
-
-/** The typed amount as a plain decimal string ("1." → "1", ".5" → "0.5"); null when empty. */
-function normalizeAmount(raw: string): string | null {
-  const t = raw.replace(/,/g, '').replace(/\.$/, '');
-  if (t === '' || t === '.') return null;
-  const s = t.startsWith('.') ? `0${t}` : t;
-  return /^\d+(\.\d+)?$/.test(s) ? s : null;
-}
-
 // Stellar classic precision when a crypto leg's decimals are unknown; a fiat
 // leg rounds to cents but keeps four significant digits below one unit.
 const DEFAULT_CRYPTO_DECIMALS = 7;

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import {
@@ -33,6 +33,9 @@ const row: TradeRow = {
 let tape: TradeRow[] = [row];
 // The scatter needs two plotted trades.
 const twoTrades = () => [row, { ...row, op_index: 1, price: '0.025' }];
+beforeEach(() => {
+  tape = [row];
+});
 
 vi.mock('@/api/hooks', async () => {
   const actual =
