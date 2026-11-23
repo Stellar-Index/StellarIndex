@@ -29,8 +29,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// passkeySignupMaxPerIP per passkeySignupWindow caps account-creating begin-signup calls per client IP (/64 for IPv6) per instance;
-// each completed ceremony creates an account.
+// passkeySignupMaxPerIP per passkeySignupWindow caps account-creating calls per client IP (/64 for IPv6) per instance: passkey
+// begin-signups and email-proven first sign-ins share it (see [Handlers.signupIPAllowed]).
 const (
 	passkeySignupMaxPerIP = 10
 	passkeySignupWindow   = time.Hour
@@ -78,9 +78,16 @@ func (h *Handlers) HandlePasskeyBeginSignup(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bool {
-	if !h.signupEnabled(w, r) {
+	if !h.signupEnabled(w, r) || !h.signupIPAllowed(w, r, "passkey sign-ups") {
 		return false
 	}
+	// Begin creates nothing, so it spends no budget unit: finish spends one, immediately before the account it creates.
+	return true
+}
+
+// signupIPAllowed charges one account-creating attempt to the client IP on the per-IP cap every sign-up door shares, so no
+// single address can drain an all-caller budget; false means the 429 is written. Call it before spending a budget unit.
+func (h *Handlers) signupIPAllowed(w http.ResponseWriter, r *http.Request, what string) bool {
 	limiter := h.cfg.passkeySignupLimiter
 	if limiter == nil {
 		// Only reachable by bypassing NewHandlers; refuse rather than run uncapped.
@@ -88,12 +95,11 @@ func (h *Handlers) allowPasskeySignup(w http.ResponseWriter, r *http.Request) bo
 		return false
 	}
 	if !limiter.Allow(middleware.RemoteIPThrottleKey(r), passkeySignupMaxPerIP) {
-		h.cfg.Logger.Warn("passkey signup throttled", "ip", clientIP(r).String())
+		h.cfg.Logger.Warn("sign-up throttled", "what", what, "ip", clientIP(r).String())
 		w.Header().Set("Retry-After", strconv.Itoa(int(passkeySignupWindow/time.Second)))
-		writeProblem(w, http.StatusTooManyRequests, "too many passkey sign-ups; retry later", r.URL.Path)
+		writeProblem(w, http.StatusTooManyRequests, "too many "+what+"; retry later", r.URL.Path)
 		return false
 	}
-	// Begin creates nothing, so it spends no budget unit: finish spends one, immediately before the account it creates.
 	return true
 }
 

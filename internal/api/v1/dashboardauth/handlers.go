@@ -697,7 +697,9 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		}
 		// Only after the email is proven, so the refusal tells nobody but its owner that it has no account.
 		// The proven mailbox is the per-account cost, so this draws on its own budget, not the one /v1/register can drain.
-		if !h.signupEnabled(w, r) || !h.signupBudgetOK(w, r, h.cfg.SignupBudget.EmailProven(), obs.RegistrationPoolEmailProven) {
+		// A catch-all domain mints mailboxes freely, so the per-IP cap runs first and one address cannot drain that budget.
+		if !h.signupEnabled(w, r) || !h.signupIPAllowed(w, r, "sign-ups") ||
+			!h.signupBudgetOK(w, r, h.cfg.SignupBudget.EmailProven(), obs.RegistrationPoolEmailProven) {
 			return errSignupRefused
 		}
 		user, err = h.signupNewUser(r.Context(), email)

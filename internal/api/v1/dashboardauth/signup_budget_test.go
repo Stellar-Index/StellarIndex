@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -97,6 +98,38 @@ func TestEmailSignIn_FirstSignInObeysRegistrationLevers(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Invariant: one client IP creates at most passkeySignupMaxPerIP accounts per window through email-proven first sign-ins, and
+// a refused one spends no unit of the all-caller email-proven budget, so a catch-all domain on one address cannot drain it.
+// Existing users on the same address still sign in.
+func TestEmailSignIn_FirstSignInPerIPCapSpendsNoBudget(t *testing.T) {
+	r := newTestRig(t)
+	budget := &fakeSignupBudget{}
+	r.h.cfg.SignupBudget = auth.NewRegistrationBudget(budget)
+	acct, _ := r.accounts.Create(t.Context(), platform.Account{
+		Name: "Acme", Slug: "acme", BillingEmail: "ash@acme.com", Tier: platform.TierFree, Status: platform.AccountActive,
+	})
+	if _, err := r.users.CreateUser(t.Context(), platform.User{AccountID: acct.ID, Email: "ash@acme.com", Role: platform.RoleOwner}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	for i := range passkeySignupMaxPerIP {
+		if w := r.signInByCode(t, "a"+strconv.Itoa(i)+"@catch-all.example"); w.Code != http.StatusOK {
+			t.Fatalf("sign-up %d inside the cap: status = %d, want 200", i, w.Code)
+		}
+	}
+	accounts := r.accountCount()
+	w := r.signInByCode(t, "over-cap@catch-all.example")
+	if w.Code != http.StatusTooManyRequests || sessionCookieSet(w) || r.accountCount() != accounts {
+		t.Fatalf("sign-up past the per-IP cap: status = %d, session = %v, accounts +%d; want 429, none, none",
+			w.Code, sessionCookieSet(w), r.accountCount()-accounts)
+	}
+	if budget.calls != passkeySignupMaxPerIP {
+		t.Errorf("budget spends = %d, want %d (the refused sign-up spends none)", budget.calls, passkeySignupMaxPerIP)
+	}
+	if w := r.signInByCode(t, "ash@acme.com"); w.Code != http.StatusOK || !sessionCookieSet(w) {
+		t.Errorf("existing user's sign-in from the capped address: status = %d, want 200 and a session", w.Code)
 	}
 }
 
