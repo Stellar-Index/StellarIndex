@@ -1,7 +1,8 @@
 # Gitleaks config for the WORKING-TREE scan only (`gitleaks detect --no-git`).
 #
-# Extends the canonical .gitleaks.toml and adds exactly one thing: an
-# allowlist for ansible vault-var files (`*.secrets.yml` / `*.secrets.yaml`).
+# Extends the canonical .gitleaks.toml and adds allowlists for local-only
+# content, chiefly the ansible inventory and vault-var files
+# (`*.secrets.yml` / `*.secrets.yaml`, per-host `r*.yml`).
 #
 # WHY A SEPARATE CONFIG RATHER THAN AN ENTRY IN .gitleaks.toml
 #
@@ -36,6 +37,9 @@ path = ".gitleaks.toml"
 description = "Ansible vault-var files — real local secrets, gitignored repo-wide; exempt from the working-tree scan ONLY (history scan still flags them)"
 paths = [
   '''(^|/)[^/]+\.secrets\.ya?ml$''',
+  # Per-host inventory (r1.yml): gitignored and holds live host config. No dot
+  # after the host name, so the TRACKED r*.example.yml templates stay scanned.
+  '''^configs/ansible/inventory/r[^/.]*\.yml$''',
   # Third-party package content is not this repository's working tree, and
   # every committed byte is covered by the separate history scan. The store
   # entry is load-bearing, not belt-and-braces: when pnpm's configured store

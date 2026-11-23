@@ -104,8 +104,12 @@ FROM stellar.account_movements;
 -- then repeat that partition's FINAL copy above.
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
--- Per partition, FINAL row counts and distinct keys (asset included) must match
--- on both sides; a count above the distinct-key count means leftover rows.
+-- Per partition, the FINAL row count and a content checksum must match on both
+-- sides. Both sides are read FINAL so the source's unmerged versions do not
+-- count, and a stale-asset row left in the copy changes the count. Reads stop
+-- at TIP: cap67-movements keeps writing above it, and the two subqueries see
+-- different moments. sum(cityHash64(..)) streams; uniqExact over a 1M-ledger
+-- partition does not fit the memory cap.
 -- Every partition 0..TIP/1000000 is checked, each a heavy job, and the marker
 -- is recorded only behind PASSED; until it exists
 -- GET /v1/assets/{asset_id}/movements answers lower_bound=true. Run with the
@@ -118,20 +122,22 @@ FROM stellar.account_movements;
 --     MBA_OUT=$(mktemp -d) || exit 1
 --     for P in $(seq 0 $((TIP / 1000000))); do
 --       LO=$((P * 1000000)); HI=$(((P + 1) * 1000000))
+--       [ "$HI" -gt "$TIP" ] && HI=$((TIP + 1))
 --       rm -f "$MBA_OUT/$P.tsv"
 --       /usr/local/sbin/run-heavy-job.sh "movements-by-asset-verify-$P" bash -c 'clickhouse-client --port 9300 -q "$1" > "$2.tmp" && mv "$2.tmp" "$2"' mba-verify "
 --         SELECT
 --           (SELECT count() FROM stellar.account_movements FINAL WHERE ledger >= $LO AND ledger < $HI),
 --           (SELECT count() FROM stellar.movements_by_asset FINAL WHERE ledger >= $LO AND ledger < $HI),
---           (SELECT uniqExact(address, ledger, tx_hash, op_index, leg_index, direction, asset)
---              FROM stellar.account_movements WHERE ledger >= $LO AND ledger < $HI),
---           (SELECT uniqExact(address, ledger, tx_hash, op_index, leg_index, direction, asset)
---              FROM stellar.movements_by_asset WHERE ledger >= $LO AND ledger < $HI)" "$MBA_OUT/$P.tsv" </dev/null \
+--           (SELECT sum(cityHash64(address, ledger, tx_hash, op_index, leg_index, direction, asset, amount))
+--              FROM stellar.account_movements FINAL WHERE ledger >= $LO AND ledger < $HI),
+--           (SELECT sum(cityHash64(address, ledger, tx_hash, op_index, leg_index, direction, asset, amount))
+--              FROM stellar.movements_by_asset FINAL WHERE ledger >= $LO AND ledger < $HI)
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000" "$MBA_OUT/$P.tsv" </dev/null \
 --         || { echo "movements_by_asset verify: partition $P DID NOT RUN or FAILED (rc=$?) - aborting" >&2; exit 1; }
---       read -r SRC_ROWS DST_ROWS SRC_KEYS DST_KEYS < "$MBA_OUT/$P.tsv" \
+--       read -r SRC_ROWS DST_ROWS SRC_SUM DST_SUM < "$MBA_OUT/$P.tsv" \
 --         || { echo "movements_by_asset verify: partition $P wrote no result - aborting" >&2; exit 1; }
---       [ -n "$DST_KEYS" ] && [ "$SRC_ROWS" = "$DST_ROWS" ] && [ "$SRC_KEYS" = "$DST_KEYS" ] \
---         || { echo "movements_by_asset verify: partition $P MISMATCH src_rows=$SRC_ROWS dst_rows=$DST_ROWS src_keys=$SRC_KEYS dst_keys=$DST_KEYS - aborting" >&2; exit 1; }
+--       [ -n "$DST_SUM" ] && [ "$SRC_ROWS" = "$DST_ROWS" ] && [ "$SRC_SUM" = "$DST_SUM" ] \
+--         || { echo "movements_by_asset verify: partition $P MISMATCH src_rows=$SRC_ROWS dst_rows=$DST_ROWS src_sum=$SRC_SUM dst_sum=$DST_SUM - aborting" >&2; exit 1; }
 --     done
 --     rm -rf "$MBA_OUT"
 --   ) && echo "movements_by_asset verify: PASSED" \
