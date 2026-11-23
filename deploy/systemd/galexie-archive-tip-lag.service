@@ -24,6 +24,13 @@ After=minio.service
 [Service]
 Type=oneshot
 User=root
+# Root only for root's mc aliases, so ProtectHome stays off.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 ExecStart=/usr/local/bin/galexie-archive-tip-lag
 TimeoutStartSec=60
 Nice=10

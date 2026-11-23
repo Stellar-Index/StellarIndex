@@ -317,8 +317,12 @@
     content: |
       # Managed by ansible (archival-node/15-log-discipline.yml).
       # security record is preserved but syslog stays readable + small.
-      :msg, contains, "nft-drop" -/var/log/nft-drop.log
-      & stop
+      # Kernel lines only: sshd logs attacker-chosen usernames verbatim, and a
+      # bare contains-match would divert them out of auth.log.
+      if $programname == 'kernel' and $msg contains 'nft-drop: ' then {
+        action(type="omfile" file="/var/log/nft-drop.log")
+        stop
+      }
   notify:
     - Reload rsyslog
   tags: [log-discipline, rsyslog, firewall]

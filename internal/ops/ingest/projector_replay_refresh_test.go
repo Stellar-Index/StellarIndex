@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
@@ -249,6 +250,25 @@ func replayArgs(t *testing.T, source string, extra ...string) []string {
 	return append([]string{"-config", missing, "-source", source, "-from", "52728375"}, extra...)
 }
 
+// TestProjectorReplay_RequiresStatedMode: a run with neither -write nor -dry-run is refused before the config load on both
+// the rewind and the -refresh-only paths, so a scripted caller cannot silently dry-run.
+func TestProjectorReplay_RequiresStatedMode(t *testing.T) {
+	t.Parallel()
+	for _, extra := range [][]string{nil, {"-refresh-only", "-refresh-to", "52728400"}} {
+		err := projectorReplay(io.Discard, replayArgs(t, "cctp", extra...))
+		if !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+			t.Errorf("args %v: want ErrWriteModeUnstated, got: %v", extra, err)
+		}
+		if err != nil && !strings.HasPrefix(err.Error(), "projector-replay: ") {
+			t.Errorf("args %v: refusal does not name the subcommand: %v", extra, err)
+		}
+	}
+	err := projectorReplay(io.Discard, replayArgs(t, "cctp", "-dry-run"))
+	if errors.Is(err, opsutil.ErrWriteModeUnstated) {
+		t.Errorf("-dry-run is a stated mode and must not be refused: %v", err)
+	}
+}
+
 func TestProjectorReplay_RefusesSourceThatIsNotBackfillSafe(t *testing.T) {
 	t.Parallel()
 	// The registry is the authority; if the audit lands and this flips,
@@ -292,7 +312,7 @@ func TestProjectorReplay_AuditedAndRegistrylessSourcesPassTheGate(t *testing.T) 
 		sep41supply.SourceName,
 		sep41transfers.SourceName,
 	} {
-		err := projectorReplay(io.Discard, replayArgs(t, source))
+		err := projectorReplay(io.Discard, replayArgs(t, source, "-dry-run"))
 		if err == nil {
 			t.Fatalf("%s: expected the absent config to fail the run", source)
 		}
