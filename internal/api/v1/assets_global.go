@@ -42,8 +42,8 @@ type GlobalAssetView struct {
 	// and can be days old over a weekend. It is null only under price_authority onchain_listing.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
-	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded), the Stellar
-	// issuer's flag withholds (scam_issuer), or an exclusion or directory read could not judge (unattributed, with flags.stale).
+	// PriceWithheldReason is set only beside a nil PriceUSD that a source exclusion refused (source_excluded), the substance gate
+	// refused (substance), the Stellar issuer's flag withholds (scam_issuer), or a read could not judge (unattributed, flags.stale).
 	PriceWithheldReason PriceWithheldReason `json:"price_withheld_reason,omitempty"`
 	PriceSources        []string            `json:"price_sources,omitempty"`
 	PriceAsOf           *WireTime           `json:"price_as_of,omitempty"`
