@@ -189,6 +189,8 @@ type ExplorerReader interface {
 	EntryIndexWatermark(ctx context.Context) (uint32, error)
 	// EntryHistoryWatermark is the ledger ch-entry-history has derived the sponsorship lifecycles through (0 = never derived).
 	EntryHistoryWatermark(ctx context.Context) (uint32, error)
+	// EntryHistoryFloor is the first ledger that derive covered (0 = not recorded).
+	EntryHistoryFloor(ctx context.Context) (uint32, error)
 	// AccountEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the raw account key.
 	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
 	// LiveClaimableBalancesInLedgers returns the still-unclaimed balances naming the raw account changed in the ledgers.

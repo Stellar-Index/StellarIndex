@@ -497,28 +497,36 @@ export function RWAView() {
           is the question a snapshot cannot answer. */}
       {byClass.length > 0 && (
         <div className="grid gap-6 lg:grid-cols-2">
-          <Panel title="Value by instrument class" headingLevel={2}>
+          <Panel
+            title="Value of backing by instrument class"
+            hint="By reference valuation, not market value"
+            headingLevel={2}
+          >
             <ShareBars
-              ariaLabel="Market cap by instrument class"
+              ariaLabel="Value of backing by instrument class, by reference valuation"
               rows={byClass.map((c) => ({
                 key: c.class,
                 label: CLASS_LABEL[c.class] ?? c.class,
-                usd: c.market_cap_usd ?? null,
-                unvalued: c.assets_unvalued,
-                lowerBound: c.market_cap_lower_bound,
+                usd: c.reference_value_usd ?? null,
+                unvalued: c.assets_reference_unvalued,
+                lowerBound: c.reference_value_lower_bound,
               }))}
             />
           </Panel>
-          <Panel title="Value by issuer" headingLevel={2}>
+          <Panel
+            title="Value of backing by issuer"
+            hint="By reference valuation, not market value"
+            headingLevel={2}
+          >
             <ShareBars
-              ariaLabel="Market cap by issuer"
+              ariaLabel="Value of backing by issuer, by reference valuation"
               rows={byIssuer.map((i) => ({
                 key: i.issuer,
                 label:
                   i.name || i.home_domain || truncateMiddle(i.issuer, 6, 6),
-                usd: i.market_cap_usd ?? null,
-                unvalued: i.assets_unvalued,
-                lowerBound: i.market_cap_lower_bound,
+                usd: i.reference_value_usd ?? null,
+                unvalued: i.assets_reference_unvalued,
+                lowerBound: i.reference_value_lower_bound,
               }))}
             />
           </Panel>

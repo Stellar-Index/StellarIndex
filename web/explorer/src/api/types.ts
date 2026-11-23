@@ -7166,8 +7166,9 @@ export interface components {
              * @description Present on a fee-bump transaction: hash is then the OUTER
              *     (fee-bump) hash, source_account the inner transaction's source,
              *     and max_fee the fee payer's bid. GET /v1/tx/{hash} also resolves
-             *     the inner hash. Absent on a fee bump ingested before the outer
-             *     layer was captured; its result still reads
+             *     the inner hash, except for a fee bump ingested before the outer
+             *     layer was captured: look that one up by its outer hash. Absent on
+             *     such a fee bump; its result still reads
              *     tx_fee_bump_inner_success / tx_fee_bump_inner_failed.
              */
             fee_bump?: {
@@ -7559,15 +7560,28 @@ export interface components {
              *     position (e.g. "USDC", "XLM"). Absent when the underlying
              *     table carries no resolvable asset identity for this
              *     position_kind (documented per-protocol in
-             *     internal/api/v1/explorer/positions.go).
+             *     internal/api/v1/explorer/positions.go). Display only, never
+             *     an identity: a code can be claimed by any issuer — read
+             *     asset_ids.
              */
             assets?: string[];
+            /**
+             * @description The identity of each `assets` entry, in the same order:
+             *     "CODE-ISSUER", "native", or the token's contract C-strkey
+             *     when it names no classic asset or its classic asset could not
+             *     be read. Absent wherever `assets` is absent or is a fixed
+             *     label with no resolved contract behind it (the Blend backstop
+             *     token, sorocredit's USDC) — never guessed.
+             */
+            asset_ids?: string[];
             /**
              * @description Decimal string (ADR-0003) — see amount_semantics for exactly
              *     what this number represents. The empty string means the
              *     quantity is unknown (superseded_by_auction,
              *     not_yet_published, shares_unknown, a negative
-             *     net_share_flows), never a verified zero.
+             *     net_share_flows, a negative net_underlying_at_event_time on
+             *     an open leg), never a verified zero. A lending leg whose
+             *     b/d-token balance is exactly zero is closed and serves "0".
              */
             amount: string;
             /**

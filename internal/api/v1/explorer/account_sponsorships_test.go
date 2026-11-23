@@ -18,6 +18,7 @@ import (
 type sponsorshipsReader struct {
 	*capReader
 	wm           uint32
+	floor        uint32
 	arrangements []clickhouse.SponsorshipArrangement
 	resume       clickhouse.SponsorshipKey
 	totals       map[string]clickhouse.SponsorshipTotals
@@ -30,6 +31,10 @@ type sponsorshipsReader struct {
 
 func (r *sponsorshipsReader) EntryHistoryWatermark(context.Context) (uint32, error) {
 	return r.wm, nil
+}
+
+func (r *sponsorshipsReader) EntryHistoryFloor(context.Context) (uint32, error) {
+	return r.floor, nil
 }
 
 func (r *sponsorshipsReader) AccountSponsorships(_ context.Context, _, side string, inForce bool,
@@ -58,7 +63,7 @@ func spEv(ledger uint32, tx, event string) clickhouse.SponsorshipEventRow {
 
 func newSponsorshipsReader(wm uint32) *sponsorshipsReader {
 	return &sponsorshipsReader{
-		capReader: &capReader{probe: &deadlineProbe{}}, wm: wm,
+		capReader: &capReader{probe: &deadlineProbe{}}, wm: wm, floor: entryhistory.GenesisDeriveFloor,
 		arrangements: []clickhouse.SponsorshipArrangement{
 			{SponsorshipKey: spTrustlineKey, Reserves: 1, Events: []clickhouse.SponsorshipEventRow{
 				spEv(100, "a", entryhistory.SponsorshipStarted), spEv(120, "b", entryhistory.SponsorshipRevoked), spEv(130, "c", entryhistory.SponsorshipStarted),
@@ -173,6 +178,25 @@ func TestAccountSponsorships_ProofNotComparableAndMismatch(t *testing.T) {
 	}
 	if reader.lastSide != clickhouse.SponsorshipSideSponsor || view.Direction != "sponsoring" {
 		t.Fatalf("default direction = %q over side %q", view.Direction, reader.lastSide)
+	}
+}
+
+// A derive that began above genesis misses every arrangement in force since before it: the counters cannot be
+// blamed, and the in-force totals are a lower bound that names the floor.
+func TestAccountSponsorships_FloorAboveGenesisIsALowerBound(t *testing.T) {
+	for _, floor := range []uint32{120, 0} {
+		reader := newSponsorshipsReader(200)
+		reader.floor = floor
+		reader.state.NumSponsored = 3
+		_, view := callAccountSponsorships(t, reader, nil, 25)
+		if view.Proof.Match != nil || strings.Contains(view.CoverageNote, "DISAGREE") || !strings.Contains(view.CoverageNote, "lower bound") {
+			t.Fatalf("floor %d: proof = %+v note %q", floor, view.Proof, view.CoverageNote)
+		}
+	}
+	reader := newSponsorshipsReader(200)
+	reader.floor = 120
+	if _, view := callAccountSponsorships(t, reader, nil, 25); !strings.Contains(view.CoverageNote, "ledger 120") {
+		t.Fatalf("note does not name the floor: %q", view.CoverageNote)
 	}
 }
 

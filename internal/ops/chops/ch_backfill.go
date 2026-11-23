@@ -95,7 +95,30 @@ func chBackfill(args []string) error {
 	shares := assignRanges(plan.ranges, *parallel)
 	fmt.Fprintf(os.Stderr, "ch-backfill: streaming %s from %q -> %s (%d worker(s))\n",
 		plan.label(), streamBucket, sinkDesc, len(shares))
-	return runBackfillWalk(ctx, worker, shares, streamBucket, prog, dryRun)
+	if err := runBackfillWalk(ctx, worker, shares, streamBucket, prog, dryRun); err != nil {
+		return err
+	}
+	if !dryRun && !*changesOnly {
+		fmt.Fprintln(os.Stderr, censusFollowUp(ctx, *chAddr, plan.lo))
+	}
+	return nil
+}
+
+// backfillLedgerCloseTimes is clickhouse.LedgerCloseTimes, a var so the follow-up is testable without a live lake.
+var backfillLedgerCloseTimes = clickhouse.LedgerCloseTimes
+
+// censusFollowUp names the recompute a written range owes: contracts_census_daily re-replaces only its newest day, so
+// contract events re-derived into an earlier day stay out of /v1/contracts until the days from the range's first are redone.
+func censusFollowUp(ctx context.Context, chAddr string, lo uint32) string {
+	day := fmt.Sprintf("<UTC day of ledger %d>", lo)
+	if ts, err := backfillLedgerCloseTimes(ctx, chAddr, []uint32{lo}); err == nil {
+		if t, ok := ts[lo]; ok {
+			day = t.UTC().Format("2006-01-02")
+		}
+	}
+	return fmt.Sprintf("ch-backfill: FOLLOW-UP OWED — stellar.contracts_census_daily does not hold contract events re-derived "+
+		"from ledger %d on; run `run-heavy-job.sh census-rollup-redo stellarindex-ops ch-census-rollup -from-day %s -write`, "+
+		"or /v1/contracts counts for those days stay short", lo, day)
 }
 
 // runBackfillWalk runs the workers and fails closed on a short walk or an extract undercount.
