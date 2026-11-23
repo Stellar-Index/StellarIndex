@@ -4417,9 +4417,10 @@ export interface paths {
          *     `scopes` (optional) confines the new key to route families:
          *     `read` (public data surfaces), `account` (`/v1/account/*`),
          *     `dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).
-         *     Omitted/empty mints a full-access key — the posture every key
-         *     minted before scopes shipped keeps. Scopes only narrow; they
-         *     never grant anything the key's tier wouldn't already reach.
+         *     Omitted/empty inherits the calling key's scopes (an unscoped
+         *     caller mints an unscoped, full-access key); a scope the caller
+         *     lacks is refused. Scopes only narrow; they never grant anything
+         *     the key's tier wouldn't already reach.
          *
          *     One caller identifier may hold a bounded number of un-revoked
          *     keys (25 by default, operator-tunable). A mint that would cross
@@ -4430,8 +4431,9 @@ export interface paths {
          *     an `auth_mode = "sep10"` deployment honours only SEP-10 tokens,
          *     so a minted key would have no use there.
          *
-         *     The new key inherits the caller's identifier and tier and is a
-         *     child of the calling key: revoking the caller also revokes the
+         *     The new key inherits the caller's identifier, tier, IP/Referer/
+         *     permission restrictions, rate limit, monthly quota and expiry,
+         *     and is a child of the calling key: revoking the caller also revokes the
          *     new key. There is no rotate endpoint. To replace a key, mint the
          *     replacement with its parent (a sibling), deploy it, then revoke
          *     the old key. A root key has no parent: replace it with an
@@ -25085,8 +25087,9 @@ export interface operations {
                 "application/json": {
                     label: string;
                     /**
-                     * @description Optional capability scopes. Empty = full access
-                     *     (back-compat). Unknown values 400.
+                     * @description Optional capability scopes. Empty inherits the
+                     *     calling key's scopes (full access only when the
+                     *     caller is unscoped). Unknown values 400.
                      */
                     scopes?: ("read" | "account" | "dashboard" | "admin")[];
                 };

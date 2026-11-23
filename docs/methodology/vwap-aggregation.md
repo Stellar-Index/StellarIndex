@@ -118,7 +118,7 @@ are `Class = Exchange` AND `IncludeInVWAP = true` contribute to VWAP.**
 |---|---|---|
 | Exchange | Soroswap, Aquarius, Phoenix, Comet, SDEX, SushiSwap V3 (on-chain DEX); Binance, Kraken, Coinbase, Bitstamp (CEX); FX feeds | **Yes** — genuine executed trades |
 | Oracle | Reflector, RedStone, Band, Chainlink | No — **reported alongside**, not counted |
-| Aggregator | CoinGecko, CoinMarketCap, CryptoCompare | No — divergence cross-check only |
+| Aggregator | CoinGecko, CoinMarketCap, CryptoCompare | Not in VWAP — divergence cross-check, and the `aggregator_avg` fallback for the asset headline price when the VWAP tier misses |
 | Lending | Blend, Blend's emitter, Sorocredit | No — auction/stress prices (or, for the emitter, protocol-emissions plumbing) reported as a secondary signal |
 | Router | Soroswap-Router, DeFindex, Upshift | No — they emit no independent trades (they invoke other contracts, which do) |
 | Bridge | CCTP, Rozo | No — cross-chain transfer, not a priced trade |
@@ -129,7 +129,9 @@ derived** prices under their own governance and methodology. Folding them
 into our VWAP would either double-count the upstream markets they
 themselves summarise, or impose their aggregation policy on our output. We
 surface them on `/v1/sources` and use them for divergence detection — an
-independent cross-check, not an input. (An operator can opt a single
+independent cross-check, not a VWAP input. Aggregators are separately the
+second tier of the asset headline price (`aggregator_avg`), a plain average
+used only when the VWAP tier misses. (An operator can opt a single
 oracle into aggregation per-source, but the default is excluded.)
 
 **Fail-closed:** an unregistered / mis-typed source falls back to
