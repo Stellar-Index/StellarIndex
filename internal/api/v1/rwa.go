@@ -1223,7 +1223,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 
 	// The reference is attached AFTER the valuation: it reads the gated row (including the
 	// scam-flag suppression) and must not put a figure on a row the gates emptied.
-	refs := s.cachedRWAReferences(ctx)
+	refs, refVerdicts := s.rwaJudgedReferences(ctx, s.cachedRWAReferences(ctx))
 	// The listing rows that priced the admitted contracts are indexed from the MEMBERSHIP, not a
 	// second read: the row that prices an asset must be the one that recognised it.
 	listingRefs := rwaListingReferencesOf(m.contracts)
@@ -1244,11 +1244,13 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
 	stale := degraded || curatedDegraded || join.unanswered || rwaReferencesUnanswered(view.Assets)
 	ms := m.serveFlags()
+	flags := Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0}
 	return rwaAssetsBuild{
-		view:       view,
-		flags:      Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0},
-		builtAt:    now,
-		observedAt: observedAt,
+		view:        view,
+		flags:       markFillsWithheld(flags, rwaReferencesExcluded(view.Assets)),
+		builtAt:     now,
+		observedAt:  observedAt,
+		refVerdicts: refVerdicts,
 	}, nil
 }
 
@@ -1755,7 +1757,7 @@ func rwaReferenceOutageNote(assets []RWAAsset) string {
 		}
 	}
 	var parts []string
-	for _, by := range []string{rwaUnansweredOracle, rwaUnansweredListing, rwaUnansweredBoth, ""} {
+	for _, by := range []string{rwaUnansweredOracle, rwaUnansweredListing, rwaUnansweredBoth, rwaUnansweredExclusions, ""} {
 		n := counts[by]
 		if n == 0 {
 			continue

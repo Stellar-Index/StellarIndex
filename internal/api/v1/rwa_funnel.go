@@ -213,6 +213,7 @@ var rwaReferenceRefusalOrder = []string{
 	RWAPremiumReferenceISINMismatch,
 	RWAPremiumNotInstrumentScoped,
 	RWAPremiumNotBound,
+	RWAPremiumReferenceSourceExcluded,
 	RWAPremiumReferenceNotUSD,
 	RWAPremiumNoReference,
 	RWAPremiumReferenceExpired,
@@ -236,6 +237,8 @@ var rwaReferenceDropActors = map[string]string{
 	RWAPremiumReferenceUnavailable: rwaActorOperator,
 	RWAPremiumReferenceExpired:     rwaActorOperator,
 	RWAReferenceValuationNoSupply:  rwaActorOperator,
+	// The operator's own kill switch on the reading's source.
+	RWAPremiumReferenceSourceExcluded: rwaActorOperator,
 	// The operator's: the constant-NAV binding must be re-read against the issuer's page and
 	// re-bound or removed.
 	RWAPremiumReferenceISINMismatch: rwaActorOperator,

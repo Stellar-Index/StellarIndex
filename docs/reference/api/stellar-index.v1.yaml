@@ -21117,6 +21117,7 @@ components:
             - reference_expired
             - reference_not_positive
             - reference_isin_mismatch
+            - source_excluded
             - supply_unavailable
             - decimals_unavailable
           description: |
@@ -21414,6 +21415,7 @@ components:
             - reference_not_bound
             - reference_contract_not_bound
             - reference_isin_mismatch
+            - source_excluded
             - no_reference_feed
             - reference_unavailable
             - reference_expired
@@ -21476,6 +21478,12 @@ components:
             reference of any provenance is served until the binding is
             re-verified. Only a well-formed ISIN is compared; a free-text
             `anchor_asset` names no security and contradicts nothing.
+            `source_excluded` — an operator source exclusion covers the
+            oracle or fund-NAV reading the row would be valued at, so
+            no reference, valuation or premium is served; the envelope
+            carries `flags.fills_withheld_reason: source_excluded` and
+            the answer is not cached. An unreadable exclusion set
+            refuses the reading as `reference_unavailable`.
             `no_reference_feed` — the pair IS bound, but the oracle stream
             carries no row for its feed.
             `reference_unavailable` — a read the row depends on did not
@@ -22215,7 +22223,8 @@ components:
             `reference_valuation.status` and is documented there and
             under `RWAPremium.status`. `reference_contract_not_bound`,
             `no_reference_feed`, `reference_unavailable`,
-            `reference_expired`, `reference_isin_mismatch` and
+            `reference_expired`, `reference_isin_mismatch`,
+            `source_excluded` and
             `supply_unavailable` and `withheld_issuer_unchecked` are
             attributed to the `operator` — a
             source that could be enabled, an outage here, a supply
@@ -22309,6 +22318,7 @@ components:
             - reference_expired
             - reference_not_positive
             - reference_isin_mismatch
+            - source_excluded
             - supply_unavailable
             - decimals_unavailable
             - contract_already_evaluated_by_directory_arm

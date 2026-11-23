@@ -10962,7 +10962,7 @@ export interface components {
              *     string on the same row.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "reference_isin_mismatch" | "supply_unavailable" | "decimals_unavailable";
+            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "reference_isin_mismatch" | "source_excluded" | "supply_unavailable" | "decimals_unavailable";
             /**
              * @description `circulating_supply / 10^decimals x reference.price_usd`, as
              *     a 2-dp decimal string (ADR-0003). Exact rational arithmetic
@@ -11288,6 +11288,12 @@ export interface components {
              *     reference of any provenance is served until the binding is
              *     re-verified. Only a well-formed ISIN is compared; a free-text
              *     `anchor_asset` names no security and contradicts nothing.
+             *     `source_excluded` — an operator source exclusion covers the
+             *     oracle or fund-NAV reading the row would be valued at, so
+             *     no reference, valuation or premium is served; the envelope
+             *     carries `flags.fills_withheld_reason: source_excluded` and
+             *     the answer is not cached. An unreadable exclusion set
+             *     refuses the reading as `reference_unavailable`.
              *     `no_reference_feed` — the pair IS bound, but the oracle stream
              *     carries no row for its feed.
              *     `reference_unavailable` — a read the row depends on did not
@@ -11336,7 +11342,7 @@ export interface components {
              *     percent on a one-dollar share.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "market_outside_band" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
+            status: "published" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_not_bound" | "reference_contract_not_bound" | "reference_isin_mismatch" | "source_excluded" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "market_outside_band" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price" | "reference_is_a_fund_nav";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's
@@ -11930,7 +11936,8 @@ export interface components {
              *     `reference_valuation.status` and is documented there and
              *     under `RWAPremium.status`. `reference_contract_not_bound`,
              *     `no_reference_feed`, `reference_unavailable`,
-             *     `reference_expired`, `reference_isin_mismatch` and
+             *     `reference_expired`, `reference_isin_mismatch`,
+             *     `source_excluded` and
              *     `supply_unavailable` and `withheld_issuer_unchecked` are
              *     attributed to the `operator` — a
              *     source that could be enabled, an outage here, a supply
@@ -11990,7 +11997,7 @@ export interface components {
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_attestation_stale" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_is_classic_member_sac" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "reference_isin_mismatch" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
+            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_attestation_stale" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_is_classic_member_sac" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "reference_isin_mismatch" | "source_excluded" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has
