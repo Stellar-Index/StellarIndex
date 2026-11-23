@@ -205,6 +205,7 @@ type wordTaint struct {
 	field    string
 	fieldTyp types.Type
 	accessor string
+	recv     string // the parts value's expression, so its other words can be found
 }
 
 // Recognises the three spellings of the same operand (the word itself, a Must* call, or a local bound to either) so a
@@ -220,7 +221,7 @@ func classifyWord(info *types.Info, tainted map[types.Object]wordTaint, expr ast
 			return wordTaint{}, false
 		}
 		if recv, ok := info.Types[e.X]; ok && isPartsType(recv.Type) {
-			return wordTaint{field: e.Sel.Name, fieldTyp: info.TypeOf(e)}, true
+			return wordTaint{field: e.Sel.Name, fieldTyp: info.TypeOf(e), recv: types.ExprString(e.X)}, true
 		}
 	case *ast.Ident:
 		if obj := info.ObjectOf(e); obj != nil {
@@ -318,6 +319,85 @@ func checkConversion(info *types.Info, tainted map[types.Object]wordTaint, call 
 		return "" // lossless same-width same-sign conversion (the correct decode shape)
 	}
 	return fmt.Sprintf("%s(<x>.%s)%s truncates/reinterprets a 128-bit word (field is %s) — decode via canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)) or the FromUInt* siblings", target.Name(), tn.field, via, tn.fieldTyp)
+}
+
+// wordSinkArg returns the word operand of a call that takes one machine word with no conversion:
+// a math/big SetInt64/SetUint64 or strconv.Format/AppendInt|Uint.
+func wordSinkArg(info *types.Info, call *ast.CallExpr) (ast.Expr, string) {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return nil, ""
+	}
+	name := sel.Sel.Name
+	if s, ok := info.Selections[sel]; ok {
+		if s.Kind() == types.MethodVal && isBigNumber(s.Recv()) && (name == "SetInt64" || name == "SetUint64") && len(call.Args) == 1 {
+			return call.Args[0], name
+		}
+		return nil, ""
+	}
+	fn, ok := info.Uses[sel.Sel].(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "strconv" {
+		return nil, ""
+	}
+	switch name {
+	case "FormatInt", "FormatUint":
+		if len(call.Args) == 2 {
+			return call.Args[0], "strconv." + name
+		}
+	case "AppendInt", "AppendUint":
+		if len(call.Args) == 3 {
+			return call.Args[1], "strconv." + name
+		}
+	}
+	return nil, ""
+}
+
+// lowWordSinks flags each call that hands one 128/256-bit word, unconverted, to a math/big setter
+// or a strconv formatter, in a function that reads no other word of the same value: the rest of the
+// value is dropped with no numeric conversion for checkConversion to see.
+func lowWordSinks(info *types.Info, tainted map[types.Object]wordTaint, f *ast.File) map[*ast.CallExpr]string {
+	out := map[*ast.CallExpr]string{}
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		words := map[string]map[string]bool{}
+		var sinks []*ast.CallExpr
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			switch e := n.(type) {
+			case *ast.SelectorExpr, *ast.Ident:
+				if tn, ok := classifyWord(info, tainted, e.(ast.Expr)); ok && tn.field != "" {
+					if words[tn.recv] == nil {
+						words[tn.recv] = map[string]bool{}
+					}
+					words[tn.recv][tn.field] = true
+				}
+			case *ast.CallExpr:
+				if arg, _ := wordSinkArg(info, e); arg != nil {
+					sinks = append(sinks, e)
+				}
+			}
+			return true
+		})
+		for _, call := range sinks {
+			arg, sink := wordSinkArg(info, call)
+			// The SDK's words are named types (xdr.Uint64), so the setter's argument is a conversion.
+			for {
+				conv, ok := ast.Unparen(arg).(*ast.CallExpr)
+				if !ok || len(conv.Args) != 1 || !info.Types[conv.Fun].IsType() {
+					break
+				}
+				arg = conv.Args[0]
+			}
+			tn, ok := classifyWord(info, tainted, arg)
+			if !ok || tn.field == "" || len(words[tn.recv]) > 1 {
+				continue
+			}
+			out[call] = fmt.Sprintf("%s(<x>.%s) reads one word of %s, a 128/256-bit value, and drops the rest — decode via canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)) or the FromUInt* siblings", sink, tn.field, tn.recv)
+		}
+	}
+	return out
 }
 
 // isBigNumber reports whether t (after pointer deref) is big.Int,
@@ -431,6 +511,7 @@ func TestI128TruncationGuard(t *testing.T) {
 		pow10 := collectPow10Locals(pkg.TypesInfo, pkg.Syntax)
 		for _, f := range pkg.Syntax {
 			markers := markerLines(pkg.Fset, f)
+			sinks := lowWordSinks(pkg.TypesInfo, tainted, f)
 			for line := range markers {
 				key := fmt.Sprintf("%s:%d", pkg.Fset.Position(f.Pos()).Filename, line)
 				allMarkers[key] = token.Position{Filename: pkg.Fset.Position(f.Pos()).Filename, Line: line}
@@ -446,6 +527,9 @@ func TestI128TruncationGuard(t *testing.T) {
 				}
 				if msg == "" {
 					msg = checkTruncatingReciprocal(pkg.TypesInfo, pow10, call)
+				}
+				if msg == "" {
+					msg = sinks[call]
 				}
 				if msg == "" {
 					return true
@@ -558,6 +642,76 @@ func sink() {
 		if fired[k] {
 			t.Errorf("checkConversion FALSE-fired on the correct decode shape %s — it would reject valid FromInt128Parts code", k)
 		}
+	}
+}
+
+// Proves the one-word sink fires when a word reaches math/big or strconv unconverted with no other
+// word of the same value read, and stays silent when the function also reads the sibling word.
+func TestLowWordSinkGuard_PositiveControl(t *testing.T) {
+	const src = `package xdr
+
+import (
+	"math/big"
+	"strconv"
+)
+
+type Uint64 uint64
+
+type Int128Parts struct {
+	Hi int64
+	Lo uint64
+}
+
+type UInt128Parts struct {
+	Hi Uint64
+	Lo Uint64
+}
+
+func loOnly(p Int128Parts) *big.Int { return new(big.Int).SetUint64(p.Lo) }
+
+func loNamed(r UInt128Parts) *big.Int { return new(big.Int).SetUint64(uint64(r.Lo)) }
+
+func loLocal(p Int128Parts) string { lo := p.Lo; return strconv.FormatUint(lo, 10) }
+
+func hiOnly(q Int128Parts) *big.Int { return new(big.Int).SetInt64(q.Hi) }
+
+func both(p Int128Parts) *big.Int {
+	v := new(big.Int).Lsh(new(big.Int).SetInt64(p.Hi), 64)
+	return v.Or(v, new(big.Int).SetUint64(p.Lo))
+}
+
+func plain(n uint64) *big.Int { return new(big.Int).SetUint64(n) }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "xdr.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse synthetic source: %v", err)
+	}
+	info := &types.Info{
+		Types:      map[ast.Expr]types.TypeAndValue{},
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	if _, err := (&types.Config{Importer: importer.Default()}).Check("example.test/fake/xdr", fset, []*ast.File{f}, info); err != nil {
+		t.Fatalf("type-check synthetic source: %v", err)
+	}
+	sinks := lowWordSinks(info, collectWordTaint(info, []*ast.File{f}), f)
+	fired := map[string]bool{}
+	for call := range sinks {
+		var b strings.Builder
+		if err := printer.Fprint(&b, fset, call); err != nil {
+			t.Fatalf("render call: %v", err)
+		}
+		fired[b.String()] = true
+	}
+	for _, k := range []string{"new(big.Int).SetUint64(p.Lo)", "new(big.Int).SetUint64(uint64(r.Lo))", "strconv.FormatUint(lo, 10)", "new(big.Int).SetInt64(q.Hi)"} {
+		if !fired[k] {
+			t.Errorf("lowWordSinks did NOT fire on %s — a one-word read of a 128-bit value lands unflagged", k)
+		}
+	}
+	if len(sinks) != 4 {
+		t.Errorf("lowWordSinks fired %d times, want 4 (both() reads both words; plain() reads none): %v", len(sinks), fired)
 	}
 }
 

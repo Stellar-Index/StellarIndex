@@ -554,7 +554,8 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
-          args: --timeout=5m
+          # Named, so an added .golangci.yaml/.toml/.json cannot be loaded instead.
+          args: --config=.golangci.yml --timeout=10m
           verify: false
       - name: go vet
         if: needs.preflight.outputs.go == 'true'
@@ -1092,7 +1093,10 @@ jobs:
         # lint-deploy-systemd-authority.sh run in this job and read grandfather
         # baselines/ORPHANS, so they are pinned too. lint-lake-dedup.sh,
         # lint-migration-compat.sh and lint-migration-immutability.sh guard
-        # served sums and the deploy's migrate step; their self-test steps
+        # served sums and the deploy's migrate step; lint-i128-sum.sh,
+        # lint-decimals-default.sh, lint-asset-identity.sh and
+        # lint-systemd-hardening.sh guard money sums, token scale, asset
+        # identity and unit sandboxing. Their self-test steps
         # check the PR-head copy back
         # out first, so a PR can still change such a gate and its tests
         # together. Deliberately not every
@@ -1119,7 +1123,7 @@ jobs:
             echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running PR-head gate scripts (fetch-depth too shallow?)."
             exit 0
           fi
-          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh scripts/ci/lint-imports.sh scripts/ci/lint-deploy-systemd-authority.sh scripts/ci/lint-lake-dedup.sh scripts/ci/lint-migration-compat.sh scripts/ci/lint-migration-immutability.sh; do
+          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-i128.sh scripts/ci/lint-baseline-growth.sh scripts/ci/lint-imports.sh scripts/ci/lint-deploy-systemd-authority.sh scripts/ci/lint-lake-dedup.sh scripts/ci/lint-migration-compat.sh scripts/ci/lint-migration-immutability.sh scripts/ci/lint-i128-sum.sh scripts/ci/lint-decimals-default.sh scripts/ci/lint-asset-identity.sh scripts/ci/lint-systemd-hardening.sh; do
             if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
               mv "${f}.trusted" "$f"
               chmod +x "$f"
@@ -1187,12 +1191,17 @@ jobs:
         # A ClickHouse sum over an Int128 value wraps past 2^127; i128 amounts sum through toInt256 (i128sum:ok).
         run: ./scripts/ci/lint-i128-sum.sh
       - name: lint-i128-sum self-test
-        run: ./scripts/ci/lint-i128-sum-test.sh
+        # The step above judged the tree with the base copy.
+        run: |
+          git checkout -q HEAD -- scripts/ci/lint-i128-sum.sh
+          ./scripts/ci/lint-i128-sum-test.sh
       - name: lint-decimals-default
         # An undeclared or unread Soroban token scale is served absent, never
-        # as 7; every remaining 7 carries a decimals-7 reason marker.
+        # as 7; every remaining 7 carries a decimals-7 reason marker. The
+        # self-test exercises the PR's copy; the gate ran the base copy.
         run: |
           ./scripts/ci/lint-decimals-default.sh
+          git checkout -q HEAD -- scripts/ci/lint-decimals-default.sh
           ./scripts/ci/lint-decimals-default-test.sh
       - name: lint-migrations
         # ADR-0003 SQL side: monetary migration columns must be NUMERIC —
@@ -1361,7 +1370,10 @@ jobs:
         # An asset read keyed on 'native' alone or on LIKE '<CODE>-%' drops XLM's other identities or trusts any issuer.
         run: ./scripts/ci/lint-asset-identity.sh
       - name: lint-asset-identity self-test
-        run: ./scripts/ci/lint-asset-identity-test.sh
+        # The step above judged the tree with the base copy.
+        run: |
+          git checkout -q HEAD -- scripts/ci/lint-asset-identity.sh
+          ./scripts/ci/lint-asset-identity-test.sh
       - name: lint-ch-apply-scope
         # deploy/clickhouse/ is not a bootstrap manifest. Executing every file
         # in the directory on each fresh provision would run OPERATOR migration
@@ -1616,7 +1628,10 @@ jobs:
         # The gaps it replaces were all absent directives nothing noticed.
         run: ./scripts/ci/lint-systemd-hardening.sh
       - name: systemd unit hardening self-test
-        run: ./scripts/ci/lint-systemd-hardening-test.sh
+        # The step above judged the tree with the base copy.
+        run: |
+          git checkout -q HEAD -- scripts/ci/lint-systemd-hardening.sh
+          ./scripts/ci/lint-systemd-hardening-test.sh
       - name: systemd EnvironmentFile= order
         # A later Environment= overrides the EnvironmentFile= value, so a
         # default placed after the file silently masks the operator's setting.
