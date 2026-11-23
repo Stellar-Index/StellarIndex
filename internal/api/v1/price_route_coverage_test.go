@@ -191,6 +191,31 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 			t.Errorf("notPriceServing lists %s, which the spec does not define", op)
 		}
 	}
+	ungated := 0
+	for _, c := range priceRouteCoverage {
+		if c.state == covPartial || c.state == covUncovered {
+			ungated++
+		}
+	}
+	if ungated != ungatedPriceRoutes {
+		t.Errorf("%d price routes are partial or uncovered, want %d: a new price route judges source exclusions (gated, with a "+
+			"proof in gatedRouteExclusionProof); after gating one, lower ungatedPriceRoutes", ungated, ungatedPriceRoutes)
+	}
+}
+
+// ungatedPriceRoutes ratchets the kill switch's known gaps: an operator exclusion does not reach these routes' figures.
+const ungatedPriceRoutes = 48
+
+// GatedPriceRoutes returns the census's gated rows for the external-package proof check.
+func GatedPriceRoutes() []string {
+	var ops []string
+	for op, c := range priceRouteCoverage {
+		if c.state == covGated {
+			ops = append(ops, op)
+		}
+	}
+	sort.Strings(ops)
+	return ops
 }
 
 // valueFieldNames matches a response field that can carry a price, valuation or USD figure.

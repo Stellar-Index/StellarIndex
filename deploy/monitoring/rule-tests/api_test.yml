@@ -1279,6 +1279,49 @@ tests:
         alertname: stellarindex_magic_link_token_table_growing
         exp_alerts: []
 
+  # ── webhook_deliveries table-fill bound ────────────────────────────
+  - interval: 1m
+    name: webhook_delivery rows above 1M for 30m ticket; the session reaper's series is ignored
+    input_series:
+      - series: 'stellarindex_retention_reaper_rows{job="stellarindex_api",instance="r1:8080",reaper="webhook_delivery"}'
+        values: '1500000x80'
+      - series: 'stellarindex_retention_reaper_rows{job="stellarindex_api",instance="r1:8080",reaper="session"}'
+        values: '5000000x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_webhook_delivery_table_growing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_webhook_delivery_table_growing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:8080
+              reaper: webhook_delivery
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_webhook_delivery_table_growing
+              summary: "webhook_deliveries has 1.5M rows on r1:8080 (bound 1000000)"
+              description: |
+                `webhook_deliveries` has stayed above 1M rows for 30+ minutes.
+                Customer webhooks and price alerts write it, and the 30-day
+                retention sweep is its only bound; it is either outpaced by a
+                delivery flood or failing. Each row holds a payload, so growth
+                ends as disk pressure on Postgres if nothing names it first.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_webhook_delivery_table_growing
+
+  - interval: 1m
+    name: webhook_delivery rows at a healthy level stay silent
+    input_series:
+      - series: 'stellarindex_retention_reaper_rows{job="stellarindex_api",instance="r1:8080",reaper="webhook_delivery"}'
+        values: '20000x80'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_webhook_delivery_table_growing
+        exp_alerts: []
+
   # Schema-absent empty reads: one sponsorship_events read tickets at once; a flat account_entry_ledgers series stays silent.
   - interval: 1m
     input_series:
