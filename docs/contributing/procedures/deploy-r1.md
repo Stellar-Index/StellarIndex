@@ -16,9 +16,17 @@ Ansible config apply: the tag is `--tags stellarindex`, not `stellarindex-servic
 ```sh
 gh workflow run deploy.yml \
   -f region=r1 \
-  -f version=vX.Y.Z \
-  -f config_acknowledged=true
+  -f version=vX.Y.Z
 ```
+
+If the release changed config (`configs/ansible/**`, Prometheus rules,
+systemd units, schema), the config-apply gate fails the job after the
+binaries are live. That order is deliberate: **binary first, then the host
+role.** The API rejects unknown config keys, so a role that adds a key and
+lands ahead of its binary crash-loops the API. Apply the role afterwards
+(`--tags stellarindex`, per
+[deploy-config-apply.md](../../operations/deploy-config-apply.md)), then
+re-run the same dispatch with `-f config_acknowledged=true`.
 
 Omit `binaries`: the default is the full set, filtered through
 `scripts/dev/region-binaries.tsv`, and r1 runs all six (indexer, aggregator,
@@ -26,9 +34,9 @@ api, sla-probe, ops, migrate). Naming fewer is refused unless the omitted
 ones are already on that version. This also keeps r1's ops binary, which has
 drifted out-of-band before, current.
 
-`config_acknowledged=true` asserts you have applied (or will apply) any
-config the release changed; without it the config-apply gate fails the job
-for a release that touched config. See
+`config_acknowledged=true` asserts you have already applied any config the
+release changed; without it the config-apply gate fails the job for a
+release that touched config. Never set it before the role is applied. See
 [deploy-workflow.md](../../operations/deploy-workflow.md).
 
 ## What the workflow does (know before you press)
@@ -44,7 +52,8 @@ binary on probe failure**. Two sharp edges:
   Before deploying a release with migrations, read them for
   old-binary compatibility (additive = fine; renames/drops = not).
 - `migrations_skip` is a string→bool footgun with history — leave it
-  alone unless you know why you're setting it.
+  alone on a forward deploy. A rollback dispatch requires
+  `migrations_skip=true` (see Rollback).
 - A release whose migrations declare `-- REQUIRED-FOLLOWUP:` commands
   (a replay or CAGG refresh) is refused until you pass
   `followups_acknowledged=true`; run those commands straight after the
@@ -87,6 +96,10 @@ cursor+1 (see docs/contributing/procedures/diagnose-stellarindex.md).
 ## Rollback
 
 The workflow keeps the previous 5 binaries at
-`/usr/local/bin/<binary>.prev-<tag>`. Manual rollback: stop unit,
-`mv` the prev binary into place, restart, re-run the smoke. Runbook:
-deploy-workflow.md §rollback. Remember the migration caveat above.
+`/usr/local/bin/<binary>.prev-<tag>`. Roll back with the one command in
+[rollback.md](../../operations/rollback.md#rolling-back-the-binaries):
+`deploy.yml` with `-f version=<previous-tag> -f migrations_skip=true` and
+no `-f binaries`, then re-run the smoke. The manual per-binary fallback
+(`cp` the `.prev-<tag>` binary, write the version sidecar in
+`/var/lib/stellarindex/deployed-versions/`) is in the same file. Remember
+the migration caveat above.
