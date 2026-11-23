@@ -85,6 +85,7 @@ var Registry = map[string]Metadata{
 
 	// ─── Aggregators (divergence signal; excluded from VWAP) ─────
 	// CoinGecko's redistribution is an open owner decision in the licensing register, so it is not marked barred here.
+	// coingecko's backfill is `backfill-external -source coingecko`: vendor hourly points as oracle updates, not candles.
 	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, Credit: "CoinGecko", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 5 * time.Minute},
 	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, RedistributionBarred: true, Credit: "CoinMarketCap", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
 	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, RedistributionBarred: true, Credit: "CCData (CryptoCompare)", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
