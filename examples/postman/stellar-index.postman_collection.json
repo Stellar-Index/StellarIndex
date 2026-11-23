@@ -1866,7 +1866,7 @@
                   "request": {
                     "name": "Extended metadata (SEP-1 CURRENCIES block).",
                     "description": {
-                      "content": "The asset's SEP-1 `[[CURRENCIES]]` slice on its own —\nsame overlay-resolution path as `/v1/assets/{asset_id}`\nbut returning ONLY the metadata fields, for clients that\nrefresh metadata without re-fetching the pricing core.\n`sep1_status` reports resolver state (`verified` /\n`not_fetched` / `unreachable` / `no_match` /\n`not_applicable`) — resolver failures surface there, not\nas an HTTP error. 404 only when the asset isn't indexed\nat all.\n",
+                      "content": "The asset's SEP-1 `[[CURRENCIES]]` slice on its own —\nsame overlay-resolution path as `/v1/assets/{asset_id}`\nbut returning ONLY the metadata fields, for clients that\nrefresh metadata without re-fetching the pricing core.\n`sep1_status` reports resolver state (`verified` /\n`not_fetched` / `unreachable` / `no_match` /\n`not_applicable`) — SEP-1 resolver failures surface there,\nnot as an HTTP error. 404 only when the asset isn't indexed\nat all; 503 (with `Retry-After`) when a slug id cannot be\nresolved because the asset registry read failed.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -1987,6 +1987,53 @@
                       },
                       "status": "Not Found",
                       "code": 404,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "assets",
+                            ":asset_id",
+                            "metadata"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Canonical asset identifier. One of `native`, `<code>-<issuer>`,\n`<code>:<issuer>` (alias), or `<contract_id>`. Strkeys\nvalidated per SEP-23. The handler is strict — short symbols\nlike `XLM` or `USDC` are NOT accepted here; use `native` or\nthe full `<code>-<G…>` form.\n",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "asset_id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
                       "header": [
                         {
                           "key": "Content-Type",

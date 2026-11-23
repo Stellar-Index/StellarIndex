@@ -406,9 +406,10 @@ export interface paths {
          *     refresh metadata without re-fetching the pricing core.
          *     `sep1_status` reports resolver state (`verified` /
          *     `not_fetched` / `unreachable` / `no_match` /
-         *     `not_applicable`) — resolver failures surface there, not
-         *     as an HTTP error. 404 only when the asset isn't indexed
-         *     at all.
+         *     `not_applicable`) — SEP-1 resolver failures surface there,
+         *     not as an HTTP error. 404 only when the asset isn't indexed
+         *     at all; 503 (with `Retry-After`) when a slug id cannot be
+         *     resolved because the asset registry read failed.
          */
         get: operations["getAssetMetadata"];
         put?: never;
@@ -15876,6 +15877,7 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAssetSupply: {
