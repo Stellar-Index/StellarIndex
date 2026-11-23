@@ -14,6 +14,9 @@
 #   3. Every .gitleaksignore fingerprint names a commit reachable from HEAD.
 #      A fingerprint for a rewritten or side-branch commit exempts nothing
 #      and hides that the finding it was written for has moved.
+#   4. A credential COMMITTED under configs/ansible/inventory/ is reported by
+#      the history scan (.gitleaks.toml), while the working-tree scan
+#      (.gitleaks.worktree.toml) still clears the untracked local inventory.
 #
 # GITLEAKS_HISTORY_SOURCE points check 3 at a clone with real history when
 # the working directory is a synthetic single-commit tree (the pre-push
@@ -21,6 +24,9 @@
 #
 # Run: bash scripts/ci/gitleaks-allowlist-scope-test.sh
 set -uo pipefail
+# A hook exports GIT_DIR; check 4's fixture `git init` would otherwise re-initialise the real repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR
 
 cd "$(dirname "$0")/../.." || exit 1
 ROOT="$PWD"
@@ -187,6 +193,50 @@ else
       bad ".gitleaksignore fingerprint names $sha, which is not a commit reachable from HEAD: $line"
     fi
   done <"$ROOT/.gitleaksignore"
+fi
+
+# ── 4. a committed inventory file is reported by the history scan
+# Written fresh (never copied from $ROOT) so a real local inventory file is never read.
+INVENTORY=(
+  configs/ansible/inventory/r1.yml
+  configs/ansible/inventory/r1.secrets.yml
+  configs/ansible/inventory/testnet.secrets.yml
+)
+tree4="$TMP/tree4"
+mkdir -p "$tree4/configs/ansible/inventory"
+for f in "${INVENTORY[@]}"; do printf 'apiKey := "%s"\n' "$canary" >"$tree4/$f"; done
+if git -C "$tree4" init -q &&
+  git -C "$tree4" add -A &&
+  git -C "$tree4" -c user.name=probe -c user.email=probe@example.invalid -c commit.gpgsign=false \
+    commit -qm probe; then
+  (cd "$tree4" && gitleaks detect --source . --no-banner --config "$ROOT/.gitleaks.toml" \
+    --report-format json --report-path "$TMP/r4.json" >"$TMP/r4.json.log" 2>&1)
+  rc=$?
+  if [ "$rc" -gt 1 ] || [ ! -s "$TMP/r4.json" ]; then
+    bad "history scan of the inventory fixture did not run cleanly (exit $rc)"
+  else
+    for f in "${INVENTORY[@]}"; do
+      if reported "$TMP/r4.json" "$f" "$canary"; then ok; else
+        bad "a credential committed in $f is not reported by the history scan: .gitleaks.toml exempts it"
+      fi
+    done
+  fi
+  (cd "$tree4" && gitleaks detect --no-git --source . --no-banner --config "$ROOT/.gitleaks.worktree.toml" \
+    --report-format json --report-path "$TMP/r4w.json" >"$TMP/r4w.json.log" 2>&1)
+  rc=$?
+  if [ "$rc" -gt 1 ]; then
+    bad "working-tree scan of the inventory fixture did not run cleanly (exit $rc)"
+  else
+    for f in "${INVENTORY[@]}"; do
+      if [ -s "$TMP/r4w.json" ] && reported "$TMP/r4w.json" "$f" "$canary"; then
+        bad "the working-tree scan reports local inventory file $f; .gitleaks.worktree.toml must exempt it"
+      else
+        ok
+      fi
+    done
+  fi
+else
+  bad "could not commit the inventory fixture"
 fi
 
 echo "gitleaks-allowlist-scope-test: $pass passed, $fail failed"

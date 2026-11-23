@@ -31,18 +31,9 @@ useDefault = true
 description = "Gitignored local-dev bulk (working-tree scan only)"
 paths = [
   '''^\.discovery-repos/''',
-  # Per-host ansible inventory + its secrets. These are GITIGNORED and
-  # untracked — they hold the real credentials for r1 and the test nets
-  # and must never be committed, which is exactly why .gitignore covers
-  # them. The working-tree scan reads them anyway, so without this entry
-  # verify.sh cannot pass on ANY operator machine that actually holds the
-  # inventory, which is every machine that can run a deploy. The
-  # protection that matters here is the COMMITTED-HISTORY scan below,
-  # which still sees these paths if anyone ever force-adds one. No dot
-  # after the host name, so the TRACKED r*.example.yml templates (which
-  # .gitignore re-includes) stay scanned.
-  '''^configs/ansible/inventory/[^/]+\.secrets\.yml$''',
-  '''^configs/ansible/inventory/r[^/.]*\.yml$''',
+  # The per-host ansible inventory is exempted in .gitleaks.worktree.toml
+  # only: this [allowlist] applies to the history scan too, which must
+  # report an inventory file anyone force-adds.
   '''(^|/)node_modules/''',
   '''^web/[^/]+/(\.next|out)/''',
   '''^docs/archive/''',
