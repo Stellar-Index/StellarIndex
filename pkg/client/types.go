@@ -101,8 +101,8 @@ type Flags struct {
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`, `/v1/markets`).
 	IncludesUnread []string `json:"includes_unread,omitempty"`
-	// FillsWithheldReason is set on `/v1/history` when fills were removed from the page ("source_excluded": an operator
-	// excluded their source); the page is thinner than the market was, not a quiet market.
+	// FillsWithheldReason is set when fills, or chart points built from them, were removed ("source_excluded": an operator
+	// excluded their source): history/chart rows are missing, vwap/twap/ohlc recomputed from the other sources.
 	FillsWithheldReason string `json:"fills_withheld_reason,omitempty"`
 }
 
