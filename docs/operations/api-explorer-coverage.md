@@ -20,8 +20,8 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **158** |
-| Level 3 — reachable | **121** |
+| Paths in the OpenAPI contract | **159** |
+| Level 3 — reachable | **122** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **33** |
 | Deliberately excluded (operational) | **4** |
