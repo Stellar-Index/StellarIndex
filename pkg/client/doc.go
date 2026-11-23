@@ -82,7 +82,7 @@
 // The SDK covers the pricing/read surface with 40-plus typed methods:
 // pricing (Price, PriceAt, PriceChanges, PriceTip, PriceBatch, Chart, History,
 // HistorySinceInception, OHLC, OHLCSeries, VWAP, TWAP, Observations), market
-// data (Markets, Pair, Pools, LendingPools), the asset catalogue
+// data (Markets, Pair, Pools, LendingPools, LendingPoolLiquidations), the asset catalogue
 // (Assets, Asset, AssetMetadata, AssetSupplyFlows, Issuers, Issuer, SACWrappers),
 // real-world assets (RWAAssets, RWAHistory, RWAPremiumHistory),
 // aggregate snapshots (NetworkStats, Sources, Aggregators, Methodology,
