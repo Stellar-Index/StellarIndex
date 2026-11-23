@@ -654,6 +654,20 @@ func TestChange24hPct_HappyPath(t *testing.T) {
 	mustContain(t, body, `"change_24h_pct":"+1.81"`)
 }
 
+// The 24h anchor must read the market the current price was served from: native's fresh price lives under crypto:XLM, so a
+// literal native anchor (an SDEX bucket 0.2% off CEX) would report a move on a flat asset, on the detail and the batch alike.
+func TestChange24hPct_AnchorsOnTheServedAlias(t *testing.T) {
+	priceStub := &stubPriceReader{snapshots: map[string]v1.PriceSnapshot{
+		"crypto:XLM/fiat:USD": {Price: "0.1600", PriceType: "vwap"},
+	}}
+	change24hStub := &stubChange24hReader{prices: map[string]string{"native": "0.16032", "crypto:XLM": "0.1600"}}
+	ts := startHTTPTest(t, v1.New(v1.Options{Prices: priceStub, Change24h: change24hStub}).Handler())
+	for _, path := range []string{"/v1/assets/native", "/v1/price/batch?asset_ids=native"} {
+		body, _ := readAll(mustGet(t, ts.URL+path))
+		mustContain(t, body, `"change_24h_pct":"0.00"`)
+	}
+}
+
 // TestChange24hPct_NilPriceReader_NoPanic: Prices==nil with Change24h!=nil is legal; populateChange24h runs on a child goroutine
 // with no Recoverer, so a missing nil-guard would crash the process. The request must serve with the field absent.
 func TestChange24hPct_NilPriceReader_NoPanic(t *testing.T) {
