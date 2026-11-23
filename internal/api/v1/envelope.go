@@ -93,8 +93,8 @@ type Flags struct {
 	// IncludesUnread names the `include` sections the response asked for and could not read. Their fields are
 	// absent from every row, which without this is the same body as rows that have nothing to report.
 	IncludesUnread []string `json:"includes_unread,omitempty"`
-	// FillsWithheldReason: /v1/history removed fills from this page for this [PriceWithheldReason]; a thinner page is
-	// otherwise the same body as a quiet market.
+	// FillsWithheldReason: fills, or chart buckets built from them, were removed for this [PriceWithheldReason] (see
+	// [markFillsWithheld]); a thinner answer is otherwise the same body as a quieter market.
 	FillsWithheldReason PriceWithheldReason `json:"fills_withheld_reason,omitempty"`
 	// Degraded marks a 200 whose body is carried forward or partial (stale-while-revalidate past
 	// TTL, last-good after a failed refresh, a held frozen price, a dropped best-effort section).

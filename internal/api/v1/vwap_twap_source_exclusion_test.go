@@ -41,8 +41,8 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 		}
 		_, sdexOnly := exclGet(t, newSrv(nil, sdex), path)
 		pairScoped := gate(exclTable{rows: []timescale.SourceExclusion{{ID: 1, Source: "soroswap", Base: "crypto:XLM", Quote: exclUSDC, From: from}}})
-		if status, body := exclGet(t, newSrv(pairScoped, soroswap, sdex), path); status != http.StatusOK || strip(body) != strip(sdexOnly) {
-			t.Fatalf("%s: soroswap excluded %d %s, want exactly the sdex-only answer %s", path, status, body, sdexOnly)
+		if status, body := exclGet(t, newSrv(pairScoped, soroswap, sdex), path); status != http.StatusOK || strip(unmarked(t, body)) != strip(sdexOnly) {
+			t.Fatalf("%s: soroswap excluded %d %s, want the sdex-only answer %s marked fills withheld", path, status, body, sdexOnly)
 		}
 		both := gate(exclTable{rows: []timescale.SourceExclusion{{ID: 1, Source: "soroswap", From: from}, {ID: 2, Source: "sdex", From: from}}})
 		if status, body := exclGet(t, newSrv(both, soroswap, sdex), path); status != http.StatusNotFound || !strings.Contains(body, `"source_excluded"`) {
@@ -66,10 +66,21 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 		}
 		_, soroswapOnly := exclGet(t, newSrv(nil, soroswap), path)
 		fiatScoped := gate(exclTable{rows: []timescale.SourceExclusion{{ID: 1, Source: "sdex", Base: "native", Quote: "fiat:USD", From: from}}})
-		if status, body := exclGet(t, newSrv(fiatScoped, soroswap, sdex), path); status != http.StatusOK || strip(body) != strip(soroswapOnly) {
-			t.Fatalf("%s: sdex excluded on the fiat pair %d %s, want exactly the soroswap-only answer %s", path, status, body, soroswapOnly)
+		if status, body := exclGet(t, newSrv(fiatScoped, soroswap, sdex), path); status != http.StatusOK || strip(unmarked(t, body)) != strip(soroswapOnly) {
+			t.Fatalf("%s: sdex excluded on the fiat pair %d %s, want the soroswap-only answer %s marked fills withheld", path, status, body, soroswapOnly)
 		}
 	}
+}
+
+// unmarked is a recomputed answer's body less its fills-withheld marker, which it must carry: without it the caller cannot
+// tell the survivors' answer from the market's.
+func unmarked(t *testing.T, body string) string {
+	t.Helper()
+	const marker = `,"fills_withheld_reason":"source_excluded"`
+	if strings.Count(body, marker) != 1 {
+		t.Fatalf("recomputed body carries no fills_withheld_reason marker: %s", body)
+	}
+	return strings.Replace(body, marker, "", 1)
 }
 
 // TestOHLCSeriesWithholdsExcludedBars: a CAGG bar pools its sources, so a bar an exclusion covers withholds the series

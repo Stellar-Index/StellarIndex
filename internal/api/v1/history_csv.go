@@ -28,6 +28,9 @@ func (s *Server) writeHistoryCSV(w http.ResponseWriter, r *http.Request, rows []
 	if env.Flags.Degraded {
 		p.Flags = append(p.Flags, "degraded")
 	}
+	if env.Flags.FillsWithheldReason != "" {
+		p.Flags = append(p.Flags, "fills_withheld_reason="+string(env.Flags.FillsWithheldReason))
+	}
 	if env.CoverageFrom != nil {
 		p.Headers = map[string]string{"X-StellarIndex-Coverage-From": env.CoverageFrom.String()}
 	}

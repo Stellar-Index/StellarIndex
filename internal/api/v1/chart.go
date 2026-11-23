@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -209,7 +210,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		if clientAborted(r, err) {
+		if clientAborted(r, err) || writeChartWithheld(w, r, pair, err) {
 			return
 		}
 		if handlerTimedOut(chartCtx, err) {
@@ -409,7 +410,7 @@ func (s *Server) handleChartTWAP(
 		return
 	}
 	if err != nil {
-		if clientAborted(r, err) {
+		if clientAborted(r, err) || writeChartWithheld(w, r, pair, err) {
 			return
 		}
 		if handlerTimedOut(ctx, err) {
@@ -446,9 +447,9 @@ func (s *Server) handleChartTWAP(
 	}
 	series.markWindowStart(from)
 	series.markRowCap(walk)
-	writeChartJSON(w, series, Flags{
+	writeChartJSON(w, series, walk.markWithheld(Flags{
 		Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded, ThinMarket: s.chartThin(ctx, pair, walk),
-	})
+	}))
 }
 
 // fxClosedDayWindow is the fx_quotes read window for a chart: closed UTC days only, because the
@@ -545,6 +546,10 @@ func (s *Server) handleChartFiat(
 		writeChartJSON(w, series, Flags{Stale: true, Degraded: true})
 		return
 	}
+	points, withheld, err := s.fxSeriesClean(fxCtx, ticker, points)
+	if writeChartWithheld(w, r, pair, err) {
+		return
+	}
 
 	wire := make([]HistoryPointWire, 0, len(points))
 	for _, p := range points {
@@ -566,7 +571,7 @@ func (s *Server) handleChartFiat(
 
 	series.markWindowStart(from)
 	outlived := series.windowStartOutlived(from)
-	writeChartJSON(w, series, Flags{Stale: outlived, Degraded: outlived})
+	writeChartJSON(w, series, markFillsWithheld(Flags{Stale: outlived, Degraded: outlived}, withheld))
 }
 
 // handleChartFiatCross serves non-USD fiat crosses as rate_usd[quote] / rate_usd[base] (as /v1/price's tryFiatCrossRate). A day
@@ -611,13 +616,24 @@ func (s *Server) handleChartFiatCross(
 		return
 	}
 
+	// A day either leg withholds is absent from the cross, as a day missing a leg already is.
+	basePts, baseWithheld, err := s.fxSeriesClean(fxCtx, pair.Base.Code, basePts)
+	if writeChartWithheld(w, r, pair, err) {
+		return
+	}
+	quotePts, quoteWithheld, err := s.fxSeriesClean(fxCtx, pair.Quote.Code, quotePts)
+	if writeChartWithheld(w, r, pair, err) {
+		return
+	}
+
 	wire := crossFiatChartPoints(basePts, quotePts)
 	series.Points = wire
 	series.Credit = fxSeriesCredit(append(append([]FXQuotePoint{}, basePts...), quotePts...))
 
 	series.markWindowStart(from)
 	outlived := series.windowStartOutlived(from)
-	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0, Stale: outlived, Degraded: outlived})
+	writeChartJSON(w, series, markFillsWithheld(
+		Flags{Triangulated: len(wire) > 0, Stale: outlived, Degraded: outlived}, baseWithheld || quoteWithheld))
 }
 
 // crossFiatChartPoints merges two ascending daily USD-leg series on equal buckets and emits
@@ -739,6 +755,8 @@ func (m *chartBucketMerge) series() []HistoryPoint {
 type chartWindow struct {
 	from time.Time
 	gran string
+	// servedAs are the pairs a derived series' legs are served under, so an exclusion stored there judges each leg bucket too.
+	servedAs []canonical.Pair
 }
 
 // covered reports whether `m` already holds EVERY bucket the reader can return, so the walk may stop identically to the full
@@ -838,7 +856,14 @@ type chartWalkResult struct {
 	bookAt map[time.Time]canonical.Pair
 	// crossLegs are a derived cross's leg walks, whose bookAt name the books under each crossed bucket.
 	crossLegs []chartWalkResult
+	// withheld: a bucket was dropped because an operator source exclusion covers it → flags.fills_withheld_reason.
+	withheld bool
+	// refused is a non-exclusion verdict (the exclusion set unread) that withholds the whole series.
+	refused pricingguard.Withholding
 }
+
+// markWithheld is [markFillsWithheld] for a walk that dropped a bucket.
+func (res chartWalkResult) markWithheld(f Flags) Flags { return markFillsWithheld(f, res.withheld) }
 
 // chartReadLimit reads one row past the cap so a source holding exactly historyMaxPoints rows is not reported truncated.
 const chartReadLimit = historyMaxPoints + 1
@@ -1005,7 +1030,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 			w.res.degraded = true
 			return true, nil //nolint:nilerr // a proxy failure is never the answer — see above
 		}
-		w.claim(sp, w.res.noteCap(points))
+		w.claim(ctx, sp, w.res.noteCap(points))
 		return true, nil
 	}
 	now := w.s.now().UTC()
@@ -1039,7 +1064,7 @@ func (w *chartWalk) fill(ctx context.Context, sp canonical.Pair, spans []chartSp
 		if !ok {
 			return cont
 		}
-		w.claim(sp, w.res.noteCap(points))
+		w.claim(ctx, sp, w.res.noteCap(points))
 	}
 	return true
 }
@@ -1072,8 +1097,8 @@ func (w *chartWalk) readSpan(
 
 // claim normalises one source's points to true prices and offers them
 // to the merge, recording whether the source's quote leg was a proxy.
-func (w *chartWalk) claim(sp canonical.Pair, points []HistoryPoint) {
-	points = w.s.adjustSourcePoints(sp, points)
+func (w *chartWalk) claim(ctx context.Context, sp canonical.Pair, points []HistoryPoint) {
+	points = w.s.adjustSourcePoints(sp, w.cleanPoints(ctx, sp, points))
 	claimed, newest := w.merge.add(sp, points)
 	if claimed == 0 {
 		return
@@ -1117,9 +1142,11 @@ func (s *Server) chartSeriesPoints(
 		derived = crossRes.trimToCap(derived)
 		// A failed observed read means an observed market may have existed, so the derived series must not read as complete.
 		crossRes.degraded = crossRes.degraded || res.degraded
+		crossRes.withheld = crossRes.withheld || res.withheld
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
+	res.withheld = res.withheld || crossRes.withheld
 	res.mergeCap(crossRes.cappedAt)
 	return nil, res, nil
 }
@@ -1140,6 +1167,9 @@ func (s *Server) chartObservedPoints(
 	}
 	if err := s.chartStablecoinFallback(ctx, w); err != nil {
 		return nil, chartWalkResult{}, err
+	}
+	if w.res.refused != pricingguard.NotWithheld {
+		return nil, chartWalkResult{}, PriceWithheldError(w.res.refused)
 	}
 	w.res.bookAt = w.merge.owner
 	return w.merge.series(), w.res, nil
@@ -1304,6 +1334,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	if !ok {
 		return nil, chartWalkResult{}, nil
 	}
+	win.servedAs = append(slices.Clip(win.servedAs), pair)
 	assetPts, assetRes, err := s.chartObservedPoints(ctx, legs[0], win, read)
 	if err != nil {
 		return nil, chartWalkResult{}, err
@@ -1311,7 +1342,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	// A leg that stopped short makes the PRODUCT short (or empty): the
 	// cross emits only buckets present on both, so carry each leg's
 	// degradation out even when the cross comes back empty.
-	res := chartWalkResult{degraded: assetRes.degraded, cappedAt: assetRes.cappedAt}
+	res := chartWalkResult{degraded: assetRes.degraded, cappedAt: assetRes.cappedAt, withheld: assetRes.withheld}
 	if len(assetPts) == 0 {
 		return nil, res, nil
 	}
@@ -1327,6 +1358,7 @@ func (s *Server) fiatSeriesThroughXLM(
 		return nil, chartWalkResult{}, err
 	}
 	res.degraded = res.degraded || xlmRes.degraded
+	res.withheld = res.withheld || xlmRes.withheld
 	res.mergeCap(assetRes.cappedAt)
 	res.mergeCap(xlmRes.cappedAt)
 	if len(xlmPts) == 0 {
@@ -1597,6 +1629,10 @@ func (s *Server) handleChartMarketCap(
 		s.marketCapReadFailed(w, r, fxCtx, err, "ListFXHistory", pair, tfRaw, gran, from, "market_cap: fx_quotes fetch failed", "ticker", pair.Base.Code, "err", err)
 		return
 	}
+	points, withheld, err := s.fxSeriesClean(fxCtx, pair.Base.Code, points)
+	if writeChartWithheld(w, r, pair, err) {
+		return
+	}
 
 	wire := make([]HistoryPointWire, 0, len(points))
 	for _, p := range points {
@@ -1634,7 +1670,7 @@ func (s *Server) handleChartMarketCap(
 	} else {
 		series.markWindowStart(from)
 	}
-	writeChartJSON(w, series, Flags{})
+	writeChartJSON(w, series, markFillsWithheld(Flags{}, withheld))
 }
 
 // writeChartTimeout answers a chart read that blew its budget with a retryable 503 rather than an empty 200 with no flag: a
@@ -1740,6 +1776,9 @@ func (s *Server) handleChartMarketCapCrypto(
 	readFrom := chartClosedReadFrom(s.now(), from, gran)
 	pricePts, walk, err := s.chartSeriesPoints(ctx, pair,
 		chartWindow{from: readFrom, gran: gran}, s.chartVWAPReader(gran))
+	if writeChartWithheld(w, r, pair, err) {
+		return
+	}
 	if err != nil {
 		s.writeMarketCapReadFailure(ctx, w, r, err, "HistoryPointsInRange", pair, tfRaw, from)
 		return
@@ -1780,9 +1819,9 @@ func (s *Server) handleChartMarketCapCrypto(
 		series.markRowCap(walk)
 	}
 	// A guard whose input was not read has not ruled, so the series must not be cached as cleared.
-	writeChartJSON(w, series, Flags{
+	writeChartJSON(w, series, walk.markWithheld(Flags{
 		Triangulated: walk.proxied, Stale: walk.degraded || supplyStale || guardUnread, Degraded: walk.degraded || guardUnread,
-	})
+	}))
 }
 
 // marketCapSeriesRefused applies the detail page's valuation guards (a thin book under the latest price values nothing,
