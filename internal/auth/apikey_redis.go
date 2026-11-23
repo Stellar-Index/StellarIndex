@@ -97,6 +97,10 @@ type APIKeyRecord struct {
 	// this key by it, even once an intermediate key has expired or been deleted; ParentKeyID alone cannot.
 	AncestorKeyIDs []string `json:"ancestor_key_ids,omitempty"`
 
+	// AncestorHashes are the record hashes of AncestorKeyIDs, index for index: a KeyID resolves to a record only
+	// through the index, which a request cannot rely on. Secret-adjacent, so never in Subject, a response or a log.
+	AncestorHashes []string `json:"ancestor_hashes,omitempty"`
+
 	// Tier is the [Tier] this key authenticates as: [TierAPIKey], or [TierOperator] to unlock admin endpoints.
 	Tier Tier `json:"tier"`
 

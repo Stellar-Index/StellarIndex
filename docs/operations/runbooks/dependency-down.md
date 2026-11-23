@@ -14,6 +14,7 @@ severity: P1
 | `clickhouse` | none (no exporter on r1) | the primary signal |
 | `postgres` | `postgres_exporter` (`pg_up`) | corroboration |
 | `redis` | `redis_exporter` | corroboration |
+| `redis_outage` | `redis` row above (same notification group) | Redis down past `api.rate_limit_dwell`: rate-limited routes answer 503 and `/v1/readyz` is 503 |
 | `schema`, `nonstandard_decimals`, `closed_buckets` | none | the primary signal |
 
 ## At a glance
@@ -60,9 +61,9 @@ journalctl -u clickhouse-server --since "30 min ago" --no-pager | tail -40
 
 **Escalate:** page per [sev-playbook](../sev-playbook.md).
 
-## If `dependency="postgres"` or `"redis"`
+## If `dependency="postgres"`, `"redis"` or `"redis_outage"`
 
-The exporter alerts (`stellarindex_timescale_primary_down`, the redis rules) fire alongside and carry more detail: follow those runbooks. This alert alone suggests a problem between the API and the dependency (credentials, pool, network path).
+The exporter alerts (`stellarindex_timescale_primary_down`, the redis rules) fire alongside and carry more detail: follow those runbooks. This alert alone suggests a problem between the API and the dependency (credentials, pool, network path). `redis_outage` only ever fires with `redis`: it means the outage has outlasted the rate-limit dwell, so the API is draining itself; it clears on the first readiness round after Redis answers.
 
 ## If `dependency="schema"`
 

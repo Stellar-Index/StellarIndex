@@ -166,6 +166,12 @@ paths:
         deadline. 200 iff all pass; 503 with a per-check
         failure list otherwise.
 
+        A Redis failure reads `degraded` (200) for the first
+        `api.rate_limit_dwell` (30 s by default). Past that,
+        rate-limited routes answer 503, so the critical
+        `redis_outage` check fails and `/readyz` is 503 too,
+        until Redis answers again.
+
         Like `/healthz`,
         `/readyz` is deliberately scoped — it answers
         "should the load balancer route traffic to this
