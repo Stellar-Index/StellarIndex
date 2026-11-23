@@ -22,7 +22,7 @@ pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
 bad() { fail=$((fail + 1)); echo "  FAIL — $1"; }
 
-SECRET="https://hc.example.invalid/ping/00000000-fake-0000"   # gitleaks:allow
+SECRET="https://hc.example.invalid/ping/00000000-fake-0000"
 mkdir -p "$TMP/bin"
 
 # curl stub. Probe calls: pops the next "code rc" line for the path from
@@ -153,7 +153,7 @@ else ok "unit files carry no ping URL"; fi
 
 if command -v ansible >/dev/null 2>&1; then
   mkdir -p "$TMP/render"
-  vars='{"edge_probe_cert_min_days":7,"vault_edge_ping":"https://hc.example.invalid/ping/render-fake","item":{"name":"prod","base_url":"https://api.example.invalid","ping_url_var":"vault_edge_ping"}}'   # gitleaks:allow
+  vars='{"edge_probe_cert_min_days":7,"vault_edge_ping":"https://hc.example.invalid/ping/render-fake","item":{"name":"prod","base_url":"https://api.example.invalid","ping_url_var":"vault_edge_ping"}}'
   if ANSIBLE_LOCALHOST_WARNING=False ansible localhost -c local -i localhost, -m ansible.builtin.template \
     -a "src=$PWD/$ENVTPL dest=$TMP/render/env" -e "$vars" >"$TMP/render/log" 2>&1; then
     if grep -qx 'EDGE_PROBE_PING_URL=https://hc.example.invalid/ping/render-fake' "$TMP/render/env" &&
