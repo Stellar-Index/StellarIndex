@@ -76,7 +76,12 @@ func (sc assetExclusionScope) judgeRow(ctx context.Context, s *Server, d *AssetD
 	covered := j.covered
 	now := sc.now.Add(time.Nanosecond)
 	removed := false
-	if d.PriceUSD != nil && j.headlineCovered(d, now) {
+	switch {
+	case d.PriceUSD != nil && j.headlineCovered(d, now):
+		removed = withholdAssetRow(d, PriceWithheldSourceExcluded)
+	case d.PriceUSD == nil && d.PriceWithheldReason == PriceWithheldSourceExcluded:
+		// The price tier already withheld it (a catalogue row's global view); a cap or valuation merged from the twin was
+		// read at that same excluded price.
 		removed = withholdAssetRow(d, PriceWithheldSourceExcluded)
 	}
 	for _, c := range []struct {
