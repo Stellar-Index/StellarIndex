@@ -422,7 +422,7 @@ type Options struct {
 	// dollar VWAP). Nil publishes no series, for [OracleHistory]'s reason: a premium missing a
 	// leg is no series.
 	MarketHistory RWAMarketHistoryReader
-	// RWAPremiumSubstance is the thin-market floor /v1/rwa/premium's day-clearing check uses; it
+	// RWAPremiumSubstance is the thin-market floor /v1/rwa/premium's day check and liquidation fills use; it
 	// must be the same policy as the live [pricingguard.SubstanceGate] (pass
 	// substanceGate.Policy()). Zero falls back to pricingguard defaults.
 	RWAPremiumSubstance pricingguard.SubstancePolicy

@@ -53,10 +53,7 @@ var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "U
 // says WHEN ([timescale.Store.DailyMarketDays]); inheriting it would blank every series. MinTrades carries the serving minute
 // count instead: a minute bucket holds at least one trade, so a day the live gate would refuse on that leg is refused here too.
 func (s *Server) rwaPremiumDayFloorFor() rwaPremiumDayFloor {
-	minVolumeUSD := s.RWAPremiumSubstance.MinVolumeUSD
-	if minVolumeUSD == nil {
-		minVolumeUSD = new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
-	}
+	minVolumeUSD := s.substanceMinVolumeUSD()
 	minSpan := s.RWAPremiumSubstance.MinSpan
 	if minSpan == 0 {
 		minSpan = pricingguard.DefaultSubstanceMinSpan
@@ -74,6 +71,14 @@ func (s *Server) rwaPremiumDayFloorFor() rwaPremiumDayFloor {
 		},
 		MinTrades: minTrades,
 	}
+}
+
+// substanceMinVolumeUSD is the live substance gate's trailing-window USD floor (s.RWAPremiumSubstance), else its default.
+func (s *Server) substanceMinVolumeUSD() *big.Rat {
+	if v := s.RWAPremiumSubstance.MinVolumeUSD; v != nil {
+		return v
+	}
+	return new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD)
 }
 
 // rwaPremiumDayFloor is the hour-grain substance policy plus the serving gate's minute-bucket count read as a trade floor.

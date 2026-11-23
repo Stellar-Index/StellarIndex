@@ -28,6 +28,7 @@ const (
 	liqReasonRateUnrecorded    = "rate_at_fill_unrecorded"
 	liqReasonPriceWithheld     = "price_withheld"
 	liqReasonPriceThin         = "price_thin_market"
+	liqReasonPriceThinAtFill   = "price_thin_at_fill"
 	liqReasonPriceUnread       = "price_unread"
 	liqReasonNoPrice           = "no_price_within_bound"
 )
@@ -36,6 +37,18 @@ const (
 type liqPrice struct {
 	close time.Time
 	price string
+	// traded: the bucket's own USD volume is known and clears [liqBucketTraded]'s floor; false refuses it.
+	traded bool
+}
+
+// liqBucketTraded applies the live substance gate's trailing-24h USD floor whole to one bucket: no per-bucket floor exists, and
+// pro-rating would invent one. A bucket with unknown volume is refused.
+func liqBucketTraded(volumeUSD *string, floor *big.Rat) bool {
+	if volumeUSD == nil {
+		return false
+	}
+	v, ok := new(big.Rat).SetString(*volumeUSD)
+	return ok && v.Cmp(floor) >= 0
 }
 
 // liqMarks is what one asset is valued with across a page: its closed USD price buckets and its reserve state per ledger.
@@ -74,6 +87,8 @@ func (m *liqMarks) priceAt(t time.Time) (liqPrice, string) {
 		return liqPrice{}, liqReasonPriceUnread
 	case !found:
 		return liqPrice{}, liqReasonNoPrice
+	case !m.prices[i].traded:
+		return liqPrice{}, liqReasonPriceThinAtFill
 	}
 	return m.prices[i], ""
 }
@@ -315,8 +330,9 @@ func (s *Server) liquidationSeries(ctx context.Context, assetC string, asset can
 		return &liqMarks{priceReason: liqReasonPriceUnread}
 	}
 	m := &liqMarks{scale: aggregate.ResolveDecimals(s.NonstandardDecimals, asset), cappedAt: walk.cappedAt}
+	floor := s.substanceMinVolumeUSD()
 	for _, p := range points {
-		m.prices = append(m.prices, liqPrice{close: p.Bucket.UTC().Add(width), price: p.VWAP})
+		m.prices = append(m.prices, liqPrice{close: p.Bucket.UTC().Add(width), price: p.VWAP, traded: liqBucketTraded(p.VolumeUSD, floor)})
 	}
 	for _, b := range walk.withheld {
 		m.withheld = append(m.withheld, b.UTC().Add(width))

@@ -27,12 +27,12 @@ func liqTestMarks() map[string]*liqMarks {
 	return map[string]*liqMarks{
 		"CUSDC": {
 			scale:  7,
-			prices: []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "0.90"}, {close: liqFillTime.Add(time.Hour), price: "1.50"}},
+			prices: []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "0.90", traded: true}, {close: liqFillTime.Add(time.Hour), price: "1.50", traded: true}},
 			rates:  map[clickhouse.LendingTxRef]blend.ReserveData{liqFillTx: {Version: blend.PoolV2, BRate: liqRate("1100000000000"), DRate: liqRate("1000000000000")}},
 		},
 		"CXLM": {
 			scale:  7,
-			prices: []liqPrice{{close: liqFillTime.Add(-30 * time.Minute), price: "0.30"}, {close: liqFillTime.Add(30 * time.Minute), price: "0.60"}},
+			prices: []liqPrice{{close: liqFillTime.Add(-30 * time.Minute), price: "0.30", traded: true}, {close: liqFillTime.Add(30 * time.Minute), price: "0.60", traded: true}},
 			rates:  map[clickhouse.LendingTxRef]blend.ReserveData{liqFillTx: {Version: blend.PoolV2, BRate: liqRate("1000000000000"), DRate: liqRate("1250000000000")}},
 		},
 	}
@@ -71,7 +71,7 @@ func TestLiqValuer_ValuesAtFillTimeAndFillRate(t *testing.T) {
 // TestLiqValuer_MissingPriceIsNullWithReason: a price older than the bound is no price — null with a reason, never 0.
 func TestLiqValuer_MissingPriceIsNullWithReason(t *testing.T) {
 	marks := liqTestMarks()
-	marks["CUSDC"].prices = []liqPrice{{close: liqFillTime.Add(-liquidationPriceMaxAge - time.Minute), price: "0.90"}}
+	marks["CUSDC"].prices = []liqPrice{{close: liqFillTime.Add(-liquidationPriceMaxAge - time.Minute), price: "0.90", traded: true}}
 	v := liqValuer{protocol: blend.SourceName, marks: marks}.value(liqTestFill())
 	if v.LotUSD != nil || v.FillerProfitUSD != nil || v.LotUSDLowerBound || liqDeref(v.Lot[0].Reason) != liqReasonNoPrice {
 		t.Fatalf("lot_usd %s profit %s reason %s, want null, null, %s", liqDeref(v.LotUSD), liqDeref(v.FillerProfitUSD),
@@ -153,11 +153,44 @@ func TestLiqValuer_PartialSideIsLowerBound(t *testing.T) {
 	}
 }
 
+// TestLiqValuer_ThinBucketAtFill: a lot leg whose pricing bucket was thin at the fill is null with price_thin_at_fill, leaving
+// the side the other leg's value as a lower bound and no profit; the same bucket traded above the floor is valued.
+func TestLiqValuer_ThinBucketAtFill(t *testing.T) {
+	f := liqTestFill()
+	f.Lot = map[string]string{"CUSDC": "1000000000", "CXLM": "1000000000"}
+	marks := liqTestMarks()
+	marks["CUSDC"].prices[0].traded = false
+	v := liqValuer{protocol: blend.SourceName, marks: marks}.value(f)
+	if liqDeref(v.LotUSD) != "30.00" || !v.LotUSDLowerBound || v.FillerProfitUSD != nil || v.Lot[0].USD != nil ||
+		liqDeref(v.Lot[0].Reason) != liqReasonPriceThinAtFill {
+		t.Fatalf("lot_usd %s lower_bound %v profit %s leg %+v, want 30.00 true null and %s", liqDeref(v.LotUSD),
+			v.LotUSDLowerBound, liqDeref(v.FillerProfitUSD), v.Lot[0], liqReasonPriceThinAtFill)
+	}
+	v = liqValuer{protocol: blend.SourceName, marks: liqTestMarks()}.value(f)
+	if liqDeref(v.LotUSD) != "129.00" || v.LotUSDLowerBound || liqDeref(v.FillerProfitUSD) != "91.50" {
+		t.Fatalf("healthy: lot_usd %s lower_bound %v profit %s, want 129.00 false 91.50", liqDeref(v.LotUSD), v.LotUSDLowerBound,
+			liqDeref(v.FillerProfitUSD))
+	}
+}
+
+// TestLiqBucketTraded: the floor is inclusive, compared exactly; unknown or unparseable volume is refused.
+func TestLiqBucketTraded(t *testing.T) {
+	floor := big.NewRat(1000, 1)
+	for vol, want := range map[string]bool{"1000": true, "1000.00": true, "999.999999999": false, "0": false, "x": false} {
+		if got := liqBucketTraded(&vol, floor); got != want {
+			t.Errorf("volume %s: traded %v, want %v", vol, got, want)
+		}
+	}
+	if liqBucketTraded(nil, floor) {
+		t.Error("unknown volume: traded, want refused")
+	}
+}
+
 // TestLiqValuer_AmountAboveInt64IsExact: a 2^65+1 lot keeps every digit through the rate and the USD product.
 func TestLiqValuer_AmountAboveInt64IsExact(t *testing.T) {
 	marks := liqTestMarks()
 	marks["CUSDC"].rates[liqFillTx] = blend.ReserveData{Version: blend.PoolV2, BRate: liqRate("1000000000000"), DRate: liqRate("1000000000000")}
-	marks["CUSDC"].prices = []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "1"}}
+	marks["CUSDC"].prices = []liqPrice{{close: liqFillTime.Add(-time.Hour), price: "1", traded: true}}
 	f := liqTestFill()
 	f.Lot = map[string]string{"CUSDC": "36893488147419103233"}
 	v := liqValuer{protocol: blend.SourceName, marks: marks}.value(f)

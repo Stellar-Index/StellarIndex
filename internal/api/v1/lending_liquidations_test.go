@@ -51,8 +51,14 @@ func (liqRouteExplorer) LendingReservesAtTxs(_ context.Context, _, _ string, ass
 }
 
 // liqRouteServer: a V2 pool with two user-liquidation fills 30 and 40 minutes ago, each taking 100 b-tokens of a thin-market
-// asset and of a deep one and repaying 100 d-tokens of the deep one; every asset trades at 0.50 an hour before.
+// asset and of a deep one and repaying 100 d-tokens of the deep one; every asset trades at 0.50 an hour before, on $1,000.
 func liqRouteServer(t *testing.T) (*testServerImpl, *stubLiquidationReader, string, string) {
+	t.Helper()
+	return liqRouteServerWith(t, "1000", nil)
+}
+
+// liqRouteServerWith is liqRouteServer with the pricing bucket's USD volume and the operator's source exclusions.
+func liqRouteServerWith(t *testing.T, volumeUSD string, excl []timescale.SourceExclusion) (*testServerImpl, *stubLiquidationReader, string, string) {
 	t.Helper()
 	thin, deep := mkCStrkey(t, 3), mkCStrkey(t, 4)
 	now := time.Now().UTC()
@@ -65,14 +71,64 @@ func liqRouteServer(t *testing.T) (*testServerImpl, *stubLiquidationReader, stri
 	}
 	lr := &stubLiquidationReader{fills: []timescale.LendingLiquidationFill{fill(30*time.Minute, liqTxA), fill(40*time.Minute, liqTxB)}}
 	bucket := now.Add(-2 * time.Hour).Truncate(time.Hour)
-	pts := []v1.HistoryPoint{{Bucket: bucket, VWAP: "0.50"}}
-	srv := v1.New(v1.Options{
+	pts := []v1.HistoryPoint{{Bucket: bucket, VWAP: "0.50", VolumeUSD: &volumeUSD, Sources: []string{"soroswap"}}}
+	opts := v1.Options{
 		Explorer: liqRouteExplorer{&stubExplorerReader{}}, Lending: lr,
 		History:            &stubHistoryReader{points: pts, twapPoints: pts},
 		VerifiedCurrencies: newTestCatalogue(t),
 		Substance:          pricingguard.NewSubstanceGate(thinStore{thin: map[string]bool{thin: true}}, pricingguard.SubstanceGateOptions{}),
-	})
-	return startHTTPTest(t, srv.Handler()), lr, thin, deep
+	}
+	if excl != nil {
+		opts.Exclusions = pricingguard.NewSourceExclusionGate(exclTable{rows: excl}, pricingguard.SourceExclusionGateOptions{})
+	}
+	return startHTTPTest(t, v1.New(opts).Handler()), lr, thin, deep
+}
+
+// liqRouteFirstFill fetches one fill through the route.
+func liqRouteFirstFill(t *testing.T, ts *testServerImpl) map[string]any {
+	t.Helper()
+	status, body := fetch(t, ts.URL+"/v1/lending/pools/"+liqTestPool+"/liquidations?limit=1")
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %s", status, body)
+	}
+	fills, _ := decodeMap(t, body)["data"].(map[string]any)["liquidations"].([]any)
+	if len(fills) != 1 {
+		t.Fatalf("liquidations = %v, want 1", fills)
+	}
+	f, _ := fills[0].(map[string]any)
+	return f
+}
+
+// TestLendingPoolLiquidations_ThinBucketAtFill: the asset's market today clears the substance gate, but the bucket that would
+// price the fill traded under the floor, so the deep legs are null with price_thin_at_fill and no side or profit is claimed.
+func TestLendingPoolLiquidations_ThinBucketAtFill(t *testing.T) {
+	ts, _, _, deep := liqRouteServerWith(t, "999.99", nil)
+	f := liqRouteFirstFill(t, ts)
+	if f["lot_usd"] != nil || f["bid_usd"] != nil || f["filler_profit_usd"] != nil {
+		t.Fatalf("lot_usd %v bid_usd %v profit %v, want all null", f["lot_usd"], f["bid_usd"], f["filler_profit_usd"])
+	}
+	for _, l := range append(f["lot"].([]any), f["bid"].([]any)...) {
+		if leg, _ := l.(map[string]any); leg["asset"] == deep && (leg["usd"] != nil || leg["reason"] != "price_thin_at_fill") {
+			t.Errorf("deep leg = %v, want usd null with reason price_thin_at_fill", leg)
+		}
+	}
+}
+
+// TestLendingPoolLiquidations_ExcludedSourceDoesNotValueFill: the only bucket that could price the fills was fed by a source
+// the operator excluded over its span, so no leg is valued from it (price_withheld) — the route's source-exclusion proof.
+func TestLendingPoolLiquidations_ExcludedSourceDoesNotValueFill(t *testing.T) {
+	bucket := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Hour)
+	excl := []timescale.SourceExclusion{{ID: 1, Source: "soroswap", From: bucket.Add(-time.Hour), Until: bucket.Add(2 * time.Hour)}}
+	ts, _, _, deep := liqRouteServerWith(t, "1000", excl)
+	f := liqRouteFirstFill(t, ts)
+	if f["bid_usd"] != nil || f["filler_profit_usd"] != nil {
+		t.Fatalf("bid_usd %v profit %v, want null", f["bid_usd"], f["filler_profit_usd"])
+	}
+	for _, l := range f["bid"].([]any) {
+		if leg, _ := l.(map[string]any); leg["asset"] == deep && (leg["usd"] != nil || leg["price_usd"] != nil || leg["reason"] != "price_withheld") {
+			t.Errorf("deep bid leg = %v, want no price and reason price_withheld", leg)
+		}
+	}
 }
 
 // TestLendingPoolLiquidations_ThinLotLegWithheld: a lot asset whose only market is thin gets no USD (price_thin_market), so the
