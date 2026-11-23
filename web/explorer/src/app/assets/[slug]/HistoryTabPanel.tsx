@@ -23,6 +23,8 @@ import { useObservationsFollow } from '@/lib/live/hooks';
 import { formatRelative, formatUnitsReadable } from '@/lib/format';
 import { TradeScatter } from '../../markets/[pair]/TradeScatter';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
+import { withheldNote } from './headerNotes';
+import { useScaleRefused } from './LiveAssetPrice';
 
 const HISTORY_LIMIT = 100;
 
@@ -41,15 +43,24 @@ const HISTORY_LIMIT = 100;
 export function HistoryTabPanel({
   assetID,
   decimals,
+  scaleMismatch,
 }: {
   assetID: string;
   decimals?: number | null;
+  /** The page's build-time scale verdict; null skips the live re-read. */
+  scaleMismatch: boolean | null;
 }) {
   const quote = historyQuote(assetID);
   const history = useHistory(assetID, quote, HISTORY_LIMIT);
   // Live tape (RT-2): refresh the instant this pair trades, event-driven off
   // the observations stream (one connection — single pair, cap-safe).
   useObservationsFollow(assetID, quote, ['/v1/history', assetID, quote]);
+  // /v1/history normalises `price` by the projection the asset row may
+  // contradict; the amounts are on the token's own read scale and stand.
+  const priceRefused = useScaleRefused(
+    scaleMismatch === null ? undefined : assetID,
+    scaleMismatch ?? false,
+  );
 
   if (history.isError) {
     return (
@@ -112,6 +123,9 @@ export function HistoryTabPanel({
     <Panel
       headingLevel={2}
       title={`Recent trades — last ${rows.length}`}
+      hint={
+        priceRefused ? `Price ${withheldNote('decimals_mismatch')}` : undefined
+      }
       source={asExample('/v1/history', {
         base: assetID,
         quote,
@@ -120,12 +134,14 @@ export function HistoryTabPanel({
       bodyClassName="-mx-4"
     >
       <div className="px-4">
-        <TradeScatter
-          trades={rows.map((r) => ({
-            ...r,
-            base_decimals: r.base_decimals ?? decimals,
-          }))}
-        />
+        {priceRefused ? null : (
+          <TradeScatter
+            trades={rows.map((r) => ({
+              ...r,
+              base_decimals: r.base_decimals ?? decimals,
+            }))}
+          />
+        )}
         <TradeVenueBars rows={rows} />
       </div>
       <div className="overflow-x-auto">
@@ -181,7 +197,7 @@ export function HistoryTabPanel({
                   {formatUnitsReadable(r.quote_amount, r.quote_decimals)}
                 </Td>
                 <Td align="right" className="font-mono text-xs">
-                  {r.price ?? '—'}
+                  {priceRefused ? '—' : (r.price ?? '—')}
                 </Td>
               </LinkRow>
             ))}

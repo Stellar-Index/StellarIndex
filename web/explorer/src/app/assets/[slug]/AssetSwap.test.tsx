@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -883,5 +883,48 @@ describe('missingPriceNote', () => {
       'AAA has no USD price: withheld by the server (thin market). BBB has no USD price available',
     );
     expect(missingPriceNote([])).toBeNull();
+  });
+});
+
+// The amount's separators are read from its shape, never the browser locale:
+// the page prints "1,000", so a comma-locale reader copying it must still get
+// one thousand, and "0,5" from a comma keypad must still be a half.
+describe('AssetSwap comma decimal input', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+  function commaLocale() {
+    vi.spyOn(Intl.NumberFormat.prototype, 'formatToParts').mockReturnValue([
+      { type: 'integer', value: '1' },
+      { type: 'decimal', value: ',' },
+      { type: 'fraction', value: '5' },
+    ]);
+  }
+  const field = (i: number) =>
+    screen.getAllByRole('textbox')[i] as HTMLInputElement;
+  /** Types into the USD field; returns its echo and the XLM it converts to. */
+  const typed = (value: string) => {
+    fireEvent.change(field(1), { target: { value } });
+    return [field(1).value, field(0).value];
+  };
+
+  it('reads the amount by its shape in a comma locale', () => {
+    stubApi();
+    commaLocale();
+    renderSwap();
+    // 1000 USD at the baked 0.195 USD/XLM; 1.000 would be 5.1282051.
+    expect(typed('1,000')).toEqual(['1,000', '5,128.2051282']);
+    expect(typed('0,5')).toEqual(['0,5', '2.5641026']);
+    expect(typed('1.234,56')).toEqual(['1.234,56', '6,331.0769231']);
+  });
+
+  it('reads a leading comma as the decimal mark in a dot locale', () => {
+    stubApi();
+    renderSwap();
+    expect(typed(',5')).toEqual([',5', '2.5641026']);
+    expect(typed('1,234.56')).toEqual(['1,234.56', '6,331.0769231']);
+    // Unreadable input converts to nothing, never to a guess.
+    expect(typed('1,2,3')).toEqual(['1,2,3', '']);
   });
 });

@@ -185,6 +185,7 @@ type AssetDetail struct {
 	// declaration and no projection row vouches for one: the scale is unknown, but as a fact, so the
 	// body stays cacheable and unflagged.
 	DecimalsUndeclared bool `json:"-"`
+	decimalsLakeUnread bool // the lake read failed, so `decimals` is the projection's and the lockstep check never ran
 
 	// SupplyBasis identifies which ADR-0011 policy produced the
 	// supply numbers; null when no snapshot exists. Lets consumers
@@ -2384,9 +2385,8 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := newAssetDetailEntry(detail, body, flags)
-	// A failed decimals, issuer-directory or F2 read is a transient outage, and a dead context means
-	// the body holds only the reads that landed before cancellation; replaying either for the whole
-	// TTL would outlive the outage. Skip the cache write, not the response.
+	// A failed decimals, issuer-directory or F2 read, or a dead context (only the reads that landed),
+	// is a transient outage that replaying for the whole TTL would outlive. Skip the cache write only.
 	if !transientlyDegraded(&detail, ctxDead) {
 		s.assetDetailCache.put(cacheKey, entry)
 	}
@@ -2396,13 +2396,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || detail.sep1Unread || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.decimalsLakeUnread || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || detail.sep1Unread || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or
 // was cut short, so the body must not outlive the request in the detail cache.
 func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
-	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread || detail.sep1Unread
+	return detail.DecimalsUnresolved || detail.decimalsLakeUnread || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread || detail.sep1Unread
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed from the reader, else a canonical echo.
@@ -2437,8 +2437,8 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // applyTokenDecimals overlays a Soroban token's lake decimals() onto detail.Decimals (classic/native are 7) and is the lockstep
 // check with `nonstandard_decimals_assets`. A lake/projection disagreement serves the lake value but flags
 // MarketCapDecimalsMismatch (cap refused; obs.NonstandardDecimalsLockstepMismatchTotal{site="asset_detail"}); a FAILED lake
-// read with no projection row sets DecimalsUnresolved (flags.stale, uncached) and a read finding no declaration sets
-// DecimalsUndeclared; either way `decimals` is omitted and the cap refused.
+// read with no projection row sets DecimalsUnresolved (flags.stale, uncached; `decimals` omitted, cap refused), a read finding
+// no declaration sets DecimalsUndeclared (same omission), and a failed read beside a projection row serves it stale, uncached.
 func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a canonical.Asset) {
 	if a.Type != canonical.AssetSoroban || a.ContractID == "" {
 		return
@@ -2448,7 +2448,7 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	if !lakeKnown {
 		switch {
 		case hasConfirmed:
-			detail.Decimals = confirmed
+			detail.Decimals, detail.decimalsLakeUnread = confirmed, lakeErr != nil
 		case lakeErr != nil:
 			detail.DecimalsUnresolved = true
 		default:
@@ -3573,7 +3573,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		// smallest unit paired with `decimals`, while a catalogue row's own Decimals is 0 for
 		// Stellar-issued entries. A stroop value on a decimals=0 row would render 10^7 too large.
 		dst.Decimals = twin.Decimals
-		dst.DecimalsUnresolved, dst.DecimalsUndeclared = twin.DecimalsUnresolved, twin.DecimalsUndeclared
+		dst.DecimalsUnresolved, dst.DecimalsUndeclared, dst.decimalsLakeUnread = twin.DecimalsUnresolved, twin.DecimalsUndeclared, twin.decimalsLakeUnread
 		// The basis says whether the figure is exact, a floor or a derived upper bound; without it a
 		// lake-flows or trustline-sum reading renders as exact.
 		dst.SupplyBasis, dst.CirculatingSupplyLowerBound = twin.SupplyBasis, twin.CirculatingSupplyLowerBound

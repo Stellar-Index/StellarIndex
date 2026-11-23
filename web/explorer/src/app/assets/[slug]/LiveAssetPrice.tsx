@@ -290,9 +290,11 @@ export function useScaleRefused(
   assetID: string | undefined,
   initialScaleMismatch: boolean | undefined,
 ): boolean {
+  const env = useAsset(assetID).data;
   return resolveScaleRefused(
-    useAsset(assetID).data?.data,
+    env?.data,
     initialScaleMismatch,
+    env?.flags?.stale,
   );
 }
 
@@ -350,7 +352,11 @@ export function useResolvedAssetPrice(
   const detailRow = detail.data?.data;
   // The build-time verdict stands until the live row answers, so an unread or
   // failed row read never lets the /v1/price figure through.
-  const scaleRefused = resolveScaleRefused(detailRow, initialScaleMismatch);
+  const scaleRefused = resolveScaleRefused(
+    detailRow,
+    initialScaleMismatch,
+    detail.data?.flags?.stale,
+  );
   // Under a contradicted scale only the row's whole-token fill may stand.
   const fromAssets = scaleRefused || (derived && (!poll.polled || refused));
   const reread = fromAssets && detailRow != null;

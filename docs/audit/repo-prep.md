@@ -125,9 +125,11 @@ Run/heed these locally before pushing so PRs are green on first push:
    CI. The per-host inventory paths under `configs/ansible/inventory/`
    (`*.secrets.yml`, `r*.yml`) are exempted only in `.gitleaks.worktree.toml`
    (the `--no-git` scan), so the history scan still flags a committed one.
-   `.gitignore` covers only names ending `.yml` there, so a suffixed copy
-   (`r1.secrets.yml.bak-<date>`) is not ignored and stages without `-f`;
-   keep such copies out of the repo. The two cases are handled differently:
+   `.gitignore` ignores a suffixed secrets copy (`r1.secrets.yml.bak-<date>`,
+   `*.secrets.yml.*`), but only names ending `.yml` match the host-inventory
+   rule, so a suffixed host copy (`r1.yml.bak-<date>`) is not ignored, stages
+   without `-f` and is not secret-shaped for gitleaks; keep such copies out of
+   the repo. The two cases are handled differently:
    - **A real credential** (any value that ever authenticated anything):
      treat it as an incident. Revoke and rotate it first and follow
      `SECURITY.md`; the repo is public, so deleting it does not undo the

@@ -5,8 +5,8 @@ status: living doc
 ---
 
 # Diagnose a live incident
-r1 access: `ssh root@136.243.90.96` (hostname doesn't resolve; login
-root). SQL: file+scp then `sudo -u postgres psql -d stellarindex -f`
+r1 access: `ssh root@$R1_HOST` (the address is in your private inventory;
+hostname doesn't resolve; login root). SQL: file+scp then `sudo -u postgres psql -d stellarindex -f`
 — NEVER inline `$$` over ssh (expands to shell PID, silently corrupts
 the query; caused two wrong conclusions once). ClickHouse: HTTP
 `curl http://127.0.0.1:8123/` on r1, not the native port over ssh.
@@ -28,8 +28,8 @@ the query; caused two wrong conclusions once). ClickHouse: HTTP
 
 ```sh
 # FIRST hypothesis every time: is the next ledger object even in the bucket?
-ssh root@136.243.90.96 'mc stat local/galexie-live/... <cursor+1 object>'   # frozen-cursor diagnostic
-ssh root@136.243.90.96 'sudo -u postgres psql -d stellarindex -c "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors ORDER BY last_updated DESC LIMIT 5"'
+ssh root@$R1_HOST 'mc stat local/galexie-live/... <cursor+1 object>'   # frozen-cursor diagnostic
+ssh root@$R1_HOST 'sudo -u postgres psql -d stellarindex -c "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors ORDER BY last_updated DESC LIMIT 5"'
 ```
 
 - Cursor advancing but trades frozen while CEX fresh → the 2026-06-01

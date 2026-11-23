@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import {
@@ -30,13 +30,21 @@ const row: TradeRow = {
   quote_decimals: 7,
   price: '0.02469136',
 };
+let tape: TradeRow[] = [row];
+// The scatter needs two plotted trades.
+const twoTrades = () => [row, { ...row, op_index: 1, price: '0.025' }];
+beforeEach(() => {
+  tape = [row];
+});
 
 vi.mock('@/api/hooks', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/hooks')>('@/api/hooks');
   return {
     ...actual,
-    useHistory: () => ({ isError: false, isLoading: false, data: [row] }),
+    useHistory: () => ({ isError: false, isLoading: false, data: tape }),
+    // No live asset row yet: the page's build-time scale verdict stands.
+    useAsset: () => ({ data: undefined }),
   };
 });
 
@@ -55,7 +63,13 @@ describe('HistoryTabPanel', () => {
   it('scales quote_amount by the quote leg (native, 7 decimals) rather than the base asset decimals prop', () => {
     // decimals=2 mimics a 2-decimal Soroban base asset detail page —
     // the bug scaled quote_amount by this value instead of 10^7.
-    render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
+    render(
+      <HistoryTabPanel
+        assetID="SHEKEL:GABC"
+        decimals={2}
+        scaleMismatch={false}
+      />,
+    );
 
     // 123456789 / 10^7, truncated to 4 places; 10^2 would give 1,234,567.89
     expect(screen.getByText('12.35')).toBeInTheDocument();
@@ -64,8 +78,51 @@ describe('HistoryTabPanel', () => {
 
   it('renders amounts above 2^53 digit for digit', () => {
     row.base_amount = '900719925474099312';
-    render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
+    render(
+      <HistoryTabPanel
+        assetID="SHEKEL:GABC"
+        decimals={2}
+        scaleMismatch={false}
+      />,
+    );
     expect(screen.getByText('9007.2T')).toBeInTheDocument();
+  });
+
+  it('shows the per-unit price and its scatter when the scale stands', () => {
+    tape = twoTrades();
+    render(
+      <HistoryTabPanel
+        assetID="SHEKEL:GABC"
+        decimals={2}
+        scaleMismatch={false}
+      />,
+    );
+    expect(screen.getByText('0.02469136')).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: /Recent trades plotted/ }),
+    ).toBeTruthy();
+  });
+
+  // `price` is normalised by the projection the page's verdict contradicts;
+  // the amounts are on the token's own read scale and stay.
+  it('withholds the price column and scatter under the page scale refusal', () => {
+    tape = twoTrades();
+    render(
+      <HistoryTabPanel
+        assetID="SHEKEL:GABC"
+        decimals={2}
+        scaleMismatch={true}
+      />,
+    );
+    expect(screen.queryByText('0.02469136')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('img', { name: /Recent trades plotted/ }),
+    ).toBeNull();
+    expect(screen.queryByText('0.025')).not.toBeInTheDocument();
+    expect(screen.getAllByText('12.35')).toHaveLength(2);
+    expect(
+      screen.getByText(/Price withheld · decimals disagree/),
+    ).toBeInTheDocument();
   });
 });
 

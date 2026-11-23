@@ -16,8 +16,10 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-async function renderPanel() {
-  render(await LiquidityTabPanel({ assetID: ASSET, code: 'USDC' }));
+async function renderPanel(scaleMismatch = false) {
+  render(
+    await LiquidityTabPanel({ assetID: ASSET, code: 'USDC', scaleMismatch }),
+  );
 }
 
 // Frontend-honesty sweep: this build-time panel swallowed 5xx, 429 and
@@ -85,7 +87,33 @@ describe('LiquidityTabPanel', () => {
     );
     await renderPanel();
     expect(screen.getByText('soroswap')).toBeInTheDocument();
+    expect(screen.getByText('0.420000')).toBeInTheDocument();
     expect(screen.queryByText(/Pool list unavailable/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No DEX pools touching/)).not.toBeInTheDocument();
+  });
+
+  // last_price is normalised by the projection a decimals mismatch says is
+  // wrong, so it is off by a power of ten exactly when the page refuses it.
+  it('withholds the last price under the page scale refusal', async () => {
+    mockFetch(async () =>
+      jsonResponse({
+        data: [
+          {
+            source: 'soroswap',
+            base: ASSET,
+            quote: 'native',
+            last_price: '0.42',
+            volume_24h_usd: '1000',
+            trade_count_24h: 5,
+          },
+        ],
+      }),
+    );
+    await renderPanel(true);
+    expect(screen.getByText('soroswap')).toBeInTheDocument();
+    expect(screen.queryByText('0.420000')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('withheld · decimals disagree'),
+    ).toBeInTheDocument();
   });
 });

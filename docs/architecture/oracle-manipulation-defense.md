@@ -19,8 +19,10 @@ RedStone's feed attribution) are in [domain-traps.md](domain-traps.md).
 
 - Oracle outputs are **record-layer only**. Reflector, Band, RedStone,
   CoinGecko and CMC never carry VWAP weight; they are `ClassOracle` /
-  aggregator class in `internal/sources/external/registry.go` and appear
-  in `sources`, not in the price.
+  aggregator class in `internal/sources/external/registry.go`. Oracles appear
+  in `sources`, not in the price. Aggregators are also the second tier of the
+  asset headline price (`aggregator_avg`, `tryAggregatorTier` in
+  `internal/aggregate/global.go`), used when the VWAP tier misses.
 - **Never drop an unmapped symbol.** Record it verbatim as `raw:<symbol>`
   (`canonical.AssetOracleRaw`, `internal/canonical/asset_raw.go`). A raw
   row never reaches VWAP, divergence, a pair leg or a supply key: filter
@@ -257,8 +259,8 @@ only for a pair with no `prices_1m` rows. What an operator can do:
    aggregator. This drops its stored trades from the aggregator's VWAP
    windows only; the API binary does not read the setting.
 4. Rows already stored stay in `prices_1m` and on the surfaces under "Not
-   covered" below (`/v1/price/at`, history, charts). The covered surfaces
-   withhold them while an exclusion is in force.
+   covered" below. The covered surfaces, including `/v1/price/at`, history
+   and charts, withhold them while an exclusion is in force.
    `GuardServedVWAP1mConfidence` substitutes last-known-good only for a
    bucket grossly off its trailing buckets, so a sustained mis-scale passes.
 
@@ -313,20 +315,30 @@ What an exclusion does once recorded (read by `pricingguard.SourceExclusionGate`
   Worst case, healthy: `/v1/price`, batch, SEP-40, `/v1/vwap` and `/v1/twap`
   45 s (15 s gate plus `max-age=30`); 90 s while the table is unreadable;
   tip 15 s; tip stream one tick more; closed-bucket stream until the next
-  closed bucket; asset detail and listing 15 s, then their in-process caches
-  are bypassed and unfilled while an exclusion overlaps the last 7 days 2 hours;
+  closed bucket; asset detail and listing 15 s (their in-process caches hold
+  unjudged values and stay in use; each response is judged on the way out);
   a body already at the edge or client keeps its cache life there (detail:
   60 s edge, 30 s client).
+- Also **withheld**: `/v1/price/at`, `/v1/price/changes`, `/v1/history`,
+  `/v1/history/since-inception`, `/v1/chart`, `/v1/rwa/premium`, and
+  `/v1/lending/pools/{pool}/liquidations`, the lending reserve history and pool history.
 - **Not covered** (keep serving values that may include the excluded source
-  until it is lifted or the data ages out): `/v1/price/at`, `/v1/price/changes`,
-  `/v1/depeg`, history, since-inception, chart, RWA
-  assets/history/premium; `/v1/observations` and its stream
+  until it is lifted or the data ages out; the census is
+  `priceRouteCoverage` in `internal/api/v1/price_route_coverage_test.go`):
+  `/v1/rwa/assets` and `/v1/rwa/history`; `/v1/observations` and its stream
   (raw trades), `/v1/oracle/latest`, `/v1/oracle/streams`, `/v1/markets`,
-  `/v1/pairs`, `/v1/protocols` and per-protocol TVL USD, `/v1/lending/*` USD
-  (gated reader first, ungated catalogue price as fallback),
-  `/v1/stablecoins`, `/v1/external/assets`, `/v1/aggregators`,
-  `/v1/divergence`, `/v1/mev`, `/v1/assets/verified`. `/v1/pools/reserves`,
-  `/v1/liquidity-pools`, account positions and `/v1/search` serve no USD
+  `/v1/markets/sources`, `/v1/pairs`, `/v1/pools`, `/v1/protocols` and
+  per-protocol TVL USD, the other `/v1/lending/*` USD (gated reader first,
+  ungated catalogue price as fallback), `/v1/stablecoins`,
+  `/v1/external/assets`, `/v1/aggregators`, `/v1/divergence` and
+  `/v1/divergence/series`, `/v1/anomalies`, `/v1/mev`, `/v1/assets/verified`,
+  `/v1/sources` and `/v1/sources/{name}/health`, `/v1/network/stats`,
+  `/v1/diagnostics/ingestion`, `/v1/changes/{entity_type}/{id}` (stored
+  price values, ATH/ATL), the account USD figures (`/v1/accounts` listing
+  `usd_value` and `priced_assets`, a single account's balance `usd_value`,
+  its trades `usd_volume`, graph, graph history and cohort), and the
+  venue-native prices of `/v1/pools/reserves`, `/v1/liquidity-pools` and
+  `/v1/sdex/orderbook`. Account positions and `/v1/search` serve no USD
   price.
 - **Check**: `curl` `/v1/price?asset=...&quote=...` for an affected pair and
   expect 404 with `reason: source_excluded` once the delay has passed.
