@@ -30,6 +30,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -41,6 +42,12 @@ func TestProcessAndPersistCursor_ReturnsDispatcherErrorBeforeCursorWrite(t *test
 	events := make(chan consumer.Event)
 	defer close(events)
 
+	store := &fakeCursorWriter{}
+	marks := pipeline.NewLedgerMarks(41)
+	cursor := &durableCursor{
+		store: store, marks: marks, logger: logger, written: 41,
+		accountObserverActive: true, classicObserverActive: true,
+	}
 	err := processAndPersistCursor(
 		context.Background(),
 		disp,
@@ -49,11 +56,14 @@ func TestProcessAndPersistCursor_ReturnsDispatcherErrorBeforeCursorWrite(t *test
 		logger,
 		invalidLedgerCloseMeta(42),
 		"not-a-real-network-passphrase",
-		false, // accountObserverActive: irrelevant — ProcessLedger errors before any cursor/watermark write
-		false, // classicObserverActive: likewise
+		marks,
+		cursor,
 	)
 	if err == nil {
 		t.Fatal("expected dispatcher/build-reader error for invalid ledger meta")
+	}
+	if store.cursor != 0 || store.account != 0 || store.classic != 0 {
+		t.Fatalf("a rejected ledger wrote cursor=%d account=%d classic=%d, want no writes", store.cursor, store.account, store.classic)
 	}
 }
 
