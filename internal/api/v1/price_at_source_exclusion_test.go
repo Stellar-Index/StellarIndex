@@ -69,8 +69,8 @@ func TestPriceAtWithholdsExcludedBucket(t *testing.T) {
 	}
 }
 
-// TestHistoryWithholdsPageWithExcludedFill: a trade page holding a fill an exclusion covers is withheld, never served with
-// the row silently dropped; an exclusion outside the page's fills leaves it byte-identical; an unreadable table withholds.
+// TestHistoryWithholdsPageWithExcludedFill: a fill an exclusion covers is removed from its page, which is served degraded
+// (no-store); an exclusion outside the page's fills leaves it byte-identical; an unreadable table withholds.
 func TestHistoryWithholdsPageWithExcludedFill(t *testing.T) {
 	excluded, other := mkHistTrade(100), mkHistTrade(101)
 	other.Source, other.Ledger = "aquarius", 2
@@ -102,9 +102,9 @@ func TestHistoryWithholdsPageWithExcludedFill(t *testing.T) {
 			t.Errorf("%s: %d %s, want byte-identical %s", name, status, body, baseline)
 		}
 	}
-	if status, body := exclGet(t, srv(true, window(at.Add(-time.Minute), at.Add(time.Minute)), nil), path); status != http.StatusNotFound ||
-		!strings.Contains(body, `"source_excluded"`) || strings.Contains(body, `"aquarius"`) {
-		t.Errorf("soroswap excluded over its fill: %d %s, want 404 source_excluded", status, body)
+	page := histPageGet(t, srv(true, window(at.Add(-time.Minute), at.Add(time.Minute)), nil), path)
+	if page.status != http.StatusOK || page.cache != "no-store" || len(page.ledgers) != 1 || page.ledgers[0] != other.Ledger {
+		t.Errorf("soroswap excluded over its fill: %+v, want 200 no-store with only the aquarius fill", page)
 	}
 	if status, body := exclGet(t, srv(true, nil, errors.New("db down")), path); status != http.StatusNotFound ||
 		!strings.Contains(body, "price-withheld") {

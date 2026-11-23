@@ -267,32 +267,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	// The opaque cursor shadows `from`; otherwise paginating callers would re-request
-	// duplicate rows on each page. A defaulted `from` (now-1h, or now-window) moves between
-	// pages, so it must not cut above the cursor: rows between would match neither page.
-	var (
-		afterTs      time.Time
-		afterLedger  uint32
-		afterSource  string
-		afterTxHash  string
-		afterOpIndex uint32
-	)
-	if raw := r.URL.Query().Get("cursor"); raw != "" {
-		c, err := decodeHistoryCursor(raw)
-		if err != nil {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/invalid-cursor",
-				"Invalid cursor", http.StatusBadRequest, err.Error())
-			return
-		}
-		afterTs = c.ts
-		if r.URL.Query().Get("from") == "" && c.ts.Before(from) {
-			from = c.ts
-		}
-		afterLedger = c.ledger
-		afterSource = c.source
-		afterTxHash = c.txHash
-		afterOpIndex = c.opIndex
+	after, from, ok := historyCursorParam(w, r, from)
+	if !ok {
+		return
 	}
 
 	// 8s ceiling on the trades range query: long windows can take 5-10s cold. One ceiling spans
@@ -300,7 +277,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
 	trades, next, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair, source,
-		from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
+		from, to, after.ts, after.ledger, after.txHash, after.source, after.opIndex, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -329,7 +306,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// per-asset value is wrong for off-chain rows (CEX 1e8, FX 1e6) and one page can mix them;
 	// the scale-invariant `price` would not reveal a 10x overstatement.
 	// An undeclared scale stays 0, which omits the field: amounts are then base units with no stated scale.
-	if err := s.historyTradesWithheld(hCtx, base, quote, trades); err != nil {
+	readCount := len(trades)
+	trades, excludedFills, err := s.historyCleanPage(hCtx, base, quote, trades, next != nil)
+	if err != nil {
 		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(err))
 		return
 	}
@@ -346,11 +325,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 
 	// Pagination: next comes from the read itself, not from len(trades) == limit, because the
 	// two-direction merge can cut a page short with rows still behind it.
-	env := Envelope{Data: rows, Flags: Flags{Stale: unread, Degraded: unread}}
+	env := Envelope{Data: rows, Flags: Flags{Stale: unread, Degraded: unread || excludedFills}}
 	// The coverage probe spans both legs' alias families and both stored directions, exactly
 	// what the page read spans (see historyCoverageSet), so the floor describes returnable rows.
 	coverageFrom, outsideCoverage := s.coverageAnnotationIfEmpty(
-		r.Context(), historyCoverageSet(pair), to, historyPageIsAmbiguous(len(trades), afterTs))
+		r.Context(), historyCoverageSet(pair), to, historyPageIsAmbiguous(readCount, after.ts))
 	env.CoverageFrom, env.Flags.OutsideCoverage = wireTimePtr(coverageFrom), outsideCoverage
 	env.Pagination = historyNextCursor(next)
 	if asCSV {
@@ -369,6 +348,27 @@ func (s *Server) historyScales(ctx context.Context, base, quote canonical.Asset)
 		return 0, 0, false, false
 	}
 	return baseDec, quoteDec, baseErr != nil || quoteErr != nil, true
+}
+
+// historyCursorParam decodes ?cursor= (zero when absent) and returns from widened to it; ok=false means a 400 was written. The
+// cursor shadows `from`, else paging callers would re-request rows; a defaulted `from` (now-1h, or now-window) moves between
+// pages, so it must not cut above the cursor: rows between would match neither page.
+func historyCursorParam(w http.ResponseWriter, r *http.Request, from time.Time) (historyCursor, time.Time, bool) {
+	raw := r.URL.Query().Get("cursor")
+	if raw == "" {
+		return historyCursor{}, from, true
+	}
+	c, err := decodeHistoryCursor(raw)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest, err.Error())
+		return historyCursor{}, from, false
+	}
+	if r.URL.Query().Get("from") == "" && c.ts.Before(from) {
+		from = c.ts
+	}
+	return c, from, true
 }
 
 // historyNextCursor renders the next-cursor, or nil when the window is drained. The resume point

@@ -63,14 +63,20 @@ func (s *Server) exclusionCleanWindow(ctx context.Context, base, quote canonical
 	return kept, nil
 }
 
-// historyTradesWithheld refuses a /v1/history page holding a fill an exclusion covers: dropping the row would read as a quiet
-// market and move the cursor past it. A ?source= page of another venue still serves.
-func (s *Server) historyTradesWithheld(ctx context.Context, base, quote canonical.Asset, trades []canonical.Trade) error {
-	kept, err := s.exclusionCleanTrades(ctx, base, quote, trades)
-	if err == nil && len(kept) < len(trades) {
+// historyCleanPage drops the fills an exclusion covers from a /v1/history page; removed reports any were, so the caller marks
+// the page degraded. The cursor is the read's, not the survivors', so paging continues past the window; only a page that
+// empties with no next page is withheld, as an empty terminal page would read as a quiet market.
+func (s *Server) historyCleanPage(
+	ctx context.Context, base, quote canonical.Asset, trades []canonical.Trade, hasNext bool,
+) (kept []canonical.Trade, removed bool, err error) {
+	kept, err = s.exclusionCleanTrades(ctx, base, quote, trades)
+	if err == nil && len(kept) == 0 && len(trades) > 0 && !hasNext {
 		err = PriceWithheldError(pricingguard.WithheldSourceExcluded)
 	}
-	return err
+	if err != nil {
+		return nil, false, err
+	}
+	return kept, len(kept) < len(trades), nil
 }
 
 // writeExclusionCleanWindow is [Server.exclusionCleanWindow] for a handler: it writes the withheld problem (an emptied window
