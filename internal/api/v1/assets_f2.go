@@ -456,9 +456,9 @@ func (d *AssetDetail) scaleWithheldReason() MarketCapWithheldReason {
 
 // withholdContradictedScalePrice withholds a market price, and every figure derived from it, only on positive evidence: a
 // successful decimals read contradicting the scale it was normalised on. An unread or undeclared scale is no such evidence.
-// A global-market, declared-peg or whole-token price is quoted per whole token, so no token scale enters it.
+// A global-market or declared-peg price is quoted per whole token, so no token scale enters it.
 func withholdContradictedScalePrice(d *AssetDetail) {
-	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil || d.priceWholeToken ||
+	if !d.MarketCapDecimalsMismatch || d.PriceUSD == nil ||
 		d.PriceBasis == priceBasisDeclaredPeg || d.PriceBasis == priceBasisGlobalMarket {
 		return
 	}

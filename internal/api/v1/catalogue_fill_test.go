@@ -96,7 +96,8 @@ func (p *pricedTwinAssets) LatestSupplyObservations(context.Context, time.Durati
 }
 
 // A catalogue row's cap is its own served price times its own supply: never the twin's on-chain price beside the row's global
-// price, and the supply (with the cap on the row's price) still lands when the twin has no on-chain price.
+// price. With no on-chain price the supply still lands, but the row's whole-token price values no cap (price_basis), as on the
+// asset detail for the same issuance.
 func TestCatalogueStats_CapIsTheRowsOwnPriceTimesSupply(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -112,8 +113,12 @@ func TestCatalogueStats_CapIsTheRowsOwnPriceTimesSupply(t *testing.T) {
 			if page[0].CirculatingSupply == nil || *page[0].CirculatingSupply != "1000000000" {
 				t.Fatalf("circulating_supply = %v, want the twin's 1000000000", page[0].CirculatingSupply)
 			}
-			// 1000000000 stroops = 100 USDC at the row's own $2.
-			if page[0].MarketCapUSD == nil || !decimalEqual(*page[0].MarketCapUSD, "200") {
+			if twinPrice == nil {
+				if page[0].MarketCapUSD != nil || page[0].MarketCapWithheldReason != MarketCapWithheldPriceBasis {
+					t.Errorf("market_cap_usd = %v reason %q, want null with price_basis", page[0].MarketCapUSD, page[0].MarketCapWithheldReason)
+				}
+			} else if page[0].MarketCapUSD == nil || !decimalEqual(*page[0].MarketCapUSD, "200") {
+				// 1000000000 stroops = 100 USDC at the row's own $2.
 				t.Errorf("market_cap_usd = %v, want 200 (row price 2 x supply 100)", page[0].MarketCapUSD)
 			}
 			if page[0].PriceUSD == nil || *page[0].PriceUSD != "2" {
@@ -209,8 +214,8 @@ func TestFillMarketCapsFromSupply_UnpricedRowGetsSupply(t *testing.T) {
 	}
 }
 
-// A twin with no on-chain price is valued at the row's per-whole-token price, which was never normalised on the projection's
-// scale, so a lake scale that disagrees with the default is not drift; a twin with its own price keeps the lockstep refusal.
+// A twin with no on-chain price is not valued at the row's per-whole-token price, so no scale drift is claimed for it; a twin
+// with its own price keeps the lockstep refusal.
 func TestFillTwinCapAtRowPrice_DecimalsDriftNeedsTheTwinsOwnPrice(t *testing.T) {
 	const contract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	onChain, rowPrice := "0.5", "2"
@@ -220,7 +225,7 @@ func TestFillTwinCapAtRowPrice_DecimalsDriftNeedsTheTwinsOwnPrice(t *testing.T) 
 		wantMismatch bool
 		wantCap      string
 	}{
-		"twin unpriced": {own: nil, wantCap: "200"},
+		"twin unpriced": {own: nil},
 		"twin priced":   {own: &onChain, wantMismatch: true},
 	} {
 		t.Run(name, func(t *testing.T) {
