@@ -88,7 +88,11 @@ cd configs/ansible
 
 The `03-haproxy-configure` task validates the rendered config via
 `haproxy -c -f` before reload — a malformed template never lands
-in production.
+in production. `04-keepalived-configure` does the same with
+`keepalived -t -f` (and `sh -n` for `chk_haproxy.sh`). The keepalived
+restart runs one LB at a time, checks the unit is active afterwards,
+and a failure ends the play, so the other LB keeps its old config and
+the VIP.
 
 ## Health-check semantics
 

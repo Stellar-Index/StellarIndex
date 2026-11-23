@@ -173,11 +173,14 @@ Net: no separate "Redis HAProxy" sub-role of Task #72.
 ## Rolling password rotation
 
 Not supported by re-applying the role yet. On a configured host
-`redis_first_run_only` skips the redis.conf, users.acl and
-sentinel.conf renders, so a changed `redis_password` reaches only
-`/etc/default/redis_exporter`: the play goes green while Redis and
-Sentinel keep the old secret, and apps deployed with the new one get
-WRONGPASS. Do not deploy apps with a new password until the role
+`redis_first_run_only` skips the redis.conf and sentinel.conf renders.
+`users.acl` is re-rendered on every run and applied live with `ACL LOAD`
+(so a new grant reaches a running cluster), but under
+`redis_acl_lockdown` the role first checks that the running ACL accepts
+`redis_password` and fails the play if it does not. Without lockdown a
+changed `redis_password` reaches only `/etc/default/redis_exporter`: the
+play goes green while Redis and Sentinel keep the old secret, and apps
+deployed with the new one get WRONGPASS. Do not deploy apps with a new password until the role
 applies it live (`CONFIG SET requirepass`/`masterauth` + `CONFIG
 REWRITE`, `SENTINEL SET <master> auth-pass`, `ACL SETUSER`) and
 proves `AUTH` with the new secret on every node.

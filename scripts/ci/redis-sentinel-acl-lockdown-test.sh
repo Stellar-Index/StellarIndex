@@ -105,5 +105,10 @@ if [[ "$RENDERED_ACL" == *"user replication on >fixture-password"* \
 fi
 record "users.acl.j2 defines a replication ACL user with PSYNC/REPLCONF" "$acl_ok"
 
+# The role applies a changed users.acl with ACL LOAD as the sentinel user.
+load_ok=0
+grep -E '^user sentinel on .*\+acl\|load( |$)' <<<"$RENDERED_ACL" >/dev/null && load_ok=1
+record "users.acl.j2 lets the sentinel user run ACL LOAD" "$load_ok"
+
 echo "redis-sentinel-acl-lockdown-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
