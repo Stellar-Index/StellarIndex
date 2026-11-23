@@ -377,9 +377,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 			return nil, canonical.Asset{}, false, nil, err
 		}
 		failed.note(err)
-		if withheldByExclusion(err) {
-			directWithheld = err
-		}
+		directWithheld = exclusionVerdict(err)
 	}
 	if !usdQuote || s.oracleSeriesLive(best, bestAt) {
 		return best, served, false, nil, nil
@@ -546,6 +544,14 @@ func withheldByExclusion(err error) bool {
 	return errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldSourceExcluded
 }
 
+// exclusionVerdict is err when a source exclusion withheld it, else nil.
+func exclusionVerdict(err error) error {
+	if withheldByExclusion(err) {
+		return err
+	}
+	return nil
+}
+
 func withheldExclusionsUnread(err error) bool {
 	var e *withheldError
 	return errors.As(err, &e) && e.unread
@@ -578,26 +584,20 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 // walk, plus the spelling that served it. An error is returned only when no spelling served.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
-		firstErr          error
-		excluded, unread  bool
-		best              []PriceSnapshot
-		bestAt            time.Time
-		served            canonical.Asset
-		unreadEstablished bool
+		failed oracleLegErrors
+		best   []PriceSnapshot
+		bestAt time.Time
+		served canonical.Asset
 	)
 	for _, a := range assetAliases(asset) {
-		if unreadEstablished && a.Type == canonical.AssetSoroban {
-			// The SAC spelling is the thinner market: it does not stand in for an established one that could not be read.
+		if failed.read != nil && a.Type == canonical.AssetSoroban {
+			// The SAC spelling (walked after the established ones) is the thinner market: it does not stand in for an
+			// established one that could not be read.
 			continue
 		}
 		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			unreadEstablished = unreadEstablished || (isPriceReadFailure(err) && a.Type != canonical.AssetSoroban)
-			excluded = excluded || withheldByExclusion(err)
-			unread = unread || withheldExclusionsUnread(err)
+			failed.note(err)
 			continue
 		}
 		if len(snapshots) == 0 {
@@ -613,11 +613,11 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 	}
 	if len(best) > 0 {
 		if !s.oracleSeriesLive(best, bestAt) {
-			best = seriesFillsWithheld(best, excluded, unread)
+			best = seriesFillsWithheld(best, failed.excluded, failed.unread)
 		}
 		return best, bestAt, served, nil
 	}
-	return nil, time.Time{}, canonical.Asset{}, firstErr
+	return nil, time.Time{}, canonical.Asset{}, failed.first
 }
 
 // newestSnapshotTime is the latest observed_at in a series, whatever its order.
