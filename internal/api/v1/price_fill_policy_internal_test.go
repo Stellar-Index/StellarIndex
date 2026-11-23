@@ -136,13 +136,16 @@ func TestTransitiveFill_ExcludedLegIsNotServed(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name       string
-		gate       fillExclGate
+		gate       PriceExclusionGate
 		wantPrice  bool
 		wantUnread bool
 	}{
 		{name: "no exclusion", gate: fillExclGate{verdict: pricingguard.WithheldSourceExcluded}, wantPrice: true},
 		{name: "near leg excluded", gate: fillExclGate{base: fillTestSoroban, quote: fillTestHop, verdict: pricingguard.WithheldSourceExcluded}},
 		{name: "far leg excluded", gate: fillExclGate{base: fillTestHop, quote: "native", verdict: pricingguard.WithheldSourceExcluded}},
+		{name: "anchor leg excluded", gate: pricingguard.NewSourceExclusionGate(globalExclTable{rows: []timescale.SourceExclusion{{
+			ID: 1, Source: "sdex", Base: "native", Quote: globalTestUSDC, From: time.Now().Add(-time.Hour),
+		}}}, pricingguard.SourceExclusionGateOptions{})},
 		{name: "exclusions unread", gate: fillExclGate{base: fillTestSoroban, quote: fillTestHop, verdict: pricingguard.WithheldExclusionsUnread}, wantUnread: true},
 	} {
 		s := fillTestTransitiveServer()

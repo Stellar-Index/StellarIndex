@@ -65,7 +65,11 @@ func (s *Server) transitiveLegsWithheld(ctx context.Context, asset canonical.Ass
 	if w := s.unattributedWithheld(ctx, asset, hop, from, false); w != pricingguard.NotWithheld {
 		return w
 	}
-	return s.unattributedWithheld(ctx, hop, farQuote, from, false)
+	if w := s.unattributedWithheld(ctx, hop, farQuote, from, false); w != pricingguard.NotWithheld || !sameAsset(farQuote, canonical.NativeAsset()) {
+		return w
+	}
+	// A hop priced in XLM reaches USD through the XLM/USD anchor, a third pooled leg.
+	return s.unattributedWithheld(ctx, canonical.NativeAsset(), defaultPriceQuote, from, false)
 }
 
 // transitiveCandidateAllowed reports whether one candidate hop's price
