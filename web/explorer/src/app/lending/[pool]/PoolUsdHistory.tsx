@@ -20,6 +20,9 @@ import { HistoryChart } from './HistoryChart';
 type Resp =
   paths['/lending/pools/{pool}/history']['get']['responses'][200]['content']['application/json'];
 export type PoolUsdPoint = NonNullable<Resp['data']>['points'][number];
+type ReserveResp =
+  paths['/lending/pools/{pool}/reserves/{asset}/history']['get']['responses'][200]['content']['application/json'];
+type ReserveUsdPoint = NonNullable<ReserveResp['data']>['points'][number];
 
 const COLORS = {
   supplied: 'var(--color-chart-2)',
@@ -73,6 +76,22 @@ export function usdSeries(
   return out;
 }
 
+/** One reserve's supplied and borrowed USD at each recorded state; a null is a gap, never 0. */
+export function reserveUsdSeries(points: ReserveUsdPoint[]): UsdSeries {
+  const out: UsdSeries = {
+    supplied: [],
+    borrowed: [],
+    lowerBound: 0,
+    leftOut: [],
+  };
+  for (const p of points) {
+    const time = Math.floor(Date.parse(p.t) / 1000);
+    out.supplied.push({ time, value: usd(p.supplied_usd) });
+    out.borrowed.push({ time, value: usd(p.borrowed_usd) });
+  }
+  return out;
+}
+
 /** Supplied (TVL) and borrowed in USD over time, each bucket valued at its own price. */
 export function PoolUsdHistory({
   pool,
@@ -85,22 +104,46 @@ export function PoolUsdHistory({
   const range = RANGES.find((r) => r.id === rangeId) ?? RANGES[1];
   const text = useAssetText();
   const q = useQuery({
-    queryKey: ['/v1/lending/pools/{pool}/history', pool, range.id],
+    queryKey: [
+      asset
+        ? '/v1/lending/pools/{pool}/reserves/{asset}/history'
+        : '/v1/lending/pools/{pool}/history',
+      pool,
+      asset,
+      range.id,
+    ],
     retry: false,
     staleTime: 60_000,
     queryFn: async () => {
-      const env = await apiGet<Resp>(
-        `/v1/lending/pools/${encodeURIComponent(pool)}/history`,
-        {
-          interval: range.interval,
-          window: range.window,
-        },
-      );
-      return env.data ? { ...env.data, flags: env.flags } : env.data;
+      const params = { interval: range.interval, window: range.window };
+      const base = `/v1/lending/pools/${encodeURIComponent(pool)}`;
+      if (asset) {
+        const env = await apiGet<ReserveResp>(
+          `${base}/reserves/${encodeURIComponent(asset)}/history`,
+          params,
+        );
+        return env.data
+          ? {
+              series: reserveUsdSeries(env.data.points),
+              points: env.data.points.length,
+              price_max_age_hours: env.data.price_max_age_hours ?? null,
+              flags: env.flags,
+            }
+          : env.data;
+      }
+      const env = await apiGet<Resp>(`${base}/history`, params);
+      return env.data
+        ? {
+            series: usdSeries(env.data.points, env.data.omitted_reserves),
+            points: env.data.points.length,
+            price_max_age_hours: env.data.price_max_age_hours,
+            flags: env.flags,
+          }
+        : env.data;
     },
   });
   const d = q.data;
-  const s = d ? usdSeries(d.points, d.omitted_reserves, asset) : null;
+  const s = d ? d.series : null;
   const suppliedLabel = asset
     ? 'Supplied (USD)'
     : s && s.lowerBound > 0
@@ -151,9 +194,9 @@ export function PoolUsdHistory({
           />
           {s.lowerBound > 0 && (
             <p className="text-ink-muted text-xs">
-              ≥ {s.lowerBound.toLocaleString('en-US')} of{' '}
-              {d.points.length.toLocaleString('en-US')} points are lower bounds:
-              they leave out{' '}
+              {s.lowerBound.toLocaleString('en-US')} of{' '}
+              {d.points.toLocaleString('en-US')} points are lower bounds (the
+              true value is at least the one shown): they leave out{' '}
               {s.leftOut.map((a, i) => (
                 <span key={a}>
                   {i > 0 && ', '}
