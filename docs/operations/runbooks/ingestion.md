@@ -267,6 +267,24 @@ Fix (a deterministic panic needs a code fix):
 
 See also [worker-panicked](infra.md#stellarindex_worker_panicked) (a panicking background worker stops; here one input is skipped) and [cursor-stuck](ledger-ingest.md#stellarindex_ingestion_cursor_stuck) if the cursor is NOT advancing.
 
+## stellarindex_source_amount_degraded
+
+Ticket: `stellarindex_source_amount_degraded_total{field!="settled_amount_extra_legs"} > 0`. A decoder could not parse a money field and kept the row with that amount NULL, so every served sum over the field is short. Today only sorocredit's settlement decoder emits the counter:
+
+- `field="settled_amount"`: the settled amount failed to parse and was written NULL. This fires the alert.
+- `field="settled_amount_extra_legs"`: a liquidation settled more than one debt asset. Only leg 0 is stored, so the row is a designed lower bound (`debt_legs` in its attrs), not a parse failure. It is excluded from the alert and needs no action.
+
+The counter resets on restart, so the alert clears then while the NULL rows stay. A restart does not resolve it; only the re-derive below does.
+
+Check:
+
+```sh
+# Which source and field, and how many rows?
+ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=stellarindex_source_amount_degraded_total" | python3 -m json.tool | grep -E "source|field|value"'
+```
+
+Fix the decoder's parse of that field, ship the binary, then re-derive the affected range with `projector-replay` (projected source) or `ch-rebuild` (dispatcher-written source), as for [decoder-panicked](#stellarindex_decoder_panicked). The raw event is in the lake, so nothing is lost permanently.
+
 ## stellarindex_ingestion_lag_high
 
 Retired: no rule in either tree defines this alert and the per-source lag gauge no longer exists (the current `ledgerstream -> dispatcher` indexer does not emit one). Per-source freshness now comes from `data-freshness.sh` and `source_coverage_snapshots`. Kept as operator context for a source that is behind but not stopped (`source_last_event_unix` still advancing).
