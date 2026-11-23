@@ -16,12 +16,14 @@ import {
 } from '@/lib/format';
 import {
   CLASSIC_FLOWS_CAVEAT,
+  SUPPLY_FLOOR_HINT,
+  circulatingSupplyIsFloor,
   supplyHint,
   supplyIsDerived,
-  supplyIsFloor,
   supplyMark,
   totalSupplyIsFloor,
 } from '@/lib/supplyFloor';
+import { capHistoryWithheldNote } from './headerNotes';
 import { type Envelope } from '../../explorer-shared';
 import { SupplyFlowsBar, buildSupplyFlowRows } from './SupplyFlowsBar';
 import { CurrencyDeclarations } from './CurrencyDeclarations';
@@ -100,13 +102,12 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
     a.circulating_supply == null &&
     a.total_supply == null &&
     a.max_supply == null;
-  const onchainFloor =
-    onchain.data?.data?.circulating_supply_lower_bound === true;
-  const floor = supplyIsFloor(a) || onchainFloor;
+  // The on-chain block's floor flag qualifies its own lake reading, not this snapshot.
+  const floor = circulatingSupplyIsFloor(a);
   const derived = supplyIsDerived(a);
   const mark = supplyMark(floor, derived);
   const hint = supplyHint(floor, derived);
-  const totalFloor = totalSupplyIsFloor(a, onchainFloor);
+  const totalFloor = totalSupplyIsFloor(a);
   const totalMark = supplyMark(totalFloor, derived);
   const totalHint = supplyHint(totalFloor, derived);
 
@@ -198,7 +199,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
             </div>
           )}
 
-          <MarketCapChart assetID={assetID} />
+          <MarketCapChart
+            assetID={assetID}
+            withheldNote={capHistoryWithheldNote(a)}
+            floor={floor}
+          />
 
           {a.supply_basis && (
             <p
@@ -243,11 +248,21 @@ type MarketCapSeries = {
   market_cap_low_liquidity?: boolean;
 };
 
-function MarketCapChart({ assetID }: { assetID: string }) {
+function MarketCapChart({
+  assetID,
+  withheldNote,
+  floor,
+}: {
+  assetID: string;
+  /** The detail's refusal of this asset's cap; /v1/chart does not apply it. */
+  withheldNote: string | undefined;
+  floor: boolean;
+}) {
   // The whole envelope: a failed or refused series is served as an empty
   // 200 whose flags say why, and that is not an empty history.
   const q = useQuery<Envelope<MarketCapSeries>>({
     queryKey: ['/v1/chart', assetID, 'market-cap'],
+    enabled: withheldNote == null,
     retry: false,
     queryFn: () =>
       apiGet<Envelope<MarketCapSeries>>('/v1/chart', {
@@ -272,9 +287,25 @@ function MarketCapChart({ assetID }: { assetID: string }) {
     q.isError ||
     (answered && !withheld && points.length < 2 && flags?.stale === true);
 
+  if (withheldNote != null) {
+    return (
+      <div className="border-line border-t pt-4">
+        <h3 className={`${PANEL_LABEL_CLASS} mb-2`}>Market-cap timeline</h3>
+        <p className="text-ink-muted text-sm">
+          Market-cap history withheld: {withheldNote}.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="border-line border-t pt-4">
-      <h3 className={`${PANEL_LABEL_CLASS} mb-2`}>Market-cap timeline</h3>
+      <h3
+        className={`${PANEL_LABEL_CLASS} mb-2`}
+        title={floor ? SUPPLY_FLOOR_HINT : undefined}
+      >
+        Market-cap timeline{floor && ' · at least'}
+      </h3>
       {q.isLoading && (
         <div className="h-[260px]" aria-busy="true">
           <span className="sr-only">Loading market-cap timeline</span>
