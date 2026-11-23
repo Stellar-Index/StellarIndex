@@ -9004,7 +9004,7 @@ export interface components {
              */
             pivot_unverified: boolean;
             /**
-             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. A declared peg is observed through the stablecoin ticker the verified catalogue issues under that exact asset id; one sharing only the code has no observed market. A non-USD fiat answer (served through that fiat's stablecoins, e.g. crypto:EURC, or a USD anchor) also checks each of that fiat's stablecoins against the fiat. Omitted when false. Meaningful only when `proxy_deviation_unchecked` is absent.
+             * @description Set on a TRIANGULATED /v1/price/at, /v1/price/changes or /v1/vwap response served through a declared USD peg when any declared USD peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1. A declared peg is observed through the stablecoin ticker the verified catalogue issues under that exact asset id; one sharing only the code has no observed market. A non-USD fiat answer (served through that fiat's stablecoins, e.g. crypto:EURC, or a USD anchor) also checks each of that fiat's stablecoins against the fiat. Omitted when false. A true value is a depeg warning even beside `proxy_deviation_unchecked` (it may rest on a stale reading); when that flag is set, only its absence is no "peg holds" verdict.
              * @default false
              */
             proxy_deviation: boolean;
@@ -9691,7 +9691,8 @@ export interface components {
             /**
              * Format: date-time
              * @description The first full day for which the served price history holds
-             *     a dollar-quoted trade of any asset. No series starts before
+             *     an on-chain trade quoted in dollars (native, classic or SAC
+             *     assets; CEX and vendor buckets do not count). No series starts before
              *     it, and `no_market_history` means no dollar-quoted trade
              *     since it — trading before this day is not read here. A venue
              *     whose served history starts later is covered only from its
@@ -17647,8 +17648,10 @@ export interface operations {
             /**
              * @description Single-bar mode only — no trades in window. Series mode
              *     returns 200 with `intervals: []` instead. Both modes return
-             *     a `price-withheld` 404 when the base's issuer carries a
-             *     scam-class directory tag, as `/v1/chart` and `/v1/vwap` do.
+             *     a `price-withheld` 404 when the base or quote issuer carries a
+             *     scam-class directory tag (as `/v1/chart` and `/v1/vwap` do),
+             *     and when a source exclusion covers the window (single bar) or
+             *     any returned bar (series); the problem's `reason` names which.
              */
             404: {
                 headers: {
@@ -18094,9 +18097,10 @@ export interface operations {
             query?: {
                 /**
                  * @description Optional. A pool (pair) contract C-strkey; restricts the
-                 *     response to that pool. 404 when the contract is not a
-                 *     registered Soroswap pair — unknown pools are refused, not
-                 *     silently empty.
+                 *     response to that pool. 404 `unknown-pool` when the contract
+                 *     is not a registered Soroswap pair; 404
+                 *     `pool-reserves-unreadable` when it is registered but has no
+                 *     readable current state. A named pool is never an empty list.
                  */
                 pool?: string;
                 /**
@@ -28136,6 +28140,7 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

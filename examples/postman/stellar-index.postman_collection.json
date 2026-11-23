@@ -10891,7 +10891,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Single-bar mode only — no trades in window. Series mode\nreturns 200 with `intervals: []` instead. Both modes return\na `price-withheld` 404 when the base's issuer carries a\nscam-class directory tag, as `/v1/chart` and `/v1/vwap` do.",
+              "name": "Single-bar mode only — no trades in window. Series mode\nreturns 200 with `intervals: []` instead. Both modes return\na `price-withheld` 404 when the base or quote issuer carries a\nscam-class directory tag (as `/v1/chart` and `/v1/vwap` do),\nand when a source exclusion covers the window (single bar) or\nany returned bar (series); the problem's `reason` names which.",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -15590,7 +15590,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                        "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                         "type": "text/plain"
                       },
                       "key": "pool",
@@ -15643,7 +15643,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                             "type": "text/plain"
                           },
                           "key": "pool",
@@ -15706,7 +15706,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                             "type": "text/plain"
                           },
                           "key": "pool",
@@ -15769,7 +15769,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                             "type": "text/plain"
                           },
                           "key": "pool",
@@ -15832,7 +15832,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                             "type": "text/plain"
                           },
                           "key": "pool",
@@ -15949,7 +15949,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                             "type": "text/plain"
                           },
                           "key": "pool",
@@ -16012,7 +16012,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 when the contract is not a\nregistered Soroswap pair — unknown pools are refused, not\nsilently empty.\n",
+                            "content": "Optional. A pool (pair) contract C-strkey; restricts the\nresponse to that pool. 404 `unknown-pool` when the contract\nis not a registered Soroswap pair; 404\n`pool-reserves-unreadable` when it is registered but has no\nreadable current state. A named pool is never an empty list.\n",
                             "type": "text/plain"
                           },
                           "key": "pool",
@@ -23114,6 +23114,53 @@
                       },
                       "status": "Not Found",
                       "code": 404,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"span\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Internal error. Body includes the request_id for correlation.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "contracts",
+                            ":contract_id",
+                            "wasm"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) C-strkey contract id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "contract_id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Internal Server Error",
+                      "code": 500,
                       "header": [
                         {
                           "key": "Content-Type",
