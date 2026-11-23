@@ -1769,8 +1769,10 @@ export interface paths {
          *     whose AVERAGE execution price stays within the tier of the mid
          *     price, and its output. It assumes no other trade lands first —
          *     it is not an order book. Pools whose contract-storage entry
-         *     isn't captured in the lake are absent from the listing (absent,
-         *     never zero); a pool with an empty side reports its reserves but
+         *     isn't captured in the lake are absent from `data` (absent, never
+         *     zero) and named in the envelope's `unread`, so a listing with
+         *     `unread` is not the complete set of registered pools; a pool
+         *     with an empty side reports its reserves but
          *     no mid price / depth.
          */
         get: operations["getPoolReserves"];
@@ -18200,6 +18202,8 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["PoolReservesRow"][];
+                        /** @description Registered pool contracts (C-strkeys, sorted) omitted from `data` because their current state could not be read from the lake (not captured, archived, or a storage layout the decoder does not recognise): unknown, not empty. Absent when every matching pool was read. */
+                        unread?: string[];
                     };
                 };
             };
