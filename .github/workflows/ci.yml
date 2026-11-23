@@ -1283,6 +1283,12 @@ jobs:
         run: |
           git checkout -q HEAD -- scripts/ci/lint-migration-immutability.sh
           ./scripts/ci/lint-migration-immutability-test.sh
+      - name: lint-healthcheck-oneshot-timeout
+        # A Type=oneshot healthcheck with no TimeoutStartSec= hangs on a wedged
+        # socket and its timer silently stops firing.
+        run: ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+      - name: lint-healthcheck-oneshot-timeout self-test
+        run: ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
       - name: lint-migration-commands
         # A SQL command written into a migration HEADER is a claim, and
         # claims get tested. 0156's disarm command shipped with a

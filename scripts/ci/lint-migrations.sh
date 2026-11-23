@@ -422,28 +422,40 @@ echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under
 # A down that narrows a CHECK must REFUSE while offending rows exist
 # (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not DELETE
 # them: a rollback would otherwise discard production rows and report success.
-# Any executable DELETE/TRUNCATE in a down is a violation unless its line carries
-# `-- lint-down-delete:ok <reason>` (e.g. removing only the seed row the matching
-# up inserted).
-del_re='^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE)\b'
+# Any executable DELETE/TRUNCATE/drop_chunks in a down is a violation unless its
+# line carries `-- lint-down-delete:ok <reason>` (e.g. removing only the seed row
+# the matching up inserted). It is matched anywhere on the line outside quoted
+# strings and comments: inside a one-line DO block, after a CTE's `(`, or as a
+# DELETE whose FROM is on the next line.
+del_re='(^|[^a-z0-9_])(delete([[:space:]]+from([[:space:]]|$)|[[:space:]]*$)|truncate([[:space:]]|;|$)|drop_chunks[[:space:]]*[(])'
 down_files=0
-for f in migrations/*.down.sql; do
+for f in "${MIG_DIR:-migrations}"/*.down.sql; do
   [ -e "$f" ] || continue
   down_files=$((down_files + 1))
-  hits=$(grep -nEi "$del_re" "$f" | grep -viE -- '-- *lint-down-delete:ok +[^ ]' || true)
+  # HIT <n>:<line> for an unmarked delete, STALE <n>:<line> for a marker on a line without one.
+  p5="$(awk -v re="$del_re" '
+    {
+      l = $0; ok = (tolower(l) ~ /-- *lint-down-delete:ok/)
+      gsub(/'"'"'[^'"'"']*'"'"'/, "", l); sub(/--.*$/, "", l)
+      del = (tolower(l) ~ re)
+      if (del && !(tolower($0) ~ /-- *lint-down-delete:ok +[^ ]/)) print "HIT " NR ":" $0
+      else if (ok && !del) print "STALE " NR ":" $0
+    }' "$f")"
+  hits="$(sed -n 's/^HIT //p' <<<"$p5")"
   if [ -n "$hits" ]; then
     echo "lint-migrations ❌ ${f}: down deletes rows silently — refuse with a RAISE EXCEPTION guard instead (see 0070's down):" >&2
     indent "$hits" >&2
     fail=1
   fi
-  stale=$(grep -nEi -- '-- *lint-down-delete:ok' "$f" | grep -vEi "^[0-9]+:${del_re#^}" || true)
+  stale="$(sed -n 's/^STALE //p' <<<"$p5")"
   if [ -n "$stale" ]; then
     echo "lint-migrations ❌ ${f}: stale lint-down-delete:ok marker (line is not a DELETE/TRUNCATE) — remove it:" >&2
     indent "$stale" >&2
     fail=1
   fi
 done
-if [ "$down_files" -eq 0 ]; then
+# Vacuity is judged on the real tree; a test fixture (MIG_DIR) may carry no down.
+if [ "$down_files" -eq 0 ] && [ -z "${MIG_DIR:-}" ]; then
   echo "lint-migrations ❌ no migrations/*.down.sql found — the down-delete pass cannot pass vacuously" >&2
   fail=1
 fi
