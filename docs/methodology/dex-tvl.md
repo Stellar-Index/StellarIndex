@@ -129,8 +129,12 @@ makes the served number smaller, never larger.
    alike. The screen has no off switch; a deployment that wires no
    catalogue values native XLM and declared pegs only.
 3. **A leg with no served USD price contributes exactly 0**, same
-   accounting. We do not substitute a stale, modelled or single-trade
-   price to make a pool look complete.
+   accounting. We do not substitute a single-trade price, or one older
+   than the tier windows in the leg table, to make a pool look complete.
+   The XLM bridge tier is a cross rate: the asset's XLM leg can be up to
+   24h old, multiplied by the current XLM/USD rate. Such a leg still
+   carries `basis: served_usd_price`; nothing on the leg marks it as
+   bridge-priced.
 4. **A pool whose captured storage shape is unrecognised contributes 0**
    and is counted in both `pools_total` and `unpriced_pools`. It is
    never partially decoded or guessed — a contract upgrade that changes
