@@ -150,12 +150,14 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		ObservedAt:       current.observedAt.UTC().Format(time.RFC3339),
 		Resolution:       resolutionLabel(current.resSec),
 	}
-	flags := s.withProxyDeviation(ctx, Flags{Triangulated: cur.triangulated}, quote, now)
+	flags := Flags{Triangulated: cur.triangulated}
 	if cur.adm.Admitted() {
 		flags.ThinMarket = true
 		resp.Substance = substanceEvidenceWire(cur.adm.Evidence())
 	}
 	horizons := []*PriceChangeHorizon{&resp.H1, &resp.H24, &resp.D7, &resp.D30}
+	// Each delta is priced at now and at its reference instant, so the peg is judged at every one of them.
+	pricedAt := []time.Time{now}
 	for i, h := range priceChangeHorizons {
 		horizon, err := s.priceChangeHorizonThin(ctx, r, asset, quote, pair, current.value, now.Add(-h.dur), h.dur)
 		if err != nil {
@@ -164,9 +166,12 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		}
 		flags.ThinMarket = flags.ThinMarket || horizon.ThinMarket
 		*horizons[i] = horizon
+		if horizon.Available {
+			pricedAt = append(pricedAt, now.Add(-h.dur))
+		}
 	}
 
-	writeJSON(w, resp, flags)
+	writeJSON(w, resp, s.withProxyDeviation(ctx, flags, quote, pricedAt...))
 }
 
 // priceChangeCurrent is the resolved anchor of /v1/price/changes and the
