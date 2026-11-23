@@ -165,8 +165,8 @@ type RWAPremiumSeries struct {
 	// MarketWithheldDays.
 	PegOutsideBandDays int `json:"peg_outside_band_days,omitempty"`
 	SourceExcludedDays int `json:"source_excluded_days,omitempty"`
-	// PegUnobservedDays counts cleared days absent because a dollar-pegged quote had no usable day of its own (silent, thin,
-	// excluded, before its first observed day, or never observed), so the market price could not be shown to be in dollars.
+	// PegUnobservedDays counts cleared days absent because a dollar-pegged quote, from its first observed day on, had no
+	// usable day of its own (silent, thin, or excluded), so the market price could not be shown to be in dollars.
 	PegUnobservedDays int `json:"peg_unobserved_days,omitempty"`
 }
 
@@ -219,7 +219,7 @@ const (
 	// leg pools traded outside [depegBand] of $1, so the market price was not in dollars.
 	RWAPremiumExcludedPegOutsideBand = "peg_outside_band"
 	// RWAPremiumExcludedPegUnobserved — every day that cleared the floor was one on which a dollar-pegged quote the market
-	// leg pools had no usable dollar day of its own, observed or not, so the market price was not shown in dollars.
+	// leg pools, already observed before, had no usable dollar day of its own, so the market price was not shown in dollars.
 	RWAPremiumExcludedPegUnobserved = "peg_unobserved"
 	// RWAPremiumExcludedSourceExcluded — every day that cleared the floor fell under an operator source exclusion on
 	// either leg.
@@ -237,7 +237,7 @@ var rwaPremiumExcludedDetail = map[string]string{
 	RWAPremiumExcludedMarketOutsideBand:  "Days with enough trading to clear the thin-market floor exist, but every one of them priced the token outside the band around the instrument's published value, so no day may carry a premium. This is a market far from its reference, not a thin one; the trades are fully visible through the raw trade surfaces.",
 	RWAPremiumExcludedNoOverlap:          "A market price and a published value both exist for this asset, but never on the same day, and neither may be carried across a day it was not observed on. A premium needs both legs struck on one clock.",
 	RWAPremiumExcludedPegOutsideBand:     "Every day with enough trading to clear the thin-market floor was a day on which a dollar stablecoin the token is quoted in traded more than 2% away from $1 on its own observed market, so the token's price in that stablecoin was not its price in dollars and no premium is computed from it.",
-	RWAPremiumExcludedPegUnobserved:      "Every day with enough trading to clear the thin-market floor was a day on which a dollar stablecoin the token is quoted in had no usable day of its own on its own dollar market (no trades, too thin, or under an operator exclusion, including every day before that market was first observed and every day of a market never observed), so the token's price in that stablecoin could not be shown to be its price in dollars and no premium is computed from it.",
+	RWAPremiumExcludedPegUnobserved:      "Every day with enough trading to clear the thin-market floor was a day on which a dollar stablecoin the token is quoted in, whose own dollar market had been observed before, had no usable day of its own (no trades, too thin, or under an operator exclusion), so the token's price in that stablecoin could not be shown to be its price in dollars and no premium is computed from it.",
 	RWAPremiumExcludedSourceExcluded:     "Every day with enough trading to clear the thin-market floor falls under an operator source exclusion on the token's dollar markets or on the oracle series it is compared with, so no premium is computed from it until the exclusion is lifted or ends.",
 }
 
