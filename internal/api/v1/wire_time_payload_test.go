@@ -140,8 +140,8 @@ type wireTimePriceAtStub struct {
 
 func (s wireTimePriceAtStub) PriceAt(
 	context.Context, canonical.Pair, time.Time, time.Duration,
-) (string, time.Time, int, error) {
-	return s.value, s.bucketAt, 60, nil
+) (string, time.Time, int, []string, error) {
+	return s.value, s.bucketAt, 60, nil, nil
 }
 
 // TestWireTime_RenderedPayloadsCarryNoLocalOffset: feeds every timestamp-bearing reader a NON-UTC fixture, renders many

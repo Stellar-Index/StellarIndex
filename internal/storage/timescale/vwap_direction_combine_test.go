@@ -311,10 +311,10 @@ func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	const maxStaleness = time.Hour
 
 	script := []scriptedResult{{
-		cols: []string{"bucket", "base_asset", "vwap", "volume"},
+		cols: []string{"bucket", "base_asset", "vwap", "volume", "sources"},
 		rows: [][]driver.Value{
-			{bucket, pair.Base.String(), "0.5", "100"},
-			{bucket, pair.Quote.String(), "5", "10"},
+			{bucket, pair.Base.String(), "0.5", "100", []byte("{soroswap,sdex}")},
+			{bucket, pair.Quote.String(), "5", "10", []byte("{aquarius,sdex}")},
 		},
 	}}
 	store, conn := newScriptedStore(t, script...)
@@ -349,6 +349,9 @@ func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	}
 	if got.Resolution != Granularity1m {
 		t.Errorf("resolution = %s, want the finest rung 1m", got.Resolution)
+	}
+	if s := strings.Join(got.Sources, ","); s != "aquarius,sdex,soroswap" {
+		t.Errorf("sources = %q, want the sorted union of both direction rows", s)
 	}
 }
 
@@ -455,8 +458,8 @@ func TestClosedVWAPAtOrBefore_BindsNonVWAPSources(t *testing.T) {
 	ts := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
 	bucket := ts.Truncate(time.Minute).Add(-time.Minute)
 	store, conn := newScriptedStore(t, scriptedResult{
-		cols: []string{"bucket", "base_asset", "vwap", "volume"},
-		rows: [][]driver.Value{{bucket, pair.Base.String(), "0.5", "100"}},
+		cols: []string{"bucket", "base_asset", "vwap", "volume", "sources"},
+		rows: [][]driver.Value{{bucket, pair.Base.String(), "0.5", "100", nil}},
 	})
 	defer func() { _ = store.db.Close() }()
 

@@ -13,8 +13,8 @@ import (
 
 type failingPriceAt struct{}
 
-func (failingPriceAt) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, error) {
-	return "", time.Time{}, 0, errors.New("pool timeout")
+func (failingPriceAt) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, []string, error) {
+	return "", time.Time{}, 0, nil, errors.New("pool timeout")
 }
 
 // TestTriangulatedPrice_UnreadPegIsNotCached: a triangulated answer whose peg check failed must not reach a shared cache as "peg held".

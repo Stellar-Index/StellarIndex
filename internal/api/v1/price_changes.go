@@ -296,7 +296,7 @@ func (s *Server) currentPriceForAliases(
 			if pairErr != nil {
 				continue
 			}
-			value, observedAt, resSec, err := s.PriceAt.PriceAt(ctx, pair, now, priceChangesCurrentStaleness)
+			value, observedAt, resSec, err := s.readPriceAt(ctx, pair, now, priceChangesCurrentStaleness)
 			if err != nil {
 				if failErr := notePriceAtMiss(&withheld, err); failErr != nil {
 					return canonical.Pair{}, priceAtResult{}, false, nil, failErr
@@ -319,7 +319,7 @@ func (s *Server) currentPriceForAliases(
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) (PriceChangeHorizon, PriceWithheldReason, error) {
-	value, observedAt, resSec, err := s.PriceAt.PriceAt(ctx, pair, target, tolerance)
+	value, observedAt, resSec, err := s.readPriceAt(ctx, pair, target, tolerance)
 	if err != nil {
 		if !isPriceAtMiss(err) {
 			return PriceChangeHorizon{}, "", err

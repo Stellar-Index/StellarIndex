@@ -2797,24 +2797,30 @@ func prewarmAssetCall(ctx context.Context, logger *slog.Logger, name, assetID st
 // withholding gates as wiring.StorePriceReader or these routes would republish prices /v1/price refuses; thin-market is asked at ts, not
 // now.
 type storePriceAtReader struct {
-	s         *timescale.Store
+	s         priceAtStore
 	substance *pricingguard.SubstanceGate // nil → no thin-market gate
 	scam      *pricingguard.ScamGate      // nil → no scam-issuer gate
 	logger    *slog.Logger                // nil → guard logging disabled
 }
 
+// priceAtStore is the slice of *timescale.Store storePriceAtReader reads.
+type priceAtStore interface {
+	ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts time.Time, maxStaleness time.Duration) (timescale.VWAPAtRow, error)
+	pricingguard.TrailingAtReader
+}
+
 func (r storePriceAtReader) PriceAt(
 	ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration,
-) (string, time.Time, int, error) {
+) (string, time.Time, int, []string, error) {
 	if withheld := wiring.PriceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "price_at", wiring.AsOfInstant(ts)); withheld != pricingguard.NotWithheld {
-		return "", time.Time{}, 0, v1.PriceWithheldError(withheld)
+		return "", time.Time{}, 0, nil, v1.PriceWithheldError(withheld)
 	}
 	row, err := r.s.ClosedVWAPAtOrBefore(ctx, pair, ts, maxStaleness)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+			return "", time.Time{}, 0, nil, v1.ErrPriceAtUnavailable
 		}
-		return "", time.Time{}, 0, err
+		return "", time.Time{}, 0, nil, err
 	}
 	// The finest rung is the raw prices_1m bucket with no outlier filter, so apply the same
 	// trailing-baseline guard as /v1/price, on the 1m rung only (a 1-minute baseline cannot judge
@@ -2822,12 +2828,13 @@ func (r storePriceAtReader) PriceAt(
 	// withheld rather than no data.
 	if row.Resolution == timescale.Granularity1m {
 		served, ok := pricingguard.GuardServedVWAP1mAt(ctx, r.s, r.logger, pair,
-			timescale.Vwap1mRow{Bucket: row.Bucket, VWAP: row.VWAP}, ts, maxStaleness)
+			timescale.Vwap1mRow{Bucket: row.Bucket, VWAP: row.VWAP, Sources: row.Sources}, ts, maxStaleness)
 		if !ok {
-			return "", time.Time{}, 0, v1.ErrPriceAtGuarded
+			return "", time.Time{}, 0, nil, v1.ErrPriceAtGuarded
 		}
-		row.VWAP, row.Bucket = served.VWAP, served.Bucket
+		// A stand-in bucket carries its own sources; the caller judges exclusions on the bucket served.
+		row.VWAP, row.Bucket, row.Sources = served.VWAP, served.Bucket, served.Sources
 	}
 	// observed_at is the bucket close, when its VWAP became final (ADR-0015).
-	return row.VWAP, row.Bucket.Add(row.Resolution.BucketDuration()), row.Resolution.Seconds(), nil
+	return row.VWAP, row.Bucket.Add(row.Resolution.BucketDuration()), row.Resolution.Seconds(), row.Sources, nil
 }
