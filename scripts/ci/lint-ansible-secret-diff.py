@@ -93,15 +93,16 @@ def err(msg):
     print(f"lint-ansible-secret-diff: FAIL — {msg}", file=sys.stderr)
 
 
-def text_renders_secret(text):
+def guarded_names(text):
     text = JINJA_COMMENT.sub("", text)
-    return [m.group(0).strip() for m in JINJA_EXPR.finditer(text)
-            if SECRET_VAR.search(m.group(1))]
+    # Names only: an expression can carry a literal, and this goes to the CI log.
+    names = (SECRET_VAR.search(m.group(1)) for m in JINJA_EXPR.finditer(text))
+    return sorted({n.group(0) for n in names if n})
 
 
-def template_renders_secret(path):
+def template_guarded_names(path):
     with open(path, encoding="utf-8") as fh:
-        return text_renders_secret(fh.read())
+        return guarded_names(fh.read())
 
 
 def inline_text_of(task):
@@ -146,7 +147,7 @@ def walk(tasks, task_file, role):
         inline_mod, inline = inline_text_of(task)
         if inline is not None:
             tpl = f"its inline `{inline_mod}` text"
-            hits = text_renders_secret(inline)
+            hits = guarded_names(inline)
         elif mod is None:
             continue
         else:
@@ -162,7 +163,7 @@ def walk(tasks, task_file, role):
             tpl = os.path.join(templates_dir_for(task_file, role), src)
             if not os.path.isfile(tpl):
                 continue
-            hits = template_renders_secret(tpl)
+            hits = template_guarded_names(tpl)
         if not hits:
             continue
         checked += 1
