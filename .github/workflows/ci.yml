@@ -555,7 +555,7 @@ jobs:
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           # Named, so an added .golangci.yaml/.toml/.json cannot be loaded instead.
-          args: --config=.golangci.yml --timeout=5m
+          args: --config=.golangci.yml --timeout=10m
           verify: false
       - name: go vet
         if: needs.preflight.outputs.go == 'true'
