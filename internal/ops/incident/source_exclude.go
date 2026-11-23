@@ -51,7 +51,7 @@ const readSideNote = "source-exclude: note:\n" +
 	"    /v1/price/at, /changes, /v1/history, /v1/ohlc, /v1/chart, since-inception: the 15s re-read plus a 30s client / 5s CDN cache.\n" +
 	"  NOT COVERED (may still include the source until lifted or aged out): /depeg, RWA assets/history/premium,\n" +
 	"    /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
-	"    /v1/protocols + tvl USD, /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
+	"    /v1/protocols + tvl USD, /v1/lending/* USD but /liquidations (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
 	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +
 	"    graph USD, /v1/accounts usd_value + priced_assets, volume_24h_usd on /v1/network/stats, /v1/sources/{name}/health and\n" +
 	"    /v1/diagnostics/ingestion, /v1/changes/{type}/{id} values + ATH/ATL, and the venue-native mid and offer prices of\n" +

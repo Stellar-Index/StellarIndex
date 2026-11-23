@@ -72,27 +72,32 @@ func markUnderReview(list []holds.Hold, pathAsset string, body []byte) ([]byte, 
 		return nil, false
 	}
 	hold, ok := holds.Match(list, subjectOf(pathAsset, env["data"]))
-	if !ok {
+	if !ok || !setUnderReviewFlag(env) {
 		return nil, false
 	}
-	flags := map[string]json.RawMessage{}
-	if raw, ok := env["flags"]; ok {
-		if json.Unmarshal(raw, &flags) != nil {
-			return nil, false
-		}
-	}
-	flags["under_review"] = json.RawMessage("true")
-	rawFlags, err := json.Marshal(flags)
-	if err != nil {
-		return nil, false
-	}
-	env["flags"] = rawFlags
 	env["under_review_reason"] = json.RawMessage(strconv.Quote(hold.Reason))
 	out, err := json.Marshal(env)
 	if err != nil {
 		return nil, false
 	}
 	return append(out, '\n'), true
+}
+
+// setUnderReviewFlag adds `flags.under_review` to env; false when its flags are not an object.
+func setUnderReviewFlag(env map[string]json.RawMessage) bool {
+	flags := map[string]json.RawMessage{}
+	if raw, ok := env["flags"]; ok {
+		if json.Unmarshal(raw, &flags) != nil {
+			return false
+		}
+	}
+	flags["under_review"] = json.RawMessage("true")
+	rawFlags, err := json.Marshal(flags)
+	if err != nil {
+		return false
+	}
+	env["flags"] = rawFlags
+	return true
 }
 
 // subjectOf collects every asset or contract id the response names: the path asset, data.asset_id/contract_id, and for an account the
