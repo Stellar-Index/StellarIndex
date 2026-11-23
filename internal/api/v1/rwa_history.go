@@ -711,11 +711,19 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 	return out
 }
 
-// rwaSeriesMembers is m with its classic members as /v1/rwa/assets judges them at this build: the issuers' directory
-// tags re-read in one batch, since a tag added after the membership was built must withhold the series too. ok=false
-// when the read failed, as the listing withholds an unchecked issuer's valuation.
+// rwaSeriesMembers is m with its classic members as /v1/rwa/assets judges them at this build: each code is the on-chain
+// spelling the catalogue join matches (the declared one when nothing matched), and the issuers' directory tags are re-read
+// in one batch, since a tag added after the membership was built must withhold the series too. ok=false when a read
+// failed, as the listing withholds what it could not check.
 func (s *Server) rwaSeriesMembers(ctx context.Context, m rwaMembership) (rwaMembership, bool) {
-	if s.Directory == nil || len(m.members) == 0 {
+	if len(m.members) == 0 {
+		return m, true
+	}
+	m.members = slices.Clone(m.members)
+	if !s.rwaResolveMemberCodes(ctx, m.members) {
+		return m, false
+	}
+	if s.Directory == nil {
 		return m, true
 	}
 	found, err := s.Directory.DirectoryEntriesByAddresses(ctx, rwaMemberIssuers(m))
@@ -723,11 +731,39 @@ func (s *Server) rwaSeriesMembers(ctx context.Context, m rwaMembership) (rwaMemb
 		s.logger.Warn("rwa series: issuer directory read failed", "err", err)
 		return m, false
 	}
-	m.members = slices.Clone(m.members)
 	for i := range m.members {
 		m.members[i].dirTags = found[m.members[i].issuer].Tags
 	}
 	return m, true
+}
+
+// rwaResolveMemberCodes rewrites each member's code to the listing row [Server.rwaIssuerMemberRows] resolves it to, one
+// issuer page each: the binding, the SAC and the market leg are case-sensitive, so the declared spelling would miss them.
+func (s *Server) rwaResolveMemberCodes(ctx context.Context, members []rwaMember) bool {
+	if s.AssetsReader == nil {
+		return true
+	}
+	codesByIssuer := make(map[string][]string, len(members))
+	for _, mem := range members {
+		codesByIssuer[mem.issuer] = append(codesByIssuer[mem.issuer], strings.TrimSpace(mem.code))
+	}
+	onChain := make(map[string]string, len(members))
+	for issuer, codes := range codesByIssuer {
+		got, err := s.rwaIssuerMemberRows(ctx, issuer, codes)
+		if err != nil {
+			s.logger.Warn("rwa series: member listing read failed", "issuer", issuer, "err", err)
+			return false
+		}
+		for i, declared := range got.memberCodes {
+			onChain[rwaKey(declared, issuer)] = got.keep[i].Code
+		}
+	}
+	for i := range members {
+		if code, ok := onChain[rwaKey(members[i].code, members[i].issuer)]; ok {
+			members[i].code = code
+		}
+	}
+	return true
 }
 
 func rwaHistoryIssuerCount(m rwaMembership) int {

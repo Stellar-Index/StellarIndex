@@ -806,6 +806,31 @@ func TestRWAHistory_AFlagTaggedAfterMembershipWithholdsTheIssuer(t *testing.T) {
 	}
 }
 
+// TestRWAHistory_KeysAMisCasedMemberOnItsOnChainCode: the issuer declares `ustry`, the chain holds `USTRY`. The listing
+// folds the declaration to the on-chain row, so the binding, the SAC and the market leg must key on `USTRY` here too.
+func TestRWAHistory_KeysAMisCasedMemberOnItsOnChainCode(t *testing.T) {
+	_, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{rwaBound("ustry", rwaGoodIssuer, "etherfuse.com", "bond")}},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{}, byIssuer: rows, supply: rwaSupplyFor(rows),
+		},
+		TokenSupply:   &stubFlowSupply{days: []clickhouse.SupplyFlowDay{histFlow(sac, 1, "200000000")}},
+		OracleHistory: &stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+		MarketHistory: &stubMarketHistory{rows: []timescale.MarketDay{premMarket(premAssetID("USTRY", rwaGoodIssuer), 1, "1.08")}},
+	})
+	v := getRWAHistory(t, srv, "?timeframe=all")
+	if len(v.Points) != 1 || v.Points[0].ValueUSD != "21.40" || v.Members != 1 {
+		t.Fatalf("points/members/excluded = %+v/%d/%+v, want one 21.40 point from the on-chain USTRY", v.Points, v.Members, v.Excluded)
+	}
+	p := getRWAPremium(t, srv, "?timeframe=all")
+	if len(p.Series) != 1 {
+		t.Fatalf("premium series/excluded = %+v/%+v, want the USTRY series", p.Series, p.Excluded)
+	}
+}
+
 // TestRWAHistory_AnUnreadIssuerFlagPublishesNoSeries: the listing withholds a row whose directory read failed, so a
 // series must not value one either.
 func TestRWAHistory_AnUnreadIssuerFlagPublishesNoSeries(t *testing.T) {
