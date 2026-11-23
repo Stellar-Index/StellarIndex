@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -277,6 +278,14 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 			writePriceWithheldProblem(w, r, asset, defaultPriceQuote, priceWithheldReason(err))
 			return
 		}
+		if errors.Is(err, errStablecoinNoOwnSeries) {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/price-not-found",
+				"No price data for asset", http.StatusNotFound,
+				asset.String()+" is a USD stablecoin with no observed fiat:USD series; another stablecoin's book "+
+					"never stands in for its price")
+			return
+		}
 		if handlerTimedOut(ctx, err) {
 			s.logger.Warn("RecentClosedSnapshots (sep40 prices) deadline exceeded",
 				"asset", asset.String(), "records", records)
@@ -365,13 +374,15 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" || s.oracleSeriesLive(best, bestAt) {
 		return best, served, false, nil
 	}
+	// A USD stablecoin's book against another peg would hide a joint depeg (and its own peg is no market).
+	if s.isUSDStablecoin(asset) {
+		if len(best) == 0 {
+			return nil, canonical.Asset{}, false, errStablecoinNoOwnSeries
+		}
+		return best, served, false, nil
+	}
 	var failed oracleLegErrors
 	for _, peg := range s.usdPegProxyQuotes() {
-		// A peg asked for under any of its spellings — the classic id or
-		// its SAC wrapper — is not a market against itself.
-		if sameAsset(peg, asset) {
-			continue
-		}
 		pegSnapshots, pegAt, pegServed, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
 		if pegErr == nil {
 			pegSnapshots, pegErr = s.pegSeriesClean(ctx, asset, quote, pegSnapshots)
@@ -392,6 +403,17 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		return best, served, viaPeg, nil
 	}
 	return nil, canonical.Asset{}, false, failed.err()
+}
+
+// errStablecoinNoOwnSeries: a USD stablecoin has no observed fiat:USD series, and no other stablecoin's book may stand in.
+var errStablecoinNoOwnSeries = errors.New("usd stablecoin has no observed fiat:USD series")
+
+// isUSDStablecoin: a declared USD peg under any spelling, or a `crypto:<STABLE>` ticker tracking USD.
+func (s *Server) isUSDStablecoin(asset canonical.Asset) bool {
+	if proxy, ok := aggregate.FiatProxy(asset); ok && proxy.Equal(defaultPriceQuote) {
+		return true
+	}
+	return s.isDeclaredUSDPeg(asset)
 }
 
 // pegSeriesClean judges each bucket of a peg book's series, served as asset/quote, under that requested pair: the reader judged

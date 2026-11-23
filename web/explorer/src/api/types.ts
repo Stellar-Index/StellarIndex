@@ -4114,7 +4114,10 @@ export interface paths {
          *     CLOSED 1-minute VWAP snapshots for the asset/USD pair,
          *     newest first; the in-progress bucket is excluded
          *     (ADR-0015). 200 with an empty array when the asset has no
-         *     closed buckets yet. A pair frozen by the anomaly checker
+         *     closed buckets yet. A USD stablecoin (a declared peg, or a
+         *     `crypto:<STABLE>` ticker) is served only from its own observed
+         *     fiat:USD series, never from another stablecoin's book; with
+         *     none recorded it answers 404 `price-not-found`. A pair frozen by the anomaly checker
          *     (ADR-0019) serves one record, the held last-known-good value
          *     `lastprice` serves, with `flags.frozen` and `flags.degraded`;
          *     the closed buckets are not served while the freeze holds, and
@@ -24287,6 +24290,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
