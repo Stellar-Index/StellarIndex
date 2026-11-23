@@ -486,3 +486,118 @@ func (in reserveHistoryIn) instance(row stateRow) (*PoolInstance, bool) {
 	}
 	return nil, true
 }
+
+// LendingTxRef names one transaction in one ledger; TxHash is lowercase hex.
+type LendingTxRef struct {
+	Ledger uint32
+	TxHash string
+}
+
+// LendingTxReserve is one reserve asset's ResData as one transaction stored it.
+type LendingTxReserve struct {
+	LendingTxRef
+	Asset string
+}
+
+// lendingTxReservesQuery is each listed key's last image per (ledger, tx), probed on the lake's (ledger_seq, tx_hash) sort-key
+// prefix. The IN lists cross; the caller keeps only the pairs it asked for. argMax folds the ReplacingMergeTree's duplicate
+// copies (identical rows) without FINAL; a removal is an empty entry_xdr and decodes to nothing.
+const lendingTxReservesQuery = `SELECT ledger_seq, tx_hash, key_xdr, argMax(entry_xdr, (op_index, change_index))
+	FROM stellar.ledger_entry_changes
+	WHERE ledger_seq IN (?) AND tx_hash IN (?) AND entry_type = 'contract_data' AND change_type != 'state' AND key_xdr IN (?)
+	GROUP BY ledger_seq, tx_hash, key_xdr
+	SETTINGS max_threads = 4, max_memory_usage = 8000000000`
+
+// txReserveRow is one lendingTxReservesQuery row.
+type txReserveRow struct {
+	ref   LendingTxRef
+	key   string
+	entry string
+}
+
+// LendingReservesAtTxs reads, in one query, the ResData each of txs stored for each of a pool's assets, decoded with protocol's
+// (LendingBlendV2 / LendingBLNT / LendingBlendV1) model. A pair the transaction did not write, removed, or that fails to decode is
+// absent: unknown, never zero.
+func (r *ExplorerReader) LendingReservesAtTxs(ctx context.Context, pool, protocol string, assets []string, txs []LendingTxRef) (map[LendingTxReserve]blend.ReserveData, error) {
+	model, ok := historyModel(protocol)
+	if !ok {
+		return nil, fmt.Errorf("clickhouse: lending reserve model %q unknown", protocol)
+	}
+	if len(assets) == 0 || len(txs) == 0 {
+		return map[LendingTxReserve]blend.ReserveData{}, nil
+	}
+	assetByKey, keys, err := resDataKeys(pool, assets)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[LendingTxRef]bool, len(txs))
+	ledgers := make([]uint32, 0, len(txs))
+	hashes := make([]string, 0, len(txs))
+	for _, t := range txs {
+		if !want[t] {
+			want[t] = true
+			ledgers, hashes = append(ledgers, t.Ledger), append(hashes, t.TxHash)
+		}
+	}
+	rows, err := r.conn.Query(ctx, lendingTxReservesQuery, ledgers, hashes, keys)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending reserves at txs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var read []txReserveRow
+	for rows.Next() {
+		var row txReserveRow
+		if err := rows.Scan(&row.ref.Ledger, &row.ref.TxHash, &row.key, &row.entry); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan lending reserves at txs: %w", err)
+		}
+		read = append(read, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse: lending reserves at txs rows: %w", err)
+	}
+	return foldTxReserves(read, want, assetByKey, model), nil
+}
+
+// resDataKeys is each asset's ResData key under pool, and the asset each key names.
+func resDataKeys(pool string, assets []string) (map[string]string, []string, error) {
+	poolID, err := contractIDFromStrkey(pool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("clickhouse: lending pool id %q: %w", pool, err)
+	}
+	assetByKey := make(map[string]string, len(assets))
+	keys := make([]string, 0, len(assets))
+	for _, a := range assets {
+		id, err := contractIDFromStrkey(a)
+		if err != nil {
+			return nil, nil, fmt.Errorf("clickhouse: lending asset id %q: %w", a, err)
+		}
+		k, err := poolDataKeyXDR(poolID, "ResData", id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("clickhouse: ResData key: %w", err)
+		}
+		assetByKey[k] = a
+		keys = append(keys, k)
+	}
+	return assetByKey, keys, nil
+}
+
+// foldTxReserves keeps the requested (ledger, tx) pairs' decodable images, keyed by asset.
+func foldTxReserves(rows []txReserveRow, want map[LendingTxRef]bool, assetByKey map[string]string, model reserveModel) map[LendingTxReserve]blend.ReserveData {
+	out := make(map[LendingTxReserve]blend.ReserveData, len(rows))
+	for _, row := range rows {
+		asset, ok := assetByKey[row.key]
+		if !ok || !want[row.ref] || row.entry == "" {
+			continue
+		}
+		val, ok := contractDataValue(row.entry)
+		if !ok {
+			continue
+		}
+		rd, err := model.decode(val)
+		if err != nil {
+			continue
+		}
+		out[LendingTxReserve{LendingTxRef: row.ref, Asset: asset}] = rd
+	}
+	return out
+}

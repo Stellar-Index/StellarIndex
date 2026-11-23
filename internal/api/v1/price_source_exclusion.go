@@ -212,6 +212,7 @@ func (w *chartWalk) cleanPoints(ctx context.Context, sp canonical.Pair, points [
 			kept = append(kept, p)
 		} else {
 			w.res.withheldFrom = earliestWithheld(w.res.withheldFrom, p.Bucket)
+			w.res.withheld = append(w.res.withheld, p.Bucket)
 		}
 	}
 	return kept

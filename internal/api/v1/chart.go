@@ -870,6 +870,8 @@ type chartWalkResult struct {
 	// withheldFrom is the earliest bucket dropped because an operator source exclusion covers it (zero: none) →
 	// flags.fills_withheld_reason.
 	withheldFrom time.Time
+	// withheld is the start of every bucket an exclusion dropped, for a reader that judges each point in time on its own.
+	withheld []time.Time
 	// refused is a non-exclusion verdict (the exclusion set unread) that withholds the whole series.
 	refused pricingguard.Withholding
 }
@@ -1157,10 +1159,12 @@ func (s *Server) chartSeriesPoints(
 		// A failed observed read means an observed market may have existed, so the derived series must not read as complete.
 		crossRes.degraded = crossRes.degraded || res.degraded
 		crossRes.withheldFrom = earliestWithheld(crossRes.withheldFrom, res.withheldFrom)
+		crossRes.withheld = append(crossRes.withheld, res.withheld...)
 		return derived, crossRes, nil
 	}
 	res.degraded = res.degraded || crossRes.degraded
 	res.withheldFrom = earliestWithheld(res.withheldFrom, crossRes.withheldFrom)
+	res.withheld = append(res.withheld, crossRes.withheld...)
 	res.mergeCap(crossRes.cappedAt)
 	return nil, res, nil
 }
@@ -1356,7 +1360,9 @@ func (s *Server) fiatSeriesThroughXLM(
 	// A leg that stopped short makes the PRODUCT short (or empty): the
 	// cross emits only buckets present on both, so carry each leg's
 	// degradation out even when the cross comes back empty.
-	res := chartWalkResult{degraded: assetRes.degraded, cappedAt: assetRes.cappedAt, withheldFrom: assetRes.withheldFrom}
+	res := chartWalkResult{
+		degraded: assetRes.degraded, cappedAt: assetRes.cappedAt, withheldFrom: assetRes.withheldFrom, withheld: assetRes.withheld,
+	}
 	if len(assetPts) == 0 {
 		return nil, res, nil
 	}
@@ -1373,6 +1379,7 @@ func (s *Server) fiatSeriesThroughXLM(
 	}
 	res.degraded = res.degraded || xlmRes.degraded
 	res.withheldFrom = earliestWithheld(res.withheldFrom, xlmRes.withheldFrom)
+	res.withheld = append(res.withheld[:len(res.withheld):len(res.withheld)], xlmRes.withheld...)
 	res.mergeCap(assetRes.cappedAt)
 	res.mergeCap(xlmRes.cappedAt)
 	if len(xlmPts) == 0 {

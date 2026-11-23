@@ -106,8 +106,9 @@ var (
 	// contractDetailPath is /v1/contracts/{id} and its /interactions, /code-history and
 	// /transfers children. /wasm is excluded: its handler sets its own directive.
 	contractDetailPath = regexp.MustCompile(`^/v1/contracts/[^/]+(/interactions|/code-history|/transfers)?$`)
-	// lendingReservesPath is /v1/lending/pools/{pool}/reserves and its /config-history, /backstop, /auctions, /emissions and history siblings.
-	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/(reserves|reserves/[^/]+/history|config-history|backstop|backstop/history|auctions|emissions)$`)
+	// lendingReservesPath is /v1/lending/pools/{pool}/reserves and its /config-history, /backstop, /auctions, /liquidations,
+	// /emissions and history siblings.
+	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/(reserves|reserves/[^/]+/history|config-history|backstop|backstop/history|auctions|liquidations|emissions)$`)
 	// lendingAccountEarningsPath is /v1/lending/accounts/{account}/earnings.
 	lendingAccountEarningsPath = regexp.MustCompile(`^/v1/lending/accounts/[^/]+/earnings$`)
 )
