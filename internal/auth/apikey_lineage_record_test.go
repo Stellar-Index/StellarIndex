@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -219,13 +220,48 @@ func TestLineage_SlideIsThrottledPerAuthenticatingKey(t *testing.T) {
 		}
 		return f.denier.expires.Load() - before
 	}
-	// One credential refresh per Lookup, plus one slide (the key and its root) per hour.
-	if got := lookups(10); got != 10+2 {
-		t.Errorf("10 Lookups in one hour sent %d EXPIREs, want 12", got)
+	// One credential refresh per Lookup, plus one slide (the key, its root and their owner set) per hour.
+	if got := lookups(10); got != 10+3 {
+		t.Errorf("10 Lookups in one hour sent %d EXPIREs, want 13", got)
 	}
 	f.advance(lineageSlideInterval)
-	if got := lookups(1); got != 1+2 {
-		t.Errorf("first Lookup after the interval sent %d EXPIREs, want 3", got)
+	if got := lookups(1); got != 1+3 {
+		t.Errorf("first Lookup after the interval sent %d EXPIREs, want 4", got)
+	}
+}
+
+// A failed slide is retried a minute later, not an hour later, and not on every request in between.
+func TestLineage_FailedSlideRetriesAfterAMinute(t *testing.T) {
+	f := newLineageRecFixture(t)
+	_, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+	_, plain, err := f.store.Create(context.Background(), ChildKeyRequest(rootSub, "c", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oom := "OOM command not allowed when used memory > 'maxmemory'."
+	f.denier.failWith.Store(&oom)
+	lookup := func() int64 {
+		before := f.denier.denied.Load()
+		if _, err := f.v.Lookup(context.Background(), plain); err != nil {
+			t.Fatal(err)
+		}
+		return f.denier.denied.Load() - before
+	}
+	if lookup() == 0 {
+		t.Fatal("first Lookup attempted no slide")
+	}
+	f.advance(30 * time.Second)
+	if lookup() != 0 {
+		t.Error("a slide was retried within the minute: a Redis outage would see one per request")
+	}
+	f.advance(31 * time.Second)
+	if lookup() == 0 {
+		t.Error("no slide retried a minute after the failure")
+	}
+	f.denier.failWith.Store(nil)
+	f.advance(time.Minute)
+	if before := f.denier.expires.Load(); lookup() == 0 && f.denier.expires.Load()-before != 1+3 {
+		t.Error("the slide after Redis recovered did not run")
 	}
 }
 
@@ -278,13 +314,22 @@ func TestLineage_FailuresNeverChangeAnAuthOutcome(t *testing.T) {
 		"no key id":   func(r *APIKeyRecord) { r.KeyID = "" },
 		"idle-absent": nil,
 	}
+	// Written out, not derived: a change that moved both runs alike still fails here.
+	expected := map[string]error{
+		"active": nil, "delegated": nil, "legacy": nil,
+		"revoked": ErrUnauthorized, "expired": ErrTokenExpired, "idle-absent": ErrUnauthorized,
+		"no key id": errNoKeyIDOutcome,
+	}
 	type outcome struct {
 		sub Subject
 		err string
 		ttl time.Duration
 	}
-	run := func(t *testing.T, failWith string) map[string]outcome {
+	run := func(t *testing.T, failWith string, withSlider bool) map[string]outcome {
 		f := newLineageRecFixture(t)
+		if !withSlider {
+			f.v.lineage = nil
+		}
 		if failWith != "" {
 			f.denier.failWith.Store(&failWith)
 		}
@@ -307,6 +352,15 @@ func TestLineage_FailuresNeverChangeAnAuthOutcome(t *testing.T) {
 				if err != nil {
 					o.err = err.Error()
 				}
+				want := expected[name]
+				switch {
+				case want == nil && (err != nil || sub.KeyID == ""):
+					t.Errorf("%s/%v (%q): got %v, want allowed", name, ttl, failWith, err)
+				case errors.Is(want, errNoKeyIDOutcome) && (err == nil || !strings.Contains(err.Error(), "no key id")):
+					t.Errorf("%s/%v (%q): got %v, want rejected for a missing key id", name, ttl, failWith, err)
+				case want != nil && !errors.Is(want, errNoKeyIDOutcome) && !errors.Is(err, want):
+					t.Errorf("%s/%v (%q): got %v, want %v", name, ttl, failWith, err, want)
+				}
 				out[name+"/"+ttl.String()] = o
 			}
 		}
@@ -318,29 +372,43 @@ func TestLineage_FailuresNeverChangeAnAuthOutcome(t *testing.T) {
 		if _, err := f.v.Lookup(context.Background(), childPlain); err != nil {
 			t.Fatalf("child Lookup with lineage failing: %v", err)
 		}
-		if err := f.store.RevokeKeyByID(context.Background(), "acct-z", rootSub.KeyID); err != nil && failWith != "" && strings.HasPrefix(failWith, "NOPERM") {
-			t.Fatalf("revoke with the lineage ACL missing: %v", err)
+		removed, err := f.store.RevokeKeyTree(context.Background(), "acct-z", rootSub.KeyID)
+		if err != nil || len(removed) != 1 {
+			t.Fatalf("revoke (%q): removed %v, err %v; want the child removed and no error", failWith, removed, err)
 		}
-		if _, err := f.store.DeleteKeysForIdentifier(context.Background(), "acct-x"); err != nil && strings.HasPrefix(failWith, "NOPERM") {
-			t.Fatalf("erasure delete with the lineage ACL missing: %v", err)
+		if _, err := f.v.Lookup(context.Background(), childPlain); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("revoked child Lookup (%q): %v, want ErrUnauthorized", failWith, err)
+		}
+		if deleted, err := f.store.DeleteKeysForIdentifier(context.Background(), "acct-x"); err != nil || len(deleted) != 12 {
+			t.Fatalf("erasure delete (%q): deleted %d, err %v; want 12 and no error", failWith, len(deleted), err)
 		}
 		if failWith != "" && f.denier.denied.Load() == 0 {
 			t.Fatal("no lineage command was refused: the failure path was not exercised")
 		}
 		return out
 	}
-	want := run(t, "")
-	for _, failWith := range []string{"NOPERM No permissions to access a key", "OOM command not allowed when used memory > 'maxmemory'."} {
+	oracle := run(t, "", false)
+	if got := run(t, "", true); !reflect.DeepEqual(got, oracle) {
+		t.Errorf("auth outcomes with the slider differ from without it:\n got %+v\nwant %+v", got, oracle)
+	}
+	for _, failWith := range []string{
+		"NOPERM No permissions to access a key",
+		"OOM command not allowed when used memory > 'maxmemory'.",
+		"i/o timeout",
+	} {
 		before := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpSlide))
-		got := run(t, failWith)
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: auth outcomes differ from lineage working:\n got %+v\nwant %+v", failWith, got, want)
+		got := run(t, failWith, true)
+		if !reflect.DeepEqual(got, oracle) {
+			t.Errorf("%s: auth outcomes differ from no lineage slider:\n got %+v\nwant %+v", failWith, got, oracle)
 		}
 		if after := testutil.ToFloat64(obs.APIKeyLineageWriteFailuresTotal.WithLabelValues(obs.APIKeyLineageOpSlide)); after <= before {
 			t.Errorf("%s: slide failures not counted", failWith)
 		}
 	}
 }
+
+// errNoKeyIDOutcome stands in the expected-outcome table for Lookup's non-sentinel missing-key-id rejection.
+var errNoKeyIDOutcome = errors.New("rejected: no key id")
 
 func TestBackfill_CreatesMissingLineageRecordsIdempotently(t *testing.T) {
 	f := newLineageRecFixture(t)
@@ -371,5 +439,266 @@ func TestBackfill_CreatesMissingLineageRecordsIdempotently(t *testing.T) {
 	f.denier.failWith.Store(&nope)
 	if rep, err := f.store.BackfillAncestorHashes(context.Background(), false); err != nil || !rep.LineageDenied {
 		t.Fatalf("backfill under a missing ACL grant: denied %v, err %v; want reported denied", rep.LineageDenied, err)
+	}
+}
+
+// The backfill's orphan sweep deletes lineage records with no credential that no credential's chain lists,
+// keeps one a live descendant holds, reports without deleting on a dry run, and finds nothing on a rerun.
+func TestBackfill_SweepsOrphanedLineageRecords(t *testing.T) {
+	ctx := context.Background()
+	f := newLineageRecFixture(t)
+	heldHash, heldSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+	_, childPlain, err := f.store.Create(ctx, ChildKeyRequest(heldSub, "c", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphanHash, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-y"}) // persistent: no TTL would ever clear it
+	liveHash, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-z"})
+	f.useDaily(t, childPlain, 100)
+	// An old binary's revoke: the credential goes, the lineage record stays.
+	f.mr.Del(cachekeys.APIKey(orphanHash).String())
+	if !f.lineageExists(heldHash) || !f.lineageExists(orphanHash) {
+		t.Fatal("setup: want both lineage records standing")
+	}
+	var lineage []string
+	for _, k := range f.mr.Keys() {
+		if h, ok := strings.CutPrefix(k, "apikey-lineage:"); ok && !strings.HasPrefix(h, "owner:") {
+			lineage = append(lineage, h, h) // SCAN may return a key twice
+		}
+	}
+	rep, err := f.store.BackfillAncestorHashes(ctx, false, lineage...)
+	if err != nil || rep.LineageOrphans != 1 || rep.LineageOrphansDeleted != 0 || !f.lineageExists(orphanHash) {
+		t.Fatalf("dry run: orphans %d, deleted %d, err %v; want 1 reported and none deleted", rep.LineageOrphans, rep.LineageOrphansDeleted, err)
+	}
+	if rep, err = f.store.BackfillAncestorHashes(ctx, true, lineage...); err != nil || rep.LineageOrphansDeleted != 1 {
+		t.Fatalf("write: deleted %d, err %v; want 1", rep.LineageOrphansDeleted, err)
+	}
+	if f.lineageExists(orphanHash) || !f.lineageExists(heldHash) || !f.lineageExists(liveHash) {
+		t.Errorf("after write: orphan %v, held %v, live %v; want only the orphan gone",
+			f.lineageExists(orphanHash), f.lineageExists(heldHash), f.lineageExists(liveHash))
+	}
+	if rep, err = f.store.BackfillAncestorHashes(ctx, true, lineage...); err != nil || rep.LineageOrphansDeleted != 0 {
+		t.Fatalf("rerun: deleted %d, err %v; want 0", rep.LineageOrphansDeleted, err)
+	}
+}
+
+// cmdFailer fails, with OOM, every command (alone or pipelined) that fail selects.
+type cmdFailer struct{ fail func(cmd redis.Cmder) bool }
+
+func (c cmdFailer) err(cmd redis.Cmder) error {
+	if !c.fail(cmd) {
+		return nil
+	}
+	err := errors.New("OOM command not allowed when used memory > 'maxmemory'.")
+	cmd.SetErr(err)
+	return err
+}
+
+func (c cmdFailer) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (c cmdFailer) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if err := c.err(cmd); err != nil {
+			return err
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (c cmdFailer) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		var first error
+		for _, cmd := range cmds {
+			if err := c.err(cmd); err != nil && first == nil {
+				first = err
+			}
+		}
+		if first != nil {
+			return first
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// names reports whether cmd is named (case-insensitively) one of names and has an argument with prefix.
+func names(cmd redis.Cmder, prefix string, names ...string) bool {
+	if !slices.Contains(names, strings.ToLower(cmd.Name())) {
+		return false
+	}
+	return slices.ContainsFunc(cmd.Args(), func(a any) bool { s, ok := a.(string); return ok && strings.HasPrefix(s, prefix) })
+}
+
+// A revoke's outcome is its credential deletes' alone: a lineage delete that fails, before or after the
+// credential is gone, neither fails the revoke nor drops a key from the removed list.
+func TestRevoke_LineageDeleteFailureNeverChangesTheOutcome(t *testing.T) {
+	for name, gone := range map[string]bool{"while the credential exists": false, "after the credential is gone": true} {
+		t.Run(name, func(t *testing.T) {
+			f := newLineageRecFixture(t)
+			_, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+			childHash, childSub := f.mint(t, ChildKeyRequest(rootSub, "c", nil))
+			f.rdb.AddHook(cmdFailer{fail: func(cmd redis.Cmder) bool {
+				return names(cmd, "apikey-lineage:"+childHash, "del") && f.mr.Exists(cachekeys.APIKey(childHash).String()) != gone
+			}})
+			removed, err := f.store.RevokeKeyTree(context.Background(), "acct-x", rootSub.KeyID)
+			if err != nil || !slices.Equal(removed, []string{childSub.KeyID}) {
+				t.Fatalf("removed %v, err %v; want the child removed and no error", removed, err)
+			}
+			if f.mr.Exists(cachekeys.APIKey(childHash).String()) {
+				t.Error("child credential survived the revoke")
+			}
+		})
+	}
+}
+
+// A credential delete that fails still fails the revoke, and the key still authenticates for a retry.
+func TestRevoke_CredentialDeleteFailureStillFailsTheRevoke(t *testing.T) {
+	f := newLineageRecFixture(t)
+	rootHash, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+	f.rdb.AddHook(cmdFailer{fail: func(cmd redis.Cmder) bool {
+		return names(cmd, cachekeys.APIKey(rootHash).String(), "evalsha", "eval", "del")
+	}})
+	err := f.store.RevokeKeyByID(context.Background(), "acct-x", rootSub.KeyID)
+	if err == nil || !strings.Contains(err.Error(), "redis del "+cachekeys.APIKey(rootHash).String()) {
+		t.Fatalf("revoke: %v; want the credential delete's error", err)
+	}
+	if !f.mr.Exists(cachekeys.APIKey(rootHash).String()) {
+		t.Fatal("credential gone although its delete failed")
+	}
+}
+
+// lineageOf returns the hashes of every lineage record naming identifier, and whether its owner set exists.
+func (f *lineageRecFixture) lineageOf(t *testing.T, identifier string) ([]string, bool) {
+	t.Helper()
+	var out []string
+	for _, k := range f.mr.Keys() {
+		h, ok := strings.CutPrefix(k, "apikey-lineage:")
+		if !ok || strings.HasPrefix(h, "owner:") {
+			continue
+		}
+		body, err := f.mr.Get(k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec lineageRecord
+		if err := json.Unmarshal([]byte(body), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Identifier == identifier {
+			out = append(out, h)
+		}
+	}
+	return out, f.mr.Exists(cachekeys.APIKeyLineageOwner(identifier).String())
+}
+
+// useDaily authenticates plain once a day for days, idling out every key in its chain that is not used.
+func (f *lineageRecFixture) useDaily(t *testing.T, plain string, days int) {
+	t.Helper()
+	for range days {
+		f.advance(24 * time.Hour)
+		if _, err := f.v.Lookup(context.Background(), plain); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Erasure leaves no lineage record holding the account's identifier, whether its key's credential idled
+// out under a live child or every credential of the account is gone; another account's records stand.
+func TestErasure_DeletesLineageOfIdledOutKeys(t *testing.T) {
+	t.Run("idle root under a live child", func(t *testing.T) {
+		ctx := context.Background()
+		f := newLineageRecFixture(t)
+		rootHash, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+		_, childPlain, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "c", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.useDaily(t, childPlain, 100)
+		if f.mr.Exists(cachekeys.APIKey(rootHash).String()) || !f.lineageExists(rootHash) {
+			t.Fatal("setup: want the root's credential idled out and its lineage record standing")
+		}
+		if _, err := f.store.DeleteKeysForIdentifier(ctx, "acct-x"); err != nil {
+			t.Fatal(err)
+		}
+		if left, set := f.lineageOf(t, "acct-x"); len(left) != 0 || set {
+			t.Errorf("after erasure: %d lineage records name the account, owner set %v; want none", len(left), set)
+		}
+	})
+	t.Run("no credential left", func(t *testing.T) {
+		ctx := context.Background()
+		f := newLineageRecFixture(t)
+		_, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+		f.mint(t, ChildKeyRequest(rootSub, "c", nil))
+		otherHash, _ := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-y"})
+		f.advance(MirroredKeyIdleTTL + time.Hour)
+		if left, _ := f.lineageOf(t, "acct-x"); len(left) != 2 {
+			t.Fatalf("setup: %d lineage records outlive the credentials, want 2", len(left))
+		}
+		if deleted, err := f.store.DeleteKeysForIdentifier(ctx, "acct-x"); err != nil || len(deleted) != 0 {
+			t.Fatalf("deleted %v, err %v; want no credential found and no error", deleted, err)
+		}
+		if left, set := f.lineageOf(t, "acct-x"); len(left) != 0 || set {
+			t.Errorf("after erasure: %d lineage records name the account, owner set %v; want none", len(left), set)
+		}
+		if !f.lineageExists(otherHash) {
+			t.Error("another account's lineage record was deleted")
+		}
+	})
+}
+
+// A chain is read from this account's records but never deletes a lineage record naming another account,
+// on erasure or on revoke.
+func TestLineageDelete_SparesAnotherAccountsAncestor(t *testing.T) {
+	for _, op := range []string{"erase", "revoke"} {
+		t.Run(op, func(t *testing.T) {
+			ctx := context.Background()
+			f := newLineageRecFixture(t)
+			foreignHash, foreignSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-y", SelfService: true})
+			rec := APIKeyRecord{
+				KeyID: "kid_forged", Identifier: "acct-x", PermissionsAll: true, ParentKeyID: foreignSub.KeyID,
+				AncestorKeyIDs: []string{foreignSub.KeyID}, AncestorHashes: []string{foreignHash},
+			}
+			body, _ := json.Marshal(rec)
+			if err := f.store.writeRecord(ctx, hashAPIKey("sip_forged"), rec, body, MirroredKeyIdleTTL); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			if op == "erase" {
+				_, err = f.store.DeleteKeysForIdentifier(ctx, "acct-x")
+			} else {
+				_, err = f.store.RevokeKeyTree(ctx, "acct-x", foreignSub.KeyID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.mr.Exists(cachekeys.APIKey(hashAPIKey("sip_forged")).String()) {
+				t.Fatal("setup: the acct-x record was not removed")
+			}
+			if !f.lineageExists(foreignHash) {
+				t.Error("acct-y's lineage record was deleted by an acct-x " + op)
+			}
+		})
+	}
+}
+
+// Revoking a key whose credential idled out, by key ID, deletes its lineage record and those of idled-out
+// keys between it and its live descendants.
+func TestRevoke_IdledOutRootDeletesChainLineage(t *testing.T) {
+	ctx := context.Background()
+	f := newLineageRecFixture(t)
+	rootHash, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x", SelfService: true})
+	midHash, midSub := f.mint(t, ChildKeyRequest(rootSub, "mid", nil))
+	_, leafPlain, err := f.store.Create(ctx, ChildKeyRequest(midSub, "leaf", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.useDaily(t, leafPlain, 100)
+	if f.mr.Exists(cachekeys.APIKey(rootHash).String()) || f.mr.Exists(cachekeys.APIKey(midHash).String()) {
+		t.Fatal("setup: want root and mid credentials idled out")
+	}
+	if err := f.store.RevokeKeyByID(ctx, "acct-x", rootSub.KeyID); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := f.lineageOf(t, "acct-x"); len(left) != 0 {
+		t.Errorf("after revoking the idled-out root: %d lineage records of its tree remain, want 0", len(left))
 	}
 }

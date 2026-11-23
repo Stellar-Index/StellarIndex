@@ -8,14 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 )
 
 // LineageBackfill records each delegated API key's ancestor chain (KeyIDs and record hashes) on its Redis record,
-// reporting keys whose chain cannot be resolved. Prints counts and KeyIDs only. -write or -dry-run is required.
+// reporting keys whose chain cannot be resolved, creating missing lineage records and deleting orphaned ones.
+// Prints counts and KeyIDs only. -write or -dry-run is required.
 func LineageBackfill(args []string) error {
 	cfgPath, gate, timeout, err := parseLineageBackfillFlags(args)
 	if err != nil {
@@ -37,7 +41,11 @@ func LineageBackfill(args []string) error {
 		return fmt.Errorf("redis ping: %w", err)
 	}
 	write := gate.Banner()
-	rep, err := auth.NewRedisAPIKeyStore(rdb).BackfillAncestorHashes(ctx, write)
+	lineage, err := lineageRecordHashes(ctx, rdb)
+	if err != nil {
+		return fmt.Errorf("list lineage records: %w", err)
+	}
+	rep, err := auth.NewRedisAPIKeyStore(rdb).BackfillAncestorHashes(ctx, write, lineage...)
 	if err != nil {
 		return err
 	}
@@ -46,6 +54,20 @@ func LineageBackfill(args []string) error {
 		return errors.New("lineage records not checked: the Redis ACL does not admit ~apikey-lineage:* — apply the redis-sentinel role, then rerun")
 	}
 	return nil
+}
+
+// lineageRecordHashes lists the key hash of every `apikey-lineage:` record (owner sets skipped) with a cursor
+// SCAN, 1000 keys a call, so Redis is never blocked the way KEYS would block it. Offline: one pass per run.
+func lineageRecordHashes(ctx context.Context, rdb redis.Cmdable) ([]string, error) {
+	var out []string
+	iter := rdb.Scan(ctx, 0, cachekeys.APIKeyLineage("*").String(), 1000).Iterator()
+	for iter.Next(ctx) {
+		h := strings.TrimPrefix(iter.Val(), cachekeys.APIKeyLineage("").String())
+		if !strings.HasPrefix(h, "owner:") {
+			out = append(out, h)
+		}
+	}
+	return out, iter.Err()
 }
 
 // parseLineageBackfillFlags parses argv without touching config or Redis.
@@ -80,6 +102,11 @@ func lineageBackfillSummary(rep auth.LineageBackfillReport, write bool) string {
 	if rep.LineageDenied {
 		return out + "lineage records: not checked, the Redis ACL denies apikey-lineage:*\n"
 	}
+	orphans := fmt.Sprintf("would delete %d orphaned lineage records (no credential, no live descendant)\n", rep.LineageOrphans)
+	if write {
+		orphans = fmt.Sprintf("deleted %d of %d orphaned lineage records (no credential, no live descendant)\n",
+			rep.LineageOrphansDeleted, rep.LineageOrphans)
+	}
 	return out + fmt.Sprintf("%s the lineage record of %d keys: %s\n",
-		opsutil.WriteModeVerb(write, "created", "would create"), len(rep.LineageMissing), strings.Join(rep.LineageMissing, " "))
+		opsutil.WriteModeVerb(write, "created", "would create"), len(rep.LineageMissing), strings.Join(rep.LineageMissing, " ")) + orphans
 }

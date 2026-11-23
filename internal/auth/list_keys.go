@@ -462,12 +462,18 @@ func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifi
 		return nil, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
 	}
 	deleted := make([]string, 0, len(owned))
+	var chains []string
 	for _, o := range owned {
 		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
 			return deleted, fmt.Errorf("auth: DeleteKeysForIdentifier: %w", err)
 		}
 		deleted = append(deleted, o.rec.KeyID)
+		chains = append(chains, o.rec.AncestorHashes...)
 	}
+	// Best-effort, like removeRecord's: ancestors whose credentials idled out, then whatever the owner set
+	// still lists (an account none of whose credentials is left).
+	deleteOwnedLineage(ctx, s.rdb, identifier, chains...)
+	deleteAccountLineage(ctx, s.rdb, identifier)
 	return deleted, nil
 }
 
@@ -632,11 +638,16 @@ func (s *RedisAPIKeyStore) revokeDescendants(ctx context.Context, identifier, ke
 	}
 	doomed := descendantsOf(owned, keyID)
 	removed := make([]string, 0, len(doomed))
+	// Keys between keyID and a removed descendant whose credentials idled out, and keyID itself when its
+	// own record is gone, are reachable only through the descendants' chains.
+	var chains []string
+	defer func() { deleteOwnedLineage(ctx, s.rdb, identifier, chains...) }()
 	for _, o := range doomed {
 		if err := s.removeRecord(ctx, o.hash, o.rec.KeyID, identifier); err != nil {
 			return removed, err
 		}
 		removed = append(removed, o.rec.KeyID)
+		chains = append(chains, chainBelow(o, keyID)...)
 	}
 	return removed, nil
 }
@@ -686,17 +697,25 @@ func delegationDepths(owned []ownedRecord) map[string]int {
 	return depth
 }
 
-// removeRecord deletes one record, its index entries and its lineage record.
+// removeRecord deletes one record and its index entries, then best-effort its lineage record: the result is
+// the credential delete's alone. Lineage is created only by a script that sees the credential, so none can
+// appear after the credential is gone.
 func (s *RedisAPIKeyStore) removeRecord(ctx context.Context, hash, keyID, identifier string) error {
-	// Lineage goes first so a failure leaves the credential for a retry to find, and again after,
-	// for a backfill that created it while the credential still existed.
-	if err := DeleteLineageRecords(ctx, s.rdb, hash); err != nil {
-		return err
-	}
 	if err := s.removeCredential(ctx, hash, keyID, identifier); err != nil {
 		return err
 	}
-	return DeleteLineageRecords(ctx, s.rdb, hash)
+	DeleteLineageRecords(ctx, s.rdb, identifier, hash)
+	return nil
+}
+
+// chainBelow returns the hashes o's stored chain holds from keyID down to o's parent; nil when keyID is not
+// in it or the chain's ids and hashes do not pair up.
+func chainBelow(o ownedRecord, keyID string) []string {
+	i := slices.Index(o.rec.AncestorKeyIDs, keyID)
+	if i < 0 || len(o.rec.AncestorKeyIDs) != len(o.rec.AncestorHashes) {
+		return nil
+	}
+	return o.rec.AncestorHashes[i:]
 }
 
 // removeCredential deletes one credential record and its index entries.

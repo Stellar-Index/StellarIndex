@@ -29,7 +29,7 @@ type RedisAPIKeyValidator struct {
 	// validated Lookup (the read-path half of [MirroredKeyIdleTTL]); zero disables refresh-on-use.
 	mirroredKeyIdleTTL time.Duration
 
-	lineage lineageSlider
+	lineage *lineageSlider
 }
 
 // accountStatusGate is the account-level kill switch both validators apply to a record naming a
@@ -175,6 +175,7 @@ func NewRedisAPIKeyValidator(rdb redis.Cmdable, opts ...RedisOption) *RedisAPIKe
 		rdb:                rdb,
 		now:                time.Now,
 		mirroredKeyIdleTTL: MirroredKeyIdleTTL,
+		lineage:            &lineageSlider{},
 	}
 	v.status.init(DefaultAccountStatusCacheTTL)
 	for _, opt := range opts {

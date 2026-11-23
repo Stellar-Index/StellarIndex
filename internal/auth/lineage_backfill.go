@@ -28,7 +28,19 @@ type LineageBackfillReport struct {
 
 	LineageMissing []string // KeyIDs of standing keys with no `apikey-lineage:` record (with write, created)
 	LineageDenied  bool     // the Redis ACL does not admit `apikey-lineage:*`, so no record was checked
+
+	LineageOrphans        int // lineage records with no credential that no credential's chain lists
+	LineageOrphansDeleted int // of those, deleted (write only); a credential that reappeared keeps its record
 }
+
+// deleteOrphanLineageScript deletes a lineage record only while its credential is absent.
+// KEYS: credential, lineage.
+var deleteOrphanLineageScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+	return 0
+end
+return redis.call('DEL', KEYS[2])
+`)
 
 // backfillLineageScript rewrites a record only while it still holds the body the backfill read.
 // KEYS: record. ARGV: body read, body to write.
@@ -42,13 +54,20 @@ return 1
 
 // BackfillAncestorHashes records AncestorKeyIDs and AncestorHashes on every delegated record lacking them, resolving
 // each chain from one keyspace walk (not the index). Without write it only reports. A record whose chain cannot be
-// resolved is reported orphaned and left as it is.
-func (s *RedisAPIKeyStore) BackfillAncestorHashes(ctx context.Context, write bool) (LineageBackfillReport, error) {
+// resolved is reported orphaned and left as it is. lineage names the hashes of existing lineage records, listed
+// BEFORE this call: those with no credential that no walked credential's chain lists are orphans, and with write
+// are deleted. A key minted during the call cannot be one: its credential precedes its lineage record.
+func (s *RedisAPIKeyStore) BackfillAncestorHashes(ctx context.Context, write bool, lineage ...string) (LineageBackfillReport, error) {
 	var rep LineageBackfillReport
 	byID := map[string]ownedRecord{}
 	var delegated []ownedRecord
+	held := map[string]bool{}
 	err := s.walkAPIKeyRecords(ctx, func(hash string, rec APIKeyRecord) (bool, error) {
 		rep.Scanned++
+		held[hash] = true
+		for _, h := range rec.AncestorHashes {
+			held[h] = true
+		}
 		if rec.KeyID != "" {
 			byID[rec.KeyID] = ownedRecord{hash: hash, rec: rec}
 		}
@@ -80,7 +99,33 @@ func (s *RedisAPIKeyStore) BackfillAncestorHashes(ctx context.Context, write boo
 	if err != nil {
 		return rep, fmt.Errorf("auth: BackfillAncestorHashes: lineage records: %w", err)
 	}
+	if err := s.sweepOrphanLineage(ctx, lineage, held, write, &rep); err != nil {
+		return rep, fmt.Errorf("auth: BackfillAncestorHashes: orphaned lineage records: %w", err)
+	}
 	return rep, nil
+}
+
+// sweepOrphanLineage counts the lineage records among hashes that held does not name and, with write, deletes
+// each whose credential is still absent. A rerun finds nothing left to delete.
+func (s *RedisAPIKeyStore) sweepOrphanLineage(ctx context.Context, hashes []string, held map[string]bool, write bool, rep *LineageBackfillReport) error {
+	seen := map[string]bool{}
+	for _, h := range hashes {
+		if held[h] || seen[h] {
+			continue
+		}
+		seen[h] = true
+		rep.LineageOrphans++
+		if !write {
+			continue
+		}
+		n, err := deleteOrphanLineageScript.Run(ctx, s.rdb,
+			[]string{cachekeys.APIKey(h).String(), cachekeys.APIKeyLineage(h).String()}).Int()
+		if err != nil {
+			return err
+		}
+		rep.LineageOrphansDeleted += n
+	}
+	return nil
 }
 
 // lineageBackfillBatch bounds one EXISTS pipeline of the lineage-record check.

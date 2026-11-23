@@ -1,6 +1,8 @@
 package cachekeys
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -415,6 +417,14 @@ func (k APIKeyLineageKey) String() string { return string(k) }
 // APIKeyLineage returns the lineage record key for keyHash, the same hash [APIKey] takes.
 func APIKeyLineage(keyHash string) APIKeyLineageKey {
 	return APIKeyLineageKey("apikey-lineage:" + keyHash)
+}
+
+// APIKeyLineageOwner returns the set of lineage-record hashes written for identifier, so an erasure finds
+// records whose credentials are gone. Inside `apikey-lineage:` for its ACL grant; the identifier is hashed
+// out of the key name, and a 64-hex key hash cannot collide with `owner:`.
+func APIKeyLineageOwner(identifier string) APIKeyLineageKey {
+	sum := sha256.Sum256([]byte(identifier))
+	return APIKeyLineageKey("apikey-lineage:owner:" + hex.EncodeToString(sum[:]))
 }
 
 // APIKeyCacheKey is the typed Redis key for the `apikey-cache:<sha256-hex>` family: the postgres validator's finite-TTL read-through cache of api_keys rows.

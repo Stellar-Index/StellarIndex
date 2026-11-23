@@ -270,10 +270,9 @@ func (e *Eraser) deleteRedis(
 			return keys, 0, fmt.Errorf("delete key records: %w", err)
 		}
 		deleted += n
-		// Separate from the DEL above: a Redis ACL that does not admit lineage records yet must not stop it.
-		if err := auth.DeleteLineageRecords(ctx, e.Redis, keyHashes...); err != nil {
-			return keys, deleted, fmt.Errorf("delete key lineage records: %w", err)
-		}
+		// Best-effort and separate from the DEL above, so a lineage failure cannot fail the pass; both
+		// passes try, and apikey-lineage-backfill -write removes what both missed.
+		auth.DeleteLineageRecords(ctx, e.Redis, auth.AccountIdentifier(slug), keyHashes...)
 	}
 	counter := usage.New(e.Redis)
 	for _, s := range subjects {
