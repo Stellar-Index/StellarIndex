@@ -4916,6 +4916,132 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/pools/{pool}/liquidations:
+    get:
+      operationId: listLendingPoolLiquidations
+      tags: [protocols]
+      summary: Lending pool — liquidation fills valued at the fill.
+      description: |
+        A Blend or BLNT pool's user_liquidation (0) and bad_debt (1)
+        auction fills, newest first. `lot` is what the filler received and
+        `bid` what it repaid, from the fill event's own filled auction data
+        (the filled portion, already scaled by the contract). Blend V1
+        pools emit no amounts with a fill: such a fill has
+        `amounts_recorded: false`, empty sides and `usd_reason:
+        amounts_not_emitted`.
+
+        Every value is taken AT THE FILL (`valued_at: event_time`), never
+        at today's prices. A bToken or dToken leg is converted to
+        underlying with the reserve state written in the fill's own ledger
+        (the rate the fill used), rounded as the contract rounds; when no
+        state is recorded for that ledger the leg keeps its token
+        `amount` and is unvalued (`rate_at_fill_unrecorded`). The USD
+        price is the hourly VWAP bucket that closed at or before the fill
+        and at most `price_max_age_seconds` before it, read through the
+        same alias, stablecoin-proxy and source-exclusion walk as
+        `/v1/chart`, after the reserve page's SAC and scam-issuer gates; a
+        series whose latest bucket stands on a thin book values nothing
+        (`price_thin_market`), as the market-cap chart refuses it.
+        Leg kinds follow `/auctions`: a BLNT leg is `leg_kind_unknown`, and
+        a backstop-token leg is unvalued
+        (`backstop_token_not_valued_at_event_time`). A missing value is
+        null with a `reason` (`no_price_within_bound`, `price_withheld`,
+        `price_thin_market`, `price_unread`, `rate_at_fill_unrecorded`, `rate_unread`,
+        `leg_kind_unknown`, `backstop_token_not_valued_at_event_time`,
+        `amount_unparseable`), never 0.
+
+        `lot_usd` / `bid_usd` sum a side's valued legs to 2 dp (`"0.00"` for
+        an empty side, null when no leg is valued); `*_usd_lower_bound` is
+        true when a leg is left out. `filler_profit_usd` is `lot_usd -
+        bid_usd` only when both sides are fully valued, else null. A failed
+        read marks the response degraded. 503 when the deployment has no
+        liquidation history reader.
+
+        Pagination: pass `pagination.next` back as `cursor`;
+        `pagination` is omitted on the last page.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: limit, in: query, required: false, description: "Page size, 1..200 (default 50).", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: cursor, in: query, required: false, description: Opaque cursor from a prior `pagination.next`., schema: { type: string } }
+      responses:
+        "200":
+          description: Liquidation fills, newest first.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  valued_at: event_time
+                  price_max_age_seconds: 86400
+                  liquidations:
+                  - auction_type: 0
+                    auction_type_label: user_liquidation
+                    user: GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL
+                    filler: GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R
+                    fill_percent: '100'
+                    ledger: 63340300
+                    time: '2026-07-03T22:57:00Z'
+                    tx_hash: 9e8d7c6b5a49382716051f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a
+                    block: 63340103
+                    amounts_recorded: true
+                    lot:
+                    - { asset: CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA, kind: b_token, amount: '9000000000', underlying: '9900000000', price_usd: '0.30', price_at: '2026-07-03T22:00:00Z', usd: '297.00', reason: null }
+                    bid:
+                    - { asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, kind: d_token, amount: '1200000000', underlying: null, price_usd: null, price_at: null, usd: null, reason: rate_at_fill_unrecorded }
+                    lot_usd: '297.00'
+                    lot_usd_lower_bound: false
+                    bid_usd: null
+                    bid_usd_lower_bound: false
+                    filler_profit_usd: null
+                    usd_reason: null
+                as_of: '2026-07-03T22:58:00.032774886Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          valued_at: { type: string, enum: [event_time], description: "Every price and rate is the one at the fill." }
+                          price_max_age_seconds: { type: integer, description: "Oldest a price bucket may have closed before a fill and still value it." }
+                          liquidations:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                auction_type: { type: integer, description: "0 user_liquidation, 1 bad_debt." }
+                                auction_type_label: { type: string }
+                                user: { type: string, description: "The liquidated account (the backstop for bad debt)." }
+                                filler: { type: string }
+                                fill_percent: { type: string }
+                                ledger: { type: integer, format: int64 }
+                                time: { type: string, format: date-time }
+                                tx_hash: { type: string }
+                                block: { type: [integer, "null"], description: "Ledger the auction's pricing starts from, as recorded by the fill." }
+                                amounts_recorded: { type: boolean, description: "False when the fill event carries no amounts (Blend V1)." }
+                                lot: { type: array, items: { $ref: "#/components/schemas/LendingLiquidationLeg" }, description: "What the filler received." }
+                                bid: { type: array, items: { $ref: "#/components/schemas/LendingLiquidationLeg" }, description: "What the filler repaid." }
+                                lot_usd: { type: [string, "null"], description: "Sum of the lot's valued legs at the fill, 2 dp; null when none is valued." }
+                                lot_usd_lower_bound: { type: boolean }
+                                bid_usd: { type: [string, "null"], description: "Sum of the bid's valued legs at the fill, 2 dp; null when none is valued." }
+                                bid_usd_lower_bound: { type: boolean }
+                                filler_profit_usd: { type: [string, "null"], description: "lot_usd - bid_usd, only when both sides are fully valued." }
+                                usd_reason: { type: [string, "null"], description: "Why the fill as a whole is unvalued (amounts_not_emitted)." }
+                              required: [auction_type, auction_type_label, user, filler, fill_percent, ledger, time, tx_hash, block, amounts_recorded, lot, bid, lot_usd, lot_usd_lower_bound, bid_usd, bid_usd_lower_bound, filler_profit_usd, usd_reason]
+                        required: [pool, valued_at, price_max_age_seconds, liquidations]
+                      pagination: { $ref: "#/components/schemas/Pagination" }
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /lending/pools/{pool}/emissions:
     get:
       operationId: getLendingPoolEmissions
@@ -16438,6 +16564,19 @@ components:
         kind: { type: string, enum: [b_token, d_token, underlying, backstop_token, unknown] }
         reason: { type: string }
       required: [asset, kind, reason]
+    LendingLiquidationLeg:
+      type: object
+      description: One asset of a liquidation fill's lot or bid, valued at the fill. A null value carries its `reason`.
+      properties:
+        asset: { type: string, description: "The leg's map key: the reserve's underlying asset, or the backstop token." }
+        kind: { type: string, enum: [b_token, d_token, underlying, backstop_token, unknown] }
+        amount: { type: string, description: "The event's amount, base units of `kind`." }
+        underlying: { type: [string, "null"], description: "Underlying base units at the reserve rate written in the fill's ledger." }
+        price_usd: { type: [string, "null"], description: "USD per whole token from the bucket that closed at `price_at`." }
+        price_at: { type: [string, "null"], format: date-time }
+        usd: { type: [string, "null"], description: "2 dp." }
+        reason: { type: [string, "null"] }
+      required: [asset, kind, amount, underlying, price_usd, price_at, usd, reason]
     LendingUSDTotals:
       type: object
       description: USD sums of a lending account's valued supply and borrow legs, decimal strings, exact sums rounded half away from zero to 2 dp. A backstop leg is never valued, so it is always in `excluded`.
