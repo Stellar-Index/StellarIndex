@@ -468,7 +468,8 @@ tests:
               summary: "An Alertmanager silence has been held for most of a day"
               description: |
                 A silence was active at 90% or more of the 5-minute samples
-                in the last 24h, however often it was expired and recreated.
+                in the last 24h, or at half or more of them in the last 7
+                days, however often it was expired and recreated.
                 List them with `amtool silence query` and expire any that no
                 operator can account for.
 
