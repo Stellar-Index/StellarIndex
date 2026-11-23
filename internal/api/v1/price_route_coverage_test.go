@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -95,24 +96,30 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/accounts/{g_strkey}/graph":                     uncovered("counterparty flows in USD"),
 	"GET /v1/accounts/{g_strkey}/graph/history":             uncovered("counterparty flows in USD"),
 	"GET /v1/accounts/{g_strkey}/graph/cohort":              uncovered("holding price_usd and value_usd"),
-	"GET /v1/pools/reserves":                                {state: covNone, reason: "reserve ratios, no USD price"},
-	"GET /v1/liquidity-pools":                               {state: covNone, reason: "reserve ratios, no USD price"},
-	"GET /v1/sdex/orderbook":                                {state: covNone, reason: "raw offers in quote units"},
+	"GET /v1/accounts":                                      uncovered("listing usd_value and priced_assets"),
+	"GET /v1/network/stats":                                 uncovered("volume_24h_usd"),
+	"GET /v1/sources/{name}/health":                         uncovered("volume_24h_usd"),
+	"GET /v1/diagnostics/ingestion":                         uncovered("ledger and per-source volume_24h_usd"),
+	"GET /v1/changes/{entity_type}/{id}":                    uncovered("stored change-summary price values, ATH/ATL"),
+	"GET /v1/pools/reserves":                                uncovered("venue mid_price from reserves, quote units"),
+	"GET /v1/liquidity-pools":                               uncovered("venue mid_price from reserves, quote units"),
+	"GET /v1/sdex/orderbook":                                uncovered("raw offer prices, quote units"),
 	"GET /v1/accounts/{g_strkey}/positions":                 {state: covNone, reason: "positions carry no USD price"},
 	"GET /v1/search":                                        {state: covNone, reason: "no USD price"},
 	"GET /v1/coverage":                                      {state: covNone, reason: "coverage verdicts, not prices"},
 }
 
-// notPriceServing lists the operations that serve no price, valuation or USD figure.
+// notPriceServing lists the operations that serve no price, valuation or USD figure;
+// TestPriceRouteCoverage_NoneRoutesServeNoValueField checks that against each one's response schema.
 var notPriceServing = []string{
 	"GET /v1/healthz", "GET /v1/readyz", "GET /v1/livez/lake", "GET /v1/version", "GET /v1/status", "GET /v1/status/notices",
 	"GET /v1/assets/{asset_id}/metadata", "GET /v1/assets/{asset_id}/supply", "GET /v1/assets/{asset_id}/supply/flows",
 	"GET /v1/assets/{asset_id}/holders", "GET /v1/assets/{asset_id}/movements", "GET /v1/assets/{asset_id}/entry-changes",
 	"GET /v1/assets/{asset_id}/trustline-history", "GET /v1/issuers", "GET /v1/issuers/{g_strkey}",
-	"GET /v1/contracts/{contract_id}/transfers", "GET /v1/changes/{entity_type}/{id}", "GET /v1/diagnostics/cursors",
-	"GET /v1/diagnostics/ingestion", "GET /v1/diagnostics/archive", "GET /v1/diagnostics/backups", "GET /v1/incidents",
-	"GET /v1/incidents.atom", "GET /v1/ledger/tip", "GET /v1/ledger/stream", "GET /v1/network/stats",
-	"GET /v1/network/throughput", "GET /v1/methodology", "GET /v1/sources/{name}/health", "GET /v1/sac-wrappers",
+	"GET /v1/contracts/{contract_id}/transfers", "GET /v1/diagnostics/cursors",
+	"GET /v1/diagnostics/archive", "GET /v1/diagnostics/backups", "GET /v1/incidents",
+	"GET /v1/incidents.atom", "GET /v1/ledger/tip", "GET /v1/ledger/stream",
+	"GET /v1/network/throughput", "GET /v1/methodology", "GET /v1/sac-wrappers",
 	"GET /v1/account/me", "GET /v1/account/usage", "GET /v1/account/keys", "GET /v1/admin/accounts/{id}",
 	"GET /v1/admin/status-notices", "GET /v1/signup/verify", "GET /v1/dashboard/account/export", "GET /v1/dashboard/keys",
 	"GET /v1/dashboard/webhooks", "GET /v1/dashboard/webhooks/{id}/deliveries", "GET /v1/dashboard/price-alerts", "GET /v1/auth/callback",
@@ -120,7 +127,7 @@ var notPriceServing = []string{
 	"GET /v1/ledgers/{seq}", "GET /v1/ledgers/{seq}/transactions", "GET /v1/ledgers/{seq}/operations", "GET /v1/tx/{hash}",
 	"GET /v1/operations", "GET /v1/contracts", "GET /v1/contracts/stats", "GET /v1/contracts/{contract_id}",
 	"GET /v1/contracts/{contract_id}/wasm", "GET /v1/contracts/{contract_id}/interactions",
-	"GET /v1/contracts/{contract_id}/code-history", "GET /v1/accounts", "GET /v1/directory", "GET /v1/accounts/stats",
+	"GET /v1/contracts/{contract_id}/code-history", "GET /v1/directory", "GET /v1/accounts/stats",
 	"GET /v1/accounts/creators", "GET /v1/accounts/sponsors", "GET /v1/accounts/{g_strkey}/transactions",
 	"GET /v1/accounts/{g_strkey}/operations", "GET /v1/accounts/{g_strkey}/entry-changes",
 	"GET /v1/accounts/{g_strkey}/claimable-balances", "GET /v1/accounts/{g_strkey}/signer-on",
@@ -182,6 +189,143 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 	for op := range none {
 		if !spec[op] {
 			t.Errorf("notPriceServing lists %s, which the spec does not define", op)
+		}
+	}
+}
+
+// valueFieldNames matches a response field that can carry a price, valuation or USD figure.
+var valueFieldNames = regexp.MustCompile(`usd|price|value|tvl|market_cap|fdv`)
+
+// noneValueFieldWhy justifies, per field, a value-looking response field on a "none" route; a field the scan finds that
+// is not here fails TestPriceRouteCoverage_NoneRoutesServeNoValueField.
+var noneValueFieldWhy = map[string]map[string]string{
+	"GET /v1/coverage": {
+		"data.usd_volume_pricing":                      "counts of sources with and without a USD volume price, no figure",
+		"data.usd_volume_pricing.sources.priced":       "a source count",
+		"data.usd_volume_pricing.sources.priced_ratio": "a ratio of source counts",
+		"data.usd_volume_pricing.sources.unpriced":     "a source count",
+	},
+	"GET /v1/methodology":              {"data.aggregation.price_method": "the method's name, a string"},
+	"GET /v1/dashboard/account/export": {"price_alerts": "the caller's own alert rules; threshold is the number they set"},
+}
+
+// specValueFields returns, per GET operation, the value-looking property names (dotted paths) in its 2xx response schemas.
+func specValueFields(t *testing.T) map[string][]string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(body, &root); err != nil || len(root.Content) == 0 {
+		t.Fatalf("spec: %v", err)
+	}
+	components := mapGet(root.Content[0], "components")
+	deref := func(n *yaml.Node) *yaml.Node {
+		for n != nil && n.Kind == yaml.MappingNode {
+			ref := mapGet(n, "$ref")
+			if ref == nil {
+				return n
+			}
+			kind, name, ok := strings.Cut(strings.TrimPrefix(ref.Value, "#/components/"), "/")
+			target := mapGet(mapGet(components, kind), name)
+			if !ok || target == nil {
+				t.Fatalf("unresolvable $ref %q", ref.Value)
+			}
+			n = target
+		}
+		return n
+	}
+	var walk func(n *yaml.Node, prefix string, seen map[*yaml.Node]bool, out map[string]bool)
+	walk = func(n *yaml.Node, prefix string, seen map[*yaml.Node]bool, out map[string]bool) {
+		n = deref(n)
+		if n == nil || n.Kind != yaml.MappingNode || seen[n] {
+			return
+		}
+		seen[n] = true
+		defer delete(seen, n)
+		if props := mapGet(n, "properties"); props != nil {
+			for i := 0; i+1 < len(props.Content); i += 2 {
+				name := props.Content[i].Value
+				if valueFieldNames.MatchString(strings.ToLower(name)) {
+					out[prefix+name] = true
+				}
+				walk(props.Content[i+1], prefix+name+".", seen, out)
+			}
+		}
+		for _, k := range []string{"items", "additionalProperties"} {
+			walk(mapGet(n, k), prefix, seen, out)
+		}
+		for _, k := range []string{"allOf", "oneOf", "anyOf"} {
+			if list := mapGet(n, k); list != nil {
+				for _, c := range list.Content {
+					walk(c, prefix, seen, out)
+				}
+			}
+		}
+	}
+	fields := map[string][]string{}
+	paths := mapGet(root.Content[0], "paths")
+	for p := 0; paths != nil && p+1 < len(paths.Content); p += 2 {
+		path := paths.Content[p].Value
+		get := mapGet(paths.Content[p+1], "get")
+		if get == nil {
+			continue
+		}
+		out := map[string]bool{}
+		responses := mapGet(get, "responses")
+		for i := 0; responses != nil && i+1 < len(responses.Content); i += 2 {
+			if !strings.HasPrefix(responses.Content[i].Value, "2") {
+				continue
+			}
+			content := mapGet(deref(responses.Content[i+1]), "content")
+			for j := 0; content != nil && j+1 < len(content.Content); j += 2 {
+				walk(mapGet(content.Content[j+1], "schema"), "", map[*yaml.Node]bool{}, out)
+			}
+		}
+		for f := range out {
+			fields["GET /v1"+path] = append(fields["GET /v1"+path], f)
+		}
+		sort.Strings(fields["GET /v1"+path])
+	}
+	return fields
+}
+
+func mapGet(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// TestPriceRouteCoverage_NoneRoutesServeNoValueField reads every "none" route's response schema, so a route that serves a
+// USD figure cannot be filed as serving none without a per-field reason.
+func TestPriceRouteCoverage_NoneRoutesServeNoValueField(t *testing.T) {
+	fields := specValueFields(t)
+	none := append([]string{}, notPriceServing...)
+	for op, c := range priceRouteCoverage {
+		if c.state == covNone {
+			none = append(none, op)
+		}
+	}
+	sort.Strings(none)
+	for _, op := range none {
+		for _, f := range fields[op] {
+			if noneValueFieldWhy[op][f] == "" {
+				t.Errorf("%s is filed as serving no price but its response has %q: classify it uncovered, or justify the field in noneValueFieldWhy", op, f)
+			}
+		}
+	}
+	for op, byField := range noneValueFieldWhy {
+		for f := range byField {
+			if !slices.Contains(fields[op], f) {
+				t.Errorf("noneValueFieldWhy justifies %s %q, which its response schema no longer has", op, f)
+			}
 		}
 	}
 }

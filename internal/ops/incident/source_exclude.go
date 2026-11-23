@@ -35,8 +35,10 @@ const readSideNote = "source-exclude: note:\n" +
 	"    chart, asset listing price_usd, sparkline, ATH, transitive fill, RWA assets/history/premium, fiat-asset headline and\n" +
 	"    non-USD declared-peg FX, /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
 	"    /v1/protocols + tvl USD, /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
-	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume and\n" +
-	"    graph USD. No USD price: /v1/pools/reserves, /v1/liquidity-pools, positions, /v1/search.\n" +
+	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +
+	"    graph USD, /v1/accounts usd_value + priced_assets, volume_24h_usd on /v1/network/stats, /v1/sources/{name}/health and\n" +
+	"    /v1/diagnostics/ingestion, /v1/changes/{type}/{id} values + ATH/ATL, and the venue-native mid and offer prices of\n" +
+	"    /v1/pools/reserves, /v1/liquidity-pools and /v1/sdex/orderbook. No price: positions, /v1/search.\n" +
 	"  Check: curl /v1/price for an affected pair, expect 404 reason source_excluded. Lift: source-exclude -lift -id N -reason ... -write"
 
 // maxFutureFrom bounds how far ahead -from may start without -allow-future: a guard against year typos.
