@@ -21428,6 +21428,10 @@ export interface operations {
                                 volume_lower_bound?: boolean;
                                 /** Format: int64 */
                                 markets_count_24h: number;
+                                /** @description true when the event counter could not be read, so entries_24h 0 means unknown, not idle. Omitted when read. */
+                                entries_24h_unmeasured?: boolean;
+                                /** @description true when the trades aggregation could not be read, so trade_count_24h, markets_count_24h and volume_24h_usd are unknown, not zero. Omitted when read. */
+                                trade_stats_unmeasured?: boolean;
                             }[];
                         };
                     };
@@ -23075,6 +23079,10 @@ export interface operations {
                             volume_lower_bound?: boolean;
                             /** Format: int64 */
                             markets_count_24h: number;
+                            /** @description true when the event counter could not be read, so entries_24h 0 means unknown, not idle. Omitted when read. */
+                            entries_24h_unmeasured?: boolean;
+                            /** @description true when the trades aggregation could not be read, so trade_count_24h, markets_count_24h and volume_24h_usd are unknown, not zero. Omitted when read. */
+                            trade_stats_unmeasured?: boolean;
                         };
                     };
                 };

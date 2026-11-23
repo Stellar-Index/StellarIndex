@@ -258,6 +258,9 @@ type SourceHealthRow struct {
 	// VolumeLowerBound is true when VolumeUSD24h excludes unpriced trades, as on /v1/sources.
 	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
 	MarketsCount24h  int64 `json:"markets_count_24h"`
+	// The required counters cannot turn null without breaking the contract, so an unread counter is marked beside its 0.
+	EntriesUnmeasured    bool `json:"entries_24h_unmeasured,omitempty"`
+	TradeStatsUnmeasured bool `json:"trade_stats_unmeasured,omitempty"`
 }
 
 // handleDiagnosticsIngestion serves GET /v1/diagnostics/ingestion. Readers fan out under one deadline and soft-fail per reader
@@ -846,13 +849,13 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 	// deadline: the trades aggregation below is slow under backfill load and can consume the whole
 	// filler budget, which would leave this query no deadline and read 0 for every source.
 	// Soft-fail to empty.
-	entries24h := map[string]int64{}
+	entries24h, entriesRead := map[string]int64{}, false
 	if s.StatusBackend != nil {
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		m, err := s.StatusBackend.SourceEntries24h(ectx)
 		cancel()
 		if err == nil {
-			entries24h = m
+			entries24h, entriesRead = m, true
 		} else {
 			s.logger.Warn("diagnostics/ingestion: source entries_24h", "err", err)
 		}
@@ -873,9 +876,10 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 
 	// Trades/volume/markets are best-effort: the error is swallowed because under backfill load this
 	// scan can time out, leaving trade_count/volume empty while entries_24h still shows activity.
-	statsBySource := map[string]timescale.SourceStats{}
+	statsBySource, statsRead := map[string]timescale.SourceStats{}, false
 	if s.SourcesStats != nil {
 		if rows, err := s.SourcesStats.GetSourceStats(ctx); err == nil {
+			statsRead = true
 			for _, r := range rows {
 				statsBySource[r.Source] = r
 			}
@@ -889,6 +893,9 @@ func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
 			Subclass:      string(meta.Subclass),
 			IncludeInVWAP: meta.IncludeInVWAP,
 			BackfillSafe:  meta.BackfillSafe(),
+
+			EntriesUnmeasured:    !entriesRead,
+			TradeStatsUnmeasured: !statsRead,
 		}
 		if st, ok := statsBySource[name]; ok {
 			row.TradeCount24h = st.TradeCount24h

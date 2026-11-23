@@ -6887,6 +6887,8 @@ paths:
                                 volume_24h_usd:    { type: string }
                                 volume_lower_bound: { type: boolean, description: "true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources)." }
                                 markets_count_24h: { type: integer, format: int64 }
+                                entries_24h_unmeasured: { type: boolean, description: "true when the event counter could not be read, so entries_24h 0 means unknown, not idle. Omitted when read." }
+                                trade_stats_unmeasured: { type: boolean, description: "true when the trades aggregation could not be read, so trade_count_24h, markets_count_24h and volume_24h_usd are unknown, not zero. Omitted when read." }
                     required: [data]
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -8701,6 +8703,8 @@ paths:
                           volume_24h_usd: { type: string }
                           volume_lower_bound: { type: boolean, description: "true when volume_24h_usd excludes trades with no trade-time USD value, so it is a floor (as on /v1/sources)." }
                           markets_count_24h: { type: integer, format: int64 }
+                          entries_24h_unmeasured: { type: boolean, description: "true when the event counter could not be read, so entries_24h 0 means unknown, not idle. Omitted when read." }
+                          trade_stats_unmeasured: { type: boolean, description: "true when the trades aggregation could not be read, so trade_count_24h, markets_count_24h and volume_24h_usd are unknown, not zero. Omitted when read." }
         "404":
           description: No registered source with that name.
           content:
