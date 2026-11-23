@@ -846,11 +846,12 @@ func (r *redisOracleReader) LatestOracleStreams(
 }
 
 const (
-	aclTemplatePath   = "configs/ansible/roles/redis-sentinel/templates/users.acl.j2"
-	aclIndexPattern   = "~apikey-index:*"
-	aclLineagePattern = "~apikey-lineage:*"
-	aclFixtureAppPwd  = "index-acl-fixture" // gitleaks:allow — throwaway container ACL user, not a credential
+	aclTemplatePath  = "configs/ansible/roles/redis-sentinel/templates/users.acl.j2"
+	aclIndexPattern  = "~apikey-index:*"
+	aclFixtureAppPwd = "index-acl-fixture" // gitleaks:allow — throwaway container ACL user, not a credential
 )
+
+const aclLineagePattern = "~apikey-lineage:*"
 
 // shippedStellarindexACLRule returns the `user stellarindex …` rule of
 // the shipped template as ACL SETUSER arguments, with the vaulted
