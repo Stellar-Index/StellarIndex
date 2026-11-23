@@ -78,11 +78,11 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/lending/rates":                 lendingUncovered,
 	"GET /v1/lending/protocols":             lendingUncovered,
 	"GET /v1/lending/pools/{pool}/reserves": lendingUncovered,
-	"GET /v1/lending/pools/{pool}/reserves/{asset}/history": lendingUncovered,
+	"GET /v1/lending/pools/{pool}/reserves/{asset}/history": gated,
 	"GET /v1/lending/pools/{pool}/config-history":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/backstop":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/backstop/history":         lendingUncovered,
-	"GET /v1/lending/pools/{pool}/history":                  lendingUncovered,
+	"GET /v1/lending/pools/{pool}/history":                  gated,
 	"GET /v1/lending/accounts/{account}/earnings":           lendingUncovered,
 	"GET /v1/lending/pools/{pool}/auctions":                 lendingUncovered,
 	"GET /v1/lending/pools/{pool}/emissions":                lendingUncovered,
@@ -205,7 +205,7 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 }
 
 // ungatedPriceRoutes ratchets the kill switch's known gaps: an operator exclusion does not reach these routes' figures.
-const ungatedPriceRoutes = 48
+const ungatedPriceRoutes = 47
 
 // GatedPriceRoutes returns the census's gated rows for the external-package proof check.
 func GatedPriceRoutes() []string {

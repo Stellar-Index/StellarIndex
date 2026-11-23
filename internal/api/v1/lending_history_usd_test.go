@@ -16,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // perAssetHistoryExplorer serves each reserve its own history; an asset with none is ErrLendingReserveNotFound, as the lake answers.
@@ -349,7 +350,63 @@ func TestLendingReserveHistory_UnreadExclusionsDegrade(t *testing.T) {
 	}
 }
 
-// TestLendingHistory_HourlyPriceAgeAndCarry: an hourly series takes a price at most 6 hours old; a price more than one bucket
+// TestLendingHistory_ExcludedSourceDoesNotValueBucket: a source exclusion in force over the 4 Nov bucket removes its price from
+// both history routes, so the state at that bucket is unvalued (the only other price is past the 48h bound) and the response
+// says fills were withheld; without the exclusion the same bucket is valued at its own price.
+func TestLendingHistory_ExcludedSourceDoesNotValueBucket(t *testing.T) {
+	pool, xlm := mkCStrkey(t, 1), canonical.NativeSACContractID()
+	hist := xlmUSDPrices(map[time.Time]string{nov(1, 0): "0.1", nov(4, 0): "0.3"})
+	excluded := assetExclGate(exclTable{rows: []timescale.SourceExclusion{{
+		ID: 1, Source: "soroswap", Base: "native", Quote: "fiat:USD", From: nov(4, 0), Until: nov(5, 0),
+	}}})
+	get := func(excl v1.PriceExclusionGate, path string) ([]map[string]json.RawMessage, v1.Flags) {
+		t.Helper()
+		srv := historyFixture(t, map[string]clickhouse.LendingReserveHistory{xlm: reserveHistoryOf(
+			reservePoint(historySeed, 1_000_000_000, 0), reservePoint(nov(4, 12), 2_000_000_000, 0),
+		)}, []string{xlm}, hist, nil, excl)
+		rec := getLendingHistory(t, srv, "/v1/lending/pools/"+pool+path+"?from=2026-11-01T00:00:00Z&to=2026-11-05T00:00:00Z")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		var env struct {
+			Data  map[string]json.RawMessage
+			Flags v1.Flags
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatal(err)
+		}
+		return rawObjects(t, env.Data["points"]), env.Flags
+	}
+
+	reservePath := "/reserves/" + xlm + "/history"
+	if pts, _ := get(nil, reservePath); len(pts) != 2 || string(pts[1]["supplied_usd"]) != `"60.00"` {
+		t.Fatalf("control: reserve points = %v; want the 4 Nov state valued at 60.00", pts)
+	}
+	pts, flags := get(excluded, reservePath)
+	if len(pts) != 2 || string(pts[0]["supplied_usd"]) != `"10.00"` {
+		t.Fatalf("reserve points = %v; want the 1 Nov state still valued at 10.00", pts)
+	}
+	if string(pts[1]["supplied_usd"]) != "null" || string(pts[1]["price_usd"]) != "null" || string(pts[1]["usd_reason"]) != `"no_price_within_bound"` {
+		t.Errorf("4 Nov state = supplied %s price %s reason %s; want no USD from the excluded bucket",
+			pts[1]["supplied_usd"], pts[1]["price_usd"], pts[1]["usd_reason"])
+	}
+	if flags.FillsWithheldReason != v1.PriceWithheldSourceExcluded {
+		t.Errorf("reserve flags = %+v; want fills withheld for the source exclusion", flags)
+	}
+
+	if pp, _ := get(nil, "/history"); len(pp) != 4 || string(pp[3]["tvl_usd"]) != `"60.00"` {
+		t.Fatalf("control: pool points = %v; want the 4 Nov bucket valued at 60.00", pp)
+	}
+	pp, flags := get(excluded, "/history")
+	if len(pp) != 4 || string(pp[3]["tvl_usd"]) != "null" || string(pp[3]["unvalued_reserves"]) != `["`+xlm+`"]` {
+		t.Errorf("pool 4 Nov bucket = %v; want no TVL, naming the unvalued reserve", pp)
+	}
+	if flags.FillsWithheldReason != v1.PriceWithheldSourceExcluded {
+		t.Errorf("pool flags = %+v; want fills withheld for the source exclusion", flags)
+	}
+}
+
+// TestLendingHistory_HourlyPriceAgeAndCarry:an hourly series takes a price at most 6 hours old; a price more than one bucket
 // old is marked carried, and the pool point names the reserve it carried.
 func TestLendingHistory_HourlyPriceAgeAndCarry(t *testing.T) {
 	pool, xlm := mkCStrkey(t, 1), canonical.NativeSACContractID()
