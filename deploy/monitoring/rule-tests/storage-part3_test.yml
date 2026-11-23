@@ -428,3 +428,35 @@ tests:
       - eval_time: 60m
         alertname: stellarindex_late_trade_cagg_refresh_failing
         exp_alerts: []
+
+  # A hold older than 72h alerts; a 10h hold on the same host does not.
+  - interval: 1m
+    name: heavy_lock_held_too_long alerts only the holder past 72h
+    input_series:
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="projector-replay"}'
+        values: '0x6001'
+      - series: 'stellarindex_heavy_lock_held_since_unix{instance="r1:9100",job="node_exporter",ops_job="fresh"}'
+        values: '252000x6001'
+    alert_rule_test:
+      - eval_time: 60h
+        alertname: stellarindex_heavy_lock_held_too_long
+        exp_alerts: []
+      - eval_time: 80h
+        alertname: stellarindex_heavy_lock_held_too_long
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              ops_job: projector-replay
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_heavy_lock_held_too_long
+              summary: "heavy-job lock held by projector-replay for over 72h on r1:9100"
+              description: |
+                projector-replay has held the host-wide heavy-job lock on
+                r1:9100 for more than 72h (the longest hold the
+                textfile staleness suppression accepts as legitimate). Every
+                later heavy job queues behind it silently. Check the job is
+                progressing; if it is wedged, stop it. If nothing holds the lock,
+                remove the orphaned heavy_job_*.prom file.

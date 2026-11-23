@@ -1375,6 +1375,29 @@ groups:
             most producers should have fired their own, tighter alert long
             before this one does.
 
+      # The wrapper publishes the lock's hold time while a job holds it
+      # (non-root holders under Type=notify and verify-archive tiers A/B do
+      # not). 72h is the ceiling the textfile_producer_stale suppression above
+      # already treats as a legitimate hold, so a longer one is a stuck holder
+      # (or an orphaned heavy_job_*.prom from a SIGKILLed job).
+      - alert: stellarindex_heavy_lock_held_too_long
+        expr: max by (instance, ops_job) (time() - stellarindex_heavy_lock_held_since_unix) > 259200
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-stale.md#stellarindex_heavy_lock_held_too_long
+          summary: "heavy-job lock held by {{ $labels.ops_job }} for over 72h on {{ $labels.instance }}"
+          description: |
+            {{ $labels.ops_job }} has held the host-wide heavy-job lock on
+            {{ $labels.instance }} for more than 72h (the longest hold the
+            textfile staleness suppression accepts as legitimate). Every
+            later heavy job queues behind it silently. Check the job is
+            progressing; if it is wedged, stop it. If nothing holds the lock,
+            remove the orphaned heavy_job_*.prom file.
+
       # restore-drill.sh runs on a monthly timer, so the catch-all's 24h
       # backstop would false-fire and excludes it. This is the mtime backstop
       # (35d) for the timer dying before writing a gauge; the content signal is
