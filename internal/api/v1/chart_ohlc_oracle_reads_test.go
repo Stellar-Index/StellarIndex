@@ -85,6 +85,30 @@ func TestOraclePrices_PegLegFailureIsNotAnEmptyHistory(t *testing.T) {
 	}
 }
 
+// TestOraclePrices_UnreadLegIsNotStoodInFor: a leg that could not be read is an error, never a miss that the next peg's
+// book or the thinner SAC spelling answers with a cacheable 200 (lastprice and /v1/price answer the same state with 5xx).
+func TestOraclePrices_UnreadLegIsNotStoodInFor(t *testing.T) {
+	usdc, usdt := oraclePegs(t)
+	live := func(quote string) []v1.PriceSnapshot {
+		return []v1.PriceSnapshot{{
+			AssetID: "native", Quote: quote, Price: "0.31", PriceType: "vwap",
+			ObservedAt: v1.WireTime(time.Now().Add(-2 * time.Minute).UTC()),
+		}}
+	}
+	for name, recent := range map[string]map[string][]v1.PriceSnapshot{
+		"next peg serves":     {"native/" + usdt.String(): live(usdt.String())},
+		"SAC spelling serves": {canonical.XLMSacContractID + "/" + usdc.String(): live(usdc.String())},
+	} {
+		reader := &stubPriceReader{
+			errByPair: map[string]error{"native/" + usdc.String(): errors.New("pool acquire timeout")},
+			recent:    recent,
+		}
+		if status, data := oraclePricesGet(t, reader, usdc, usdt); status != http.StatusInternalServerError {
+			t.Errorf("%s: status = %d data = %+v, want 500 for the unread USDC leg", name, status, data)
+		}
+	}
+}
+
 // TestOraclePrices_ServesTheNewestSeries: a dormant leg is non-empty forever, so the leg with the
 // newest bucket is served, whatever the walk order.
 func TestOraclePrices_ServesTheNewestSeries(t *testing.T) {

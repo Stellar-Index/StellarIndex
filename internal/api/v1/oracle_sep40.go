@@ -391,6 +391,10 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	}
 	for _, peg := range s.usdPegProxyQuotes() {
 		pegSnapshots, pegAt, pegServed, ok := s.oraclePegSeries(ctx, asset, quote, peg, n, &failed)
+		if failed.read != nil {
+			// An unread leg is not a missing one: the next peg's market never stands in for it (walkUSDPegs' rule).
+			return nil, canonical.Asset{}, false, nil, failed.read
+		}
 		if !ok {
 			continue
 		}
@@ -520,11 +524,14 @@ func (s *Server) pegSeriesClean(ctx context.Context, asset, quote canonical.Asse
 // first read error. excluded: some leg was withheld by a source exclusion; unread: by an unreadable exclusion set. These are the
 // only refusals an older series fills.
 type oracleLegErrors struct {
-	withheld, first  error
-	excluded, unread bool
+	withheld, first, read error
+	excluded, unread      bool
 }
 
 func (e *oracleLegErrors) note(err error) {
+	if err != nil && e.read == nil && isPriceReadFailure(err) {
+		e.read = err
+	}
 	if errors.Is(err, ErrPriceWithheld) && e.withheld == nil {
 		e.withheld = err
 	}
@@ -571,18 +578,24 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 // walk, plus the spelling that served it. An error is returned only when no spelling served.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
-		firstErr         error
-		excluded, unread bool
-		best             []PriceSnapshot
-		bestAt           time.Time
-		served           canonical.Asset
+		firstErr          error
+		excluded, unread  bool
+		best              []PriceSnapshot
+		bestAt            time.Time
+		served            canonical.Asset
+		unreadEstablished bool
 	)
 	for _, a := range assetAliases(asset) {
+		if unreadEstablished && a.Type == canonical.AssetSoroban {
+			// The SAC spelling is the thinner market: it does not stand in for an established one that could not be read.
+			continue
+		}
 		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
+			unreadEstablished = unreadEstablished || (isPriceReadFailure(err) && a.Type != canonical.AssetSoroban)
 			excluded = excluded || withheldByExclusion(err)
 			unread = unread || withheldExclusionsUnread(err)
 			continue
