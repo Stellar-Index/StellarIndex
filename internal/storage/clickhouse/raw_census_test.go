@@ -4,7 +4,9 @@
 package clickhouse
 
 import (
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -67,23 +69,64 @@ func TestRawCensusShortfalls_EmptyPresent(t *testing.T) {
 	}
 }
 
-// TestCensusShortfalls pins the partition comparison: a dropped partition
-// (absent from system.parts) and a short one are reported; unmerged duplicates
-// (present > expected) are not.
+// TestCensusShortfalls pins the partition comparison: a dropped partition (absent from system.parts) and a short one are
+// reported; a partition over its count is recounted by identity, so duplicates that complete it pass and duplicates standing
+// in for lost events (54: 12 rows, 8 distinct) are reported at the identity count.
 func TestCensusShortfalls(t *testing.T) {
 	expected := []EventCensusShortfall{
 		{Partition: 50, FirstEventLedger: 50_457_424, Expected: 10},
 		{Partition: 51, FirstEventLedger: 51_000_000, Expected: 10},
 		{Partition: 52, FirstEventLedger: 52_000_003, Expected: 10},
 		{Partition: 53, FirstEventLedger: 53_000_000, Expected: 10},
+		{Partition: 54, FirstEventLedger: 54_000_000, Expected: 10},
 	}
-	present := map[uint32]uint64{50: 10, 52: 9, 53: 25}
-	got := censusShortfalls(expected, present)
+	present := map[uint32]uint64{50: 10, 52: 9, 53: 25, 54: 12}
+	distinct := map[uint32]uint64{53: 10, 54: 8}
+	var recounted []uint32
+	got, err := censusShortfalls(expected, present, func(p uint32) (uint64, error) {
+		recounted = append(recounted, p)
+		return distinct[p], nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []EventCensusShortfall{
 		{Partition: 51, FirstEventLedger: 51_000_000, Expected: 10, Present: 0},
 		{Partition: 52, FirstEventLedger: 52_000_003, Expected: 10, Present: 9},
+		{Partition: 54, FirstEventLedger: 54_000_000, Expected: 10, Present: 8},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("censusShortfalls = %+v, want %+v", got, want)
+	}
+	if !reflect.DeepEqual(recounted, []uint32{53, 54}) {
+		t.Fatalf("recounted %v, want only the over-count partitions [53 54]", recounted)
+	}
+}
+
+// The identity recount runs over a whole 1M-ledger partition on every over-count, so it must stream (FINAL over the ORDER BY
+// key, not an in-memory uniqExact set) and carry the package's memory and time caps.
+func TestEventCensusIdentityQuery_StreamsUnderCaps(t *testing.T) {
+	q := strings.Join(strings.Fields(eventCensusIdentityQuery), " ")
+	for _, want := range []string{
+		"FROM stellar.contract_events FINAL WHERE ledger_seq BETWEEN ? AND ?",
+		"do_not_merge_across_partitions_select_final = 1",
+		"max_memory_usage = 8589934592",
+		"max_execution_time = 600",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("identity recount query lacks %q:\n%s", want, q)
+		}
+	}
+	if strings.Contains(q, "uniqExact") {
+		t.Errorf("identity recount must not build an in-memory uniqExact set:\n%s", q)
+	}
+}
+
+func TestCensusShortfalls_RecountErrorFails(t *testing.T) {
+	expected := []EventCensusShortfall{{Partition: 53, Expected: 10}}
+	if _, err := censusShortfalls(expected, map[uint32]uint64{53: 11}, func(uint32) (uint64, error) {
+		return 0, errors.New("boom")
+	}); err == nil {
+		t.Fatal("a failed identity recount must fail the census, not pass the partition")
 	}
 }

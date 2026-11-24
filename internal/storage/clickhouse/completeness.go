@@ -384,12 +384,12 @@ type EventCensusShortfall struct {
 	// FirstEventLedger is the lowest ledger in the partition with a non-zero soroban_event_count.
 	FirstEventLedger uint32
 	// Expected is Σ soroban_event_count (deduplicated per ledger); Present is the active-part row
-	// count.
+	// count, or the distinct-event count when that row count exceeded Expected.
 	Expected uint64
 	Present  uint64
 }
 
-// EventCensusShortfalls cross-checks contract_events against ledgers per partition in [from, to], catching a DROP/REPLACE PARTITION or restore that leaves ledgers intact over missing events; unmerged duplicates can mask a loss.
+// EventCensusShortfalls cross-checks contract_events against ledgers per partition in [from, to], catching a DROP/REPLACE PARTITION or restore that leaves ledgers intact over missing events. Duplicates exactly equal to a loss in one partition still mask it.
 func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([]EventCensusShortfall, error) {
 	if from > to {
 		return nil, nil
@@ -410,7 +410,27 @@ func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([
 	if err := boundCensusTipPartition(ctx, conn, map[string]map[uint32]uint64{"contract_events": present}, to); err != nil {
 		return nil, err
 	}
-	return censusShortfalls(expected, present), nil
+	return censusShortfalls(expected, present, func(p uint32) (uint64, error) {
+		return eventCensusIdentity(ctx, conn, p, to)
+	})
+}
+
+// eventCensusIdentityQuery counts distinct events with FINAL: the identity is the table's ORDER BY, so the collapse streams
+// part-by-part in key order instead of holding a ~100M-tuple uniqExact set that cannot spill. Binds: lo, hi.
+const eventCensusIdentityQuery = `SELECT toUInt64(count())
+		FROM stellar.contract_events FINAL WHERE ledger_seq BETWEEN ? AND ?
+		SETTINGS do_not_merge_across_partitions_select_final = 1,
+		         max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 600`
+
+// eventCensusIdentity counts partition p's distinct events over ledgers <= to; unmerged duplicates do not count twice.
+func eventCensusIdentity(ctx context.Context, conn driver.Conn, p, to uint32) (uint64, error) {
+	lo := p * eventCensusPartitionWidth
+	hi := min(lo+eventCensusPartitionWidth-1, to)
+	var n uint64
+	if err := conn.QueryRow(ctx, eventCensusIdentityQuery, lo, hi).Scan(&n); err != nil {
+		return 0, fmt.Errorf("clickhouse: event census identity %d [%d,%d]: %w", p, lo, hi, err)
+	}
+	return n, nil
 }
 
 func eventCensusExpected(ctx context.Context, conn driver.Conn, lo, hi uint32) ([]EventCensusShortfall, error) {
@@ -452,15 +472,22 @@ func eventCensusPresent(ctx context.Context, conn driver.Conn) (map[uint32]uint6
 	return m["contract_events"], nil
 }
 
-// censusShortfalls keeps expected partitions whose present count falls short; an absent partition
-// reads as 0. Pure.
-func censusShortfalls(expected []EventCensusShortfall, present map[uint32]uint64) []EventCensusShortfall {
+// censusShortfalls keeps expected partitions whose present count falls short; an absent partition reads as 0. A physical count
+// above expected holds unmerged duplicates that could stand in for lost events, so that partition is recounted by identity.
+func censusShortfalls(expected []EventCensusShortfall, present map[uint32]uint64, identity func(p uint32) (uint64, error)) ([]EventCensusShortfall, error) {
 	var out []EventCensusShortfall
 	for _, e := range expected {
 		e.Present = present[e.Partition]
+		if e.Present > e.Expected {
+			n, err := identity(e.Partition)
+			if err != nil {
+				return nil, err
+			}
+			e.Present = n
+		}
 		if e.Present < e.Expected {
 			out = append(out, e)
 		}
 	}
-	return out
+	return out, nil
 }
