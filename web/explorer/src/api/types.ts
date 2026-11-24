@@ -7020,9 +7020,10 @@ export interface paths {
          *     counts, and bridge-transfer counts (Postgres served tier).
          *
          *     CACHING: every segment is a whole-history aggregate, so the
-         *     payload is served stale-while-revalidate — an expired entry is
-         *     served immediately with `flags.stale: true` and its real `as_of`
-         *     while one detached recompute runs; a never-computed address may
+         *     payload is served stale-while-revalidate — an entry older than
+         *     5 minutes is served immediately with its real `as_of` while one
+         *     detached recompute runs. It carries `flags.stale: true` once it is
+         *     over 10 minutes old or its last recompute failed; a never-computed address may
          *     503 its first request (retry lands warm). The envelope's `as_of`
          *     is the payload's computation time, not now.
          *

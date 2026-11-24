@@ -213,9 +213,9 @@ type Server struct {
 	classicSupplyAt     time.Time
 	classicSupplyLag    time.Duration // how far the cached sums trailed classicSupplyAt when filled
 	classicSupplyFlight chan struct{}
-	// classicSupplyAttemptAt advances on every attempt, unlike classicSupplyAt (success only), so a
-	// failing refresh retries once per classicSupplyRetryGap, not per request at full timeout.
+	// classicSupplyAttemptAt advances on every attempt (classicSupplyAt on success only) to rate-limit retries.
 	classicSupplyAttemptAt time.Time
+	classicSupplyFailed    bool // the last completed refresh did not replace the map; cleared only by a success
 	// Per-asset TTL cache for the lake-flows classic supply, which includes the claimable-balance,
 	// LP-reserve and SAC-held supply the trustline sum cannot see. Filled in bounded batches by a
 	// detached refresh; see classic_lake_supply.go.

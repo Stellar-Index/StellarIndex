@@ -39,6 +39,18 @@ const networkThroughputFlightKey = "throughput"
 type networkThroughputEntry struct {
 	buckets  []clickhouse.ThroughputBucket
 	cachedAt time.Time
+	// refreshFailed: the last refresh failed or was skipped; only a put clears it.
+	refreshFailed bool
+}
+
+// endRefresh ends the flight, recording a failure on the entry first.
+func (c *networkThroughputCache) endRefresh(fl *keyFlight, err error) {
+	if err != nil {
+		c.mu.Lock()
+		c.entry.refreshFailed = c.has
+		c.mu.Unlock()
+	}
+	c.flight.end(networkThroughputFlightKey, fl, err)
 }
 
 // networkThroughputCache is the single-entry TTL cache behind
@@ -80,7 +92,7 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 	// rather than queue; the 5-minute prewarm pass re-kicks.
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("network_throughput") {
-		h.throughput.flight.end(networkThroughputFlightKey, fl, errRefreshSaturated)
+		h.throughput.endRefresh(fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
@@ -93,7 +105,7 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 				worker.Report(h.Logger, "explorer-network-throughput-refresh", rec)
 				err = errRefreshPanicked
 			}
-			h.throughput.flight.end(networkThroughputFlightKey, fl, err)
+			h.throughput.endRefresh(fl, err)
 		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), networkThroughputRefreshTimeout)
@@ -110,14 +122,17 @@ func (h *Handler) refreshNetworkThroughput() *keyFlight {
 	return fl
 }
 
-// networkThroughputCached serves the daily series for `windowDays`: a stale entry is served (degraded=true, real asOf) while a detached
-// recompute runs. A never-computed cache waits only to the request deadline; the compute outlives it, so the retry lands warm.
+// networkThroughputCached serves the daily series for `windowDays`: an expired entry is served with its real asOf while a detached
+// recompute runs, degraded per [swrServedStale]. A never-computed cache waits only to the request deadline; the compute outlives
+// it, so the retry lands warm.
 func (h *Handler) networkThroughputCached(ctx context.Context, windowDays int) (buckets []clickhouse.ThroughputBucket, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.throughput.get(); ok {
 		if !fresh {
 			h.refreshNetworkThroughput() //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshNetworkThroughput)
+			e, _, _ = h.throughput.get() // a refresh skipped just now is already a known failure
 		}
-		return sliceThroughput(e.buckets, windowDays), e.cachedAt, !fresh, nil
+		stale := !fresh && swrServedStale(e.cachedAt, networkThroughputTTL, networkThroughputRefreshTimeout, e.refreshFailed)
+		return sliceThroughput(e.buckets, windowDays), e.cachedAt, stale, nil
 	}
 	fl := h.refreshNetworkThroughput() //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	select {

@@ -337,15 +337,80 @@ func TestContractDetailCached_ColdWaitsThenServes(t *testing.T) {
 	}
 }
 
+// ageContractDetail backdates key's entry to age.
+func ageContractDetail(h *Handler, key string, age time.Duration) {
+	h.contractDetail.mu.Lock()
+	defer h.contractDetail.mu.Unlock()
+	e := h.contractDetail.entries[key]
+	e.cachedAt = time.Now().Add(-age)
+	h.contractDetail.entries[key] = e
+}
+
+// An entry just past its TTL is refreshed but served unflagged: it is inside its staleness bound.
+func TestContractDetailCached_ExpiredWithinBoundServedClean(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
+
+	v, asOf, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { return "new", nil })
+	if err != nil || v != "old" || degraded {
+		t.Fatalf("serve 1m past ttl: v=%v degraded=%v err=%v, want old/false", v, degraded, err)
+	}
+	if time.Since(asOf) < contractDetailTTL {
+		t.Fatalf("the serve must expose the entry's real age, got asOf=%v", asOf)
+	}
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+	if v, _, _, _ := h.contractDetailCached(context.Background(), "ev:C1", nil); v != "new" {
+		t.Fatalf("expired serve did not refresh: v=%v", v)
+	}
+}
+
+// Inside its bound an expired entry whose last refresh failed is flagged; a successful refresh clears the flag.
+func TestContractDetailCached_FailedRefreshFlagsNextServe(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
+	h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) { return nil, errors.New("boom") })
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+
+	release := make(chan struct{})
+	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
+		<-release
+		return "new", nil
+	})
+	if err != nil || v != "old" || !degraded {
+		t.Fatalf("serve after a failed refresh, inside the bound: v=%v degraded=%v err=%v, want old/true", v, degraded, err)
+	}
+	close(release)
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
+	hold := make(chan struct{}) // held until the serve returns: the verdict must come from the entry alone
+	defer close(hold)
+	if v, _, degraded, _ := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
+		<-hold
+		return nil, errors.New("released")
+	}); v != "new" || degraded {
+		t.Fatalf("expired after a successful refresh: v=%v degraded=%v, want new/false", v, degraded)
+	}
+}
+
+// Positions are balances held now: their unflagged window past the TTL is half a TTL, not a whole one.
+func TestContractDetailEntry_PositionsGraceIsHalfTTL(t *testing.T) {
+	key := positionsCacheKey + "G1"
+	if got, want := detailStaleAfterForKey(key), accountPositionsTTL+accountPositionsTTL/2; got != want {
+		t.Errorf("detailStaleAfterForKey(pos) = %v, want %v", got, want)
+	}
+	e := contractDetailEntry{v: "p", cachedAt: time.Now().Add(-(accountPositionsTTL + 45*time.Second))}
+	if !e.servedStale(key) {
+		t.Error("positions 45s past their TTL were served unflagged")
+	}
+}
+
 func TestContractDetailCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h, _ := newSWRHandler()
 	h.contractDetail.put("ev:C1", "old")
-	// Age the entry past the TTL.
-	h.contractDetail.mu.Lock()
-	e := h.contractDetail.entries["ev:C1"]
-	e.cachedAt = time.Now().Add(-contractDetailTTL - time.Minute)
-	h.contractDetail.entries["ev:C1"] = e
-	h.contractDetail.mu.Unlock()
+	ageContractDetail(h, "ev:C1", detailStaleAfterForKey("ev:C1")+time.Minute)
 
 	v, asOf, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
 		func(context.Context) (any, error) { return "new", nil })
@@ -365,11 +430,7 @@ func TestContractDetailCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 func TestContractDetailCached_FailedRefreshKeepsStaleEntry(t *testing.T) {
 	h, _ := newSWRHandler()
 	h.contractDetail.put("ev:C1", "old")
-	h.contractDetail.mu.Lock()
-	e := h.contractDetail.entries["ev:C1"]
-	e.cachedAt = time.Now().Add(-contractDetailTTL - time.Minute)
-	h.contractDetail.entries["ev:C1"] = e
-	h.contractDetail.mu.Unlock()
+	ageContractDetail(h, "ev:C1", detailStaleAfterForKey("ev:C1")+time.Minute)
 
 	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
 		func(context.Context) (any, error) { return nil, errors.New("boom") })

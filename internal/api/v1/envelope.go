@@ -97,8 +97,8 @@ type Flags struct {
 	// FillsWithheldReason: fills, or chart buckets built from them, were removed for this [PriceWithheldReason] (see
 	// [markFillsWithheld]); a thinner answer is otherwise the same body as a quieter market.
 	FillsWithheldReason PriceWithheldReason `json:"fills_withheld_reason,omitempty"`
-	// Degraded marks a 200 whose body is carried forward or partial (stale-while-revalidate past
-	// TTL, last-good after a failed refresh, a held frozen price, a dropped best-effort section).
+	// Degraded marks a 200 whose body is carried forward or partial (last-good after a failed or
+	// overrun refresh, a held frozen price, a dropped best-effort section); never a value within its bound.
 	// Never on the wire: writeEnvelopeStatus turns it into `Cache-Control: no-store` so a shared
 	// cache cannot keep serving it after recovery. Set explicitly, never derived from Stale, which
 	// also covers fresh reads of a lagging source.

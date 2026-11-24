@@ -6,6 +6,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,6 +42,58 @@ func TestClassicSupplyMap_ExpiredEntryReportsStale(t *testing.T) {
 			}
 		})
 	}
+}
+
+// gatedClassicExplorer blocks each refresh until the test sends its outcome: nil fills the map, an error fails it.
+type gatedClassicExplorer struct {
+	ExplorerReader
+	outcome chan error
+}
+
+func (g gatedClassicExplorer) ClassicCirculatingSupply(context.Context) (map[string]string, time.Time, error) {
+	if err := <-g.outcome; err != nil {
+		return nil, time.Time{}, err
+	}
+	return map[string]string{cetesAsset: "500000000"}, time.Now(), nil
+}
+
+// Past its TTL the map is clean only while a refresh runs within TTL+budget and the last completed attempt did not fail.
+func TestClassicSupplyMap_ExpiredStaleVerdictRemembersFailure(t *testing.T) {
+	s, _ := lakeSupplyServer(t, "")
+	g := gatedClassicExplorer{outcome: make(chan error)}
+	s.Explorer = g
+	s.classicSupplyCache = map[string]string{cetesAsset: "400000000"}
+	serve := func(step string, age time.Duration, wantStale bool) chan struct{} {
+		t.Helper()
+		s.classicSupplyMu.Lock()
+		s.classicSupplyAt = time.Now().Add(-age)
+		if s.classicSupplyFlight == nil {
+			s.classicSupplyAttemptAt = time.Time{} // retry gap closed: this read starts a refresh
+		}
+		s.classicSupplyMu.Unlock()
+		ctx, rep := withReadReport(context.Background())
+		if m, unread := s.classicSupplyMap(ctx); m == nil || unread {
+			t.Fatalf("%s: map = %v, unread = %v; want the cached map served", step, m, unread)
+		}
+		if got := rep.stale.Load(); got != wantStale {
+			t.Errorf("%s: stale = %v, want %v", step, got, wantStale)
+		}
+		s.classicSupplyMu.Lock()
+		defer s.classicSupplyMu.Unlock()
+		return s.classicSupplyFlight
+	}
+	justPast := classicSupplyTTL + time.Second
+
+	flight := serve("first refresh in flight after a good fill", justPast, false)
+	g.outcome <- errors.New("classic supply GROUP BY exceeded its budget")
+	<-flight
+	flight = serve("previous attempt failed, retry in flight", justPast, true)
+	g.outcome <- nil
+	<-flight
+	flight = serve("expired again after a successful refresh", justPast, false)
+	serve("past TTL+budget with a refresh running", classicSupplyTTL+classicSupplyRefreshBudget, true)
+	g.outcome <- nil
+	<-flight
 }
 
 func TestFillMarketCapsFromSupply_ExpiredBroadMapFlagsStale(t *testing.T) {
