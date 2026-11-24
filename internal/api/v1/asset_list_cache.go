@@ -109,14 +109,14 @@ func (c *assetListResponseCache) read(key string, claim bool) (hit assetListHit,
 }
 
 // staleLocked judges the page by its own age and its rows by theirs: the rows (env.AsOf when they predate the build) are held
-// to the 2-minute catalogue's bound, so caching a page cannot replay them clean past it.
+// to the catalogue's bound, so caching a page cannot replay them clean past it.
 func (c *assetListResponseCache) staleLocked(e *assetListEntry, now time.Time) bool {
 	rowsAt := e.cachedAt
 	if at := e.env.AsOf.Time(); !at.IsZero() && at.Before(rowsAt) {
 		rowsAt = at
 	}
 	return swrverdict.Stale(now.Sub(e.cachedAt), c.ttl, cacheFillBudget, e.refreshFailed) ||
-		swrverdict.Stale(now.Sub(rowsAt), c.maxAge, assetsRefreshBudget, false)
+		swrverdict.Stale(now.Sub(rowsAt), assetCatalogueTTL, assetsRefreshBudget, false)
 }
 
 // put renders env and stores it under key, clearing any refresh flight.

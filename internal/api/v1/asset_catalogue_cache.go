@@ -271,6 +271,9 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 // the cache advances instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
+// assetCatalogueTTL is the catalogue rows' TTL as cmd/stellarindex-api wires it; a cache built over those rows ages them by it.
+const assetCatalogueTTL = 2 * time.Minute
+
 // fetchRows returns just the rows; a caller that installed a [readReport] still learns they came from an overdue entry.
 func (c *CachedAssetsReader) fetchRows(
 	ctx context.Context,

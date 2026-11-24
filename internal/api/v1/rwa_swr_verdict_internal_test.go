@@ -102,3 +102,41 @@ func TestRWAAssetsView_StaleFollowsTheSWRVerdict(t *testing.T) {
 	s.rwaViewExpires, s.rwaViewFlight = time.Now().Add(-5*time.Second), make(chan struct{})
 	check("after a successful build", s, false)
 }
+
+// A view inside its own TTL is still flagged once an input it was built from passes that input's bound: caching the view
+// must not replay an old membership set or old catalogue rows clean.
+func TestRWAAssetsView_InputsAgeFromTheirOwnFill(t *testing.T) {
+	overMembership := rwaMembershipTTL + rwaMembershipBudget + time.Second
+	for _, tc := range []struct {
+		name                       string
+		catalogueAge, membAge      time.Duration
+		membershipReplacedSinceUse bool
+		want                       bool
+	}{
+		{"fresh inputs", time.Minute, time.Minute, false, false},
+		{"membership past its bound", time.Minute, overMembership, false, true},
+		{"replaced membership past its bound", time.Minute, overMembership, true, true},
+		{"catalogue rows past the view bound", rwaAssetsViewTTL + time.Second, time.Minute, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			s.rwaViewCache = &rwaAssetsBuild{
+				builtAt: now.Add(-5 * time.Second), observedAt: now.Add(-tc.catalogueAge),
+				catalogueAt: now.Add(-tc.catalogueAge), membershipAt: now.Add(-tc.membAge),
+			}
+			s.rwaViewExpires = now.Add(rwaAssetsViewTTL - 5*time.Second)
+			s.rwaAt = s.rwaViewCache.membershipAt
+			if tc.membershipReplacedSinceUse {
+				s.rwaAt = now
+			}
+			b, err := s.cachedRWAAssetsViewOnce(context.Background(), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if b.flags.Stale != tc.want || b.flags.Degraded != tc.want {
+				t.Errorf("flags = %+v, want stale and degraded %v", b.flags, tc.want)
+			}
+		})
+	}
+}
