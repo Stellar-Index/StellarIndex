@@ -26,6 +26,7 @@ type wealthSnapshotReader struct {
 	asOf   time.Time
 	ledger uint32
 	ok     bool
+	failed bool
 }
 
 func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string, []string, int) (clickhouse.AccountWealthSnapshot, bool) {
@@ -33,7 +34,7 @@ func (r *wealthSnapshotReader) AccountsByWealthCached(context.Context, []string,
 	if basis == "" {
 		basis = clickhouse.WealthBasisUSD
 	}
-	return clickhouse.AccountWealthSnapshot{Rows: r.rows, Basis: basis, AsOf: r.asOf, AsOfLedger: r.ledger}, r.ok
+	return clickhouse.AccountWealthSnapshot{Rows: r.rows, Basis: basis, AsOf: r.asOf, AsOfLedger: r.ledger, RefreshFailed: r.failed}, r.ok
 }
 
 // TestAccountsList_AsOfLedgerIsSnapshotVintage pins that as_of_ledger must
