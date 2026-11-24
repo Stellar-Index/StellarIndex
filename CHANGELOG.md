@@ -20,6 +20,29 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.132.0] - 2026-11-24
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. Galexie moves to v30.0.1: a host role run from this tag restarts the exporter and needs `galexie_restart_ack=true` (#4348).
+
+### Added
+
+- **supply:** when a watched SEP-41 contract's served history starts after its first mint, burn or clawback in the lake, the aggregator names the contract, the ledger window and both `projected-rebuild` commands, sets `stellarindex_aggregator_sep41_history_gap_from_ledger` and raises `stellarindex_aggregator_sep41_history_gap` until the totals check passes (#4345).
+- **ingest:** a reviewed list of judged non-token contracts relabels a listed contract's supply-decode skip to `judged_non_token`, which stays counted and does not alert; an unlisted contract with the same shape still alerts, and an alerting skip now names its contract in the log (#4345).
+
+### Changed
+
+- **api:** a cached read is flagged stale only when it is past its refresh TTL plus the refresh budget, or its last finished refresh failed, timed out, panicked or was skipped. This now covers markets, pools, sparklines and token supply (#4340); RWA history, premium history, membership and the assets view, protocol detail, the asset list page, the asset catalogue and explorer contract stats (#4343); and the account state and wealth caches behind `/v1/accounts` (#4344). The OpenAPI text for both account routes states the rule.
+- **api:** a page built from another cache is judged on its inputs: the asset list page ages from when its rows were observed, and the RWA assets view, value history and premium history re-judge their membership set and catalogue rows on every serve (#4343).
+- **ops:** `verify-served-values` checks the served USDC total supply against the issuer's public stablecoin figure for the Stellar chain, skipping (never passing) on a missing, unparseable, non-positive or day-old figure (#4341).
+- **ops:** galexie is pinned to `galexie-v30.0.1`, with its version string and binary sha256 (#4348).
+
+### Fixed
+
+- **api:** the RWA assets view and a replayed asset list page are flagged as soon as the asset catalogue's refresh fails, where they previously judged its rows by age only (#4346).
+- **api:** the asset-id resolve fallback no longer claims the asset list refresh slot without starting a refresh (#4343).
+- **ops:** the `trades-by-account` freshness bound is 9 days, matching a rollup that writes once per 7-day trades chunk; the 72-hour bound fired `stellarindex_data_source_stale` for about four days of every seven (#4342).
+- **tests:** the VWAP/TWAP source-exclusion test pins one closed window (#4346), and three explorer stale-serve tests hold the refresh until the stale serve is observed (#4347).
+
 ## [v0.131.0] - 2026-11-24
 
 Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break; `pkg/client` gains lending types and splits `types.go` by domain with no API change (#4279, #4311, #4315, #4321). Not run by the deploy: after rolling the binary, run `stellarindex-ops backfill-external -source coingecko -pair all` once on r1, dry run first, to fill the CoinGecko outage window (#4326); to catch up ledger-upgrade entry changes use `ch-backfill -ledgers FILE` (#4288). Host payload changed: the HA, archive-job and archival-node roles, alert rules and the new optional edge probe, which is off unless a host sets `edge_probe_targets` (#4327, #4304, #4276, #4272). Behaviour changes for API clients: `/v1/oracle/prices` serves a USD-peg book, flagged triangulated, when an asset's own `fiat:USD` book is refused only for being thin, and answers 404 `price-withheld` otherwise (#4336); the holders board is stale only when its rollup is behind its own schedule (#4335); a freeze that holds on buckets the scorer cannot evaluate now escalates to operator review and no longer auto-releases if healthy buckets return (#4337). Behaviour change for operators: the indexer saves its cursor only through ledgers whose rows were written, so a restart after an unclean exit replays from the oldest unwritten ledger (#4333).
@@ -183,34 +206,3 @@ Tested against Stellar protocol 27. No migrations, no `pkg/*` change. Behaviour 
 
 - **aggregate:** a freeze row held open by a ladder logs at INFO once per hold, then DEBUG (#4226).
 - **ingest:** probe errors in a bounded ledger walk name the step that failed (#4229).
-
-## [v0.127.0] - 2026-11-21
-
-Tested against Stellar protocol 27. No migrations, no `pkg/*` change, no breaking API change. Not run by the deploy: run `stellarindex-ops ch-index-proof -write` once per host to record the proof watermark, which could not be recorded before (#4222); after an earlier `ch-rebuild -write` that failed after writing rows, refresh the price aggregates over that range with `stellarindex-ops trades-cagg-refresh -from L -to H -write` (#4223). Host payload changed: the alert rules in both rule trees (a new ticket alert) and the operator runbooks; run the host role from the tag to install the rules.
-
-### Added
-
-- **api:** `/v1/stablecoins` per-peg subtotals carry `assets_valued` and `lower_bound`, set when a member is unvalued, a supplied total is a floor, or the member list was truncated (#4218).
-- **api:** `/v1/lending/protocols` serves a thin-market protocol-token price with `thin_market`, its substance evidence and `price_basis`; no market cap, emission value, APR or protocol KPI is computed from a thin price (#4221).
-- **api:** lending reserve state reasons `reserve_archived`, `decode_failed` and `not_captured`; `no_decoded_reserve_state` stays in the enum but is no longer sent (#4221).
-- **monitoring:** ticket alert `stellarindex_api_degraded_responses_high`, for a route where more than half of responses stayed degraded for 30 minutes above a floor rate (#4220).
-- **monitoring:** `stellarindex_lending_reserve_undecodable_total` counts reserve decode failures, with a ticket alert (#4221).
-- **ci:** `lint-ops-write-flag` requires every gated `stellarindex-ops` command in `docs/operations` to state `-write` or `-dry-run` (#4219).
-
-### Changed
-
-- **api:** lending reserve USD pricing follows the asset page's steps in order; a gated price reports `withheld`, a failed read reports `price_read_failed` and marks the response degraded, and a one-hop price carries `price_basis: transitive`. Backstop, auction, earnings and emissions routes do the same and are not cached when degraded; a degraded pools build is cached for 10 seconds, not a minute (#4221).
-- **api:** asset detail gets a market cap for a price filled after the direct read, through the same guards as a direct price, and none when the direct read refused or failed (#4221).
-- **api:** the catalogue market cap is the row's own price times its supply, and supply is stamped on an unpriced row; a twin the substance gate refused or could not measure gets no cap (#4223).
-- **api:** asset detail 24h volume adds a lake-confirmed derived SAC the alias registry does not list, without counting a registered alias twice; a failed SAC lookup or read sets `volume_lower_bound` and marks the read degraded, and a classic asset's volume is a lower bound when no lake reader is configured (#4223).
-- **explorer:** archived lending reserves are shown as a state with their own count (#4221).
-- **ops:** `ch-index-proof` starts at ledger 2, the lake's first ledger (`-from` below 2 reads as 2), and a run without `-to` refuses when the lake has a hole below its highest ledger instead of recording a partial proof (#4222).
-- **ops:** a `ch-rebuild -write` run that fails after writing rows makes the same aggregate-refresh decision as a successful run, or prints `FOLLOW-UP OWED` with the command, and still exits non-zero; a cancelled run prints the owed command and starts no refresh (#4223).
-- **ops:** `cut-release.sh` refuses any SLA proof verdict except `PROVEN`; an override needs `SLA_PROOF_OVERRIDE_REASON`, which is echoed (#4219).
-- **ci:** `lint-openapi-compat` also catches properties removed by dropping the `properties` block, loosening to a free-form object or moving fields into an `allOf` base, a removed 2xx response code, media type or body schema, and a request body re-pointed at a schema with a new required field (#4220).
-- **docs:** wrong-row recovery runbooks name `projected-rebuild` followed by the aggregate refresh; backfill, credential-exposure, privacy-request, credential-rotation, corrupt-chunk recovery and test-net reset procedures give the real commands, with 37 runbook lines corrected; the durability, backup, pricing and TVL documents and ADR-0041 and ADR-0043 match the code (#4218, #4219).
-
-### Fixed
-
-- **pipeline:** trades the external retry buffer abandons at shutdown, or that are enqueued after its final pass, are counted once in the sink lane's shutdown loss, which names the venues of abandoned off-chain trades; the indexer's error line gives the refetch command. Nothing is written or acknowledged differently (#4220).
-- **ops:** `ch-index-proof` no longer refuses a default run with "missing ledger 1", so its probe alert can clear (#4222).
