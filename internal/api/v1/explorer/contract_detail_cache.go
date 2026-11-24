@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -189,18 +190,22 @@ func detachedClassForKey(key string) string {
 	return "contract_detail_" + prefix
 }
 
+// coldSlotWait caps how long a cold read waits for a refresh-gate slot, leaving an admitted compute half the read budget.
+const coldSlotWait = explorerReadTimeout / 2
+
 // refreshContractDetail kicks ONE detached compute for key (no-op while a flight is up) and returns the flight. Detached because
-// a scan bound to a request deadline never completes for a busy contract, so the cache would never fill.
-func (h *Handler) refreshContractDetail(key string, compute func(context.Context) (any, error)) *keyFlight {
+// a scan bound to a request deadline never completes for a busy contract, so the cache would never fill. admit claims the gate slot.
+func (h *Handler) refreshContractDetail(key string, compute func(context.Context) (any, error),
+	admit func(*clickhouse.RefreshGate, string) bool,
+) *keyFlight {
 	fl, owner := h.contractDetail.flight.begin(key)
 	if !owner {
 		return fl
 	}
-	// Bounded globally across keys because any shape-valid C-address is a distinct cold key; on
-	// saturation skip, don't queue (see detachedGate).
+	// Bounded globally across keys because any shape-valid C-address is a distinct cold key (see detachedGate).
 	gate := h.detachedGate()
 	class := detachedClassForKey(key)
-	if !gate.TryAcquireClass(class) {
+	if !admit(gate, class) {
 		h.endContractDetailRefresh(key, fl, errRefreshSaturated)
 		return fl
 	}
@@ -238,14 +243,21 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 func (h *Handler) contractDetailCached(ctx context.Context, key string, compute func(context.Context) (any, error)) (v any, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {
-			h.refreshContractDetail(key, compute) //nolint:contextcheck // intentional detach — see refreshContractDetail
+			// Stale path: an entry is served either way, so skip rather than wait.
+			h.refreshContractDetail(key, compute, (*clickhouse.RefreshGate).TryAcquireClass) //nolint:contextcheck // intentional detach — see refreshContractDetail
 			if cur, ok, _ := h.contractDetail.get(key); ok {
 				e = cur // a refresh skipped just now is already a known failure
 			}
 		}
 		return e.v, e.cachedAt, !fresh && e.servedStale(key), nil
 	}
-	fl := h.refreshContractDetail(key, compute) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
+	// Cold path: nothing to serve, so wait (bounded, see AcquireClassWait) for a slot rather than shed the page.
+	waitForSlot := func(g *clickhouse.RefreshGate, class string) bool {
+		wctx, cancel := context.WithTimeout(ctx, coldSlotWait)
+		defer cancel()
+		return g.AcquireClassWait(wctx, class)
+	}
+	fl := h.refreshContractDetail(key, compute, waitForSlot) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.contractDetail.get(key); ok {
