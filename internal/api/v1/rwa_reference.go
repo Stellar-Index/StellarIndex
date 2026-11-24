@@ -216,6 +216,7 @@ type rwaReference struct {
 	wire   string
 	source string
 	feed   string
+	asset  canonical.Asset
 	asOf   time.Time
 }
 
@@ -232,6 +233,8 @@ type rwaReferences struct {
 	// globalUSD holds the newest aggregator USD price per global ticker, keyed by canonical asset
 	// id. Read by [Server.applyGlobalMarket], not here.
 	globalUSD map[string]rwaReference
+	// withheldFeed and withheldNAV hold, on a judged copy only, the byFeed and fundNAV keys an exclusion withholds.
+	withheldFeed, withheldNAV map[string]rwaWithheldRef
 	// available is false when no oracle reader is wired or the read failed; a failed read may not
 	// claim "the oracles publish nothing for these instruments".
 	available bool
@@ -280,6 +283,7 @@ func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 			wire:     scaledDecimalString(u.Price.BigInt(), u.Decimals),
 			source:   u.Source,
 			feed:     u.Asset.String(),
+			asset:    u.Asset,
 			asOf:     u.Timestamp,
 		}
 		// Several oracles may price one instrument: take the most recent, tie-broken on source
@@ -317,6 +321,7 @@ func rwaAddFundNAV(into map[string]rwaReference, u canonical.OracleUpdate) bool 
 		wire:     trimScaledZeros(scaledDecimalString(u.Price.BigInt(), u.Decimals), rwaFundNAVDecimalsPublished),
 		source:   u.Source,
 		feed:     u.Asset.String(),
+		asset:    u.Asset,
 		asOf:     u.Timestamp,
 	}
 	return true
@@ -472,6 +477,9 @@ func rwaApplyReference(
 	if !snap.available {
 		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
 		a.ReferenceValuation.unansweredBy = rwaUnansweredOracle
+		return
+	}
+	if rwaRefuseWithheldReference(a, snap.withheldFeed[feed].w) {
 		return
 	}
 	ref, ok := snap.byFeed[feed]
@@ -715,6 +723,9 @@ func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bo
 	ticker, ok := rwaFundNAVTicker(a.Code, a.Issuer)
 	if !ok {
 		return false
+	}
+	if wr, held := snap.withheldNAV[ticker]; held && !external.RedistributionBarred(wr.source) {
+		return rwaRefuseWithheldReference(a, wr.w)
 	}
 	nav, ok := snap.fundNAV[ticker]
 	// A barred NAV may still raise the disagreement flag, but its figure never reaches the wire.

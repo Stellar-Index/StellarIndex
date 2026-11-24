@@ -271,6 +271,8 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 		RWAPremiumReferenceExpired:     {},
 		RWAPremiumReferenceNotPositive: {},
 		RWAReferenceValuationNoSupply:  {},
+		// An operator exclusion covering the reading's source.
+		RWAPremiumReferenceSourceExcluded: {},
 		// A declared ISIN contradicting the constant-NAV table.
 		RWAPremiumReferenceISINMismatch: {},
 		// A contract row whose own declared scale could not be read.

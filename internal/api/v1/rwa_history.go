@@ -41,6 +41,10 @@ import (
 // (a ClickHouse flow-log scan, a CAGG scan over every oracle day) are far too heavy per request.
 const rwaHistoryTTL = 10 * time.Minute
 
+// rwaHistoryMaxStale bounds how long an assembly whose rebuilds keep failing is served. Its membership (issuer tags, scam flags) was
+// judged at build time, so past the bound /v1/rwa/assets uses for the same judgement it is no longer true.
+const rwaHistoryMaxStale = rwaAssetsViewMaxStale
+
 // rwaHistoryBudget is the assembly's own deadline over both scan legs, tied to [maxHandlerBudget]: on a cache miss handleRWAHistory
 // builds synchronously, so a larger budget never fires and the unavailable-response branch would never run.
 const rwaHistoryBudget = maxHandlerBudget
@@ -605,18 +609,19 @@ func (s *Server) settleRWAValueHistory(built rwaValueHistory, err error) {
 		s.rwaHistCache = &built
 		s.rwaHistAt = time.Now()
 	} else {
-		// The last good series keeps serving under flags.stale, so this counter is the only signal stellarindex_api_cache_refresh_failing sees.
+		// The last good series keeps serving under flags.stale until rwaHistoryMaxStale, so this counter is the only signal
+		// stellarindex_api_cache_refresh_failing sees.
 		obs.APICacheOpsTotal.WithLabelValues("rwa_history", "build", "refresh_error").Inc()
 	}
 	s.rwaHistFlight = nil
 }
 
-// lastRWAValueHistory returns the cached assembly, stale once past its
-// TTL, or an unavailable one when no build has ever succeeded.
+// lastRWAValueHistory returns the cached assembly, stale once past its TTL, or an unavailable one when no build has ever
+// succeeded or the last one is past rwaHistoryMaxStale.
 func (s *Server) lastRWAValueHistory() rwaValueHistory {
 	s.rwaHistMu.Lock()
 	defer s.rwaHistMu.Unlock()
-	if s.rwaHistCache == nil {
+	if s.rwaHistCache == nil || time.Since(s.rwaHistAt) > rwaHistoryMaxStale {
 		return rwaValueHistory{}
 	}
 	h := *s.rwaHistCache

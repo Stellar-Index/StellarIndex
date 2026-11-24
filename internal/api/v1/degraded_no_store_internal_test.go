@@ -258,8 +258,9 @@ func closedFlight() chan struct{} {
 
 func TestRWAHistory_CarriedForwardAssemblyIsNoStore(t *testing.T) {
 	s := &Server{Options: Options{AssetsReader: nilAssets{}, OracleHistory: nilOracleHistory{}}}
-	s.rwaHistCache = &rwaValueHistory{available: true, builtAt: time.Now().Add(-48 * time.Hour)}
-	s.rwaHistAt = time.Now().Add(-48 * time.Hour)
+	carried := time.Now().Add(-(rwaHistoryTTL + time.Minute))
+	s.rwaHistCache = &rwaValueHistory{available: true, builtAt: carried}
+	s.rwaHistAt = carried
 	s.rwaHistFlight = closedFlight()
 	rec := httptest.NewRecorder()
 	s.handleRWAHistory(rec, httptest.NewRequest(http.MethodGet, "/v1/rwa/history", nil))

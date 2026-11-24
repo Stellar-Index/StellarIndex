@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"errors"
 	"math/big"
 	"net/http"
 	"slices"
@@ -1153,13 +1152,12 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, errRWAViewTooOld) {
+		if detail, ok := rwaAssetsUnavailableDetail(err); ok {
 			s.logger.Warn("rwa assets view unavailable", "err", err)
 			w.Header().Set("Retry-After", rwaSeriesRetryAfter)
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/rwa-assets-unavailable",
-				"RWA assets unavailable", http.StatusServiceUnavailable,
-				"the last assets view is past its maximum age and its rebuild has not answered; retry shortly")
+				"RWA assets unavailable", http.StatusServiceUnavailable, detail)
 			return
 		}
 		s.logger.Error("rwa listing read failed", "err", err)
@@ -1224,7 +1222,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 
 	// The reference is attached AFTER the valuation: it reads the gated row (including the
 	// scam-flag suppression) and must not put a figure on a row the gates emptied.
-	refs := s.cachedRWAReferences(ctx)
+	refs, refVerdicts := s.rwaJudgedReferences(ctx, s.cachedRWAReferences(ctx))
 	// The listing rows that priced the admitted contracts are indexed from the MEMBERSHIP, not a
 	// second read: the row that prices an asset must be the one that recognised it.
 	listingRefs := rwaListingReferencesOf(m.contracts)
@@ -1247,10 +1245,11 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	ms := m.serveFlags()
 	flags := Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0}
 	return rwaAssetsBuild{
-		view:       view,
-		flags:      markFillsWithheld(flags, listReads.withheld.Load() || valReads.withheld.Load()),
-		builtAt:    now,
-		observedAt: observedAt,
+		view:        view,
+		flags:       markFillsWithheld(flags, rwaViewWithheld(view.Assets, listReads, valReads)),
+		builtAt:     now,
+		observedAt:  observedAt,
+		refVerdicts: refVerdicts,
 	}, nil
 }
 
@@ -1757,7 +1756,7 @@ func rwaReferenceOutageNote(assets []RWAAsset) string {
 		}
 	}
 	var parts []string
-	for _, by := range []string{rwaUnansweredOracle, rwaUnansweredListing, rwaUnansweredBoth, ""} {
+	for _, by := range []string{rwaUnansweredOracle, rwaUnansweredListing, rwaUnansweredBoth, rwaUnansweredExclusions, ""} {
 		n := counts[by]
 		if n == 0 {
 			continue
