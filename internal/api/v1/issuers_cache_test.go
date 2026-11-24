@@ -93,7 +93,10 @@ func TestCachedIssuersReader_RefetchesAfterTTL(t *testing.T) {
 // An expired entry is served at once with its old fill time and stale=true while one background refresh runs; a failed
 // refresh keeps the entry, so the 3-4 s scan never lands on a visitor once the key has filled.
 func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
-	c := NewCachedIssuersReader(nil, 20*time.Millisecond)
+	const ttl = 20 * time.Millisecond
+	c := NewCachedIssuersReader(nil, ttl)
+	clk := &swrTestClock{t: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}
+	c.list.now = clk.now
 	ctx := context.Background()
 	rows := func(g string) func(context.Context) ([]timescale.IssuerSummary, error) {
 		return func(context.Context) ([]timescale.IssuerSummary, error) {
@@ -104,7 +107,7 @@ func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
 	if err != nil || stale {
 		t.Fatalf("cold fill: stale=%v err=%v", stale, err)
 	}
-	time.Sleep(30 * time.Millisecond)
+	clk.add(ttl + ttl/2)
 
 	var calls atomic.Int64
 	release := make(chan struct{})
@@ -115,8 +118,9 @@ func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
 	}
 	for i := range 2 {
 		got, at, stale, err := c.list.get(ctx, "list_issuers", "k", failing)
-		if err != nil || !stale || !at.Equal(at0) || len(got) != 1 || got[0].GStrkey != "OLD" {
-			t.Fatalf("call %d: got=%+v at=%v stale=%v err=%v; want OLD at %v stale", i, got, at, stale, err, at0)
+		// The refresh has not failed yet and the entry is inside its bound, so OLD is served unflagged.
+		if err != nil || stale || !at.Equal(at0) || len(got) != 1 || got[0].GStrkey != "OLD" {
+			t.Fatalf("call %d: got=%+v at=%v stale=%v err=%v; want OLD at %v unflagged", i, got, at, stale, err, at0)
 		}
 	}
 	close(release)
