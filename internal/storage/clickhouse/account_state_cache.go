@@ -88,6 +88,9 @@ func (c *accountStateCache) put(account string, st AccountState, now time.Time) 
 // detached refreshes; a whale account's UNION arms run well past the 8s request budget.
 const AccountStateRefreshTimeout = 3 * time.Minute
 
+// accountStateColdSlotWait caps a cold read's wait for a gate slot at half the 8s API read budget, leaving an admitted scan the rest.
+const accountStateColdSlotWait = 4 * time.Second
+
 // errAccountStateRefreshFailed is returned to waiters when the detached scan produced no
 // cacheable state (the error went through the wealth-refresh error hook, the only log seam).
 var errAccountStateRefreshFailed = errors.New(
@@ -99,7 +102,7 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
 			// Serve the expired entry now while one detached refresh runs: old-but-real beats a 503.
-			if _, skipped := r.refreshAccountState(account); skipped { //nolint:contextcheck // intentional detach — see refreshAccountState
+			if _, skipped := r.refreshAccountState(account, (*RefreshGate).TryAcquireClass); skipped { //nolint:contextcheck // intentional detach — see refreshAccountState
 				st.RefreshFailed = true
 			}
 		}
@@ -107,7 +110,13 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	}
 	// Not single-flighted across accounts: distinct accounts need distinct scans; only the
 	// same-account burst is collapsed, by the per-account flight.
-	fl, saturated := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
+	// Cold: nothing to serve, so wait (bounded, see AcquireClassWait) for a slot rather than shed.
+	waitForSlot := func(g *RefreshGate, class string) bool {
+		wctx, cancel := context.WithTimeout(ctx, accountStateColdSlotWait)
+		defer cancel()
+		return g.AcquireClassWait(wctx, class)
+	}
+	fl, saturated := r.refreshAccountState(account, waitForSlot) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
 	select {
 	case <-fl.done:
 		if st, ok, _ := r.stateCache.get(account); ok {
@@ -128,15 +137,15 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 // refreshAccountState kicks one detached scan for account (returning the existing flight's channel), outliving the request. saturated is
 // true only when this call owned the flight and the shared refresh gate was full; non-owners read the entry's flag, set before end()
 // closes done.
-func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEntry, saturated bool) {
+func (r *ExplorerReader) refreshAccountState(account string, admit func(*RefreshGate, string) bool) (fl *stateFlightEntry, saturated bool) {
 	fl, owner := r.stateFlight.begin(account)
 	if !owner {
 		return fl, false
 	}
 	// Global bound across keys: the per-account flight collapses same-account bursts, but the
 	// account space is attacker-chosen, so key churn would queue unbounded scans on the shared
-	// pool. On saturation skip, never queue (see RefreshGate).
-	if !r.refreshGate.TryAcquireClass("account_state") {
+	// pool. admit claims the slot: a bounded wait for a cold read, a skip for a stale one (see RefreshGate).
+	if !admit(r.refreshGate, "account_state") {
 		r.stateCache.markRefreshFailed(account)
 		fl.saturated = true // published to waiters by end()'s close
 		r.stateFlight.end(account, fl)

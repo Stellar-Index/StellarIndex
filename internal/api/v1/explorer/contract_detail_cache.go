@@ -193,6 +193,16 @@ func detachedClassForKey(key string) string {
 // coldSlotWait caps how long a cold read waits for a refresh-gate slot, leaving an admitted compute half the read budget.
 const coldSlotWait = explorerReadTimeout / 2
 
+// coldSlotAdmit is the cold-path admit func shared by the cached reads: it waits (bounded, see AcquireClassWait) for a slot until ctx
+// or coldSlotWait ends, where the stale path uses the non-blocking TryAcquireClass.
+func coldSlotAdmit(ctx context.Context) func(*clickhouse.RefreshGate, string) bool {
+	return func(g *clickhouse.RefreshGate, class string) bool {
+		wctx, cancel := context.WithTimeout(ctx, coldSlotWait)
+		defer cancel()
+		return g.AcquireClassWait(wctx, class)
+	}
+}
+
 // refreshContractDetail kicks ONE detached compute for key (no-op while a flight is up) and returns the flight. Detached because
 // a scan bound to a request deadline never completes for a busy contract, so the cache would never fill. admit claims the gate slot.
 func (h *Handler) refreshContractDetail(key string, compute func(context.Context) (any, error),
@@ -252,12 +262,7 @@ func (h *Handler) contractDetailCached(ctx context.Context, key string, compute 
 		return e.v, e.cachedAt, !fresh && e.servedStale(key), nil
 	}
 	// Cold path: nothing to serve, so wait (bounded, see AcquireClassWait) for a slot rather than shed the page.
-	waitForSlot := func(g *clickhouse.RefreshGate, class string) bool {
-		wctx, cancel := context.WithTimeout(ctx, coldSlotWait)
-		defer cancel()
-		return g.AcquireClassWait(wctx, class)
-	}
-	fl := h.refreshContractDetail(key, compute, waitForSlot) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
+	fl := h.refreshContractDetail(key, compute, coldSlotAdmit(ctx)) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.contractDetail.get(key); ok {
