@@ -876,6 +876,8 @@ const pairMarketQuery = `
                        COALESCE((SELECT t.ts FROM trades t
                                   WHERE t.base_asset = p.base_asset AND t.quote_asset = p.quote_asset
                                     AND t.ts >= p.bucket AND t.ts < p.bucket + INTERVAL '1 minute'
+                                    -- implied by p's own bound, but a correlated p.bucket excludes no chunk; this constant does.
+                                    AND t.ts >= NOW() - INTERVAL '24 hours'
                                     AND t.base_amount > 0 AND t.quote_amount > 0
                                   ORDER BY (t.usd_volume >= 0.01) IS TRUE DESC, t.ts DESC LIMIT 1),
                                 p.bucket) AS priced_at
