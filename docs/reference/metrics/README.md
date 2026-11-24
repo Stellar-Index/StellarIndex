@@ -844,9 +844,9 @@ Counter, no labels.
 
 ### `stellarindex_aggregator_window_truncated_total`
 
-Counter, no labels.
+Counter, labels `pair` (the configured target pair) and `window` (`5m` / `1h` / `24h`).
 
-(pair, window) trade fetches that hit `MaxTradesPerWindow` (default 10,000), so the VWAP covers only the newest slice. Chart against `stellarindex_aggregator_vwap_writes_total`.
+(pair, window) leg fetches that hit `MaxTradesPerWindow` (default 10,000) and stayed capped after the minute-sum fill, so the VWAP covers only `[covered_from, to)` and is served `truncated`. Alert: `stellarindex_aggregator_window_truncated`.
 
 ### `stellarindex_aggregator_stream_publish_total`
 

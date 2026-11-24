@@ -2103,12 +2103,14 @@ var AggregatorEmptyWindowsTotal = prometheus.NewCounter(
 	},
 )
 
-// AggregatorWindowTruncatedTotal counts (pair, window) fetches that hit MaxTradesPerWindow, so the VWAP covered only the newest trades; unlabelled.
-var AggregatorWindowTruncatedTotal = prometheus.NewCounter(
+// AggregatorWindowTruncatedTotal counts (pair, window) leg fetches still capped at MaxTradesPerWindow after the minute-sum fill, so the
+// VWAP covers only [covered_from, to). pair is the configured target (bounded by aggregate.pairs), window the configured window set.
+var AggregatorWindowTruncatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_window_truncated_total",
-		Help: "Aggregator (pair, window) fetches that hit MaxTradesPerWindow — VWAP computed over a partial (newest-N) trade slice.",
+		Help: "Aggregator (pair, window) leg fetches still capped at MaxTradesPerWindow after the minute-sum fill — VWAP computed over the newest part of the window only.",
 	},
+	[]string{"pair", "window"},
 )
 
 // AggregatorVWAPCacheWriteErrorsTotal counts failed Redis SETs in the VWAP cache write; sustained, cached pairs 404 on /v1/price while flags.stale stays off.

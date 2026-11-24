@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 332 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 333 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -468,6 +468,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_aggregator_bootstrap_cap_reengaged` | pairs with `bootstrap_capped` flipping 0 to 1 | >= 3 pairs in 1 h, 10 min (one pair alone stays silent) | ticket | [aggregator-bootstrap-cap-reengaged](runbooks/aggregator.md#stellarindex_aggregator_bootstrap_cap_reengaged) |
 | `stellarindex_aggregator_cache_write_errors` | `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | page | [redis-write-blocked-disk-full](runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors) |
 | `stellarindex_aggregator_contribution_write_errors` | `stellarindex_aggregator_contribution_write_errors_total` | increase > 0 in 15 min | ticket | [aggregator](runbooks/aggregator.md#stellarindex_aggregator_contribution_write_errors) |
+| `stellarindex_aggregator_window_truncated` | `increase(stellarindex_aggregator_window_truncated_total[10m])` by (pair, window) | > 0 for 30 min | ticket | [aggregator](runbooks/aggregator.md#stellarindex_aggregator_window_truncated) |
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.05/s for ≥ 15 min | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_failing) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `customer_webhook_delivery_attempts_total{outcome="exhausted"}` | > 0, `for: 0m` | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted) |
 | `stellarindex_customer_webhook_mark_errors` | `increase(...{outcome="mark_error"}[30m])` | > 0 for 15 min (POST done, result not saved; re-POSTs each lease) | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_mark_errors) |

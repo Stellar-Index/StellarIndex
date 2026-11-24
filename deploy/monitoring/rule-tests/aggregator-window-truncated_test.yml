@@ -1,0 +1,78 @@
+---
+# promtool unit test for stellarindex_aggregator_window_truncated (see the
+# rule comment in ../rules/aggregator.yml; the r1 copy is mirrored text).
+#
+#   promtool test rules deploy/monitoring/rule-tests/aggregator-window-truncated_test.yml
+#
+# The counter is {pair, window} and ticks once per decided bucket (1m) for
+# as long as a leg stays capped. Guards: a persistent truncation tickets for
+# its own (pair, window) only; one blip and an absent counter stay silent.
+#
+# PROVEN-RED: drop `sum by (pair, window)` to a bare `sum(...)` and case 1's
+# exp_labels lose pair/window; set `for: 0m` and case 2 fires at 15m.
+
+rule_files:
+  - ../rules/aggregator.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Case 1: the 24h leg stays truncated every minute → tickets after 30m ──
+  # The same pair's 1h window is clean throughout and must not fire.
+  - interval: 1m
+    name: persistent truncation of one window tickets for that window only
+    input_series:
+      - series: 'stellarindex_aggregator_window_truncated_total{pair="native/fiat:USD",window="24h"}'
+        values: '0+1x90'
+      - series: 'stellarindex_aggregator_window_truncated_total{pair="native/fiat:USD",window="1h"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_aggregator_window_truncated
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_aggregator_window_truncated
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              pair: native/fiat:USD
+              window: 24h
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_window_truncated
+              summary: "native/fiat:USD 24h VWAP covers only part of its window"
+              description: |
+                The 24h VWAP for native/fiat:USD has been
+                served `truncated` for 30 minutes: a leg read hit
+                MaxTradesPerWindow and the minute-sum fill could not cover the
+                older part. The aggregator WARN line "trade window truncated"
+                names the leg, covered_from and rows.
+
+  # ── Case 2: one truncated bucket on a volatile minute stays silent ──
+  - interval: 1m
+    name: a single truncated bucket never fires
+    input_series:
+      - series: 'stellarindex_aggregator_window_truncated_total{pair="native/fiat:USD",window="24h"}'
+        values: '0x10 1x80'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_aggregator_window_truncated
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_aggregator_window_truncated
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_aggregator_window_truncated
+        exp_alerts: []
+
+  # ── Case 3: no counter series at all (nothing ever truncated) ──
+  - interval: 1m
+    name: an absent counter never fires
+    input_series:
+      - series: 'stellarindex_aggregator_vwap_writes_total'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_aggregator_window_truncated
+        exp_alerts: []

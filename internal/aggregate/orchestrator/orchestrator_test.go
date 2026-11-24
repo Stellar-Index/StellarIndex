@@ -2693,14 +2693,15 @@ func TestTick_WindowAtTheRowCapCountsAsTruncated(t *testing.T) {
 				MaxTradesPerWindow: maxRows,
 			})
 
-			before := testutil.ToFloat64(obs.AggregatorWindowTruncatedTotal)
+			counter := obs.AggregatorWindowTruncatedTotal.WithLabelValues(xlmUsdtPair(t).String(), "5m")
+			before := testutil.ToFloat64(counter)
 			if err := orch.Tick(context.Background()); err != nil {
 				t.Fatalf("Tick: %v", err)
 			}
 			if store.lastLimit != maxRows {
 				t.Fatalf("store fetched with limit %d, want the configured cap %d", store.lastLimit, maxRows)
 			}
-			if got := testutil.ToFloat64(obs.AggregatorWindowTruncatedTotal) - before; got != tc.want {
+			if got := testutil.ToFloat64(counter) - before; got != tc.want {
 				t.Errorf("AggregatorWindowTruncatedTotal advanced by %v, want %v", got, tc.want)
 			}
 		})
