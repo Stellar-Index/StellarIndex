@@ -133,7 +133,7 @@ groups:
         # balance hasn't been seeded — a range-scoped condition fixed by
         # `stellarindex-ops supply seed-sep41-genesis`, or a watched contract
         # whose Soroban-era events are not all in the served tier, fixed by
-        # `projector-replay -source sep41_supply`; neither is corruption. A
+        # `projected-rebuild -source sep41_supply`; neither is corruption. A
         # genuine post-seed negative still surfaces as `compute_error`).
         # 15m spans three 5m refresh ticks: a window of one cadence holds
         # an increment or not by alignment, and the ratio flaps under `for`.
@@ -195,8 +195,33 @@ groups:
             is not seeded (and the auto-seed is failing), or its
             Soroban-era events in the served tier do not match the lake.
             The aggregator log names which. Fix: `stellarindex-ops supply
-            seed-sep41-genesis`, or `projector-replay -source
+            seed-sep41-genesis`, or `projected-rebuild -source
             sep41_supply` over the range the log names.
+
+      # A contract added to the watch-list after its first event has served
+      # rows only from then on. The gauge is the lake's first event ledger
+      # (the rebuild's -from) while that leading gap exists; a coverage
+      # failure with no leading gap leaves it 0 and is _withheld's alone.
+      - alert: stellarindex_aggregator_sep41_history_gap
+        expr: |
+          max by (asset_key) (stellarindex_aggregator_sep41_history_gap_from_ledger) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_aggregator_sep41_history_gap
+          summary: "SEP-41 contract {{ $labels.asset_key }} lacks served history from ledger {{ printf \"%.0f\" $value }}"
+          description: |
+            Watched contract {{ $labels.asset_key }} has lake events from
+            ledger {{ printf "%.0f" $value }} but no served rows that early,
+            so its supply is withheld. Decompress the window's chunks of
+            sep41_transfers and sep41_supply_events, then run
+            `stellarindex-ops projected-rebuild -source sep41_transfers
+            -from {{ printf "%.0f" $value }} -to <to> -resume=false -write`
+            and the same with `-source sep41_supply`. The aggregator log
+            line names `-to` and the full commands.
 
       - alert: stellarindex_aggregator_supply_refresh_dormant_fleet
         # MinComponentLedger is the producer's watermark (MAX(ledger) over the

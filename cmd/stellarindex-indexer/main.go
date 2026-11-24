@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -1553,11 +1554,41 @@ func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
 		"ledger", ledger, "err", err, "errors_so_far", chExtractErrLog.Load())
 }
 
+// supplySkipLogged names each alerting (contract, reason) once per process, at most supplySkipLogCap of them, so a decoder break
+// that skips on every ledger cannot flood the journal; the counter carries the rate.
+var supplySkipLogged = &firstSightings{seen: map[[2]string]struct{}{}, limit: supplySkipLogCap}
+
+const supplySkipLogCap = 64
+
+type firstSightings struct {
+	mu    sync.Mutex
+	seen  map[[2]string]struct{}
+	limit int
+}
+
+// first reports whether (contract, reason) is new and under the cap, recording it.
+func (f *firstSightings) first(contract, reason string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := [2]string{contract, reason}
+	if _, ok := f.seen[k]; ok || len(f.seen) >= f.limit {
+		return false
+	}
+	f.seen[k] = struct{}{}
+	return true
+}
+
 // recordCHLiveSinkUndercount meters and logs a LedgerExtract's read-undercount; the ledger is still written, so this counter is the only
 // alertable trace. Supply-flow skips are metered separately: any contract can emit them, so they are not an undercount.
 func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logger) {
 	for reason, n := range ext.SupplyFlowSkips {
 		obs.SupplyFlowSkippedTotal.WithLabelValues(reason).Add(float64(n))
+	}
+	for _, s := range ext.SupplyFlowSkipSamples {
+		if supplySkipLogged.first(s.ContractID, s.Reason) {
+			logger.Warn("ch live-sink: supply event skipped; the contract's supply may be short (first sighting this run)",
+				"contract", s.ContractID, "reason", s.Reason, "ledger", ext.Ledger.LedgerSeq, "tx", s.TxHash)
+		}
 	}
 	if ext.TxReadErrors == 0 && ext.TxEventReadErrors == 0 && ext.EntryMetaUnsupported == 0 &&
 		ext.SorobanFeeMetaUnsupported == 0 && ext.EvictedKeysUnreadable == 0 && ext.EntryChangesUnencodable == 0 {

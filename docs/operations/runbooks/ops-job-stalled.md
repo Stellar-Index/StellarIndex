@@ -153,12 +153,12 @@ The textfile persists after the process dies, deliberately. The next run overwri
 
 ## Records skipped
 
-`stellarindex_ops_job_records_skipped` (P3 ticket) fires when `stellarindex_ops_job_skipped_total{reason!="not_token_shaped"}` has risen over the last 3 hours (one skip fires it; it keeps firing 1 h). `ch-cap67-movements` and `ch-backfill` report it; the `ch-cap67-movements` `-follow` daemon drops a transfer/mint/burn/clawback event it cannot decode and advances the watermark, so `stellar.account_movements` lacks that event's rows. The raw event stays in `stellar.contract_events`.
+`stellarindex_ops_job_records_skipped` (P3 ticket) fires when `stellarindex_ops_job_skipped_total{reason!~"not_token_shaped|judged_non_token"}` has risen over the last 3 hours (one skip fires it; it keeps firing 1 h). `ch-cap67-movements` and `ch-backfill` report it; the `ch-cap67-movements` `-follow` daemon drops a transfer/mint/burn/clawback event it cannot decode and advances the watermark, so `stellar.account_movements` lacks that event's rows. The raw event stays in `stellar.contract_events`.
 
-Reasons: `not_token_shaped` (a foreign contract's event whose body is neither a bare i128 nor a map with `amount`, e.g. an NFT's u32 id) is expected traffic, is metered and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode; `decode_failed` is a token-shaped body the decoder still refused (topics, close time). The one-shot run's `-max-decode-errors` budget counts only these three.
+Reasons: `not_token_shaped` (a foreign contract's event whose body is neither a bare i128 nor a map with `amount`, e.g. an NFT's u32 id) is expected traffic, is metered and never alerts; so is `judged_non_token`, a contract recorded in `judgedNonToken` (`internal/storage/clickhouse/supply_judged.go`) for that one reason. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode; `decode_failed` is a token-shaped body the decoder still refused (topics, close time). The one-shot run's `-max-decode-errors` budget counts only these three.
 
-1. `journalctl -u <unit> | grep 'events skipped (decode)'` names each window `[lo,hi]` and its counts by reason.
-2. Read those events from `stellar.contract_events` and find why the decoder refused them. A foreign contract emitting a malformed `transfer` is noise; a real token whose body shape changed is a decoder bug.
+1. `journalctl -u <unit> | grep 'events skipped (decode)'` names each window `[lo,hi]`, its counts by reason, and the first 8 alerting `contract:reason` pairs.
+2. Read those contracts' events in the window from `stellar.contract_events` and find why the decoder refused them. A real token whose body shape changed is a decoder bug. A contract that is not a token: record the ledger, tx and body as evidence and open the PR adding it to `judgedNonToken` with that reason.
 3. After a decoder fix, re-derive the windows: `stellarindex-ops ch-cap67-movements -write -from <lo> -to <hi>` (idempotent; a `<lo>` above watermark+1, or above the floor before any watermark exists, is refused). The one-shot run exits non-zero if anything is still skipped.
 
 ## Entry index lagging

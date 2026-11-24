@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -713,5 +714,70 @@ func TestDeriveCap67MovementsWindow_ForeignContractU32IsNotTokenShaped(t *testin
 	}
 	if got := skips.actionable(); got != 1 {
 		t.Fatalf("actionable = %d, want 1: foreign u32 traffic must not count", got)
+	}
+}
+
+// A judged contract's skip is relabelled and not actionable; an unjudged one with the same body alerts, and the window's line names
+// it so the ticket needs no lake search.
+func TestDeriveCap67MovementsWindow_JudgedAndNamedSkips(t *testing.T) {
+	canonical.InstallNetworkPassphrase("")
+	orig := streamCap67TransferEvents
+	t.Cleanup(func() { streamCap67TransferEvents = orig })
+	const poolBody = "AAAAEQAAAAEAAAAGAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAs/+k8uDsAAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAASUJspE0AAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAPnT7H7cAAAADwAAAAVvd25lcgAAAAAAABIAAAABIzovoLDzgMm/PSicyUIChIApn2d5n/jeVHAlcu+O3HoAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAQAAAhwAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAEAAAJYA=="
+	judged := cap67TransferEvent(t, "")
+	judged.ContractID = "CAOAVZOUDGYDI3QJTCDEQ3GJPWFN7QHM632EQZLWAIUWKILEFTKZUPE6"
+	judged.Value = poolBody
+	unjudged := cap67TransferEvent(t, "")
+	unjudged.Value = poolBody
+	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, _, _ []string, _, _, _, _ bool, fn func(events.Event) error) error {
+		for _, ev := range []events.Event{judged, unjudged, unjudged} {
+			if err := fn(ev); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	stderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = stderr })
+	_, skips, derr := deriveCap67MovementsWindow(context.Background(), "ch", 63_000_000, 63_000_000, true)
+	_ = w.Close()
+	os.Stderr = stderr
+	out, _ := io.ReadAll(r)
+
+	if derr != nil {
+		t.Fatalf("derive: %v", derr)
+	}
+	if skips[clickhouse.SupplySkipJudgedNonToken] != 1 || skips[clickhouse.SupplySkipAmountNotI128] != 2 || skips.actionable() != 2 {
+		t.Fatalf("skips = %v actionable=%d, want judged_non_token=1, amount_not_i128=2, actionable 2", map[string]uint64(skips), skips.actionable())
+	}
+	line := string(out)
+	if want := unjudged.ContractID + ":" + clickhouse.SupplySkipAmountNotI128; strings.Count(line, want) != 1 {
+		t.Errorf("skip line should name %q once: %q", want, line)
+	}
+	if strings.Contains(line, judged.ContractID+":") {
+		t.Errorf("skip line names the judged contract: %q", line)
+	}
+}
+
+func TestNameAlertingSkip_Bounded(t *testing.T) {
+	var named []string
+	for i := range 3 * cap67SkipContractCap {
+		named = nameAlertingSkip(named, fmt.Sprintf("C%d", i), clickhouse.SupplySkipAmountNotI128)
+	}
+	named = nameAlertingSkip(named[:0:0], "CX", clickhouse.SupplySkipNotTokenShaped)
+	if len(named) != 0 {
+		t.Errorf("not_token_shaped was named: %v", named)
+	}
+	for i := range 3 * cap67SkipContractCap {
+		named = nameAlertingSkip(named, fmt.Sprintf("C%d", i), cap67SkipDecodeFailed)
+	}
+	if len(named) != cap67SkipContractCap {
+		t.Errorf("named %d contracts, want the cap %d", len(named), cap67SkipContractCap)
 	}
 }

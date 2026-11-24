@@ -97,6 +97,32 @@ func TestEmitDiscoveryDropMetricDelta_AddsOnlyNewDrops(t *testing.T) {
 	}
 }
 
+// An alerting supply skip names its contract in the log once per process, and the distinct set is capped.
+func TestRecordCHLiveSinkUndercount_NamesSkipContractOnce(t *testing.T) {
+	orig := supplySkipLogged
+	supplySkipLogged = &firstSightings{seen: map[[2]string]struct{}{}, limit: 2}
+	t.Cleanup(func() { supplySkipLogged = orig })
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	sample := func(c string) clickhouse.LedgerExtract {
+		return clickhouse.LedgerExtract{
+			Ledger:                clickhouse.LedgerRow{LedgerSeq: 65648178},
+			SupplyFlowSkips:       map[string]int{"amount_not_i128": 1},
+			SupplyFlowSkipSamples: []clickhouse.SupplySkipSample{{ContractID: c, Reason: "amount_not_i128", TxHash: "f9b5"}},
+		}
+	}
+	for _, c := range []string{"CONE", "CONE", "CTWO", "CTHREE"} {
+		recordCHLiveSinkUndercount(sample(c), logger)
+	}
+	out := buf.String()
+	if strings.Count(out, "contract=CONE") != 1 || !strings.Contains(out, "contract=CTWO") || strings.Contains(out, "CTHREE") {
+		t.Fatalf("want CONE once, CTWO, and nothing past the cap; got:\n%s", out)
+	}
+	if !strings.Contains(out, "reason=amount_not_i128") || !strings.Contains(out, "ledger=65648178") || !strings.Contains(out, "tx=f9b5") {
+		t.Errorf("line lacks reason/ledger/tx: %s", out)
+	}
+}
+
 // TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric: a non-zero LedgerExtract undercount must add its exact count,
 // not just a per-ledger flag, to obs.ChLiveSinkReadUndercountTotal rather than appear only as a WARN log.
 func TestRecordCHLiveSinkUndercount_AddsErrorCountsToMetric(t *testing.T) {

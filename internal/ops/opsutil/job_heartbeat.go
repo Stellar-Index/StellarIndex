@@ -314,7 +314,7 @@ func (h *JobHeartbeat) render() string {
 	}
 	sort.Strings(reasons)
 	if len(reasons) > 0 {
-		fmt.Fprint(&b, "# HELP stellarindex_ops_job_skipped_total Records a stellarindex-ops job dropped in the current run and carried on past, by reason; reasons other than not_token_shaped are rows missing from its target.\n")
+		fmt.Fprint(&b, "# HELP stellarindex_ops_job_skipped_total Records a stellarindex-ops job dropped in the current run and carried on past, by reason; reasons other than not_token_shaped and judged_non_token are rows missing from its target.\n")
 		fmt.Fprint(&b, "# TYPE stellarindex_ops_job_skipped_total gauge\n")
 		for _, reason := range reasons {
 			skipLabel := strings.TrimSuffix(label, "}") + fmt.Sprintf(",reason=%q}", reason)

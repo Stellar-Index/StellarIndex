@@ -625,7 +625,7 @@ Any increase matters; it is zero when healthy. A climb tracking `stellarindex_ch
 
 ### `stellarindex_supply_flow_skipped_total`
 
-Counter, label `reason` (`not_token_shaped` | `amount_not_i128` | `body_unparseable`). Every reason is seeded at zero.
+Counter, label `reason` (`not_token_shaped` | `judged_non_token` | `amount_not_i128` | `body_unparseable`). Every reason is seeded at zero. `judged_non_token` is a contract recorded in `judgedNonToken` as no token, for its recorded reason only; like `not_token_shaped` it loses no supply.
 
 Mint, burn and clawback events the lake extract wrote to `contract_events` with no `supply_flows` row. `not_token_shaped` is a foreign contract's body that is neither a bare i128 nor a map carrying `amount` (an NFT's u32 token id): no supply is lost. `amount_not_i128` and `body_unparseable` are a token-shaped body whose amount did not decode, so that token's supply sum is short. Alert `stellarindex_supply_flow_skipped` (reasons other than `not_token_shaped`).
 
@@ -1520,6 +1520,10 @@ C-strkey for SEP-41.
 Refresh outcomes, one per asset per tick. Only fires when `[supply] aggregator_refresh_enabled = true`; stays at zero if the systemd timer drives the writer instead.
 
 Steady state is mostly `ok`. Sustained `no_observation` means the observer has not backfilled and the static fallback is empty. `no_ledger` means no chain position to stamp at: no cursor yet, or no `stellar.ledgers` row in the 512 ledgers below it. `missing_baseline` is a SEP-41 SAC-wrapper with no seeded opening balance; benign (excluded from `error_dominant`), cleared by `stellarindex-ops supply seed-sep41-genesis`. A negative total after seeding is `compute_error` (pages).
+
+### `stellarindex_aggregator_sep41_history_gap_from_ledger`
+
+Gauge, label `asset_key` (the watched SEP-41 contract id). Set by the coverage check that gates a watched contract's supply: the ledger of the contract's first supply event (mint/burn/clawback) in the lake while its first `sep41_supply_events` row is later, i.e. the `-from` of the `projected-rebuild` that fills the gap; 0 once the check passes or when it fails with no leading gap. No series until the check first runs for the contract. Read by `stellarindex_aggregator_sep41_history_gap`.
 
 ### `stellarindex_aggregator_confidence_compute_total`
 

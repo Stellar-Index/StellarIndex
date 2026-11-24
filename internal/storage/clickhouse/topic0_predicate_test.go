@@ -60,6 +60,8 @@ func TestTopic0SymIncludePredicates_OnlyReviewedSites(t *testing.T) {
 		"internal/storage/clickhouse/event_reader.go": 2,
 		// sep41_supply's decoder matches mint/burn/clawback as Symbols only.
 		"internal/storage/clickhouse/supply_reader.go": 1,
+		// FirstSupplyEvent pairs with supply_flows, which the extract fills only for Symbol mint/burn/clawback (IsSupplyFlowSym).
+		"internal/storage/clickhouse/supply_flows.go": 2,
 	}
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {

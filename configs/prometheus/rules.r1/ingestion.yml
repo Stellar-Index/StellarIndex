@@ -677,10 +677,11 @@ groups:
             heal the lake case: the ledgers row exists. A climb on
             every ledger is a TransactionMeta version break.
 
-      # Any contract can emit a mint/burn/clawback; not_token_shaped (an NFT's u32 id) loses no supply and is excluded.
+      # Any contract can emit a mint/burn/clawback; not_token_shaped (an NFT's u32 id) and judged_non_token (a contract
+      # recorded as no token, clickhouse.judgedNonToken) lose no supply and are excluded.
       # The other reasons are a token-shaped body whose amount did not decode: a supply_flows row is missing.
       - alert: stellarindex_supply_flow_skipped
-        expr: sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!="not_token_shaped"}[3h])) > 0
+        expr: sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!~"not_token_shaped|judged_non_token"}[3h])) > 0
         for: 0m
         keep_firing_for: 1h
         labels:
@@ -1227,7 +1228,7 @@ groups:
       # A job that skips undecodable records and carries on (a -follow daemon cannot exit on a
       # deterministic skip without crash-looping) advances its watermark past rows it never wrote.
       - alert: stellarindex_ops_job_records_skipped
-        expr: sum by (ops_job, reason) (increase(stellarindex_ops_job_skipped_total{reason!="not_token_shaped"}[3h])) > 0
+        expr: sum by (ops_job, reason) (increase(stellarindex_ops_job_skipped_total{reason!~"not_token_shaped|judged_non_token"}[3h])) > 0
         for: 0m
         keep_firing_for: 1h
         labels:
