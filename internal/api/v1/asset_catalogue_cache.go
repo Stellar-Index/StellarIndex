@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/swrverdict"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -72,6 +73,8 @@ type assetsCacheEntry struct {
 	// the SAME entry they joined, so they can read err even after the leader deletes it from
 	// the map (errors are not cached); re-looking it up by key would nil-deref and panic.
 	err error
+	// refreshFailed: the last refresh of a filled entry failed or panicked; only a successful fill clears it.
+	refreshFailed bool
 }
 
 // NewCachedAssetsReader wraps upstream with a TTL cache (ttl=0 disables); the 2-minute production TTL is set in cmd/stellarindex-api/main.go.
@@ -233,21 +236,15 @@ func (c *CachedAssetsReader) GetAssetTradeCount24h(ctx context.Context, assetID 
 
 // swr is the per-asset single-value read through c.single (a free function: methods cannot take type parameters).
 func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
-	v, at, _, err := c.single.get(ctx, op, key, func(ctx context.Context) (any, error) { return upstream(ctx) })
+	v, _, stale, err := c.single.get(ctx, op, key, func(ctx context.Context) (any, error) { return upstream(ctx) })
 	if err != nil {
 		var zero T
 		return zero, err
 	}
-	c.reportIfOverdue(ctx, at)
-	return v.(T), nil
-}
-
-// reportIfOverdue marks the request's [readReport] stale when an entry has outlived its ttl by more than one refresh budget.
-// Plain expiry is not reported: every rebuild of a view cached for the same ttl reads entries that have just expired.
-func (c *CachedAssetsReader) reportIfOverdue(ctx context.Context, at time.Time) {
-	if !at.IsZero() && time.Since(at) >= c.ttl+assetsRefreshBudget {
+	if stale {
 		reportStaleRead(ctx)
 	}
+	return v.(T), nil
 }
 
 // settleRowsFillLocked applies a finished fill: on failure keep a stale value, or hand err to a cold entry's waiters and drop
@@ -256,9 +253,10 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 	entry.flight = nil
 	switch {
 	case err == nil:
-		entry.at = time.Now()
+		entry.at, entry.refreshFailed = time.Now(), false
 		apply()
 	case !entry.at.IsZero():
+		entry.refreshFailed = true
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
 		c.logger.Warn("cache refresh failed; serving stale value", "cache", "coins", "op", op, "key", key, "err", err)
 	default:
@@ -279,20 +277,20 @@ func (c *CachedAssetsReader) fetchRows(
 	op, key string,
 	upstream func(context.Context) ([]timescale.AssetRow, error),
 ) ([]timescale.AssetRow, error) {
-	rows, at, err := c.fetchRowsAt(ctx, op, key, upstream)
-	if err == nil {
-		c.reportIfOverdue(ctx, at)
+	rows, _, stale, err := c.fetchRowsAt(ctx, op, key, upstream)
+	if err == nil && stale {
+		reportStaleRead(ctx)
 	}
 	return rows, err
 }
 
-// fetchRowsAt is fetchRows plus the rows' OBSERVATION TIME, read under the same lock: sampling `e.at` separately races a
-// refresh and would publish fresh rows under a stale `as_of`. A zero `at` means "answered live" (no cache entry).
+// fetchRowsAt is fetchRows plus the rows' OBSERVATION TIME and [swrverdict.Stale] verdict, read under the same lock: sampling
+// `e.at` separately races a refresh and would publish fresh rows under a stale `as_of`. A zero `at` means "answered live".
 func (c *CachedAssetsReader) fetchRowsAt(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]timescale.AssetRow, error),
-) ([]timescale.AssetRow, time.Time, error) {
+) ([]timescale.AssetRow, time.Time, bool, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
@@ -301,7 +299,7 @@ func (c *CachedAssetsReader) fetchRowsAt(
 		out, outAt := e.rows, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-		return out, outAt, nil
+		return out, outAt, false, nil
 	}
 
 	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists (failed cold fetches delete
@@ -310,6 +308,7 @@ func (c *CachedAssetsReader) fetchRowsAt(
 	// get stale, so the slow expiry refetch never lands on a user request.
 	if ok && !e.at.IsZero() {
 		stale, staleAt := e.rows, e.at
+		lastGood := swrverdict.Stale(time.Since(e.at), c.ttl, assetsRefreshBudget, e.refreshFailed)
 		if e.flight == nil {
 			done := make(chan struct{})
 			e.flight = done
@@ -324,11 +323,11 @@ func (c *CachedAssetsReader) fetchRowsAt(
 			// would abort every refresh — defeating the entire point
 			// of serving stale while revalidating.
 			go runDetachedFill(c.logger, "api-assets-catalogue-rows-refresh", assetsRefreshBudget, done, upstream, c.settleRows(op, key, entry))
-			return stale, staleAt, nil
+			return stale, staleAt, lastGood, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
-		return stale, staleAt, nil
+		return stale, staleAt, lastGood, nil
 	}
 
 	// (B)/(C) Cold: no prior success to serve. Join the running fill or
@@ -354,14 +353,14 @@ func (c *CachedAssetsReader) fetchRowsAt(
 			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
 			}
-			return nil, time.Time{}, err
+			return nil, time.Time{}, false, err
 		}
 		if !leader {
 			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
 		}
-		return rows, at, nil
+		return rows, at, false, nil
 	case <-ctx.Done():
-		return nil, time.Time{}, ctx.Err()
+		return nil, time.Time{}, false, ctx.Err()
 	}
 }
 
