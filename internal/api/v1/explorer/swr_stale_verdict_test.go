@@ -54,6 +54,87 @@ func TestRecentContractsCached_StaleVerdict(t *testing.T) {
 		})
 }
 
+func TestAssetHoldersCached_StaleVerdict(t *testing.T) {
+	h, reader := newSWRHandler()
+	const asset = "native"
+	if _, _, _, _, err := h.assetHoldersCached(context.Background(), asset, 10); err != nil {
+		t.Fatal(err)
+	}
+	age := func(d time.Duration) {
+		h.assetHolders.mu.Lock()
+		e := h.assetHolders.entries[asset]
+		e.cachedAt = time.Now().Add(-d)
+		h.assetHolders.entries[asset] = e
+		h.assetHolders.mu.Unlock()
+	}
+	// heldServe serves while the detached refresh it kicks is held, so the verdict is on the aged entry, not a refill.
+	heldServe := func() bool {
+		reader.holdersBlock = make(chan struct{})
+		_, _, _, degraded, err := h.assetHoldersCached(context.Background(), asset, 10)
+		close(reader.holdersBlock)
+		waitFlightIdle(t, &h.assetHolders.flight, asset)
+		reader.holdersBlock = nil
+		if err != nil {
+			t.Fatal(err)
+		}
+		return degraded
+	}
+
+	age(assetHoldersTTL + time.Second)
+	if heldServe() {
+		t.Error("a board just past its TTL, with a healthy refresh running, was served degraded")
+	}
+	age(assetHoldersTTL + min(assetHoldersTTL, assetHoldersRefreshTimeout) + time.Second)
+	if !heldServe() {
+		t.Error("a board past its TTL plus one refresh's grace was served clean")
+	}
+
+	reader.fail.Store(true)
+	age(assetHoldersTTL + time.Second)
+	heldServe() // kicks the refresh that fails
+	if !heldServe() {
+		t.Error("a board whose last refresh failed was served clean")
+	}
+	reader.fail.Store(false)
+	if !heldServe() {
+		t.Error("a board whose last refresh failed was served clean before a refresh succeeded")
+	}
+	age(assetHoldersTTL + time.Second)
+	if heldServe() {
+		t.Error("after a successful refresh, a board just past its TTL was served degraded")
+	}
+}
+
+func TestOpTypeStats_StaleVerdict(t *testing.T) {
+	h, reader := newSWRHandler()
+	h.PrewarmOpTypeStats(context.Background())
+	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
+	age := func(d time.Duration) {
+		h.opTypeStats.mu.Lock()
+		h.opTypeStats.at = time.Now().Add(-d)
+		h.opTypeStats.mu.Unlock()
+	}
+	resolve := func() bool {
+		_, stale := h.resolveOpTypeStats()
+		waitFlightIdle(t, &h.opTypeStats.flight, "stats")
+		return stale
+	}
+
+	age(opTypeStatsTTL + time.Second)
+	if resolve() {
+		t.Error("a panel just past its TTL, with a healthy refresh running, was served stale")
+	}
+	reader.fail.Store(true)
+	age(opTypeStatsTTL + min(opTypeStatsTTL, opTypeStatsRefreshTimeout) + time.Second)
+	if !resolve() {
+		t.Error("a panel past its TTL plus one refresh's grace was served clean")
+	}
+	age(opTypeStatsTTL + time.Second)
+	if !resolve() {
+		t.Error("a panel whose last refresh failed was served clean")
+	}
+}
+
 func TestContractStats_StaleVerdict(t *testing.T) {
 	h, reader := newStatsHandler(nil)
 	age := func(d time.Duration) {

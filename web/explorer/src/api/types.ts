@@ -528,8 +528,10 @@ export interface paths {
          *     `as_of` is when the balances were read: the scan time, or the
          *     rollup cycle's time. `as_of_ledger` is the lake watermark a scanned
          *     board is fresh to, and is omitted for a rollup board. `flags.stale`
-         *     fires when `as_of` or the watermark's close time trails now by
-         *     more than 300s, so a rollup board is usually flagged.
+         *     fires when the lake watermark's close time trails now by more than
+         *     300s, or when `as_of` does: by more than 300s for a scanned board,
+         *     or by more than 70 minutes (two missed rollup cycles) for a rollup
+         *     board. It is also set whenever `flags.degraded` is.
          *
          *     CSV: send `Accept: text/csv` for the same board as CSV with a header
          *     row (`asset,account_id,balance`, same `limit` cap). `balance` is the
