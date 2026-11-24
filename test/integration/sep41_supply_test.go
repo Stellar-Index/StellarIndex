@@ -606,6 +606,46 @@ const (
 // TestSEP41SupplyRollupComment executes 0194 up and down against a real
 // database: only pg_description can show whether the stored text an operator
 // reads in \d+ still describes a single writer and a TRUNCATE recovery.
+// The coverage check sums supply events, so the gap's served side is the first supply event: a transfer served earlier (a
+// transfers-only rebuild) must not hide a supply window that is still missing.
+func TestSEP41FirstSupplyEventLedger_IgnoresTransfers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	rawdb, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	t.Cleanup(func() { _ = rawdb.Close() })
+
+	const contract = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" // synthetic
+	lakeFirstAt := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	if got, err := store.SEP41FirstSupplyEventLedger(ctx, contract, lakeFirstAt); err != nil || got != 0 {
+		t.Fatalf("empty = %d, %v; want 0, nil", got, err)
+	}
+	if _, err := rawdb.ExecContext(ctx, `
+		INSERT INTO sep41_transfers (ledger_close_time, ledger, tx_hash, op_index, contract_id, event_kind, amount)
+		VALUES ($1, 65134033, '\x01'::bytea, 0, $2, 'transfer', 5)`, lakeFirstAt.Add(time.Hour), contract); err != nil {
+		t.Fatalf("insert transfer: %v", err)
+	}
+	if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+		ContractID: contract, Ledger: 65588751, TxHash: fmt.Sprintf("%064x", 2), ObservedAt: lakeFirstAt.Add(26 * 24 * time.Hour),
+		Kind: timescale.SEP41EventMint, Amount: big.NewInt(900), Counterparty: "GA1",
+	}); err != nil {
+		t.Fatalf("insert mint: %v", err)
+	}
+	got, err := store.SEP41FirstSupplyEventLedger(ctx, contract, lakeFirstAt)
+	if err != nil || got != 65588751 {
+		t.Fatalf("SEP41FirstSupplyEventLedger = %d, %v; want the first supply event 65588751, not the transfer", got, err)
+	}
+}
+
 func TestSEP41SupplyRollupComment(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

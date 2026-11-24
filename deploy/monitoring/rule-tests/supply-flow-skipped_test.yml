@@ -76,3 +76,16 @@ tests:
       - eval_time: 200m
         alertname: stellarindex_supply_flow_skipped
         exp_alerts: []
+
+  # A contract recorded in clickhouse.judgedNonToken is relabelled; its skips climb without alerting.
+  - interval: 1m
+    name: judged_non_token skips alone never ticket
+    input_series:
+      - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="judged_non_token"}'
+        values: '0+5x300'
+      - series: 'stellarindex_supply_flow_skipped_total{job="stellarindex-indexer",instance="r1:9464",reason="amount_not_i128"}'
+        values: '0+0x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_supply_flow_skipped
+        exp_alerts: []

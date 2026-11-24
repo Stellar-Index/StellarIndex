@@ -112,6 +112,19 @@ tests:
         alertname: stellarindex_ops_job_records_skipped
         exp_alerts: []
 
+  # A contract recorded in clickhouse.judgedNonToken is relabelled; its skips climb without alerting.
+  - interval: 1m
+    name: judged_non_token skips alone never ticket records_skipped
+    input_series:
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="judged_non_token"}'
+        values: '0+5x300'
+      - series: 'stellarindex_ops_job_skipped_total{job="node_exporter",instance="r1:9100",ops_job="ch-cap67-movements",reason="amount_not_i128"}'
+        values: '0+0x300'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_ops_job_records_skipped
+        exp_alerts: []
+
   # ── the process died hard ────────────────────────────────────────
   # running is stuck at 1 (nothing cleared it — OOM kill) and the 60s
   # liveness ticker stopped at t=20m. By t=60m the heartbeat is 40 min
