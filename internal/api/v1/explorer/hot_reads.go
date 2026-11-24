@@ -292,6 +292,14 @@ type contractsDirEntry struct {
 	types    map[string]bool // contract id -> isSAC; nil when the lookup failed
 	since    uint32
 	cachedAt time.Time
+	// refreshFailed: the last refresh of this window failed or was skipped; only a put clears it.
+	refreshFailed bool
+}
+
+// swrServedStale is the verdict for an entry served past ttl: clean only while its age is within ttl plus one refresh (at
+// most one more ttl, capped at refreshTimeout) and its last refresh did not fail or get skipped.
+func swrServedStale(cachedAt time.Time, ttl, refreshTimeout time.Duration, refreshFailed bool) bool {
+	return refreshFailed || time.Since(cachedAt) > ttl+min(ttl, refreshTimeout)
 }
 
 // contractsDirCache is the TTL cache behind the GET /v1/contracts directory, keyed on the ladder-quantised window.
@@ -323,6 +331,24 @@ func (c *contractsDirCache) put(window int, e contractsDirEntry) {
 	c.entries[window] = e
 }
 
+// markRefreshFailed records on window's entry, if any, that its refresh failed or was skipped.
+func (c *contractsDirCache) markRefreshFailed(window int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[window]; ok {
+		e.refreshFailed = true
+		c.entries[window] = e
+	}
+}
+
+// endRefresh ends window's flight, recording a failure on its entry first.
+func (c *contractsDirCache) endRefresh(window int, key string, fl *keyFlight, err error) {
+	if err != nil {
+		c.markRefreshFailed(window)
+	}
+	c.flight.end(key, fl, err)
+}
+
 // refreshContractsDir kicks ONE detached aggregation for ladder rung `window` (no-op while a flight is up). Detached as in
 // refreshAssetHolders: the multi-day GROUP BY cannot fit a request deadline and would leave the cache cold forever.
 func (h *Handler) refreshContractsDir(window int) *keyFlight {
@@ -335,7 +361,7 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	// scans still contend on the shared pool. The prewarm loop re-kicks within one TTL if skipped.
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("contracts_dir") {
-		h.contractsDir.flight.end(key, fl, errRefreshSaturated)
+		h.contractsDir.endRefresh(window, key, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
@@ -347,7 +373,7 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 				worker.Report(h.Logger, "explorer-contracts-dir-refresh", rec)
 				err = errRefreshPanicked
 			}
-			h.contractsDir.flight.end(key, fl, err)
+			h.contractsDir.endRefresh(window, key, fl, err)
 		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractsDirRefreshTimeout)
@@ -381,14 +407,19 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	return fl
 }
 
-// recentContractsCached serves the directory for the quantised window: fresh as-is; STALE (degraded=true, real asOf) while a detached
-// rerun goes; never-computed waits to the deadline. Returns the ledger floor used so `since_ledger` describes the data served.
+// recentContractsCached serves the directory for the quantised window: an expired entry is served with its real asOf while a
+// detached rerun goes, degraded per [swrServedStale]; never-computed waits to the deadline. Returns the ledger floor used so
+// `since_ledger` describes the data served.
 func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.contractsDir.get(window); ok {
 		if !fresh {
 			h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
+			if cur, ok, _ := h.contractsDir.get(window); ok {
+				e = cur // a refresh skipped just now is already a known failure
+			}
 		}
-		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, !fresh, nil
+		stale := !fresh && swrServedStale(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed)
+		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, stale, nil
 	}
 	fl := h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 	select {
