@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/swrverdict"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -29,7 +30,7 @@ const assetListCacheMaxAge = 2 * time.Minute
 const assetListCacheMaxEntries = 512
 
 // assetListEntry holds one listing page as built, before any exclusion judgement: rendered twice (as built, and with
-// flags.stale set for replays past the TTL, so a hit under an empty exclusion set never re-encodes) and as the envelope a
+// flags.stale set for last-good replays, so a hit under an empty exclusion set never re-encodes) and as the envelope a
 // hit judges when the set is not empty.
 type assetListEntry struct {
 	fresh    []byte
@@ -37,6 +38,8 @@ type assetListEntry struct {
 	env      Envelope
 	cachedAt time.Time
 	flight   bool
+	// refreshFailed: the last refresh errored, panicked or built nothing cacheable; only a put clears it.
+	refreshFailed bool
 }
 
 // assetListHit is one cache replay: body to write as it is, or env to judge first.
@@ -65,8 +68,8 @@ func newAssetListResponseCache(ttl, maxAge time.Duration) *assetListResponseCach
 	}
 }
 
-// lookup returns the body to replay for key. Past the TTL it returns the stale-flagged body and refresh=true to exactly one
-// caller until the refresh settles; past maxAge it misses.
+// lookup returns the body to replay for key. Past the TTL it returns refresh=true to exactly one caller until the refresh
+// settles, and the stale-flagged body once the page is a last-good copy per [swrverdict.Stale]; past maxAge it misses.
 func (c *assetListResponseCache) lookup(key string) (hit assetListHit, refresh, ok bool) {
 	if c == nil || c.ttl <= 0 {
 		return hit, false, false
@@ -84,6 +87,9 @@ func (c *assetListResponseCache) lookup(key string) (hit assetListHit, refresh, 
 	case age <= c.maxAge:
 		refresh = !e.flight
 		e.flight = true
+		if !swrverdict.Stale(age, c.ttl, cacheFillBudget, e.refreshFailed) {
+			return assetListHit{body: e.fresh, env: e.env}, refresh, true
+		}
 		env := e.env
 		env.Flags.Stale = true
 		return assetListHit{body: e.stale, env: env, stale: true}, refresh, true
@@ -119,13 +125,12 @@ func (c *assetListResponseCache) put(key string, env Envelope) error {
 	return nil
 }
 
-// settleFlight lets a later request retry after a refresh that produced
-// nothing cacheable.
+// settleFlight records a refresh that produced nothing cacheable as failed and lets a later request retry.
 func (c *assetListResponseCache) settleFlight(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.entries[key]; ok {
-		e.flight = false
+		e.flight, e.refreshFailed = false, true
 	}
 }
 
