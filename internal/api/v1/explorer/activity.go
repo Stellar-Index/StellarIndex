@@ -17,8 +17,8 @@ import (
 //
 // Every segment is a WHOLE-HISTORY aggregate, so the payload is served through the shared
 // contract-detail SWR cache (contract_detail_cache.go) under an "act:"+g key. The compute runs
-// DETACHED on the refresh budget; an expired entry is served stale (flags.stale + its real as_of)
-// while one single-flighted refresh runs. Reuse the
+// DETACHED on the refresh budget; an expired entry is served with its real as_of while one
+// single-flighted refresh runs, flagged stale per contractDetailEntry.servedStale. Reuse the
 // obs.ObserveExplorerSWRRefresh("contract_detail", ...) label: it is a bounded enum, so do not
 // mint one per key kind.
 
