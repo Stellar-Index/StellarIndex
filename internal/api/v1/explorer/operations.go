@@ -16,7 +16,7 @@ import (
 )
 
 // opsDirTTL is how long the cached /v1/operations first page counts as fresh (~two ledgers). Past it the entry is still SERVED
-// (flags.stale + real as_of) while a detached refresh runs, so the TTL sets the freshness label rather than gating a blocking recompute.
+// (real as_of; flags.stale per swrServedStale) while a detached refresh runs, so the TTL starts a refresh, not a blocking recompute.
 const opsDirTTL = 10 * time.Second
 
 // opsDirRefreshTimeout bounds one detached first-page rebuild: a tail-window-bounded page plus the
@@ -44,6 +44,18 @@ type opsDirCache struct {
 type opsDirEntry struct {
 	view     OperationsView
 	cachedAt time.Time
+	// refreshFailed: the last refresh failed or was skipped; only a put clears it.
+	refreshFailed bool
+}
+
+// endRefresh ends the flight, recording a failure on the entry first.
+func (c *opsDirCache) endRefresh(fl *keyFlight, err error) {
+	if err != nil {
+		c.mu.Lock()
+		c.entry.refreshFailed = c.has
+		c.mu.Unlock()
+	}
+	c.flight.end(opsDirFlightKey, fl, err)
 }
 
 // get returns the cached first-page view whenever one exists, INCLUDING past the TTL (fresh=false):
@@ -609,14 +621,15 @@ func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseW
 		"Internal error", http.StatusInternalServerError, "")
 }
 
-// opsDirCached serves the cached max-page first-page view: stale is served (degraded=true) while a detached refresh runs; a never-computed
-// cache single-flights the fill, so concurrent first requests share ONE lake read.
+// opsDirCached serves the cached max-page first-page view: an expired entry is served while a detached refresh runs, degraded
+// per [swrServedStale]; a never-computed cache single-flights the fill, so concurrent first requests share ONE lake read.
 func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, degraded bool, err error) {
 	if e, hit, fresh := h.opsDir.get(); hit {
 		if !fresh {
-			h.refreshOpsDirectory() //nolint:contextcheck // intentional detach — see refreshOpsDirectory
+			h.refreshOpsDirectory()  //nolint:contextcheck // intentional detach — see refreshOpsDirectory
+			e, _, _ = h.opsDir.get() // a refresh skipped just now is already a known failure
 		}
-		return e.view, e.cachedAt, !fresh, nil
+		return e.view, e.cachedAt, !fresh && swrServedStale(e.cachedAt, opsDirTTL, opsDirRefreshTimeout, e.refreshFailed), nil
 	}
 	// Stone-cold: wait for the detached compute, bounded by OUR deadline
 	// only — the compute itself is not (see refreshAssetHolders).
@@ -726,7 +739,7 @@ func (h *Handler) refreshOpsDirectory() *keyFlight {
 	}
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("ops_directory") {
-		h.opsDir.flight.end(opsDirFlightKey, fl, errRefreshSaturated)
+		h.opsDir.endRefresh(fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
@@ -739,7 +752,7 @@ func (h *Handler) refreshOpsDirectory() *keyFlight {
 				worker.Report(h.Logger, "explorer-ops-directory-refresh", rec)
 				err = errRefreshPanicked
 			}
-			h.opsDir.flight.end(opsDirFlightKey, fl, err)
+			h.opsDir.endRefresh(fl, err)
 		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), opsDirRefreshTimeout)

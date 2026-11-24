@@ -191,6 +191,29 @@ func TestAssetEntryChanges_FirstPageCachedAndCutPerLimit(t *testing.T) {
 	}
 }
 
+// A cached first page carries its computation time as the envelope as_of, not the serve time.
+func TestAssetEntryChanges_CachedPageCarriesItsAsOf(t *testing.T) {
+	h := newProbeHandler(newAssetEntryChangesReader(120, aecAssetFixture(t)), nil)
+	if code, _ := serveAssetEntryChanges(t, h, aecUSD, nil, 25); code != http.StatusOK {
+		t.Fatalf("fill status = %d", code)
+	}
+	ageContractDetail(h, "aec:"+aecUSD, time.Minute)
+	e, ok, fresh := h.contractDetail.get("aec:" + aecUSD)
+	if !ok || !fresh {
+		t.Fatalf("instrument: cached first page ok=%v fresh=%v", ok, fresh)
+	}
+	var asOf time.Time
+	h.ParseLimit = func(http.ResponseWriter, *http.Request, int, int) (int, bool) { return 25, true }
+	h.WriteJSONAt = func(w http.ResponseWriter, _ any, _, _ bool, at time.Time) { asOf = at; w.WriteHeader(http.StatusOK) }
+	h.WriteJSON = func(w http.ResponseWriter, _ any, _ bool) { w.WriteHeader(http.StatusOK) }
+	r := httptest.NewRequest(http.MethodGet, "/v1/assets/x/entry-changes", nil)
+	r.SetPathValue("asset_id", aecUSD)
+	h.AssetEntryChanges(httptest.NewRecorder(), r)
+	if !asOf.Equal(e.cachedAt) {
+		t.Errorf("as_of = %v, want the cached page's computation time %v", asOf, e.cachedAt)
+	}
+}
+
 func TestAssetEntryChanges_AliasResolvesToNative(t *testing.T) {
 	reader := newAssetEntryChangesReader(120, aecAssetFixture(t))
 	code, view := callAssetEntryChanges(t, reader, "crypto:XLM", nil, 25)
