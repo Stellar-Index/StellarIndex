@@ -184,7 +184,7 @@ func TestExplorer_AssetHolders(t *testing.T) {
 }
 
 // A holders board served from the precomputed rollup is as old as the rollup's cycle. The envelope's as_of must be that
-// cycle time, as_of_ledger must not name the watermark read at cache time, and a cycle past the freshness bound is stale.
+// cycle time, as_of_ledger must not name the watermark read at cache time, and a cycle older than two timer cycles is stale.
 func TestExplorer_AssetHolders_PrecomputedBoardCarriesItsOwnAge(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -194,7 +194,8 @@ func TestExplorer_AssetHolders_PrecomputedBoardCarriesItsOwnAge(t *testing.T) {
 	}{
 		{"live scan", time.Time{}, false, 63_888_999},
 		{"rollup cycle 2 minutes old", time.Now().Add(-2 * time.Minute), false, 0},
-		{"rollup cycle 40 minutes old", time.Now().Add(-40 * time.Minute), true, 0},
+		{"rollup cycle 40 minutes old, within its 30-min schedule", time.Now().Add(-40 * time.Minute), false, 0},
+		{"rollup cycle 80 minutes old, behind its schedule", time.Now().Add(-80 * time.Minute), true, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
