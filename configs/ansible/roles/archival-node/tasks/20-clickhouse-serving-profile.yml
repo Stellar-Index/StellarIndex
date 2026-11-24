@@ -133,7 +133,8 @@
                  from the live per-query settings first.
                  What survives unchanged as defense in depth: no
                  INSERT/ALTER/DROP/CREATE from a leaked credential,
-                 allow_databases below pinning it to `stellar`,
+                 the grants below pinning it to SELECT on `stellar`
+                 and system.parts,
                  access_management=0, and the loopback-only network
                  ACL. max_concurrent_queries_for_user still bounds the
                  profile's aggregate footprint for every query that
@@ -167,15 +168,18 @@
                   <profile>api_serving</profile>
                   <quota>default</quota>
                   <access_management>0</access_management>
-                  <!-- Legacy XML access control (this deployment isn't
-                       SQL-driven-access-control): restricts this user
-                       to the `stellar` database (the Tier-1 lake +
-                       ADR-0048 D2's account_movements serving table)
-                       — it has no business touching `system` writes
-                       or any other database on this host. -->
-                  <allow_databases>
-                      <database>stellar</database>
-                  </allow_databases>
+                  <!-- Explicit grants, not allow_databases: that grants ALL
+                       on the database plus global KILL QUERY/SYSTEM, and CH
+                       rejects <grants> beside it. system.parts is the
+                       counts-rollup plan's per-partition row count
+                       (account_op_type_counts.go sourceRows); without it
+                       every account read falls back to the source scan.
+                       test/integration/clickhouse_serving_user_test.go
+                       runs this drop-in. -->
+                  <grants>
+                      <query>GRANT SELECT ON stellar.*</query>
+                      <query>GRANT SELECT ON system.parts</query>
+                  </grants>
               </{{ clickhouse_serving_user }}>
           </users>
       </clickhouse>
@@ -216,6 +220,37 @@
   delay: 2
   # users,profiles — exactly one of each.
   until: ch_serving_profile_live.stdout == '1,1'
+  tags: [clickhouse, clickhouse-serving-profile]
+
+- name: Verify api_serving reads system.parts and is denied other system reads and SYSTEM
+  # As the serving user over loopback HTTP, credentials as headers on stdin
+  # (never argv). A missing grant fails the run here, not days later as
+  # stellarindex_counts_rollup_plan_unusable.
+  when:
+    - clickhouse_serving_profile_enabled | bool
+    - not ansible_check_mode
+  ansible.builtin.command:
+    argv: [curl, -sS, --max-time, "10", -H, "@-", -w, "\n%{http_code}",
+           "http://127.0.0.1:8123/", --data-binary, "{{ item.q }}"]
+    stdin: |-
+      X-ClickHouse-User: {{ clickhouse_serving_user }}
+      X-ClickHouse-Key: {{ clickhouse_serving_password }}
+  loop:
+    - {q: "SELECT count() FROM system.parts WHERE database = 'stellar'", allowed: true}
+    - {q: "SELECT count() FROM system.processes", allowed: false}
+    - {q: "SYSTEM DROP DNS CACHE", allowed: false}
+  loop_control:
+    label: "{{ item.q }}"
+  register: ch_serving_grants_probe
+  changed_when: false
+  no_log: true   # stdin carries the serving password
+  retries: 5
+  delay: 2
+  # Allowed: HTTP 200. Denied: ACCESS_DENIED (497), not an auth or transport error.
+  until: >-
+    ((ch_serving_grants_probe.stdout_lines | last) == '200')
+    if item.allowed else
+    ('Code: 497' in ch_serving_grants_probe.stdout)
   tags: [clickhouse, clickhouse-serving-profile]
 
 # ───── ops_batch: the LOW-priority counterpart ─────────

@@ -91,7 +91,8 @@ Ticket. `stellarindex_counts_rollup_plan_ok{rollup} == 0` for 30m, exported by t
 Fix:
 
 1. Table missing: build it per `deploy/clickhouse/account_op_types.sql` Step 6 (`ch-optype-rollup -max-closed 0 -write` under `run-heavy-job.sh`), then enable `optype-rollup.timer`.
-2. Table present: `stellarindex-ops ch-optype-rollup` (dry run) lists the partitions it would rebuild; check the API log for the sentinel read error.
+2. API log shows `partition rows: code: 497 ... SELECT ON system.parts`: the plan reads `system.parts` as the serving user, which lacks that grant. Re-run the role with `--tags clickhouse-serving-profile` (the users.d drop-in hot-reloads; no restart) and confirm its `Verify api_serving reads system.parts` task passes. By hand: `curl -sS -H 'X-ClickHouse-User: <serving user>' -H 'X-ClickHouse-Key: <password>' http://127.0.0.1:8123/ --data-binary "SELECT count() FROM system.parts WHERE database = 'stellar'"` must print a number. The gauge recovers on the next plan refresh (1 min, on page traffic).
+3. Table present: `stellarindex-ops ch-optype-rollup` (dry run) lists the partitions it would rebuild; check the API log for the sentinel read error.
 
 ## stellarindex_counts_rollup_stale_partitions
 
