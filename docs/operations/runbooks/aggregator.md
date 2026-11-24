@@ -93,6 +93,16 @@ Escalate: disk will not free, or Redis still rejects writes after BGSAVE. Past i
 
 Ticket. `increase(stellarindex_aggregator_contribution_write_errors_total[15m]) > 0`, `for: 0m`. The `ContributionSink` failed to write a per-(pair, window) batch to `price_source_contributions`. The write is atomic, so the bucket's per-source record is lost while its VWAP still served. Check the aggregator log for the write error and its Postgres connectivity; a lost bucket is not backfilled.
 
+## stellarindex_aggregator_window_truncated
+
+Ticket. `sum by (pair, window) (increase(stellarindex_aggregator_window_truncated_total[10m])) > 0`, `for: 30m`. A leg read for that (pair, window) hit `max_trades_per_window` and the minute-sum fill could not cover the older part, so the served VWAP covers `[covered_from, to)` only and carries `truncated`. The fill re-reads at most 10 over-spread minutes raw per leg (`minuteRawBudget`); a volatile day exceeds that on the 24h leg of a liquid pair.
+
+1. Read the aggregator WARN line `trade window truncated` for the pair: `window`, `fetch_pair` (the leg), `covered_from`, `rows`. A `covered_from` near `to` means most of the window is missing.
+2. If the log also shows `minute-sums read failed`, or the window is past 25h, the fill did not run at all: fix that cause first (Postgres, `trade_sums_1m` watermark).
+3. Otherwise it clears on its own as the volatile minutes leave the window (up to 24h for the `24h` window). The served value is honestly flagged; no data is wrong or lost.
+
+Escalate: a pair truncated on most days, which means the budget or `max_trades_per_window` no longer fits its volume.
+
 ## stellarindex_aggregator_class_drop_spike
 
 P3. Expr: `sum(rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m]))` above 10x its `offset 1h` baseline, `for: 15m`. The class filter is dropping trades; most often a new venue not yet in `external.Registry` hits the fail-closed `IncludeInVWAP=false` fallback. Ingest still records rows.

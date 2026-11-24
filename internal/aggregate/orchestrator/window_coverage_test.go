@@ -1,16 +1,22 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"sort"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -152,7 +158,7 @@ func TestFillFromMinuteSums_ReproducesTheWholeWindow(t *testing.T) {
 	s := &sumsStore{raw: busyWindow(t, pair, from), watermark: to}
 	o := coverageOrch(t, s, 1001, 4) // 1001 = mid-timestamp; 6 rows per timestamp
 
-	got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+	got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, time.Hour, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +214,7 @@ func TestFillFromMinuteSums_OutlierFilterMatchesUncappedRead(t *testing.T) {
 		s := &sumsStore{raw: raw, watermark: to}
 		o := coverageOrch(t, s, 200, 4) // raw rows cover the last ~11 minutes
 
-		got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+		got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, time.Hour, from, to)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,7 +256,7 @@ func TestFillFromMinuteSums_WideMinuteIsReadRaw(t *testing.T) {
 	s := &sumsStore{raw: raw, watermark: to}
 	o := coverageOrch(t, s, 1000, 4)
 
-	got, _, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+	got, _, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, time.Hour, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,13 +290,28 @@ func TestFillFromMinuteSums_BudgetExhaustedEndsCoverage(t *testing.T) {
 	}
 	s := &sumsStore{raw: raw, watermark: to}
 	o := coverageOrch(t, s, 100, 4) // raw part covers only the last ~6 minutes
+	var logs bytes.Buffer
+	o.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	counter := obs.AggregatorWindowTruncatedTotal.WithLabelValues(pair.String(), "1h")
+	before := testutil.ToFloat64(counter)
 
-	got, _, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+	got, _, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, time.Hour, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := from.Add(time.Minute); !coveredFrom.Equal(want) {
 		t.Fatalf("coveredFrom = %v, want %v (end of the oldest wide minute, the one past the budget)", coveredFrom, want)
+	}
+	if d := testutil.ToFloat64(counter) - before; d != 1 {
+		t.Errorf("truncated counter {pair=%s, window=1h} advanced by %v, want 1", pair, d)
+	}
+	// The operator acts on this line: it must say which served pair and window lost coverage, from where, and over how many rows.
+	for _, want := range []string{
+		" pair=" + pair.String(), " window=1h", "covered_from=" + coveredFrom.UTC().Format("2006-01-02T15:04:05"), fmt.Sprintf("rows=%d", len(got)),
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("truncation log lacks %q:\n%s", want, logs.String())
+		}
 	}
 	for _, tr := range got {
 		if tr.Timestamp.Before(coveredFrom) {
@@ -315,7 +336,7 @@ func TestFillFromMinuteSums_FallsBackToTruncated(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := &sumsStore{raw: busyWindow(t, pair, from), watermark: tc.watermark}
 			o := coverageOrch(t, s, 1000, 4)
-			got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, tc.from, to)
+			got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, to.Sub(tc.from), tc.from, to)
 			if err != nil {
 				t.Fatal(err)
 			}

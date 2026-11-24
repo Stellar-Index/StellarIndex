@@ -355,6 +355,28 @@ groups:
             gone for that bucket. Check the aggregator's Postgres
             connectivity and its log for the write error.
 
+      # A capped leg that the minute-sum fill could not complete serves a
+      # window VWAP over [covered_from, to) only, flagged `truncated`. The
+      # counter ticks once per decided bucket (every minute) while it lasts;
+      # `for: 30m` keeps one volatile minute's spill silent.
+      - alert: stellarindex_aggregator_window_truncated
+        expr: |
+          sum by (pair, window) (increase(stellarindex_aggregator_window_truncated_total[10m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_window_truncated
+          summary: "{{ $labels.pair }} {{ $labels.window }} VWAP covers only part of its window"
+          description: |
+            The {{ $labels.window }} VWAP for {{ $labels.pair }} has been
+            served `truncated` for 30 minutes: a leg read hit
+            MaxTradesPerWindow and the minute-sum fill could not cover the
+            older part. The aggregator WARN line "trade window truncated"
+            names the leg, covered_from and rows.
+
       # ── Protocol-events rollup worker ──
       #
       # protoeventsrollup folds the trailing-24h per-source event census into
