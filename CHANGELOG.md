@@ -45,6 +45,7 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 - **api:** the asset and source pages give one verdict per figure, and the asset page shows no withheld or partial figure as exact (#4329, #4308).
 - **api:** RWA references are judged against exclusions and stale history is bounded; RWA members, premium days and history report what was left out (#4334, #4314).
 - **api:** a rollup-backed holders board is judged against the rollup cadence, 70 minutes, instead of 300 seconds; a board scanned live from the lake keeps 300 seconds (#4335).
+- **api:** a response served from a background-refreshed cache is flagged `stale` only when it is past the route's age bound or its last refresh failed, not on every serve after the refresh interval; affects network stats, contract detail and its sibling views, the contracts and operations directories, network throughput and classic supply. Position data keeps a 90-second bound (#4339).
 - **api:** classic supply agrees across the listing, detail and supply routes; floor supply, same-market 24-hour change and exact asset ids are fixed (#4299, #4289).
 - **api:** peg totals and freeze release are corrected; derived market-cap charts measure both legs; no price fill may replace a withholding it cannot answer (#4287, #4286, #4284).
 - **api:** lending liquidation prices refuse a partial price read: the leg is null with `price_unread` and profit is served only when both sides are exact (#4332).
