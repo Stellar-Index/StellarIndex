@@ -30,6 +30,7 @@ func wireMarkets(rows []timescale.Market) []v1.Market {
 			TradeCount24h:    m.TradeCount24h,
 			Volume24hUSD:     m.Volume24hUSD,
 			LastPrice:        m.LastPrice,
+			LastPricedAt:     v1.WireTime(m.LastPricedAt),
 			VolumeLowerBound: m.VolumeLowerBound,
 		}
 	}

@@ -897,6 +897,45 @@ func TestOraclePrices_PegFallbackIsStale(t *testing.T) {
 	}
 }
 
+// A dormant direct series served because a later peg leg could not be read is not known best: degraded and never cached.
+func TestOraclePrices_UnreadLaterLegDegradesTheServedSeries(t *testing.T) {
+	usdc, _ := oraclePegs(t)
+	direct := map[string][]v1.PriceSnapshot{"native/fiat:USD": pegSeries("fiat:USD", "0.1620")}
+	cases := []struct {
+		name    string
+		errs    map[string]error
+		wantDeg bool
+	}{
+		{"later leg read error", map[string]error{"native/" + usdc.String(): errors.New("pool acquire timeout")}, true},
+		{"later leg empty", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:            &stubPriceReader{recent: direct, errByPair: tc.errs},
+				USDPeggedClassics: []canonical.Asset{usdc},
+			})
+			ts := startHTTPTest(t, srv.Handler())
+			resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native&records=5")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200 from the direct series", resp.StatusCode)
+			}
+			noStore := resp.Header.Get("Cache-Control") == "no-store"
+			var env struct {
+				Data []v1.SEP40Price `json:"data"`
+			}
+			mustDecode(t, resp, &env)
+			if len(env.Data) != 1 || env.Data[0].Price != "0.1620" {
+				t.Fatalf("data = %+v, want the direct 0.1620 record", env.Data)
+			}
+			// Flags.Degraded is never serialised; no-store is how it reaches the wire.
+			if noStore != tc.wantDeg {
+				t.Errorf("Cache-Control no-store = %v, want %v (degraded)", noStore, tc.wantDeg)
+			}
+		})
+	}
+}
+
 // TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm: the
 // self-pair guard on the surface that walks the pegs with its own reader call.
 func TestOraclePrices_DeclaredPegSACTwinNeverProbesItsOwnClassicForm(t *testing.T) {
