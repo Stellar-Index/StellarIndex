@@ -14,10 +14,14 @@ type statsReader struct {
 	*capReader
 	statsCalls atomic.Int32
 	typesErr   error
+	fail       atomic.Bool
 }
 
 func (r *statsReader) ContractStats(context.Context) (clickhouse.ContractStats, error) {
 	r.statsCalls.Add(1)
+	if r.fail.Load() {
+		return clickhouse.ContractStats{}, errRefreshFailed
+	}
 	n := int64(9)
 	return clickhouse.ContractStats{
 		Deployments: []clickhouse.ContractDeployMonth{

@@ -137,4 +137,22 @@ func TestAssetsQSACLookupFailureIsUnavailable(t *testing.T) {
 		!strings.Contains(body, `"price_withheld_reason":"source_excluded"`) {
 		t.Errorf("replayed page under an exclusion: status = %d body %s; want price_usd withheld", rec.Code, body)
 	}
+
+	// The fallback replay cannot start a refresh, so it must leave the flight for the handler's next lookup to claim.
+	clock := &fakeClock{t: time.Now()}
+	s.assetListCache.now = clock.now
+	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: usdc}}}); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(time.Minute + time.Second)
+	rec = httptest.NewRecorder()
+	s.handleAssetList(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fallback replay past the TTL: status = %d", rec.Code)
+	}
+	_, first, _ := s.assetListCache.lookup(assetListCacheKey(req))
+	_, second, _ := s.assetListCache.lookup(assetListCacheKey(req))
+	if !first || second {
+		t.Errorf("handler lookups after the fallback replay: refresh = %v then %v, want exactly one refresh", first, second)
+	}
 }

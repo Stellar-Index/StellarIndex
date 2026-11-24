@@ -14,18 +14,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// protocolDetailTTL is the freshness horizon of a cached /v1/protocols/{name} detail; past it the entry is served STALE
-// (flags.stale + analytics.status="stale") while a detached single-flight rebuild runs, so a built page never blanks back to a
-// cold 503.
+// protocolDetailTTL is the longest a cached /v1/protocols/{name} detail is served clean; past it the entry is served STALE
+// (flags.stale + analytics.status="stale") while a detached single-flight rebuild runs, so a built page never blanks back to
+// a cold 503.
 const protocolDetailTTL = 20 * time.Minute
 
 // protocolDetailRefreshTimeout bounds one detached rebuild so a wedged query cannot pin the
 // single-flight.
 const protocolDetailRefreshTimeout = 90 * time.Second
 
+// protocolDetailRefreshAfter starts the rebuild one budget before the TTL, so an on-time rebuild lands before the entry is
+// stale: the roster, event counts and verdicts it froze at build are never served clean past the TTL.
+const protocolDetailRefreshAfter = protocolDetailTTL - protocolDetailRefreshTimeout
+
 type protoDetailEntry struct {
 	view ProtocolDetailView
 	at   time.Time
+	// refreshFailed: the last rebuild of this key failed, timed out or panicked; only a complete rebuild clears it.
+	refreshFailed bool
 }
 
 // protoDetailInitLocked lazy-creates the cache maps. Caller holds
@@ -37,8 +43,8 @@ func (s *Server) protoDetailInitLocked() {
 	}
 }
 
-// cachedProtocolDetail returns the detail view for key stale-while-revalidate: fresh as-is; past protocolDetailTTL served stale while ONE
-// detached rebuild runs;
+// cachedProtocolDetail returns the detail view for key stale-while-revalidate: fresh as-is; past protocolDetailRefreshAfter served while
+// ONE detached rebuild runs, stale once a last-good copy per [swrServedStale];
 // never built waits for that build up to the caller's deadline. The build is NOT bound to that deadline (a request-bound build could be
 // cancelled forever and never fill the cache).
 // The key is protocolDetailCacheKey (name AND bespoke window): ?days= varies the block, so a name-only key would serve one window's
@@ -48,13 +54,13 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 	s.protoDetailMu.Lock()
 	s.protoDetailInitLocked()
 	if e, has := s.protoDetailCache[key]; has {
-		if time.Since(e.at) < protocolDetailTTL {
+		if time.Since(e.at) < protocolDetailRefreshAfter {
 			s.protoDetailMu.Unlock()
 			return e.view, e.at, false, true
 		}
 		s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — the rebuild must outlive this request (see protoDetailRefreshLocked)
 		s.protoDetailMu.Unlock()
-		return e.view, e.at, true, true
+		return e.view, e.at, swrServedStale(e.at, protocolDetailRefreshAfter, protocolDetailRefreshTimeout, e.refreshFailed), true
 	}
 	done := s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	s.protoDetailMu.Unlock()
@@ -87,6 +93,7 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 			if rec := recover(); rec != nil {
 				worker.Report(s.logger, "api-protocol-detail-refresh", rec)
 				obs.ProtocolDetailRefreshTotal.WithLabelValues("degraded").Inc()
+				s.failProtoDetailRefresh(key)
 			}
 			s.endProtoDetailFlight(key, done)
 		}()
@@ -110,8 +117,12 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 		existing, exists := s.protoDetailCache[key]
 		// rctx.Err() alone is not enough: a fast-failing build (store down) has it nil but an
 		// analytics-empty view.
-		if outcome == "ok" || outcome == "stale" || !exists || !protoDetailEntryHealthy(existing) {
-			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
+		failed := outcome != "ok" && outcome != "stale"
+		if !failed || !exists || !protoDetailEntryHealthy(existing) {
+			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now(), refreshFailed: failed}
+		} else {
+			existing.refreshFailed = true
+			s.protoDetailCache[key] = existing
 		}
 		s.protoDetailMu.Unlock()
 
@@ -132,6 +143,16 @@ func (s *Server) endProtoDetailFlight(key string, done chan struct{}) {
 	delete(s.protoDetailFlight, key)
 	s.protoDetailMu.Unlock()
 	close(done)
+}
+
+// failProtoDetailRefresh records a rebuild of key that ended without settling (a panic) as failed.
+func (s *Server) failProtoDetailRefresh(key string) {
+	s.protoDetailMu.Lock()
+	defer s.protoDetailMu.Unlock()
+	if e, ok := s.protoDetailCache[key]; ok {
+		e.refreshFailed = true
+		s.protoDetailCache[key] = e
+	}
 }
 
 // protoDetailEntryHealthy reports whether a cached entry carries a COMPLETE page ("ok", or "stale" with the last-good bespoke block); a
