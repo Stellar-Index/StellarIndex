@@ -6,11 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/swrverdict"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // swrCache is a keyed TTL cache with single-flight fills and stale-while-revalidate: once a key has filled, an expired value is
-// served (dated by its fill time, flagged stale) while one detached fill replaces it, and a failed refresh keeps the old value.
+// served (dated by its fill time) while one detached fill replaces it, and a failed refresh keeps the old value. A served value
+// is flagged stale per [swrverdict.Stale]: its refresh failed, or it is older than ttl+min(ttl, cacheFillBudget).
 type swrCache[V any] struct {
 	logger     *slog.Logger // sinks a failed refresh and a panic recovered in a detached fill
 	cache      string       // APICacheOpsTotal cache label
@@ -18,6 +20,7 @@ type swrCache[V any] struct {
 	ttl        time.Duration
 	ttlOf      func(V) time.Duration // per-value TTL; nil = ttl
 	maxEntries int                   // 0 = unbounded; set it whenever keys carry client-controlled parts
+	now        func() time.Time
 
 	mu      sync.Mutex
 	entries map[string]*swrEntry[V]
@@ -39,7 +42,7 @@ func newSWRCache[V any](logger *slog.Logger, cache, fillName string, ttl time.Du
 		logger = slog.Default()
 	}
 	return &swrCache[V]{
-		logger: logger, cache: cache, fillName: fillName, ttl: ttl, maxEntries: maxEntries,
+		logger: logger, cache: cache, fillName: fillName, ttl: ttl, maxEntries: maxEntries, now: time.Now,
 		entries: map[string]*swrEntry[V]{},
 	}
 }
@@ -61,7 +64,7 @@ func (c *swrCache[V]) count(op, result string) {
 	obs.APICacheOpsTotal.WithLabelValues(c.cache, op, result).Inc()
 }
 
-// get returns key's value, its fill time and whether it is past the TTL. Only a key with no successful fill makes the caller wait,
+// get returns key's value, its fill time and whether it is a last-good copy per [swrverdict.Stale]. Only a key with no successful fill makes the caller wait,
 // and then only on the fill or its own ctx: fills run detached (runDetachedFill), so one caller's abort cannot fail the others.
 func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(context.Context) (V, error)) (V, time.Time, bool, error) {
 	var zero V
@@ -113,7 +116,7 @@ func (c *swrCache[V]) lastGood(key string, budget time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[key]
-	return ok && !e.at.IsZero() && (e.refreshFailed || (e.flight != nil && time.Since(e.flightAt) >= budget))
+	return ok && !e.at.IsZero() && (e.refreshFailed || (e.flight != nil && c.now().Sub(e.flightAt) >= budget))
 }
 
 // lookupResult is a filled value (entry nil) or the cold-fill entry to wait on.
@@ -132,7 +135,7 @@ func (c *swrCache[V]) lookup(op, key string, upstream func(context.Context) (V, 
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
-	if ok && e.flight == nil && time.Since(e.at) < c.entryTTL(e.val) {
+	if ok && e.flight == nil && c.now().Sub(e.at) < c.entryTTL(e.val) {
 		out, at := e.val, e.at
 		c.mu.Unlock()
 		c.count(op, "hit")
@@ -142,13 +145,14 @@ func (c *swrCache[V]) lookup(op, key string, upstream func(context.Context) (V, 
 	if ok && !e.at.IsZero() {
 		out, at := e.val, e.at
 		if e.flight == nil {
-			e.flight, e.flightAt = make(chan struct{}), time.Now()
+			e.flight, e.flightAt = make(chan struct{}), c.now()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill — see runDetachedFill.
 			go runDetachedFill(c.logger, c.fillName, cacheFillBudget, e.flight, upstream, c.settle(op, key, e))
 		}
+		stale := swrverdict.Stale(c.now().Sub(e.at), c.entryTTL(e.val), cacheFillBudget, e.refreshFailed)
 		c.mu.Unlock()
 		c.count(op, "stale")
-		return lookupResult[V]{val: out, at: at, stale: true}
+		return lookupResult[V]{val: out, at: at, stale: stale}
 	}
 
 	entry, leader := e, false
@@ -186,7 +190,7 @@ func (c *swrCache[V]) settle(op, key string, entry *swrEntry[V]) func(V, error) 
 			}
 			return
 		}
-		entry.at = time.Now()
+		entry.at = c.now()
 		entry.val = val
 		entry.flight, entry.refreshFailed = nil, false
 	}

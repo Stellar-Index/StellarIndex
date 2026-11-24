@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/swrverdict"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -21,7 +22,8 @@ const (
 	// Soroban asset without a supply snapshot runs this FINAL sum per page view, so a crawler turns it into sustained lake load.
 	tokenSupplyTTL = 5 * time.Minute
 
-	// tokenSupplyFillTimeout bounds one detached fill; the largest contracts sum millions of flows.
+	// tokenSupplyFillTimeout bounds one detached fill; the largest contracts sum millions of flows. A reading past its TTL is
+	// flagged stale once older than TTL plus this, since a refresh still running then is late ([swrverdict.Stale]).
 	tokenSupplyFillTimeout = 30 * time.Second
 
 	// tokenSupplyCacheMax caps cached contracts so a crawl over every token cannot grow the map without bound.
@@ -31,6 +33,8 @@ const (
 type tokenSupplyEntry struct {
 	sup clickhouse.TokenSupply
 	at  time.Time
+	// failed: the last refresh failed or panicked, so sup is a last-good copy until one succeeds.
+	failed bool
 }
 
 // TokenSupplyCache is a per-contract TTL cache in front of [clickhouse.SupplyReader.TokenSupply]; the embedded reader still serves
@@ -56,7 +60,8 @@ func newTokenSupplyCache(sr *clickhouse.SupplyReader, upstream func(context.Cont
 }
 
 // TokenSupply serves a fresh entry or joins one detached fill per contract; a failed fill falls back to the last-good reading,
-// reported stale on ctx's [readReport]. Every return is a copy, so no caller can mutate another's amounts.
+// reported stale on ctx's [readReport]. A caller that stops waiting on a refresh gets the expired reading, stale per [swrverdict.Stale].
+// Every return is a copy, so no caller can mutate another's amounts.
 func (c *TokenSupplyCache) TokenSupply(ctx context.Context, contractID string) (clickhouse.TokenSupply, error) {
 	c.mu.Lock()
 	prev, have := c.entries[contractID]
@@ -82,10 +87,30 @@ func (c *TokenSupplyCache) TokenSupply(ctx context.Context, contractID string) (
 		return copyTokenSupply(sup), nil
 	case <-ctx.Done():
 		if have {
-			reportStaleRead(ctx)
+			if c.servedStale(contractID, prev.at) {
+				reportStaleRead(ctx)
+			}
 			return copyTokenSupply(prev.sup), nil
 		}
 		return clickhouse.TokenSupply{}, ctx.Err()
+	}
+}
+
+// servedStale is the [swrverdict.Stale] verdict for the reading filled at servedAt while contractID's refresh runs.
+func (c *TokenSupplyCache) servedStale(contractID string, servedAt time.Time) bool {
+	c.mu.Lock()
+	failed := c.entries[contractID].failed
+	c.mu.Unlock()
+	return swrverdict.Stale(c.now().Sub(servedAt), tokenSupplyTTL, tokenSupplyFillTimeout, failed)
+}
+
+// markFailed remembers a failed refresh of a filled entry until a fill succeeds.
+func (c *TokenSupplyCache) markFailed(contractID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[contractID]; ok {
+		e.failed = true
+		c.entries[contractID] = e
 	}
 }
 
@@ -98,6 +123,12 @@ func (c *TokenSupplyCache) fill(contractID string) (val any, err error) {
 	if have && c.now().Sub(cur.at) < tokenSupplyTTL {
 		return cur.sup, nil
 	}
+	// Registered before the recover below, so it runs after it and sees a panic as err.
+	defer func() {
+		if err != nil {
+			c.markFailed(contractID)
+		}
+	}()
 	// singleflight re-raises a panic on a fresh goroutine nothing can
 	// recover, so it must be turned into an error here.
 	defer func() {

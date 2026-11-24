@@ -10,7 +10,8 @@ import (
 )
 
 // cacheFillBudget bounds a detached fill for caches that had no refresh
-// budget of their own. Matches the markets/assets/oracle budgets.
+// budget of their own. Matches the markets/assets/oracle budgets. For swrCache it also caps how long past its ttl a value with a
+// refresh still running is served unflagged: a refresh that cannot finish inside it is late.
 const cacheFillBudget = 30 * time.Second
 
 // errCacheFillPanicked is what a waiter receives when the detached fill it

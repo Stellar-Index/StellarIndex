@@ -71,22 +71,21 @@ type MarketsReader interface {
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
-// marketsStaleReader is the optional CachedMarketsReader capability reporting observedAt (zero = as_of=now) and stale (past TTL),
-// so handleMarkets never stamps as_of=now over old rows while refresh keeps failing.
+// marketsStaleReader is the optional CachedMarketsReader capability reporting observedAt (zero = as_of=now) and stale (a last-good
+// copy per [swrverdict.Stale]), so handleMarkets never stamps as_of=now over old rows while refresh keeps failing.
 type marketsStaleReader interface {
 	DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 }
 
-// sparklineStaleReader is the optional cached sparkline batch read; stale means the batch came from the stale-while-revalidate
-// branch, and the page then carries flags.stale.
+// sparklineStaleReader is the optional cached sparkline batch read; stale means the batch is a last-good copy per [swrverdict.Stale],
+// and the page then carries flags.stale.
 type sparklineStaleReader interface {
 	GetPairsVolumeHistory24hBatchAt(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, bool, error)
 }
 
-// poolsStaleReader is marketsStaleReader's /v1/pools counterpart; stale means the rows came from
-// the cache's stale-while-revalidate branch.
+// poolsStaleReader is marketsStaleReader's /v1/pools counterpart; stale means the rows are a last-good copy per [swrverdict.Stale].
 type poolsStaleReader interface {
 	AllPoolsStale(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, time.Time, bool, error)
 }
@@ -549,8 +548,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 	}
 
-	// A stale-while-revalidate serve stamps flags.stale and the data's actual observation time,
-	// never now() over rows a failing refresh let age past the TTL. An uncached read leaves
+	// A cached serve stamps the data's actual observation time, never now(), and a last-good copy
+	// (failed or late refresh) stamps flags.stale. An uncached read leaves
 	// observedAt zero and writeEnvelope defaults as_of to now.
 	env := Envelope{
 		Data:  rows,

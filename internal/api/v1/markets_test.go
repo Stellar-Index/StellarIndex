@@ -304,8 +304,9 @@ func (u *swrStaleMarketsUpstream) DistinctPairsExt(ctx context.Context, cursor s
 	return u.stubMarketsReader.DistinctPairsExt(ctx, cursor, limit, order)
 }
 
-// TestMarkets_SWRStaleServeStampsHonestFlags: an expired entry served while refresh keeps failing must report
-// flags.stale=true and as_of = the rows' real observation time; a fresh serve stays stale:false.
+// TestMarkets_SWRStaleServeStampsHonestFlags: an entry served past ttl+min(ttl, budget) (here 2*ttl) must report
+// flags.stale=true and as_of = the rows' real observation time; a fresh serve stays stale:false. The healthy-refresh and
+// failed-refresh cases are in TestMarketsSWR_FlagsOnlyLateOrFailedRefresh.
 func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	const ttl = 40 * time.Millisecond
 	up := &swrStaleMarketsUpstream{
@@ -354,7 +355,7 @@ func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
 		t.Fatalf("stale serve: got %d rows, want the old rows served (1)", len(stale.Data))
 	}
 	if !stale.Flags.Stale {
-		t.Errorf("stale serve: flags.stale = false, want true (expired entry served while refresh fails)")
+		t.Errorf("stale serve: flags.stale = false, want true (entry served past its hard bound)")
 	}
 	if !stale.AsOf.Equal(fresh.AsOf) {
 		t.Errorf("stale serve: as_of = %v, want the OLD fill time %v (the served data's real observation time)", stale.AsOf, fresh.AsOf)
@@ -392,8 +393,8 @@ func (u *swrStalePoolsUpstream) AllPools(ctx context.Context, f timescale.PoolsF
 	return u.stubMarketsReader.AllPools(ctx, f, cursor, limit, order)
 }
 
-// /v1/pools served from an expired cache entry whose refresh keeps failing
-// must report flags.stale=true and the rows' original fill time as as_of.
+// /v1/pools served from a cache entry past its hard bound (2*ttl here) must
+// report flags.stale=true and the rows' original fill time as as_of.
 func TestPools_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	const ttl = 40 * time.Millisecond
 	up := &swrStalePoolsUpstream{
