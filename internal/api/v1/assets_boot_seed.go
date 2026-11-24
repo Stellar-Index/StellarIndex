@@ -56,7 +56,7 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 
 	// Rows and observation time must come from the SAME lock acquisition: sampling `e.at` first
 	// races a refresh and stamps fresh rows with the stale entry's as_of and freshness flag.
-	rows, at, err := c.fetchRowsAt(ctx, "list_coins", key,
+	rows, at, stale, err := c.fetchRowsAt(ctx, "list_coins", key,
 		func(ctx context.Context) ([]timescale.AssetRow, error) {
 			return c.upstream.ListAssetsExt(ctx, opts)
 		})
@@ -67,7 +67,7 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 	if at.IsZero() {
 		return rows, time.Time{}, false, nil
 	}
-	return rows, at, time.Since(at) >= c.ttl, nil
+	return rows, at, stale, nil
 }
 
 // listAssetsExtAt reads via [CachedAssetsReader.ListAssetsExtAt] when the reader has it, else the plain call (avoids widening

@@ -45,6 +45,8 @@ type ContractStatsView struct {
 type contractStatsEntry struct {
 	view     ContractStatsView
 	cachedAt time.Time
+	// refreshFailed: the last refresh failed, panicked or was skipped; only a put clears it.
+	refreshFailed bool
 }
 
 // contractStatsCache is the single-entry cache behind GET /v1/contracts/stats. Zero value ready.
@@ -67,6 +69,15 @@ func (c *contractStatsCache) put(e contractStatsEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entry = &e
+}
+
+// markRefreshFailed records on the entry, if any, that its refresh failed or was skipped.
+func (c *contractStatsCache) markRefreshFailed() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entry != nil {
+		c.entry.refreshFailed = true
+	}
 }
 
 func buildContractStatsView(s clickhouse.ContractStats, now time.Time) ContractStatsView {
@@ -108,6 +119,7 @@ func (h *Handler) refreshContractStats() *keyFlight {
 	}
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("contract_stats") {
+		h.contractStats.markRefreshFailed()
 		h.contractStats.flight.end(contractStatsKey, fl, errRefreshSaturated)
 		return fl
 	}
@@ -118,6 +130,9 @@ func (h *Handler) refreshContractStats() *keyFlight {
 			if rec := recover(); rec != nil {
 				worker.Report(h.Logger, "explorer-contract-stats-refresh", rec)
 				err = errRefreshPanicked
+			}
+			if err != nil {
+				h.contractStats.markRefreshFailed()
 			}
 			h.contractStats.flight.end(contractStatsKey, fl, err)
 		}()
@@ -147,7 +162,8 @@ func (h *Handler) PrewarmContractStats(ctx context.Context) {
 	h.refreshContractStats() //nolint:contextcheck // intentional detach — prewarm kicks the same background compute
 }
 
-// ContractStats serves GET /v1/contracts/stats (monthly deployments, totals, 90-day active count); snapshot-served, a stale entry returns degraded while a detached refresh runs.
+// ContractStats serves GET /v1/contracts/stats (monthly deployments, totals, 90-day active count); snapshot-served, an expired
+// entry is served while a detached refresh runs, degraded per [swrServedStale].
 func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -156,8 +172,12 @@ func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 	if e, ok, fresh := h.contractStats.get(); ok {
 		if !fresh {
 			h.refreshContractStats() //nolint:contextcheck // intentional detach — see refreshContractStats
+			if cur, ok, _ := h.contractStats.get(); ok {
+				e = cur // a refresh skipped just now is already a known failure
+			}
 		}
-		h.writeCachedJSON(r.Context(), w, e.view, !fresh, !fresh, e.cachedAt)
+		stale := !fresh && swrServedStale(e.cachedAt, contractStatsTTL, contractStatsRefreshTimeout, e.refreshFailed)
+		h.writeCachedJSON(r.Context(), w, e.view, stale, stale, e.cachedAt)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)

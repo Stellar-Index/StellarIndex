@@ -2,6 +2,8 @@ package explorer
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -50,6 +52,42 @@ func TestRecentContractsCached_StaleVerdict(t *testing.T) {
 			}
 			return degraded
 		})
+}
+
+func TestContractStats_StaleVerdict(t *testing.T) {
+	h, reader := newStatsHandler(nil)
+	age := func(d time.Duration) {
+		h.contractStats.mu.Lock()
+		h.contractStats.entry.cachedAt = time.Now().Add(-d)
+		h.contractStats.mu.Unlock()
+	}
+	var stale, degraded bool
+	h.WriteJSON = func(_ http.ResponseWriter, _ any, s bool) { stale, degraded = s, false }
+	h.WriteJSONAt = func(_ http.ResponseWriter, _ any, s, d bool, _ time.Time) { stale, degraded = s, d }
+	serve := func() bool {
+		h.ContractStats(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/contracts/stats", nil))
+		if stale != degraded {
+			t.Errorf("stale = %v degraded = %v, want them together", stale, degraded)
+		}
+		return degraded
+	}
+	serve() // cold fill
+	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
+	assertSWRStaleVerdict(t, &h.contractStats.flight, contractStatsKey, contractStatsTTL+time.Minute, age, reader.fail.Store, serve)
+
+	reader.fail.Store(false)
+	serve()
+	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
+	age(contractStatsTTL + time.Minute)
+	if serve() {
+		t.Error("after a successful refresh: an entry just past its TTL was served degraded")
+	}
+	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
+	age(contractStatsTTL + contractStatsRefreshTimeout + time.Second)
+	if !serve() {
+		t.Error("an entry past its hard bound was served clean")
+	}
+	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
 }
 
 func TestOpsDirCached_StaleVerdict(t *testing.T) {

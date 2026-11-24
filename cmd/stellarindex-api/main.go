@@ -585,7 +585,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// serves a warm entry.
 	cachedSourcesStats := v1.NewCachedSourcesStatsReader(store, 10*time.Minute)
 	cachedMarketsReader := v1.NewCachedMarketsReader(marketsReader, 2*time.Minute)
-	cachedAssetsReader := v1.NewCachedAssetsReader(store, 2*time.Minute)
+	cachedAssetsReader := v1.NewCachedAssetsReader(store, v1.AssetCatalogueTTL)
 	// The issuers listing is a full aggregate no index can help, and the verified-issuer
 	// catalogue changes slowly, so a long TTL is safe.
 	cachedIssuersReader := v1.NewCachedIssuersReader(store, issuersCacheTTL)
