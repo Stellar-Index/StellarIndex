@@ -212,7 +212,7 @@ func TestAssetListCache_RowsAgeFromTheirObservation(t *testing.T) {
 	c.now = clock.now
 	rowsAge := assetListCacheMaxAge + 25*time.Second
 	env := Envelope{Data: []AssetDetail{{AssetID: "USDC-" + alcIssuer}}, AsOf: WireTime(clock.now().Add(-rowsAge))}
-	if err := c.put("k", env); err != nil {
+	if err := c.put("k", env, nil); err != nil {
 		t.Fatal(err)
 	}
 	if hit, _, ok := c.lookup("k"); !ok || hit.stale {
@@ -292,7 +292,7 @@ func TestAssetListCacheKey_OnlyPageShapingInputsSplitTheSlot(t *testing.T) {
 func TestAssetListCache_BoundedEntries(t *testing.T) {
 	c := newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge)
 	for i := range assetListCacheMaxEntries + 10 {
-		if err := c.put(string(rune('a'+i%26))+time.Duration(i).String(), Envelope{Data: []AssetDetail{}}); err != nil {
+		if err := c.put(string(rune('a'+i%26))+time.Duration(i).String(), Envelope{Data: []AssetDetail{}}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
