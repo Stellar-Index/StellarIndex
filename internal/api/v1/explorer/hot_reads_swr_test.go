@@ -26,10 +26,14 @@ type swrReader struct {
 	statsCalls     atomic.Int32
 	fail           atomic.Bool
 	contractsBlock chan struct{} // when non-nil, RecentContracts waits for it
+	holdersBlock   chan struct{} // when non-nil, AssetHolders waits for it
 }
 
 func (r *swrReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	r.holdersCalls.Add(1)
+	if r.holdersBlock != nil {
+		<-r.holdersBlock
+	}
 	if r.fail.Load() {
 		return nil, 0, time.Time{}, errors.New("boom")
 	}
@@ -86,13 +90,17 @@ func waitFlightIdle(t *testing.T, f *perKeyFlight, key string) {
 
 func TestAssetHoldersCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h, reader := newSWRHandler()
-	staleAt := time.Now().Add(-2 * assetHoldersTTL)
+	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
+	reader.holdersBlock = make(chan struct{})
+	// Past the TTL plus its one-refresh grace, so degraded even with a healthy refresh running.
+	staleAt := time.Now().Add(-3 * assetHoldersTTL)
 	h.assetHolders.put("native", assetHoldersEntry{
 		holders: []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 1}},
 		total:   1, cachedAt: staleAt,
 	})
 
 	holders, total, asOf, degraded, err := h.assetHoldersCached(context.Background(), "native", 10)
+	close(reader.holdersBlock)
 	if err != nil || total != 1 || len(holders) != 1 {
 		t.Fatalf("stale serve: holders=%d total=%d err=%v, want the stale entry", len(holders), total, err)
 	}
@@ -204,7 +212,7 @@ func TestPrewarmOpTypeStats_FillsColdCacheThenNoops(t *testing.T) {
 	if got := reader.statsCalls.Load(); got != 1 {
 		t.Fatalf("prewarm ran the aggregation %d times, want 1", got)
 	}
-	if stats, fresh := h.opTypeStats.get(); !fresh || len(stats) != 1 {
+	if stats, fresh, _ := h.opTypeStats.get(); !fresh || len(stats) != 1 {
 		t.Fatalf("after prewarm: fresh=%v stats=%v, want a fresh 1-row panel", fresh, stats)
 	}
 
@@ -226,16 +234,16 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Cold: returns nothing (panel omitted — op_type_stats is omitempty),
 	// kicks the detached refresh.
-	if got, fresh := h.resolveOpTypeStats(); got != nil || fresh {
-		t.Fatalf("cold resolve returned %v (fresh=%v), want nil and not fresh (panel appears next request)", got, fresh)
+	if got, stale := h.resolveOpTypeStats(); got != nil || !stale {
+		t.Fatalf("cold resolve returned %v (stale=%v), want nil and stale (panel appears next request)", got, stale)
 	}
 	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
 	if got := reader.statsCalls.Load(); got != 1 {
 		t.Fatalf("detached stats refresh ran %d times, want 1", got)
 	}
 	// Warm: served from cache, no further compute.
-	stats, fresh := h.resolveOpTypeStats()
-	if !fresh {
+	stats, stale := h.resolveOpTypeStats()
+	if stale {
 		t.Error("warm resolve reported a stale panel")
 	}
 	if len(stats) != 1 || stats[0].Type != "payment" || stats[0].Count != 9 {
@@ -298,9 +306,9 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 		t.Fatalf("saturated gate still launched %d scans", got)
 	}
 
-	// Stale key under saturation: the old entry still serves (degraded),
-	// the skipped refresh never blanks it.
-	staleAt := time.Now().Add(-2 * assetHoldersTTL)
+	// Stale key under saturation: the old entry still serves, degraded even inside the grace because the refresh was
+	// skipped, and the skip never blanks it.
+	staleAt := time.Now().Add(-assetHoldersTTL - time.Second)
 	h.assetHolders.put("USDC-"+validTestAccount, assetHoldersEntry{
 		holders: []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 1}},
 		total:   1, cachedAt: staleAt,
@@ -323,6 +331,19 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 	}
 	if got := reader.holdersCalls.Load(); got != 1 {
 		t.Fatalf("post-release fill ran %d scans, want 1", got)
+	}
+
+	// The skipped key stays degraded until a refresh succeeds; the put clears the failure memory.
+	usdc := "USDC-" + validTestAccount
+	reader.holdersBlock = make(chan struct{}) // hold the refresh so the serve reads the skipped entry
+	_, _, _, degraded, _ = h.assetHoldersCached(context.Background(), usdc, 10)
+	close(reader.holdersBlock)
+	if !degraded {
+		t.Error("post-release serve of a key whose refresh was skipped came back clean before any refresh landed")
+	}
+	waitFlightIdle(t, &h.assetHolders.flight, usdc)
+	if _, _, _, degraded, _ := h.assetHoldersCached(context.Background(), usdc, 10); degraded {
+		t.Error("after a successful refresh the board still served degraded")
 	}
 }
 

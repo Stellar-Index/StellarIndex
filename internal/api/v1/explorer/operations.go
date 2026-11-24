@@ -91,22 +91,40 @@ type opTypeStatsCache struct {
 	mu    sync.Mutex
 	stats []OpTypeStatV
 	at    time.Time
+	// refreshFailed: the last refresh failed or panicked; only a put clears it.
+	refreshFailed bool
 	// flight collapses concurrent detached refreshes into one aggregation.
 	flight perKeyFlight
 }
 
-// get returns the cached breakdown and whether it is still fresh. The stats
-// are returned even when stale so the caller can fall back to them on error.
-func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh bool) {
+// get returns the cached breakdown and whether it is still fresh, plus whether a stale copy is served degraded per
+// [swrServedStale]. The stats are returned even when stale so the caller can fall back to them on error.
+func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh, servedStale bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.stats, c.stats != nil && time.Since(c.at) < opTypeStatsTTL
+	if c.stats == nil {
+		return nil, false, true
+	}
+	if time.Since(c.at) < opTypeStatsTTL {
+		return c.stats, true, false
+	}
+	return c.stats, false, swrServedStale(c.at, opTypeStatsTTL, opTypeStatsRefreshTimeout, c.refreshFailed)
 }
 
 func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.stats, c.at = stats, time.Now()
+	c.stats, c.at, c.refreshFailed = stats, time.Now(), false
+}
+
+// endRefresh ends the flight, recording a failure first.
+func (c *opTypeStatsCache) endRefresh(fl *keyFlight, err error) {
+	if err != nil {
+		c.mu.Lock()
+		c.refreshFailed = c.stats != nil
+		c.mu.Unlock()
+	}
+	c.flight.end("stats", fl, err)
 }
 
 // OpView is the wire shape for a decoded operation; Fields is the decoded body, empty for undecoded types where RawXDR carries the
@@ -259,13 +277,14 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 
 // resolveOpTypeStats returns the trailing-24h op-type breakdown, serving the STALE value (nil when cold, so the omitempty panel drops)
 // while a DETACHED refresh runs; inline recompute would share the directory's request budget and 503 the page.
-func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fresh bool) {
-	cached, fresh := h.opTypeStats.get()
+// stale is the served verdict: a cold (nil) panel or one judged stale by [swrServedStale].
+func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, stale bool) {
+	cached, fresh, servedStale := h.opTypeStats.get()
 	if fresh {
-		return cached, true
+		return cached, false
 	}
-	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
-	return cached, false   // stale (or nil on a cold process — panel appears next request)
+	h.refreshOpTypeStats()     //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
+	return cached, servedStale // nil on a cold process — panel appears next request
 }
 
 // PrewarmOpTypeStats primes the op-type breakdown at opTypeStatsTTL cadence via the request path's detached single-flight refresh; a
@@ -274,7 +293,7 @@ func (h *Handler) PrewarmOpTypeStats(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return
 	}
-	if _, fresh := h.opTypeStats.get(); fresh {
+	if _, fresh, _ := h.opTypeStats.get(); fresh {
 		return
 	}
 	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — prewarm kicks the same background compute
@@ -296,7 +315,7 @@ func (h *Handler) refreshOpTypeStats() {
 				worker.Report(h.Logger, "explorer-op-type-stats-refresh", rec)
 				err = errRefreshPanicked
 			}
-			h.opTypeStats.flight.end("stats", fl, err)
+			h.opTypeStats.endRefresh(fl, err)
 		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), opTypeStatsRefreshTimeout)
@@ -671,9 +690,7 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	out := h.lightOperationsView(ctx, rows, limit)
 	// Op-type stats are best-effort context and only attached to the first page.
 	if !cur.IsSet() {
-		var fresh bool
-		out.OpTypeStats, fresh = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
-		out.opTypeStatsStale = !fresh
+		out.OpTypeStats, out.opTypeStatsStale = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
 	}
 	return out, nil
 }

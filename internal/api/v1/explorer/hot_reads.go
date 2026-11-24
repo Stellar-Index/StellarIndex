@@ -97,6 +97,8 @@ type assetHoldersEntry struct {
 	computedAt time.Time
 	cachedAt   time.Time
 	asOfLedger uint32
+	// refreshFailed: the last refresh of this board failed or was skipped; only a put clears it.
+	refreshFailed bool
 }
 
 // snapshotVintage is when a cached snapshot was computed and the lake ledger read just before its
@@ -176,6 +178,24 @@ func (c *assetHoldersCache) put(asset string, e assetHoldersEntry) {
 	c.entries[asset] = e
 }
 
+// markRefreshFailed records on asset's entry, if any, that its refresh failed or was skipped.
+func (c *assetHoldersCache) markRefreshFailed(asset string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[asset]; ok {
+		e.refreshFailed = true
+		c.entries[asset] = e
+	}
+}
+
+// endRefresh ends asset's flight, recording a failure on its entry first.
+func (c *assetHoldersCache) endRefresh(asset string, fl *keyFlight, err error) {
+	if err != nil {
+		c.markRefreshFailed(asset)
+	}
+	c.flight.end(asset, fl, err)
+}
+
 // errRefreshFailed is returned by a wait path when the detached compute finished without a
 // cacheable entry; the refresh goroutine already logged the cause.
 var errRefreshFailed = errors.New("explorer: detached cache refresh produced no entry")
@@ -199,7 +219,7 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	// CODE-ISSUER parses); on saturation skip, don't queue (see detachedGate).
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("asset_holders") {
-		h.assetHolders.flight.end(asset, fl, errRefreshSaturated)
+		h.assetHolders.endRefresh(asset, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
@@ -211,7 +231,7 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 				worker.Report(h.Logger, "explorer-asset-holders-refresh", rec)
 				err = errRefreshPanicked
 			}
-			h.assetHolders.flight.end(asset, fl, err)
+			h.assetHolders.endRefresh(asset, fl, err)
 		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
@@ -229,14 +249,19 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	return fl
 }
 
-// assetHoldersCached serves the holders board: fresh as-is; STALE (degraded=true, real asOf) while a detached rescan runs; never-computed
-// waits to the deadline, so a huge asset 503s THIS request but a retry lands warm. The total is limit-independent.
+// assetHoldersCached serves the holders board: fresh as-is; expired with its real asOf while a detached rescan runs, degraded per
+// [swrServedStale]; never-computed waits to the deadline, so a huge asset 503s THIS request but a retry lands warm. The total is
+// limit-independent.
 func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, degraded bool, err error) {
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
 			h.refreshAssetHolders(asset) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
+			if cur, ok, _ := h.assetHolders.get(asset); ok {
+				e = cur // a refresh skipped just now is already a known failure
+			}
 		}
-		return sliceHolders(e.holders, limit), e.total, e.vintage(), !fresh, nil
+		stale := !fresh && swrServedStale(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed)
+		return sliceHolders(e.holders, limit), e.total, e.vintage(), stale, nil
 	}
 	// Stone-cold: wait for the detached compute, bounded by OUR deadline
 	// only — the compute itself is not.
