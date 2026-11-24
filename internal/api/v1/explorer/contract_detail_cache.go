@@ -18,7 +18,8 @@ import (
 // (kind, contract, params) string key holding an `any` payload lets the differently-typed reads
 // share one bounded cache and flight table.
 
-// contractDetailTTL bounds how stale a served detail payload may be: five minutes is near-live for these views,
+// contractDetailTTL is when a served detail payload is refreshed (its staleness bound is [detailStaleAfterForKey]): five minutes
+// is near-live for these views,
 // while each recompute is a bloom-probed scan over the multi-billion-row contract_events table.
 const contractDetailTTL = 5 * time.Minute
 
@@ -85,6 +86,21 @@ func detailTTLForKey(key string) time.Duration {
 	default:
 		return contractDetailTTL
 	}
+}
+
+// detailStaleAfterForKey is how old a served entry may be before it is stale: its class TTL plus the refresh that the first
+// expired read starts (at most one more TTL window, capped at the refresh budget). Inside it an expired entry is served unflagged.
+func detailStaleAfterForKey(key string) time.Duration {
+	ttl := detailTTLForKey(key)
+	return ttl + min(ttl, contractDetailRefreshTimeout)
+}
+
+// servedStale reports whether e, served for key, is past its staleness bound or declared itself stale on arrival.
+func (e contractDetailEntry) servedStale(key string) bool {
+	if p, ok := e.v.(provisionalPayload); ok && p.provisional() {
+		return true
+	}
+	return time.Since(e.cachedAt) > detailStaleAfterForKey(key)
 }
 
 // get returns the entry for key even past the TTL (fresh=false), so a run of failed refreshes
@@ -190,14 +206,15 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	return fl
 }
 
-// contractDetailCached serves key from cache: a stale entry is served (degraded=true, real asOf) while a detached single-flight
-// recompute runs; a never-computed key waits only to the request deadline, and the compute outlives it so the retry lands warm.
+// contractDetailCached serves key from cache: an expired entry is served with its real asOf while a detached single-flight
+// recompute runs, degraded only once past [detailStaleAfterForKey]; a never-computed key waits only to the request deadline,
+// and the compute outlives it so the retry lands warm.
 func (h *Handler) contractDetailCached(ctx context.Context, key string, compute func(context.Context) (any, error)) (v any, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {
 			h.refreshContractDetail(key, compute) //nolint:contextcheck // intentional detach — see refreshContractDetail
 		}
-		return e.v, e.cachedAt, !fresh, nil
+		return e.v, e.cachedAt, !fresh && e.servedStale(key), nil
 	}
 	fl := h.refreshContractDetail(key, compute) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	select {
