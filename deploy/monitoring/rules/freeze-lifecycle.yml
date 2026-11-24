@@ -176,6 +176,12 @@ groups:
             real sustained manipulation or a genuine repricing the
             per-asset baseline has not absorbed. Both need a human.
 
+            A freeze also lands here when its hold expired on a bucket
+            that could not be scored more than 4 times (the log line
+            carries unscored_slides): a pair too thin to produce a
+            scoreable bucket, or a scoring outage. Check for that
+            before looking for manipulation.
+
             Triage:
               - `journalctl -u stellarindex-aggregator | grep "freeze escalated"`
                 — one ERROR line per escalation with the pair, its

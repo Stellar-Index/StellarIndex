@@ -457,16 +457,19 @@ func (o *Orchestrator) logFreezeTransition(
 			"class", string(decision.Class),
 			"fired_at", out.State.FiredAt,
 			"extensions_used", out.State.ExtensionsUsed,
+			"unscored_slides", out.State.UnscoredSlides,
 			"resumed_override_ladder", !out.State.OverriddenAt.IsZero(),
 			"reason", decision.Reason)
 	case freeze.TransitionHeldUnscored:
-		// The hold expired on a bucket the scorer could not evaluate (restart bootstrap, scoring outage). ADR-0019 says slide, not extend, but a sustained run means scoring is stuck while extension/escalation counters stay zero, so it gets its own counter and WARN.
+		// The hold expired on a bucket the scorer could not evaluate (restart bootstrap, scoring outage, thin book). It slides rather than extends, up to max_unscored_slides, then escalates.
 		obs.AnomalyFreezeHeldUnscoredTotal.Inc()
 		o.logger.Warn("freeze hold slid — bucket could not be scored",
 			"pair", pair.String(),
 			"window", window.String(),
 			"hold_until", out.State.HoldUntil,
-			"extensions_used", out.State.ExtensionsUsed)
+			"extensions_used", out.State.ExtensionsUsed,
+			"unscored_slides", out.State.UnscoredSlides,
+			"max_unscored_slides", o.cfg.Phase2Thresholds.Lifecycle.WithDefaults().MaxExtensions)
 	case freeze.TransitionHeld, freeze.TransitionNone,
 		freeze.TransitionReleased, freeze.TransitionOverridden:
 		// Held is the steady state of a live freeze — logging it every

@@ -216,16 +216,6 @@ func (s *Server) handleOHLCSeries(
 	}
 	bars = withoutVendorVolumes(bars)
 
-	// dex-nonstandard-decimals forward normalization: K = 10^(baseDec-quoteDec) is constant for the
-	// requested pair, so applying it once to the finished series (not per CAGG row) is exact, also
-	// across ohlcSeriesFiatCombined's bars (all constituents share the base token and a 7dp peg).
-	//
-	// v_base/v_quote are NOT touched: they are raw sums at the per-source scale that
-	// [barScaleDecimals] reads from `sources` and the bar states on the wire.
-	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
-	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote)
-	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)
-
 	// Series mode returns 200 with empty `intervals: []` for no closed buckets, unlike the 404 of
 	// single-bar, because charts expect a stable shape. The slice must be non-nil for byte-stability.
 	if bars == nil {
@@ -401,6 +391,11 @@ func (s *Server) ohlcSeriesWithAliases(
 			if err != nil || len(bars) > 0 {
 				annotateOHLCSeriesBarScale(bars, s.NonstandardDecimals, ap)
 				normalizeOHLCSeriesVolumes(bars)
+				// dex-nonstandard-decimals: K = 10^(baseDec-quoteDec) is constant for the requested pair, so applying it
+				// to the CAGG's full-precision NUMERIC text is exact. The fiat path adjusts in big.Rat before it renders.
+				// v_base/v_quote stay raw sums at the scale the bar states.
+				bars = adjustOHLCSeriesBars(bars, aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base),
+					aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote))
 				return bars, nil, false, err
 			}
 		}

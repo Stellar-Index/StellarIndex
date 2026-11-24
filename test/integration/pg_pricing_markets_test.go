@@ -929,9 +929,11 @@ func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 	// Bucket A stores the requested direction at price 0.5 USDC/XLM.
 	// Bucket B stores ONLY the flipped direction at price 2.0 XLM/USDC —
 	// which is the SAME market at 0.5 USDC/XLM once inverted.
+	// Bucket B's trade is mid-minute: PairMarket dates its price by the trade, not by the bucket start.
+	pricedAt := t0.Add(2*time.Minute + 37*time.Second)
 	trades := []canonical.Trade{
-		mkAPITrade(1, t0, xlmUSDC, 1_000_000, 500_000),                      // price 0.5
-		mkAPITrade(2, t0.Add(2*time.Minute), usdcXLM, 1_000_000, 2_000_000), // price 2.0 → 0.5 inverted
+		mkAPITrade(1, t0, xlmUSDC, 1_000_000, 500_000),         // price 0.5
+		mkAPITrade(2, pricedAt, usdcXLM, 1_000_000, 2_000_000), // price 2.0 → 0.5 inverted
 	}
 	for _, tr := range trades {
 		if err := store.InsertTrade(ctx, tr); err != nil {
@@ -976,6 +978,9 @@ func TestOrientStragglers_CombineBothDirections(t *testing.T) {
 	}
 	if lp := mustFloat(t, *m.LastPrice); lp < 0.49 || lp > 0.51 {
 		t.Errorf("PairMarket LastPrice = %s, want ~0.5 (latest bucket is flipped, inverted)", *m.LastPrice)
+	}
+	if !m.LastPricedAt.Equal(pricedAt) {
+		t.Errorf("PairMarket LastPricedAt = %s, want %s: the priced trade's own time, not its bucket's start", m.LastPricedAt, pricedAt)
 	}
 
 	// ── OHLCSeries ─────────────────────────────────────────────────

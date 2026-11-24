@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -52,27 +53,8 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawAsset := r.URL.Query().Get("asset")
-	if rawAsset == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-asset",
-			"Missing asset parameter", http.StatusBadRequest,
-			"asset query parameter is required")
-		return
-	}
-	asset, err := parsePriceLeg(rawAsset)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			err.Error())
-		return
-	}
-	if asset.Equal(defaultPriceQuote) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/identity-price",
-			"Asset is the SEP-40 quote", http.StatusBadRequest,
-			"price of fiat:USD in itself is always 1; SEP-40 lastprice quotes everything in fiat:USD")
+	asset, ok := parseOracleAsset(w, r, "lastprice")
+	if !ok {
 		return
 	}
 
@@ -85,14 +67,6 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// Loop the XLM aliases as handlePrice does; querying only the literal `native/fiat:USD` key
 	// would miss a fresh `crypto:XLM/fiat:USD` VWAP from CEX trades.
 	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, asset, defaultPriceQuote)
-	// Substance-gated pair: withheld beats the fallback chain — same
-	// rationale as handlePrice (see ErrPriceWithheld). The SEP-40
-	// surface is the LAST place a substanceless price belongs: its
-	// consumers are oracle integrators.
-	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblem(w, r, asset, defaultPriceQuote, priceWithheldReason(err))
-		return
-	}
 	// viaFallback mirrors handlePrice: normalizeRawPriceSnapshot below
 	// must only run on the RAW closed-1m-bucket read, never on a
 	// priceFallback result (already normalized upstream / peg / cross-
@@ -103,6 +77,15 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// chain, a fiat cross-rate — is not a print of the pair, and the
 	// flag is the only place the envelope says so.
 	triangulated := false
+	// Substance-gated pair: withheld beats the fallback chain (see ErrPriceWithheld); only a thin verdict yields, and only to a
+	// qualifying peg book ([Server.thinDirectPegAnswer]), the rule prices() applies.
+	if errors.Is(err, ErrPriceWithheld) {
+		fb, ok := s.writeLastPriceThinDirect(ctx, w, r, asset, err)
+		if !ok {
+			return
+		}
+		snapshot, sources, served, triangulated, stale, viaFallback, err = fb.snap, fb.sources, fb.served, fb.triangulated, fb.stale, true, nil
+	}
 	if errors.Is(err, ErrPriceNotFound) {
 		// Same chain as /v1/price (priceFallback): Redis VWAP cache, stablecoin-fiat proxy, then
 		// fiat cross-rate. prices_1m has no literal native/fiat:USD bucket, so without it
@@ -165,6 +148,35 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, flags, sources...)
 }
 
+// parseOracleAsset reads a SEP-40 call's `asset` parameter, writing the 400 and returning ok=false when it is missing, invalid or
+// the fiat:USD quote itself.
+func parseOracleAsset(w http.ResponseWriter, r *http.Request, call string) (canonical.Asset, bool) {
+	rawAsset := r.URL.Query().Get("asset")
+	if rawAsset == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-asset",
+			"Missing asset parameter", http.StatusBadRequest,
+			"asset query parameter is required")
+		return canonical.Asset{}, false
+	}
+	asset, err := parsePriceLeg(rawAsset)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid asset identifier", http.StatusBadRequest,
+			err.Error())
+		return canonical.Asset{}, false
+	}
+	if asset.Equal(defaultPriceQuote) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/identity-price",
+			"Asset is the SEP-40 quote", http.StatusBadRequest,
+			"price of fiat:USD in itself is always 1; SEP-40 "+call+" quotes everything in fiat:USD")
+		return canonical.Asset{}, false
+	}
+	return asset, true
+}
+
 // isDeclaredPeg reports a fallback answer that is the operator's peg declaration, not an observation; SEP40Price has no price_type, so
 // point reads answer None (404).
 func isDeclaredPeg(s PriceSnapshot) bool { return s.PriceType == "peg" }
@@ -224,27 +236,8 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawAsset := r.URL.Query().Get("asset")
-	if rawAsset == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-asset",
-			"Missing asset parameter", http.StatusBadRequest,
-			"asset query parameter is required")
-		return
-	}
-	asset, err := parsePriceLeg(rawAsset)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid asset identifier", http.StatusBadRequest,
-			err.Error())
-		return
-	}
-	if asset.Equal(defaultPriceQuote) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/identity-price",
-			"Asset is the SEP-40 quote", http.StatusBadRequest,
-			"price of fiat:USD in itself is always 1; SEP-40 prices() quotes everything in fiat:USD")
+	asset, ok := parseOracleAsset(w, r, "prices()")
+	if !ok {
 		return
 	}
 
@@ -272,12 +265,13 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(s.liveDirectRefusal(ctx, asset, directWithheld))
+	held := s.resolveFrozenServe(r, asset, served, defaultPriceQuote).refusedBy(directWithheld)
 	if writeFrozenOraclePrices(w, r, asset, held) {
 		return
 	}
 	excluded := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsWithheld })
 	unread := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsUnread })
+	legUnread := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.PegReadFailed })
 	snapshots, dropped, windowsUnknown := s.dropFrozenBuckets(ctx, asset, snapshots)
 
 	out := make([]SEP40Price, len(snapshots))
@@ -296,7 +290,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	// below the surface's baseline: stale as well as triangulated, the
 	// rule lastprice/x_last_price follow. A series short of the buckets a recovered freeze refused is a partial answer.
 	writeJSON(w, out, markFillsWithheld(Flags{
-		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown || unread,
+		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown || unread || legUnread,
 		FrozenChecked: held.checked && !windowsUnknown,
 	}, excluded))
 }
@@ -364,21 +358,21 @@ const oracleLiveWindow = 10 * time.Minute
 // (viaPeg=true marks the envelope stale and triangulated). A dormant book is non-empty forever, so
 // "first non-empty" would serve months-old records beside a live series.
 // With nothing to serve, a withheld verdict wins, then the first read error: neither is 200 [].
-// served is the spelling of asset whose series was chosen (it governs the freeze check); directWithheld is the refusal of the
-// asset's own quote series when a peg book answered in its place.
+// served is the spelling of asset whose series was chosen (it governs the freeze check); directWithheld is the exclusion that
+// withheld the asset's own quote series when a peg book answered in its place (it withdraws a frozen pair's hold).
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, served canonical.Asset, viaPeg bool, directWithheld, err error) {
 	usdQuote := quote.Type == canonical.AssetFiat && quote.Code == "USD"
 	best, bestAt, served, err := s.recentClosedForAliases(ctx, asset, quote, n)
+	directErr := err
 	var failed oracleLegErrors
 	if err != nil {
-		// A direct series the exclusion withheld is no direct series: a clean peg book may still answer.
-		if !usdQuote || !errors.Is(err, ErrPriceWithheld) {
-			return nil, canonical.Asset{}, false, nil, err
+		if refusal := directReadRefusal(usdQuote, err); refusal != nil {
+			return nil, canonical.Asset{}, false, nil, refusal
 		}
 		failed.note(err)
-		directWithheld = err
+		directWithheld = exclusionVerdict(err)
 	}
 	if !usdQuote || s.oracleSeriesLive(best, bestAt) {
 		return best, served, false, nil, nil
@@ -390,6 +384,11 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	}
 	for _, peg := range s.usdPegProxyQuotes() {
 		pegSnapshots, pegAt, pegServed, ok := s.oraclePegSeries(ctx, asset, quote, peg, n, &failed)
+		if failed.read != nil {
+			// An unread leg is not a missing one: the next peg's market never stands in for it, but a leg read before it
+			// still answers (walkUSDPegs' rule).
+			break
+		}
 		if !ok {
 			continue
 		}
@@ -401,31 +400,44 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		}
 	}
 	if len(best) > 0 {
-		if !s.oracleSeriesLive(best, bestAt) {
-			best = seriesFillsWithheld(best, failed.excluded, failed.unread)
+		if best, err = s.settledSeries(ctx, best, bestAt, failed, directErr); err != nil {
+			return nil, canonical.Asset{}, false, nil, err
 		}
 		return best, served, viaPeg, directWithheld, nil
 	}
-	return nil, canonical.Asset{}, false, nil, failed.err()
+	return nil, canonical.Asset{}, false, nil, cmp.Or(failed.read, failed.err())
 }
 
-// liveDirectRefusal is the direct-series refusal that withdraws a frozen pair's held value. The series read has no lower time
-// bound, so a thin verdict on a book with no closed bucket inside the existence window lastprice gates on is a dormant book, not a
-// refused market; any other verdict, or an unanswered probe, still withdraws the hold.
-func (s *Server) liveDirectRefusal(ctx context.Context, asset canonical.Asset, directWithheld error) error {
-	if directWithheld == nil || priceWithheldReason(directWithheld) != PriceWithheldSubstance {
-		return directWithheld
+// settledSeries is the chosen series as served: marked when an older one fills a withheld leg, and refused when it stands in for a
+// direct series refused as thin without qualifying ([Server.thinDirectPegRefusal]).
+func (s *Server) settledSeries(
+	ctx context.Context, best []PriceSnapshot, bestAt time.Time, failed oracleLegErrors, directErr error,
+) ([]PriceSnapshot, error) {
+	if !s.oracleSeriesLive(best, bestAt) {
+		best = seriesFillsWithheld(best, failed.excluded, failed.unread)
 	}
-	gate, ok := s.Prices.(proxyPairGate)
-	if !ok {
-		return directWithheld
+	if err := s.thinDirectPegRefusal(ctx, directErr, best); err != nil {
+		return nil, err
 	}
-	for _, a := range assetAliases(asset) {
-		if exists, err := gate.RecentClosedVWAP1mExists(ctx, a, defaultPriceQuote); err != nil || exists {
-			return directWithheld
+	if failed.read != nil {
+		// A later leg that could not be read may hold the newer series: the answer is not known best, so not cached.
+		best = slices.Clone(best)
+		for i := range best {
+			best[i].PegReadFailed = true
 		}
 	}
-	return nil
+	return best, nil
+}
+
+// directReadRefusal is the error prices() answers for a failed direct read, or nil when a peg book may answer in its place: a
+// series withheld by a source exclusion is no direct series, and one refused as thin yields only to a qualifying peg book
+// ([Server.thinDirectPegRefusal]). Any other refusal (a flagged issuer, an unreadable exclusion set) refuses the pair, as
+// lastprice does.
+func directReadRefusal(usdQuote bool, err error) error {
+	if usdQuote && (withheldByExclusion(err) || thinOnly(err)) {
+		return nil
+	}
+	return err
 }
 
 // stablecoinOwnSeries answers a USD stablecoin from its own series only: a withheld verdict outranks "no series".
@@ -508,11 +520,14 @@ func (s *Server) pegSeriesClean(ctx context.Context, asset, quote canonical.Asse
 // first read error. excluded: some leg was withheld by a source exclusion; unread: by an unreadable exclusion set. These are the
 // only refusals an older series fills.
 type oracleLegErrors struct {
-	withheld, first  error
-	excluded, unread bool
+	withheld, first, read error
+	excluded, unread      bool
 }
 
 func (e *oracleLegErrors) note(err error) {
+	if err != nil && e.read == nil && isPriceReadFailure(err) {
+		e.read = err
+	}
 	if errors.Is(err, ErrPriceWithheld) && e.withheld == nil {
 		e.withheld = err
 	}
@@ -525,6 +540,14 @@ func (e *oracleLegErrors) note(err error) {
 
 func withheldByExclusion(err error) bool {
 	return errors.Is(err, ErrPriceWithheld) && priceWithheldReason(err) == PriceWithheldSourceExcluded
+}
+
+// exclusionVerdict is err when a source exclusion withheld it, else nil.
+func exclusionVerdict(err error) error {
+	if withheldByExclusion(err) {
+		return err
+	}
+	return nil
 }
 
 func withheldExclusionsUnread(err error) bool {
@@ -559,20 +582,20 @@ func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, 
 // walk, plus the spelling that served it. An error is returned only when no spelling served.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, canonical.Asset, error) {
 	var (
-		firstErr         error
-		excluded, unread bool
-		best             []PriceSnapshot
-		bestAt           time.Time
-		served           canonical.Asset
+		failed oracleLegErrors
+		best   []PriceSnapshot
+		bestAt time.Time
+		served canonical.Asset
 	)
 	for _, a := range assetAliases(asset) {
+		if failed.read != nil && a.Type == canonical.AssetSoroban {
+			// The SAC spelling (walked after the established ones) is the thinner market: it does not stand in for an
+			// established one that could not be read.
+			continue
+		}
 		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			excluded = excluded || withheldByExclusion(err)
-			unread = unread || withheldExclusionsUnread(err)
+			failed.note(err)
 			continue
 		}
 		if len(snapshots) == 0 {
@@ -588,11 +611,11 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 	}
 	if len(best) > 0 {
 		if !s.oracleSeriesLive(best, bestAt) {
-			best = seriesFillsWithheld(best, excluded, unread)
+			best = seriesFillsWithheld(best, failed.excluded, failed.unread)
 		}
 		return best, bestAt, served, nil
 	}
-	return nil, time.Time{}, canonical.Asset{}, firstErr
+	return nil, time.Time{}, canonical.Asset{}, failed.first
 }
 
 // newestSnapshotTime is the latest observed_at in a series, whatever its order.

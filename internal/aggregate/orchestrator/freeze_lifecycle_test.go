@@ -403,6 +403,71 @@ func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	}
 }
 
+// TestFreezeLifecycle_SustainedUnscoreableRunEscalates: a frozen pair whose buckets can no longer be
+// scored (empty/thin, or no baseline) slides up to MaxExtensions times, then escalates to an operator
+// through the P1 counter; it never auto-releases and keeps serving the LKG.
+func TestFreezeLifecycle_SustainedUnscoreableRunEscalates(t *testing.T) {
+	cases := []struct {
+		name       string
+		unscorable func(t *testing.T, f *freezeFixture)
+	}{
+		{name: "unpriced", unscorable: func(_ *testing.T, f *freezeFixture) { f.store.trades = nil }},
+		{name: "no_baseline", unscorable: func(t *testing.T, f *freezeFixture) {
+			f.orch.cfg.Baselines = stubBaselineSource{err: errors.New("no baseline row")}
+			f.feed(t, lkgQuoteAmount, "soroswap")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFreezeFixture(t)
+			beforeSlid := testutil.ToFloat64(obs.AnomalyFreezeHeldUnscoredTotal)
+			beforeEsc := testutil.ToFloat64(obs.AnomalyFreezeEscalatedTotal)
+
+			f.feed(t, manipQuoteAmount, "soroswap")
+			f.tick(t, closedBucket)
+			if !f.state().Active() {
+				t.Fatal("setup: freeze did not fire")
+			}
+
+			tc.unscorable(t, f)
+			step := freeze.DefaultUncorroboratedInitialHold + time.Minute
+			for i := 1; i <= freeze.DefaultMaxExtensions; i++ {
+				f.tick(t, step)
+				step = freeze.DefaultExtension + time.Minute
+				if st := f.state(); st.UnscoredSlides != i || st.Escalated || st.ExtensionsUsed != 0 {
+					t.Fatalf("unscored expiry %d: %+v, want slides=%d, not escalated", i, st, i)
+				}
+			}
+			if got := testutil.ToFloat64(obs.AnomalyFreezeHeldUnscoredTotal) - beforeSlid; got != float64(freeze.DefaultMaxExtensions) {
+				t.Errorf("held_unscored delta = %v, want %d", got, freeze.DefaultMaxExtensions)
+			}
+
+			f.tick(t, step)
+			if st := f.state(); !st.Active() || !st.Escalated {
+				t.Fatalf("sustained unscored run did not escalate: %+v", st)
+			}
+			if got := testutil.ToFloat64(obs.AnomalyFreezeEscalatedTotal) - beforeEsc; got != 1 {
+				t.Errorf("escalation counter delta = %v, want 1", got)
+			}
+			if got := f.served(t); got != lkgFormatted {
+				t.Errorf("served %q after escalation; want the LKG %q", got, lkgFormatted)
+			}
+
+			// Operator-only from here: scoring recovering does not release it.
+			f.orch.cfg.Baselines = stubBaselineSource{multi: baseline.MultiBaseline{
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
+			}}
+			f.feed(t, lkgQuoteAmount, "soroswap")
+			for range 3 {
+				f.tick(t, closedBucket)
+			}
+			if !f.state().Active() {
+				t.Error("escalated freeze auto-released once scoring returned")
+			}
+		})
+	}
+}
+
 // A freeze with a corroborating lens (trusted cross-oracle result) serves the
 // ADR's 30 minutes; with no lens at all it serves 10, since false freezes
 // concentrate there and bill the customer in stale LKG price.

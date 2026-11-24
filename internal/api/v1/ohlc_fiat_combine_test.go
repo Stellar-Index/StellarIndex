@@ -33,7 +33,7 @@ func finalizeCombined(t *testing.T, acc *ohlcBucketAcc, ts time.Time, scales ...
 	if acc.commonScale != want {
 		t.Fatalf("bucket lift target = %d, want %d (the maximum of %v)", acc.commonScale, want, scales)
 	}
-	return acc.finalize(ts)
+	return acc.finalize(ts, nil)
 }
 
 func TestCombinedBarServesTrueExtremes(t *testing.T) {
