@@ -49,7 +49,7 @@ Thresholds (from `data-freshness.sh`):
 | `sep1` | `issuers.sep1_payload_fetched_at` | 48 h | issuer-metadata refresh |
 | `sep41_supply` (`supply_flows`) | ClickHouse `stellar.supply_flows.ingested_at` | 1 h | its freshness IS the served SEP-41 supply's |
 | `rollup` (`cohort-rollup`) | ClickHouse `stellar.account_cohort_roots.computed_at` | 50 h | daily timer; one missed cycle tolerated |
-| `rollup` (`trades-by-account`) | ClickHouse `stellar.trades_by_account_windows.updated_at` | 72 h | pubnet only; writes a window only when the compression horizon moves |
+| `rollup` (`trades-by-account`) | ClickHouse `stellar.trades_by_account_windows.updated_at` | 9 d | pubnet only; writes a window only when the compression horizon moves, once per 7-day trades chunk |
 
 FX `frankfurter-historical` is not watched (one-off backfill label). `coingecko` reads stale until the CoinGecko Pro key lands.
 
