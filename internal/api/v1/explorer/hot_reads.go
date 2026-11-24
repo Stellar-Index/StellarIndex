@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/swrverdict"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -296,10 +297,9 @@ type contractsDirEntry struct {
 	refreshFailed bool
 }
 
-// swrServedStale is the verdict for an entry served past ttl: clean only while its age is within ttl plus one refresh (at
-// most one more ttl, capped at refreshTimeout) and its last refresh did not fail or get skipped.
+// swrServedStale is [swrverdict.Stale] for an entry cached at cachedAt.
 func swrServedStale(cachedAt time.Time, ttl, refreshTimeout time.Duration, refreshFailed bool) bool {
-	return refreshFailed || time.Since(cachedAt) > ttl+min(ttl, refreshTimeout)
+	return swrverdict.Stale(time.Since(cachedAt), ttl, refreshTimeout, refreshFailed)
 }
 
 // contractsDirCache is the TTL cache behind the GET /v1/contracts directory, keyed on the ladder-quantised window.

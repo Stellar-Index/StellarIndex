@@ -91,19 +91,22 @@ func TestSWRCache_PeekMissStartsOneFill(t *testing.T) {
 	}
 }
 
-// A stale entry: two peeks serve it and start exactly one refresh; the next peek is fresh.
+// An expired entry: two peeks serve it, unflagged while its one healthy refresh runs inside the bound; the next peek is fresh.
 func TestSWRCache_PeekStaleRefreshesOnce(t *testing.T) {
-	c := newSWRCache[int](nil, "test", "test-fill", 20*time.Millisecond, 0)
+	const ttl = 20 * time.Millisecond
+	clk := &swrTestClock{t: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}
+	c := newSWRCache[int](nil, "test", "test-fill", ttl, 0)
+	c.now = clk.now
 	if _, _, _, err := c.get(context.Background(), "op", "k", func(context.Context) (int, error) { return 1, nil }); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(30 * time.Millisecond)
+	clk.add(ttl + ttl/2)
 	release := make(chan struct{})
 	var fills atomic.Int64
 	up := func(context.Context) (int, error) { fills.Add(1); <-release; return 2, nil }
 	for range 2 {
-		if v, _, stale, ok := c.peek("op", "k", up); !ok || v != 1 || !stale {
-			t.Fatalf("peek = %d ok=%v stale=%v, want stale 1", v, ok, stale)
+		if v, _, stale, ok := c.peek("op", "k", up); !ok || v != 1 || stale {
+			t.Fatalf("peek = %d ok=%v stale=%v, want the expired 1 unflagged", v, ok, stale)
 		}
 	}
 	close(release)
