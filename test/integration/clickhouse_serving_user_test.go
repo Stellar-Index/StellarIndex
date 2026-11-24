@@ -59,7 +59,7 @@ func TestServingUserRunsCountsRollupPlanRead(t *testing.T) {
 	// The serving path's other non-table reads: the TTL-liveness probe and a per-query SETTINGS clause.
 	for _, q := range []string{
 		`EXISTS TABLE stellar.ttl_live_until`,
-		`SELECT count() FROM stellar.ledgers SETTINGS max_threads = 4, max_execution_time = 30`,
+		`SELECT ledger_seq FROM stellar.ledgers LIMIT 1 SETTINGS max_threads = 4, max_execution_time = 30`,
 	} {
 		if err := serving.Exec(ctx, q); err != nil {
 			t.Fatalf("serving user cannot run %q: %v", q, err)
