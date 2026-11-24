@@ -767,7 +767,7 @@ func (o *Orchestrator) decideBucket(
 	now time.Time,
 ) (*publishedBucket, error) {
 	from := bucketEnd.Add(-window)
-	trades, tradeUSD, proxied, weights, coverage, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
+	trades, tradeUSD, proxied, weights, coverage, err := o.fetchForTarget(ctx, pair, window, from, bucketEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
@@ -1217,10 +1217,11 @@ func distinctSourceCount(trades []canonical.Trade) int {
 func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
+	window time.Duration,
 	from, to time.Time,
 ) (trades []canonical.Trade, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, weights map[string]int64, coverage cachekeys.WindowCoverage, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
-		t, w, coveredFrom, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
+		t, w, coveredFrom, err := o.fetchTradesDetectTruncation(ctx, target, target, window, from, to)
 		if err != nil {
 			return nil, nil, nil, nil, coverage, err
 		}
@@ -1238,7 +1239,7 @@ func (o *Orchestrator) fetchForTarget(
 	tradeUSD = map[string]*big.Rat{}
 	proxied = map[string]struct{}{}
 	for _, src := range sources {
-		batch, w, coveredFrom, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
+		batch, w, coveredFrom, ferr := o.fetchTradesDetectTruncation(ctx, target, src, window, from, to)
 		if ferr != nil {
 			o.logger.Warn("stablecoin-expansion fetch failed",
 				"target", target.String(),

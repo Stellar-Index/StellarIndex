@@ -18,7 +18,7 @@ import (
 // `target` is the aggregation target, `fetch` the pair actually queried (a stablecoin-backer pair under proxy expansion). weights maps a
 // minute row's Trade.ID() to the trades it stands for.
 func (o *Orchestrator) fetchTradesDetectTruncation(
-	ctx context.Context, target, fetch canonical.Pair, from, to time.Time,
+	ctx context.Context, target, fetch canonical.Pair, window time.Duration, from, to time.Time,
 ) (trades []canonical.Trade, weights map[string]int64, coveredFrom time.Time, err error) {
 	t, err := o.store.TradesInRange(ctx, fetch, from, to, o.cfg.MaxTradesPerWindow)
 	if err != nil {
@@ -37,11 +37,13 @@ func (o *Orchestrator) fetchTradesDetectTruncation(
 		t, weights, coveredFrom = filled, w, cf
 	}
 	if !coveredFrom.IsZero() {
-		obs.AggregatorWindowTruncatedTotal.Inc()
+		obs.AggregatorWindowTruncatedTotal.WithLabelValues(target.String(), windowLabel(window)).Inc()
 		o.logger.Warn("trade window truncated at MaxTradesPerWindow — VWAP over the newest slice only",
-			"target", target.String(),
+			"pair", target.String(),
+			"window", windowLabel(window),
 			"fetch_pair", fetch.String(),
 			"cap", o.cfg.MaxTradesPerWindow,
+			"rows", len(t),
 			"from", from.UTC(),
 			"to", to.UTC(),
 			"covered_from", coveredFrom.UTC(),
