@@ -114,7 +114,7 @@ func TestAssetsQSACLookupFailureIsUnavailable(t *testing.T) {
 
 	s.assetListCache = newAssetListResponseCache(time.Minute, time.Hour)
 	req := httptest.NewRequest(http.MethodGet, path, nil)
-	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: "USDC-" + cetesIssuer}}}); err != nil {
+	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: "USDC-" + cetesIssuer}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestAssetsQSACLookupFailureIsUnavailable(t *testing.T) {
 
 	// The replayed page was cached unjudged, so an exclusion on the cached row's asset withholds it on the way out.
 	usdc := "USDC-" + cetesIssuer
-	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: usdc, PriceUSD: sptrLocal("1.0")}}}); err != nil {
+	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: usdc, PriceUSD: sptrLocal("1.0")}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	s.Exclusions = pricingguard.NewSourceExclusionGate(globalExclTable{rows: []timescale.SourceExclusion{{
@@ -141,7 +141,7 @@ func TestAssetsQSACLookupFailureIsUnavailable(t *testing.T) {
 	// The fallback replay cannot start a refresh, so it must leave the flight for the handler's next lookup to claim.
 	clock := &fakeClock{t: time.Now()}
 	s.assetListCache.now = clock.now
-	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: usdc}}}); err != nil {
+	if err := s.assetListCache.put(assetListCacheKey(req), Envelope{Data: []AssetDetail{{AssetID: usdc}}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	clock.advance(time.Minute + time.Second)

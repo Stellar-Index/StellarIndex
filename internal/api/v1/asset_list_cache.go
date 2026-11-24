@@ -40,6 +40,8 @@ type assetListEntry struct {
 	flight   bool
 	// refreshFailed: the last refresh errored, panicked or built nothing cacheable; only a put clears it.
 	refreshFailed bool
+	// rowsFailed re-reads, at each lookup, whether the catalogue's last refresh of the page's rows failed; nil when unknown.
+	rowsFailed func() bool
 }
 
 // assetListHit is one cache replay: body to write as it is, or env to judge first.
@@ -109,18 +111,37 @@ func (c *assetListResponseCache) read(key string, claim bool) (hit assetListHit,
 }
 
 // staleLocked judges the page by its own age and its rows by theirs: the rows (env.AsOf when they predate the build) are held
-// to the catalogue's bound, so caching a page cannot replay them clean past it.
+// to the catalogue's bound and its refresh failure, so caching a page cannot replay them clean past either.
 func (c *assetListResponseCache) staleLocked(e *assetListEntry, now time.Time) bool {
 	rowsAt := e.cachedAt
 	if at := e.env.AsOf.Time(); !at.IsZero() && at.Before(rowsAt) {
 		rowsAt = at
 	}
 	return swrverdict.Stale(now.Sub(e.cachedAt), c.ttl, cacheFillBudget, e.refreshFailed) ||
-		swrverdict.Stale(now.Sub(rowsAt), AssetCatalogueTTL, assetsRefreshBudget, false)
+		swrverdict.Stale(now.Sub(rowsAt), AssetCatalogueTTL, assetsRefreshBudget, e.rowsFailed != nil && e.rowsFailed())
 }
 
-// put renders env and stores it under key, clearing any refresh flight.
-func (c *assetListResponseCache) put(key string, env Envelope) error {
+// assetListRowsOptions is the catalogue listing read behind one default-listing page.
+func assetListRowsOptions(filters assetListFilters, cursor string, limit int, order timescale.AssetsOrder) timescale.ListAssetsOptions {
+	return timescale.ListAssetsOptions{
+		Limit:  limit + AssetsListOverfetchBy,
+		Issuer: filters.issuer,
+		Code:   filters.code,
+		Type:   filters.typ,
+		Q:      filters.q,
+		Cursor: cursor,
+		Order:  order,
+	}
+}
+
+// catalogueListingFailed binds [Server.catalogueListingsFailed] to one listing read, for a cached page to re-check at lookup.
+func (s *Server) catalogueListingFailed(opts timescale.ListAssetsOptions) func() bool {
+	return func() bool { return s.catalogueListingsFailed([]timescale.ListAssetsOptions{opts}) }
+}
+
+// put renders env and stores it under key, clearing any refresh flight; rowsFailed is the rows' catalogue failure, re-read at
+// every lookup.
+func (c *assetListResponseCache) put(key string, env Envelope, rowsFailed func() bool) error {
 	if c == nil || c.ttl <= 0 {
 		return nil
 	}
@@ -142,7 +163,7 @@ func (c *assetListResponseCache) put(key string, env Envelope) error {
 	if _, exists := c.entries[key]; !exists && len(c.entries) >= assetListCacheMaxEntries {
 		c.evictLocked()
 	}
-	c.entries[key] = &assetListEntry{fresh: fresh, stale: stale, env: built, cachedAt: c.now()}
+	c.entries[key] = &assetListEntry{fresh: fresh, stale: stale, env: built, cachedAt: c.now(), rowsFailed: rowsFailed}
 	return nil
 }
 
@@ -243,7 +264,7 @@ func (s *Server) refreshAssetListPage(
 		if err != nil || ctx.Err() != nil || !assetListPageCacheable(env, rows) {
 			return false, err
 		}
-		return true, s.assetListCache.put(key, env)
+		return true, s.assetListCache.put(key, env, s.catalogueListingFailed(assetListRowsOptions(filters, cursor, limit, order)))
 	}
 	settle := func(cached bool, err error) {
 		if err != nil {
