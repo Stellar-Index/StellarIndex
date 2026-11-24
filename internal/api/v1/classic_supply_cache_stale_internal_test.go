@@ -43,6 +43,22 @@ func TestClassicSupplyMap_ExpiredEntryReportsStale(t *testing.T) {
 	}
 }
 
+// A map just past its TTL, served while the refresh that read started is running, is within its bound: not a stale read.
+func TestClassicSupplyMap_ExpiredWithRefreshRunningIsNotStale(t *testing.T) {
+	s, _ := lakeSupplyServer(t, "")
+	s.Explorer = failingClassicExplorer{}
+	s.classicSupplyCache = map[string]string{cetesAsset: "400000000"}
+	s.classicSupplyAt = time.Now().Add(-(classicSupplyTTL + time.Second))
+	ctx, rep := withReadReport(context.Background())
+	m, unread := s.classicSupplyMap(ctx)
+	if m == nil || unread {
+		t.Fatalf("map = %v, unread = %v; want the cached map served", m, unread)
+	}
+	if rep.stale.Load() {
+		t.Error("a map 1s past its TTL with its refresh just started was reported stale")
+	}
+}
+
 func TestFillMarketCapsFromSupply_ExpiredBroadMapFlagsStale(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "")
 	s.Explorer = failingClassicExplorer{}

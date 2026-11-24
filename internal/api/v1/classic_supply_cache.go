@@ -93,6 +93,9 @@ func (s *Server) readCachedClassicSupply(ctx context.Context, er classicSupplyRe
 		// would retry the doomed query. The goroutine has its own budget in refreshClassicSupply.
 		go s.refreshClassicSupply(er, flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is intentional; see refreshClassicSupply's doc comment.
 	}
+	// Past its TTL the map is stale only as a last-good copy: no refresh is running (the last attempt failed and the retry gap
+	// is open) or the one running has outrun its budget.
+	lastGood := flight == nil || time.Since(s.classicSupplyAttemptAt) >= classicSupplyRefreshBudget
 	s.classicSupplyMu.Unlock()
 
 	// Serving stale beats blocking: this map only feeds market-cap enrichment,
@@ -101,7 +104,7 @@ func (s *Server) readCachedClassicSupply(ctx context.Context, er classicSupplyRe
 		return nil, false
 	}
 	if last != nil {
-		return last, true
+		return last, lastGood
 	}
 	// Nothing servable: wait briefly so a fast query still fills this response, never for the whole
 	// request budget, since the query can outrun the 15s timeout. The detached refresh keeps
