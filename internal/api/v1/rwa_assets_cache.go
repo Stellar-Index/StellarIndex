@@ -27,6 +27,9 @@ type rwaAssetsBuild struct {
 	flags Flags
 	// builtAt is when the build ran; observedAt, the envelope as_of, is the oldest store read behind it.
 	builtAt, observedAt time.Time
+	// catalogueAt is the oldest catalogue page's observation time, zero when no page came from the catalogue cache;
+	// membershipAt is when the membership set the build read was filled, zero when there was none.
+	catalogueAt, membershipAt time.Time
 	// refVerdicts are the exclusion verdicts the build valued its references under.
 	refVerdicts []rwaRefVerdict
 }
@@ -68,24 +71,21 @@ func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error
 	return rwaAssetsBuild{}, err
 }
 
-// cachedRWAAssetsViewOnce serves the assembled view, stale-while-revalidate: past expiry it is served under flags.stale and
-// flags.degraded while a detached rebuild runs. A server with no build, one past rwaAssetsViewMaxStale, or rebuild=true waits
-// up to ctx.
+// cachedRWAAssetsViewOnce serves the assembled view, stale-while-revalidate: past expiry it is served while a detached rebuild
+// runs, under flags.stale and flags.degraded once it is a last-good copy (rwaAssetsViewLastGoodLocked). A server with no build,
+// one past rwaAssetsViewMaxStale, or rebuild=true waits up to ctx.
 func (s *Server) cachedRWAAssetsViewOnce(ctx context.Context, rebuild bool) (rwaAssetsBuild, error) {
 	s.rwaViewMu.Lock()
 	cached, expired := s.rwaViewCache, time.Now().After(s.rwaViewExpires)
+	lastGood := expired && cached != nil && s.rwaAssetsViewLastGoodLocked()
+	viewFailed := s.rwaViewErr != nil
 	ch := s.rwaViewFlight
 	if cached == nil || expired || rebuild {
 		ch = s.startRWAAssetsBuildLocked() //nolint:contextcheck // the build outlives the request that found the view stale.
 	}
 	s.rwaViewMu.Unlock()
 	if !rebuild && cached != nil && time.Since(cached.builtAt) <= rwaAssetsViewMaxStale {
-		b := *cached
-		if expired {
-			b.flags.Stale = true
-			b.flags.Degraded = true
-		}
-		return b, nil
+		return s.judgeRWAAssetsView(*cached, lastGood, viewFailed), nil
 	}
 	select {
 	case <-ch:
@@ -93,14 +93,46 @@ func (s *Server) cachedRWAAssetsViewOnce(ctx context.Context, rebuild bool) (rwa
 		return rwaAssetsBuild{}, ctx.Err()
 	}
 	s.rwaViewMu.Lock()
-	defer s.rwaViewMu.Unlock()
 	if s.rwaViewCache == nil {
+		defer s.rwaViewMu.Unlock()
 		return rwaAssetsBuild{}, s.rwaViewErr
 	}
 	if time.Since(s.rwaViewCache.builtAt) > rwaAssetsViewMaxStale {
+		defer s.rwaViewMu.Unlock()
 		return rwaAssetsBuild{}, errors.Join(errRWAViewTooOld, s.rwaViewErr)
 	}
-	return *s.rwaViewCache, nil
+	b, lastGood := *s.rwaViewCache, time.Now().After(s.rwaViewExpires) && s.rwaAssetsViewLastGoodLocked()
+	viewFailed = s.rwaViewErr != nil
+	s.rwaViewMu.Unlock()
+	return s.judgeRWAAssetsView(b, lastGood, viewFailed), nil
+}
+
+// rwaCatalogueRowsStale judges catalogue rows at build by the view's TTL, not the catalogue's 2 minutes that every 5-minute
+// prewarm outlives.
+func rwaCatalogueRowsStale(observedAt, now time.Time) bool {
+	return !observedAt.IsZero() && now.Sub(observedAt) >= rwaAssetsViewTTL
+}
+
+// judgeRWAAssetsView flags a view that is a last-good copy or holds an input past its bound. Catalogue rows get the view's
+// own build allowance on top of the build-time bound: a quiet server's build holds the previous prewarm's rows, which reach
+// exactly the TTL as the next build starts. viewFailed is the last build's failure. Takes rwaMu; the caller holds no lock.
+func (s *Server) judgeRWAAssetsView(b rwaAssetsBuild, lastGood, viewFailed bool) rwaAssetsBuild {
+	stale := lastGood || (!b.catalogueAt.IsZero() && swrServedStale(b.catalogueAt, rwaAssetsViewTTL, maxHandlerBudget, viewFailed)) ||
+		s.rwaMembershipLapsed(b.membershipAt)
+	if stale {
+		b.flags.Stale, b.flags.Degraded = true, true
+	}
+	return b
+}
+
+// rwaAssetsViewLastGoodLocked is the [swrServedStale] verdict for the cached view, filled one TTL before it expires; the
+// caller holds rwaViewMu and has a cached view.
+func (s *Server) rwaAssetsViewLastGoodLocked() bool {
+	ttl := rwaAssetsViewTTL
+	if s.rwaViewCache.flags.Degraded {
+		ttl = rwaAssetsDegradedTTL
+	}
+	return swrServedStale(s.rwaViewExpires.Add(-ttl), ttl, maxHandlerBudget, s.rwaViewErr != nil)
 }
 
 // refreshRWAAssetsView rebuilds the view whatever its age and waits for the build, so the prewarm cadence keeps it from expiring.

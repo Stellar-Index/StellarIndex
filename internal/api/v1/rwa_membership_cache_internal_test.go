@@ -272,11 +272,11 @@ func TestRWAMembershipSet_SeparatesARebuildComingFromNothingComing(t *testing.T)
 			reading: "fresh: nothing to say and nothing to do",
 		},
 		{
-			name:      "lapsed, a rebuild is coming",
+			name:      "lapsed, its rebuild held back by the retry gap",
 			age:       rwaMembershipTTL + time.Minute,
 			wantStale: true,
-			reading: "expected and transient — the cache serves the lapsed set " +
-				"rather than making a request wait for the rescan",
+			reading: "no rebuild is running to replace the lapsed set, so it is a " +
+				"last-good copy (a rebuild running on time is clean, see TestRWAMembership_StaleFollowsTheSWRVerdict)",
 		},
 		{
 			name:        "lapsed, and nothing is replacing it",

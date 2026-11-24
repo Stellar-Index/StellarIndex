@@ -1013,7 +1013,7 @@ func (s *Server) stampRWAServeState(m rwaMembership) rwaMembership {
 
 // stampServeStateLocked is [Server.stampRWAServeState] for callers already holding rwaMu.
 func (s *Server) stampServeStateLocked(m rwaMembership) rwaMembership {
-	m.servedStale = !s.rwaAt.IsZero() && time.Since(s.rwaAt) >= rwaMembershipTTL
+	m.servedStale = s.rwaMembershipServedStaleLocked()
 	m.rebuildFailedAt = s.rwaFailedAt
 	return m
 }
@@ -1051,12 +1051,15 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 	// Deferred so a panic in the scan cannot leave the single-flight marker set, which would
 	// freeze the cache for the life of the process since a non-nil flight is never replaced.
 	defer s.endRWAMembershipFlight(done)
+	finished := false
+	defer s.failUnfinishedRWARebuild(&finished)
 	defer worker.Recover(s.logger, "api-rwa-membership-refresh")
 
 	ctx, cancel := context.WithTimeout(context.Background(), rwaMembershipBudget)
 	defer cancel()
 
 	built := s.buildRWAMembership(ctx)
+	finished = true
 	// One instant for the published age and the lifetime clock, so `stale` always describes the
 	// same moment as the `built_at` beside it.
 	at := time.Now().UTC()
@@ -1174,7 +1177,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	m := s.cachedRWAMembership(ctx)
 	if rwaMembershipUnavailable(m) {
 		at := time.Now()
-		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: m.serveFlags(), builtAt: at, observedAt: at}, nil
+		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: m.serveFlags(), builtAt: at, observedAt: at, membershipAt: m.builtAt}, nil
 	}
 	now := time.Now()
 	listCtx, listReads := withReadReport(ctx)
@@ -1245,11 +1248,13 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	ms := m.serveFlags()
 	flags := Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0}
 	return rwaAssetsBuild{
-		view:        view,
-		flags:       markFillsWithheld(flags, rwaViewWithheld(view.Assets, listReads, valReads)),
-		builtAt:     now,
-		observedAt:  observedAt,
-		refVerdicts: refVerdicts,
+		view:         view,
+		flags:        markFillsWithheld(flags, rwaViewWithheld(view.Assets, listReads, valReads)),
+		builtAt:      now,
+		observedAt:   observedAt,
+		catalogueAt:  join.observedAt,
+		membershipAt: m.builtAt,
+		refVerdicts:  refVerdicts,
 	}, nil
 }
 
@@ -1384,8 +1389,8 @@ func (s *Server) rwaListingRows(
 		if err != nil {
 			return nil, join, err
 		}
-		// Judged against the view, not the catalogue's 2-minute TTL that every 5-minute prewarm outlives; the age still lands in as_of.
-		join.notePage(issuer, got.at, !got.at.IsZero() && time.Since(got.at) >= rwaAssetsViewTTL, got.tailUnchecked)
+		// The age still lands in as_of.
+		join.notePage(issuer, got.at, rwaCatalogueRowsStale(got.at, time.Now()), got.tailUnchecked)
 		keep, memberCodes := got.keep, got.memberCodes
 		if len(keep) == 0 {
 			continue

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,7 +84,8 @@ func newCountingListingServer(t *testing.T, dir *countingDirectory) (*Server, *c
 	reader := &countingListingReader{}
 	srv := New(Options{Directory: dir})
 	srv.AssetsReader = reader
-	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
+	// Starts at the wall clock: a build stamps its rows' as_of with time.Now, and the verdict ages rows from it.
+	clock := &fakeClock{t: time.Now()}
 	srv.assetListCache.now = clock.now
 	return srv, reader, clock
 }
@@ -143,9 +145,31 @@ func TestAssetList_WarmPageMakesNoStoreReads(t *testing.T) {
 	}
 }
 
-// Past the TTL the page is served at once, flagged stale, and exactly one
-// background rebuild replaces it; past the max age it is rebuilt inline.
-func TestAssetList_StaleReplayIsFlaggedAndRefreshedOnce(t *testing.T) {
+// waitAssetListSettled waits until no listing page has a refresh in flight.
+func waitAssetListSettled(t *testing.T, srv *Server) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c := srv.assetListCache
+		c.mu.Lock()
+		busy := false
+		for _, e := range c.entries {
+			busy = busy || e.flight
+		}
+		c.mu.Unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background refresh never settled")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Past the TTL the page is served at once, clean while its refresh is on time, and exactly one background rebuild replaces
+// it; past the max age it is rebuilt inline.
+func TestAssetList_ReplayPastTTLIsRefreshedOnce(t *testing.T) {
 	srv, reader, clock := newCountingListingServer(t, &countingDirectory{})
 
 	if got := getAssetList(t, srv, "/v1/assets?limit=100"); got.stale {
@@ -154,22 +178,19 @@ func TestAssetList_StaleReplayIsFlaggedAndRefreshedOnce(t *testing.T) {
 	clock.advance(assetListCacheTTL + time.Second)
 
 	got := getAssetList(t, srv, "/v1/assets?limit=100")
-	if !got.stale || got.cache != "HIT" {
-		t.Errorf("replay past the TTL: cache=%q stale=%v, want a stale-flagged HIT", got.cache, got.stale)
+	if got.stale || got.cache != "HIT" {
+		t.Errorf("replay just past the TTL: cache=%q stale=%v, want a clean HIT", got.cache, got.stale)
 	}
 	getAssetList(t, srv, "/v1/assets?limit=100")
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		fresh := getAssetList(t, srv, "/v1/assets?limit=100")
-		if !fresh.stale {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("background refresh never replaced the stale page")
-		}
-		time.Sleep(5 * time.Millisecond)
+	waitAssetListSettled(t, srv)
+	key := assetListCacheKey(httptest.NewRequest(http.MethodGet, "/v1/assets?limit=100", nil))
+	srv.assetListCache.mu.Lock()
+	refreshedAt := srv.assetListCache.entries[key].cachedAt
+	srv.assetListCache.mu.Unlock()
+	if !refreshedAt.Equal(clock.now()) {
+		t.Errorf("refresh did not replace the page: cachedAt %v, want %v", refreshedAt, clock.now())
 	}
+	getAssetList(t, srv, "/v1/assets?limit=100")
 	if n := reader.lists.Load(); n != 2 {
 		t.Errorf("rows read %d times, want 2 (cold build + one refresh for every stale replay)", n)
 	}
@@ -180,6 +201,28 @@ func TestAssetList_StaleReplayIsFlaggedAndRefreshedOnce(t *testing.T) {
 	}
 	if n := reader.lists.Load(); n != 3 {
 		t.Errorf("rows read %d times past max age, want 3", n)
+	}
+}
+
+// A page built from rows the catalogue already held is flagged once those rows pass the catalogue's bound, even while the
+// page itself is inside its own TTL: the two caches' bounds do not add up.
+func TestAssetListCache_RowsAgeFromTheirObservation(t *testing.T) {
+	c := newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge)
+	clock := &fakeClock{t: time.Now()}
+	c.now = clock.now
+	rowsAge := assetListCacheMaxAge + 25*time.Second
+	env := Envelope{Data: []AssetDetail{{AssetID: "USDC-" + alcIssuer}}, AsOf: WireTime(clock.now().Add(-rowsAge))}
+	if err := c.put("k", env); err != nil {
+		t.Fatal(err)
+	}
+	if hit, _, ok := c.lookup("k"); !ok || hit.stale {
+		t.Fatalf("rows inside the catalogue bound: ok=%v stale=%v, want a clean hit", ok, hit.stale)
+	}
+	clock.advance(assetListCacheMaxAge + assetsRefreshBudget - rowsAge + time.Second)
+	hit, _, ok := c.lookup("k")
+	if !ok || !hit.stale || !hit.env.Flags.Stale || !strings.Contains(string(hit.body), `"stale":true`) {
+		t.Errorf("rows past the catalogue bound on a %v-old page: ok=%v stale=%v, want flagged",
+			assetListCacheMaxAge+assetsRefreshBudget-rowsAge+time.Second, ok, hit.stale)
 	}
 }
 
@@ -319,13 +362,7 @@ func TestPrewarmAssetList_KeepsDefaultPageWarm(t *testing.T) {
 
 	clock.advance(assetListCacheTTL + time.Second)
 	srv.PrewarmAssetList(context.Background())
-	deadline := time.Now().Add(5 * time.Second)
-	for getAssetList(t, srv, "/v1/assets").stale {
-		if time.Now().After(deadline) {
-			t.Fatal("prewarm past the TTL never refreshed the page")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitAssetListSettled(t, srv)
 
 	if n := reader.lists.Load(); n != 2 {
 		t.Errorf("rows read %d times, want 2 (cold prewarm + one refresh)", n)
