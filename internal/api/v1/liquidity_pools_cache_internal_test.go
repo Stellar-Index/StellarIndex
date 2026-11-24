@@ -175,6 +175,62 @@ func TestNativeLPListing_FailedRescanKeepsTheLastGoodListing(t *testing.T) {
 	}
 }
 
+// seedLPEntry installs a one-row listing aged age without touching the reader, so a gated reader blocks only rescans.
+func seedLPEntry(s *Server, age time.Duration) {
+	s.nativeLPMu.Lock()
+	s.nativeLPCached = []LiquidityPoolReservesRow{{Pool: "L" + "POOL", AsOfLedger: 63_000_000}}
+	s.nativeLPFetched = time.Now().Add(-age)
+	s.nativeLPMu.Unlock()
+}
+
+func lpSnapshotDegraded(t *testing.T, s *Server) bool {
+	t.Helper()
+	rows, _, degraded, err := s.nativeLPSnapshot(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("snapshot: rows=%d err=%v, want the cached row", len(rows), err)
+	}
+	return degraded
+}
+
+// Past the TTL the listing is a last-good copy only once its last rescan failed or it is older than TTL+min(TTL, budget).
+func TestNativeLPSnapshot_StaleVerdict(t *testing.T) {
+	grace := min(nativeLPListingTTL, nativeLPListingRefreshTimeout)
+
+	t.Run("past TTL+grace with the rescan held is degraded", func(t *testing.T) {
+		reader := &lpCacheReader{gate: make(chan struct{})}
+		t.Cleanup(func() { close(reader.gate) })
+		s := newLPCacheServer(reader)
+		seedLPEntry(s, nativeLPListingTTL+grace+time.Second)
+		if !lpSnapshotDegraded(t, s) {
+			t.Error("an entry past TTL+grace was served clean")
+		}
+	})
+
+	t.Run("failed rescan is degraded until a successful fill", func(t *testing.T) {
+		reader := &lpCacheReader{gate: make(chan struct{})}
+		reader.fail.Store(true)
+		s := newLPCacheServer(reader)
+		rescanIdle := func() bool { return !s.nativeLPRefreshing.Load() }
+		seedLPEntry(s, nativeLPListingTTL+time.Second)
+
+		if lpSnapshotDegraded(t, s) {
+			t.Error("just past its TTL, with a healthy rescan running, the listing was served degraded")
+		}
+		reader.gate <- struct{}{} // the held rescan fails
+		waitForLPCache(t, "the failing rescan", rescanIdle)
+		if !lpSnapshotDegraded(t, s) {
+			t.Error("inside the grace after a failed rescan, the listing was served clean")
+		}
+		reader.fail.Store(false)
+		reader.gate <- struct{}{} // the rescan kicked by that serve succeeds
+		waitForLPCache(t, "the succeeding rescan", rescanIdle)
+		if lpSnapshotDegraded(t, s) {
+			t.Error("after a successful fill the listing was still served degraded")
+		}
+		close(reader.gate)
+	})
+}
+
 // A stone-cold process still fills inline (there is nothing to serve), but
 // concurrent cold callers must collapse onto ONE scan rather than each
 // running their own.

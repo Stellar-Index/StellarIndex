@@ -175,15 +175,15 @@ type Server struct {
 	priceReadFlight singleflight.Group
 	// batchRowFlight coalesces identical in-flight /v1/price/batch rows across requests (see resolveBatchRowShared).
 	batchRowFlight singleflight.Group
-	// Cached top-N native (CAP-38) LP listing: a whole-prefix lake scan (~40k pools) ranked in Go.
-	// nativeLPMu is NEVER held across the scan, or callers queue behind it after each TTL lapse.
-	// nativeLPFillMu collapses COLD fills onto one scan; nativeLPRefreshing admits one rescan.
-	nativeLPMu         sync.Mutex
-	nativeLPCached     []LiquidityPoolReservesRow
-	nativeLPAll        []clickhouse.NativeLiquidityPoolState
-	nativeLPFetched    time.Time
-	nativeLPFillMu     sync.Mutex
-	nativeLPRefreshing atomic.Bool
+	// Cached top-N native (CAP-38) LP listing (whole-prefix lake scan, ranked in Go). nativeLPMu is NEVER held across the scan;
+	// nativeLPFillMu collapses COLD fills; nativeLPRefreshing admits one rescan; nativeLPRefreshFailed: last rescan failed.
+	nativeLPMu            sync.Mutex
+	nativeLPCached        []LiquidityPoolReservesRow
+	nativeLPAll           []clickhouse.NativeLiquidityPoolState
+	nativeLPFetched       time.Time
+	nativeLPRefreshFailed bool
+	nativeLPFillMu        sync.Mutex
+	nativeLPRefreshing    atomic.Bool
 	// protocolFast{Mu,Settled,OK} cache the probe once definitive (fastActivity); a sync.Once would latch a transient error.
 	protocolFastMu      sync.Mutex
 	protocolFastSettled bool

@@ -159,20 +159,28 @@ func (s *Server) nativeLPListing(ctx context.Context) ([]LiquidityPoolReservesRo
 }
 
 // nativeLPSnapshot is [Server.nativeLPListing] plus every captured pool's state in ranked order (the ?asset= filter needs pools
-// beyond the top N), and whether rows are carried forward: past the TTL, or last-good after a failed scan.
+// beyond the top N), and whether rows are a last-good copy per [swrServedStale].
 func (s *Server) nativeLPSnapshot(ctx context.Context) ([]LiquidityPoolReservesRow, []clickhouse.NativeLiquidityPoolState, bool, error) {
 	s.nativeLPMu.Lock()
-	rows, all, fetched := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched
+	rows, all, fetched, failed := s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched, s.nativeLPRefreshFailed
 	s.nativeLPMu.Unlock()
 
 	if !fetched.IsZero() {
-		lapsed := time.Since(fetched) >= nativeLPListingTTL
-		if lapsed {
+		if time.Since(fetched) >= nativeLPListingTTL {
 			s.refreshNativeLPListing() //nolint:contextcheck // intentional detach — the rescan must outlive the request that noticed the lapse (see refreshNativeLPListing)
 		}
-		return rows, all, lapsed, nil
+		return rows, all, swrServedStale(fetched, nativeLPListingTTL, nativeLPListingRefreshTimeout, failed), nil
 	}
 	return s.fillNativeLPListing(ctx)
+}
+
+// markNativeLPRefreshFailed records that a rescan of the filled listing failed; only a successful fill clears it.
+func (s *Server) markNativeLPRefreshFailed() {
+	s.nativeLPMu.Lock()
+	if !s.nativeLPFetched.IsZero() {
+		s.nativeLPRefreshFailed = true
+	}
+	s.nativeLPMu.Unlock()
 }
 
 // nativeLPRowsForAsset returns up to limit ranked pools holding any alias
@@ -210,6 +218,7 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 	obs.ObserveExplorerSWRRefresh("native_lp_listing", start, err)
 	if err != nil {
 		if !fetched.IsZero() {
+			s.markNativeLPRefreshFailed()
 			return rows, all, true, nil // last-good beats failing the request
 		}
 		return nil, nil, false, err
@@ -223,7 +232,7 @@ func (s *Server) fillNativeLPListing(ctx context.Context) ([]LiquidityPoolReserv
 		out = append(out, buildLiquidityPoolRow(st))
 	}
 	s.nativeLPMu.Lock()
-	s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched = out, states, time.Now()
+	s.nativeLPCached, s.nativeLPAll, s.nativeLPFetched, s.nativeLPRefreshFailed = out, states, time.Now(), false
 	s.nativeLPMu.Unlock()
 	return out, states, false, nil
 }
@@ -239,9 +248,17 @@ func (s *Server) refreshNativeLPListing() {
 		// which leaves the last-good entry served and lets the NEXT visitor kick a fresh rescan.
 		defer s.nativeLPRefreshing.Store(false)
 		defer worker.Recover(s.logger, "api-native-lp-listing-refresh")
+		finished := false
+		defer func() {
+			if !finished { // a panicked rescan leaves a last-good copy like a failed one
+				s.markNativeLPRefreshFailed()
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), nativeLPListingRefreshTimeout)
 		defer cancel()
-		if _, _, _, err := s.fillNativeLPListing(ctx); err != nil {
+		_, _, _, err := s.fillNativeLPListing(ctx)
+		finished = true
+		if err != nil {
 			// The previous entry is still served; the refresh metric shows a dying refresher.
 			s.logger.Warn("native liquidity-pool listing detached refresh failed (serving last good)", "err", err)
 		}
