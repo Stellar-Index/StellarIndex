@@ -1563,7 +1563,7 @@ Hold extensions granted: +30 minutes, up to 4 times, when a hold expires without
 
 Counter, no labels.
 
-Holds that expired on an unscored bucket; no extension is used. A sustained rate means scoring is down.
+Holds that expired on an unscored bucket; no extension is used. At most 4 per freeze (`max_extensions`): the next unscored expiry escalates and counts under `stellarindex_anomaly_freeze_escalated_total`. A sustained rate across pairs means scoring is down.
 
 ### `stellarindex_anomaly_freeze_escalated_total`
 

@@ -2489,7 +2489,7 @@ var AnomalyFreezeExtensionsTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeHeldUnscoredTotal counts hold expiries on a bucket the scorer could not evaluate; a sustained rate means scoring is stuck while extension and escalation counters stay silent.
+// AnomalyFreezeHeldUnscoredTotal counts hold expiries on a bucket the scorer could not evaluate; bounded per freeze, after which the freeze escalates.
 var AnomalyFreezeHeldUnscoredTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_held_unscored_total",

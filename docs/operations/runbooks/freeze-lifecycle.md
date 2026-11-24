@@ -50,7 +50,7 @@ stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -asset <A> -quot
 
 ## stellarindex_anomaly_freeze_escalated
 
-P1 page. `increase(stellarindex_anomaly_freeze_escalated_total[15m]) > 0`, `for: 0m`. A freeze exhausted the ladder (>= 2 h) and is held until an operator acts: manipulation, a genuine repricing the baseline has not absorbed, no corroborating reference, or Phase-2 thresholds too tight. Price is stuck for the pair; `stellarindex_anomaly_freeze_active > 0`; `freeze_events` has an open row with `escalated = true`.
+P1 page. `increase(stellarindex_anomaly_freeze_escalated_total[15m]) > 0`, `for: 0m`. A freeze exhausted the ladder (>= 2 h), or its hold expired unscored 5 times (`unscored_slides=4` on the journal line: empty/thin buckets, no fresh baseline), and is held until an operator acts: manipulation, a genuine repricing the baseline has not absorbed, no corroborating reference, a pair that cannot be scored, or Phase-2 thresholds too tight. Price is stuck for the pair; `stellarindex_anomaly_freeze_active > 0`; `freeze_events` has an open row with `escalated = true`.
 
 **Check** Shared diagnosis (the `freeze escalated` journal line carries pair, fired_at and the confidence/z/source_count reason).
 
@@ -61,7 +61,7 @@ P1 page. `increase(stellarindex_anomaly_freeze_escalated_total[15m]) > 0`, `for:
 3. References disagree: market genuinely distressed; keep held and update the status page (`sev-status-page-update.md`). Confirmed manipulation: leave frozen, ack.
 4. No reference (e.g. CoinGecko 429): `divergence.md#stellarindex_divergence_refresh_error_dominant`. A lens-less pair that pages repeatedly needs a second reference source for its quote currency, not a looser gate.
 
-**Likely false positives** Sparse Phase-2 baseline (30-day persisted row): confidence is unscorable, so the bucket cannot be freeze-eligible or earn an unfreeze streak and a straddling freeze walks the ladder; a frozen pair is scorable from its second bucket after a restart. A real stablecoin depeg looks like an anomaly (ADR-0026): the freeze is correct; `divergence_checked=false` means the check was blind.
+**Likely false positives** Sparse Phase-2 baseline (30-day persisted row) or a thin pair whose buckets are empty or under the volume floor: the bucket is unscorable, so it cannot be freeze-eligible or earn an unfreeze streak, and a straddling freeze slides (`freeze hold slid — bucket could not be scored`) until it escalates with `unscored_slides=4`. Tell which from `stellarindex_aggregator_confidence_compute_total` (`baseline_missing` / `baseline_stale`) versus empty windows. A frozen pair is scorable from its second priced bucket after a restart. A real stablecoin depeg looks like an anomaly (ADR-0026): the freeze is correct; `divergence_checked=false` means the check was blind.
 
 **Escalate** Capture `freeze_events` history over 24 h, `divergence_observations`, adjacent `stellarindex_aggregator_class_drop_spike` / `stellarindex_aggregator_outlier_storm` (`aggregator.yml`) and the journal. See `aggregator.md#stellarindex_aggregator_outlier_storm`, `anomaly.md#stellarindex_anomaly_freeze_engaged`.
 
