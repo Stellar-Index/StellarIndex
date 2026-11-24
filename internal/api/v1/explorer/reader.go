@@ -162,13 +162,13 @@ type ExplorerReader interface {
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
 	// AccountStateCached serves account state from a bounded TTL cache. A cold miss waits on a
 	// DETACHED fill bounded by the caller's deadline; an EXPIRED entry is served at once with
-	// stale=true while one detached refresh runs. Pair stale with flags.stale in the envelope.
+	// pastTTL=true while one detached refresh runs. Judge flags.stale with swrServedStale.
 	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error)
 	AssetHolders(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, computedAt time.Time, err error)
 	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed cache and NEVER runs
-	// the FINAL scan on the caller's deadline. An entry past its TTL is still served (flagged
-	// degraded), so failed refreshes yield old-but-real data, not 503s. ok=false means never
+	// the FINAL scan on the caller's deadline. An entry past its TTL is still served (degraded once
+	// late or its refresh failed), so failed refreshes yield old-but-real data, not 503s. ok=false means never
 	// computed: render a warming state, never fall back to AccountsByWealth on the request path
 	// (the scan needs 11-20s against an 8s deadline). Basis ("usd" | "native_xlm") labels the
 	// ranking's unit when no USD price map was available.

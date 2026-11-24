@@ -82,10 +82,10 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 			"the account wealth ranking is being computed; retry shortly")
 		return
 	}
-	// Degraded when the snapshot has outlived its refresh contract (the
-	// background refresher is failing/behind) — the data is real, the flag +
-	// the envelope's as_of (stamped from the snapshot) say how old.
-	snapshotStale := time.Since(snap.AsOf) > clickhouse.AccountsWealthCacheTTL
+	// Degraded once the snapshot outlives its refresh contract (late or last refresh failed); the data is
+	// real, and the envelope's as_of (stamped from the snapshot) says how old.
+	snapshotStale := time.Since(snap.AsOf) > clickhouse.AccountsWealthCacheTTL &&
+		swrServedStale(snap.AsOf, clickhouse.AccountsWealthCacheTTL, clickhouse.AccountsWealthRefreshTimeout, snap.RefreshFailed)
 	// The SDF burn address would rank as the richest account with provably unspendable XLM, so
 	// it is badged rather than hidden. The flag is resolved by the background refresh and cached
 	// on each row (a.Locked); AccountsUnspendable is a FINAL scan too slow to run per request.
@@ -352,7 +352,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	st, snapStale, err := h.Reader.AccountStateCached(ctx, g)
+	st, pastTTL, err := h.Reader.AccountStateCached(ctx, g)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -385,9 +385,8 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	if st.Exists {
 		fillAccountStateView(&out, st)
 	}
-	// snapStale: the served state came from an expired cache entry while a
-	// detached refresh runs (whale-account stale-serve) —
-	// surfaced on the same flags.stale the watermark uses.
+	snapStale := pastTTL && swrServedStale(st.CachedAt, clickhouse.AccountStateCacheTTL,
+		clickhouse.AccountStateRefreshTimeout, st.RefreshFailed)
 	h.writeJSONAt(w, out, stale || snapStale, out.DirectoryUnavailable, time.Time{})
 }
 

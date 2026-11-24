@@ -6152,12 +6152,13 @@ export interface paths {
          *     Phase C); coverage tracks the entry-change capture.
          *
          *     Freshness (ADR-0041): the ranking is a background-computed snapshot
-         *     (refreshed every few minutes, served for up to 15 minutes). The
+         *     (refreshed every few minutes, and on a serve once 15 minutes old). The
          *     envelope `as_of` is when it was computed and `as_of_ledger` is the
          *     lake watermark read immediately before its scan — the snapshot's own
          *     vintage, never a later serve-time read. `flags.stale` fires when the
-         *     snapshot has outlived its 15-minute refresh contract or the lake
-         *     watermark's close time trails now by more than 300s (a wedged sink).
+         *     snapshot is older than 18 minutes, or is past 15 minutes and its last
+         *     refresh failed, or the lake watermark's close time trails now by more
+         *     than 300s (a wedged sink).
          */
         get: operations["listAccounts"];
         put?: never;
@@ -6374,10 +6375,11 @@ export interface paths {
          *     merged away, or not yet in the capture. Balances are strings (ADR-0003).
          *
          *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the served
-         *     state was fresh to WHEN IT WAS CACHED (up to 30s old), not a serve-time
-         *     read and not the account's `last_modified_ledger`; `flags.stale` fires
-         *     when the cache entry is stale (served while a refresh runs) or the
-         *     watermark's close time trails now by more than 300s.
+         *     state was fresh to WHEN IT WAS CACHED, not a serve-time read and not the
+         *     account's `last_modified_ledger`. The cache refreshes entries older than
+         *     30s; `flags.stale` fires when the served entry is older than 60s, or its
+         *     last refresh failed or was skipped, or the watermark's close time trails
+         *     now by more than 300s.
          */
         get: operations["getAccount"];
         put?: never;
