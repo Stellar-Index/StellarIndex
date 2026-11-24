@@ -75,6 +75,7 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 	var (
 		page     entryPage[clickhouse.AssetEntryChange]
 		wm       uint32
+		asOf     time.Time // zero on the inline cursor path: computed now
 		degraded bool
 		err      error
 	)
@@ -84,7 +85,7 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 			page, err = h.assetEntryPage(ctx, asset, limit, cur, wm)
 		}
 	} else {
-		page, wm, degraded, err = h.assetEntryFirstPageCached(ctx, asset, limit)
+		page, wm, asOf, degraded, err = h.assetEntryFirstPageCached(ctx, asset, limit)
 	}
 	if err != nil {
 		h.assetEntryChangesError(w, r, ctx, err, asset)
@@ -105,7 +106,7 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 		Asset: asset, Changes: changes, NextCursor: page.next, ThroughLedger: wm, LowerBound: true,
 		CoverageNote: assetEntryChangesNote(wm, partial, lookupFailed),
 	}
-	h.writeJSONAt(w, out, degraded || h.movementsStale(ctx, wm), lookupFailed, time.Time{})
+	h.writeJSONAt(w, out, degraded || h.movementsStale(ctx, wm), lookupFailed, asOf)
 }
 
 // assetEntryFirstWalk is a cached first page: the walk at the max limit and the watermark it was walked through.
@@ -116,8 +117,8 @@ type assetEntryFirstWalk struct {
 
 // assetEntryFirstPageCached serves the first page through the contract-detail SWR cache, walked once at the max
 // limit and cut to the request's: a liquid asset's walk outlasts a page view, and the cursor pages stay inline.
-func (h *Handler) assetEntryFirstPageCached(ctx context.Context, asset string, limit int) (entryPage[clickhouse.AssetEntryChange], uint32, bool, error) {
-	v, _, degraded, err := h.contractDetailCached(ctx, "aec:"+asset, func(rctx context.Context) (any, error) {
+func (h *Handler) assetEntryFirstPageCached(ctx context.Context, asset string, limit int) (entryPage[clickhouse.AssetEntryChange], uint32, time.Time, bool, error) {
+	v, asOf, degraded, err := h.contractDetailCached(ctx, "aec:"+asset, func(rctx context.Context) (any, error) {
 		wm, werr := h.Reader.EntryIndexWatermark(rctx)
 		if werr != nil || wm == 0 {
 			return assetEntryFirstWalk{}, werr
@@ -129,10 +130,10 @@ func (h *Handler) assetEntryFirstPageCached(ctx context.Context, asset string, l
 		return assetEntryFirstWalk{walk: walk, wm: wm}, nil
 	})
 	if err != nil {
-		return entryPage[clickhouse.AssetEntryChange]{}, 0, false, err
+		return entryPage[clickhouse.AssetEntryChange]{}, 0, time.Time{}, false, err
 	}
 	first, _ := v.(assetEntryFirstWalk)
-	return first.walk.page(assetEntryKey, limit), first.wm, degraded, nil
+	return first.walk.page(assetEntryKey, limit), first.wm, asOf, degraded, nil
 }
 
 // assetEntryPage walks the asset's indexed ledgers and keeps the projector's asset rows other than an offer's.
