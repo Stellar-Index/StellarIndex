@@ -271,6 +271,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	}
 	excluded := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsWithheld })
 	unread := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.FillsUnread })
+	legUnread := slices.ContainsFunc(snapshots, func(p PriceSnapshot) bool { return p.PegReadFailed })
 	snapshots, dropped, windowsUnknown := s.dropFrozenBuckets(ctx, asset, snapshots)
 
 	out := make([]SEP40Price, len(snapshots))
@@ -289,7 +290,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	// below the surface's baseline: stale as well as triangulated, the
 	// rule lastprice/x_last_price follow. A series short of the buckets a recovered freeze refused is a partial answer.
 	writeJSON(w, out, markFillsWithheld(Flags{
-		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown || unread,
+		Stale: viaPeg || windowsUnknown, Triangulated: viaPeg, Degraded: dropped || windowsUnknown || unread || legUnread,
 		FrozenChecked: held.checked && !windowsUnknown,
 	}, excluded))
 }
@@ -417,6 +418,13 @@ func (s *Server) settledSeries(
 	}
 	if err := s.thinDirectPegRefusal(ctx, directErr, best); err != nil {
 		return nil, err
+	}
+	if failed.read != nil {
+		// A later leg that could not be read may hold the newer series: the answer is not known best, so not cached.
+		best = slices.Clone(best)
+		for i := range best {
+			best[i].PegReadFailed = true
+		}
 	}
 	return best, nil
 }
