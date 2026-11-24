@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,7 +84,8 @@ func newCountingListingServer(t *testing.T, dir *countingDirectory) (*Server, *c
 	reader := &countingListingReader{}
 	srv := New(Options{Directory: dir})
 	srv.AssetsReader = reader
-	clock := &fakeClock{t: time.Unix(1_800_000_000, 0)}
+	// Starts at the wall clock: a build stamps its rows' as_of with time.Now, and the verdict ages rows from it.
+	clock := &fakeClock{t: time.Now()}
 	srv.assetListCache.now = clock.now
 	return srv, reader, clock
 }
@@ -181,6 +183,13 @@ func TestAssetList_ReplayPastTTLIsRefreshedOnce(t *testing.T) {
 	}
 	getAssetList(t, srv, "/v1/assets?limit=100")
 	waitAssetListSettled(t, srv)
+	key := assetListCacheKey(httptest.NewRequest(http.MethodGet, "/v1/assets?limit=100", nil))
+	srv.assetListCache.mu.Lock()
+	refreshedAt := srv.assetListCache.entries[key].cachedAt
+	srv.assetListCache.mu.Unlock()
+	if !refreshedAt.Equal(clock.now()) {
+		t.Errorf("refresh did not replace the page: cachedAt %v, want %v", refreshedAt, clock.now())
+	}
 	getAssetList(t, srv, "/v1/assets?limit=100")
 	if n := reader.lists.Load(); n != 2 {
 		t.Errorf("rows read %d times, want 2 (cold build + one refresh for every stale replay)", n)
@@ -192,6 +201,28 @@ func TestAssetList_ReplayPastTTLIsRefreshedOnce(t *testing.T) {
 	}
 	if n := reader.lists.Load(); n != 3 {
 		t.Errorf("rows read %d times past max age, want 3", n)
+	}
+}
+
+// A page built from rows the catalogue already held is flagged once those rows pass the catalogue's bound, even while the
+// page itself is inside its own TTL: the two caches' bounds do not add up.
+func TestAssetListCache_RowsAgeFromTheirObservation(t *testing.T) {
+	c := newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge)
+	clock := &fakeClock{t: time.Now()}
+	c.now = clock.now
+	rowsAge := assetListCacheMaxAge + 25*time.Second
+	env := Envelope{Data: []AssetDetail{{AssetID: "USDC-" + alcIssuer}}, AsOf: WireTime(clock.now().Add(-rowsAge))}
+	if err := c.put("k", env); err != nil {
+		t.Fatal(err)
+	}
+	if hit, _, ok := c.lookup("k"); !ok || hit.stale {
+		t.Fatalf("rows inside the catalogue bound: ok=%v stale=%v, want a clean hit", ok, hit.stale)
+	}
+	clock.advance(assetListCacheMaxAge + assetsRefreshBudget - rowsAge + time.Second)
+	hit, _, ok := c.lookup("k")
+	if !ok || !hit.stale || !hit.env.Flags.Stale || !strings.Contains(string(hit.body), `"stale":true`) {
+		t.Errorf("rows past the catalogue bound on a %v-old page: ok=%v stale=%v, want flagged",
+			assetListCacheMaxAge+assetsRefreshBudget-rowsAge+time.Second, ok, hit.stale)
 	}
 }
 

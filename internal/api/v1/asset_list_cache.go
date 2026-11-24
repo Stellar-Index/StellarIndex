@@ -69,8 +69,19 @@ func newAssetListResponseCache(ttl, maxAge time.Duration) *assetListResponseCach
 }
 
 // lookup returns the body to replay for key. Past the TTL it returns refresh=true to exactly one caller until the refresh
-// settles, and the stale-flagged body once the page is a last-good copy per [swrverdict.Stale]; past maxAge it misses.
+// settles, and the stale-flagged body once the page is a last-good copy per [assetListResponseCache.staleLocked]; past
+// maxAge it misses.
 func (c *assetListResponseCache) lookup(key string) (hit assetListHit, refresh, ok bool) {
+	return c.read(key, true)
+}
+
+// peek is lookup for a caller that cannot start the page's refresh: it never claims the flight, so the next lookup still does.
+func (c *assetListResponseCache) peek(key string) (assetListHit, bool) {
+	hit, _, ok := c.read(key, false)
+	return hit, ok
+}
+
+func (c *assetListResponseCache) read(key string, claim bool) (hit assetListHit, refresh, ok bool) {
 	if c == nil || c.ttl <= 0 {
 		return hit, false, false
 	}
@@ -80,22 +91,32 @@ func (c *assetListResponseCache) lookup(key string) (hit assetListHit, refresh, 
 	if !found {
 		return hit, false, false
 	}
-	age := c.now().Sub(e.cachedAt)
-	switch {
-	case age < c.ttl:
-		return assetListHit{body: e.fresh, env: e.env}, false, true
-	case age <= c.maxAge:
-		refresh = !e.flight
-		e.flight = true
-		if !swrverdict.Stale(age, c.ttl, cacheFillBudget, e.refreshFailed) {
-			return assetListHit{body: e.fresh, env: e.env}, refresh, true
-		}
-		env := e.env
-		env.Flags.Stale = true
-		return assetListHit{body: e.stale, env: env, stale: true}, refresh, true
-	default:
+	now := c.now()
+	age := now.Sub(e.cachedAt)
+	if age > c.maxAge {
 		return hit, false, false
 	}
+	if age >= c.ttl && claim {
+		refresh = !e.flight
+		e.flight = true
+	}
+	if !c.staleLocked(e, now) {
+		return assetListHit{body: e.fresh, env: e.env}, refresh, true
+	}
+	env := e.env
+	env.Flags.Stale = true
+	return assetListHit{body: e.stale, env: env, stale: true}, refresh, true
+}
+
+// staleLocked judges the page by its own age and its rows by theirs: the rows (env.AsOf when they predate the build) are held
+// to the 2-minute catalogue's bound, so caching a page cannot replay them clean past it.
+func (c *assetListResponseCache) staleLocked(e *assetListEntry, now time.Time) bool {
+	rowsAt := e.cachedAt
+	if at := e.env.AsOf.Time(); !at.IsZero() && at.Before(rowsAt) {
+		rowsAt = at
+	}
+	return swrverdict.Stale(now.Sub(e.cachedAt), c.ttl, cacheFillBudget, e.refreshFailed) ||
+		swrverdict.Stale(now.Sub(rowsAt), c.maxAge, assetsRefreshBudget, false)
 }
 
 // put renders env and stores it under key, clearing any refresh flight.
