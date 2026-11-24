@@ -31,7 +31,8 @@ func classicOpTypeInList(opTypes []string) string {
 	return strings.Join(quoted, ",")
 }
 
-// StreamClassicOps streams successful-tx operations for [from,to] of the given opTypes in dispatcher order, with NO FINAL, so callers that count MUST dedupe on (ledger_seq, tx_hash, op_index).
+// StreamClassicOps streams successful-tx operations for [from,to] of the given opTypes in apply order (ledger_seq, tx_index,
+// op_index; tx_hash order is not apply order), with NO FINAL, so callers that count MUST dedupe on (ledger_seq, tx_hash, op_index).
 func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes []string, fn func(ClassicOp) error) error {
 	if len(opTypes) == 0 {
 		return fmt.Errorf("clickhouse: StreamClassicOps: opTypes is empty")
@@ -70,7 +71,7 @@ func classicOpsQuery(opTypes []string) string {
 		  ON o.ledger_seq = r.ledger_seq AND o.tx_hash = r.tx_hash AND o.op_index = r.op_index
 		WHERE o.ledger_seq BETWEEN ? AND ?
 		  AND o.op_type IN (%s)
-		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
+		ORDER BY o.ledger_seq, o.tx_index, o.op_index
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, classicOpTypeInList(opTypes))
 }
 

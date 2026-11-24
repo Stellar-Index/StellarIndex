@@ -178,7 +178,7 @@ func TestClassicOpsQuery_Shape(t *testing.T) {
 	for _, s := range []string{
 		"SETTINGS join_algorithm = 'grace_hash'",
 		"grace_hash_join_initial_buckets = 32",
-		"ORDER BY o.ledger_seq, o.tx_hash, o.op_index",
+		"ORDER BY o.ledger_seq, o.tx_index, o.op_index", // apply order; a lexical tx_hash order is not
 	} {
 		if !strings.Contains(q, s) {
 			t.Errorf("classicOpsQuery missing %q:\n%s", s, q)
