@@ -325,7 +325,7 @@ Then fix as in [watchdog_silent](#stellarindex_data_freshness_watchdog_silent).
 
 ## Served-value truth (verify-served-values)
 
-`stellarindex-ops verify-served-values` reconciles served values against independent sources (SDF lumen API, Stellar Expert) and writes `stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}` plus `stellarindex_sdf_reserve_list_drift{kind}`, daily 06:20 UTC from `verify-served-values.timer`.
+`stellarindex-ops verify-served-values` reconciles served values against independent sources (SDF lumen API; Circle's `api.circle.com/v1/stablecoins` for USDC, its XLM-chain `amount`, skipped when that entry's `updateDate` is over 24 h old) and writes `stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}` plus `stellarindex_sdf_reserve_list_drift{kind}`, daily 06:20 UTC from `verify-served-values.timer`.
 
 Investigate:
 
@@ -338,7 +338,7 @@ curl -s 'https://api.stellarindex.io/v1/assets/native' | jq '.data | {circulatin
 
 # The independent sources:
 curl -s https://dashboard.stellar.org/api/v3/lumens | jq .
-curl -s 'https://api.stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' | jq '{supply}'
+curl -s https://api.circle.com/v1/stablecoins | jq '.data[] | select(.symbol=="USDC") | .chains[] | select(.chain=="XLM")'
 
 # Supply pipeline state (r1):
 sudo -u postgres psql -d stellarindex -c "SELECT asset, basis, max(time) FROM asset_supply_history GROUP BY 1,2 ORDER BY 3 DESC LIMIT 10"
@@ -350,7 +350,7 @@ Then `docs/architecture/supply-pipeline.md` for which algorithm (1 XLM / 2 class
 
 Trips: `stellarindex_served_value_ok == 0`, `for: 26h` (two daily runs). Label `check`. A served value is outside tolerance vs its independent source; a drifted check is re-read once 6 minutes later, so a mint/burn between our snapshot and the truth read does not count. The unit log note says which: `gap persisted after the served snapshot advanced` is real drift; `served supply snapshot stale` means `supply_as_of_ledger` did not move (look at the supply writer).
 
-Causes: a supply basis wrong or partly populated (standing: `xlm_circulating_supply` reads `xlm_total_only` until `sdf_reserve_accounts` is set; `usdc_total_supply` under-reads vs Stellar Expert); an observer gap; the GROUND TRUTH changed methodology (verify bases match before changing ours).
+Causes: a supply basis wrong or partly populated (standing: `xlm_circulating_supply` reads `xlm_total_only` until `sdf_reserve_accounts` is set; `usdc_total_supply` once under-read vs Stellar Expert, its earlier truth; Circle's `amount` is the issuer's own outstanding figure, whose treatment of Circle-held balances is undocumented); an observer gap; the GROUND TRUTH changed methodology (verify bases match before changing ours).
 
 Fix: no cache to flush. Fix the derivation or its config, or state the differing basis on the wire (`supply_basis`). Never widen a tolerance without a written methodology justification in the check's `note`.
 
@@ -368,7 +368,7 @@ No textfile in 48 h: timer dead or never installed (hence the `absent_over_time`
 
 ## stellarindex_served_value_persistently_skipped
 
-Trips: `stellarindex_served_value_skipped == 1`, `for: 26h`. Label `check`. Skipped on every run for 2 days because its truth source (SDF lumen API / Stellar Expert / the stellar/dashboard source behind `sdf_reserve_list`) is unreachable. `drift` and `check_stale` stay quiet and a skipped check emits no `served_value_ok`, so without this the value stays UNVERIFIED behind a green gate. Check the source's reachability and response shape (URL/schema change); the check resumes when truth returns.
+Trips: `stellarindex_served_value_skipped == 1`, `for: 26h`. Label `check`. Skipped on every run for 2 days because its truth source (SDF lumen API / Circle stablecoins API / the stellar/dashboard source behind `sdf_reserve_list`) is unreachable or stale (Circle's `updateDate` over 24 h old reads as dark). `drift` and `check_stale` stay quiet and a skipped check emits no `served_value_ok`, so without this the value stays UNVERIFIED behind a green gate. Check the source's reachability and response shape (URL/schema change); the check resumes when truth returns.
 
 ## stellarindex_sdf_reserve_list_drift
 

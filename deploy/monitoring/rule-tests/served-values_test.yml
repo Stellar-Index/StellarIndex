@@ -295,7 +295,7 @@ tests:
               description: |
                 verify-served-values has SKIPPED sdf_reserve_list on every
                 run for 2 days — its independent truth source (SDF lumen API /
-                Stellar Expert / the stellar/dashboard source behind
+                Circle stablecoins API / the stellar/dashboard source behind
                 sdf_reserve_list) is unreachable. This is availability, not drift,
                 so served_value_drift (ok==0) stays quiet AND check_stale stays
                 quiet (the run still completes). Without this alert a PERSISTENT

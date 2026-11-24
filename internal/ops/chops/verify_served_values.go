@@ -19,7 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
-// verify-served-values reconciles served values against independent truth (XLM supply vs SDF lumen API, USDC supply vs Stellar Expert, SDF
+// verify-served-values reconciles served values against independent truth (XLM supply vs SDF lumen API, USDC supply vs Circle, SDF
 // reserve list) into textfile gauges; all truths are point-in-time state. Empty -textfile (served_values.prom) prints to stdout; empty
 // -config skips the list check.
 func verifyServedValues(args []string) error {
@@ -155,9 +155,9 @@ func servedValueChecks() []servedValueCheck {
 		},
 		{
 			name: "usdc_total_supply", tolerance: 0.02,
-			note:         "vs Stellar Expert asset API supply (point-in-time state both sides)",
+			note:         "vs Circle's own XLM-chain USDC amount (api.circle.com/v1/stablecoins; point-in-time state both sides, truth updateDate ≤24h)",
 			served:       servedSupplyField(usdcIssuer, "total_supply", 7),
-			truth:        stellarExpertSupply(usdcIssuer),
+			truth:        circleChainSupply(circleStablecoinsURL, "USDC", "XLM", circleSupplyMaxAge, time.Now),
 			recheckAfter: supplySnapshotRecheck,
 		},
 	}
@@ -430,28 +430,74 @@ func lumenAPIField(field string) func(context.Context, *http.Client) (*big.Rat, 
 	}
 }
 
-// stellarExpertSupply reads an asset's supply from Stellar Expert.
-// SE reports classic-asset supply in STROOPS (1e7 base units).
-func stellarExpertSupply(assetID string) func(context.Context, *http.Client) (*big.Rat, error) {
+// circleStablecoinsURL is the issuer's own keyless per-chain supply feed for its stablecoins.
+const circleStablecoinsURL = "https://api.circle.com/v1/stablecoins"
+
+// circleSupplyMaxAge bounds how old Circle's per-chain updateDate may be: the amount is point-in-time
+// state, so a frozen feed must read as unavailable truth, not as a match.
+const circleSupplyMaxAge = 24 * time.Hour
+
+type circleStablecoins struct {
+	Data []struct {
+		Symbol string `json:"symbol"`
+		Chains []struct {
+			Chain      string          `json:"chain"`
+			Amount     json.RawMessage `json:"amount"`
+			UpdateDate string          `json:"updateDate"`
+		} `json:"chains"`
+	} `json:"data"`
+}
+
+// circleChainSupply reads one stablecoin's outstanding amount on one chain, in natural units, from Circle.
+func circleChainSupply(url, symbol, chain string, maxAge time.Duration, now func() time.Time) func(context.Context, *http.Client) (*big.Rat, error) {
 	return func(ctx context.Context, c *http.Client) (*big.Rat, error) {
-		// SE serves supply as a number OR a string depending on
-		// magnitude — accept both.
-		var body struct {
-			Supply json.RawMessage `json:"supply"`
-		}
-		url := "https://api.stellar.expert/explorer/public/asset/" + assetID
+		var body circleStablecoins
 		if err := getJSON(ctx, c, url, &body); err != nil {
 			return nil, err
 		}
-		v, err := decimalRat(body.Supply)
+		v, err := body.chainAmount(symbol, chain, maxAge, now())
 		if err != nil {
-			return nil, fmt.Errorf("stellar.expert supply for %s: %w", assetID, err)
+			return nil, fmt.Errorf("circle %s on %s: %w", symbol, chain, err)
 		}
-		if v.Sign() <= 0 {
-			return nil, fmt.Errorf("stellar.expert supply for %s is %s", assetID, v.RatString())
-		}
-		return v.Quo(v, big.NewRat(10_000_000, 1)), nil
+		return v, nil
 	}
+}
+
+func (b circleStablecoins) chainAmount(symbol, chain string, maxAge time.Duration, now time.Time) (*big.Rat, error) {
+	var found []json.RawMessage
+	var updated []string
+	for _, coin := range b.Data {
+		if coin.Symbol != symbol {
+			continue
+		}
+		for _, ch := range coin.Chains {
+			if ch.Chain == chain {
+				found = append(found, ch.Amount)
+				updated = append(updated, ch.UpdateDate)
+			}
+		}
+	}
+	if len(found) != 1 {
+		return nil, fmt.Errorf("want exactly one entry, found %d", len(found))
+	}
+	at, err := time.Parse(time.RFC3339Nano, updated[0])
+	if err != nil {
+		return nil, fmt.Errorf("updateDate %q: %w", updated[0], err)
+	}
+	if age := now.Sub(at); age > maxAge {
+		return nil, fmt.Errorf("updateDate %s is %s old, over the %s bound", updated[0], age.Round(time.Minute), maxAge)
+	}
+	if len(found[0]) == 0 || string(found[0]) == "null" {
+		return nil, errors.New("amount missing")
+	}
+	v, err := decimalRat(found[0])
+	if err != nil {
+		return nil, fmt.Errorf("amount: %w", err)
+	}
+	if v.Sign() <= 0 {
+		return nil, fmt.Errorf("amount is %s", v.RatString())
+	}
+	return v, nil
 }
 
 func getJSON(ctx context.Context, c *http.Client, url string, into any) error {
