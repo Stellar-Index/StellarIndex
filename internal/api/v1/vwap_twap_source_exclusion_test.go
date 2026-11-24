@@ -19,11 +19,14 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 	native, _ := canonical.ParseAsset("native")
 	usdc, _ := canonical.ParseAsset(exclUSDC)
 	pair, _ := canonical.NewPair(native, usdc)
-	now := time.Now().UTC()
+	// A defaulted window ends at the request's own 30s boundary, so two requests either side of one answer over different
+	// windows. An explicit `to` on an already-closed boundary is served verbatim by every request that follows.
+	to := time.Now().UTC().Truncate(30 * time.Second)
+	from := to.Add(-time.Hour)
+	window := "&from=" + from.Format(time.RFC3339) + "&to=" + to.Format(time.RFC3339)
 	onBook := func(tr canonical.Trade) canonical.Trade { tr.Pair = pair; return tr }
-	soroswap := onBook(mkTipTrade(now.Add(-2*time.Minute), 5, 100, "soroswap"))
-	sdex := onBook(mkTipTrade(now.Add(-time.Minute), 5, 50, "sdex"))
-	from := now.Add(-time.Hour)
+	soroswap := onBook(mkTipTrade(to.Add(-2*time.Minute), 5, 100, "soroswap"))
+	sdex := onBook(mkTipTrade(to.Add(-time.Minute), 5, 50, "sdex"))
 	gate := func(e exclTable) v1.PriceExclusionGate {
 		return pricingguard.NewSourceExclusionGate(e, pricingguard.SourceExclusionGateOptions{})
 	}
@@ -32,6 +35,7 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 	}
 	strip := func(s string) string { return exclAsOf.ReplaceAllString(s, "") }
 	for _, path := range []string{"/v1/vwap?base=native&quote=" + exclUSDC, "/v1/twap?base=native&quote=" + exclUSDC, "/v1/ohlc?base=native&quote=" + exclUSDC} {
+		path += window
 		status, baseline := exclGet(t, newSrv(nil, soroswap, sdex), path)
 		if status != http.StatusOK || !strings.Contains(baseline, `"price":"15.0000000000"`) && strings.HasPrefix(path, "/v1/vwap") {
 			t.Fatalf("%s: ungated %d %s, want 200 over both sources", path, status, baseline)
@@ -57,6 +61,7 @@ func TestVWAPAndTWAPDropExcludedTrades(t *testing.T) {
 	// A fiat-quoted window pools the stablecoin books, so an exclusion stored under the requested pair drops the source's trades
 	// on every pooled book, not only on a book literally named native/fiat:USD.
 	for _, path := range []string{"/v1/vwap?base=native&quote=fiat:USD", "/v1/twap?base=native&quote=fiat:USD", "/v1/ohlc?base=native&quote=fiat:USD"} {
+		path += window
 		status, baseline := exclGet(t, newSrv(nil, soroswap, sdex), path)
 		if status != http.StatusOK {
 			t.Fatalf("%s: ungated %d %s, want 200", path, status, baseline)

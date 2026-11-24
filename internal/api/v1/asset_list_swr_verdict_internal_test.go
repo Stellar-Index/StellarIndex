@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,17 +40,38 @@ func TestAssetList_StaleFollowsTheSWRVerdict(t *testing.T) {
 	waitAssetListSettled(t, srv)
 }
 
+// A catalogue refresh that fails after a listing page was built flags the page's next replay, though the page and its rows
+// are both inside their bounds: the failure is re-read at lookup, not frozen at put.
+func TestAssetList_CatalogueFailureAfterBuildFlagsTheReplay(t *testing.T) {
+	const target = "/v1/assets?limit=100"
+	srv, reader, _ := newCountingListingServer(t, &countingDirectory{})
+	catalogue := NewCachedAssetsReader(reader, AssetCatalogueTTL)
+	srv.AssetsReader = catalogue
+	getAssetList(t, srv, target)
+	if got := getAssetList(t, srv, target); got.stale || got.cache != "HIT" {
+		t.Fatalf("healthy catalogue: cache=%q stale=%v, want a clean HIT", got.cache, got.stale)
+	}
+	catalogue.mu.Lock()
+	for _, e := range catalogue.entries {
+		e.refreshFailed = true
+	}
+	catalogue.mu.Unlock()
+	if got := getAssetList(t, srv, target); !got.stale || got.cache != "HIT" || !strings.Contains(got.body, `"stale":true`) {
+		t.Errorf("catalogue refresh failed after the build: cache=%q stale=%v, want a stale-flagged HIT", got.cache, got.stale)
+	}
+}
+
 // A refresh that built nothing cacheable (failed read, panic) is remembered as failed.
 func TestAssetListCache_UncachedRefreshIsAFailure(t *testing.T) {
 	c := newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge)
-	if err := c.put("k", Envelope{}); err != nil {
+	if err := c.put("k", Envelope{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	c.settleFlight("k")
 	if !c.entries["k"].refreshFailed {
 		t.Error("settleFlight left no failure behind")
 	}
-	if err := c.put("k", Envelope{}); err != nil {
+	if err := c.put("k", Envelope{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if c.entries["k"].refreshFailed {

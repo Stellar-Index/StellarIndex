@@ -879,7 +879,7 @@ func (s *Server) handleAssetListFromAssets(
 	// A page built on a dead context holds whatever best-effort reads
 	// landed before cancellation; it is answered, never replayed.
 	if r.Context().Err() == nil && assetListPageCacheable(env, rows) {
-		if err := s.assetListCache.put(key, env); err != nil {
+		if err := s.assetListCache.put(key, env, s.catalogueListingFailed(assetListRowsOptions(filters, cursor, limit, order))); err != nil {
 			s.logger.Debug("assets listing render for cache failed", "err", err)
 		}
 	}
@@ -897,15 +897,7 @@ func (s *Server) buildAssetListPage(
 ) (Envelope, []AssetDetail, error) {
 	// Overfetch by one: the (limit+1)th row signals a next page. Passing limit itself would make
 	// len(rows) > limit never true and only the first page reachable.
-	opts := timescale.ListAssetsOptions{
-		Limit:  limit + AssetsListOverfetchBy,
-		Issuer: filters.issuer,
-		Code:   filters.code,
-		Type:   filters.typ,
-		Q:      filters.q,
-		Cursor: cursor,
-		Order:  order,
-	}
+	opts := assetListRowsOptions(filters, cursor, limit, order)
 	// This path can serve a row set observed by a previous process (boot seed, prewarm), which is
 	// correct only if the envelope is not stamped stale:false / as_of=now; observedAt and stale
 	// carry the rows' real provenance.

@@ -16,17 +16,36 @@ type rwaIssuerRows struct {
 	at          time.Time
 	// tailUnchecked: the page filled and a member missing by exact spelling could not be checked for a case variant past it.
 	tailUnchecked bool
+	// reads are the catalogue listings behind keep, re-checked for a failed refresh at build and at serve.
+	reads []timescale.ListAssetsOptions
+}
+
+// notePage folds one issuer page's freshness, truncation and catalogue reads into the join.
+func (j *rwaCatalogueJoin) notePage(issuer string, got rwaIssuerRows, stale bool) {
+	j.unanswered = j.unanswered || stale
+	j.reads = append(j.reads, got.reads...)
+	if !got.at.IsZero() && (j.observedAt.IsZero() || got.at.Before(j.observedAt)) {
+		j.observedAt = got.at
+	}
+	if got.tailUnchecked {
+		j.pagesTruncated++
+		if j.fullPageIssuers == nil {
+			j.fullPageIssuers = map[string]bool{}
+		}
+		j.fullPageIssuers[issuer] = true
+	}
 }
 
 // rwaIssuerMemberRows reads one issuer's listing page and, when the page is full, every member it missed by exact
 // (code, issuer), then by its one case variant. Anyone can open trustlines that fill the page, so a page alone can push a
 // member out. Bounded by one page, one batched variant probe and two indexed reads per missed member.
 func (s *Server) rwaIssuerMemberRows(ctx context.Context, issuer string, codes []string) (rwaIssuerRows, error) {
-	page, at, _, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{Limit: rwaAssetsPerIssuer, Issuer: issuer, Type: "classic"})
+	opts := timescale.ListAssetsOptions{Limit: rwaAssetsPerIssuer, Issuer: issuer, Type: "classic"}
+	page, at, _, err := s.listAssetsExtAt(ctx, opts)
 	if err != nil {
 		return rwaIssuerRows{}, err
 	}
-	out := rwaIssuerRows{at: at}
+	out := rwaIssuerRows{at: at, reads: []timescale.ListAssetsOptions{opts}}
 	out.keep, out.memberCodes = rwaMatchMemberRows(codes, page)
 	if len(page) < rwaAssetsPerIssuer {
 		return out, nil
@@ -72,7 +91,7 @@ func (s *Server) rwaAddFoldedRows(
 		if len(members) != 1 {
 			continue
 		}
-		row, found, err := s.rwaExactClassicRow(ctx, issuer, spelling)
+		row, found, err := s.rwaExactClassicRow(ctx, out, issuer, spelling)
 		if err != nil {
 			return err
 		}
@@ -88,7 +107,7 @@ func (s *Server) rwaAddFoldedRows(
 func (s *Server) rwaAddExactRows(ctx context.Context, issuer string, codes []string, out *rwaIssuerRows) ([]string, error) {
 	var missed []string
 	for _, c := range codes {
-		row, found, err := s.rwaExactClassicRow(ctx, issuer, c)
+		row, found, err := s.rwaExactClassicRow(ctx, out, issuer, c)
 		if err != nil {
 			return nil, err
 		}
@@ -110,9 +129,12 @@ func (r rwaIssuerRows) keepCodes() []string {
 	return codes
 }
 
-// rwaExactClassicRow is the classic row spelled exactly code under issuer, by the listing's indexed, case-sensitive Code filter.
-func (s *Server) rwaExactClassicRow(ctx context.Context, issuer, code string) (timescale.AssetRow, bool, error) {
-	rows, _, _, err := s.listAssetsExtAt(ctx, timescale.ListAssetsOptions{Limit: 2, Issuer: issuer, Code: code, Type: "classic"})
+// rwaExactClassicRow is the classic row spelled exactly code under issuer, by the listing's indexed, case-sensitive Code filter;
+// the read joins out.reads.
+func (s *Server) rwaExactClassicRow(ctx context.Context, out *rwaIssuerRows, issuer, code string) (timescale.AssetRow, bool, error) {
+	opts := timescale.ListAssetsOptions{Limit: 2, Issuer: issuer, Code: code, Type: "classic"}
+	out.reads = append(out.reads, opts)
+	rows, _, _, err := s.listAssetsExtAt(ctx, opts)
 	if err != nil {
 		return timescale.AssetRow{}, false, err
 	}

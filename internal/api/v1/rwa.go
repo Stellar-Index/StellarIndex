@@ -1248,13 +1248,14 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	ms := m.serveFlags()
 	flags := Flags{Stale: stale || ms.Stale, Degraded: stale || ms.Degraded || trunc.unread > 0}
 	return rwaAssetsBuild{
-		view:         view,
-		flags:        markFillsWithheld(flags, rwaViewWithheld(view.Assets, listReads, valReads)),
-		builtAt:      now,
-		observedAt:   observedAt,
-		catalogueAt:  join.observedAt,
-		membershipAt: m.builtAt,
-		refVerdicts:  refVerdicts,
+		view:           view,
+		flags:          markFillsWithheld(flags, rwaViewWithheld(view.Assets, listReads, valReads)),
+		builtAt:        now,
+		observedAt:     observedAt,
+		catalogueAt:    join.observedAt,
+		catalogueReads: join.reads,
+		membershipAt:   m.builtAt,
+		refVerdicts:    refVerdicts,
 	}, nil
 }
 
@@ -1340,6 +1341,8 @@ type rwaCatalogueJoin struct {
 	unanswered bool
 	// observedAt is when the oldest listing page was read from its store; zero when every page answered live.
 	observedAt time.Time
+	// reads are the catalogue listings behind the rows.
+	reads []timescale.ListAssetsOptions
 }
 
 // rwaAssetsCost is the rate-limit price in tokens of one /v1/rwa/assets request: one per store listing read (per member issuer, plus one
@@ -1390,7 +1393,7 @@ func (s *Server) rwaListingRows(
 			return nil, join, err
 		}
 		// The age still lands in as_of.
-		join.notePage(issuer, got.at, rwaCatalogueRowsStale(got.at, time.Now()), got.tailUnchecked)
+		join.notePage(issuer, got, rwaCatalogueRowsStale(got.at, time.Now()) || s.catalogueListingsFailed(got.reads))
 		keep, memberCodes := got.keep, got.memberCodes
 		if len(keep) == 0 {
 			continue
@@ -1416,21 +1419,6 @@ func (s *Server) rwaListingRows(
 		}
 	}
 	return out, join, nil
-}
-
-// notePage folds one issuer page's freshness and truncation into the join.
-func (j *rwaCatalogueJoin) notePage(issuer string, at time.Time, stale, tailUnchecked bool) {
-	j.unanswered = j.unanswered || stale
-	if !at.IsZero() && (j.observedAt.IsZero() || at.Before(j.observedAt)) {
-		j.observedAt = at
-	}
-	if tailUnchecked {
-		j.pagesTruncated++
-		if j.fullPageIssuers == nil {
-			j.fullPageIssuers = map[string]bool{}
-		}
-		j.fullPageIssuers[issuer] = true
-	}
 }
 
 // rwaFillMissingSupply attaches circulating supply to rows the market-cap fill left without one. Only rows with no reading at all
