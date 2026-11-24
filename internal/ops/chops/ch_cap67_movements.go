@@ -162,7 +162,7 @@ var cap67CatchUpOnce = runCap67CatchUp
 type cap67CatchUp struct {
 	start, last uint32
 	rows        int64
-	skipped     uint64 // events dropped as undecodable, excluding not_token_shaped
+	skipped     uint64 // events dropped as undecodable, excluding not_token_shaped and judged_non_token
 }
 
 // idle reports an empty resolved range: the watermark is at or above the contiguous tip, or `start` is not in the lake.
@@ -435,6 +435,7 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 		batch   []clickhouse.AccountMovement
 		written int64
 		skips   = cap67Skips{}
+		named   []string
 	)
 	flush := func() error {
 		if len(batch) == 0 || dryRun {
@@ -460,7 +461,9 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 		func(ev events.Event) error {
 			m, ok := cap67EventMovement(dec, sup, &ev)
 			if !ok {
-				skips[cap67SkipReason(&ev)]++
+				reason := cap67SkipReason(&ev)
+				skips[reason]++
+				named = nameAlertingSkip(named, ev.ContractID, reason)
 				return nil
 			}
 			batch = append(batch, m)
@@ -478,9 +481,25 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 	if n := skips.total(); n > 0 {
 		// Not fatal per window: a deterministically undecodable transfer event re-fails on every retry; the raw event stays in
 		// contract_events for audit. The one-shot run's exit status accounts for it via enforceDecodeBudget.
-		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode): %v\n", lo, hi, n, map[string]uint64(skips))
+		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode): %v; alerting contracts (first %d): %v\n",
+			lo, hi, n, map[string]uint64(skips), cap67SkipContractCap, named)
 	}
 	return written, skips, nil
+}
+
+// cap67SkipContractCap bounds the contracts one window's skip line names.
+const cap67SkipContractCap = 8
+
+// nameAlertingSkip adds "contract:reason" for a skip that alerts, keeping the first cap67SkipContractCap distinct ones.
+func nameAlertingSkip(named []string, contractID, reason string) []string {
+	if !clickhouse.SupplySkipAlerts(reason) || len(named) >= cap67SkipContractCap {
+		return named
+	}
+	entry := contractID + ":" + reason
+	if slices.Contains(named, entry) {
+		return named
+	}
+	return append(named, entry)
 }
 
 // cap67Skips counts events a window dropped, by reason.
@@ -495,9 +514,15 @@ func (s cap67Skips) total() uint64 {
 }
 
 // actionable is the skips that may short a token's movements: not_token_shaped is expected traffic, as topic[0] alone does not identify a
-// token and any contract (an NFT's `transfer` with a u32 id) can emit one.
+// token and any contract (an NFT's `transfer` with a u32 id) can emit one; judged_non_token is a contract recorded as no token.
 func (s cap67Skips) actionable() uint64 {
-	return s.total() - s[clickhouse.SupplySkipNotTokenShaped]
+	var n uint64
+	for reason, v := range s {
+		if clickhouse.SupplySkipAlerts(reason) {
+			n += v
+		}
+	}
+	return n
 }
 
 // cap67SkipDecodeFailed is a token-shaped body the decoder still refused (malformed topics, unusable close time).
@@ -509,7 +534,7 @@ var cap67SkipReasons = append(slices.Clone(clickhouse.SupplySkipReasons), cap67S
 // cap67SkipReason classifies an undecodable event with the supply-body classifier: a transfer body has the same shape (a bare i128, or a
 // map carrying amount).
 func cap67SkipReason(ev *events.Event) string {
-	if _, skip := clickhouse.ClassifySupplyBodyXDR(ev.Value); skip != "" {
+	if _, skip := clickhouse.ClassifySupplyEventXDR(ev.ContractID, ev.Value); skip != "" {
 		return skip
 	}
 	return cap67SkipDecodeFailed

@@ -210,11 +210,15 @@ The alert clears 30 min after the last increment. If only one path advanced, loo
 
 ### stellarindex_supply_flow_skipped
 
-Ticket. `sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!="not_token_shaped"}[3h])) > 0`, fires on a single skip and keeps firing 1 h. The lake extract wrote a mint/burn/clawback event to `contract_events` but no `supply_flows` row. `not_token_shaped` (a foreign contract's body that is not a bare i128 or a map with `amount`, e.g. an NFT's u32 id) is expected and never alerts. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode, so that token's supply sum is short.
+Ticket. `sum by (reason) (increase(stellarindex_supply_flow_skipped_total{reason!~"not_token_shaped|judged_non_token"}[3h])) > 0`, fires on a single skip and keeps firing 1 h. The lake extract wrote a mint/burn/clawback event to `contract_events` but no `supply_flows` row. `not_token_shaped` (a foreign contract's body that is not a bare i128 or a map with `amount`, e.g. an NFT's u32 id) is expected and never alerts; nor does `judged_non_token`, a contract recorded in `judgedNonToken` (`internal/storage/clickhouse/supply_judged.go`) for that one reason. `amount_not_i128` and `body_unparseable` are token-shaped bodies whose amount did not decode, so that token's supply sum is short.
 
 ```sh
 curl -s localhost:9464/metrics | grep supply_flow_skipped_total
+sudo journalctl -u stellarindex-indexer --since "4 hours ago" | grep "supply event skipped"
 ```
 
-Find the contract in `contract_events` (topic0 mint/burn/clawback, recent ledgers) and why its body did not decode. A foreign contract with a malformed body is noise; a real token whose body shape changed is a decoder bug. Re-derive with `ch-backfill` over the range once fixed.
+The log line names the contract, reason, ledger and tx (each contract once per indexer run, at most 64). Read that event from `contract_events` and decide:
+
+- A real token whose body shape changed is a decoder bug: fix it, then re-derive with `ch-backfill` over the range.
+- A contract that is not a token (its events say what it is, e.g. a pool's liquidity `amount`): record the ledger, tx and body as evidence and open a PR adding one entry to `judgedNonToken` with that reason. Only that reason is relabelled; any other skip from the contract still alerts.
 

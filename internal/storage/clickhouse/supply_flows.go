@@ -404,15 +404,15 @@ func (r *SupplyReader) FirstContractEvent(ctx context.Context, contractID string
 	if days == 0 {
 		return 0, time.Time{}, nil
 	}
+	// min() over no rows is 0, which no event ledger is; min is duplicate-insensitive, so no FINAL.
 	var ledger uint32
 	var closedAt time.Time
-	var events uint64
-	if err := r.conn.QueryRow(ctx, `SELECT min(ledger_seq), min(close_time), count() FROM stellar.contract_events
+	if err := r.conn.QueryRow(ctx, `SELECT min(ledger_seq), min(close_time) FROM stellar.contract_events
 		WHERE contract_id = ? AND event_type = 'contract' AND close_time >= ? AND close_time < ?`,
-		contractID, day, day.AddDate(0, 0, 1)).Scan(&ledger, &closedAt, &events); err != nil {
+		contractID, day, day.AddDate(0, 0, 1)).Scan(&ledger, &closedAt); err != nil {
 		return 0, time.Time{}, fmt.Errorf("clickhouse: first event of %s on %s: %w", contractID, day.Format(time.DateOnly), err)
 	}
-	if events == 0 {
+	if ledger == 0 {
 		return 0, time.Time{}, nil
 	}
 	return ledger, closedAt.UTC(), nil

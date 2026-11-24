@@ -625,7 +625,7 @@ Any increase matters; it is zero when healthy. A climb tracking `stellarindex_ch
 
 ### `stellarindex_supply_flow_skipped_total`
 
-Counter, label `reason` (`not_token_shaped` | `amount_not_i128` | `body_unparseable`). Every reason is seeded at zero.
+Counter, label `reason` (`not_token_shaped` | `judged_non_token` | `amount_not_i128` | `body_unparseable`). Every reason is seeded at zero. `judged_non_token` is a contract recorded in `judgedNonToken` as no token, for its recorded reason only; like `not_token_shaped` it loses no supply.
 
 Mint, burn and clawback events the lake extract wrote to `contract_events` with no `supply_flows` row. `not_token_shaped` is a foreign contract's body that is neither a bare i128 nor a map carrying `amount` (an NFT's u32 token id): no supply is lost. `amount_not_i128` and `body_unparseable` are a token-shaped body whose amount did not decode, so that token's supply sum is short. Alert `stellarindex_supply_flow_skipped` (reasons other than `not_token_shaped`).
 
