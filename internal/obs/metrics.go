@@ -150,6 +150,7 @@ func registerPricingMetrics() {
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
 		AggregatorSupplyRefreshEnabled,
+		AggregatorSEP41HistoryGapFromLedger,
 		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
@@ -2677,6 +2678,15 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 		Help: "Supply-snapshot refresh outcomes per (asset_key, outcome). Outcome ∈ {ok, dormant, static_reserve, no_ledger, no_observation, compute_error, stale_component, missing_freshness, missing_baseline, write_error}.",
 	},
 	[]string{"asset_key", "outcome"},
+)
+
+// AggregatorSEP41HistoryGapFromLedger is the lake's first event ledger for a watched SEP-41 contract whose served rows start later; 0 once covered.
+var AggregatorSEP41HistoryGapFromLedger = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_sep41_history_gap_from_ledger",
+		Help: "Per watched SEP-41 contract (asset_key = contract id): the lake's first event ledger while the served tier's rows start later, i.e. the -from of the projected-rebuild that fills the gap. 0 when the coverage check passes or finds no leading gap.",
+	},
+	[]string{"asset_key"},
 )
 
 // SupplyWriteBandBreachTotal counts supply snapshots whose total_supply moved more than supply.WriteBandFactor against the previous one; the row is still written.

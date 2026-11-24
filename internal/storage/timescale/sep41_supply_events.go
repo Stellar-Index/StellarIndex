@@ -369,6 +369,31 @@ func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, aft
 // sep41WatermarkWindow is how far back sep41ObserverWatermark looks before falling back to the full read.
 const sep41WatermarkWindow = 7 * 24 * time.Hour
 
+// SEP41FirstServedLedger returns the lowest ledger of contractID in sep41_supply_events or sep41_transfers that closed at or after
+// notBefore less [sep41BoundMargin], or 0 when neither holds one. Ordering on each table's time dimension lets the ordered chunk
+// append stop at the first chunk holding the contract, and the floor prunes every chunk before it.
+func (s *Store) SEP41FirstServedLedger(ctx context.Context, contractID string, notBefore time.Time) (uint32, error) {
+	const q = `
+        SELECT (SELECT ledger FROM sep41_supply_events
+                 WHERE contract_id = $1 AND observed_at >= $2
+                 ORDER BY observed_at, ledger LIMIT 1),
+               (SELECT ledger FROM sep41_transfers
+                 WHERE contract_id = $1 AND ledger_close_time >= $2
+                 ORDER BY ledger_close_time, ledger LIMIT 1)
+    `
+	var events, transfers sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, q, contractID, notBefore.Add(-sep41BoundMargin)).Scan(&events, &transfers); err != nil {
+		return 0, fmt.Errorf("timescale: SEP41FirstServedLedger %s: %w", contractID, err)
+	}
+	first := int64(0)
+	for _, l := range []sql.NullInt64{events, transfers} {
+		if l.Valid && (first == 0 || l.Int64 < first) {
+			first = l.Int64
+		}
+	}
+	return uint32(first), nil //nolint:gosec // ledger columns are CHECK (ledger >= 0) integers.
+}
+
 // sep41BoundMargin widens the delta read's observed_at bound; a day is far below the 7-day chunk interval, so pruning is unaffected.
 const sep41BoundMargin = 24 * time.Hour
 

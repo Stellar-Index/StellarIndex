@@ -1521,6 +1521,10 @@ Refresh outcomes, one per asset per tick. Only fires when `[supply] aggregator_r
 
 Steady state is mostly `ok`. Sustained `no_observation` means the observer has not backfilled and the static fallback is empty. `no_ledger` means no chain position to stamp at: no cursor yet, or no `stellar.ledgers` row in the 512 ledgers below it. `missing_baseline` is a SEP-41 SAC-wrapper with no seeded opening balance; benign (excluded from `error_dominant`), cleared by `stellarindex-ops supply seed-sep41-genesis`. A negative total after seeding is `compute_error` (pages).
 
+### `stellarindex_aggregator_sep41_history_gap_from_ledger`
+
+Gauge, label `asset_key` (the watched SEP-41 contract id). Set by the coverage check that gates a watched contract's supply: the lake's first event ledger for the contract while the served tier's rows start later, i.e. the `-from` of the `projected-rebuild` that fills the gap; 0 once the check passes or when it fails with no leading gap. No series until the check first runs for the contract. Read by `stellarindex_aggregator_sep41_history_gap`.
+
 ### `stellarindex_aggregator_confidence_compute_total`
 
 Counter, label `outcome` (`ok` / `skipped` / `baseline_missing` /

@@ -368,6 +368,28 @@ P3 (`ticket`), `for: 6h`. Expr: per asset, `increase(..._supply_refresh_total{ou
 
 Escalate: the sums still differ after a clean `projected-rebuild`, and `max(derive_generation)` over the range shows the rebuild's generation. Then the lake and the decoder disagree on an event, which a replay cannot fix; compare per-kind counts for the contract in `stellar.supply_flows FINAL` and `sep41_supply_events`.
 
+## stellarindex_aggregator_sep41_history_gap
+
+P3 (`ticket`), `for: 30m`. Expr: `max by (asset_key) (stellarindex_aggregator_sep41_history_gap_from_ledger) > 0`. A contract enters `[supply].watched_sep41_contracts` by a config edit, and the projector writes its rows only from then on; the lake holds its events from its first one. The gauge is that first lake ledger while the served tier's rows start later. The supply stays withheld (`missing_baseline`, so [withheld](#stellarindex_aggregator_supply_refresh_withheld) follows after 6 h).
+
+### Check
+
+`sudo journalctl -u stellarindex-aggregator --since "1 hour ago" | grep "served rows at" | tail -1` gives the contract, the window `[from, to]` and both commands with the numbers filled in.
+
+### Fix
+
+1. Decompress the chunks of `sep41_transfers` and `sep41_supply_events` that cover the window first (the [projector-replay](projector.md#stellarindex_projector_replay_stalled) pre-flight); a rebuild into compressed chunks fails or crawls.
+2. Run, with the window from the log:
+
+   ```sh
+   stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source sep41_transfers -from <from> -to <to> -resume=false -write
+   stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source sep41_supply -from <from> -to <to> -resume=false -write
+   ```
+
+3. The next coverage check (at most 10 min) sets the gauge to 0 and the supply publishes.
+
+Escalate: the gauge is back at 0 but the supply stays withheld. Then the sums differ inside the served window, which is [withheld](#stellarindex_aggregator_supply_refresh_withheld)'s fix.
+
 ## stellarindex_aggregator_supply_refresh_dormant_fleet
 
 P3 (`ticket`), `for: 30m`. Expr: `count(sum by (asset_key) (rate(..._supply_refresh_total{outcome="dormant"}[15m])) > 0) > 1`. Two or more assets `dormant` together. `MinComponentLedger` is a shared watermark (classic assets share the slowest of four component observers; SEP-41 share `MAX(ledger)` of `sep41_supply_events`), so a quiet asset cannot freeze it alone: the producer stopped, and served supply silently goes stale until the 24 h horizon flips these to `stale_component`.

@@ -392,6 +392,32 @@ func (r *SupplyReader) TokenSupplyInLedgerRange(ctx context.Context, contractID 
 	return assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows), nil
 }
 
+// FirstContractEvent returns the ledger and close time of contractID's first contract event in the lake, or ledger 0 when it has none.
+// The contract_id-led daily pre-aggregation names the first day, so the raw read is pruned to one day by the close_time minmax index.
+func (r *SupplyReader) FirstContractEvent(ctx context.Context, contractID string) (uint32, time.Time, error) {
+	var day time.Time
+	var days uint64
+	if err := r.conn.QueryRow(ctx, `SELECT min(day), count() FROM stellar.contract_events_daily
+		WHERE contract_id = ? AND event_type = 'contract'`, contractID).Scan(&day, &days); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: first event day for %s: %w", contractID, err)
+	}
+	if days == 0 {
+		return 0, time.Time{}, nil
+	}
+	var ledger uint32
+	var closedAt time.Time
+	var events uint64
+	if err := r.conn.QueryRow(ctx, `SELECT min(ledger_seq), min(close_time), count() FROM stellar.contract_events
+		WHERE contract_id = ? AND event_type = 'contract' AND close_time >= ? AND close_time < ?`,
+		contractID, day, day.AddDate(0, 0, 1)).Scan(&ledger, &closedAt, &events); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: first event of %s on %s: %w", contractID, day.Format(time.DateOnly), err)
+	}
+	if events == 0 {
+		return 0, time.Time{}, nil
+	}
+	return ledger, closedAt.UTC(), nil
+}
+
 // LakeTip returns the newest ledger the lake holds.
 func (r *SupplyReader) LakeTip(ctx context.Context) (uint32, error) {
 	_, ledger, err := r.NativeTotalCoins(ctx)

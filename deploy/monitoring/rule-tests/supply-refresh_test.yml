@@ -259,8 +259,49 @@ tests:
                 is not seeded (and the auto-seed is failing), or its
                 Soroban-era events in the served tier do not match the lake.
                 The aggregator log names which. Fix: `stellarindex-ops supply
-                seed-sep41-genesis`, or `projector-replay -source
+                seed-sep41-genesis`, or `projected-rebuild -source
                 sep41_supply` over the range the log names.
+
+  # ── sep41_history_gap: a contract watched after its first event ──
+  - interval: 5m
+    name: a leading SEP-41 history gap fires with the rebuild's -from
+    input_series:
+      - series: 'stellarindex_aggregator_sep41_history_gap_from_ledger{asset_key="CGAP",job="j",instance="i"}'
+        values: '65134033x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_aggregator_sep41_history_gap
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_aggregator_sep41_history_gap
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: supply
+              asset_key: CGAP
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_aggregator_sep41_history_gap
+              summary: "SEP-41 contract CGAP lacks served history from ledger 65134033"
+              description: |
+                Watched contract CGAP has lake events from
+                ledger 65134033 but no served rows that early,
+                so its supply is withheld. Decompress the window's chunks of
+                sep41_transfers and sep41_supply_events, then run
+                `stellarindex-ops projected-rebuild -source sep41_transfers
+                -from 65134033 -to <to> -resume=false -write`
+                and the same with `-source sep41_supply`. The aggregator log
+                line names `-to` and the full commands.
+
+  - interval: 5m
+    name: a covered contract (gauge 0) never trips sep41_history_gap
+    input_series:
+      - series: 'stellarindex_aggregator_sep41_history_gap_from_ledger{asset_key="CGAP",job="j",instance="i"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_aggregator_sep41_history_gap
+        exp_alerts: []
 
   # ── a seed that lands inside the window ──────────────────────────
   # missing_baseline for two hours, then ok: a seed or replay finished.
