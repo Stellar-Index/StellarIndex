@@ -21117,6 +21117,7 @@ components:
             - reference_expired
             - reference_not_positive
             - reference_isin_mismatch
+            - source_excluded
             - supply_unavailable
             - decimals_unavailable
           description: |
@@ -21414,6 +21415,7 @@ components:
             - reference_not_bound
             - reference_contract_not_bound
             - reference_isin_mismatch
+            - source_excluded
             - no_reference_feed
             - reference_unavailable
             - reference_expired
@@ -21476,6 +21478,12 @@ components:
             reference of any provenance is served until the binding is
             re-verified. Only a well-formed ISIN is compared; a free-text
             `anchor_asset` names no security and contradicts nothing.
+            `source_excluded` — an operator source exclusion covers the
+            oracle or fund-NAV reading the row would be valued at, so
+            no reference, valuation or premium is served; the envelope
+            carries `flags.fills_withheld_reason: source_excluded` and
+            the answer is not cached. An unreadable exclusion set
+            refuses the reading as `reference_unavailable`.
             `no_reference_feed` — the pair IS bound, but the oracle stream
             carries no row for its feed.
             `reference_unavailable` — a read the row depends on did not
@@ -22200,6 +22208,10 @@ components:
             infrastructure rather than issuance. The largest contract
             bucket by construction, and the one to watch if the
             vocabulary proves too narrow.
+            `not_a_contract_address` — requirement C1: the directory
+            row is shaped like a contract address but fails its strkey
+            checksum, a defect in the third-party directory that no
+            operator here can correct (`definition`).
             `no_real_world_instrument_basis_for_contract` — requirement
             C4: neither a curated binding nor an oracle-priced symbol.
             `contract_is_classic_member_sac` — the address is the SAC of
@@ -22215,7 +22227,8 @@ components:
             `reference_valuation.status` and is documented there and
             under `RWAPremium.status`. `reference_contract_not_bound`,
             `no_reference_feed`, `reference_unavailable`,
-            `reference_expired`, `reference_isin_mismatch` and
+            `reference_expired`, `reference_isin_mismatch`,
+            `source_excluded` and
             `supply_unavailable` and `withheld_issuer_unchecked` are
             attributed to the `operator` — a
             source that could be enabled, an outage here, a supply
@@ -22293,6 +22306,7 @@ components:
             - directory_entry_names_an_account
             - contract_scam_flagged
             - contract_named_without_issuing_tag
+            - not_a_contract_address
             - no_real_world_instrument_basis_for_contract
             - contract_is_classic_member_sac
             - duplicate_directory_entry_for_contract
@@ -22309,6 +22323,7 @@ components:
             - reference_expired
             - reference_not_positive
             - reference_isin_mismatch
+            - source_excluded
             - supply_unavailable
             - decimals_unavailable
             - contract_already_evaluated_by_directory_arm

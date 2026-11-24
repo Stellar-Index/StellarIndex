@@ -118,6 +118,9 @@ const RWAAssetsDegradedTTL = rwaAssetsDegradedTTL
 // RWAHistoryTTL is the production /v1/rwa/history cache TTL.
 const RWAHistoryTTL = rwaHistoryTTL
 
+// RWAHistoryMaxStale is how long a /v1/rwa/history assembly is carried past failed rebuilds.
+const RWAHistoryMaxStale = rwaHistoryMaxStale
+
 // StorageSupplyIdleAge is an age past the storage cache's TTL and one refresh budget: a key nobody has asked for in that long.
 const StorageSupplyIdleAge = tokenSupplyTTL + cacheFillBudget + time.Minute
 

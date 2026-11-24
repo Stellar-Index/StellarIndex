@@ -834,6 +834,10 @@ Each `premium.status` means one thing:
   pair. No reference of any provenance is served until the binding is
   re-verified, because the row would otherwise name one security and be valued
   as another.
+- `source_excluded` — an operator source exclusion covers the oracle or
+  fund-NAV reading the row would be valued at. No reference, valuation or
+  premium is served, and the response carries
+  `flags.fills_withheld_reason: source_excluded`.
 
 ### What the comparison rests on
 

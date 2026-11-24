@@ -534,7 +534,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, stale, _ := h.LakeWatermark(ctx)
-	stale = stale || time.Since(asOf.at) > assetHoldersStaleAfter
+	stale = stale || time.Since(asOf.at) > asOf.staleAfter()
 	out := AssetHoldersView{Asset: asset, HolderCount: total, Holders: make([]AssetHolderV, len(holders)), AsOfLedger: asOf.ledger}
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
