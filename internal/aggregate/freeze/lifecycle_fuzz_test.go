@@ -172,8 +172,10 @@ func FuzzPolicyEvaluate(f *testing.F) {
 				t.Fatal("a hold consumed an extension")
 			}
 		case freeze.TransitionHeldUnscored:
-			if !expired || scored || prev.Escalated || st.ExtensionsUsed != prev.ExtensionsUsed {
-				t.Fatalf("held_unscored: expired=%v scored=%v ext %d->%d", expired, scored, prev.ExtensionsUsed, st.ExtensionsUsed)
+			if !expired || scored || prev.Escalated || st.ExtensionsUsed != prev.ExtensionsUsed ||
+				prev.UnscoredSlides >= p.MaxExtensions || st.UnscoredSlides != prev.UnscoredSlides+1 {
+				t.Fatalf("held_unscored: expired=%v scored=%v ext %d->%d slides %d->%d max %d", expired, scored,
+					prev.ExtensionsUsed, st.ExtensionsUsed, prev.UnscoredSlides, st.UnscoredSlides, p.MaxExtensions)
 			}
 		case freeze.TransitionExtended:
 			if !expired || !scored || prev.Escalated || st.ExtensionsUsed != prev.ExtensionsUsed+1 ||
@@ -181,8 +183,13 @@ func FuzzPolicyEvaluate(f *testing.F) {
 				t.Fatalf("extended: expired=%v scored=%v ext %d->%d max %d", expired, scored, prev.ExtensionsUsed, st.ExtensionsUsed, p.MaxExtensions)
 			}
 		case freeze.TransitionEscalated:
-			if !expired || !scored || prev.Escalated || !st.Escalated || prev.ExtensionsUsed < p.MaxExtensions {
-				t.Fatalf("escalated: expired=%v scored=%v ext %d max %d", expired, scored, prev.ExtensionsUsed, p.MaxExtensions)
+			spent := prev.ExtensionsUsed >= p.MaxExtensions
+			if !scored {
+				spent = prev.UnscoredSlides >= p.MaxExtensions
+			}
+			if !expired || prev.Escalated || !st.Escalated || !spent {
+				t.Fatalf("escalated: expired=%v scored=%v ext %d slides %d max %d", expired, scored,
+					prev.ExtensionsUsed, prev.UnscoredSlides, p.MaxExtensions)
 			}
 		default:
 			t.Fatalf("active freeze produced transition %q", out.Transition)
@@ -241,8 +248,12 @@ func FuzzPolicyLadder(f *testing.F) {
 				if n.ExtensionsUsed > p.MaxExtensions {
 					t.Fatalf("step %d: %d extensions > max %d", i, n.ExtensionsUsed, p.MaxExtensions)
 				}
-				if n.Escalated && n.ExtensionsUsed != p.MaxExtensions {
-					t.Fatalf("step %d: escalated with %d/%d extensions", i, n.ExtensionsUsed, p.MaxExtensions)
+				if n.UnscoredSlides > p.MaxExtensions {
+					t.Fatalf("step %d: %d unscored slides > max %d", i, n.UnscoredSlides, p.MaxExtensions)
+				}
+				if n.Escalated && n.ExtensionsUsed != p.MaxExtensions && n.UnscoredSlides != p.MaxExtensions {
+					t.Fatalf("step %d: escalated with %d/%d extensions and %d unscored slides",
+						i, n.ExtensionsUsed, p.MaxExtensions, n.UnscoredSlides)
 				}
 				if st.Active() && n.HoldUntil.Before(st.HoldUntil) {
 					t.Fatalf("step %d: hold moved backwards %v -> %v", i, st.HoldUntil, n.HoldUntil)

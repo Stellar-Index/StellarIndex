@@ -173,6 +173,9 @@ Gate state is in aggregator memory, so a restart re-applies the 28.5 gate.
   second lens produced a reading this bucket, not that it agreed).
 - At each expiry, if the condition still holds, extend 30 minutes, up to 4 times. After 2 hours
   the freeze escalates (P1, `stellarindex_anomaly_freeze_escalated`) and never auto-unfreezes.
+- An expiry on a bucket that cannot be scored (empty or under the volume floor, no fresh baseline)
+  slides 30 minutes without using an extension, at most 4 times per freeze; the next unscored
+  expiry escalates the same way, so a pair that cannot be scored still reaches an operator.
 - Auto-unfreeze needs the table's thresholds for two consecutive buckets AND `release_corroborated`:
   a lens reading that agrees within 5% with the fresh candidate (calm alone cannot tell "repriced"
   from "manipulation parked"). A pair with no lens rides the ladder to a human.

@@ -379,11 +379,10 @@ func TestPolicy_UnscoredExpiryDoesNotBurnTheLadder(t *testing.T) {
 	p := freeze.Policy{}
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
 
-	// Ten hold expiries in a row, all unscored (a bootstrap window far
-	// longer than a whole fixed ladder): no extension consumed, no
-	// escalation, still frozen throughout.
+	// The whole unscored-slide budget spent in a row: no extension consumed,
+	// no escalation, still frozen throughout.
 	now := t0.Add(freeze.DefaultUncorroboratedInitialHold + time.Second)
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= freeze.DefaultMaxExtensions; i++ {
 		sig := middling(now)
 		sig.Scored = false
 		out := p.Evaluate(st, sig)
@@ -426,6 +425,52 @@ func TestPolicy_UnscoredExpiryDoesNotBurnTheLadder(t *testing.T) {
 	res := p.Evaluate(st, healthy(now))
 	if res.Transition != freeze.TransitionReleased {
 		t.Fatalf("post-bootstrap recovery did not release: %q %+v", res.Transition, res.State)
+	}
+}
+
+// TestPolicy_SustainedUnscoredRunEscalates: a pair that can never be scored (thin book, no baseline)
+// cannot earn a release, so once the slide budget is spent the next unscored expiry escalates to an
+// operator instead of holding the last-known-good silently forever; it never releases.
+func TestPolicy_SustainedUnscoredRunEscalates(t *testing.T) {
+	p := freeze.Policy{}
+	st := p.Evaluate(freeze.State{}, firing(t0)).State
+	unscored := func(at time.Time) freeze.Signal {
+		sig := healthy(at)
+		sig.Scored = false
+		return sig
+	}
+
+	now := t0.Add(freeze.DefaultUncorroboratedInitialHold + time.Second)
+	for i := 1; i <= freeze.DefaultMaxExtensions; i++ {
+		out := p.Evaluate(st, unscored(now))
+		if out.Transition != freeze.TransitionHeldUnscored || out.State.UnscoredSlides != i {
+			t.Fatalf("unscored expiry %d: %q slides=%d, want %q slides=%d",
+				i, out.Transition, out.State.UnscoredSlides, freeze.TransitionHeldUnscored, i)
+		}
+		st = out.State
+		now = now.Add(freeze.DefaultExtension + time.Second)
+	}
+
+	out := p.Evaluate(st, unscored(now))
+	if out.Transition != freeze.TransitionEscalated || !out.State.Escalated || !out.Frozen {
+		t.Fatalf("unscored expiry past the budget: %q %+v, want a frozen escalation", out.Transition, out)
+	}
+	if out.State.ExtensionsUsed != 0 {
+		t.Errorf("ExtensionsUsed = %d; the escalation must not invent scored extensions", out.State.ExtensionsUsed)
+	}
+	if !out.State.HoldUntil.Equal(now.Add(freeze.DefaultExtension)) {
+		t.Errorf("HoldUntil = %v, want now+extension so the marker keeps sliding", out.State.HoldUntil)
+	}
+
+	// Escalated is operator-only: healthy, corroborated buckets do not release it.
+	st = out.State
+	for i := 0; i < 2*freeze.DefaultUnfreezeBuckets; i++ {
+		now = now.Add(time.Minute)
+		res := p.Evaluate(st, healthy(now))
+		if res.Transition == freeze.TransitionReleased || !res.Frozen {
+			t.Fatalf("escalated unscored freeze auto-released on bucket %d", i)
+		}
+		st = res.State
 	}
 }
 

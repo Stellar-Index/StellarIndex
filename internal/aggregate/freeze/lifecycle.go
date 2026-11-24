@@ -9,7 +9,8 @@ import (
 // ADR-0019 freeze lifecycle: a HOLD with an extension ladder (30 min, up to 4 x 30 min, then P1
 // and manual unfreeze only), released when confidence > 0.30 AND z < 3.0 for two consecutive
 // buckets, never on one bucket's negated fire condition. The initial hold is a MINIMUM and
-// release needs POSITIVE evidence (an unscorable bucket resets the streak). The machine is pure;
+// release needs POSITIVE evidence (an unscorable bucket resets the streak). Unscored expiries
+// slide without an extension, at most MaxExtensions times, then escalate. The machine is pure;
 // the orchestrator owns persistence.
 
 // Freeze-lifecycle defaults per ADR-0019; operators tune via `[anomaly.phase2]`, and unset
@@ -119,6 +120,10 @@ type State struct {
 	// ExtensionsUsed counts granted extensions; at [Policy.MaxExtensions] the next expiry escalates.
 	ExtensionsUsed int `json:"extensions_used,omitempty"`
 
+	// UnscoredSlides counts expiries that slid on an unscored bucket; at [Policy.MaxExtensions] the
+	// next unscored expiry escalates, so a pair that can never be scored still reaches an operator.
+	UnscoredSlides int `json:"unscored_slides,omitempty"`
+
 	// Escalated records that the ladder ran out and an operator must act. An escalated freeze
 	// does NOT auto-unfreeze (ADR-0019: it stays active until manual unfreeze).
 	Escalated bool `json:"escalated,omitempty"`
@@ -139,7 +144,7 @@ type State struct {
 
 // Overridden returns the inactive State an override leaves behind: the ended ladder, remembered from now.
 func (s State) Overridden(now time.Time) State {
-	return State{ExtensionsUsed: s.ExtensionsUsed, Escalated: s.Escalated, OverriddenAt: now}
+	return State{ExtensionsUsed: s.ExtensionsUsed, UnscoredSlides: s.UnscoredSlides, Escalated: s.Escalated, OverriddenAt: now}
 }
 
 // Active reports whether the state describes a live freeze.
@@ -188,7 +193,7 @@ const (
 	// TransitionHeldUnscored: the hold expired on an unscored bucket and slid without consuming an
 	// extension.
 	TransitionHeldUnscored Transition = "held_unscored"
-	// TransitionEscalated — the ladder ran out; operator review (P1).
+	// TransitionEscalated — the ladder or the unscored-slide budget ran out; operator review (P1).
 	TransitionEscalated Transition = "escalated"
 	// TransitionReleased: the auto-unfreeze condition was met at expiry.
 	TransitionReleased Transition = "released"
@@ -245,11 +250,19 @@ func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 		// below read a CURRENT answer.
 		return p.frozen(st, TransitionHeld, sig.Now)
 
-	case !sig.Scored:
+	case !sig.Scored && st.UnscoredSlides < p.MaxExtensions:
 		// Unscored expiry (post-restart bootstrap, scoring outage): slide without climbing the ladder,
 		// else a rehydrated freeze could reach ESCALATED without one scored evaluation.
+		st.UnscoredSlides++
 		st.HoldUntil = sig.Now.Add(p.Extension)
 		return p.frozen(st, TransitionHeldUnscored, sig.Now)
+
+	case !sig.Scored:
+		// A pair that stays unscorable (thin book, no baseline) can never earn a release, so its
+		// slides are bounded like the ladder rather than holding the LKG silently forever.
+		st.Escalated = true
+		st.HoldUntil = sig.Now.Add(p.Extension)
+		return p.frozen(st, TransitionEscalated, sig.Now)
 
 	case st.ExtensionsUsed < p.MaxExtensions:
 		st.ExtensionsUsed++
@@ -275,6 +288,7 @@ func (p Policy) fire(prev State, sig Signal) Outcome {
 		return p.frozen(st, TransitionFired, sig.Now)
 	}
 	st.ExtensionsUsed = prev.ExtensionsUsed
+	st.UnscoredSlides = prev.UnscoredSlides
 	st.OverriddenAt = prev.OverriddenAt
 	if prev.Escalated {
 		st.Escalated = true
