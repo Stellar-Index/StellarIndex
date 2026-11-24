@@ -67,9 +67,14 @@ func (f *perKeyFlight) end(key string, fl *keyFlight, err error) {
 // FINAL scans of the large current-state table. Double the 30s AccountStateCacheTTL: twice the scans, slower-changing.
 const assetHoldersTTL = 60 * time.Second
 
-// assetHoldersStaleAfter matches lakeStaleThreshold: a board whose balances are older than this is served with
-// flags.stale, whether the age comes from the lake, this cache or the precomputed rollup's cycle.
+// assetHoldersStaleAfter matches lakeStaleThreshold: a board scanned live from the lake is served with flags.stale once
+// its balances are older than this.
 const assetHoldersStaleAfter = 300 * time.Second
+
+// assetHoldersRollupStaleAfter is the age past which a rollup-backed board means the rollup is behind its schedule: the
+// holders-rollup timer runs every 30 min (+2 min jitter, ~3 min run), so 70 min is two missed cycles. A healthy board is
+// up to ~35 min old, so the live bound would flag it stale permanently.
+const assetHoldersRollupStaleAfter = 70 * time.Minute
 
 // assetHoldersCacheMax bounds resident entries: boards are long-tail (a few hot assets plus
 // one-off lookups), so a modest cap holds the hot set. On overflow the oldest entry is evicted.
@@ -98,13 +103,22 @@ type assetHoldersEntry struct {
 type snapshotVintage struct {
 	at     time.Time
 	ledger uint32
+	rollup bool // at is a precomputed rollup's cycle stamp, not a scan this process made
+}
+
+// staleAfter is the age past which a snapshot with this vintage is flagged stale.
+func (v snapshotVintage) staleAfter() time.Duration {
+	if v.rollup {
+		return assetHoldersRollupStaleAfter
+	}
+	return assetHoldersStaleAfter
 }
 
 // vintage is what the board is fresh to. A precomputed board answers with its own build time and no ledger: the
 // watermark read at cache time says nothing about balances scanned earlier.
 func (e assetHoldersEntry) vintage() snapshotVintage {
 	if !e.computedAt.IsZero() {
-		return snapshotVintage{at: e.computedAt}
+		return snapshotVintage{at: e.computedAt, rollup: true}
 	}
 	return snapshotVintage{at: e.cachedAt, ledger: e.asOfLedger}
 }
