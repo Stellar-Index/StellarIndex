@@ -395,9 +395,10 @@ ch-rollup-age() { # <source> <table> <time column> <threshold seconds>
     "$1" "$([ "$age" -gt "$4" ] && echo 1 || echo 0)" >> "$TMP"
 }
 # Daily timers: the thresholds allow one missed cycle. trades-by-account writes a window only
-# when the Postgres compression horizon has moved, hence its extra day.
+# when the Postgres compression horizon moves, once per 7-day trades chunk: 9 days allows one
+# chunk interval, the 12 h compression job and a missed daily run.
 for spec in cohort-rollup:stellar.account_cohort_roots:computed_at:180000 \
-  trades-by-account:stellar.trades_by_account_windows:updated_at:259200; do
+  trades-by-account:stellar.trades_by_account_windows:updated_at:777600; do
   IFS=: read -r src table col thr <<<"$spec"
   ch-rollup-age "$src" "$table" "$col" "$thr"
 done
