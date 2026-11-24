@@ -20,6 +20,23 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.133.0] - 2026-11-24
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. A host role run from this tag replaces the API's ClickHouse user definition and hot-reloads it, with no restart (#4351).
+
+### Added
+
+- **ops:** `stellarindex_aggregator_window_truncated` raises a ticket when a pair and window keep serving a truncated trade window for 30 minutes; `stellarindex_aggregator_window_truncated_total` gains `pair` and `window` labels, and the warn line names the pair, window, rows used and `covered_from` (#4353).
+
+### Changed
+
+- **api:** a cold `GET /v1/contracts/{id}` read waits for a refresh slot until its request deadline or 4 seconds, with a bounded queue, before answering 503; concurrency against ClickHouse is unchanged (#4354).
+- **api:** the asset holders cache, the op-type stats panel on `/v1/operations` and the native liquidity-pool listing flag a serve as stale only past the refresh TTL plus the refresh budget, or after a failed, timed-out or skipped refresh. The OpenAPI text for `/v1/assets/{asset_id}/holders` states the real bounds: 300 seconds for a scanned board, 70 minutes for a rollup board (#4352).
+
+### Fixed
+
+- **ops:** the API's ClickHouse user is granted `SELECT` on `stellar.*` and `system.parts` explicitly, so the count rollup plan is readable and account reads stop falling back to the source scan; the role verifies the grants as that user (#4351).
+
 ## [v0.132.0] - 2026-11-24
 
 Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. Galexie moves to v30.0.1: a host role run from this tag restarts the exporter and needs `galexie_restart_ack=true` (#4348).
@@ -173,36 +190,3 @@ Tested against Stellar protocol 27. Migrations 0233-0234 (schema version 234): 0
 - **api:** a key can revoke itself under the postgres auth backend (#4240).
 - **api:** the SEP-1 supply parser accepts only a plain decimal of bounded length whose result fits i128; a string such as `1p9999999` no longer costs seconds of CPU per request (#4243).
 - **docs:** the migrations README records why there is no CHECK on `trades` amounts: on a hypertable with compressed chunks `ADD CONSTRAINT ... NOT VALID` still decompresses every compressed row under ACCESS EXCLUSIVE, so it is a planned maintenance operation; the rule stays in `canonical.Trade.Validate` (#4238).
-
-## [v0.128.0] - 2026-11-21
-
-Tested against Stellar protocol 27. No migrations, no `pkg/*` change. Behaviour changes for API clients: `/v1/oracle/prices` on a frozen pair returns the single held value, or 503 when nothing is held (#4227); `/v1/assets/{id}/supply` answers 502 when the supply read fails, where a token with no flows got 404 or an empty answer, and serves a supply whose completeness check could not run as a lower bound (#4228). Behaviour change for operators: a bounded ledger walk by the ops tools over a range with a real hole below the datastore tip now exits non-zero where it used to exit 0 (#4229). Host payload changed: job locks move to `/run/lock/stellarindex/`, and the public API unit runs with `ProtectSystem=strict` and no writable paths; both are applied by the next host role run (#4230). On a host that already holds the `movements_by_asset_backfill` marker, run Step 3 of `deploy/clickhouse/movements_by_asset.sql` to verify it, and on a mismatch delete the marker and re-run Step 2 (#4229).
-
-### Added
-
-- **api:** `/v1/oracle/prices` answers carry `frozen_checked`; a frozen pair returns the held value flagged `frozen`, `degraded`, `stale` and `single_source` (#4227).
-- **api:** `circulating_supply_lower_bound` on `/v1/assets/{id}/supply` and the RWA row, `market_cap_lower_bound` on the RWA row and the asset detail, and `lower_bound` on the RWA totals, set when the storage completeness check could not run (#4228).
-- **ci:** `lint-numeric-mask` fails on any `to_char` numeric mask in Go or SQL (#4225).
-
-### Changed
-
-- **api:** `/v1/oracle/prices` goes through the same freeze check as `lastprice`: a frozen pair returns the single held value, or 503 when nothing is held (#4227).
-- **api:** `/v1/assets/{id}/supply` answers 502 on a failed storage read whatever the flow count; the event-net supply is served as a lower bound when the check cannot run (undecodable balance entries, more entries than the cap, no instance entry), and only a Stellar asset contract is a real decline (#4228).
-- **api:** when the contract supply arm refuses, is cut short or applies its own reading, the generic fill's supply, basis, cap and flags are cleared; an observer SEP-41 supply is kept when the arm merely has no reading, and its cap is recomputed through the dust and turnover guards (#4228).
-- **api:** RWA views serve a cut-short curated valuation as lower bounds and say how many rows were not valued; a failed published or directory read, or a membership set that was never built, marks the view degraded (#4228).
-- **api:** fiat-quoted `ohlc`, `vwap` and `twap` carry a `truncated` flag set by whichever read hit the cap, and every book is cut to the capped book's span; `thin_market` is measured over the peg books that put a trade into the answer, and a book that could not be measured never clears it (#4227).
-- **api:** a chart whose grain is as wide as its window, including 1mo, reads back to the last closed bucket and the series is labelled `starts_before_window`; a protocols bespoke block's staleness and `as_of` come from the same cache read as the block (#4227).
-- **api:** the seven change-% expressions render with `ROUND((expr)::numeric, 2)::text`, so a value over nine digits no longer prints as `#########.##`; values that fit the old mask are unchanged (#4225).
-- **aggregate:** an escalated freeze (ADR-0019) ends only by operator action: a ladder whose hold lapsed while the aggregator was down stays live on restart reads, the recovery sweep, the marker rebuild, carry-forward and sibling checks, and a sibling window's release no longer clears it (#4226).
-- **aggregate:** when the last frozen window auto-releases with its marker present, `ReleaseWindow` closes the open `freeze_events` row, so a re-fire opens a new row and sends its webhook; a close with no open row is success (#4226).
-- **ingest:** a bounded ledger walk fails on a ledger missing at or below the datastore tip, on a delivered ledger whose sequence differs from the requested one, and returns the retryable `ErrLedgerArrivedDuringWalk` where it used to exit 0 with the range unread; the trailing-missing tolerance applies only to the distance from `-to`; the live path is unchanged (#4229).
-- **storage:** when two upstream directory files name one address, the last copy's name, domain and tags win and only scam-class tags carry over from earlier copies; a listing directory sync refuses a snapshot whose prunes plus re-binds exceed the churn ceiling (20%, floor 5) unless `-accept-churn` is given (#4225).
-- **lake:** `lake-dedup-driver` aborts when a merge removed fewer rows than the probe counted, sets `optimize_throw_if_noop` and skips partitions with a part written in the last hour; the `movements_by_asset` backfill steps stop on any failed or unmarked partition and insert the completeness marker only after verification (#4229).
-- **deploy:** the restore-drill and galexie-archive-fill locks live in `/run/lock/stellarindex/` as root:root 0600, created at boot by tmpfiles.d, opened read-only and owner-checked; the heavy-job wrapper no longer honours old-path per-job locks (#4230).
-- **deploy:** the public API unit runs with `ProtectSystem=strict` and no `ReadWritePaths`, hides `/run/lock` and `/etc/default/galexie*`, and sets `TasksMax`, `SystemCallFilter` and memory limits in both copies; `lint-systemd-hardening.sh` enforces it (#4230).
-- **deploy:** stellar-core auto-upgrade reads the network tip only from the root-owned textfile and skips when it is missing or foreign; the MinIO scrape token is minted only when the prometheus user and `/etc/prometheus` exist (#4230).
-
-### Fixed
-
-- **aggregate:** a freeze row held open by a ladder logs at INFO once per hold, then DEBUG (#4226).
-- **ingest:** probe errors in a bounded ledger walk name the step that failed (#4229).
