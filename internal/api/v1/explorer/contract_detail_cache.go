@@ -34,6 +34,8 @@ const contractDetailRefreshTimeout = 3 * time.Minute
 type contractDetailEntry struct {
 	v        any
 	cachedAt time.Time
+	// refreshFailed: the last refresh of this entry failed or was skipped; only a put clears it.
+	refreshFailed bool
 }
 
 // contractDetailCache is the shared TTL+bounded cache behind the three
@@ -73,7 +75,7 @@ const contractCodeHistoryTTL = 24 * time.Hour
 const positionsCacheKey = "pos:"
 
 // accountPositionsTTL is the "pos:" class window, shorter than contractDetailTTL because positions are what an address holds now.
-// One minute still collapses repeat loads onto one fan-out; past it the entry is served stale-but-labelled.
+// One minute still collapses repeat loads onto one fan-out; past it the entry is served, labelled stale per [detailStaleAfterForKey].
 const accountPositionsTTL = time.Minute
 
 // detailTTLForKey maps a cache key to its freshness window by key-class prefix.
@@ -89,18 +91,42 @@ func detailTTLForKey(key string) time.Duration {
 }
 
 // detailStaleAfterForKey is how old a served entry may be before it is stale: its class TTL plus the refresh that the first
-// expired read starts (at most one more TTL window, capped at the refresh budget). Inside it an expired entry is served unflagged.
+// expired read starts (at most one more TTL window, capped at the refresh budget). "pos:" balances are held now, so their
+// grace is half a TTL (30s); no measured fan-out time justifies a longer one.
 func detailStaleAfterForKey(key string) time.Duration {
 	ttl := detailTTLForKey(key)
+	if strings.HasPrefix(key, positionsCacheKey) {
+		return ttl + min(ttl/2, contractDetailRefreshTimeout)
+	}
 	return ttl + min(ttl, contractDetailRefreshTimeout)
 }
 
-// servedStale reports whether e, served for key, is past its staleness bound or declared itself stale on arrival.
+// servedStale reports whether e, served for key, is stale: past its bound, its last refresh failed, or it declared itself
+// stale on arrival. An expired entry is clean only inside the bound while no refresh of it has failed.
 func (e contractDetailEntry) servedStale(key string) bool {
 	if p, ok := e.v.(provisionalPayload); ok && p.provisional() {
 		return true
 	}
-	return time.Since(e.cachedAt) > detailStaleAfterForKey(key)
+	return e.refreshFailed || time.Since(e.cachedAt) > detailStaleAfterForKey(key)
+}
+
+// markRefreshFailed records on key's entry, if any, that its refresh failed or was skipped.
+func (c *contractDetailCache) markRefreshFailed(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.tableLocked(key)
+	if e, ok := m[key]; ok {
+		e.refreshFailed = true
+		m[key] = e
+	}
+}
+
+// endContractDetailRefresh ends key's flight, first recording a failure on its entry so the next serve is flagged.
+func (h *Handler) endContractDetailRefresh(key string, fl *keyFlight, err error) {
+	if err != nil {
+		h.contractDetail.markRefreshFailed(key)
+	}
+	h.contractDetail.flight.end(key, fl, err)
 }
 
 // get returns the entry for key even past the TTL (fresh=false), so a run of failed refreshes
@@ -175,7 +201,7 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	gate := h.detachedGate()
 	class := detachedClassForKey(key)
 	if !gate.TryAcquireClass(class) {
-		h.contractDetail.flight.end(key, fl, errRefreshSaturated)
+		h.endContractDetailRefresh(key, fl, errRefreshSaturated)
 		return fl
 	}
 	go func() {
@@ -189,7 +215,7 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 				worker.Report(h.Logger, "explorer-contract-detail-refresh", rec)
 				err = errRefreshPanicked
 			}
-			h.contractDetail.flight.end(key, fl, err)
+			h.endContractDetailRefresh(key, fl, err)
 		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractDetailRefreshTimeout)
@@ -213,6 +239,9 @@ func (h *Handler) contractDetailCached(ctx context.Context, key string, compute 
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {
 			h.refreshContractDetail(key, compute) //nolint:contextcheck // intentional detach — see refreshContractDetail
+			if cur, ok, _ := h.contractDetail.get(key); ok {
+				e = cur // a refresh skipped just now is already a known failure
+			}
 		}
 		return e.v, e.cachedAt, !fresh && e.servedStale(key), nil
 	}

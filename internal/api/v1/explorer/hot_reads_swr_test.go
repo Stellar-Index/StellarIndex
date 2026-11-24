@@ -366,6 +366,47 @@ func TestContractDetailCached_ExpiredWithinBoundServedClean(t *testing.T) {
 	}
 }
 
+// Inside its bound an expired entry whose last refresh failed is flagged; a successful refresh clears the flag.
+func TestContractDetailCached_FailedRefreshFlagsNextServe(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
+	h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) { return nil, errors.New("boom") })
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+
+	release := make(chan struct{})
+	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
+		<-release
+		return "new", nil
+	})
+	if err != nil || v != "old" || !degraded {
+		t.Fatalf("serve after a failed refresh, inside the bound: v=%v degraded=%v err=%v, want old/true", v, degraded, err)
+	}
+	close(release)
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
+	hold := make(chan struct{}) // held until the serve returns: the verdict must come from the entry alone
+	defer close(hold)
+	if v, _, degraded, _ := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
+		<-hold
+		return nil, errors.New("released")
+	}); v != "new" || degraded {
+		t.Fatalf("expired after a successful refresh: v=%v degraded=%v, want new/false", v, degraded)
+	}
+}
+
+// Positions are balances held now: their unflagged window past the TTL is half a TTL, not a whole one.
+func TestContractDetailEntry_PositionsGraceIsHalfTTL(t *testing.T) {
+	key := positionsCacheKey + "G1"
+	if got, want := detailStaleAfterForKey(key), accountPositionsTTL+accountPositionsTTL/2; got != want {
+		t.Errorf("detailStaleAfterForKey(pos) = %v, want %v", got, want)
+	}
+	e := contractDetailEntry{v: "p", cachedAt: time.Now().Add(-(accountPositionsTTL + 45*time.Second))}
+	if !e.servedStale(key) {
+		t.Error("positions 45s past their TTL were served unflagged")
+	}
+}
+
 func TestContractDetailCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h, _ := newSWRHandler()
 	h.contractDetail.put("ev:C1", "old")
