@@ -237,6 +237,7 @@
       X-ClickHouse-Key: {{ clickhouse_serving_password }}
   loop:
     - {q: "SELECT count() FROM system.parts WHERE database = 'stellar'", allowed: true}
+    - {q: "SELECT ledger_seq FROM stellar.ledgers LIMIT 1", allowed: true}
     - {q: "SELECT count() FROM system.processes", allowed: false}
     - {q: "SYSTEM DROP DNS CACHE", allowed: false}
   loop_control:
