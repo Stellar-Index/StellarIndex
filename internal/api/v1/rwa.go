@@ -1013,7 +1013,7 @@ func (s *Server) stampRWAServeState(m rwaMembership) rwaMembership {
 
 // stampServeStateLocked is [Server.stampRWAServeState] for callers already holding rwaMu.
 func (s *Server) stampServeStateLocked(m rwaMembership) rwaMembership {
-	m.servedStale = !s.rwaAt.IsZero() && time.Since(s.rwaAt) >= rwaMembershipTTL
+	m.servedStale = s.rwaMembershipServedStaleLocked()
 	m.rebuildFailedAt = s.rwaFailedAt
 	return m
 }
@@ -1051,12 +1051,15 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 	// Deferred so a panic in the scan cannot leave the single-flight marker set, which would
 	// freeze the cache for the life of the process since a non-nil flight is never replaced.
 	defer s.endRWAMembershipFlight(done)
+	finished := false
+	defer s.failUnfinishedRWARebuild(&finished)
 	defer worker.Recover(s.logger, "api-rwa-membership-refresh")
 
 	ctx, cancel := context.WithTimeout(context.Background(), rwaMembershipBudget)
 	defer cancel()
 
 	built := s.buildRWAMembership(ctx)
+	finished = true
 	// One instant for the published age and the lifetime clock, so `stale` always describes the
 	// same moment as the `built_at` beside it.
 	at := time.Now().UTC()
