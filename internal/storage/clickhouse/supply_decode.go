@@ -49,10 +49,12 @@ const (
 	SupplySkipNotTokenShaped  = "not_token_shaped"
 	SupplySkipAmountNotI128   = "amount_not_i128"
 	SupplySkipBodyUnparseable = "body_unparseable"
+	// SupplySkipJudgedNonToken is a skip from a contract judged not a token (judgedNonToken), for that judgement's reason only.
+	SupplySkipJudgedNonToken = "judged_non_token"
 )
 
-// SupplySkipReasons lists every reason ClassifySupplyBodyXDR returns, for metric zero-seeding.
-var SupplySkipReasons = []string{SupplySkipNotTokenShaped, SupplySkipAmountNotI128, SupplySkipBodyUnparseable}
+// SupplySkipReasons lists every reason ClassifySupplyEventXDR returns, for metric zero-seeding.
+var SupplySkipReasons = []string{SupplySkipNotTokenShaped, SupplySkipAmountNotI128, SupplySkipBodyUnparseable, SupplySkipJudgedNonToken}
 
 // ClassifySupplyBodyXDR type-tests a mint/burn/clawback body before reading its amount: a bare i128 or a map carrying `amount` is
 // token-shaped; skip is "" when the amount decoded, else a SupplySkip* reason.

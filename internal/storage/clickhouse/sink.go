@@ -203,7 +203,21 @@ type LedgerExtract struct {
 	// SupplyFlowSkips counts mint/burn/clawback events written to contract_events with no supply_flows row, by SupplySkip* reason.
 	// Not a read undercount: any contract can emit these topics, so they never fail a run.
 	SupplyFlowSkips map[string]int
+
+	// SupplyFlowSkipSamples names up to supplySkipSampleCap distinct contracts whose skip alerts ([SupplySkipAlerts]), so the
+	// ticket can be acted on without a lake search.
+	SupplyFlowSkipSamples []SupplySkipSample
 }
+
+// SupplySkipSample is one alerting supply-flow skip: the contract, its reason and the transaction carrying it.
+type SupplySkipSample struct {
+	ContractID string
+	Reason     string
+	TxHash     string
+}
+
+// supplySkipSampleCap bounds SupplyFlowSkipSamples per ledger.
+const supplySkipSampleCap = 4
 
 // ErrBufferFull is returned by Sink.Add when the buffer is full and flushes keep failing; the extract is DROPPED (a bounded drop, not an error) and the ch-live-catchup gap scan heals it.
 var ErrBufferFull = errors.New("clickhouse: sink buffer full — extract dropped (bounded-drop, heals via ch-live-catchup)")

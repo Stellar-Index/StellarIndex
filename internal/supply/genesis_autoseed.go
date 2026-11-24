@@ -16,8 +16,8 @@ type GenesisSeeder func(ctx context.Context, contractID string) error
 type HistoryCoverageCheck func(ctx context.Context, contractID string, ledger uint32) error
 
 // ErrSEP41HistoryNotCovered is returned while a watched contract's Soroban-era events are not shown to be in the served tier, so a
-// sum over them would be partial; benign (`missing_baseline`) until `stellarindex-ops projector-replay -source sep41_supply` lands.
-var ErrSEP41HistoryNotCovered = errors.New("supply: SEP-41 contract's Soroban-era events are not shown to be replayed — run `stellarindex-ops projector-replay -source sep41_supply`")
+// sum over them would be partial; benign (`missing_baseline`) until `stellarindex-ops projected-rebuild -source sep41_supply` lands.
+var ErrSEP41HistoryNotCovered = errors.New("supply: SEP-41 contract's Soroban-era events are not shown to be replayed — run `stellarindex-ops projected-rebuild -source sep41_supply` over the range the log names")
 
 // GenesisSeedingComputer wraps a SEP-41 [SnapshotComputer] so a watched contract with a missing genesis baseline seeds itself instead of staying withheld.
 type GenesisSeedingComputer struct {
