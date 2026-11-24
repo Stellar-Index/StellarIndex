@@ -296,9 +296,10 @@ type rwaPremiumHistory struct {
 	membership rwaSeriesMembership
 	// marketFrom is the first day the market leg could have observed; zero when not read.
 	marketFrom time.Time
-	// stale marks a cached assembly served past its TTL because the
-	// rebuild failed or has not answered; builtAt is then its real age.
+	// stale marks a cached assembly served as a last-good copy per [swrServedStale]; builtAt is then its real age.
 	stale bool
+	// refreshFailed is set on the cached copy when a rebuild since it failed; a successful build replaces the copy.
+	refreshFailed bool
 	// sourceExcluded marks an assembly from which an operator source exclusion removed a day.
 	sourceExcluded bool
 }
@@ -549,12 +550,15 @@ func (s *Server) settleRWAPremiumHistory(built rwaPremiumHistory, err error) {
 	} else {
 		// The last good series keeps serving under flags.stale, so this counter is the only signal stellarindex_api_cache_refresh_failing sees.
 		obs.APICacheOpsTotal.WithLabelValues("rwa_premium_history", "build", "refresh_error").Inc()
+		if s.rwaPremCache != nil {
+			s.rwaPremCache.refreshFailed = true
+		}
 	}
 	s.rwaPremFlight = nil
 }
 
-// lastRWAPremiumHistory returns the cached assembly, stale once past its
-// TTL, or an unavailable one when no build has ever succeeded.
+// lastRWAPremiumHistory returns the cached assembly, stale per [swrServedStale], or an unavailable one when no build has ever
+// succeeded.
 func (s *Server) lastRWAPremiumHistory() rwaPremiumHistory {
 	s.rwaPremMu.Lock()
 	defer s.rwaPremMu.Unlock()
@@ -562,7 +566,7 @@ func (s *Server) lastRWAPremiumHistory() rwaPremiumHistory {
 		return rwaPremiumHistory{}
 	}
 	h := *s.rwaPremCache
-	h.stale = time.Since(s.rwaPremAt) >= rwaPremiumHistoryTTL
+	h.stale = swrServedStale(s.rwaPremAt, rwaPremiumHistoryTTL, rwaPremiumHistoryBudget, h.refreshFailed)
 	return h
 }
 
