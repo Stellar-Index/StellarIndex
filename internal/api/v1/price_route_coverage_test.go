@@ -59,7 +59,7 @@ var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/assets/verified":               gated,
 	"GET /v1/external/assets":               uncovered("external asset prices"),
 	"GET /v1/external/assets/{slug}":        gated,
-	"GET /v1/rwa/assets":                    uncovered("RWA prices"),
+	"GET /v1/rwa/assets":                    uncovered("RWA market prices; the oracle and fund-NAV reference is judged"),
 	"GET /v1/rwa/history":                   uncovered("RWA price history"),
 	"GET /v1/rwa/premium":                   gated,
 	"GET /v1/stablecoins":                   uncovered("stablecoin USD valuation"),

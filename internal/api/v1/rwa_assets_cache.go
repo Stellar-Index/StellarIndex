@@ -27,19 +27,59 @@ type rwaAssetsBuild struct {
 	flags Flags
 	// builtAt is when the build ran; observedAt, the envelope as_of, is the oldest store read behind it.
 	builtAt, observedAt time.Time
+	// refVerdicts are the exclusion verdicts the build valued its references under.
+	refVerdicts []rwaRefVerdict
 }
 
-// cachedRWAAssetsView serves the assembled view, stale-while-revalidate: past expiry it is served under flags.stale and
-// flags.degraded while a detached rebuild runs. A server with no build, or one past rwaAssetsViewMaxStale, waits up to ctx.
+// errRWAViewVerdictsChanged: the exclusion set no longer judges the view's references as its build did, and a rebuild did not
+// catch up, so the view's figures are no longer true.
+var errRWAViewVerdictsChanged = errors.New("rwa assets view was rebuilt but the source exclusions still judge its references otherwise")
+
+// rwaAssetsUnavailableDetail is the 503 detail for a view the cache refused to serve, or false for any other error.
+func rwaAssetsUnavailableDetail(err error) (string, bool) {
+	switch {
+	case errors.Is(err, errRWAViewVerdictsChanged):
+		return "the source exclusions changed under the assets view and its rebuild does not yet agree with them; retry shortly", true
+	case errors.Is(err, errRWAViewTooOld):
+		return "the last assets view is past its maximum age and its rebuild has not answered; retry shortly", true
+	}
+	return "", false
+}
+
+// cachedRWAAssetsView serves the assembled view, never one whose reference verdicts the current exclusion set contradicts:
+// that view is rebuilt, waiting up to ctx, and refused if the rebuild still disagrees or does not answer in time.
 func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error) {
+	refused, err := s.cachedRWAAssetsViewOnce(ctx, false)
+	if err != nil || s.rwaRefVerdictsHold(ctx, refused.refVerdicts) {
+		return refused, err
+	}
+	// A build that landed since the read may already agree, so only the refused view itself is rebuilt.
+	if cur, err := s.cachedRWAAssetsViewOnce(ctx, false); err == nil && !cur.builtAt.Equal(refused.builtAt) &&
+		s.rwaRefVerdictsHold(ctx, cur.refVerdicts) {
+		return cur, nil
+	}
+	b, err := s.cachedRWAAssetsViewOnce(ctx, true)
+	switch {
+	case err == nil && s.rwaRefVerdictsHold(ctx, b.refVerdicts):
+		return b, nil
+	case err == nil, errors.Is(err, context.DeadlineExceeded):
+		return rwaAssetsBuild{}, errors.Join(errRWAViewVerdictsChanged, err)
+	}
+	return rwaAssetsBuild{}, err
+}
+
+// cachedRWAAssetsViewOnce serves the assembled view, stale-while-revalidate: past expiry it is served under flags.stale and
+// flags.degraded while a detached rebuild runs. A server with no build, one past rwaAssetsViewMaxStale, or rebuild=true waits
+// up to ctx.
+func (s *Server) cachedRWAAssetsViewOnce(ctx context.Context, rebuild bool) (rwaAssetsBuild, error) {
 	s.rwaViewMu.Lock()
 	cached, expired := s.rwaViewCache, time.Now().After(s.rwaViewExpires)
 	ch := s.rwaViewFlight
-	if cached == nil || expired {
+	if cached == nil || expired || rebuild {
 		ch = s.startRWAAssetsBuildLocked() //nolint:contextcheck // the build outlives the request that found the view stale.
 	}
 	s.rwaViewMu.Unlock()
-	if cached != nil && time.Since(cached.builtAt) <= rwaAssetsViewMaxStale {
+	if !rebuild && cached != nil && time.Since(cached.builtAt) <= rwaAssetsViewMaxStale {
 		b := *cached
 		if expired {
 			b.flags.Stale = true

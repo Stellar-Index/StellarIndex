@@ -316,6 +316,29 @@ func TestRWAHistory_ACarriedForwardAssemblyIsStaleAndDated(t *testing.T) {
 	}
 }
 
+// TestRWAHistory_AnAssemblyPastItsMaximumAgeIsNotServed — a series whose
+// rebuilds keep failing is refused once past its maximum age: its
+// membership verdicts are no longer true, so it is a 503, not a stale 200.
+func TestRWAHistory_AnAssemblyPastItsMaximumAgeIsNotServed(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	supply := &stubFlowSupply{days: []clickhouse.SupplyFlowDay{histFlow(sac, 1, "200000000")}}
+	srv := rwaHistoryServer(t, bound, dir, rows, supply,
+		&stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+	)
+	ts := httpTestServer(t, srv)
+	if resp := mustGet(t, ts.URL+"/v1/rwa/history?timeframe=all"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("first build: status = %d, want 200", resp.StatusCode)
+	}
+	supply.err = errors.New("lake unreachable")
+	srv.AgeRWASeriesCachesForTest(v1.RWAHistoryMaxStale + time.Minute)
+	resp := mustGet(t, ts.URL+"/v1/rwa/history?timeframe=all")
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
+		t.Errorf("assembly past its maximum age: status = %d Retry-After = %q, want 503 with Retry-After",
+			resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+}
+
 // blockingFlowSupply holds the supply read until released, and closes
 // cancelled if the build's context is cancelled while it waits.
 type blockingFlowSupply struct {
