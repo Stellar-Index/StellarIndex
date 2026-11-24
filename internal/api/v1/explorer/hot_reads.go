@@ -210,15 +210,14 @@ var errRefreshPanicked = errors.New("explorer: detached refresh panicked")
 
 // refreshAssetHolders kicks ONE detached holders scan for asset (no-op when a flight is up) and returns the flight. Detached on purpose:
 // bound to an 8s request deadline, a huge asset's scan never completes and the cache never fills.
-func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
+func (h *Handler) refreshAssetHolders(asset string, admit func(*clickhouse.RefreshGate, string) bool) *keyFlight {
 	fl, owner := h.assetHolders.flight.begin(asset)
 	if !owner {
 		return fl
 	}
-	// Bounded globally across keys because the asset space is attacker-mintable (any
-	// CODE-ISSUER parses); on saturation skip, don't queue (see detachedGate).
+	// Bounded globally across keys because the asset space is attacker-mintable (any CODE-ISSUER parses); admit claims the slot (see detachedGate).
 	gate := h.detachedGate()
-	if !gate.TryAcquireClass("asset_holders") {
+	if !admit(gate, "asset_holders") {
 		h.assetHolders.endRefresh(asset, fl, errRefreshSaturated)
 		return fl
 	}
@@ -255,7 +254,8 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, degraded bool, err error) {
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
-			h.refreshAssetHolders(asset) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
+			// Stale path: an entry is served either way, so skip rather than wait.
+			h.refreshAssetHolders(asset, (*clickhouse.RefreshGate).TryAcquireClass) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
 			if cur, ok, _ := h.assetHolders.get(asset); ok {
 				e = cur // a refresh skipped just now is already a known failure
 			}
@@ -263,9 +263,8 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 		stale := !fresh && swrServedStale(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed)
 		return sliceHolders(e.holders, limit), e.total, e.vintage(), stale, nil
 	}
-	// Stone-cold: wait for the detached compute, bounded by OUR deadline
-	// only — the compute itself is not.
-	fl := h.refreshAssetHolders(asset) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill (see refreshAssetHolders)
+	// Stone-cold: wait for a slot (bounded, see coldSlotAdmit), then for the detached compute, bounded by OUR deadline only — the compute itself is not.
+	fl := h.refreshAssetHolders(asset, coldSlotAdmit(ctx)) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill (see refreshAssetHolders)
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.assetHolders.get(asset); ok {

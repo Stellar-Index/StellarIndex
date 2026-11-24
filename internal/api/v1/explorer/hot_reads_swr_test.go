@@ -263,14 +263,14 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 	okBefore, errBefore := count("ok"), count("error")
 
 	h, reader := newSWRHandler()
-	fl := h.refreshAssetHolders("asset-metrics-ok")
+	fl := h.refreshAssetHolders("asset-metrics-ok", (*clickhouse.RefreshGate).TryAcquireClass)
 	<-fl.done
 	if got := count("ok"); got != okBefore+1 {
 		t.Errorf("ok observations = %d, want %d", got, okBefore+1)
 	}
 
 	reader.fail.Store(true)
-	fl = h.refreshAssetHolders("asset-metrics-err")
+	fl = h.refreshAssetHolders("asset-metrics-err", (*clickhouse.RefreshGate).TryAcquireClass)
 	<-fl.done
 	if got := count("error"); got != errBefore+1 {
 		t.Errorf("error observations = %d, want %d", got, errBefore+1)
