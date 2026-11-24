@@ -43,6 +43,9 @@ type AccountWealthSnapshot struct {
 	// the scan, so it never names a ledger later than the data read; 0 if unreadable.
 	AsOf       time.Time
 	AsOfLedger uint32
+	// RefreshFailed is set on read: the last finished refresh errored, timed out or panicked, so
+	// this is a last-good copy until one succeeds. The API layer judges staleness from it.
+	RefreshFailed bool
 }
 
 // accountsWealthCache is a TTL + single-flight cache in front of [ExplorerReader.AccountsByWealth]. The query needs 11-20 s against the
@@ -52,6 +55,8 @@ type accountsWealthCache struct {
 	entry  AccountWealthSnapshot
 	filled bool
 	flight chan struct{}
+	// refreshFailed is cleared only by put, i.e. a complete successful fill.
+	refreshFailed bool
 }
 
 func newAccountsWealthCache() *accountsWealthCache {
@@ -69,7 +74,9 @@ func (c *accountsWealthCache) get() (AccountWealthSnapshot, bool) {
 	if !c.filled {
 		return AccountWealthSnapshot{}, false
 	}
-	return c.entry, true
+	snap := c.entry
+	snap.RefreshFailed = c.refreshFailed
+	return snap, true
 }
 
 func (c *accountsWealthCache) put(snap AccountWealthSnapshot) {
@@ -80,6 +87,16 @@ func (c *accountsWealthCache) put(snap AccountWealthSnapshot) {
 	defer c.mu.Unlock()
 	c.entry = snap
 	c.filled = true
+	c.refreshFailed = false
+}
+
+func (c *accountsWealthCache) markRefreshFailed() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.refreshFailed = true
+	c.mu.Unlock()
 }
 
 // beginFlight returns (wait, false) when a refresh is running; (done, true) when the caller
@@ -144,11 +161,18 @@ func clampWealth(rows []AccountWealth, limit int) []AccountWealth {
 func (r *ExplorerReader) PrewarmAccountsByWealth(
 	ctx context.Context, assets, prices []string,
 ) error {
+	filled := false
+	defer func() {
+		if !filled {
+			r.wealthCache.markRefreshFailed()
+		}
+	}()
 	snap, err := r.computeAccountsWealth(ctx, assets, prices)
 	if err != nil {
 		return err
 	}
 	r.wealthCache.put(snap)
+	filled = true
 	return nil
 }
 
@@ -204,6 +228,14 @@ func (r *ExplorerReader) refreshAccountsWealth(assets, prices []string) {
 		// An unrecovered panic in any goroutine kills the API. Registered last so it unwinds
 		// first and endFlight still runs, so a contained panic cannot wedge the flight.
 		defer worker.Recover(nil, "explorer-accounts-wealth-refresh")
+		// Registered after Recover so it runs first, during a panic too: error, timeout and panic all
+		// leave the failure memory set.
+		filled := false
+		defer func() {
+			if !filled {
+				r.wealthCache.markRefreshFailed()
+			}
+		}()
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
 		defer cancel()
@@ -218,5 +250,6 @@ func (r *ExplorerReader) refreshAccountsWealth(assets, prices []string) {
 			return // next caller retries; nothing cached, nothing corrupted
 		}
 		r.wealthCache.put(snap)
+		filled = true
 	}()
 }

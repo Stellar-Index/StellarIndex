@@ -20,6 +20,9 @@ const accountStateCacheMax = 4096
 type accountStateEntry struct {
 	state    AccountState
 	cachedAt time.Time
+	// refreshFailed: the last finished refresh errored, timed out, panicked or was skipped by the
+	// gate. A new entry (a complete successful fill) is the only thing that clears it.
+	refreshFailed bool
 }
 
 type accountStateCache struct {
@@ -44,7 +47,21 @@ func (c *accountStateCache) get(account string) (st AccountState, ok, fresh bool
 	if !present {
 		return AccountState{}, false, false
 	}
-	return e.state, true, time.Since(e.cachedAt) <= AccountStateCacheTTL
+	st = e.state
+	st.CachedAt, st.RefreshFailed = e.cachedAt, e.refreshFailed
+	return st, true, time.Since(e.cachedAt) <= AccountStateCacheTTL
+}
+
+func (c *accountStateCache) markRefreshFailed(account string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[account]; ok {
+		e.refreshFailed = true
+		c.entries[account] = e
+	}
 }
 
 func (c *accountStateCache) put(account string, st AccountState, now time.Time) {
@@ -67,9 +84,9 @@ func (c *accountStateCache) put(account string, st AccountState, now time.Time) 
 	c.entries[account] = accountStateEntry{state: st, cachedAt: now}
 }
 
-// accountStateRefreshTimeout bounds one detached scan: the 3-minute ceiling of the other
+// AccountStateRefreshTimeout bounds one detached scan: the 3-minute ceiling of the other
 // detached refreshes; a whale account's UNION arms run well past the 8s request budget.
-const accountStateRefreshTimeout = 3 * time.Minute
+const AccountStateRefreshTimeout = 3 * time.Minute
 
 // errAccountStateRefreshFailed is returned to waiters when the detached scan produced no
 // cacheable state (the error went through the wealth-refresh error hook, the only log seam).
@@ -77,12 +94,14 @@ var errAccountStateRefreshFailed = errors.New(
 	"clickhouse: detached account-state refresh produced no entry")
 
 // AccountStateCached serves account state from the TTL cache; a miss kicks one detached scan per account (so a whale scan survives the request) and waits only up to the caller's deadline.
+// The bool reports a serve from an expired entry; with the state's CachedAt and RefreshFailed the API layer judges whether it is stale.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, bool, error) {
 	if st, ok, fresh := r.stateCache.get(account); ok {
 		if !fresh {
-			// Serve the stale entry now while one detached refresh runs: old-but-real beats a 503. The
-			// stale bool lets the handler set flags.stale, as for the wealth ranking.
-			r.refreshAccountState(account) //nolint:contextcheck // intentional detach — see refreshAccountState
+			// Serve the expired entry now while one detached refresh runs: old-but-real beats a 503.
+			if _, skipped := r.refreshAccountState(account); skipped { //nolint:contextcheck // intentional detach — see refreshAccountState
+				st.RefreshFailed = true
+			}
 		}
 		return st, !fresh, nil
 	}
@@ -118,6 +137,7 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 	// account space is attacker-chosen, so key churn would queue unbounded scans on the shared
 	// pool. On saturation skip, never queue (see RefreshGate).
 	if !r.refreshGate.TryAcquireClass("account_state") {
+		r.stateCache.markRefreshFailed(account)
 		fl.saturated = true // published to waiters by end()'s close
 		r.stateFlight.end(account, fl)
 		return fl, true
@@ -129,7 +149,14 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 		// An unrecovered panic in any goroutine kills the API, and the account is attacker-chosen.
 		// Registered last so it unwinds first and the releases above run on a non-panicking stack.
 		defer worker.Recover(nil, "explorer-account-state-refresh")
-		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
+		// Runs first, during a panic too: error, timeout and panic all leave the failure memory set.
+		filled := false
+		defer func() {
+			if !filled {
+				r.stateCache.markRefreshFailed(account)
+			}
+		}()
+		rctx, cancel := context.WithTimeout(context.Background(), AccountStateRefreshTimeout)
 		defer cancel()
 		// Watermark read before the scan (as computeAccountsWealth): AsOfLedger must never exceed
 		// the state it stamps. Unreadable leaves it 0 rather than failing a completed scan.
@@ -146,6 +173,7 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 		}
 		st.AsOfLedger = ledger
 		r.stateCache.put(account, st, time.Now())
+		filled = true
 	}()
 	return fl, false
 }
