@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
-// A protocol detail served just past its TTL while its rebuild runs on time is clean and cacheable; after a failed rebuild
-// the same age is stale and no-store; a complete rebuild clears the failure.
+// A protocol detail served inside its TTL while its early rebuild runs on time is clean and cacheable; after a failed
+// rebuild the same age is stale and no-store; a complete rebuild clears the failure. Past the TTL it is stale even with the
+// rebuild on time: the inputs it froze at build must not be served clean longer than the TTL.
 func TestHandleProtocolDetail_StaleFollowsTheSWRVerdict(t *testing.T) {
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: &prewarmBespokeStub{}})
 	ts := httptest.NewServer(srv.Handler())
@@ -19,10 +20,11 @@ func TestHandleProtocolDetail_StaleFollowsTheSWRVerdict(t *testing.T) {
 		t.Fatalf("cold: status %d", code)
 	}
 	waitProtoDetailIdle(t, srv, key)
+	ageBy := protocolDetailRefreshAfter + protocolDetailRefreshTimeout/2
 	age := func(failed bool) {
 		srv.protoDetailMu.Lock()
 		e := srv.protoDetailCache[key]
-		e.at, e.refreshFailed = time.Now().Add(-protocolDetailTTL-protocolDetailRefreshTimeout/2), failed
+		e.at, e.refreshFailed = time.Now().Add(-ageBy), failed
 		srv.protoDetailCache[key] = e
 		srv.protoDetailMu.Unlock()
 	}
@@ -65,6 +67,10 @@ func TestHandleProtocolDetail_StaleFollowsTheSWRVerdict(t *testing.T) {
 	}
 	age(false)
 	serveFlag("after a successful rebuild", false)
+
+	ageBy = protocolDetailTTL + protocolDetailRefreshTimeout/2
+	age(false)
+	serveFlag("past the ttl, rebuild on time", true)
 }
 
 // A rebuild that panics marks the kept entry failed.

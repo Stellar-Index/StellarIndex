@@ -103,40 +103,112 @@ func TestRWAAssetsView_StaleFollowsTheSWRVerdict(t *testing.T) {
 	check("after a successful build", s, false)
 }
 
+// rwaMembershipCase is the membership state a cached RWA view or series, built 5s ago and clean then, is served under.
+type rwaMembershipCase struct {
+	name string
+	age  time.Duration
+	// replaced: the cache now holds a newer set; failedSince: a rebuild failed after the series was built, retry running.
+	replaced, failedSince bool
+	want                  bool
+}
+
+var rwaMembershipCases = []rwaMembershipCase{
+	{"fresh", time.Minute, false, false, false},
+	{"past its bound", rwaMembershipTTL + rwaMembershipBudget + time.Second, false, false, true},
+	{"replaced and past its bound", rwaMembershipTTL + rwaMembershipBudget + time.Second, true, false, true},
+	{"rebuild failed after the build", rwaMembershipTTL + time.Minute, false, true, true},
+}
+
+// seedRWAMembershipCase sets s's membership cache to tc and returns the fill time a build would have recorded.
+func seedRWAMembershipCase(s *Server, tc rwaMembershipCase) time.Time {
+	filledAt := time.Now().Add(-tc.age)
+	s.rwaAt = filledAt
+	if tc.replaced {
+		s.rwaAt = time.Now()
+	}
+	if tc.failedSince {
+		s.rwaFlight, s.rwaFailedAt = make(chan struct{}), time.Now().Add(-time.Minute)
+	}
+	return filledAt
+}
+
+func rwaVerdictTestServer() *Server {
+	return &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+}
+
 // A view inside its own TTL is still flagged once an input it was built from passes that input's bound: caching the view
-// must not replay an old membership set or old catalogue rows clean.
+// must not replay an old membership set or old catalogue rows clean. Catalogue rows get the view's build allowance.
 func TestRWAAssetsView_InputsAgeFromTheirOwnFill(t *testing.T) {
-	overMembership := rwaMembershipTTL + rwaMembershipBudget + time.Second
-	for _, tc := range []struct {
-		name                       string
-		catalogueAge, membAge      time.Duration
-		membershipReplacedSinceUse bool
-		want                       bool
-	}{
-		{"fresh inputs", time.Minute, time.Minute, false, false},
-		{"membership past its bound", time.Minute, overMembership, false, true},
-		{"replaced membership past its bound", time.Minute, overMembership, true, true},
-		{"catalogue rows past the view bound", rwaAssetsViewTTL + time.Second, time.Minute, false, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			now := time.Now()
-			s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-			s.rwaViewCache = &rwaAssetsBuild{
-				builtAt: now.Add(-5 * time.Second), observedAt: now.Add(-tc.catalogueAge),
-				catalogueAt: now.Add(-tc.catalogueAge), membershipAt: now.Add(-tc.membAge),
-			}
-			s.rwaViewExpires = now.Add(rwaAssetsViewTTL - 5*time.Second)
-			s.rwaAt = s.rwaViewCache.membershipAt
-			if tc.membershipReplacedSinceUse {
-				s.rwaAt = now
-			}
-			b, err := s.cachedRWAAssetsViewOnce(context.Background(), false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if b.flags.Stale != tc.want || b.flags.Degraded != tc.want {
-				t.Errorf("flags = %+v, want stale and degraded %v", b.flags, tc.want)
+	serve := func(t *testing.T, s *Server, catalogueAge time.Duration, membershipAt time.Time, viewFailed bool) Flags {
+		t.Helper()
+		now := time.Now()
+		s.rwaViewCache = &rwaAssetsBuild{
+			builtAt: now.Add(-5 * time.Second), observedAt: now.Add(-catalogueAge),
+			catalogueAt: now.Add(-catalogueAge), membershipAt: membershipAt,
+		}
+		s.rwaViewExpires = now.Add(rwaAssetsViewTTL - 5*time.Second)
+		if viewFailed {
+			s.rwaViewErr = errors.New("down")
+		}
+		b, err := s.cachedRWAAssetsViewOnce(context.Background(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.flags.Stale != b.flags.Degraded {
+			t.Errorf("flags = %+v, want stale and degraded together", b.flags)
+		}
+		return b.flags
+	}
+	for _, tc := range rwaMembershipCases {
+		t.Run("membership "+tc.name, func(t *testing.T) {
+			s := rwaVerdictTestServer()
+			if got := serve(t, s, time.Minute, seedRWAMembershipCase(s, tc), false); got.Stale != tc.want {
+				t.Errorf("stale = %v, want %v", got.Stale, tc.want)
 			}
 		})
+	}
+	for _, tc := range []struct {
+		name       string
+		age        time.Duration
+		viewFailed bool
+		want       bool
+	}{
+		{"catalogue rows inside the build allowance", rwaAssetsViewTTL + 5*time.Second, false, false},
+		{"catalogue rows past the build allowance", rwaAssetsViewTTL + maxHandlerBudget + time.Second, false, true},
+		{"catalogue rows past the ttl after a failed build", rwaAssetsViewTTL + 5*time.Second, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := serve(t, rwaVerdictTestServer(), tc.age, time.Time{}, tc.viewFailed); got.Stale != tc.want {
+				t.Errorf("stale = %v, want %v", got.Stale, tc.want)
+			}
+		})
+	}
+}
+
+// The value and premium series take their membership flags at build; served from cache they are re-judged by the set's own
+// verdict, so a set that ages past its bound or fails a rebuild after the build is not replayed clean.
+func TestRWASeries_MembershipJudgedAtServeTime(t *testing.T) {
+	routes := map[string]func(*Server, rwaSeriesMembership) Flags{
+		"history": func(s *Server, sm rwaSeriesMembership) Flags {
+			s.rwaHistCache, s.rwaHistAt = &rwaValueHistory{membership: sm}, time.Now().Add(-5*time.Second)
+			h := s.cachedRWAValueHistory(context.Background())
+			return h.membership.envelopeFlags(h.stale)
+		},
+		"premium": func(s *Server, sm rwaSeriesMembership) Flags {
+			s.rwaPremCache, s.rwaPremAt = &rwaPremiumHistory{membership: sm}, time.Now().Add(-5*time.Second)
+			h := s.cachedRWAPremiumHistory(context.Background())
+			return h.membership.envelopeFlags(h.stale)
+		},
+	}
+	for route, serve := range routes {
+		for _, tc := range rwaMembershipCases {
+			t.Run(route+" "+tc.name, func(t *testing.T) {
+				s := rwaVerdictTestServer()
+				at := seedRWAMembershipCase(s, tc)
+				if got := serve(s, rwaSeriesMembership{at: at, filledAt: at}); got.Stale != tc.want || got.Degraded != tc.want {
+					t.Errorf("flags = %+v, want stale and degraded %v", got, tc.want)
+				}
+			})
+		}
 	}
 }

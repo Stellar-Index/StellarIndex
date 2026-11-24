@@ -14,14 +14,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// protocolDetailTTL is the freshness horizon of a cached /v1/protocols/{name} detail; past it the entry is served while a
-// detached single-flight rebuild runs, so a built page never blanks back to a cold 503, and is marked STALE (flags.stale +
-// analytics.status="stale") once a last-good copy per [swrServedStale].
+// protocolDetailTTL is the longest a cached /v1/protocols/{name} detail is served clean; past it the entry is served STALE
+// (flags.stale + analytics.status="stale") while a detached single-flight rebuild runs, so a built page never blanks back to
+// a cold 503.
 const protocolDetailTTL = 20 * time.Minute
 
 // protocolDetailRefreshTimeout bounds one detached rebuild so a wedged query cannot pin the
 // single-flight.
 const protocolDetailRefreshTimeout = 90 * time.Second
+
+// protocolDetailRefreshAfter starts the rebuild one budget before the TTL, so an on-time rebuild lands before the entry is
+// stale: the roster, event counts and verdicts it froze at build are never served clean past the TTL.
+const protocolDetailRefreshAfter = protocolDetailTTL - protocolDetailRefreshTimeout
 
 type protoDetailEntry struct {
 	view ProtocolDetailView
@@ -39,8 +43,8 @@ func (s *Server) protoDetailInitLocked() {
 	}
 }
 
-// cachedProtocolDetail returns the detail view for key stale-while-revalidate: fresh as-is; past protocolDetailTTL served stale while ONE
-// detached rebuild runs;
+// cachedProtocolDetail returns the detail view for key stale-while-revalidate: fresh as-is; past protocolDetailRefreshAfter served while
+// ONE detached rebuild runs, stale once a last-good copy per [swrServedStale];
 // never built waits for that build up to the caller's deadline. The build is NOT bound to that deadline (a request-bound build could be
 // cancelled forever and never fill the cache).
 // The key is protocolDetailCacheKey (name AND bespoke window): ?days= varies the block, so a name-only key would serve one window's
@@ -50,13 +54,13 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 	s.protoDetailMu.Lock()
 	s.protoDetailInitLocked()
 	if e, has := s.protoDetailCache[key]; has {
-		if time.Since(e.at) < protocolDetailTTL {
+		if time.Since(e.at) < protocolDetailRefreshAfter {
 			s.protoDetailMu.Unlock()
 			return e.view, e.at, false, true
 		}
 		s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — the rebuild must outlive this request (see protoDetailRefreshLocked)
 		s.protoDetailMu.Unlock()
-		return e.view, e.at, swrServedStale(e.at, protocolDetailTTL, protocolDetailRefreshTimeout, e.refreshFailed), true
+		return e.view, e.at, swrServedStale(e.at, protocolDetailRefreshAfter, protocolDetailRefreshTimeout, e.refreshFailed), true
 	}
 	done := s.protoDetailRefreshLocked(key, build) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 	s.protoDetailMu.Unlock()

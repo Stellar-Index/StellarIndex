@@ -116,7 +116,7 @@ func (c *assetListResponseCache) staleLocked(e *assetListEntry, now time.Time) b
 		rowsAt = at
 	}
 	return swrverdict.Stale(now.Sub(e.cachedAt), c.ttl, cacheFillBudget, e.refreshFailed) ||
-		swrverdict.Stale(now.Sub(rowsAt), assetCatalogueTTL, assetsRefreshBudget, false)
+		swrverdict.Stale(now.Sub(rowsAt), AssetCatalogueTTL, assetsRefreshBudget, false)
 }
 
 // put renders env and stores it under key, clearing any refresh flight.

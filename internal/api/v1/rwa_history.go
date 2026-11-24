@@ -267,6 +267,8 @@ type rwaValueHistory struct {
 type rwaSeriesMembership struct {
 	at    time.Time
 	flags Flags
+	// filledAt is the set's own fill time, zero when there was none; a served series re-judges the set by it.
+	filledAt time.Time
 }
 
 func rwaSeriesMembershipOf(m rwaMembership, built time.Time) rwaSeriesMembership {
@@ -274,7 +276,16 @@ func rwaSeriesMembershipOf(m rwaMembership, built time.Time) rwaSeriesMembership
 	if at.IsZero() {
 		at = built
 	}
-	return rwaSeriesMembership{at: at, flags: m.serveFlags()}
+	return rwaSeriesMembership{at: at, flags: m.serveFlags(), filledAt: m.builtAt}
+}
+
+// judgeSeriesMembership flags a cached series whose membership set has since failed its own verdict; its flags were taken
+// once, at the series build.
+func (s *Server) judgeSeriesMembership(sm rwaSeriesMembership) rwaSeriesMembership {
+	if s.rwaMembershipLapsed(sm.filledAt) {
+		sm.flags.Stale, sm.flags.Degraded = true, true
+	}
+	return sm
 }
 
 // envelopeFlags joins the series cache's own staleness with the membership's.
@@ -568,7 +579,9 @@ func rwaHistoryExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 // scans). On a failed assembly the last good history is served, else an UNAVAILABLE one:
 // an empty series would say the sector has never been worth anything, a finding a read that did not answer may not make.
 func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
-	return s.awaitRWAValueHistory(ctx, false)
+	h := s.awaitRWAValueHistory(ctx, false)
+	h.membership = s.judgeSeriesMembership(h.membership)
+	return h
 }
 
 // refreshRWAValueHistory rebuilds whatever the cache's age: a prewarm served a hit would refresh nothing, and a reader would

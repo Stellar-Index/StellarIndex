@@ -77,7 +77,7 @@ type assetsCacheEntry struct {
 	refreshFailed bool
 }
 
-// NewCachedAssetsReader wraps upstream with a TTL cache (ttl=0 disables); the 2-minute production TTL is set in cmd/stellarindex-api/main.go.
+// NewCachedAssetsReader wraps upstream with a TTL cache (ttl=0 disables); production passes [AssetCatalogueTTL].
 func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAssetsReader {
 	return &CachedAssetsReader{
 		logger:   slog.Default(),
@@ -271,8 +271,8 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 // the cache advances instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
-// assetCatalogueTTL is the catalogue rows' TTL as cmd/stellarindex-api wires it; a cache built over those rows ages them by it.
-const assetCatalogueTTL = 2 * time.Minute
+// AssetCatalogueTTL is the catalogue rows' TTL in production; a cache built over those rows ages them by it.
+const AssetCatalogueTTL = 2 * time.Minute
 
 // fetchRows returns just the rows; a caller that installed a [readReport] still learns they came from an overdue entry.
 func (c *CachedAssetsReader) fetchRows(

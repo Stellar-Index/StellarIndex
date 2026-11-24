@@ -507,7 +507,9 @@ func rwaPremiumExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 // scans), as [Server.cachedRWAValueHistory]. On a failed assembly the last good series is served, else an UNAVAILABLE one: an
 // empty series would claim no token ever traded away from its NAV, which a read that did not answer may not claim.
 func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
-	return s.awaitRWAPremiumHistory(ctx, false)
+	h := s.awaitRWAPremiumHistory(ctx, false)
+	h.membership = s.judgeSeriesMembership(h.membership)
+	return h
 }
 
 // refreshRWAPremiumHistory rebuilds whatever the cache's age, so the prewarm cadence keeps it from expiring as [Server.refreshRWAValueHistory].
