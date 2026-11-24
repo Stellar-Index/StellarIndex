@@ -727,6 +727,12 @@ Counter, no labels.
 
 Takes (one per token charged) an in-process limiter (the passkey begin-login and signup caps, and every limiter on a Redis-less boot) counted against a shared region or overflow bucket because its 100k-key map was full. Nonzero means a many-address flood: new clients in the flooding IPv4 /16s and IPv6 /32s share one budget until the window rolls.
 
+### `stellarindex_ratelimit_cold_fill_refused_total`
+
+Counter, no labels.
+
+Requests answered `429` because their budget could not pay a cold cache fill's surcharge (`ratelimit.ColdFillCost`, on top of the request's own token): a client walking distinct uncached explorer keys (contract detail, holders, account state). No lake read or refresh-gate slot was taken. Ordinary throttling is the rest of the route's `429`s in `http_requests_total`.
+
 ### `stellarindex_ratelimit_fail_closed_total`
 
 Counter, label `limiter` (`api` / `failed_auth` / `signup_ip` / `register_budget`). Pre-seeded at zero.

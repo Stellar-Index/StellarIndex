@@ -483,6 +483,10 @@ unencrypted, so a multi-host deployment needs its own network-layer encryption (
   bucket; anonymous callers use the IP bucket. `X-Forwarded-For` only
   influences the anonymous IP identity when the immediate peer is in
   `api.trusted_proxy_cidrs`.
+- **Cost:** one token per request; parameter-scaled routes re-price through
+  `middleware.ChargeRateLimit`, and each cold cache fill a request starts
+  (an uncached client-chosen key behind the detached-refresh gate) adds
+  `ratelimit.ColdFillCost` tokens, charged before any gate slot is claimed.
 - **Response when limit hit:** 429 with
   `Retry-After` header and an RFC 9457 problem payload.
 

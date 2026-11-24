@@ -264,7 +264,11 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 		return sliceHolders(e.holders, limit), e.total, e.vintage(), stale, nil
 	}
 	// Stone-cold: wait for a slot (bounded, see coldSlotAdmit), then for the detached compute, bounded by OUR deadline only — the compute itself is not.
-	fl := h.refreshAssetHolders(asset, coldSlotAdmit(ctx)) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill (see refreshAssetHolders)
+	cold := &coldSlotAdmit{ctx: ctx}
+	fl := h.refreshAssetHolders(asset, cold.admit) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill (see refreshAssetHolders)
+	if cold.refused != nil {
+		return nil, 0, snapshotVintage{}, false, cold.refused
+	}
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.assetHolders.get(asset); ok {

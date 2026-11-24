@@ -22,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -45,6 +46,7 @@ func readTimedOut(callCtx context.Context, err error) bool {
 // refresh gate saturated (both this package's sentinel and the clickhouse layer's).
 func retryableColdMiss(callCtx context.Context, err error) bool {
 	if readTimedOut(callCtx, err) ||
+		errors.Is(err, ratelimit.ErrColdFillRefused) ||
 		errors.Is(err, errRefreshSaturated) ||
 		errors.Is(err, clickhouse.ErrRefreshSaturated) {
 		return true
@@ -87,6 +89,10 @@ func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeU
 // writeRetryable is writeReadTimeout with an honest split by cause: a saturation reject is not a timeout (the query never ran).
 // Same 503 + type URL either way; only the detail differs.
 func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err error, typeURL, title string) {
+	// A cold read the caller's budget could not pay: the limiter's own 429, not a capacity 503.
+	if middleware.WriteRateLimitRefusal(w, r, err) {
+		return
+	}
 	if errors.Is(err, errRefreshSaturated) || errors.Is(err, clickhouse.ErrRefreshSaturated) {
 		w.Header().Set("Retry-After", retryAfterBusy)
 		h.WriteProblem(w, r, typeURL, title, http.StatusServiceUnavailable,

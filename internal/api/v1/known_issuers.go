@@ -1,6 +1,16 @@
 package v1
 
-import "context"
+import (
+	"context"
+
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
+)
+
+// coldFillExempt clears the cold-fill surcharge for an issuer enrichment read: it degrades rather than erroring, so a refusal would
+// serve a silently thinner page instead of a 429, and its accounts are stored issuers, not keys a client can mint.
+func coldFillExempt(ctx context.Context) context.Context {
+	return ratelimit.WithColdFillCharge(ctx, nil)
+}
 
 // knownIssuer is an entry in the hand-curated fallback map from issuer G-strkey to (home_domain, org_name), applied while
 // `issuers.home_domain` is empty. Never add one without verifying the G-strkey controls the home_domain (e.g. the stellar.toml
@@ -154,7 +164,7 @@ func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain s
 	if s.Explorer == nil {
 		return "", false
 	}
-	st, _, err := s.Explorer.AccountStateCached(ctx, issuer)
+	st, _, err := s.Explorer.AccountStateCached(coldFillExempt(ctx), issuer)
 	if err != nil {
 		return "", true
 	}

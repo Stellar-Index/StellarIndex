@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -110,13 +111,21 @@ func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string)
 	}
 	// Not single-flighted across accounts: distinct accounts need distinct scans; only the
 	// same-account burst is collapsed, by the per-account flight.
-	// Cold: nothing to serve, so wait (bounded, see AcquireClassWait) for a slot rather than shed.
+	// Cold: the owner pays the request's cold-fill surcharge before claiming a slot (refused: nothing claimed), then waits (bounded,
+	// see AcquireClassWait) for a slot rather than shed.
+	var refused error
 	waitForSlot := func(g *RefreshGate, class string) bool {
+		if refused = ratelimit.ChargeColdFill(ctx); refused != nil {
+			return false
+		}
 		wctx, cancel := context.WithTimeout(ctx, accountStateColdSlotWait)
 		defer cancel()
 		return g.AcquireClassWait(wctx, class)
 	}
 	fl, saturated := r.refreshAccountState(account, waitForSlot) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
+	if refused != nil {
+		return AccountState{}, false, refused
+	}
 	select {
 	case <-fl.done:
 		if st, ok, _ := r.stateCache.get(account); ok {

@@ -199,6 +199,15 @@ X-RateLimit-Remaining: 5958
 ```
 
 Exceeded limits return `429 Too Many Requests` with `Retry-After`.
+
+A request costs one token unless its work scales. Some routes price by
+parameter (a long window, a large batch), and an explorer read that must
+compute a page nobody has requested recently (a contract, account or
+holders list not in the server's cache) costs 5 more tokens per uncached
+panel. Repeat reads of the same page cost one token. An uncached
+`GET /v1/contracts/{contract_id}` makes three such reads and costs 16, so an
+anonymous IP can open about 60 new contracts a minute.
+
 On a Redis outage the rate limiter fails open for
 `[api].rate_limit_dwell` (default 30 s), counting
 `stellarindex_ratelimit_fail_open_total`, then fails closed with
