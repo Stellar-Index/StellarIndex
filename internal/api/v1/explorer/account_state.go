@@ -512,9 +512,9 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 
 	// Cached + single-flighted: this unauthenticated route runs two ledger_entries_current FINAL
 	// scans on the shared explorer pool, so one looping client could stall every lake-backed
-	// endpoint. A stale board is served as 200 + flags.stale + its real as_of while the detached
-	// rescan runs; only a never-computed asset can time out (its scan keeps running, so a retry
-	// lands warm). See hot_reads.go.
+	// endpoint. An expired board is served as 200 + its real as_of while the detached rescan runs,
+	// flagged stale+degraded per swrServedStale; only a never-computed asset can time out (its scan
+	// keeps running, so a retry lands warm). See hot_reads.go.
 	holders, total, asOf, degraded, err := h.assetHoldersCached(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
