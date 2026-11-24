@@ -102,7 +102,7 @@ func getProtoDetail(t *testing.T, base, name string) (int, protoDetailEnvelope) 
 	return resp.StatusCode, env
 }
 
-// TestHandleProtocolDetail_StaleServeNeverBlanks verifies SWR on the detail route: a view past its TTL is served
+// TestHandleProtocolDetail_StaleServeNeverBlanks verifies SWR on the detail route: a view past its swr bound is served
 // immediately with flags.stale and analytics.status "stale", bespoke block intact, while one detached rebuild runs;
 // the next request is fresh.
 func TestHandleProtocolDetail_StaleServeNeverBlanks(t *testing.T) {
@@ -131,7 +131,7 @@ func TestHandleProtocolDetail_StaleServeNeverBlanks(t *testing.T) {
 		srv.protoDetailMu.Unlock()
 		t.Fatal("entry missing after cold build")
 	}
-	e.at = e.at.Add(-protocolDetailTTL - time.Minute)
+	e.at = e.at.Add(-protocolDetailTTL - protocolDetailRefreshTimeout - time.Minute) // past the swr bound
 	srv.protoDetailCache[key] = e
 	srv.protoDetailMu.Unlock()
 
@@ -210,7 +210,7 @@ func TestHandleProtocolDetail_StaleServeIsNoStore(t *testing.T) {
 		srv.protoDetailMu.Unlock()
 		t.Fatal("entry missing after cold build")
 	}
-	e.at = e.at.Add(-protocolDetailTTL - time.Minute)
+	e.at = e.at.Add(-protocolDetailTTL - protocolDetailRefreshTimeout - time.Minute) // past the swr bound
 	srv.protoDetailCache[key] = e
 	srv.protoDetailMu.Unlock()
 
