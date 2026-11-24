@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // rwaAssetsViewTTL matches the membership TTL; PrewarmRWA rebuilds on a 5-minute cadence, so a reader never waits on the build.
@@ -30,6 +31,9 @@ type rwaAssetsBuild struct {
 	// catalogueAt is the oldest catalogue page's observation time, zero when no page came from the catalogue cache;
 	// membershipAt is when the membership set the build read was filled, zero when there was none.
 	catalogueAt, membershipAt time.Time
+	// catalogueReads are the catalogue listings the rows came from: their age is judged by catalogueAt, a failed refresh
+	// of any of them by the catalogue's own bit, at serve time.
+	catalogueReads []timescale.ListAssetsOptions
 	// refVerdicts are the exclusion verdicts the build valued its references under.
 	refVerdicts []rwaRefVerdict
 }
@@ -115,10 +119,11 @@ func rwaCatalogueRowsStale(observedAt, now time.Time) bool {
 
 // judgeRWAAssetsView flags a view that is a last-good copy or holds an input past its bound. Catalogue rows get the view's
 // own build allowance on top of the build-time bound: a quiet server's build holds the previous prewarm's rows, which reach
-// exactly the TTL as the next build starts. viewFailed is the last build's failure. Takes rwaMu; the caller holds no lock.
+// exactly the TTL as the next build starts. viewFailed is the last build's failure; a failed catalogue refresh flags the view
+// whatever the rows' age. Takes rwaMu; the caller holds no lock.
 func (s *Server) judgeRWAAssetsView(b rwaAssetsBuild, lastGood, viewFailed bool) rwaAssetsBuild {
 	stale := lastGood || (!b.catalogueAt.IsZero() && swrServedStale(b.catalogueAt, rwaAssetsViewTTL, maxHandlerBudget, viewFailed)) ||
-		s.rwaMembershipLapsed(b.membershipAt)
+		s.catalogueListingsFailed(b.catalogueReads) || s.rwaMembershipLapsed(b.membershipAt)
 	if stale {
 		b.flags.Stale, b.flags.Degraded = true, true
 	}
