@@ -20,6 +20,56 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.131.0] - 2026-11-24
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break; `pkg/client` gains lending types and splits `types.go` by domain with no API change (#4279, #4311, #4315, #4321). Not run by the deploy: after rolling the binary, run `stellarindex-ops backfill-external -source coingecko -pair all` once on r1, dry run first, to fill the CoinGecko outage window (#4326); to catch up ledger-upgrade entry changes use `ch-backfill -ledgers FILE` (#4288). Host payload changed: the HA, archive-job and archival-node roles, alert rules and the new optional edge probe, which is off unless a host sets `edge_probe_targets` (#4327, #4304, #4276, #4272). Behaviour changes for API clients: `/v1/oracle/prices` serves a USD-peg book, flagged triangulated, when an asset's own `fiat:USD` book is refused only for being thin, and answers 404 `price-withheld` otherwise (#4336); the holders board is stale only when its rollup is behind its own schedule (#4335); a freeze that holds on buckets the scorer cannot evaluate now escalates to operator review and no longer auto-releases if healthy buckets return (#4337). Behaviour change for operators: the indexer saves its cursor only through ledgers whose rows were written, so a restart after an unclean exit replays from the oldest unwritten ledger (#4333).
+
+### Added
+
+- **api:** `GET /v1/lending/pools/{pool}/top-accounts` ranks a Blend or BLNT pool's largest suppliers and borrowers per reserve, reconciled against the reserve supply and marked as a floor when a missing account could outrank a row (#4311).
+- **api:** `GET /v1/lending/pools/{pool}/history` serves pool TVL and borrowed in USD per hour or day for Blend V1, V2 and BLNT pools, each bucket valued at its own price; reserve history gains `supplied_usd`, `borrowed_usd` and the price used (#4315).
+- **api:** `GET /v1/lending/pools/{pool}/liquidations` lists user liquidations and bad-debt fills with collateral seized, debt repaid and filler profit in dollars at the fill; BLNT user liquidations are valued the same way as Blend V2 (#4321, #4322).
+- **auth:** a delegated key records its ancestors' record hashes at mint; `stellarindex-ops apikey-lineage-backfill` records the chain on existing keys, and a lineage record outlives an idle ancestor's credential; no authentication decision changes (#4275, #4292).
+- **ops:** `backfill-external -source coingecko` fills an outage window from the vendor's hourly history without overwriting live rows (#4326).
+- **ops:** `ch-backfill -ledgers FILE` and `-list-upgrade-ledgers -dry-run` catch up ledger-upgrade entry changes without walking every ledger (#4288).
+- **ops:** an off-host probe of a deployment's public `/v1/readyz` and `/v1/assets?limit=1` edge, with certificate-expiry checks, off by default (#4327).
+- **monitoring:** ticket alerts for NVMe health series that vanish, a heavy-job lock that ages, per-drive NVMe vanish, and a decoder writing a money field NULL (`stellarindex_source_amount_degraded`) (#4294, #4313, #4332).
+- **ci:** the price-route census fails when coverage moves, and a pre-pull of integration images with a mirror fallback runs before shards (#4316, #4323).
+
+### Changed
+
+- **api:** `/v1/oracle/prices` falls back to a qualifying USD-peg book only when the asset's own book is refused for being thin; otherwise it is `price-withheld`, and an unread peg leg is an error rather than a stand-in price (#4336).
+- **api:** price routes refuse stand-in prices; a peg fallback is served only behind a checked peg that passes the substance floor, is within its band and is not excluded (#4336, #4287).
+- **api:** source exclusions reach the asset listing and detail, chart routes, price-at, price changes and history, the OHLC kill switch and peg-served oracle and change series; recomputes say so (#4300, #4298, #4293, #4281, #4317).
+- **api:** the fiat FX leg of asset prices is judged against exclusions, and declared-peg prices, held assets and metadata are handled on the asset routes (#4331, #4310).
+- **api:** the asset and source pages give one verdict per figure, and the asset page shows no withheld or partial figure as exact (#4329, #4308).
+- **api:** RWA references are judged against exclusions and stale history is bounded; RWA members, premium days and history report what was left out (#4334, #4314).
+- **api:** a rollup-backed holders board is judged against the rollup cadence, 70 minutes, instead of 300 seconds; a board scanned live from the lake keeps 300 seconds (#4335).
+- **api:** classic supply agrees across the listing, detail and supply routes; floor supply, same-market 24-hour change and exact asset ids are fixed (#4299, #4289).
+- **api:** peg totals and freeze release are corrected; derived market-cap charts measure both legs; no price fill may replace a withholding it cannot answer (#4287, #4286, #4284).
+- **api:** lending liquidation prices refuse a partial price read: the leg is null with `price_unread` and profit is served only when both sides are exact (#4332).
+- **api:** a case variant of a code never inherits a declared asset's identity (#4297).
+- **api:** unread counts, FDV reasons, unread pools and a 503 are reported as such; explorer positions, movements and wasm reads, and movements and the source page, no longer serve a holed page as complete (#4302, #4307, #4280).
+- **api:** `/readyz` fails once Redis is down past the rate-limit dwell and tracks limiter writes; first sign-ins are capped per IP (#4274, #4303).
+- **aggregate:** an unscored freeze hold escalates to operator review after `MaxExtensions` unscoreable slides instead of sliding forever (#4337).
+- **indexer:** the persisted cursor and observer watermarks advance only through ledgers whose rows were written; `stellarindex_cursor_durable_lag_ledgers` shows the gap (#4333).
+- **data:** lake answers the derived tables cannot prove are qualified, seam holes in the lake are found, and retired webhook keys are erased (#4309, #4305).
+- **ops:** the root metric-writer hardening is finished on live hosts; the heavy-job lock race, root audit trail and probe writes are fixed; `projector-replay` needs a stated mode (#4312, #4306, #4273).
+- **deploy:** HA roles fail closed on TLS, slots, restarts and ACLs, log to the journal and check the whole VIP address; archive jobs are sandboxed; wabt output is capped; the role cannot write a config the installed binary rejects (#4304, #4276, #4272, #4283, #4285).
+- **monitoring:** four alerting gaps are closed and fast aborts leave the SLO; unmeasured pairs retry instead of sending; backup and drift gaps are covered; the failed-auth alert is widened (#4278, #4290, #4328).
+- **security:** account export is scoped and the explorer honours scale refusals (#4277).
+- **client:** `pkg/client` `types.go` is split by domain with no API change (#4279).
+- **deps:** OpenTelemetry is bumped to v1.47.0 for GO-2026-6974 (#4330).
+- **ci:** the baseline-growth, immutability, migration, secret, replay and lake-read gates judge by the base copy and close blind spots; exclusion-named waiver maps are scoped to test files; rollback passes the immutability gate (#4295, #4291, #4320, #4324).
+- **docs:** passages on security, pricing and 14 other claims corrected to match the code; secrets-file copies are ignored (#4328, #4282).
+
+### Fixed
+
+- **api:** `/v1/oracle/prices` no longer serves an unqualified peg book for every withheld reason, and fiat-quoted OHLC bars for tokens with non-standard decimals are adjusted exactly (#4336).
+- **api:** oracle, RWA and pool read fixes under the kill switch (#4281).
+- **obs:** a per-drive NVMe vanish alert, a webhook row bound and corrected auth docs (#4313).
+- **test:** the exclusion cache stub's observed-at instant is pinned, and the account operations page is bounded absolutely in the integration test (#4325, #4301).
+
 ## [v0.130.0] - 2026-11-22
 
 Tested against Stellar protocol 27. Migrations 0235-0236 (schema version 236): 0235 allows a customer webhook only one current signing-key form and refuses to apply, listing the ids, if a row holds both; 0236 caps `nonstandard_decimals_assets.decimals` at 38 and refuses to apply if a row is above it; neither rewrites rows, and both tables are tiny. Run the pre-check queries in `docs/operations/credential-rotation.md` (webhook keys) and `docs/operations/runbooks/dex.md` (decimals) before deploying (#4265). No `pkg/*` break. Behaviour change for operators: apply the host role (archival-node) before or with the new binary; the API now refuses to start with a ClickHouse serving password but no serving user, and the role renders the two together (#4258). After deploy, run `stellarindex-ops ch-backfill -config <toml> -changes-only -from 2 -to <tip>` once per host to extract ledger-upgrade entry changes (#4265). New optional setting `webhook_seal_previous_key_env` (default `STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY`, role variable `vault_webhook_seal_previous_key`) rotates the webhook seal secret; steps are in `docs/operations/credential-rotation.md` (#4265). Behaviour changes for API clients, all additive in shape: asset rows and the detail carry `circulating_supply_lower_bound` (#4266); `price_withheld_reason` appears on the global asset view and takes the value `source_excluded` when a price depends on an excluded source (#4263); a fiat price is withheld when its only FX rate is older than 76 hours (#4270); the RWA valuation status is `market_cap_withheld` with a reason for any refusal other than a missing supply (#4259); a scoped key can revoke itself (#4257). Behaviour change for sign-up: a first email sign-in has its own hourly counter with the same cap as `api.register_max_per_hour`, so the total ceiling is twice that setting (#4264). Deploys now restart the long-running units that run `stellarindex-ops` (#4254).
@@ -163,48 +213,3 @@ Tested against Stellar protocol 27. No migrations, no `pkg/*` change, no breakin
 
 - **pipeline:** trades the external retry buffer abandons at shutdown, or that are enqueued after its final pass, are counted once in the sink lane's shutdown loss, which names the venues of abandoned off-chain trades; the indexer's error line gives the refetch command. Nothing is written or acknowledged differently (#4220).
 - **ops:** `ch-index-proof` no longer refuses a default run with "missing ledger 1", so its probe alert can clear (#4222).
-
-## [v0.126.0] - 2026-11-21
-
-Tested against Stellar protocol 27. Migrations 0231-0232: 0231 creates the empty `source_exclusions` control table, and 0232 switches `pools_per_source_1h` back to real-time when the view's watermark is within six hours (or `trades` is empty), otherwise leaves it as it is; it takes a five second lock timeout and rewrites no data. Breaking for API clients: `DELETE /v1/account/keys/{id}` changes its status codes, and `decimals` is no longer always present on three response types (details under Changed). Breaking for the Go SDK: `pkg/client` `AssetDetail.Decimals` changes from `int` to `*int`; there is no separate `pkg/client` tag, so this section is the notice. The OpenAPI contract carries `OpenAPI-Break:` trailers on #4193 only. Host payload changed: ClickHouse `account_cohort_rollup.sql`, `tier1_schema.sql`, `ops_by_source.sql` and `contract_instance_changes.sql`; the indexer, API and aggregator units; alert rules in both rule trees; the ansible HA roles and node-healthcheck. Not run by the deploy: stop `cohort-rollup.timer`, apply `deploy/clickhouse/account_cohort_rollup.sql`, check `system.columns` shows `Int256`, then restart the timer, before or right after rolling the binary (until then the cohort cycle refuses and the previous snapshot stays served); run the host role from the tag to install the alert rules and unit changes (rules otherwise reach hosts on the next rules sync); on a host where `pools_per_source_1h` stays materialized-only after 0232, refresh it and set `materialized_only=false` per `docs/operations/cagg-broad-recompute.md`; ranges rebuilt with `projected-rebuild` before this release keep stale price aggregates until `stellarindex-ops trades-cagg-refresh -from L -to H -oracle -write` covers them (#4194).
-
-### Added
-
-- **api:** BLNT protocol block, and USD values on lending protocol stats, backstops, emissions, auctions and account accrued interest (#4202, #4206).
-- **api:** the listing valuation status `scale_unknown`, for a token whose scale could not be read (#4193).
-- **api:** `flags.truncated` on `/v1/admin/status-notices` when more notices exist than were served (#4190).
-- **explorer:** lending pages show dollar values, charts and names for Blend and BLNT (#4203).
-- **ops:** `source_exclusions` control table and the `source-exclude` command (#4189).
-- **monitoring:** alerts for five previously unread failure signals, a dropped pgBackRest WAL, a stalled cohort rollup or trades-by-account window, a stalled webhook worker, and an old directory snapshot (#4207, #4180, #4214, #4188).
-
-### Changed
-
-- **api (breaking):** `DELETE /v1/account/keys/{id}` answers 403 `key-not-delegated` for a key the caller may not revoke, including unknown ids (was 204); a key revoking itself answers 204 (was 409 `cannot-revoke-self`); a malformed id answers 400 `invalid-key-id`. A key may revoke itself and the keys minted from it, never its minter, a sibling or another root; account-wide revoke is for a SEP-10 session. Clients that treated 204 as "gone" must treat 403 as "not yours" (#4209).
-- **api (breaking):** `decimals` is omitted, not served as 7, when a token's scale was not read, on the transfers response, `AssetDetail` and `PoolReserveToken`. Market cap, FDV, RWA valuation and stablecoin figures are refused for such a token. Clients must treat `decimals` as optional. Native XLM, classic assets and their SACs stay 7 (#4193).
-- **sdk (breaking):** `pkg/client` `AssetDetail.Decimals` is `*int`; nil means the server omitted it (#4193).
-- **api:** under `auth_mode=sep10`, callers behind one IPv4 address or one IPv6 /64 share one per-minute budget; API-key callers and a single SEP-10 user are unchanged (#4195).
-- **api:** the 1h, 24h and 7d change figures compare against the last closed price at or before the target time (within 5 min, 30 min and 2 h), where they used a band around it; an asset with no such reference shows no change. `/v1/pools` and `/v1/markets?source=` 24h figures cover (now-24h, now] and are flagged a lower bound when the view lags more than six hours (#4197).
-- **api:** a capped read is never served as the whole set: protocol `contract_count` counts every rostered contract, and a detail page whose analytics covered only part of the contracts reports the status `unavailable` (#4190).
-- **api:** asset reads match every identity of an asset, and divergence `our_price` stays exact (#4191).
-- **api:** RWA summaries and series, charts, depeg and divergence state what they cover and what they could not check (#4198, #4199).
-- **api:** the listing market cap is exact and equal to the asset detail value; `org_name` is served only when the issuer's own `stellar.toml` lists that issuer; the storage floor is served when the event log is partial; Soroswap TVL counts pairs a read missed (#4212, #4188, #4185).
-- **explorer:** the asset page keeps safety warnings, labels every price and converts exactly; RWA totals reconcile and floors are marked; a failed read shows an error and a partial list says so; the exchange and venue 24h totals show a lower bound with "≥"; the pair page shows the server's 24h volume (#4208, #4210, #4196, #4190, #4197).
-- **auth:** key revocation is bounded to the key and its descendants, a retried revoke answers 204 for 24 hours, and a key id must be `kid_` plus 12-64 lowercase hex (#4209).
-- **ops:** an external backfill never mixes fills and candles in one bucket, the gap finder sees range edges, and overrides are audited; a rebuild refreshes the price aggregates; `wasm-drift` checks every per-WASM source; `ch-backfill -changes-only` fails on an unreadable transaction (#4187, #4194, #4186, #4212).
-- **ops:** the indexer restarts with backoff, the API unit runs with `ProtectSystem=strict`, node-healthcheck uses the read-only MinIO reader key, and heavy-job locks have tighter permissions and refuse unsafe lock files; the API and aggregator keep retrying through a long Postgres outage (#4201, #4180).
-- **ansible:** the HA roles fail closed on re-run, restart one node at a time and refuse unsafe hosts; tasks that retire a timer or service fail on a real stop failure (#4205, #4195).
-- **lending:** the state proof bounds its lake reads and reports what it did not compare (#4184).
-- **monitoring:** the rules-sync self-tests run in CI and the deadman no longer fires under a day-long silence (#4214).
-- **ci:** the lake-dedup, migration and baseline-growth lints close blind spots; new lints for unflagged `LIMIT`, rolling-window grain, Int128 sums, a defaulted `decimals` and swallowed ansible failures (#4215, #4190, #4197, #4200, #4193, #4195).
-- **docs:** methodology, security, rollback, recovery and credential runbooks match what the tools do; key replacement is described for cascading revoke (#4185, #4183, #4213).
-- **deps:** `next` and `eslint-config-next` 16.4.5 in the explorer (#4204).
-
-### Fixed
-
-- **supply:** account-cohort flow sums are 256-bit; three 2^126 receipts were served as -2^126. The rollup refuses a cycle against narrower columns and keeps the previous snapshot (#4200).
-- **lake:** a claimable balance created and claimed in the same ledger is no longer seeded as live; undecodable supply and movement event bodies are classified, and non-token bodies no longer fail a run (#4216).
-- **api:** `/v1/pools` is real-time again (migration 0232) (#4216).
-- **api:** account movement pages keep their pinned boundary when the watermark read fails, and a failed first page writes no zero boundary into `next_cursor`; backups diagnostics serve the kept snapshot as unknown and stale when every Prometheus query fails (#4212).
-- **ops:** a failed parallelism reset in the volume-character rollup no longer returns a capped connection to the pool; a rebuild's `-sep41-supply-only` refusal runs before `-preflight`; the sponsorship proof reports "not comparable" for a stale read instead of "disagree" (#4195, #4212, #4200).
-- **ci:** a test-fixture key id no longer trips the secret scan; the doc-walking supply test tolerates a fixture that vanishes mid-walk (#4211, #4182).
-
