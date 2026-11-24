@@ -118,6 +118,9 @@ func TestOracleThinDirect_PegBookQualifiesOnBothRoutes(t *testing.T) {
 				if got := strings.Contains(body, `"triangulated":true`); got != peg {
 					t.Errorf("%s: triangulated = %v, want %v: %s", path, got, peg, body)
 				}
+				if got := strings.Contains(body, `"stale":true`); got != peg {
+					t.Errorf("%s: stale = %v, want %v: %s", path, got, peg, body)
+				}
 			}
 			if got[lastPriceURL] != got[pricesURL] {
 				t.Errorf("lastprice = %d, prices() = %d: the routes disagree", got[lastPriceURL], got[pricesURL])
@@ -127,7 +130,8 @@ func TestOracleThinDirect_PegBookQualifiesOnBothRoutes(t *testing.T) {
 }
 
 // TestOraclePrices_ThinDirectPegJudgedOverTheSeriesSpan: a peg that holds at the newest bucket but left its band between the
-// series' buckets does not qualify; the same series with the peg in band throughout does.
+// series' buckets, or inside the oldest bucket's own minute (it closes at that record's ObservedAt), does not qualify; the same
+// series with the peg in band throughout does.
 func TestOraclePrices_ThinDirectPegJudgedOverTheSeriesSpan(t *testing.T) {
 	usdc, _ := oraclePegs(t)
 	newest := time.Unix(1_770_000_000, 0).UTC()
@@ -136,14 +140,20 @@ func TestOraclePrices_ThinDirectPegJudgedOverTheSeriesSpan(t *testing.T) {
 		{AssetID: "native", Quote: usdc.String(), Price: pegPrice, PriceType: "vwap", ObservedAt: v1.WireTime(newest)},
 		{AssetID: "native", Quote: usdc.String(), Price: "0.1620", PriceType: "vwap", ObservedAt: v1.WireTime(oldest)},
 	}
-	for _, dip := range []bool{true, false} {
-		low := "1.0"
-		if dip {
-			low = "0.95"
-		}
+	cases := []struct {
+		name   string
+		wickAt time.Time
+		low    string
+		want   int
+	}{
+		{"in band throughout", oldest.Add(30 * time.Minute), "1.0", http.StatusOK},
+		{"wick mid-span", oldest.Add(30 * time.Minute), "0.95", http.StatusNotFound},
+		{"wick in the oldest bucket's minute", oldest.Add(-time.Minute), "0.95", http.StatusNotFound},
+	}
+	for _, tc := range cases {
 		bars := []v1.OHLCSeriesBar{
 			{T: v1.WireTime(oldest), O: "1.0", H: "1.0", L: "1.0", C: "1.0"},
-			{T: v1.WireTime(oldest.Add(30 * time.Minute)), O: "1.0", H: "1.0", L: low, C: "1.0"},
+			{T: v1.WireTime(tc.wickAt), O: "1.0", H: "1.0", L: tc.low, C: "1.0"},
 		}
 		base := thinPegFixture{
 			direct:  v1.PriceWithheldError(pricingguard.WithheldThinMarket),
@@ -152,8 +162,8 @@ func TestOraclePrices_ThinDirectPegJudgedOverTheSeriesSpan(t *testing.T) {
 			pegBook: book,
 		}.server(t)
 		status, body := getBody(t, base+"/v1/oracle/prices?asset=crypto:XLM&records=2")
-		if want := map[bool]int{true: http.StatusNotFound, false: http.StatusOK}[dip]; status != want {
-			t.Fatalf("dip=%v: prices() = %d, want %d: %s", dip, status, want, body)
+		if status != tc.want {
+			t.Fatalf("%s: prices() = %d, want %d: %s", tc.name, status, tc.want, body)
 		}
 	}
 }

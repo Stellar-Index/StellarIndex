@@ -66,6 +66,11 @@ func (s *Server) thinDirectPegRefusal(ctx context.Context, directErr error, seri
 			to = at
 		}
 	}
+	// ObservedAt is a prices_1m bucket's close, so a span's oldest bucket opens a minute earlier. A single bucket keeps
+	// lastprice's point check, so the two routes still agree.
+	if from.Before(to) {
+		from = from.Add(-time.Minute)
+	}
 	held, err := s.pegHeldOver(ctx, from, to)
 	if err != nil {
 		return err
