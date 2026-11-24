@@ -114,7 +114,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	res.Truncated = window.Truncated()
 	res.Clamped = clamped
 	res.Substance = s.thinMarketEvidence(ctx, base, quote, books, "twap")
-	writeJSON(w, res, s.withFiatCombineProxyDeviation(ctx, markFillsWithheld(Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil}, excluded), quote, to, books))
+	writeJSON(w, res, s.withFiatCombineProxyDeviation(ctx, markFillsWithheld(Flags{Triangulated: triangulated, ThinMarket: res.Substance != nil}, excluded), quote, from, to, books))
 }
 
 // computeTWAP filters trades at sigma and time-weights the survivors over [from, to), writing the problem response itself on failure;

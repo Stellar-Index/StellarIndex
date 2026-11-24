@@ -293,6 +293,8 @@ type Market struct {
 	// LastPrice is the latest quote-per-base price in the trailing 24h, across every source or
 	// that source's own with `?source=`. Null when none was observed.
 	LastPrice *string `json:"last_price,omitempty"`
+	// LastPricedAt is the time of the trade LastPrice came from; /v1/pairs folds spellings on it, as the listing does. Not served.
+	LastPricedAt WireTime `json:"-"`
 	// VolumeHistory24h holds 24 hourly USD-volume buckets, oldest to newest, zero-filled so the
 	// length is stable. Populated only with `?include=sparkline` without `?source=`.
 	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`

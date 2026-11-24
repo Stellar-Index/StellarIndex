@@ -264,9 +264,10 @@ func (r *pairKeyedMarketsReader) PairMarket(_ context.Context, base, quote canon
 	return m, ok, nil
 }
 
-// TestPairs_NewestSpellingWithoutAPriceServesNone — the newest trade sets the timestamp, so an older spelling's price
-// beside it would be read as that trade's.
-func TestPairs_NewestSpellingWithoutAPriceServesNone(t *testing.T) {
+// TestPairs_FoldTakesTheNewestPricedSpelling — the newest trade sets the timestamp, but the price is the newest priced bucket's,
+// as /v1/markets folds it: a spelling whose newer trade is unpriced or still in the open minute does not supply a stale or null
+// price.
+func TestPairs_FoldTakesTheNewestPricedSpelling(t *testing.T) {
 	usdc, err := canonical.ParseAsset(w2t2USDC)
 	if err != nil {
 		t.Fatalf("parse USDC: %v", err)
@@ -277,37 +278,74 @@ func TestPairs_NewestSpellingWithoutAPriceServesNone(t *testing.T) {
 	}
 	xlm := canonical.AssetAliases(native)
 	sac := xlm[len(xlm)-1]
-	older := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
-	newer := older.Add(19 * time.Hour)
-	oldPx := "0.1600000000"
-	reader := &pairKeyedMarketsReader{
-		byPair: map[string]v1.Market{
-			"native/" + usdc.String(): {
-				Base: "native", Quote: usdc.String(), TradeCount24h: 7,
-				LastTradeAt: v1.WireTime(older), LastPrice: &oldPx,
-			},
-			sac.String() + "/" + usdc.String(): {
-				Base: sac.String(), Quote: usdc.String(), TradeCount24h: 3,
-				LastTradeAt: v1.WireTime(newer),
-			},
+	noon := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	newer := noon.Add(20 * time.Second)
+	bookPx, poolPx := "0.0050000000", "0.0062000000"
+	for name, pool := range map[string]v1.Market{
+		"newer trade, no priced bucket": {TradeCount24h: 3, LastTradeAt: v1.WireTime(newer)},
+		"newer trade, older priced bucket": {
+			TradeCount24h: 3, LastTradeAt: v1.WireTime(newer),
+			LastPrice: &poolPx, LastPricedAt: v1.WireTime(noon.Add(-6 * time.Hour)),
 		},
-	}
-	srv := v1.New(v1.Options{Markets: reader})
-	ts := httpTestServer(t, srv)
+	} {
+		pool.Base, pool.Quote = sac.String(), usdc.String()
+		reader := &pairKeyedMarketsReader{
+			byPair: map[string]v1.Market{
+				"native/" + usdc.String(): {
+					Base: "native", Quote: usdc.String(), TradeCount24h: 7,
+					LastTradeAt: v1.WireTime(noon.Add(-20 * time.Second)), LastPrice: &bookPx,
+					LastPricedAt: v1.WireTime(noon.Add(-time.Minute)),
+				},
+				sac.String() + "/" + usdc.String(): pool,
+			},
+		}
+		ts := httpTestServer(t, v1.New(v1.Options{Markets: reader}))
 
-	resp := mustGet(t, ts.URL+"/v1/pairs?base=native&quote="+usdc.String())
+		resp := mustGet(t, ts.URL+"/v1/pairs?base=native&quote="+usdc.String())
+		var body struct {
+			Data []v1.Market `json:"data"`
+		}
+		mustDecode(t, resp, &body)
+		if len(body.Data) != 1 {
+			t.Fatalf("%s: want 1 market, got %d", name, len(body.Data))
+		}
+		got := body.Data[0]
+		if !got.LastTradeAt.Time().Equal(newer) || got.TradeCount24h != 10 {
+			t.Errorf("%s: row = %d trades, last %s; want 10 trades, last %s", name, got.TradeCount24h, got.LastTradeAt, newer)
+		}
+		if got.LastPrice == nil || *got.LastPrice != bookPx {
+			t.Errorf("%s: last price = %v, want the newest priced bucket's %s", name, got.LastPrice, bookPx)
+		}
+	}
+}
+
+// TestPairs_SameMinuteFoldTakesTheLaterTrade: two spellings priced in one minute are ordered by their trades' own times, as
+// /v1/markets orders them; price breaks only an identical timestamp, so a later, lower print is served.
+func TestPairs_SameMinuteFoldTakesTheLaterTrade(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	xlm := canonical.AssetAliases(canonical.NativeAsset())
+	sac := xlm[len(xlm)-1]
+	minute := time.Date(2026, 11, 1, 11, 59, 0, 0, time.UTC)
+	bookPx, poolPx := "0.0050000000", "0.0041000000"
+	reader := &pairKeyedMarketsReader{byPair: map[string]v1.Market{
+		"native/" + usdc.String(): {
+			Base: "native", Quote: usdc.String(), TradeCount24h: 7, LastTradeAt: v1.WireTime(minute.Add(10 * time.Second)),
+			LastPrice: &bookPx, LastPricedAt: v1.WireTime(minute.Add(10 * time.Second)),
+		},
+		sac.String() + "/" + usdc.String(): {
+			Base: sac.String(), Quote: usdc.String(), TradeCount24h: 3, LastTradeAt: v1.WireTime(minute.Add(40 * time.Second)),
+			LastPrice: &poolPx, LastPricedAt: v1.WireTime(minute.Add(40 * time.Second)),
+		},
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{Markets: reader}))
 	var body struct {
 		Data []v1.Market `json:"data"`
 	}
-	mustDecode(t, resp, &body)
-	if len(body.Data) != 1 {
-		t.Fatalf("want 1 market, got %d", len(body.Data))
-	}
-	got := body.Data[0]
-	if !got.LastTradeAt.Time().Equal(newer) || got.TradeCount24h != 10 {
-		t.Errorf("row = %d trades, last %s; want 10 trades, last %s", got.TradeCount24h, got.LastTradeAt, newer)
-	}
-	if got.LastPrice != nil {
-		t.Errorf("last price = %s beside a trade 19h newer than the one that set it", *got.LastPrice)
+	mustDecode(t, mustGet(t, ts.URL+"/v1/pairs?base=native&quote="+usdc.String()), &body)
+	if len(body.Data) != 1 || body.Data[0].LastPrice == nil || *body.Data[0].LastPrice != poolPx {
+		t.Errorf("rows = %+v, want one market at the later trade's %s", body.Data, poolPx)
 	}
 }

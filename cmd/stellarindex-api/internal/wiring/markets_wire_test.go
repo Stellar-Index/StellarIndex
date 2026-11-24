@@ -24,6 +24,7 @@ func TestWireMarkets_CarriesEveryStoreField(t *testing.T) {
 	row := timescale.Market{
 		Pair: pair, LastTradeAt: time.Unix(1700000000, 0).UTC(), BucketCloseAt: time.Unix(1700000060, 0).UTC(),
 		TradeCount24h: 7, Volume24hUSD: &vol, VolumeLowerBound: true, LastPrice: &last,
+		LastPricedAt: time.Unix(1700000040, 0).UTC(),
 	}
 	rv := reflect.ValueOf(row)
 	for i := 0; i < rv.NumField(); i++ {
@@ -34,6 +35,9 @@ func TestWireMarkets_CarriesEveryStoreField(t *testing.T) {
 	got := wireMarkets([]timescale.Market{row})[0]
 	if !got.VolumeLowerBound {
 		t.Error("volume_lower_bound dropped")
+	}
+	if !got.LastPricedAt.Time().Equal(row.LastPricedAt) {
+		t.Error("last_priced_at dropped: /v1/pairs folds spellings on it")
 	}
 	if got.Volume24hUSD == nil || *got.Volume24hUSD != vol || got.LastPrice == nil || *got.LastPrice != last || got.TradeCount24h != 7 {
 		t.Errorf("wire row = %+v", got)

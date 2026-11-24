@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"cmp"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Stellar-Index/StellarIndex/internal/ops/incident"
 )
 
 // priceCoverage is a route's state under the operator source-exclusion kill switch (stellarindex-ops source-exclude).
@@ -34,8 +37,8 @@ var (
 )
 
 // priceRouteCoverage is the reviewed census of every public operation: whether the source-exclusion gate covers what it serves.
-// A new route fails TestPriceRouteCoverage_EveryRouteClassified until it is classified here; keep source_exclude.go's
-// readSideNote in step with the uncovered rows.
+// A new route fails TestPriceRouteCoverage_EveryRouteClassified until it is classified here, and
+// TestPriceRouteCoverage_OperatorNoteMatchesCensus until incident.ReadSideNote tells the operator the same.
 var priceRouteCoverage = map[string]priceCoverage{
 	"GET /v1/price":                         gated,
 	"GET /v1/price/batch":                   gated,
@@ -208,6 +211,77 @@ func TestPriceRouteCoverage_EveryRouteClassified(t *testing.T) {
 
 // ungatedPriceRoutes ratchets the kill switch's known gaps: an operator exclusion does not reach these routes' figures.
 const ungatedPriceRoutes = 45
+
+// operatorNoteName is how incident.ReadSideNote's NOT COVERED list names an ungated route whose path it does not spell out.
+var operatorNoteName = map[string]string{
+	"GET /v1/rwa/assets":                          "RWA assets/history",
+	"GET /v1/rwa/history":                         "RWA assets/history",
+	"GET /v1/observations/stream":                 "/v1/observations + stream",
+	"GET /v1/markets/sources":                     "/v1/markets + sources",
+	"GET /v1/divergence/series":                   "/v1/divergence",
+	"GET /v1/accounts/{g_strkey}":                 "account usd_value",
+	"GET /v1/accounts/{g_strkey}/trades":          "trades usd_volume",
+	"GET /v1/accounts/{g_strkey}/graph":           "graph USD",
+	"GET /v1/accounts/{g_strkey}/graph/history":   "graph USD",
+	"GET /v1/accounts/{g_strkey}/graph/cohort":    "graph USD",
+	"GET /v1/accounts":                            "/v1/accounts usd_value",
+	"GET /v1/protocols/{name}":                    "/v1/protocols + tvl",
+	"GET /v1/protocols/{name}/tvl":                "/v1/protocols + tvl",
+	"GET /v1/changes/{entity_type}/{id}":          "/v1/changes/{type}/{id}",
+	"GET /v1/lending/pools":                       "/v1/lending/*",
+	"GET /v1/lending/rates":                       "/v1/lending/*",
+	"GET /v1/lending/protocols":                   "/v1/lending/*",
+	"GET /v1/lending/pools/{pool}/reserves":       "/v1/lending/*",
+	"GET /v1/lending/pools/{pool}/config-history": "/v1/lending/*",
+	"GET /v1/lending/pools/{pool}/backstop":       "/v1/lending/*",
+
+	"GET /v1/lending/pools/{pool}/backstop/history": "/v1/lending/*",
+	"GET /v1/lending/accounts/{account}/earnings":   "/v1/lending/*",
+	"GET /v1/lending/pools/{pool}/auctions":         "/v1/lending/*",
+	"GET /v1/lending/pools/{pool}/emissions":        "/v1/lending/*",
+	"GET /v1/lending/pools/{pool}/top-accounts":     "/v1/lending/*",
+}
+
+// TestPriceRouteCoverage_OperatorNoteMatchesCensus: the operator who excludes a bad source is told which routes it does not
+// reach. Every partial or uncovered route must be named in that NOT COVERED list, and no gated route may be.
+func TestPriceRouteCoverage_OperatorNoteMatchesCensus(t *testing.T) {
+	_, notCovered, ok := strings.Cut(incident.ReadSideNote, "NOT COVERED")
+	if !ok {
+		t.Fatal("incident.ReadSideNote has no NOT COVERED list")
+	}
+	notCovered, _, _ = strings.Cut(notCovered, "Check:")
+	named := func(phrase string) bool {
+		for rest := notCovered; ; {
+			i := strings.Index(rest, phrase)
+			if i < 0 {
+				return false
+			}
+			rest = rest[i+len(phrase):]
+			if rest == "" || strings.ContainsRune(" ,.\n", rune(rest[0])) {
+				return true
+			}
+		}
+	}
+	for op, c := range priceRouteCoverage {
+		_, path, _ := strings.Cut(op, " ")
+		switch c.state {
+		case covPartial, covUncovered:
+			phrase := cmp.Or(operatorNoteName[op], path)
+			if !named(phrase) {
+				t.Errorf("%s is %s, but incident.ReadSideNote's NOT COVERED list does not name it (%q)", op, c.state, phrase)
+			}
+		case covGated:
+			if named(path) {
+				t.Errorf("%s is gated, but incident.ReadSideNote lists it as NOT COVERED", op)
+			}
+		}
+	}
+	for op := range operatorNoteName {
+		if c := priceRouteCoverage[op]; c.state != covPartial && c.state != covUncovered {
+			t.Errorf("operatorNoteName names %s, which the census does not file as partial or uncovered", op)
+		}
+	}
+}
 
 // GatedPriceRoutes returns the census's gated rows for the external-package proof check.
 func GatedPriceRoutes() []string {

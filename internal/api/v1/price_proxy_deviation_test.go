@@ -77,16 +77,31 @@ func devPegServer(t *testing.T, pegID string, declared bool, byPair map[string]s
 			},
 		},
 		PriceAt: devPriceAtStub(byPair),
-		History: &fiatConstituentReader{tradesByPair: map[string][]canonical.Trade{
+		History: &pegSeriesReader{bars: pegWindowBars(byPair, t0), fiatConstituentReader: &fiatConstituentReader{tradesByPair: map[string][]canonical.Trade{
 			fiatParityPairKey(pair): {
 				fiatParityTrade(pair, 1, t0.Add(time.Minute), 1000, 2000),
 				fiatParityTrade(pair, 2, t0.Add(2*time.Minute), 1000, 2000),
 			},
-		}},
+		}}},
 		USDPeggedClassics:  pegs,
 		VerifiedCurrencies: newTestCatalogue(t),
 	})
 	return startHTTPTest(t, srv.Handler())
+}
+
+// pegSeriesReader serves the observed peg markets' own bars over a fiatConstituentReader's trades.
+type pegSeriesReader struct {
+	*fiatConstituentReader
+	bars map[string][]v1.OHLCSeriesBar
+}
+
+func (r *pegSeriesReader) OHLCSeries(
+	ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int,
+) ([]v1.OHLCSeriesBar, error) {
+	if bars, ok := r.bars[pair.String()]; ok {
+		return bars, nil
+	}
+	return r.fiatConstituentReader.OHLCSeries(ctx, pair, interval, from, to, limit)
 }
 
 // TestProxyDeviation_ChecksThePegTheAnswerRodeOnItsOwnIdentity: the depeg verdict covers the peg a triangulated answer was

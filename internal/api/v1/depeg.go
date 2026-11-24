@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // depegBand is the deviation from $1 beyond which a USD peg's own market is
@@ -173,21 +174,97 @@ func (s *Server) observePeg(ctx context.Context, forms []canonical.Pair, at time
 	return value, observed, stale, readFailed
 }
 
-// withProxyDeviation stamps a triangulated answer's depeg flag. One whose peg check did not answer says so on the wire; a failed
-// read is also degraded (no-store), while a miss is a standing state the cache may hold.
-func (s *Server) withProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, at time.Time) Flags {
-	return s.withFiatCombineProxyDeviation(ctx, f, quote, at, nil)
-}
-
-// withFiatCombineProxyDeviation is [Server.withProxyDeviation] for an answer from [Server.tradesInRangeWithStablecoinFallback]:
-// books are the constituents that fed it, whose stablecoin quotes are pegs the answer rode on too.
-func (s *Server) withFiatCombineProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, at time.Time, books []canonical.Pair) Flags {
+// withProxyDeviation stamps a triangulated answer's depeg flag, judged at every instant the answer was priced at. One whose peg
+// check did not answer says so on the wire; a failed read is also degraded (no-store), while a miss is a standing state the cache
+// may hold.
+func (s *Server) withProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, instants ...time.Time) Flags {
 	if !f.Triangulated {
 		return f
 	}
-	deviated, unchecked, failed := s.pegDeviation(ctx, quote, at, books)
+	f.ProxyDeviation, f.ProxyDeviationUnchecked = false, false
+	for _, at := range instants {
+		deviated, unchecked, failed := s.pegDeviation(ctx, quote, at, nil)
+		f.ProxyDeviation = f.ProxyDeviation || deviated
+		f.ProxyDeviationUnchecked = f.ProxyDeviationUnchecked || unchecked
+		f.Degraded = f.Degraded || failed
+	}
+	return f
+}
+
+// withFiatCombineProxyDeviation stamps an answer from [Server.tradesInRangeWithStablecoinFallback] over [from, to): books are
+// the constituents that fed it, whose stablecoin quotes are pegs the answer rode on too.
+func (s *Server) withFiatCombineProxyDeviation(ctx context.Context, f Flags, quote canonical.Asset, from, to time.Time, books []canonical.Pair) Flags {
+	if !f.Triangulated {
+		return f
+	}
+	deviated, unchecked, failed := s.pegRangeDeviation(ctx, quote, from, to, books)
 	f.ProxyDeviation = deviated
 	f.ProxyDeviationUnchecked = unchecked
 	f.Degraded = f.Degraded || failed
 	return f
+}
+
+// pegRangeMaxBars bounds the bars one peg's window read may return; a window it truncates is unchecked.
+const pegRangeMaxBars = 1440
+
+// pegHourRungMaxAge is how far back prices_1h answers (priceAtResolutionLadder's second rung); older windows read daily bars.
+const pegHourRungMaxAge = 45 * 24 * time.Hour
+
+// pegRangeDeviation is [Server.pegDeviation] over a window of trades: the peg is judged at `to` as before, and any bar of a peg
+// market's own series in [from, to) whose high or low leaves the band is a deviation (a bar's extremes keep every print inside
+// it, so a coarse rung still sees a short depeg). A peg with no bars in the window, or no series reader, is unchecked: the
+// reading at `to` says nothing about the trades before it.
+func (s *Server) pegRangeDeviation(ctx context.Context, quote canonical.Asset, from, to time.Time, books []canonical.Pair) (deviated, unchecked, failed bool) {
+	deviated, unchecked, failed = s.pegDeviation(ctx, quote, to, books)
+	if deviated || s.PriceAt == nil || !from.Before(to) {
+		return deviated, unchecked, failed
+	}
+	if s.History == nil {
+		return false, true, failed
+	}
+	markets, _ := s.pegObservationMarkets(quote, books)
+	interval := pegRangeInterval(s.now(), from, to)
+	for _, forms := range markets {
+		out, seen, readFailed := s.pegSeriesLeavesBand(ctx, forms, interval, from, to)
+		if out {
+			return true, false, false
+		}
+		unchecked = unchecked || !seen
+		failed = failed || readFailed
+	}
+	return false, unchecked, failed
+}
+
+// pegRangeInterval is the finest rung still retained at from that spans [from, to) in at most pegRangeMaxBars bars.
+func pegRangeInterval(now, from, to time.Time) string {
+	age, window := now.Sub(from), to.Sub(from)
+	switch {
+	case age <= timescale.PriceAtMinuteRungMaxAge && window <= pegRangeMaxBars*time.Minute:
+		return "1m"
+	case age <= pegHourRungMaxAge && window <= pegRangeMaxBars*time.Hour:
+		return "1h"
+	default:
+		return "1d"
+	}
+}
+
+// pegSeriesLeavesBand reads one peg's bars in [from, to) under every alias form: out when any bar leaves the band, seen when a
+// form answered with a complete (untruncated) series.
+func (s *Server) pegSeriesLeavesBand(
+	ctx context.Context, forms []canonical.Pair, interval string, from, to time.Time,
+) (out, seen, readFailed bool) {
+	for _, pair := range forms {
+		bars, err := s.History.OHLCSeries(ctx, pair, interval, from, to, pegRangeMaxBars+1)
+		if err != nil {
+			readFailed = true
+			continue
+		}
+		for _, b := range bars {
+			if outsideDepegBand(b.H) || outsideDepegBand(b.L) {
+				return true, true, readFailed
+			}
+		}
+		seen = seen || (len(bars) > 0 && len(bars) <= pegRangeMaxBars)
+	}
+	return false, seen, readFailed
 }

@@ -19,7 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-const readSideNote = "source-exclude: note:\n" +
+// ReadSideNote is what source-exclude tells the operator an exclusion reaches; its NOT COVERED list is checked against the
+// API's route census (internal/api/v1 TestPriceRouteCoverage_OperatorNoteMatchesCensus).
+const ReadSideNote = "source-exclude: note:\n" +
 	"  WITHHELD (404 reason source_excluded; tip, /v1/vwap, /v1/twap and the headline aggregator tier recompute without the source):\n" +
 	"    /v1/price (closed, swapped-in, last-trade, cached, stablecoin proxy, USD-leg cross, frozen held, FX conversions), /v1/price/batch,\n" +
 	"    /v1/price/tip + stream, closed-bucket price stream, SEP-40, /v1/vwap, /v1/twap, /v1/ohlc (a covered series bar\n" +
@@ -29,7 +31,7 @@ const readSideNote = "source-exclude: note:\n" +
 	"    fill is removed from its page, served degraded and uncached; paging continues past the window), /v1/chart and\n" +
 	"    /v1/history/since-inception (a covered bucket or fx day is removed, a gap, never a zero; a derived cross loses the day;\n" +
 	"    served uncached; if every observed bucket is withheld the series derived through XLM is served instead, judged under the\n" +
-	"    served pair, marked and flags.triangulated), /v1/assets (every asset_class) and asset detail (a covered price withholds\n" +
+	"    served pair, marked and flags.triangulated), /v1/assets (every asset_class), /v1/assets/verified and asset detail (a covered price withholds\n" +
 	"    price, cap, FDV, changes, series and ATH as source_excluded; the headline's minute is not recorded, so any exclusion on\n" +
 	"    its legs in the last 7 days withholds it; a change, 24h USD volume, series point or ATH whose own span is covered is\n" +
 	"    dropped alone; judged on the asset, XLM's USD books and a non-USD peg's fiat: an exclusion naming XLM against a USD\n" +
@@ -57,9 +59,9 @@ const readSideNote = "source-exclude: note:\n" +
 	"    detail 15s, then uncached while an exclusion overlaps the last 7d2h, plus the edge/client life of a body served before;\n" +
 	"    /v1/price/at, /changes, /v1/history, /v1/ohlc, /v1/chart, since-inception: the 15s re-read plus a 30s client / 5s CDN cache.\n" +
 	"  NOT COVERED (may still include the source until lifted or aged out): /depeg, RWA assets/history,\n" +
-	"    /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets, /v1/pairs,\n" +
+	"    /v1/observations + stream, /v1/oracle/latest, /v1/oracle/streams, /v1/markets + sources, /v1/pairs,\n" +
 	"    /v1/protocols + tvl USD, other /v1/lending/* USD (catalogue fallback), /v1/stablecoins, /v1/external/assets, /v1/aggregators,\n" +
-	"    /v1/divergence, /v1/mev, /v1/assets/verified, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +
+	"    /v1/divergence, /v1/mev, /v1/anomalies, /v1/sources, /v1/pools, account usd_value, trades usd_volume,\n" +
 	"    graph USD, /v1/accounts usd_value + priced_assets, volume_24h_usd on /v1/network/stats, /v1/sources/{name}/health and\n" +
 	"    /v1/diagnostics/ingestion, /v1/changes/{type}/{id} values + ATH/ATL, and the venue-native mid and offer prices of\n" +
 	"    /v1/pools/reserves, /v1/liquidity-pools and /v1/sdex/orderbook. No price: positions, /v1/search.\n" +
@@ -352,7 +354,7 @@ func createSourceExclusion(ctx context.Context, audit keys.AuditSink, store sour
 		map[string]any{"scope": target}); err != nil {
 		return fmt.Errorf("exclusion %d recorded, but its %s audit_log row failed: %w", id, idTarget, err)
 	}
-	fmt.Println(readSideNote)
+	fmt.Println(ReadSideNote)
 	return nil
 }
 

@@ -466,10 +466,11 @@ func TestPairMarketQueryShape(t *testing.T) {
 	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2, vol_lower_bound's hourly read x2) must carry
 	// its own 24-hour bound; vol_lower_bound's two trades reads cover the two newest hours only. The $1/$2/$3 checks above prove the $1 branches are the ONLY 14-day reads;
 	// this proves none of the other reads unbounded or rides the 14-day window back in.
-	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 8 {
+	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 9 {
 		t.Errorf("pairMarketQuery has %d \"NOW() - INTERVAL '24 hours'\" bounds, want "+
-			"8 — one on each of count_24h's two directions, vol_24h_usd's two "+
-			"directions, last_price's two directions and vol_lower_bound's hourly read's two directions. Fewer means a branch lost "+
+			"9 — one on each of count_24h's two directions, vol_24h_usd's two "+
+			"directions, last_price's two directions, last_price's priced-minute trades probe and "+
+			"vol_lower_bound's hourly read's two directions. Fewer means a branch lost "+
 			"its bound (an unbounded prices_1m/trades walk); more means a bound was "+
 			"duplicated onto a branch that should stay a $1 recency-window probe."+
 			"\n\nquery:\n%s", n, q)
@@ -478,10 +479,22 @@ func TestPairMarketQueryShape(t *testing.T) {
 	// ── determinism: the last_price sort needs a total order ──
 	// `bucket DESC` alone is not one once a bucket holds both orientations, so which leg won
 	// would be planner-defined. Same tiebreaker, and same reasoning, as the prices_1m readers.
-	if !strings.Contains(q, "ORDER BY bucket DESC, base_asset LIMIT 1") {
+	if !strings.Contains(q, "ORDER BY priced_at DESC, base_asset LIMIT 1") {
 		t.Error("pairMarketQuery's last_price sort lacks the base_asset tiebreaker. " +
 			"With both directions present in one bucket the winner would be " +
 			"planner-defined, which ADR-0015 byte-identical cross-region serving " +
 			"cannot rely on")
+	}
+	// last_priced_at is the priced trade's own time (the listing's bucket_last_ts), read by one probe bounded to that minute.
+	pricedProbe := regexp.MustCompile(`(?s)t\.ts >= p\.bucket AND t\.ts < p\.bucket \+ INTERVAL '1 minute'.*?t\.ts DESC LIMIT 1\)`)
+	if !pricedProbe.MatchString(q) || !strings.Contains(q, "lp.priced_at AS last_priced_at") {
+		t.Errorf("pairMarketQuery must date last_price by its trade's own time via one LIMIT 1 probe inside the "+
+			"priced minute; a bucket start ties every spelling priced in that minute\n\nquery:\n%s", q)
+	}
+	// A correlated p.bucket bound excludes no hypertable chunk; the probe needs its own constant lower bound.
+	boundedProbe := regexp.MustCompile(`(?s)t\.ts < p\.bucket \+ INTERVAL '1 minute'\s+(?:--[^\n]*\n\s*)?AND t\.ts >= NOW\(\) - INTERVAL '24 hours'`)
+	if !boundedProbe.MatchString(q) {
+		t.Errorf("pairMarketQuery's priced-minute trades probe has no constant lower ts bound, so every trades "+
+			"chunk is planned per call\n\nquery:\n%s", q)
 	}
 }

@@ -52,9 +52,14 @@ func (s *Server) ohlcSeriesFiatCombined(
 		return nil, nil, false, nil
 	}
 
+	var adj *big.Rat
+	if baseDec, quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base),
+		aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote); baseDec != quoteDec {
+		adj = aggregate.DecimalsAdjustment(baseDec, quoteDec)
+	}
 	out := make([]OHLCSeriesBar, 0, len(acc))
 	for t, a := range acc {
-		bar := a.finalize(t)
+		bar := a.finalize(t, adj)
 		// Every constituent shares the base token, so its leg follows the same rule as the plain series; the
 		// quote leg sums 7-decimal USD pegs.
 		if bar.VBaseDecimals != nil {
@@ -565,8 +570,9 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 
 // finalize renders the bucket, lifting each scale's totals to the bucket's common scale (stated as v_base_decimals/v_quote_decimals).
 // Map-order summing is safe only because exact big.Rat addition is order-independent; the point path's open/close needs
-// [sortTradesChronological] (ADR-0015).
-func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
+// [sortTradesChronological] (ADR-0015). adj (nil: none) is the decimals adjustment, applied in big.Rat before rendering: applied
+// to the rendered string it would scale up digits the render already dropped.
+func (a *ohlcBucketAcc) finalize(t time.Time, adj *big.Rat) OHLCSeriesBar {
 	baseVol, quoteVol := new(big.Rat), new(big.Rat)
 	for scale, sa := range a.byScale {
 		f := ohlcScaleFactor(scale, a.commonScale)
@@ -592,6 +598,10 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	}
 	high := selectExtreme(highs, true)
 	low := selectExtreme(lows, false)
+	if adj != nil {
+		open, closeP = new(big.Rat).Mul(open, adj), new(big.Rat).Mul(closeP, adj)
+		high, low = new(big.Rat).Mul(high, adj), new(big.Rat).Mul(low, adj)
+	}
 	// A bucket holding an unknown-scale bar sums integers at no single scale, so it states none.
 	stated := a.commonScale
 	if _, unknown := a.byScale[ohlcBarScaleUnknown]; unknown {
