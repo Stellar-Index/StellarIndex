@@ -344,3 +344,97 @@ func TestDecimalRat_ExactAbove2Pow53(t *testing.T) {
 		t.Error("an object must not parse as a decimal")
 	}
 }
+
+var circleTestNow = time.Date(2026, 11, 24, 14, 0, 0, 0, time.UTC)
+
+// circleBody renders a stablecoins response whose USDC/XLM chain carries the given raw amount and updateDate, among
+// sibling coins and chains that must not be picked.
+func circleBody(xlmChain string) string {
+	return `{"data":[` +
+		`{"name":"EURC","symbol":"EURC","totalAmount":"1","chains":[{"chain":"XLM","amount":"999","updateDate":"2026-11-24T13:00:00Z"}]},` +
+		`{"name":"USD Coin","symbol":"USDC","totalAmount":"1","chains":[` +
+		`{"chain":"ETH","amount":"555","updateDate":"2026-11-24T13:00:00Z"}` + xlmChain + `]}]}`
+}
+
+func circleCheck(url string) servedValueCheck {
+	return servedValueCheck{
+		name: "usdc_total_supply", tolerance: 0.02,
+		served: servedSupplyField("USDC-GA5Z", "total_supply", 7),
+		truth:  circleChainSupply(url, "USDC", "XLM", circleSupplyMaxAge, func() time.Time { return circleTestNow }),
+	}
+}
+
+func stubServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// The truth is the exact decimal Circle publishes for USDC on XLM, not a float and not a sibling coin or chain.
+func TestCircleChainSupply_ExactAmount(t *testing.T) {
+	const amount = "332227870.92594171234567"
+	s := stubServer(t, http.StatusOK, circleBody(`,{"chain":"XLM","amount":"`+amount+`","secondaryMarketBurnedAmount":"0","updateDate":"2026-11-24T13:32:01.348Z"}`))
+	got, err := circleCheck(s.URL).truth(context.Background(), &http.Client{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := new(big.Rat).SetString(amount)
+	if got.Cmp(want) != 0 {
+		t.Fatalf("truth = %s, want exactly %s", got.FloatString(14), amount)
+	}
+}
+
+// Every way the Circle feed can fail to give a current, unambiguous, positive amount is an unavailable truth (SKIP),
+// never a verdict; a stale updateDate included, since a frozen point-in-time feed is not truth.
+func TestCircleChainSupply_FailClosedSkips(t *testing.T) {
+	const fresh = `"updateDate":"2026-11-24T13:32:01.348Z"`
+	cases := []struct {
+		name, body, wantNote string
+		status               int
+	}{
+		{"payment required", `{"error":"pay"}`, "status 402", http.StatusPaymentRequired},
+		{"not json", `<html>nope</html>`, "invalid character", http.StatusOK},
+		{"no usdc", `{"data":[{"symbol":"EURC","chains":[{"chain":"XLM","amount":"1",` + fresh + `}]}]}`, "found 0", http.StatusOK},
+		{"no xlm chain", circleBody(``), "found 0", http.StatusOK},
+		{"duplicate xlm chain", circleBody(`,{"chain":"XLM","amount":"1",` + fresh + `},{"chain":"XLM","amount":"2",` + fresh + `}`), "found 2", http.StatusOK},
+		{"amount missing", circleBody(`,{"chain":"XLM",` + fresh + `}`), "amount missing", http.StatusOK},
+		{"amount unparseable", circleBody(`,{"chain":"XLM","amount":"lots",` + fresh + `}`), "not a decimal", http.StatusOK},
+		{"amount negative", circleBody(`,{"chain":"XLM","amount":"-5",` + fresh + `}`), "amount is -5", http.StatusOK},
+		{"updateDate missing", circleBody(`,{"chain":"XLM","amount":"100000000"}`), "updateDate", http.StatusOK},
+		{"updateDate stale", circleBody(`,{"chain":"XLM","amount":"100000000","updateDate":"2026-11-23T13:59:00Z"}`), "over the 24h0m0s bound", http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := stubServer(t, http.StatusOK, `{"data":{"total_supply":"1000000000000000"}}`)
+			truth := stubServer(t, tc.status, tc.body)
+			r := runChecksForTest(context.Background(), api.URL, []servedValueCheck{circleCheck(truth.URL)})[0]
+			if !r.skipped || r.ok || !math.IsNaN(r.relErr) {
+				t.Fatalf("skipped=%v ok=%v rel_err=%v, want a SKIP (note=%s)", r.skipped, r.ok, r.relErr, r.note)
+			}
+			if !strings.Contains(r.note, tc.wantNote) {
+				t.Errorf("note %q lacks %q", r.note, tc.wantNote)
+			}
+		})
+	}
+}
+
+// A current Circle amount 2.1% above the served supply is measured drift: FAIL, not a skip. 1.9% passes.
+func TestCircleChainSupply_DriftFails(t *testing.T) {
+	for _, tc := range []struct {
+		truth  string
+		wantOK bool
+	}{{"102100000", false}, {"101900000", true}} {
+		api := stubServer(t, http.StatusOK, `{"data":{"total_supply":"1000000000000000"}}`)
+		truth := stubServer(t, http.StatusOK, circleBody(`,{"chain":"XLM","amount":"`+tc.truth+`","updateDate":"2026-11-24T13:32:01.348Z"}`))
+		chk := circleCheck(truth.URL)
+		r := runChecksForTest(context.Background(), api.URL, []servedValueCheck{chk})[0]
+		if r.skipped || r.ok != tc.wantOK {
+			t.Errorf("truth %s: skipped=%v ok=%v, want skipped=false ok=%v (rel_err=%v note=%s)", tc.truth, r.skipped, r.ok, tc.wantOK, r.relErr, r.note)
+		}
+	}
+}

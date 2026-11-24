@@ -794,7 +794,7 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 
 # verify-served-values — the served-value truth harness. Both of its
 # independent sources are PUBNET authorities: the SDF lumen API
-# (dashboard.stellar.org) and Stellar Expert's `/explorer/public/asset`.
+# (dashboard.stellar.org) and Circle's `api.circle.com/v1/stablecoins` (XLM chain).
 # Neither has a test-net equivalent this check could reconcile against, so
 # on a test net every check would compare a testnet-served number with a
 # mainnet truth and report permanent, meaningless drift — the same shape as

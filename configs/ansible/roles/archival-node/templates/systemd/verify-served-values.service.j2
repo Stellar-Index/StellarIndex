@@ -2,8 +2,8 @@
 #
 # Rendered by Ansible. Runs `stellarindex-ops verify-served-values`, which
 # reconciles a curated set of values we SERVE against INDEPENDENT ground
-# truth — the SDF lumen API for XLM supply, Stellar Expert for classic-asset
-# supply — and writes the verdict to the node_exporter textfile collector as
+# truth — the SDF lumen API for XLM supply, Circle's api.circle.com/v1/stablecoins
+# for USDC supply — and writes the verdict to the node_exporter textfile collector as
 # stellarindex_served_value_{ok,rel_err,skipped,last_run_unix}. It also diffs
 # this node's supply.sdf_reserve_accounts against the reserve list SDF
 # publishes (a single account is inside the value check's 2%
