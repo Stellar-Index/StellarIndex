@@ -109,6 +109,8 @@ func TestNetworkThroughputCached_ColdComputesOnceThenServesWarm(t *testing.T) {
 
 func TestNetworkThroughputCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h, reader := newThroughputHandler()
+	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
+	reader.block = make(chan struct{})
 	staleAt := time.Now().Add(-2 * networkThroughputTTL)
 	h.throughput.mu.Lock()
 	h.throughput.entry = networkThroughputEntry{buckets: throughputSeries(40), cachedAt: staleAt}
@@ -116,6 +118,7 @@ func TestNetworkThroughputCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h.throughput.mu.Unlock()
 
 	buckets, asOf, degraded, err := h.networkThroughputCached(context.Background(), 30)
+	close(reader.block)
 	if err != nil || len(buckets) != 30 {
 		t.Fatalf("stale serve: buckets=%d err=%v, want the stale entry sliced to 30", len(buckets), err)
 	}

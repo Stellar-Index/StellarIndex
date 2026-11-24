@@ -25,6 +25,7 @@ type swrReader struct {
 	contractsCalls atomic.Int32
 	statsCalls     atomic.Int32
 	fail           atomic.Bool
+	contractsBlock chan struct{} // when non-nil, RecentContracts waits for it
 }
 
 func (r *swrReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
@@ -37,6 +38,9 @@ func (r *swrReader) AssetHolders(context.Context, string, int) ([]clickhouse.Ass
 
 func (r *swrReader) RecentContracts(context.Context, int, uint32) ([]clickhouse.ContractDirectoryRow, error) {
 	r.contractsCalls.Add(1)
+	if r.contractsBlock != nil {
+		<-r.contractsBlock
+	}
 	if r.fail.Load() {
 		return nil, errors.New("boom")
 	}
@@ -147,6 +151,8 @@ func TestAssetHoldersCached_ColdFailurePropagatesRefreshError(t *testing.T) {
 
 func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h, reader := newSWRHandler()
+	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
+	reader.contractsBlock = make(chan struct{})
 	staleAt := time.Now().Add(-2 * contractsDirTTL)
 	h.contractsDir.put(30, contractsDirEntry{
 		rows:  []clickhouse.ContractDirectoryRow{{ContractID: validTestContract, Events: 1}},
@@ -154,6 +160,7 @@ func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	})
 
 	rows, _, since, asOf, degraded, err := h.recentContractsCached(context.Background(), 30, 10)
+	close(reader.contractsBlock)
 	if err != nil || len(rows) != 1 || since != 100 {
 		t.Fatalf("stale serve: rows=%d since=%d err=%v", len(rows), since, err)
 	}
@@ -412,8 +419,11 @@ func TestContractDetailCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 	h.contractDetail.put("ev:C1", "old")
 	ageContractDetail(h, "ev:C1", detailStaleAfterForKey("ev:C1")+time.Minute)
 
+	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
+	hold := make(chan struct{})
 	v, asOf, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
-		func(context.Context) (any, error) { return "new", nil })
+		func(context.Context) (any, error) { <-hold; return "new", nil })
+	close(hold)
 	if err != nil || v != "old" || !degraded {
 		t.Fatalf("stale serve: v=%v degraded=%v err=%v", v, degraded, err)
 	}
