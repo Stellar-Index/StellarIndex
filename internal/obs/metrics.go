@@ -2680,11 +2680,11 @@ var AggregatorSupplyRefreshTotal = prometheus.NewCounterVec(
 	[]string{"asset_key", "outcome"},
 )
 
-// AggregatorSEP41HistoryGapFromLedger is the lake's first event ledger for a watched SEP-41 contract whose served rows start later; 0 once covered.
+// AggregatorSEP41HistoryGapFromLedger is the lake's first supply-event ledger for a watched SEP-41 contract whose served supply events start later; 0 once covered.
 var AggregatorSEP41HistoryGapFromLedger = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_sep41_history_gap_from_ledger",
-		Help: "Per watched SEP-41 contract (asset_key = contract id): the lake's first event ledger while the served tier's rows start later, i.e. the -from of the projected-rebuild that fills the gap. 0 when the coverage check passes or finds no leading gap.",
+		Help: "Per watched SEP-41 contract (asset_key = contract id): the lake's first supply-event (mint/burn/clawback) ledger while the served sep41_supply_events rows start later, i.e. the -from of the projected-rebuild that fills the gap. 0 when the coverage check passes or finds no leading gap.",
 	},
 	[]string{"asset_key"},
 )

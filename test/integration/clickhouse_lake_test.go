@@ -173,6 +173,63 @@ func TestClickHouseLakeRoundTrip(t *testing.T) {
 // ExplorerReader.TransactionByHash's two modes: the tx_hash_index fast path, and the bloom-scan FALLBACK taken when the
 // index EXISTS but is EMPTY (MV-drop / TRUNCATE), which must read as unavailable instead of minting 404s for real hashes
 // (a miss on a NON-EMPTY index stays authoritative). Two txs share one hash at different ledgers:
+// FirstSupplyEvent counts only mint/burn/clawback: a non-supply event a day earlier (the daily table's filter) or earlier the
+// same day (the raw read's filter) has no served row, and taking it would open a gap that never closes.
+func TestSupplyReaderFirstSupplyEvent_SkipsNonSupplyEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const contractID = "CTEST_FIRST_SUPPLY_EVENT_CCCCCCCCCCCCCCCCCCCCCCC"
+	mintDay := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+	for i, ev := range []struct {
+		ledger uint32
+		at     time.Time
+		sym    string
+	}{
+		{65_100_000, mintDay.Add(-24 * time.Hour), "init"},
+		{65_133_000, mintDay.Add(-time.Hour), "set_admin"},
+		{65_133_709, mintDay, "mint"},
+		{65_134_033, mintDay.Add(time.Hour), "transfer"},
+	} {
+		ext := chstore.LedgerExtract{
+			Ledger: chstore.LedgerRow{LedgerSeq: ev.ledger, CloseTime: ev.at, ProtocolVersion: 23, SorobanEventCount: 1},
+			Events: []chstore.ContractEventRow{{
+				LedgerSeq: ev.ledger, CloseTime: ev.at, TxHash: fmt.Sprintf("%064x", i+1), ContractID: contractID,
+				EventType: "contract", TopicCount: 1, Topic0Sym: ev.sym, TopicsXDR: []string{scval.MustEncodeSymbol(ev.sym)},
+				DataXDR: scval.MustEncodeString("body"), OpArgsXDR: []string{}, InSuccessfulCall: 1,
+			}},
+		}
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add %s: %v", ev.sym, err)
+		}
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("sink flush: %v", err)
+	}
+	sr, err := chstore.NewSupplyReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("supply reader: %v", err)
+	}
+	t.Cleanup(func() { _ = sr.Close() })
+
+	ledger, at, err := sr.FirstSupplyEvent(ctx, contractID)
+	if err != nil {
+		t.Fatalf("FirstSupplyEvent: %v", err)
+	}
+	if ledger != 65_133_709 || !at.Equal(mintDay) {
+		t.Fatalf("FirstSupplyEvent = %d at %v, want the mint 65133709 at %v", ledger, at, mintDay)
+	}
+	if ledger, _, err := sr.FirstSupplyEvent(ctx, "CTEST_NO_SUCH_CONTRACT"); err != nil || ledger != 0 {
+		t.Fatalf("unknown contract = %d, %v; want 0, nil", ledger, err)
+	}
+}
+
 func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

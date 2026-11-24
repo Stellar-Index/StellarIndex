@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -60,7 +61,7 @@ func (f *fakeCoverageLake) TokenSupplyInLedgerRange(context.Context, string, uin
 	return f.sum, nil
 }
 
-func (f *fakeCoverageLake) FirstContractEvent(context.Context, string) (uint32, time.Time, error) {
+func (f *fakeCoverageLake) FirstSupplyEvent(context.Context, string) (uint32, time.Time, error) {
 	return f.first, f.firstAt, f.firstErr
 }
 
@@ -79,9 +80,48 @@ func (f *fakeCoverageStore) SEP41EventTotalsInRange(context.Context, string, uin
 	return f.totals, nil
 }
 
-func (f *fakeCoverageStore) SEP41FirstServedLedger(_ context.Context, _ string, notBefore time.Time) (uint32, error) {
+func (f *fakeCoverageStore) SEP41FirstSupplyEventLedger(_ context.Context, _ string, notBefore time.Time) (uint32, error) {
 	f.notBefore = notBefore
 	return f.servedFirst, nil
+}
+
+// A lake lookup that fails keeps the plain mismatch (still ErrSEP41HistoryNotCovered, so missing_baseline) and leaves the gauge
+// where it was; nothing served bounds the window at the last compared ledger.
+func TestSEP41CoverageCheck_LookupErrorAndNothingServed(t *testing.T) {
+	const contract = "CGAPLOOKUPCONTRACT"
+	gauge := obs.AggregatorSEP41HistoryGapFromLedger.WithLabelValues(contract)
+	gauge.Set(65000000)
+	lake := &fakeCoverageLake{
+		tip:      65700000,
+		sum:      clickhouse.TokenSupply{Mint: big.NewInt(900), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+		firstErr: errors.New("clickhouse: dial timeout"),
+	}
+	store := &fakeCoverageStore{
+		projected: 65700000,
+		totals:    timescale.SEP41KindTotals{Mint: big.NewInt(0), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+	}
+	ctx := context.Background()
+
+	err := checkSEP41Coverage(ctx, lake, store, 50457424, contract, 65700000)
+	if !errors.Is(err, supply.ErrSEP41HistoryNotCovered) || strings.Contains(err.Error(), "projected-rebuild -config") ||
+		!strings.Contains(err.Error(), "dial timeout") {
+		t.Errorf("lookup error: err=%v, want the plain mismatch naming the failed lookup", err)
+	}
+	if got := testutil.ToFloat64(gauge); got != 65000000 {
+		t.Errorf("lookup error gauge = %v, want it left at 65000000", got)
+	}
+
+	// The production shape: the first lake supply event is a mint at 65133709 (the first transfer comes later), nothing served.
+	lake.firstErr, lake.first, lake.firstAt = nil, 65133709, time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	err = checkSEP41Coverage(ctx, lake, store, 50457424, contract, 65700000)
+	upTo := uint32(65700000 - sep41CoverageSettle)
+	if want := fmt.Sprintf("[65133709, %d]", upTo); err == nil || !strings.Contains(err.Error(), want) ||
+		!strings.Contains(err.Error(), fmt.Sprintf("-source sep41_supply -from 65133709 -to %d", upTo)) {
+		t.Errorf("nothing served: err=%v, want window %s", err, want)
+	}
+	if got := testutil.ToFloat64(gauge); got != 65133709 {
+		t.Errorf("nothing served gauge = %v, want 65133709", got)
+	}
 }
 
 // A contract watched after its first event names the missing window and both rebuild commands, sets the gauge to the window's

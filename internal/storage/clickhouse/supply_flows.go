@@ -392,14 +392,15 @@ func (r *SupplyReader) TokenSupplyInLedgerRange(ctx context.Context, contractID 
 	return assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows), nil
 }
 
-// FirstContractEvent returns the ledger and close time of contractID's first contract event in the lake, or ledger 0 when it has none.
+// FirstSupplyEvent returns the ledger and close time of contractID's first mint/burn/clawback event in the lake, or ledger 0 when none.
 // The contract_id-led daily pre-aggregation names the first day, so the raw read is pruned to one day by the close_time minmax index.
-func (r *SupplyReader) FirstContractEvent(ctx context.Context, contractID string) (uint32, time.Time, error) {
+// Only [SupplyFlowTopic0Syms] count: the coverage check compares supply flows, and an earlier non-supply event has no served row.
+func (r *SupplyReader) FirstSupplyEvent(ctx context.Context, contractID string) (uint32, time.Time, error) {
 	var day time.Time
 	var days uint64
 	if err := r.conn.QueryRow(ctx, `SELECT min(day), count() FROM stellar.contract_events_daily
-		WHERE contract_id = ? AND event_type = 'contract'`, contractID).Scan(&day, &days); err != nil {
-		return 0, time.Time{}, fmt.Errorf("clickhouse: first event day for %s: %w", contractID, err)
+		WHERE contract_id = ? AND event_type = 'contract' AND topic_0_sym IN (?)`, contractID, SupplyFlowTopic0Syms).Scan(&day, &days); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: first supply event day for %s: %w", contractID, err)
 	}
 	if days == 0 {
 		return 0, time.Time{}, nil
@@ -408,9 +409,9 @@ func (r *SupplyReader) FirstContractEvent(ctx context.Context, contractID string
 	var ledger uint32
 	var closedAt time.Time
 	if err := r.conn.QueryRow(ctx, `SELECT min(ledger_seq), min(close_time) FROM stellar.contract_events
-		WHERE contract_id = ? AND event_type = 'contract' AND close_time >= ? AND close_time < ?`,
-		contractID, day, day.AddDate(0, 0, 1)).Scan(&ledger, &closedAt); err != nil {
-		return 0, time.Time{}, fmt.Errorf("clickhouse: first event of %s on %s: %w", contractID, day.Format(time.DateOnly), err)
+		WHERE contract_id = ? AND event_type = 'contract' AND topic_0_sym IN (?) AND close_time >= ? AND close_time < ?`,
+		contractID, SupplyFlowTopic0Syms, day, day.AddDate(0, 0, 1)).Scan(&ledger, &closedAt); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: first supply event of %s on %s: %w", contractID, day.Format(time.DateOnly), err)
 	}
 	if ledger == 0 {
 		return 0, time.Time{}, nil

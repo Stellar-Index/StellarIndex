@@ -369,30 +369,31 @@ func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, aft
 // sep41WatermarkWindow is how far back sep41ObserverWatermark looks before falling back to the full read.
 const sep41WatermarkWindow = 7 * 24 * time.Hour
 
-// SEP41FirstServedLedger returns the lowest ledger of contractID in sep41_supply_events or sep41_transfers that closed at or after
-// notBefore less [sep41BoundMargin], or 0 when neither holds one. Ordering on each table's time dimension lets the ordered chunk
-// append stop at the first chunk holding the contract, and the floor prunes every chunk before it.
-func (s *Store) SEP41FirstServedLedger(ctx context.Context, contractID string, notBefore time.Time) (uint32, error) {
+// SEP41FirstSupplyEventLedger returns the lowest ledger of contractID in sep41_supply_events that closed at or after notBefore less
+// [sep41BoundMargin], or 0 when there is none. Only supply events count, as they are what the coverage check sums; ordering on the
+// time dimension lets the ordered chunk append stop at the first chunk holding the contract, and the floor prunes every chunk before it.
+func (s *Store) SEP41FirstSupplyEventLedger(ctx context.Context, contractID string, notBefore time.Time) (uint32, error) {
 	const q = `
-        SELECT (SELECT ledger FROM sep41_supply_events
-                 WHERE contract_id = $1 AND observed_at >= $2
-                 ORDER BY observed_at, ledger LIMIT 1),
-               (SELECT ledger FROM sep41_transfers
-                 WHERE contract_id = $1 AND ledger_close_time >= $2
-                 ORDER BY ledger_close_time, ledger LIMIT 1)
+        SELECT ledger FROM sep41_supply_events
+         WHERE contract_id = $1 AND observed_at >= $2
+         ORDER BY observed_at, ledger LIMIT 1
     `
-	var events, transfers sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, q, contractID, notBefore.Add(-sep41BoundMargin)).Scan(&events, &transfers); err != nil {
-		return 0, fmt.Errorf("timescale: SEP41FirstServedLedger %s: %w", contractID, err)
+	// A diagnostic probe: past this it fails, and the caller keeps its plain error instead of holding the coverage check.
+	ctx, cancel := context.WithTimeout(ctx, sep41FirstSupplyEventTimeout)
+	defer cancel()
+	var ledger int64
+	err := s.db.QueryRowContext(ctx, q, contractID, notBefore.Add(-sep41BoundMargin)).Scan(&ledger)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
 	}
-	first := int64(0)
-	for _, l := range []sql.NullInt64{events, transfers} {
-		if l.Valid && (first == 0 || l.Int64 < first) {
-			first = l.Int64
-		}
+	if err != nil {
+		return 0, fmt.Errorf("timescale: SEP41FirstSupplyEventLedger %s: %w", contractID, err)
 	}
-	return uint32(first), nil //nolint:gosec // ledger columns are CHECK (ledger >= 0) integers.
+	return uint32(ledger), nil //nolint:gosec // ledger is a CHECK (ledger >= 0) integer.
 }
+
+// sep41FirstSupplyEventTimeout bounds SEP41FirstSupplyEventLedger; the slowest production read (no rows, two-year floor) took 3 s.
+const sep41FirstSupplyEventTimeout = 5 * time.Second
 
 // sep41BoundMargin widens the delta read's observed_at bound; a day is far below the 7-day chunk interval, so pruning is unaffected.
 const sep41BoundMargin = 24 * time.Hour

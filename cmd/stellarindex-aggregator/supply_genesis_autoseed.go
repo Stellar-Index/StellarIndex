@@ -42,14 +42,14 @@ func newSEP41CoverageCheck(cfg config.Config, store *timescale.Store) supply.His
 type sep41CoverageLake interface {
 	LakeTip(ctx context.Context) (uint32, error)
 	TokenSupplyInLedgerRange(ctx context.Context, contractID string, fromLedger, toLedger uint32) (clickhouse.TokenSupply, error)
-	FirstContractEvent(ctx context.Context, contractID string) (uint32, time.Time, error)
+	FirstSupplyEvent(ctx context.Context, contractID string) (uint32, time.Time, error)
 }
 
 // sep41CoverageStore is the served side of the coverage check.
 type sep41CoverageStore interface {
 	SEP41SupplyDurableLedger(ctx context.Context) (uint32, error)
 	SEP41EventTotalsInRange(ctx context.Context, contractID string, fromLedger, toLedger uint32) (timescale.SEP41KindTotals, error)
-	SEP41FirstServedLedger(ctx context.Context, contractID string, notBefore time.Time) (uint32, error)
+	SEP41FirstSupplyEventLedger(ctx context.Context, contractID string, notBefore time.Time) (uint32, error)
 }
 
 func checkSEP41Coverage(ctx context.Context, lake sep41CoverageLake, store sep41CoverageStore, boundary uint32, contractID string, ledger uint32) error {
@@ -82,10 +82,11 @@ func checkSEP41Coverage(ctx context.Context, lake sep41CoverageLake, store sep41
 	return nil
 }
 
-// explainSEP41Gap names the leading window the served tier lacks (a contract watched later than its first event) and the
-// commands that fill it; mismatch stays the wrapped cause, so the outcome is still `missing_baseline`.
+// explainSEP41Gap names the leading window of supply events the served tier lacks (a contract watched later than its first mint)
+// and the commands that fill it; mismatch stays the wrapped cause, so the outcome is still `missing_baseline`. A failed lookup
+// leaves the gauge at its last value: it neither raises nor clears the gap alert on a read it could not make.
 func explainSEP41Gap(ctx context.Context, lake sep41CoverageLake, store sep41CoverageStore, contractID string, upTo uint32, mismatch error) error {
-	lakeFirst, lakeFirstAt, err := lake.FirstContractEvent(ctx, contractID)
+	lakeFirst, lakeFirstAt, err := lake.FirstSupplyEvent(ctx, contractID)
 	if err != nil {
 		return fmt.Errorf("%w (served-history gap not located: %v)", mismatch, err) //nolint:errorlint // the lookup failure is context, not the cause.
 	}
@@ -94,7 +95,7 @@ func explainSEP41Gap(ctx context.Context, lake sep41CoverageLake, store sep41Cov
 		gauge.Set(0)
 		return mismatch
 	}
-	servedFirst, err := store.SEP41FirstServedLedger(ctx, contractID, lakeFirstAt)
+	servedFirst, err := store.SEP41FirstSupplyEventLedger(ctx, contractID, lakeFirstAt)
 	if err != nil {
 		return fmt.Errorf("%w (served-history gap not located: %v)", mismatch, err) //nolint:errorlint // the lookup failure is context, not the cause.
 	}
@@ -107,7 +108,7 @@ func explainSEP41Gap(ctx context.Context, lake sep41CoverageLake, store sep41Cov
 		return mismatch
 	}
 	gauge.Set(float64(lakeFirst))
-	return fmt.Errorf("%w; contract %s: lake events start at ledger %d, served rows at %d, so ledgers [%d, %d] are missing. "+
+	return fmt.Errorf("%w; contract %s: lake supply events start at ledger %d, served ones at %d, so ledgers [%d, %d] are missing. "+
 		"Decompress both tables' chunks over the window (%s), then run "+
 		"`stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source sep41_transfers -from %d -to %d -resume=false -write` and "+
 		"`stellarindex-ops projected-rebuild -config /etc/stellarindex.toml -source sep41_supply -from %d -to %d -resume=false -write`",

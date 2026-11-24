@@ -370,11 +370,11 @@ Escalate: the sums still differ after a clean `projected-rebuild`, and `max(deri
 
 ## stellarindex_aggregator_sep41_history_gap
 
-P3 (`ticket`), `for: 30m`. Expr: `max by (asset_key) (stellarindex_aggregator_sep41_history_gap_from_ledger) > 0`. A contract enters `[supply].watched_sep41_contracts` by a config edit, and the projector writes its rows only from then on; the lake holds its events from its first one. The gauge is that first lake ledger while the served tier's rows start later. The supply stays withheld (`missing_baseline`, so [withheld](#stellarindex_aggregator_supply_refresh_withheld) follows after 6 h).
+P3 (`ticket`), `for: 30m`. Expr: `max by (asset_key) (stellarindex_aggregator_sep41_history_gap_from_ledger) > 0`. A contract enters `[supply].watched_sep41_contracts` by a config edit, and the projector writes its rows only from then on; the lake holds its events from its first one. The gauge is the ledger of its first supply event (mint/burn/clawback, what the coverage check sums) in the lake while its first row in `sep41_supply_events` is later; a failed lookup leaves it unchanged. The supply stays withheld (`missing_baseline`, so [withheld](#stellarindex_aggregator_supply_refresh_withheld) follows after 6 h).
 
 ### Check
 
-`sudo journalctl -u stellarindex-aggregator --since "1 hour ago" | grep "served rows at" | tail -1` gives the contract, the window `[from, to]` and both commands with the numbers filled in.
+`sudo journalctl -u stellarindex-aggregator --since "1 hour ago" | grep "lake supply events start at" | tail -1` gives the contract, the window `[from, to]` and both commands with the numbers filled in.
 
 ### Fix
 

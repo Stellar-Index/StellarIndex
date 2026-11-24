@@ -1523,7 +1523,7 @@ Steady state is mostly `ok`. Sustained `no_observation` means the observer has n
 
 ### `stellarindex_aggregator_sep41_history_gap_from_ledger`
 
-Gauge, label `asset_key` (the watched SEP-41 contract id). Set by the coverage check that gates a watched contract's supply: the lake's first event ledger for the contract while the served tier's rows start later, i.e. the `-from` of the `projected-rebuild` that fills the gap; 0 once the check passes or when it fails with no leading gap. No series until the check first runs for the contract. Read by `stellarindex_aggregator_sep41_history_gap`.
+Gauge, label `asset_key` (the watched SEP-41 contract id). Set by the coverage check that gates a watched contract's supply: the ledger of the contract's first supply event (mint/burn/clawback) in the lake while its first `sep41_supply_events` row is later, i.e. the `-from` of the `projected-rebuild` that fills the gap; 0 once the check passes or when it fails with no leading gap. No series until the check first runs for the contract. Read by `stellarindex_aggregator_sep41_history_gap`.
 
 ### `stellarindex_aggregator_confidence_compute_total`
 
