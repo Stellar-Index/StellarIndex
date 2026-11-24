@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -68,6 +69,26 @@ func (c *CachedAssetsReader) ListAssetsExtAt(
 		return rows, time.Time{}, false, nil
 	}
 	return rows, at, stale, nil
+}
+
+// listingRefreshFailed peeks whether the last refresh of the cached listing for opts failed; it never starts one. This is
+// the failure half of the stale verdict ListAssetsExtAt returns, for a caller that judges the rows' age by its own bound.
+func (c *CachedAssetsReader) listingRefreshFailed(opts timescale.ListAssetsOptions) bool {
+	if c == nil || c.ttl <= 0 {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[listAssetsCacheKey(opts)]
+	return ok && e.refreshFailed
+}
+
+// catalogueListingsFailed is true when the catalogue's last refresh of any listing in reads failed.
+func (s *Server) catalogueListingsFailed(reads []timescale.ListAssetsOptions) bool {
+	c, ok := s.AssetsReader.(interface {
+		listingRefreshFailed(timescale.ListAssetsOptions) bool
+	})
+	return ok && slices.ContainsFunc(reads, c.listingRefreshFailed)
 }
 
 // listAssetsExtAt reads via [CachedAssetsReader.ListAssetsExtAt] when the reader has it, else the plain call (avoids widening
