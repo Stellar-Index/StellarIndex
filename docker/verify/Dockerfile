@@ -6,7 +6,7 @@
 # are multi-platform index digests resolved 2026-10-05 via the registry's
 # manifest-list endpoint; refresh by hand with the same lookup and update
 # this file when the tag moves.
-FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
+FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS node
 
 FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9
 
