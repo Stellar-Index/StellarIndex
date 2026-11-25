@@ -136,13 +136,33 @@ that binary.
   versions (the row's fee-only delta), so it neither fails nor hides in the
   fee-carry check.
 
+- **Residual classes** (`lendinginterest.CauseRules`), read from the
+  `5d055ca` pool source: an interest fill (`fill_auction`, type 2;
+  `AuctionType::InterestAuction = 2` in `auctions/auction.rs`) loads the
+  reserve with accrual and does `backstop_credit = checked_sub(.., amount)`
+  over the filled lot it emits (`auctions/tier_interest.rs`); `gulp` adds the
+  `token_delta` it emits (`pool/gulp.rs`); `reconcile_loss` subtracts the
+  `backstop_credit_loss` it emits (`execute_reconcile_loss`). Each is an exact
+  integer move, so a residual equal to the transaction's sum of them is
+  explained. A `reconcile_loss` with a supplier or protocol-credit leg also
+  moves b_rate (`fixed_div_ceil`) or the fee entry, and that version stays
+  unexplained. The same source confirms the 20000 fee rate and the
+  floor-with-carry rule (`constants.rs`, `reserve.rs::accrue_protocol_fee`).
+  Shape on real bytes: the interest fill at 65225244 (lot CCW67… 62201350),
+  `TestInterestEventDecoder_BLNTInterestFill`; `gulp`, `reconcile_loss` and
+  `protocol_credit_loss` are still `sourceOnly`.
+
 Open before the table is served:
 
 1. Widen the evidence to BLNT's whole history with the prove pass; the span
    above is at most 80,000 ledgers.
-2. Confirm the rate and rule against the deployed hash (source or attested
-   build) rather than chain fit.
-3. Explain the 65648345 draw against its events.
+2. Confirm the rate and rule against the deployed hash (an attested build);
+   the source above was read, not rebuilt.
+3. Explain the 65648345 draw against its events: its transaction's events
+   are not in the repo, so its class is known only after the prove pass.
+4. Unexplained by design: `protocol_credit_loss` (an exact `credit -=
+   amount`, but the table has no column for an explained fee residual), the
+   protocol-fee auction fill (type 3) and fee withdrawal (no event).
 
 ## References
 

@@ -29,6 +29,9 @@ type state struct {
 	fees     map[string][]blnt.ProtocolFees
 	rows     map[rowKey]*HourRow
 	feeOnly  map[rowKey]*feeMove
+	events   map[txKey][]Event
+	used     map[eventID]bool // a transaction's events explain one version per asset
+	poisoned map[txRef]bool   // transactions holding a CauseUndecodable event
 }
 
 // feeMove is one asset-hour's ProtocolFees movement outside its reserve's pairs.
@@ -45,6 +48,7 @@ func newState(seed Seeds, opts Options) (*state, error) {
 		fees:     make(map[string][]blnt.ProtocolFees, len(seed.Fees)),
 		rows:     map[rowKey]*HourRow{},
 		feeOnly:  map[rowKey]*feeMove{},
+		used:     map[eventID]bool{},
 	}
 	for k, v := range seed.Reserves {
 		for _, rd := range v {
@@ -74,6 +78,7 @@ func (st *state) carry(pending []Version, committedBefore time.Time) Seeds {
 	s := Seeds{
 		Reserves: make(map[ReserveKey][]blend.ReserveData, len(st.reserves)), Configs: make(map[string][]uint32, len(st.configs)),
 		Fees: make(map[string][]blnt.ProtocolFees, len(st.fees)), Pending: make([]Version, len(pending)), CommittedBefore: committedBefore,
+		PendingEvents: pendingEvents(st.events, committedBefore),
 	}
 	for k, v := range st.reserves {
 		s.Reserves[k] = make([]blend.ReserveData, len(v))
@@ -366,7 +371,7 @@ func (st *state) later(row *HourRow, proto Protocol, in pairIn) {
 		excluded := new(big.Int).Sub(v.Reserve.BackstopCredit, chain.BackstopCredit)
 		if !exact {
 			orderUnknown(row, v, in, excluded)
-		} else if err := accrueZeroGap(row, proto, chain, v.Reserve, bstop, fee); err != nil {
+		} else if err := st.accrueZeroGap(row, proto, chain, v, bstop, fee); err != nil {
 			fail(row, v, err, excluded)
 		}
 		chain = v.Reserve
@@ -401,17 +406,17 @@ func (st *state) zeroGap(proto Protocol, in pairIn) (bstop uint32, fee blnt.Prot
 	return cfgs[len(cfgs)-1], fee, true
 }
 
-func accrueZeroGap(row *HourRow, proto Protocol, prev, next blend.ReserveData, bstop uint32, fee blnt.ProtocolFee) error {
+func (st *state) accrueZeroGap(row *HourRow, proto Protocol, prev blend.ReserveData, v Version, bstop uint32, fee blnt.ProtocolFee) error {
 	if proto != BLNT {
-		a, err := blend.AccrueBetween(prev, next, bstop)
+		a, err := blend.AccrueBetween(prev, v.Reserve, bstop)
 		if err == nil {
-			add(row, a, nil, prev, next)
+			st.add(row, a, nil, prev, []Version{v})
 		}
 		return err
 	}
-	a, err := blnt.AccrueBetween(prev, next, fee, fee, bstop)
+	a, err := blnt.AccrueBetween(prev, v.Reserve, fee, fee, bstop)
 	if err == nil {
-		add(row, a.Accrual, &a, prev, next)
+		st.add(row, a.Accrual, &a, prev, []Version{v})
 	}
 	return err
 }
@@ -440,7 +445,7 @@ func (st *state) accrue(row *HourRow, proto Protocol, prevs []blend.ReserveData,
 			fail(row, first, err, excluded)
 			return
 		}
-		add(row, a, nil, prev, next)
+		st.add(row, a, nil, prev, in.nexts)
 		return
 	}
 	prevFee, nextFee, ok, err := pairFees(first.Asset, in)
@@ -455,7 +460,7 @@ func (st *state) accrue(row *HourRow, proto Protocol, prevs []blend.ReserveData,
 			fail(row, first, err, excluded)
 			return
 		}
-		add(row, a.Accrual, &a, prev, next)
+		st.add(row, a.Accrual, &a, prev, in.nexts)
 	}
 }
 
@@ -539,7 +544,9 @@ func fail(row *HourRow, v Version, err error, excluded *big.Int) {
 	row.ExcludedCreditDelta.Add(row.ExcludedCreditDelta, excluded)
 }
 
-func add(row *HourRow, a blend.Accrual, fee *blnt.Accrual, prev, next blend.ReserveData) {
+// add sums one accrued pair; nexts are the versions it stands for, the first being the pair's next.
+func (st *state) add(row *HourRow, a blend.Accrual, fee *blnt.Accrual, prev blend.ReserveData, nexts []Version) {
+	next := nexts[0].Reserve
 	row.AccruedVersions++
 	for _, s := range [...]struct{ dst, v *big.Int }{
 		{row.Gross, a.Gross},
@@ -552,21 +559,22 @@ func add(row *HourRow, a blend.Accrual, fee *blnt.Accrual, prev, next blend.Rese
 	} {
 		s.dst.Add(s.dst, s.v)
 	}
-	reconciled := a.BackstopResidual.Sign() == 0
+	onlyBackstop := true
 	if !a.BRateMatches {
-		reconciled = false
+		onlyBackstop = false
 		row.BRateMismatches++
 		row.SupplyResidual.Add(row.SupplyResidual, supplyResidual(prev, next, a.ExpectedBRate))
 	}
 	if fee != nil {
 		row.FeeCreditResidual.Add(row.FeeCreditResidual, fee.FeeCreditResidual)
 		if !fee.FeesMatch {
-			reconciled = false
+			onlyBackstop = false
 			row.FeeMismatches++
 		}
 	}
-	if !reconciled {
+	if !onlyBackstop || a.BackstopResidual.Sign() != 0 {
 		row.UnreconciledVersions++
+		st.explain(row, nexts, a.BackstopResidual, onlyBackstop)
 	}
 }
 
@@ -589,6 +597,7 @@ func (st *state) row(proto Protocol, v Version) *HourRow {
 		Gross: new(big.Int), ProtocolFee: new(big.Int), Backstop: new(big.Int), SupplierIntended: new(big.Int),
 		SupplierRealised: new(big.Int), BackstopCreditDelta: new(big.Int), BackstopResidual: new(big.Int),
 		SupplyResidual: new(big.Int), FeeCreditResidual: new(big.Int), ExcludedCreditDelta: new(big.Int),
+		ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int), ResidualUnexplained: new(big.Int),
 		FeeOnlyCreditDelta: new(big.Int), FeeOnlyCarryDelta: new(big.Int),
 	}
 	st.rows[k] = r

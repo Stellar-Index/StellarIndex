@@ -64,6 +64,26 @@
 -- Re-derive (ingest-pipeline.md, the replay decision rule):
 --   ch-entry-history -lending-only -interest-only -from {lo} [-to {hi}] -write
 --
+-- Residual classes. Each unreconciled version is explained (a same-transaction
+-- event of the pool states its backstop_credit change exactly: an interest
+-- fill's lot, a gulp's token_delta, BLNT reconcile_loss's backstop_credit_loss),
+-- attributed (a Blend V1 interest fill, whose event carries no lot, beside a
+-- draw) or unexplained; unexplained = backstop_residual − residual_explained −
+-- residual_attributed, and versions likewise. A version whose b_rate or fee
+-- entry also moved stays unexplained. The pass reads the pools' contract_events
+-- for each window and refuses it unless every ledger holding a version it
+-- classifies by those events has, in contract_events, exactly the events
+-- stellar.ledgers declares. A pool's cause event that does not decode is
+-- logged and counted (stellarindex_lending_interest_undecodable_events on the
+-- run's heartbeat), and every residual of its transaction stays unexplained.
+-- Rows of an older derive_rev prove INCOMPLETE: after deploying a revision,
+-- re-derive from the floor (entry_history_watermark name
+-- 'lending_interest_floor') through the tip, in chunks if need be:
+--   run-heavy-job.sh lending-interest stellarindex-ops ch-entry-history
+--     -lending-only -interest-only -from {floor} -interest-max-windows 20 -write
+-- then the same with -from L+1, L the ledger of the run's "stopping after N
+-- windows at L" line, until a run reaches the tip without that line.
+--
 -- Amounts are Int256: each accrual is an i128, and sum(Int128) wraps silently,
 -- so an hourly sum or a served sum over hours needs the headroom. Never float.
 --

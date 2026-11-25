@@ -146,6 +146,9 @@ func checkLendingInterest(protos map[string]lendinginterest.Protocol, rows []len
 		if r.Hour.Before(from) || !r.Hour.Before(to) {
 			return c, fmt.Errorf("lending interest: pool %s asset %s: row for hour %s outside [%s, %s)", r.Pool, r.Asset, r.Hour, from, to)
 		}
+		if err := checkResidualClasses(r); err != nil {
+			return c, err
+		}
 		k := lendinginterest.ReserveKey{Pool: r.Pool, Asset: r.Asset}
 		byKey[k] = append(byKey[k], r)
 		if _, ok := reserves[k]; !ok {
@@ -171,6 +174,21 @@ func checkLendingInterest(protos map[string]lendinginterest.Protocol, rows []len
 		}
 	}
 	return c, nil
+}
+
+// checkResidualClasses holds a row's event classification whole: each unreconciled version is explained, attributed
+// or unexplained, and the three classes' residuals sum to the row's backstop residual.
+func checkResidualClasses(r lendinginterest.HourRow) error {
+	sum := new(big.Int).Add(zeroIfNil(r.ResidualExplained), zeroIfNil(r.ResidualAttributed))
+	sum.Add(sum, zeroIfNil(r.ResidualUnexplained))
+	n := uint64(r.ExplainedVersions) + uint64(r.AttributedVersions) + uint64(r.UnexplainedVersions)
+	if sum.Cmp(zeroIfNil(r.BackstopResidual)) == 0 && n == uint64(r.UnreconciledVersions) {
+		return nil
+	}
+	return fmt.Errorf("lending interest: pool %s asset %s hour %s: residual explained %v + attributed %v + unexplained %v "+
+		"against backstop_residual %v, versions %d + %d + %d against unreconciled %d", r.Pool, r.Asset, r.Hour.Format(time.RFC3339),
+		r.ResidualExplained, r.ResidualAttributed, r.ResidualUnexplained, r.BackstopResidual,
+		r.ExplainedVersions, r.AttributedVersions, r.UnexplainedVersions, r.UnreconciledVersions)
 }
 
 func checkFeeRows(rows []lendinginterest.HourRow, fees *interestState, c *interestChecked) error {
