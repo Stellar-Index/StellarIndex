@@ -165,6 +165,44 @@ func explorerBuildChain(t *testing.T) buildChain {
 	return chain
 }
 
+// TestExplorerDeployBuildKeyIsPerNetwork pins that each network's build key is
+// selected by that network and sent only to its own origin.
+func TestExplorerDeployBuildKeyIsPerNetwork(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), ".github/workflows/explorer-deploy.yml")) //nolint:gosec // repo-relative, test-only
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := string(b)
+
+	if !strings.Contains(wf, `if [ "$api" = "$base" ]; then send_key=true; fi`) {
+		t.Error("send_key must be true exactly when the origin equals the network's derived base (override => no key)")
+	}
+	m := regexp.MustCompile(`STELLARINDEX_BUILD_API_KEY: (\$\{\{.*\}\})`).FindStringSubmatch(wf)
+	if m == nil {
+		t.Fatal("Build step no longer sets STELLARINDEX_BUILD_API_KEY")
+	}
+	expr := m[1]
+	if !strings.Contains(expr, "steps.net.outputs.send_key == 'true' &&") {
+		t.Error("build key must be gated on send_key")
+	}
+	want := map[string]string{
+		"EXPLORER_BUILD_API_KEY":           "mainnet",
+		"EXPLORER_BUILD_API_KEY_TESTNET":   "testnet",
+		"EXPLORER_BUILD_API_KEY_FUTURENET": "futurenet",
+	}
+	secretRE := regexp.MustCompile(`secrets\.(EXPLORER_BUILD_API_KEY\w*)`)
+	found := secretRE.FindAllStringSubmatch(expr, -1)
+	if len(found) != len(want) {
+		t.Fatalf("expected %d build-key secrets in %s, found %d", len(want), expr, len(found))
+	}
+	for secret, network := range want {
+		pair := "steps.net.outputs.network == '" + network + "' && secrets." + secret
+		if strings.Count(expr, pair) != 1 {
+			t.Errorf("secret %s must appear exactly once, guarded by network == %q", secret, network)
+		}
+	}
+}
+
 // repoScriptText returns the contents of every in-repo script the body
 // names, so a guard invoked one hop away still counts as reached.
 func repoScriptText(t *testing.T, body string) string {

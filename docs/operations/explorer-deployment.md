@@ -104,6 +104,16 @@ set, or CI-published; `NEXT_PUBLIC_API_BASE_URL` is optional but must be that
 network's own `api.*`, never mainnet's); add the custom domain (orange/proxied,
 CF terminates TLS, no origin cert); give `CLOUDFLARE_API_TOKEN` Pages:Edit on it.
 
+Build keys: the `explorer-deploy.yml` build authenticates to its own network's
+API with a per-network repo secret: `EXPLORER_BUILD_API_KEY` (mainnet),
+`EXPLORER_BUILD_API_KEY_TESTNET`, `EXPLORER_BUILD_API_KEY_FUTURENET`. Mint each
+on that network's own host (key stores are separate, and a key is never sent to
+another network's origin or to an overridden `api_base_url`):
+`stellarindex-ops mint-key -write ... -identifier explorer-build -tier apikey ...`.
+An unset secret builds anonymous. The Cloudflare Pages git-integration build
+reads a differently named variable, the Pages secret `STELLARINDEX_BUILD_API_KEY`;
+the workflow maps its repo secret onto that name.
+
 ```sh
 gh workflow run explorer-deploy.yml --ref main -f network=testnet   -f environment=production
 gh workflow run explorer-deploy.yml --ref main -f network=futurenet -f environment=production
