@@ -313,7 +313,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	v, asOf, degraded, err := h.contractDetailCached(ctx, positionsCacheKey+g, func(rctx context.Context) (any, error) {
+	v, asOf, fr, err := h.contractDetailCached(ctx, positionsCacheKey+g, func(rctx context.Context) (any, error) {
 		// The resolver and folds must run on the REFRESH context: binding either to a request that
 		// may be gone would silently produce a half-resolved payload.
 		var cov positionsCoverage
@@ -359,7 +359,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		IncludeClosed: includeClosed,
 		Note:          positionsHonestNote,
 		CoverageNote:  snap.coverageNote,
-	}, degraded, degraded || snap.coverageNote != "" || snap.labelsUnresolved, asOf)
+	}, fr.stale, fr.degraded || snap.coverageNote != "" || snap.labelsUnresolved, asOf)
 }
 
 // ─── asset / venue display-label resolution ──────────────────────────

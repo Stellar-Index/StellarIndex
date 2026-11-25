@@ -513,9 +513,9 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	// Cached + single-flighted: this unauthenticated route runs two ledger_entries_current FINAL
 	// scans on the shared explorer pool, so one looping client could stall every lake-backed
 	// endpoint. An expired board is served as 200 + its real as_of while the detached rescan runs,
-	// flagged stale+degraded per swrServedStale; only a never-computed asset can time out (its scan
+	// flagged per expiredFreshness; only a never-computed asset can time out (its scan
 	// keeps running, so a retry lands warm). See hot_reads.go.
-	holders, total, asOf, degraded, err := h.assetHoldersCached(ctx, asset, limit)
+	holders, total, asOf, fr, err := h.assetHoldersCached(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -539,10 +539,10 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
 	if asCSV {
-		h.writeAssetHoldersCSV(w, r, out, stale || degraded, degraded)
+		h.writeAssetHoldersCSV(w, r, out, stale || fr.stale, fr.degraded)
 		return
 	}
-	h.writeJSONAt(w, out, stale || degraded, degraded, asOf.at)
+	h.writeJSONAt(w, out, stale || fr.stale, fr.degraded, asOf.at)
 }
 
 var assetHoldersCSVColumns = []string{"asset", "account_id", "balance"}
