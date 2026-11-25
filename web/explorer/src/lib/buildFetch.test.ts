@@ -1,11 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildFetchBatchedPrice,
   buildFetchData,
   buildFetchPriceBatch,
+  buildRequestCounts,
   MAX_IN_FLIGHT,
   MAX_UNAVAILABLE_WAITS,
+  routeTemplate,
   throttleDelayMs,
 } from './buildFetch';
 
@@ -139,6 +144,48 @@ describe('non-authoritative 4xx (e.g. 403) handling', () => {
     await expect(
       buildFetchData('/v1/entity/ca2-a35-hardfail', { attempts: 1 }),
     ).rejects.toThrow(/blocked by WAF/);
+  });
+});
+
+describe('request counter', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('counts each request sent per route template, not memo hits', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse(200, { data: [] })),
+    );
+    const before = new Map(buildRequestCounts());
+    const delta = (route: string) =>
+      (buildRequestCounts().get(route) ?? 0) - (before.get(route) ?? 0);
+    await buildFetchData(`/v1/assets/CNT1-G${'A'.repeat(55)}`);
+    await buildFetchData('/v1/assets/cnt2');
+    await buildFetchData('/v1/assets/cnt2'); // memo hit: no request
+    await buildFetchData('/v1/assets/verified?cnt=1');
+    await buildFetchData('/v1/price/batch?asset_ids=crypto:CNT&quote=fiat:USD');
+    await buildFetchData('/v1/lending/pools/CCNT/reserves');
+    expect(delta('/v1/assets/{id}')).toBe(2);
+    expect(delta('/v1/assets/verified')).toBe(1);
+    expect(delta('/v1/price/batch')).toBe(1);
+    expect(delta('/v1/lending/pools/{id}/reserves')).toBe(1);
+  });
+
+  // An OpenAPI word missing from ROUTE_WORDS would read as an id and fold
+  // a route into its sibling's line.
+  it('templates every OpenAPI path to itself', () => {
+    const repo = join(__dirname, '..', '..', '..', '..');
+    const spec = readFileSync(join(repo, 'openapi', 'stellar-index.v1.yaml'));
+    const paths = String(spec)
+      .split('\n')
+      .map((line) => /^ {2}(\/\S+):\s*$/.exec(line)?.[1])
+      .filter((p): p is string => p !== undefined);
+    expect(paths.length).toBeGreaterThan(100);
+    for (const p of paths) {
+      const want = `/v1${p.replace(/\{[^}]+\}/g, '{id}')}`;
+      expect(routeTemplate(`/v1${p.replace(/\{[^}]+\}/g, 'x1')}`)).toBe(want);
+    }
   });
 });
 
