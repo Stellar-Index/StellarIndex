@@ -1,7 +1,14 @@
-import { readFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildFetchBatchedPrice,
@@ -338,6 +345,115 @@ describe('buildFetchPriceBatch', () => {
     expect(await price('crypto:OUT')).toBe('10.5');
     expect(urls).toHaveLength(4);
     expect(new URL(urls[3]).searchParams.get('asset_ids')).toBe('crypto:OUT');
+  });
+
+  describe('across the build passes', () => {
+    // The production build's slow batches: the /v1/assets listing's 500 ids in
+    // USD (5 chunks) and the XLM-quoted market bases (2 chunks), each sent
+    // again by `next build`'s second render pass in fresh worker processes.
+    const assetIds = Array.from({ length: 500 }, (_, i) => `crypto:A${i}`);
+    const markets = [
+      ...Array.from({ length: 180 }, (_, i) => ({ base: `crypto:M${i}`, quote: 'native' })),
+      { base: 'native', quote: 'fiat:USD' },
+    ];
+    let dir = '';
+    let calls: string[] = [];
+    let failBatches = false;
+
+    // One worker process: a fresh module (empty in-memory memo, own nonce).
+    async function worker(nonceMs: number) {
+      vi.resetModules();
+      const now = vi.spyOn(Date, 'now').mockReturnValue(nonceMs);
+      const mod = await import('./buildFetch');
+      now.mockRestore();
+      const usd = await mod.buildFetchPriceBatch(assetIds, 'fiat:USD');
+      const pair = await mod.buildFetchPairPrice('crypto:M7', 'native');
+      const xlm = await mod.buildFetchPairPrice('native', 'fiat:USD');
+      return { usd, pair, xlm };
+    }
+    const batchCalls = () => {
+      const n = new Map<string, number>();
+      for (const u of calls.filter((c) => c.includes('/v1/price/batch'))) {
+        const url = new URL(u);
+        url.searchParams.delete('b');
+        n.set(url.toString(), (n.get(url.toString()) ?? 0) + 1);
+      }
+      return n;
+    };
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), 'bf-batch-'));
+      calls = [];
+      failBatches = false;
+      vi.spyOn(process, 'cwd').mockReturnValue(dir);
+      vi.stubEnv('NEXT_PHASE', 'phase-production-build');
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) => {
+          calls.push(url);
+          if (url.includes('/v1/markets')) return fakeResponse(200, { data: markets });
+          if (failBatches) return fakeResponse(400);
+          const ids = new URL(url).searchParams.get('asset_ids')!.split(',');
+          return fakeResponse(200, {
+            // A0 is missing (omitted row); A1 is stale; prices vary per request.
+            data: ids
+              .filter((id) => id !== 'crypto:A0')
+              .map((id) => ({ asset_id: id, price: `${calls.length}.25` })),
+            stale: ids.filter((id) => id === 'crypto:A1'),
+            triangulated: [],
+            flags: { stale: ids.includes('crypto:A1') },
+          });
+        }),
+      );
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('prices each chunk once per build and renders the same values and flags', async () => {
+      const first = await worker(1);
+      const second = await worker(2);
+      const n = batchCalls();
+      // 5 USD chunks + 2 XLM-quoted market chunks + 1 USD market chunk, once each.
+      expect(n.size).toBe(8);
+      expect([...n.values()].every((c) => c === 1)).toBe(true);
+      expect(second).toEqual(first);
+      expect(first.usd.get('crypto:A0')).toBeNull();
+      expect(first.usd.get('crypto:A1')?.stale).toBe(true);
+      expect(first.usd.get('crypto:A2')?.stale).toBe(false);
+      expect(first.xlm?.asset_id).toBe('native');
+      // The second worker has its own nonce yet sent nothing: the memo key has none.
+      const nonces = new Set(
+        calls
+          .filter((c) => c.includes('/v1/price/batch'))
+          .map((c) => new URL(c).searchParams.get('b')),
+      );
+      expect(nonces).toEqual(new Set([(1).toString(36)]));
+      for (const f of readdirSync(join(dir, '.next', 'build-price-batch'))) {
+        const saved = readFileSync(join(dir, '.next', 'build-price-batch', f), 'utf8');
+        expect(saved).not.toContain('b=');
+      }
+    });
+
+    it('ignores a corrupt memo file and never persists a failed chunk', async () => {
+      await worker(1);
+      const memoDir = join(dir, '.next', 'build-price-batch');
+      const files = readdirSync(memoDir);
+      for (const f of files) writeFileSync(join(memoDir, f), '{"path":"/v1/pri');
+      const second = await worker(2);
+      expect([...batchCalls().values()].every((c) => c === 2)).toBe(true);
+      expect(second.usd.get('crypto:A1')?.stale).toBe(true);
+
+      rmSync(memoDir, { recursive: true, force: true });
+      failBatches = true;
+      expect((await worker(3)).usd.size).toBe(0);
+      failBatches = false;
+      calls = [];
+      expect((await worker(4)).usd.size).toBe(500);
+      expect(batchCalls().size).toBe(8);
+    });
   });
 
   it('leaves a row flag undefined when the OR flag is set without the id list', async () => {
