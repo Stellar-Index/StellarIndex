@@ -187,3 +187,44 @@ func TestRateLimitUtilisation_ObservesBudgetSpentAfterEveryCharge(t *testing.T) 
 		t.Errorf("observed sum = %v, want %v (1/20 + 7/20 + 17/20)", sum-beforeSum, want)
 	}
 }
+
+// TestRateLimitUsage_SEP10PerIPChargeIsRecorded: a SEP-10 request is recorded by its per-IP charge as well as its account's,
+// so a per-IP refusal is counted and an allowed request observes the larger of the two budget shares.
+func TestRateLimitUsage_SEP10PerIPChargeIsRecorded(t *testing.T) {
+	rdb, _ := newRLRedis(t)
+	authB := ratelimit.New(rdb, 10, time.Minute, frozenClock, ratelimit.WithKeyPrefix("sep10-usage:"))
+	h := middleware.RateLimitBySubject(nil, authB, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	sep10 := func(remote, acct string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = remote
+		return r.WithContext(auth.WithSubject(r.Context(), auth.NewSEP10Session(acct, time.Time{})))
+	}
+
+	// Allowed: the IP has spent 2 of 10 across two accounts, the second account only 1, so the per-IP share binds.
+	h.ServeHTTP(httptest.NewRecorder(), sep10("198.51.100.20:1", "GACCOUNTONE"))
+	beforeN, beforeSum := utilisation(t, "sep10")
+	assertOneDecision(t, "per-IP binds", decisionDeltas(func() {
+		h.ServeHTTP(httptest.NewRecorder(), sep10("198.51.100.20:1", "GACCOUNTTWO"))
+	}), "sep10/allowed")
+	if n, sum := utilisation(t, "sep10"); n-beforeN != 1 || math.Abs(sum-beforeSum-0.2) > 1e-9 {
+		t.Errorf("observed %d sample(s) summing %v, want 1 at 0.2 (per-IP 2/10, not the account's 1/10)", n-beforeN, sum-beforeSum)
+	}
+
+	// Refused at the per-IP charge, before the account is billed: counted as limited, not observed.
+	for i := range 10 {
+		h.ServeHTTP(httptest.NewRecorder(), sep10("198.51.100.21:1", "GFILLER"+strconv.Itoa(i)))
+	}
+	beforeN, _ = utilisation(t, "sep10")
+	var code int
+	assertOneDecision(t, "per-IP refusal", decisionDeltas(func() {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, sep10("198.51.100.21:1", "GFRESHACCOUNT"))
+		code = w.Code
+	}), "sep10/limited")
+	if code != http.StatusTooManyRequests {
+		t.Errorf("per-IP refusal status = %d, want 429", code)
+	}
+	if n, _ := utilisation(t, "sep10"); n != beforeN {
+		t.Errorf("a refused request was observed (%d new samples)", n-beforeN)
+	}
+}
