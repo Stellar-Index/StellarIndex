@@ -36,6 +36,12 @@ func fixedDivCeil(a, b, scalar *big.Int) *big.Int {
 	return ceilDiv(n, b)
 }
 
+// fixedDivFloor = floor(a*scalar / b).
+func fixedDivFloor(a, b, scalar *big.Int) *big.Int {
+	n := new(big.Int).Mul(a, scalar)
+	return n.Quo(n, b) // non-negative inputs: Quo's truncation is floor
+}
+
 // ceilDiv = ceil(n / d) for non-negative n, positive d.
 func ceilDiv(n, d *big.Int) *big.Int {
 	q, r := new(big.Int).QuoRem(n, d, new(big.Int))
