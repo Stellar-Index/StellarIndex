@@ -64,6 +64,10 @@ func Logger(logger *slog.Logger) Middleware {
 				attrs = append(attrs, "slow", true)
 			}
 
+			if reason := obs.DegradedReasonOf(w); reason != "" {
+				attrs = append(attrs, "degraded_reason", reason)
+			}
+
 			switch {
 			case rec.status >= 500:
 				logger.Error("http request", attrs...)

@@ -353,6 +353,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, p)
 	}
 
+	fr.note(w)
 	h.writeJSONAt(w, AccountPositionsView{
 		Account:       g,
 		Positions:     out,

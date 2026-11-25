@@ -106,6 +106,7 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 		Asset: asset, Changes: changes, NextCursor: page.next, ThroughLedger: wm, LowerBound: true,
 		CoverageNote: assetEntryChangesNote(wm, partial, lookupFailed),
 	}
+	fr.note(w)
 	h.writeJSONAt(w, out, fr.stale || h.movementsStale(ctx, wm), fr.degraded || lookupFailed, asOf)
 }
 

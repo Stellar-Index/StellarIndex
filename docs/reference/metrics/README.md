@@ -146,6 +146,12 @@ Counter, labels `route`, `flag` (`degraded` / `stale`).
 
 Responses served with `flags.degraded` (a carried-forward or partial body, sent with `Cache-Control: no-store`) or `flags.stale`, counted by `obs.HTTPMetrics` from the envelope writer and the cached asset detail and listing replays. These are 200s, so the 5xx availability SLO never sees a backend read that fails on every request; divide by `http_requests_total` for the route's degraded share. `route` is the route pattern, as in `http_requests_total`. Synthetic probes are excluded. Alerted by `stellarindex_api_degraded_responses_high` (more than half of a route's responses degraded for 30 min); `stale` is left to `stellarindex_api_cache_refresh_failing`.
 
+### `stellarindex_api_degraded_responses_total`
+
+Counter, labels `route`, `reason` (`refresh_failed` / `refresh_overrun` / `provisional` / `section_dropped` / `other`).
+
+The `flag="degraded"` share of `stellarindex_api_flagged_responses_total`, split by cause; `sum by (route)` of this equals that series. `refresh_failed`: the cached entry served was carried over a refresh that failed or was refused (the cache does not tell the two apart). `refresh_overrun`: the refresh in flight has outrun its budget. `provisional`: the cached payload declared itself provisional. `section_dropped`: a cold cache dropped a panel from the body. `other`: every path that sets `flags.degraded` without naming a cause (partial or unread upstream reads in the handlers). Age past the stale bound alone is `flag="stale"` and never appears here. The same reason is on the request log line as `degraded_reason`. Diagnostic only, not alerted: `stellarindex_api_degraded_responses_high` still fires on the flagged counter.
+
 ### `stellarindex_contracts_census_latest_day_timestamp_seconds`
 
 Gauge, no labels.

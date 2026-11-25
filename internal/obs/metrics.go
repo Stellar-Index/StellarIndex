@@ -32,6 +32,7 @@ func registerAppMetrics() {
 		HTTPRequestDuration,
 		HTTPRequestSuccessDuration,
 		APIFlaggedResponsesTotal,
+		APIDegradedResponsesTotal,
 		ContractsCensusLatestDay,
 		IngestGapLedgers,
 		IngestGapCount,

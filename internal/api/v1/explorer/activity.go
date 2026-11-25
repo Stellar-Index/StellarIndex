@@ -129,6 +129,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+	fr.note(w)
 	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded || out.CoverageNote != "", asOf)
 }
 
