@@ -41,6 +41,12 @@ type fakeInterestLake struct {
 	gaps                    []clickhouse.LendingInterestPoolGap
 	noReserveKeys           bool  // the pools hold no ResData key yet
 	refuse                  error // every mark refuses with it
+	underived               []clickhouse.LendingInterestUnderived
+	redo                    *clickhouse.LendingInterestRedo
+	seedHash                string // the seeded instance's WASM hash ("" = liV2)
+	staleSeed               bool   // seeds omit the reserve, as a lending_state missing its rows would
+	seedBefore              uint32
+	redoMarks               [][2]uint32
 
 	calls    []string
 	reads    [][2]uint32
@@ -107,6 +113,8 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		set(func() {
 			deleteSupersededInterest, setLendingInterestWM, setLendingInterestPoolWM, lendingInterestServerNow, lendingInterestRegistry, openLendingCodeHistory = l, m, n, o, p, q
 		})
+		u, v, w := lendingInterestUnderived, lendingInterestRedo, advanceLendingRedo
+		set(func() { lendingInterestUnderived, lendingInterestRedo, advanceLendingRedo = u, v, w })
 	}
 	t.Cleanup(func() {
 		for _, r := range saved {
@@ -127,15 +135,53 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		}
 		return []clickhouse.LendingInterestKey{inst, {Key: "res", Pool: liPool, Kind: lendinginterest.KindReserve, Asset: liAsset}}, nil
 	}
-	lendingInterestSeeds = func(_ context.Context, _ string, _ []clickhouse.LendingContract, _ []clickhouse.LendingInterestKey, h time.Time) (lendinginterest.Seeds, error) {
+	lendingInterestSeeds = func(_ context.Context, _ string, _ []clickhouse.LendingContract, _ []clickhouse.LendingInterestKey, h time.Time, before uint32) (clickhouse.LendingInterestSeedSet, error) {
 		f.seeds++
-		s := lendinginterest.Seeds{CommittedBefore: h, Configs: map[string][]uint32{liPool: {2_000_000}}}
-		for _, v := range f.versions {
+		f.seedBefore = before
+		s := clickhouse.LendingInterestSeedSet{Seeds: lendinginterest.Seeds{CommittedBefore: h, Configs: map[string][]uint32{liPool: {2_000_000}}}}
+		s.Rows = []clickhouse.LendingInterestStateRow{{
+			Key: clickhouse.LendingInterestKey{Pool: liPool, Kind: lendinginterest.KindConfig}, Hour: liT0, Ledger: 1, Before: true,
+			Value: lendinginterest.Version{BstopRate: 2_000_000, WasmHash: f.seedHash},
+		}}
+		if s.Rows[0].Value.WasmHash == "" {
+			s.Rows[0].Value.WasmHash = liV2
+		}
+		var last *lendinginterest.Version
+		for i, v := range f.versions {
 			if v.Kind == lendinginterest.KindReserve && v.CloseTime.Before(h) {
-				s.Reserves = map[lendinginterest.ReserveKey][]blend.ReserveData{{Pool: v.Pool, Asset: v.Asset}: {v.Reserve}}
+				last = &f.versions[i]
 			}
 		}
+		if last != nil && !f.staleSeed {
+			s.Reserves = map[lendinginterest.ReserveKey][]blend.ReserveData{{Pool: last.Pool, Asset: last.Asset}: {last.Reserve}}
+			s.Rows = append(s.Rows, clickhouse.LendingInterestStateRow{
+				Key:  clickhouse.LendingInterestKey{Pool: last.Pool, Asset: last.Asset, Kind: lendinginterest.KindReserve},
+				Hour: last.CloseTime.Truncate(time.Hour), Ledger: last.Ledger, Before: true, Value: *last,
+			})
+		}
 		return s, nil
+	}
+	lendingInterestUnderived = func(_ context.Context, _ string, pools []clickhouse.LendingContract, _ uint32) ([]clickhouse.LendingInterestUnderived, error) {
+		var out []clickhouse.LendingInterestUnderived
+		for _, u := range f.underived {
+			if slices.ContainsFunc(pools, func(c clickhouse.LendingContract) bool { return c.ID == u.Pool }) {
+				out = append(out, u)
+			}
+		}
+		return out, nil
+	}
+	lendingInterestRedo = func(context.Context, string) (clickhouse.LendingInterestRedo, bool, error) {
+		if f.redo == nil {
+			return clickhouse.LendingInterestRedo{}, false, nil
+		}
+		return *f.redo, true, nil
+	}
+	advanceLendingRedo = func(_ context.Context, _ string, gen, thru uint32) error {
+		f.redoMarks = append(f.redoMarks, [2]uint32{gen, thru})
+		if thru >= f.wm {
+			f.redo = nil
+		}
+		return nil
 	}
 	lendingInterestVersions = func(_ context.Context, _ string, lo, hi uint32, _ []clickhouse.LendingInterestKey, fn func(lendinginterest.Version) error) error {
 		f.reads = append(f.reads, [2]uint32{lo, hi})
@@ -235,6 +281,7 @@ func newFakeInterestLake() *fakeInterestLake {
 	for i, seq := range []uint32{199_991, 199_994, 199_998, 200_001, 200_005, 200_012} {
 		f.versions = append(f.versions, liReserve(seq, int64(i+1)))
 	}
+	f.versions[0].Created = true
 	return f
 }
 
@@ -374,7 +421,7 @@ func TestInterestPass_DryRunWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 0 || len(f.reads) != 2 || !strings.Contains(out, "would write") ||
-		!strings.Contains(out, "gross telescoped 3 (0 with excluded pairs not)") {
+		!strings.Contains(out, "gross telescoped 3 (0 around 0 excluded pairs, not recomputed)") {
 		t.Fatalf("dry run: calls %v reads %v log %q", f.calls, f.reads, out)
 	}
 }

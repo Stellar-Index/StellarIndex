@@ -1,0 +1,277 @@
+package clickhouse
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+)
+
+// ErrLendingInterestSeedUnproved reports a seed lending_state_hourly gave that is not its key's last stored version
+// before the window: rows are missing (a lending_state replay deleted them and has not yet rewritten them) or extra.
+var ErrLendingInterestSeedUnproved = errors.New("clickhouse: lending interest seed is not the lake's last version before the window")
+
+// lendingInterestCurrentQuery reads each key's latest change from the lake's current-state projection: a point
+// lookup on its (entry_type, key_xdr) sort key.
+const lendingInterestCurrentQuery = `SELECT key_xdr, ledger_seq FROM stellar.ledger_entries_current FINAL
+	WHERE entry_type = 'contract_data' AND key_xdr IN ?`
+
+// lendingInterestLastChangeQuery is each key's last stored change in [lo, hi]. max() needs no FINAL: the versions
+// FINAL collapses share ledger_seq, a sort-key column. The key_xdr bloom index and the ledger range prune the read.
+const lendingInterestLastChangeQuery = `SELECT key_xdr, max(ledger_seq) FROM stellar.ledger_entry_changes
+	WHERE ledger_seq BETWEEN ? AND ? AND entry_type = 'contract_data' AND change_type != 'state' AND key_xdr IN ?
+	GROUP BY key_xdr`
+
+// proveLendingInterestSeeds proves each seed row is its key's last stored version before ledger before, against the
+// lake alone. A key whose latest lake change is the seed's ledger is proved by that point lookup; any other is read
+// from the lake over [its seed ledger, before-1], once for all such keys from the oldest of their seeds.
+func proveLendingInterestSeeds(ctx context.Context, conn driver.Conn, got []lendingInterestSeedRow, before uint32) error {
+	if len(got) == 0 {
+		return nil
+	}
+	list := make([]any, 0, len(got))
+	for _, r := range got {
+		if r.Ledger >= before {
+			return fmt.Errorf("%w: key %s: seed at ledger %d is not before ledger %d", ErrLendingInterestSeedUnproved, r.Key, r.Ledger, before)
+		}
+		list = append(list, r.Key)
+	}
+	current, err := lendingInterestKeyLedgers(ctx, conn, lendingInterestCurrentQuery, clickhouse.GroupSet{Value: list})
+	if err != nil {
+		return err
+	}
+	var scan []lendingInterestSeedRow
+	lo := before
+	for _, r := range got {
+		if current[r.Key] != r.Ledger {
+			scan = append(scan, r)
+			lo = min(lo, r.Ledger)
+		}
+	}
+	if len(scan) == 0 {
+		return nil
+	}
+	keys := make([]any, 0, len(scan))
+	for _, r := range scan {
+		keys = append(keys, r.Key)
+	}
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"max_execution_time": 3600}))
+	last, err := lendingInterestKeyLedgers(ctx, conn, lendingInterestLastChangeQuery, lo, before-1, clickhouse.GroupSet{Value: keys})
+	if err != nil {
+		return err
+	}
+	for _, r := range scan {
+		if l := last[r.Key]; l != r.Ledger {
+			return fmt.Errorf("%w: key %s: lending_state_hourly's last row before ledger %d is at ledger %d, the lake's last "+
+				"version at %d (0: none from %d); finish the lending_state replay, then re-derive interest from its first ledger",
+				ErrLendingInterestSeedUnproved, r.Key, before, r.Ledger, l, lo)
+		}
+	}
+	return nil
+}
+
+// lendingInterestKeyLedgers runs a (key_xdr, ledger) query into a map.
+func lendingInterestKeyLedgers(ctx context.Context, conn driver.Conn, q string, args ...any) (map[string]uint32, error) {
+	rows, err := conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending interest seed proof: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]uint32{}
+	for rows.Next() {
+		var k string
+		var l uint32
+		if err := rows.Scan(&k, &l); err != nil {
+			return nil, fmt.Errorf("clickhouse: lending interest seed proof: %w", err)
+		}
+		out[k] = l
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse: lending interest seed proof: %w", err)
+	}
+	return out, nil
+}
+
+// LendingInterestUnderived is a pool deployed by a window's end of which lending_state_hourly holds no instance row.
+// Lake reports whether the lake holds the instance's change at the deploy ledger.
+type LendingInterestUnderived struct {
+	Pool     string
+	Deployed uint32
+	Lake     bool
+}
+
+const lendingInterestInstanceRowsQuery = `SELECT contract_id, max(ledger_seq) FROM stellar.lending_state_hourly FINAL
+	WHERE contract_id IN ? AND key_xdr IN ? AND hour <= ?
+	GROUP BY contract_id`
+
+const lendingInterestLakeInstanceQuery = `SELECT 1 FROM stellar.ledger_entry_changes
+	WHERE ledger_seq = ? AND entry_type = 'contract_data' AND change_type != 'state' AND key_xdr = ? LIMIT 1`
+
+// LendingInterestUnderivedPools lists the pools deployed by ledger hi whose instance lending_state_hourly holds no
+// row of at or after the deploy ledger through hi's hour. Every pool writes its instance at deploy, so the state pass
+// never derived such a pool: a pool holding an instance row but no reserve is empty, one holding nothing is unread.
+func LendingInterestUnderivedPools(ctx context.Context, addr string, pools []LendingContract, hi uint32) ([]LendingInterestUnderived, error) {
+	ps, err := LendingPrefixes(pools)
+	if err != nil {
+		return nil, err
+	}
+	inst := map[string]string{}
+	var ids, keys []any
+	for _, p := range ps {
+		if p.Key == "Instance" {
+			inst[p.Contract] = p.Prefix
+			ids, keys = append(ids, p.Contract), append(keys, p.Prefix)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("clickhouse: lending interest underived pools: no pools")
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	hour, ok, err := ledgerHour(ctx, conn, hi)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("clickhouse: lending interest underived pools through %d: the ledger is not in stellar.ledgers", hi)
+	}
+	have, err := lendingInterestKeyLedgers(ctx, conn, lendingInterestInstanceRowsQuery, clickhouse.GroupSet{Value: ids},
+		clickhouse.GroupSet{Value: keys}, hour)
+	if err != nil {
+		return nil, err
+	}
+	var out []LendingInterestUnderived
+	for _, c := range pools {
+		if c.Deployed > hi || (have[c.ID] != 0 && have[c.ID] >= c.Deployed) {
+			continue
+		}
+		u := LendingInterestUnderived{Pool: c.ID, Deployed: c.Deployed}
+		rows, err := conn.Query(ctx, lendingInterestLakeInstanceQuery, c.Deployed, inst[c.ID])
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: lending interest: pool %s instance at %d: %w", c.ID, c.Deployed, err)
+		}
+		u.Lake = rows.Next()
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: lending interest: pool %s instance at %d: %w", c.ID, c.Deployed, err)
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+// A lending_state replay rewrites state the interest rows from its first ledger on were derived from. It arms a redo
+// (generation g, from ledger L); the interest pass then refuses everything but a re-derive from at or below L, or
+// from the ledger after the redo's progress, until one reaches the watermark. Every row is max()-read, so each
+// generation has its own from and progress rows and the latest armed and done generations are counters.
+const (
+	lendingInterestRedoName       = "lending_interest_redo"
+	lendingInterestRedoDoneName   = "lending_interest_redo_done"
+	lendingInterestRedoFromPrefix = "lending_interest_redo_from:"
+	lendingInterestRedoThruPrefix = "lending_interest_redo_thru:"
+)
+
+// LendingInterestRedo is an armed redo: interest rows from From on must be re-derived; Thru is how far one has
+// rewritten them contiguously (0: not begun).
+type LendingInterestRedo struct {
+	Gen, From, Thru uint32
+}
+
+// Next is the highest -from a re-derive may start at and keep the redo contiguous.
+func (r LendingInterestRedo) Next() uint32 { return max(r.From, r.Thru+1) }
+
+// LendingInterestPendingRedo returns the armed redo no re-derive has completed, if any.
+func LendingInterestPendingRedo(ctx context.Context, addr string) (LendingInterestRedo, bool, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return LendingInterestRedo{}, false, err
+	}
+	defer func() { _ = conn.Close() }()
+	return pendingLendingInterestRedo(ctx, conn)
+}
+
+func pendingLendingInterestRedo(ctx context.Context, conn driver.Conn) (LendingInterestRedo, bool, error) {
+	rows, err := lendingInterestKeyLedgers(ctx, conn, `SELECT name, max(thru_ledger) FROM stellar.entry_history_watermark
+		WHERE startsWith(name, 'lending_interest_redo') GROUP BY name`)
+	if err != nil {
+		return LendingInterestRedo{}, false, err
+	}
+	gen := rows[lendingInterestRedoName]
+	if gen == 0 || gen <= rows[lendingInterestRedoDoneName] {
+		return LendingInterestRedo{}, false, nil
+	}
+	g := strconv.FormatUint(uint64(gen), 10)
+	from, ok := rows[lendingInterestRedoFromPrefix+g]
+	if !ok {
+		return LendingInterestRedo{}, false, fmt.Errorf("clickhouse: lending interest redo %d has no from row", gen)
+	}
+	return LendingInterestRedo{Gen: gen, From: from, Thru: rows[lendingInterestRedoThruPrefix+g]}, true, nil
+}
+
+// ArmLendingInterestRedo records, before a lending_state replay from ledger from writes, that interest rows from
+// there on must be re-derived; a pending redo widens to the lower ledger and restarts. A no-op while no interest row
+// reaches from.
+func ArmLendingInterestRedo(ctx context.Context, addr string, from uint32) error {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	wm, err := entryWatermarkRow(ctx, conn, lendingInterestWatermarkName)
+	if err != nil || wm < from {
+		return err
+	}
+	last, err := entryWatermarkRow(ctx, conn, lendingInterestRedoName)
+	if err != nil {
+		return err
+	}
+	p, pending, err := pendingLendingInterestRedo(ctx, conn)
+	if err != nil {
+		return err
+	}
+	if pending {
+		from = min(from, p.From)
+	}
+	gen := last + 1
+	// The from row first, so the generation never stands without it.
+	for _, row := range []struct {
+		name string
+		v    uint32
+	}{{lendingInterestRedoFromPrefix + strconv.FormatUint(uint64(gen), 10), from}, {lendingInterestRedoName, gen}} {
+		if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`, row.name, row.v); err != nil {
+			return fmt.Errorf("clickhouse: arm lending interest redo from %d: %w", from, err)
+		}
+	}
+	return nil
+}
+
+// AdvanceLendingInterestRedo records a re-derive of redo gen rewritten through thru, and the redo done once that
+// reaches the interest watermark.
+func AdvanceLendingInterestRedo(ctx context.Context, addr string, gen, thru uint32) error {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	g := strconv.FormatUint(uint64(gen), 10)
+	if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`,
+		lendingInterestRedoThruPrefix+g, thru); err != nil {
+		return fmt.Errorf("clickhouse: lending interest redo %s through %d: %w", g, thru, err)
+	}
+	wm, err := entryWatermarkRow(ctx, conn, lendingInterestWatermarkName)
+	if err != nil || thru < wm {
+		return err
+	}
+	if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`,
+		lendingInterestRedoDoneName, gen); err != nil {
+		return fmt.Errorf("clickhouse: lending interest redo %s done: %w", g, err)
+	}
+	return nil
+}

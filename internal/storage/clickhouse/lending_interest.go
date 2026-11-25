@@ -355,7 +355,7 @@ func lendingInterestVersion(k LendingInterestKey, c lendingInterestChange) (lend
 	}
 	v := lendinginterest.Version{
 		Pool: k.Pool, Kind: k.Kind, Asset: k.Asset, Ledger: c.Ledger, IntraLedgerSeq: c.Intra, TxHash: c.TxHash,
-		OpIndex: uint32(c.OpIndex), ChangeIndex: c.ChangeIndex, CloseTime: c.CloseTime.UTC(),
+		OpIndex: uint32(c.OpIndex), ChangeIndex: c.ChangeIndex, CloseTime: c.CloseTime.UTC(), Created: c.ChangeType == "created",
 	}
 	switch c.ChangeType {
 	case "removed":
@@ -445,8 +445,8 @@ func decodeLendingInterestEntry(k LendingInterestKey, entry string, v *lendingin
 }
 
 // lendingInterestSeedsQuery takes each key's last row before an hour.
-const lendingInterestSeedsQuery = `SELECT key_xdr, last.1, last.2 FROM (
-		SELECT key_xdr, argMax((ledger_seq, entry_xdr), hour) AS last
+const lendingInterestSeedsQuery = `SELECT key_xdr, last.1, last.2, last.3 FROM (
+		SELECT key_xdr, argMax((hour, ledger_seq, entry_xdr), hour) AS last
 		FROM stellar.lending_state_hourly FINAL
 		WHERE contract_id IN ? AND key_xdr IN ? AND hour < ?
 		GROUP BY key_xdr
@@ -455,23 +455,32 @@ const lendingInterestSeedsQuery = `SELECT key_xdr, last.1, last.2 FROM (
 // lendingInterestSeedRow is one key's last lending_state_hourly row before the seed hour.
 type lendingInterestSeedRow struct {
 	Key    string
+	Hour   time.Time
 	Ledger uint32
 	Entry  string
 }
 
-// LendingInterestSeeds reads each key's value in force at beforeHour from lending_state_hourly: the state a window
-// starting at that hour folds from. A reserve with no row before the hour gets no seed (it is new); a BLNT pool with
-// no ProtocolFees row, or whose last one is a delete, gets an explicit empty map. It refuses unless lending_state is
-// complete through every ledger closing before beforeHour.
+// LendingInterestSeedSet is a run's seeds and the lending_state rows they came from (Before set), each proved
+// against the lake to be its key's last stored version before the seed hour. A key with no row has none.
+type LendingInterestSeedSet struct {
+	lendinginterest.Seeds
+	Rows []LendingInterestStateRow
+}
+
+// LendingInterestSeeds reads each key's value in force at beforeHour, whose first ledger is before, from
+// lending_state_hourly: the state a window starting at that hour folds from. A reserve with no row before the hour
+// gets no seed (it is new); a BLNT pool with no ProtocolFees row, or whose last one is a delete, gets an explicit empty
+// map. It refuses unless lending_state is complete through every ledger closing before beforeHour, and unless the lake
+// holds each row's version as the key's last before ledger before (proveLendingInterestSeeds).
 func LendingInterestSeeds(ctx context.Context, addr string, pools []LendingContract, keys []LendingInterestKey,
-	beforeHour time.Time,
-) (lendinginterest.Seeds, error) {
+	beforeHour time.Time, before uint32,
+) (LendingInterestSeedSet, error) {
 	beforeHour = beforeHour.UTC()
 	if !beforeHour.Equal(beforeHour.Truncate(time.Hour)) {
-		return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seeds: %s is not an hour boundary", beforeHour)
+		return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seeds: %s is not an hour boundary", beforeHour)
 	}
 	if len(pools) == 0 || len(keys) == 0 {
-		return lendinginterest.Seeds{}, errors.New("clickhouse: lending interest seeds: no pools or keys")
+		return LendingInterestSeedSet{}, errors.New("clickhouse: lending interest seeds: no pools or keys")
 	}
 	ids := make([]any, 0, len(pools))
 	for _, c := range pools {
@@ -483,27 +492,30 @@ func LendingInterestSeeds(ctx context.Context, addr string, pools []LendingContr
 	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
-		return lendinginterest.Seeds{}, err
+		return LendingInterestSeedSet{}, err
 	}
 	defer func() { _ = conn.Close() }()
 	if err := lendingStateBefore(ctx, conn, beforeHour); err != nil {
-		return lendinginterest.Seeds{}, err
+		return LendingInterestSeedSet{}, err
 	}
 	rows, err := conn.Query(ctx, lendingInterestSeedsQuery, clickhouse.GroupSet{Value: ids}, clickhouse.GroupSet{Value: list}, beforeHour)
 	if err != nil {
-		return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
+		return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var got []lendingInterestSeedRow
 	for rows.Next() {
 		var r lendingInterestSeedRow
-		if err := rows.Scan(&r.Key, &r.Ledger, &r.Entry); err != nil {
-			return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
+		if err := rows.Scan(&r.Key, &r.Hour, &r.Ledger, &r.Entry); err != nil {
+			return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
 		}
 		got = append(got, r)
 	}
 	if err := rows.Err(); err != nil {
-		return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
+		return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
+	}
+	if err := proveLendingInterestSeeds(ctx, conn, got, before); err != nil {
+		return LendingInterestSeedSet{}, err
 	}
 	return lendingInterestSeeds(pools, keys, got, beforeHour)
 }
@@ -512,8 +524,9 @@ func LendingInterestSeeds(ctx context.Context, addr string, pools []LendingContr
 // order unknown, so each key has one candidate.
 func lendingInterestSeeds(pools []LendingContract, keys []LendingInterestKey, got []lendingInterestSeedRow,
 	beforeHour time.Time,
-) (lendinginterest.Seeds, error) {
-	s := lendinginterest.Seeds{CommittedBefore: beforeHour}
+) (LendingInterestSeedSet, error) {
+	out := LendingInterestSeedSet{Seeds: lendinginterest.Seeds{CommittedBefore: beforeHour}}
+	s := &out.Seeds
 	byKey := make(map[string]LendingInterestKey, len(keys))
 	for _, k := range keys {
 		byKey[k.Key] = k
@@ -521,17 +534,18 @@ func lendingInterestSeeds(pools []LendingContract, keys []LendingInterestKey, go
 	for _, r := range got {
 		k, ok := byKey[r.Key]
 		if !ok {
-			return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seed for unrequested key %s", r.Key)
+			return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seed for unrequested key %s", r.Key)
 		}
 		var v lendinginterest.Version
 		if r.Entry == "" {
 			if err := lendingInterestDeleted(k); err != nil {
-				return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seed: ledger %d key %s: %w", r.Ledger, r.Key, err)
+				return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seed: ledger %d key %s: %w", r.Ledger, r.Key, err)
 			}
 			v.Fees = noBLNTFees()
 		} else if err := decodeLendingInterestEntry(k, r.Entry, &v); err != nil {
-			return lendinginterest.Seeds{}, fmt.Errorf("clickhouse: lending interest seed: ledger %d key %s: %w", r.Ledger, r.Key, err)
+			return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seed: ledger %d key %s: %w", r.Ledger, r.Key, err)
 		}
+		out.Rows = append(out.Rows, LendingInterestStateRow{Key: k, Hour: r.Hour.UTC(), Ledger: r.Ledger, Before: true, Value: v})
 		switch k.Kind {
 		case lendinginterest.KindReserve:
 			seedOne(&s.Reserves, lendinginterest.ReserveKey{Pool: k.Pool, Asset: k.Asset}, v.Reserve)
@@ -544,14 +558,14 @@ func lendingInterestSeeds(pools []LendingContract, keys []LendingInterestKey, go
 	for _, c := range pools {
 		p, err := lendingInterestProtocol(c)
 		if err != nil {
-			return lendinginterest.Seeds{}, err
+			return LendingInterestSeedSet{}, err
 		}
 		if _, ok := s.Fees[c.ID]; !ok && p == lendinginterest.BLNT {
 			// Empty, not absent: Fold reads an absent entry as unknown fees and refuses the pair.
 			seedOne(&s.Fees, c.ID, noBLNTFees())
 		}
 	}
-	return s, nil
+	return out, nil
 }
 
 // seedOne sets key k's only candidate.

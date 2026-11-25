@@ -46,6 +46,9 @@ var (
 	setLendingInterestWM     = clickhouse.SetLendingInterestWatermark
 	setLendingInterestPoolWM = clickhouse.SetLendingInterestPoolWatermark
 	lendingInterestServerNow = clickhouse.ServerNow
+	lendingInterestUnderived = clickhouse.LendingInterestUnderivedPools
+	lendingInterestRedo      = clickhouse.LendingInterestPendingRedo
+	advanceLendingRedo       = clickhouse.AdvanceLendingInterestRedo
 	lendingInterestRegistry  = lendingRegistry
 	openLendingCodeHistory   = func(ctx context.Context, addr string) (lendingCodeHistory, func(), error) {
 		r, err := clickhouse.NewExplorerReader(ctx, addr)
@@ -89,7 +92,7 @@ type interestPlan struct {
 // chunks under the heavy-job wrapper, never inside the 10-minute timer's unit.
 const lendingInterestTimerBacklog = lendingWindow
 
-// interestLock serialises interest runs; its own lock, so a backfill holding it for hours never blocks the state pass.
+// interestLock serialises interest runs, beside -lock-file.
 const interestLock = lendingInterestJob + ".lock"
 
 // timerInterest is the pass as lending-state.timer runs it: no -interest-only, -interest-init or -interest-pool.
@@ -97,9 +100,19 @@ func (r lendingRun) timerInterest() bool {
 	return !r.interest.only && !r.interest.init && r.interest.pool == ""
 }
 
-// lockedInterestPass runs the interest pass under its own lock, beside -lock-file. The timer's pass skips while
-// another run holds it; an explicit interest run refuses.
+// lockedInterestPass runs the interest pass holding -lock-file shared, so no lending_state run (which holds it
+// exclusive) changes the rows it reads, and its own lock exclusive. The timer's pass skips while either is held
+// against it; an explicit interest run refuses.
 func (r lendingRun) lockedInterestPass(ctx context.Context, log io.Writer) error {
+	unlockState, err := acquireSharedLock(lendingJob, r.lockFile)
+	if err != nil {
+		if r.timerInterest() && errors.Is(err, syscall.EWOULDBLOCK) {
+			_, _ = fmt.Fprintf(log, "%s: skipped, a lending_state run holds its lock: %v\n", lendingInterestJob, err)
+			return nil
+		}
+		return err
+	}
+	defer unlockState()
 	unlock, err := acquireRollupLock(lendingInterestJob, filepath.Join(filepath.Dir(r.lockFile), interestLock))
 	if err != nil {
 		if r.timerInterest() && errors.Is(err, syscall.EWOULDBLOCK) {
@@ -154,8 +167,8 @@ func (r lendingRun) deriveInterest(ctx context.Context, log io.Writer, wm uint32
 			return nil
 		}
 	}
-	plan, err := r.interestPlan(ctx, wm)
-	if err != nil {
+	plan, skip, err := r.planUnderRedo(ctx, log, wm)
+	if err != nil || skip {
 		return err
 	}
 	if plan.last < plan.start {
@@ -178,6 +191,12 @@ func (r lendingRun) deriveInterest(ctx context.Context, log io.Writer, wm uint32
 		return err
 	}
 	return p.run(ctx, plan.start, plan.last)
+}
+
+// redoes reports whether the run may proceed under a pending redo: a re-derive that keeps the redo contiguous, or a
+// pool backfill, whose rows come from the replayed state.
+func (r lendingRun) redoes(redo clickhouse.LendingInterestRedo) bool {
+	return r.interest.pool != "" || (r.interest.only && r.from != 0 && r.from <= redo.Next())
 }
 
 // interestHeartbeat sits beside an explicit -heartbeat path, else in the default textfile directory.
@@ -368,6 +387,11 @@ type interestCarry struct {
 	seed   lendinginterest.Seeds
 	seeded bool
 	from   uint32
+	// seedRows are the proved seeds: while seedCheck, the first checked window's lending_state values before it.
+	seedRows  []clickhouse.LendingInterestStateRow
+	seedCheck bool
+	known     map[string]bool // keys seeded or read: any other key's first version must be its creation
+	derived   map[string]bool // pools whose instance lending_state is proved to hold
 }
 
 // run derives [start, last] window by window; start is the first ledger of an hour.
@@ -397,6 +421,10 @@ func (p *interestPass) run(ctx context.Context, start, last uint32) error {
 			hi = lo + (hi-lo)/2
 			err = p.window(ctx, &st, lo, hi)
 		}
+		if errors.Is(err, errInterestWindowTooLarge) {
+			err = fmt.Errorf("%w: ledger %d with the carried open hour holds over %d versions; the fold holds an hour whole",
+				err, lo, lendingInterestMaxVersions)
+		}
 		if err != nil {
 			return fmt.Errorf("%s: window [%d,%d]: %w — the watermark holds at %d", lendingInterestJob, lo, hi, err, st.from-1)
 		}
@@ -419,18 +447,27 @@ func (p *interestPass) window(ctx context.Context, st *interestCarry, lo, hi uin
 	if err != nil {
 		return err
 	}
+	if err := p.checkDerived(ctx, st, hi); err != nil {
+		return err
+	}
 	if !st.seeded {
 		// Seeds once per run; later windows continue from the carry and read from hi+1, never both.
-		if st.seed, err = lendingInterestSeeds(ctx, p.addr, p.pools, keys, st.seed.CommittedBefore); err != nil {
+		if err := p.seedRun(ctx, st, keys, lo); err != nil {
 			return err
 		}
-		st.seeded = true
 	}
-	vs, err := p.readVersions(ctx, keys, lo, hi)
+	if n := len(st.seed.Pending); n >= lendingInterestMaxVersions {
+		return fmt.Errorf("lending interest: the open hour from %s carries %d versions, over the bound %d: the fold holds an hour whole",
+			st.seed.CommittedBefore.Format(time.RFC3339), n, lendingInterestMaxVersions)
+	}
+	vs, err := p.readVersions(ctx, keys, lo, hi, len(st.seed.Pending))
 	if err != nil {
 		return err
 	}
 	if err := checkInstanceCode(p.code, vs); err != nil {
+		return err
+	}
+	if err := st.checkNewKeys(vs); err != nil {
 		return err
 	}
 	commitBefore, thru, err := p.commitPoint(ctx, hi)
@@ -450,10 +487,14 @@ func (p *interestPass) window(ctx context.Context, st *interestCarry, lo, hi uin
 	if err != nil {
 		return err
 	}
+	if st.seedCheck {
+		state = withSeedsBefore(state, st.seedRows)
+	}
 	checked, err := checkLendingInterest(p.opts.Protocols, rows, state, append(st.seed.Pending, vs...), from, commitBefore)
 	if err != nil {
 		return err
 	}
+	st.seedRows, st.seedCheck = nil, false
 	reportInterestWindow(p.log, from, commitBefore, rows, checked, p.dryRun)
 	if !p.dryRun {
 		if err := p.write(ctx, rows, from, commitBefore, st.from, thru); err != nil {
@@ -478,14 +519,14 @@ func (p *interestPass) stateRows(ctx context.Context, keys []clickhouse.LendingI
 	return nil, nil
 }
 
-// readVersions reads [lo, hi]'s versions, halving a read over the lake's memory limit; over
-// lendingInterestMaxVersions it stops with errInterestWindowTooLarge.
-func (p *interestPass) readVersions(ctx context.Context, keys []clickhouse.LendingInterestKey, lo, hi uint32) ([]lendinginterest.Version, error) {
+// readVersions reads [lo, hi]'s versions, halving a read over the lake's memory limit; with the carried open hour's
+// versions over lendingInterestMaxVersions it stops with errInterestWindowTooLarge.
+func (p *interestPass) readVersions(ctx context.Context, keys []clickhouse.LendingInterestKey, lo, hi uint32, carried int) ([]lendinginterest.Version, error) {
 	var vs []lendinginterest.Version
 	err := splitOnMemoryLimit(lo, hi, "interest window", p.log, func(lo, hi uint32) error {
 		var got []lendinginterest.Version
 		if err := lendingInterestVersions(ctx, p.addr, lo, hi, keys, func(v lendinginterest.Version) error {
-			if len(vs)+len(got) >= lendingInterestMaxVersions {
+			if carried+len(vs)+len(got) >= lendingInterestMaxVersions {
 				return errInterestWindowTooLarge
 			}
 			got = append(got, v)
@@ -571,8 +612,8 @@ func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginter
 	}
 	_, _ = fmt.Fprintf(log, "%s: hours [%s, %s): %s %d rows; versions %d, accrued %d, accrual errors %d, unordered %d; "+
 		"unreconciled %d (b_rate mismatches %d, fee mismatches %d, rows with a backstop residual %d), fee-only moves %d; "+
-		"checked: chain endpoints %d rows, gross telescoped %d (%d with excluded pairs not), fee carry %d (%d not)\n",
+		"checked: chain endpoints %d rows, gross telescoped %d (%d around %d excluded pairs, not recomputed), fee carry %d (%d not)\n",
 		lendingInterestJob, from.Format(time.RFC3339), to.Format(time.RFC3339), verb, len(rows), versions, accrued, errs, unordered,
-		unreconciled, bRate, feeMis, residualRows, feeOnly, c.telescoped+c.telescopeSkipped, c.telescoped, c.telescopeSkipped,
+		unreconciled, bRate, feeMis, residualRows, feeOnly, c.telescoped, c.telescoped, c.telescopeSplit, c.excludedPairs,
 		c.feeChecked, c.feeSkipped)
 }

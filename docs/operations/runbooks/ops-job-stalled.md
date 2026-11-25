@@ -206,10 +206,11 @@ Check and fix:
 Check and fix (operator commands: the runbook in `deploy/clickhouse/lending_interest.sql`):
 
 1. `journalctl -u lending-state.service -n 50 | grep 'lending interest'`.
-2. `backfill incomplete (N ledgers behind; run the backfill chunks)`: the timer's pass catches up at most one 100,000-ledger window. Run the backfill chunks by hand under `run-heavy-job.sh` until a run reports the tip. They take only the interest lock, so the timer's state pass keeps running.
+2. `backfill incomplete (N ledgers behind; run the backfill chunks)`: the timer's pass catches up at most one 100,000-ledger window. Run the backfill chunks by hand under `run-heavy-job.sh` until a run reports the tip. Each holds the state lock shared, so while one runs the timer's state pass logs `skipped, an interest run is reading lending_state` and its interest pass skips; keep chunks short (`-interest-max-windows`) so the state pass catches up between them.
 3. `skipped, another interest run holds the lock`: a manual chunk or re-derive is running; that is progress while its cursor rises.
-4. A refused window names its reason: an unmapped or mismatched WASM hash, an upgrade ledger, an instance whose executable the code history does not hold (`contract_instance_changes` behind the lake), a failed check against `lending_state_hourly`, or `bring each up with -interest-only -interest-pool <pool> -write` (a pool added after the watermark). The watermark holds until it is fixed.
-5. During the initial backfill this alert fires until the chunks reach the tip.
+4. `a lending_state replay rewrote the state from ledger L`: run `-interest-only -from L -write` (then from each run's end) until a run reaches the tip; the redo then clears.
+5. A refused window names its reason: an unmapped or mismatched WASM hash, an upgrade ledger, an instance whose executable the code history does not hold (`contract_instance_changes` behind the lake), a failed check against `lending_state_hourly`, a seed the lake does not prove (`not the lake's last version before the window`: finish the lending_state replay), `lending_state has not derived pool P` (replay lending_state from P's deploy ledger), or `bring each up with -interest-only -interest-pool <pool> -write` (a pool added after the watermark). The watermark holds until it is fixed.
+6. Expected during the `-interest-init` backfill: the cursor starts at the floor, so this fires until the chunks reach the tip. Silence it for the backfill's duration and confirm `progress_cursor` keeps rising; the expression is left as is so a stuck backfill still fires.
 
 ## stellarindex_catchup_lane_failed
 

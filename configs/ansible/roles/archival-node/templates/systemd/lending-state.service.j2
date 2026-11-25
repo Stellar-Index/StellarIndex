@@ -10,8 +10,9 @@
 # the lake's contiguous tip, advancing the watermark only for a window it
 # proved complete. A second firing while one runs exits at once on the flock.
 # Then, once initialised, it extends stellar.lending_interest_hourly by at
-# most one window under its own lock; a larger lag, or a manual interest run
-# holding that lock, is logged and skipped (deploy/clickhouse/lending_interest.sql).
+# most one window under its own lock, holding the state lock shared; a larger
+# lag, or a manual interest run holding either lock, is logged and skipped, as
+# is the state pass beside a manual interest run (deploy/clickhouse/lending_interest.sql).
 
 [Unit]
 Description=Stellar Index — lending state history catch-up
