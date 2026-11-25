@@ -193,13 +193,14 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
 (
     ledger_seq   UInt32,
     close_time   DateTime('UTC'),
-    tx_hash      String,
+    tx_hash      String CODEC(ZSTD(3)),
     op_index     Int32,
     change_index UInt32,
     change_type  LowCardinality(String),
     entry_type   LowCardinality(String),
     -- CODEC(ZSTD(3)) must match the live ALTER (measured 1.75x over the LZ4
-    -- default on entry_xdr).
+    -- default on entry_xdr). The codecs on tx_hash, account_id, asset, balance and
+    -- intra_ledger_seq match deploy/clickhouse/ledger_entry_changes_codecs.sql.
     key_xdr      String CODEC(ZSTD(3)),
     entry_xdr    String CODEC(ZSTD(3)),
     -- ingested_at sits HERE, before the ADR-0038 columns below, because that is the
@@ -213,11 +214,11 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- tx_hash, ...). asset has none: asset-holder reads use ledger_entries_current's
     -- idx_lecur_asset; WHERE asset=? here scans every part.
     -- Existing rows read '' until a ch re-derive repopulates them.
-    account_id   String DEFAULT '',
-    asset        String DEFAULT '',
+    account_id   String DEFAULT '' CODEC(ZSTD(3)),
+    asset        String DEFAULT '' CODEC(ZSTD(3)),
     -- Stroop balance for account (native) + trustline entries, 0 otherwise; lets
     -- top-holder reads aggregate in SQL without decoding XDR.
-    balance      Int64 DEFAULT 0,
+    balance      Int64 DEFAULT 0 CODEC(ZSTD(3)),
     -- Position of this change within its ledger's canonical entry-change walk: a
     -- per-LEDGER monotonic counter (change_index restarts per transaction),
     -- assigned in LEDGER-WIDE PHASE order:
@@ -246,7 +247,7 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- as must the projection's stale rows. Procedure (orphans: step 5):
     -- docs/operations/runbooks/entry-walk-renumbering.md
     -- (see also migrations/0120).
-    intra_ledger_seq UInt32 DEFAULT 0,
+    intra_ledger_seq UInt32 DEFAULT 0 CODEC(Delta, ZSTD(3)),
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     -- key_xdr is not in the sort key; the bloom prunes point lookups. 0.01 matches
     -- r1: a probe reads the whole index, so a tighter FP is slower and no reader
