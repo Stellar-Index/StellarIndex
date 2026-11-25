@@ -538,6 +538,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
+	fr.note(w)
 	if asCSV {
 		h.writeAssetHoldersCSV(w, r, out, stale || fr.stale, fr.degraded)
 		return

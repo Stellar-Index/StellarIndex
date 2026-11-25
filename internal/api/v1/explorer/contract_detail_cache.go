@@ -118,6 +118,9 @@ func (e contractDetailEntry) servedStale(key string) bool {
 func (c *contractDetailCache) freshness(key string, e contractDetailEntry) servedFreshness {
 	fr := expiredFreshness(e.servedStale(key), e.refreshFailed, c.flight.overran(key, contractDetailRefreshTimeout))
 	if p, ok := e.v.(provisionalPayload); ok && p.provisional() {
+		if !fr.degraded {
+			fr.reason = obs.DegradedProvisional
+		}
 		fr.degraded = true
 	}
 	return fr

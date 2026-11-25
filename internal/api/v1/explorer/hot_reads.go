@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -53,12 +54,29 @@ func (f *perKeyFlight) overran(key string, budget time.Duration) bool {
 // servedFreshness is an SWR serve's two verdicts. Age past the bound alone is stale: the refresh the read starts has not failed.
 // degraded means the body is carried forward over a failure (the last refresh failed or was skipped, the one running overran
 // its budget, or the payload is provisional), or a section was dropped; on a served old entry it implies stale.
-type servedFreshness struct{ stale, degraded bool }
+// reason names which of those it is (an obs.Degraded* value) whenever degraded is set.
+type servedFreshness struct {
+	stale, degraded bool
+	reason          string
+}
+
+// note records fr's degraded reason on w's metrics recorder; call it before writing the response.
+func (fr servedFreshness) note(w http.ResponseWriter) {
+	if fr.degraded {
+		obs.MarkDegradedReason(w, fr.reason)
+	}
+}
 
 // expiredFreshness is the verdict for an entry served past its TTL, stale per [swrServedStale].
 func expiredFreshness(stale, refreshFailed, overran bool) servedFreshness {
-	degraded := refreshFailed || overran
-	return servedFreshness{stale: stale || degraded, degraded: degraded}
+	fr := servedFreshness{stale: stale || refreshFailed || overran, degraded: refreshFailed || overran}
+	switch {
+	case refreshFailed:
+		fr.reason = obs.DegradedRefreshFailed
+	case overran:
+		fr.reason = obs.DegradedRefreshOverrun
+	}
+	return fr
 }
 
 // begin returns the flight for key and whether the caller owns it. Owners must call end (with the compute's error); waiters select on done.

@@ -180,6 +180,7 @@ func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 		if !fresh {
 			fr = swrFreshness(e.cachedAt, contractStatsTTL, contractStatsRefreshTimeout, e.refreshFailed, &h.contractStats.flight, contractStatsKey)
 		}
+		fr.note(w)
 		h.writeCachedJSON(r.Context(), w, e.view, fr.stale, fr.degraded, e.cachedAt)
 		return
 	}

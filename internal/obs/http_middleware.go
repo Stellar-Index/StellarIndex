@@ -166,6 +166,7 @@ type statusRecorder struct {
 	wrote    bool
 	degraded bool
 	stale    bool
+	reason   string
 }
 
 // MarkResponseFlags tells [HTTPMetrics] the response carries flags.degraded or flags.stale. It walks
@@ -191,6 +192,11 @@ func MarkResponseFlags(w http.ResponseWriter, degraded, stale bool) {
 func countFlaggedResponse(route string, rec *statusRecorder) {
 	if rec.degraded {
 		APIFlaggedResponsesTotal.WithLabelValues(route, "degraded").Inc()
+		reason := rec.reason
+		if reason == "" {
+			reason = DegradedOther
+		}
+		APIDegradedResponsesTotal.WithLabelValues(route, reason).Inc()
 	}
 	if rec.stale {
 		APIFlaggedResponsesTotal.WithLabelValues(route, "stale").Inc()

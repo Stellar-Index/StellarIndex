@@ -163,6 +163,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Seq, last.TxHash, last.OpIndex, last.EventIndex)
 	}
 	if !cur.IsSet() {
+		fr.note(w)
 		h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded || apiDegraded, asOf)
 		return
 	}

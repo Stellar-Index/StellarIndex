@@ -3,6 +3,8 @@ package explorer
 import (
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Every explorer SWR cache judges an expired serve through swrFreshness or contractDetailCache.freshness, so a new cache
@@ -20,9 +22,9 @@ func TestSWRFreshness_AgeIsStaleFailureIsDegraded(t *testing.T) {
 		{"just past ttl, healthy refresh", ttl + time.Second, false, time.Millisecond, servedFreshness{}},
 		{"past bound, refresh just started", bound + time.Hour, false, time.Millisecond, servedFreshness{stale: true}},
 		{"past bound, no refresh in flight", bound + time.Hour, false, 0, servedFreshness{stale: true}},
-		{"inside bound, last refresh failed or refused", ttl + time.Second, true, 0, servedFreshness{stale: true, degraded: true}},
-		{"past bound, last refresh failed", bound + time.Hour, true, time.Millisecond, servedFreshness{stale: true, degraded: true}},
-		{"refresh running past its budget", bound + time.Hour, false, budget + time.Second, servedFreshness{stale: true, degraded: true}},
+		{"inside bound, last refresh failed or refused", ttl + time.Second, true, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
+		{"past bound, last refresh failed", bound + time.Hour, true, time.Millisecond, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
+		{"refresh running past its budget", bound + time.Hour, false, budget + time.Second, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshOverrun}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,9 +54,9 @@ func TestContractDetailFreshness_AgeIsStaleFailureIsDegraded(t *testing.T) {
 		}{
 			{"just past ttl, healthy refresh", "v", detailTTLForKey(key) + time.Second, false, time.Millisecond, servedFreshness{}},
 			{"past bound, refresh just started", "v", bound + time.Minute, false, time.Millisecond, servedFreshness{stale: true}},
-			{"last refresh failed or refused", "v", detailTTLForKey(key) + time.Second, true, 0, servedFreshness{stale: true, degraded: true}},
-			{"refresh running past its budget", "v", bound + time.Hour, false, contractDetailRefreshTimeout + time.Second, servedFreshness{stale: true, degraded: true}},
-			{"provisional payload", provisionalTestPayload{}, time.Second, false, 0, servedFreshness{stale: true, degraded: true}},
+			{"last refresh failed or refused", "v", detailTTLForKey(key) + time.Second, true, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshFailed}},
+			{"refresh running past its budget", "v", bound + time.Hour, false, contractDetailRefreshTimeout + time.Second, servedFreshness{stale: true, degraded: true, reason: obs.DegradedRefreshOverrun}},
+			{"provisional payload", provisionalTestPayload{}, time.Second, false, 0, servedFreshness{stale: true, degraded: true, reason: obs.DegradedProvisional}},
 		}
 		for _, tc := range cases {
 			t.Run(key+"/"+tc.name, func(t *testing.T) {

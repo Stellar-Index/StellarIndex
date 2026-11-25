@@ -112,6 +112,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 			Type:       contractTypeLabel(types, c.ContractID),
 		}
 	}
+	fr.note(w)
 	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 
@@ -234,6 +235,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 			Protocol:   attribution[e.ContractID],
 		}
 	}
+	fr.note(w)
 	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 
@@ -301,6 +303,7 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	for i, ver := range versions {
 		out.Versions[i] = ContractCodeVersionV{Ledger: ver.Ledger, CloseTime: ver.CloseTime.UTC().Format(time.RFC3339), WasmHash: ver.WasmHash}
 	}
+	fr.note(w)
 	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 

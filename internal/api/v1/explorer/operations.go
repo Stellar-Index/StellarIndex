@@ -103,7 +103,7 @@ func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh bool, fr servedFres
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stats == nil {
-		return nil, false, servedFreshness{degraded: true} // nothing old is served, the section is dropped
+		return nil, false, servedFreshness{degraded: true, reason: obs.DegradedSectionDropped} // nothing old is served, the section is dropped
 	}
 	if time.Since(c.at) < opTypeStatsTTL {
 		return c.stats, true, servedFreshness{}
@@ -601,6 +601,8 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ts := view.opTypeStatsFreshness
+		fr.note(w)
+		ts.note(w)
 		h.writeCachedJSON(ctx, w, sliceOperationsView(view, limit), fr.stale || ts.stale, fr.degraded || ts.degraded || view.CoverageNote != "", asOf)
 		return
 	}
