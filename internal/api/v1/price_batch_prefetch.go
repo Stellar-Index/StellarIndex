@@ -17,6 +17,9 @@ type (
 	triangulatedPrefetcher interface {
 		PrefetchTriangulatedVWAP(context.Context, []readset.PairRead)
 	}
+	change24hPrefetcher interface {
+		PrefetchUSDPrice24hAgo(context.Context, []canonical.Asset)
+	}
 )
 
 const (
@@ -42,7 +45,7 @@ func (s *Server) prefetchBatch(ctx context.Context, ids []string, quote canonica
 	if len(ids) < batchPrefetchMinIDs {
 		return ctx
 	}
-	fills := s.batchPrefetchFills()
+	fills := s.batchPrefetchFills(quote)
 	if len(fills) == 0 {
 		return ctx
 	}
@@ -77,11 +80,27 @@ func (s *Server) prefetchBatch(ctx context.Context, ids []string, quote canonica
 	return readset.With(ctx, m)
 }
 
-// batchPrefetchFills is every prefetch capability this server's seams have, each with the windowed reads it takes.
-func (s *Server) batchPrefetchFills() []func(context.Context, []readset.PairRead) {
-	var out []func(context.Context, []readset.PairRead)
+// batchPrefetchFills is every prefetch capability this server's seams have, each with the windowed reads it takes. The
+// store fills run one after the other, so a batch never has more than one fill's statements in flight.
+func (s *Server) batchPrefetchFills(quote canonical.Asset) []func(context.Context, []readset.PairRead) {
+	var out, store []func(context.Context, []readset.PairRead)
 	if p, ok := s.Prices.(latestPricePrefetcher); ok {
-		out = append(out, func(ctx context.Context, reads []readset.PairRead) { p.PrefetchLatestPrices(ctx, unwindowed(reads)) })
+		store = append(store, func(ctx context.Context, reads []readset.PairRead) { p.PrefetchLatestPrices(ctx, unwindowed(reads)) })
+	}
+	// batchChange24h reads an anchor only for a USD-quoted row, under the row's id or the alias its price was served under.
+	if p, ok := s.Change24h.(change24hPrefetcher); ok && quote.Equal(defaultPriceQuote) {
+		store = append(store, func(ctx context.Context, reads []readset.PairRead) { p.PrefetchUSDPrice24hAgo(ctx, readBases(reads)) })
+	}
+	if len(store) > 0 {
+		out = append(out, func(ctx context.Context, reads []readset.PairRead) {
+			for i, fill := range store {
+				// A fill starting this late would be cut off at MaxAge mid-statement, its answers expiring as they land.
+				if m := readset.From(ctx); i > 0 && m != nil && m.Age() > batchPrefetchBudget {
+					return
+				}
+				fill(ctx, reads)
+			}
+		})
 	}
 	if p, ok := s.Triangulated.(triangulatedPrefetcher); ok {
 		out = append(out, p.PrefetchTriangulatedVWAP)
@@ -112,6 +131,19 @@ func batchPrefetchReads(ids []string, quote canonical.Asset) (reads []readset.Pa
 		}
 	}
 	return reads, true
+}
+
+// readBases is each distinct base spelling of reads, in order.
+func readBases(reads []readset.PairRead) []canonical.Asset {
+	seen := map[string]bool{}
+	var out []canonical.Asset
+	for _, r := range reads {
+		if k := r.Base.String(); !seen[k] {
+			seen[k] = true
+			out = append(out, r.Base)
+		}
+	}
+	return out
 }
 
 func unwindowed(reads []readset.PairRead) []readset.PairRead {
