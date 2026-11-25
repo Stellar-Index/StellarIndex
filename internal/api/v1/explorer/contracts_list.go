@@ -79,7 +79,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 
 	// Snapshot-served: a stale rung is a 200 with flags.stale and its real as_of while a detached
 	// re-aggregation runs; only a never-computed rung can time out, and a retry lands warm.
-	rows, types, since, asOf, degraded, err := h.recentContractsCached(ctx, window, limit)
+	rows, types, since, asOf, fr, err := h.recentContractsCached(ctx, window, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -112,7 +112,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 			Type:       contractTypeLabel(types, c.ContractID),
 		}
 	}
-	h.writeCachedJSON(ctx, w, out, degraded, degraded, asOf)
+	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 
 // ContractEdge is one edge of a contract's interaction map.
@@ -180,7 +180,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		edges []clickhouse.ContractEdgeRow
 		since uint32
 	}
-	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, window), func(rctx context.Context) (any, error) {
+	v, asOf, fr, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, window), func(rctx context.Context) (any, error) {
 		s, werr := h.windowFloorLedger(rctx, window)
 		if werr != nil {
 			return nil, werr
@@ -234,7 +234,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 			Protocol:   attribution[e.ContractID],
 		}
 	}
-	h.writeCachedJSON(ctx, w, out, degraded, degraded, asOf)
+	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 
 // ContractCodeVersionV is one entry in a contract's code-upgrade timeline.
@@ -271,7 +271,7 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 
 	// Served via the shared contract-detail SWR cache — same rationale as
 	// ContractInteractions above.
-	v, asOf, degraded, err := h.contractDetailCached(ctx, "ch:"+cid, func(rctx context.Context) (any, error) {
+	v, asOf, fr, err := h.contractDetailCached(ctx, "ch:"+cid, func(rctx context.Context) (any, error) {
 		full, cerr := h.Reader.ContractCodeHistory(rctx, cid)
 		if cerr != nil {
 			return nil, cerr
@@ -301,7 +301,7 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	for i, ver := range versions {
 		out.Versions[i] = ContractCodeVersionV{Ledger: ver.Ledger, CloseTime: ver.CloseTime.UTC().Format(time.RFC3339), WasmHash: ver.WasmHash}
 	}
-	h.writeCachedJSON(ctx, w, out, degraded, degraded, asOf)
+	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 
 // windowFloorLedger returns the ledger closest to `days` before the tip's close_time, or 0 if unknown or past genesis.

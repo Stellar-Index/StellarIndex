@@ -37,8 +37,28 @@ type perKeyFlight struct {
 // keyFlight is one in-flight compute. done closes when it finishes; err (nil on success) is readable only AFTER done closes,
 // which is the happens-before edge.
 type keyFlight struct {
-	done chan struct{}
-	err  error
+	done    chan struct{}
+	err     error
+	started time.Time
+}
+
+// overran reports whether key's in-flight compute has run longer than budget.
+func (f *perKeyFlight) overran(key string, budget time.Duration) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fl, ok := f.inGoing[key]
+	return ok && time.Since(fl.started) > budget
+}
+
+// servedFreshness is an SWR serve's two verdicts. Age past the bound alone is stale: the refresh the read starts has not failed.
+// degraded means the body is carried forward over a failure (the last refresh failed or was skipped, the one running overran
+// its budget, or the payload is provisional), or a section was dropped; on a served old entry it implies stale.
+type servedFreshness struct{ stale, degraded bool }
+
+// expiredFreshness is the verdict for an entry served past its TTL, stale per [swrServedStale].
+func expiredFreshness(stale, refreshFailed, overran bool) servedFreshness {
+	degraded := refreshFailed || overran
+	return servedFreshness{stale: stale || degraded, degraded: degraded}
 }
 
 // begin returns the flight for key and whether the caller owns it. Owners must call end (with the compute's error); waiters select on done.
@@ -51,7 +71,7 @@ func (f *perKeyFlight) begin(key string) (*keyFlight, bool) {
 	if f.inGoing == nil {
 		f.inGoing = make(map[string]*keyFlight)
 	}
-	fl := &keyFlight{done: make(chan struct{})}
+	fl := &keyFlight{done: make(chan struct{}), started: time.Now()}
 	f.inGoing[key] = fl
 	return fl, true
 }
@@ -251,10 +271,10 @@ func (h *Handler) refreshAssetHolders(asset string, admit slotAdmit) *keyFlight 
 	return fl
 }
 
-// assetHoldersCached serves the holders board: fresh as-is; expired with its real asOf while a detached rescan runs, degraded per
-// [swrServedStale]; never-computed waits to the deadline, so a huge asset 503s THIS request but a retry lands warm. The total is
+// assetHoldersCached serves the holders board: fresh as-is; expired with its real asOf while a detached rescan runs, judged per
+// [expiredFreshness]; never-computed waits to the deadline, so a huge asset 503s THIS request but a retry lands warm. The total is
 // limit-independent.
-func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, degraded bool, err error) {
+func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, fr servedFreshness, err error) {
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
 			// Stale path: an entry is served either way, so skip rather than wait.
@@ -263,23 +283,25 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 				e = cur // a refresh skipped just now is already a known failure
 			}
 		}
-		stale := !fresh && swrServedStale(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed)
-		return sliceHolders(e.holders, limit), e.total, e.vintage(), stale, nil
+		if !fresh {
+			fr = swrFreshness(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed, &h.assetHolders.flight, asset)
+		}
+		return sliceHolders(e.holders, limit), e.total, e.vintage(), fr, nil
 	}
 	// Stone-cold: wait for a slot (bounded, see coldSlotAdmit), then for the detached compute, bounded by OUR deadline only — the compute itself is not.
 	fl, err := coldFill(ctx, func(admit slotAdmit) *keyFlight { //nolint:contextcheck // intentional detach — a request that times out must not kill the fill (see refreshAssetHolders)
 		return h.refreshAssetHolders(asset, admit)
 	})
 	if err != nil {
-		return nil, 0, snapshotVintage{}, false, err
+		return nil, 0, snapshotVintage{}, servedFreshness{}, err
 	}
 	if e, ok, _ := h.assetHolders.get(asset); ok {
-		return sliceHolders(e.holders, limit), e.total, e.vintage(), false, nil
+		return sliceHolders(e.holders, limit), e.total, e.vintage(), servedFreshness{}, nil
 	}
 	if fl.err != nil {
-		return nil, 0, snapshotVintage{}, false, fl.err
+		return nil, 0, snapshotVintage{}, servedFreshness{}, fl.err
 	}
-	return nil, 0, snapshotVintage{}, false, errRefreshFailed
+	return nil, 0, snapshotVintage{}, servedFreshness{}, errRefreshFailed
 }
 
 func sliceHolders(rows []clickhouse.AssetHolder, limit int) []clickhouse.AssetHolder {
@@ -322,6 +344,11 @@ type contractsDirEntry struct {
 	cachedAt time.Time
 	// refreshFailed: the last refresh of this window failed or was skipped; only a put clears it.
 	refreshFailed bool
+}
+
+// swrFreshness is the [expiredFreshness] verdict for an entry cached at cachedAt, served past ttl while flight's key refreshes it.
+func swrFreshness(cachedAt time.Time, ttl, refreshTimeout time.Duration, refreshFailed bool, flight *perKeyFlight, key string) servedFreshness {
+	return expiredFreshness(swrServedStale(cachedAt, ttl, refreshTimeout, refreshFailed), refreshFailed, flight.overran(key, refreshTimeout))
 }
 
 // swrServedStale is [swrverdict.Stale] for an entry cached at cachedAt.
@@ -435,31 +462,31 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 }
 
 // recentContractsCached serves the directory for the quantised window: an expired entry is served with its real asOf while a
-// detached rerun goes, degraded per [swrServedStale]; never-computed waits to the deadline. Returns the ledger floor used so
+// detached rerun goes, judged per [swrFreshness]; never-computed waits to the deadline. Returns the ledger floor used so
 // `since_ledger` describes the data served.
-func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, degraded bool, err error) {
+func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, fr servedFreshness, err error) {
 	if e, ok, fresh := h.contractsDir.get(window); ok {
 		if !fresh {
 			h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 			if cur, ok, _ := h.contractsDir.get(window); ok {
 				e = cur // a refresh skipped just now is already a known failure
 			}
+			fr = swrFreshness(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed, &h.contractsDir.flight, strconv.Itoa(window))
 		}
-		stale := !fresh && swrServedStale(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed)
-		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, stale, nil
+		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, fr, nil
 	}
 	fl := h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.contractsDir.get(window); ok {
-			return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, false, nil
+			return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, servedFreshness{}, nil
 		}
 		if fl.err != nil {
-			return nil, nil, 0, time.Time{}, false, fl.err
+			return nil, nil, 0, time.Time{}, servedFreshness{}, fl.err
 		}
-		return nil, nil, 0, time.Time{}, false, errRefreshFailed
+		return nil, nil, 0, time.Time{}, servedFreshness{}, errRefreshFailed
 	case <-ctx.Done():
-		return nil, nil, 0, time.Time{}, false, ctx.Err()
+		return nil, nil, 0, time.Time{}, servedFreshness{}, ctx.Err()
 	}
 }
 
