@@ -733,6 +733,18 @@ Counter, no labels.
 
 Cold cache fills refused because the request's budget could not pay the surcharge (`ratelimit.ColdFillCost`, on top of the request's own token): a client walking distinct uncached explorer keys (contract detail, holders, account state). No lake read or refresh-gate slot was taken. The explorer page answers `429`; a contract page's side panel and an asset page's issuer lookup are skipped instead and the response is flagged degraded or stale. Ordinary throttling is the rest of the route's `429`s in `http_requests_total`.
 
+### `stellarindex_ratelimit_decisions_total`
+
+Counter, labels `tier` (`anonymous` / `apikey` / `sep10` / `operator` / `custom` / `other`) and `result` (`allowed` / `limited` / `fail_open` / `unavailable`). Pre-seeded at zero.
+
+One per API request through the limiter, by its most severe charge: the base token, a handler's re-price and any cold-fill surcharge. `limited` covers every budget refusal, including a re-price `429` and a cold fill a page skipped instead of answering `429`; `unavailable` is the fail-closed `503`. `custom` is a subject held to its own per-key ceiling (partner plans); `other` an unrecognised auth tier. No label identifies a client. Refusals per tier: `sum by (tier) (rate(stellarindex_ratelimit_decisions_total{result="limited"}[5m]))`.
+
+### `stellarindex_ratelimit_utilisation_ratio`
+
+Histogram, label `tier` (as above). Buckets 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1.
+
+Per allowed request, the share of the subject's per-minute budget spent once the request has paid all its charges: window count ÷ ceiling, from the count the limiter already returns (no extra Redis call). For a SEP-10 session it is the larger of the account and per-IP budgets. Refused, fail-open and fail-closed requests are counted above, not observed. Headroom: `histogram_quantile(0.99, sum by (tier, le) (rate(stellarindex_ratelimit_utilisation_ratio_bucket[1h])))`.
+
 ### `stellarindex_ratelimit_fail_closed_total`
 
 Counter, label `limiter` (`api` / `failed_auth` / `signup_ip` / `register_budget`). Pre-seeded at zero.
