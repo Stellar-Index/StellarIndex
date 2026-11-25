@@ -913,11 +913,11 @@ var APICacheOpsTotal = prometheus.NewCounterVec(
 	[]string{"cache", "op", "result"},
 )
 
-// APIPriceBatchPrefetchTotal counts /v1/price/batch read-memo outcomes per seam: hit, fallthrough, prefetch_error, capped.
+// APIPriceBatchPrefetchTotal counts /v1/price/batch read-memo outcomes per seam: hit, fallthrough, expired, prefetch_error, capped.
 var APIPriceBatchPrefetchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_price_batch_prefetch_total",
-		Help: "Batch price read-memo outcomes per seam: hit (answered from the prefetch), fallthrough (read as before), prefetch_error (a prefetch read failed; key left unfilled), capped (memo full; key left unfilled).",
+		Help: "Batch price read-memo outcomes per seam: hit (answered from the prefetch), fallthrough (read as before), expired (prefetched over 2s ago; read as before), prefetch_error (a prefetch read failed; key left unfilled), capped (memo full; key left unfilled).",
 	},
 	[]string{"seam", "result"},
 )

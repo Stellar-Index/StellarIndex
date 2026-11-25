@@ -2,8 +2,12 @@ package v1_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,10 +82,13 @@ func (l rsTri) LookupTriangulatedVWAP(ctx context.Context, base, quote canonical
 	})
 }
 
+var rsMetaForwards atomic.Int64
+
 // rsTriMeta is rsTri over a next that has composite meta, forwarded unmemoised as the production decorator's embedding does.
 type rsTriMeta struct{ rsTri }
 
 func (l rsTriMeta) LookupCompositeMeta(ctx context.Context, base, quote canonical.Asset, window time.Duration) ([]byte, bool, error) {
+	rsMetaForwards.Add(1)
 	return l.next.(v1.CompositeMetaLooker).LookupCompositeMeta(ctx, base, quote, window)
 }
 
@@ -122,6 +129,16 @@ func rsServer(t *testing.T, spec eqSpec, rec *rsReads, seed bool) http.Handler {
 	})
 }
 
+func rsServe(h http.Handler, target string) string {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	body := rsSingleVolatile.ReplaceAll(eqVolatile.ReplaceAll(rec.Body.Bytes(), nil), nil)
+	return fmt.Sprintf("%d %s", rec.Code, body)
+}
+
+// rsSingleVolatile is the wall-clock stamps a single read's withheld problem carries beyond eqVolatile's.
+var rsSingleVolatile = regexp.MustCompile(`"(measured_at|window_end)":"[^"]*"`)
+
 func rsHits() float64 {
 	return testutil.ToFloat64(obs.APIPriceBatchPrefetchTotal.WithLabelValues("golden_triangulated", "hit")) +
 		testutil.ToFloat64(obs.APIPriceBatchPrefetchTotal.WithLabelValues("golden_freeze", "hit"))
@@ -142,9 +159,22 @@ func TestPriceBatchGolden_ReadMemoIsByteIdentical(t *testing.T) {
 					t.Errorf("%+v: seeded memo differs: %s", req, m)
 				}
 			}
+			// Single reads through the same decorators: the only path that reads composite meta.
+			for _, id := range spec.ids {
+				for _, quote := range spec.quotes {
+					target := "/v1/price?" + eqQuery(id, quote, spec.thin[0], "asset")
+					want := rsServe(plain, target)
+					if got := rsServe(seeded, target); got != want {
+						t.Errorf("%s: decorated single read differs\n a: %s\n b: %s", target, want, got)
+					}
+				}
+			}
 		})
 	}
 	if rsHits() == hits0 {
 		t.Error("no read was answered from a seeded memo: the comparison proved nothing")
+	}
+	if rsMetaForwards.Load() == 0 {
+		t.Error("no composite meta read went through the decorator: the forwarding is unexercised")
 	}
 }
