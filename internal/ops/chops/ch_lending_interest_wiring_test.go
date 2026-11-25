@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
+	"maps"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -263,32 +266,83 @@ func TestInterestPass_VersionBoundHalvesTheWindow(t *testing.T) {
 	if _, err := runInterest(t, lendingRun{}); err != nil {
 		t.Fatal(err)
 	}
-	f := newFakeInterestLake()
-	f.install(t)
-	saved := lendingInterestMaxVersions
-	// The bound counts the carried open hour, which holds up to two versions here: 3 is the least that fits.
-	lendingInterestMaxVersions = 3
-	t.Cleanup(func() { lendingInterestMaxVersions = saved })
-	out, err := runInterest(t, lendingRun{})
-	if err != nil || !strings.Contains(out, "halving it") || f.marks[len(f.marks)-1][1] != 200_017 {
-		t.Fatalf("%v marks %v log %q", err, f.marks, out)
-	}
-	// At 2 an hour's own versions reach the bound: a refusal naming it, not an endless halving.
+	// At 2 an hour's own versions reach the bound: a refusal naming the flag, not an endless halving.
 	over := newFakeInterestLake()
 	over.install(t)
-	lendingInterestMaxVersions = 2
-	if _, err := runInterest(t, lendingRun{}); err == nil || !strings.Contains(err.Error(), "the fold holds an hour whole") ||
-		len(over.marks) != 0 || len(over.inserted) != 0 {
+	if _, err := runInterest(t, lendingRun{interest: interestFlags{maxVersions: 2}}); err == nil ||
+		!strings.Contains(err.Error(), "the fold holds an hour whole: raise -interest-max-versions") || len(over.marks) != 0 || len(over.inserted) != 0 {
 		t.Fatalf("an hour over the bound: %v marks %v, want a refusal writing nothing", err, over.marks)
 	}
-	gross := map[string]string{}
-	for _, r := range f.inserted {
-		gross[r.Hour.String()] = r.Gross.String()
+	// Raised to 3, the least that fits the carried open hour's two versions, the same lake halves and passes.
+	f := newFakeInterestLake()
+	f.install(t)
+	out, err := runInterest(t, lendingRun{interest: interestFlags{maxVersions: 3}})
+	if err != nil || !strings.Contains(out, "holds over 3 versions; halving it") || f.marks[len(f.marks)-1][1] != 200_017 {
+		t.Fatalf("%v marks %v log %q", err, f.marks, out)
 	}
-	for _, r := range whole.inserted {
-		if gross[r.Hour.String()] != r.Gross.String() {
-			t.Errorf("hour %s gross %s halved, %s whole", r.Hour, gross[r.Hour.String()], r.Gross)
+	if got, want := interestRowsByHour(f.inserted), interestRowsByHour(whole.inserted); !maps.Equal(got, want) {
+		t.Fatalf("rows with the raised bound:\n%v\nwant the unbounded run's:\n%v", got, want)
+	}
+}
+
+// interestRowsByHour renders each written row by its hour and asset; a re-derived hour keeps its last row.
+func interestRowsByHour(rows []lendinginterest.HourRow) map[string]string {
+	out := map[string]string{}
+	for _, r := range rows {
+		out[r.Hour.String()+"/"+r.Asset] = fmt.Sprintf("%+v", r)
+	}
+	return out
+}
+
+// The open hour's cause events count towards the bound beside its versions: the fold holds them again. Four events
+// and a version carried out of [199997,199999] reach a bound of 5, which the versions alone do not.
+func TestInterestPass_VersionBoundCountsCarriedEvents(t *testing.T) {
+	lake := func() *fakeInterestLake {
+		f := newFakeInterestLake()
+		for i := range 4 {
+			f.events = append(f.events, undecodableFill(t, 199_998, i))
 		}
+		f.install(t)
+		return f
+	}
+	whole := lake()
+	if _, err := runInterest(t, lendingRun{}); err != nil {
+		t.Fatal(err)
+	}
+	over := lake()
+	_, err := runInterest(t, lendingRun{interest: interestFlags{maxVersions: 5}})
+	if err == nil || !strings.Contains(err.Error(), "carries 5 versions and cause events, over the bound 5") ||
+		!strings.Contains(err.Error(), "-interest-max-versions") || len(over.marks) != 1 {
+		t.Fatalf("err %v marks %v, want the carried events to reach the bound after the first hour", err, over.marks)
+	}
+	f := lake()
+	if _, err := runInterest(t, lendingRun{interest: interestFlags{maxVersions: 8}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := interestRowsByHour(f.inserted), interestRowsByHour(whole.inserted); !maps.Equal(got, want) {
+		t.Fatalf("rows with the bound:\n%v\nwant the unbounded run's:\n%v", got, want)
+	}
+}
+
+// The flag refuses a bound of 0 or less at parse; unset, the pass uses the default.
+func TestInterestFlags_MaxVersions(t *testing.T) {
+	for _, arg := range []string{"0", "-5", "x"} {
+		var f interestFlags
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		f.register(fs)
+		if err := fs.Parse([]string{"-interest-max-versions", arg}); err == nil {
+			t.Errorf("-interest-max-versions %s parsed", arg)
+		}
+	}
+	var f interestFlags
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	f.register(fs)
+	if err := fs.Parse([]string{"-interest-max-versions", "300000"}); err != nil || f.maxVersions != 300_000 {
+		t.Fatalf("parse: %v, %d", err, f.maxVersions)
+	}
+	if b := (&interestPass{}).versionBound(); b != lendingInterestMaxVersions {
+		t.Fatalf("default bound %d", b)
 	}
 }
 
@@ -326,6 +380,9 @@ func TestInterestFlagsCheck(t *testing.T) {
 		{"prove -interest over a range and pool", lendingRun{prove: true, from: 5, to: 9, floor: 5, interest: interestFlags{prove: true, pool: "P"}}, ""},
 		{"-interest without -prove", lendingRun{interest: interestFlags{prove: true}}, "applies to -prove"},
 		{"prove -interest with a derive flag", lendingRun{prove: true, interest: interestFlags{prove: true, maxUnordered: 1}}, "the derive's"},
+		{"prove -interest with a version bound", lendingRun{prove: true, interest: interestFlags{prove: true, maxVersions: 9}}, ""},
+		{"state prove with a version bound", lendingRun{prove: true, interest: interestFlags{maxVersions: 9}}, "-interest-max-versions does not apply"},
+		{"derive with a version bound", lendingRun{interest: interestFlags{only: true, maxVersions: 9}}, ""},
 		{"state prove with a pool", lendingRun{prove: true, interest: interestFlags{pool: "P"}}, "lending_state -prove"},
 		{"init and pool", lendingRun{interest: interestFlags{init: true, pool: "P"}}, "separate runs"},
 		{"init with -from", lendingRun{from: 5, interest: interestFlags{init: true}}, "set their own range"},

@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ type interestFlags struct {
 	prove        bool // -interest: with -prove, prove lending_interest_hourly instead of lending_state
 	maxWindows   int
 	maxUnordered int
+	maxVersions  int // 0: lendingInterestMaxVersions
 	pool         string
 	recent       uint // -prove-recent: with -prove -interest, prove the last N ledgers to the watermark
 }
@@ -40,6 +42,15 @@ func (f *interestFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.only, "interest-only", false, "with -lending-only: skip the lending_state pass; -from (snapped down to its hour's first ledger) re-derives the interest rows and deletes the hours' superseded ones, -to is snapped up to its hour's last ledger")
 	fs.IntVar(&f.maxWindows, "interest-max-windows", 0, "with -lending-only: stop the interest pass after N windows (0 = to lending_state's watermark)")
 	fs.IntVar(&f.maxUnordered, "interest-max-unordered", 0, "with -lending-only: accept up to N versions per interest row whose apply order is unknown (intra_ledger_seq 0); more refuses the window")
+	fs.Func("interest-max-versions", fmt.Sprintf("with -lending-only (and -prove -interest): hold up to N versions and cause events per window in memory (default %d, ~4 KB each); a window over it halves, an open hour over it refuses; raise it only within lending-state.service's MemoryMax", lendingInterestMaxVersions),
+		func(s string) error {
+			n, err := strconv.Atoi(s)
+			if err != nil || n <= 0 {
+				return fmt.Errorf("must be an integer > 0, got %q", s)
+			}
+			f.maxVersions = n
+			return nil
+		})
 	fs.BoolVar(&f.prove, "interest", false, "with -lending-only -prove: prove stellar.lending_interest_hourly instead (reads only): per window of [-from, -to] (default the floor to the lending_interest watermark; -prove-recent the last N ledgers; -interest-pool one pool) the stored rows against a fresh fold of the lake's versions, version counts, telescoped gross and the in-line identities; exits non-zero on a mismatch or INCOMPLETE hours, 0 with nothing to prove on an uninitialised host")
 	fs.UintVar(&f.recent, "prove-recent", 0, "with -lending-only -prove -interest: prove from the hour of (watermark − N ledgers), never below the floor, to the watermark instead of the whole range (the daily unit's rolling week; a spot check by hand), its verdict on the daily proof's heartbeat; without it the proof's heartbeat is the full range's, ops_job …-prove-full")
 	fs.StringVar(&f.pool, "interest-pool", "", "with -lending-only: backfill the interest rows of one pool the lending_interest watermark does not cover, up to that watermark (skips the lending_state pass); with -prove -interest, prove that pool only")
@@ -91,11 +102,13 @@ type interestPass struct {
 	dryRun     bool
 	rederive   bool // the run starts at or below the watermark: rows it no longer writes are deleted
 	maxWindows int
-	mark       func(ctx context.Context, from, thru uint32) error
-	hb         *opsutil.JobHeartbeat
-	cursorAt   *uint32 // the heartbeat cursor when it is not the run's progress
-	log        io.Writer
-	proof      *interestProof // set on -prove -interest: compare, never write
+	// maxVersions is -interest-max-versions; 0 is lendingInterestMaxVersions.
+	maxVersions int
+	mark        func(ctx context.Context, from, thru uint32) error
+	hb          *opsutil.JobHeartbeat
+	cursorAt    *uint32 // the heartbeat cursor when it is not the run's progress
+	log         io.Writer
+	proof       *interestProof // set on -prove -interest: compare, never write
 	// undecodable counts the cause events the run's folded reads could not decode.
 	undecodable int64
 }
@@ -198,7 +211,7 @@ func (r lendingRun) deriveInterest(ctx context.Context, log io.Writer, wm uint32
 	}
 	p := &interestPass{
 		addr: r.chAddr, pools: plan.pools, dryRun: r.dryRun, rederive: plan.rederive,
-		maxWindows: r.interest.maxWindows, mark: plan.mark, log: log, hb: hb,
+		maxWindows: r.interest.maxWindows, maxVersions: r.interest.maxVersions, mark: plan.mark, log: log, hb: hb,
 		opts: lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{}, MaxUnordered: r.interest.maxUnordered},
 	}
 	if plan.pool {
@@ -399,10 +412,22 @@ func readLendingCode(ctx context.Context, addr string, pools []clickhouse.Lendin
 	return out, nil
 }
 
-// lendingInterestMaxVersions bounds one window's versions. Estimated, not measured: a decoded version with its
-// big.Ints, strings and BLNT fee map is ~1-2 KB, and the fold holds a sorted copy plus a dedupe key per version, so
-// ~4 KB each at peak; 150,000 keeps a window near 600 MB, inside lending-state.service's MemoryMax=1G.
-var lendingInterestMaxVersions = 150_000
+// lendingInterestMaxVersions is -interest-max-versions' default bound on one window's versions and cause events.
+// Estimated, not measured: a decoded version with its big.Ints, strings and BLNT fee map is ~1-2 KB, and the fold
+// holds a sorted copy plus a dedupe key per version, so ~4 KB each at peak; 150,000 keeps a window near 600 MB,
+// inside lending-state.service's MemoryMax=1G.
+const lendingInterestMaxVersions = 150_000
+
+// versionBound is the run's bound on a window's versions and cause events.
+func (p *interestPass) versionBound() int {
+	if p.maxVersions > 0 {
+		return p.maxVersions
+	}
+	return lendingInterestMaxVersions
+}
+
+// carried is what the carry's open hour adds to every window's read: its versions and its cause events.
+func (st *interestCarry) carried() int { return len(st.seed.Pending) + len(st.seed.PendingEvents) }
 
 var errInterestWindowTooLarge = errors.New("lending interest: window over the version bound")
 
@@ -451,13 +476,13 @@ func (p *interestPass) run(ctx context.Context, start, last uint32) error {
 		err = p.window(ctx, &st, lo, hi)
 		for errors.Is(err, errInterestWindowTooLarge) && hi > lo {
 			// The fold holds the whole window in memory: narrow it rather than meet the unit's MemoryMax.
-			_, _ = fmt.Fprintf(p.log, "%s: window [%d,%d] holds over %d versions; halving it\n", lendingInterestJob, lo, hi, lendingInterestMaxVersions)
+			_, _ = fmt.Fprintf(p.log, "%s: window [%d,%d] holds over %d versions; halving it\n", lendingInterestJob, lo, hi, p.versionBound())
 			hi = lo + (hi-lo)/2
 			err = p.window(ctx, &st, lo, hi)
 		}
 		if errors.Is(err, errInterestWindowTooLarge) {
-			err = fmt.Errorf("%w: ledger %d with the carried open hour holds over %d versions; the fold holds an hour whole",
-				err, lo, lendingInterestMaxVersions)
+			err = fmt.Errorf("%w: ledger %d with the carried open hour holds over %d versions and cause events; the fold holds an "+
+				"hour whole: raise -interest-max-versions (within lending-state.service's MemoryMax)", err, lo, p.versionBound())
 		}
 		if err != nil {
 			return fmt.Errorf("%s: window [%d,%d]: %w — the watermark holds at %d", lendingInterestJob, lo, hi, err, st.from-1)
@@ -531,11 +556,12 @@ func (p *interestPass) fold(ctx context.Context, st *interestCarry, lo, hi uint3
 			return foldedWindow{}, false, err
 		}
 	}
-	if n := len(st.seed.Pending); n >= lendingInterestMaxVersions {
-		return foldedWindow{}, false, fmt.Errorf("lending interest: the open hour from %s carries %d versions, over the bound %d: the fold holds an hour whole",
-			st.seed.CommittedBefore.Format(time.RFC3339), n, lendingInterestMaxVersions)
+	if n := st.carried(); n >= p.versionBound() {
+		return foldedWindow{}, false, fmt.Errorf("lending interest: the open hour from %s carries %d versions and cause events, over the bound %d: "+
+			"the fold holds an hour whole: raise -interest-max-versions (within lending-state.service's MemoryMax)",
+			st.seed.CommittedBefore.Format(time.RFC3339), n, p.versionBound())
 	}
-	vs, err := p.readVersions(ctx, keys, lo, hi, len(st.seed.Pending))
+	vs, err := p.readVersions(ctx, keys, lo, hi, st.carried())
 	if err != nil {
 		return foldedWindow{}, false, err
 	}
@@ -547,7 +573,7 @@ func (p *interestPass) fold(ctx context.Context, st *interestCarry, lo, hi uint3
 	}
 	opts := p.opts
 	var reads map[uint32]uint64
-	budget := lendingInterestMaxVersions - len(st.seed.Pending) - len(vs)
+	budget := p.versionBound() - st.carried() - len(vs)
 	if opts.Events, reads, err = p.readInterestEvents(ctx, lo, hi, budget); err != nil {
 		return foldedWindow{}, false, err
 	}
@@ -598,7 +624,7 @@ func (p *interestPass) readVersions(ctx context.Context, keys []clickhouse.Lendi
 	err := splitOnMemoryLimit(lo, hi, "interest window", p.log, func(lo, hi uint32) error {
 		var got []lendinginterest.Version
 		if err := lendingInterestVersions(ctx, p.addr, lo, hi, keys, func(v lendinginterest.Version) error {
-			if carried+len(vs)+len(got) >= lendingInterestMaxVersions {
+			if carried+len(vs)+len(got) >= p.versionBound() {
 				return errInterestWindowTooLarge
 			}
 			got = append(got, v)

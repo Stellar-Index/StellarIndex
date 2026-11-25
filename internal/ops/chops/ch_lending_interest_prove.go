@@ -258,7 +258,7 @@ func (r lendingRun) clipToRedo(ctx context.Context, pr *interestProof) error {
 // with the reason; any other refusal fails the run.
 func (r lendingRun) proveGroup(ctx context.Context, pr *interestProof, g interestProofGroup, hb *opsutil.JobHeartbeat, log io.Writer) error {
 	p := &interestPass{
-		addr: r.chAddr, pools: g.pools, dryRun: true, log: log, hb: hb, proof: pr,
+		addr: r.chAddr, pools: g.pools, dryRun: true, log: log, hb: hb, proof: pr, maxVersions: r.interest.maxVersions,
 		// The stored rows carry whatever unordered count the writer accepted; the proof compares it, never refuses it.
 		opts: lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{}, MaxUnordered: math.MaxInt},
 	}
