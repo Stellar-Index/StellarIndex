@@ -19,6 +19,16 @@ import (
 // the other is mid-INSERT into, or both EXCHANGE. systemd only serializes the timer against itself, not a manual `stellarindex-ops <job>`.
 // Contention fails closed, never blocks.
 func acquireRollupLock(job, path string) (func(), error) {
+	return acquireFlock(job, path, syscall.LOCK_EX)
+}
+
+// acquireSharedLock is acquireRollupLock in shared mode: any number of readers hold it together, and none beside an
+// exclusive holder.
+func acquireSharedLock(job, path string) (func(), error) {
+	return acquireFlock(job, path, syscall.LOCK_SH)
+}
+
+func acquireFlock(job, path string, how int) (func(), error) {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)
 	if st, statErr := os.Stat(dir); statErr != nil || !st.IsDir() {
@@ -34,7 +44,7 @@ func acquireRollupLock(job, path string) (func(), error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("%s: chown lock file %s: %w", job, path, err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("%s: %s is already locked by another run (the timer or a concurrent invocation is mid-cycle): %w", job, path, err)
 	}

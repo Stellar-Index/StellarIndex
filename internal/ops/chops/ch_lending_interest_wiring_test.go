@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
@@ -118,8 +119,10 @@ func TestInterestPass_PoolWithoutReserveKeysAdvances(t *testing.T) {
 	}
 }
 
-// Manual interest runs take only the interest lock, so a held lending_state lock does not stop them; a held interest
-// lock refuses a manual run and makes the timer's pass skip quietly.
+// Interest runs hold the lending_state lock shared: a state run holding it exclusive refuses a manual interest run
+// (and a dry run) and makes the timer's pass skip quietly, while another reader's shared hold stops neither. A held
+// interest lock refuses a manual run and makes the timer's pass skip quietly. A state resume beside a reader skips
+// quietly; a replay (-from) beside one, or a resume beside another state run, refuses.
 func TestLendingRun_InterestLocks(t *testing.T) {
 	f := newFakeInterestLake()
 	f.install(t)
@@ -130,9 +133,39 @@ func TestLendingRun_InterestLocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer unlock()
+	if err := r.run(); err == nil || !strings.Contains(err.Error(), "already locked") || len(f.reads) != 0 {
+		t.Fatalf("-interest-only beside a state run: %v reads %v, want a refusal reading nothing", err, f.reads)
+	}
+	dry := r
+	dry.dryRun = true
+	if err := dry.run(); err == nil || len(f.reads) != 0 {
+		t.Fatalf("dry run beside a state run: %v reads %v, want a refusal", err, f.reads)
+	}
+	var log bytes.Buffer
+	timer := lendingRun{chAddr: "fake", lockFile: r.lockFile, heartbeat: hb}
+	if err := timer.lockedInterestPass(context.Background(), &log); err != nil || !strings.Contains(log.String(), "a lending_state run holds") || len(f.reads) != 0 {
+		t.Fatalf("timer pass beside a state run: %v %q reads %v", err, log.String(), f.reads)
+	}
+	state := lendingRun{chAddr: "fake", lockFile: r.lockFile}
+	if err := state.statePass(context.Background()); err == nil || !strings.Contains(err.Error(), "already locked") {
+		t.Fatalf("state resume beside a state run: %v, want a refusal", err)
+	}
+	unlock()
+	unlockR, err := acquireSharedLock(lendingInterestJob, r.lockFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlockR()
 	if err := r.run(); err != nil || len(f.marks) == 0 {
-		t.Fatalf("-interest-only beside a held state lock: %v marks %v", err, f.marks)
+		t.Fatalf("-interest-only beside another reader: %v marks %v", err, f.marks)
+	}
+	replay := lendingRun{chAddr: "fake", lockFile: r.lockFile, from: 5}
+	if err := replay.statePass(context.Background()); err == nil || !strings.Contains(err.Error(), "already locked") {
+		t.Fatalf("state replay beside a reader: %v, want a refusal", err)
+	}
+	state.heartbeat = hb
+	if err := state.statePass(context.Background()); err != nil {
+		t.Fatalf("state resume beside a reader: %v, want a quiet skip", err)
 	}
 	unlockI, err := acquireRollupLock(lendingInterestJob, filepath.Join(dir, interestLock))
 	if err != nil {
@@ -143,9 +176,8 @@ func TestLendingRun_InterestLocks(t *testing.T) {
 		t.Fatalf("manual run beside a held interest lock: %v, want a refusal", err)
 	}
 	f.reads = nil
-	var log bytes.Buffer
-	timer := lendingRun{chAddr: "fake", lockFile: r.lockFile, heartbeat: hb}
-	if err := timer.lockedInterestPass(context.Background(), &log); err != nil || !strings.Contains(log.String(), "skipped") || len(f.reads) != 0 {
+	log.Reset()
+	if err := timer.lockedInterestPass(context.Background(), &log); err != nil || !strings.Contains(log.String(), "another interest run") || len(f.reads) != 0 {
 		t.Fatalf("timer pass beside a held interest lock: %v %q reads %v", err, log.String(), f.reads)
 	}
 }
@@ -234,11 +266,20 @@ func TestInterestPass_VersionBoundHalvesTheWindow(t *testing.T) {
 	f := newFakeInterestLake()
 	f.install(t)
 	saved := lendingInterestMaxVersions
-	lendingInterestMaxVersions = 2
+	// The bound counts the carried open hour, which holds up to two versions here: 3 is the least that fits.
+	lendingInterestMaxVersions = 3
 	t.Cleanup(func() { lendingInterestMaxVersions = saved })
 	out, err := runInterest(t, lendingRun{})
 	if err != nil || !strings.Contains(out, "halving it") || f.marks[len(f.marks)-1][1] != 200_017 {
 		t.Fatalf("%v marks %v log %q", err, f.marks, out)
+	}
+	// At 2 an hour's own versions reach the bound: a refusal naming it, not an endless halving.
+	over := newFakeInterestLake()
+	over.install(t)
+	lendingInterestMaxVersions = 2
+	if _, err := runInterest(t, lendingRun{}); err == nil || !strings.Contains(err.Error(), "the fold holds an hour whole") ||
+		len(over.marks) != 0 || len(over.inserted) != 0 {
+		t.Fatalf("an hour over the bound: %v marks %v, want a refusal writing nothing", err, over.marks)
 	}
 	gross := map[string]string{}
 	for _, r := range f.inserted {
@@ -309,5 +350,149 @@ func TestGateLendingWASM_UpgradeLedger(t *testing.T) {
 	}
 	if hi, err := gateLendingWASM(code, pools, 151, 200); err != nil || hi != 200 {
 		t.Fatal(fmt.Sprint(hi, err))
+	}
+}
+
+// A pool lending_state never derived (no instance row) refuses before anything is read or written, naming the replay;
+// one it derived with no reserve still advances (TestInterestPass_PoolWithoutReserveKeysAdvances).
+func TestInterestPass_UnderivedPoolRefuses(t *testing.T) {
+	for _, lake := range []bool{true, false} {
+		f := newFakeInterestLake()
+		f.underived = []clickhouse.LendingInterestUnderived{{Pool: liPool, Deployed: 1, Lake: lake}}
+		f.install(t)
+		want := map[bool]string{true: "lending_state has not derived pool CPOOL", false: "neither lending_state nor the lake"}[lake]
+		_, err := runInterest(t, lendingRun{})
+		if err == nil || !strings.Contains(err.Error(), want) || len(f.reads) != 0 || len(f.marks) != 0 || len(f.inserted) != 0 {
+			t.Fatalf("lake %t: %v reads %v marks %v, want %q and nothing read or written", lake, err, f.reads, f.marks, want)
+		}
+	}
+}
+
+// A seeded instance whose WASM is not the code the timeline has in force at the run's start refuses.
+func TestInterestPass_SeedInstanceCodeCrossCheck(t *testing.T) {
+	f := newFakeInterestLake()
+	f.seedHash = "1111111111111111111111111111111111111111111111111111111111111111"
+	f.install(t)
+	_, err := runInterest(t, lendingRun{})
+	if err == nil || !strings.Contains(err.Error(), "the seed from ledger 1") || len(f.marks) != 0 || len(f.inserted) != 0 {
+		t.Fatalf("err = %v marks %v, want the seed's cross-check refusal and nothing written", err, f.marks)
+	}
+}
+
+// A key with no seed whose first version is not its creation existed before the run: lending_state lacks its rows.
+func TestInterestPass_UnseededKeyMustBeNew(t *testing.T) {
+	f := newFakeInterestLake()
+	f.versions[0].Created = false
+	f.install(t)
+	_, err := runInterest(t, lendingRun{})
+	if err == nil || !strings.Contains(err.Error(), "not its creation") || len(f.marks) != 0 || len(f.inserted) != 0 {
+		t.Fatalf("err = %v marks %v, want the refusal and nothing written", err, f.marks)
+	}
+}
+
+// A pending redo stops the timer's pass quietly and refuses any other run but a re-derive from at or below its next
+// ledger, which advances the redo window by window until it reaches the watermark.
+func TestInterestPass_PendingRedo(t *testing.T) {
+	f := newFakeInterestLake()
+	f.wm, f.floor = 200_017, 199_990
+	f.redo = &clickhouse.LendingInterestRedo{Gen: 3, From: 199_995}
+	f.install(t)
+	out, err := runInterest(t, lendingRun{})
+	if err != nil || !strings.Contains(out, "-interest-only -from 199995") || len(f.reads) != 0 {
+		t.Fatalf("timer under a redo: %v %q reads %v", err, out, f.reads)
+	}
+	for _, r := range []lendingRun{{interest: interestFlags{only: true}}, {from: 199_998, interest: interestFlags{only: true}}} {
+		if _, err := runInterest(t, r); err == nil || !strings.Contains(err.Error(), "re-derive them first") || len(f.reads) != 0 {
+			t.Fatalf("%+v under a redo: %v, want a refusal reading nothing", r, err)
+		}
+	}
+	if _, err := runInterest(t, lendingRun{from: 199_995, interest: interestFlags{only: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][2]uint32{{3, 199_996}, {3, 200_017}}; !slices.Equal(f.redoMarks, want) || f.redo != nil {
+		t.Fatalf("redo marks %v pending %v, want %v and the redo done", f.redoMarks, f.redo, want)
+	}
+}
+
+// A redo armed below the floor (a lending_state replay from before the interest rows start) is redone from the floor:
+// the timer names it, a re-derive from there is let through and clears the redo, and the heartbeat shows the hold.
+func TestInterestPass_RedoBelowFloor(t *testing.T) {
+	f := newFakeInterestLake()
+	f.wm, f.floor = 200_017, 199_990
+	f.redo = &clickhouse.LendingInterestRedo{Gen: 4, From: 199_000}
+	f.install(t)
+	hb, read := liHeartbeat(t)
+	out, err := runInterest(t, lendingRun{heartbeat: hb})
+	if err != nil || !strings.Contains(out, "-interest-only -from 199990") || len(f.reads) != 0 {
+		t.Fatalf("timer under a redo below the floor: %v %q reads %v", err, out, f.reads)
+	}
+	if text := read(); metric(text, lendingInterestRedoPendingMetric) != "1" || metric(text, "stellarindex_ops_job_last_exit_ok") != "1" {
+		t.Fatalf("heartbeat:\n%s\nwant the redo held the run, which exited cleanly", text)
+	}
+	if _, err := runInterest(t, lendingRun{heartbeat: hb, from: 199_990, interest: interestFlags{only: true}}); err != nil {
+		t.Fatalf("re-derive from the floor: %v", err)
+	}
+	if n := len(f.redoMarks); f.redo != nil || n == 0 || f.redoMarks[n-1] != [2]uint32{4, 200_017} {
+		t.Fatalf("redo marks %v pending %v, want the redo done through 200017", f.redoMarks, f.redo)
+	}
+	if got := metric(read(), lendingInterestRedoPendingMetric); got != "0" {
+		t.Fatalf("redo_pending after the re-derive = %q, want 0", got)
+	}
+}
+
+// A new key created in one transaction and updated in another of the same ledger, on rows without intra-ledger order,
+// passes whichever sorts first; with apply order, or with no creation in the ledger, an update first refuses.
+func TestCheckNewKeys_FirstLedger(t *testing.T) {
+	created, updated := liReserve(10, 1), liReserve(10, 2)
+	created.Created, created.IntraLedgerSeq, created.TxHash = true, 0, "b"
+	updated.IntraLedgerSeq, updated.TxHash = 0, "a"
+	later := liReserve(11, 3)
+	for _, vs := range [][]lendinginterest.Version{{created, updated, later}, {updated, created, later}} {
+		st := interestCarry{known: map[string]bool{}}
+		if err := st.checkNewKeys(vs); err != nil {
+			t.Fatalf("unordered first ledger %s,%s: %v", vs[0].TxHash, vs[1].TxHash, err)
+		}
+	}
+	ordered := []lendinginterest.Version{updated, created}
+	ordered[0].IntraLedgerSeq, ordered[1].IntraLedgerSeq = 1, 2
+	other := updated
+	other.TxHash = "c"
+	for _, vs := range [][]lendinginterest.Version{ordered, {updated, other}, {updated, later}} {
+		st := interestCarry{known: map[string]bool{}}
+		if err := st.checkNewKeys(vs); err == nil || !strings.Contains(err.Error(), "not its creation") {
+			t.Fatalf("%+v: %v, want the refusal", vs, err)
+		}
+	}
+}
+
+// An excluded pair cuts the telescoped chain; the pairs around it are still recomputed, so a wrong gross fails.
+func TestCheckGross_ExcludedPairKeepsTheRestChecked(t *testing.T) {
+	vs := []lendinginterest.Version{liReserve(8, 1), liReserve(9, 2), liReserve(10, 3), liReserve(11, 4)}
+	prev := liReserve(7, 0).Reserve
+	head, err := lendinginterest.TelescopedGross(&prev, vs[:2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail, err := lendinginterest.TelescopedGross(nil, vs[2:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, _ := lendinginterest.TelescopedGross(&prev, vs)
+	gross := new(big.Int).Add(head, tail)
+	if gross.Cmp(whole) == 0 {
+		t.Fatal("degenerate fixture: the excluded pair moved nothing")
+	}
+	r := lendinginterest.HourRow{Gross: gross, AccrualErrors: 1, Excluded: []lendinginterest.Version{vs[2]}}
+	var c interestChecked
+	if msg := checkGross(r, &prev, vs, &c); msg != "" || c.telescoped != 1 || c.telescopeSplit != 1 || c.excludedPairs != 1 {
+		t.Fatalf("matching gross: %q %+v", msg, c)
+	}
+	r.Gross = new(big.Int).Add(gross, big.NewInt(1))
+	if msg := checkGross(r, &prev, vs, &c); !strings.Contains(msg, "telescope to") {
+		t.Fatalf("gross off by one on a row with an excluded pair: %q, want a failure", msg)
+	}
+	r.Gross, r.Excluded = gross, nil
+	if msg := checkGross(r, &prev, vs, &c); !strings.Contains(msg, "1 excluded pairs counted, 0 listed") {
+		t.Fatalf("unlisted exclusion: %q", msg)
 	}
 }

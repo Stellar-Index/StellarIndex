@@ -129,7 +129,7 @@ func complete(rd blend.ReserveData) bool {
 // unknown, as a zero intra_ledger_seq does, but its order-dependent versions count as accrual errors.
 func (st *state) poolLedger(vs []Version) {
 	proto := st.opts.Protocols[vs[0].Pool]
-	if unorderedLedger(vs) {
+	if UnorderedLedger(vs) {
 		st.unorderedLedger(proto, vs, nil)
 		return
 	}
@@ -527,10 +527,12 @@ func orderUnknown(row *HourRow, v Version, in pairIn, excluded *big.Int) {
 	}
 	row.UnorderedVersions++
 	row.ExcludedCreditDelta.Add(row.ExcludedCreditDelta, excluded)
+	row.Excluded = append(row.Excluded, v)
 }
 
 func fail(row *HourRow, v Version, err error, excluded *big.Int) {
 	row.AccrualErrors++
+	row.Excluded = append(row.Excluded, v)
 	if len(row.ErrorSamples) < maxErrorSamples {
 		row.ErrorSamples = append(row.ErrorSamples, fmt.Sprintf("%d %s: %v", v.Ledger, v.TxHash, err))
 	}

@@ -56,6 +56,7 @@ type Version struct {
 	OpIndex        uint32
 	ChangeIndex    uint32
 	CloseTime      time.Time
+	Created        bool              // the key's creation; the caller's check that an unseeded key is new
 	Reserve        blend.ReserveData // KindReserve
 	BstopRate      uint32            // KindConfig
 	WasmHash       string            // KindConfig: the instance's executable, hex; the caller's WASM cross-check
@@ -111,6 +112,9 @@ type HourRow struct {
 	// ExcludedCreditDelta is Σ backstop_credit deltas of unordered and errored versions, for the
 	// in-line backstop identity; not stored.
 	ExcludedCreditDelta *big.Int
+	// Excluded are the versions whose pair with their predecessor is excluded (one per unordered or errored
+	// version), for the in-line gross check; not stored.
+	Excluded []Version
 	// FeeOnlyCreditDelta and FeeOnlyCarryDelta are the asset's ProtocolFees movement in the hour by
 	// transactions that wrote no ResData of it (a fee claim, protocol_credit_loss); FeeOnlyVersions
 	// counts them. FeeOnlyUnknown counts such movements the apply order leaves open. None is stored.
@@ -327,9 +331,9 @@ func ledgerPools(vs []Version) [][]Version {
 	return out
 }
 
-// unorderedLedger is lendingAmbiguousOrderQuery's test per (pool, ledger): rows without apply order
+// UnorderedLedger is lendingAmbiguousOrderQuery's test per (pool, ledger): rows without apply order
 // from more than one transaction. A removal changes no value, so it does not count.
-func unorderedLedger(vs []Version) bool {
+func UnorderedLedger(vs []Version) bool {
 	zero, txs := false, map[string]struct{}{}
 	for _, v := range vs {
 		if v.Removed {

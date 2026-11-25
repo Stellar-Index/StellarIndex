@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging` / `stellarindex_lending_interest_redo_pending`
 
 ## At a glance
 
@@ -206,10 +206,18 @@ Check and fix:
 Check and fix (operator commands: the runbook in `deploy/clickhouse/lending_interest.sql`):
 
 1. `journalctl -u lending-state.service -n 50 | grep 'lending interest'`.
-2. `backfill incomplete (N ledgers behind; run the backfill chunks)`: the timer's pass catches up at most one 100,000-ledger window. Run the backfill chunks by hand under `run-heavy-job.sh` until a run reports the tip. They take only the interest lock, so the timer's state pass keeps running.
+2. `backfill incomplete (N ledgers behind; run the backfill chunks)`: the timer's pass catches up at most one 100,000-ledger window. Run the backfill chunks by hand under `run-heavy-job.sh` until a run reports the tip. Each holds the state lock shared, so while one runs the timer's state pass logs `skipped, an interest run is reading lending_state` and its interest pass skips; keep chunks short (`-interest-max-windows`). Between chunks, wait for one `lending-state.service` run to complete without that line (`systemctl list-timers lending-state.timer` for the next trigger, then `journalctl -u lending-state.service -n 20`), so the state pass catches up. If state stops advancing, `stellarindex_lending_state_lagging` fires: pause the chunks until it clears.
 3. `skipped, another interest run holds the lock`: a manual chunk or re-derive is running; that is progress while its cursor rises.
-4. A refused window names its reason: an unmapped or mismatched WASM hash, an upgrade ledger, an instance whose executable the code history does not hold (`contract_instance_changes` behind the lake), a failed check against `lending_state_hourly`, or `bring each up with -interest-only -interest-pool <pool> -write` (a pool added after the watermark). The watermark holds until it is fixed.
-5. During the initial backfill this alert fires until the chunks reach the tip.
+4. `a lending_state replay rewrote the state from ledger L` (`stellarindex_lending_interest_redo_pending`, below): run `-interest-only -from L -write` (then from each run's end) until a run reaches the tip; the redo then clears.
+5. A refused window names its reason: an unmapped or mismatched WASM hash, an upgrade ledger, an instance whose executable the code history does not hold (`contract_instance_changes` behind the lake), a failed check against `lending_state_hourly`, a seed the lake does not prove (`not the lake's last version before the window`: finish the lending_state replay), `lending_state has not derived pool P` (replay lending_state from P's deploy ledger), or `bring each up with -interest-only -interest-pool <pool> -write` (a pool added after the watermark). The watermark holds until it is fixed.
+6. Expected during the `-interest-init` backfill: the cursor starts at the floor, so this fires until the chunks reach the tip. Silence it for the backfill's duration and confirm `progress_cursor` keeps rising; the expression is left as is so a stuck backfill still fires.
+
+## Lending interest redo pending
+
+`stellarindex_lending_interest_redo_pending` fires when the interest heartbeat's `stellarindex_lending_interest_redo_pending` has been 1 for 6 hours. A `lending_state` replay (`-lending-only -from L -write`) arms a redo before it writes; until a re-derive reaches the tip, the timer's interest pass derives nothing and exits cleanly, and every other interest run but `-interest-pool` refuses. A redo armed below the interest floor starts at the floor.
+
+1. `journalctl -u lending-state.service -n 50 | grep 'lending_state replay rewrote'` names the first ledger L.
+2. Run `ch-entry-history -lending-only -interest-only -from L -write` under `run-heavy-job.sh`, then from each run's end, until a run reaches the tip. The next timer run writes 0.
 
 ## stellarindex_catchup_lane_failed
 

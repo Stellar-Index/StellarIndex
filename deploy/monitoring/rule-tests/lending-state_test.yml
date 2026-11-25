@@ -79,6 +79,43 @@ tests:
                 chunks. Or the pass is refusing a window (WASM gate, identity
                 check, uncovered pool), or a backfill chunk is still running.
 
+  - interval: 5m
+    name: a redo holding the interest pass for 6h fires
+    input_series:
+      - series: 'stellarindex_lending_interest_redo_pending{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest"}'
+        values: '1x80'
+      - series: 'stellarindex_lending_interest_redo_pending{job="node_exporter",instance="r2:9100",ops_job="ch-entry-history-lending-interest"}'
+        values: '0x80'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: stellarindex_lending_interest_redo_pending
+        exp_alerts: []
+      - eval_time: 6h10m
+        alertname: stellarindex_lending_interest_redo_pending
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-redo-pending
+              summary: "lending interest is held by a pending redo"
+              description: |
+                A lending_state replay rewrote state the interest rows were
+                derived from, and for 6 h the timer's interest pass has derived
+                nothing until they are re-derived: run the -interest-only -from
+                re-derive its log line names, through the tip.
+
+  - interval: 5m
+    name: a redo cleared within 6h stays quiet
+    input_series:
+      - series: 'stellarindex_lending_interest_redo_pending{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest"}'
+        values: '1x60 0x20'
+    alert_rule_test:
+      - eval_time: 6h30m
+        alertname: stellarindex_lending_interest_redo_pending
+        exp_alerts: []
+
   - interval: 1m
     name: a host whose interest pass was never initialised stays quiet
     input_series:
