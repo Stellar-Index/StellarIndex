@@ -18,14 +18,18 @@ import {
   ConvertLiveRate,
   ConvertSnippets,
 } from './ConvertLive';
-import { buildFetchData, isCIStub } from '@/lib/buildFetch';
-import { fetchConvertCatalogue } from '../../tickers';
+import {
+  buildFetchBatchedPrice,
+  buildFetchData,
+  isCIStub,
+} from '@/lib/buildFetch';
+import { convertPriceUniverse, fetchConvertCatalogue } from '../../tickers';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 type Params = Promise<{ from: string; to: string }>;
 
 // Local projection of the per-(from, to) data the SSR shell needs.
-// One pair comes from /v1/price/batch, synthesized into a {to: rate}
+// One pair's row comes from /v1/price/batch, synthesized into a {to: rate}
 // singleton map so the render path stays map-shaped.
 interface CurrencyDetail {
   ticker: string;
@@ -66,6 +70,17 @@ async function convertAssetFor(
   return assets.find((a) => a.ticker.toUpperCase() === segment);
 }
 
+// The rate is softFail (useConvertRate re-fetches it client-side every 60s) and
+// comes off one memoised batch per quote over every page's id, not one per page.
+async function fetchRate(id: string, quote: string): Promise<number> {
+  const row = await buildFetchBatchedPrice(
+    id,
+    quote,
+    await convertPriceUniverse(quote),
+  );
+  return row?.asset_id === id && row.price ? Number(row.price) : 0;
+}
+
 // A verified asset's identity is the catalogue row; /v1/external/assets is
 // keyed by bare ticker and must never stand in for a (code, issuer) asset.
 async function fetchAssetDetail(
@@ -73,14 +88,7 @@ async function fetchAssetDetail(
   to: string,
 ): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
-  const rows = await buildFetchData<
-    Array<{ asset_id: string; price: string | null }>
-  >(
-    `/v1/price/batch?asset_ids=${encodeURIComponent(asset.assetId)}&quote=${encodeURIComponent(`fiat:${to}`)}`,
-    { softFail: true, timeoutMs: 6_000, attempts: 2 },
-  );
-  const row = (rows ?? []).find((r) => r.asset_id === asset.assetId);
-  const rate = row?.price ? Number(row.price) : 0;
+  const rate = await fetchRate(asset.assetId, `fiat:${to}`);
   return {
     ticker: asset.ticker,
     name: asset.name,
@@ -96,8 +104,8 @@ async function fetchAssetDetail(
 //
 //   1. /v1/external/assets/{from} for the identity (ticker, name);
 //      /v1/assets is Stellar-only and 404s a fiat ticker
-//   2. /v1/price/batch?asset_ids=fiat:{from}&quote=fiat:{to} for
-//      the singleton from→to rate (forward: 1 {from} in {to} units)
+//   2. /v1/price/batch?quote=fiat:{to} (fetchRate) for the from→to
+//      rate (forward: 1 {from} in {to} units)
 //
 // The cross_rates map carries just the one entry (key = `to`)
 // rather than every ticker the pre-rc.48 endpoint returned. The
@@ -108,7 +116,7 @@ async function fetchDetail(
   to: string,
 ): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
-  const [identity, priceRows] = await Promise.all([
+  const [identity, rate] = await Promise.all([
     // Entity identity — fail-hard, same as fetchAssetDetail in
     // assets/[slug]/page.tsx: a persistent transport failure throws
     // and fails the build rather than baking a rate-less page.
@@ -119,24 +127,17 @@ async function fetchDetail(
     // call: useConvertRate (ConvertLive.tsx) re-fetches this pair
     // client-side every 60s, so a cold/slow price/batch at build
     // time should degrade this one pair rather than abort the export.
-    buildFetchData<Array<{ asset_id: string; price: string | null }>>(
-      `/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${from.toUpperCase()}`)}&quote=${encodeURIComponent(`fiat:${to.toUpperCase()}`)}`,
-      { softFail: true, timeoutMs: 6_000, attempts: 2 },
-    ),
+    fetchRate(`fiat:${from.toUpperCase()}`, `fiat:${to.toUpperCase()}`),
   ]);
   if (!identity) return null;
   const fromUSD = identity.price_usd ? Number(identity.price_usd) : 0;
   if (!(fromUSD > 0)) return null;
-  const row = (priceRows ?? []).find(
-    (r) => r.asset_id === `fiat:${from.toUpperCase()}`,
-  );
   // Forward read: the price is already "1 {from} = ? {to}", the
   // direction the converter displays, so it is never inverted.
-  const fromToRate = row?.price ? Number(row.price) : 0;
   return {
     ticker: identity.ticker,
     name: identity.name,
-    cross_rates: fromToRate > 0 ? { [to.toUpperCase()]: fromToRate } : {},
+    cross_rates: rate > 0 ? { [to.toUpperCase()]: rate } : {},
   };
 }
 

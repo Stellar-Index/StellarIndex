@@ -495,13 +495,26 @@ export async function buildFetchPairPrice(
     // narrows the price fetch, so fall through to the one-id batch.
   }
   const bases = (markets ?? []).filter((m) => m.quote === quote).map((m) => m.base);
-  if (bases.includes(base)) {
-    const prices = await buildFetchPriceBatch(bases, quote);
-    const hit = prices.get(base);
+  return buildFetchBatchedPrice(base, quote, bases);
+}
+
+/**
+ * buildFetchBatchedPrice prices one id from the memoised batch over
+ * `universe` — every id the build prices against `quote` — so N pages cost
+ * ⌈N/100⌉ requests. An id outside the universe, or in an unanswered chunk,
+ * costs one one-id batch, the request each page used to make on its own.
+ */
+export async function buildFetchBatchedPrice(
+  id: string,
+  quote: string,
+  universe: readonly string[],
+): Promise<PriceBatchRow | null> {
+  if (universe.includes(id)) {
+    const hit = (await buildFetchPriceBatch(universe, quote)).get(id);
     if (hit !== undefined) return hit?.row ?? null;
   }
   const rows = await buildFetchData<PriceBatchRow[]>(
-    `/v1/price/batch?asset_ids=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    `/v1/price/batch?asset_ids=${encodeURIComponent(id)}&quote=${encodeURIComponent(quote)}`,
     { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
   return rows?.[0] ?? null;

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildFetchBatchedPrice,
   buildFetchData,
   buildFetchPriceBatch,
   MAX_IN_FLIGHT,
@@ -197,6 +198,38 @@ describe('buildFetchPriceBatch', () => {
     expect(got.get('crypto:CHUNK3')?.stale).toBe(true);
     expect(got.get('crypto:CHUNK4')?.stale).toBe(false);
     expect(got.has('fiat:USD')).toBe(false);
+  });
+
+  it('serves an id from the universe batch and falls back to one request when its chunk is rejected', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        const ids = new URL(url).searchParams.get('asset_ids')!.split(',');
+        // The batch 400s a whole request on one id it cannot parse.
+        if (ids.length > 1 && ids.includes('crypto:FB99'))
+          return fakeResponse(400);
+        return fakeResponse(200, {
+          data: ids.map((id) => ({ asset_id: id, price: `${id.length}.5` })),
+          stale: [],
+          triangulated: [],
+        });
+      }),
+    );
+    // Sorted, FB3 and FB150 land in the first 100-id chunk, FB99 in the second.
+    const universe = Array.from({ length: 160 }, (_, i) => `crypto:FB${i}`);
+    const price = async (id: string) =>
+      (await buildFetchBatchedPrice(id, 'fiat:EUR', universe))?.price;
+    expect(await price('crypto:FB3')).toBe('10.5');
+    expect(await price('crypto:FB150')).toBe('12.5');
+    expect(urls).toHaveLength(2); // both chunks, once
+    // FB99 sits in the rejected chunk: one one-id request, the same row.
+    expect(await price('crypto:FB99')).toBe('11.5');
+    // Outside the universe: one one-id request.
+    expect(await price('crypto:OUT')).toBe('10.5');
+    expect(urls).toHaveLength(4);
+    expect(new URL(urls[3]).searchParams.get('asset_ids')).toBe('crypto:OUT');
   });
 
   it('leaves a row flag undefined when the OR flag is set without the id list', async () => {
