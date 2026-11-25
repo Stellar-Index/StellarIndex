@@ -66,7 +66,7 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(withRateLimitCharge(r.Context(), charge)))
+			next.ServeHTTP(w, r.WithContext(withRateLimitCharge(r.Context(), r, charge)))
 		})
 	}
 }
@@ -87,8 +87,10 @@ type rateLimitCharge struct {
 
 type rateLimitChargeKey struct{}
 
-func withRateLimitCharge(ctx context.Context, c *rateLimitCharge) context.Context {
-	return context.WithValue(ctx, rateLimitChargeKey{}, c)
+// withRateLimitCharge carries c in r's context for [ChargeRateLimit] and, below the api layer, for [ratelimit.ChargeColdFill].
+func withRateLimitCharge(ctx context.Context, r *http.Request, c *rateLimitCharge) context.Context {
+	ctx = context.WithValue(ctx, rateLimitChargeKey{}, c)
+	return ratelimit.WithColdFillCharge(ctx, func(tokens int) error { return c.chargeColdFill(r, tokens) })
 }
 
 // effectiveMax is the ceiling this request's subject is held to: the
@@ -128,6 +130,16 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 // take charges tokens against this bucket alone. It returns false once it has written a 429 (with this bucket's headers)
 // or a fail-closed 503; a nil result with true means the limiter failed open.
 func (c *rateLimitCharge) take(w http.ResponseWriter, r *http.Request, tokens int) (*ratelimit.Result, bool) {
+	res, refusal := c.bill(r, tokens)
+	if refusal != nil {
+		refusal.write(w, r)
+		return nil, false
+	}
+	return res, true
+}
+
+// bill is take without writing: a refusal carries what its 429/503 needs; a nil result and nil refusal means the limiter failed open.
+func (c *rateLimitCharge) bill(r *http.Request, tokens int) (*ratelimit.Result, *rateLimitRefusal) {
 	takeCtx, takeCancel := throttleContext(r)
 	res, err := c.bucket.Charge(takeCtx, c.key, tokens, c.override)
 	takeCancel()
@@ -137,27 +149,74 @@ func (c *rateLimitCharge) take(w http.ResponseWriter, r *http.Request, tokens in
 			c.logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
 				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI).Inc()
-			writeThrottleUnavailableProblem(w, r)
-			return nil, false
+			return nil, &rateLimitRefusal{c: c, unavailable: true}
 		}
 		// Debug level so an outage does not flood the error log; the metric is the alert signal.
 		c.logger.Debug("ratelimit redis error — failing open",
 			"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 		obs.RateLimitFailOpenTotal.Inc()
-		return nil, true
+		return nil, nil
 	}
-
 	if !res.Allowed {
-		c.setHeaders(w, res)
-		retryAfter := int(res.RetryAfter.Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		writeRateLimitProblem(w, r, retryAfter)
-		return nil, false
+		return nil, &rateLimitRefusal{c: c, res: res}
 	}
-	return &res, true
+	return &res, nil
+}
+
+// rateLimitRefusal is a denied charge: over budget (429) or the limiter failed closed (503).
+type rateLimitRefusal struct {
+	c           *rateLimitCharge
+	res         ratelimit.Result
+	unavailable bool
+}
+
+func (e *rateLimitRefusal) Error() string { return ratelimit.ErrColdFillRefused.Error() }
+
+func (e *rateLimitRefusal) Unwrap() error { return ratelimit.ErrColdFillRefused }
+
+func (e *rateLimitRefusal) write(w http.ResponseWriter, r *http.Request) {
+	if e.unavailable {
+		writeThrottleUnavailableProblem(w, r)
+		return
+	}
+	e.c.setHeaders(w, e.res)
+	retryAfter := max(int(e.res.RetryAfter.Seconds()), 1)
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	writeRateLimitProblem(w, r, retryAfter)
+}
+
+// chargeColdFill bills tokens for a cold fill without writing (it may run on a handler's worker goroutines); a refusal is returned
+// for the handler to answer through [WriteRateLimitRefusal].
+func (c *rateLimitCharge) chargeColdFill(r *http.Request, tokens int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.perIP != nil {
+		if _, refusal := c.perIP.bill(r, tokens); refusal != nil {
+			return refusal.counted()
+		}
+	}
+	if _, refusal := c.bill(r, tokens); refusal != nil {
+		return refusal.counted()
+	}
+	return nil
+}
+
+func (e *rateLimitRefusal) counted() error {
+	if !e.unavailable {
+		obs.RateLimitColdFillRefusedTotal.Inc()
+	}
+	return e
+}
+
+// WriteRateLimitRefusal answers err with the limiter's 429 (or fail-closed 503) when it is a refused cold-fill charge
+// ([ratelimit.ChargeColdFill]) and reports whether it wrote.
+func WriteRateLimitRefusal(w http.ResponseWriter, r *http.Request, err error) bool {
+	var refusal *rateLimitRefusal
+	if !errors.As(err, &refusal) {
+		return false
+	}
+	refusal.write(w, r)
+	return true
 }
 
 func (c *rateLimitCharge) setHeaders(w http.ResponseWriter, res ratelimit.Result) {
@@ -225,7 +284,7 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(withRateLimitCharge(r.Context(), charge)))
+			next.ServeHTTP(w, r.WithContext(withRateLimitCharge(r.Context(), r, charge)))
 		})
 	}
 }

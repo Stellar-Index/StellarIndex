@@ -518,6 +518,32 @@ groups:
             together with it. If Redis is healthy, the failure is in the
             limiter's own path (auth, evicted script, key namespace).
 
+      # stellarindex_ratelimit_cold_fill_refused_total: requests answered
+      # 429 because they could not pay the surcharge for an uncached (lake)
+      # read. A short burst is a crawler being held back; a sustained
+      # rate is either that crawler or real users being throttled. No
+      # client label on purpose: the counter is unlabelled, never by IP.
+      - alert: stellarindex_ratelimit_cold_fill_refusals_sustained
+        expr: sum(rate(stellarindex_ratelimit_cold_fill_refused_total[15m])) > 1
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_cold_fill_refusals_sustained
+          summary: "Cold-read refusals at {{ $value | humanize }}/s for 30m"
+          description: |
+            The API has refused more than 60 requests a minute with 429
+            for half an hour because they could not pay the extra cost of
+            a read that was not cached. No lake read was started for
+            them. Either a crawler is being held back, which is fine, or
+            real users are being throttled.
+
+            Check who is refused: one subject or many (API logs), whether
+            stellarindex_explorer_refresh_gate_saturated_total is also
+            rising, and whether paying or explorer users are getting 429s.
+
       # Companion to the fail-open alert above: past the same dwell
       # time (ratelimit.DefaultDwellTime, 30s) of continuous Redis
       # errors, the limiter flips from failing open to failing CLOSED —

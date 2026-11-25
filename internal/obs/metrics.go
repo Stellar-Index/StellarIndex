@@ -80,6 +80,7 @@ func registerAppMetrics() {
 		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
 		RateLimitInProcessOverflowTotal,
+		RateLimitColdFillRefusedTotal,
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
@@ -1362,6 +1363,14 @@ var RateLimitInProcessOverflowTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ratelimit_inprocess_overflow_total",
 		Help: "Takes (one per token charged) counted against a shared region or overflow bucket because an in-process limiter's key map was full.",
+	},
+)
+
+// RateLimitColdFillRefusedTotal counts cold cache fills refused at admission because the request could not pay their surcharge.
+var RateLimitColdFillRefusedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ratelimit_cold_fill_refused_total",
+		Help: "Requests answered 429 because their rate-limit budget could not pay a cold cache fill's surcharge; no lake read was started.",
 	},
 )
 

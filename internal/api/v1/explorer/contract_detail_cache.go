@@ -2,11 +2,13 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -193,21 +195,69 @@ func detachedClassForKey(key string) string {
 // coldSlotWait caps how long a cold read waits for a refresh-gate slot, leaving an admitted compute half the read budget.
 const coldSlotWait = explorerReadTimeout / 2
 
-// coldSlotAdmit is the cold-path admit func shared by the cached reads: it waits (bounded, see AcquireClassWait) for a slot until ctx
-// or coldSlotWait ends, where the stale path uses the non-blocking TryAcquireClass.
-func coldSlotAdmit(ctx context.Context) func(*clickhouse.RefreshGate, string) bool {
-	return func(g *clickhouse.RefreshGate, class string) bool {
-		wctx, cancel := context.WithTimeout(ctx, coldSlotWait)
-		defer cancel()
-		return g.AcquireClassWait(wctx, class)
+// slotAdmit claims a flight owner's refresh-gate slot; a non-nil error ends the flight with it, so it is what joiners see.
+type slotAdmit func(*clickhouse.RefreshGate, string) error
+
+// tryAdmit is the stale path's admission: an entry is served either way, so skip rather than wait.
+func tryAdmit(g *clickhouse.RefreshGate, class string) error {
+	if g.TryAcquireClass(class) {
+		return nil
+	}
+	return errRefreshSaturated
+}
+
+// coldSlotAdmit is the cold-path admission shared by the cached reads. Called only by a flight's owner, it first bills the request
+// [ratelimit.ColdFillCost] (refused: no slot claimed, refused holds why, the flight ends errOwnerRefused), then waits (bounded, see
+// AcquireClassWait) for a slot until ctx or coldSlotWait ends.
+type coldSlotAdmit struct {
+	ctx     context.Context
+	refused error
+}
+
+func (a *coldSlotAdmit) admit(g *clickhouse.RefreshGate, class string) error {
+	if err := ratelimit.ChargeColdFill(a.ctx); err != nil {
+		a.refused = err
+		return errOwnerRefused
+	}
+	wctx, cancel := context.WithTimeout(a.ctx, coldSlotWait)
+	defer cancel()
+	if !g.AcquireClassWait(wctx, class) {
+		return errRefreshSaturated
+	}
+	return nil
+}
+
+// coldFill starts or joins a cold fill through start and waits for it. A joined flight whose owner was refused its charge says
+// nothing about this request's budget, so it is retried once with this request as candidate owner paying its own charge; a second
+// refused owner answers errRefreshSaturated, so the retry cannot loop.
+func coldFill(ctx context.Context, start func(slotAdmit) *keyFlight) (*keyFlight, error) {
+	fl, err := coldFillOnce(ctx, start)
+	if err != nil || !errors.Is(fl.err, errOwnerRefused) {
+		return fl, err
+	}
+	if fl, err = coldFillOnce(ctx, start); err == nil && errors.Is(fl.err, errOwnerRefused) {
+		return nil, errRefreshSaturated
+	}
+	return fl, err
+}
+
+func coldFillOnce(ctx context.Context, start func(slotAdmit) *keyFlight) (*keyFlight, error) {
+	cold := &coldSlotAdmit{ctx: ctx}
+	fl := start(cold.admit)
+	if cold.refused != nil {
+		return nil, cold.refused
+	}
+	select {
+	case <-fl.done:
+		return fl, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
 // refreshContractDetail kicks ONE detached compute for key (no-op while a flight is up) and returns the flight. Detached because
 // a scan bound to a request deadline never completes for a busy contract, so the cache would never fill. admit claims the gate slot.
-func (h *Handler) refreshContractDetail(key string, compute func(context.Context) (any, error),
-	admit func(*clickhouse.RefreshGate, string) bool,
-) *keyFlight {
+func (h *Handler) refreshContractDetail(key string, compute func(context.Context) (any, error), admit slotAdmit) *keyFlight {
 	fl, owner := h.contractDetail.flight.begin(key)
 	if !owner {
 		return fl
@@ -215,8 +265,8 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	// Bounded globally across keys because any shape-valid C-address is a distinct cold key (see detachedGate).
 	gate := h.detachedGate()
 	class := detachedClassForKey(key)
-	if !admit(gate, class) {
-		h.endContractDetailRefresh(key, fl, errRefreshSaturated)
+	if err := admit(gate, class); err != nil {
+		h.endContractDetailRefresh(key, fl, err)
 		return fl
 	}
 	go func() {
@@ -254,7 +304,7 @@ func (h *Handler) contractDetailCached(ctx context.Context, key string, compute 
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {
 			// Stale path: an entry is served either way, so skip rather than wait.
-			h.refreshContractDetail(key, compute, (*clickhouse.RefreshGate).TryAcquireClass) //nolint:contextcheck // intentional detach — see refreshContractDetail
+			h.refreshContractDetail(key, compute, tryAdmit) //nolint:contextcheck // intentional detach — see refreshContractDetail
 			if cur, ok, _ := h.contractDetail.get(key); ok {
 				e = cur // a refresh skipped just now is already a known failure
 			}
@@ -262,17 +312,17 @@ func (h *Handler) contractDetailCached(ctx context.Context, key string, compute 
 		return e.v, e.cachedAt, !fresh && e.servedStale(key), nil
 	}
 	// Cold path: nothing to serve, so wait (bounded, see AcquireClassWait) for a slot rather than shed the page.
-	fl := h.refreshContractDetail(key, compute, coldSlotAdmit(ctx)) //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
-	select {
-	case <-fl.done:
-		if e, ok, _ := h.contractDetail.get(key); ok {
-			return e.v, e.cachedAt, false, nil
-		}
-		if fl.err != nil {
-			return nil, time.Time{}, false, fl.err
-		}
-		return nil, time.Time{}, false, errRefreshFailed
-	case <-ctx.Done():
-		return nil, time.Time{}, false, ctx.Err()
+	fl, err := coldFill(ctx, func(admit slotAdmit) *keyFlight { //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
+		return h.refreshContractDetail(key, compute, admit)
+	})
+	if err != nil {
+		return nil, time.Time{}, false, err
 	}
+	if e, ok, _ := h.contractDetail.get(key); ok {
+		return e.v, e.cachedAt, false, nil
+	}
+	if fl.err != nil {
+		return nil, time.Time{}, false, fl.err
+	}
+	return nil, time.Time{}, false, errRefreshFailed
 }
