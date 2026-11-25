@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"slices"
@@ -606,5 +607,70 @@ func TestChEntryHistoryLending_ReplayDisplacesRenumberedRow(t *testing.T) {
 	}
 	if got := lendingHistory(t, ctx, conn, pool, key); !slices.Equal(got, row("END")) {
 		t.Fatalf("history after the replay = %q, want %q", got, row("END"))
+	}
+}
+
+// Int256 amounts above 2^200 (and negative ones) round-trip exactly as *big.Int, a re-derive of the same
+// (contract_id, asset, hour) with a later derived_at wins under FINAL, and sum() stays exact past Int128.
+func TestLendingInterestHourly_Int256RoundTripAndNewestDeriveWins(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	stmts, err := clickHouseDeployStatements("lending_interest.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range stmts {
+		if err := conn.Exec(ctx, s); err != nil {
+			t.Fatalf("apply lending_interest.sql over tier1: %.72q: %v", s, err)
+		}
+	}
+	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.lending_interest_hourly`); err != nil {
+		t.Fatal(err)
+	}
+
+	const pool, assetA, assetB = "CPOOL", "CASSETA", "CASSETB"
+	hour := time.Date(2027, 3, 1, 10, 0, 0, 0, time.UTC)
+	p200 := new(big.Int).Lsh(big.NewInt(1), 200)
+	stale := new(big.Int).Add(p200, big.NewInt(1))
+	fresh := new(big.Int).Add(p200, big.NewInt(987_654_321))
+	freshResidual := new(big.Int).Neg(new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 201), big.NewInt(7)))
+	other := new(big.Int).Lsh(big.NewInt(1), 130)
+	insert := func(asset string, gross, residual *big.Int, derivedAt time.Time) {
+		t.Helper()
+		b, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.lending_interest_hourly
+			(contract_id, protocol, asset, hour, first_ledger, last_ledger, gross, backstop_residual, derived_at)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Append(pool, "blnt", asset, hour, uint32(100), uint32(200), gross, residual, derivedAt); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Send(); err != nil {
+			t.Fatalf("insert %s: %v", asset, err)
+		}
+	}
+	first := time.Date(2027, 3, 1, 11, 0, 0, 0, time.UTC)
+	// The stale derive is inserted last: only the derived_at version, not insert order, can make the newer one win.
+	insert(assetA, fresh, freshResidual, first.Add(time.Millisecond))
+	insert(assetA, stale, big.NewInt(0), first)
+	insert(assetB, other, big.NewInt(0), first)
+
+	var gross, residual big.Int
+	if err := conn.QueryRow(ctx, `SELECT gross, backstop_residual FROM stellar.lending_interest_hourly FINAL
+		WHERE contract_id = ? AND asset = ? AND hour = ?`, pool, assetA, hour).Scan(&gross, &residual); err != nil {
+		t.Fatal(err)
+	}
+	if gross.Cmp(fresh) != 0 || residual.Cmp(freshResidual) != 0 {
+		t.Fatalf("FINAL row = (%s, %s), want the newest derive (%s, %s)", &gross, &residual, fresh, freshResidual)
+	}
+	var total big.Int
+	if err := conn.QueryRow(ctx, `SELECT sum(gross) FROM stellar.lending_interest_hourly FINAL
+		WHERE contract_id = ?`, pool).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if want := new(big.Int).Add(fresh, other); total.Cmp(want) != 0 {
+		t.Fatalf("sum(gross) FINAL = %s, want %s", &total, want)
 	}
 }
