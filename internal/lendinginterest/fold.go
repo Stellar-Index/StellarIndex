@@ -58,6 +58,7 @@ type Version struct {
 	CloseTime      time.Time
 	Reserve        blend.ReserveData // KindReserve
 	BstopRate      uint32            // KindConfig
+	WasmHash       string            // KindConfig: the instance's executable, hex; the caller's WASM cross-check
 	Fees           blnt.ProtocolFees // KindFees
 }
 
@@ -110,6 +111,11 @@ type HourRow struct {
 	// ExcludedCreditDelta is Σ backstop_credit deltas of unordered and errored versions, for the
 	// in-line backstop identity; not stored.
 	ExcludedCreditDelta *big.Int
+	// FeeOnlyCreditDelta and FeeOnlyCarryDelta are the asset's ProtocolFees movement in the hour by
+	// transactions that wrote no ResData of it (a fee claim, protocol_credit_loss); FeeOnlyVersions
+	// counts them. FeeOnlyUnknown counts such movements the apply order leaves open. None is stored.
+	FeeOnlyCreditDelta, FeeOnlyCarryDelta *big.Int
+	FeeOnlyVersions, FeeOnlyUnknown       uint32
 }
 
 const maxErrorSamples = 5
@@ -244,7 +250,7 @@ func readLess(a, b Version) bool {
 
 // content renders everything a version stores besides its identity and position.
 func content(v Version) string {
-	return fmt.Sprintf("%t|%v|%d|%v", v.Removed, v.Reserve, v.BstopRate, v.Fees)
+	return fmt.Sprintf("%t|%v|%d|%s|%v", v.Removed, v.Reserve, v.BstopRate, v.WasmHash, v.Fees)
 }
 
 type changeID struct {

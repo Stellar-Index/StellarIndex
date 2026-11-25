@@ -28,6 +28,13 @@ type state struct {
 	configs  map[string][]uint32
 	fees     map[string][]blnt.ProtocolFees
 	rows     map[rowKey]*HourRow
+	feeOnly  map[rowKey]*feeMove
+}
+
+// feeMove is one asset-hour's ProtocolFees movement outside its reserve's pairs.
+type feeMove struct {
+	credit, carry *big.Int
+	n, unknown    uint32
 }
 
 func newState(seed Seeds, opts Options) (*state, error) {
@@ -37,6 +44,7 @@ func newState(seed Seeds, opts Options) (*state, error) {
 		configs:  make(map[string][]uint32, len(seed.Configs)),
 		fees:     make(map[string][]blnt.ProtocolFees, len(seed.Fees)),
 		rows:     map[rowKey]*HourRow{},
+		feeOnly:  map[rowKey]*feeMove{},
 	}
 	for k, v := range seed.Reserves {
 		for _, rd := range v {
@@ -159,8 +167,70 @@ func (st *state) tx(proto Protocol, g []Version) {
 		st.configs[pool] = cfg
 	}
 	if f, ok := txFees[g[0].TxHash]; ok {
+		paired := map[string]bool{}
+		for _, v := range g {
+			if v.Kind == KindReserve && !v.Removed {
+				paired[v.Asset] = true
+			}
+		}
+		st.feeOnlyMoves(g[0], st.fees[pool], []blnt.ProtocolFees{f}, paired)
 		st.fees[pool] = []blnt.ProtocolFees{f}
 	}
+}
+
+// feeOnlyMoves records, per asset not in paired, the ProtocolFees movement from befores to afters (each the
+// candidates an admissible apply order leaves): exact when each side agrees, else counted unknown.
+func (st *state) feeOnlyMoves(at Version, befores, afters []blnt.ProtocolFees, paired map[string]bool) {
+	for _, a := range feeAssets(paired, befores, afters) {
+		var b blnt.ProtocolFee
+		okB := len(befores) > 0
+		if okB {
+			b, okB = agree(feeEntries(befores, a), sameFee)
+		}
+		f, okA := agree(feeEntries(afters, a), sameFee)
+		if okB && okA && sameFee(b, f) {
+			continue
+		}
+		k := rowKey{at.Pool, a, hourOf(at).Unix()}
+		m := st.feeOnly[k]
+		if m == nil {
+			m = &feeMove{credit: new(big.Int), carry: new(big.Int)}
+			st.feeOnly[k] = m
+		}
+		if !okB || !okA {
+			m.unknown++
+			continue
+		}
+		m.n++
+		m.credit.Add(m.credit, new(big.Int).Sub(f.Credit, b.Credit))
+		m.carry.Add(m.carry, new(big.Int).Sub(f.Carry, b.Carry))
+	}
+}
+
+// feeAssets is every asset the fee entries name outside skip, sorted.
+func feeAssets(skip map[string]bool, sets ...[]blnt.ProtocolFees) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, fs := range sets {
+		for _, f := range fs {
+			for a := range f {
+				if !seen[a] && !skip[a] {
+					seen[a] = true
+					out = append(out, a)
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func feeEntries(fs []blnt.ProtocolFees, asset string) []blnt.ProtocolFee {
+	out := make([]blnt.ProtocolFee, len(fs))
+	for i, f := range fs {
+		out[i] = feeEntry(f, asset)
+	}
+	return out
 }
 
 // unorderedLedger pairs a pool-ledger whose apply order is unknown. Each reserve's versions there
@@ -180,6 +250,15 @@ func (st *state) unorderedLedger(proto Protocol, vs []Version, orderErr error) {
 		st.pair(proto, pairIn{nexts: w.byAsset[a], bstops: bstops, prevFees: prevFees, txFees: w.feeByTx, orderErr: orderErr})
 	}
 	cfgs, fees := w.pool(nil)
+	if fees != nil {
+		// A reserve written here pairs under every candidate fee entry: a fee-only write to its asset
+		// unorders that pair, so only the other assets' movements are recorded here.
+		paired := map[string]bool{}
+		for _, a := range w.assets {
+			paired[a] = true
+		}
+		st.feeOnlyMoves(vs[0], st.fees[pool], fees, paired)
+	}
 	if cfgs != nil {
 		st.configs[pool] = cfgs
 	}
@@ -508,6 +587,7 @@ func (st *state) row(proto Protocol, v Version) *HourRow {
 		Gross: new(big.Int), ProtocolFee: new(big.Int), Backstop: new(big.Int), SupplierIntended: new(big.Int),
 		SupplierRealised: new(big.Int), BackstopCreditDelta: new(big.Int), BackstopResidual: new(big.Int),
 		SupplyResidual: new(big.Int), FeeCreditResidual: new(big.Int), ExcludedCreditDelta: new(big.Int),
+		FeeOnlyCreditDelta: new(big.Int), FeeOnlyCarryDelta: new(big.Int),
 	}
 	st.rows[k] = r
 	return r
@@ -515,7 +595,14 @@ func (st *state) row(proto Protocol, v Version) *HourRow {
 
 func (st *state) emit() []HourRow {
 	out := make([]HourRow, 0, len(st.rows))
-	for _, r := range st.rows {
+	for k, r := range st.rows {
+		// A move in an hour with no row of its reserve is in the next row's opening entry.
+		if m := st.feeOnly[k]; m != nil {
+			r.FeeOnlyCreditDelta.Add(r.FeeOnlyCreditDelta, m.credit)
+			r.FeeOnlyCarryDelta.Add(r.FeeOnlyCarryDelta, m.carry)
+			r.FeeOnlyVersions += m.n
+			r.FeeOnlyUnknown += m.unknown
+		}
 		out = append(out, *r)
 	}
 	sort.Slice(out, func(i, j int) bool {
