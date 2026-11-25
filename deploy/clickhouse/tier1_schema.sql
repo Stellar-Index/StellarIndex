@@ -1614,6 +1614,43 @@ ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(hour)
 ORDER BY (contract_id, key_xdr, hour);
 
+-- ── lending_interest_hourly — see deploy/clickhouse/lending_interest.sql ──
+CREATE TABLE IF NOT EXISTS stellar.lending_interest_hourly
+(
+    contract_id           String,                  -- pool C-strkey
+    protocol              LowCardinality(String),  -- blend_v1 | blend_v2 | blnt: the arithmetic used
+    asset                 String,                  -- reserve asset C-strkey
+    hour                  DateTime('UTC'),
+    first_ledger          UInt32,                  -- replay DELETEs key on first/last_ledger
+    last_ledger           UInt32,
+    versions              UInt32,                  -- ResData versions in the hour
+    accrued_versions      UInt32,                  -- versions with a known predecessor
+    gross                 Int256,
+    protocol_fee          Int256,                  -- 0 on Blend
+    backstop              Int256,
+    supplier_intended     Int256,
+    supplier_realised     Int256,
+    backstop_credit_delta Int256,
+    unreconciled_versions UInt32,                  -- any of the b_rate / backstop / fee checks failed
+    brate_mismatches      UInt32,
+    backstop_residual     Int256,
+    supply_residual       Int256,
+    fee_mismatches        UInt32,
+    fee_credit_residual   Int256,
+    residual_explained    Int256,                  -- amount-matched to an event
+    residual_attributed   Int256,                  -- same-tx event whose amount cannot be checked
+    explained_versions    UInt32,
+    attributed_versions   UInt32,
+    unordered_versions    UInt32,                  -- predecessor order unknown: counted, not summed
+    accrual_errors        UInt32,                  -- accrual refused the pair: counted, not summed
+    error_samples         Array(String),           -- at most 5
+    derive_rev            UInt16,                  -- bumped on any change to the derive arithmetic
+    derived_at            DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(derived_at)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (contract_id, asset, hour);
+
 -- ── account_entry_ledgers / asset_entry_ledgers — the entry index: which ledgers an account
 -- (by role) or an asset has classic-entry activity in; no payload. Built by
 -- `stellarindex-ops ch-entry-index` (deploy/clickhouse/entry_index.sql carries the runbook).
