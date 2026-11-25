@@ -20,6 +20,23 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.138.0] - 2026-11-25
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). No ClickHouse DDL change; an existing host needs `stellar.lending_interest_hourly` from `deploy/clickhouse/lending_interest.sql` (`si-apply-scope: operator`) if it has not been applied since v0.136.0. New metric: `stellarindex_api_degraded_responses_total`. `stellarindex_lending_interest_unexplained_versions` changes meaning (see Fixed).
+
+### Changed
+
+- **api:** `/v1/price/batch` reads the first stage of a request's data as set statements before its rows run: the cached triangulated price, the latest closed 1m bucket and the guard's trailing buckets. A prefetched answer is used only within 2 s and only for the exact key it was read for; anything else is read as before. Requests under 8 ids are not prefetched and only the first 200 ids are. Responses are unchanged (#4387).
+- **api:** a `fiat:USD` `/v1/price/batch` also prefetches each asset's 24h-ago anchor bucket and its guard baseline, keyed on the anchor's minute, beneath the per-minute change-24h cache. Responses are unchanged (#4388).
+
+### Added
+
+- **api:** `stellarindex_api_degraded_responses_total{route,reason}` and a `degraded_reason` field on the request log line say why a response was flagged degraded: `refresh_failed`, `refresh_overrun`, `provisional`, `section_dropped` or `other` (#4390).
+
+### Fixed
+
+- **lending:** the interest pass window line reports explained, attributed and unexplained versions separately, with up to five samples of unexplained rows. `stellarindex_lending_interest_unexplained_versions` and the proof report no longer count attributed versions (a Blend V1 interest-auction fill, whose event carries no amount) as unexplained (#4389).
+
 ## [v0.137.0] - 2026-11-25
 
 Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break (no change under `pkg/`). Operators of an EXISTING ClickHouse host: `deploy/clickhouse/lending_interest.sql` and `deploy/clickhouse/lending_state.sql` (both `si-apply-scope: operator`) changed in comments and runbook text only, with no DDL change, so nothing needs re-applying before deploying. New operator flag `-interest-max-versions` (default 150,000) on `ch-entry-history`. The hourly interest pass is uninitialised on every host and derive revision 2 replaces revision 1; a host that had initialised it would re-derive from the floor. New metrics: `stellarindex_lending_interest_undecodable_events`, `stellarindex_api_price_batch_prefetch_total`.
@@ -97,20 +114,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 ### Fixed
 
 - **api:** a cold asset holders or account state read waits for a refresh slot until its request deadline or 4 seconds, with a bounded queue, before answering 503; it answered 503 at once when its class was full. A stale read still skips rather than waits, and concurrency against ClickHouse is unchanged (#4356).
-
-## [v0.133.0] - 2026-11-24
-
-Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. A host role run from this tag replaces the API's ClickHouse user definition and hot-reloads it, with no restart (#4351).
-
-### Added
-
-- **ops:** `stellarindex_aggregator_window_truncated` raises a ticket when a pair and window keep serving a truncated trade window for 30 minutes; `stellarindex_aggregator_window_truncated_total` gains `pair` and `window` labels, and the warn line names the pair, window, rows used and `covered_from` (#4353).
-
-### Changed
-
-- **api:** a cold `GET /v1/contracts/{id}` read waits for a refresh slot until its request deadline or 4 seconds, with a bounded queue, before answering 503; concurrency against ClickHouse is unchanged (#4354).
-- **api:** the asset holders cache, the op-type stats panel on `/v1/operations` and the native liquidity-pool listing flag a serve as stale only past the refresh TTL plus the refresh budget, or after a failed, timed-out or skipped refresh. The OpenAPI text for `/v1/assets/{asset_id}/holders` states the real bounds: 300 seconds for a scanned board, 70 minutes for a rollup board (#4352).
-
-### Fixed
-
-- **ops:** the API's ClickHouse user is granted `SELECT` on `stellar.*` and `system.parts` explicitly, so the count rollup plan is readable and account reads stop falling back to the source scan; the role verifies the grants as that user (#4351).
