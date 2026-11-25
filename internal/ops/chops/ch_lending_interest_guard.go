@@ -5,21 +5,37 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
+// lendingInterestRedoPendingMetric is the interest heartbeat's gauge of a run held by a pending redo.
+const lendingInterestRedoPendingMetric = "stellarindex_lending_interest_redo_pending"
+
 // planUnderRedo plans the run. Under a pending redo only a run that redoes it plans (the timer's pass skips, any other
-// refuses), and a re-derive records its progress with each mark.
-func (r lendingRun) planUnderRedo(ctx context.Context, log io.Writer, wm uint32) (interestPlan, bool, error) {
+// refuses), and a re-derive records its progress with each mark. hb reports whether the redo held the run.
+func (r lendingRun) planUnderRedo(ctx context.Context, log io.Writer, wm uint32, hb *opsutil.JobHeartbeat) (interestPlan, bool, error) {
 	redo, pending, err := lendingInterestRedo(ctx, r.chAddr)
 	if err != nil {
 		return interestPlan{}, false, err
 	}
-	if pending && !r.redoes(redo) {
+	if pending {
+		floor, err := lendingInterestFloor(ctx, r.chAddr)
+		if err != nil {
+			return interestPlan{}, false, err
+		}
+		// No row lies below the floor and rederiveFloor refuses a -from there, so a redo armed below it starts at it.
+		redo.From = max(redo.From, floor)
+	}
+	held := pending && !r.redoes(redo)
+	hb.Gauge(lendingInterestRedoPendingMetric, "1 when the lending interest pass derived nothing because a lending_state replay "+
+		"armed a redo this run does not perform, 0 otherwise.", held)
+	if held {
 		msg := fmt.Sprintf("lending interest: a lending_state replay rewrote the state from ledger %d, so the rows from there "+
 			"on are stale; re-derive them first: -interest-only -from %d -write, then from each run's end until one reaches the tip",
 			redo.From, redo.Next())
@@ -73,14 +89,33 @@ func interestKeyID(pool string, kind lendinginterest.Kind, asset string) string 
 }
 
 // checkNewKeys refuses a key the run neither seeded nor read before whose first version is not its creation:
-// lending_state_hourly holds no row of a key that existed before the run, so its history there is missing.
+// lending_state_hourly holds no row of a key that existed before the run, so its history there is missing. Where the
+// key's first ledger leaves its order unknown (lendinginterest.UnorderedLedger, as the fold judges it), its creation
+// may sort after another transaction's update, so any version there being the creation is enough.
 func (st *interestCarry) checkNewKeys(vs []lendinginterest.Version) error {
+	firstLedger := map[string][]lendinginterest.Version{}
+	var order []string
 	for _, v := range vs {
 		id := interestKeyID(v.Pool, v.Kind, v.Asset)
 		if st.known[id] {
 			continue
 		}
-		if !v.Created {
+		first, seen := firstLedger[id]
+		if !seen {
+			order = append(order, id)
+		} else if first[0].Ledger != v.Ledger {
+			continue
+		}
+		firstLedger[id] = append(firstLedger[id], v)
+	}
+	for _, id := range order {
+		in := firstLedger[id]
+		created := in[0].Created
+		if lendinginterest.UnorderedLedger(in) {
+			created = slices.ContainsFunc(in, func(v lendinginterest.Version) bool { return v.Created })
+		}
+		if !created {
+			v := in[0]
 			return fmt.Errorf("lending interest: pool %s key %s first read at ledger %d tx %s as a change, not its creation, "+
 				"yet lending_state_hourly holds no row of it before the run: lending_state is missing its history; replay it over the key's past first",
 				v.Pool, id, v.Ledger, v.TxHash)

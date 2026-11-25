@@ -129,7 +129,7 @@ func complete(rd blend.ReserveData) bool {
 // unknown, as a zero intra_ledger_seq does, but its order-dependent versions count as accrual errors.
 func (st *state) poolLedger(vs []Version) {
 	proto := st.opts.Protocols[vs[0].Pool]
-	if unorderedLedger(vs) {
+	if UnorderedLedger(vs) {
 		st.unorderedLedger(proto, vs, nil)
 		return
 	}

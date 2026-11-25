@@ -414,6 +414,57 @@ func TestInterestPass_PendingRedo(t *testing.T) {
 	}
 }
 
+// A redo armed below the floor (a lending_state replay from before the interest rows start) is redone from the floor:
+// the timer names it, a re-derive from there is let through and clears the redo, and the heartbeat shows the hold.
+func TestInterestPass_RedoBelowFloor(t *testing.T) {
+	f := newFakeInterestLake()
+	f.wm, f.floor = 200_017, 199_990
+	f.redo = &clickhouse.LendingInterestRedo{Gen: 4, From: 199_000}
+	f.install(t)
+	hb, read := liHeartbeat(t)
+	out, err := runInterest(t, lendingRun{heartbeat: hb})
+	if err != nil || !strings.Contains(out, "-interest-only -from 199990") || len(f.reads) != 0 {
+		t.Fatalf("timer under a redo below the floor: %v %q reads %v", err, out, f.reads)
+	}
+	if text := read(); metric(text, lendingInterestRedoPendingMetric) != "1" || metric(text, "stellarindex_ops_job_last_exit_ok") != "1" {
+		t.Fatalf("heartbeat:\n%s\nwant the redo held the run, which exited cleanly", text)
+	}
+	if _, err := runInterest(t, lendingRun{heartbeat: hb, from: 199_990, interest: interestFlags{only: true}}); err != nil {
+		t.Fatalf("re-derive from the floor: %v", err)
+	}
+	if n := len(f.redoMarks); f.redo != nil || n == 0 || f.redoMarks[n-1] != [2]uint32{4, 200_017} {
+		t.Fatalf("redo marks %v pending %v, want the redo done through 200017", f.redoMarks, f.redo)
+	}
+	if got := metric(read(), lendingInterestRedoPendingMetric); got != "0" {
+		t.Fatalf("redo_pending after the re-derive = %q, want 0", got)
+	}
+}
+
+// A new key created in one transaction and updated in another of the same ledger, on rows without intra-ledger order,
+// passes whichever sorts first; with apply order, or with no creation in the ledger, an update first refuses.
+func TestCheckNewKeys_FirstLedger(t *testing.T) {
+	created, updated := liReserve(10, 1), liReserve(10, 2)
+	created.Created, created.IntraLedgerSeq, created.TxHash = true, 0, "b"
+	updated.IntraLedgerSeq, updated.TxHash = 0, "a"
+	later := liReserve(11, 3)
+	for _, vs := range [][]lendinginterest.Version{{created, updated, later}, {updated, created, later}} {
+		st := interestCarry{known: map[string]bool{}}
+		if err := st.checkNewKeys(vs); err != nil {
+			t.Fatalf("unordered first ledger %s,%s: %v", vs[0].TxHash, vs[1].TxHash, err)
+		}
+	}
+	ordered := []lendinginterest.Version{updated, created}
+	ordered[0].IntraLedgerSeq, ordered[1].IntraLedgerSeq = 1, 2
+	other := updated
+	other.TxHash = "c"
+	for _, vs := range [][]lendinginterest.Version{ordered, {updated, other}, {updated, later}} {
+		st := interestCarry{known: map[string]bool{}}
+		if err := st.checkNewKeys(vs); err == nil || !strings.Contains(err.Error(), "not its creation") {
+			t.Fatalf("%+v: %v, want the refusal", vs, err)
+		}
+	}
+}
+
 // An excluded pair cuts the telescoped chain; the pairs around it are still recomputed, so a wrong gross fails.
 func TestCheckGross_ExcludedPairKeepsTheRestChecked(t *testing.T) {
 	vs := []lendinginterest.Version{liReserve(8, 1), liReserve(9, 2), liReserve(10, 3), liReserve(11, 4)}

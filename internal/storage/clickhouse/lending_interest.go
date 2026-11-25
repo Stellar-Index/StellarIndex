@@ -445,8 +445,8 @@ func decodeLendingInterestEntry(k LendingInterestKey, entry string, v *lendingin
 }
 
 // lendingInterestSeedsQuery takes each key's last row before an hour.
-const lendingInterestSeedsQuery = `SELECT key_xdr, last.1, last.2, last.3 FROM (
-		SELECT key_xdr, argMax((hour, ledger_seq, entry_xdr), hour) AS last
+const lendingInterestSeedsQuery = `SELECT key_xdr, last.1, last.2, last.3, last.4 FROM (
+		SELECT key_xdr, argMax((hour, ledger_seq, intra_ledger_seq, entry_xdr), hour) AS last
 		FROM stellar.lending_state_hourly FINAL
 		WHERE contract_id IN ? AND key_xdr IN ? AND hour < ?
 		GROUP BY key_xdr
@@ -454,10 +454,10 @@ const lendingInterestSeedsQuery = `SELECT key_xdr, last.1, last.2, last.3 FROM (
 
 // lendingInterestSeedRow is one key's last lending_state_hourly row before the seed hour.
 type lendingInterestSeedRow struct {
-	Key    string
-	Hour   time.Time
-	Ledger uint32
-	Entry  string
+	Key           string
+	Hour          time.Time
+	Ledger, Intra uint32
+	Entry         string
 }
 
 // LendingInterestSeedSet is a run's seeds and the lending_state rows they came from (Before set), each proved
@@ -506,7 +506,7 @@ func LendingInterestSeeds(ctx context.Context, addr string, pools []LendingContr
 	var got []lendingInterestSeedRow
 	for rows.Next() {
 		var r lendingInterestSeedRow
-		if err := rows.Scan(&r.Key, &r.Hour, &r.Ledger, &r.Entry); err != nil {
+		if err := rows.Scan(&r.Key, &r.Hour, &r.Ledger, &r.Intra, &r.Entry); err != nil {
 			return LendingInterestSeedSet{}, fmt.Errorf("clickhouse: lending interest seeds before %s: %w", beforeHour, err)
 		}
 		got = append(got, r)

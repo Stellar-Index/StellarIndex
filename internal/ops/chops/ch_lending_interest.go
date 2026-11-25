@@ -167,7 +167,7 @@ func (r lendingRun) deriveInterest(ctx context.Context, log io.Writer, wm uint32
 			return nil
 		}
 	}
-	plan, skip, err := r.planUnderRedo(ctx, log, wm)
+	plan, skip, err := r.planUnderRedo(ctx, log, wm, hb)
 	if err != nil || skip {
 		return err
 	}

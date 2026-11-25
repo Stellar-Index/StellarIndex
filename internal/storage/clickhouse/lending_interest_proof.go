@@ -14,20 +14,46 @@ import (
 // before the window: rows are missing (a lending_state replay deleted them and has not yet rewritten them) or extra.
 var ErrLendingInterestSeedUnproved = errors.New("clickhouse: lending interest seed is not the lake's last version before the window")
 
-// lendingInterestCurrentQuery reads each key's latest change from the lake's current-state projection: a point
-// lookup on its (entry_type, key_xdr) sort key.
+// lendingInterestCurrentQuery reads each key's latest change ledger from the lake's current-state projection: a point
+// lookup on its (entry_type, key_xdr) sort key. It proves only that no later ledger changed the key: after a lake
+// re-derive renumbers a ledger, its stale row there can outrank the new last one.
 const lendingInterestCurrentQuery = `SELECT key_xdr, ledger_seq FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN ?`
 
-// lendingInterestLastChangeQuery is each key's last stored change in [lo, hi]. max() needs no FINAL: the versions
-// FINAL collapses share ledger_seq, a sort-key column. The key_xdr bloom index and the ledger range prune the read.
-const lendingInterestLastChangeQuery = `SELECT key_xdr, max(ledger_seq) FROM stellar.ledger_entry_changes
-	WHERE ledger_seq BETWEEN ? AND ? AND entry_type = 'contract_data' AND change_type != 'state' AND key_xdr IN ?
-	GROUP BY key_xdr`
+// lendingInterestLastVersionSelect is each key's last stored version in the versions read's apply order, a removal's
+// image empty as lending_state stores it, and whether one change sits at two intra_ledger_seq (a renumbering leftover).
+const lendingInterestLastVersionSelect = `SELECT key_xdr, last.1, last.2, last.3, renumbered FROM (
+		SELECT key_xdr,
+			argMax((ledger_seq, intra_ledger_seq, if(change_type = 'removed', '', entry_xdr)),
+				(ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS last,
+			uniqExact(tx_hash, op_index, change_type, entry_xdr) !=
+				uniqExact(tx_hash, op_index, change_type, entry_xdr, intra_ledger_seq) AS renumbered
+		FROM stellar.ledger_entry_changes FINAL
+		WHERE entry_type = 'contract_data' AND change_type != 'state' AND key_xdr IN ? AND `
 
-// proveLendingInterestSeeds proves each seed row is its key's last stored version before ledger before, against the
-// lake alone. A key whose latest lake change is the seed's ledger is proved by that point lookup; any other is read
-// from the lake over [its seed ledger, before-1], once for all such keys from the oldest of their seeds.
+// lendingInterestSeedLedgerQuery reads each key's versions at its own seed ledger only.
+const lendingInterestSeedLedgerQuery = lendingInterestLastVersionSelect + `ledger_seq IN ?
+			AND ledger_seq = transform(key_xdr, CAST(? AS Array(String)), CAST(? AS Array(UInt32)), toUInt32(0))
+		GROUP BY key_xdr)`
+
+// lendingInterestSinceSeedQuery reads each key from its own seed ledger to hi; [lo, hi] prunes the partitions.
+const lendingInterestSinceSeedQuery = lendingInterestLastVersionSelect + `ledger_seq BETWEEN ? AND ?
+			AND ledger_seq >= transform(key_xdr, CAST(? AS Array(String)), CAST(? AS Array(UInt32)), toUInt32(0))
+		GROUP BY key_xdr)`
+
+// lendingInterestProofSeconds bounds the proof's lake reads inside the 10-minute timer cadence.
+const lendingInterestProofSeconds = 300
+
+// lendingInterestLakeVersion is a key's last stored lake version.
+type lendingInterestLakeVersion struct {
+	Ledger, Intra uint32
+	Entry         string
+	Renumbered    bool
+}
+
+// proveLendingInterestSeeds proves each seed row is its key's last stored version before ledger before, by
+// (ledger_seq, intra_ledger_seq) and image, against the lake alone. A key whose latest change ledger
+// (ledger_entries_current) is its seed's is read at that ledger only; any other from its own seed ledger to before-1.
 func proveLendingInterestSeeds(ctx context.Context, conn driver.Conn, got []lendingInterestSeedRow, before uint32) error {
 	if len(got) == 0 {
 		return nil
@@ -43,34 +69,98 @@ func proveLendingInterestSeeds(ctx context.Context, conn driver.Conn, got []lend
 	if err != nil {
 		return err
 	}
-	var scan []lendingInterestSeedRow
+	var atSeed, scan []lendingInterestSeedRow
 	lo := before
 	for _, r := range got {
-		if current[r.Key] != r.Ledger {
-			scan = append(scan, r)
-			lo = min(lo, r.Ledger)
+		if current[r.Key] == r.Ledger {
+			atSeed = append(atSeed, r)
+			continue
+		}
+		scan = append(scan, r)
+		lo = min(lo, r.Ledger)
+	}
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": lendingInterestProofSeconds, "do_not_merge_across_partitions_select_final": 1,
+	}))
+	if len(atSeed) > 0 {
+		keys, ledgers := lendingInterestSeedArgs(atSeed)
+		set := make([]any, 0, len(ledgers))
+		for _, l := range ledgers {
+			set = append(set, l)
+		}
+		if err := matchLendingInterestSeeds(ctx, conn, atSeed, before, lendingInterestSeedLedgerQuery,
+			lendingInterestGroup(keys), clickhouse.GroupSet{Value: set}, keys, ledgers); err != nil {
+			return err
 		}
 	}
-	if len(scan) == 0 {
-		return nil
-	}
-	keys := make([]any, 0, len(scan))
-	for _, r := range scan {
-		keys = append(keys, r.Key)
-	}
-	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"max_execution_time": 3600}))
-	last, err := lendingInterestKeyLedgers(ctx, conn, lendingInterestLastChangeQuery, lo, before-1, clickhouse.GroupSet{Value: keys})
-	if err != nil {
-		return err
-	}
-	for _, r := range scan {
-		if l := last[r.Key]; l != r.Ledger {
-			return fmt.Errorf("%w: key %s: lending_state_hourly's last row before ledger %d is at ledger %d, the lake's last "+
-				"version at %d (0: none from %d); finish the lending_state replay, then re-derive interest from its first ledger",
-				ErrLendingInterestSeedUnproved, r.Key, before, r.Ledger, l, lo)
+	if len(scan) > 0 {
+		keys, ledgers := lendingInterestSeedArgs(scan)
+		if err := matchLendingInterestSeeds(ctx, conn, scan, before, lendingInterestSinceSeedQuery,
+			lendingInterestGroup(keys), lo, before-1, keys, ledgers); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func lendingInterestSeedArgs(rows []lendingInterestSeedRow) ([]string, []uint32) {
+	keys, ledgers := make([]string, 0, len(rows)), make([]uint32, 0, len(rows))
+	for _, r := range rows {
+		keys, ledgers = append(keys, r.Key), append(ledgers, r.Ledger)
+	}
+	return keys, ledgers
+}
+
+func lendingInterestGroup(keys []string) clickhouse.GroupSet {
+	v := make([]any, 0, len(keys))
+	for _, k := range keys {
+		v = append(v, k)
+	}
+	return clickhouse.GroupSet{Value: v}
+}
+
+// matchLendingInterestSeeds reads the lake's last version of each seed's key with q and refuses any seed it differs from.
+func matchLendingInterestSeeds(ctx context.Context, conn driver.Conn, seeds []lendingInterestSeedRow, before uint32, q string,
+	args ...any,
+) error {
+	lake, err := lendingInterestLakeVersions(ctx, conn, q, args...)
+	if err != nil {
+		return fmt.Errorf("clickhouse: lending interest seed proof before ledger %d (%d keys, limit %ds): %w",
+			before, len(seeds), lendingInterestProofSeconds, err)
+	}
+	for _, r := range seeds {
+		l, ok := lake[r.Key]
+		if ok && l.Renumbered {
+			return fmt.Errorf("%w: key %s: the lake holds one change at two intra_ledger_seq from ledger %d, a renumbering leftover; "+
+				"run docs/operations/runbooks/entry-walk-renumbering.md's cleanup first", ErrLendingInterestSeedUnproved, r.Key, r.Ledger)
+		}
+		if !ok || l.Ledger != r.Ledger || l.Intra != r.Intra || l.Entry != r.Entry {
+			return fmt.Errorf("%w: key %s: lending_state_hourly's last row before ledger %d is (%d, %d), the lake's last version "+
+				"(%d, %d) (0: none), same image %t; finish the lending_state replay, then re-derive interest from its first ledger",
+				ErrLendingInterestSeedUnproved, r.Key, before, r.Ledger, r.Intra, l.Ledger, l.Intra, ok && l.Entry == r.Entry)
+		}
+	}
+	return nil
+}
+
+func lendingInterestLakeVersions(ctx context.Context, conn driver.Conn, q string, args ...any) (map[string]lendingInterestLakeVersion, error) {
+	rows, err := conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]lendingInterestLakeVersion{}
+	for rows.Next() {
+		var k string
+		var v lendingInterestLakeVersion
+		var renumbered uint8
+		if err := rows.Scan(&k, &v.Ledger, &v.Intra, &v.Entry, &renumbered); err != nil {
+			return nil, err
+		}
+		v.Renumbered = renumbered != 0
+		out[k] = v
+	}
+	return out, rows.Err()
 }
 
 // lendingInterestKeyLedgers runs a (key_xdr, ledger) query into a map.
@@ -216,8 +306,8 @@ func pendingLendingInterestRedo(ctx context.Context, conn driver.Conn) (LendingI
 }
 
 // ArmLendingInterestRedo records, before a lending_state replay from ledger from writes, that interest rows from
-// there on must be re-derived; a pending redo widens to the lower ledger and restarts. A no-op while no interest row
-// reaches from.
+// there on must be re-derived; a pending redo widens to the lower ledger and restarts, never below the interest floor.
+// A no-op while no interest row reaches from.
 func ArmLendingInterestRedo(ctx context.Context, addr string, from uint32) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -239,6 +329,12 @@ func ArmLendingInterestRedo(ctx context.Context, addr string, from uint32) error
 	if pending {
 		from = min(from, p.From)
 	}
+	floor, err := entryWatermarkRow(ctx, conn, lendingInterestFloorName)
+	if err != nil {
+		return err
+	}
+	// No interest row lies below the floor, and a re-derive may not start there.
+	from = max(from, floor)
 	gen := last + 1
 	// The from row first, so the generation never stands without it.
 	for _, row := range []struct {

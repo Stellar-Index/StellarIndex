@@ -331,9 +331,9 @@ func ledgerPools(vs []Version) [][]Version {
 	return out
 }
 
-// unorderedLedger is lendingAmbiguousOrderQuery's test per (pool, ledger): rows without apply order
+// UnorderedLedger is lendingAmbiguousOrderQuery's test per (pool, ledger): rows without apply order
 // from more than one transaction. A removal changes no value, so it does not count.
-func unorderedLedger(vs []Version) bool {
+func UnorderedLedger(vs []Version) bool {
 	zero, txs := false, map[string]struct{}{}
 	for _, v := range vs {
 		if v.Removed {

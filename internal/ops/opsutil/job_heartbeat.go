@@ -40,6 +40,7 @@ type JobHeartbeat struct {
 	cursor   uint64
 	bytes    uint64
 	skipped  map[string]uint64 // by reason
+	gauges   map[string]jobGauge
 	running  bool
 	finished bool
 	exitOK   bool
@@ -218,6 +219,24 @@ func (h *JobHeartbeat) Skipped(reason string, n uint64) {
 	h.mu.Unlock()
 }
 
+type jobGauge struct {
+	help string
+	on   bool
+}
+
+// Gauge sets a job-specific 0/1 gauge, written with the job's label beside its heartbeat.
+func (h *JobHeartbeat) Gauge(name, help string, on bool) {
+	if !h.Enabled() {
+		return
+	}
+	h.mu.Lock()
+	if h.gauges == nil {
+		h.gauges = map[string]jobGauge{}
+	}
+	h.gauges[name] = jobGauge{help: help, on: on}
+	h.mu.Unlock()
+}
+
 // Stop halts the ticker and writes running=0 with last_finish_unix and last_exit_ok; safe on an inert heartbeat and when called twice.
 func (h *JobHeartbeat) Stop(exitOK bool) {
 	if !h.Enabled() {
@@ -266,6 +285,10 @@ func (h *JobHeartbeat) render() string {
 	skipped := make(map[string]uint64, len(h.skipped))
 	for reason, n := range h.skipped {
 		skipped[reason] = n
+	}
+	gauges := make(map[string]jobGauge, len(h.gauges))
+	for name, g := range h.gauges {
+		gauges[name] = g
 	}
 	running, finished, exitOK := h.running, h.finished, h.exitOK
 	h.mu.Unlock()
@@ -320,6 +343,14 @@ func (h *JobHeartbeat) render() string {
 			skipLabel := strings.TrimSuffix(label, "}") + fmt.Sprintf(",reason=%q}", reason)
 			fmt.Fprintf(&b, "stellarindex_ops_job_skipped_total%s %d\n", skipLabel, skipped[reason])
 		}
+	}
+	names := make([]string, 0, len(gauges))
+	for name := range gauges {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		writeGauge(name, gauges[name].help, one(gauges[name].on))
 	}
 	// last_finish/last_exit are only meaningful once a run has ended. Emitting them mid-run (as 0, or as the PREVIOUS run's
 	// values) would be worse than absent: a 0 finish timestamp reads as 1970 to every `time() - x` expression.

@@ -1282,6 +1282,16 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 	liStaleStateCases(t, ctx, conn, addr, base, pool, assetStr, rs, want[5], count)
 	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8, base + 10},
 		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8, base + 10})
+	// The lake's last image in a seed's own ledger rewritten (another tx, a later intra, another value): the instance's
+	// latest change is its seed ledger; the reserve changed since its hour-14 seed.
+	var oracle xdr.ContractId
+	oracle[0] = 0x6e
+	instRow := change(0, 9, 0, "updated", instKey, entry(liInstanceVal(t, oracle, liBLNTPoolWASM)))
+	resRow := change(8, 3, 0, "updated", resKey, entry(rs[4].val(t)))
+	instRow.TxHash, resRow.TxHash = "9r0", "9r8"
+	liSeedImageCases(t, ctx, conn, addr, base, []chstore.LedgerEntryChangeRow{instRow, resRow}, count)
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8, base + 10},
+		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8, base + 10})
 
 	// An upgrade to unaudited code refuses the window naming the hash; the watermark holds.
 	const unaudited = "1111111111111111111111111111111111111111111111111111111111111111"
@@ -1361,6 +1371,47 @@ func liStaleStateCases(t *testing.T, ctx context.Context, conn driver.Conn, addr
 	}
 	if redo, pending, err := chstore.LendingInterestPendingRedo(ctx, addr); err != nil || pending {
 		t.Fatalf("redo after the re-derive reached the watermark: %+v pending %t (%v)", redo, pending, err)
+	}
+}
+
+// liSeedImageCases adds each row to the lake, as a lake re-derive that renumbers the seed's ledger leaves it, without
+// replaying lending_state: the seed's ledger still matches the lake's last change, its (ledger, intra) and image do
+// not, so a re-derive of hour 15 refuses and writes nothing. Each row is removed after. Then a redo armed below the
+// interest floor is armed at the floor, and a re-derive from the floor clears it.
+func liSeedImageCases(t *testing.T, ctx context.Context, conn driver.Conn, addr string, base uint32,
+	rows []chstore.LedgerEntryChangeRow, count func() (uint64, time.Time),
+) {
+	t.Helper()
+	for _, r := range rows {
+		insertEntryChanges(t, ctx, r)
+		n, newest := count()
+		err := liRun(t, addr, base, "-interest-only", "-from", liU(base+10), "-to", liU(base+11))
+		if !errors.Is(err, chstore.ErrLendingInterestSeedUnproved) {
+			t.Fatalf("re-derive over a rewritten seed image at ledger %d: err = %v, want ErrLendingInterestSeedUnproved", r.LedgerSeq, err)
+		}
+		if m, nw := count(); m != n || !nw.Equal(newest) {
+			t.Fatalf("refused re-derive wrote rows: %d (was %d), newest derive %s (was %s)", m, n, nw, newest)
+		}
+		if err := conn.Exec(ctx, `ALTER TABLE stellar.ledger_entry_changes DELETE WHERE ledger_seq = ? AND key_xdr = ? AND tx_hash = ?
+			SETTINGS mutations_sync = 2`, r.LedgerSeq, r.KeyXDR, r.TxHash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	floor, err := chstore.LendingInterestFloor(ctx, addr)
+	if err != nil || floor == 0 {
+		t.Fatalf("floor %d: %v", floor, err)
+	}
+	if err := chstore.ArmLendingInterestRedo(ctx, addr, floor-1); err != nil {
+		t.Fatal(err)
+	}
+	if redo, pending, err := chstore.LendingInterestPendingRedo(ctx, addr); err != nil || !pending || redo.From != floor {
+		t.Fatalf("redo armed below the floor %d: %+v pending %t (%v); want it from the floor", floor, redo, pending, err)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-from", liU(floor)); err != nil {
+		t.Fatalf("re-derive from the floor: %v", err)
+	}
+	if redo, pending, err := chstore.LendingInterestPendingRedo(ctx, addr); err != nil || pending {
+		t.Fatalf("redo after the re-derive from the floor: %+v pending %t (%v)", redo, pending, err)
 	}
 }
 
