@@ -226,6 +226,24 @@ func TestAccrueBetween_RefusesImpossiblePairs(t *testing.T) {
 	}
 }
 
+// A fork's fee hook may take at most the whole of gross; anything else is refused, not clamped.
+func TestAccrueBetweenWithFee_RefusesFeeOutsideGross(t *testing.T) {
+	prev := rdIn{"1000000001", "1000000001", "7", "3", "0", 10}.data(t, PoolV1)
+	next := rdIn{"2000000001", "1285714285", "7", "3", "1", 20}.data(t, PoolV1)
+	for _, f := range []*big.Int{nil, big.NewInt(-1), big.NewInt(4)} {
+		if got, err := AccrueBetweenWithFee(prev, next, 5_000_000, func(*big.Int) *big.Int { return f }); err == nil {
+			t.Errorf("fee %v on gross 3: got %+v, want error", f, got)
+		}
+	}
+	a, err := AccrueBetweenWithFee(prev, next, 5_000_000, func(*big.Int) *big.Int { return big.NewInt(3) })
+	if err != nil || a.Backstop.Sign() != 0 || a.SupplierIntended.Sign() != 0 {
+		t.Errorf("whole-gross fee: %+v, %v; want zero backstop and supplier share", a, err)
+	}
+	if a, err := AccrueBetween(prev, next, 5_000_000); err != nil || a.ProtocolFee.Sign() != 0 {
+		t.Errorf("Blend accrual: protocol fee %v, %v; want 0", a.ProtocolFee, err)
+	}
+}
+
 // V2's update_pool (config.rs execute_update_pool) loads and stores every reserve at the OLD
 // bstop_rate before writing the new one, so that version reconciles only at the old rate.
 func TestAccrueBetween_V2RateChangeAccruesAtOldRate(t *testing.T) {
