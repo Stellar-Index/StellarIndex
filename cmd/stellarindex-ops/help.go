@@ -74,6 +74,10 @@ Subcommands:
                           it; until then the pass only logs. -interest-only
                           skips the state pass; with -from it re-derives.
                           -interest-pool backfills one uncovered pool.
+                          Without those flags the pass catches up at most
+                          one 100000-ledger window and logs "backfill
+                          incomplete" beyond it. Interest runs take their
+                          own lock beside -lock-file.
   ch-entry-index -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-max-decode-errors N] [-write]
                           Build the ledger index of classic-entry activity:
                           stellar.account_entry_ledgers (account, role,

@@ -38,6 +38,9 @@ type fakeInterestLake struct {
 	versions                []lendinginterest.Version
 	code                    map[string][]clickhouse.ContractCodeVersion
 	tamper                  func([]clickhouse.LendingInterestStateRow)
+	gaps                    []clickhouse.LendingInterestPoolGap
+	noReserveKeys           bool  // the pools hold no ResData key yet
+	refuse                  error // every mark refuses with it
 
 	calls    []string
 	reads    [][2]uint32
@@ -118,7 +121,11 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		if hi > f.stateWM {
 			return nil, clickhouse.ErrLendingInterestAheadOfState
 		}
-		return []clickhouse.LendingInterestKey{{Key: "res", Pool: liPool, Kind: lendinginterest.KindReserve, Asset: liAsset}}, nil
+		inst := clickhouse.LendingInterestKey{Key: "inst", Pool: liPool, Kind: lendinginterest.KindConfig}
+		if f.noReserveKeys {
+			return []clickhouse.LendingInterestKey{inst}, nil
+		}
+		return []clickhouse.LendingInterestKey{inst, {Key: "res", Pool: liPool, Kind: lendinginterest.KindReserve, Asset: liAsset}}, nil
 	}
 	lendingInterestSeeds = func(_ context.Context, _ string, _ []clickhouse.LendingContract, _ []clickhouse.LendingInterestKey, h time.Time) (lendinginterest.Seeds, error) {
 		f.seeds++
@@ -141,11 +148,14 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		}
 		return nil
 	}
-	lendingInterestState = func(_ context.Context, _ string, _ []clickhouse.LendingContract, _ []clickhouse.LendingInterestKey, from, to time.Time) ([]clickhouse.LendingInterestStateRow, error) {
+	lendingInterestState = func(_ context.Context, _ string, _ []clickhouse.LendingContract, keys []clickhouse.LendingInterestKey, from, to time.Time) ([]clickhouse.LendingInterestStateRow, error) {
+		if !hasStateKeys(keys) {
+			return nil, fmt.Errorf("lending interest state rows: no keys") // as the storage read refuses
+		}
 		return f.state(from, to), nil
 	}
 	lendingInterestUncovered = func(context.Context, string, []clickhouse.LendingContract) ([]clickhouse.LendingInterestPoolGap, error) {
-		return nil, nil
+		return f.gaps, nil
 	}
 	insertLendingInterest = func(_ context.Context, _ string, rows []lendinginterest.HourRow, rev uint16) error {
 		if rev != lendingInterestRev {
@@ -160,14 +170,13 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		return nil
 	}
 	setLendingInterestWM = func(_ context.Context, _ string, from, thru uint32, _ []clickhouse.LendingContract) error {
-		f.calls = append(f.calls, "mark")
-		f.marks = append(f.marks, [2]uint32{from, thru})
-		return nil
+		if len(f.gaps) > 0 {
+			return clickhouse.ErrLendingInterestPoolUncovered
+		}
+		return f.mark("mark", from, thru)
 	}
 	setLendingInterestPoolWM = func(_ context.Context, _ string, _ clickhouse.LendingContract, from, thru uint32) error {
-		f.calls = append(f.calls, "pool-mark")
-		f.marks = append(f.marks, [2]uint32{from, thru})
-		return nil
+		return f.mark("pool-mark", from, thru)
 	}
 	lendingInterestServerNow = func(context.Context, string) (time.Time, error) {
 		f.calls = append(f.calls, "now")
@@ -177,6 +186,24 @@ func (f *fakeInterestLake) install(t *testing.T) {
 	openLendingCodeHistory = func(context.Context, string) (lendingCodeHistory, func(), error) {
 		return fakeCodeHistory(f.code), func() {}, nil
 	}
+}
+
+// mark refuses as the storage advance does: past lending_state, not ending a closed hour, not starting one (or the
+// floor); a refused mark records nothing.
+func (f *fakeInterestLake) mark(call string, from, thru uint32) error {
+	switch {
+	case f.refuse != nil:
+		return f.refuse
+	case thru > f.stateWM:
+		return clickhouse.ErrLendingInterestAheadOfState
+	case f.hour(thru).Last != thru || !f.hour(thru).Closed:
+		return clickhouse.ErrLendingInterestNotHourEnd
+	case f.hour(from).First != from && from != f.floor:
+		return clickhouse.ErrLendingInterestNotHourStart
+	}
+	f.calls = append(f.calls, call)
+	f.marks = append(f.marks, [2]uint32{from, thru})
+	return nil
 }
 
 type fakeCodeHistory map[string][]clickhouse.ContractCodeVersion
@@ -219,7 +246,7 @@ func runInterest(t *testing.T, r lendingRun) (string, error) {
 	return log.String(), err
 }
 
-// The hourly timer's run never starts a backfill: with no watermark it logs one line and reads and writes nothing.
+// The timer's run never starts a backfill: with no watermark it logs one line and reads and writes nothing.
 func TestInterestPass_TimerWithoutWatermarkWritesNothing(t *testing.T) {
 	f := newFakeInterestLake()
 	f.wm = 0
@@ -346,7 +373,8 @@ func TestInterestPass_DryRunWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 0 || len(f.reads) != 2 || !strings.Contains(out, "would write") || !strings.Contains(out, "identities hold") {
+	if len(f.calls) != 0 || len(f.reads) != 2 || !strings.Contains(out, "would write") ||
+		!strings.Contains(out, "gross telescoped 3 (0 with excluded pairs not)") {
 		t.Fatalf("dry run: calls %v reads %v log %q", f.calls, f.reads, out)
 	}
 }
@@ -420,7 +448,7 @@ func TestGateLendingWASM(t *testing.T) {
 	}{
 		{"listed", pool(clickhouse.LendingBlendV2, 10), code(clickhouse.ContractCodeVersion{Ledger: 10, WasmHash: liV2}), 200, ""},
 		{"unlisted", pool(clickhouse.LendingBlendV2, 10), code(clickhouse.ContractCodeVersion{Ledger: 10, WasmHash: other}), 0, other},
-		{"mismatch", pool(clickhouse.LendingBlendV2, 10), code(clickhouse.ContractCodeVersion{Ledger: 10, WasmHash: v1}), 0, "audited as blend_v1"},
+		{"mismatch", pool(clickhouse.LendingBlendV2, 10), code(clickhouse.ContractCodeVersion{Ledger: 10, WasmHash: v1}), 0, "mapped to blend_v1"},
 		{"no history", pool(clickhouse.LendingBlendV2, 10), code(), 0, "no WASM recorded at ledger 100"},
 		{"deployed later", pool(clickhouse.LendingBlendV2, 300), code(), 200, ""},
 		{
@@ -459,27 +487,43 @@ func TestCheckFeeCarry(t *testing.T) {
 	st.before.Value.Fees = blnt.ProtocolFees{"A": {Credit: n(5), Carry: n(9_000_000)}}
 	// 9e6 + 1000·20000 = 2.9e7: two units credited, carry 9e6.
 	st.in[0].Value.Fees = blnt.ProtocolFees{"A": {Credit: n(7), Carry: n(9_000_000)}}
-	if err := checkFeeCarry(row, st); err != nil {
-		t.Fatal(err)
+	if ok, err := checkFeeCarry(row, st); err != nil || !ok {
+		t.Fatal(ok, err)
 	}
 	st.in[0].Value.Fees = blnt.ProtocolFees{"A": {Credit: n(7), Carry: n(9_000_001)}}
-	if err := checkFeeCarry(row, st); err == nil || !strings.Contains(err.Error(), "carry 9000001") {
+	if _, err := checkFeeCarry(row, st); err == nil || !strings.Contains(err.Error(), "carry 9000001") {
 		t.Fatalf("err = %v, want the carry named", err)
 	}
+	// A claim of 4 units in the hour by a transaction that wrote no ResData: the fee-only delta accounts for it.
+	st.in[0].Value.Fees = blnt.ProtocolFees{"A": {Credit: n(3), Carry: n(9_000_000)}}
+	if _, err := checkFeeCarry(row, st); err == nil {
+		t.Fatal("a claim with no fee-only delta passed the identity")
+	}
+	claim := row
+	claim.FeeOnlyCreditDelta, claim.FeeOnlyCarryDelta, claim.FeeOnlyVersions = n(-4), n(0), 1
+	if ok, err := checkFeeCarry(claim, st); err != nil || !ok {
+		t.Fatalf("claim with its fee-only delta: %v %v", ok, err)
+	}
+	// A fee-only move whose order is open leaves the movement unrecorded: reported unchecked, not passed.
+	claim.FeeOnlyCreditDelta, claim.FeeOnlyUnknown = n(0), 1
+	if ok, err := checkFeeCarry(claim, st); err != nil || ok {
+		t.Fatalf("open-order fee-only move: checked %v err %v, want unchecked", ok, err)
+	}
+	st.in[0].Value.Fees = blnt.ProtocolFees{"A": {Credit: n(7), Carry: n(9_000_000)}}
 	// An hour whose entry did not change holds Ef = Pf: no gross, no movement.
-	if err := checkFeeCarry(lendinginterest.HourRow{Pool: "P", Asset: "A", Hour: h.Add(time.Hour), Gross: n(0), FeeCreditResidual: n(0)}, st); err != nil {
+	if _, err := checkFeeCarry(lendinginterest.HourRow{Pool: "P", Asset: "A", Hour: h.Add(time.Hour), Gross: n(0), FeeCreditResidual: n(0)}, st); err != nil {
 		t.Fatal(err)
 	}
 	// A deleted entry (the empty map) reads as zero; the dropped credit is the residual.
 	st.before.Value.Fees = blnt.ProtocolFees{"A": {Credit: n(5), Carry: n(0)}}
 	st.in[0].Value.Fees = blnt.ProtocolFees{}
 	row.Gross, row.FeeCreditResidual = n(0), n(-5)
-	if err := checkFeeCarry(row, st); err != nil {
+	if _, err := checkFeeCarry(row, st); err != nil {
 		t.Fatal(err)
 	}
 	// Pairs left out of the sums leave the fee movement unrecorded: not checked.
 	row.FeeCreditResidual, row.AccrualErrors = n(0), 1
-	if err := checkFeeCarry(row, st); err != nil {
-		t.Fatal(err)
+	if ok, err := checkFeeCarry(row, st); err != nil || ok {
+		t.Fatal(ok, err)
 	}
 }

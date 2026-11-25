@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// lendingInterestWASM is the pool code whose accrual arithmetic the pass knows, by WASM hash. A hash enters only with
-// evidence in docs/operations/wasm-audits/ binding it to one protocol's pools; a pool running any other refuses.
+// lendingInterestWASM maps a pool WASM hash to the accrual arithmetic the pass applies to it. A listing records that
+// the audit docs bind the hash to one protocol's pools and that the arithmetic's evidence ("Interest accrual
+// arithmetic" in docs/operations/wasm-audits/) covers it; it is not a review of that code's arithmetic.
 var lendingInterestWASM = map[string]lendinginterest.Protocol{
 	// blend.md Phase 1/3: all nine Pool Factory V2 children run it; Phase 2 walk: no upgrades.
 	"a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e": lendinginterest.BlendV2,
@@ -24,8 +26,9 @@ var lendingInterestWASM = map[string]lendinginterest.Protocol{
 }
 
 // gateLendingWASM returns the window's end, lowered to the ledger before the first code change inside (lo, hi], and
-// refuses unless every pool deployed by then runs, from max(lo, deploy), a listed hash audited as its registry
-// protocol.
+// refuses unless every pool deployed by then runs, from max(lo, deploy), a listed hash mapped to its registry
+// protocol. A window starting on an upgrade ledger also needs the code before it mapped to the same protocol: the
+// ledger's transactions before the upgrade ran it.
 func gateLendingWASM(code map[string][]clickhouse.ContractCodeVersion, pools []clickhouse.LendingContract, lo, hi uint32) (uint32, error) {
 	for _, c := range pools {
 		vs := code[c.ID]
@@ -41,29 +44,66 @@ func gateLendingWASM(code map[string][]clickhouse.ContractCodeVersion, pools []c
 			continue
 		}
 		at := max(lo, c.Deployed)
-		var active *clickhouse.ContractCodeVersion
-		for i, v := range code[c.ID] {
-			if v.Ledger <= at {
-				active = &code[c.ID][i]
-			}
-		}
-		if active == nil {
+		vs := code[c.ID]
+		i := activeCode(vs, at)
+		if i < 0 {
 			bad = append(bad, fmt.Sprintf("pool %s has no WASM recorded at ledger %d", c.ID, at))
 			continue
 		}
+		active := vs[i]
 		proto, listed := lendingInterestWASM[active.WasmHash]
 		switch {
 		case !listed:
-			bad = append(bad, fmt.Sprintf("pool %s runs WASM %s (from ledger %d), which no audit binds to accrual arithmetic", c.ID, active.WasmHash, active.Ledger))
+			bad = append(bad, fmt.Sprintf("pool %s runs WASM %s (from ledger %d), which lendingInterestWASM does not map to accrual arithmetic", c.ID, active.WasmHash, active.Ledger))
 		case string(proto) != c.Protocol:
-			bad = append(bad, fmt.Sprintf("pool %s is %s in the registry but runs WASM %s, audited as %s", c.ID, c.Protocol, active.WasmHash, proto))
+			bad = append(bad, fmt.Sprintf("pool %s is %s in the registry but runs WASM %s, mapped to %s", c.ID, c.Protocol, active.WasmHash, proto))
+		case i > 0 && active.Ledger == at && lendingInterestWASM[vs[i-1].WasmHash] != proto:
+			bad = append(bad, fmt.Sprintf("pool %s upgraded from WASM %s to %s in ledger %d, whose earlier transactions ran the old code under other arithmetic",
+				c.ID, vs[i-1].WasmHash, active.WasmHash, at))
 		}
 	}
 	if len(bad) > 0 {
-		return 0, fmt.Errorf("lending interest: refusing [%d,%d]: %s; audit each hash under docs/operations/wasm-audits/ and list it in lendingInterestWASM",
+		return 0, fmt.Errorf("lending interest: refusing [%d,%d]: %s; record each hash's evidence under docs/operations/wasm-audits/ and map it in lendingInterestWASM",
 			lo, hi, strings.Join(bad, "; "))
 	}
 	return hi, nil
+}
+
+// activeCode is the index of the version in force at ledger at, -1 before the first.
+func activeCode(vs []clickhouse.ContractCodeVersion, at uint32) int {
+	i := -1
+	for j, v := range vs {
+		if v.Ledger <= at {
+			i = j
+		}
+	}
+	return i
+}
+
+// checkInstanceCode holds every instance version the window read against the WASM timeline the gate used: the
+// executable it stores must be the code the timeline has in force at its ledger (on an upgrade ledger, the code before
+// or after). It catches a timeline that stops short of an upgrade, since an upgrade rewrites the instance.
+func checkInstanceCode(code map[string][]clickhouse.ContractCodeVersion, vs []lendinginterest.Version) error {
+	for _, v := range vs {
+		if v.Kind != lendinginterest.KindConfig || v.Removed {
+			continue
+		}
+		cv := code[v.Pool]
+		i := activeCode(cv, v.Ledger)
+		ok := i >= 0 && cv[i].WasmHash == v.WasmHash
+		if !ok && i > 0 && cv[i].Ledger == v.Ledger {
+			ok = cv[i-1].WasmHash == v.WasmHash
+		}
+		if !ok {
+			want := "none"
+			if i >= 0 {
+				want = cv[i].WasmHash
+			}
+			return fmt.Errorf("lending interest: pool %s instance at ledger %d tx %s stores WASM %q, the code history has %s in force; "+
+				"the contract_instance_changes timeline is behind the lake (check contract_instance_changes_mv)", v.Pool, v.Ledger, v.TxHash, v.WasmHash, want)
+		}
+	}
+	return nil
 }
 
 // feeScale is BLNT's carry unit: Carry is in 1e-7 base units.
@@ -75,20 +115,35 @@ type interestState struct {
 	in     []clickhouse.LendingInterestStateRow // by hour
 }
 
-// checkLendingInterest holds the fold's rows of hours [from, to) against lending_state_hourly before anything is
-// written. Per reserve: the hours with a row are exactly the hours lending_state holds a ResData value for (a removal
-// there refuses: the read refuses one too), each row's last ledger is that hour's state row and its first lies after
-// the previous one, and the backstop credit moved by exactly the summed backstop, residual and excluded deltas. On
-// BLNT the fee entry's carry moved by exactly gross·rate less the credited whole units, unless the hour holds pairs
-// left out of the sums (accrual errors or unordered), whose fee movement no row records.
+// interestChecked counts what checkLendingInterest compared, for the window's log line.
+type interestChecked struct {
+	telescoped, telescopeSkipped int // rows whose gross was recomputed; rows with excluded pairs, not recomputed
+	feeChecked, feeSkipped       int // BLNT rows whose fee carry was checked; not checked (excluded or order-open pairs)
+}
+
+// checkLendingInterest holds the fold's rows of hours [from, to) against lending_state_hourly and the raw versions
+// before anything is written. Per reserve:
+//   - hour set: the hours with a row are exactly those lending_state holds a ResData value for (a removal there
+//     refuses: the read refuses one too); each row's last ledger is that hour's state row, its first after the previous.
+//   - chain endpoints: backstop_credit moved, between lending_state's rows, by the fold's backstop + residual +
+//     excluded. The residual is defined as the credit delta less the backstop share, so this proves only that the
+//     fold's version chain starts and ends where lending_state's does, not any arithmetic.
+//   - gross: on a row with no errored or unordered pair, TelescopedGross over the hour's raw versions from lending_state's
+//     prior value equals the fold's gross. That re-derives the d_rate movement without AccrueBetween's pairing; it
+//     proves nothing about the fee, backstop or b_rate split, which stay counted residuals (unreconciled, b_rate
+//     mismatches) reported per window.
+//   - BLNT fee carry: the entry moved by exactly gross·rate less the credited whole units, plus the fee-only moves
+//     (claims, credit losses) walked from the fee versions; skipped, and counted, on a row whose fee movement is
+//     not all recorded (excluded pairs, or a fee-only move whose order is open).
 func checkLendingInterest(protos map[string]lendinginterest.Protocol, rows []lendinginterest.HourRow,
 	state []clickhouse.LendingInterestStateRow, versions []lendinginterest.Version, from, to time.Time,
-) error {
+) (interestChecked, error) {
+	var c interestChecked
 	reserves, fees := groupInterestState(state)
 	byKey := map[lendinginterest.ReserveKey][]lendinginterest.HourRow{}
 	for _, r := range rows {
 		if r.Hour.Before(from) || !r.Hour.Before(to) {
-			return fmt.Errorf("lending interest: pool %s asset %s: row for hour %s outside [%s, %s)", r.Pool, r.Asset, r.Hour, from, to)
+			return c, fmt.Errorf("lending interest: pool %s asset %s: row for hour %s outside [%s, %s)", r.Pool, r.Asset, r.Hour, from, to)
 		}
 		k := lendinginterest.ReserveKey{Pool: r.Pool, Asset: r.Asset}
 		byKey[k] = append(byKey[k], r)
@@ -97,25 +152,56 @@ func checkLendingInterest(protos map[string]lendinginterest.Protocol, rows []len
 		}
 	}
 	firsts := firstReserveVersions(versions)
+	hours := reserveHourVersions(versions)
 	keys := make([]lendinginterest.ReserveKey, 0, len(reserves))
 	for k := range reserves {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i].Pool+keys[i].Asset < keys[j].Pool+keys[j].Asset })
 	for _, k := range keys {
-		if err := checkReserve(k, byKey[k], reserves[k], firsts); err != nil {
-			return err
+		if err := checkReserve(k, byKey[k], reserves[k], firsts, hours[k], &c); err != nil {
+			return c, err
 		}
 		if protos[k.Pool] != lendinginterest.BLNT {
 			continue
 		}
-		for _, r := range byKey[k] {
-			if err := checkFeeCarry(r, fees[k.Pool]); err != nil {
-				return err
-			}
+		if err := checkFeeRows(byKey[k], fees[k.Pool], &c); err != nil {
+			return c, err
+		}
+	}
+	return c, nil
+}
+
+func checkFeeRows(rows []lendinginterest.HourRow, fees *interestState, c *interestChecked) error {
+	for _, r := range rows {
+		checked, err := checkFeeCarry(r, fees)
+		if err != nil {
+			return err
+		}
+		if checked {
+			c.feeChecked++
+		} else {
+			c.feeSkipped++
 		}
 	}
 	return nil
+}
+
+// reserveHourVersions is each reserve's versions by hour (Unix seconds).
+func reserveHourVersions(vs []lendinginterest.Version) map[lendinginterest.ReserveKey]map[int64][]lendinginterest.Version {
+	out := map[lendinginterest.ReserveKey]map[int64][]lendinginterest.Version{}
+	for _, v := range vs {
+		if v.Kind != lendinginterest.KindReserve {
+			continue
+		}
+		k := lendinginterest.ReserveKey{Pool: v.Pool, Asset: v.Asset}
+		if out[k] == nil {
+			out[k] = map[int64][]lendinginterest.Version{}
+		}
+		h := v.CloseTime.UTC().Truncate(time.Hour).Unix()
+		out[k][h] = append(out[k][h], v)
+	}
+	return out
 }
 
 func groupInterestState(state []clickhouse.LendingInterestStateRow) (map[lendinginterest.ReserveKey]*interestState, map[string]*interestState) {
@@ -165,7 +251,7 @@ func firstReserveVersions(vs []lendinginterest.Version) map[lendinginterest.Rese
 }
 
 func checkReserve(k lendinginterest.ReserveKey, rows []lendinginterest.HourRow, s *interestState,
-	firsts map[lendinginterest.ReserveKey]lendinginterest.Version,
+	firsts map[lendinginterest.ReserveKey]lendinginterest.Version, hours map[int64][]lendinginterest.Version, c *interestChecked,
 ) error {
 	fail := func(h time.Time, format string, a ...any) error {
 		return fmt.Errorf("lending interest: identity failed for pool %s asset %s hour %s: %s", k.Pool, k.Asset,
@@ -183,27 +269,19 @@ func checkReserve(k lendinginterest.ReserveKey, rows []lendinginterest.HourRow, 
 		if r.LastLedger != e.Ledger {
 			return fail(e.Hour, "last_ledger %d, lending_state's hour ends at %d", r.LastLedger, e.Ledger)
 		}
-		var start *big.Int
-		switch {
-		case prev != nil && prev.Value.Removed:
-			return fail(e.Hour, "lending_state holds a ResData removal before it, at ledger %d", prev.Ledger)
-		case prev != nil && r.FirstLedger <= prev.Ledger:
-			return fail(e.Hour, "first_ledger %d is not after the previous state row's ledger %d", r.FirstLedger, prev.Ledger)
-		case prev != nil:
-			start = prev.Value.Reserve.BackstopCredit
-		default:
-			f, ok := firsts[k]
-			if !ok || r.Baselines == 0 || !f.CloseTime.UTC().Truncate(time.Hour).Equal(e.Hour) {
-				return fail(e.Hour, "no state row before the hour, and the fold holds no baseline in it")
-			}
-			start = f.Reserve.BackstopCredit
+		start, chainFrom, msg := chainStart(r, e.Hour, prev, firsts[k])
+		if msg != "" {
+			return fail(e.Hour, "%s", msg)
 		}
 		moved := new(big.Int).Sub(e.Value.Reserve.BackstopCredit, start)
 		summed := new(big.Int).Add(r.Backstop, r.BackstopResidual)
 		summed.Add(summed, r.ExcludedCreditDelta)
 		if moved.Cmp(summed) != 0 {
-			return fail(e.Hour, "backstop_credit moved %s in lending_state, the fold sums %s (backstop %s + residual %s + excluded %s)",
+			return fail(e.Hour, "chain endpoints: backstop_credit moved %s in lending_state, the fold's chain %s (backstop %s + residual %s + excluded %s)",
 				moved, summed, r.Backstop, r.BackstopResidual, r.ExcludedCreditDelta)
+		}
+		if msg := checkGross(r, chainFrom, hours[e.Hour.Unix()], c); msg != "" {
+			return fail(e.Hour, "%s", msg)
 		}
 		prev = &s.in[i]
 	}
@@ -214,11 +292,47 @@ func checkReserve(k lendinginterest.ReserveKey, rows []lendinginterest.HourRow, 
 	return nil
 }
 
-// checkFeeCarry is the BLNT fee identity over one row's hour: Pf.carry + rate·gross − 1e7·(Ef.credit − Pf.credit −
-// fee_credit_residual) == Ef.carry, Pf the entry in force at the hour's start, Ef at its end.
-func checkFeeCarry(r lendinginterest.HourRow, s *interestState) error {
+// chainStart is where the row's chain starts: the previous state row, or with none the hour's baseline version
+// (first, the reserve's first version read; zero when there was none). chainFrom is nil for a baseline.
+func chainStart(r lendinginterest.HourRow, hour time.Time, prev *clickhouse.LendingInterestStateRow, first lendinginterest.Version,
+) (start *big.Int, chainFrom *blend.ReserveData, msg string) {
+	switch {
+	case prev != nil && prev.Value.Removed:
+		return nil, nil, fmt.Sprintf("lending_state holds a ResData removal before it, at ledger %d", prev.Ledger)
+	case prev != nil && r.FirstLedger <= prev.Ledger:
+		return nil, nil, fmt.Sprintf("first_ledger %d is not after the previous state row's ledger %d", r.FirstLedger, prev.Ledger)
+	case prev != nil:
+		return prev.Value.Reserve.BackstopCredit, &prev.Value.Reserve, ""
+	case first.Pool == "" || r.Baselines == 0 || !first.CloseTime.UTC().Truncate(time.Hour).Equal(hour):
+		return nil, nil, "no state row before the hour, and the fold holds no baseline in it"
+	}
+	return first.Reserve.BackstopCredit, nil, ""
+}
+
+// checkGross recomputes a row's gross by TelescopedGross from chainFrom (lending_state's value before the hour, nil
+// for a baseline) over the hour's raw versions; a row with excluded pairs is counted, not recomputed.
+func checkGross(r lendinginterest.HourRow, chainFrom *blend.ReserveData, vs []lendinginterest.Version, c *interestChecked) string {
 	if r.AccrualErrors+r.UnorderedVersions > 0 {
-		return nil
+		c.telescopeSkipped++
+		return ""
+	}
+	g, err := lendinginterest.TelescopedGross(chainFrom, vs)
+	if err != nil {
+		return fmt.Sprintf("telescoping gross: %v", err)
+	}
+	if g.Cmp(r.Gross) != 0 {
+		return fmt.Sprintf("gross %s, the hour's versions telescope to %s from lending_state's prior value", r.Gross, g)
+	}
+	c.telescoped++
+	return ""
+}
+
+// checkFeeCarry is the BLNT fee identity over one row's hour: Pf.carry + fee-only carry + rate·gross − 1e7·(Ef.credit
+// − Pf.credit − fee_credit_residual − fee-only credit) == Ef.carry, Pf the entry in force at the hour's start, Ef at its
+// end. It reports false, checking nothing, when the row's fee movement is not all recorded.
+func checkFeeCarry(r lendinginterest.HourRow, s *interestState) (bool, error) {
+	if r.AccrualErrors+r.UnorderedVersions+r.FeeOnlyUnknown > 0 {
+		return false, nil
 	}
 	pf, ef := blnt.ProtocolFees{}, blnt.ProtocolFees(nil)
 	if s != nil {
@@ -239,16 +353,25 @@ func checkFeeCarry(r lendinginterest.HourRow, s *interestState) error {
 	p, e := feeOf(pf, r.Asset), feeOf(ef, r.Asset)
 	credited := new(big.Int).Sub(e.Credit, p.Credit)
 	credited.Sub(credited, r.FeeCreditResidual)
+	credited.Sub(credited, zeroIfNil(r.FeeOnlyCreditDelta))
 	got := new(big.Int).Mul(r.Gross, big.NewInt(blnt.ProtocolInterestFeeRate))
 	got.Add(got, p.Carry)
+	got.Add(got, zeroIfNil(r.FeeOnlyCarryDelta))
 	got.Sub(got, credited.Mul(credited, feeScale))
 	if got.Cmp(e.Carry) != 0 {
-		return fmt.Errorf("lending interest: identity failed for pool %s asset %s hour %s: fee carry %s + %d·gross %s less "+
-			"the credited units leaves %s, ProtocolFees holds carry %s (credit %s → %s, credit residual %s)",
+		return false, fmt.Errorf("lending interest: identity failed for pool %s asset %s hour %s: fee carry %s + %d·gross %s less "+
+			"the credited units leaves %s, ProtocolFees holds carry %s (credit %s → %s, credit residual %s, %d fee-only moves: credit %s carry %s)",
 			r.Pool, r.Asset, r.Hour.Format(time.RFC3339), p.Carry, blnt.ProtocolInterestFeeRate, r.Gross, got, e.Carry,
-			p.Credit, e.Credit, r.FeeCreditResidual)
+			p.Credit, e.Credit, r.FeeCreditResidual, r.FeeOnlyVersions, zeroIfNil(r.FeeOnlyCreditDelta), zeroIfNil(r.FeeOnlyCarryDelta))
 	}
-	return nil
+	return true, nil
+}
+
+func zeroIfNil(n *big.Int) *big.Int {
+	if n == nil {
+		return new(big.Int)
+	}
+	return n
 }
 
 func feeOf(f blnt.ProtocolFees, asset string) blnt.ProtocolFee {

@@ -1096,12 +1096,15 @@ func liInstanceVal(t *testing.T, oracle xdr.ContractId, hexHash string) xdr.ScVa
 	return v
 }
 
+// liRun runs the command; -floor-ledger goes only to runs that read it (the state pass or -interest-init), since an
+// interest-only run refuses it.
 func liRun(t *testing.T, addr string, base uint32, args ...string) error {
 	t.Helper()
-	return chops.Run(append([]string{
-		"ch-entry-history", "-lending-only", "-ch-addr", addr, "-write",
-		"-lock-file", filepath.Join(t.TempDir(), "lending.lock"), "-floor-ledger", strconv.FormatUint(uint64(base), 10),
-	}, args...))
+	cmd := []string{"ch-entry-history", "-lending-only", "-ch-addr", addr, "-write", "-lock-file", filepath.Join(t.TempDir(), "lending.lock")}
+	if !slices.Contains(args, "-interest-only") || slices.Contains(args, "-interest-init") {
+		cmd = append(cmd, "-floor-ledger", strconv.FormatUint(uint64(base), 10))
+	}
+	return chops.Run(append(cmd, args...))
 }
 
 func liU(n uint32) string { return strconv.FormatUint(uint64(n), 10) }

@@ -66,6 +66,9 @@ func (f interestFlags) check(r lendingRun) error {
 		return fmt.Errorf("-interest-init and -interest-pool are separate runs")
 	case (f.init || f.pool != "") && (r.from != 0 || r.to != 0):
 		return fmt.Errorf("-interest-init and -interest-pool set their own range; drop -from and -to")
+	case (f.only || f.pool != "") && !f.init && r.floor > 1:
+		// -to and -from stay legal without -interest-only: the state pass reads them.
+		return fmt.Errorf("-floor-ledger sets where -interest-init or the state pass starts; an interest-only run ignores it")
 	case f.maxWindows < 0 || f.maxUnordered < 0:
 		return fmt.Errorf("-interest-max-windows and -interest-max-unordered must be >= 0")
 	}
@@ -88,24 +91,29 @@ func (r lendingRun) run() error {
 		}
 		return r.interestPass(ctx, os.Stderr)
 	}
+	if !r.interestOnly() {
+		if err := r.statePass(ctx); err != nil {
+			return err
+		}
+	}
+	return r.lockedInterestPass(ctx, os.Stderr)
+}
+
+// statePass derives lending_state under -lock-file, released before the interest pass takes its own.
+func (r lendingRun) statePass(ctx context.Context) error {
 	unlock, err := acquireRollupLock(lendingJob, r.lockFile)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if !r.interestOnly() {
-		hb := opsutil.NewJobHeartbeat(lendingJob, r.heartbeat, nil)
-		if hb.Enabled() {
-			fmt.Fprintf(os.Stderr, "%s: heartbeat -> %s\n", lendingJob, hb.Path())
-		}
-		hb.Start()
-		err = r.exec(ctx, hb)
-		hb.Stop(err == nil)
-		if err != nil {
-			return err
-		}
+	hb := opsutil.NewJobHeartbeat(lendingJob, r.heartbeat, nil)
+	if hb.Enabled() {
+		fmt.Fprintf(os.Stderr, "%s: heartbeat -> %s\n", lendingJob, hb.Path())
 	}
-	return r.interestPass(ctx, os.Stderr)
+	hb.Start()
+	err = r.exec(ctx, hb)
+	hb.Stop(err == nil)
+	return err
 }
 
 // interestOnly skips the state pass: -interest-only, or a per-pool backfill.
