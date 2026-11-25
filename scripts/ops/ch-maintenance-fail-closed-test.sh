@@ -16,7 +16,7 @@
 #     the run after PHASED_MAX_ATTEMPTS tries instead of retrying forever; a
 #     transient failure is still retried.
 #
-# Hermetic: curl, df, date, sleep, the heavy-job wrapper and the ops binary are PATH/env shims. The curl
+# Hermetic: curl, clickhouse-client, df, date, sleep, the heavy-job wrapper and the ops binary are shims. The curl
 # shim models real curl — an HTTP 500 exits 0 with the exception as the
 # body unless --fail/--fail-with-body is passed — and the sleep shim kills
 # its caller after SLEEP_LIMIT calls, so an unbounded retry loop fails the
@@ -78,6 +78,7 @@ case "$sql" in
   *"latest_fail_reason FROM system.mutations"*)
     if [ -n "${MUT_FAIL:-}" ]; then echo "0|$MUT_FAIL"; else echo "1|"; fi
     ;;
+  *"count() FROM system.mutations WHERE database='stellar' AND table='ledger_entry_changes'") echo 3 ;;
   *"FROM system.mutations"*"NOT is_done"*) echo "${MUT_OPEN:-0}" ;;
   *"sum(cityHash64(*))"*) if [ -n "${HASH_DRIFT:-}" ] && rewritten; then echo 222; else echo 111; fi ;;
   *"count() FROM stellar.ledger_entry_changes"*) echo 1000 ;;
@@ -112,6 +113,22 @@ n=$(( $(cat "$SLEEP_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$SLEEP_COUNT"
 if [ "$n" -gt "${SLEEP_LIMIT:-40}" ]; then kill -TERM "$PPID"; fi
 exit 0
+STUB
+
+# Models clickhouse-client -q for recompress-lec.sh over the curl shim: a server
+# exception exits non-zero; CHC_FAIL_MATCH fails any query containing it, as auth does.
+cat > "$TMP/bin/fake-chc" <<'STUB'
+#!/usr/bin/env bash
+sql=""
+while [ $# -gt 0 ]; do
+  case "$1" in -q) sql="${2-}"; shift 2 ;; *) shift ;; esac
+done
+if [ -n "${CHC_FAIL_MATCH:-}" ] && [[ "$sql" == *"$CHC_FAIL_MATCH"* ]]; then
+  printf '%s\n' "$sql" >> "$CH_LOG"
+  echo "Code: 516. DB::Exception: default: Authentication failed. (AUTHENTICATION_FAILED)" >&2
+  exit 4
+fi
+exec curl --fail-with-body --data-binary "$sql"
 STUB
 
 cat > "$TMP/bin/date" <<'STUB'
@@ -159,6 +176,7 @@ run() {
   env PATH="$TMP/bin:$PATH" CH_LOG="$STMT" OPS_LOG="$OPSL" SLEEP_COUNT="$SLEEPC" \
       RECOMPRESS_LOG="$LOG" PHASED_LOG="$LOG" PHASED_STATE="$STATEF" \
       RECOMPRESS_STATE="$STATEF" HEAVY_JOB="$TMP/bin/fake-heavy" HEAVY_LOG="$OPSL" FAKE_HHMM=12:00 \
+      RECOMPRESS_CH="$TMP/bin/fake-chc --port 9300" \
       PHASED_OPS="$TMP/bin/fake-ops" \
       ${envs[@]+"${envs[@]}"} bash "$OPS_DIR/$script" "$@" >> "$LOG" 2>&1
   RC=$?
@@ -254,6 +272,18 @@ expect_absent "$STMT" "FREEZE" "open mutation: nothing frozen"
 run lec_quiet recompress-lec.sh FAKE_HHMM=02:00 SLEEP_LIMIT=2 --
 expect_rc_nonzero "inside the quiet window"
 expect_absent "$OPSL" "recompress-lec-p" "quiet window: heavy job never started"
+
+run lec_noauth recompress-lec.sh CHC_FAIL_MATCH="FROM system.mutations" --
+expect_rc_nonzero "client cannot read system.mutations at startup"
+expect_count "$LOG" "cannot read system.mutations" 1 "startup probe: names the transport problem"
+expect_absent "$STMT" "ALTER" "startup probe: no ALTER issued"
+
+run lec_clientexit recompress-lec.sh CHC_FAIL_MATCH="latest_fail_reason" --
+expect_rc_nonzero "client exits non-zero while polling the mutation"
+expect_absent "$LOG" " DONE " "client exit: no partition logged DONE"
+expect_absent "$LOG" "RECOMPRESS_COMPLETE" "client exit: RECOMPRESS_COMPLETE never logged"
+expect_absent "$STMT" "UNFREEZE" "client exit: freeze not released"
+expect_count "$LOG" "freeze lec_codec_40 kept" 1 "client exit: the log names the kept freeze"
 
 run lec_parts500 recompress-lec.sh PARTS_FAIL=1 --
 expect_rc_nonzero "partition-list query answered HTTP 500"
