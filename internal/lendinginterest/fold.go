@@ -76,8 +76,9 @@ type Seeds struct {
 
 // Options are Fold's inputs other than the data.
 type Options struct {
-	Protocols    map[string]Protocol // per pool; a pool absent here refuses the call
-	MaxUnordered int                 // Fold errors when the emitted rows hold more unordered versions
+	Protocols map[string]Protocol // per pool; a pool absent here refuses the call
+	// MaxUnordered bounds each emitted row's UnorderedVersions; per row, so no verdict depends on where calls cut.
+	MaxUnordered int
 }
 
 // HourRow is the interest one reserve accrued in one UTC hour; the column comments are in lending_interest.sql.
@@ -114,7 +115,8 @@ const maxErrorSamples = 5
 
 // Fold pairs every ResData version with its predecessor and sums the hours before commitBefore.
 // Versions of later hours return in carry.Pending with every key's last value, so folding [A,B]
-// then [B+1,C] through the carry equals folding [A,C]. Every version is summed or counted.
+// then [B+1,C] through the carry equals folding [A,C]. Every version is summed or counted; a change
+// stored twice with the same content is one version. The carry shares no memory with the inputs.
 func Fold(seed Seeds, versions []Version, commitBefore time.Time, opts Options) ([]HourRow, Seeds, error) {
 	commitBefore = commitBefore.UTC()
 	if !commitBefore.Equal(commitBefore.Truncate(time.Hour)) {
@@ -130,8 +132,8 @@ func Fold(seed Seeds, versions []Version, commitBefore time.Time, opts Options) 
 			return nil, Seeds{}, err
 		}
 	}
-	sort.SliceStable(all, func(i, j int) bool { return compareOrder(all[i], all[j]) < 0 })
-	committed, pending, err := split(all, commitBefore)
+	sort.SliceStable(all, func(i, j int) bool { return readLess(all[i], all[j]) })
+	committed, pending, err := split(dedupe(all), commitBefore)
 	if err != nil {
 		return nil, Seeds{}, err
 	}
@@ -140,21 +142,17 @@ func Fold(seed Seeds, versions []Version, commitBefore time.Time, opts Options) 
 		return nil, Seeds{}, err
 	}
 	for _, l := range ledgerPools(committed) {
-		if err := st.poolLedger(l); err != nil {
-			return nil, Seeds{}, err
-		}
+		st.poolLedger(l)
 	}
 	rows := st.emit()
-	unordered := 0
 	for _, r := range rows {
-		unordered += int(r.UnorderedVersions)
+		if int(r.UnorderedVersions) > opts.MaxUnordered {
+			return nil, Seeds{}, fmt.Errorf("lendinginterest: pool %s asset %s hour %s holds %d unordered versions, over the allowed %d; "+
+				"re-derive the range's intra_ledger_seq or accept it explicitly",
+				r.Pool, r.Asset, r.Hour.Format(time.RFC3339), r.UnorderedVersions, opts.MaxUnordered)
+		}
 	}
-	if unordered > opts.MaxUnordered {
-		return nil, Seeds{}, fmt.Errorf("lendinginterest: %d unordered versions exceed the allowed %d; "+
-			"re-derive the range's intra_ledger_seq or accept it explicitly", unordered, opts.MaxUnordered)
-	}
-	carry := Seeds{Reserves: st.reserves, Configs: st.configs, Fees: st.fees, Pending: pending, CommittedBefore: commitBefore}
-	return rows, carry, nil
+	return rows, st.carry(pending, commitBefore), nil
 }
 
 func hourOf(v Version) time.Time { return v.CloseTime.UTC().Truncate(time.Hour) }
@@ -221,6 +219,48 @@ func compareOrder(a, b Version) int {
 	return cmpUint(a.ChangeIndex, b.ChangeIndex)
 }
 
+// readLess is compareOrder with the key and the content as tie-breaks, so input order never matters.
+func readLess(a, b Version) bool {
+	if c := compareOrder(a, b); c != 0 {
+		return c < 0
+	}
+	switch {
+	case a.Pool != b.Pool:
+		return a.Pool < b.Pool
+	case a.Kind != b.Kind:
+		return a.Kind < b.Kind
+	case a.Asset != b.Asset:
+		return a.Asset < b.Asset
+	}
+	return content(a) < content(b)
+}
+
+// content renders everything a version stores besides its identity and position.
+func content(v Version) string {
+	return fmt.Sprintf("%t|%v|%d|%v", v.Removed, v.Reserve, v.BstopRate, v.Fees)
+}
+
+type changeID struct {
+	pool, asset, tx, content string
+	kind                     Kind
+	ledger                   uint32
+}
+
+// dedupe keeps the first, in read order, of a key's versions in one transaction with the same content:
+// a re-read, or a re-derive's orphan at another change_index or intra_ledger_seq, is one change.
+func dedupe(sorted []Version) []Version {
+	seen := map[changeID]bool{}
+	out := sorted[:0]
+	for _, v := range sorted {
+		id := changeID{v.Pool, v.Asset, v.TxHash, content(v), v.Kind, v.Ledger}
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func cmpUint(a, b uint32) int {
 	switch {
 	case a < b:
@@ -235,14 +275,8 @@ func cmpUint(a, b uint32) int {
 func split(all []Version, commitBefore time.Time) (committed, pending []Version, err error) {
 	cut := len(all)
 	for i, v := range all {
-		if i > 0 {
-			p := all[i-1]
-			if compareOrder(p, v) == 0 {
-				return nil, nil, fmt.Errorf("lendinginterest: ledger %d tx %s change %d/%d appears twice", v.Ledger, v.TxHash, v.OpIndex, v.ChangeIndex)
-			}
-			if p.Ledger == v.Ledger && !p.CloseTime.Equal(v.CloseTime) {
-				return nil, nil, fmt.Errorf("lendinginterest: ledger %d has two close times", v.Ledger)
-			}
+		if i > 0 && all[i-1].Ledger == v.Ledger && !all[i-1].CloseTime.Equal(v.CloseTime) {
+			return nil, nil, fmt.Errorf("lendinginterest: ledger %d has two close times", v.Ledger)
 		}
 		open := !hourOf(v).Before(commitBefore)
 		if open && cut == len(all) {
@@ -281,23 +315,33 @@ func ledgerPools(vs []Version) [][]Version {
 }
 
 // unorderedLedger is lendingAmbiguousOrderQuery's test per (pool, ledger): rows without apply order
-// from more than one transaction.
+// from more than one transaction. A removal changes no value, so it does not count.
 func unorderedLedger(vs []Version) bool {
 	zero, txs := false, map[string]struct{}{}
 	for _, v := range vs {
+		if v.Removed {
+			continue
+		}
 		zero = zero || v.IntraLedgerSeq == 0
 		txs[v.TxHash] = struct{}{}
 	}
 	return zero && len(txs) > 1
 }
 
-var errInterleaved = errors.New("lendinginterest: a transaction's changes are interleaved with another's")
+var (
+	errInterleaved  = errors.New("lendinginterest: a transaction's changes are interleaved with another's")
+	errSamePosition = errors.New("lendinginterest: two values of a key at one position")
+)
 
-// txGroups splits one ordered pool-ledger into its transactions, in apply order.
+// txGroups splits one ordered pool-ledger into its transactions, in apply order. An error means the
+// stored positions contradict each other, so the apply order is unknown.
 func txGroups(vs []Version) ([][]Version, error) {
 	var out [][]Version
 	seen := map[string]bool{}
 	for i, v := range vs {
+		if i > 0 && compareOrder(v, vs[i-1]) == 0 && v.Kind == vs[i-1].Kind && v.Asset == vs[i-1].Asset {
+			return nil, fmt.Errorf("%w: ledger %d tx %s change %d/%d", errSamePosition, v.Ledger, v.TxHash, v.OpIndex, v.ChangeIndex)
+		}
 		if i > 0 && v.TxHash == vs[i-1].TxHash {
 			out[len(out)-1] = append(out[len(out)-1], v)
 			continue
