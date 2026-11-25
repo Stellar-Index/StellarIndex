@@ -66,7 +66,7 @@ While a long bound is in force: the disk watchdog's low-space stop (`stop_job`, 
 
 ### A ClickHouse merge outlives its client
 
-`scripts/ops/recompress-lec.sh` and `scripts/ops/recompress-others.sh` issue `OPTIMIZE TABLE ... PARTITION ... FINAL` from a client. The merge runs in the server, so stopping the scope kills only the client and the partition rewrite (up to one partition, <= 424 GiB on `ledger_entry_changes`, above the 300 GiB the pool guard preserves) carries on. After the scope stop, cancel the merge itself (substitute the table):
+`scripts/ops/recompress-others.sh` issues `OPTIMIZE TABLE ... PARTITION ... FINAL` from a client. The merge runs in the server, so stopping the scope kills only the client and the partition rewrite carries on. After the scope stop, cancel the merge itself (substitute the table):
 
 ```sh
 clickhouse-client --port 9300 -q "SELECT partition_id, elapsed, progress FROM system.merges WHERE database='stellar' AND table='ledger_entry_changes'"
@@ -76,6 +76,22 @@ clickhouse-client --port 9300 -q "SYSTEM START MERGES stellar.ledger_entry_chang
 ```
 
 `KILL QUERY` is not a substitute. Never leave merges stopped: part count climbs until inserts fail with `TOO_MANY_PARTS`. A cancelled merge keeps the originals, so the script redoes that partition from scratch.
+
+### A ClickHouse rewrite outlives its client
+
+`scripts/ops/recompress-lec.sh` runs `ALTER TABLE stellar.ledger_entry_changes REWRITE PARTS IN PARTITION <n>` under the heavy-job scope `recompress-lec-p<n>`. That is a mutation: stopping the script or the scope does not stop it. `SYSTEM STOP MERGES` also stalls it, so never use that here. See it, then stop it:
+
+```sh
+clickhouse-client --port 9300 -q "SELECT mutation_id, parts_to_do, latest_fail_reason FROM system.mutations WHERE database='stellar' AND table='ledger_entry_changes' AND NOT is_done"
+clickhouse-client --port 9300 -q "KILL MUTATION WHERE database='stellar' AND table='ledger_entry_changes' AND mutation_id='<id>'"
+```
+
+Before each rewrite the script freezes the partition to `shadow/lec_codec_<n>/` and releases the freeze only after count, per-part rows and an all-column hash match the `p<n> START` line. A `p<n> MISMATCH` line, or any `ABORT` after `START`, keeps the freeze. A killed rewrite leaves the rows unchanged: check count and hash (step 3), release the freeze (step 4), then re-run the script to redo the partition. To restore partition `<n>` from the freeze, as root (`<path>` = `data_paths` from `system.tables` for the table):
+
+1. `ALTER TABLE stellar.ledger_entry_changes DETACH PARTITION <n>`, then move `<path>detached/<n>_*` to a holding directory.
+2. `cp -al /var/lib/clickhouse/shadow/lec_codec_<n>/store/*/*/<n>_* <path>detached/` and `chown -R clickhouse:clickhouse <path>detached`.
+3. `ALTER TABLE stellar.ledger_entry_changes ATTACH PARTITION <n>`; check `count()` and `sum(cityHash64(*))` `WHERE _partition_id='<n>'` against the `p<n> START` line.
+4. Only when they match: `ALTER TABLE stellar.ledger_entry_changes UNFREEZE PARTITION <n> WITH NAME 'lec_codec_<n>'`.
 
 ### Before applying the long bound: prove systemd takes the property
 

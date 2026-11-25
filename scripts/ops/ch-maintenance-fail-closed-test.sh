@@ -2,16 +2,21 @@
 # ch-maintenance-fail-closed-test.sh — fixture tests for the ClickHouse
 # maintenance and Phase-D backfill drivers' failure paths:
 #
-#   recompress-lec.sh / recompress-others.sh — a ClickHouse exception
+#   recompress-lec.sh — never OPTIMIZEs; a partition is DONE (freeze released,
+#     state written) only when its rows, all-column hash and per-part rows
+#     are unchanged by REWRITE PARTS; any failure, a mismatch, a failed
+#     mutation, low disk or a held heavy-job lock exits non-zero with the
+#     freeze kept; the tip partition and recorded partitions are skipped.
+#   recompress-others.sh — a ClickHouse exception
 #     (HTTP 500, message in the body) must stop the run non-zero and must
-#     never be followed by a DONE or *_COMPLETE line; recompress-others.sh
+#     never be followed by a DONE or *_COMPLETE line; it
 #     must put every table's merge ceiling back to the value it READ before
 #     raising it, on failure, on SIGTERM and on success.
 #   phaseD-backfill.sh / phaseD-range.sh — a window that keeps failing stops
 #     the run after PHASED_MAX_ATTEMPTS tries instead of retrying forever; a
 #     transient failure is still retried.
 #
-# Hermetic: curl, df, sleep and the ops binary are PATH/env shims. The curl
+# Hermetic: curl, df, date, sleep, the heavy-job wrapper and the ops binary are PATH/env shims. The curl
 # shim models real curl — an HTTP 500 exits 0 with the exception as the
 # body unless --fail/--fail-with-body is passed — and the sleep shim kills
 # its caller after SLEEP_LIMIT calls, so an unbounded retry loop fails the
@@ -57,7 +62,27 @@ http500() {
   fi
   exit 0
 }
+rewritten() { grep -q "REWRITE PARTS" "$CH_LOG"; }
 case "$sql" in
+  *"FROM system.columns"*intra_ledger_seq*) echo "${LEC_CODECS:-5}" ;;
+  *"AND active GROUP BY partition_id"*)
+    [ -n "${PARTS_FAIL:-}" ] && http500 "Code: 159. DB::Exception: Timeout exceeded. (TIMEOUT_EXCEEDED)"
+    printf '%b' "${LEC_PARTS:-40\n41\n65\n}"
+    ;;
+  *"max(toUInt32(partition_id))"*) echo "${LEC_TIP:-65}" ;;
+  *"REWRITE PARTS IN PARTITION"*)
+    [ -n "${REWRITE_FAIL:-}" ] && http500 "Code: 243. DB::Exception: Cannot reserve 300.00 GiB, not enough space. (NOT_ENOUGH_SPACE)"
+    ;;
+  *"FREEZE PARTITION"*|*"KILL MUTATION"*) ;;
+  *"SELECT mutation_id"*) echo "mutation_9.txt" ;;
+  *"latest_fail_reason FROM system.mutations"*)
+    if [ -n "${MUT_FAIL:-}" ]; then echo "0|$MUT_FAIL"; else echo "1|"; fi
+    ;;
+  *"FROM system.mutations"*"NOT is_done"*) echo "${MUT_OPEN:-0}" ;;
+  *"sum(cityHash64(*))"*) if [ -n "${HASH_DRIFT:-}" ] && rewritten; then echo 222; else echo 111; fi ;;
+  *"count() FROM stellar.ledger_entry_changes"*) echo 1000 ;;
+  *"count() FROM system.parts"*) echo 4 ;;
+  *"groupArray(rows)"*) echo 777 ;;
   *"OPTIMIZE TABLE"*)
     if [ -n "${OPT_KILL:-}" ]; then kill -TERM "$PPID"; exit 0; fi
     [ -n "${OPT_FAIL:-}" ] && http500 "Code: 241. DB::Exception: Memory limit (total) exceeded. (MEMORY_LIMIT_EXCEEDED)"
@@ -89,6 +114,21 @@ if [ "$n" -gt "${SLEEP_LIMIT:-40}" ]; then kill -TERM "$PPID"; fi
 exit 0
 STUB
 
+cat > "$TMP/bin/date" <<'STUB'
+#!/usr/bin/env bash
+if [ "$*" = "-u +%H:%M" ]; then echo "$FAKE_HHMM"; exit 0; fi
+exec /bin/date "$@"
+STUB
+
+# Models run-heavy-job.sh: exit 75 without running the payload while the lock is held.
+cat > "$TMP/bin/fake-heavy" <<'STUB'
+#!/usr/bin/env bash
+echo "$1" >> "$HEAVY_LOG"
+[ -n "${HEAVY_HELD:-}" ] && exit 75
+shift
+exec "$@"
+STUB
+
 cat > "$TMP/bin/fake-ops" <<'STUB'
 #!/usr/bin/env bash
 from=""
@@ -118,6 +158,7 @@ run() {
   SLEEPC="$TMP/$name.sleeps"; rm -f "$SLEEPC"
   env PATH="$TMP/bin:$PATH" CH_LOG="$STMT" OPS_LOG="$OPSL" SLEEP_COUNT="$SLEEPC" \
       RECOMPRESS_LOG="$LOG" PHASED_LOG="$LOG" PHASED_STATE="$STATEF" \
+      RECOMPRESS_STATE="$STATEF" HEAVY_JOB="$TMP/bin/fake-heavy" HEAVY_LOG="$OPSL" FAKE_HHMM=12:00 \
       PHASED_OPS="$TMP/bin/fake-ops" \
       ${envs[@]+"${envs[@]}"} bash "$OPS_DIR/$script" "$@" >> "$LOG" 2>&1
   RC=$?
@@ -137,25 +178,87 @@ expect_count() { # expect_count <file> <fixed-string> <n> <label>
 
 echo "ch-maintenance-fail-closed-test: recompress-lec.sh"
 
-run lec_opt500 recompress-lec.sh OPT_FAIL=1 --
-expect_rc_nonzero "OPTIMIZE answered HTTP 500"
-expect_absent "$LOG" "DONE" "OPTIMIZE 500: no partition logged DONE"
-expect_absent "$LOG" "RECOMPRESS_COMPLETE" "OPTIMIZE 500: RECOMPRESS_COMPLETE never logged"
-expect_count "$STMT" "OPTIMIZE TABLE" 1 "OPTIMIZE 500: stopped at the first failing partition"
+RW="REWRITE PARTS IN PARTITION"
+
+run lec_happy recompress-lec.sh --
+expect_rc_zero "two healthy partitions below the tip"
+expect_count "$LOG" " DONE " 2 "healthy run: both partitions DONE"
+expect_count "$STMT" "FREEZE PARTITION 40 WITH NAME 'lec_codec_40'" 2 "healthy run: p40 frozen, then unfrozen"
+expect_count "$STMT" "UNFREEZE PARTITION" 2 "healthy run: both freezes released"
+if [ "$(tr '\n' ' ' < "$STATEF")" = "40 41 " ]; then ok "healthy run: both partitions recorded done"; else bad "healthy run: state is '$(cat "$STATEF" 2>/dev/null)'"; fi
+expect_count "$LOG" "RECOMPRESS_COMPLETE" 1 "healthy run: RECOMPRESS_COMPLETE logged"
+expect_absent "$STMT" "$RW 65" "healthy run: the tip partition is never rewritten"
+expect_absent "$STMT" "OPTIMIZE" "healthy run: no OPTIMIZE issued (it deduplicates)"
+expect_count "$OPSL" "recompress-lec-p" 2 "healthy run: the heavy-job lock taken once per partition"
+
+run lec_codecs recompress-lec.sh LEC_CODECS=4 --
+expect_rc_nonzero "codecs not applied"
+expect_absent "$STMT" "ALTER" "codecs missing: no ALTER issued"
+expect_count "$LOG" "ledger_entry_changes_codecs.sql" 1 "codecs missing: message names the DDL to apply"
+
+run lec_rw500 recompress-lec.sh REWRITE_FAIL=1 --
+expect_rc_nonzero "REWRITE answered HTTP 500"
+expect_absent "$LOG" " DONE " "REWRITE 500: no partition logged DONE"
+expect_absent "$LOG" "RECOMPRESS_COMPLETE" "REWRITE 500: RECOMPRESS_COMPLETE never logged"
+expect_absent "$STMT" "UNFREEZE" "REWRITE 500: freeze not released"
+expect_count "$STMT" "$RW" 1 "REWRITE 500: stopped at the first failing partition"
+
+run lec_mutfail recompress-lec.sh "MUT_FAIL=Code: 241. DB::Exception: Memory limit exceeded" --
+expect_rc_nonzero "mutation reports a fail reason"
+expect_count "$STMT" "KILL MUTATION" 1 "mutation failure: KILL MUTATION issued"
+expect_absent "$LOG" " DONE " "mutation failure: no partition logged DONE"
+expect_absent "$STMT" "UNFREEZE" "mutation failure: freeze not released"
+
+run lec_mismatch recompress-lec.sh HASH_DRIFT=1 --
+expect_rc_nonzero "rows changed by the rewrite"
+expect_count "$LOG" "p40 MISMATCH" 1 "mismatch: logged MISMATCH"
+expect_count "$LOG" "lec_codec_40" 1 "mismatch: the log names the kept freeze"
+expect_absent "$STMT" "UNFREEZE" "mismatch: freeze not released"
+if [ -s "$STATEF" ]; then bad "mismatch: state written: $(cat "$STATEF")"; else ok "mismatch: state not written"; fi
+expect_absent "$LOG" "RECOMPRESS_COMPLETE" "mismatch: RECOMPRESS_COMPLETE never logged"
+
+# 600 GiB floor = 629145600 KiB; plus the 2 GiB partition, 630000000 KiB is short.
+run lec_floor recompress-lec.sh DF_AVAIL_KB=630000000 --
+expect_rc_nonzero "free space below floor + partition"
+expect_absent "$STMT" "FREEZE" "low disk: aborted before FREEZE"
+
+run lec_dfglitch recompress-lec.sh DF_AVAIL_KB=- --
+expect_rc_nonzero "df glitch"
+expect_absent "$STMT" "FREEZE" "df glitch: aborted before FREEZE"
+
+run lec_locked recompress-lec.sh HEAVY_HELD=1 RECOMPRESS_LOCK_ATTEMPTS=3 --
+expect_rc_nonzero "heavy-job lock held beyond the attempts"
+expect_count "$OPSL" "recompress-lec-p40" 3 "lock held: exactly 3 attempts"
+expect_absent "$STMT" "FREEZE" "lock held: nothing frozen"
+expect_absent "$LOG" "RECOMPRESS_COMPLETE" "lock held: RECOMPRESS_COMPLETE never logged"
+
+printf '40\n' > "$TMP/lec_done.state"
+run lec_skip recompress-lec.sh RECOMPRESS_STATE="$TMP/lec_done.state" --
+expect_rc_zero "one partition already recorded done"
+expect_absent "$STMT" "$RW 40" "already done: p40 not rewritten"
+expect_count "$STMT" "$RW 41" 1 "already done: p41 rewritten"
+expect_count "$LOG" "p40 SKIP" 1 "already done: skip logged"
+
+run lec_onlytip recompress-lec.sh RECOMPRESS_PARTITIONS=65 --
+expect_rc_nonzero "the tip requested explicitly"
+expect_absent "$STMT" "ALTER" "tip requested: no ALTER issued"
+
+run lec_subset recompress-lec.sh RECOMPRESS_PARTITIONS=41 --
+expect_rc_zero "a requested subset"
+expect_absent "$STMT" "$RW 40" "subset: unrequested p40 not rewritten"
+
+run lec_openmut recompress-lec.sh MUT_OPEN=1 --
+expect_rc_nonzero "a mutation already open on the table"
+expect_absent "$STMT" "FREEZE" "open mutation: nothing frozen"
+
+run lec_quiet recompress-lec.sh FAKE_HHMM=02:00 SLEEP_LIMIT=2 --
+expect_rc_nonzero "inside the quiet window"
+expect_absent "$OPSL" "recompress-lec-p" "quiet window: heavy job never started"
 
 run lec_parts500 recompress-lec.sh PARTS_FAIL=1 --
 expect_rc_nonzero "partition-list query answered HTTP 500"
 expect_absent "$LOG" "RECOMPRESS_COMPLETE" "partition-list 500: RECOMPRESS_COMPLETE never logged"
-expect_count "$STMT" "OPTIMIZE TABLE" 0 "partition-list 500: no OPTIMIZE issued"
-
-run lec_dfglitch recompress-lec.sh DF_AVAIL_KB=- --
-expect_rc_nonzero "every partition skipped on a df glitch"
-expect_absent "$LOG" "RECOMPRESS_COMPLETE" "df glitch: RECOMPRESS_COMPLETE never logged"
-
-run lec_happy recompress-lec.sh --
-expect_rc_zero "two healthy partitions"
-expect_count "$LOG" "DONE" 2 "healthy run: both partitions DONE"
-expect_count "$LOG" "RECOMPRESS_COMPLETE" 1 "healthy run: RECOMPRESS_COMPLETE logged"
+expect_absent "$STMT" "ALTER" "partition-list 500: no ALTER issued"
 
 echo "ch-maintenance-fail-closed-test: recompress-others.sh"
 RESET="RESET SETTING max_bytes_to_merge_at_max_space_in_pool"

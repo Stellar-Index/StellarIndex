@@ -67,7 +67,7 @@
 -- back 0, so same-ledger ties among them stay unbroken until ledger_entry_changes
 -- is fully re-derived; the tie-break works on all NEW ingest immediately.
 ALTER TABLE stellar.ledger_entry_changes
-    ADD COLUMN IF NOT EXISTS intra_ledger_seq UInt32 DEFAULT 0 AFTER balance;
+    ADD COLUMN IF NOT EXISTS intra_ledger_seq UInt32 DEFAULT 0 CODEC(Delta, ZSTD(3)) AFTER balance;
 
 -- ── Step 1: create v2 (this immediately starts capturing LIVE ledger_entry_changes
 -- inserts going forward — the historical reproject below only needs to cover the
