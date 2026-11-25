@@ -80,10 +80,15 @@ Subcommands:
                           -interest-pool backfills one uncovered pool.
                           Residuals are classed by the pool's events in
                           the same transaction (explained only on an exact
-                          amount); a residual ledger whose contract_events
-                          are short refuses the window. Rows of an older
-                          derive_rev prove INCOMPLETE: re-derive from the
-                          floor. Without those flags the pass catches up at most
+                          amount); a classified residual's ledger whose
+                          contract_events are short refuses the window; an
+                          undecodable pool event leaves its transaction's
+                          residuals unexplained. Rows of an older derive_rev
+                          prove INCOMPLETE: re-derive from the floor; with
+                          -interest-max-windows each chunk's next -from is
+                          L+1, L from its "stopping after N windows at L"
+                          line, until a run reaches the tip.
+                          Without those flags the pass catches up at most
                           one 100000-ledger window and logs "backfill
                           incomplete" beyond it. Interest runs take their
                           own lock beside -lock-file.

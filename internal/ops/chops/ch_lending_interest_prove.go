@@ -53,7 +53,7 @@ func (l *interestProofList) add(format string, a ...any) {
 // written from other versions or by older arithmetic, not a defect in Fold itself), then holds the stored rows under
 // FINAL against:
 //   - the row set: every stored (pool, asset, hour) has a fresh row and the reverse; a stored row with none is stale;
-//   - every stored column, byte-exact against the fresh fold (the event-reconciliation columns against zero);
+//   - every stored column, byte-exact against the fresh fold, the event-reconciliation columns included;
 //   - versions against ReserveVersionCounts: the lake's non-removed versions after Fold's own duplicate collapse,
 //     independent of the pairing, so a version lost or doubled shows even where telescoping is blind;
 //   - the writer's in-line identities (chain endpoints, hour set, telescoped gross, BLNT fee carry) over the fresh
