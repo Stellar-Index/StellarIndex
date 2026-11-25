@@ -57,7 +57,7 @@ Subcommands:
                           transition. Resumes from its sponsorship_events
                           watermark and never writes past the entry_index
                           watermark. Without -write it counts events.
-  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove [-interest]] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-write]
+  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove [-interest]] [-interest-init | -interest-only | -interest-pool C...] [-interest-max-windows N] [-interest-max-unordered N] [-interest-max-versions N] [-write]
                           Derive stellar.lending_state_hourly: the verbatim
                           last change per hour of every Blend and BLNT pool
                           ResData / ResConfig / instance and backstop
@@ -88,6 +88,12 @@ Subcommands:
                           -interest-max-windows each chunk's next -from is
                           L+1, L from its "stopping after N windows at L"
                           line, until a run reaches the tip.
+                          -interest-max-versions N (default 150000) bounds
+                          a window's versions and cause events in memory:
+                          a window over it halves, an open hour over it
+                          refuses until N is raised. Re-run -interest-init
+                          only with the same -floor-ledger, or delete the
+                          table's rows first.
                           Without those flags the pass catches up at most
                           one 100000-ledger window and logs "backfill
                           incomplete" beyond it. Interest runs take their

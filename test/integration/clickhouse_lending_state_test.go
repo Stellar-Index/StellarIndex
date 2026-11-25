@@ -935,12 +935,14 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if len(viaCarry) != len(rows2) || len(rows2) != 2 || viaCarry[0].Gross.Cmp(rows2[0].Gross) != 0 || viaCarry[1].Gross.Cmp(rows2[1].Gross) != 0 {
 		t.Fatalf("resume from seeds = %+v, from the carry = %+v; want the same two hours", rows2, viaCarry)
 	}
-	// Re-deriving hours 11-13: an earlier derive's hour-13 row that this one no longer writes is deleted.
+	// Re-deriving hours 11-13: an earlier derive's hour-13 row that this one no longer writes is deleted, though it was
+	// stamped (DEFAULT now64(3)) within the same second as the cutoff.
 	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_interest_hourly (contract_id, protocol, asset, hour, first_ledger,
-		last_ledger, derived_at) VALUES (?, 'blnt', ?, ?, ?, ?, '2026-01-01 00:00:00')`, pool, assetStr, at(13, 0), base+6, base+6); err != nil {
+		last_ledger) VALUES (?, 'blnt', ?, ?, ?, ?)`, pool, assetStr, at(13, 0), base+6, base+6); err != nil {
 		t.Fatal(err)
 	}
-	cutoff, err := chstore.ServerNow(ctx, addr)
+	time.Sleep(5 * time.Millisecond)
+	cutoff, err := chstore.ServerNowMilli(ctx, addr)
 	if err != nil {
 		t.Fatal(err)
 	}

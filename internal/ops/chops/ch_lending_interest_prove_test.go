@@ -3,6 +3,7 @@ package chops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -263,18 +264,28 @@ func TestProveInterest_RedoPendingIsIncomplete(t *testing.T) {
 	}
 }
 
-// A seed the lake does not prove leaves its pools INCOMPLETE with the reason, never proved.
+// A seed the lake does not prove, or whose proof read timed out, leaves its pools INCOMPLETE with the reason, never
+// proved; the writer refuses both, writing nothing.
 func TestProveInterest_UnprovedSeedIsIncomplete(t *testing.T) {
-	p := newProofFixture(t)
-	lendingInterestSeeds = func(context.Context, string, []clickhouse.LendingContract, []clickhouse.LendingInterestKey, time.Time, uint32,
-	) (clickhouse.LendingInterestSeedSet, error) {
-		return clickhouse.LendingInterestSeedSet{}, fmt.Errorf("reserve res at ledger 9: %w", clickhouse.ErrLendingInterestSeedUnproved)
-	}
-	out, gauge, err := p.prove(t, lendingRun{})
-	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
-		!strings.Contains(out, "INCOMPLETE pools CPOOL [199990,200017]: not compared, the seed is not proved") ||
-		!strings.Contains(out, ": INCOMPLETE: 0 hours proved") {
-		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	for _, sentinel := range []error{clickhouse.ErrLendingInterestSeedUnproved, clickhouse.ErrLendingInterestSeedProofTimeout} {
+		seeds := func(context.Context, string, []clickhouse.LendingContract, []clickhouse.LendingInterestKey, time.Time, uint32,
+		) (clickhouse.LendingInterestSeedSet, error) {
+			return clickhouse.LendingInterestSeedSet{}, fmt.Errorf("reserve res at ledger 9: %w", sentinel)
+		}
+		p := newProofFixture(t)
+		lendingInterestSeeds = seeds
+		out, gauge, err := p.prove(t, lendingRun{})
+		if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
+			!strings.Contains(out, "INCOMPLETE pools CPOOL [199990,200017]: not compared, the seed is not proved") ||
+			!strings.Contains(out, ": INCOMPLETE: 0 hours proved") {
+			t.Fatalf("%v: err %v gauge %s:\n%s", sentinel, err, gauge, out)
+		}
+		f := newFakeInterestLake()
+		f.install(t)
+		lendingInterestSeeds = seeds
+		if _, err := runInterest(t, lendingRun{}); !errors.Is(err, sentinel) || len(f.inserted) != 0 || len(f.marks) != 0 {
+			t.Fatalf("%v: writer err %v inserted %d marks %v, want the refusal and nothing written", sentinel, err, len(f.inserted), f.marks)
+		}
 	}
 }
 

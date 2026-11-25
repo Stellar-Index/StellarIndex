@@ -100,7 +100,9 @@ func (f interestFlags) checkReads(r lendingRun, explicit bool) error {
 	case f.prove && !r.prove:
 		return fmt.Errorf("-interest applies to -prove")
 	case f.prove && explicit:
-		return fmt.Errorf("-prove -interest takes -from, -to and -interest-pool; the other -interest-* flags are the derive's")
+		return fmt.Errorf("-prove -interest takes -from, -to, -interest-pool and -interest-max-versions; the other -interest-* flags are the derive's")
+	case f.maxVersions != 0 && !f.prove:
+		return fmt.Errorf("-interest-max-versions does not apply to -print-prefixes or the lending_state -prove")
 	case f.pool != "" && !f.prove:
 		return fmt.Errorf("-interest-pool does not apply to -print-prefixes or the lending_state -prove")
 	case explicit:

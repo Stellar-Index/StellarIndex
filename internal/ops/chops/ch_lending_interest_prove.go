@@ -254,11 +254,11 @@ func (r lendingRun) clipToRedo(ctx context.Context, pr *interestProof) error {
 	return nil
 }
 
-// proveGroup folds and compares one pool group's windows. A seed the lake does not prove leaves the group INCOMPLETE
+// proveGroup folds and compares one pool group's windows. A seed the lake does not prove (or whose read timed out) leaves the group INCOMPLETE
 // with the reason; any other refusal fails the run.
 func (r lendingRun) proveGroup(ctx context.Context, pr *interestProof, g interestProofGroup, hb *opsutil.JobHeartbeat, log io.Writer) error {
 	p := &interestPass{
-		addr: r.chAddr, pools: g.pools, dryRun: true, log: log, hb: hb, proof: pr,
+		addr: r.chAddr, pools: g.pools, dryRun: true, log: log, hb: hb, proof: pr, maxVersions: r.interest.maxVersions,
 		// The stored rows carry whatever unordered count the writer accepted; the proof compares it, never refuses it.
 		opts: lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{}, MaxUnordered: math.MaxInt},
 	}
@@ -272,7 +272,7 @@ func (r lendingRun) proveGroup(ctx context.Context, pr *interestProof, g interes
 		return err
 	}
 	err = p.run(ctx, pr.start, g.last)
-	if errors.Is(err, clickhouse.ErrLendingInterestSeedUnproved) {
+	if errors.Is(err, clickhouse.ErrLendingInterestSeedUnproved) || errors.Is(err, clickhouse.ErrLendingInterestSeedProofTimeout) {
 		pr.incomplete.add("INCOMPLETE pools %s [%d,%d]: not compared, the seed is not proved: %v", strings.Join(ids, ","), pr.start, g.last, err)
 		return nil
 	}
