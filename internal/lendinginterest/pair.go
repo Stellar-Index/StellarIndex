@@ -31,6 +31,7 @@ type state struct {
 	feeOnly  map[rowKey]*feeMove
 	events   map[txKey][]Event
 	used     map[eventID]bool // a transaction's events explain one version per asset
+	poisoned map[txRef]bool   // transactions holding a CauseUndecodable event
 }
 
 // feeMove is one asset-hour's ProtocolFees movement outside its reserve's pairs.

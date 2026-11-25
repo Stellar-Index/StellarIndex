@@ -84,7 +84,7 @@ type Options struct {
 	// MaxUnordered bounds each emitted row's UnorderedVersions; per row, so no verdict depends on where calls cut.
 	MaxUnordered int
 	// Events are the cause events of the versions' ledgers, read as completely as the versions; an event the
-	// caller did not read can only leave a residual unexplained.
+	// caller did not read can only leave a residual unexplained, as can a CauseUndecodable marker in its transaction.
 	Events []Event
 }
 
@@ -114,8 +114,8 @@ type HourRow struct {
 	// unexplained pair is not stored (each is the row's residual or unreconciled count less the other two).
 	ResidualExplained, ResidualAttributed, ResidualUnexplained *big.Int
 	ExplainedVersions, AttributedVersions, UnexplainedVersions uint32
-	// ResidualLedgers are the ledgers of the unreconciled versions, ascending: the caller proves their events
-	// were read in full. Not stored.
+	// ResidualLedgers are the ledgers of the versions classified by their events, ascending: the caller proves
+	// their events were read in full. Not stored.
 	ResidualLedgers   []uint32
 	UnorderedVersions uint32
 	AccrualErrors     uint32
@@ -167,6 +167,7 @@ func Fold(seed Seeds, versions []Version, commitBefore time.Time, opts Options) 
 	if st.events, err = indexEvents(append(append(allEvents, seed.PendingEvents...), opts.Events...), opts, seed.CommittedBefore); err != nil {
 		return nil, Seeds{}, err
 	}
+	st.poisoned = poisonedTxs(st.events)
 	for _, l := range ledgerPools(committed) {
 		st.poolLedger(l)
 	}

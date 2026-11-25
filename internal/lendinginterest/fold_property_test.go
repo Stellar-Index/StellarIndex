@@ -197,6 +197,12 @@ func (g *gen) causeEvent(v Version, proto Protocol, prev blend.ReserveData) {
 		}
 	}
 	g.events = append(g.events, e)
+	if proto != BlendV1 && len(g.events)%4 == 0 {
+		// An undecodable event beside it: the transaction's residual stays unexplained in every split. Not on V1,
+		// whose few attributed versions the class check below needs; and off the rng, whose draws decide them.
+		e.Cause, e.Asset, e.Amount, e.EventIndex = CauseUndecodable, "", nil, uint32(len(g.events)) //nolint:gosec // small
+		g.events = append(g.events, e)
+	}
 }
 
 func (g *gen) evict() {

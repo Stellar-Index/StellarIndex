@@ -147,7 +147,9 @@ func checkInvariant(t testing.TB, rows []HourRow) {
 		}
 		if r.ExplainedVersions+r.AttributedVersions+r.UnexplainedVersions != r.UnreconciledVersions ||
 			new(big.Int).Add(new(big.Int).Add(r.ResidualExplained, r.ResidualAttributed), r.ResidualUnexplained).Cmp(r.BackstopResidual) != 0 ||
-			(len(r.ResidualLedgers) == 0) != (r.UnreconciledVersions == 0) {
+			// The census holds only classified versions' ledgers, and every explained or attributed one.
+			len(r.ResidualLedgers) > int(r.UnreconciledVersions) ||
+			(r.ExplainedVersions+r.AttributedVersions > 0 && len(r.ResidualLedgers) == 0) {
 			t.Errorf("%s %s %s: residual classes %d+%d+%d of %d unreconciled, %s+%s+%s of %s, ledgers %v", r.Pool, r.Asset, r.Hour,
 				r.ExplainedVersions, r.AttributedVersions, r.UnexplainedVersions, r.UnreconciledVersions, r.ResidualExplained,
 				r.ResidualAttributed, r.ResidualUnexplained, r.BackstopResidual, r.ResidualLedgers)

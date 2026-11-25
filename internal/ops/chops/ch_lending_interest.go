@@ -96,6 +96,8 @@ type interestPass struct {
 	cursorAt   *uint32 // the heartbeat cursor when it is not the run's progress
 	log        io.Writer
 	proof      *interestProof // set on -prove -interest: compare, never write
+	// undecodable counts the cause events the run's folded reads could not decode.
+	undecodable int64
 }
 
 // interestPlan is what a run derives: [start, last] over pools, marked by mark.
@@ -435,6 +437,7 @@ func (p *interestPass) run(ctx context.Context, start, last uint32) error {
 	}
 	st := interestCarry{seed: lendinginterest.Seeds{CommittedBefore: h.Hour}, from: start, eventReads: map[uint32]uint64{}}
 	p.events = newInterestEventDecoder(p.opts.Protocols)
+	p.countUndecodable(nil)
 	runStart := time.Now()
 	for lo, n := start, 0; lo <= last; n++ {
 		if p.maxWindows > 0 && n == p.maxWindows {
@@ -555,6 +558,7 @@ func (p *interestPass) fold(ctx context.Context, st *interestCarry, lo, hi uint3
 	if w.rows, w.carry, err = lendinginterest.Fold(st.seed, vs, w.to, opts); err != nil {
 		return foldedWindow{}, false, err
 	}
+	p.countUndecodable(opts.Events) // after the fold: a window halved before it is read again
 	if !w.to.After(w.from) {
 		st.seed = w.carry // no hour completes in the window
 		st.takeReads(w.reads, 0)

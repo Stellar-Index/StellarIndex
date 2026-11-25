@@ -16,6 +16,9 @@ const (
 	CauseInterestFillV1 Cause = "interest_auction_fill_v1" // V1 fill_auction, auction_type 2: no lot in the body
 	CauseGulp           Cause = "gulp"
 	CauseReconcileLoss  Cause = "reconcile_loss" // BLNT; its backstop_credit_loss leg
+	// CauseUndecodable marks a pool's cause-topic event the caller could not decode. It explains nothing, and its
+	// transaction's residuals stay unexplained: the events left may sum to a residual by chance.
+	CauseUndecodable Cause = "undecodable"
 )
 
 // CauseRule is how one cause's event moves backstop_credit, and where that is read from.
@@ -91,6 +94,24 @@ type txKey struct {
 	op       uint32
 }
 
+// txRef is one pool's transaction, whatever the operation.
+type txRef struct {
+	pool, tx string
+	ledger   uint32
+}
+
+func poisonedTxs(idx map[txKey][]Event) map[txRef]bool {
+	out := map[txRef]bool{}
+	for k, es := range idx {
+		for _, e := range es {
+			if e.Cause == CauseUndecodable {
+				out[txRef{k.pool, k.tx, k.ledger}] = true
+			}
+		}
+	}
+	return out
+}
+
 type eventID struct {
 	txKey
 	index uint32
@@ -104,6 +125,9 @@ func (e Event) id() eventID {
 func checkEvent(e Event, opts Options, committedBefore time.Time) error {
 	where := fmt.Sprintf("lendinginterest: pool %s ledger %d tx %s event %d", e.Pool, e.Ledger, e.TxHash, e.EventIndex)
 	rule, ok := causeRule(e.Cause, opts.Protocols[e.Pool])
+	if _, known := opts.Protocols[e.Pool]; known && e.Cause == CauseUndecodable {
+		ok = true // rule stays zero: not Checkable, so the marker carries no amount
+	}
 	switch {
 	case !ok:
 		return fmt.Errorf("%s: cause %q is not one for a %q pool", where, e.Cause, opts.Protocols[e.Pool])
@@ -181,14 +205,15 @@ const (
 // explain classifies one unreconciled version by the events of its own transaction. Explained: b_rate and the
 // fee entry reconcile, and the Checkable events' changes for the asset sum to the backstop residual exactly.
 // Attributed: the same, but the transaction carries a cause whose amount is not emitted and the residual is a
-// draw. Anything else, including a version whose transaction the apply order leaves open, stays unexplained.
+// draw. Anything else, including a version whose transaction the apply order leaves open or holds an undecodable
+// event, stays unexplained. Only a classified version's ledger needs its events proved complete.
 func (st *state) explain(row *HourRow, nexts []Version, residual *big.Int, onlyBackstop bool) {
 	v := nexts[0]
-	row.ResidualLedgers = appendLedger(row.ResidualLedgers, v.Ledger)
 	class := unexplained
 	k := txKey{v.Pool, v.TxHash, v.Ledger, v.OpIndex}
 	used := eventID{txKey: k, asset: v.Asset}
-	if onlyBackstop && residual.Sign() != 0 && oneTx(nexts) && !st.used[used] {
+	if onlyBackstop && residual.Sign() != 0 && oneTx(nexts) && !st.used[used] && !st.poisoned[txRef{v.Pool, v.TxHash, v.Ledger}] {
+		row.ResidualLedgers = appendLedger(row.ResidualLedgers, v.Ledger)
 		class = classify(st.events[k], v.Asset, residual)
 	}
 	switch class {

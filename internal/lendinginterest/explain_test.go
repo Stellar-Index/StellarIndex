@@ -2,6 +2,7 @@ package lendinginterest
 
 import (
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,6 +107,85 @@ func TestExplain_InterestFillExactOnly(t *testing.T) {
 				t.Fatalf("residual %s, want -112512682 in its class", want)
 			}
 		})
+	}
+}
+
+// An undecodable event anywhere in the version's transaction leaves it unexplained even where the decoded events
+// match exactly or would attribute it, and its ledger needs no census; in another transaction it changes nothing.
+func TestExplain_UndecodableEventPoisonsItsTransaction(t *testing.T) {
+	vs := blntCACSQ.versions(t)
+	v := versionAt(t, vs, 65648345, blendtest.BLNT[0].Asset)
+	poison := eventOf(v, CauseUndecodable, "", 0)
+	poison.OpIndex, poison.EventIndex = v.OpIndex+1, 7
+	elsewhere := poison
+	elsewhere.TxHash = strings.Repeat("0", 64)
+	for name, c := range map[string]struct {
+		poison    Event
+		explained bool
+	}{"same tx": {poison, false}, "another tx": {elsewhere, true}} {
+		t.Run(name, func(t *testing.T) {
+			opts := blntCACSQ.opts(0)
+			opts.Events = []Event{eventOf(v, CauseInterestFill, v.Asset, -112512682), c.poison}
+			rows := fold(t, blntCACSQ.seed(), vs, opts)
+			got := totals(rows)
+			if c.explained != (got.nExplained == 1) || got.nAttributed != 0 {
+				t.Fatalf("%+v", got)
+			}
+			censused := false
+			for _, r := range rows {
+				censused = censused || slices.Contains(r.ResidualLedgers, v.Ledger)
+			}
+			if censused != c.explained {
+				t.Fatalf("ledger %d in the census: %v, want %v", v.Ledger, censused, c.explained)
+			}
+		})
+	}
+	v1 := v1Auction.versions(t)
+	fill := eventOf(versionAt(t, v1, 53013801, ""), CauseInterestFillV1, "", 0)
+	bad := fill
+	bad.Cause, bad.EventIndex = CauseUndecodable, 1
+	opts := v1Auction.opts(0)
+	opts.Events = []Event{fill, bad}
+	if got := totals(fold(t, v1Auction.seed(), v1, opts)); got.nAttributed != 0 || got.nUnexplained != 1 {
+		t.Fatalf("an attribution beside an undecodable event: %+v", got)
+	}
+}
+
+// Only a classified version's ledger is in the census: a b_rate or fee mismatch, a zero residual, a version spanning
+// transactions, an already-used event set and a poisoned transaction need no proof of their events.
+func TestExplain_CensusOnlyClassifiedLedgers(t *testing.T) {
+	v := Version{Pool: "P", Asset: "A", Ledger: 1, TxHash: "t"}
+	other := v
+	other.TxHash = "u"
+	k := txKey{"P", "t", 1, 0}
+	cases := []struct {
+		name         string
+		nexts        []Version
+		residual     int64
+		onlyBackstop bool
+		used         bool
+		poisoned     bool
+		censused     bool
+	}{
+		{"classified", []Version{v}, -3, true, false, false, true},
+		{"b_rate moved", []Version{v}, -3, false, false, false, false},
+		{"zero residual", []Version{v}, 0, true, false, false, false},
+		{"several txs", []Version{v, other}, -3, true, false, false, false},
+		{"events used", []Version{v}, -3, true, true, false, false},
+		{"poisoned", []Version{v}, -3, true, false, true, false},
+	}
+	for _, c := range cases {
+		st := &state{
+			used: map[eventID]bool{}, events: map[txKey][]Event{k: {{Pool: "P", Asset: "A", Amount: big.NewInt(-3)}}},
+			poisoned: map[txRef]bool{},
+		}
+		st.used[eventID{txKey: k, asset: "A"}] = c.used
+		st.poisoned[txRef{"P", "t", 1}] = c.poisoned
+		row := &HourRow{ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int), ResidualUnexplained: new(big.Int)}
+		st.explain(row, c.nexts, big.NewInt(c.residual), c.onlyBackstop)
+		if got := len(row.ResidualLedgers) == 1; got != c.censused || (row.ExplainedVersions == 1) != c.censused {
+			t.Errorf("%s: census %v explained %d, want %v", c.name, row.ResidualLedgers, row.ExplainedVersions, c.censused)
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -19,7 +20,8 @@ import (
 
 // interestEventDecoder turns the pools' lake events into the fold's cause events. Contract identity is the gate: an
 // event of a contract outside the pools is rejected whatever its topic, and a pool's events decode by its
-// protocol's ABI. An event of a cause topic that does not decode refuses the window, as a ResData decode error does.
+// protocol's ABI. A pool's cause-topic event that does not decode is its transaction's CauseUndecodable marker, so
+// the window still derives and that transaction's residuals stay unexplained.
 type interestEventDecoder struct {
 	protos map[string]lendinginterest.Protocol
 	blend  *blend.Decoder
@@ -35,6 +37,11 @@ func newInterestEventDecoder(protos map[string]lendinginterest.Protocol) interes
 	}
 }
 
+// errInterestEventUndecodable wraps why a pool's event did not decode; decode returns the marker beside it.
+var errInterestEventUndecodable = errors.New("undecodable, its transaction's residuals stay unexplained")
+
+// decode returns the event's cause events; for one that does not decode, its CauseUndecodable marker together with
+// an errInterestEventUndecodable error saying why. Any other error refuses the window.
 func (d interestEventDecoder) decode(ev events.Event) ([]lendinginterest.Event, error) {
 	proto, ok := d.protos[ev.ContractID]
 	if !ok || !ev.InSuccessfulContractCall {
@@ -56,12 +63,14 @@ func (d interestEventDecoder) decode(ev events.Event) ([]lendinginterest.Event, 
 		out, err = blendEvents(outs, proto, base)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("lending interest: pool %s event %d %s/%d: %w", ev.ContractID, ev.Ledger, ev.TxHash, ev.EventIndex, err)
+		return []lendinginterest.Event{causeEvent(base, lendinginterest.CauseUndecodable, "", nil)},
+			fmt.Errorf("lending interest: pool %s event %d %s/%d: %w: %w", ev.ContractID, ev.Ledger, ev.TxHash, ev.EventIndex,
+				errInterestEventUndecodable, err)
 	}
 	return out, nil
 }
 
-// decodeGuarded runs the pool protocol's decoder under a recover: a panic refuses the window, never skips the event.
+// decodeGuarded runs the pool protocol's decoder under a recover: a panic is an undecodable event, never a skip.
 func (d interestEventDecoder) decodeGuarded(ev events.Event, proto lendinginterest.Protocol) (outs []consumer.Event, err error) {
 	var dec interface {
 		Matches(events.Event) bool
@@ -209,13 +218,31 @@ func (p *interestPass) readInterestEvents(ctx context.Context, lo, hi uint32, bu
 		}
 		reads[ev.Ledger]++
 		es, err := p.events.decode(ev)
+		if errors.Is(err, errInterestEventUndecodable) {
+			_, _ = fmt.Fprintf(p.log, "%s: %v\n", lendingInterestJob, err)
+			err = nil
+		}
 		out = append(out, es...)
 		return err
 	})
 	return out, reads, err
 }
 
-// eventsCovered proves the cause events of every ledger holding an unreconciled version were read in full: the
+// lendingInterestUndecodableMetric counts, on the run's heartbeat, the pools' cause events it could not decode.
+const lendingInterestUndecodableMetric = "stellarindex_lending_interest_undecodable_events"
+
+// countUndecodable adds the folded window's undecodable markers to the run's gauge, once per folded read.
+func (p *interestPass) countUndecodable(es []lendinginterest.Event) {
+	for _, e := range es {
+		if e.Cause == lendinginterest.CauseUndecodable {
+			p.undecodable++
+		}
+	}
+	p.hb.Gauge(lendingInterestUndecodableMetric, "Pool cause-topic events the lending interest run read and could not decode; "+
+		"each leaves its transaction's residuals unexplained.", p.undecodable)
+}
+
+// eventsCovered proves the cause events of every ledger holding a version classified by them were read in full: the
 // lake holds every event stellar.ledgers declares there, and exactly as many cause events of the pools as the
 // pass read (reads, over this window and the carried open hour's).
 func (p *interestPass) eventsCovered(ctx context.Context, rows []lendinginterest.HourRow, reads ...map[uint32]uint64) error {

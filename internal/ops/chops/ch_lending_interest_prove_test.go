@@ -39,8 +39,8 @@ func newProofFixture(t *testing.T, edit ...func(*fakeInterestLake)) *proofFixtur
 		s.Baselines, s.ExcludedCreditDelta, s.FeeOnlyCreditDelta, s.FeeOnlyCarryDelta, s.FeeOnlyVersions, s.FeeOnlyUnknown = 0, nil, nil, nil, 0, 0
 		s.Excluded = nil
 		p.stored = append(p.stored, clickhouse.LendingInterestStoredRow{
-			Row: s, ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int),
-			DeriveRev: lendingInterestRev,
+			Row: s, ResidualExplained: new(big.Int).Set(r.ResidualExplained), ResidualAttributed: new(big.Int).Set(r.ResidualAttributed),
+			ExplainedVersions: r.ExplainedVersions, AttributedVersions: r.AttributedVersions, DeriveRev: lendingInterestRev,
 		})
 	}
 	if len(p.stored) != 4 {
