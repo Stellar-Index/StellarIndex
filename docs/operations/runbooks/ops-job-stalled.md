@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging` / `stellarindex_lending_interest_lagging`
 
 ## At a glance
 
@@ -198,6 +198,18 @@ Check and fix:
 1. Timer alive: `systemctl list-timers lending-state.timer` and `journalctl -u lending-state.service -n 50`. The timer is enabled by hand as the last step of the runbook in `deploy/clickhouse/lending_state.sql`.
 2. A refused window names its reason: `is not contiguous` (lake hole; wait for `ch-backfill`), `lacks known pools` (the lake is missing a factory `deploy` event), or `without intra-ledger order` (the lake range's `intra_ledger_seq` must be re-derived first, then the range deleted and replayed per the replay decision rule in `docs/architecture/ingest-pipeline.md`).
 3. The initial catch-up fires this alert until it reaches the tip; that is progress while `progress_cursor` keeps rising.
+
+## Lending interest lagging
+
+`stellarindex_lending_interest_lagging` fires when `ch-entry-history-lending-interest`'s `progress_cursor` (the `lending_interest` watermark) trails `ch-entry-history-lending`'s by more than 100,000 ledgers for 2 hours. It is measured against the state pass, so a state stall fires only the alert above. A host where the interest pass was never initialised has no series and stays quiet. A refused interest run also fires `stellarindex_ops_job_run_failed` for that job.
+
+Check and fix (operator commands: the runbook in `deploy/clickhouse/lending_interest.sql`):
+
+1. `journalctl -u lending-state.service -n 50 | grep 'lending interest'`.
+2. `backfill incomplete (N ledgers behind; run the backfill chunks)`: the timer's pass catches up at most one 100,000-ledger window. Run the backfill chunks by hand under `run-heavy-job.sh` until a run reports the tip. They take only the interest lock, so the timer's state pass keeps running.
+3. `skipped, another interest run holds the lock`: a manual chunk or re-derive is running; that is progress while its cursor rises.
+4. A refused window names its reason: an unmapped or mismatched WASM hash, an upgrade ledger, an instance whose executable the code history does not hold (`contract_instance_changes` behind the lake), a failed check against `lending_state_hourly`, or `bring each up with -interest-only -interest-pool <pool> -write` (a pool added after the watermark). The watermark holds until it is fixed.
+5. During the initial backfill this alert fires until the chunks reach the tip.
 
 ## stellarindex_catchup_lane_failed
 
