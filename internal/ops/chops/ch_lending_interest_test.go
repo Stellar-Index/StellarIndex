@@ -421,7 +421,7 @@ func TestInterestPass_DryRunWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 0 || len(f.reads) != 2 || !strings.Contains(out, "would write") ||
-		!strings.Contains(out, "gross telescoped 3 (0 around 0 excluded pairs, not recomputed)") {
+		!strings.Contains(out, "gross telescoped 3 (0 of them around 0 excluded pairs)") {
 		t.Fatalf("dry run: calls %v reads %v log %q", f.calls, f.reads, out)
 	}
 }

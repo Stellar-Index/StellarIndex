@@ -3,6 +3,7 @@ package chops
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -25,9 +26,22 @@ const lendingInterestRev uint16 = 1
 // interestFlags are the -interest-* flags.
 type interestFlags struct {
 	init, only   bool
+	prove        bool // -interest: with -prove, prove lending_interest_hourly instead of lending_state
 	maxWindows   int
 	maxUnordered int
 	pool         string
+	recent       uint // -prove-recent: with -prove -interest, prove the last N ledgers to the watermark
+}
+
+// register defines the -interest* flags on fs.
+func (f *interestFlags) register(fs *flag.FlagSet) {
+	fs.BoolVar(&f.init, "interest-init", false, "with -lending-only: start stellar.lending_interest_hourly at the hour of max(-floor-ledger, the Blend factory genesis); without it a run whose interest pass has no watermark only logs that it is not initialised")
+	fs.BoolVar(&f.only, "interest-only", false, "with -lending-only: skip the lending_state pass; -from (snapped down to its hour's first ledger) re-derives the interest rows and deletes the hours' superseded ones, -to is snapped up to its hour's last ledger")
+	fs.IntVar(&f.maxWindows, "interest-max-windows", 0, "with -lending-only: stop the interest pass after N windows (0 = to lending_state's watermark)")
+	fs.IntVar(&f.maxUnordered, "interest-max-unordered", 0, "with -lending-only: accept up to N versions per interest row whose apply order is unknown (intra_ledger_seq 0); more refuses the window")
+	fs.BoolVar(&f.prove, "interest", false, "with -lending-only -prove: prove stellar.lending_interest_hourly instead (reads only): per window of [-from, -to] (default the floor to the lending_interest watermark; -prove-recent the last N ledgers; -interest-pool one pool) the stored rows against a fresh fold of the lake's versions, version counts, telescoped gross and the in-line identities; exits non-zero on a mismatch or INCOMPLETE hours, 0 with nothing to prove on an uninitialised host")
+	fs.UintVar(&f.recent, "prove-recent", 0, "with -lending-only -prove -interest: prove from the hour of (watermark − N ledgers), never below the floor, to the watermark instead of the whole range (the daily unit's rolling week; a spot check by hand), its verdict on the daily proof's heartbeat; without it the proof's heartbeat is the full range's, ops_job …-prove-full")
+	fs.StringVar(&f.pool, "interest-pool", "", "with -lending-only: backfill the interest rows of one pool the lending_interest watermark does not cover, up to that watermark (skips the lending_state pass); with -prove -interest, prove that pool only")
 }
 
 // Seams so the interest pass is testable without a live lake.
@@ -77,6 +91,7 @@ type interestPass struct {
 	hb         *opsutil.JobHeartbeat
 	cursorAt   *uint32 // the heartbeat cursor when it is not the run's progress
 	log        io.Writer
+	proof      *interestProof // set on -prove -interest: compare, never write
 }
 
 // interestPlan is what a run derives: [start, last] over pools, marked by mark.
@@ -200,11 +215,14 @@ func (r lendingRun) redoes(redo clickhouse.LendingInterestRedo) bool {
 }
 
 // interestHeartbeat sits beside an explicit -heartbeat path, else in the default textfile directory.
-func (r lendingRun) interestHeartbeat() string {
+func (r lendingRun) interestHeartbeat() string { return r.siblingHeartbeat(lendingInterestJob) }
+
+// siblingHeartbeat is job's textfile beside an explicit -heartbeat path, else "" (the default textfile directory).
+func (r lendingRun) siblingHeartbeat(job string) string {
 	if r.heartbeat == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(r.heartbeat), "ops_job_"+lendingInterestJob+".prom")
+	return filepath.Join(filepath.Dir(r.heartbeat), "ops_job_"+job+".prom")
 }
 
 // interestPlan resolves the run's range and pools: a per-pool backfill, a first run, a re-derive from -from, or a
@@ -441,68 +459,93 @@ func (p *interestPass) run(ctx context.Context, start, last uint32) error {
 }
 
 // window reads, folds and checks [lo, hi]; once the checks pass it writes the complete hours, deletes on a
-// re-derive the rows of those hours it no longer writes, and marks them. Nothing is written before the check.
+// re-derive the rows of those hours it no longer writes, and marks them. Nothing is written before the check. A
+// proof run compares the stored rows instead and writes nothing.
 func (p *interestPass) window(ctx context.Context, st *interestCarry, lo, hi uint32) error {
-	keys, err := lendingInterestKeys(ctx, p.addr, p.pools, hi)
-	if err != nil {
+	w, ok, err := p.fold(ctx, st, lo, hi)
+	if err != nil || !ok {
 		return err
 	}
+	if p.proof != nil {
+		if err := p.proof.window(ctx, p, w); err != nil {
+			return err
+		}
+	} else {
+		checked, err := checkLendingInterest(p.opts.Protocols, w.rows, w.state, w.versions, w.from, w.to)
+		if err != nil {
+			return err
+		}
+		reportInterestWindow(p.log, w.from, w.to, w.rows, checked, p.dryRun)
+		if !p.dryRun {
+			if err := p.write(ctx, w.rows, w.from, w.to, st.from, w.thru); err != nil {
+				return err
+			}
+		}
+	}
+	st.seedRows, st.seedCheck = nil, false
+	st.seed, st.from = w.carry, w.thru+1
+	return nil
+}
+
+// foldedWindow is one window read and folded: its complete hours [from, to), ending at ledger thru, and what the
+// checks compare the rows with.
+type foldedWindow struct {
+	from, to time.Time
+	thru     uint32
+	rows     []lendinginterest.HourRow
+	carry    lendinginterest.Seeds
+	versions []lendinginterest.Version // the fold's input: the carry's open hour, then the window's read
+	state    []clickhouse.LendingInterestStateRow
+}
+
+// fold reads and folds [lo, hi]; ok is false, with the carry already taken, when no hour completes in it.
+func (p *interestPass) fold(ctx context.Context, st *interestCarry, lo, hi uint32) (foldedWindow, bool, error) {
+	keys, err := lendingInterestKeys(ctx, p.addr, p.pools, hi)
+	if err != nil {
+		return foldedWindow{}, false, err
+	}
 	if err := p.checkDerived(ctx, st, hi); err != nil {
-		return err
+		return foldedWindow{}, false, err
 	}
 	if !st.seeded {
 		// Seeds once per run; later windows continue from the carry and read from hi+1, never both.
 		if err := p.seedRun(ctx, st, keys, lo); err != nil {
-			return err
+			return foldedWindow{}, false, err
 		}
 	}
 	if n := len(st.seed.Pending); n >= lendingInterestMaxVersions {
-		return fmt.Errorf("lending interest: the open hour from %s carries %d versions, over the bound %d: the fold holds an hour whole",
+		return foldedWindow{}, false, fmt.Errorf("lending interest: the open hour from %s carries %d versions, over the bound %d: the fold holds an hour whole",
 			st.seed.CommittedBefore.Format(time.RFC3339), n, lendingInterestMaxVersions)
 	}
 	vs, err := p.readVersions(ctx, keys, lo, hi, len(st.seed.Pending))
 	if err != nil {
-		return err
+		return foldedWindow{}, false, err
 	}
 	if err := checkInstanceCode(p.code, vs); err != nil {
-		return err
+		return foldedWindow{}, false, err
 	}
 	if err := st.checkNewKeys(vs); err != nil {
-		return err
+		return foldedWindow{}, false, err
 	}
-	commitBefore, thru, err := p.commitPoint(ctx, hi)
-	if err != nil {
-		return err
+	w := foldedWindow{from: st.seed.CommittedBefore}
+	if w.to, w.thru, err = p.commitPoint(ctx, hi); err != nil {
+		return foldedWindow{}, false, err
 	}
-	from := st.seed.CommittedBefore
-	rows, carry, err := lendinginterest.Fold(st.seed, vs, commitBefore, p.opts)
-	if err != nil {
-		return err
+	if w.rows, w.carry, err = lendinginterest.Fold(st.seed, vs, w.to, p.opts); err != nil {
+		return foldedWindow{}, false, err
 	}
-	if !commitBefore.After(from) {
-		st.seed = carry // no hour completes in the window
-		return nil
+	if !w.to.After(w.from) {
+		st.seed = w.carry // no hour completes in the window
+		return foldedWindow{}, false, nil
 	}
-	state, err := p.stateRows(ctx, keys, rows, from, commitBefore)
-	if err != nil {
-		return err
+	if w.state, err = p.stateRows(ctx, keys, w.rows, w.from, w.to); err != nil {
+		return foldedWindow{}, false, err
 	}
 	if st.seedCheck {
-		state = withSeedsBefore(state, st.seedRows)
+		w.state = withSeedsBefore(w.state, st.seedRows)
 	}
-	checked, err := checkLendingInterest(p.opts.Protocols, rows, state, append(st.seed.Pending, vs...), from, commitBefore)
-	if err != nil {
-		return err
-	}
-	st.seedRows, st.seedCheck = nil, false
-	reportInterestWindow(p.log, from, commitBefore, rows, checked, p.dryRun)
-	if !p.dryRun {
-		if err := p.write(ctx, rows, from, commitBefore, st.from, thru); err != nil {
-			return err
-		}
-	}
-	st.seed, st.from = carry, thru+1
-	return nil
+	w.versions = append(append([]lendinginterest.Version(nil), st.seed.Pending...), vs...)
+	return w, true, nil
 }
 
 // stateRows reads lending_state's rows for the checks; with no ResData or ProtocolFees key (a pool not yet or no
@@ -612,7 +655,7 @@ func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginter
 	}
 	_, _ = fmt.Fprintf(log, "%s: hours [%s, %s): %s %d rows; versions %d, accrued %d, accrual errors %d, unordered %d; "+
 		"unreconciled %d (b_rate mismatches %d, fee mismatches %d, rows with a backstop residual %d), fee-only moves %d; "+
-		"checked: chain endpoints %d rows, gross telescoped %d (%d around %d excluded pairs, not recomputed), fee carry %d (%d not)\n",
+		"checked: chain endpoints %d rows, gross telescoped %d (%d of them around %d excluded pairs), fee carry %d (%d not)\n",
 		lendingInterestJob, from.Format(time.RFC3339), to.Format(time.RFC3339), verb, len(rows), versions, accrued, errs, unordered,
 		unreconciled, bRate, feeMis, residualRows, feeOnly, c.telescoped, c.telescoped, c.telescopeSplit, c.excludedPairs,
 		c.feeChecked, c.feeSkipped)

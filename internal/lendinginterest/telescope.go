@@ -61,6 +61,27 @@ func telescope(chain []blend.ReserveData) *big.Int {
 	return total
 }
 
+// ReserveVersionCounts is the number of ResData versions per reserve and UTC hour (Unix seconds) in vs, counted as
+// Fold counts HourRow.Versions: removals excluded, same-content duplicates in one transaction collapsed by Fold's own
+// dedupe, and nothing else. It shares that collapse with Fold, not the pairing, so a version the pairing lost or
+// counted twice shows as a difference.
+func ReserveVersionCounts(vs []Version) map[ReserveKey]map[int64]uint32 {
+	sorted := append([]Version(nil), vs...)
+	sort.SliceStable(sorted, func(i, j int) bool { return readLess(sorted[i], sorted[j]) })
+	out := map[ReserveKey]map[int64]uint32{}
+	for _, v := range dedupe(sorted) {
+		if v.Kind != KindReserve || v.Removed {
+			continue
+		}
+		k := ReserveKey{Pool: v.Pool, Asset: v.Asset}
+		if out[k] == nil {
+			out[k] = map[int64]uint32{}
+		}
+		out[k][hourOf(v).Unix()]++
+	}
+	return out
+}
+
 // liabilities is ceil(d·d_rate/S) at rd's rate scale (SCALAR_9 on V1, SCALAR_12 on V2).
 func liabilities(d *big.Int, rd blend.ReserveData) *big.Int {
 	s := big.NewInt(1_000_000_000_000)

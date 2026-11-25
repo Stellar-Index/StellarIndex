@@ -1,0 +1,66 @@
+# systemd unit: weekly full-range read-only proof of stellar.lending_interest_hourly.
+#
+# Rendered by Ansible where lending_interest_prove_enabled is set, beside the
+# daily lending-interest-prove.service (which proves the last week). This one
+# proves the floor-to-watermark range, so a mismatch in an hour the daily run
+# has slid past is still found. Its verdict has its own heartbeat
+# (ops_job="ch-entry-history-lending-interest-prove-full"): a daily run that
+# proves never clears it. stellarindex_lending_interest_proof_failed covers
+# both series; stellarindex_lending_interest_proof_stale ages this one at 8 days.
+
+[Unit]
+Description=Stellar Index — lending interest proof (weekly, full range, read-only)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-failed
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+# 75 = run-heavy-job lock skip; a mismatch is carried by the proof gauge and the exit code.
+SuccessExitStatus=75
+# Queue behind another heavy job (the daily proof included) for up to 12h instead of skipping the fire.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
+Environment=HEAVY_JOB_CLASS=scheduled
+EnvironmentFile=-/etc/default/lending-interest-prove
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# No -write: -prove only reads. It holds the lending_state and interest locks shared for the whole
+# run, so the state pass and the timer's interest pass skip until it ends; it waits up to 15 min for
+# a writer that holds either, then skips, exit 0, writing no heartbeat.
+ExecStart=/usr/local/sbin/run-heavy-job.sh lending-interest-prove-full /usr/local/bin/stellarindex-ops ch-entry-history \
+  -lending-only \
+  -prove \
+  -interest \
+  -ch-addr ${CH_ADDR} \
+  $EXTRA_FLAGS
+
+User=stellarindex
+Group=stellarindex
+
+# full, not strict, as verify-lake: run-heavy-job.sh takes its locks under /run/lock,
+# and the heartbeat textfile is the only other write.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Floor to watermark in 100k-ledger windows, each read twice for coverage and once
+# for versions; 12h of queueing plus the run.
+TimeoutStartSec=86400
+
+# The fold holds one window's versions in process, as the derive does; a window
+# over lendingInterestMaxVersions is halved rather than meet this limit.
+MemoryMax=1G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

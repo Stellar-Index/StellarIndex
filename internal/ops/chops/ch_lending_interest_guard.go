@@ -33,8 +33,12 @@ func (r lendingRun) planUnderRedo(ctx context.Context, log io.Writer, wm uint32,
 		redo.From = max(redo.From, floor)
 	}
 	held := pending && !r.redoes(redo)
+	heldGauge := int64(0)
+	if held {
+		heldGauge = 1
+	}
 	hb.Gauge(lendingInterestRedoPendingMetric, "1 when the lending interest pass derived nothing because a lending_state replay "+
-		"armed a redo this run does not perform, 0 otherwise.", held)
+		"armed a redo this run does not perform, 0 otherwise.", heldGauge)
 	if held {
 		msg := fmt.Sprintf("lending interest: a lending_state replay rewrote the state from ledger %d, so the rows from there "+
 			"on are stale; re-derive them first: -interest-only -from %d -write, then from each run's end until one reaches the tip",

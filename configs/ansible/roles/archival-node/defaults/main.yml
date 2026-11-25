@@ -792,6 +792,14 @@ verify_archive_tier_d_enabled: "{{ (stellar_network | default('pubnet')) == 'pub
 # omitted where its anchor is not network-correct.
 archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# lending-interest-prove — the daily read-only proof of
+# stellar.lending_interest_hourly over the last week, and
+# lending-interest-prove-full, its weekly full-range run. Off until a host's interest pass is
+# initialised and its backfill has proved once by hand (the serving gate in
+# deploy/clickhouse/lending_interest.sql); on an uninitialised host the proof
+# only prints "not initialised".
+lending_interest_prove_enabled: false
+
 # verify-served-values — the served-value truth harness. Both of its
 # independent sources are PUBNET authorities: the SDF lumen API
 # (dashboard.stellar.org) and Circle's `api.circle.com/v1/stablecoins` (XLM chain).

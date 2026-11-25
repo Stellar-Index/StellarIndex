@@ -1322,6 +1322,51 @@ groups:
             nothing until they are re-derived: run the -interest-only -from
             re-derive its log line names, through the tip.
 
+      # The read-only proof (lending-interest-prove.timer, daily) recomputed the interest rows from the lake and a
+      # stored row disagrees: wrong numbers in a money table. `for: 0m`: one proof run is the whole signal, and the
+      # gauge holds until the next run. INCOMPLETE hours (another derive revision) exit non-zero without setting it and
+      # fire stellarindex_ops_job_run_failed instead.
+      - alert: stellarindex_lending_interest_proof_failed
+        expr: max(stellarindex_lending_interest_proof_failed) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-failed
+          summary: "the lending interest proof found stored rows that disagree with the lake"
+          description: |
+            `stellarindex-ops ch-entry-history -lending-only -prove -interest`
+            recomputed stellar.lending_interest_hourly from the lake and a
+            stored row (or a window's identities) disagrees. The proof's
+            report in `journalctl -u lending-interest-prove -n 200` names
+            each mismatch: pool, asset, hour, column, stored and recomputed.
+            Re-derive the named hours before anything serves them.
+
+      # A proof that silently stops running leaves the gauge above at its last value. Same shape as
+      # stellarindex_lake_verify_stale: the daily run's last finish is more than two days old, the weekly full-range
+      # run's (its own series) more than eight. Absent until a timer's first run, so a host where it is off stays quiet.
+      - alert: stellarindex_lending_interest_proof_stale
+        expr: |
+          (time() - stellarindex_ops_job_last_finish_unix{ops_job="ch-entry-history-lending-interest-prove"}) > 172800
+          or (time() - stellarindex_ops_job_last_finish_unix{ops_job="ch-entry-history-lending-interest-prove-full"}) > 691200
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-stale
+          summary: "a lending interest proof has not finished on its schedule"
+          description: |
+            The last finished run of {{ $labels.ops_job }} is older than its
+            cadence allows (lending-interest-prove.timer, daily: 48 h;
+            lending-interest-prove-full.timer, weekly: 8 days): the timer was
+            disabled or stopped firing, or a run has hung (heartbeat_stale
+            covers a dead one). Its proof gauge still shows the last run's
+            verdict, which is no longer current.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an

@@ -38,6 +38,16 @@
 --      beside -lock-file) and hold -lock-file shared, so lending_state cannot
 --      change under one; while a chunk runs, the timer's state and interest
 --      passes skip, and a lending_state replay (-from) refuses.
+--   5. Prove the backfill (reads only; exit 0 only with no mismatch and no
+--      INCOMPLETE hour), then set lending_interest_prove_enabled for the host
+--      so lending-interest-prove.timer repeats it daily over the last week
+--      (-prove-recent 120960) and lending-interest-prove-full.timer weekly
+--      over the whole range:
+--      stellarindex-ops ch-entry-history -lending-only -prove -interest
+--        [-from {lo} | -prove-recent {ledgers}] [-to {hi}] [-interest-pool {pool}]
+--      It holds -lock-file and the interest lock shared (waiting up to 15
+--      minutes for a writer), and reports the hours under a pending redo, or
+--      past a seed the lake does not prove, INCOMPLETE.
 --
 -- Seeds come from lending_state_hourly and are proved against the lake: a
 -- seed that is not its key's last stored version before the run (rows a

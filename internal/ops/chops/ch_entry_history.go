@@ -34,11 +34,7 @@ func chEntryHistory(args []string) error {
 	lockFile := fs.String("lock-file", lendingLockPath, "with -lending-only: flock serialising concurrent -write runs")
 	heartbeat := fs.String("heartbeat", "", "with -lending-only: ops-job heartbeat textfile path. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_"+lendingJob+".prom when that directory exists")
 	var interest interestFlags
-	fs.BoolVar(&interest.init, "interest-init", false, "with -lending-only: start stellar.lending_interest_hourly at the hour of max(-floor-ledger, the Blend factory genesis); without it a run whose interest pass has no watermark only logs that it is not initialised")
-	fs.BoolVar(&interest.only, "interest-only", false, "with -lending-only: skip the lending_state pass; -from (snapped down to its hour's first ledger) re-derives the interest rows and deletes the hours' superseded ones, -to is snapped up to its hour's last ledger")
-	fs.IntVar(&interest.maxWindows, "interest-max-windows", 0, "with -lending-only: stop the interest pass after N windows (0 = to lending_state's watermark)")
-	fs.IntVar(&interest.maxUnordered, "interest-max-unordered", 0, "with -lending-only: accept up to N versions per interest row whose apply order is unknown (intra_ledger_seq 0); more refuses the window")
-	fs.StringVar(&interest.pool, "interest-pool", "", "with -lending-only: backfill the interest rows of one pool the lending_interest watermark does not cover, up to that watermark (skips the lending_state pass)")
+	interest.register(fs)
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
