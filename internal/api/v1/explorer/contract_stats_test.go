@@ -15,10 +15,14 @@ type statsReader struct {
 	statsCalls atomic.Int32
 	typesErr   error
 	fail       atomic.Bool
+	block      chan struct{} // when non-nil, ContractStats waits for it; set before the refresh it should hold starts
 }
 
 func (r *statsReader) ContractStats(context.Context) (clickhouse.ContractStats, error) {
 	r.statsCalls.Add(1)
+	if r.block != nil {
+		<-r.block
+	}
 	if r.fail.Load() {
 		return clickhouse.ContractStats{}, errRefreshFailed
 	}
