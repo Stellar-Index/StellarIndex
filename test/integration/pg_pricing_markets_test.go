@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1947,3 +1948,255 @@ func TestPoolsLastPriceSkipsZeroLegBucket(t *testing.T) {
 }
 
 func ptrFloat(f float64) *float64 { return &f }
+
+// bothSharedBucket is BOTH's -30m bucket folded across its two directions. Exact 11/20, but prices_1m stores the flipped
+// row's VWAP (10/6) as the NUMERIC 1.6666666666666667, so the fold lands at this value; a set reader must too.
+const bothSharedBucket = "0.5499999999999999945@30"
+
+// readerPinSeed is the prices_1m seed behind TestPriceReaders_PerKeyPins; every pair quotes USDC.
+type readerPinSeed struct {
+	store *timescale.Store
+	now   time.Time
+	usdc  string
+	sac   string
+	id    func(code string) string
+}
+
+func seedReaderPins(ctx context.Context, t *testing.T) readerPinSeed {
+	t.Helper()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, db := openOrientationStore(t, ctx, dsn)
+	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	s := readerPinSeed{
+		store: store, now: time.Now().UTC().Truncate(time.Minute),
+		sac: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		id:  func(code string) string { return code + "-" + issuer },
+	}
+	s.usdc = s.id("USDC")
+	nonce := 950
+	seed := func(source string, minutesAgo time.Duration, base, quote, baseAmt, quoteAmt, usd string) {
+		t.Helper()
+		nonce++
+		ts := s.now.Add(-minutesAgo * time.Minute).Add(5 * time.Second)
+		seedGrainTrade(t, ctx, db, nonce, source, ts, base, quote, baseAmt, quoteAmt, usd)
+	}
+	// BOTH: both directions share the -30m bucket (10 BOTH for 5 USDC; 6 USDC for 10 BOTH: see bothSharedBucket), and an older
+	// flipped-only bucket at -40m (4 USDC for 10 BOTH: 2/5).
+	seed("sdex", 30, s.id("BOTH"), s.usdc, "10", "5", "5")
+	seed("soroswap", 30, s.usdc, s.id("BOTH"), "6", "10", "6")
+	seed("sdex", 40, s.usdc, s.id("BOTH"), "4", "10", "4")
+	seed("sdex", 20, s.usdc, s.id("FLIP"), "4", "2", "4") // flipped-only: 2
+	seed("sdex", 10, s.id("ZERO"), s.usdc, "10", "0", "0")
+	seed("sdex", 50, s.id("ZMIX"), s.usdc, "10", "2", "2") // 1/5 under a newer zero-leg bucket
+	seed("sdex", 10, s.id("ZMIX"), s.usdc, "10", "0", "0")
+	seed("coingecko_daily", 15, s.id("VEND"), s.usdc, "10", "3", "3")
+	// The 14-day gate moves with the clock while the test runs; two minutes inside holds for any run under a minute.
+	seed("sdex", 14*24*60-2, s.id("EDGI"), s.usdc, "10", "1", "1")
+	seed("sdex", 14*24*60+1, s.id("EDGO"), s.usdc, "10", "1", "1")
+	seed("sdex", 5, "native", s.usdc, "10", "1", "1")
+	seed("soroswap", 6, s.sac, s.usdc, "10", "2", "2")
+	seed("binance", 7, "crypto:XLM", s.usdc, "10", "3", "3")
+	for i := 0; i < 41; i++ { // MANY: 41 buckets, -101m holds 1/10 ... -61m holds 41/10
+		seed("sdex", time.Duration(101-i), s.id("MANY"), s.usdc, "10", strconv.Itoa(i+1), "1")
+	}
+	refreshPrices1m(t, ctx, db)
+	return s
+}
+
+func (s readerPinSeed) pair(t *testing.T, base string) canonical.Pair {
+	t.Helper()
+	b, err := canonical.ParseAsset(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := canonical.ParseAsset(s.usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := canonical.NewPair(b, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func (s readerPinSeed) ago(minutes int) time.Time {
+	return s.now.Add(-time.Duration(minutes) * time.Minute)
+}
+
+func ratEqual(got, want string) bool {
+	g, ok := new(big.Rat).SetString(got)
+	w, wok := new(big.Rat).SetString(want)
+	return ok && wok && g.Cmp(w) == 0
+}
+
+// checkVWAPRows requires rows to be exactly want, newest first: "<vwap>@<minutes ago>" per row.
+func (s readerPinSeed) checkVWAPRows(t *testing.T, name string, rows []timescale.Vwap1mRow, err error, want ...string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("%s: %d rows, want %d", name, len(rows), len(want))
+	}
+	for i, w := range want {
+		v, ago, ok := strings.Cut(w, "@")
+		m, err := strconv.Atoi(ago)
+		if !ok || err != nil {
+			t.Fatalf("%s: bad expectation %q", name, w)
+		}
+		if !ratEqual(rows[i].VWAP, v) || !rows[i].Bucket.Equal(s.ago(m)) {
+			t.Errorf("%s row %d = %s@%s, want %s@%s", name, i, rows[i].VWAP, rows[i].Bucket, v, s.ago(m))
+		}
+	}
+}
+
+// The per-key price readers a batch prefetch will answer with set queries, pinned on one seed so each set reader can be
+// held to exactly these answers. Pinned elsewhere and not repeated: the 30-day-quiet 14d gate and the empty-pair latest
+// (pg_pricing_test.go), combined-before anchoring (TestClosedVWAP1mCombinedBefore_AnchorsAtTheInstant), and alias-union
+// substance at an instant (TestPairMarketSubstanceAt_MeasuresTheMarketAtTheInstant).
+func TestPriceReaders_PerKeyPins(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	s := seedReaderPins(ctx, t)
+	if sac, err := canonical.ParseAsset(s.sac); err != nil || sac.String() != s.sac {
+		t.Fatalf("SAC id does not round-trip: %v %v", sac, err)
+	}
+	t.Run("exists-14d, latest closed VWAP, at-or-before now", func(t *testing.T) { s.pinLatest(ctx, t) })
+	t.Run("trailing combined and combined-before", func(t *testing.T) { s.pinCombined(ctx, t) })
+	t.Run("pair market substance", func(t *testing.T) { s.pinSubstance(ctx, t) })
+}
+
+func (s readerPinSeed) pinLatest(ctx context.Context, t *testing.T) {
+	for _, tc := range []struct {
+		name, base string
+		exists     bool
+		latest     string // "<vwap>@<minutes ago>"; "" is sql.ErrNoRows
+		at         string // ClosedVWAP1mAtOrBefore(now), same form
+		sources    string
+	}{
+		{"two directions share a bucket", s.id("BOTH"), true, bothSharedBucket, bothSharedBucket, "[sdex soroswap]"},
+		{"flipped-only", s.id("FLIP"), true, "2@20", "2@20", "[sdex]"},
+		{"empty pair", s.id("NONE"), false, "", "", ""},
+		{"zero-leg bucket only", s.id("ZERO"), false, "", "", ""},
+		{"priced bucket under a newer zero-leg one", s.id("ZMIX"), true, "1/5@50", "1/5@50", "[sdex]"},
+		{"vendor-only bucket is read", s.id("VEND"), true, "3/10@15", "3/10@15", "[coingecko_daily]"},
+		{"last bucket 14d-2m old", s.id("EDGI"), true, fmt.Sprintf("1/10@%d", 14*24*60-2), fmt.Sprintf("1/10@%d", 14*24*60-2), "[sdex]"},
+		// The gate makes the latest read a miss; the at-or-before read has no gate.
+		{"last bucket 14d+1m old", s.id("EDGO"), false, "", fmt.Sprintf("1/10@%d", 14*24*60+1), ""},
+		{"native, its own literal only", "native", true, "1/10@5", "1/10@5", "[sdex]"},
+		{"XLM SAC, its own literal only", s.sac, true, "1/5@6", "1/5@6", "[soroswap]"},
+		{"crypto:XLM, its own literal only", "crypto:XLM", true, "3/10@7", "3/10@7", "[binance]"},
+		{"41 buckets", s.id("MANY"), true, "41/10@61", "41/10@61", "[sdex]"},
+	} {
+		p := s.pair(t, tc.base)
+		exists, err := s.store.RecentClosedVWAP1mExists(ctx, p)
+		if err != nil || exists != tc.exists {
+			t.Errorf("%s: RecentClosedVWAP1mExists = %v, %v; want %v", tc.name, exists, err, tc.exists)
+		}
+		latest, err := s.store.LatestClosedVWAP1mForPair(ctx, p)
+		s.checkOne(t, tc.name+": LatestClosedVWAP1mForPair", latest, err, tc.latest)
+		if tc.latest != "" && fmt.Sprint(latest.Sources) != tc.sources {
+			t.Errorf("%s: latest sources = %v, want %s", tc.name, latest.Sources, tc.sources)
+		}
+		at, err := s.store.ClosedVWAP1mAtOrBefore(ctx, p, s.now)
+		s.checkOne(t, tc.name+": ClosedVWAP1mAtOrBefore(now)", at, err, tc.at)
+	}
+	// The anchor bound is inclusive of a bucket ending at it, and exclusive a second earlier.
+	both := s.pair(t, s.id("BOTH"))
+	at, err := s.store.ClosedVWAP1mAtOrBefore(ctx, both, s.ago(29))
+	s.checkOne(t, "at-or-before the shared bucket's end", at, err, bothSharedBucket)
+	at, err = s.store.ClosedVWAP1mAtOrBefore(ctx, both, s.ago(29).Add(-time.Second))
+	s.checkOne(t, "at-or-before one second earlier", at, err, "2/5@40")
+}
+
+// checkOne requires row to be want ("<vwap>@<minutes ago>"), or err to be sql.ErrNoRows when want is "".
+func (s readerPinSeed) checkOne(t *testing.T, name string, row timescale.Vwap1mRow, err error, want string) {
+	t.Helper()
+	if want == "" {
+		if !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("%s = %s@%s, %v; want sql.ErrNoRows", name, row.VWAP, row.Bucket, err)
+		}
+		return
+	}
+	s.checkVWAPRows(t, name, []timescale.Vwap1mRow{row}, err, want)
+}
+
+func (s readerPinSeed) pinCombined(ctx context.Context, t *testing.T) {
+	many := make([]string, 0, 40)
+	for i := 40; i >= 1; i-- { // -61m (41/10) down to -100m (2/10); -101m is the 41st row
+		many = append(many, fmt.Sprintf("%d/10@%d", i+1, 101-i))
+	}
+	trailing := func(base string, limit int) ([]timescale.Vwap1mRow, error) {
+		return s.store.RecentClosedVWAP1mCombined(ctx, s.pair(t, base), limit)
+	}
+	rows, err := trailing(s.id("NONE"), 40)
+	s.checkVWAPRows(t, "trailing 40, empty pair", rows, err)
+	rows, err = trailing(s.id("FLIP"), 40)
+	s.checkVWAPRows(t, "trailing 40, one row", rows, err, "2@20")
+	rows, err = trailing(s.id("BOTH"), 40)
+	s.checkVWAPRows(t, "trailing 40, shared then flipped-only bucket", rows, err, bothSharedBucket, "2/5@40")
+	rows, err = trailing(s.id("MANY"), 40)
+	s.checkVWAPRows(t, "trailing 40 of 41", rows, err, many...)
+	rows, err = trailing(s.id("ZERO"), 40)
+	s.checkVWAPRows(t, "trailing 40, zero-leg bucket only", rows, err)
+	rows, err = trailing(s.id("EDGO"), 40)
+	s.checkVWAPRows(t, "trailing 40 has no 14d gate", rows, err, fmt.Sprintf("1/10@%d", 14*24*60+1))
+	rows, err = trailing(s.id("MANY"), 0)
+	s.checkVWAPRows(t, "trailing 0", rows, err)
+
+	before := func(base string, at time.Time, limit int) ([]timescale.Vwap1mRow, error) {
+		return s.store.ClosedVWAP1mCombinedBefore(ctx, s.pair(t, base), at, limit)
+	}
+	beforeMany := append(append([]string{}, many[1:]...), "1/10@101")
+	rows, err = before(s.id("MANY"), s.ago(61), 40)
+	s.checkVWAPRows(t, "combined-before the newest of 41", rows, err, beforeMany...)
+	rows, err = before(s.id("MANY"), s.ago(61), 1)
+	s.checkVWAPRows(t, "combined-before, limit 1", rows, err, "4/1@62")
+	rows, err = before(s.id("BOTH"), s.ago(30), 40)
+	s.checkVWAPRows(t, "combined-before a bucket's start excludes it", rows, err, "2/5@40")
+	rows, err = before(s.id("BOTH"), s.ago(30).Add(time.Second), 40)
+	s.checkVWAPRows(t, "combined-before a second after its start", rows, err, bothSharedBucket, "2/5@40")
+	rows, err = before(s.id("NONE"), s.now, 40)
+	s.checkVWAPRows(t, "combined-before, empty pair", rows, err)
+}
+
+func (s readerPinSeed) pinSubstance(ctx context.Context, t *testing.T) {
+	asset := func(id string) canonical.Asset {
+		a, err := canonical.ParseAsset(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	usdc := canonical.AssetAliases(asset(s.usdc))
+	xlm := canonical.AssetAliases(canonical.NativeAsset())
+	if fmt.Sprint(xlm) != fmt.Sprint([]canonical.Asset{canonical.NativeAsset(), asset("crypto:XLM"), asset(s.sac)}) {
+		t.Fatalf("AssetAliases(native) = %v, want native, crypto:XLM and the seeded SAC", xlm)
+	}
+	for _, tc := range []struct {
+		name                  string
+		bases                 []canonical.Asset
+		volume                string
+		buckets, span, valued int64
+	}{
+		{"two directions share one of two buckets", canonical.AssetAliases(asset(s.id("BOTH"))), "15", 2, 600, 2},
+		{"flipped-only", canonical.AssetAliases(asset(s.id("FLIP"))), "4", 1, 0, 1},
+		{"empty pair", canonical.AssetAliases(asset(s.id("NONE"))), "0", 0, 0, 0},
+		{"zero-leg bucket counts, unvalued", canonical.AssetAliases(asset(s.id("ZERO"))), "0", 1, 0, 0},
+		{"vendor-only bucket counts", canonical.AssetAliases(asset(s.id("VEND"))), "3", 1, 0, 1},
+		{"14d-old bucket is outside 24h", canonical.AssetAliases(asset(s.id("EDGI"))), "0", 0, 0, 0},
+		{"41 buckets", canonical.AssetAliases(asset(s.id("MANY"))), "41", 41, 2400, 41},
+		{"XLM's three spellings", xlm, "6", 3, 120, 3},
+		{"native literal alone", []canonical.Asset{canonical.NativeAsset()}, "1", 1, 0, 1},
+	} {
+		got, err := s.store.PairMarketSubstance(ctx, tc.bases, usdc, 24*time.Hour)
+		if err != nil {
+			t.Fatalf("%s: PairMarketSubstance: %v", tc.name, err)
+		}
+		if !ratEqual(got.VolumeUSD, tc.volume) || got.Buckets != tc.buckets || got.SpanSeconds != tc.span || got.ValuedBuckets != tc.valued {
+			t.Errorf("%s: substance = %+v, want {%s %d %d %d}", tc.name, got, tc.volume, tc.buckets, tc.span, tc.valued)
+		}
+	}
+}
