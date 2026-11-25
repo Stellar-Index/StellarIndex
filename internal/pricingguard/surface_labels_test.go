@@ -126,13 +126,21 @@ func emittedSurfaceLabels(t *testing.T, roots ...string) []string {
 		}
 	}
 	params := surfaceParamIndex(pkgs)
+	declaredIn := surfaceDeclDirs(pkgs)
 	seen := map[string]bool{}
 	for _, p := range pkgs {
 		for _, f := range p.files {
+			imports := importNames(f)
 			ast.Inspect(f, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
 				if !ok {
 					return true
+				}
+				// pkg.Name names one package's function: another package's same-named one is not in reach.
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+					if x, ok := sel.X.(*ast.Ident); ok && imports[x.Name] != "" && !declaredIn[sel.Sel.Name][imports[x.Name]] {
+						return true
+					}
 				}
 				// A name can carry several surface positions (pricingguard's
 				// Gate.PushWithholding and wiring.PriceWithheld differ); one must resolve.
@@ -209,6 +217,40 @@ func surfaceParamIndex(pkgs map[string]*surfacePackage) map[string][]int {
 			out[d.fn.Name.Name] = appendUnique(out[d.fn.Name.Name], d.idx)
 			grew = true
 		}
+	}
+	return out
+}
+
+// surfaceDeclDirs maps each function name with a `surface` parameter to the package directories (base names) that
+// declare it.
+func surfaceDeclDirs(pkgs map[string]*surfacePackage) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for dir, p := range pkgs {
+		for _, f := range p.files {
+			for _, d := range f.Decls {
+				if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && surfaceParam(fn) >= 0 {
+					if out[fn.Name.Name] == nil {
+						out[fn.Name.Name] = map[string]bool{}
+					}
+					out[fn.Name.Name][filepath.Base(dir)] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// importNames maps each name a file refers to an import by to the imported path's last element.
+func importNames(f *ast.File) map[string]string {
+	out := map[string]string{}
+	for _, im := range f.Imports {
+		p := strings.Trim(im.Path.Value, `"`)
+		base := p[strings.LastIndex(p, "/")+1:]
+		name := base
+		if im.Name != nil {
+			name = im.Name.Name
+		}
+		out[name] = base
 	}
 	return out
 }
