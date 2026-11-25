@@ -29,7 +29,8 @@ EnvironmentFile=-/etc/default/lending-interest-prove
 EnvironmentFile=-/etc/default/stellarindex
 EnvironmentFile=-/etc/default/stellarindex-ops
 
-# No -write: -prove only reads, and takes no lock, so it never holds up lending-state.timer.
+# No -write: -prove only reads. It holds the lending_state lock shared, as interest runs do (the state
+# pass skips while it runs); a fire during a lending_state run skips, exit 0, writing no heartbeat.
 ExecStart=/usr/local/sbin/run-heavy-job.sh lending-interest-prove /usr/local/bin/stellarindex-ops ch-entry-history \
   -lending-only \
   -prove \

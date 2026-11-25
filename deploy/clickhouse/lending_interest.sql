@@ -43,6 +43,8 @@
 --      so lending-interest-prove.timer repeats it daily:
 --      stellarindex-ops ch-entry-history -lending-only -prove -interest
 --        [-from {lo}] [-to {hi}] [-interest-pool {pool}]
+--      It holds -lock-file shared too, and reports the hours under a
+--      pending redo, or past a seed the lake does not prove, INCOMPLETE.
 --
 -- Seeds come from lending_state_hourly and are proved against the lake: a
 -- seed that is not its key's last stored version before the run (rows a

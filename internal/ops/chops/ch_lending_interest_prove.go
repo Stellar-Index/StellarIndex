@@ -2,10 +2,14 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"sort"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
@@ -55,7 +59,8 @@ func (l *interestProofList) add(format string, a ...any) {
 //     rows and, where the row sets agree, over the stored values. TelescopedGross shares the ceil liability formula
 //     with the accrual; what is independent is the pairing and the start value, which come from lending_state.
 //
-// A row of another derive revision is INCOMPLETE, not compared; rows past the watermark or a pool's coverage row are
+// A row of another derive revision is INCOMPLETE, not compared, as are the hours under a pending redo and a group whose
+// seed the lake does not prove; rows past the watermark or a pool's coverage row are
 // listed as unmarked, neither proved nor failed.
 type interestProof struct {
 	wm, start, last uint32
@@ -69,12 +74,28 @@ type interestProof struct {
 	notChecked      int             // stored rows whose window's row set or revisions differ, so not re-checked
 }
 
-// proveLendingInterest runs the proof and publishes its verdict gauges in its heartbeat textfile.
+// proveLendingInterest runs the proof holding -lock-file shared, as every interest run does, so no lending_state run
+// changes the rows it reads, and publishes its verdict gauges in its heartbeat textfile. Against a lending_state run
+// the unit's fire skips, writing no heartbeat so the last finished proof's age still reaches proof_stale; a run by
+// hand refuses.
 func (r lendingRun) proveLendingInterest(ctx context.Context, out, log io.Writer) error {
+	unlock, err := acquireSharedLock(lendingJob, r.lockFile)
+	if err != nil {
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return err
+		}
+		if launchedByUnit() {
+			_, _ = fmt.Fprintf(log, "%s: skipped, a lending_state run holds its lock; the next fire proves: %v\n", lendingInterestProveJob, err)
+			return nil
+		}
+		return fmt.Errorf("%s: a lending_state run holds -lock-file, so the state it reads may change; prove once it finishes: %w",
+			lendingInterestProveJob, err)
+	}
+	defer unlock()
 	hb := opsutil.NewJobHeartbeat(lendingInterestProveJob, r.siblingHeartbeat(lendingInterestProveJob), nil)
 	hb.Start()
 	pr := &interestProof{keys: map[lendinginterest.ReserveKey]*interestProofCounts{}}
-	err := r.collectInterestProof(ctx, pr, hb, log)
+	err = r.collectInterestProof(ctx, pr, hb, log)
 	if err == nil {
 		failed := int64(0)
 		if pr.mismatches.n > 0 {
@@ -87,6 +108,10 @@ func (r lendingRun) proveLendingInterest(ctx context.Context, out, log io.Writer
 	hb.Stop(err == nil)
 	return err
 }
+
+// launchedByUnit reports a run systemd started (the timer's unit): systemd sets INVOCATION_ID for every unit, as
+// run-heavy-job.sh also reads it.
+func launchedByUnit() bool { return os.Getenv("INVOCATION_ID") != "" }
 
 // interestProofGroup is the pools proved through one last ledger.
 type interestProofGroup struct {
@@ -108,6 +133,9 @@ func (r lendingRun) collectInterestProof(ctx context.Context, pr *interestProof,
 	if pr.start, pr.last, err = r.interestProofRange(ctx, wm); err != nil {
 		return err
 	}
+	if err := r.clipToRedo(ctx, pr); err != nil {
+		return err
+	}
 	reg, err := lendingInterestRegistry(ctx, r.chAddr, wm)
 	if err != nil {
 		return err
@@ -121,22 +149,53 @@ func (r lendingRun) collectInterestProof(ctx context.Context, pr *interestProof,
 		if g.last < pr.start {
 			continue
 		}
-		p := &interestPass{
-			addr: r.chAddr, pools: g.pools, dryRun: true, log: log, hb: hb, proof: pr,
-			// The stored rows carry whatever unordered count the writer accepted; the proof compares it, never refuses it.
-			opts: lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{}, MaxUnordered: math.MaxInt},
-		}
-		for _, c := range g.pools {
-			p.opts.Protocols[c.ID] = lendinginterest.Protocol(c.Protocol)
-		}
-		if p.code, err = readLendingCode(ctx, r.chAddr, g.pools); err != nil {
-			return err
-		}
-		if err := p.run(ctx, pr.start, g.last); err != nil {
+		if err := r.proveGroup(ctx, pr, g, hb, log); err != nil {
 			return err
 		}
 	}
 	return pr.beyond(ctx, r.chAddr, all, cuts, r.interest.pool)
+}
+
+// clipToRedo ends the proof before the hour a pending redo starts in: a lending_state replay rewrote the state from
+// there, so those rows await a re-derive and are INCOMPLETE, not compared. Hours below it are still proved.
+func (r lendingRun) clipToRedo(ctx context.Context, pr *interestProof) error {
+	redo, pending, err := lendingInterestRedo(ctx, r.chAddr)
+	if err != nil || !pending || redo.Next() > pr.last {
+		return err
+	}
+	cut, err := hourStart(ctx, r.chAddr, max(redo.Next(), pr.start))
+	if err != nil {
+		return err
+	}
+	pr.incomplete.add("INCOMPLETE redo pending from ledger %d (re-derived through %d): ledgers [%d,%d] not compared; "+
+		"re-derive them (-interest-only -from %d -write, through the tip), then prove again", redo.From, redo.Thru, cut, pr.last, redo.Next())
+	pr.last = cut - 1
+	return nil
+}
+
+// proveGroup folds and compares one pool group's windows. A seed the lake does not prove leaves the group INCOMPLETE
+// with the reason; any other refusal fails the run.
+func (r lendingRun) proveGroup(ctx context.Context, pr *interestProof, g interestProofGroup, hb *opsutil.JobHeartbeat, log io.Writer) error {
+	p := &interestPass{
+		addr: r.chAddr, pools: g.pools, dryRun: true, log: log, hb: hb, proof: pr,
+		// The stored rows carry whatever unordered count the writer accepted; the proof compares it, never refuses it.
+		opts: lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{}, MaxUnordered: math.MaxInt},
+	}
+	ids := make([]string, 0, len(g.pools))
+	for _, c := range g.pools {
+		p.opts.Protocols[c.ID] = lendinginterest.Protocol(c.Protocol)
+		ids = append(ids, c.ID)
+	}
+	var err error
+	if p.code, err = readLendingCode(ctx, r.chAddr, g.pools); err != nil {
+		return err
+	}
+	err = p.run(ctx, pr.start, g.last)
+	if errors.Is(err, clickhouse.ErrLendingInterestSeedUnproved) {
+		pr.incomplete.add("INCOMPLETE pools %s [%d,%d]: not compared, the seed is not proved: %v", strings.Join(ids, ","), pr.start, g.last, err)
+		return nil
+	}
+	return err
 }
 
 // interestProofRange is [-from, -to] snapped to whole hours, by default the floor to the watermark.
@@ -302,7 +361,7 @@ func (pr *interestProof) window(ctx context.Context, p *interestPass, w foldedWi
 				pr.counts(k.ReserveKey).proved++
 			}
 			m := s.Row
-			m.Baselines, m.ExcludedCreditDelta = f.Baselines, f.ExcludedCreditDelta
+			m.Baselines, m.ExcludedCreditDelta, m.Excluded = f.Baselines, f.ExcludedCreditDelta, f.Excluded
 			m.FeeOnlyCreditDelta, m.FeeOnlyCarryDelta, m.FeeOnlyVersions, m.FeeOnlyUnknown = f.FeeOnlyCreditDelta, f.FeeOnlyCarryDelta, f.FeeOnlyVersions, f.FeeOnlyUnknown
 			merged = append(merged, m)
 		}

@@ -3,6 +3,7 @@ package chops
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -20,9 +21,12 @@ type proofFixture struct {
 	stored []clickhouse.LendingInterestStoredRow
 }
 
-func newProofFixture(t *testing.T) *proofFixture {
+func newProofFixture(t *testing.T, edit ...func(*fakeInterestLake)) *proofFixture {
 	t.Helper()
 	f := newFakeInterestLake()
+	for _, e := range edit {
+		e(f)
+	}
 	f.install(t)
 	if out, err := runInterest(t, lendingRun{}); err != nil {
 		t.Fatalf("writer: %v\n%s", err, out)
@@ -31,7 +35,9 @@ func newProofFixture(t *testing.T) *proofFixture {
 	p := &proofFixture{fakeInterestLake: f}
 	for _, r := range f.inserted {
 		s := r
+		// The columns the table does not store.
 		s.Baselines, s.ExcludedCreditDelta, s.FeeOnlyCreditDelta, s.FeeOnlyCarryDelta, s.FeeOnlyVersions, s.FeeOnlyUnknown = 0, nil, nil, nil, 0, 0
+		s.Excluded = nil
 		p.stored = append(p.stored, clickhouse.LendingInterestStoredRow{
 			Row: s, ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int),
 			DeriveRev: lendingInterestRev,
@@ -68,6 +74,9 @@ func (p *proofFixture) prove(t *testing.T, r lendingRun) (out, gauge string, err
 	t.Helper()
 	dir := t.TempDir()
 	r.chAddr, r.heartbeat = "fake", filepath.Join(dir, "state.prom")
+	if r.lockFile == "" {
+		r.lockFile = filepath.Join(dir, "state.lock")
+	}
 	var report, log bytes.Buffer
 	err = r.proveLendingInterest(context.Background(), &report, &log)
 	raw, rerr := os.ReadFile(filepath.Join(dir, "ops_job_"+lendingInterestProveJob+".prom")) //nolint:gosec // test temp dir
@@ -212,5 +221,83 @@ func TestProveInterest_IdentityOverTheLake(t *testing.T) {
 	out, gauge, err := p.prove(t, lendingRun{})
 	if err == nil || gauge != "1" || !strings.Contains(out, "the lake's versions fail the in-line identities") {
 		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+}
+
+// An hour with an excluded pair proves: the stored row's gross telescopes around the pair the fresh fold excluded,
+// which the table does not store.
+func TestProveInterest_ExcludedPairTelescopes(t *testing.T) {
+	p := newProofFixture(t, func(f *fakeInterestLake) {
+		// After 199_998, in ledger order; its d_rate is below 199_998's: an accrual error.
+		f.versions = slices.Insert(f.versions, 3, liReserve(200_000, 1))
+	})
+	var excluded int
+	for _, s := range p.stored {
+		excluded += int(s.Row.AccrualErrors + s.Row.UnorderedVersions)
+	}
+	if excluded != 1 {
+		t.Fatalf("degenerate fixture: %d excluded pairs stored, want 1", excluded)
+	}
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err != nil || gauge != "0" || !strings.Contains(out, ": PROVED: 4 hours proved, 0 mismatches") ||
+		!strings.Contains(out, "gross telescoped 4 (1 around 1 excluded pairs)") {
+		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+}
+
+// Under a pending redo the hours from the redo's hour on are INCOMPLETE, not compared; the hours below it prove.
+func TestProveInterest_RedoPendingIsIncomplete(t *testing.T) {
+	p := newProofFixture(t)
+	p.redo = &clickhouse.LendingInterestRedo{Gen: 1, From: 199_998} // mid-hour: the hour from 199_997 is stale too
+	p.stored[1].Row.Gross = big.NewInt(-1)                          // a stale row past the cut is not a mismatch
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
+		!strings.Contains(out, "INCOMPLETE redo pending from ledger 199998 (re-derived through 0): ledgers [199997,200017] not compared") ||
+		!strings.Contains(out, "[199990,199996] @200017: INCOMPLETE: 1 hours proved, 0 mismatches") {
+		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+}
+
+// A seed the lake does not prove leaves its pools INCOMPLETE with the reason, never proved.
+func TestProveInterest_UnprovedSeedIsIncomplete(t *testing.T) {
+	p := newProofFixture(t)
+	lendingInterestSeeds = func(context.Context, string, []clickhouse.LendingContract, []clickhouse.LendingInterestKey, time.Time, uint32,
+	) (clickhouse.LendingInterestSeedSet, error) {
+		return clickhouse.LendingInterestSeedSet{}, fmt.Errorf("reserve res at ledger 9: %w", clickhouse.ErrLendingInterestSeedUnproved)
+	}
+	out, gauge, err := p.prove(t, lendingRun{})
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
+		!strings.Contains(out, "INCOMPLETE pools CPOOL [199990,200017]: not compared, the seed is not proved") ||
+		!strings.Contains(out, ": INCOMPLETE: 0 hours proved") {
+		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+}
+
+// Against a lending_state run holding -lock-file, the unit's fire skips with exit 0 and writes no heartbeat (so
+// proof_stale still ages); a run by hand refuses. Neither reads the lake.
+func TestProveInterest_StateLockHeld(t *testing.T) {
+	p := newProofFixture(t)
+	dir := t.TempDir()
+	r := lendingRun{chAddr: "fake", lockFile: filepath.Join(dir, "state.lock"), heartbeat: filepath.Join(dir, "state.prom")}
+	unlock, err := acquireRollupLock(lendingJob, r.lockFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := len(p.reads)
+	var out, log bytes.Buffer
+	t.Setenv("INVOCATION_ID", "")
+	if err := r.proveLendingInterest(context.Background(), &out, &log); err == nil || !strings.Contains(err.Error(), "prove once it finishes") {
+		t.Fatalf("run by hand under the state lock: err %v, want a refusal", err)
+	}
+	t.Setenv("INVOCATION_ID", "0123456789abcdef")
+	if err := r.proveLendingInterest(context.Background(), &out, &log); err != nil || !strings.Contains(log.String(), "skipped, a lending_state run holds its lock") {
+		t.Fatalf("unit fire under the state lock: err %v, log %q; want a logged skip", err, log.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ops_job_"+lendingInterestProveJob+".prom")); !os.IsNotExist(err) || len(p.reads) != reads || out.Len() != 0 {
+		t.Fatalf("a skipped proof wrote its heartbeat (%v), read the lake (%d reads) or reported %q", err, len(p.reads)-reads, out.String())
+	}
+	unlock()
+	if out, _, err := p.prove(t, lendingRun{lockFile: r.lockFile}); err != nil {
+		t.Fatalf("proof once the state run finished: %v\n%s", err, out)
 	}
 }

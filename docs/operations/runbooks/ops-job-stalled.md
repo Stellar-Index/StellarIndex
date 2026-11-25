@@ -229,6 +229,8 @@ Read the report: `journalctl -u lending-interest-prove -n 200`.
 - `mismatch <pool> <asset> <hour> <column>: stored X, recomputed Y`: one column of one row. `row: stored present, recomputed none` is a stale row (a re-derive should have deleted it); `stored none` is a missing row; `versions (the lake's count)` is a version lost or doubled.
 - `mismatch hours [...): the lake's versions fail the in-line identities` means the lake or `lending_state_hourly` changed after the write (a lake re-derive or a state replay).
 - `INCOMPLETE ... derive_rev N, this binary derives M`: rows of another arithmetic revision; re-derive them. This exits non-zero without the proof gauge, so it fires `stellarindex_ops_job_run_failed` instead.
+- `INCOMPLETE redo pending from ledger L`: a lending_state replay armed a redo; the hours from L's hour on are not compared until the re-derive it names reaches the tip ([Lending interest redo pending](#lending-interest-redo-pending)). Hours below L are still proved.
+- `INCOMPLETE pools ...: the seed is not proved`: a seed in `lending_state_hourly` is not the lake's last version before the range (a lending_state replay deleted rows and has not rewritten them); finish the replay, then prove again.
 - `unmarked ...`: rows past the watermark or a pool's coverage row; neither proved nor failed.
 
 Fix: re-derive the named hours, then prove them again (both from `deploy/clickhouse/lending_interest.sql`; add `-ch-addr 127.0.0.1:9300`):
@@ -241,7 +243,7 @@ Stop serving: once anything reads the table, a mismatch that a re-derive does no
 
 ## Lending interest proof stale
 
-`stellarindex_lending_interest_proof_stale` fires when the proof's last finished run is more than 48 hours old, so the proof gauge no longer describes the table. `systemctl status lending-interest-prove.timer`: it is enabled only where `lending_interest_prove_enabled` is set. A run still going for hours is `heartbeat_stale` or `no_progress` territory; a refused run (lake hole, WASM gate) fires `stellarindex_ops_job_run_failed` and names its reason in the journal.
+`stellarindex_lending_interest_proof_stale` fires when the proof's last finished run is more than 48 hours old, so the proof gauge no longer describes the table. `systemctl status lending-interest-prove.timer`: it is enabled only where `lending_interest_prove_enabled` is set. A run still going for hours is `heartbeat_stale` or `no_progress` territory; a refused run (lake hole, WASM gate, an underived pool or a key with no history) fires `stellarindex_ops_job_run_failed` and names its reason in the journal. The proof holds the lending_state lock shared: a fire during a lending_state run logs `skipped, a lending_state run holds its lock` and exits 0 without a heartbeat, so repeated skips (a replay or state backfill running for days) end here.
 
 ## stellarindex_catchup_lane_failed
 
