@@ -1,10 +1,11 @@
 // Package readset is the request-scoped read-through memo a /v1/price/batch prefetch fills and each read seam consults.
 //
 // Invariant: the batch prefetch is a read-through memo beneath every gate: each seam answers a key exactly as its
-// single-key read would at the prefetch instant, and any key it did not read is read as before — it changes when reads
-// happen, never what they return or how they are judged.
+// single-key read would have at an instant no more than [MaxAge] before the read; any key not read, or read longer ago,
+// is read as before — it changes when reads happen, never what they return or how they are judged.
 //
-// A memo must never be read inside a flight shared across requests, or one request's prefetch would answer another's.
+// A follower joining another request's shared row flight may be answered from that request's memo, so the age bound,
+// not the request, is what limits how old a prefetched answer can be. The detached single-price path never carries one.
 package readset
 
 import (
@@ -19,10 +20,16 @@ import (
 // maxEntries bounds one request's memo; a fill past it is dropped, so that key is read as before.
 const maxEntries = 8192
 
+// MaxAge is how long after its prefetch instant a memo may answer; a read later than that falls through.
+const MaxAge = 2 * time.Second
+
 // Memo holds one request's prefetched answers. It is safe for concurrent use; the zero value is not usable, see [New].
 type Memo struct {
 	mu sync.RWMutex
 	m  map[any]entry
+	// at is the prefetch instant: taken before any fill's read, so every entry is at least as fresh as it.
+	at  time.Time
+	now func() time.Time
 }
 
 // entry is a prefetched answer: found=false is a definite miss and v is then always the zero value.
@@ -31,8 +38,16 @@ type entry struct {
 	found bool
 }
 
-// New returns an empty memo.
-func New() *Memo { return &Memo{m: map[any]entry{}} }
+// New returns an empty memo whose prefetch instant is now; create it immediately before the prefetch reads.
+func New() *Memo { return NewWithClock(time.Now) }
+
+// NewWithClock is [New] reading time from now, which must be safe for concurrent use.
+func NewWithClock(now func() time.Time) *Memo {
+	return &Memo{m: map[any]entry{}, at: now(), now: now}
+}
+
+// expired reports whether a read now is more than [MaxAge] after the prefetch instant.
+func (m *Memo) expired() bool { return m.now().Sub(m.at) > MaxAge }
 
 type ctxKey struct{}
 
@@ -116,7 +131,8 @@ func (s *Seam[K, V]) Fill(ctx context.Context, k K, v V, found bool) {
 // Failed counts a prefetch read that errored; its key stays unfilled, so the seam reads it as before.
 func (s *Seam[K, V]) Failed() { s.count("prefetch_error") }
 
-// Read answers k from ctx's memo when it was prefetched, else calls read: with no memo on ctx it is exactly read(ctx).
+// Read answers k from ctx's memo when it was prefetched no more than [MaxAge] ago, else calls read: with no memo on ctx
+// it is exactly read(ctx).
 func (s *Seam[K, V]) Read(ctx context.Context, k K, read func(context.Context) (V, bool, error)) (V, bool, error) {
 	m := From(ctx)
 	if m == nil {
@@ -127,6 +143,10 @@ func (s *Seam[K, V]) Read(ctx context.Context, k K, read func(context.Context) (
 	m.mu.RUnlock()
 	if !ok {
 		s.count("fallthrough")
+		return read(ctx)
+	}
+	if m.expired() {
+		s.count("expired")
 		return read(ctx)
 	}
 	s.count("hit")

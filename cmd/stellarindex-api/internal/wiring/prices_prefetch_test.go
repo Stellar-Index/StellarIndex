@@ -3,6 +3,7 @@ package wiring
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -216,5 +217,35 @@ func TestPrefetchFreeze_AnswersAsTheSingleRead(t *testing.T) {
 		if got := (answer{f, err != nil}); got != want[i] {
 			t.Errorf("prefetched %+v: %+v, single read at the prefetch instant %+v", r, got, want[i])
 		}
+	}
+}
+
+func TestPrefetchFreeze_MarkerSetAfterPrefetchIsSeenOnceExpired(t *testing.T) {
+	mr, rdb := pfRedis(t)
+	native, usd := pfAsset(t, "native"), pfAsset(t, "fiat:USD")
+	fl, err := freeze.NewLooker(rdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := PrefetchFreezeLooker{Looker: fl, RDB: rdb}
+	var mu sync.Mutex
+	now := time.Now()
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	ctx := readset.With(context.Background(), readset.NewWithClock(clock))
+	dec.PrefetchFrozen(ctx, []readset.PairRead{{Base: native, Quote: usd}})
+	if err := mr.Set(cachekeys.Freeze(native, usd).String(), "1"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	now = now.Add(readset.MaxAge)
+	mu.Unlock()
+	if f, err := dec.FrozenForPair(ctx, native, usd); f || err != nil {
+		t.Fatalf("within MaxAge: frozen=%v err=%v, want the prefetched not-frozen", f, err)
+	}
+	mu.Lock()
+	now = now.Add(time.Millisecond)
+	mu.Unlock()
+	if f, err := dec.FrozenForPair(ctx, native, usd); !f || err != nil {
+		t.Errorf("past MaxAge: frozen=%v err=%v, want the marker set after the prefetch", f, err)
 	}
 }

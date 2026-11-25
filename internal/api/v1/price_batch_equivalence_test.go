@@ -47,6 +47,18 @@ func (c eqCache) LookupTriangulatedVWAP(_ context.Context, base, quote canonical
 	return v, ok, nil
 }
 
+// eqMetaCache is eqCache with the router's composite meta keyed like it, so a looker decorator must forward
+// [v1.CompositeMetaLooker] for the diverged and rerouted flags to survive.
+type eqMetaCache struct {
+	eqCache
+	meta map[string]string
+}
+
+func (c eqMetaCache) LookupCompositeMeta(_ context.Context, base, quote canonical.Asset, _ time.Duration) ([]byte, bool, error) {
+	m, ok := c.meta[base.String()+"/"+quote.String()]
+	return []byte(m), ok, nil
+}
+
 // eqSlowReader holds every read past the request deadline.
 type eqSlowReader struct {
 	*stubPriceReader
@@ -216,6 +228,18 @@ func eqSpecs() []eqSpec {
 				FXFixings: fixingsOf(hourlyFixing("EUR", "0.92", eqBarEnd)),
 			}
 			withChange24h(&o)
+			return o
+		},
+	}, {
+		name: "composite-meta", ids: []string{eqID("DIRC"), eqID("TRIA"), eqID("FRZH")}, quotes: []string{"fiat:USD", "fiat:EUR"},
+		thin: off,
+		build: func(t *testing.T) v1.Options {
+			o := eqUniverseOptions(t)
+			o.Triangulated = eqMetaCache{eqCache: o.Triangulated.(eqCache), meta: map[string]string{
+				eqID("DIRC") + "/fiat:USD": `{"diverged":true}`,
+				eqID("TRIA") + "/fiat:EUR": `{"rerouted":true,"pivot_unverified":true}`,
+				eqID("FRZH") + "/fiat:USD": `{"diverged":true,"rerouted":true}`,
+			}}
 			return o
 		},
 	}}

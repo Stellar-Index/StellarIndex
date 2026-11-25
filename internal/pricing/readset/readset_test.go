@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -181,6 +182,84 @@ func TestReadset_ConcurrentRows(t *testing.T) {
 		if want := i%3 != 0; found != want || (found && v.price.Cmp(big.NewRat(int64(i), 1)) != 0) {
 			t.Errorf("key %d: found=%v v=%v", i, found, v.price)
 		}
+	}
+}
+
+// fakeClock is a concurrency-safe clock tests advance by hand.
+type fakeClock struct{ ns atomic.Int64 }
+
+func (c *fakeClock) now() time.Time          { return time.Unix(0, c.ns.Load()) }
+func (c *fakeClock) advance(d time.Duration) { c.ns.Add(int64(d)) }
+
+func TestReadset_ExpiredEntriesFallThrough(t *testing.T) {
+	seam := NewSeam[PairKey, ratAnswer]("test_expired", cloneRat)
+	clk := &fakeClock{}
+	clk.ns.Store(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	ctx := With(context.Background(), NewWithClock(clk.now))
+	present, absent := PairKey{Base: "a"}, PairKey{Base: "b"}
+	seam.Fill(ctx, present, ratAnswer{big.NewRat(1, 2)}, true)
+	seam.Fill(ctx, absent, ratAnswer{}, false)
+	expired := func() float64 {
+		return testutil.ToFloat64(obs.APIPriceBatchPrefetchTotal.WithLabelValues("test_expired", "expired"))
+	}
+	e0 := expired()
+	c := &counted{want: ratAnswer{big.NewRat(3, 1)}, found: true}
+
+	clk.advance(MaxAge) // the boundary: exactly MaxAge old still answers
+	if v, found, _ := seam.Read(ctx, present, c.read); c.calls != 0 || !found || v.price.Cmp(big.NewRat(1, 2)) != 0 {
+		t.Fatalf("at MaxAge: calls=%d v=%v found=%v, want the memoised 1/2", c.calls, v.price, found)
+	}
+	if _, found, _ := seam.Read(ctx, absent, c.read); c.calls != 0 || found {
+		t.Fatalf("at MaxAge: a memoised miss must still answer: calls=%d found=%v", c.calls, found)
+	}
+
+	clk.advance(time.Nanosecond)
+	if v, found, _ := seam.Read(ctx, present, c.read); c.calls != 1 || !found || v.price.Cmp(big.NewRat(3, 1)) != 0 {
+		t.Errorf("past MaxAge: calls=%d v=%v, want the real read's 3", c.calls, v.price)
+	}
+	if _, found, _ := seam.Read(ctx, absent, c.read); c.calls != 2 || !found {
+		t.Errorf("past MaxAge: a memoised miss must fall through too: calls=%d found=%v", c.calls, found)
+	}
+	if got := expired(); got != e0+2 {
+		t.Errorf("expired count %v, want %v", got, e0+2)
+	}
+}
+
+func TestReadset_ExpiryRace(t *testing.T) {
+	seam := NewSeam[int, int]("test_expiry_race", nil)
+	clk := &fakeClock{}
+	ctx := With(context.Background(), NewWithClock(clk.now))
+	for i := 0; i < 100; i++ {
+		seam.Fill(ctx, i, i, true)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 400; i++ {
+			clk.advance(10 * time.Millisecond)
+		}
+	}()
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 400; i++ {
+				// A fresh read answers the memo (i%100); an expired one answers the real read (-1); nothing else is right.
+				at := clk.now()
+				v, _, _ := seam.Read(ctx, i%100, func(context.Context) (int, bool, error) { return -1, true, nil })
+				if v != i%100 && v != -1 {
+					t.Errorf("key %d answered %d", i%100, v)
+				}
+				if v == i%100 && at.Sub(time.Unix(0, 0)) > MaxAge {
+					t.Errorf("key %d answered from a memo already %v old", i%100, at.Sub(time.Unix(0, 0)))
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if v, _, _ := seam.Read(ctx, 1, func(context.Context) (int, bool, error) { return -1, true, nil }); v != -1 {
+		t.Errorf("after 4s the memo answered %d; it must have expired", v)
 	}
 }
 
