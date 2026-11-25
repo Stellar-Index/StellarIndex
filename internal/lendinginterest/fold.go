@@ -47,7 +47,8 @@ type Version struct {
 	Pool  string
 	Kind  Kind
 	Asset string // reserve asset strkey, KindReserve only
-	// Removed marks a removal (archival eviction): a gap that leaves the key's last value in force.
+	// Removed marks a reserve's archival eviction: a gap that leaves its last value in force. Refused on
+	// the other kinds, whose removal is a delete.
 	Removed        bool
 	Ledger         uint32
 	IntraLedgerSeq uint32 // 0 = apply order unknown
@@ -188,13 +189,19 @@ func payloadProblem(v Version, proto Protocol, want blend.PoolVersion) string {
 			return fmt.Sprintf("reserve decoded for pool version %d, protocol %s needs %d", v.Reserve.Version, proto, want)
 		}
 	case KindFees:
-		if proto != BLNT {
+		switch {
+		case proto != BLNT:
 			return fmt.Sprintf("ProtocolFees version on a %s pool", proto)
-		}
-		if !v.Removed && v.Fees == nil {
+		case v.Removed:
+			// A delete stores no fees; a gap would keep the deleted value in force.
+			return "ProtocolFees removal; pass the empty map it leaves"
+		case v.Fees == nil:
 			return "ProtocolFees version without a value"
 		}
 	case KindConfig:
+		if v.Removed {
+			return "instance removal; the pool's Config is gone"
+		}
 	default:
 		return fmt.Sprintf("unknown kind %d", v.Kind)
 	}
