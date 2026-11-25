@@ -19,6 +19,14 @@ var judgedNonToken = map[string]Judgement{
 			"whose body is a map {amount u128, amount0 u128, amount1 u128, owner, tick_lower i32, tick_upper i32}; its `mint` adds sender",
 		Judged: "2026-11-24",
 	},
+	"CBFY4Q26RW5TYMWFFIVBP3CRMWHWNUD2GUFRQWNKRG4U53VELSSZ2OFQ": {
+		Reason:  SupplySkipAmountNotI128,
+		Verdict: "concentrated-liquidity pool, not a SEP-41 token: its `amount` is a u128 liquidity figure",
+		Evidence: "mainnet ledger 65660039, tx ef2478a489ebee5eea183e884465f2c874c0ab12987098801b75e093339e9a87: one-topic `burn` " +
+			"whose body is a map {amount u128, amount0 u128, amount1 u128, owner, tick_lower i32, tick_upper i32}; the contract " +
+			"emits only init, swap, mint, burn and collect, never a transfer",
+		Judged: "2026-11-25",
+	},
 }
 
 // ClassifySupplyEventXDR is [ClassifySupplyBodyXDR] for one contract's event. A skip equal to the contract's judged Reason becomes
