@@ -29,6 +29,10 @@
 --      run-heavy-job.sh lending-interest stellarindex-ops ch-entry-history
 --        -lending-only -interest-only [-interest-init]
 --        -interest-max-windows 20 -write
+--      Between chunks let one lending-state.service run complete without
+--      "skipped, an interest run is reading lending_state" (journalctl -u
+--      lending-state.service); if state stops advancing,
+--      stellarindex_lending_state_lagging fires: pause the chunks.
 --   4. From then on lending-state.timer's run extends it every 10 minutes.
 --      Interest runs take their own lock (ch-entry-history-lending-interest.lock
 --      beside -lock-file) and hold -lock-file shared, so lending_state cannot

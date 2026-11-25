@@ -1313,6 +1313,24 @@ groups:
             chunks. Or the pass is refusing a window (WASM gate, identity
             check, uncovered pool), or a backfill chunk is still running.
 
+      # A lending_state replay arms a redo and the timer's interest pass then derives nothing, exiting cleanly, until a
+      # re-derive from the replay's first ledger reaches the tip. 6h: a re-derive run by hand after the replay clears it.
+      - alert: stellarindex_lending_interest_redo_pending
+        expr: max(stellarindex_lending_interest_redo_pending) == 1
+        for: 6h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-redo-pending
+          summary: "lending interest is held by a pending redo"
+          description: |
+            A lending_state replay rewrote state the interest rows were
+            derived from, and for 6 h the timer's interest pass has derived
+            nothing until they are re-derived: run the -interest-only -from
+            re-derive its log line names, through the tip.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an
