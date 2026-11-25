@@ -238,6 +238,17 @@ export function buildFetchData<T>(
 }
 
 /**
+ * buildFetchOptional is buildFetchData for decoration a page renders
+ * without (the /embed widgets): same memo, in-flight cap and retries, but
+ * any failure resolves to null instead of failing the build. It requests
+ * with the fail-hard defaults, so a URL it shares with a fail-hard page is
+ * memoised once with that page's contract.
+ */
+export function buildFetchOptional<T>(path: string): Promise<T | null> {
+  return buildFetchData<T>(path).catch(() => null);
+}
+
+/**
  * buildFetchEnvelope is buildFetchData's full-envelope sibling: same
  * transport/retry/fail-hard contract, but resolves `{data, flags, as_of}`
  * instead of discarding everything but `data`. Use this when a caller
