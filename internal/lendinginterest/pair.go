@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"sort"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
@@ -59,24 +61,78 @@ func newState(seed Seeds, opts Options) (*state, error) {
 	return st, nil
 }
 
+// carry deep-copies the state, so a caller changing Fold's inputs later cannot change it.
+func (st *state) carry(pending []Version, committedBefore time.Time) Seeds {
+	s := Seeds{
+		Reserves: make(map[ReserveKey][]blend.ReserveData, len(st.reserves)), Configs: make(map[string][]uint32, len(st.configs)),
+		Fees: make(map[string][]blnt.ProtocolFees, len(st.fees)), Pending: make([]Version, len(pending)), CommittedBefore: committedBefore,
+	}
+	for k, v := range st.reserves {
+		s.Reserves[k] = make([]blend.ReserveData, len(v))
+		for i, rd := range v {
+			s.Reserves[k][i] = cloneReserve(rd)
+		}
+	}
+	for k, v := range st.configs {
+		s.Configs[k] = slices.Clone(v)
+	}
+	for k, v := range st.fees {
+		s.Fees[k] = make([]blnt.ProtocolFees, len(v))
+		for i, f := range v {
+			s.Fees[k][i] = cloneFees(f)
+		}
+	}
+	for i, v := range pending {
+		v.Reserve, v.Fees = cloneReserve(v.Reserve), cloneFees(v.Fees)
+		s.Pending[i] = v
+	}
+	return s
+}
+
+func cloneInt(n *big.Int) *big.Int {
+	if n == nil {
+		return nil
+	}
+	return new(big.Int).Set(n)
+}
+
+func cloneReserve(rd blend.ReserveData) blend.ReserveData {
+	rd.DRate, rd.BRate, rd.IRMod = cloneInt(rd.DRate), cloneInt(rd.BRate), cloneInt(rd.IRMod)
+	rd.BSupply, rd.DSupply, rd.BackstopCredit = cloneInt(rd.BSupply), cloneInt(rd.DSupply), cloneInt(rd.BackstopCredit)
+	return rd
+}
+
+func cloneFees(f blnt.ProtocolFees) blnt.ProtocolFees {
+	if f == nil {
+		return nil
+	}
+	out := make(blnt.ProtocolFees, len(f))
+	for a, e := range f {
+		out[a] = blnt.ProtocolFee{Credit: cloneInt(e.Credit), Carry: cloneInt(e.Carry)}
+	}
+	return out
+}
+
 func complete(rd blend.ReserveData) bool {
 	return rd.DRate != nil && rd.BRate != nil && rd.BSupply != nil && rd.DSupply != nil && rd.BackstopCredit != nil
 }
 
-func (st *state) poolLedger(vs []Version) error {
+// poolLedger pairs one pool-ledger. Positions that contradict each other leave the apply order
+// unknown, as a zero intra_ledger_seq does, but its order-dependent versions count as accrual errors.
+func (st *state) poolLedger(vs []Version) {
 	proto := st.opts.Protocols[vs[0].Pool]
 	if unorderedLedger(vs) {
-		st.unorderedLedger(proto, vs)
-		return nil
+		st.unorderedLedger(proto, vs, nil)
+		return
 	}
 	groups, err := txGroups(vs)
 	if err != nil {
-		return err
+		st.unorderedLedger(proto, vs, err)
+		return
 	}
 	for _, g := range groups {
 		st.tx(proto, g)
 	}
-	return nil
 }
 
 // tx pairs one transaction's ResData versions. Its own Config does not count for them; its own
@@ -110,7 +166,7 @@ func (st *state) tx(proto Protocol, g []Version) {
 // unorderedLedger pairs a pool-ledger whose apply order is unknown. Each reserve's versions there
 // are candidates for its first; Config and ProtocolFees written by a transaction that did not touch
 // the reserve may or may not have run before it, so they join the candidates.
-func (st *state) unorderedLedger(proto Protocol, vs []Version) {
+func (st *state) unorderedLedger(proto Protocol, vs []Version, orderErr error) {
 	pool := vs[0].Pool
 	w := collectWrites(vs)
 	for _, a := range w.assets {
@@ -121,7 +177,7 @@ func (st *state) unorderedLedger(proto Protocol, vs []Version) {
 		bstops, prevFees := w.pool(touched)
 		bstops = append(append([]uint32(nil), st.configs[pool]...), bstops...)
 		prevFees = append(append([]blnt.ProtocolFees(nil), st.fees[pool]...), prevFees...)
-		st.pair(proto, pairIn{nexts: w.byAsset[a], bstops: bstops, prevFees: prevFees, txFees: w.feeByTx})
+		st.pair(proto, pairIn{nexts: w.byAsset[a], bstops: bstops, prevFees: prevFees, txFees: w.feeByTx, orderErr: orderErr})
 	}
 	cfgs, fees := w.pool(nil)
 	if cfgs != nil {
@@ -187,10 +243,19 @@ type pairIn struct {
 	bstops   []uint32
 	prevFees []blnt.ProtocolFees
 	txFees   map[string]blnt.ProtocolFees // ProtocolFees written per transaction
+	orderErr error                        // set when contradicting positions, not a zero seq, hid the order
+}
+
+func reserves(vs []Version) []blend.ReserveData {
+	out := make([]blend.ReserveData, len(vs))
+	for i, v := range vs {
+		out[i] = v.Reserve
+	}
+	return out
 }
 
 // pair accounts for every version in in.nexts: the first is a baseline, a pair or excluded; the rest
-// share its timestamp and have no known predecessor, so they are unordered.
+// share its timestamp and pair with each other in an unknown order.
 func (st *state) pair(proto Protocol, in pairIn) {
 	first := in.nexts[0]
 	key := ReserveKey{first.Pool, first.Asset}
@@ -199,36 +264,86 @@ func (st *state) pair(proto Protocol, in pairIn) {
 		row.Versions++
 		row.LastLedger = v.Ledger
 	}
-	prevs := st.reserves[key]
-	chain := first.Reserve
-	if len(prevs) == 0 {
+	if prevs := st.reserves[key]; len(prevs) == 0 {
 		row.Baselines++
 	} else {
 		st.accrue(row, proto, prevs, in)
 	}
+	st.later(row, proto, in)
+	st.reserves[key] = reserves(in.nexts)
+}
+
+// later accounts for the reserve's versions after the first in an unordered ledger. Each pairs with
+// another of them; when all agree on what AccrueBetween reads from next, d_rate is unchanged in every
+// order, so gross, fee, backstop, realised and credit delta are zero and b_rate matches whatever the
+// supplies. They are summed only when the Config's presence and the BLNT fee entry are order-free too.
+func (st *state) later(row *HourRow, proto Protocol, in pairIn) {
+	if len(in.nexts) < 2 {
+		return
+	}
+	bstop, fee, exact := st.zeroGap(proto, in)
+	chain := in.nexts[0].Reserve
 	for _, v := range in.nexts[1:] {
-		row.UnorderedVersions++
-		row.ExcludedCreditDelta.Add(row.ExcludedCreditDelta, new(big.Int).Sub(v.Reserve.BackstopCredit, chain.BackstopCredit))
+		excluded := new(big.Int).Sub(v.Reserve.BackstopCredit, chain.BackstopCredit)
+		if !exact {
+			orderUnknown(row, v, in, excluded)
+		} else if err := accrueZeroGap(row, proto, chain, v.Reserve, bstop, fee); err != nil {
+			fail(row, v, err, excluded)
+		}
 		chain = v.Reserve
 	}
-	next := make([]blend.ReserveData, len(in.nexts))
-	for i, v := range in.nexts {
-		next[i] = v.Reserve
+}
+
+// zeroGap reports whether in.nexts agree on every field AccrueBetween reads from next, a Config held
+// before the ledger, and on BLNT every candidate fee entry of the asset is the same.
+func (st *state) zeroGap(proto Protocol, in pairIn) (bstop uint32, fee blnt.ProtocolFee, ok bool) {
+	pool, asset := in.nexts[0].Pool, in.nexts[0].Asset
+	cfgs := st.configs[pool]
+	if _, same := agree(reserves(in.nexts), sameNext); !same || len(cfgs) == 0 {
+		return 0, fee, false
 	}
-	st.reserves[key] = next
+	if proto != BLNT {
+		return cfgs[len(cfgs)-1], fee, true
+	}
+	if len(st.fees[pool]) == 0 {
+		return 0, fee, false
+	}
+	fee = feeEntry(st.fees[pool][0], asset)
+	for _, f := range in.prevFees {
+		if !sameFee(fee, feeEntry(f, asset)) {
+			return 0, fee, false
+		}
+	}
+	for _, f := range in.txFees {
+		if !sameFee(fee, feeEntry(f, asset)) {
+			return 0, fee, false
+		}
+	}
+	return cfgs[len(cfgs)-1], fee, true
+}
+
+func accrueZeroGap(row *HourRow, proto Protocol, prev, next blend.ReserveData, bstop uint32, fee blnt.ProtocolFee) error {
+	if proto != BLNT {
+		a, err := blend.AccrueBetween(prev, next, bstop)
+		if err == nil {
+			add(row, a, nil, prev, next)
+		}
+		return err
+	}
+	a, err := blnt.AccrueBetween(prev, next, fee, fee, bstop)
+	if err == nil {
+		add(row, a.Accrual, &a, prev, next)
+	}
+	return err
 }
 
 func (st *state) accrue(row *HourRow, proto Protocol, prevs []blend.ReserveData, in pairIn) {
 	first := in.nexts[0]
 	excluded := new(big.Int).Sub(first.Reserve.BackstopCredit, prevs[len(prevs)-1].BackstopCredit)
-	nexts := make([]blend.ReserveData, len(in.nexts))
-	for i, v := range in.nexts {
-		nexts[i] = v.Reserve
-	}
 	prev, okPrev := agree(prevs, samePrev)
-	next, okNext := agree(nexts, sameNext)
+	next, okNext := agree(reserves(in.nexts), sameNext)
 	if !okPrev || !okNext {
-		unordered(row, excluded)
+		orderUnknown(row, first, in, excluded)
 		return
 	}
 	if len(in.bstops) == 0 {
@@ -237,7 +352,7 @@ func (st *state) accrue(row *HourRow, proto Protocol, prevs []blend.ReserveData,
 	}
 	bstop, ok := agree(in.bstops, func(a, b uint32) bool { return a == b })
 	if !ok {
-		unordered(row, excluded)
+		orderUnknown(row, first, in, excluded)
 		return
 	}
 	if proto != BLNT {
@@ -254,7 +369,7 @@ func (st *state) accrue(row *HourRow, proto Protocol, prevs []blend.ReserveData,
 	case err != nil:
 		fail(row, first, err, excluded)
 	case !ok:
-		unordered(row, excluded)
+		orderUnknown(row, first, in, excluded)
 	default:
 		a, err := blnt.AccrueBetween(prev, next, prevFee, nextFee, bstop)
 		if err != nil {
@@ -325,7 +440,12 @@ func sameNext(a, b blend.ReserveData) bool {
 
 func sameFee(a, b blnt.ProtocolFee) bool { return eqInt(a.Credit, b.Credit) && eqInt(a.Carry, b.Carry) }
 
-func unordered(row *HourRow, excluded *big.Int) {
+// orderUnknown counts a version whose pairing depends on the unknown apply order.
+func orderUnknown(row *HourRow, v Version, in pairIn, excluded *big.Int) {
+	if in.orderErr != nil {
+		fail(row, v, in.orderErr, excluded)
+		return
+	}
 	row.UnorderedVersions++
 	row.ExcludedCreditDelta.Add(row.ExcludedCreditDelta, excluded)
 }

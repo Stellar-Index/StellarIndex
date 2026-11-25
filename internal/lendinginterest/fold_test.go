@@ -328,11 +328,12 @@ func ledgerCuts(vs []Version) []int {
 // foldWindows folds vs in windows cut at the given indexes, as the derive does with windows [A,B],
 // [B+1,C]. A window commits the hours before its last version's hour, or with whole set, before the
 // next version's hour (the window ended on a later ledger that touched no key).
-func foldWindows(t testing.TB, seed Seeds, vs []Version, cuts []int, whole bool, final time.Time, opts Options) string {
+// The windows' rows are sorted as one call sorts them.
+func foldWindows(t testing.TB, seed Seeds, vs []Version, cuts []int, whole bool, final time.Time, opts Options) (string, error) {
 	t.Helper()
 	var rows []HourRow
 	lo := 0
-	for _, hi := range append(cuts, len(vs)) {
+	for _, hi := range append(append([]int(nil), cuts...), len(vs)) {
 		commit := final
 		switch {
 		case hi < len(vs) && whole:
@@ -342,11 +343,21 @@ func foldWindows(t testing.TB, seed Seeds, vs []Version, cuts []int, whole bool,
 		}
 		r, carry, err := Fold(seed, vs[lo:hi], commit, opts)
 		if err != nil {
-			t.Fatalf("window [%d,%d): %v", lo, hi, err)
+			return "", fmt.Errorf("window [%d,%d): %w", lo, hi, err)
 		}
 		rows, seed, lo = append(rows, r...), carry, hi
 	}
-	return snapshot(rows, seed)
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.Pool != b.Pool {
+			return a.Pool < b.Pool
+		}
+		if a.Asset != b.Asset {
+			return a.Asset < b.Asset
+		}
+		return a.Hour.Before(b.Hour)
+	})
+	return snapshot(rows, seed), nil
 }
 
 // Folding in windows through the carry equals one fold, at every ledger cut and every pair of cuts.
@@ -369,16 +380,19 @@ func TestFold_SplitInvariance(t *testing.T) {
 func checkSplits(t *testing.T, seed Seeds, vs []Version, opts Options) {
 	t.Helper()
 	final := lastHour(vs)
-	one := foldWindows(t, seed, vs, nil, false, final, opts)
+	one, err := foldWindows(t, seed, vs, nil, false, final, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cuts := ledgerCuts(vs)
 	for _, whole := range []bool{false, true} {
 		for i, a := range cuts {
-			if got := foldWindows(t, seed, vs, []int{a}, whole, final, opts); got != one {
-				t.Fatalf("cut before ledger %d (whole hours %v):\n%s\nwant\n%s", vs[a].Ledger, whole, got, one)
+			if got, err := foldWindows(t, seed, vs, []int{a}, whole, final, opts); err != nil || got != one {
+				t.Fatalf("cut before ledger %d (whole hours %v): %v\n%s\nwant\n%s", vs[a].Ledger, whole, err, got, one)
 			}
 			for _, b := range cuts[i+1:] {
-				if got := foldWindows(t, seed, vs, []int{a, b}, whole, final, opts); got != one {
-					t.Fatalf("cuts before ledgers %d and %d (whole hours %v) differ from one fold", vs[a].Ledger, vs[b].Ledger, whole)
+				if got, err := foldWindows(t, seed, vs, []int{a, b}, whole, final, opts); err != nil || got != one {
+					t.Fatalf("cuts before ledgers %d and %d (whole hours %v) differ from one fold: %v", vs[a].Ledger, vs[b].Ledger, whole, err)
 				}
 			}
 		}
@@ -490,12 +504,13 @@ func TestFold_RefusedPairs(t *testing.T) {
 }
 
 // v2_supplies' two versions at 65641374 lose their order: they agree on what the first pair reads,
-// so it is exact, the second is unordered, and they disagree on b_supply, so the pair to 65641393 is.
+// so it is exact, the second is a zero-interest pair in either order, and they disagree on b_supply,
+// so the pair to 65641393 is unordered.
 func TestFold_UnorderedDisagreeingPredecessor(t *testing.T) {
 	vs := unorderedAt(v2Supplies.versions(t), 65641374)
-	rows := fold(t, v2Supplies.seed(), vs, v2Supplies.opts(2))
+	rows := fold(t, v2Supplies.seed(), vs, v2Supplies.opts(1))
 	_, accrued, _, unordered := counts(rows)
-	if accrued != 11 || unordered != 2 {
+	if accrued != 12 || unordered != 1 {
 		t.Fatalf("accrued %d unordered %d", accrued, unordered)
 	}
 	n := len(vs)
@@ -514,12 +529,136 @@ func TestFold_UnorderedAgreeingPredecessor(t *testing.T) {
 	vs := unorderedAt(v2Supplies.versions(t), 65641374)
 	n := len(vs)
 	vs[n-2].Reserve.BSupply = vs[n-3].Reserve.BSupply
-	rows := fold(t, v2Supplies.seed(), vs, v2Supplies.opts(1))
+	rows := fold(t, v2Supplies.seed(), vs, v2Supplies.opts(0))
 	_, accrued, _, unordered := counts(rows)
-	if accrued != 12 || unordered != 1 {
+	if accrued != 13 || unordered != 0 {
 		t.Fatalf("accrued %d unordered %d", accrued, unordered)
 	}
 	eqStr(t, "gross includes the resolved pair", sumRows(rows, gross), telescoped(t, blendtest.BlendV2Supplies.Rows, blend.PoolV2))
+}
+
+// A later write in an unordered ledger that agrees on last_time, d_rate, b_rate and backstop_credit
+// is a zero-interest pair in every apply order, so the ledger folds exactly as when ordered. On BLNT
+// a fee entry that moved in the ledger makes it order-dependent, and it stays unordered.
+func TestFold_UnorderedZeroGapWrite(t *testing.T) {
+	vs := v2Supplies.versions(t)
+	n := len(vs)
+	vs[n-2].Reserve.BSupply = vs[n-3].Reserve.BSupply
+	want := snapshot(fold(t, v2Supplies.seed(), vs, v2Supplies.opts(0)), Seeds{})
+	if got := snapshot(fold(t, v2Supplies.seed(), unorderedAt(vs, 65641374), v2Supplies.opts(0)), Seeds{}); got != want {
+		t.Fatalf("unordered ledger:\n%s\nwant\n%s", got, want)
+	}
+
+	prev, next := blntPair(t)
+	other := next
+	other.TxHash, other.Reserve.BSupply = "t2", big.NewInt(1)
+	in := unorderedAt([]Version{prev, next, other, feeVersion(next, 2, blnt.ProtocolFees{"A": feeOf(t, "2476", "1360000")})}, 11)
+	seed := Seeds{Configs: map[string][]uint32{"P": {2_000_000}}, Fees: map[string][]blnt.ProtocolFees{"P": {{"A": feeOf(t, "7", "0")}}}}
+	if _, accrued, _, unordered := counts(fold(t, seed, in, Options{Protocols: map[string]Protocol{"P": BLNT}, MaxUnordered: 2})); accrued != 0 || unordered != 2 {
+		t.Fatalf("BLNT fee moved: accrued %d unordered %d", accrued, unordered)
+	}
+}
+
+// The MaxUnordered verdict is per emitted row, so it cannot depend on where the derive cuts its calls.
+func TestFold_MaxUnorderedIsCutIndependent(t *testing.T) {
+	h0 := time.Date(2026, 1, 1, 0, 10, 0, 0, time.UTC)
+	mk := func(ledger uint32, tx string, at time.Time, dRate, credit int64) Version {
+		return Version{Pool: "P", Kind: KindReserve, Asset: "A", Ledger: ledger, TxHash: tx, CloseTime: at, Reserve: blend.ReserveData{
+			DRate: big.NewInt(dRate), BRate: big.NewInt(1e12), IRMod: big.NewInt(1), BSupply: big.NewInt(1e12), DSupply: big.NewInt(5e11),
+			BackstopCredit: big.NewInt(credit), LastTime: uint64(at.Unix()), Version: blend.PoolV2, //nolint:gosec // 2026
+		}}
+	}
+	h1 := h0.Add(70 * time.Minute)
+	vs := []Version{mk(10, "a", h0, 1e12, 0), mk(10, "b", h0, 1e12, 5), mk(20, "c", h1, 1e12+100, 7), mk(20, "d", h1, 1e12+100, 9)}
+	seed := Seeds{Configs: map[string][]uint32{"P": {2_000_000}}}
+	for limit, wantErr := range map[int]bool{1: true, 2: false} {
+		opts := Options{Protocols: map[string]Protocol{"P": BlendV2}, MaxUnordered: limit}
+		_, oneErr := foldWindows(t, seed, vs, nil, false, lastHour(vs), opts)
+		_, splitErr := foldWindows(t, seed, vs, []int{2}, true, lastHour(vs), opts)
+		if (oneErr != nil) != wantErr || (splitErr != nil) != wantErr {
+			t.Errorf("MaxUnordered %d: one fold %v, split at 01:00 %v", limit, oneErr, splitErr)
+		}
+	}
+}
+
+// The lake can hold one change twice: an exact re-read, or a re-derive's orphan at another
+// change_index or apply position. Each folds as the single change.
+func TestFold_LakeDuplicates(t *testing.T) {
+	vs := v2Supplies.versions(t)
+	want := snapshot(fold(t, v2Supplies.seed(), vs, v2Supplies.opts(0)), Seeds{})
+	n := len(vs)
+	renumbered := vs[1]
+	renumbered.ChangeIndex = 9
+	moved := vs[n-3] // 65641374's first transaction; the other is at intra_ledger_seq 2
+	moved.ChangeIndex, moved.IntraLedgerSeq = 9, 5
+	for name, extra := range map[string]Version{"exact": vs[1], "renumbered": renumbered, "moved_past_another_tx": moved} {
+		got := snapshot(fold(t, v2Supplies.seed(), append(append([]Version(nil), vs...), extra), v2Supplies.opts(0)), Seeds{})
+		if got != want {
+			t.Errorf("%s:\n%s\nwant\n%s", name, got, want)
+		}
+	}
+}
+
+// Two values of one key in one transaction: in change order (P23 restored, then updated) they pair in
+// that order; at the same position the order is unknown, so both are accrual errors and nothing is summed.
+func TestFold_OneTxTwoValues(t *testing.T) {
+	vs := v2Supplies.versions(t)
+	restored, updated := vs[1], vs[1]
+	restored.Reserve, updated.ChangeIndex = vs[0].Reserve, 1
+	in := append([]Version{vs[0], restored, updated}, vs[2:]...)
+	rows := fold(t, v2Supplies.seed(), in, v2Supplies.opts(0))
+	if versions, accrued, errs, unordered := counts(rows); versions != uint32(len(in)) || accrued != versions-1 || errs+unordered != 0 { //nolint:gosec // short
+		t.Errorf("restored: versions %d accrued %d errors %d unordered %d", versions, accrued, errs, unordered)
+	}
+	eqStr(t, "restored gross", sumRows(rows, gross), telescoped(t, blendtest.BlendV2Supplies.Rows, blend.PoolV2))
+
+	conflict := vs[1]
+	conflict.Reserve.DRate = new(big.Int).Add(vs[1].Reserve.DRate, big.NewInt(1))
+	rows = fold(t, v2Supplies.seed(), append(append([]Version(nil), vs...), conflict), v2Supplies.opts(1))
+	_, _, errs, unordered := counts(rows)
+	if errs != 2 || unordered != 1 || !strings.Contains(rows[0].ErrorSamples[0], "65641173") {
+		t.Fatalf("conflict: errors %d unordered %d samples %q", errs, unordered, rows[0].ErrorSamples)
+	}
+}
+
+// An eviction row (no transaction, no apply order) beside ordered transactions changes no value, so
+// it does not make the ledger unordered.
+func TestFold_RemovedDoesNotUnorder(t *testing.T) {
+	vs := v2Supplies.versions(t)
+	want := snapshot(fold(t, v2Supplies.seed(), vs, v2Supplies.opts(0)), Seeds{})
+	gone := vs[len(vs)-3]
+	gone.Asset, gone.TxHash, gone.IntraLedgerSeq, gone.Removed, gone.Reserve = "X", "", 0, true, blend.ReserveData{}
+	if got := snapshot(fold(t, v2Supplies.seed(), append(vs, gone), v2Supplies.opts(0)), Seeds{}); got != want {
+		t.Fatalf("with an eviction row:\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The carry owns its values: changing Fold's inputs afterwards does not change it.
+func TestFold_CarryOwnsItsValues(t *testing.T) {
+	vs := blntCACSQ.versions(t)
+	seed := blntCACSQ.seed()
+	_, carry, err := Fold(seed, vs, hourOf(vs[len(vs)-1]), blntCACSQ.opts(0))
+	if err != nil || len(carry.Pending) == 0 {
+		t.Fatalf("err %v, %d pending", err, len(carry.Pending))
+	}
+	render := func() string { return snapshot(nil, carry) + fmt.Sprintf("%+v", carry.Pending) }
+	before := render()
+	for _, v := range vs {
+		for _, n := range []*big.Int{v.Reserve.DRate, v.Reserve.BSupply, v.Reserve.BackstopCredit} {
+			if n != nil {
+				n.SetInt64(-1)
+			}
+		}
+		for _, f := range v.Fees {
+			f.Credit.SetInt64(-1)
+		}
+	}
+	for _, c := range seed.Configs {
+		c[0] = 9
+	}
+	if after := render(); after != before {
+		t.Fatalf("carry changed with its inputs:\n%s\nwas\n%s", after, before)
+	}
 }
 
 // Candidates for an unordered ledger's first version that disagree on b_rate leave the pair unordered.
@@ -552,7 +691,7 @@ func TestFold_UnorderedConfigWrite(t *testing.T) {
 
 func TestFold_MaxUnordered(t *testing.T) {
 	vs := unorderedAt(v2Supplies.versions(t), 65641374)
-	for limit, wantErr := range map[int]bool{0: true, 1: true, 2: false} {
+	for limit, wantErr := range map[int]bool{0: true, 1: false} {
 		_, _, err := Fold(v2Supplies.seed(), vs, lastHour(vs), v2Supplies.opts(limit))
 		if (err != nil) != wantErr {
 			t.Errorf("MaxUnordered %d: err %v", limit, err)
@@ -664,10 +803,6 @@ func TestFold_RefusesInput(t *testing.T) {
 		},
 		"nil field": func() error {
 			_, _, err := Fold(Seeds{}, []Version{vs[0], nilField}, lastHour(vs), v2Supplies.opts(0))
-			return err
-		},
-		"duplicate": func() error {
-			_, _, err := Fold(Seeds{}, []Version{vs[0], vs[0]}, lastHour(vs), v2Supplies.opts(0))
 			return err
 		},
 		"commit not an hour": func() error {
