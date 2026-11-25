@@ -62,7 +62,7 @@ func TestLendingInterestKeyList_ResDataInstanceAndBLNTFees(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := lendingInterestKeyList(pools, ps, [][2]string{{blendTestPool, blendTestResDataKey}})
+	keys, err := lendingInterestKeyList(pools, ps, []lendingInterestResRow{{blendTestPool, blendTestResDataKey, LendingBlendV2}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,19 +100,23 @@ func TestLendingInterestKeyList_Refusals(t *testing.T) {
 	}
 	for name, c := range map[string]struct {
 		pools []LendingContract
-		res   [][2]string
+		res   []lendingInterestResRow
 		want  string
 	}{
-		"ResData key under another pool": {pool, [][2]string{{blntTestPool, blendTestResDataKey}}, "unrequested pool"},
+		"ResData key under another pool": {pool, []lendingInterestResRow{{blntTestPool, blendTestResDataKey, LendingBlendV2}}, "unrequested pool"},
 		"key held by another contract": {
 			[]LendingContract{{ID: blendTestPool, Protocol: LendingBlendV2}, {ID: blntTestPool, Protocol: LendingBLNT}},
-			[][2]string{{blntTestPool, blendTestResDataKey}},
+			[]lendingInterestResRow{{blntTestPool, blendTestResDataKey, LendingBLNT}},
 			"held by another contract",
 		},
-		"not a ResData key":   {pool, [][2]string{{blendTestPool, blendTestInstanceKeyPersistent}}, "not ResData(asset)"},
+		"not a ResData key":   {pool, []lendingInterestResRow{{blendTestPool, blendTestInstanceKeyPersistent, LendingBlendV2}}, "not ResData(asset)"},
 		"backstop":            {[]LendingContract{{ID: blendTestPool, Protocol: LendingBlendV2, Backstop: true}}, nil, "backstop"},
 		"unknown protocol":    {[]LendingContract{{ID: blendTestPool, Protocol: "comet"}}, nil, "unknown protocol"},
-		"undecodable key_xdr": {pool, [][2]string{{blendTestPool, "!!"}}, "key !!"},
+		"undecodable key_xdr": {pool, []lendingInterestResRow{{blendTestPool, "!!", LendingBlendV2}}, "key !!"},
+		// A registry edit must not silently switch a pool's rate scale.
+		"registry protocol differs from the derived one": {
+			pool, []lendingInterestResRow{{blendTestPool, blendTestResDataKey, LendingBlendV1}}, "is blend_v2 in the registry",
+		},
 	} {
 		if _, err := lendingInterestKeyList(c.pools, ps, c.res); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one containing %q", name, err, c.want)
@@ -144,9 +148,56 @@ func TestLendingInterestVersion_DecodesEachKind(t *testing.T) {
 	if f := fv.Fees[blendTestAssetSAC]; len(fv.Fees) != 1 || f.Credit.Cmp(big.NewInt(70)) != 0 || f.Carry.Cmp(big.NewInt(9_999_999)) != 0 {
 		t.Fatalf("fees version = %+v", fv.Fees)
 	}
-	removed, err := lendingInterestVersion(liKey(lendinginterest.KindReserve, lendinginterest.BlendV2), liChange("removed", ""))
-	if err != nil || !removed.Removed || removed.Reserve.DRate != nil || removed.Asset != blendTestAssetSAC {
-		t.Fatalf("removed version = %+v (%v), want Removed with no payload", removed, err)
+	// The lake writes no eviction of a persistent key, so a removal is the contract's delete: no fees stored.
+	deleted, err := lendingInterestVersion(liKey(lendinginterest.KindFees, lendinginterest.BLNT), liChange("removed", ""))
+	if err != nil || deleted.Removed || deleted.Fees == nil || len(deleted.Fees) != 0 {
+		t.Fatalf("deleted ProtocolFees = %+v (%v), want an explicit empty map, not a removal gap", deleted, err)
+	}
+}
+
+// Neither Blend nor BLNT deletes a ResData or instance entry, so one refuses the window naming the key.
+func TestLendingInterestVersion_DeletedReserveOrInstanceRefuses(t *testing.T) {
+	for _, kind := range []lendinginterest.Kind{lendinginterest.KindReserve, lendinginterest.KindConfig} {
+		v, err := lendingInterestVersion(liKey(kind, lendinginterest.BlendV2), liChange("removed", ""))
+		if err == nil || !strings.Contains(err.Error(), "ledger 61000000 tx aa key K") || !strings.Contains(err.Error(), "deleted its") {
+			t.Errorf("kind %d: version %+v, err = %v; want a refusal naming the change", kind, v, err)
+		}
+	}
+}
+
+// A renumbering leftover (one change at two intra_ledger_seq) refuses; P23's restored-then-updated pair
+// and a re-read at the same position do not.
+func TestLendingInterestLeftovers(t *testing.T) {
+	at := func(ct, entry string, intra, idx uint32) lendingInterestChange {
+		c := liChange(ct, entry)
+		c.Intra, c.ChangeIndex = intra, idx
+		return c
+	}
+	e := liResDataEntry(t, histDRate, histBSupply)
+	for name, c := range map[string]struct {
+		rows  []lendingInterestChange
+		bad   bool
+		other func(*lendingInterestChange)
+	}{
+		"leftover":                 {[]lendingInterestChange{at("updated", e, 4, 2), at("updated", e, 9, 5)}, true, nil},
+		"restored then updated":    {[]lendingInterestChange{at("restored", e, 4, 2), at("updated", e, 5, 3)}, false, nil},
+		"same position, re-read":   {[]lendingInterestChange{at("updated", e, 4, 2), at("updated", e, 4, 5)}, false, nil},
+		"other content":            {[]lendingInterestChange{at("updated", e, 4, 2), at("updated", "", 9, 5)}, false, nil},
+		"same change, next ledger": {[]lendingInterestChange{at("updated", e, 4, 2), at("updated", e, 9, 5)}, false, func(c *lendingInterestChange) { c.Ledger++ }},
+	} {
+		var l lendingInterestLeftovers
+		if c.other != nil {
+			c.other(&c.rows[1])
+		}
+		var err error
+		for _, r := range c.rows {
+			if err = l.check(r); err != nil {
+				break
+			}
+		}
+		if bad := err != nil; bad != c.bad || (bad && !strings.Contains(err.Error(), "ledger 61000000")) {
+			t.Errorf("%s: err = %v, want refusal %t", name, err, c.bad)
+		}
 	}
 }
 
@@ -208,11 +259,18 @@ func TestLendingInterestSeeds_OneCandidatePerKeyAndEmptyBLNTFees(t *testing.T) {
 	if s, err := lendingInterestSeeds(v2, nil, nil, hour); err != nil || len(s.Fees) != 0 {
 		t.Fatalf("Blend pool fee seeds = %+v (%v), want none", s.Fees, err)
 	}
+	deleted, err := lendingInterestSeeds(pools, []LendingInterestKey{res, inst, fees}, []lendingInterestSeedRow{
+		{Key: "F", Ledger: 7},
+	}, hour)
+	if f := deleted.Fees[blendTestPool]; err != nil || len(f) != 1 || f[0] == nil || len(f[0]) != 0 {
+		t.Fatalf("seed after a ProtocolFees delete = %#v (%v), want one explicit empty map", f, err)
+	}
 	for name, row := range map[string]lendingInterestSeedRow{
-		"removed last":   {Key: "R", Ledger: 9},
-		"undecodable":    {Key: "R", Ledger: 9, Entry: histInstance(t)},
-		"unrequested":    {Key: "X", Ledger: 9, Entry: histInstance(t)},
-		"corrupt config": {Key: "I", Ledger: 9, Entry: liFeesEntry(t, "1", "1")},
+		"deleted reserve":  {Key: "R", Ledger: 9},
+		"deleted instance": {Key: "I", Ledger: 9},
+		"undecodable":      {Key: "R", Ledger: 9, Entry: histInstance(t)},
+		"unrequested":      {Key: "X", Ledger: 9, Entry: histInstance(t)},
+		"corrupt config":   {Key: "I", Ledger: 9, Entry: liFeesEntry(t, "1", "1")},
 	} {
 		if _, err := lendingInterestSeeds(pools, []LendingInterestKey{res, inst}, []lendingInterestSeedRow{row}, hour); err == nil {
 			t.Errorf("%s: seed accepted, want a refusal", name)

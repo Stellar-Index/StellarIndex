@@ -758,8 +758,10 @@ func liVersions(t *testing.T, ctx context.Context, addr string, lo, hi uint32, k
 
 // A synthetic BLNT lake goes through the storage path the interest pass will run: keys, versions, seeds, Fold,
 // insert, and the watermark. The stored sums equal an independent blnt.AccrueBetween chain; a superseded lake row
-// is collapsed by FINAL; a removal reads as Removed; a corrupt reserve refuses the read naming its key; the
-// watermark refuses to pass lending_state's or to rest mid-hour, and never moves down.
+// is collapsed by FINAL; a re-derive deletes an hour it no longer writes. The read refuses a corrupt reserve, a
+// renumbering leftover, a deleted ResData and a lake missing a tx-bearing ledger, and reads a deleted ProtocolFees as
+// empty. Keys, seeds and the watermark refuse to pass lending_state's; the watermark refuses to start or rest
+// mid-hour and to leave a registry pool uncovered, records its floor, and never moves down.
 func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
@@ -786,16 +788,19 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	feeKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &feeVec})
 
 	at := func(h, m int) time.Time { return time.Date(2027, 2, 13, h, m, 0, 0, time.UTC) }
-	closes := []time.Time{at(10, 10), at(10, 50), at(11, 5), at(11, 40), at(12, 10), at(12, 20), at(13, 5), at(14, 5)}
+	closes := []time.Time{
+		at(10, 10), at(10, 50), at(11, 5), at(11, 40), at(12, 10), at(12, 20), at(13, 5), at(14, 5), at(15, 5), at(16, 5), at(17, 5),
+	}
 	seqs := make([]uint32, len(closes))
 	for i := range closes {
 		seqs[i] = base + uint32(i)
 	}
-	entryHistorySeedLedgers(t, ctx, addr, seqs, 1, false)
-	for i, ts := range closes {
+	// base-1 closes in hour 9, so base starts an hour.
+	entryHistorySeedLedgers(t, ctx, addr, append([]uint32{base - 1}, seqs...), 1, false)
+	for i, ts := range append([]time.Time{at(9, 50)}, closes...) {
 		if err := conn.Exec(ctx, `ALTER TABLE stellar.ledgers UPDATE close_time = ? WHERE ledger_seq = ? SETTINGS mutations_sync = 2`,
-			ts, seqs[i]); err != nil {
-			t.Fatalf("align ledger %d close time: %v", seqs[i], err)
+			ts, base-1+uint32(i)); err != nil {
+			t.Fatalf("align ledger %d close time: %v", base-1+uint32(i), err)
 		}
 	}
 
@@ -818,12 +823,21 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 		change(1, 1, 0, "updated", resKey, entry(r1.val(t))),
 		change(1, 2, 1, "updated", feeKey, entry(liFeesVal(t, asset, "1000", "5"))),
 		change(2, 1, 0, "updated", resKey, entry(r2.val(t))),
-		change(3, 1, 0, "removed", resKey, ""),
+		// The lake writes no eviction row for a persistent key; P23 auto-restore stores the old value back.
 		change(4, 1, 0, "restored", resKey, entry(r2.val(t))),
 		change(5, 1, 0, "updated", resKey, entry(r3.val(t))),
 		change(6, 1, 0, "updated", resKey, entry(r4.val(t))),
 		change(7, 1, 0, "updated", resKey, entry(lendingPoolInstanceVal(asset))),
+		// A renumbering leftover: one change at two walk positions.
+		change(8, 1, 0, "updated", resKey, entry(r4.val(t))),
+		change(8, 5, 3, "updated", resKey, entry(r4.val(t))),
+		change(9, 1, 0, "removed", resKey, ""),
+		change(10, 1, 0, "removed", feeKey, ""),
 	)
+	// Ledger base+3's transaction touches none of the pool's keys.
+	unrelated := change(3, 1, 0, "updated", "AAAAunrelated", "")
+	unrelated.EntryType = "account"
+	insertEntryChanges(t, ctx, unrelated)
 	// A superseded copy of ledger base+2's change (same identity, older ingest) that would not decode.
 	if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
 		(ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, intra_ledger_seq)
@@ -834,8 +848,12 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 		t.Fatalf("lending state [%d,%d]: %v", base, base+6, err)
 	}
 
-	pools := []chstore.LendingContract{{ID: pool, Protocol: chstore.LendingBLNT}}
+	pools := []chstore.LendingContract{{ID: pool, Protocol: chstore.LendingBLNT, Deployed: base}}
 	opts := lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{pool: lendinginterest.BLNT}}
+	// lending_state stops at base+6: a reserve first written past it would be missing from the list.
+	if _, err := chstore.LendingInterestKeys(ctx, addr, pools, base+7); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
+		t.Fatalf("keys past lending_state: err = %v, want ErrLendingInterestAheadOfState", err)
+	}
 	keys, err := chstore.LendingInterestKeys(ctx, addr, pools, base+2)
 	if err != nil {
 		t.Fatal(err)
@@ -870,8 +888,20 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if err := chstore.InsertLendingInterestRows(ctx, addr, rows1, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := chstore.SetLendingInterestWatermark(ctx, addr, base, base+1); err != nil {
+	// A first window starting mid-hour would claim the hour's earlier ledgers.
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+1, base+1, pools); !errors.Is(err, chstore.ErrLendingInterestNotHourStart) {
+		t.Fatalf("first advance from mid-hour: err = %v, want ErrLendingInterestNotHourStart", err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base, base+1, pools); err != nil {
 		t.Fatalf("watermark at hour 10's last ledger: %v", err)
+	}
+	var floor uint32
+	if err := conn.QueryRow(ctx, `SELECT max(thru_ledger) FROM stellar.entry_history_watermark WHERE name = 'lending_interest_floor'`).
+		Scan(&floor); err != nil || floor != base {
+		t.Fatalf("floor = %d (%v), want %d", floor, err, base)
+	}
+	if _, err := chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(15, 0)); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
+		t.Fatalf("seeds before an hour lending_state has not finished: err = %v, want ErrLendingInterestAheadOfState", err)
 	}
 
 	// Window 2 resumes from lending_state_hourly's seeds at base+2, not from the carry.
@@ -890,8 +920,8 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 		t.Fatalf("seeds before hour 11 = %+v, want r1, bstop 2000000 and the fees of base+1", seeds)
 	}
 	vs = liVersions(t, ctx, addr, base+2, base+6, keys)
-	if len(vs) != 5 || !vs[1].Removed || vs[1].Ledger != base+3 || vs[2].Removed {
-		t.Fatalf("versions [%d,%d] = %+v, want 5 with the removal at %d", base+2, base+6, vs, base+3)
+	if len(vs) != 4 || vs[1].Ledger != base+4 || vs[1].Reserve.DRate.Cmp(r2.data().DRate) != 0 {
+		t.Fatalf("versions [%d,%d] = %+v, want 4 with the restore at %d", base+2, base+6, vs, base+4)
 	}
 	rows2, _, err := lendinginterest.Fold(seeds, vs, at(13, 0), opts)
 	if err != nil {
@@ -904,7 +934,19 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if len(viaCarry) != len(rows2) || len(rows2) != 2 || viaCarry[0].Gross.Cmp(rows2[0].Gross) != 0 || viaCarry[1].Gross.Cmp(rows2[1].Gross) != 0 {
 		t.Fatalf("resume from seeds = %+v, from the carry = %+v; want the same two hours", rows2, viaCarry)
 	}
+	// Re-deriving hours 11-13: an earlier derive's hour-13 row that this one no longer writes is deleted.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.lending_interest_hourly (contract_id, protocol, asset, hour, first_ledger,
+		last_ledger, derived_at) VALUES (?, 'blnt', ?, ?, ?, ?, '2026-01-01 00:00:00')`, pool, assetStr, at(13, 0), base+6, base+6); err != nil {
+		t.Fatal(err)
+	}
+	cutoff, err := chstore.ServerNow(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := chstore.InsertLendingInterestRows(ctx, addr, rows2, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := chstore.DeleteSupersededLendingInterestRows(ctx, addr, pools, at(11, 0), at(13, 0), cutoff); err != nil {
 		t.Fatal(err)
 	}
 
@@ -970,17 +1012,65 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ledger "+strconv.FormatUint(uint64(base+7), 10)) || !strings.Contains(err.Error(), resKey) {
 		t.Fatalf("corrupt reserve read: err = %v, want a refusal naming ledger %d and the key", err, base+7)
 	}
+	refusal := func(seq uint32, want string) {
+		t.Helper()
+		err := chstore.LendingInterestVersions(ctx, addr, seq, seq, keys, func(lendinginterest.Version) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "ledger "+strconv.FormatUint(uint64(seq), 10)) || !strings.Contains(err.Error(), want) {
+			t.Errorf("read of ledger %d: err = %v, want a refusal naming it and %q", seq, err, want)
+		}
+	}
+	refusal(base+8, "renumbering leftover")
+	refusal(base+9, "deleted its ResData")
+	if vs := liVersions(t, ctx, addr, base+10, base+10, keys); len(vs) != 1 || vs[0].Removed || vs[0].Fees == nil || len(vs[0].Fees) != 0 {
+		t.Errorf("deleted ProtocolFees = %+v, want one version holding an empty map", vs)
+	}
 
-	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+4); !errors.Is(err, chstore.ErrLendingInterestNotHourEnd) {
+	// The lake losing a tx-bearing ledger's changes (a ch-rebuild or orphan delete part-way) refuses both the read
+	// and the advance; the same window passes once they are back.
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.ledger_entry_changes DELETE WHERE ledger_seq = ? SETTINGS mutations_sync = 2`, base+3); err != nil {
+		t.Fatal(err)
+	}
+	if err := chstore.LendingInterestVersions(ctx, addr, base+2, base+6, keys, func(lendinginterest.Version) error { return nil }); !errors.Is(err, chstore.ErrEntryHistoryEntryChangeShortfall) {
+		t.Errorf("read over a lost ledger: err = %v, want ErrEntryHistoryEntryChangeShortfall", err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+5, pools); !errors.Is(err, chstore.ErrEntryHistoryEntryChangeShortfall) {
+		t.Errorf("advance over a lost ledger: err = %v, want ErrEntryHistoryEntryChangeShortfall", err)
+	}
+	insertEntryChanges(t, ctx, unrelated)
+
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+4, pools); !errors.Is(err, chstore.ErrLendingInterestNotHourEnd) {
 		t.Fatalf("mid-hour advance: err = %v, want ErrLendingInterestNotHourEnd", err)
 	}
-	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+7); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+7, pools); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
 		t.Fatalf("advance past lending_state: err = %v, want ErrLendingInterestAheadOfState", err)
 	}
-	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+5); err != nil {
+
+	// A pool added to the registry after the watermark passed its deploy ledger refuses the advance until a bounded
+	// per-pool backfill covers it; one deployed past the watermark needs none.
+	late := strkey.MustEncode(strkey.VersionByteContract, append([]byte{0x77}, make([]byte, 31)...))
+	future := strkey.MustEncode(strkey.VersionByteContract, append([]byte{0x78}, make([]byte, 31)...))
+	lateC := chstore.LendingContract{ID: late, Protocol: chstore.LendingBlendV2, Deployed: base}
+	all := append(slices.Clone(pools), lateC, chstore.LendingContract{ID: future, Protocol: chstore.LendingBlendV2, Deployed: base + 3})
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+5, all); !errors.Is(err, chstore.ErrLendingInterestPoolUncovered) {
+		t.Fatalf("advance with an uncovered pool: err = %v, want ErrLendingInterestPoolUncovered", err)
+	}
+	gaps, err := chstore.LendingInterestUncoveredPools(ctx, addr, all)
+	if err != nil || len(gaps) != 1 || gaps[0] != (chstore.LendingInterestPoolGap{Pool: late, Deployed: base}) {
+		t.Fatalf("uncovered pools = %+v (%v), want only %s", gaps, err, late)
+	}
+	if err := chstore.SetLendingInterestPoolWatermark(ctx, addr, lateC, base+1, base+1); !errors.Is(err, chstore.ErrLendingInterestPoolUncovered) {
+		t.Fatalf("pool backfill starting past its deploy ledger: err = %v, want ErrLendingInterestPoolUncovered", err)
+	}
+	if err := chstore.SetLendingInterestPoolWatermark(ctx, addr, lateC, base, base+1); err != nil {
+		t.Fatalf("pool backfill: %v", err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+5, all); err != nil {
 		t.Fatalf("advance to hour 12's last ledger: %v", err)
 	}
-	if err := chstore.SetLendingInterestWatermark(ctx, addr, base, base+1); err != nil {
+	if gaps, err := chstore.LendingInterestUncoveredPools(ctx, addr, all); err != nil || len(gaps) != 0 {
+		t.Fatalf("uncovered pools after the advance = %+v (%v), want none", gaps, err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base, base+1, pools); err != nil {
 		t.Fatalf("re-set below the watermark: %v", err)
 	}
 	if wm, err := chstore.LendingInterestWatermark(ctx, addr); err != nil || wm != base+5 {

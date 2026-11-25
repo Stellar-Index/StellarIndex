@@ -209,10 +209,9 @@ func DeriveLendingWindow(ctx context.Context, addr string, lo, hi uint32, ps []L
 		"max_execution_time": 3600, "do_not_merge_across_partitions_select_final": 1,
 	}))
 	// Counted before the read: rows only arrive, so the insert sees at least this coverage.
-	var txLedgers uint64
-	if err := conn.QueryRow(ctx, `SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes
-		WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != ''`, lo, hi).Scan(&txLedgers); err != nil {
-		return 0, fmt.Errorf("clickhouse: lending window [%d,%d] entry-change ledgers: %w", lo, hi, err)
+	txLedgers, err := lakeTxLedgers(ctx, conn, "lending", lo, hi)
+	if err != nil {
+		return 0, err
 	}
 	prefixes, contracts, protocols, heads := lendingPrefixArgs(ps)
 	var ambiguous uint64

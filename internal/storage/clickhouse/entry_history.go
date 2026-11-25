@@ -226,6 +226,16 @@ func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, name strin
 	return nil
 }
 
+// lakeTxLedgers counts the ledgers of [lo, hi] holding tx-scoped entry changes, the readTxLedgers entryHistoryWindowCovered proves.
+func lakeTxLedgers(ctx context.Context, conn driver.Conn, name string, lo, hi uint32) (uint64, error) {
+	var n uint64
+	if err := conn.QueryRow(ctx, `SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes
+		WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != ''`, lo, hi).Scan(&n); err != nil {
+		return 0, fmt.Errorf("clickhouse: %s window [%d,%d] entry-change ledgers: %w", name, lo, hi, err)
+	}
+	return n, nil
+}
+
 // ServerNow returns the ClickHouse server's clock, the one that stamps a DEFAULT now() column.
 func ServerNow(ctx context.Context, addr string) (time.Time, error) {
 	conn, err := openRead(ctx, addr)
@@ -354,6 +364,14 @@ func SetSponsorshipWatermark(ctx context.Context, addr string, from, thru uint32
 
 // advanceEntryWatermark is the shared advance: range sanity, no skipped prefix, lake contiguity, then the caller's proof.
 func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru uint32, proof func(context.Context, driver.Conn) error) error {
+	return advanceEntryRow(ctx, addr, name, entryWatermarkOn, from, thru, proof)
+}
+
+// advanceEntryRow is advanceEntryWatermark reading the row through read, so a row that is not a served index's
+// watermark can skip the completeness gauge.
+func advanceEntryRow(ctx context.Context, addr, name string, read func(context.Context, driver.Conn, string) (uint32, error),
+	from, thru uint32, proof func(context.Context, driver.Conn) error,
+) error {
 	if from == 0 || thru < from {
 		return fmt.Errorf("clickhouse: %s watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", name, from, thru)
 	}
@@ -362,7 +380,7 @@ func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru ui
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	wm, err := entryWatermarkOn(ctx, conn, name)
+	wm, err := read(ctx, conn, name)
 	if err != nil {
 		return err
 	}
