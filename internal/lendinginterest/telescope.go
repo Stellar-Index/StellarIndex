@@ -3,6 +3,7 @@ package lendinginterest
 import (
 	"fmt"
 	"math/big"
+	"slices"
 	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -15,12 +16,19 @@ import (
 // duplicates in one transaction one change). It proves the fold summed the chain's d_rate movement, nothing about
 // the fee, backstop or b_rate split, and nothing when the chain's order is unknown.
 func TelescopedGross(prev *blend.ReserveData, vs []Version) (*big.Int, error) {
+	return TelescopedGrossExcluding(prev, vs, nil)
+}
+
+// TelescopedGrossExcluding is TelescopedGross over the sub-chains the excluded versions cut: the pair ending at an
+// excluded version (HourRow.Excluded, matched by position) is not summed, and the next sub-chain starts from it.
+func TelescopedGrossExcluding(prev *blend.ReserveData, vs, excluded []Version) (*big.Int, error) {
 	sorted := append([]Version(nil), vs...)
 	sort.SliceStable(sorted, func(i, j int) bool { return readLess(sorted[i], sorted[j]) })
 	var chain []blend.ReserveData
 	if prev != nil {
 		chain = append(chain, *prev)
 	}
+	total := new(big.Int)
 	for _, v := range dedupe(sorted) {
 		switch {
 		case v.Kind != KindReserve:
@@ -30,8 +38,17 @@ func TelescopedGross(prev *blend.ReserveData, vs []Version) (*big.Int, error) {
 		case !complete(v.Reserve):
 			return nil, fmt.Errorf("lendinginterest: telescoping a reserve version with a missing field at ledger %d", v.Ledger)
 		}
+		if slices.ContainsFunc(excluded, func(x Version) bool { return compareOrder(x, v) == 0 }) {
+			total.Add(total, telescope(chain))
+			chain = chain[:0]
+		}
 		chain = append(chain, v.Reserve)
 	}
+	return total.Add(total, telescope(chain)), nil
+}
+
+// telescope is Σgross over consecutive pairs of chain.
+func telescope(chain []blend.ReserveData) *big.Int {
 	total := new(big.Int)
 	for j, m := 0, 1; m < len(chain); m++ {
 		if m < len(chain)-1 && chain[m].DSupply.Cmp(chain[j].DSupply) == 0 {
@@ -41,7 +58,7 @@ func TelescopedGross(prev *blend.ReserveData, vs []Version) (*big.Int, error) {
 		total.Sub(total, liabilities(chain[j].DSupply, chain[j]))
 		j = m
 	}
-	return total, nil
+	return total
 }
 
 // liabilities is ceil(d·d_rate/S) at rd's rate scale (SCALAR_9 on V1, SCALAR_12 on V2).
