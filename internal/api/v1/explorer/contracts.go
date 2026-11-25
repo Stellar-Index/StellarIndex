@@ -120,13 +120,13 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	// deadline and dying with the request would leave the cache cold. Cursor pages stay inline:
 	// they are unique per cursor (caching would churn the bounded cache) and scan a narrower range.
 	var (
-		rows     []clickhouse.ContractActivityRow
-		asOf     time.Time
-		degraded bool
-		err      error
+		rows []clickhouse.ContractActivityRow
+		asOf time.Time
+		fr   servedFreshness
+		err  error
 	)
 	if !cur.IsSet() {
-		rows, asOf, degraded, err = h.contractEventsFirstPageCached(ctx, cid, limit)
+		rows, asOf, fr, err = h.contractEventsFirstPageCached(ctx, cid, limit)
 	} else {
 		rows, err = h.Reader.ContractEventsRecent(ctx, cid, limit, cur)
 	}
@@ -163,7 +163,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		out.NextCursor = fmt.Sprintf("%d.%s.%d.%d", last.Seq, last.TxHash, last.OpIndex, last.EventIndex)
 	}
 	if !cur.IsSet() {
-		h.writeCachedJSON(ctx, w, out, degraded, degraded || apiDegraded, asOf)
+		h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded || apiDegraded, asOf)
 		return
 	}
 	_, stale, _ := h.lakeTip(ctx)
@@ -364,7 +364,7 @@ var contractEventsFirstPageSizes = [...]int{100, 500}
 
 // contractEventsFirstPageCached serves the contract's first activity page through the contract-detail SWR cache, computed at the
 // smallest contractEventsFirstPageSizes bucket covering limit and sliced to it (see ContractDetail).
-func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string, limit int) ([]clickhouse.ContractActivityRow, time.Time, bool, error) {
+func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string, limit int) ([]clickhouse.ContractActivityRow, time.Time, servedFreshness, error) {
 	size := contractEventsFirstPageSizes[len(contractEventsFirstPageSizes)-1]
 	for _, s := range contractEventsFirstPageSizes {
 		if limit <= s {
@@ -372,7 +372,7 @@ func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string,
 			break
 		}
 	}
-	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ev:%d:%s", size, cid), func(rctx context.Context) (any, error) {
+	v, asOf, fr, err := h.contractDetailCached(ctx, fmt.Sprintf("ev:%d:%s", size, cid), func(rctx context.Context) (any, error) {
 		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, size, clickhouse.ContractEventsCursor{})
 		if cerr != nil {
 			return nil, cerr
@@ -380,11 +380,11 @@ func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string,
 		return full, nil
 	})
 	if err != nil {
-		return nil, time.Time{}, false, err
+		return nil, time.Time{}, servedFreshness{}, err
 	}
 	rows, _ := v.([]clickhouse.ContractActivityRow)
 	if limit < len(rows) {
 		rows = rows[:limit]
 	}
-	return rows, asOf, degraded, nil
+	return rows, asOf, fr, nil
 }

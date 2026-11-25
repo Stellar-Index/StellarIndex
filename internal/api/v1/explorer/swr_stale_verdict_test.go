@@ -68,25 +68,26 @@ func TestAssetHoldersCached_StaleVerdict(t *testing.T) {
 		h.assetHolders.mu.Unlock()
 	}
 	// heldServe serves while the detached refresh it kicks is held, so the verdict is on the aged entry, not a refill.
-	heldServe := func() bool {
+	verdict := func() servedFreshness {
 		reader.holdersBlock = make(chan struct{})
-		_, _, _, degraded, err := h.assetHoldersCached(context.Background(), asset, 10)
+		_, _, _, fr, err := h.assetHoldersCached(context.Background(), asset, 10)
 		close(reader.holdersBlock)
 		waitFlightIdle(t, &h.assetHolders.flight, asset)
 		reader.holdersBlock = nil
 		if err != nil {
 			t.Fatal(err)
 		}
-		return degraded
+		return fr
 	}
+	heldServe := func() bool { return verdict().degraded }
 
 	age(assetHoldersTTL + time.Second)
-	if heldServe() {
-		t.Error("a board just past its TTL, with a healthy refresh running, was served degraded")
+	if fr := verdict(); fr != (servedFreshness{}) {
+		t.Errorf("a board just past its TTL, with a healthy refresh running, was served %+v", fr)
 	}
 	age(assetHoldersTTL + min(assetHoldersTTL, assetHoldersRefreshTimeout) + time.Second)
-	if !heldServe() {
-		t.Error("a board past its TTL plus one refresh's grace was served clean")
+	if fr := verdict(); !fr.stale || fr.degraded {
+		t.Errorf("a board past its TTL plus one refresh's grace, with a healthy refresh running, was served %+v; want stale only", fr)
 	}
 
 	reader.fail.Store(true)

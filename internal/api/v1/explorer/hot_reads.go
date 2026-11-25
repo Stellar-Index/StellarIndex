@@ -37,8 +37,28 @@ type perKeyFlight struct {
 // keyFlight is one in-flight compute. done closes when it finishes; err (nil on success) is readable only AFTER done closes,
 // which is the happens-before edge.
 type keyFlight struct {
-	done chan struct{}
-	err  error
+	done    chan struct{}
+	err     error
+	started time.Time
+}
+
+// overran reports whether key's in-flight compute has run longer than budget.
+func (f *perKeyFlight) overran(key string, budget time.Duration) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fl, ok := f.inGoing[key]
+	return ok && time.Since(fl.started) > budget
+}
+
+// servedFreshness is an SWR serve's two verdicts. Age past the bound alone is stale: the refresh the read starts has not failed.
+// degraded (implies stale) means the body is carried forward over a failure: the last refresh failed or was skipped, the one
+// running overran its budget, or the payload is provisional.
+type servedFreshness struct{ stale, degraded bool }
+
+// expiredFreshness is the verdict for an entry served past its TTL, stale per [swrServedStale].
+func expiredFreshness(stale, refreshFailed, overran bool) servedFreshness {
+	degraded := refreshFailed || overran
+	return servedFreshness{stale: stale || degraded, degraded: degraded}
 }
 
 // begin returns the flight for key and whether the caller owns it. Owners must call end (with the compute's error); waiters select on done.
@@ -51,7 +71,7 @@ func (f *perKeyFlight) begin(key string) (*keyFlight, bool) {
 	if f.inGoing == nil {
 		f.inGoing = make(map[string]*keyFlight)
 	}
-	fl := &keyFlight{done: make(chan struct{})}
+	fl := &keyFlight{done: make(chan struct{}), started: time.Now()}
 	f.inGoing[key] = fl
 	return fl, true
 }
@@ -251,10 +271,10 @@ func (h *Handler) refreshAssetHolders(asset string, admit slotAdmit) *keyFlight 
 	return fl
 }
 
-// assetHoldersCached serves the holders board: fresh as-is; expired with its real asOf while a detached rescan runs, degraded per
-// [swrServedStale]; never-computed waits to the deadline, so a huge asset 503s THIS request but a retry lands warm. The total is
+// assetHoldersCached serves the holders board: fresh as-is; expired with its real asOf while a detached rescan runs, judged per
+// [expiredFreshness]; never-computed waits to the deadline, so a huge asset 503s THIS request but a retry lands warm. The total is
 // limit-independent.
-func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, degraded bool, err error) {
+func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, fr servedFreshness, err error) {
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
 			// Stale path: an entry is served either way, so skip rather than wait.
@@ -263,23 +283,26 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 				e = cur // a refresh skipped just now is already a known failure
 			}
 		}
-		stale := !fresh && swrServedStale(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed)
-		return sliceHolders(e.holders, limit), e.total, e.vintage(), stale, nil
+		if !fresh {
+			fr = expiredFreshness(swrServedStale(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed),
+				e.refreshFailed, h.assetHolders.flight.overran(asset, assetHoldersRefreshTimeout))
+		}
+		return sliceHolders(e.holders, limit), e.total, e.vintage(), fr, nil
 	}
 	// Stone-cold: wait for a slot (bounded, see coldSlotAdmit), then for the detached compute, bounded by OUR deadline only — the compute itself is not.
 	fl, err := coldFill(ctx, func(admit slotAdmit) *keyFlight { //nolint:contextcheck // intentional detach — a request that times out must not kill the fill (see refreshAssetHolders)
 		return h.refreshAssetHolders(asset, admit)
 	})
 	if err != nil {
-		return nil, 0, snapshotVintage{}, false, err
+		return nil, 0, snapshotVintage{}, servedFreshness{}, err
 	}
 	if e, ok, _ := h.assetHolders.get(asset); ok {
-		return sliceHolders(e.holders, limit), e.total, e.vintage(), false, nil
+		return sliceHolders(e.holders, limit), e.total, e.vintage(), servedFreshness{}, nil
 	}
 	if fl.err != nil {
-		return nil, 0, snapshotVintage{}, false, fl.err
+		return nil, 0, snapshotVintage{}, servedFreshness{}, fl.err
 	}
-	return nil, 0, snapshotVintage{}, false, errRefreshFailed
+	return nil, 0, snapshotVintage{}, servedFreshness{}, errRefreshFailed
 }
 
 func sliceHolders(rows []clickhouse.AssetHolder, limit int) []clickhouse.AssetHolder {

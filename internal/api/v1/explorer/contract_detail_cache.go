@@ -113,6 +113,16 @@ func (e contractDetailEntry) servedStale(key string) bool {
 	return e.refreshFailed || time.Since(e.cachedAt) > detailStaleAfterForKey(key)
 }
 
+// freshness is e's verdict served for key past its TTL ([servedFreshness]): a provisional payload, like a failed or overrun
+// refresh, is degraded; age past [detailStaleAfterForKey] alone is only stale.
+func (c *contractDetailCache) freshness(key string, e contractDetailEntry) servedFreshness {
+	fr := expiredFreshness(e.servedStale(key), e.refreshFailed, c.flight.overran(key, contractDetailRefreshTimeout))
+	if p, ok := e.v.(provisionalPayload); ok && p.provisional() {
+		fr.degraded = true
+	}
+	return fr
+}
+
 // markRefreshFailed records on key's entry, if any, that its refresh failed or was skipped.
 func (c *contractDetailCache) markRefreshFailed(key string) {
 	c.mu.Lock()
@@ -298,9 +308,9 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 }
 
 // contractDetailCached serves key from cache: an expired entry is served with its real asOf while a detached single-flight
-// recompute runs, degraded only once past [detailStaleAfterForKey]; a never-computed key waits only to the request deadline,
+// recompute runs, judged per [contractDetailCache.freshness]; a never-computed key waits only to the request deadline,
 // and the compute outlives it so the retry lands warm.
-func (h *Handler) contractDetailCached(ctx context.Context, key string, compute func(context.Context) (any, error)) (v any, asOf time.Time, degraded bool, err error) {
+func (h *Handler) contractDetailCached(ctx context.Context, key string, compute func(context.Context) (any, error)) (v any, asOf time.Time, fr servedFreshness, err error) {
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {
 			// Stale path: an entry is served either way, so skip rather than wait.
@@ -308,21 +318,22 @@ func (h *Handler) contractDetailCached(ctx context.Context, key string, compute 
 			if cur, ok, _ := h.contractDetail.get(key); ok {
 				e = cur // a refresh skipped just now is already a known failure
 			}
+			fr = h.contractDetail.freshness(key, e)
 		}
-		return e.v, e.cachedAt, !fresh && e.servedStale(key), nil
+		return e.v, e.cachedAt, fr, nil
 	}
 	// Cold path: nothing to serve, so wait (bounded, see AcquireClassWait) for a slot rather than shed the page.
 	fl, err := coldFill(ctx, func(admit slotAdmit) *keyFlight { //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
 		return h.refreshContractDetail(key, compute, admit)
 	})
 	if err != nil {
-		return nil, time.Time{}, false, err
+		return nil, time.Time{}, servedFreshness{}, err
 	}
 	if e, ok, _ := h.contractDetail.get(key); ok {
-		return e.v, e.cachedAt, false, nil
+		return e.v, e.cachedAt, servedFreshness{}, nil
 	}
 	if fl.err != nil {
-		return nil, time.Time{}, false, fl.err
+		return nil, time.Time{}, servedFreshness{}, fl.err
 	}
-	return nil, time.Time{}, false, errRefreshFailed
+	return nil, time.Time{}, servedFreshness{}, errRefreshFailed
 }
