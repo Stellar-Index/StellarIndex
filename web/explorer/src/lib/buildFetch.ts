@@ -207,6 +207,19 @@ function releaseSlot(): void {
   else inFlight--;
 }
 
+// The API prices a batch's rows 16 at a time against a DB pool shared with live
+// /v1/price traffic, so batches run one at a time (inside the global cap above).
+const PRICE_BATCH_ROUTE = '/v1/price/batch';
+let batchTail: Promise<void> = Promise.resolve();
+
+async function acquireBatchGate(): Promise<() => void> {
+  const prev = batchTail;
+  let release!: () => void;
+  batchTail = new Promise<void>((resolve) => (release = resolve));
+  await prev;
+  return release;
+}
+
 // Per-build memo. Module state persists for the lifetime of the
 // `next build` worker, which is exactly the scope we want.
 const memo = new Map<string, Promise<unknown>>();
@@ -354,16 +367,24 @@ async function fetchWithRetry<T>(
   let unavailableWaits = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await acquireSlot();
+      // Taken before the global slot so a queued batch never idles on one;
+      // both are released before any backoff sleep.
+      const releaseBatch =
+        route === PRICE_BATCH_ROUTE ? await acquireBatchGate() : undefined;
       let res: Response;
       try {
-        countRequest(route);
-        res = await fetch(url, {
-          headers: buildHeaders(),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
+        await acquireSlot();
+        try {
+          countRequest(route);
+          res = await fetch(url, {
+            headers: buildHeaders(),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+        } finally {
+          releaseSlot();
+        }
       } finally {
-        releaseSlot();
+        releaseBatch?.();
       }
       if (res.status === 429) {
         // Rate-limited: wait on the server's terms and DON'T spend a
