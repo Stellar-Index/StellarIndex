@@ -689,12 +689,7 @@ func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair
 	if limit <= 0 {
 		return nil, nil
 	}
-	cutoff := time.Now().UTC().Add(-LatestVWAPWindow)
-	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
-	// #nosec G201 — only `lower` is interpolated, built from our own time.Time in a fixed layout;
-	// pair strings + limit bind as $1/$2/$3.
-	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower) //nolint:gosec // G201: see note above
-	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), bucketRowCap(limit))
+	rows, err := s.db.QueryContext(ctx, recentClosedVWAP1mCombinedSQL(time.Now()), p.Base.String(), p.Quote.String(), bucketRowCap(limit))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined: %w", err)
 	}
@@ -734,12 +729,8 @@ func (s *Store) ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair
 	if limit <= 0 {
 		return nil, nil
 	}
-	cutoff := before.UTC().Add(-LatestVWAPWindow)
-	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
-	// #nosec G201 — only `lower` is interpolated, built from our own time.Time in a fixed layout;
-	// pair strings, limit and the anchor bind as $1..$4.
-	q := fmt.Sprintf(closedVWAP1mCombinedBeforeTemplate, lower) //nolint:gosec // G201: see note above
-	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), bucketRowCap(limit), before.UTC())
+	rows, err := s.db.QueryContext(ctx, closedVWAP1mCombinedBeforeSQL(before),
+		p.Base.String(), p.Quote.String(), bucketRowCap(limit), before.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ClosedVWAP1mCombinedBefore: %w", err)
 	}
@@ -751,63 +742,18 @@ func (s *Store) ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair
 // scanCombinedVwap1mRows folds adjacent both-direction prices_1m rows into one [Vwap1mRow] per bucket, in query order. VWAP via
 // [combineDirVWAP], trade counts summed, sources unioned; `limit` (0 = unbounded) trims the partial tail of the [bucketRowCap] fetch.
 func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what string) ([]Vwap1mRow, error) {
-	base := p.Base.String()
-	capHint := limit
-	if capHint <= 0 {
-		capHint = 16
-	}
-	out := make([]Vwap1mRow, 0, capHint)
-	var (
-		cur  Vwap1mRow
-		dirs []dirVWAP
-		open bool
-	)
-	flush := func() {
-		if !open {
-			return
-		}
-		open = false
-		vwap, ok := combineDirVWAP(dirs)
-		if !ok {
-			return
-		}
-		cur.VWAP = vwap
-		normalizeVwapSources(&cur)
-		out = append(out, cur)
-	}
+	f := newVwapBucketFold(p, limit)
 	for rows.Next() {
-		var (
-			bucket  time.Time
-			rowBase string
-			vwap    string
-			volume  string
-			tc      int64
-			src     stringArray
-		)
-		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume, &tc, &src); err != nil {
+		var r vwapDirRow
+		if err := rows.Scan(&r.bucket, &r.base, &r.vwap, &r.volume, &r.tc, &r.sources); err != nil {
 			return nil, fmt.Errorf("timescale: %s scan: %w", what, err)
 		}
-		if !open || !bucket.Equal(cur.Bucket) {
-			flush()
-			cur = Vwap1mRow{Bucket: bucket, BaseAsset: base, QuoteAsset: p.Quote.String()}
-			dirs, open = dirs[:0], true
-		}
-		dirs = append(dirs, dirVWAP{
-			vwapText:   vwap,
-			volumeText: volume,
-			flipped:    rowBase != base,
-		})
-		cur.TradeCount += tc
-		cur.Sources = appendSources(cur.Sources, src)
+		f.add(r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: %s rows: %w", what, err)
 	}
-	flush()
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out, nil
+	return f.result(), nil
 }
 
 // closedVWAP1mAtOrBeforeQuery is the both-directions anchor read for change_24h_pct (one orientation alone gives one leg's VWAP).
@@ -1044,14 +990,8 @@ const recentClosedVWAP1mExistsTemplate = `
 
 // recentClosedVWAP1mExists reports whether the pair has a CLOSED 1m bucket in either direction at or after `since`; a miss is (false, nil).
 func (s *Store) recentClosedVWAP1mExists(ctx context.Context, p canonical.Pair, since time.Time) (bool, error) {
-	// A literal lower bound (our own timestamp) gives PLAN-time chunk exclusion; a $N bind
-	// parameter would force a whole-history plan.
-	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", since.Format("2006-01-02 15:04:05-07"))
-	// #nosec G201 — the only interpolated value is `lower`, built from our
-	// own time.Time in a fixed layout; the pair strings bind as $1/$2.
-	q := fmt.Sprintf(recentClosedVWAP1mExistsTemplate, lower) //nolint:gosec // G201: see note above
 	var one int
-	err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(&one)
+	err := s.db.QueryRowContext(ctx, recentClosedVWAP1mExistsSQL(since), p.Base.String(), p.Quote.String()).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -1103,14 +1043,7 @@ const latestClosedVWAP1mTemplate = `
     `
 
 func (s *Store) latestClosedVWAP1m(ctx context.Context, p canonical.Pair, since time.Time) (Vwap1mRow, error) {
-	// The literal lower bound goes on both max() arms AND the point-read so all three prices_1m
-	// scans get plan-time chunk exclusion.
-	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", since.Format("2006-01-02 15:04:05-07"))
-	// G201 is suppressed below: only `lower` is interpolated, from our own time.Time in a fixed
-	// layout. The literal is REQUIRED: TimescaleDB only does plan-time chunk exclusion for a
-	// constant, not a bind parameter.
-	q := fmt.Sprintf(latestClosedVWAP1mTemplate, lower) //nolint:gosec // G201: see note above
-	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
+	rows, err := s.db.QueryContext(ctx, latestClosedVWAP1mSQL(since), p.Base.String(), p.Quote.String())
 	if err != nil {
 		return Vwap1mRow{}, fmt.Errorf("timescale: LatestClosedVWAP1mForPair: %w", err)
 	}
@@ -1671,35 +1604,8 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
 	if err != nil {
 		return MarketSubstance{}, err
 	}
-	cutoff := time.Now().UTC().Add(-window)
-	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
-	// #nosec G201 — only `lower` (our own time.Time, fixed layout) is interpolated; the spelling
-	// sets bind as $1/$2. The second arm's NOT stops a row both arms select (possible only when
-	// the two sets share a spelling) from counting twice.
-	q := fmt.Sprintf(`
-        SELECT COALESCE(sum(bucket_usd), 0)::text,
-               count(*),
-               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0),
-               count(*) FILTER (WHERE bucket_usd > 0)
-          FROM (
-            SELECT bucket, sum(volume_usd) AS bucket_usd
-              FROM (
-                SELECT bucket, volume_usd FROM prices_1m
-                 WHERE base_asset = ANY($1) AND quote_asset = ANY($2)
-                   AND bucket <= now() - INTERVAL '1 minute'
-                   %[1]s
-                UNION ALL
-                SELECT bucket, volume_usd FROM prices_1m
-                 WHERE base_asset = ANY($2) AND quote_asset = ANY($1)
-                   AND bucket <= now() - INTERVAL '1 minute'
-                   %[1]s
-                   AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
-              ) d
-             GROUP BY bucket
-          ) b
-    `, lower) //nolint:gosec // G201: see note above
 	var sub MarketSubstance
-	if err := s.db.QueryRowContext(ctx, q, baseKeys, quoteKeys).Scan(
+	if err := s.db.QueryRowContext(ctx, pairMarketSubstanceSQL(time.Now(), window), baseKeys, quoteKeys).Scan(
 		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds, &sub.ValuedBuckets,
 	); err != nil {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: %w", err)

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -2066,6 +2067,132 @@ func TestPriceReaders_PerKeyPins(t *testing.T) {
 	t.Run("exists-14d, latest closed VWAP, at-or-before now", func(t *testing.T) { s.pinLatest(ctx, t) })
 	t.Run("trailing combined and combined-before", func(t *testing.T) { s.pinCombined(ctx, t) })
 	t.Run("pair market substance", func(t *testing.T) { s.pinSubstance(ctx, t) })
+	t.Run("set readers answer each key as its single read", func(t *testing.T) { s.pinSets(ctx, t) })
+}
+
+// sameKeyAnswer requires a set read's answer for one key to be the single read's: the full value and the error text.
+func sameKeyAnswer[T any](t *testing.T, name string, got T, gotErr error, want T, wantErr error) {
+	t.Helper()
+	if fmt.Sprint(gotErr) != fmt.Sprint(wantErr) || !reflect.DeepEqual(got, want) {
+		t.Errorf("%s: set %+v, %v; single %+v, %v", name, got, gotErr, want, wantErr)
+	}
+}
+
+// pinSets holds every set reader to its single reader over the pinned keys at once, listed and reordered, with
+// duplicates and a key that has no data.
+func (s readerPinSeed) pinSets(ctx context.Context, t *testing.T) {
+	ids := []string{
+		s.id("BOTH"), s.id("FLIP"), s.id("NONE"), s.id("ZERO"), s.id("ZMIX"), s.id("VEND"), s.id("EDGI"), s.id("EDGO"),
+		"native", s.sac, "crypto:XLM", s.id("MANY"), s.id("UNKN"), s.id("BOTH"), "native",
+	}
+	listed := make([]canonical.Pair, len(ids))
+	for i, id := range ids {
+		listed[i] = s.pair(t, id)
+	}
+	reordered := make([]canonical.Pair, 0, len(listed))
+	for i := range listed { // reversed, then rotated by five
+		reordered = append(reordered, listed[(2*len(listed)-1-i-5)%len(listed)])
+	}
+	for _, pairs := range [][]canonical.Pair{listed, reordered} {
+		key := func(i int) string { return pairs[i].Base.String() }
+		exists, err := s.store.RecentClosedVWAP1mExistsSet(ctx, pairs)
+		if err != nil || len(exists) != len(pairs) {
+			t.Fatalf("RecentClosedVWAP1mExistsSet: %d answers, %v", len(exists), err)
+		}
+		latest, err := s.store.LatestClosedVWAP1mForPairSet(ctx, pairs)
+		if err != nil || len(latest) != len(pairs) {
+			t.Fatalf("LatestClosedVWAP1mForPairSet: %d answers, %v", len(latest), err)
+		}
+		for i, p := range pairs {
+			want, wantErr := s.store.RecentClosedVWAP1mExists(ctx, p)
+			sameKeyAnswer(t, "exists "+key(i), exists[i], nil, want, wantErr)
+			row, rowErr := s.store.LatestClosedVWAP1mForPair(ctx, p)
+			sameKeyAnswer(t, "latest "+key(i), latest[i].Value, latest[i].Err, row, rowErr)
+		}
+		for _, at := range []time.Time{s.now, s.ago(29), s.ago(29).Add(-time.Second)} {
+			got, err := s.store.ClosedVWAP1mAtOrBeforeSet(ctx, pairs, at)
+			if err != nil || len(got) != len(pairs) {
+				t.Fatalf("ClosedVWAP1mAtOrBeforeSet(%s): %d answers, %v", at, len(got), err)
+			}
+			for i, p := range pairs {
+				row, rowErr := s.store.ClosedVWAP1mAtOrBefore(ctx, p, at)
+				sameKeyAnswer(t, fmt.Sprintf("at-or-before %s %s", at, key(i)), got[i].Value, got[i].Err, row, rowErr)
+			}
+		}
+		for _, limit := range []int{40, 1, 0} {
+			got, err := s.store.RecentClosedVWAP1mCombinedSet(ctx, pairs, limit)
+			if err != nil || len(got) != len(pairs) {
+				t.Fatalf("RecentClosedVWAP1mCombinedSet(%d): %d answers, %v", limit, len(got), err)
+			}
+			for i, p := range pairs {
+				rows, rowsErr := s.store.RecentClosedVWAP1mCombined(ctx, p, limit)
+				sameKeyAnswer(t, fmt.Sprintf("trailing %d %s", limit, key(i)), got[i], nil, rows, rowsErr)
+			}
+		}
+		for _, b := range []struct {
+			at    time.Time
+			limit int
+		}{{s.ago(61), 40}, {s.ago(61), 1}, {s.ago(30), 40}, {s.ago(30).Add(time.Second), 40}, {s.now, 40}, {s.now, 0}} {
+			got, err := s.store.ClosedVWAP1mCombinedBeforeSet(ctx, pairs, b.at, b.limit)
+			if err != nil || len(got) != len(pairs) {
+				t.Fatalf("ClosedVWAP1mCombinedBeforeSet(%s, %d): %d answers, %v", b.at, b.limit, len(got), err)
+			}
+			for i, p := range pairs {
+				rows, rowsErr := s.store.ClosedVWAP1mCombinedBefore(ctx, p, b.at, b.limit)
+				sameKeyAnswer(t, fmt.Sprintf("before %s/%d %s", b.at, b.limit, key(i)), got[i], nil, rows, rowsErr)
+			}
+		}
+	}
+	if latest, err := s.store.LatestClosedVWAP1mForPairSet(ctx, listed[:1]); err != nil ||
+		latest[0].Err != nil || latest[0].Value.VWAP != "0.5499999999999999945" {
+		t.Errorf("BOTH's shared bucket through the set reader = %+v, %v; want the pinned fold 0.5499999999999999945", latest, err)
+	}
+	s.pinSubstanceSet(ctx, t)
+
+	dead, cancel := context.WithCancel(ctx)
+	cancel()
+	if got, err := s.store.ClosedVWAP1mAtOrBeforeSet(dead, listed, s.now); err == nil || got != nil {
+		t.Errorf("a failed set statement must fail the whole set, never read as absent keys: %d answers, %v", len(got), err)
+	}
+	if got, err := s.store.PairMarketSubstanceSet(dead, []timescale.SubstanceRead{{
+		Bases: []canonical.Asset{canonical.NativeAsset()}, Quotes: []canonical.Asset{listed[0].Quote},
+	}}, time.Hour); err == nil || got != nil {
+		t.Errorf("a failed substance set must fail the whole set: %d answers, %v", len(got), err)
+	}
+}
+
+func (s readerPinSeed) pinSubstanceSet(ctx context.Context, t *testing.T) {
+	asset := func(id string) canonical.Asset {
+		a, err := canonical.ParseAsset(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	usdc := canonical.AssetAliases(asset(s.usdc))
+	var reads []timescale.SubstanceRead
+	for _, id := range []string{"BOTH", "FLIP", "NONE", "ZERO", "VEND", "EDGI", "MANY", "UNKN", "BOTH"} {
+		reads = append(reads, timescale.SubstanceRead{Bases: canonical.AssetAliases(asset(s.id(id))), Quotes: usdc})
+	}
+	reads = append(reads,
+		timescale.SubstanceRead{Bases: canonical.AssetAliases(canonical.NativeAsset()), Quotes: usdc},
+		timescale.SubstanceRead{Bases: nil, Quotes: usdc}, // the single read rejects an empty spelling set
+		timescale.SubstanceRead{Bases: []canonical.Asset{canonical.NativeAsset()}, Quotes: usdc},
+		timescale.SubstanceRead{Bases: usdc, Quotes: canonical.AssetAliases(canonical.NativeAsset())},
+	)
+	for _, order := range [][]timescale.SubstanceRead{reads, append(append([]timescale.SubstanceRead{}, reads[7:]...), reads[:7]...)} {
+		got, err := s.store.PairMarketSubstanceSet(ctx, order, 24*time.Hour)
+		if err != nil || len(got) != len(order) {
+			t.Fatalf("PairMarketSubstanceSet: %d answers, %v", len(got), err)
+		}
+		for i, r := range order {
+			want, wantErr := s.store.PairMarketSubstance(ctx, r.Bases, r.Quotes, 24*time.Hour)
+			sameKeyAnswer(t, fmt.Sprintf("substance %v", r.Bases), got[i].Value, got[i].Err, want, wantErr)
+		}
+	}
+	if _, err := s.store.PairMarketSubstanceSet(ctx, reads, 0); err == nil {
+		t.Error("a non-positive window must fail the set as it fails every single read")
+	}
 }
 
 func (s readerPinSeed) pinLatest(ctx context.Context, t *testing.T) {
