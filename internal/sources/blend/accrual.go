@@ -27,7 +27,12 @@ type Accrual struct {
 	BackstopResidual *big.Int
 }
 
-// AccrueBetween recomputes the accrual Reserve::load applied between consecutive stored versions prev → next of one reserve; bstopRate is the pool's 7-decimal bstop_rate in force at next.
+// AccrueBetween recomputes the accrual Reserve::load applied between stored versions prev → next of
+// one reserve. The caller must pass ADJACENT versions: a skipped one (e.g. a borrow) silently
+// computes gross on the wrong d_supply. bstopRate (7 decimals) is the pool's stored bstop_rate
+// before next's transaction ran. V2's update_pool accrues every reserve at the old rate before
+// storing a new one; V1's does not, so after a V1 change the new rate covers the whole interval up
+// to each reserve's next load.
 func AccrueBetween(prev, next ReserveData, bstopRate uint32) (Accrual, error) {
 	if err := checkAccrualInputs(prev, next, bstopRate); err != nil {
 		return Accrual{}, err
@@ -59,8 +64,8 @@ func AccrueBetween(prev, next ReserveData, bstopRate uint32) (Accrual, error) {
 	}, nil
 }
 
-// checkAccrualInputs refuses version pairs Reserve::load cannot have produced, so a gap or a
-// mis-paired row errors instead of reading as a zero or a wrong accrual.
+// checkAccrualInputs refuses version pairs Reserve::load cannot have produced. It cannot detect a
+// skipped intermediate version; adjacency is the caller's obligation.
 func checkAccrualInputs(prev, next ReserveData, bstopRate uint32) error {
 	if prev.Version != next.Version || (prev.Version != PoolV1 && prev.Version != PoolV2) {
 		return fmt.Errorf("blend: accrual between pool versions %d and %d", prev.Version, next.Version)

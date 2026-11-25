@@ -226,6 +226,29 @@ func TestAccrueBetween_RefusesImpossiblePairs(t *testing.T) {
 	}
 }
 
+// V2's update_pool (config.rs execute_update_pool) loads and stores every reserve at the OLD
+// bstop_rate before writing the new one, so that version reconciles only at the old rate.
+func TestAccrueBetween_V2RateChangeAccruesAtOldRate(t *testing.T) {
+	prev := rdIn{"1000000000001", "1000000000001", "7", "3", "0", 10}.data(t, PoolV2)
+	next := rdIn{"2000000000001", "1428571428571", "7", "3", "0", 20}.data(t, PoolV2)
+	for _, c := range []struct {
+		name  string
+		bstop uint32
+		want  accrualWant
+	}{
+		{"old_rate", 2_000_000, accrualWant{"3", "0", "3", "2", "1428571428571", "0", "0", true}},
+		{"new_rate", 5_000_000, accrualWant{"3", "1", "2", "1", "1285714285714", "0", "-1", false}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := AccrueBetween(prev, next, c.bstop)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertAccrual(t, got, c.want)
+		})
+	}
+}
+
 // refLoad transliterates Reserve::load after calc_accrual (blend-contracts v1.0.0 and
 // blend-contracts-v2 v2.0.0 pool/src/pool/reserve.rs, v2's accrue inlined), given the d_rate
 // calc_accrual produced, using fuzz_test.go's independent rounding helpers.
