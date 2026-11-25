@@ -17,6 +17,10 @@ import (
 // before the window: rows are missing (a lending_state replay deleted them and has not yet rewritten them) or extra.
 var ErrLendingInterestSeedUnproved = errors.New("clickhouse: lending interest seed is not the lake's last version before the window")
 
+// ErrLendingInterestSeedProofTimeout reports an after-seed read the server stopped at its time limit: the seed is
+// neither proved nor disproved.
+var ErrLendingInterestSeedProofTimeout = errors.New("clickhouse: lending interest seed proof read timed out")
+
 // lendingInterestCurrentQuery reads each key's latest change ledger from the lake's current-state projection: a point
 // lookup on its (entry_type, key_xdr) sort key. It proves only that no later ledger changed the key: after a lake
 // re-derive renumbers a ledger, its stale row there can outrank the new last one.
@@ -39,7 +43,7 @@ const lendingInterestSeedLedgerQuery = lendingInterestLastVersionSelect + `ledge
 			AND ledger_seq = transform(key_xdr, CAST(? AS Array(String)), CAST(? AS Array(UInt32)), toUInt32(0))
 		GROUP BY key_xdr)`
 
-// lendingInterestAfterSeedQuery finds one change of a bucket's keys after each key's own seed ledger, within [lo, hi].
+// lendingInterestAfterSeedQuery finds one change of a chunk's keys after each key's own seed ledger, within [lo, hi].
 // An existence read needs no FINAL (a duplicate row is the same change), so the key_xdr bloom index prunes it.
 const lendingInterestAfterSeedQuery = `SELECT key_xdr, ledger_seq, intra_ledger_seq FROM stellar.ledger_entry_changes
 	WHERE entry_type = 'contract_data' AND change_type != 'state' AND key_xdr IN ? AND ledger_seq BETWEEN ? AND ?
@@ -49,12 +53,9 @@ const lendingInterestAfterSeedQuery = `SELECT key_xdr, ledger_seq, intra_ledger_
 // lendingInterestProofSeconds bounds the proof's lake reads inside the 10-minute timer cadence.
 const lendingInterestProofSeconds = 300
 
-const (
-	// lendingInterestSeedBucketLedgers is how far below its own seed a key is read for sharing a bucket: a day.
-	lendingInterestSeedBucketLedgers = 17_280
-	// lendingInterestSeedBucketsMax caps the after-seed reads per proof; the oldest seeds share the last bucket.
-	lendingInterestSeedBucketsMax = 16
-)
+// lendingInterestSeedChunkLedgers bounds the ledgers one after-seed read spans: the key_xdr bloom is read over every
+// granule in range, so a read's cost is its span. A quarter of the table's 1,000,000-ledger partition, aligned to it.
+const lendingInterestSeedChunkLedgers = 250_000
 
 // lendingInterestLakeVersion is a key's last stored lake version.
 type lendingInterestLakeVersion struct {
@@ -66,7 +67,7 @@ type lendingInterestLakeVersion struct {
 // proveLendingInterestSeeds proves each seed row is its key's last stored version before ledger before, by
 // (ledger_seq, intra_ledger_seq) and image, against the lake alone: every key's last version at its seed ledger is
 // the seed, and a key whose latest change ledger (ledger_entries_current) is not its seed's has no change after that
-// ledger and below before. That read runs per bucket of keys with close seeds, so no old seed widens another's.
+// ledger and below before. That read runs per bounded chunk of ledgers (lendingInterestSeedChunks).
 func proveLendingInterestSeeds(ctx context.Context, conn driver.Conn, got []lendingInterestSeedRow, before uint32) error {
 	if len(got) == 0 {
 		return nil
@@ -100,39 +101,45 @@ func proveLendingInterestSeeds(ctx context.Context, conn driver.Conn, got []lend
 		lendingInterestGroup(keys), clickhouse.GroupSet{Value: set}, keys, ledgers); err != nil {
 		return err
 	}
-	for _, b := range lendingInterestSeedBuckets(scan) {
-		if err := noLendingInterestChangeAfterSeed(ctx, conn, b, before); err != nil {
+	for _, c := range lendingInterestSeedChunks(scan, before) {
+		if err := noLendingInterestChangeAfterSeed(ctx, conn, c, before); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// lendingInterestSeedBuckets groups seeds newest first into buckets whose seeds lie within
-// lendingInterestSeedBucketLedgers of the bucket's newest; past lendingInterestSeedBucketsMax the rest share the last.
-func lendingInterestSeedBuckets(rows []lendingInterestSeedRow) [][]lendingInterestSeedRow {
+// lendingInterestSeedChunk is one after-seed read: the seeds below hi, over ledgers [lo, hi].
+type lendingInterestSeedChunk struct {
+	lo, hi uint32
+	seeds  []lendingInterestSeedRow
+}
+
+// lendingInterestSeedChunks cuts [lowest seed + 1, before − 1] at multiples of lendingInterestSeedChunkLedgers, each
+// chunk reading only the seeds below its hi: every (key, seed) is read over all of (seed, before), the reads number
+// at most span/chunk + 1 however many keys, and no old seed widens a newer one's read.
+func lendingInterestSeedChunks(rows []lendingInterestSeedRow, before uint32) []lendingInterestSeedChunk {
+	if len(rows) == 0 {
+		return nil
+	}
 	sorted := slices.Clone(rows)
-	slices.SortStableFunc(sorted, func(a, b lendingInterestSeedRow) int { return cmp.Compare(b.Ledger, a.Ledger) })
-	var out [][]lendingInterestSeedRow
-	for _, r := range sorted {
-		n := len(out)
-		if n > 0 && (n == lendingInterestSeedBucketsMax || out[n-1][0].Ledger-r.Ledger <= lendingInterestSeedBucketLedgers) {
-			out[n-1] = append(out[n-1], r)
-			continue
-		}
-		out = append(out, []lendingInterestSeedRow{r})
+	slices.SortStableFunc(sorted, func(a, b lendingInterestSeedRow) int { return cmp.Compare(a.Ledger, b.Ledger) })
+	end := uint64(before) - 1
+	var out []lendingInterestSeedChunk
+	for lo := uint64(sorted[0].Ledger) + 1; lo <= end; {
+		hi := min(end, (lo/lendingInterestSeedChunkLedgers+1)*lendingInterestSeedChunkLedgers-1)
+		n, _ := slices.BinarySearchFunc(sorted, hi, func(r lendingInterestSeedRow, h uint64) int { return cmp.Compare(uint64(r.Ledger), h) })
+		out = append(out, lendingInterestSeedChunk{lo: uint32(lo), hi: uint32(hi), seeds: sorted[:n]}) //nolint:gosec // both <= before - 1
+		lo = hi + 1
 	}
 	return out
 }
 
-// noLendingInterestChangeAfterSeed refuses a bucket's seed when the lake holds a change of its key after the seed
-// ledger and below before. bucket is newest first, so its last seed is its lowest.
-func noLendingInterestChangeAfterSeed(ctx context.Context, conn driver.Conn, bucket []lendingInterestSeedRow, before uint32) error {
-	lo, hi := bucket[len(bucket)-1].Ledger+1, before-1
-	if lo > hi {
-		return nil
-	}
-	keys, ledgers := lendingInterestSeedArgs(bucket)
+// noLendingInterestChangeAfterSeed refuses a chunk's seed when the lake holds a change of its key after the seed
+// ledger within the chunk; a read the server times out is ErrLendingInterestSeedProofTimeout.
+func noLendingInterestChangeAfterSeed(ctx context.Context, conn driver.Conn, c lendingInterestSeedChunk, before uint32) error {
+	lo, hi := c.lo, c.hi
+	keys, ledgers := lendingInterestSeedArgs(c.seeds)
 	rows, err := conn.Query(ctx, lendingInterestAfterSeedQuery, lendingInterestGroup(keys), lo, hi, keys, ledgers)
 	if err != nil {
 		return lendingInterestBucketError(keys, lo, hi, err)
@@ -153,7 +160,7 @@ func noLendingInterestChangeAfterSeed(ctx context.Context, conn driver.Conn, buc
 	if i < 0 {
 		return lendingInterestBucketError(keys, lo, hi, fmt.Errorf("the read returned key %s, not one asked for", k))
 	}
-	seed := bucket[i]
+	seed := c.seeds[i]
 	return fmt.Errorf("%w: key %s: lending_state_hourly's last row before ledger %d is (%d, %d), the lake holds a later "+
 		"version at (%d, %d); finish the lending_state replay, then re-derive interest from its first ledger",
 		ErrLendingInterestSeedUnproved, k, before, seed.Ledger, seed.Intra, l, intra)
@@ -161,8 +168,14 @@ func noLendingInterestChangeAfterSeed(ctx context.Context, conn driver.Conn, buc
 
 // lendingInterestBucketError names the keys and the ledger range a failed after-seed read covered.
 func lendingInterestBucketError(keys []string, lo, hi uint32, err error) error {
-	return fmt.Errorf("clickhouse: lending interest seed proof: no change after the seed of keys %s over ledgers [%d, %d] "+
-		"(limit %ds): %w", strings.Join(keys, ","), lo, hi, lendingInterestProofSeconds, err)
+	msg := fmt.Sprintf("clickhouse: lending interest seed proof: no change after the seed of keys %s over ledgers [%d, %d] "+
+		"(limit %ds)", strings.Join(keys, ","), lo, hi, lendingInterestProofSeconds)
+	var ex *clickhouse.Exception
+	// 159 TIMEOUT_EXCEEDED, 160 TOO_SLOW: max_execution_time reached, or estimated to be.
+	if errors.As(err, &ex) && (ex.Code == 159 || ex.Code == 160) {
+		return fmt.Errorf("%w: %s: %w", ErrLendingInterestSeedProofTimeout, msg, err)
+	}
+	return fmt.Errorf("%s: %w", msg, err)
 }
 
 func lendingInterestSeedArgs(rows []lendingInterestSeedRow) ([]string, []uint32) {
