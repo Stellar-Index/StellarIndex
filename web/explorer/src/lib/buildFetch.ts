@@ -52,6 +52,11 @@
  * 4. CI-stub builds (no network by design) get `null` back without any
  *    fetch, and failBuild() is a no-op — the CI fallback branches keep
  *    rendering so networkless smoke builds still pass.
+ * 5. A degraded (partial) 200 from a core read is asked again a bounded
+ *    number of times (DEGRADED_REASK_DELAYS_MS); one still degraded is
+ *    returned with `degraded: true` for the page to mark, and listed in the
+ *    postbuild summary. It does not fail the build: the data is real, only
+ *    incomplete, and one thin asset must not block a deploy.
  *
  * ── The `softFail` opt-out (build-time LIVE-PRICE enrichment) ─────────
  * Fail-hard is right for a page's core entity data (baking "not found"
@@ -94,6 +99,9 @@ export type BuildFetchEnvelope<T> = {
   /** /v1/price/batch only: the rows behind flags.stale / flags.triangulated. */
   stale?: string[];
   triangulated?: string[];
+  pagination?: { next?: string | null };
+  /** True when a REASK_DEGRADED_ROUTES answer was still degraded (partial) after the re-asks. */
+  degraded?: boolean;
 };
 
 /**
@@ -256,12 +264,42 @@ export function routeTemplate(path: string): string {
     .join('/');
 }
 
+// The API marks a partial 200 (a cold section that missed its deadline) only by
+// `Cache-Control: no-store` (Flags.Degraded never reaches the body) and keeps
+// filling it in the background, so these core reads are asked again before
+// the answer is baked. Two re-asks, 15 s in all: a few fill deadlines, not a
+// stall; the waits hold no in-flight slot.
+export const DEGRADED_REASK_DELAYS_MS = [5_000, 10_000] as const;
+const REASK_DEGRADED_ROUTES = new Set([
+  '/v1/assets',
+  '/v1/assets/{id}',
+  '/v1/markets',
+  '/v1/pools',
+]);
+
+function isDegradedAnswer(res: Response): boolean {
+  return res.headers.get('cache-control')?.trim().toLowerCase() === 'no-store';
+}
+
 // HTTP requests this process sent, per route, retries included: what the API sees.
 const requestCounts = new Map<string, number>();
+// Re-asks after a degraded answer, per route; paths baked degraded or unavailable.
+const reaskCounts = new Map<string, number>();
+const bakedDegraded = new Set<string>();
 
 /** buildRequestCounts is this process's route → requests-sent tally. */
 export function buildRequestCounts(): ReadonlyMap<string, number> {
   return requestCounts;
+}
+
+/** buildReaskCounts is this process's route → re-asks-after-degraded tally. */
+export function buildReaskCounts(): ReadonlyMap<string, number> {
+  return reaskCounts;
+}
+
+/** buildBakedDegraded is the request paths this process baked degraded or unavailable. */
+export function buildBakedDegraded(): ReadonlySet<string> {
+  return bakedDegraded;
 }
 
 // `next build` spreads pages over worker processes that are killed, not
@@ -271,12 +309,29 @@ const COUNTS_DIR = join(process.cwd(), '.next', 'build-fetch-counts');
 
 function countRequest(route: string): void {
   requestCounts.set(route, (requestCounts.get(route) ?? 0) + 1);
+  writeTally();
+}
+
+function countReask(route: string): void {
+  reaskCounts.set(route, (reaskCounts.get(route) ?? 0) + 1);
+}
+
+function noteBakedDegraded(path: string): void {
+  bakedDegraded.add(path);
+  writeTally();
+}
+
+function writeTally(): void {
   if (process.env.NEXT_PHASE !== 'phase-production-build') return;
   try {
     mkdirSync(COUNTS_DIR, { recursive: true });
     writeFileSync(
       join(COUNTS_DIR, `${process.pid}.json`),
-      JSON.stringify(Object.fromEntries(requestCounts)),
+      JSON.stringify({
+        requests: Object.fromEntries(requestCounts),
+        reasked: Object.fromEntries(reaskCounts),
+        degraded: [...bakedDegraded],
+      }),
     );
   } catch {
     // A report-only tally: an unwritable .next costs the summary line, never the request.
@@ -348,7 +403,7 @@ export function buildFetchEnvelope<T>(
   const url = `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
   const hit = memo.get(url);
   if (hit) return hit as Promise<BuildFetchEnvelope<T>>;
-  const p = fetchWithRetry<T>(url, routeTemplate(path), {
+  const p = fetchWithRetry<T>(url, path, {
     timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxAttempts: opts?.attempts ?? MAX_ATTEMPTS,
     softFail: opts?.softFail ?? false,
@@ -359,13 +414,16 @@ export function buildFetchEnvelope<T>(
 
 async function fetchWithRetry<T>(
   url: string,
-  route: string,
+  path: string,
   opts: { timeoutMs: number; maxAttempts: number; softFail: boolean },
 ): Promise<BuildFetchEnvelope<T>> {
   const { timeoutMs, maxAttempts, softFail } = opts;
+  const route = routeTemplate(path);
+  const reaskDegraded = REASK_DEGRADED_ROUTES.has(route);
   let lastErr: unknown = null;
   let throttleWaits = 0;
   let unavailableWaits = 0;
+  let degradedReasks = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       // Taken before the global slot so a queued batch never idles on one;
@@ -430,7 +488,10 @@ async function fetchWithRetry<T>(
         // softFail caller degrades gracefully (see the module header);
         // everything else fails the build so the contract break is visible
         // instead of silently baked in.
-        if (softFail) return { data: null };
+        if (softFail) {
+          if (reaskDegraded) noteBakedDegraded(path);
+          return { data: null };
+        }
         let extra = '';
         try {
           const body = (await res.json()) as { title?: string };
@@ -452,12 +513,23 @@ async function fetchWithRetry<T>(
       const env = (await res.json()) as Omit<BuildFetchEnvelope<T>, 'data'> & {
         data?: T;
       };
+      const degraded = reaskDegraded && isDegradedAnswer(res);
+      if (degraded && degradedReasks < DEGRADED_REASK_DELAYS_MS.length) {
+        await sleep(DEGRADED_REASK_DELAYS_MS[degradedReasks]);
+        degradedReasks++;
+        countReask(route);
+        attempt--; // a partial answer is not a spent transport attempt
+        continue;
+      }
+      if (degraded) noteBakedDegraded(path);
       return {
         data: env.data ?? null,
         flags: env.flags,
         as_of: env.as_of,
         stale: env.stale,
         triangulated: env.triangulated,
+        pagination: env.pagination,
+        ...(degraded ? { degraded: true } : {}),
       };
     } catch (err) {
       lastErr = err;
@@ -468,6 +540,7 @@ async function fetchWithRetry<T>(
     // Opt-in non-fatal caller (build-time live-price enrichment): the
     // value is refreshed client-side, so degrade the page rather than
     // abort the export. See the softFail note in the module header.
+    if (reaskDegraded) noteBakedDegraded(path);
     return { data: null };
   }
   throw new BuildFetchError(

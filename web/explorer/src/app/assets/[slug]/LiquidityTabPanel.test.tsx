@@ -1,25 +1,31 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-
-import { LiquidityTabPanel } from './LiquidityTabPanel';
 
 const ASSET = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
 function mockFetch(impl: () => Promise<Response>) {
-  vi.stubGlobal('fetch', vi.fn(impl));
+  const fn = vi.fn(impl);
+  vi.stubGlobal('fetch', fn);
+  return fn;
 }
 
-function jsonResponse(body: unknown, status = 200) {
+function jsonResponse(body: unknown, status = 200, cacheControl?: string) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(cacheControl ? { 'cache-control': cacheControl } : {}),
+    },
   });
 }
 
+// The fetch goes through buildFetch's per-build memo and its waits: a fresh
+// module per test is a fresh build, and fake timers run the waits.
 async function renderPanel(scaleMismatch = false) {
-  render(
-    await LiquidityTabPanel({ assetID: ASSET, code: 'USDC', scaleMismatch }),
-  );
+  const { LiquidityTabPanel } = await import('./LiquidityTabPanel');
+  const el = LiquidityTabPanel({ assetID: ASSET, code: 'USDC', scaleMismatch });
+  await vi.runAllTimersAsync();
+  render(await el);
 }
 
 // Frontend-honesty sweep: this build-time panel swallowed 5xx, 429 and
@@ -28,8 +34,55 @@ async function renderPanel(scaleMismatch = false) {
 // exact incident class src/lib/buildFetch.ts documents. Absent must read
 // as unavailable; a served empty list keeps the honest empty claim.
 describe('LiquidityTabPanel', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.useFakeTimers();
+  });
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  // Casing variants and the asset_id route of one asset all render this
+  // panel for the same asset id: one request per build pass, tallied.
+  it('reads the pools once per pass for every route of one asset', async () => {
+    const fn = mockFetch(async () => jsonResponse({ data: [] }));
+    for (let i = 0; i < 4; i++) await renderPanel();
+    expect(fn).toHaveBeenCalledTimes(1);
+    const { buildRequestCounts } = await import('@/lib/buildFetch');
+    expect(buildRequestCounts().get('/v1/pools')).toBe(1);
+  });
+
+  it('bakes the complete pool list after a degraded first answer', async () => {
+    const replies = [
+      jsonResponse({ data: [] }, 200, 'no-store'),
+      jsonResponse({
+        data: [
+          {
+            source: 'soroswap',
+            base: ASSET,
+            quote: 'native',
+            last_price: '0.42',
+            volume_24h_usd: '1000',
+            trade_count_24h: 5,
+          },
+        ],
+      }),
+    ];
+    const fn = mockFetch(async () => replies.shift()!);
+    await renderPanel();
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('soroswap')).toBeInTheDocument();
+    expect(screen.queryByText(/Pool list incomplete/)).not.toBeInTheDocument();
+  });
+
+  it('marks a still-degraded pool list and lists it in the build summary', async () => {
+    mockFetch(async () => jsonResponse({ data: [] }, 200, 'no-store'));
+    await renderPanel();
+    expect(screen.getByText(/Pool list incomplete:/)).toBeInTheDocument();
+    expect(screen.queryByText(/No DEX pools touching/)).not.toBeInTheDocument();
+    const { buildBakedDegraded } = await import('@/lib/buildFetch');
+    expect([...buildBakedDegraded()].some((p) => p.includes(ASSET))).toBe(true);
   });
 
   it('says the pool list is unavailable when the fetch fails', async () => {
@@ -45,6 +98,8 @@ describe('LiquidityTabPanel', () => {
     mockFetch(async () => jsonResponse({}, 503));
     await renderPanel();
     expect(screen.getByText(/Pool list unavailable:/)).toBeInTheDocument();
+    const { buildBakedDegraded } = await import('@/lib/buildFetch');
+    expect([...buildBakedDegraded()].some((p) => p.includes(ASSET))).toBe(true);
   });
 
   // A static export bakes these figures; they must not read as current.

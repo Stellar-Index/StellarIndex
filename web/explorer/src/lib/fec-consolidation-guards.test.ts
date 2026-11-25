@@ -305,7 +305,6 @@ describe('FEC guards (repo-walk)', () => {
       'app/embed/currency/[ticker]/page.tsx',
       'app/embed/pair/[pair]/page.tsx',
       'app/external/assets/[slug]/page.tsx',
-      'app/assets/[slug]/LiquidityTabPanel.tsx',
     ]);
     const offenders = sources
       .filter((f) => f.rel.startsWith('app/'))

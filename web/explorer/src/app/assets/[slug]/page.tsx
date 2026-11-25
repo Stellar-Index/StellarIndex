@@ -46,6 +46,7 @@ import {
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { LiveAssetScamCallout } from './AssetScamCallout';
 import { UnverifiedTickerCallout } from './UnverifiedTickerCallout';
+import { PartialDetailCallout } from './PartialDetailCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { SacRedirect } from './SacRedirect';
@@ -560,10 +561,14 @@ async function resolveVerifiedListingCoin(
 // per build even though the casing variants + canonical-id route of
 // one asset all render off the same asset_id (unmemoised duplicates
 // would spike API load).
-function fetchAssetDetail(assetId: string): Promise<AssetDetail | null> {
-  return buildFetchData<AssetDetail>(
+// `degraded`: still partial after buildFetch's re-asks, so the page says so.
+export async function fetchAssetDetail(
+  assetId: string,
+): Promise<{ detail: AssetDetail | null; degraded: boolean }> {
+  const env = await buildFetchEnvelope<AssetDetail>(
     `/v1/assets/${encodeURIComponent(assetId)}`,
   );
+  return { detail: env.data, degraded: env.degraded === true };
 }
 
 /**
@@ -880,7 +885,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     );
   }
 
-  const [detail, price] = await Promise.all([
+  const [{ detail, degraded: detailDegraded }, price] = await Promise.all([
     fetchAssetDetail(coin.asset_id),
     fetchPrice(coin.asset_id),
   ]);
@@ -1054,6 +1059,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             warning={detail.unverified_warning}
           />
         )}
+        {detailDegraded && <PartialDetailCallout code={assetSymbol(coin)} />}
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[336px_minmax(0,1fr)] lg:grid-rows-[auto_1fr]">

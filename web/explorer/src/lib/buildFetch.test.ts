@@ -11,10 +11,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildBakedDegraded,
   buildFetchBatchedPrice,
   buildFetchData,
+  buildFetchEnvelope,
   buildFetchPriceBatch,
+  buildReaskCounts,
   buildRequestCounts,
+  DEGRADED_REASK_DELAYS_MS,
   MAX_IN_FLIGHT,
   MAX_UNAVAILABLE_WAITS,
   routeTemplate,
@@ -469,5 +473,101 @@ describe('buildFetchPriceBatch', () => {
     const got = await buildFetchPriceBatch(['crypto:OLDAPI'], 'fiat:USD');
     expect(got.get('crypto:OLDAPI')?.triangulated).toBeUndefined();
     expect(got.get('crypto:OLDAPI')?.stale).toBe(false);
+  });
+});
+
+// The API marks a partial 200 only with `Cache-Control: no-store`.
+function answer(body: unknown, cacheControl: string) {
+  return {
+    status: 200,
+    ok: true,
+    headers: {
+      get: (h: string) => (h.toLowerCase() === 'cache-control' ? cacheControl : null),
+    },
+    json: async () => body,
+  };
+}
+
+describe('degraded core answers', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function settle<T>(p: Promise<T>): Promise<T> {
+    await vi.runAllTimersAsync();
+    return p;
+  }
+
+  it('re-asks a degraded detail and bakes the complete answer', async () => {
+    const replies = [
+      answer({ data: { ath: null } }, 'no-store'),
+      answer({ data: { ath: '1.5' } }, 'public, max-age=30'),
+    ];
+    const fetchMock = vi.fn(async () => replies.shift()!);
+    vi.stubGlobal('fetch', fetchMock);
+    const path = '/v1/assets/DGR1-GAAA';
+    const reasksBefore = buildReaskCounts().get('/v1/assets/{id}') ?? 0;
+    const env = await settle(buildFetchEnvelope<{ ath: string | null }>(path));
+    expect(env.data).toEqual({ ath: '1.5' });
+    expect(env.degraded).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(buildReaskCounts().get('/v1/assets/{id}')).toBe(reasksBefore + 1);
+    expect(buildBakedDegraded().has(path)).toBe(false);
+    // The memo holds the final answer.
+    expect((await buildFetchEnvelope(path)).data).toEqual({ ath: '1.5' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a persistently degraded answer marked and lists it', async () => {
+    const fetchMock = vi.fn(async () => answer({ data: { ath: null } }, 'no-store'));
+    vi.stubGlobal('fetch', fetchMock);
+    const path = '/v1/assets/DGR2-GAAA';
+    const env = await settle(buildFetchEnvelope(path));
+    expect(env.degraded).toBe(true);
+    expect(env.data).toEqual({ ath: null });
+    expect(fetchMock).toHaveBeenCalledTimes(1 + DEGRADED_REASK_DELAYS_MS.length);
+    expect(buildBakedDegraded().has(path)).toBe(true);
+  });
+
+  it('never re-asks a complete answer, nor a no-store outside the core routes', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      answer({ data: [] }, url.includes('/v1/pools') ? 'public, max-age=30' : 'no-store'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await settle(buildFetchEnvelope('/v1/pools?asset=DGR3'));
+    await settle(buildFetchEnvelope('/v1/price/batch?asset_ids=DGR3&quote=fiat:USD'));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-asks inside the in-flight cap', async () => {
+    let current = 0;
+    let peak = 0;
+    const seen = new Map<string, number>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        current++;
+        peak = Math.max(peak, current);
+        await new Promise((r) => setTimeout(r, 5));
+        current--;
+        const key = url.split('&b=')[0];
+        const n = (seen.get(key) ?? 0) + 1;
+        seen.set(key, n);
+        return answer({ data: [] }, n === 1 ? 'no-store' : 'public, max-age=30');
+      }),
+    );
+    const all = Promise.all(
+      Array.from({ length: MAX_IN_FLIGHT * 3 }, (_, i) =>
+        buildFetchEnvelope(`/v1/pools?asset=DGRCAP${i}`),
+      ),
+    );
+    const envs = await settle(all);
+    expect(envs.every((e) => Array.isArray(e.data) && !e.degraded)).toBe(true);
+    expect([...seen.values()].every((n) => n === 2)).toBe(true);
+    expect(peak).toBeLessThanOrEqual(MAX_IN_FLIGHT);
   });
 });
