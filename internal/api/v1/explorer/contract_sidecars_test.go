@@ -177,7 +177,7 @@ func TestContractActivityCard_Cached(t *testing.T) {
 		Reader: countingActivityReader{n: &n},
 	}
 	for range 2 {
-		if av := h.contractActivityCard(context.Background(), "CX"); av == nil || av.ActiveLedgersTotal != 7 {
+		if av, ok := h.contractActivityCard(context.Background(), "CX"); !ok || av == nil || av.ActiveLedgersTotal != 7 {
 			t.Fatalf("activity card = %+v, want ActiveLedgersTotal 7", av)
 		}
 	}

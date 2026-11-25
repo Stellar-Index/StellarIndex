@@ -905,6 +905,23 @@ ORDER BY ts DESC;
 
 **Check.** Open stream count and subscribers per pair; scan latency on the serving pool. **Likely causes.** Slow scans under database load, or one client holding many streams on distinct pairs (subscribers of one pair share a scan). **Fix.** Relieve the database, or limit the client at the edge. **Escalate:** none.
 
+## stellarindex_ratelimit_cold_fill_refusals_sustained
+
+**Trigger.** `sum(rate(stellarindex_ratelimit_cold_fill_refused_total[15m])) > 1`, `for: 30m`, P3. Requests were answered 429 because their rate-limit budget could not pay the surcharge for an uncached read; no lake read was started. The counter has no client label.
+
+**Check.**
+
+1. One subject or many: API access logs for 429s on cold paths, grouped by API key or client (never publish an IP).
+2. `rate(stellarindex_explorer_refresh_gate_saturated_total[15m])`: rising too means the cold-read path itself is saturated, not one caller.
+3. Real users: explorer or paying-key requests among the refused.
+
+**Fix.**
+
+1. One crawler: nothing to do; block it at the edge if it persists.
+2. Many subjects or real users: the surcharge or budgets are too tight for legitimate load; raise the quota or warm the cache for the hot path.
+
+**Escalate:** none; related [ratelimit_fail_open](#stellarindex_ratelimit_fail_open).
+
 ## stellarindex_ratelimit_fail_open
 
 **Trigger.** `sum(increase(stellarindex_ratelimit_fail_open_total[15m])) > 100`, `for: 0m`, P3. The Redis fixed-window limiter (`internal/ratelimit`; `internal/api/v1/middleware/ratelimit.go`) fails open on Redis errors, then closed after `ratelimit.DefaultDwellTime` (30s; [fail_closed](#stellarindex_ratelimit_fail_closed)), so this alert sees only repeated short episodes (hence `increase`). Per-key limits are not enforced meanwhile; usage still meters.

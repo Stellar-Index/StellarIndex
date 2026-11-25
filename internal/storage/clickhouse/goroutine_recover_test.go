@@ -79,7 +79,7 @@ func TestAccountStateRefresh_PanicReleasesFlightAndSurvives(t *testing.T) {
 		refreshGate: NewRefreshGate(1),
 	}
 
-	fl, saturated := r.refreshAccountState(account, (*RefreshGate).TryAcquireClass)
+	fl, saturated := r.refreshAccountState(account, tryAdmitAccountState)
 	if saturated {
 		t.Fatal("refresh reported saturation; the gate has a free slot in this test")
 	}
