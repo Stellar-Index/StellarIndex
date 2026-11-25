@@ -120,7 +120,8 @@ LAKE_TABLES="$LAKE_TABLES|ledger_entries_current|ledger_entries_current_v2|ttl_l
 LAKE_TABLES="$LAKE_TABLES|account_movements|movements_by_asset|ops_by_source|account_op_types"
 LAKE_TABLES="$LAKE_TABLES|account_activity|contract_active_ledgers|contract_instance_changes"
 LAKE_TABLES="$LAKE_TABLES|contract_instance_changes_v2|sponsorship_events|sponsorship_totals_buckets"
-LAKE_TABLES="$LAKE_TABLES|lending_state_hourly|account_entry_ledgers|account_claimables"
+LAKE_TABLES="$LAKE_TABLES|lending_state_hourly|lending_interest_hourly"
+LAKE_TABLES="$LAKE_TABLES|account_entry_ledgers|account_claimables"
 LAKE_TABLES="$LAKE_TABLES|claimable_removals|asset_entry_ledgers|trades_by_account"
 LAKE_TABLES="$LAKE_TABLES|trades_by_account_windows|cap67_movements_watermark|entry_history_watermark"
 # A Sprintf verb in the table position (`%s`, `%[1]s`): the table is unknown,
