@@ -201,8 +201,8 @@ func TestAccrueBetween_Refuses(t *testing.T) {
 	prev := rdIn{"1100000000000", "1050000000000", "1300000000013", "987654321987", "500", 100}.data(t)
 	next := rdIn{"1100001250000", "1050000758214", "1300000000013", "987654321987", "246919", 160}.data(t)
 	ok := fee(t, "7", "0")
-	v1 := prev
-	v1.Version = blend.PoolV1
+	v1, v1Next := prev, next
+	v1.Version, v1Next.Version = blend.PoolV1, blend.PoolV1
 	cases := map[string]func() (Accrual, error){
 		"nil carry": func() (Accrual, error) {
 			return AccrueBetween(prev, next, ProtocolFee{Credit: big.NewInt(1)}, ok, 2_000_000)
@@ -210,6 +210,7 @@ func TestAccrueBetween_Refuses(t *testing.T) {
 		"carry of one unit": func() (Accrual, error) { return AccrueBetween(prev, next, fee(t, "7", "10000000"), ok, 2_000_000) },
 		"negative credit":   func() (Accrual, error) { return AccrueBetween(prev, next, ok, fee(t, "-1", "0"), 2_000_000) },
 		"mixed versions":    func() (Accrual, error) { return AccrueBetween(v1, next, ok, ok, 2_000_000) },
+		"v1 data":           func() (Accrual, error) { return AccrueBetween(v1, v1Next, ok, ok, 2_000_000) },
 		"bstop_rate 100%":   func() (Accrual, error) { return AccrueBetween(prev, next, ok, ok, 10_000_000) },
 		"d_rate decreasing": func() (Accrual, error) { return AccrueBetween(next, prev, ok, ok, 2_000_000) },
 	}
@@ -220,16 +221,54 @@ func TestAccrueBetween_Refuses(t *testing.T) {
 	}
 }
 
-// Fourteen consecutive stored versions of reserve CCW67TSZ…MI75 (USDC) on BLNT pool
-// CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7, each with the asset's ProtocolFees
-// entry as stored after that transaction. Config bstop_rate is 0_2000000. Across ledgers
-// 65638200–65658199 all 741 version pairs of the pool's three reserves reproduce b_rate and the fee
-// entry exactly, and 738 reproduce backstop_credit; the other three are this slice's 65648345.
+// Golden slices: consecutive stored versions of one reserve, each with the asset's ProtocolFees
+// entry as stored after that transaction. They sample a larger replay run outside the repo over
+// every stored change of BLNT pools CACSQWCM…MCY7 (ledgers 65638200–65658199: 741 version pairs),
+// CAUTPSQD…VF4D (65578200–65658199: 65) and CCH3BNZW…C3XD (65578200–65658199: 7). There every pair
+// reproduced b_rate and the fee entry, and every pair but CACSQWCM…'s three at 65648345 (below)
+// reproduced backstop_credit.
 type mainnetVersion struct {
 	ledger        uint32
 	tx            string
 	rd            rdIn
 	credit, carry string
+}
+
+type mainnetSlice struct {
+	name  string
+	bstop uint32 // the pool's Config bstop_rate
+	rows  []mainnetVersion
+	// reported maps a ledger to the BackstopResidual of a version accrual alone cannot explain.
+	reported map[uint32]string
+}
+
+var mainnetSlices = []mainnetSlice{
+	// Pool CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7, reserve CCW67TSZ…MI75 (USDC).
+	// At 65648345 the transaction also drew backstop_credit on all three reserves by amounts
+	// unrelated to accrual, which only an interest-auction fill does; b_rate and fees reconcile.
+	{"CACSQ_CCW67", 2_000_000, mainnetUSDC, map[uint32]string{65648345: "-112512682"}},
+	// Same pool, reserve CAS3J7GY…OWMA: d_supply moves every version; fees of 1, 0, 0 and 1 units.
+	{"CACSQ_CAS3J", 2_000_000, []mainnetVersion{
+		{65640816, "cc1d5bbb16a283ea9dc448f4f7fc303fc8b5dc27b670c1a548a98b462e473cf1", rdIn{"1000366279433", "1000052417455", "14480378023154", "60323350851", "2089202", 1795490129}, "925291", "200000"},
+		{65640831, "ada79d4ec9ce3bc0c9c43c726d32ac088556ff1ea60432fc2177fd6c598ad824", rdIn{"1000366281887", "1000052417463", "14480378023154", "50981327566", "2089231", 1795490204}, "925291", "3160000"},
+		{65640856, "c2b030a63ccc4e04ab83eb8300c7ee63374bee785f125874923fcde380621932", rdIn{"1000366285958", "1000052417474", "14480378023154", "999634586", "2089272", 1795490329}, "925291", "7320000"},
+		{65641861, "6f1047cf1bf501c42820b4d49d1a106fb265d478e61c819d6de5d286ca5f103c", rdIn{"1000366445487", "1000052417482", "14480378023154", "10249829434", "2089303", 1795495355}, "925292", "500000"},
+	}, nil},
+	// Same pool, reserve CDTKPWPL…BQLV: b_supply and d_supply alternate.
+	{"CACSQ_CDTKP", 2_000_000, []mainnetVersion{
+		{65654419, "83995962875116f905d4ace202b1aec92579909c52714ee8dbcd3d8a0f3c7ba8", rdIn{"1006782801155", "1004397375375", "1132053736904", "1071823478450", "36509975", 1795558149}, "12064538", "5920000"},
+		{65654428, "deef6d5b1858e53175a6b69e497e3c88831772bfc7d3c87604e41dc417aa5f15", rdIn{"1006783057321", "1004397569016", "1129564682691", "1071823478450", "36564778", 1795558194}, "12065087", "7220000"},
+		{65654432, "c5eefac259664354e625e9c02757af435b14658cf0907c1cafb94a25aecf0c07", rdIn{"1006783244142", "1004397710549", "1129564682691", "1069340322305", "36604745", 1795558214}, "12065488", "2000000"},
+		{65654439, "a77da3b8e19d1b0fb1db3474bab046830a906abbbd05495826cde1d75f6aa424", rdIn{"1006783443292", "1004397861072", "1127075629202", "1069340322305", "36647251", 1795558249}, "12065914", "1180000"},
+	}, nil},
+	// Pool CCH3BNZWTTBB2AKX6NT5OGKQSWP4UNBIKRTRMRDKKJLPMFKULHQZC3XD (Config bstop_rate 0_5000000),
+	// reserve CCW67TSZ…MI75; the first entry is the asset's first stored fee (credit 0).
+	{"CCH3B_CCW67", 5_000_000, []mainnetVersion{
+		{65583240, "bbe22dd0a6ec26056ee3f2206c5f25387a3732221cc229e1894de67f9240a06f", rdIn{"1000001180230", "1000000550000", "37700001", "37599996", "21", 1795202244}, "0", "860000"},
+		{65631804, "0c3c8754a54395e43eeabe4e79998ecbb9d79d27075a394a84e2b12994b8d5f2", rdIn{"1037921498438", "1018872598968", "106403389", "37599996", "711497", 1795445066}, "2851", "6940000"},
+		{65649577, "305026b60cabf3f12537a58bfc1d406d5fe56f5d2535a0b6c67f18b54a7edb57", rdIn{"1038075355003", "1018899726962", "106403389", "98171602", "714383", 1795533938}, "2863", "2640000"},
+		{65649587, "5af624997f12cc2ca2b5580e145ce7805dca3fa7b38888bee910bded0e4f4f24", rdIn{"1038075659841", "1018899858537", "100514684", "98171602", "714398", 1795533988}, "2863", "3240000"},
+	}, nil},
 }
 
 var mainnetUSDC = []mainnetVersion{
@@ -249,70 +288,65 @@ var mainnetUSDC = []mainnetVersion{
 	{65648942, "9997124177b1ee49428bb39174b28a9941d2edc8929b71b3887c774011f6f09a", rdIn{"1003728533011", "1002207884449", "1812412944553", "1558191411881", "30343862", 1795530762}, "9357367", "4160000"},
 }
 
-// At 65648345 the transaction also drew backstop_credit on all three reserves by amounts unrelated
-// to accrual, which only an interest-auction fill does; b_rate and the fee entry still reconcile.
-var mainnetReported = map[uint32]string{65648345: "-112512682"}
-
 func TestAccrueBetween_MainnetGolden(t *testing.T) {
-	rows := mainnetUSDC
-	gross, fees, backstop, bcResidual := new(big.Int), new(big.Int), new(big.Int), new(big.Int)
-	for i := 1; i < len(rows); i++ {
-		p, n := rows[i-1], rows[i]
-		a, err := AccrueBetween(p.rd.data(t), n.rd.data(t), fee(t, p.credit, p.carry), fee(t, n.credit, n.carry), 2_000_000)
-		if err != nil {
-			t.Fatalf("ledger %d tx %s: %v", n.ledger, n.tx, err)
-		}
-		wantResidual := "0"
-		if r, ok := mainnetReported[n.ledger]; ok {
-			wantResidual = r
-		}
-		if !a.BRateMatches || !a.FeesMatch || a.BackstopResidual.String() != wantResidual {
-			t.Errorf("ledger %d tx %s: b_rate %s recomputed %s; fees %s/%s expected %s/%s; residual %s want %s",
-				n.ledger, n.tx, n.rd.bRate, a.ExpectedBRate, n.credit, n.carry, a.ExpectedFees.Credit,
-				a.ExpectedFees.Carry, a.BackstopResidual, wantResidual)
-		}
-		if a.Gross.Sign() <= 0 || a.ProtocolFee.Sign() <= 0 {
-			t.Errorf("ledger %d tx %s: gross %s fee %s, want both positive", n.ledger, n.tx, a.Gross, a.ProtocolFee)
-		}
-		gross.Add(gross, a.Gross)
-		fees.Add(fees, a.ProtocolFee)
-		backstop.Add(backstop, a.Backstop)
-		bcResidual.Add(bcResidual, a.BackstopResidual)
+	for _, s := range mainnetSlices {
+		t.Run(s.name, func(t *testing.T) {
+			rows := s.rows
+			gross := new(big.Int)
+			for i := 1; i < len(rows); i++ {
+				p, n := rows[i-1], rows[i]
+				a, err := AccrueBetween(p.rd.data(t), n.rd.data(t), fee(t, p.credit, p.carry), fee(t, n.credit, n.carry), s.bstop)
+				if err != nil {
+					t.Fatalf("ledger %d tx %s: %v", n.ledger, n.tx, err)
+				}
+				wantResidual := "0"
+				if r, ok := s.reported[n.ledger]; ok {
+					wantResidual = r
+				}
+				if !a.BRateMatches || !a.FeesMatch || a.BackstopResidual.String() != wantResidual {
+					t.Errorf("ledger %d tx %s: b_rate %s recomputed %s; fees %s/%s expected %s/%s; residual %s want %s",
+						n.ledger, n.tx, n.rd.bRate, a.ExpectedBRate, n.credit, n.carry, a.ExpectedFees.Credit,
+						a.ExpectedFees.Carry, a.BackstopResidual, wantResidual)
+				}
+				if (p.rd.lt == n.rd.lt) != (a.Gross.Sign() == 0) {
+					t.Errorf("ledger %d tx %s: gross %s across last_time %d → %d", n.ledger, n.tx, a.Gross, p.rd.lt, n.rd.lt)
+				}
+				gross.Add(gross, a.Gross)
+			}
+			want := telescopedGross(t, rows)
+			if gross.Cmp(want) != 0 {
+				t.Errorf("Σ gross = %s, telescoped from chain values %s", gross, want)
+			}
+			// Consistency check on chain values only: carry₀ + rate·gross = 1e7·Δcredit + carryₙ, so the
+			// stored fee entry moved by exactly 0.2% of the telescoped gross, with nothing lost.
+			first, last := rows[0], rows[len(rows)-1]
+			lhs := new(big.Int).Mul(want, big.NewInt(ProtocolInterestFeeRate))
+			lhs.Add(lhs, dec(t, first.carry))
+			rhs := new(big.Int).Sub(dec(t, last.credit), dec(t, first.credit))
+			rhs.Mul(rhs, big.NewInt(10_000_000)).Add(rhs, dec(t, last.carry))
+			if lhs.Cmp(rhs) != 0 {
+				t.Errorf("carry₀ + rate·gross = %s, 1e7·Δcredit + carryₙ = %s", lhs, rhs)
+			}
+		})
 	}
+}
 
-	// Totals from the first and last chain values alone. d_supply is constant across the slice, so
-	// gross telescopes to the difference of the two ceil-rounded liabilities.
-	first, last := rows[0], rows[len(rows)-1]
-	ceilLiab := func(r rdIn) *big.Int {
-		n := new(big.Int).Mul(dec(t, r.dSupply), dec(t, r.dRate))
+// telescopedGross sums ceil(d_supply·d_rate/1e12) differences over each run of versions whose
+// d_supply (the accrual operand) is constant, from chain values alone.
+func telescopedGross(t *testing.T, rows []mainnetVersion) *big.Int {
+	t.Helper()
+	liab := func(dSupply, dRate string) *big.Int {
+		n := new(big.Int).Mul(dec(t, dSupply), dec(t, dRate))
 		n.Add(n, big.NewInt(999_999_999_999))
 		return n.Quo(n, big.NewInt(1_000_000_000_000))
 	}
-	for _, r := range rows {
-		if r.rd.dSupply != first.rd.dSupply {
-			t.Fatalf("ledger %d: d_supply moved; the telescoping below assumes it does not", r.ledger)
+	total, j := new(big.Int), 0
+	for i := 1; i < len(rows); i++ {
+		if i == len(rows)-1 || rows[i].rd.dSupply != rows[j].rd.dSupply {
+			total.Add(total, liab(rows[j].rd.dSupply, rows[i].rd.dRate))
+			total.Sub(total, liab(rows[j].rd.dSupply, rows[j].rd.dRate))
+			j = i
 		}
 	}
-	if want := new(big.Int).Sub(ceilLiab(last.rd), ceilLiab(first.rd)); gross.Cmp(want) != 0 {
-		t.Errorf("Σ gross = %s, telescoped %s", gross, want)
-	}
-	creditDelta := new(big.Int).Sub(dec(t, last.credit), dec(t, first.credit))
-	if fees.Cmp(creditDelta) != 0 {
-		t.Errorf("Σ fee = %s, stored credit moved %s", fees, creditDelta)
-	}
-	// carry₀ + Σgross·rate = 1e7·Δcredit + carryₙ: the fee is exactly 0.2% of gross, with no loss.
-	lhs := new(big.Int).Mul(gross, big.NewInt(ProtocolInterestFeeRate))
-	lhs.Add(lhs, dec(t, first.carry))
-	rhs := new(big.Int).Mul(creditDelta, big.NewInt(10_000_000))
-	rhs.Add(rhs, dec(t, last.carry))
-	if lhs.Cmp(rhs) != 0 {
-		t.Errorf("carry₀ + Σgross·rate = %s, 1e7·Δcredit + carryₙ = %s", lhs, rhs)
-	}
-	bcDelta := new(big.Int).Sub(dec(t, last.rd.bc), dec(t, first.rd.bc))
-	if sum := new(big.Int).Add(backstop, bcResidual); sum.Cmp(bcDelta) != 0 {
-		t.Errorf("Σ backstop + Σ residual = %s, stored backstop_credit moved %s", sum, bcDelta)
-	}
-	if gross.String() != "14637944" || fees.String() != "29276" || bcResidual.String() != "-112512682" {
-		t.Errorf("totals gross %s fee %s residual %s", gross, fees, bcResidual)
-	}
+	return total
 }

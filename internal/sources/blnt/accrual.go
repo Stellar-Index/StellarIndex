@@ -95,8 +95,13 @@ type Accrual struct {
 // the same adjacency and bstop_rate obligations as blend.AccrueBetween. prevFee and nextFee are the
 // reserve asset's ProtocolFees entry before and after next's transaction (pass prevFee twice when
 // the transaction did not write ProtocolFees). The fee is floor((carry + gross·rate)/1e7) with the
-// remainder carried, and the backstop's share is taken from gross less that fee.
+// remainder carried, and the backstop's share is taken from gross less that fee; like the rate, the
+// rule is inferred from chain data (see ProtocolInterestFeeRate), not read from contract source.
 func AccrueBetween(prev, next ReserveData, prevFee, nextFee ProtocolFee, bstopRate uint32) (Accrual, error) {
+	if prev.Version != blend.PoolV2 || next.Version != blend.PoolV2 {
+		// BLNT stores V2-scaled (1e12) rates; blend would also accept V1's 1e9 scale.
+		return Accrual{}, fmt.Errorf("blnt: accrual over pool versions %d and %d, want V2", prev.Version, next.Version)
+	}
 	for _, f := range [2]ProtocolFee{prevFee, nextFee} {
 		if err := f.check(); err != nil {
 			return Accrual{}, fmt.Errorf("blnt: accrual over protocol fee entry: %w", err)
