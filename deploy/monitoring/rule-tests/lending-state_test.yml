@@ -190,12 +190,45 @@ tests:
               ops_job: ch-entry-history-lending-interest-prove
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-stale
-              summary: "the daily lending interest proof has not finished in over two days"
+              summary: "a lending interest proof has not finished on its schedule"
               description: |
-                lending-interest-prove.timer's last finished run is more than
-                48 h old: the timer was disabled or stopped firing, or a run
-                has hung (heartbeat_stale covers a dead one). The proof gauge
-                still shows the last run's verdict, which is no longer current.
+                The last finished run of ch-entry-history-lending-interest-prove is older than its
+                cadence allows (lending-interest-prove.timer, daily: 48 h;
+                lending-interest-prove-full.timer, weekly: 8 days): the timer was
+                disabled or stopped firing, or a run has hung (heartbeat_stale
+                covers a dead one). Its proof gauge still shows the last run's
+                verdict, which is no longer current.
+
+  # The weekly full-range proof has its own series and an 8-day threshold: 3 days old is not stale.
+  - interval: 1m
+    name: the weekly full-range lending interest proof is stale only past eight days
+    input_series:
+      - series: 'stellarindex_ops_job_last_finish_unix{job="node_exporter",instance="r1:9100",ops_job="ch-entry-history-lending-interest-prove-full"}'
+        values: '0x12000'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts: []
+      - eval_time: 194h
+        alertname: stellarindex_lending_interest_proof_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-entry-history-lending-interest-prove-full
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-stale
+              summary: "a lending interest proof has not finished on its schedule"
+              description: |
+                The last finished run of ch-entry-history-lending-interest-prove-full is older than its
+                cadence allows (lending-interest-prove.timer, daily: 48 h;
+                lending-interest-prove-full.timer, weekly: 8 days): the timer was
+                disabled or stopped firing, or a run has hung (heartbeat_stale
+                covers a dead one). Its proof gauge still shows the last run's
+                verdict, which is no longer current.
 
   - interval: 1m
     name: a lending interest proof that finishes daily stays quiet

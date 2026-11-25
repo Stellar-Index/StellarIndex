@@ -793,7 +793,8 @@ verify_archive_tier_d_enabled: "{{ (stellar_network | default('pubnet')) == 'pub
 archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
 # lending-interest-prove — the daily read-only proof of
-# stellar.lending_interest_hourly. Off until a host's interest pass is
+# stellar.lending_interest_hourly over the last week, and
+# lending-interest-prove-full, its weekly full-range run. Off until a host's interest pass is
 # initialised and its backfill has proved once by hand (the serving gate in
 # deploy/clickhouse/lending_interest.sql); on an uninitialised host the proof
 # only prints "not initialised".

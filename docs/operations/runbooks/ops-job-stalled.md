@@ -221,9 +221,16 @@ Check and fix (operator commands: the runbook in `deploy/clickhouse/lending_inte
 
 ## Lending interest proof failed
 
-`stellarindex_lending_interest_proof_failed` fires when the daily read-only proof (`lending-interest-prove.service`: `stellarindex-ops ch-entry-history -lending-only -prove -interest`) found a stored row of `stellar.lending_interest_hourly` that disagrees with the lake. Per window it re-reads the versions with the writer's own coverage-proved read, folds them again and compares the rows under FINAL: the row set, every column byte-exact, `versions` against an independent count of the lake's versions, and the writer's in-line identities (chain endpoints, telescoped gross, BLNT fee carry). It proves the rows match what the current code computes from the current lake. It does not prove the accrual arithmetic itself: that is the fold's own tests and the WASM audit docs.
+`stellarindex_lending_interest_proof_failed` fires when a read-only proof found a stored row of `stellar.lending_interest_hourly` that disagrees with the lake. Per window it re-reads the versions with the writer's own coverage-proved read, folds them again and compares the rows under FINAL: the row set, every column byte-exact, `versions` against an independent count of the lake's versions, and the writer's in-line identities (chain endpoints, telescoped gross, BLNT fee carry). It proves the rows match what the current code computes from the current lake. It does not prove the accrual arithmetic itself: that is the fold's own tests and the WASM audit docs.
 
-Read the report: `journalctl -u lending-interest-prove -n 200`.
+Two units run it (`stellarindex-ops ch-entry-history -lending-only -prove -interest`), each with its own verdict series, told apart by the alert's `ops_job` label:
+
+- `lending-interest-prove.service`, daily, `-prove-recent 120960`: the last week to the watermark; `ops_job="ch-entry-history-lending-interest-prove"`.
+- `lending-interest-prove-full.service`, weekly (Saturday): the floor to the watermark; `ops_job="ch-entry-history-lending-interest-prove-full"`, also the series of a run by hand without `-prove-recent`.
+
+A series' gauge changes only on a run that reaches a verdict: a mismatch sets it; only a run over its whole range with no mismatch and no INCOMPLETE hour clears it. A run that errors, ends INCOMPLETE, or is narrowed by `-from`, `-to` or `-interest-pool` leaves a previous mismatch standing, so the alert clears only once step 3 below proves the whole range again.
+
+Read the report: `journalctl -u lending-interest-prove -n 200` (or `-u lending-interest-prove-full`).
 
 - `lending_interest <pool> <asset>: N hours proved, M mismatched, K INCOMPLETE` per reserve; the last line is the verdict (`PROVED`, `MISMATCH` or `INCOMPLETE`).
 - `mismatch <pool> <asset> <hour> <column>: stored X, recomputed Y`: one column of one row. `row: stored present, recomputed none` is a stale row (a re-derive should have deleted it); `stored none` is a missing row; `versions (the lake's count)` is a version lost or doubled.
@@ -237,13 +244,14 @@ Fix: re-derive the named hours, then prove them again (both from `deploy/clickho
 
 1. After a lake re-derive of the range: `ALTER TABLE stellar.lending_interest_hourly DELETE WHERE last_ledger >= {lo} AND first_ledger <= {hi}`, and wait for `system.mutations`.
 2. `stellarindex-ops ch-entry-history -lending-only -interest-only -from <first ledger of the hour> -to <ledger in the last hour> -write`.
-3. `stellarindex-ops ch-entry-history -lending-only -prove -interest -from <l> -to <l>` exits 0.
+3. `stellarindex-ops ch-entry-history -lending-only -prove -interest -from <l> -to <l>` exits 0; then clear the alert with the firing series' whole range: `-prove-recent 120960` for the daily one, no range flag for `…-prove-full` (or `systemctl start lending-interest-prove-full.service`).
+- A seed proof error `no change after the seed of keys K over ledgers [lo, hi] (limit 300s)` is a lake read that timed out, not a verdict: the keys' seeds are old (a reserve untouched since `lo`). Each bucket of keys with seeds within a day of each other is read alone, so one old seed never widens the others; run the proof again off-peak, or look at the key's history in `stellar.ledger_entry_changes` over that range.
 
 Stop serving: once anything reads the table, a mismatch that a re-derive does not clear means the writer and the lake disagree. Gate the read off (or serve those totals as a lower bound) until it proves.
 
 ## Lending interest proof stale
 
-`stellarindex_lending_interest_proof_stale` fires when the proof's last finished run is more than 48 hours old, so the proof gauge no longer describes the table. `systemctl status lending-interest-prove.timer`: it is enabled only where `lending_interest_prove_enabled` is set. A run still going for hours is `heartbeat_stale` or `no_progress` territory; a refused run (lake hole, WASM gate, an underived pool or a key with no history) fires `stellarindex_ops_job_run_failed` and names its reason in the journal. The proof holds the lending_state lock shared: a fire during a lending_state run logs `skipped, a lending_state run holds its lock` and exits 0 without a heartbeat, so repeated skips (a replay or state backfill running for days) end here.
+`stellarindex_lending_interest_proof_stale` fires when a proof's last finished run is older than its cadence allows, so its gauge no longer describes the table: 48 hours for the daily `ops_job="ch-entry-history-lending-interest-prove"`, 8 days for the weekly `…-prove-full`. `systemctl status lending-interest-prove.timer lending-interest-prove-full.timer`: both are enabled only where `lending_interest_prove_enabled` is set, and removed with their textfiles where it is not. A run still going for hours is `heartbeat_stale` or `no_progress` territory; a refused run (lake hole, WASM gate, an underived pool or a key with no history) fires `stellarindex_ops_job_run_failed` and names its reason in the journal. The proof holds the lending_state lock and the interest lock shared, so the state pass and the timer's interest pass skip while it runs. It waits up to 15 minutes for a writer holding either (a state pass, an interest chunk); past that a fire logs `skipped, a lending_state or interest write run held its lock past 15m0s` and exits 0 without a heartbeat, so repeated skips (a replay, state backfill or interest backfill running for days) end here.
 
 ## stellarindex_catchup_lane_failed
 

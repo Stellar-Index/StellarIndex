@@ -18,7 +18,8 @@ shift || true
 if [ "$#" -gt 0 ]; then
   FILES=("$@")
 else
-  FILES=("configs/ansible/roles/archival-node/templates/systemd/lending-interest-prove.service.j2"
+  FILES=("configs/ansible/roles/archival-node/templates/systemd/lending-interest-prove-full.service.j2"
+         "configs/ansible/roles/archival-node/templates/systemd/lending-interest-prove.service.j2"
          "configs/ansible/roles/archival-node/templates/systemd/supply-snapshot.service.j2"
          "configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.service.j2"
          "configs/ansible/roles/archival-node/templates/systemd/verify-lake.service.j2"

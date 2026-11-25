@@ -2,12 +2,13 @@
 #
 # Rendered by Ansible where lending_interest_prove_enabled is set (default off:
 # no host has run -interest-init yet). Re-reads the lake's lending versions
-# over the floor-to-watermark range, folds them again and compares every stored
-# row (deploy/clickhouse/lending_interest.sql). Writes nothing to ClickHouse;
-# its verdict lands in the heartbeat textfile as
-# stellarindex_lending_interest_proof_failed, and the run's exit is non-zero on
-# a mismatch or INCOMPLETE hours. On a host whose interest pass is not
-# initialised it prints so and exits 0.
+# over the last week to the watermark (-prove-recent: 7 × 17,280 ledgers),
+# folds them again and compares every stored row
+# (deploy/clickhouse/lending_interest.sql); lending-interest-prove-full.service
+# proves the whole range weekly. Writes nothing to ClickHouse; its verdict
+# lands in the heartbeat textfile as stellarindex_lending_interest_proof_failed,
+# and the run's exit is non-zero on a mismatch or INCOMPLETE hours. On a host
+# whose interest pass is not initialised it prints so and exits 0.
 
 [Unit]
 Description=Stellar Index — lending interest proof (daily, read-only)
@@ -29,12 +30,14 @@ EnvironmentFile=-/etc/default/lending-interest-prove
 EnvironmentFile=-/etc/default/stellarindex
 EnvironmentFile=-/etc/default/stellarindex-ops
 
-# No -write: -prove only reads. It holds the lending_state lock shared, as interest runs do (the state
-# pass skips while it runs); a fire during a lending_state run skips, exit 0, writing no heartbeat.
+# No -write: -prove only reads. It holds the lending_state and interest locks shared (the state pass
+# and the timer's interest pass skip while it runs), waiting up to 15 min for a writer that holds
+# either; past that the fire skips, exit 0, writing no heartbeat.
 ExecStart=/usr/local/sbin/run-heavy-job.sh lending-interest-prove /usr/local/bin/stellarindex-ops ch-entry-history \
   -lending-only \
   -prove \
   -interest \
+  -prove-recent 120960 \
   -ch-addr ${CH_ADDR} \
   $EXTRA_FLAGS
 
@@ -50,8 +53,8 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# Floor to watermark in 100k-ledger windows, each read twice for coverage and once
-# for versions; 12h of queueing plus the run.
+# A week in 100k-ledger windows, each read twice for coverage and once for
+# versions; 12h of queueing plus the run.
 TimeoutStartSec=86400
 
 # The fold holds one window's versions in process, as the derive does; a window

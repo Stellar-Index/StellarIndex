@@ -1522,7 +1522,7 @@
   when: lending_interest_prove_enabled | bool
   tags: [ops-jobs]
   block:
-    - name: Install lending-interest-prove unit + timer
+    - name: Install lending-interest-prove units + timers (daily last week, weekly full range)
       ansible.builtin.template:
         src: "systemd/{{ item }}.j2"
         dest: "/etc/systemd/system/{{ item }}"
@@ -1530,34 +1530,69 @@
       loop:
         - lending-interest-prove.service
         - lending-interest-prove.timer
+        - lending-interest-prove-full.service
+        - lending-interest-prove-full.timer
       notify: Reload systemd
       register: lending_interest_prove_units
 
-    - name: Enable + start lending-interest-prove.timer
+    - name: Enable + start the lending-interest-prove timers
       ansible.builtin.systemd:
-        name: lending-interest-prove.timer
+        name: "{{ item }}"
         state: started
         enabled: true
         daemon_reload: true
+      loop:
+        - lending-interest-prove.timer
+        - lending-interest-prove-full.timer
       when:
         # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
         - not (ansible_check_mode and lending_interest_prove_units is changed)
 
-- name: Stop + disable lending-interest-prove where the interest pass is not initialised
+- name: Remove lending-interest-prove where the interest pass is not initialised
+  # Removes the textfiles too: left behind, proof_stale fires 48h later for good and a proof_failed=1 never clears.
   when: not (lending_interest_prove_enabled | bool)
   tags: [ops-jobs]
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: stopped
-    enabled: false
-  loop:
-    - lending-interest-prove.timer
-    - lending-interest-prove.service
-  register: retired_unit
-  # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
-  failed_when: >-
-    retired_unit is failed and
-    'Could not find the requested service' not in (retired_unit.msg | default(''))
+  block:
+    - name: Stop + disable lending-interest-prove timers and services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - lending-interest-prove.timer
+        - lending-interest-prove.service
+        - lending-interest-prove-full.timer
+        - lending-interest-prove-full.service
+      register: retired_unit
+      # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+      failed_when: >-
+        retired_unit is failed and
+        'Could not find the requested service' not in (retired_unit.msg | default(''))
+
+    - name: Remove lending-interest-prove unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - lending-interest-prove.timer
+        - lending-interest-prove.service
+        - lending-interest-prove-full.timer
+        - lending-interest-prove-full.service
+      notify: Reload systemd
+
+    - name: Remove the lending-interest-prove heartbeat textfiles
+      ansible.builtin.file:
+        path: "/var/lib/node_exporter/textfile_collector/ops_job_{{ item }}.prom"
+        state: absent
+      loop:
+        - ch-entry-history-lending-interest-prove
+        - ch-entry-history-lending-interest-prove-full
+
+    - name: Clear the failed state left by earlier lending-interest-prove runs
+      ansible.builtin.command:
+        cmd: systemctl reset-failed lending-interest-prove.service lending-interest-prove-full.service
+      changed_when: false
+      failed_when: false  # si-swallow-ok: clearing a failed state that may not exist
 
 - name: Install + enable archive-completeness (networks with a correct cross-anchor)
   when: archive_completeness_enabled | bool
