@@ -113,6 +113,9 @@ expect "cmd/stellarindex-ops/** triggers integration (INT_TEST_PKGS member)" 0
 run integration "internal/ops/chops/ch_cap67_movements.go"
 expect "internal/ops/chops/** triggers integration (driven by test/integration)" 0
 
+run integration "internal/lendinginterest/fold.go"
+expect "internal/lendinginterest/** triggers integration (its end-to-end test is in test/integration)" 0
+
 run integration "internal/ops/archive/reader.go"
 expect "internal/ops/archive/** triggers integration (INT_TEST_PKGS member)" 0
 

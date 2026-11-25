@@ -40,7 +40,8 @@
 # Classes (must stay identical in substance to the `filters:` block in
 # .github/workflows/ci.yml's preflight job):
 #   integration  — internal/storage/**, internal/platform/postgresstore/**,
-#                  internal/ops/{archive,chops}/**, internal/api/v1/**,
+#                  internal/ops/{archive,chops}/**, internal/lendinginterest/**,
+#                  internal/api/v1/**,
 #                  cmd/stellarindex-ops/**, migrations/**,
 #                  scripts/ops/**, test/integration/**, test/harness/**,
 #                  test/fixtures/**, go.mod, go.sum, Makefile,
@@ -92,7 +93,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|internal/api/v1/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness|fixtures)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^scripts/ci/lint-migrations\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$|^configs/ansible/roles/archival-node/tasks/10-observability\.yml$'
+  grep -E '^(internal/storage/|internal/platform/postgresstore/|internal/ops/archive/|internal/ops/chops/|internal/lendinginterest/|internal/api/v1/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness|fixtures)/)|^go\.mod$|^go\.sum$|^Makefile$|^scripts/ci/integration-shard\.sh$|^scripts/ci/lint-migrations\.sh$|^\.github/workflows/ci\.yml$|^deploy/clickhouse/[^/]+\.sql$|^configs/ansible/roles/redis-sentinel/templates/users\.acl\.j2$|^configs/ansible/roles/archival-node/tasks/10-observability\.yml$'
 }
 
 class_go() {

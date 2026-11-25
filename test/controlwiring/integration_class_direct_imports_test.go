@@ -49,7 +49,6 @@ var nightlyOnlyIntegrationImports = map[string]string{
 	"internal/entryhistory":                      nightlyUnitTested,
 	"internal/events":                            nightlyUnitTested,
 	"internal/ledgerstream":                      nightlyUnitTested,
-	"internal/lendinginterest":                   nightlyUnitTested,
 	"internal/obs":                               nightlyUnitTested,
 	"internal/ops/incident":                      nightlyOwnQueries,
 	"internal/ops/ingest":                        nightlyUnitTested,
