@@ -160,6 +160,12 @@ Every read through the API cache wrappers. `cache` is the wrapper name (e.g. `ma
 
 A high `result="miss"` rate despite a running prewarm means prewarm-key drift. Suggested alert: `rate(stellarindex_api_cache_ops_total{result="miss"}[5m]) / rate(stellarindex_api_cache_ops_total{result=~"hit|miss|stale"}[5m]) > 0.5` for 10 min. Keep the denominator to read outcomes, since `evicted` would skew it. A sustained `evicted` rate means churn: working set over the cap, or a key-space walk.
 
+### `stellarindex_api_price_batch_prefetch_total`
+
+Counter, labels `seam`, `result`.
+
+Outcomes of the request-scoped read memo behind `/v1/price/batch`, per read seam (`triangulated`, `freeze`). `hit` is a read answered from the batch prefetch; `fallthrough` a read made as before because the prefetch did not cover the key; `prefetch_error` a prefetch read that failed, leaving its key to be read as before; `capped` a prefetched answer dropped because the request's memo was full. Only requests carrying a memo are counted. `hit / (hit + fallthrough)` is the prefetch's coverage; dashboard-only, not alerted.
+
 ### `stellarindex_api_sparkline7d_rows_total`
 
 Counter, label `result`.

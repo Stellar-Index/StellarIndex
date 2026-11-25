@@ -29,22 +29,32 @@ func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
 	}
 	// One MGET: the aggregator writes all four keys in one MULTI/EXEC, and separate GETs could
 	// straddle a write and pair a value with another write's provenance or stamp.
-	valKey := cachekeys.VWAP(base, quote, window)
-	provKey := cachekeys.VWAPProvenance(base, quote, window)
-	atKey := cachekeys.VWAPObservedAt(base, quote, window)
-	covKey := cachekeys.VWAPCoverage(base, quote, window)
-	got, err := r.RDB.MGet(ctx, valKey.String(), provKey.String(), atKey.String(), covKey.String()).Result()
+	got, err := r.RDB.MGet(ctx, vwapMGetKeys(base, quote, window)...).Result()
 	if err != nil {
-		return v1.CachedVWAP{}, false, fmt.Errorf("vwap cache mget %s: %w", valKey, err)
+		return v1.CachedVWAP{}, false, fmt.Errorf("vwap cache mget %s: %w", cachekeys.VWAP(base, quote, window), err)
 	}
+	v, found := cachedVWAPFrom(got)
+	return v, found, nil
+}
+
+// vwapMGetKeys are the four keys of one VWAP read, in the order [cachedVWAPFrom] decodes.
+func vwapMGetKeys(base, quote canonical.Asset, window time.Duration) []string {
+	return []string{
+		cachekeys.VWAP(base, quote, window).String(), cachekeys.VWAPProvenance(base, quote, window).String(),
+		cachekeys.VWAPObservedAt(base, quote, window).String(), cachekeys.VWAPCoverage(base, quote, window).String(),
+	}
+}
+
+// cachedVWAPFrom decodes one VWAP read's MGET reply; found is false for no value or no readable stamp.
+func cachedVWAPFrom(got []any) (v1.CachedVWAP, bool) {
 	val, ok := got[0].(string)
 	if !ok {
-		return v1.CachedVWAP{}, false, nil
+		return v1.CachedVWAP{}, false
 	}
 	rawAt, _ := got[2].(string)
 	observedAt, err := cachekeys.ParseVWAPObservedAt(rawAt)
 	if err != nil {
-		return v1.CachedVWAP{}, false, nil //nolint:nilerr // no readable stamp is a miss, not a Redis error
+		return v1.CachedVWAP{}, false
 	}
 	// A missing marker means a direct VWAP (per the marker contract):
 	// found=true, isTriangulated=false — served, but not labelled triangulated.
@@ -60,7 +70,7 @@ func (r RedisTriangulatedLooker) LookupTriangulatedVWAP(
 			out.Coverage = &c
 		}
 	}
-	return out, true, nil
+	return out, true
 }
 
 // LookupCompositeMeta reads the router quality-flags blob written alongside a triangulated composite; best-effort, any error leaves the flags unset rather than failing the request.

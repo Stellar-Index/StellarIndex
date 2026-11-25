@@ -187,6 +187,7 @@ func registerAPIServingMetrics() {
 	Registry.MustRegister(
 		PricingGuardDegradedTotal,
 		APICacheOpsTotal,
+		APIPriceBatchPrefetchTotal,
 		APICoverageFloorProbesTotal,
 		APILCMHomeDomainFallbackTotal,
 		APISparkline7dRowsTotal,
@@ -910,6 +911,15 @@ var APICacheOpsTotal = prometheus.NewCounterVec(
 		Help: "Cache operations in API cache wrappers (in-memory and *_redis read-through), labelled by cache name + op + result (read outcomes hit|miss|stale|error, side-events refresh|refresh_error|evicted).",
 	},
 	[]string{"cache", "op", "result"},
+)
+
+// APIPriceBatchPrefetchTotal counts /v1/price/batch read-memo outcomes per seam: hit, fallthrough, prefetch_error, capped.
+var APIPriceBatchPrefetchTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_price_batch_prefetch_total",
+		Help: "Batch price read-memo outcomes per seam: hit (answered from the prefetch), fallthrough (read as before), prefetch_error (a prefetch read failed; key left unfilled), capped (memo full; key left unfilled).",
+	},
+	[]string{"seam", "result"},
 )
 
 // ─── Ingestion-layer metrics ─────────────────────────────────────
