@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -21,7 +22,7 @@ const lendingInterestJob = "ch-entry-history-lending-interest"
 
 // lendingInterestRev is every row's derive_rev. Bump it, and re-derive, on any change to blend/accrual.go,
 // blnt/accrual.go or internal/lendinginterest: rows are computed when written, not decoded at read time.
-const lendingInterestRev uint16 = 1
+const lendingInterestRev uint16 = 2
 
 // interestFlags are the -interest-* flags.
 type interestFlags struct {
@@ -46,25 +47,27 @@ func (f *interestFlags) register(fs *flag.FlagSet) {
 
 // Seams so the interest pass is testable without a live lake.
 var (
-	lendingInterestWatermark = clickhouse.LendingInterestWatermark
-	lendingInterestFloor     = clickhouse.LendingInterestFloor
-	lendingInterestStateWM   = clickhouse.LendingStateWatermark
-	lendingInterestHour      = clickhouse.LendingInterestHour
-	lendingInterestKeys      = clickhouse.LendingInterestKeys
-	lendingInterestSeeds     = clickhouse.LendingInterestSeeds
-	lendingInterestVersions  = clickhouse.LendingInterestVersions
-	lendingInterestState     = clickhouse.LendingInterestStateRows
-	lendingInterestUncovered = clickhouse.LendingInterestUncoveredPools
-	insertLendingInterest    = clickhouse.InsertLendingInterestRows
-	deleteSupersededInterest = clickhouse.DeleteSupersededLendingInterestRows
-	setLendingInterestWM     = clickhouse.SetLendingInterestWatermark
-	setLendingInterestPoolWM = clickhouse.SetLendingInterestPoolWatermark
-	lendingInterestServerNow = clickhouse.ServerNow
-	lendingInterestUnderived = clickhouse.LendingInterestUnderivedPools
-	lendingInterestRedo      = clickhouse.LendingInterestPendingRedo
-	advanceLendingRedo       = clickhouse.AdvanceLendingInterestRedo
-	lendingInterestRegistry  = lendingRegistry
-	openLendingCodeHistory   = func(ctx context.Context, addr string) (lendingCodeHistory, func(), error) {
+	lendingInterestWatermark     = clickhouse.LendingInterestWatermark
+	lendingInterestFloor         = clickhouse.LendingInterestFloor
+	lendingInterestStateWM       = clickhouse.LendingStateWatermark
+	lendingInterestHour          = clickhouse.LendingInterestHour
+	lendingInterestKeys          = clickhouse.LendingInterestKeys
+	lendingInterestSeeds         = clickhouse.LendingInterestSeeds
+	lendingInterestVersions      = clickhouse.LendingInterestVersions
+	lendingInterestEvents        = clickhouse.LendingInterestEvents
+	lendingInterestEventsCovered = clickhouse.LendingInterestEventsCovered
+	lendingInterestState         = clickhouse.LendingInterestStateRows
+	lendingInterestUncovered     = clickhouse.LendingInterestUncoveredPools
+	insertLendingInterest        = clickhouse.InsertLendingInterestRows
+	deleteSupersededInterest     = clickhouse.DeleteSupersededLendingInterestRows
+	setLendingInterestWM         = clickhouse.SetLendingInterestWatermark
+	setLendingInterestPoolWM     = clickhouse.SetLendingInterestPoolWatermark
+	lendingInterestServerNow     = clickhouse.ServerNow
+	lendingInterestUnderived     = clickhouse.LendingInterestUnderivedPools
+	lendingInterestRedo          = clickhouse.LendingInterestPendingRedo
+	advanceLendingRedo           = clickhouse.AdvanceLendingInterestRedo
+	lendingInterestRegistry      = lendingRegistry
+	openLendingCodeHistory       = func(ctx context.Context, addr string) (lendingCodeHistory, func(), error) {
 		r, err := clickhouse.NewExplorerReader(ctx, addr)
 		if err != nil {
 			return nil, nil, err
@@ -83,6 +86,7 @@ type interestPass struct {
 	addr       string
 	pools      []clickhouse.LendingContract
 	opts       lendinginterest.Options
+	events     interestEventDecoder
 	code       map[string][]clickhouse.ContractCodeVersion
 	dryRun     bool
 	rederive   bool // the run starts at or below the watermark: rows it no longer writes are deleted
@@ -92,6 +96,8 @@ type interestPass struct {
 	cursorAt   *uint32 // the heartbeat cursor when it is not the run's progress
 	log        io.Writer
 	proof      *interestProof // set on -prove -interest: compare, never write
+	// undecodable counts the cause events the run's folded reads could not decode.
+	undecodable int64
 }
 
 // interestPlan is what a run derives: [start, last] over pools, marked by mark.
@@ -410,6 +416,14 @@ type interestCarry struct {
 	seedCheck bool
 	known     map[string]bool // keys seeded or read: any other key's first version must be its creation
 	derived   map[string]bool // pools whose instance lending_state is proved to hold
+	// eventReads counts the cause events read per ledger of the carried open hour, for its census when it commits.
+	eventReads map[uint32]uint64
+}
+
+// takeReads keeps the window's event read counts for the ledgers after thru, the open hour the carry continues.
+func (st *interestCarry) takeReads(reads map[uint32]uint64, thru uint32) {
+	maps.Copy(st.eventReads, reads)
+	maps.DeleteFunc(st.eventReads, func(l uint32, _ uint64) bool { return l <= thru })
 }
 
 // run derives [start, last] window by window; start is the first ledger of an hour.
@@ -421,7 +435,9 @@ func (p *interestPass) run(ctx context.Context, start, last uint32) error {
 	if h.First != start {
 		return fmt.Errorf("lending interest: start %d is not the first ledger of its hour (%d)", start, h.First)
 	}
-	st := interestCarry{seed: lendinginterest.Seeds{CommittedBefore: h.Hour}, from: start}
+	st := interestCarry{seed: lendinginterest.Seeds{CommittedBefore: h.Hour}, from: start, eventReads: map[uint32]uint64{}}
+	p.events = newInterestEventDecoder(p.opts.Protocols)
+	p.countUndecodable(nil)
 	runStart := time.Now()
 	for lo, n := start, 0; lo <= last; n++ {
 		if p.maxWindows > 0 && n == p.maxWindows {
@@ -484,6 +500,7 @@ func (p *interestPass) window(ctx context.Context, st *interestCarry, lo, hi uin
 	}
 	st.seedRows, st.seedCheck = nil, false
 	st.seed, st.from = w.carry, w.thru+1
+	st.takeReads(w.reads, w.thru)
 	return nil
 }
 
@@ -496,6 +513,7 @@ type foldedWindow struct {
 	carry    lendinginterest.Seeds
 	versions []lendinginterest.Version // the fold's input: the carry's open hour, then the window's read
 	state    []clickhouse.LendingInterestStateRow
+	reads    map[uint32]uint64 // cause events read per ledger of the window
 }
 
 // fold reads and folds [lo, hi]; ok is false, with the carry already taken, when no hour completes in it.
@@ -527,16 +545,27 @@ func (p *interestPass) fold(ctx context.Context, st *interestCarry, lo, hi uint3
 	if err := st.checkNewKeys(vs); err != nil {
 		return foldedWindow{}, false, err
 	}
-	w := foldedWindow{from: st.seed.CommittedBefore}
+	opts := p.opts
+	var reads map[uint32]uint64
+	budget := lendingInterestMaxVersions - len(st.seed.Pending) - len(vs)
+	if opts.Events, reads, err = p.readInterestEvents(ctx, lo, hi, budget); err != nil {
+		return foldedWindow{}, false, err
+	}
+	w := foldedWindow{from: st.seed.CommittedBefore, reads: reads}
 	if w.to, w.thru, err = p.commitPoint(ctx, hi); err != nil {
 		return foldedWindow{}, false, err
 	}
-	if w.rows, w.carry, err = lendinginterest.Fold(st.seed, vs, w.to, p.opts); err != nil {
+	if w.rows, w.carry, err = lendinginterest.Fold(st.seed, vs, w.to, opts); err != nil {
 		return foldedWindow{}, false, err
 	}
+	p.countUndecodable(opts.Events) // after the fold: a window halved before it is read again
 	if !w.to.After(w.from) {
 		st.seed = w.carry // no hour completes in the window
+		st.takeReads(w.reads, 0)
 		return foldedWindow{}, false, nil
+	}
+	if err := p.eventsCovered(ctx, w.rows, st.eventReads, w.reads); err != nil {
+		return foldedWindow{}, false, err
 	}
 	if w.state, err = p.stateRows(ctx, keys, w.rows, w.from, w.to); err != nil {
 		return foldedWindow{}, false, err

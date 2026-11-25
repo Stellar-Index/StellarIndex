@@ -74,14 +74,18 @@ type Seeds struct {
 	// Fees is per BLNT pool; an empty map, not an absent one, states that the entry was never stored.
 	Fees            map[string][]blnt.ProtocolFees
 	Pending         []Version
+	PendingEvents   []Event   // the open hour's events
 	CommittedBefore time.Time // hours before this were emitted by an earlier call
 }
 
-// Options are Fold's inputs other than the data.
+// Options are Fold's inputs other than the versions.
 type Options struct {
 	Protocols map[string]Protocol // per pool; a pool absent here refuses the call
 	// MaxUnordered bounds each emitted row's UnorderedVersions; per row, so no verdict depends on where calls cut.
 	MaxUnordered int
+	// Events are the cause events of the versions' ledgers, read as completely as the versions; an event the
+	// caller did not read can only leave a residual unexplained, as can a CauseUndecodable marker in its transaction.
+	Events []Event
 }
 
 // HourRow is the interest one reserve accrued in one UTC hour; the column comments are in lending_interest.sql.
@@ -106,9 +110,16 @@ type HourRow struct {
 	SupplyResidual       *big.Int
 	FeeMismatches        uint32
 	FeeCreditResidual    *big.Int
-	UnorderedVersions    uint32
-	AccrualErrors        uint32
-	ErrorSamples         []string
+	// Every unreconciled version is explained, attributed or unexplained, with its backstop residual; the
+	// unexplained pair is not stored (each is the row's residual or unreconciled count less the other two).
+	ResidualExplained, ResidualAttributed, ResidualUnexplained *big.Int
+	ExplainedVersions, AttributedVersions, UnexplainedVersions uint32
+	// ResidualLedgers are the ledgers of the versions classified by their events, ascending: the caller proves
+	// their events were read in full. Not stored.
+	ResidualLedgers   []uint32
+	UnorderedVersions uint32
+	AccrualErrors     uint32
+	ErrorSamples      []string
 	// ExcludedCreditDelta is Σ backstop_credit deltas of unordered and errored versions, for the
 	// in-line backstop identity; not stored.
 	ExcludedCreditDelta *big.Int
@@ -152,6 +163,11 @@ func Fold(seed Seeds, versions []Version, commitBefore time.Time, opts Options) 
 	if err != nil {
 		return nil, Seeds{}, err
 	}
+	allEvents := make([]Event, 0, len(seed.PendingEvents)+len(opts.Events))
+	if st.events, err = indexEvents(append(append(allEvents, seed.PendingEvents...), opts.Events...), opts, seed.CommittedBefore); err != nil {
+		return nil, Seeds{}, err
+	}
+	st.poisoned = poisonedTxs(st.events)
 	for _, l := range ledgerPools(committed) {
 		st.poolLedger(l)
 	}

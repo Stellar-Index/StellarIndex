@@ -609,7 +609,7 @@ func InsertLendingInterestRows(ctx context.Context, addr string, rows []lendingi
 		if err := batch.Append(r.Pool, string(r.Protocol), r.Asset, r.Hour.UTC(), r.FirstLedger, r.LastLedger, r.Versions,
 			r.AccruedVersions, r.Gross, r.ProtocolFee, r.Backstop, r.SupplierIntended, r.SupplierRealised,
 			r.BackstopCreditDelta, r.UnreconciledVersions, r.BRateMismatches, r.BackstopResidual, r.SupplyResidual,
-			r.FeeMismatches, r.FeeCreditResidual, new(big.Int), new(big.Int), uint32(0), uint32(0),
+			r.FeeMismatches, r.FeeCreditResidual, r.ResidualExplained, r.ResidualAttributed, r.ExplainedVersions, r.AttributedVersions,
 			r.UnorderedVersions, r.AccrualErrors, samples, rev); err != nil {
 			return fmt.Errorf("append lending_interest_hourly %s/%s/%s: %w", r.Pool, r.Asset, r.Hour, err)
 		}
@@ -620,7 +620,7 @@ func InsertLendingInterestRows(ctx context.Context, addr string, rows []lendingi
 func checkLendingInterestRow(r lendinginterest.HourRow) error {
 	for _, n := range []*big.Int{
 		r.Gross, r.ProtocolFee, r.Backstop, r.SupplierIntended, r.SupplierRealised,
-		r.BackstopCreditDelta, r.BackstopResidual, r.SupplyResidual, r.FeeCreditResidual,
+		r.BackstopCreditDelta, r.BackstopResidual, r.SupplyResidual, r.FeeCreditResidual, r.ResidualExplained, r.ResidualAttributed,
 	} {
 		if n == nil {
 			return fmt.Errorf("clickhouse: lending interest row %s/%s/%s has a missing amount", r.Pool, r.Asset, r.Hour)

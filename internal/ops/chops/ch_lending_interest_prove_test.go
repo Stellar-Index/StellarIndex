@@ -39,8 +39,8 @@ func newProofFixture(t *testing.T, edit ...func(*fakeInterestLake)) *proofFixtur
 		s.Baselines, s.ExcludedCreditDelta, s.FeeOnlyCreditDelta, s.FeeOnlyCarryDelta, s.FeeOnlyVersions, s.FeeOnlyUnknown = 0, nil, nil, nil, 0, 0
 		s.Excluded = nil
 		p.stored = append(p.stored, clickhouse.LendingInterestStoredRow{
-			Row: s, ResidualExplained: new(big.Int), ResidualAttributed: new(big.Int),
-			DeriveRev: lendingInterestRev,
+			Row: s, ResidualExplained: new(big.Int).Set(r.ResidualExplained), ResidualAttributed: new(big.Int).Set(r.ResidualAttributed),
+			ExplainedVersions: r.ExplainedVersions, AttributedVersions: r.AttributedVersions, DeriveRev: lendingInterestRev,
 		})
 	}
 	if len(p.stored) != 4 {
@@ -158,14 +158,15 @@ func TestProveInterest_Mismatches(t *testing.T) {
 	}
 }
 
-// A row of another derive revision is INCOMPLETE, not compared: non-zero exit, but no proof failure.
+// A row of another derive revision is INCOMPLETE, not compared: non-zero exit, but no proof failure. Revision 1
+// rows predate the event classification, so every one of them is INCOMPLETE until re-derived.
 func TestProveInterest_StaleRevisionIsIncomplete(t *testing.T) {
 	p := newProofFixture(t)
-	p.stored[2].DeriveRev = lendingInterestRev - 1
+	p.stored[2].DeriveRev = 1
 	p.stored[2].Row.Gross = big.NewInt(-1) // an older arithmetic's value is not a mismatch
 	out, gauge, err := p.prove(t, lendingRun{})
 	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" ||
-		!strings.Contains(out, "derive_rev 0, this binary derives 1") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
+		!strings.Contains(out, "derive_rev 1, this binary derives 2") || !strings.Contains(out, "3 hours proved, 0 mismatched, 1 INCOMPLETE") {
 		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
 	}
 }

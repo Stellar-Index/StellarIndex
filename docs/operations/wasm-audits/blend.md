@@ -499,10 +499,34 @@ It is not a review of those binaries.
   V2: 5,568 version pairs, all exact. V1: 522 pairs, 520 exact; the two others
   are interest-auction fills (ledgers 53013801 and 55011953). Recorded in the
   audit run's `design-open-items.md`, outside this repo.
+- **Residual classes** (`lendinginterest.CauseRules`). A residual is explained
+  only by a same-transaction event of the pool whose amount equals it
+  exactly. Read from the cited tags' source (not from a real case in the repo):
+  - V2 interest fill (`fill_auction`, type 2): `fill_interest_auction` in
+    `backstop_interest_auction.rs` loads the reserve with accrual, then does
+    `backstop_credit -= lot_amount` over the filled, scaled lot that
+    `pool/src/pool/actions.rs` emits as `filled_auction_data`. Residual =
+    −lot[asset], no rounding.
+  - V2 `gulp`: `execute_gulp` (`pool/src/pool/gulp.rs`) does
+    `backstop_credit += token_balance_delta`, the `token_delta` the event
+    carries. Residual = +token_delta, no rounding.
+  - V1 interest fill: v1.0.0's `actions.rs` emits `(filler, fill_percent)`
+    only, so the lot is unknown: the version is **attributed**, never
+    explained, and a total over it is a lower bound. Its `backstop_credit -=
+    lot_amount` is the same as V2's.
+  - Shape on real bytes: V1 interest fills at 52504175, 52850307, 55803349
+    in `test/fixtures/blend/v1-pool-auctions/`. No V2 interest fill or gulp
+    is in the repo's fixtures.
 
 Open before the table is served:
 
 1. Confirm the build-to-hash correspondence of both tags (rebuild and
    compare, or a published attestation).
 2. Capture V1 ledger 55011953 as golden data; only 53013801 is in the repo.
-3. Match both V1 residuals to their `fill_auction` events.
+3. Check the attribution of both V1 residuals against their real
+   `fill_auction` events with the prove pass (the 53013801 test uses a
+   synthetic event at the golden version's transaction).
+4. Unexplained by design until their amount relation is reproduced:
+   `defaulted_debt` (V2 cuts b_rate by `fixed_div_ceil(to_asset_from_d_token
+   (d_tokens_burnt), b_supply)`; the fold's supply_residual is not that
+   amount), `bad_debt`, and V1 `update_pool`'s retroactive bstop_rate.

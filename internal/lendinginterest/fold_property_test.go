@@ -32,7 +32,9 @@ type gen struct {
 	res           map[ReserveKey]blend.ReserveData
 	fees          map[string]blnt.ProtocolFees
 	evicted       map[ReserveKey]bool
+	cfg           map[string]uint32
 	out           []Version
+	events        []Event
 	ledger        uint32
 	now           time.Time
 	intra, change uint32
@@ -42,13 +44,14 @@ func generate(seed int64) ([]Version, Seeds, Options) {
 	g := &gen{
 		rng: rand.New(rand.NewSource(seed)), //nolint:gosec // deterministic test data
 		res: map[ReserveKey]blend.ReserveData{}, fees: map[string]blnt.ProtocolFees{"P2": {}},
-		evicted: map[ReserveKey]bool{}, ledger: 1000, now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		evicted: map[ReserveKey]bool{}, ledger: 1000, now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), cfg: map[string]uint32{},
 	}
 	opts := Options{Protocols: map[string]Protocol{}}
 	seeds := Seeds{Configs: map[string][]uint32{}, Fees: map[string][]blnt.ProtocolFees{"P2": {{}}}}
 	for _, p := range genPools {
 		opts.Protocols[p.pool] = p.proto
 		seeds.Configs[p.pool] = []uint32{2_000_000}
+		g.cfg[p.pool] = 2_000_000
 	}
 	steps := []time.Duration{5 * time.Second, 3 * time.Minute, 25 * time.Minute, 5 * time.Hour}
 	for range 30 + g.rng.Intn(30) {
@@ -56,6 +59,7 @@ func generate(seed int64) ([]Version, Seeds, Options) {
 		g.now = g.now.Add(steps[g.rng.Intn(len(steps))])
 		g.ledgerVersions()
 	}
+	opts.Events = g.events
 	return g.out, seeds, opts
 }
 
@@ -107,6 +111,7 @@ func (g *gen) tx() {
 			v := g.version(p.pool, tx, KindConfig)
 			v.BstopRate = uint32(1_000_000 * (1 + g.rng.Intn(2))) //nolint:gosec // small
 			g.out = append(g.out, v)
+			g.cfg[p.pool] = v.BstopRate // in force from the next transaction
 		}
 	}
 	if p.proto == BLNT && (feeOnly || g.rng.Intn(3) > 0) {
@@ -154,6 +159,50 @@ func (g *gen) reserve(pool, asset string, proto Protocol, tx string) {
 	v := g.version(pool, tx, KindReserve)
 	v.Asset, v.Reserve = asset, next
 	g.out = append(g.out, v)
+	if ok {
+		g.causeEvent(v, proto, cur)
+	}
+}
+
+// causeEvent sometimes adds an event to the reserve's transaction: on V2 a fill whose lot is the pair's
+// residual as generated (explained when the pair is summed in that order), one unit off, or the same in another
+// transaction of the ledger; a V1 fill (attributed when a draw); a BLNT gulp of a random amount.
+func (g *gen) causeEvent(v Version, proto Protocol, prev blend.ReserveData) {
+	e := Event{Pool: v.Pool, Ledger: v.Ledger, TxHash: v.TxHash, EventIndex: uint32(len(g.events)), CloseTime: v.CloseTime} //nolint:gosec // small
+	switch proto {
+	case BlendV1:
+		if g.rng.Intn(3) > 0 {
+			return
+		}
+		e.Cause = CauseInterestFillV1
+	case BLNT:
+		if g.rng.Intn(4) > 0 {
+			return
+		}
+		e.Cause, e.Asset, e.Amount = CauseGulp, v.Asset, big.NewInt(g.rng.Int63n(5))
+	default:
+		amt := big.NewInt(1)
+		if a, err := blend.AccrueBetween(prev, v.Reserve, g.cfg[v.Pool]); err == nil {
+			amt = a.BackstopResidual
+		}
+		e.Cause, e.Asset, e.Amount = CauseInterestFill, v.Asset, amt
+		switch g.rng.Intn(5) {
+		case 0, 1:
+		case 2:
+			e.Amount = new(big.Int).Add(amt, big.NewInt(1))
+		case 3:
+			e.TxHash += "x"
+		default:
+			return
+		}
+	}
+	g.events = append(g.events, e)
+	if proto != BlendV1 && len(g.events)%4 == 0 {
+		// An undecodable event beside it: the transaction's residual stays unexplained in every split. Not on V1,
+		// whose few attributed versions the class check below needs; and off the rng, whose draws decide them.
+		e.Cause, e.Asset, e.Amount, e.EventIndex = CauseUndecodable, "", nil, uint32(len(g.events)) //nolint:gosec // small
+		g.events = append(g.events, e)
+	}
 }
 
 func (g *gen) evict() {
@@ -193,6 +242,7 @@ func TestFold_SplitProperty(t *testing.T) {
 	if testing.Short() {
 		seeds = 40
 	}
+	var classes [3]uint32
 	for s := range seeds {
 		vs, seed, opts := generate(int64(s))
 		opts.MaxUnordered = math.MaxInt
@@ -201,6 +251,11 @@ func TestFold_SplitProperty(t *testing.T) {
 			t.Fatalf("seed %d: %v", s, err)
 		}
 		checkInvariant(t, rows)
+		for _, r := range rows {
+			classes[0] += r.ExplainedVersions
+			classes[1] += r.AttributedVersions
+			classes[2] += r.UnexplainedVersions
+		}
 		worst := 0
 		for _, r := range rows {
 			worst = max(worst, int(r.UnorderedVersions))
@@ -211,6 +266,10 @@ func TestFold_SplitProperty(t *testing.T) {
 				checkSplitProperty(t, s, seed, vs, opts)
 			}
 		}
+	}
+	// The generated data must reach every class, or split invariance of the event columns is untested.
+	if classes[0] == 0 || classes[1] == 0 || classes[2] == 0 {
+		t.Fatalf("explained, attributed, unexplained versions over all seeds: %v", classes)
 	}
 }
 

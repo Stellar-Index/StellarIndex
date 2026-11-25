@@ -1517,7 +1517,7 @@ func checkLiRows(t *testing.T, ctx context.Context, conn driver.Conn, pool, asse
 		if i >= len(want) {
 			t.Fatalf("extra row at %s", hour)
 		}
-		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 1 || feeMismatch != 0 {
+		if !hour.Equal(first.Add(time.Duration(i)*time.Hour)) || fl != firstLedgers[i] || ll != lastLedgers[i] || rev != 2 || feeMismatch != 0 {
 			t.Errorf("row %d: %s ledgers %d-%d rev %d fee mismatches %d", i, hour, fl, ll, rev, feeMismatch)
 		}
 		w := &want[i]
@@ -1536,5 +1536,148 @@ func checkLiRows(t *testing.T, ctx context.Context, conn driver.Conn, pool, asse
 	}
 	if err := rows.Err(); err != nil || i != len(want) {
 		t.Fatalf("read %d rows (%v), want %d", i, err, len(want))
+	}
+}
+
+// liFillFixture is the real BLNT interest-auction fill at 65225244; its lot pays 62201350 of liFillAsset.
+const (
+	liFillFixture = "../fixtures/blnt/0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356/fill_auction_pool_65225244_e90acf3a6cb0_3_CACSQW.json"
+	liFillAsset   = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+)
+
+// TestChEntryHistoryLending_InterestEvents: a backstop_credit draw that the pool's own interest fill in the same
+// transaction pays exactly is explained; a draw with no event stays unexplained; the proof passes on this revision
+// and reports a row of revision 1 INCOMPLETE.
+func TestChEntryHistoryLending_InterestEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if err := conn.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	for _, tbl := range []string{"entry_history_watermark", "lending_state_hourly", "lending_interest_hourly"} {
+		exec(`TRUNCATE TABLE stellar.` + tbl)
+	}
+	// Below TestChEntryHistoryLending_InterestPass's ledgers: the shared lake keeps the unaudited upgrade it writes.
+	const base = uint32(171_400_000)
+	pool := seedLendingDeploy(t, ctx, addr, base)
+	var poolID, yieldID, asset xdr.ContractId
+	copy(poolID[:], strkey.MustDecode(strkey.VersionByteContract, pool))
+	copy(yieldID[:], strkey.MustDecode(strkey.VersionByteContract, blnt.MainnetYieldBlentPool))
+	copy(asset[:], strkey.MustDecode(strkey.VersionByteContract, liFillAsset))
+	resKey := resDataKeyB64(t, poolID, asset)
+	instKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance})
+	feeSym := xdr.ScSymbol("ProtocolFees")
+	feeVec := &xdr.ScVec{{Type: xdr.ScValTypeScvSymbol, Sym: &feeSym}}
+	feeKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &feeVec})
+
+	at := func(h int) time.Time { return time.Date(2027, 2, 21, h, 10, 0, 0, time.UTC) }
+	seqs := []uint32{base - 1, base, base + 1, base + 2, base + 3, base + 4}
+	entryHistorySeedLedgers(t, ctx, addr, seqs, 1, false)
+	for i, s := range seqs {
+		exec(`ALTER TABLE stellar.ledgers UPDATE close_time = ? WHERE ledger_seq = ? SETTINGS mutations_sync = 2`, at(9+i), s)
+	}
+	exec(`INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`, chstore.ContractInstanceChangesTable, base+100)
+
+	entry := func(v xdr.ScVal) string { return lendingPoolEntryB64(t, poolID, v) }
+	change := func(i uint32, intra, idx uint32, ct, k, e string) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: base + i, CloseTime: at(10 + int(i)), TxHash: "7" + strconv.Itoa(int(i)), ChangeIndex: idx,
+			ChangeType: ct, EntryType: "contract_data", KeyXDR: k, EntryXDR: e, IntraLedgerSeq: intra,
+		}
+	}
+	rs := []liReserve{{"1000000000000", "1000000000000", "100000000", 1000}}
+	rows := []chstore.LedgerEntryChangeRow{
+		change(0, 1, 0, "created", instKey, entry(liInstanceVal(t, asset, liBLNTPoolWASM))),
+		change(0, 1, 1, "created", lendingKeyB64(t, yieldID, xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance}),
+			lendingPoolEntryB64(t, yieldID, liInstanceVal(t, asset, liBLNTPoolWASM))),
+		change(0, 2, 2, "created", resKey, entry(rs[0].val(t))),
+		change(0, 3, 3, "created", feeKey, entry(liFeesVal(t, asset, "0", "0"))),
+	}
+	// Ledger base+1 draws the fill's lot, base+2 an amount no event states, base+3 reconciles. b_rate and the fee
+	// entry follow accrual, so only backstop_credit carries a residual.
+	fee := blnt.ProtocolFee{Credit: big.NewInt(0), Carry: big.NewInt(0)}
+	for i, draw := range []int64{62_201_350, 1_234, 0} {
+		prev := rs[len(rs)-1]
+		next := liReserve{dRate: strconv.Itoa(1_000_100_000_000 + i*100_000_000), lastTime: prev.lastTime + 1000, bRate: prev.bRate, bc: prev.bc}
+		a, err := blnt.AccrueBetween(prev.data(), next.data(), fee, fee, 2_000_000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next.bRate = a.ExpectedBRate.String()
+		next.bc = new(big.Int).Sub(new(big.Int).Add(prev.data().BackstopCredit, a.Backstop), big.NewInt(draw)).String()
+		rs, fee = append(rs, next), a.ExpectedFees
+		rows = append(rows, change(uint32(i+1), 1, 0, "updated", resKey, entry(next.val(t))), //nolint:gosec // < 4
+			change(uint32(i+1), 2, 1, "updated", feeKey, entry(liFeesVal(t, asset, fee.Credit.String(), fee.Carry.String())))) //nolint:gosec // < 4
+	}
+	u := change(4, 1, 0, "updated", "AAAAunrelatedEvents", "")
+	u.EntryType = "account"
+	insertEntryChanges(t, ctx, append(rows, u)...)
+
+	raw, err := os.ReadFile(liFillFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fill struct {
+		Topics []string `json:"topics"`
+		Value  string   `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &fill); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO stellar.contract_events (ledger_seq, close_time, tx_hash, op_index, event_index, contract_id, event_type,
+		topic_count, topic_0_sym, topics_xdr, data_xdr, in_successful_call) VALUES (?, ?, '71', 0, 0, ?, 'contract', 3, 'fill_auction', ?, ?, 1)`,
+		base+1, at(11), pool, fill.Topics, fill.Value)
+	exec(`ALTER TABLE stellar.ledgers UPDATE soroban_event_count = 1 WHERE ledger_seq = ? SETTINGS mutations_sync = 2`, base+1)
+
+	if err := liRun(t, addr, base, "-from", liU(base), "-to", liU(base+4)); err != nil {
+		t.Fatalf("state pass: %v", err)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-interest-init"); err != nil {
+		t.Fatalf("interest init: %v", err)
+	}
+	type cls struct {
+		hour                                  time.Time
+		unreconciled, explained, attributed   uint32
+		residual, resExplained, resAttributed string
+		rev                                   uint16
+	}
+	q, err := conn.Query(ctx, `SELECT hour, unreconciled_versions, explained_versions, attributed_versions, toString(backstop_residual),
+		toString(residual_explained), toString(residual_attributed), derive_rev FROM stellar.lending_interest_hourly FINAL
+		WHERE contract_id = ? AND asset = ? AND hour > ? ORDER BY hour`, pool, liFillAsset, at(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []cls
+	for q.Next() {
+		var c cls
+		if err := q.Scan(&c.hour, &c.unreconciled, &c.explained, &c.attributed, &c.residual, &c.resExplained, &c.resAttributed, &c.rev); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, c)
+	}
+	_ = q.Close()
+	h := func(n int) time.Time { return time.Date(2027, 2, 21, n, 0, 0, 0, time.UTC) }
+	want := []cls{
+		{h(11), 1, 1, 0, "-62201350", "-62201350", "0", 2}, // the fill's lot, exactly
+		{h(12), 1, 0, 0, "-1234", "0", "0", 2},             // no event: unexplained
+		{h(13), 0, 0, 0, "0", "0", "0", 2},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("rows\n%+v\nwant\n%+v", got, want)
+	}
+	out, gauge, err := liProve(t, addr)
+	if err != nil || gauge != "0" || !strings.Contains(out, "unexplained versions 1") {
+		t.Fatalf("prove of the explained and unexplained rows: err %v gauge %s\n%s", err, gauge, out)
+	}
+	exec(`ALTER TABLE stellar.lending_interest_hourly UPDATE derive_rev = 1 WHERE contract_id = ? AND hour = ? SETTINGS mutations_sync = 2`,
+		pool, h(11))
+	out, gauge, err = liProve(t, addr)
+	if err == nil || !strings.Contains(err.Error(), "INCOMPLETE") || gauge != "0" || !strings.Contains(out, "derive_rev 1, this binary derives 2") {
+		t.Fatalf("prove over a revision-1 row: err %v gauge %s\n%s", err, gauge, out)
 	}
 }
