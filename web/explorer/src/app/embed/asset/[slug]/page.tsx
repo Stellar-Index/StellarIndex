@@ -9,17 +9,14 @@ import { LiveChangeChip } from '../../LiveChangeChip';
 // plus the spec'd since board #33; narrowed-to-required here coin-overlay fields this widget reads:
 // price_history_24h / change_1h_pct / change_7d_pct).
 import type { Coin } from '@/api/hooks';
-import { API_BASE_URL, buildHeaders } from '@/api/client';
 import {
   compareDecimalStrings,
   formatCompactUnits,
   formatPriceSmall,
 } from '@/lib/format';
-import { isCIStub } from '@/lib/buildFetch';
+import { buildFetchOptional, isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ slug: string }>;
 
@@ -51,17 +48,13 @@ function getAssetIndex(): Promise<AssetIndex> {
     const byKey = new Map<string, string>();
     const rows = new Map<string, Coin>();
     if (isCIStub) return { slugs, byKey, rows };
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/v1/assets?limit=500&include=sparkline24h`,
-        {
-          headers: buildHeaders(),
-          signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-        },
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const env = (await res.json()) as { data: Coin[] };
-      for (const row of env.data ?? []) {
+    // A failed listing leaves the index empty: generateStaticParams falls
+    // back to the single anchor slug and the sparkline fallback renders no chart.
+    const listing = await buildFetchOptional<Coin[]>(
+      '/v1/assets?limit=500&include=sparkline24h',
+    );
+    if (listing) {
+      for (const row of listing) {
         const slug = row.slug || row.asset_id || '';
         if (slug) slugs.push(slug);
         const id = row.asset_id || '';
@@ -82,42 +75,25 @@ function getAssetIndex(): Promise<AssetIndex> {
       // to. Without enumerating it here, /embed/asset/usdc 404'd at build
       // time while /v1/assets/usdc answered fine. Map each slug to its
       // canonical asset id where derivable so the sparkline fallback works.
-      try {
-        const vres = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-          headers: buildHeaders(),
-          signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-        });
-        if (vres.ok) {
-          const venv = (await vres.json()) as {
-            data: {
-              slug?: string;
-              ticker?: string;
-              verified_issuer?: string;
-            }[];
-          };
-          for (const row of venv.data ?? []) {
-            const vslug = (row.slug || '').toLowerCase();
-            if (!vslug) continue;
-            if (!slugs.includes(vslug)) slugs.push(vslug);
-            if (byKey.has(vslug)) continue;
-            if (vslug === 'xlm') {
-              byKey.set(vslug, 'native');
-            } else if (
-              row.ticker &&
-              row.verified_issuer &&
-              /^G[A-Z2-7]{55}$/.test(row.verified_issuer)
-            ) {
-              byKey.set(vslug, `${row.ticker}-${row.verified_issuer}`);
-            }
-          }
+      // Best-effort: a failure here must not drop the listing's routes.
+      const verified = await buildFetchOptional<
+        { slug?: string; ticker?: string; verified_issuer?: string }[]
+      >('/v1/assets/verified');
+      for (const row of verified ?? []) {
+        const vslug = (row.slug || '').toLowerCase();
+        if (!vslug) continue;
+        if (!slugs.includes(vslug)) slugs.push(vslug);
+        if (byKey.has(vslug)) continue;
+        if (vslug === 'xlm') {
+          byKey.set(vslug, 'native');
+        } else if (
+          row.ticker &&
+          row.verified_issuer &&
+          /^G[A-Z2-7]{55}$/.test(row.verified_issuer)
+        ) {
+          byKey.set(vslug, `${row.ticker}-${row.verified_issuer}`);
         }
-      } catch {
-        // Catalogue enumeration is best-effort: a failure here must not
-        // drop the per-asset routes the listing already produced.
       }
-    } catch {
-      // Leave empty — generateStaticParams falls back to the single
-      // anchor slug, and the sparkline fallback simply renders no chart.
     }
     return { slugs, byKey, rows };
   })();
@@ -156,48 +132,22 @@ function resolveChartAsset(
   return index.byKey.get(norm) ?? null;
 }
 
-const chartSparklineMemo = new Map<
-  string,
-  Promise<{ t: string; p?: string | null }[]>
->();
-
 // fetchChartSparkline pulls a trailing-24h hourly USD series from
 // /v1/chart — the same endpoint the currency embed's fetchFxSeries uses —
 // so catalogue slugs (whose thin GlobalAssetView carries no
 // price_history_24h) still get a real sparkline. The widget's price is
-// the asset's USD price, so the pairing is <asset> vs fiat:USD. Memoised
-// per asset so the ~3 casing variants of one slug share a single
-// build-time call (the /v1/assets rate limit).
+// the asset's USD price, so the pairing is <asset> vs fiat:USD. The build
+// memo lets the ~3 casing variants of one slug share a single call.
 // Degrades to [] on any error → the card just omits the sparkline.
-function fetchChartSparkline(
+async function fetchChartSparkline(
   asset: string,
 ): Promise<{ t: string; p?: string | null }[]> {
-  const cached = chartSparklineMemo.get(asset);
-  if (cached) return cached;
-  const p = (async () => {
-    if (isCIStub) return [];
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(asset)}&quote=fiat:USD&timeframe=24h&granularity=1h`,
-        {
-          headers: buildHeaders(),
-          signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-        },
-      );
-      if (!res.ok) return [];
-      const env = (await res.json()) as {
-        data?: { points?: { t: string; p?: string | null }[] };
-      };
-      return (env.data?.points ?? []).map((pt) => ({
-        t: pt.t,
-        p: pt.p ?? null,
-      }));
-    } catch {
-      return [];
-    }
-  })();
-  chartSparklineMemo.set(asset, p);
-  return p;
+  const data = await buildFetchOptional<{
+    points?: { t: string; p?: string | null }[];
+  }>(
+    `/v1/chart?asset=${encodeURIComponent(asset)}&quote=fiat:USD&timeframe=24h&granularity=1h`,
+  );
+  return (data?.points ?? []).map((pt) => ({ t: pt.t, p: pt.p ?? null }));
 }
 
 // `shell` backs functions/embed/asset/[[path]].js for an id outside this
@@ -266,20 +216,7 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
   const id = norm === 'xlm' || norm === 'native' ? 'native' : slug;
   const listed = (await getAssetIndex()).rows.get(id.toLowerCase());
   if (listed) return listed;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/assets/${encodeURIComponent(id)}`,
-      {
-        headers: buildHeaders(),
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: Coin };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+  return buildFetchOptional<Coin>(`/v1/assets/${encodeURIComponent(id)}`);
 }
 
 /**

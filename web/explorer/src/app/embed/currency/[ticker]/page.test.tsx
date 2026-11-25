@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import EmbedCurrencyPage from './page';
-
 // The currency embed baked a BUILD-time FX rate into a static <span>
 // and served it as live. The fix wires the shared <LivePrice> client
 // component: baked value as initial paint, then a 60s /v1/price poll. Here
@@ -16,9 +14,15 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+// A fresh module per test: the build fetch memoises by URL for the whole build.
 async function renderPage(ticker: string) {
+  const { default: EmbedCurrencyPage } = await import('./page');
   render(await EmbedCurrencyPage({ params: Promise.resolve({ ticker }) }));
 }
+
+afterEach(() => {
+  vi.resetModules();
+});
 
 describe('EmbedCurrencyPage — live price refresh (W8.10)', () => {
   afterEach(() => {
