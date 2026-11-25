@@ -150,7 +150,11 @@ func blntEvent(outs []consumer.Event, base lendinginterest.Event) ([]lendinginte
 	}
 	switch e.EventType {
 	case "fill_auction":
-		if t, ok := e.Attributes["auction_type"].(uint32); !ok || t != blend.AuctionTypeInterest {
+		t, ok := e.Attributes["auction_type"].(uint32)
+		if !ok {
+			return nil, fmt.Errorf("fill_auction auction_type is %T, not a u32", e.Attributes["auction_type"])
+		}
+		if t != blend.AuctionTypeInterest {
 			return nil, nil
 		}
 		return blntInterestLot(base, e.Attributes["filled_auction_data"])
