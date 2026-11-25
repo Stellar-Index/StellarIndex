@@ -82,6 +82,10 @@ WATCHED=(
   'internal/sources/*/poller.go'
   'internal/sources/*/backfill*.go'
   'internal/sources/*/worker.go'
+  # lending interest rows are computed when written: the accrual arithmetic and
+  # the fold decide them (bump lendingInterestRev and re-derive).
+  'internal/sources/*/accrual.go'
+  'internal/lendinginterest/*.go'
   ':(exclude)*_test.go'
 )
 
@@ -318,7 +322,8 @@ a bare `none` does not count:
 Watched: internal/canonical/asset_{fiat,crypto,rwa}.go and
 internal/sources/*/{decode*,events,feeds,pairs,dispatcher_adapter,abi}.go,
 internal/sources/*/{parse,rates,fixings}.go,
-internal/sources/blend/auction_data.go and the other recorded-value files
-listed in WATCHED (not *_test.go).
+internal/sources/blend/auction_data.go, internal/sources/*/accrual.go,
+internal/lendinginterest/*.go and the other recorded-value files listed in
+WATCHED (not *_test.go).
 EOF2
 exit 1

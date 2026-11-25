@@ -20,6 +20,10 @@
 --   4. stellarindex-ops ch-entry-history -lending-only -prove
 --   5. systemctl enable --now lending-state.timer
 --
+-- The same run then extends lending_interest_hourly once that pass has been
+-- initialised (see lending_interest.sql's runbook); it is keyed, seeded and
+-- checked from this table, so it never runs past this table's watermark.
+--
 -- An hour's row is its last change by (ledger_seq, intra_ledger_seq). A window
 -- where that last ledger holds several transactions without intra-ledger order
 -- (intra_ledger_seq 0) is refused rather than stored by tx_hash.
