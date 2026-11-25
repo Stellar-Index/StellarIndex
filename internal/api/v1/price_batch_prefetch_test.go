@@ -65,6 +65,7 @@ type pfStats struct {
 	overrunDone chan struct{}
 	// afterPrices runs once a price prefetch has filled.
 	afterPrices func()
+	changeFills atomic.Int64
 }
 
 type pfRead struct {
@@ -198,6 +199,7 @@ func (c pfChange24h) USDPrice24hAgo(ctx context.Context, a canonical.Asset) (str
 }
 
 func (c pfChange24h) PrefetchUSDPrice24hAgo(ctx context.Context, assets []canonical.Asset) {
+	c.st.changeFills.Add(1)
 	switch c.st.fault {
 	case pfPanic:
 		panic("change_24h prefetch exploded")
@@ -405,6 +407,37 @@ func TestPriceBatchPrefetch_BudgetStopsTheWaitNotTheFill(t *testing.T) {
 	}
 	if took := time.Since(start); !errors.Is(fctx.Err(), context.DeadlineExceeded) || took < readset.MaxAge {
 		t.Errorf("fill context ended after %v with %v, want readset.MaxAge's deadline", took, fctx.Err())
+	}
+}
+
+// A price fill that outlasts the planner's budget leaves the change_24h anchors unprefetched: started that late, their
+// statements would be cut off at readset.MaxAge.
+func TestPriceBatchPrefetch_LatePriceFillSkipsTheAnchorFill(t *testing.T) {
+	spec := pfUniverse(t)
+	st := newPfStats(pfOK)
+	priced := make(chan struct{})
+	st.afterPrices = func() {
+		time.Sleep(readset.MaxAge/2 + 200*time.Millisecond)
+		close(priced)
+	}
+	plain, on := v1.New(spec.build(t)).Handler(), v1.New(pfOptions(t, spec, st)).Handler()
+	var req eqBatchRequest
+	for _, r := range eqGoldenRequests(spec) {
+		if r.quote == "fiat:USD" {
+			req = pfPadded(r)
+			break
+		}
+	}
+	if req.quote == "" {
+		t.Fatal("no fiat:USD golden request")
+	}
+	if m := batchEnvelopeMismatch(t, plain, on, req); m != "" {
+		t.Errorf("differs from no planner: %s", m)
+	}
+	<-priced
+	time.Sleep(100 * time.Millisecond) // the step after the price fill
+	if n := st.changeFills.Load(); n != 0 {
+		t.Errorf("%d anchor fills started after the budget, want none", n)
 	}
 }
 

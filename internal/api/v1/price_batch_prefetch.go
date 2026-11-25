@@ -93,7 +93,11 @@ func (s *Server) batchPrefetchFills(quote canonical.Asset) []func(context.Contex
 	}
 	if len(store) > 0 {
 		out = append(out, func(ctx context.Context, reads []readset.PairRead) {
-			for _, fill := range store {
+			for i, fill := range store {
+				// A fill starting this late would be cut off at MaxAge mid-statement, its answers expiring as they land.
+				if m := readset.From(ctx); i > 0 && m != nil && m.Age() > batchPrefetchBudget {
+					return
+				}
 				fill(ctx, reads)
 			}
 		})

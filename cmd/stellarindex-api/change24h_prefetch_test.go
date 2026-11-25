@@ -33,8 +33,10 @@ const (
 // c24Store is the anchor reads, answering from the minute of the instant asked so an answer for another anchor shows
 // in the served percentage. Its set forms answer as the singles do, or fail as fault says.
 type c24Store struct {
-	kind           map[string]int
-	fault          string // "", "error", "panic" or "slow" (outlasts the planner's budget)
+	kind map[string]int
+	// "", "error", "panic" or "slow" (outlasts the planner's budget) for the anchor statements; "baseline-error" or
+	// "baseline-panic" for the baseline statements.
+	fault          string
 	single, before atomic.Int64
 }
 
@@ -70,20 +72,20 @@ func (s *c24Store) ClosedVWAP1mCombinedBefore(_ context.Context, _ canonical.Pai
 	return s.baseline(before, limit), nil
 }
 
-func (s *c24Store) setFault() error {
+func (s *c24Store) setFault(stage string) error {
 	switch s.fault {
-	case "error":
+	case stage + "error":
 		return errors.New("set read failed")
-	case "panic":
+	case stage + "panic":
 		panic("set read panicked")
-	case "slow":
+	case stage + "slow":
 		time.Sleep(1500 * time.Millisecond)
 	}
 	return nil
 }
 
 func (s *c24Store) ClosedVWAP1mAtOrBeforeSet(_ context.Context, pairs []canonical.Pair, t time.Time) ([]timescale.KeyResult[timescale.Vwap1mRow], error) {
-	if err := s.setFault(); err != nil {
+	if err := s.setFault(""); err != nil {
 		return nil, err
 	}
 	out := make([]timescale.KeyResult[timescale.Vwap1mRow], len(pairs))
@@ -94,6 +96,9 @@ func (s *c24Store) ClosedVWAP1mAtOrBeforeSet(_ context.Context, pairs []canonica
 }
 
 func (s *c24Store) ClosedVWAP1mCombinedBeforeSet(_ context.Context, pairs []canonical.Pair, before time.Time, limit int) ([][]timescale.Vwap1mRow, error) {
+	if err := s.setFault("baseline-"); err != nil {
+		return nil, err
+	}
 	out := make([][]timescale.Vwap1mRow, len(pairs))
 	for i := range pairs {
 		out[i] = s.baseline(before, limit)
@@ -158,7 +163,7 @@ func c24Count(seam, result string) float64 {
 // changes nothing.
 func TestChange24hPrefetch_BatchAndCacheMatchThePlannerOff(t *testing.T) {
 	ids, peg, kind := c24Fixture(t)
-	for _, fault := range []string{"", "error", "panic", "slow"} {
+	for _, fault := range []string{"", "error", "panic", "slow", "baseline-error", "baseline-panic"} {
 		t.Run("fault="+fault, func(t *testing.T) {
 			// The anchor is per-minute: a run straddling a minute would read another minute's anchors on one side.
 			if s := time.Now().Second(); s > 50 {
@@ -167,6 +172,7 @@ func TestChange24hPrefetch_BatchAndCacheMatchThePlannerOff(t *testing.T) {
 			minute := time.Now().Truncate(time.Minute)
 			offStore, onStore := &c24Store{kind: kind}, &c24Store{kind: kind, fault: fault}
 			hits := c24Count("anchor_vwap_1m", "hit") + c24Count("anchor_trailing_vwap_1m", "hit")
+			baselineFailed := c24Count("anchor_trailing_vwap_1m", "prefetch_error")
 			off, offCache := c24Batch(t, offStore, peg, minute, ids)
 			on, onCache := c24Batch(t, timescale.PrefetchAnchors{AnchorReads: onStore}, peg, minute, ids)
 			if on != off {
@@ -191,6 +197,14 @@ func TestChange24hPrefetch_BatchAndCacheMatchThePlannerOff(t *testing.T) {
 				if onStore.single.Load() != offStore.single.Load() {
 					t.Fatalf("anchor reads %d, planner off %d: a failed set read must leave every key to be read as before",
 						onStore.single.Load(), offStore.single.Load())
+				}
+			case "baseline-error", "baseline-panic":
+				if onStore.single.Load() != 0 || onStore.before.Load() != offStore.before.Load() {
+					t.Fatalf("anchor reads %d (want 0), baseline reads %d (planner off %d): a failed baseline statement must"+
+						" leave every baseline to be read as before", onStore.single.Load(), onStore.before.Load(), offStore.before.Load())
+				}
+				if d := c24Count("anchor_trailing_vwap_1m", "prefetch_error") - baselineFailed; fault == "baseline-error" && d != c24Universe/2 {
+					t.Fatalf("baseline prefetch_error = %v, want one per key (%d)", d, c24Universe/2)
 				}
 			}
 		})

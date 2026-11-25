@@ -223,7 +223,7 @@ func TestPriceBatchPrefetch_EndToEnd(t *testing.T) {
 }
 
 // The change_24h anchor prefetch over real Postgres answers every anchor and guard-baseline read exactly as the store's
-// single reads at the same instant: both stored directions, the flipped direction only, an anchor too old for a
+// single reads at the same instant: both directions in one bucket, the flipped direction only, an anchor too old for a
 // baseline, and none.
 func TestChange24hAnchorPrefetch_AnswersAsTheStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -242,8 +242,9 @@ func TestChange24hAnchorPrefetch_AnswersAsTheStore(t *testing.T) {
 		for j := range 13 { // the anchor and a 12-bucket baseline behind it
 			ts, nonce := anchorAt.Add(-time.Duration(j)*time.Minute), 10_000+i*20+j
 			switch i % 4 {
-			case 0:
+			case 0: // both directions in each bucket, folded into one combined bucket
 				itTrade(t, ctx, store, nonce, ts, pairs[i], 1_000_000_000, int64(5_000_000+i))
+				itTrade(t, ctx, store, 50_000+i*20+j, ts, flipped, int64(5_100_000+i), 1_000_000_000)
 			case 1:
 				itTrade(t, ctx, store, nonce, ts, flipped, int64(5_000_000+i), 1_000_000_000)
 			case 2:
@@ -266,7 +267,9 @@ func TestChange24hAnchorPrefetch_AnswersAsTheStore(t *testing.T) {
 	fell := count("anchor_vwap_1m", "fallthrough") + count("anchor_trailing_vwap_1m", "fallthrough")
 	p := timescale.PrefetchAnchors{AnchorReads: store}
 	mctx := readset.With(ctx, readset.New())
+	began := time.Now()
 	p.PrefetchChange24hAnchors(mctx, pairs, at, notBefore, pricingguard.SampleFetch)
+	t.Logf("prefetched %d anchors and their baselines in %v", len(pairs), time.Since(began))
 	reads, found := 0, 0
 	for i, pair := range pairs {
 		got, err := p.ClosedVWAP1mAtOrBefore(mctx, pair, at)

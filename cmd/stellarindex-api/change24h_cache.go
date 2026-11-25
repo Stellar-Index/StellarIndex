@@ -77,6 +77,8 @@ type change24hPrefetcher interface {
 
 // PrefetchUSDPrice24hAgo prefetches beneath the cache, for the assets it holds no anchor for this minute: the cache
 // is filled only by USDPrice24hAgo, at its own minute, so a prefetched read reaches it only as that call's read.
+// A flight follower may get a memo-derived anchor: flight and cache are keyed minute+asset, the cache already serves a
+// same-minute anchor to every caller, and a memo entry for another minute misses by key.
 func (r *minuteChange24hReader) PrefetchUSDPrice24hAgo(ctx context.Context, assets []canonical.Asset) {
 	pf, ok := r.next.(change24hPrefetcher)
 	if !ok {
