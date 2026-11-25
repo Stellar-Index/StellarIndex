@@ -62,7 +62,8 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 				key = key[:MaxRateLimitKeyLen]
 			}
 
-			charge := &rateLimitCharge{bucket: bucket, key: key, logger: logger, paid: 1}
+			charge := &rateLimitCharge{bucket: bucket, key: key, logger: logger, paid: 1, tier: rateLimitTier(r, 0)}
+			defer charge.record()
 			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}
@@ -81,8 +82,66 @@ type rateLimitCharge struct {
 	// perIP is a second charge every token also pays (see [sep10PerIPCharge]); nil for other subjects.
 	perIP *rateLimitCharge
 
+	// tier labels the request's usage metrics (see [rateLimitTier]); empty on a per-IP charge, which its parent records.
+	tier string
+
 	mu   sync.Mutex
 	paid int
+	// result is the most severe outcome of any charge so far and used the highest share of the budget spent, both read by
+	// [rateLimitCharge.record]; neither touches the limiter.
+	result string
+	used   float64
+}
+
+// rateLimitResultRank orders outcomes so a request is recorded by its worst charge.
+var rateLimitResultRank = map[string]int{
+	obs.RateLimitResultAllowed: 1, obs.RateLimitResultFailOpen: 2, obs.RateLimitResultLimited: 3, obs.RateLimitResultUnavailable: 4,
+}
+
+// note folds one charge's outcome into the request's; fraction is the budget share spent after it.
+func (c *rateLimitCharge) note(result string, fraction float64) {
+	if rateLimitResultRank[result] > rateLimitResultRank[c.result] {
+		c.result = result
+	}
+	c.used = max(c.used, min(fraction, 1))
+}
+
+// record counts the request once, by its worst outcome across every charge (its own and its per-IP charge's), and for an allowed
+// request observes the share of the binding budget it left spent. Runs after the handler, so it covers re-prices and cold fills.
+func (c *rateLimitCharge) record() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result, used := c.result, c.used
+	if c.perIP != nil {
+		if rateLimitResultRank[c.perIP.result] > rateLimitResultRank[result] {
+			result = c.perIP.result
+		}
+		used = max(used, c.perIP.used)
+	}
+	if result == "" {
+		return
+	}
+	obs.RateLimitDecisionsTotal.WithLabelValues(c.tier, result).Inc()
+	if result == obs.RateLimitResultAllowed {
+		obs.RateLimitUtilisationRatio.WithLabelValues(c.tier).Observe(used)
+	}
+}
+
+// rateLimitTier is the bounded tier label for r's usage metrics: the subject's auth tier, [obs.RateLimitTierCustom] when it carries
+// its own ceiling, anonymous when there is no subject. Never a client identity.
+func rateLimitTier(r *http.Request, override int) string {
+	if override > 0 {
+		return obs.RateLimitTierCustom
+	}
+	subject, ok := auth.SubjectFrom(r.Context())
+	if !ok || subject.Identifier == "" || subject.Tier == "" {
+		return auth.TierAnonymous.String()
+	}
+	switch subject.Tier {
+	case auth.TierAnonymous, auth.TierAPIKey, auth.TierSEP10, auth.TierOperator:
+		return subject.Tier.String()
+	}
+	return obs.RateLimitTierOther
 }
 
 type rateLimitChargeKey struct{}
@@ -149,17 +208,23 @@ func (c *rateLimitCharge) bill(r *http.Request, tokens int) (*ratelimit.Result, 
 			c.logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
 				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 			obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterAPI).Inc()
+			c.note(obs.RateLimitResultUnavailable, 0)
 			return nil, &rateLimitRefusal{c: c, unavailable: true}
 		}
 		// Debug level so an outage does not flood the error log; the metric is the alert signal.
 		c.logger.Debug("ratelimit redis error — failing open",
 			"err", err, "key", c.key, "request_id", RequestIDFrom(r))
 		obs.RateLimitFailOpenTotal.Inc()
+		c.note(obs.RateLimitResultFailOpen, 0)
 		return nil, nil
 	}
+	// Count, not Remaining: a denied charge still counts and Remaining clamps at zero.
+	fraction := float64(res.Count) / float64(c.effectiveMax())
 	if !res.Allowed {
+		c.note(obs.RateLimitResultLimited, fraction)
 		return nil, &rateLimitRefusal{c: c, res: res}
 	}
+	c.note(obs.RateLimitResultAllowed, fraction)
 	return &res, nil
 }
 
@@ -279,8 +344,12 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 				key = key[:MaxRateLimitKeyLen]
 			}
 
-			charge := &rateLimitCharge{bucket: bucket, key: key, override: override, logger: logger, paid: 1}
+			charge := &rateLimitCharge{
+				bucket: bucket, key: key, override: override, logger: logger, paid: 1,
+				tier: rateLimitTier(r, override),
+			}
 			charge.perIP = sep10PerIPCharge(r, bucket, authBucket, logger)
+			defer charge.record()
 			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}

@@ -347,6 +347,7 @@ func registerAppMetricsTail() {
 	registerAuthReaperMetrics()
 	registerFailedAuthMetrics()
 	registerRedisFailureMetrics()
+	registerRateLimitUsageMetrics()
 
 	seedBoundedLabelSeries()
 }
@@ -1373,6 +1374,54 @@ var RateLimitColdFillRefusedTotal = prometheus.NewCounter(
 		Help: "Requests answered 429 because their rate-limit budget could not pay a cold cache fill's surcharge; no lake read was started.",
 	},
 )
+
+// RateLimitDecisionsTotal counts API requests by their rate-limit outcome, once per request; no label identifies a client.
+var RateLimitDecisionsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ratelimit_decisions_total",
+		Help: "API requests by rate-limit tier and outcome (allowed, limited, fail_open, unavailable), one per request.",
+	},
+	[]string{"tier", "result"},
+)
+
+// RateLimitUtilisationRatio observes, per allowed API request, the share of its subject's window budget spent once the request
+// has paid every charge (base, re-price, cold fill).
+var RateLimitUtilisationRatio = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_ratelimit_utilisation_ratio",
+		Help:    "Share of the subject's per-window rate-limit budget spent after each allowed API request, by tier.",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1},
+	},
+	[]string{"tier"},
+)
+
+// Label values for [RateLimitDecisionsTotal] and [RateLimitUtilisationRatio]. The first four tiers are auth.Tier's values;
+// custom is any subject held to its own per-key ceiling (partner plans), other an unrecognised tier.
+const (
+	RateLimitTierCustom = "custom"
+	RateLimitTierOther  = "other"
+
+	RateLimitResultAllowed     = "allowed"
+	RateLimitResultLimited     = "limited"
+	RateLimitResultFailOpen    = "fail_open"
+	RateLimitResultUnavailable = "unavailable"
+)
+
+// RateLimitTiers and RateLimitResults are the complete label sets, seeded at zero.
+var (
+	RateLimitTiers   = []string{"anonymous", "apikey", "sep10", "operator", RateLimitTierCustom, RateLimitTierOther}
+	RateLimitResults = []string{RateLimitResultAllowed, RateLimitResultLimited, RateLimitResultFailOpen, RateLimitResultUnavailable}
+)
+
+func registerRateLimitUsageMetrics() {
+	Registry.MustRegister(RateLimitDecisionsTotal, RateLimitUtilisationRatio)
+	for _, tier := range RateLimitTiers {
+		RateLimitUtilisationRatio.WithLabelValues(tier)
+		for _, result := range RateLimitResults {
+			RateLimitDecisionsTotal.WithLabelValues(tier, result)
+		}
+	}
+}
 
 // RateLimitFailClosedTotal counts requests rejected (503 or 429) because a Redis-backed throttle had been erroring past its dwell time.
 var RateLimitFailClosedTotal = prometheus.NewCounterVec(
