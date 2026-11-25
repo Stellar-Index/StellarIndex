@@ -57,10 +57,13 @@ func (p PrefetchStore) LatestClosedVWAP1mForPair(ctx context.Context, pair canon
 	if readset.From(ctx) == nil {
 		return p.Store.LatestClosedVWAP1mForPair(ctx, pair)
 	}
-	r, _, _ := latestSeam.Read(ctx, memoPairKey(pair), func(ctx context.Context) (KeyResult[Vwap1mRow], bool, error) {
+	r, found, _ := latestSeam.Read(ctx, memoPairKey(pair), func(ctx context.Context) (KeyResult[Vwap1mRow], bool, error) {
 		row, err := p.Store.LatestClosedVWAP1mForPair(ctx, pair)
 		return KeyResult[Vwap1mRow]{Value: row, Err: err}, true, nil
 	})
+	if !found { // a memoised definite miss
+		return Vwap1mRow{}, sql.ErrNoRows
+	}
 	return r.Value, r.Err
 }
 
@@ -100,7 +103,7 @@ func (p PrefetchStore) PrefetchLatest(ctx context.Context, pairs []canonical.Pai
 				latestSeam.Failed()
 				continue
 			}
-			latestSeam.Fill(ctx, memoPairKey(chunk[i]), r, true)
+			latestSeam.Fill(ctx, memoPairKey(chunk[i]), r, r.Err == nil)
 			if r.Err == nil {
 				mu.Lock()
 				live = append(live, chunk[i])

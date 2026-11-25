@@ -57,12 +57,20 @@ func newPfiReader(price string) *pfiReader {
 
 var pfiBTC = canonical.Asset{Type: canonical.AssetCrypto, Code: "BTC"}
 
-// pfiMemo is a memo whose clock is now, filled with pfiBTC/USD at "1.0" when fill is set.
-func pfiMemo(fill bool, now *atomic.Int64) context.Context {
+type pfiFill int
+
+const (
+	pfiNone  pfiFill = iota
+	pfiFound         // pfiBTC/USD memoised at "1.0"
+	pfiMiss          // pfiBTC/USD memoised as a definite miss
+)
+
+// pfiMemo is a memo whose clock is now, filled as fill says.
+func pfiMemo(fill pfiFill, now *atomic.Int64) context.Context {
 	m := readset.NewWithClock(func() time.Time { return time.Unix(0, now.Load()) })
 	ctx := readset.With(context.Background(), m)
-	if fill {
-		pfiSeam.Fill(ctx, readset.Pair(pfiBTC, defaultPriceQuote, 0), "1.0", true)
+	if fill != pfiNone {
+		pfiSeam.Fill(ctx, readset.Pair(pfiBTC, defaultPriceQuote, 0), "1.0", fill == pfiFound)
 	}
 	return ctx
 }
@@ -84,7 +92,7 @@ func TestBatchRowFlight_FollowerSeesAtMostMaxAgeOldPrefetch(t *testing.T) {
 			t0 := time.Now()
 			var now atomic.Int64
 			now.Store(t0.UnixNano())
-			leaderCtx := pfiMemo(true, &now)
+			leaderCtx := pfiMemo(pfiFound, &now)
 
 			rows := make([]batchRowResult, 2)
 			var wg sync.WaitGroup
@@ -115,18 +123,21 @@ func TestBatchRowFlight_FollowerSeesAtMostMaxAgeOldPrefetch(t *testing.T) {
 }
 
 // Concurrent alias reads of one key coalesce on the shared flight, which carries no memo, unless the memo still holds
-// that read: then each is answered from the memo alone, and a single /v1/price caller beside them still gets the flight.
+// a found bucket for it: then each is answered from the memo alone, and a single /v1/price caller beside them still
+// gets the flight. A memoised miss coalesces too, since the miss path is the slow one.
 func TestReadPriceWithAliases_CoalescesUnlessTheMemoHoldsTheRead(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		fill      bool
+		fill      pfiFill
 		age       time.Duration
 		wantStore int32  // store reads made
+		wantWalks int    // LatestPrice calls: one per flight, one per memo-answered row
 		wantPrice string // the memo-carrying callers' answer
 	}{
-		{"not prefetched", false, 0, 1, "2.0"},
-		{"prefetched", true, 0, 1, "1.0"}, // the store read is the single caller's own flight
-		{"prefetch expired", true, readset.MaxAge + time.Millisecond, 1, "2.0"},
+		{"not prefetched", pfiNone, 0, 1, 1, "2.0"},
+		{"prefetched", pfiFound, 0, 1, 17, "1.0"}, // the store read is the single caller's own flight
+		{"prefetched miss", pfiMiss, 0, 1, 1, "2.0"},
+		{"prefetch expired", pfiFound, readset.MaxAge + time.Millisecond, 1, 1, "2.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := newPfiReader("2.0")
@@ -158,6 +169,9 @@ func TestReadPriceWithAliases_CoalescesUnlessTheMemoHoldsTheRead(t *testing.T) {
 
 			if n := reader.calls.Load(); n != tc.wantStore {
 				t.Errorf("store reads = %d, want %d", n, tc.wantStore)
+			}
+			if n := len(reader.entered); n != tc.wantWalks {
+				t.Errorf("alias walks = %d, want %d", n, tc.wantWalks)
 			}
 			if n := reader.memoReads(); n != 0 {
 				t.Errorf("%d store reads carried a memo: a shared flight saw it", n)

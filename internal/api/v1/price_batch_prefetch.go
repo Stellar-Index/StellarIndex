@@ -46,7 +46,7 @@ func (s *Server) prefetchBatch(ctx context.Context, ids []string, quote canonica
 	if len(fills) == 0 {
 		return ctx
 	}
-	reads, ok := batchPrefetchReads(ids[:min(len(ids), batchPrefetchMaxIDs)], quote)
+	reads, ok := batchPrefetchReads(ids, quote)
 	if !ok {
 		return ctx
 	}
@@ -68,7 +68,7 @@ func (s *Server) prefetchBatch(ctx context.Context, ids []string, quote canonica
 	for range fills {
 		select {
 		case <-done:
-		case <-budget.C: // a late fill only fills entries that read as expired
+		case <-budget.C: // a late fill's entries serve only until MaxAge after the prefetch instant
 			return readset.With(ctx, m)
 		case <-ctx.Done():
 			return readset.With(ctx, m)
@@ -91,13 +91,16 @@ func (s *Server) batchPrefetchFills() []func(context.Context, []readset.PairRead
 
 // batchPrefetchReads is the (spelling, quote) reads a batch's rows begin with, windowed for the Redis VWAP fallback: per
 // id, [assetAliases] in the order [Server.readPriceWithAliasesServedOnce] and [Server.tryRedisVWAPFallback] walk them.
-// ok is false when an id would fail the batch, which then reads nothing.
+// Only the first batchPrefetchMaxIDs ids are read; ok is false when any id would fail the batch, which then reads nothing.
 func batchPrefetchReads(ids []string, quote canonical.Asset) (reads []readset.PairRead, ok bool) {
 	seen := map[readset.PairKey]bool{}
-	for _, raw := range ids {
+	for i, raw := range ids {
 		asset, err := parsePriceLeg(raw)
 		if err != nil || asset.Equal(quote) {
 			return nil, false
+		}
+		if i >= batchPrefetchMaxIDs {
+			continue
 		}
 		for _, a := range assetAliases(asset) {
 			r := readset.PairRead{Base: a, Quote: quote, Window: triangulationLookupWindow}
@@ -119,12 +122,19 @@ func unwindowed(reads []readset.PairRead) []readset.PairRead {
 	return out
 }
 
-// memoCoversWalk reports whether ctx's memo answers every price read asset's alias walk against quote makes.
-func memoCoversWalk(ctx context.Context, asset, quote canonical.Asset) bool {
+// memoAnswersWalk reports whether ctx's memo holds the first read of every alias in asset's walk against quote, and
+// the first alias found a bucket: a walk starting on a miss takes the slow last-trade path, which stays coalesced.
+func memoAnswersWalk(ctx context.Context, asset, quote canonical.Asset) bool {
+	first := true
 	for _, a := range assetAliases(asset) {
-		if !a.Equal(quote) && !readset.Covers(ctx, a, quote) {
+		if a.Equal(quote) {
+			continue
+		}
+		held, found := readset.Covered(ctx, a, quote)
+		if !held || (first && !found) {
 			return false
 		}
+		first = false
 	}
-	return true
+	return !first
 }

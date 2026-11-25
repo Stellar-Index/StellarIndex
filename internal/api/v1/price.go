@@ -983,9 +983,9 @@ func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceRea
 	}
 	var r priceReadResult
 	var err error
-	if m := readset.From(ctx); m != nil && memoCoversWalk(ctx, asset, quote) {
-		// A prefetched read is answered alone, so no other caller is ever answered from its memo; any other read
-		// joins the shared flight below, which carries no memo.
+	if m := readset.From(ctx); m != nil && memoAnswersWalk(ctx, asset, quote) {
+		// A prefetched read is answered alone, so no other caller is ever answered from its memo; any other read,
+		// and a walk that starts on a miss, joins the shared flight below, which carries no memo.
 		r, err = read(readset.With(context.Background(), m)) //nolint:contextcheck // detached as the flight below
 	} else {
 		key := asset.String() + "/" + quote.String() + "/admit:" + strconv.FormatBool(admit)

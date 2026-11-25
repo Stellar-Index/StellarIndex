@@ -27,7 +27,7 @@ const MaxAge = 2 * time.Second
 type Memo struct {
 	mu sync.RWMutex
 	m  map[any]entry
-	// covered is every pair a [NewPairSeam] seam holds an answer for.
+	// covered is every pair a [NewPairSeam] seam holds an answer for, and whether that answer was found.
 	covered map[PairKey]bool
 	// at is the prefetch instant: taken before any fill's read, so every entry is at least as fresh as it.
 	at  time.Time
@@ -48,16 +48,17 @@ func NewWithClock(now func() time.Time) *Memo {
 	return &Memo{m: map[any]entry{}, covered: map[PairKey]bool{}, at: now(), now: now}
 }
 
-// Covers reports whether ctx's memo is unexpired and its pair seam holds an answer, found or a definite miss, for the
-// (base, quote) price read.
-func Covers(ctx context.Context, base, quote canonical.Asset) bool {
+// Covered reports whether ctx's memo is unexpired and its pair seam holds an answer for the (base, quote) price read,
+// and whether that answer was found rather than a definite miss.
+func Covered(ctx context.Context, base, quote canonical.Asset) (held, found bool) {
 	m := From(ctx)
 	if m == nil || m.expired() {
-		return false
+		return false, false
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.covered[Pair(base, quote, 0)]
+	found, held = m.covered[Pair(base, quote, 0)]
+	return held, found
 }
 
 // expired reports whether a read now is more than [MaxAge] after the prefetch instant.
@@ -99,7 +100,7 @@ func (r PairRead) Key() PairKey { return Pair(r.Base, r.Quote, r.Window) }
 type Seam[K comparable, V any] struct {
 	name  string
 	clone func(V) V
-	pair  bool // fills mark the pair covered, see [Covers]
+	pair  bool // fills mark the pair covered, see [Covered]
 }
 
 // NewSeam returns a seam named for the prefetch metric; clone deep-copies a V holding pointers so no two readers share
@@ -109,7 +110,7 @@ func NewSeam[K comparable, V any](name string, clone func(V) V) *Seam[K, V] {
 }
 
 // NewPairSeam is [NewSeam] for the one seam answering a pair's price read, keyed with no window: its fills are what
-// [Covers] reports.
+// [Covered] reports.
 func NewPairSeam[V any](name string, clone func(V) V) *Seam[PairKey, V] {
 	return &Seam[PairKey, V]{name: name, clone: clone, pair: true}
 }
@@ -148,7 +149,7 @@ func (s *Seam[K, V]) Fill(ctx context.Context, k K, v V, found bool) {
 	}
 	m.m[memoKey[K, V]{s, k}] = e
 	if pk, ok := any(k).(PairKey); ok && s.pair {
-		m.covered[pk] = true
+		m.covered[pk] = found
 	}
 }
 

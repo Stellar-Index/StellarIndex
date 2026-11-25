@@ -115,11 +115,14 @@ type pfPrices struct {
 
 func (p pfPrices) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
 	k := readset.Pair(a, q, 0)
-	ans, _, _ := pfPriceSeam.Read(ctx, k, func(ctx context.Context) (pfAnswer, bool, error) {
+	ans, found, _ := pfPriceSeam.Read(ctx, k, func(ctx context.Context) (pfAnswer, bool, error) {
 		p.st.rowRead(ctx, "prices", k)
 		snap, srcs, stale, err := p.PriceReader.LatestPrice(ctx, a, q)
 		return pfAnswer{snap, srcs, stale, err}, true, nil
 	})
+	if !found {
+		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+	}
 	return ans.snap, ans.srcs, ans.stale, ans.err
 }
 
@@ -139,7 +142,7 @@ func (p pfPrices) PrefetchLatestPrices(ctx context.Context, reads []readset.Pair
 			p.st.left("prices", r.Key())
 			continue
 		}
-		pfPriceSeam.Fill(ctx, r.Key(), pfAnswer{snap, srcs, stale, err}, true)
+		pfPriceSeam.Fill(ctx, r.Key(), pfAnswer{snap, srcs, stale, err}, err == nil)
 	}
 }
 
@@ -466,5 +469,17 @@ func TestPriceBatchPrefetch_IDBounds(t *testing.T) {
 		if len(reads) < 200 {
 			t.Errorf("prefetched %d reads, want every spelling of the first 200 ids", len(reads))
 		}
+	}
+
+	// An invalid id past the first 200 still fails the batch, so nothing is prefetched for it.
+	bad := append([]string{}, ids...)
+	bad[500] = "@@@"
+	st = newPfStats(pfOK)
+	on = v1.New(pfOptions(t, spec, st)).Handler()
+	if m := batchEnvelopeMismatch(t, plain, on, eqBatchRequest{post: true, ids: bad, quote: "fiat:USD"}); m != "" {
+		t.Errorf("invalid id at 500 differs: %s", m)
+	}
+	if len(st.asked) != 0 {
+		t.Errorf("a batch that 400s prefetched %d times", len(st.asked))
 	}
 }
