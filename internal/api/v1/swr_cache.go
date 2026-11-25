@@ -70,6 +70,9 @@ func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(con
 	var zero V
 	r := c.lookup(op, key, upstream)
 	if r.entry == nil {
+		if r.refresh != nil && awaitsRefresh(ctx) {
+			return c.awaitRefresh(ctx, r)
+		}
 		return r.val, r.at, r.stale, nil
 	}
 	select {
@@ -90,6 +93,32 @@ func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(con
 	case <-ctx.Done():
 		return zero, time.Time{}, false, ctx.Err()
 	}
+}
+
+type awaitRefreshKey struct{}
+
+// withAwaitRefresh marks ctx's reads as having no latency constraint (the self-prewarm): an expired value is refreshed before
+// it is returned, so the render they build, and cache, does not carry a value that a read cadence above the bound aged past it.
+func withAwaitRefresh(ctx context.Context) context.Context {
+	return context.WithValue(ctx, awaitRefreshKey{}, true)
+}
+
+func awaitsRefresh(ctx context.Context) bool {
+	v, _ := ctx.Value(awaitRefreshKey{}).(bool)
+	return v
+}
+
+// awaitRefresh waits for r's refresh (or ctx) and returns the entry as it then stands, judged per [swrverdict.Stale]: refreshed
+// it is clean; a failed refresh, or one ctx gave up on past the bound, is still flagged.
+func (c *swrCache[V]) awaitRefresh(ctx context.Context, r lookupResult[V]) (V, time.Time, bool, error) {
+	select {
+	case <-r.flight:
+	case <-ctx.Done():
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := r.refresh
+	return e.val, e.at, swrverdict.Stale(c.now().Sub(e.at), c.entryTTL(e.val), cacheFillBudget, e.refreshFailed), nil
 }
 
 // peek is get without the wait: where get would block on a first fill (starting it if none is in flight), peek reports a miss.
@@ -119,14 +148,16 @@ func (c *swrCache[V]) lastGood(key string, budget time.Duration) bool {
 	return ok && !e.at.IsZero() && (e.refreshFailed || (e.flight != nil && c.now().Sub(e.flightAt) >= budget))
 }
 
-// lookupResult is a filled value (entry nil) or the cold-fill entry to wait on.
+// lookupResult is a filled value (entry nil) or the cold-fill entry to wait on. An expired value also carries its entry in
+// refresh and that refresh's flight.
 type lookupResult[V any] struct {
-	val    V
-	at     time.Time
-	stale  bool
-	entry  *swrEntry[V]
-	flight chan struct{}
-	leader bool
+	val     V
+	at      time.Time
+	stale   bool
+	entry   *swrEntry[V]
+	flight  chan struct{}
+	leader  bool
+	refresh *swrEntry[V]
 }
 
 // lookup is get's locked step: a fresh or stale value returns at once (a stale one starts at most one refresh); otherwise it joins
@@ -150,9 +181,10 @@ func (c *swrCache[V]) lookup(op, key string, upstream func(context.Context) (V, 
 			go runDetachedFill(c.logger, c.fillName, cacheFillBudget, e.flight, upstream, c.settle(op, key, e))
 		}
 		stale := swrverdict.Stale(c.now().Sub(e.at), c.entryTTL(e.val), cacheFillBudget, e.refreshFailed)
+		flight := e.flight
 		c.mu.Unlock()
 		c.count(op, "stale")
-		return lookupResult[V]{val: out, at: at, stale: stale}
+		return lookupResult[V]{val: out, at: at, stale: stale, refresh: e, flight: flight}
 	}
 
 	entry, leader := e, false

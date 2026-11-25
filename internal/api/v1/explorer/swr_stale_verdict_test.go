@@ -164,11 +164,17 @@ func TestContractStats_StaleVerdict(t *testing.T) {
 		t.Error("after a successful refresh: an entry just past its TTL was served degraded")
 	}
 	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
+	// Hold the refresh: one that lands first is rightly served clean, as the fresh entry it is.
+	reader.block = make(chan struct{})
 	age(contractStatsTTL + contractStatsRefreshTimeout + time.Second)
 	if !serve() {
 		t.Error("an entry past its hard bound was served clean")
 	}
+	close(reader.block)
 	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
+	if serve() {
+		t.Error("the entry the held refresh landed was served degraded")
+	}
 }
 
 func TestOpsDirCached_StaleVerdict(t *testing.T) {
