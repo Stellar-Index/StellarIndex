@@ -78,7 +78,12 @@ Subcommands:
                           it; until then the pass only logs. -interest-only
                           skips the state pass; with -from it re-derives.
                           -interest-pool backfills one uncovered pool.
-                          Without those flags the pass catches up at most
+                          Residuals are classed by the pool's events in
+                          the same transaction (explained only on an exact
+                          amount); a residual ledger whose contract_events
+                          are short refuses the window. Rows of an older
+                          derive_rev prove INCOMPLETE: re-derive from the
+                          floor. Without those flags the pass catches up at most
                           one 100000-ledger window and logs "backfill
                           incomplete" beyond it. Interest runs take their
                           own lock beside -lock-file.
