@@ -22,11 +22,15 @@ ATTEMPTS="${RECOMPRESS_LOCK_ATTEMPTS:-12}"
 HEAVY="${HEAVY_JOB:-/usr/local/sbin/run-heavy-job.sh}"
 TBL=stellar.ledger_entry_changes
 T="database='stellar' AND table='ledger_entry_changes'"
-# ClickHouse reports an exception as HTTP 500 with the message in the body;
-# without --fail-with-body curl exits 0 and the error reads as a result.
-CH(){ curl -sS --fail-with-body 'http://localhost:8123/' --data-binary "$1"; }
+# Absolute path: inside run-heavy-job.sh a PATH shim maps bare clickhouse-client to a
+# low-priority user that cannot read system.mutations. Credentials come from root's
+# client config, never from here. A non-zero client exit is a failed query.
+CH_CMD="${RECOMPRESS_CH:-/usr/bin/clickhouse-client --port 9300}"
+read -r -a CHCMD <<< "$CH_CMD"
+CH(){ "${CHCMD[@]}" -q "$1"; }
 log(){ echo "$(date -u +%FT%TZ) $*" >> "$LOG"; }
 abort(){ log "ABORT $*"; exit 1; }
+[ "${#CHCMD[@]}" -gt 0 ] || abort "RECOMPRESS_CH is empty"
 # num <label> <sql> — print the query's single numeric result, or log why not and fail.
 num(){
   local out
@@ -42,6 +46,8 @@ avail_kb(){
 }
 check_codecs(){
   local n
+  num "startup probe" "SELECT count() FROM system.mutations WHERE $T" > /dev/null ||
+    abort "cannot read system.mutations through '$CH_CMD'; run as root with the admin client"
   n=$(num codecs "SELECT count() FROM system.columns WHERE $T AND ((name IN ('account_id','tx_hash','asset','balance') AND compression_codec LIKE '%ZSTD(3)%') OR (name='intra_ledger_seq' AND compression_codec LIKE '%Delta%ZSTD(3)%'))") || exit 1
   [ "$n" = 5 ] || abort "$n of 5 columns carry the new codecs; apply deploy/clickhouse/ledger_entry_changes_codecs.sql first"
 }
