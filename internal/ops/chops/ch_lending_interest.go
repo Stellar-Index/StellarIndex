@@ -689,7 +689,7 @@ func hasStateKeys(keys []clickhouse.LendingInterestKey) bool {
 // reportInterestWindow prints the window's counts, the residuals a drift would show in, and what the checks compared;
 // amounts are per asset, so none is summed across rows.
 func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginterest.HourRow, c interestChecked, dryRun bool) {
-	var versions, accrued, errs, unordered, unreconciled, bRate, feeMis, feeOnly uint64
+	var versions, accrued, errs, unordered, unreconciled, bRate, feeMis, feeOnly, explained, attributed, unexplained uint64
 	residualRows := 0
 	for _, r := range rows {
 		versions += uint64(r.Versions)
@@ -700,6 +700,9 @@ func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginter
 		bRate += uint64(r.BRateMismatches)
 		feeMis += uint64(r.FeeMismatches)
 		feeOnly += uint64(r.FeeOnlyVersions)
+		explained += uint64(r.ExplainedVersions)
+		attributed += uint64(r.AttributedVersions)
+		unexplained += uint64(r.UnexplainedVersions)
 		if r.BackstopResidual.Sign() != 0 {
 			residualRows++
 		}
@@ -708,10 +711,35 @@ func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginter
 	if dryRun {
 		verb = "would write"
 	}
-	_, _ = fmt.Fprintf(log, "%s: hours [%s, %s): %s %d rows; versions %d, accrued %d, accrual errors %d, unordered %d; "+
-		"unreconciled %d (b_rate mismatches %d, fee mismatches %d, rows with a backstop residual %d), fee-only moves %d; "+
+	span := fmt.Sprintf("hours [%s, %s)", from.Format(time.RFC3339), to.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(log, "%s: %s: %s %d rows; versions %d, accrued %d, accrual errors %d, unordered %d; "+
+		"unreconciled %d (b_rate mismatches %d, fee mismatches %d, rows with a backstop residual %d; "+
+		"versions explained %d, attributed %d, unexplained %d), fee-only moves %d; "+
 		"checked: chain endpoints %d rows, gross telescoped %d (%d of them around %d excluded pairs), fee carry %d (%d not)\n",
-		lendingInterestJob, from.Format(time.RFC3339), to.Format(time.RFC3339), verb, len(rows), versions, accrued, errs, unordered,
-		unreconciled, bRate, feeMis, residualRows, feeOnly, c.telescoped, c.telescoped, c.telescopeSplit, c.excludedPairs,
-		c.feeChecked, c.feeSkipped)
+		lendingInterestJob, span, verb, len(rows), versions, accrued, errs, unordered,
+		unreconciled, bRate, feeMis, residualRows, explained, attributed, unexplained, feeOnly, c.telescoped, c.telescoped,
+		c.telescopeSplit, c.excludedPairs, c.feeChecked, c.feeSkipped)
+	reportUnexplainedRows(log, span, rows)
+}
+
+// lendingInterestSampleMax caps the unexplained rows a window line names.
+const lendingInterestSampleMax = 5
+
+// reportUnexplainedRows names the window's first rows holding an unexplained version, with the ledger span to read.
+func reportUnexplainedRows(log io.Writer, span string, rows []lendinginterest.HourRow) {
+	n := 0
+	for _, r := range rows {
+		if r.UnexplainedVersions == 0 {
+			continue
+		}
+		if n++; n <= lendingInterestSampleMax {
+			_, _ = fmt.Fprintf(log, "%s: %s: unexplained %s %s %s: backstop residual %s (unexplained %s); versions explained %d, "+
+				"attributed %d, unexplained %d; ledgers %d-%d\n", lendingInterestJob, span, r.Pool, r.Asset, r.Hour.Format(time.RFC3339),
+				r.BackstopResidual, r.ResidualUnexplained, r.ExplainedVersions, r.AttributedVersions, r.UnexplainedVersions,
+				r.FirstLedger, r.LastLedger)
+		}
+	}
+	if n > lendingInterestSampleMax {
+		_, _ = fmt.Fprintf(log, "%s: %s: %d more rows with an unexplained version\n", lendingInterestJob, span, n-lendingInterestSampleMax)
+	}
 }
