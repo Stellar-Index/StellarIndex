@@ -33,6 +33,15 @@
 --      "skipped, an interest run is reading lending_state" (journalctl -u
 --      lending-state.service); if state stops advancing,
 --      stellarindex_lending_state_lagging fires: pause the chunks.
+--      A first chunk that stopped before its first window was marked can
+--      leave rows with no watermark: re-run -interest-init with the same
+--      -floor-ledger, or delete the table's rows first (and wait for
+--      system.mutations); another floor would strand them.
+--      A window whose open hour holds over 150,000 versions and cause events
+--      refuses naming -interest-max-versions; rerun the chunk with
+--      -interest-max-versions N above the logged count (~4 KB each, within
+--      lending-state.service's MemoryMax), beside -interest-max-unordered N
+--      for a refusal naming unordered versions.
 --   4. From then on lending-state.timer's run extends it every 10 minutes.
 --      Interest runs take their own lock (ch-entry-history-lending-interest.lock
 --      beside -lock-file) and hold -lock-file shared, so lending_state cannot
@@ -52,10 +61,12 @@
 -- Seeds come from lending_state_hourly and are proved against the lake: a
 -- seed that is not its key's last stored version before the run (rows a
 -- lending_state replay deleted and has not rewritten) refuses the run. After
--- any lending_state replay from {lo}, re-derive from {lo} THROUGH THE TIP: the
--- replay arms that redo, and until a re-derive reaches the watermark the
--- timer's pass skips and every other run refuses (-interest-pool excepted):
---   ch-entry-history -lending-only -interest-only -from {lo} -write
+-- any lending_state replay, re-derive THROUGH THE TIP: the replay arms that
+-- redo, and until a re-derive reaches the watermark the timer's pass skips
+-- and every other run refuses (-interest-pool excepted), logging "a
+-- lending_state replay rewrote the state from ledger L ... -from N". Run it
+-- with that N, not the replay's -from (a redo below the floor starts there):
+--   ch-entry-history -lending-only -interest-only -from {N} -write
 -- in chunks if need be, each from where the last stopped.
 --
 -- A window is refused, and the watermark holds, if a pool runs a WASM hash

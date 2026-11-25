@@ -104,7 +104,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	v, asOf, degraded, err := h.contractDetailCached(ctx, accountActivityCacheKey+g, func(rctx context.Context) (any, error) {
+	v, asOf, fr, err := h.contractDetailCached(ctx, accountActivityCacheKey+g, func(rctx context.Context) (any, error) {
 		return h.computeAccountActivity(rctx, g)
 	})
 	if err != nil {
@@ -129,7 +129,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	h.writeCachedJSON(ctx, w, out, degraded, degraded || out.CoverageNote != "", asOf)
+	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded || out.CoverageNote != "", asOf)
 }
 
 // computeAccountActivity runs the four segment reads. Each degrades independently (absent and named in coverage_note, never mistaken for

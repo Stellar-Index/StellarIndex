@@ -163,7 +163,7 @@ func (h *Handler) PrewarmContractStats(ctx context.Context) {
 }
 
 // ContractStats serves GET /v1/contracts/stats (monthly deployments, totals, 90-day active count); snapshot-served, an expired
-// entry is served while a detached refresh runs, degraded per [swrServedStale].
+// entry is served while a detached refresh runs, judged per [swrFreshness].
 func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -176,8 +176,11 @@ func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 				e = cur // a refresh skipped just now is already a known failure
 			}
 		}
-		stale := !fresh && swrServedStale(e.cachedAt, contractStatsTTL, contractStatsRefreshTimeout, e.refreshFailed)
-		h.writeCachedJSON(r.Context(), w, e.view, stale, stale, e.cachedAt)
+		var fr servedFreshness
+		if !fresh {
+			fr = swrFreshness(e.cachedAt, contractStatsTTL, contractStatsRefreshTimeout, e.refreshFailed, &h.contractStats.flight, contractStatsKey)
+		}
+		h.writeCachedJSON(r.Context(), w, e.view, fr.stale, fr.degraded, e.cachedAt)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)

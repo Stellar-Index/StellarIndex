@@ -251,6 +251,20 @@ func ServerNow(ctx context.Context, addr string) (time.Time, error) {
 	return time.Unix(int64(now), 0).UTC(), nil
 }
 
+// ServerNowMilli is ServerNow to the millisecond, the clock that stamps a DEFAULT now64(3) column.
+func ServerNowMilli(ctx context.Context, addr string) (time.Time, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	var now int64
+	if err := conn.QueryRow(ctx, `SELECT toUnixTimestamp64Milli(now64(3))`).Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("clickhouse: server time: %w", err)
+	}
+	return time.UnixMilli(now).UTC(), nil
+}
+
 // DeleteSupersededSponsorshipEvents removes, from ledgers [lo, hi], each sponsorship_events row written before
 // `before` whose arrangement and operation (ledger, tx_hash, op_index, kind, key_id) also has a row written since.
 // The table's key holds the derived sponsor and a walk position, so a re-derive that attributes or numbers an event

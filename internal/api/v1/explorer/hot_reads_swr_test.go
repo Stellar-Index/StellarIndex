@@ -15,7 +15,7 @@ import (
 )
 
 // Pins stale-while-revalidate for lake-priced explorer reads (contracts directory, asset holders, op-type stats): a
-// stale entry is served (degraded=true, real as_of) while one detached refresh runs; a cold key waits for it, bounded by
+// stale entry is served (real as_of) while one detached refresh runs; a cold key waits for it, bounded by
 // the request deadline only; a failed refresh keeps the previous entry.
 
 // swrReader overrides the three reads with countable, controllable stubs.
@@ -88,24 +88,24 @@ func waitFlightIdle(t *testing.T, f *perKeyFlight, key string) {
 	}
 }
 
-func TestAssetHoldersCached_StaleServedDegradedAndRefreshed(t *testing.T) {
+func TestAssetHoldersCached_StaleServedAndRefreshed(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
 	reader.holdersBlock = make(chan struct{})
-	// Past the TTL plus its one-refresh grace, so degraded even with a healthy refresh running.
+	// Past the TTL plus its one-refresh grace: stale, but not degraded while the refresh it just started is healthy.
 	staleAt := time.Now().Add(-3 * assetHoldersTTL)
 	h.assetHolders.put("native", assetHoldersEntry{
 		holders: []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 1}},
 		total:   1, cachedAt: staleAt,
 	})
 
-	holders, total, asOf, degraded, err := h.assetHoldersCached(context.Background(), "native", 10)
+	holders, total, asOf, fr, err := h.assetHoldersCached(context.Background(), "native", 10)
 	close(reader.holdersBlock)
 	if err != nil || total != 1 || len(holders) != 1 {
 		t.Fatalf("stale serve: holders=%d total=%d err=%v, want the stale entry", len(holders), total, err)
 	}
-	if !degraded || !asOf.at.Equal(staleAt) {
-		t.Errorf("stale serve: degraded=%v asOf=%v, want degraded=true with the entry's real time %v", degraded, asOf, staleAt)
+	if !fr.stale || fr.degraded || !asOf.at.Equal(staleAt) {
+		t.Errorf("stale serve: %+v asOf=%v, want stale, not degraded, with the entry's real time %v", fr, asOf, staleAt)
 	}
 
 	waitFlightIdle(t, &h.assetHolders.flight, "native")
@@ -126,22 +126,29 @@ func TestAssetHoldersCached_FailedRefreshKeepsStaleEntry(t *testing.T) {
 		total:   1, cachedAt: staleAt,
 	})
 
-	_, total, _, degraded, err := h.assetHoldersCached(context.Background(), "native", 10)
-	if err != nil || total != 1 || !degraded {
-		t.Fatalf("stale serve under failing refresh: total=%d degraded=%v err=%v", total, degraded, err)
+	_, total, _, fr, err := h.assetHoldersCached(context.Background(), "native", 10)
+	if err != nil || total != 1 || !fr.stale {
+		t.Fatalf("stale serve under failing refresh: total=%d %+v err=%v", total, fr, err)
 	}
 	waitFlightIdle(t, &h.assetHolders.flight, "native")
-	// The failed refresh must not blank the entry.
+	// The failed refresh must not blank the entry, and the next serve is carried forward over that failure.
 	if e, ok, _ := h.assetHolders.get("native"); !ok || e.total != 1 {
 		t.Errorf("failed refresh blanked the stale entry: ok=%v", ok)
+	}
+	reader.holdersBlock = make(chan struct{})
+	_, _, _, fr, _ = h.assetHoldersCached(context.Background(), "native", 10)
+	close(reader.holdersBlock)
+	waitFlightIdle(t, &h.assetHolders.flight, "native")
+	if !fr.degraded {
+		t.Errorf("serve after a failed refresh: %+v, want degraded", fr)
 	}
 }
 
 func TestAssetHoldersCached_ColdWaitsForDetachedCompute(t *testing.T) {
 	h, reader := newSWRHandler()
-	holders, total, _, degraded, err := h.assetHoldersCached(context.Background(), "native", 10)
-	if err != nil || total != 1 || len(holders) != 1 || degraded {
-		t.Fatalf("cold fill: holders=%d total=%d degraded=%v err=%v", len(holders), total, degraded, err)
+	holders, total, _, fr, err := h.assetHoldersCached(context.Background(), "native", 10)
+	if err != nil || total != 1 || len(holders) != 1 || fr.degraded {
+		t.Fatalf("cold fill: holders=%d total=%d %+v err=%v", len(holders), total, fr, err)
 	}
 	if got := reader.holdersCalls.Load(); got != 1 {
 		t.Errorf("cold fill ran %d scans, want 1", got)
@@ -157,7 +164,7 @@ func TestAssetHoldersCached_ColdFailurePropagatesRefreshError(t *testing.T) {
 	}
 }
 
-func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
+func TestRecentContractsCached_StaleServedAndRefreshed(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
 	reader.contractsBlock = make(chan struct{})
@@ -167,13 +174,13 @@ func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 		since: 100, cachedAt: staleAt,
 	})
 
-	rows, _, since, asOf, degraded, err := h.recentContractsCached(context.Background(), 30, 10)
+	rows, _, since, asOf, fr, err := h.recentContractsCached(context.Background(), 30, 10)
 	close(reader.contractsBlock)
 	if err != nil || len(rows) != 1 || since != 100 {
 		t.Fatalf("stale serve: rows=%d since=%d err=%v", len(rows), since, err)
 	}
-	if !degraded || !asOf.Equal(staleAt) {
-		t.Errorf("stale serve: degraded=%v asOf=%v, want degraded=true with %v", degraded, asOf, staleAt)
+	if !fr.stale || fr.degraded || !asOf.Equal(staleAt) {
+		t.Errorf("stale serve past the bound, healthy refresh: %+v asOf=%v, want stale only with %v", fr, asOf, staleAt)
 	}
 	waitFlightIdle(t, &h.contractsDir.flight, "30")
 	if got := reader.contractsCalls.Load(); got != 1 {
@@ -234,16 +241,16 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Cold: returns nothing (panel omitted — op_type_stats is omitempty),
 	// kicks the detached refresh.
-	if got, stale := h.resolveOpTypeStats(); got != nil || !stale {
-		t.Fatalf("cold resolve returned %v (stale=%v), want nil and stale (panel appears next request)", got, stale)
+	if got, fr := h.resolveOpTypeStats(); got != nil || fr.stale || !fr.degraded {
+		t.Fatalf("cold resolve returned %v (%+v), want nil and degraded only (panel appears next request)", got, fr)
 	}
 	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
 	if got := reader.statsCalls.Load(); got != 1 {
 		t.Fatalf("detached stats refresh ran %d times, want 1", got)
 	}
 	// Warm: served from cache, no further compute.
-	stats, stale := h.resolveOpTypeStats()
-	if stale {
+	stats, fr := h.resolveOpTypeStats()
+	if fr != (servedFreshness{}) {
 		t.Error("warm resolve reported a stale panel")
 	}
 	if len(stats) != 1 || stats[0].Type != "payment" || stats[0].Count != 9 {
@@ -313,9 +320,9 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 		holders: []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 1}},
 		total:   1, cachedAt: staleAt,
 	})
-	holders, total, _, degraded, err := h.assetHoldersCached(context.Background(), "USDC-"+validTestAccount, 10)
-	if err != nil || total != 1 || len(holders) != 1 || !degraded {
-		t.Fatalf("stale serve under saturation: holders=%d total=%d degraded=%v err=%v", len(holders), total, degraded, err)
+	holders, total, _, fr, err := h.assetHoldersCached(context.Background(), "USDC-"+validTestAccount, 10)
+	if err != nil || total != 1 || len(holders) != 1 || !fr.degraded || !fr.stale {
+		t.Fatalf("stale serve under saturation: holders=%d total=%d %+v err=%v", len(holders), total, fr, err)
 	}
 	if got := reader.holdersCalls.Load(); got != 0 {
 		t.Fatalf("stale-path refresh ran under saturation (%d scans)", got)
@@ -325,9 +332,9 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 	for ; held > 0; held-- {
 		gate.Release()
 	}
-	holders, total, _, degraded, err = h.assetHoldersCached(context.Background(), "native", 10)
-	if err != nil || total != 1 || len(holders) != 1 || degraded {
-		t.Fatalf("post-release cold fill: holders=%d total=%d degraded=%v err=%v", len(holders), total, degraded, err)
+	holders, total, _, fr, err = h.assetHoldersCached(context.Background(), "native", 10)
+	if err != nil || total != 1 || len(holders) != 1 || fr.degraded {
+		t.Fatalf("post-release cold fill: holders=%d total=%d %+v err=%v", len(holders), total, fr, err)
 	}
 	if got := reader.holdersCalls.Load(); got != 1 {
 		t.Fatalf("post-release fill ran %d scans, want 1", got)
@@ -336,13 +343,13 @@ func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 	// The skipped key stays degraded until a refresh succeeds; the put clears the failure memory.
 	usdc := "USDC-" + validTestAccount
 	reader.holdersBlock = make(chan struct{}) // hold the refresh so the serve reads the skipped entry
-	_, _, _, degraded, _ = h.assetHoldersCached(context.Background(), usdc, 10)
+	_, _, _, fr, _ = h.assetHoldersCached(context.Background(), usdc, 10)
 	close(reader.holdersBlock)
-	if !degraded {
+	if !fr.degraded {
 		t.Error("post-release serve of a key whose refresh was skipped came back clean before any refresh landed")
 	}
 	waitFlightIdle(t, &h.assetHolders.flight, usdc)
-	if _, _, _, degraded, _ := h.assetHoldersCached(context.Background(), usdc, 10); degraded {
+	if _, _, _, fr, _ := h.assetHoldersCached(context.Background(), usdc, 10); fr.degraded {
 		t.Error("after a successful refresh the board still served degraded")
 	}
 }
@@ -354,14 +361,14 @@ func TestContractDetailCached_ColdWaitsThenServes(t *testing.T) {
 	calls := 0
 	compute := func(context.Context) (any, error) { calls++; return "payload-1", nil }
 
-	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1", compute)
-	if err != nil || v != "payload-1" || degraded {
-		t.Fatalf("cold fill: v=%v degraded=%v err=%v", v, degraded, err)
+	v, _, fr, err := h.contractDetailCached(context.Background(), "ev:C1", compute)
+	if err != nil || v != "payload-1" || fr != (servedFreshness{}) {
+		t.Fatalf("cold fill: v=%v %+v err=%v", v, fr, err)
 	}
 	// Warm hit: no recompute.
-	v, _, degraded, err = h.contractDetailCached(context.Background(), "ev:C1", compute)
-	if err != nil || v != "payload-1" || degraded || calls != 1 {
-		t.Fatalf("warm hit: v=%v degraded=%v calls=%d err=%v", v, degraded, calls, err)
+	v, _, fr, err = h.contractDetailCached(context.Background(), "ev:C1", compute)
+	if err != nil || v != "payload-1" || fr != (servedFreshness{}) || calls != 1 {
+		t.Fatalf("warm hit: v=%v %+v calls=%d err=%v", v, fr, calls, err)
 	}
 }
 
@@ -369,9 +376,10 @@ func TestContractDetailCached_ColdWaitsThenServes(t *testing.T) {
 func ageContractDetail(h *Handler, key string, age time.Duration) {
 	h.contractDetail.mu.Lock()
 	defer h.contractDetail.mu.Unlock()
-	e := h.contractDetail.entries[key]
+	m := h.contractDetail.tableLocked(key)
+	e := m[key]
 	e.cachedAt = time.Now().Add(-age)
-	h.contractDetail.entries[key] = e
+	m[key] = e
 }
 
 // An entry just past its TTL is refreshed but served unflagged: it is inside its staleness bound.
@@ -380,10 +388,10 @@ func TestContractDetailCached_ExpiredWithinBoundServedClean(t *testing.T) {
 	h.contractDetail.put("ev:C1", "old")
 	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
 
-	v, asOf, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
+	v, asOf, fr, err := h.contractDetailCached(context.Background(), "ev:C1",
 		func(context.Context) (any, error) { return "new", nil })
-	if err != nil || v != "old" || degraded {
-		t.Fatalf("serve 1m past ttl: v=%v degraded=%v err=%v, want old/false", v, degraded, err)
+	if err != nil || v != "old" || fr != (servedFreshness{}) {
+		t.Fatalf("serve 1m past ttl: v=%v %+v err=%v, want old and unflagged", v, fr, err)
 	}
 	if time.Since(asOf) < contractDetailTTL {
 		t.Fatalf("the serve must expose the entry's real age, got asOf=%v", asOf)
@@ -403,23 +411,23 @@ func TestContractDetailCached_FailedRefreshFlagsNextServe(t *testing.T) {
 	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
 
 	release := make(chan struct{})
-	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
+	v, _, fr, err := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
 		<-release
 		return "new", nil
 	})
-	if err != nil || v != "old" || !degraded {
-		t.Fatalf("serve after a failed refresh, inside the bound: v=%v degraded=%v err=%v, want old/true", v, degraded, err)
+	if err != nil || v != "old" || !fr.degraded || !fr.stale {
+		t.Fatalf("serve after a failed refresh, inside the bound: v=%v %+v err=%v, want old/stale+degraded", v, fr, err)
 	}
 	close(release)
 	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
 	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
 	hold := make(chan struct{}) // held until the serve returns: the verdict must come from the entry alone
 	defer close(hold)
-	if v, _, degraded, _ := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
+	if v, _, fr, _ := h.contractDetailCached(context.Background(), "ev:C1", func(context.Context) (any, error) {
 		<-hold
 		return nil, errors.New("released")
-	}); v != "new" || degraded {
-		t.Fatalf("expired after a successful refresh: v=%v degraded=%v, want new/false", v, degraded)
+	}); v != "new" || fr.degraded {
+		t.Fatalf("expired after a successful refresh: v=%v %+v, want new/not degraded", v, fr)
 	}
 }
 
@@ -435,26 +443,29 @@ func TestContractDetailEntry_PositionsGraceIsHalfTTL(t *testing.T) {
 	}
 }
 
-func TestContractDetailCached_StaleServedDegradedAndRefreshed(t *testing.T) {
-	h, _ := newSWRHandler()
-	h.contractDetail.put("ev:C1", "old")
-	ageContractDetail(h, "ev:C1", detailStaleAfterForKey("ev:C1")+time.Minute)
+// Age past the bound is stale, not degraded: nothing has failed, and the refresh the read just started is healthy.
+func TestContractDetailCached_PastBoundHealthyRefreshIsStaleNotDegraded(t *testing.T) {
+	for _, key := range []string{"ev:C1", "ch:C1", positionsCacheKey + "G1", accountActivityCacheKey + "G1"} {
+		h, _ := newSWRHandler()
+		h.contractDetail.put(key, "old")
+		ageContractDetail(h, key, detailStaleAfterForKey(key)+time.Minute)
 
-	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
-	hold := make(chan struct{})
-	v, asOf, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
-		func(context.Context) (any, error) { <-hold; return "new", nil })
-	close(hold)
-	if err != nil || v != "old" || !degraded {
-		t.Fatalf("stale serve: v=%v degraded=%v err=%v", v, degraded, err)
-	}
-	if time.Since(asOf) < contractDetailTTL {
-		t.Fatalf("stale serve must expose the entry's REAL age, got asOf=%v", asOf)
-	}
-	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
-	if v, _, degraded, _ := h.contractDetailCached(context.Background(), "ev:C1",
-		func(context.Context) (any, error) { return "unused", nil }); v != "new" || degraded {
-		t.Fatalf("after refresh: v=%v degraded=%v, want new/false", v, degraded)
+		// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
+		hold := make(chan struct{})
+		v, asOf, fr, err := h.contractDetailCached(context.Background(), key,
+			func(context.Context) (any, error) { <-hold; return "new", nil })
+		close(hold)
+		if err != nil || v != "old" || !fr.stale || fr.degraded {
+			t.Fatalf("%s past its bound: v=%v %+v err=%v, want old, stale, not degraded", key, v, fr, err)
+		}
+		if time.Since(asOf) < detailStaleAfterForKey(key) {
+			t.Fatalf("%s: stale serve must expose the entry's REAL age, got asOf=%v", key, asOf)
+		}
+		waitFlightIdle(t, &h.contractDetail.flight, key)
+		if v, _, fr, _ := h.contractDetailCached(context.Background(), key,
+			func(context.Context) (any, error) { return "unused", nil }); v != "new" || fr != (servedFreshness{}) {
+			t.Fatalf("%s after refresh: v=%v %+v, want new and unflagged", key, v, fr)
+		}
 	}
 }
 
@@ -463,15 +474,74 @@ func TestContractDetailCached_FailedRefreshKeepsStaleEntry(t *testing.T) {
 	h.contractDetail.put("ev:C1", "old")
 	ageContractDetail(h, "ev:C1", detailStaleAfterForKey("ev:C1")+time.Minute)
 
-	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
+	v, _, fr, err := h.contractDetailCached(context.Background(), "ev:C1",
 		func(context.Context) (any, error) { return nil, errors.New("boom") })
-	if err != nil || v != "old" || !degraded {
-		t.Fatalf("stale serve during failing refresh: v=%v degraded=%v err=%v", v, degraded, err)
+	if err != nil || v != "old" || !fr.stale {
+		t.Fatalf("stale serve during failing refresh: v=%v %+v err=%v", v, fr, err)
 	}
 	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
-	if v, _, _, _ := h.contractDetailCached(context.Background(), "ev:C1",
-		func(context.Context) (any, error) { return nil, errors.New("boom") }); v != "old" {
-		t.Fatalf("failed refresh must keep the previous entry, got %v", v)
+	hold := make(chan struct{})
+	defer close(hold)
+	if v, _, fr, _ := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { <-hold; return nil, errors.New("boom") }); v != "old" || !fr.degraded || !fr.stale {
+		t.Fatalf("serve after the failed refresh: v=%v %+v, want the previous entry, stale+degraded", v, fr)
+	}
+}
+
+// A refresh refused a slot by the saturated gate is a known failure: that serve is degraded even inside the bound.
+func TestContractDetailCached_RefusedRefreshIsDegraded(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	ageContractDetail(h, "ev:C1", contractDetailTTL+time.Minute)
+	gate, class := h.detachedGate(), detachedClassForKey("ev:C1")
+	held := 0
+	for gate.TryAcquireClass(class) {
+		held++
+		if held > 1000 {
+			t.Fatal("gate never saturates")
+		}
+	}
+	defer func() {
+		for ; held > 0; held-- {
+			gate.ReleaseClass(class)
+		}
+	}()
+	v, _, fr, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { t.Error("a refused refresh ran"); return "new", nil })
+	if err != nil || v != "old" || !fr.degraded || !fr.stale {
+		t.Fatalf("serve with its refresh refused: v=%v %+v err=%v, want old, stale+degraded", v, fr, err)
+	}
+}
+
+type provisionalTestPayload struct{}
+
+func (provisionalTestPayload) provisional() bool { return true }
+
+// A provisional payload is degraded on its expired serve, as before.
+func TestContractDetailCached_ProvisionalIsDegraded(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", provisionalTestPayload{})
+	hold := make(chan struct{})
+	defer close(hold)
+	_, _, fr, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { <-hold; return "new", nil })
+	if err != nil || !fr.degraded || !fr.stale {
+		t.Fatalf("provisional serve: %+v err=%v, want stale+degraded", fr, err)
+	}
+}
+
+// A refresh still running past its budget is an overrun: the entry it should have replaced is served degraded.
+func TestContractDetailCached_OverrunRefreshIsDegraded(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	ageContractDetail(h, "ev:C1", detailStaleAfterForKey("ev:C1")+time.Hour)
+	fl, _ := h.contractDetail.flight.begin("ev:C1")
+	fl.started = time.Now().Add(-contractDetailRefreshTimeout - time.Second)
+	defer h.contractDetail.flight.end("ev:C1", fl, nil)
+	_, _, fr, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { t.Error("a second refresh started"); return "new", nil })
+	if err != nil || !fr.degraded || !fr.stale {
+		t.Fatalf("serve under an overrun refresh: %+v err=%v, want stale+degraded", fr, err)
 	}
 }
 

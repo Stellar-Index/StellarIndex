@@ -17,8 +17,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -127,6 +129,25 @@ func TestInterestEventDecoder_BLNTInterestFill(t *testing.T) {
 	if got, err := v1.decode(ev); !errors.Is(err, errInterestEventUndecodable) || len(got) != 1 ||
 		got[0].Cause != lendinginterest.CauseUndecodable || got[0].TxHash != ev.TxHash || got[0].Amount != nil {
 		t.Errorf("a V2-shaped fill on a V1 pool: %+v %v, want its undecodable marker", got, err)
+	}
+}
+
+// A BLNT fill whose auction_type is missing or not a u32 cannot be told from an interest fill: it fails, so its
+// transaction gets the undecodable marker, never a silent skip.
+func TestBLNTEvent_UnreadableAuctionTypeFails(t *testing.T) {
+	base := lendinginterest.Event{Pool: blntFixturePool, Ledger: 9, TxHash: "tx"}
+	for name, attrs := range map[string]map[string]any{
+		"missing":     {"filled_auction_data": map[string]any{}},
+		"wrong typed": {"auction_type": int64(2), "filled_auction_data": map[string]any{}},
+	} {
+		got, err := blntEvent([]consumer.Event{blnt.Event{EventType: "fill_auction", Attributes: attrs}}, base)
+		if err == nil || !strings.Contains(err.Error(), "auction_type") || got != nil {
+			t.Errorf("%s: %+v %v, want an error", name, got, err)
+		}
+	}
+	got, err := blntEvent([]consumer.Event{blnt.Event{EventType: "fill_auction", Attributes: map[string]any{"auction_type": uint32(0)}}}, base)
+	if err != nil || got != nil {
+		t.Errorf("a liquidation fill: %+v %v, want nothing", got, err)
 	}
 }
 

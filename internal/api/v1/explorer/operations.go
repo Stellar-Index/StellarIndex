@@ -97,18 +97,18 @@ type opTypeStatsCache struct {
 	flight perKeyFlight
 }
 
-// get returns the cached breakdown and whether it is still fresh, plus whether a stale copy is served degraded per
-// [swrServedStale]. The stats are returned even when stale so the caller can fall back to them on error.
-func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh, servedStale bool) {
+// get returns the cached breakdown and whether it is still fresh, plus the served verdict: [swrFreshness] for an expired copy, and
+// degraded when cold (the panel is dropped). The stats are returned even when stale so the caller can fall back to them on error.
+func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh bool, fr servedFreshness) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.stats == nil {
-		return nil, false, true
+		return nil, false, servedFreshness{degraded: true} // nothing old is served, the section is dropped
 	}
 	if time.Since(c.at) < opTypeStatsTTL {
-		return c.stats, true, false
+		return c.stats, true, servedFreshness{}
 	}
-	return c.stats, false, swrServedStale(c.at, opTypeStatsTTL, opTypeStatsRefreshTimeout, c.refreshFailed)
+	return c.stats, false, swrFreshness(c.at, opTypeStatsTTL, opTypeStatsRefreshTimeout, c.refreshFailed, &c.flight, "stats")
 }
 
 func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
@@ -277,14 +277,14 @@ func (h *Handler) stampTxOutcomes(ctx context.Context, ops []OpView, rows []clic
 
 // resolveOpTypeStats returns the trailing-24h op-type breakdown, serving the STALE value (nil when cold, so the omitempty panel drops)
 // while a DETACHED refresh runs; inline recompute would share the directory's request budget and 503 the page.
-// stale is the served verdict: a cold (nil) panel or one judged stale by [swrServedStale].
-func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, stale bool) {
-	cached, fresh, servedStale := h.opTypeStats.get()
+// fr is the served verdict per [opTypeStatsCache.get].
+func (h *Handler) resolveOpTypeStats() (stats []OpTypeStatV, fr servedFreshness) {
+	cached, fresh, fr := h.opTypeStats.get()
 	if fresh {
-		return cached, false
+		return cached, fr
 	}
-	h.refreshOpTypeStats()     //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
-	return cached, servedStale // nil on a cold process — panel appears next request
+	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
+	return cached, fr      // nil on a cold process — panel appears next request
 }
 
 // PrewarmOpTypeStats primes the op-type breakdown at opTypeStatsTTL cadence via the request path's detached single-flight refresh; a
@@ -351,9 +351,9 @@ type OperationsView struct {
 	// operation count vs len(Operations). Zero/false on the directory, which pages instead.
 	Total     uint32 `json:"total,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
-	// opTypeStatsStale records that OpTypeStats was stale or absent when the
-	// page was assembled, so a cached copy still serves as degraded.
-	opTypeStatsStale bool
+	// opTypeStatsFreshness is OpTypeStats' verdict when the page was assembled,
+	// so a cached copy still serves it.
+	opTypeStatsFreshness servedFreshness
 }
 
 // OpTypeStatV is one op-type's count in the trailing-24h window.
@@ -584,7 +584,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// Serve it from the SWR cache, sliced to the caller's limit; a never-computed cache is
 	// single-flighted through opsDirCached so a burst shares ONE lake read.
 	if !cur.IsSet() {
-		view, asOf, degraded, err := h.opsDirCached(ctx)
+		view, asOf, fr, err := h.opsDirCached(ctx)
 		if err != nil {
 			if h.ClientAborted(r, err) {
 				return
@@ -600,7 +600,8 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeCachedJSON(ctx, w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale || view.CoverageNote != "", asOf)
+		ts := view.opTypeStatsFreshness
+		h.writeCachedJSON(ctx, w, sliceOperationsView(view, limit), fr.stale || ts.stale, fr.degraded || ts.degraded || view.CoverageNote != "", asOf)
 		return
 	}
 
@@ -640,15 +641,16 @@ func (h *Handler) writeOperationsPageError(ctx context.Context, w http.ResponseW
 		"Internal error", http.StatusInternalServerError, "")
 }
 
-// opsDirCached serves the cached max-page first-page view: an expired entry is served while a detached refresh runs, degraded
-// per [swrServedStale]; a never-computed cache single-flights the fill, so concurrent first requests share ONE lake read.
-func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, degraded bool, err error) {
+// opsDirCached serves the cached max-page first-page view: an expired entry is served while a detached refresh runs, judged
+// per [swrFreshness]; a never-computed cache single-flights the fill, so concurrent first requests share ONE lake read.
+func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, fr servedFreshness, err error) {
 	if e, hit, fresh := h.opsDir.get(); hit {
 		if !fresh {
 			h.refreshOpsDirectory()  //nolint:contextcheck // intentional detach — see refreshOpsDirectory
 			e, _, _ = h.opsDir.get() // a refresh skipped just now is already a known failure
+			fr = swrFreshness(e.cachedAt, opsDirTTL, opsDirRefreshTimeout, e.refreshFailed, &h.opsDir.flight, opsDirFlightKey)
 		}
-		return e.view, e.cachedAt, !fresh && swrServedStale(e.cachedAt, opsDirTTL, opsDirRefreshTimeout, e.refreshFailed), nil
+		return e.view, e.cachedAt, fr, nil
 	}
 	// Stone-cold: wait for the detached compute, bounded by OUR deadline
 	// only — the compute itself is not (see refreshAssetHolders).
@@ -656,14 +658,14 @@ func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf t
 	select {
 	case <-fl.done:
 		if e, hit, _ := h.opsDir.get(); hit {
-			return e.view, e.cachedAt, false, nil
+			return e.view, e.cachedAt, servedFreshness{}, nil
 		}
 		if fl.err != nil {
-			return OperationsView{}, time.Time{}, false, fl.err
+			return OperationsView{}, time.Time{}, servedFreshness{}, fl.err
 		}
-		return OperationsView{}, time.Time{}, false, errRefreshFailed
+		return OperationsView{}, time.Time{}, servedFreshness{}, errRefreshFailed
 	case <-ctx.Done():
-		return OperationsView{}, time.Time{}, false, ctx.Err()
+		return OperationsView{}, time.Time{}, servedFreshness{}, ctx.Err()
 	}
 }
 
@@ -690,7 +692,7 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 	out := h.lightOperationsView(ctx, rows, limit)
 	// Op-type stats are best-effort context and only attached to the first page.
 	if !cur.IsSet() {
-		out.OpTypeStats, out.opTypeStatsStale = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
+		out.OpTypeStats, out.opTypeStatsFreshness = h.resolveOpTypeStats() //nolint:contextcheck // intentional detach — the 24h aggregate must never share a request deadline (see resolveOpTypeStats)
 	}
 	return out, nil
 }
