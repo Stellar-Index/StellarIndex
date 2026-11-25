@@ -1,0 +1,326 @@
+-- recentClosedVWAP1mExists
+
+        SELECT 1 FROM (
+            (SELECT 1 FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+              LIMIT 1)
+            UNION ALL
+            (SELECT 1 FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+              LIMIT 1)
+        ) u
+         LIMIT 1
+    
+-- latestClosedVWAP1m
+
+        WITH latest AS (
+            SELECT max(b) AS b FROM (
+                SELECT max(bucket) AS b FROM prices_1m
+                 WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+                UNION ALL
+                SELECT max(bucket) AS b FROM prices_1m
+                 WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+            ) u
+        ),
+        r AS (
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
+                   COALESCE(trade_count, 0) AS tc, sources
+              FROM prices_1m
+             WHERE bucket = (SELECT b FROM latest)
+               AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+               AND base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+            UNION ALL
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
+                   COALESCE(trade_count, 0) AS tc, sources
+              FROM prices_1m
+             WHERE bucket = (SELECT b FROM latest)
+               AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+               AND base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+        )
+        SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced, tc, sources
+          FROM r
+    
+-- recentClosedVWAP1mCombined
+
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT $3
+    
+-- closedVWAP1mCombinedBefore
+
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+                AND bucket < $4::timestamptz
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+                AND bucket < $4::timestamptz
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT $3
+    
+-- closedVWAP1mAtOrBefore
+
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+                AND bucket <= $3::timestamptz - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT 2)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+                AND bucket <= $3::timestamptz - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT 2)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT 2
+    
+-- pairMarketSubstance
+
+        SELECT COALESCE(sum(bucket_usd), 0)::text,
+               count(*),
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0),
+               count(*) FILTER (WHERE bucket_usd > 0)
+          FROM (
+            SELECT bucket, sum(volume_usd) AS bucket_usd
+              FROM (
+                SELECT bucket, volume_usd FROM prices_1m
+                 WHERE base_asset = ANY($1) AND quote_asset = ANY($2)
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-01 03:04:05+00'
+
+                UNION ALL
+                SELECT bucket, volume_usd FROM prices_1m
+                 WHERE base_asset = ANY($2) AND quote_asset = ANY($1)
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-01 03:04:05+00'
+
+                   AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
+              ) d
+             GROUP BY bucket
+          ) b
+    
+-- recentClosedVWAP1mExists (set)
+SELECT k.ord, x.* FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS k(base, quote, ord)
+CROSS JOIN LATERAL (
+        SELECT 1 FROM (
+            (SELECT 1 FROM prices_1m
+              WHERE base_asset = k.base AND quote_asset = k.quote AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+              LIMIT 1)
+            UNION ALL
+            (SELECT 1 FROM prices_1m
+              WHERE base_asset = k.quote AND quote_asset = k.base AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+              LIMIT 1)
+        ) u
+         LIMIT 1
+    ) AS x(one)
+ORDER BY k.ord
+-- latestClosedVWAP1m (set)
+SELECT k.ord, x.* FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS k(base, quote, ord)
+CROSS JOIN LATERAL (
+        WITH latest AS (
+            SELECT max(b) AS b FROM (
+                SELECT max(bucket) AS b FROM prices_1m
+                 WHERE base_asset = k.base AND quote_asset = k.quote AND vwap IS NOT NULL
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+                UNION ALL
+                SELECT max(bucket) AS b FROM prices_1m
+                 WHERE base_asset = k.quote AND quote_asset = k.base AND vwap IS NOT NULL
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+            ) u
+        ),
+        r AS (
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
+                   COALESCE(trade_count, 0) AS tc, sources
+              FROM prices_1m
+             WHERE bucket = (SELECT b FROM latest)
+               AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+               AND base_asset = k.base AND quote_asset = k.quote AND vwap IS NOT NULL
+            UNION ALL
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
+                   COALESCE(trade_count, 0) AS tc, sources
+              FROM prices_1m
+             WHERE bucket = (SELECT b FROM latest)
+               AND bucket >= TIMESTAMPTZ '2026-01-02 03:04:05+00'
+
+               AND base_asset = k.quote AND quote_asset = k.base AND vwap IS NOT NULL
+        )
+        SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced, tc, sources
+          FROM r
+    ) AS x(bucket, base_asset, vwap, volume_priced, trade_count, sources)
+ORDER BY k.ord, x.bucket DESC, x.base_asset
+-- recentClosedVWAP1mCombined (set)
+SELECT k.ord, x.* FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS k(base, quote, ord)
+CROSS JOIN LATERAL (
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = k.base AND quote_asset = k.quote AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = k.quote AND quote_asset = k.base AND vwap IS NOT NULL
+                AND bucket <= now() - INTERVAL '1 minute'
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT $3
+    ) AS x(bucket, base_asset, vwap, volume_priced, trade_count, sources)
+ORDER BY k.ord, x.bucket DESC, x.base_asset
+-- closedVWAP1mCombinedBefore (set)
+SELECT k.ord, x.* FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS k(base, quote, ord)
+CROSS JOIN LATERAL (
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = k.base AND quote_asset = k.quote AND vwap IS NOT NULL
+                AND bucket < $4::timestamptz
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = k.quote AND quote_asset = k.base AND vwap IS NOT NULL
+                AND bucket < $4::timestamptz
+                AND bucket >= TIMESTAMPTZ '2024-11-28 03:04:05+00'
+
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT $3
+    ) AS x(bucket, base_asset, vwap, volume_priced, trade_count, sources)
+ORDER BY k.ord, x.bucket DESC, x.base_asset
+-- closedVWAP1mAtOrBefore (set)
+SELECT k.ord, x.* FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS k(base, quote, ord)
+CROSS JOIN LATERAL (
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = k.base AND quote_asset = k.quote AND vwap IS NOT NULL
+                AND bucket <= $3::timestamptz - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT 2)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = k.quote AND quote_asset = k.base AND vwap IS NOT NULL
+                AND bucket <= $3::timestamptz - INTERVAL '1 minute'
+              ORDER BY bucket DESC
+              LIMIT 2)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT 2
+    ) AS x(bucket, base_asset, vwap, volume_priced, trade_count, sources)
+ORDER BY k.ord, x.bucket DESC, x.base_asset
+-- pairMarketSubstance (set)
+WITH k AS (
+            SELECT ord, array_agg(spelling) FILTER (WHERE leg = 'b') AS bases,
+                   array_agg(spelling) FILTER (WHERE leg = 'q') AS quotes
+              FROM unnest($1::bigint[], $2::text[], $3::text[]) AS s(ord, leg, spelling)
+             GROUP BY ord)
+        SELECT k.ord, x.* FROM k CROSS JOIN LATERAL (
+        SELECT COALESCE(sum(bucket_usd), 0)::text,
+               count(*),
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0),
+               count(*) FILTER (WHERE bucket_usd > 0)
+          FROM (
+            SELECT bucket, sum(volume_usd) AS bucket_usd
+              FROM (
+                SELECT bucket, volume_usd FROM prices_1m
+                 WHERE base_asset = ANY(k.bases) AND quote_asset = ANY(k.quotes)
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-01 03:04:05+00'
+
+                UNION ALL
+                SELECT bucket, volume_usd FROM prices_1m
+                 WHERE base_asset = ANY(k.quotes) AND quote_asset = ANY(k.bases)
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   AND bucket >= TIMESTAMPTZ '2026-01-01 03:04:05+00'
+
+                   AND NOT (base_asset = ANY(k.bases) AND quote_asset = ANY(k.quotes))
+              ) d
+             GROUP BY bucket
+          ) b
+    ) AS x(volume_usd, buckets, span_seconds, valued_buckets)
+        ORDER BY k.ord

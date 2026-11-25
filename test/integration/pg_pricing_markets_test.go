@@ -2089,6 +2089,12 @@ func (s readerPinSeed) pinSets(ctx context.Context, t *testing.T) {
 	for i, id := range ids {
 		listed[i] = s.pair(t, id)
 	}
+	// BOTH/USDC and USDC/BOTH in one call: each key folds the same rows into its own orientation.
+	flipped, err := canonical.NewPair(listed[0].Quote, listed[0].Base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed = append(listed, flipped)
 	reordered := make([]canonical.Pair, 0, len(listed))
 	for i := range listed { // reversed, then rotated by five
 		reordered = append(reordered, listed[(2*len(listed)-1-i-5)%len(listed)])

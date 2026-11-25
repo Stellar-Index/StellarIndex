@@ -90,6 +90,12 @@ func pairSetSQL(single, cols, order string) string {
 		"CROSS JOIN LATERAL (" + pairKeyLegs.Replace(single) + ") AS " + cols + "\nORDER BY k.ord" + order
 }
 
+func vwapRowsSetSQL(single string) string {
+	return pairSetSQL(single, vwapRowCols, ", x.bucket DESC, x.base_asset")
+}
+
+func existsSetSQL(single string) string { return pairSetSQL(single, "x(one)", "") }
+
 // substanceSetSQL runs a spelling-set statement once per key: $1..$3 are flat (key ordinal, leg, spelling) arrays,
 // regrouped into each key's base and quote sets.
 func substanceSetSQL(single string) string {
@@ -189,8 +195,7 @@ func (s *Store) vwapRowsSet(ctx context.Context, single string, pairs []canonica
 		return out, nil
 	}
 	bases, quotes := pairLegArrays(pairs)
-	q := pairSetSQL(single, vwapRowCols, ", x.bucket DESC, x.base_asset")
-	rows, err := s.db.QueryContext(ctx, q, append([]any{bases, quotes}, args...)...)
+	rows, err := s.db.QueryContext(ctx, vwapRowsSetSQL(single), append([]any{bases, quotes}, args...)...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: %s: %w", what, err)
 	}
@@ -241,7 +246,7 @@ func (s *Store) recentClosedVWAP1mExistsSet(ctx context.Context, pairs []canonic
 		return out, nil
 	}
 	bases, quotes := pairLegArrays(pairs)
-	rows, err := s.db.QueryContext(ctx, pairSetSQL(recentClosedVWAP1mExistsSQL(since), "x(one)", ""), bases, quotes)
+	rows, err := s.db.QueryContext(ctx, existsSetSQL(recentClosedVWAP1mExistsSQL(since)), bases, quotes)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: recentClosedVWAP1mExistsSet: %w", err)
 	}
