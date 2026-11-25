@@ -20,6 +20,24 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.135.0] - 2026-11-25
+
+Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. Behaviour change for operators on an EXISTING ClickHouse host: run `deploy/clickhouse/ledger_entry_changes_codecs.sql` once, as the operator (no bootstrap applies it); it is metadata-only and idempotent, and only new parts take the codecs until `recompress-lec.sh` rewrites the old ones. Fresh hosts get the codecs from `tier1_schema.sql` (#4358).
+
+### Added
+
+- **obs:** `stellarindex_ratelimit_decisions_total{tier,result}` counts each API request once by its worst outcome (`allowed`, `fail_open`, `limited`, `unavailable`), and `stellarindex_ratelimit_utilisation_ratio{tier}` is a histogram of the share of the subject's per-minute budget used after each allowed request, including re-prices and cold-fill surcharges (for SEP-10, the larger of the account and per-IP shares). Tiers are `anonymous`, `apikey`, `sep10`, `operator`, `custom` and `other`. Both use the count the limiter already returns, so there is no extra store call; no label identifies a client; limiter decisions, status codes and headers are unchanged (#4363).
+- **blend:** `AccrueBetween` recomputes the interest a pool accrued between two consecutive stored versions of a reserve with the contract's own integer arithmetic, and returns the gross, backstop and supplier amounts with two checks against the stored next version: whether `b_rate` matches, and the `backstop_credit` change the accrual does not explain. A pure function, not yet wired to any reader or route. Replayed over 6,093 consecutive mainnet versions, every pair reconciles to the base unit except two V1 interest-auction fills, which are reported with their exact residual (#4362).
+
+### Changed
+
+- **ops:** `recompress-lec.sh` converts `ledger_entry_changes` partitions with `ALTER TABLE ... REWRITE PARTS IN PARTITION`, which rewrites each part one-for-one and keeps duplicates; the earlier `OPTIMIZE ... FINAL` merged and deduplicated a ReplacingMergeTree, so it changed the stored rows. The codecs are ZSTD(3) on `account_id`, `tx_hash`, `asset` and `balance`, and Delta+ZSTD(3) on `intra_ledger_seq`. The driver refuses to start unless all five are in `system.columns`, skips the live tip partition, and releases a partition's freeze only when its row count, per-part rows and all-column hash match before and after; a mismatch keeps the freeze and exits non-zero. A pilot on production partition 30 gave identical signatures, 35.5 to 27.0 GiB (#4358).
+- **ops:** `recompress-lec.sh` queries through `RECOMPRESS_CH`, default `/usr/bin/clickhouse-client --port 9300`, because unauthenticated HTTP on `localhost:8123` is refused on r1. No credential is in the script, its defaults, its logs or its argv. A startup probe of `system.mutations` aborts with a clear log line, before any ALTER, on a transport or auth problem (#4361).
+
+### Fixed
+
+- **api:** a prewarm render waits for the refresh it starts or joins and is judged on the entry as it then stands. An asset detail value read only by the prewarm expired at about 180 s, past the 150 s stale bound, so the page took the old value with its stale flag while a healthy refresh had only just started; the flagged body was cached and `/v1/assets/native` cycled between clean and stale/degraded responses with no refresh failure behind it. Client requests are unchanged: served at once, flagged when past the bound (#4360).
+
 ## [v0.134.0] - 2026-11-25
 
 Tested against Stellar protocol 27. No migrations (schema version stays 236). No `pkg/*` break. Behaviour change for API clients: an uncached (cold) read now costs extra rate-limit tokens, and a request that cannot pay is refused with 429 (#4357).
@@ -127,41 +145,3 @@ Tested against Stellar protocol 27. No migrations (schema version stays 236). No
 - **api:** oracle, RWA and pool read fixes under the kill switch (#4281).
 - **obs:** a per-drive NVMe vanish alert, a webhook row bound and corrected auth docs (#4313).
 - **test:** the exclusion cache stub's observed-at instant is pinned, and the account operations page is bounded absolutely in the integration test (#4325, #4301).
-
-## [v0.130.0] - 2026-11-22
-
-Tested against Stellar protocol 27. Migrations 0235-0236 (schema version 236): 0235 allows a customer webhook only one current signing-key form and refuses to apply, listing the ids, if a row holds both; 0236 caps `nonstandard_decimals_assets.decimals` at 38 and refuses to apply if a row is above it; neither rewrites rows, and both tables are tiny. Run the pre-check queries in `docs/operations/credential-rotation.md` (webhook keys) and `docs/operations/runbooks/dex.md` (decimals) before deploying (#4265). No `pkg/*` break. Behaviour change for operators: apply the host role (archival-node) before or with the new binary; the API now refuses to start with a ClickHouse serving password but no serving user, and the role renders the two together (#4258). After deploy, run `stellarindex-ops ch-backfill -config <toml> -changes-only -from 2 -to <tip>` once per host to extract ledger-upgrade entry changes (#4265). New optional setting `webhook_seal_previous_key_env` (default `STELLARINDEX_WEBHOOK_SEAL_PREVIOUS_KEY`, role variable `vault_webhook_seal_previous_key`) rotates the webhook seal secret; steps are in `docs/operations/credential-rotation.md` (#4265). Behaviour changes for API clients, all additive in shape: asset rows and the detail carry `circulating_supply_lower_bound` (#4266); `price_withheld_reason` appears on the global asset view and takes the value `source_excluded` when a price depends on an excluded source (#4263); a fiat price is withheld when its only FX rate is older than 76 hours (#4270); the RWA valuation status is `market_cap_withheld` with a reason for any refusal other than a missing supply (#4259); a scoped key can revoke itself (#4257). Behaviour change for sign-up: a first email sign-in has its own hourly counter with the same cap as `api.register_max_per_hour`, so the total ceiling is twice that setting (#4264). Deploys now restart the long-running units that run `stellarindex-ops` (#4254).
-
-### Added
-
-- **api:** `circulating_supply_lower_bound` on asset rows and the asset detail, set when a supply or valuation comes from a floor (#4266).
-- **api:** `price_withheld_reason` on the global asset view; `source_excluded` marks a price that depends on a currently excluded source (#4263).
-- **api:** the OHLC, chart and oracle reads flag `starts_before_window`, `thin_market` and stale points; a `raw:<symbol>` oracle leg is a 400 (#4262).
-- **storage:** migration 0235, one current signing-key form per customer webhook; migration 0236, `decimals <= 38` on `nonstandard_decimals_assets` (#4265).
-- **webhooks:** optional previous seal secret (`webhook_seal_previous_key_env`) for rotating the secret that seals signing keys; keys are re-sealed at startup and on customer rotation, and the API refuses a previous secret without a current one (#4265).
-- **lake:** ledger-upgrade entry changes are extracted, kept out of entry history; `tag-tx-index` gains `-retag` (#4265).
-- **monitoring:** ticket alerts for a unit still running a replaced release binary (30 minutes), for MEV worker failed runs outnumbering good ones over an hour, and for no MEV run recorded in an hour; a `pool` label on `registrations_total` (#4256, #4267, #4264).
-- **ci:** a conflict-marker lint, a lint that every long-running unit running a release binary is on the deploy restart list, and a check that every package the integration tests import is a recorded decision (#4255, #4254).
-
-### Changed
-
-- **api:** served prices honour the source kill switch: `/v1/price`, batch, the tip and its stream, SEP-40, `/v1/vwap`, `/v1/twap` and the asset headline withhold or recompute a price that depends on an excluded source, and an unreadable exclusion list fails closed after 60 seconds (#4263).
-- **api:** the 76-hour FX max age applies to every fixing, including the daily fallback; DEX TVL legs are priced the way `usd_volume` prices them (#4270).
-- **api:** asset listings carry a stale supply map, a failed sparkline batch or a failed contract lookup in their flags and are not cached while degraded; the catalogue twin lookup keys on code and issuer (#4266).
-- **api:** RWA, protocol and listing reads refuse for the same reason the asset detail does; a licence-barred NAV source is never served; markets, pools and pairs answer a retryable 503 when the scam gate could not finish a page; rows that lose a market cap count as unvalued and raise the totals' `lower_bound` (#4259).
-- **api:** chart series are withheld or flagged where the asset detail withholds the figure; OHLC raw-trade reads are charged per book read (#4262).
-- **api:** lake reads recover without a restart when ClickHouse is down at boot; until it is back they degrade the way a later outage does (#4253).
-- **api:** `DELETE /v1/account/keys/{id}` lets a scoped key revoke itself and only itself; a self-revoke on the Redis key store also removes keys minted under it (#4257, #4270).
-- **auth:** a first email sign-in draws on its own hourly budget; `registrations_total` counts passkey and email sign-ups (#4264).
-- **storage:** markets skip buckets with no price; the completeness check reports the earliest missing ledger (#4265).
-- **supply:** the write band checks the first write after a restart against the last stored total; it only flags, it never blocks a write (#4267).
-- **explorer:** the asset page shows a withheld value as withheld with its reason, a stale one as stale, and a partial total as a bound; derived headline prices re-poll every 60 seconds; the holders board says it counts accounts only and lists the top 100 (#4261).
-- **deploy:** a deploy restarts the long-running units that run `stellarindex-ops` and rolls back if one still runs the old build; HA restart handlers record a refused restart as owed instead of dropping it, and VRRP and Alertmanager gossip are accepted only from their peers (#4254, #4260).
-- **ci:** the baseline, migration and test-selection guards no longer accept inputs they were meant to refuse, and the main-CI health check judges scheduled runs on their own (#4268, #4270).
-- **docs:** corrected where a document promised more than the code does (#4269).
-
-### Fixed
-
-- **api:** listing valuation no longer serves a thin market's own rate, and a read that failed is reported rather than served as clean (#4266).
-- **auth:** a failed self-revoke cascade can be retried by the holder, and a key minted during the sweep is removed (#4270).
-- **deploy:** the API environment file no longer renders a ClickHouse serving password when the serving user is off (#4258).
