@@ -405,7 +405,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("freeze looker: %w", err)
 		}
-		freezeLooker = fl
+		freezeLooker = wiring.PrefetchFreezeLooker{Looker: fl, RDB: rdb}
 		logger.Info("freeze looker wired")
 	}
 
@@ -930,7 +930,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Scam:                  scamGate,
 		Exclusions:            exclusionGate,
 		Confidence:            redisConfidenceLooker{rdb: rdb},
-		Triangulated:          wiring.RedisTriangulatedLooker{RDB: rdb},
+		Triangulated:          wiring.PrefetchTriangulatedLooker{RedisTriangulatedLooker: wiring.RedisTriangulatedLooker{RDB: rdb}},
 		Freeze:                freezeLooker,
 		Supply:                wiring.StoreSupplyLooker{S: store},
 		TokenSupply:           tokenSupplyReader,
