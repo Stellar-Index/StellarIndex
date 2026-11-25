@@ -778,7 +778,8 @@ const latestChange = `
 GO
 check "ledger_entry_changes through FINAL, argMax two-level and a LIMIT 1 BY detail read pass" 0 "$lecok"
 
-for tbl in lending_state_hourly ledger_entries_current ttl_live_until operation_participants; do
+for tbl in lending_state_hourly lending_interest_hourly ledger_entries_current ttl_live_until \
+  operation_participants; do
   catches "a count() over $tbl is caught" \
     "$(shape "rmt_$tbl" "SELECT count() FROM stellar.$tbl WHERE ledger_seq > 1")" "stellar.$tbl"
 done
