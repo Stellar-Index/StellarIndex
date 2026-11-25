@@ -51,8 +51,8 @@ func (f *perKeyFlight) overran(key string, budget time.Duration) bool {
 }
 
 // servedFreshness is an SWR serve's two verdicts. Age past the bound alone is stale: the refresh the read starts has not failed.
-// degraded (implies stale) means the body is carried forward over a failure: the last refresh failed or was skipped, the one
-// running overran its budget, or the payload is provisional.
+// degraded means the body is carried forward over a failure (the last refresh failed or was skipped, the one running overran
+// its budget, or the payload is provisional), or a section was dropped; on a served old entry it implies stale.
 type servedFreshness struct{ stale, degraded bool }
 
 // expiredFreshness is the verdict for an entry served past its TTL, stale per [swrServedStale].
@@ -284,8 +284,7 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 			}
 		}
 		if !fresh {
-			fr = expiredFreshness(swrServedStale(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed),
-				e.refreshFailed, h.assetHolders.flight.overran(asset, assetHoldersRefreshTimeout))
+			fr = swrFreshness(e.cachedAt, assetHoldersTTL, assetHoldersRefreshTimeout, e.refreshFailed, &h.assetHolders.flight, asset)
 		}
 		return sliceHolders(e.holders, limit), e.total, e.vintage(), fr, nil
 	}
@@ -345,6 +344,11 @@ type contractsDirEntry struct {
 	cachedAt time.Time
 	// refreshFailed: the last refresh of this window failed or was skipped; only a put clears it.
 	refreshFailed bool
+}
+
+// swrFreshness is the [expiredFreshness] verdict for an entry cached at cachedAt, served past ttl while flight's key refreshes it.
+func swrFreshness(cachedAt time.Time, ttl, refreshTimeout time.Duration, refreshFailed bool, flight *perKeyFlight, key string) servedFreshness {
+	return expiredFreshness(swrServedStale(cachedAt, ttl, refreshTimeout, refreshFailed), refreshFailed, flight.overran(key, refreshTimeout))
 }
 
 // swrServedStale is [swrverdict.Stale] for an entry cached at cachedAt.
@@ -458,31 +462,31 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 }
 
 // recentContractsCached serves the directory for the quantised window: an expired entry is served with its real asOf while a
-// detached rerun goes, degraded per [swrServedStale]; never-computed waits to the deadline. Returns the ledger floor used so
+// detached rerun goes, judged per [swrFreshness]; never-computed waits to the deadline. Returns the ledger floor used so
 // `since_ledger` describes the data served.
-func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, degraded bool, err error) {
+func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, fr servedFreshness, err error) {
 	if e, ok, fresh := h.contractsDir.get(window); ok {
 		if !fresh {
 			h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 			if cur, ok, _ := h.contractsDir.get(window); ok {
 				e = cur // a refresh skipped just now is already a known failure
 			}
+			fr = swrFreshness(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed, &h.contractsDir.flight, strconv.Itoa(window))
 		}
-		stale := !fresh && swrServedStale(e.cachedAt, contractsDirTTL, contractsDirRefreshTimeout, e.refreshFailed)
-		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, stale, nil
+		return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, fr, nil
 	}
 	fl := h.refreshContractsDir(window) //nolint:contextcheck // intentional detach — see refreshContractsDir
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.contractsDir.get(window); ok {
-			return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, false, nil
+			return sliceContracts(e.rows, limit), e.types, e.since, e.cachedAt, servedFreshness{}, nil
 		}
 		if fl.err != nil {
-			return nil, nil, 0, time.Time{}, false, fl.err
+			return nil, nil, 0, time.Time{}, servedFreshness{}, fl.err
 		}
-		return nil, nil, 0, time.Time{}, false, errRefreshFailed
+		return nil, nil, 0, time.Time{}, servedFreshness{}, errRefreshFailed
 	case <-ctx.Done():
-		return nil, nil, 0, time.Time{}, false, ctx.Err()
+		return nil, nil, 0, time.Time{}, servedFreshness{}, ctx.Err()
 	}
 }
 

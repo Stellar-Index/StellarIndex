@@ -46,11 +46,11 @@ func TestRecentContractsCached_StaleVerdict(t *testing.T) {
 		},
 		reader.fail.Store,
 		func() bool {
-			_, _, _, _, degraded, err := h.recentContractsCached(context.Background(), window, 10)
+			_, _, _, _, fr, err := h.recentContractsCached(context.Background(), window, 10)
 			if err != nil {
 				t.Fatal(err)
 			}
-			return degraded
+			return fr.degraded
 		})
 }
 
@@ -115,24 +115,24 @@ func TestOpTypeStats_StaleVerdict(t *testing.T) {
 		h.opTypeStats.at = time.Now().Add(-d)
 		h.opTypeStats.mu.Unlock()
 	}
-	resolve := func() bool {
-		_, stale := h.resolveOpTypeStats()
+	resolve := func() servedFreshness {
+		_, fr := h.resolveOpTypeStats()
 		waitFlightIdle(t, &h.opTypeStats.flight, "stats")
-		return stale
+		return fr
 	}
 
 	age(opTypeStatsTTL + time.Second)
-	if resolve() {
-		t.Error("a panel just past its TTL, with a healthy refresh running, was served stale")
+	if fr := resolve(); fr != (servedFreshness{}) {
+		t.Errorf("a panel just past its TTL, with a healthy refresh running, was served %+v", fr)
 	}
 	reader.fail.Store(true)
 	age(opTypeStatsTTL + min(opTypeStatsTTL, opTypeStatsRefreshTimeout) + time.Second)
-	if !resolve() {
-		t.Error("a panel past its TTL plus one refresh's grace was served clean")
+	if fr := resolve(); !fr.stale || fr.degraded {
+		t.Errorf("a panel past its TTL plus one refresh's grace, no refresh failed yet, was served %+v; want stale only", fr)
 	}
 	age(opTypeStatsTTL + time.Second)
-	if !resolve() {
-		t.Error("a panel whose last refresh failed was served clean")
+	if fr := resolve(); !fr.degraded || !fr.stale {
+		t.Errorf("a panel whose last refresh failed was served %+v; want stale+degraded", fr)
 	}
 }
 
@@ -148,8 +148,8 @@ func TestContractStats_StaleVerdict(t *testing.T) {
 	h.WriteJSONAt = func(_ http.ResponseWriter, _ any, s, d bool, _ time.Time) { stale, degraded = s, d }
 	serve := func() bool {
 		h.ContractStats(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/contracts/stats", nil))
-		if stale != degraded {
-			t.Errorf("stale = %v degraded = %v, want them together", stale, degraded)
+		if degraded && !stale {
+			t.Errorf("degraded without stale (stale = %v degraded = %v)", stale, degraded)
 		}
 		return degraded
 	}
@@ -168,8 +168,8 @@ func TestContractStats_StaleVerdict(t *testing.T) {
 	// Hold the refresh: one that lands first is rightly served clean, as the fresh entry it is.
 	reader.block = make(chan struct{})
 	age(contractStatsTTL + contractStatsRefreshTimeout + time.Second)
-	if !serve() {
-		t.Error("an entry past its hard bound was served clean")
+	if serve() || !stale {
+		t.Errorf("an entry past its hard bound with a healthy refresh running: stale = %v degraded = %v, want stale only", stale, degraded)
 	}
 	close(reader.block)
 	waitFlightIdle(t, &h.contractStats.flight, contractStatsKey)
@@ -191,11 +191,11 @@ func TestOpsDirCached_StaleVerdict(t *testing.T) {
 		},
 		reader.fail.Store,
 		func() bool {
-			_, _, degraded, err := h.opsDirCached(context.Background())
+			_, _, fr, err := h.opsDirCached(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
-			return degraded
+			return fr.degraded
 		})
 }
 

@@ -79,7 +79,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 
 	// Snapshot-served: a stale rung is a 200 with flags.stale and its real as_of while a detached
 	// re-aggregation runs; only a never-computed rung can time out, and a retry lands warm.
-	rows, types, since, asOf, degraded, err := h.recentContractsCached(ctx, window, limit)
+	rows, types, since, asOf, fr, err := h.recentContractsCached(ctx, window, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -112,7 +112,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 			Type:       contractTypeLabel(types, c.ContractID),
 		}
 	}
-	h.writeCachedJSON(ctx, w, out, degraded, degraded, asOf)
+	h.writeCachedJSON(ctx, w, out, fr.stale, fr.degraded, asOf)
 }
 
 // ContractEdge is one edge of a contract's interaction map.

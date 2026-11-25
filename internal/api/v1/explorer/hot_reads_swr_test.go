@@ -164,7 +164,7 @@ func TestAssetHoldersCached_ColdFailurePropagatesRefreshError(t *testing.T) {
 	}
 }
 
-func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
+func TestRecentContractsCached_StaleServedAndRefreshed(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Hold the detached refresh so the serve reads the stale entry, not one the refresh already replaced.
 	reader.contractsBlock = make(chan struct{})
@@ -174,13 +174,13 @@ func TestRecentContractsCached_StaleServedDegradedAndRefreshed(t *testing.T) {
 		since: 100, cachedAt: staleAt,
 	})
 
-	rows, _, since, asOf, degraded, err := h.recentContractsCached(context.Background(), 30, 10)
+	rows, _, since, asOf, fr, err := h.recentContractsCached(context.Background(), 30, 10)
 	close(reader.contractsBlock)
 	if err != nil || len(rows) != 1 || since != 100 {
 		t.Fatalf("stale serve: rows=%d since=%d err=%v", len(rows), since, err)
 	}
-	if !degraded || !asOf.Equal(staleAt) {
-		t.Errorf("stale serve: degraded=%v asOf=%v, want degraded=true with %v", degraded, asOf, staleAt)
+	if !fr.stale || fr.degraded || !asOf.Equal(staleAt) {
+		t.Errorf("stale serve past the bound, healthy refresh: %+v asOf=%v, want stale only with %v", fr, asOf, staleAt)
 	}
 	waitFlightIdle(t, &h.contractsDir.flight, "30")
 	if got := reader.contractsCalls.Load(); got != 1 {
@@ -241,16 +241,16 @@ func TestResolveOpTypeStats_NeverComputesInline(t *testing.T) {
 	h, reader := newSWRHandler()
 	// Cold: returns nothing (panel omitted — op_type_stats is omitempty),
 	// kicks the detached refresh.
-	if got, stale := h.resolveOpTypeStats(); got != nil || !stale {
-		t.Fatalf("cold resolve returned %v (stale=%v), want nil and stale (panel appears next request)", got, stale)
+	if got, fr := h.resolveOpTypeStats(); got != nil || fr.stale || !fr.degraded {
+		t.Fatalf("cold resolve returned %v (%+v), want nil and degraded only (panel appears next request)", got, fr)
 	}
 	waitFlightIdle(t, &h.opTypeStats.flight, "stats")
 	if got := reader.statsCalls.Load(); got != 1 {
 		t.Fatalf("detached stats refresh ran %d times, want 1", got)
 	}
 	// Warm: served from cache, no further compute.
-	stats, stale := h.resolveOpTypeStats()
-	if stale {
+	stats, fr := h.resolveOpTypeStats()
+	if fr != (servedFreshness{}) {
 		t.Error("warm resolve reported a stale panel")
 	}
 	if len(stats) != 1 || stats[0].Type != "payment" || stats[0].Count != 9 {
