@@ -83,9 +83,13 @@ WATCHED=(
   'internal/sources/*/backfill*.go'
   'internal/sources/*/worker.go'
   # lending interest rows are computed when written: the accrual arithmetic and
-  # the fold decide them (bump lendingInterestRev and re-derive).
+  # the fold decide them (bump lendingInterestRev and re-derive), as do the
+  # pass that windows, gates and checks them and the storage decode of their
+  # inputs.
   'internal/sources/*/accrual.go'
   'internal/lendinginterest/*.go'
+  'internal/ops/chops/ch_lending_interest*.go'
+  'internal/storage/clickhouse/lending_interest*.go'
   ':(exclude)*_test.go'
 )
 

@@ -136,9 +136,10 @@ func emittedSurfaceLabels(t *testing.T, roots ...string) []string {
 				if !ok {
 					return true
 				}
-				// pkg.Name names one package's function: another package's same-named one is not in reach.
+				// pkg.Name names one package's function: another package's same-named one is not in reach. A local
+				// that shadows the import resolves to an object (x.Obj != nil), so its method call stays checked.
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if x, ok := sel.X.(*ast.Ident); ok && imports[x.Name] != "" && !declaredIn[sel.Sel.Name][imports[x.Name]] {
+					if x, ok := sel.X.(*ast.Ident); ok && x.Obj == nil && imports[x.Name] != "" && !declaredIn[sel.Sel.Name][imports[x.Name]] {
 						return true
 					}
 				}

@@ -255,6 +255,26 @@ for f in openexchangerates.go client.go; do
   expect "external $f change without a plan passes" 0 "nothing to declare"
 done
 
+# --- 2h. lending interest rows are computed when written: the accrual
+# arithmetic, the fold, the pass that gates and checks them and the storage
+# decode of their inputs all decide stored values; their tests do not
+for f in internal/sources/demo/accrual.go internal/lendinginterest/fold.go \
+  internal/ops/chops/ch_lending_interest.go internal/ops/chops/ch_lending_interest_check.go \
+  internal/storage/clickhouse/lending_interest.go internal/storage/clickhouse/lending_interest_check.go; do
+  mkrepo 0
+  mkdir -p "$TMP/repo/${f%/*}"
+  touch_commit "$f" "fix(lending): change what ${f##*/} derives"
+  runGate
+  expect "${f##*/} change without a plan fails" 1 "~ $f"
+done
+for f in internal/ops/chops/ch_lending_interest_test.go internal/storage/clickhouse/lending_interest_test.go; do
+  mkrepo 0
+  mkdir -p "$TMP/repo/${f%/*}"
+  touch_commit "$f" "test(lending): cover ${f##*/}"
+  runGate
+  expect "${f##*/} change without a plan passes" 0 "nothing to declare"
+done
+
 # --- 3. declared plan passes ------------------------------------------
 mkrepo 0
 touch_commit internal/canonical/asset_fiat.go "$(printf 'canonical: widen fiat allow-list\n\nReplay-Plan: stellarindex-ops projector-replay -source reflector-fx -from 61602787 on r1 after deploy')"

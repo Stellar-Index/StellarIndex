@@ -467,3 +467,42 @@ contract set and has emitted no events.
 No V1-specific decoding is needed, so the hash is in
 `internal/wasmaudit/audited_wasm.json` and `blend` replays from 51,499,491
 pass the gate.
+
+## Interest accrual arithmetic
+
+The sections above audit event and decoder shapes. This one records what
+backs the accrual arithmetic `stellar.lending_interest_hourly` applies to pool
+hashes `a41fc53d6753b6c0…` (V2) and `baf978f10efdbcd8…` (V1), mapped in
+`lendingInterestWASM` (`internal/ops/chops/ch_lending_interest_check.go`).
+It is not a review of those binaries.
+
+- **Arithmetic.** `AccrueBetweenWithFee`, `internal/sources/blend/accrual.go:45-83`
+  (`AccrueBetween` at `:38` passes no fee), with the input checks at `:87-118`.
+  Gross is `ceil(d_supply·d_rate_next/S) − ceil(d_supply·d_rate_prev/S)` on the
+  previous version's `d_supply`, `S` = 1e9 on V1 and 1e12 on V2.
+- **Source read.** `reserve.rs::load` in blend-contracts `v1.0.0` (commit
+  `1c1daba`) and blend-contracts-v2 `v2.0.0` (commit `c19abee`), which agree
+  on it. **That these tags built `baf978f1…` and `a41fc53d…` is not
+  confirmed.** The V2 hash's WASM is in `evidence/blend/`; no rebuild was
+  compared with it.
+- **Pinned by tests.** `TestAccrueBetween_Vectors` (hand-computed cases in
+  which every rounding step is fractional), `TestAccrueBetween_AgreesWithContract`
+  (2,000 random pairs against a separate transcription of `load`) and
+  `TestAccrueBetween_V2RateChangeAccruesAtOldRate` in
+  `internal/sources/blend/accrual_test.go`; `TestFold_GoldenHours` and
+  `TestTelescopedGross_GoldenHours` in `internal/lendinginterest/` over the
+  mainnet slices `BlendV2Supplies`, `BlendV2Repays` and `BlendV1` in
+  `internal/sources/blend/blendtest/golden.go`. In those slices every version
+  reproduces exactly except V1 ledger 53013801, an interest-auction fill,
+  pinned as a reported backstop residual.
+- **Measured on the production lake (2026-11-25), not in the repo's tests.**
+  V2: 5,568 version pairs, all exact. V1: 522 pairs, 520 exact; the two others
+  are interest-auction fills (ledgers 53013801 and 55011953). Recorded in the
+  audit run's `design-open-items.md`, outside this repo.
+
+Open before the table is served:
+
+1. Confirm the build-to-hash correspondence of both tags (rebuild and
+   compare, or a published attestation).
+2. Capture V1 ledger 55011953 as golden data; only 53013801 is in the repo.
+3. Match both V1 residuals to their `fill_auction` events.
