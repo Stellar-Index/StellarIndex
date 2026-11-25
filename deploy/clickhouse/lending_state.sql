@@ -36,9 +36,18 @@
 --
 -- After a lake re-derive of ledger_entry_changes over [lo, hi] that may have
 -- removed changes, delete the range before replaying it (ingest-pipeline.md,
--- the replay decision rule):
+-- the replay decision rule). Hold the interest pass first: the delete runs
+-- outside the tool's lock, and the pass's lake proof of its seeds is the only
+-- guard between the delete and the replay.
+--   systemctl stop lending-state.timer   (and no manual interest run)
 --   ALTER TABLE stellar.lending_state_hourly
 --     DELETE WHERE ledger_seq BETWEEN {lo} AND {hi};
+--   (wait for system.mutations), then the replay:
+--   ch-entry-history -lending-only -from {lo} -to {hi} -write
+--   systemctl start lending-state.timer
+-- The replay arms an interest redo from {lo}: lending_interest_hourly must be
+-- re-derived from {lo} through the tip (lending_interest.sql) before the
+-- interest pass runs anything else.
 
 CREATE TABLE IF NOT EXISTS stellar.lending_state_hourly
 (

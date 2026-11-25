@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 75 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 337 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 338 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -102,6 +102,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_entry_index_lagging` | ledgerstream cursor minus `ch-entry-index` cursor | > 20000 ledgers for 30 min (timer silent, builder refusing, or initial build) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#entry-index-lagging) |
 | `stellarindex_lending_state_lagging` | ledgerstream cursor minus `ch-entry-history-lending` cursor; silent where the job never reported | > 20000 ledgers for 30 min (timer silent, derive refusing, or initial catch-up) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-state-lagging) |
 | `stellarindex_lending_interest_lagging` | `ch-entry-history-lending` cursor minus `ch-entry-history-lending-interest` cursor; silent where the interest pass was never initialised | > 100000 ledgers for 2 h (timer skipping a backfill-sized lag, pass refusing, or a backfill running) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-lagging) |
+| `stellarindex_lending_interest_redo_pending` | the interest heartbeat's `lending_interest_redo_pending` (1: the run derived nothing under a redo a lending_state replay armed) | == 1 for 6 h (the re-derive the replay requires has not reached the tip) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-redo-pending) |
 | `stellarindex_lending_interest_proof_failed` | `max(lending_interest_proof_failed)`, set by `ch-entry-history -lending-only -prove -interest` | > 0, `for: 0m` (a stored interest row disagrees with a fresh fold of the lake) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-proof-failed) |
 | `stellarindex_lending_interest_proof_stale` | `time() - ops_job_last_finish_unix{ops_job="ch-entry-history-lending-interest-prove"}`; silent where the proof never ran | > 2 days for 1 h (proof timer off or hung) | ticket | [ops-job-stalled](runbooks/ops-job-stalled.md#lending-interest-proof-stale) |
 | `stellarindex_projector_lag_high` | `projector_lag_ledgers` unless a replay window is active | > 256 for 10 min (replay rewinds covered by `projector_replay_stalled`) | ticket | [projector-lag](runbooks/projector.md#stellarindex_projector_lag_high) |

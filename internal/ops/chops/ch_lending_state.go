@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -107,6 +109,12 @@ func (r lendingRun) run() error {
 				return err
 			}
 		}
+		// Shared, as lockedInterestPass: its checks read lending_state too.
+		unlock, err := acquireSharedLock(lendingJob, r.lockFile)
+		if err != nil {
+			return err
+		}
+		defer unlock()
 		return r.interestPass(ctx, os.Stderr)
 	}
 	if !r.interestOnly() {
@@ -117,13 +125,23 @@ func (r lendingRun) run() error {
 	return r.lockedInterestPass(ctx, os.Stderr)
 }
 
-// statePass derives lending_state under -lock-file, released before the interest pass takes its own.
+// statePass derives lending_state holding -lock-file exclusive, released before the interest pass takes it shared.
+// A resume (no -from) skips while only interest runs hold it shared: a backfill reading for hours must not fail every
+// timer run. A replay (-from) first arms the interest redo, since it rewrites state interest rows were derived from.
 func (r lendingRun) statePass(ctx context.Context) error {
 	unlock, err := acquireRollupLock(lendingJob, r.lockFile)
 	if err != nil {
+		if r.from == 0 && errors.Is(err, syscall.EWOULDBLOCK) && heldSharedOnly(r.lockFile) {
+			return r.skipStatePass(ctx, err)
+		}
 		return err
 	}
 	defer unlock()
+	if r.from != 0 {
+		if err := clickhouse.ArmLendingInterestRedo(ctx, r.chAddr, r.from); err != nil {
+			return err
+		}
+	}
 	hb := opsutil.NewJobHeartbeat(lendingJob, r.heartbeat, nil)
 	if hb.Enabled() {
 		fmt.Fprintf(os.Stderr, "%s: heartbeat -> %s\n", lendingJob, hb.Path())
@@ -132,6 +150,31 @@ func (r lendingRun) statePass(ctx context.Context) error {
 	err = r.exec(ctx, hb)
 	hb.Stop(err == nil)
 	return err
+}
+
+// heldSharedOnly reports whether path's holders are all shared (interest runs): a shared lock is granted beside them.
+func heldSharedOnly(path string) bool {
+	unlock, err := acquireSharedLock(lendingJob, path)
+	if err != nil {
+		return false
+	}
+	unlock()
+	return true
+}
+
+// skipStatePass reports a skipped run on the state pass's heartbeat with the cursor at the watermark, so the stall
+// alerts measure the state, not the skip.
+func (r lendingRun) skipStatePass(ctx context.Context, held error) error {
+	wm, err := lendingInterestStateWM(ctx, r.chAddr)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "%s: skipped, an interest run is reading lending_state: %v\n", lendingJob, held)
+	hb := opsutil.NewJobHeartbeat(lendingJob, r.heartbeat, nil)
+	hb.Start()
+	hb.Progress(0, uint64(wm))
+	hb.Stop(true)
+	return nil
 }
 
 // interestOnly skips the state pass: -interest-only, or a per-pool backfill.

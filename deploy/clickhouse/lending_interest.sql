@@ -29,15 +29,29 @@
 --      run-heavy-job.sh lending-interest stellarindex-ops ch-entry-history
 --        -lending-only -interest-only [-interest-init]
 --        -interest-max-windows 20 -write
+--      Between chunks let one lending-state.service run complete without
+--      "skipped, an interest run is reading lending_state" (journalctl -u
+--      lending-state.service); if state stops advancing,
+--      stellarindex_lending_state_lagging fires: pause the chunks.
 --   4. From then on lending-state.timer's run extends it every 10 minutes.
 --      Interest runs take their own lock (ch-entry-history-lending-interest.lock
---      beside -lock-file), so a chunk never blocks the state pass; the timer's
---      interest pass skips while a chunk holds it.
+--      beside -lock-file) and hold -lock-file shared, so lending_state cannot
+--      change under one; while a chunk runs, the timer's state and interest
+--      passes skip, and a lending_state replay (-from) refuses.
 --   5. Prove the backfill (reads only; exit 0 only with no mismatch and no
 --      INCOMPLETE hour), then set lending_interest_prove_enabled for the host
 --      so lending-interest-prove.timer repeats it daily:
 --      stellarindex-ops ch-entry-history -lending-only -prove -interest
 --        [-from {lo}] [-to {hi}] [-interest-pool {pool}]
+--
+-- Seeds come from lending_state_hourly and are proved against the lake: a
+-- seed that is not its key's last stored version before the run (rows a
+-- lending_state replay deleted and has not rewritten) refuses the run. After
+-- any lending_state replay from {lo}, re-derive from {lo} THROUGH THE TIP: the
+-- replay arms that redo, and until a re-derive reaches the watermark the
+-- timer's pass skips and every other run refuses (-interest-pool excepted):
+--   ch-entry-history -lending-only -interest-only -from {lo} -write
+-- in chunks if need be, each from where the last stopped.
 --
 -- A window is refused, and the watermark holds, if a pool runs a WASM hash
 -- not listed in lendingInterestWASM, or if the fold's rows disagree with

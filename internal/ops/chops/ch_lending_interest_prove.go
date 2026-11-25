@@ -317,7 +317,8 @@ func (pr *interestProof) window(ctx context.Context, p *interestPass, w foldedWi
 		pr.mismatches.add("mismatch %s: the stored values fail the in-line identities: %v", span, err)
 	}
 	pr.checked.telescoped += c.telescoped
-	pr.checked.telescopeSkipped += c.telescopeSkipped
+	pr.checked.telescopeSplit += c.telescopeSplit
+	pr.checked.excludedPairs += c.excludedPairs
 	pr.checked.feeChecked += c.feeChecked
 	pr.checked.feeSkipped += c.feeSkipped
 	return nil
@@ -479,9 +480,9 @@ func (pr *interestProof) report(out io.Writer) error {
 		verdict = "INCOMPLETE"
 	}
 	if _, err := fmt.Fprintf(out, "lending_interest [%d,%d] @%d: %s: %d hours proved, %d mismatches, %d INCOMPLETE, %d unmarked; "+
-		"identities over the stored values: gross telescoped %d (%d with excluded pairs not), fee carry %d (%d not), %d rows not re-checked; "+
+		"identities over the stored values: gross telescoped %d (%d around %d excluded pairs), fee carry %d (%d not), %d rows not re-checked; "+
 		"unexplained versions %d\n", pr.start, pr.last, pr.wm, verdict, proved, pr.mismatches.n, pr.incomplete.n, pr.unmarked.n,
-		pr.checked.telescoped, pr.checked.telescopeSkipped, pr.checked.feeChecked, pr.checked.feeSkipped, pr.notChecked, pr.unexplained); err != nil {
+		pr.checked.telescoped, pr.checked.telescopeSplit, pr.checked.excludedPairs, pr.checked.feeChecked, pr.checked.feeSkipped, pr.notChecked, pr.unexplained); err != nil {
 		return err
 	}
 	switch verdict {

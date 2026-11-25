@@ -871,7 +871,7 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	}
 
 	// Window 1: [base, base+2], committing hour 10 from an empty start.
-	seeds, err := chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(10, 0))
+	seeds, err := chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(10, 0), base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -882,7 +882,7 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if len(vs) != 6 {
 		t.Fatalf("versions [%d,%d] = %d, want 6 (the superseded row collapsed)", base, base+2, len(vs))
 	}
-	rows1, carry, err := lendinginterest.Fold(seeds, vs, at(11, 0), opts)
+	rows1, carry, err := lendinginterest.Fold(seeds.Seeds, vs, at(11, 0), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -901,7 +901,7 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 		Scan(&floor); err != nil || floor != base {
 		t.Fatalf("floor = %d (%v), want %d", floor, err, base)
 	}
-	if _, err := chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(15, 0)); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
+	if _, err := chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(15, 0), base+7); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
 		t.Fatalf("seeds before an hour lending_state has not finished: err = %v, want ErrLendingInterestAheadOfState", err)
 	}
 
@@ -910,7 +910,7 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seeds, err = chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(11, 0))
+	seeds, err = chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(11, 0), base+2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +924,7 @@ func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
 	if len(vs) != 4 || vs[1].Ledger != base+4 || vs[1].Reserve.DRate.Cmp(r2.data().DRate) != 0 {
 		t.Fatalf("versions [%d,%d] = %+v, want 4 with the restore at %d", base+2, base+6, vs, base+4)
 	}
-	rows2, _, err := lendinginterest.Fold(seeds, vs, at(13, 0), opts)
+	rows2, _, err := lendinginterest.Fold(seeds.Seeds, vs, at(13, 0), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1143,7 +1143,7 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 	at := func(h, m int) time.Time { return time.Date(2027, 2, 20, h, m, 0, 0, time.UTC) }
 	closes := []time.Time{
 		at(10, 10), at(10, 50), at(11, 5), at(11, 40), at(12, 10), at(12, 50), at(13, 5), at(13, 30),
-		at(14, 5), at(14, 30), at(15, 5), at(15, 30),
+		at(14, 5), at(14, 30), at(15, 5), at(15, 30), at(16, 5), at(16, 30), at(17, 5),
 	}
 	seqs := []uint32{base - 1}
 	for i := range closes {
@@ -1169,9 +1169,10 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 		{"1000600000000", "1000300000000", "3000", 4000},
 		{"1001000000000", "1000500000000", "4500", 5000},
 		{"1001500000000", "1000750000000", "7000", 6000},
+		{"1002100000000", "1001050000000", "9500", 7000},
 	}
 	// Reserve versions at these ledger offsets; the fee entry each writes is the chain's own expectation.
-	at6 := []int{0, 1, 2, 4, 6, 8}
+	at6 := []int{0, 1, 2, 4, 6, 8, 10}
 	entry := func(v xdr.ScVal) string { return lendingPoolEntryB64(t, poolID, v) }
 	change := func(i int, intra, idx uint32, ct, k, e string) chstore.LedgerEntryChangeRow {
 		return chstore.LedgerEntryChangeRow{
@@ -1185,7 +1186,7 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 		change(0, 2, 2, "created", resKey, entry(rs[0].val(t))),
 		change(0, 3, 3, "created", feeKey, entry(liFeesVal(t, asset, "0", "0"))),
 	}
-	var want [5]liHour // hours 10..14
+	var want [6]liHour // hours 10..15
 	fee := blnt.ProtocolFee{Credit: big.NewInt(0), Carry: big.NewInt(0)}
 	for j := 1; j < len(rs); j++ {
 		a, err := blnt.AccrueBetween(rs[j-1].data(), rs[j].data(), fee, fee, 2_000_000)
@@ -1199,7 +1200,7 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 		fee = next
 	}
 	insertEntryChanges(t, ctx, rows...)
-	for _, i := range []int{3, 5, 7, 9, 10} { // every tx-bearing ledger holds a change
+	for _, i := range []int{3, 5, 7, 9, 11, 12, 14} { // every tx-bearing ledger holds a change
 		u := change(i, 1, 0, "updated", "AAAAunrelated"+strconv.Itoa(i), "")
 		u.EntryType = "account"
 		insertEntryChanges(t, ctx, u)
@@ -1257,7 +1258,7 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 	if w := wm(); w != base+9 {
 		t.Fatalf("watermark after the timer runs = %d, want %d", w, base+9)
 	}
-	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8},
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:5], []uint32{base, base + 2, base + 4, base + 6, base + 8},
 		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8})
 
 	// Re-derive hours 11-12 from mid-hour: an earlier derive's row of an asset no longer written there is deleted.
@@ -1272,29 +1273,160 @@ func TestChEntryHistoryLending_InterestPass(t *testing.T) {
 	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.lending_interest_hourly FINAL WHERE asset = 'CSTALE'`).Scan(&stale); err != nil || stale != 0 {
 		t.Fatalf("superseded row count = %d (%v), want 0", stale, err)
 	}
-	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8},
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:5], []uint32{base, base + 2, base + 4, base + 6, base + 8},
 		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8})
 	if w := wm(); w != base+9 {
 		t.Fatalf("watermark after the re-derive = %d, want %d (it never moves down)", w, base+9)
 	}
 
+	liStaleStateCases(t, ctx, conn, addr, base, pool, assetStr, rs, want[5], count)
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8, base + 10},
+		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8, base + 10})
+	// The lake's last image in a seed's own ledger rewritten (another tx, a later intra, another value): the instance's
+	// latest change is its seed ledger; the reserve changed since its hour-14 seed.
+	var oracle xdr.ContractId
+	oracle[0] = 0x6e
+	instRow := change(0, 9, 0, "updated", instKey, entry(liInstanceVal(t, oracle, liBLNTPoolWASM)))
+	resRow := change(8, 3, 0, "updated", resKey, entry(rs[4].val(t)))
+	instRow.TxHash, resRow.TxHash = "9r0", "9r8"
+	liSeedImageCases(t, ctx, conn, addr, base, []chstore.LedgerEntryChangeRow{instRow, resRow}, count)
+	checkLiRows(t, ctx, conn, pool, assetStr, at(10, 0), want[:], []uint32{base, base + 2, base + 4, base + 6, base + 8, base + 10},
+		[]uint32{base + 1, base + 2, base + 4, base + 6, base + 8, base + 10})
+	liProveCases(t, ctx, conn, addr, base, pool, assetStr, resKey, at)
+
 	// An upgrade to unaudited code refuses the window naming the hash; the watermark holds.
 	const unaudited = "1111111111111111111111111111111111111111111111111111111111111111"
-	insertEntryChanges(t, ctx, change(11, 1, 0, "updated", instKey, entry(liInstanceVal(t, asset, unaudited))))
-	err := liRun(t, addr, base, "-to", liU(base+11))
+	insertEntryChanges(t, ctx, change(13, 1, 0, "updated", instKey, entry(liInstanceVal(t, asset, unaudited))))
+	err := liRun(t, addr, base, "-to", liU(base+13))
 	if err == nil || !strings.Contains(err.Error(), unaudited) {
 		t.Fatalf("run over the upgrade: err = %v, want a refusal naming %s", err, unaudited)
 	}
-	if w := wm(); w != base+9 {
-		t.Fatalf("watermark after the refusal = %d, want %d", w, base+9)
+	if w := wm(); w != base+11 {
+		t.Fatalf("watermark after the refusal = %d, want %d", w, base+11)
 	}
 
-	// -prove -interest over [floor, watermark]: the writer's rows prove; a newer row version with a wrong gross, a
-	// stale extra row and a lost lake version each fail it naming the row; a ledger with no changes left refuses.
+	// A pool lending_state never derived (no instance row) refuses its window, naming the replay, though it has no
+	// reserve key to miss.
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE contract_id = ? SETTINGS mutations_sync = 2`,
+		blnt.MainnetYieldBlentPool); err != nil {
+		t.Fatal(err)
+	}
+	err = liRun(t, addr, base, "-interest-only", "-from", liU(base+10), "-to", liU(base+11))
+	// The lake half of the message depends on the registry's deploy ledger, the lowest any test in the shared lake wrote.
+	if err == nil || !strings.Contains(err.Error(), "lending_state") || !strings.Contains(err.Error(), "pool "+blnt.MainnetYieldBlentPool) {
+		t.Fatalf("run over an underived pool: err = %v, want the refusal naming it", err)
+	}
+}
+
+// liStaleStateCases runs the lending_state replay interleaving against the interest pass at watermark base+9: with
+// lending_state's rows of hours 13-14 deleted and not yet replayed, the timer's interest run for hour 15 seeds from
+// hour 12's row; the lake proof refuses it, writing nothing. The replay then arms a redo: the timer's pass skips until
+// a re-derive from the replay's first ledger reaches the tip, after which hour 15 holds the true gross.
+func liStaleStateCases(t *testing.T, ctx context.Context, conn driver.Conn, addr string, base uint32, pool, asset string,
+	rs []liReserve, hour15 liHour, count func() (uint64, time.Time),
+) {
+	t.Helper()
+	wm := func() uint32 {
+		w, err := chstore.LendingInterestWatermark(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.lending_state_hourly DELETE WHERE ledger_seq BETWEEN ? AND ? SETTINGS mutations_sync = 2`,
+		base+6, base+8); err != nil {
+		t.Fatal(err)
+	}
+	zero := blnt.ProtocolFee{Credit: big.NewInt(0), Carry: big.NewInt(0)}
+	staleSum, err := blnt.AccrueBetween(rs[3].data(), rs[6].data(), zero, zero, 2_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := count()
+	err = liRun(t, addr, base, "-to", liU(base+11)) // the timer: state resumes to base+11, then the interest pass
+	if err == nil || !errors.Is(err, chstore.ErrLendingInterestSeedUnproved) {
+		var got big.Int
+		_ = conn.QueryRow(ctx, `SELECT gross FROM stellar.lending_interest_hourly FINAL WHERE contract_id = ? AND asset = ? AND hour = ?`,
+			pool, asset, time.Date(2027, 2, 20, 15, 0, 0, 0, time.UTC)).Scan(&got)
+		if got.Cmp(staleSum.Gross) == 0 {
+			t.Errorf("repro: hour 15 written with the stale-seed gross %s (true %s), watermark %d", &got, &hour15.gross, wm())
+		}
+		t.Fatalf("interest run over deleted lending_state rows: err = %v, hour 15 gross %s; want ErrLendingInterestSeedUnproved", err, &got)
+	}
+	if n, _ := count(); n != before || wm() != base+9 {
+		t.Fatalf("refused run: %d rows (was %d), watermark %d; want nothing written", n, before, wm())
+	}
+
+	// The replay restores the rows and arms the redo; the timer's pass then skips.
+	if err := liRun(t, addr, base, "-from", liU(base+6), "-to", liU(base+9)); err != nil {
+		t.Fatalf("lending_state replay: %v", err)
+	}
+	if err := liRun(t, addr, base, "-to", liU(base+11)); err != nil || wm() != base+9 {
+		t.Fatalf("timer under the redo: %v, watermark %d; want a quiet skip at %d", err, wm(), base+9)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-from", liU(base+7)); err == nil || !strings.Contains(err.Error(), "re-derive them first") {
+		t.Fatalf("re-derive from past the replay's first ledger: %v, want a refusal", err)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-from", liU(base+6)); err != nil || wm() != base+11 {
+		t.Fatalf("re-derive from the replay: %v, watermark %d; want %d", err, wm(), base+11)
+	}
+	if redo, pending, err := chstore.LendingInterestPendingRedo(ctx, addr); err != nil || pending {
+		t.Fatalf("redo after the re-derive reached the watermark: %+v pending %t (%v)", redo, pending, err)
+	}
+}
+
+// liSeedImageCases adds each row to the lake, as a lake re-derive that renumbers the seed's ledger leaves it, without
+// replaying lending_state: the seed's ledger still matches the lake's last change, its (ledger, intra) and image do
+// not, so a re-derive of hour 15 refuses and writes nothing. Each row is removed after. Then a redo armed below the
+// interest floor is armed at the floor, and a re-derive from the floor clears it.
+func liSeedImageCases(t *testing.T, ctx context.Context, conn driver.Conn, addr string, base uint32,
+	rows []chstore.LedgerEntryChangeRow, count func() (uint64, time.Time),
+) {
+	t.Helper()
+	for _, r := range rows {
+		insertEntryChanges(t, ctx, r)
+		n, newest := count()
+		err := liRun(t, addr, base, "-interest-only", "-from", liU(base+10), "-to", liU(base+11))
+		if !errors.Is(err, chstore.ErrLendingInterestSeedUnproved) {
+			t.Fatalf("re-derive over a rewritten seed image at ledger %d: err = %v, want ErrLendingInterestSeedUnproved", r.LedgerSeq, err)
+		}
+		if m, nw := count(); m != n || !nw.Equal(newest) {
+			t.Fatalf("refused re-derive wrote rows: %d (was %d), newest derive %s (was %s)", m, n, nw, newest)
+		}
+		if err := conn.Exec(ctx, `ALTER TABLE stellar.ledger_entry_changes DELETE WHERE ledger_seq = ? AND key_xdr = ? AND tx_hash = ?
+			SETTINGS mutations_sync = 2`, r.LedgerSeq, r.KeyXDR, r.TxHash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	floor, err := chstore.LendingInterestFloor(ctx, addr)
+	if err != nil || floor == 0 {
+		t.Fatalf("floor %d: %v", floor, err)
+	}
+	if err := chstore.ArmLendingInterestRedo(ctx, addr, floor-1); err != nil {
+		t.Fatal(err)
+	}
+	if redo, pending, err := chstore.LendingInterestPendingRedo(ctx, addr); err != nil || !pending || redo.From != floor {
+		t.Fatalf("redo armed below the floor %d: %+v pending %t (%v); want it from the floor", floor, redo, pending, err)
+	}
+	if err := liRun(t, addr, base, "-interest-only", "-from", liU(floor)); err != nil {
+		t.Fatalf("re-derive from the floor: %v", err)
+	}
+	if redo, pending, err := chstore.LendingInterestPendingRedo(ctx, addr); err != nil || pending {
+		t.Fatalf("redo after the re-derive from the floor: %+v pending %t (%v)", redo, pending, err)
+	}
+}
+
+// liProveCases runs -prove -interest over [floor, watermark]: the writer's rows prove; a newer row version with a
+// wrong gross, a stale extra row and a lost lake version each fail it naming the row; a ledger with no changes left
+// refuses. It deletes lake rows of ledger base+4, so it runs after every case that re-derives hour 12.
+func liProveCases(t *testing.T, ctx context.Context, conn driver.Conn, addr string, base uint32, pool, assetStr, resKey string,
+	at func(h, m int) time.Time,
+) {
+	t.Helper()
 	h12 := pool + " " + assetStr + " " + at(12, 0).Format(time.RFC3339)
 	out, gauge, err := liProve(t, addr)
-	if err != nil || gauge != "0" || !strings.Contains(out, ": PROVED: 5 hours proved, 0 mismatches") ||
-		!strings.Contains(out, "gross telescoped 5") {
+	if err != nil || gauge != "0" || !strings.Contains(out, ": PROVED: 6 hours proved, 0 mismatches") ||
+		!strings.Contains(out, "gross telescoped 6 ") {
 		t.Fatalf("prove of the writer's rows: err %v gauge %s\n%s", err, gauge, out)
 	}
 	exec := func(q string, args ...any) {

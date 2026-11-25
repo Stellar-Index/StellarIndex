@@ -117,8 +117,9 @@ type interestState struct {
 
 // interestChecked counts what checkLendingInterest compared, for the window's log line.
 type interestChecked struct {
-	telescoped, telescopeSkipped int // rows whose gross was recomputed; rows with excluded pairs, not recomputed
-	feeChecked, feeSkipped       int // BLNT rows whose fee carry was checked; not checked (excluded or order-open pairs)
+	telescoped, telescopeSplit int // rows whose gross was recomputed; of them, rows recomputed around excluded pairs
+	excludedPairs              int // pairs those rows exclude, not recomputed
+	feeChecked, feeSkipped     int // BLNT rows whose fee carry was checked; not checked (excluded or order-open pairs)
 }
 
 // checkLendingInterest holds the fold's rows of hours [from, to) against lending_state_hourly and the raw versions
@@ -128,8 +129,8 @@ type interestChecked struct {
 //   - chain endpoints: backstop_credit moved, between lending_state's rows, by the fold's backstop + residual +
 //     excluded. The residual is defined as the credit delta less the backstop share, so this proves only that the
 //     fold's version chain starts and ends where lending_state's does, not any arithmetic.
-//   - gross: on a row with no errored or unordered pair, TelescopedGross over the hour's raw versions from lending_state's
-//     prior value equals the fold's gross. That re-derives the d_rate movement without AccrueBetween's pairing; it
+//   - gross: TelescopedGross over the hour's raw versions from lending_state's prior value, cut around each errored
+//     or unordered pair, equals the fold's gross. That re-derives the d_rate movement without AccrueBetween's pairing; it
 //     proves nothing about the fee, backstop or b_rate split, which stay counted residuals (unreconciled, b_rate
 //     mismatches) reported per window.
 //   - BLNT fee carry: the entry moved by exactly gross·rate less the credited whole units, plus the fee-only moves
@@ -310,13 +311,12 @@ func chainStart(r lendinginterest.HourRow, hour time.Time, prev *clickhouse.Lend
 }
 
 // checkGross recomputes a row's gross by TelescopedGross from chainFrom (lending_state's value before the hour, nil
-// for a baseline) over the hour's raw versions; a row with excluded pairs is counted, not recomputed.
+// for a baseline) over the hour's raw versions; on a row with excluded pairs, over the sub-chains between them.
 func checkGross(r lendinginterest.HourRow, chainFrom *blend.ReserveData, vs []lendinginterest.Version, c *interestChecked) string {
-	if r.AccrualErrors+r.UnorderedVersions > 0 {
-		c.telescopeSkipped++
-		return ""
+	if n := r.AccrualErrors + r.UnorderedVersions; int(n) != len(r.Excluded) {
+		return fmt.Sprintf("%d excluded pairs counted, %d listed", n, len(r.Excluded))
 	}
-	g, err := lendinginterest.TelescopedGross(chainFrom, vs)
+	g, err := lendinginterest.TelescopedGrossExcluding(chainFrom, vs, r.Excluded)
 	if err != nil {
 		return fmt.Sprintf("telescoping gross: %v", err)
 	}
@@ -324,6 +324,10 @@ func checkGross(r lendinginterest.HourRow, chainFrom *blend.ReserveData, vs []le
 		return fmt.Sprintf("gross %s, the hour's versions telescope to %s from lending_state's prior value", r.Gross, g)
 	}
 	c.telescoped++
+	if len(r.Excluded) > 0 {
+		c.telescopeSplit++
+		c.excludedPairs += len(r.Excluded)
+	}
 	return ""
 }
 

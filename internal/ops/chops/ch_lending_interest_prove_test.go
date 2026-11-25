@@ -93,7 +93,7 @@ func TestProveInterest_WritersRowsProve(t *testing.T) {
 	for _, want := range []string{
 		"lending_interest CPOOL CASSET: 4 hours proved, 0 mismatched, 0 INCOMPLETE",
 		": PROVED: 4 hours proved, 0 mismatches, 0 INCOMPLETE, 0 unmarked",
-		"gross telescoped 4 (0 with excluded pairs not)",
+		"gross telescoped 4 (0 around 0 excluded pairs)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report lacks %q:\n%s", want, out)
