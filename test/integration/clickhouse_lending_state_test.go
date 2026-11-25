@@ -19,7 +19,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -672,5 +674,316 @@ func TestLendingInterestHourly_Int256RoundTripAndNewestDeriveWins(t *testing.T) 
 	}
 	if want := new(big.Int).Add(fresh, other); total.Cmp(want) != 0 {
 		t.Fatalf("sum(gross) FINAL = %s, want %s", &total, want)
+	}
+}
+
+// liI128 is a non-negative decimal as an i128 ScVal.
+func liI128(t *testing.T, s string) xdr.ScVal {
+	t.Helper()
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok || n.Sign() < 0 || n.BitLen() > 127 {
+		t.Fatalf("i128 %q", s)
+	}
+	lo := new(big.Int).And(n, new(big.Int).SetUint64(^uint64(0)))
+	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{
+		Hi: xdr.Int64(new(big.Int).Rsh(n, 64).Uint64()), Lo: xdr.Uint64(lo.Uint64()), //nolint:gosec // BitLen <= 127
+	}}
+}
+
+// liReserve is one BLNT ResData value, both as the stored ScVal and as the decoded struct the expected sums use.
+type liReserve struct {
+	dRate, bRate, bc string
+	lastTime         uint64
+}
+
+const liBSupply, liDSupply = "30000000000000000000", "20000000000000000000" // > 2^64: no narrowing survives
+
+func (r liReserve) val(t *testing.T) xdr.ScVal {
+	lt := xdr.Uint64(r.lastTime)
+	return lendingSymMap(map[string]xdr.ScVal{
+		"b_rate": liI128(t, r.bRate), "b_supply": liI128(t, liBSupply), "backstop_credit": liI128(t, r.bc),
+		"d_rate": liI128(t, r.dRate), "d_supply": liI128(t, liDSupply), "ir_mod": liI128(t, "10000000"),
+		"last_time": {Type: xdr.ScValTypeScvU64, U64: &lt},
+	}, "b_rate", "b_supply", "backstop_credit", "d_rate", "d_supply", "ir_mod", "last_time")
+}
+
+func (r liReserve) data() blend.ReserveData {
+	n := func(s string) *big.Int { v, _ := new(big.Int).SetString(s, 10); return v }
+	return blend.ReserveData{
+		DRate: n(r.dRate), BRate: n(r.bRate), IRMod: n("10000000"), BSupply: n(liBSupply), DSupply: n(liDSupply),
+		BackstopCredit: n(r.bc), LastTime: r.lastTime, Version: blend.PoolV2,
+	}
+}
+
+func liFeesVal(t *testing.T, asset xdr.ContractId, credit, carry string) xdr.ScVal {
+	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &asset}
+	m := xdr.ScMap{{
+		Key: xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr},
+		Val: lendingSymMap(map[string]xdr.ScVal{"carry": liI128(t, carry), "credit": liI128(t, credit)}, "carry", "credit"),
+	}}
+	mp := &m
+	return xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &mp}
+}
+
+// liHour is one hour's expected sums: an independent blnt.AccrueBetween chain over its pairs.
+type liHour struct {
+	gross, fee, backstop, intended, realised, creditDelta big.Int
+}
+
+func (h *liHour) add(t *testing.T, prev, next liReserve, prevFee, nextFee blnt.ProtocolFee) {
+	t.Helper()
+	a, err := blnt.AccrueBetween(prev.data(), next.data(), prevFee, nextFee, 2_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.gross.Add(&h.gross, a.Gross)
+	h.fee.Add(&h.fee, a.ProtocolFee)
+	h.backstop.Add(&h.backstop, a.Backstop)
+	h.intended.Add(&h.intended, a.SupplierIntended)
+	h.realised.Add(&h.realised, a.SupplierRealised)
+	h.creditDelta.Add(&h.creditDelta, new(big.Int).Sub(next.data().BackstopCredit, prev.data().BackstopCredit))
+}
+
+func liVersions(t *testing.T, ctx context.Context, addr string, lo, hi uint32, keys []chstore.LendingInterestKey) []lendinginterest.Version {
+	t.Helper()
+	var out []lendinginterest.Version
+	if err := chstore.LendingInterestVersions(ctx, addr, lo, hi, keys, func(v lendinginterest.Version) error {
+		out = append(out, v)
+		return nil
+	}); err != nil {
+		t.Fatalf("versions [%d,%d]: %v", lo, hi, err)
+	}
+	return out
+}
+
+// A synthetic BLNT lake goes through the storage path the interest pass will run: keys, versions, seeds, Fold,
+// insert, and the watermark. The stored sums equal an independent blnt.AccrueBetween chain; a superseded lake row
+// is collapsed by FINAL; a removal reads as Removed; a corrupt reserve refuses the read naming its key; the
+// watermark refuses to pass lending_state's or to rest mid-hour, and never moves down.
+func TestLendingInterest_StoragePathOverASyntheticLake(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	for _, q := range []string{
+		`TRUNCATE TABLE stellar.entry_history_watermark`, `TRUNCATE TABLE stellar.lending_state_hourly`,
+		`TRUNCATE TABLE stellar.lending_interest_hourly`,
+	} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	const base = uint32(171_370_000)
+	pool := seedLendingDeploy(t, ctx, addr, base)
+	var poolID, asset xdr.ContractId
+	copy(poolID[:], strkey.MustDecode(strkey.VersionByteContract, pool))
+	asset[0] = 0x5e
+	assetStr := strkey.MustEncode(strkey.VersionByteContract, asset[:])
+	resKey := resDataKeyB64(t, poolID, asset)
+	instKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance})
+	feeSym := xdr.ScSymbol("ProtocolFees")
+	feeVec := &xdr.ScVec{{Type: xdr.ScValTypeScvSymbol, Sym: &feeSym}}
+	feeKey := lendingKeyB64(t, poolID, xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &feeVec})
+
+	at := func(h, m int) time.Time { return time.Date(2027, 2, 13, h, m, 0, 0, time.UTC) }
+	closes := []time.Time{at(10, 10), at(10, 50), at(11, 5), at(11, 40), at(12, 10), at(12, 20), at(13, 5), at(14, 5)}
+	seqs := make([]uint32, len(closes))
+	for i := range closes {
+		seqs[i] = base + uint32(i)
+	}
+	entryHistorySeedLedgers(t, ctx, addr, seqs, 1, false)
+	for i, ts := range closes {
+		if err := conn.Exec(ctx, `ALTER TABLE stellar.ledgers UPDATE close_time = ? WHERE ledger_seq = ? SETTINGS mutations_sync = 2`,
+			ts, seqs[i]); err != nil {
+			t.Fatalf("align ledger %d close time: %v", seqs[i], err)
+		}
+	}
+
+	r0 := liReserve{"1000000000000", "1000000000000", "0", 1000}
+	r1 := liReserve{"1000100000000", "1000050000000", "500", 2000}
+	r2 := liReserve{"1000300000000", "1000150000000", "1500", 3000}
+	r3 := liReserve{"1000600000000", "1000300000000", "3000", 4000}
+	r4 := liReserve{"1001000000000", "1000500000000", "4500", 5000}
+	entry := func(v xdr.ScVal) string { return lendingPoolEntryB64(t, poolID, v) }
+	change := func(i int, intra, idx uint32, ct, k, e string) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: seqs[i], CloseTime: closes[i], TxHash: "7" + strconv.Itoa(i), ChangeIndex: idx,
+			ChangeType: ct, EntryType: "contract_data", KeyXDR: k, EntryXDR: e, IntraLedgerSeq: intra,
+		}
+	}
+	insertEntryChanges(t, ctx,
+		change(0, 1, 0, "created", instKey, entry(lendingPoolInstanceVal(asset))),
+		change(0, 2, 1, "created", resKey, entry(r0.val(t))),
+		change(0, 3, 2, "created", feeKey, entry(liFeesVal(t, asset, "0", "0"))),
+		change(1, 1, 0, "updated", resKey, entry(r1.val(t))),
+		change(1, 2, 1, "updated", feeKey, entry(liFeesVal(t, asset, "1000", "5"))),
+		change(2, 1, 0, "updated", resKey, entry(r2.val(t))),
+		change(3, 1, 0, "removed", resKey, ""),
+		change(4, 1, 0, "restored", resKey, entry(r2.val(t))),
+		change(5, 1, 0, "updated", resKey, entry(r3.val(t))),
+		change(6, 1, 0, "updated", resKey, entry(r4.val(t))),
+		change(7, 1, 0, "updated", resKey, entry(lendingPoolInstanceVal(asset))),
+	)
+	// A superseded copy of ledger base+2's change (same identity, older ingest) that would not decode.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.ledger_entry_changes
+		(ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, intra_ledger_seq)
+		VALUES (?, ?, '72', 0, 0, 'updated', 'contract_data', ?, 'STALE', '2026-01-01 00:00:00', 9)`, seqs[2], closes[2], resKey); err != nil {
+		t.Fatalf("insert superseded row: %v", err)
+	}
+	if err := runLendingWrite(t, addr, base, base+6); err != nil {
+		t.Fatalf("lending state [%d,%d]: %v", base, base+6, err)
+	}
+
+	pools := []chstore.LendingContract{{ID: pool, Protocol: chstore.LendingBLNT}}
+	opts := lendinginterest.Options{Protocols: map[string]lendinginterest.Protocol{pool: lendinginterest.BLNT}}
+	keys, err := chstore.LendingInterestKeys(ctx, addr, pools, base+2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotKeys []string
+	for _, k := range keys {
+		gotKeys = append(gotKeys, k.Key)
+		if k.Kind == lendinginterest.KindReserve && k.Asset != assetStr {
+			t.Errorf("reserve key asset = %s, want %s", k.Asset, assetStr)
+		}
+	}
+	if len(keys) != 4 || keys[0].Key != resKey || !slices.Contains(gotKeys, instKey) || keys[3].Key != feeKey {
+		t.Fatalf("keys = %q, want ResData, both instance keys, ProtocolFees", gotKeys)
+	}
+
+	// Window 1: [base, base+2], committing hour 10 from an empty start.
+	seeds, err := chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := seeds.Fees[pool]; len(seeds.Reserves) != 0 || len(seeds.Configs) != 0 || len(f) != 1 || f[0] == nil || len(f[0]) != 0 {
+		t.Fatalf("seeds before the pool's first hour = %+v, want only an explicit empty fee map", seeds)
+	}
+	vs := liVersions(t, ctx, addr, base, base+2, keys)
+	if len(vs) != 6 {
+		t.Fatalf("versions [%d,%d] = %d, want 6 (the superseded row collapsed)", base, base+2, len(vs))
+	}
+	rows1, carry, err := lendinginterest.Fold(seeds, vs, at(11, 0), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := chstore.InsertLendingInterestRows(ctx, addr, rows1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base, base+1); err != nil {
+		t.Fatalf("watermark at hour 10's last ledger: %v", err)
+	}
+
+	// Window 2 resumes from lending_state_hourly's seeds at base+2, not from the carry.
+	keys, err = chstore.LendingInterestKeys(ctx, addr, pools, base+6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seeds, err = chstore.LendingInterestSeeds(ctx, addr, pools, keys, at(11, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fees1 := blnt.ProtocolFee{Credit: big.NewInt(1000), Carry: big.NewInt(5)}
+	rk := lendinginterest.ReserveKey{Pool: pool, Asset: assetStr}
+	if r := seeds.Reserves[rk]; len(r) != 1 || r[0].DRate.Cmp(r1.data().DRate) != 0 || len(seeds.Configs[pool]) != 1 ||
+		seeds.Configs[pool][0] != 2_000_000 || seeds.Fees[pool][0][assetStr].Credit.Cmp(fees1.Credit) != 0 {
+		t.Fatalf("seeds before hour 11 = %+v, want r1, bstop 2000000 and the fees of base+1", seeds)
+	}
+	vs = liVersions(t, ctx, addr, base+2, base+6, keys)
+	if len(vs) != 5 || !vs[1].Removed || vs[1].Ledger != base+3 || vs[2].Removed {
+		t.Fatalf("versions [%d,%d] = %+v, want 5 with the removal at %d", base+2, base+6, vs, base+3)
+	}
+	rows2, _, err := lendinginterest.Fold(seeds, vs, at(13, 0), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaCarry, _, err := lendinginterest.Fold(carry, vs[1:], at(13, 0), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(viaCarry) != len(rows2) || len(rows2) != 2 || viaCarry[0].Gross.Cmp(rows2[0].Gross) != 0 || viaCarry[1].Gross.Cmp(rows2[1].Gross) != 0 {
+		t.Fatalf("resume from seeds = %+v, from the carry = %+v; want the same two hours", rows2, viaCarry)
+	}
+	if err := chstore.InsertLendingInterestRows(ctx, addr, rows2, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	fees0 := blnt.ProtocolFee{Credit: big.NewInt(0), Carry: big.NewInt(0)}
+	var want [3]liHour
+	want[0].add(t, r0, r1, fees0, fees1)
+	want[1].add(t, r1, r2, fees1, fees1)
+	want[2].add(t, r2, r2, fees1, fees1)
+	want[2].add(t, r2, r3, fees1, fees1)
+	type ledgers struct{ first, last, versions, accrued uint32 }
+	wantLedgers := []ledgers{{base, base + 1, 2, 1}, {base + 2, base + 2, 1, 1}, {base + 4, base + 5, 2, 2}}
+	rows, err := conn.Query(ctx, `SELECT hour, first_ledger, last_ledger, versions, accrued_versions, gross, protocol_fee, backstop,
+		supplier_intended, supplier_realised, backstop_credit_delta, residual_explained, explained_versions, derive_rev, protocol
+		FROM stellar.lending_interest_hourly FINAL WHERE contract_id = ? AND asset = ? ORDER BY hour`, pool, assetStr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	i := 0
+	for ; rows.Next(); i++ {
+		var hour time.Time
+		var l ledgers
+		var got liHour
+		var explained big.Int
+		var explainedN uint32
+		var rev uint16
+		var proto string
+		if err := rows.Scan(&hour, &l.first, &l.last, &l.versions, &l.accrued, &got.gross, &got.fee, &got.backstop, &got.intended,
+			&got.realised, &got.creditDelta, &explained, &explainedN, &rev, &proto); err != nil {
+			t.Fatal(err)
+		}
+		if i >= len(want) {
+			t.Fatalf("extra row at %s", hour)
+		}
+		w := &want[i]
+		if !hour.Equal(at(10+i, 0)) || l != wantLedgers[i] || rev != 1 || proto != "blnt" || explained.Sign() != 0 || explainedN != 0 {
+			t.Errorf("row %d = %s %+v rev %d %s, want %s %+v rev 1 blnt", i, hour, l, rev, proto, at(10+i, 0), wantLedgers[i])
+		}
+		for _, c := range []struct {
+			name      string
+			got, want *big.Int
+		}{
+			{"gross", &got.gross, &w.gross},
+			{"protocol_fee", &got.fee, &w.fee},
+			{"backstop", &got.backstop, &w.backstop},
+			{"supplier_intended", &got.intended, &w.intended},
+			{"supplier_realised", &got.realised, &w.realised},
+			{"backstop_credit_delta", &got.creditDelta, &w.creditDelta},
+		} {
+			if c.got.Cmp(c.want) != 0 {
+				t.Errorf("hour %d %s = %s, want %s", 10+i, c.name, c.got, c.want)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil || i != len(want) {
+		t.Fatalf("read %d rows (%v), want %d", i, err, len(want))
+	}
+	if want[0].gross.Sign() <= 0 || want[1].fee.Sign() <= 0 {
+		t.Fatalf("degenerate fixture: hour 10 gross %s, hour 11 fee %s", &want[0].gross, &want[1].fee)
+	}
+
+	err = chstore.LendingInterestVersions(ctx, addr, base+7, base+7, keys, func(lendinginterest.Version) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "ledger "+strconv.FormatUint(uint64(base+7), 10)) || !strings.Contains(err.Error(), resKey) {
+		t.Fatalf("corrupt reserve read: err = %v, want a refusal naming ledger %d and the key", err, base+7)
+	}
+
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+4); !errors.Is(err, chstore.ErrLendingInterestNotHourEnd) {
+		t.Fatalf("mid-hour advance: err = %v, want ErrLendingInterestNotHourEnd", err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+7); !errors.Is(err, chstore.ErrLendingInterestAheadOfState) {
+		t.Fatalf("advance past lending_state: err = %v, want ErrLendingInterestAheadOfState", err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base+2, base+5); err != nil {
+		t.Fatalf("advance to hour 12's last ledger: %v", err)
+	}
+	if err := chstore.SetLendingInterestWatermark(ctx, addr, base, base+1); err != nil {
+		t.Fatalf("re-set below the watermark: %v", err)
+	}
+	if wm, err := chstore.LendingInterestWatermark(ctx, addr); err != nil || wm != base+5 {
+		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+5)
 	}
 }
