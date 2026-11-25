@@ -145,6 +145,13 @@ func checkInvariant(t testing.TB, rows []HourRow) {
 			t.Errorf("%s %s %s: versions %d != baselines %d + accrued %d + errors %d + unordered %d", r.Pool, r.Asset, r.Hour,
 				r.Versions, r.Baselines, r.AccruedVersions, r.AccrualErrors, r.UnorderedVersions)
 		}
+		if r.ExplainedVersions+r.AttributedVersions+r.UnexplainedVersions != r.UnreconciledVersions ||
+			new(big.Int).Add(new(big.Int).Add(r.ResidualExplained, r.ResidualAttributed), r.ResidualUnexplained).Cmp(r.BackstopResidual) != 0 ||
+			(len(r.ResidualLedgers) == 0) != (r.UnreconciledVersions == 0) {
+			t.Errorf("%s %s %s: residual classes %d+%d+%d of %d unreconciled, %s+%s+%s of %s, ledgers %v", r.Pool, r.Asset, r.Hour,
+				r.ExplainedVersions, r.AttributedVersions, r.UnexplainedVersions, r.UnreconciledVersions, r.ResidualExplained,
+				r.ResidualAttributed, r.ResidualUnexplained, r.BackstopResidual, r.ResidualLedgers)
+		}
 		if len(r.ErrorSamples) > maxErrorSamples || len(r.ErrorSamples) > int(r.AccrualErrors) {
 			t.Errorf("%s %s: %d samples for %d errors", r.Asset, r.Hour, len(r.ErrorSamples), r.AccrualErrors)
 		}
@@ -341,7 +348,9 @@ func foldWindows(t testing.TB, seed Seeds, vs []Version, cuts []int, whole bool,
 		case hi < len(vs):
 			commit = hourOf(vs[hi-1])
 		}
-		r, carry, err := Fold(seed, vs[lo:hi], commit, opts)
+		w := opts
+		w.Events = windowEvents(opts.Events, vs, lo, hi)
+		r, carry, err := Fold(seed, vs[lo:hi], commit, w)
 		if err != nil {
 			return "", fmt.Errorf("window [%d,%d): %w", lo, hi, err)
 		}
@@ -358,6 +367,17 @@ func foldWindows(t testing.TB, seed Seeds, vs []Version, cuts []int, whole bool,
 		return a.Hour.Before(b.Hour)
 	})
 	return snapshot(rows, seed), nil
+}
+
+// windowEvents are the events a derive window [vs[lo], vs[hi]) reads: those of its ledgers.
+func windowEvents(es []Event, vs []Version, lo, hi int) []Event {
+	var out []Event
+	for _, e := range es {
+		if (lo == 0 || e.Ledger >= vs[lo].Ledger) && (hi == len(vs) || e.Ledger < vs[hi].Ledger) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Folding in windows through the carry equals one fold, at every ledger cut and every pair of cuts.
