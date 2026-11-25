@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"math/big"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/lendinginterest"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
@@ -47,6 +49,9 @@ type fakeInterestLake struct {
 	staleSeed               bool   // seeds omit the reserve, as a lending_state missing its rows would
 	seedBefore              uint32
 	redoMarks               [][2]uint32
+	events                  []events.Event  // contract_events of every contract
+	eventGaps               map[uint32]bool // ledgers whose census refuses
+	censused                []map[uint32]uint64
 
 	calls    []string
 	reads    [][2]uint32
@@ -115,6 +120,8 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		})
 		u, v, w := lendingInterestUnderived, lendingInterestRedo, advanceLendingRedo
 		set(func() { lendingInterestUnderived, lendingInterestRedo, advanceLendingRedo = u, v, w })
+		x, y := lendingInterestEvents, lendingInterestEventsCovered
+		set(func() { lendingInterestEvents, lendingInterestEventsCovered = x, y })
 	}
 	t.Cleanup(func() {
 		for _, r := range saved {
@@ -122,6 +129,25 @@ func (f *fakeInterestLake) install(t *testing.T) {
 		}
 	})
 	lendingInterestWatermark = func(context.Context, string) (uint32, error) { return f.wm, nil }
+	lendingInterestEvents = func(_ context.Context, _ string, lo, hi uint32, pools []string, fn func(events.Event) error) error {
+		for _, ev := range f.events {
+			if ev.Ledger >= lo && ev.Ledger <= hi && slices.Contains(pools, ev.ContractID) {
+				if err := fn(ev); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	lendingInterestEventsCovered = func(_ context.Context, _ string, _ []string, read map[uint32]uint64) error {
+		f.censused = append(f.censused, maps.Clone(read))
+		for l := range read {
+			if f.eventGaps[l] {
+				return fmt.Errorf("%w: ledger %d", clickhouse.ErrLendingInterestEventShortfall, l)
+			}
+		}
+		return nil
+	}
 	lendingInterestFloor = func(context.Context, string) (uint32, error) { return f.floor, nil }
 	lendingInterestStateWM = func(context.Context, string) (uint32, error) { return f.stateWM, nil }
 	lendingInterestHour = func(_ context.Context, _ string, seq uint32) (clickhouse.LedgerHour, error) { return f.hour(seq), nil }

@@ -77,7 +77,7 @@ type interestProof struct {
 
 const (
 	helpInterestProofFailed = "1 when the last lending interest proof found a stored row that disagrees with the lake, 0 otherwise."
-	helpInterestUnexplained = "Σ unreconciled_versions − explained_versions over the rows the last lending interest proof read."
+	helpInterestUnexplained = "Σ unreconciled_versions − explained_versions over the rows the last lending interest proof read; attributed versions count."
 )
 
 // proveLendingInterest runs the proof holding -lock-file and the interest lock shared (proveLocks) and publishes its
@@ -452,6 +452,8 @@ func (pr *interestProof) window(ctx context.Context, p *interestPass, w foldedWi
 			m := s.Row
 			m.Baselines, m.ExcludedCreditDelta, m.Excluded = f.Baselines, f.ExcludedCreditDelta, f.Excluded
 			m.FeeOnlyCreditDelta, m.FeeOnlyCarryDelta, m.FeeOnlyVersions, m.FeeOnlyUnknown = f.FeeOnlyCreditDelta, f.FeeOnlyCarryDelta, f.FeeOnlyVersions, f.FeeOnlyUnknown
+			m.ResidualExplained, m.ResidualAttributed, m.ExplainedVersions, m.AttributedVersions = s.ResidualExplained, s.ResidualAttributed, s.ExplainedVersions, s.AttributedVersions
+			m.ResidualUnexplained, m.UnexplainedVersions, m.ResidualLedgers = f.ResidualUnexplained, f.UnexplainedVersions, f.ResidualLedgers
 			merged = append(merged, m)
 		}
 	}
@@ -510,7 +512,7 @@ func (pr *interestProof) rowMismatch(r lendinginterest.HourRow, stored, fresh st
 func (pr *interestProof) compareRow(s clickhouse.LendingInterestStoredRow, f lendinginterest.HourRow, lakeVersions uint32) bool {
 	got, want := interestColumns(s.Row), interestColumns(f)
 	got = append(got, s.ResidualExplained.String(), s.ResidualAttributed.String(), fmt.Sprint(s.ExplainedVersions), fmt.Sprint(s.AttributedVersions))
-	want = append(want, "0", "0", "0", "0")
+	want = append(want, f.ResidualExplained.String(), f.ResidualAttributed.String(), fmt.Sprint(f.ExplainedVersions), fmt.Sprint(f.AttributedVersions))
 	got, want = append(got, fmt.Sprint(s.Row.Versions)), append(want, fmt.Sprint(lakeVersions))
 	ok := true
 	for i, name := range interestColumnNames {

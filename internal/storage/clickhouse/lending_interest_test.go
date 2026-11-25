@@ -291,12 +291,19 @@ func TestCheckLendingInterestRow_RefusesAMissingAmount(t *testing.T) {
 		Pool: blendTestPool, Asset: blendTestAssetSAC, Protocol: lendinginterest.BLNT,
 		Gross: zero(), ProtocolFee: zero(), Backstop: zero(), SupplierIntended: zero(), SupplierRealised: zero(),
 		BackstopCreditDelta: zero(), BackstopResidual: zero(), SupplyResidual: zero(), FeeCreditResidual: zero(),
+		ResidualExplained: zero(), ResidualAttributed: zero(),
 	}
 	if err := checkLendingInterestRow(r); err != nil {
 		t.Fatalf("complete row refused: %v", err)
 	}
-	r.SupplyResidual = nil
-	if err := checkLendingInterestRow(r); err == nil {
-		t.Fatal("row with a nil amount accepted")
+	for _, drop := range []func(*lendinginterest.HourRow){
+		func(r *lendinginterest.HourRow) { r.SupplyResidual = nil },
+		func(r *lendinginterest.HourRow) { r.ResidualAttributed = nil },
+	} {
+		c := r
+		drop(&c)
+		if err := checkLendingInterestRow(c); err == nil {
+			t.Fatal("row with a nil amount accepted")
+		}
 	}
 }
