@@ -2241,6 +2241,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// Every read below runs under the default record, so a withheld
 	// headline carries its substance evidence into the opt-in pass.
 	ctx, off := WithThinAdmission(r.Context(), parsed, defaultPriceQuote, false)
+	if isPrewarmRequest(r) {
+		ctx = withAwaitRefresh(ctx)
+	}
 
 	detail, served := s.resolveAssetDetail(w, r.WithContext(ctx), parsed)
 	if served {
