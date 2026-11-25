@@ -276,6 +276,63 @@ func TestCheckResidualClasses(t *testing.T) {
 	}
 }
 
+// The window line splits unreconciled versions by class and names each row holding an unexplained one. The V1
+// row is the golden interest fill at 53013801, attributed by design; the second residual has no event at all.
+func TestReportInterestWindow_ResidualClasses(t *testing.T) {
+	n := big.NewInt
+	from := time.Date(2024, 8, 13, 0, 0, 0, 0, time.UTC)
+	v1Fill := lendinginterest.HourRow{
+		Pool: "CV1POOL", Asset: "CUSDC", Protocol: lendinginterest.BlendV1, Hour: from.Add(14 * time.Hour),
+		FirstLedger: 53013790, LastLedger: 53013801, Versions: 3, UnreconciledVersions: 1, AttributedVersions: 1,
+		BackstopResidual: n(-3096224423), ResidualAttributed: n(-3096224423), ResidualExplained: n(0), ResidualUnexplained: n(0),
+	}
+	line := func(rows ...lendinginterest.HourRow) string {
+		var b strings.Builder
+		reportInterestWindow(&b, from, from.Add(24*time.Hour), rows, interestChecked{}, true)
+		return b.String()
+	}
+	out := line(v1Fill)
+	if !strings.Contains(out, "unreconciled 1 (b_rate mismatches 0, fee mismatches 0, rows with a backstop residual 1; "+
+		"versions explained 0, attributed 1, unexplained 0)") || strings.Contains(out, ": unexplained CV1POOL") {
+		t.Fatalf("attributed V1 fill:\n%s", out)
+	}
+	drift := v1Fill
+	drift.Hour, drift.FirstLedger, drift.LastLedger, drift.AttributedVersions = from.Add(15*time.Hour), 53014000, 53014400, 0
+	drift.BackstopResidual, drift.ResidualAttributed, drift.UnexplainedVersions, drift.ResidualUnexplained = n(-1234), n(0), 1, n(-1234)
+	out = line(v1Fill, drift)
+	for _, want := range []string{
+		"versions explained 0, attributed 1, unexplained 1)",
+		lendingInterestJob + ": hours [2024-08-13T00:00:00Z, 2024-08-14T00:00:00Z): unexplained CV1POOL CUSDC 2024-08-13T15:00:00Z: " +
+			"backstop residual -1234 (unexplained -1234); versions explained 0, attributed 0, unexplained 1; ledgers 53014000-53014400\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("window line lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, ": unexplained CV1POOL") != 1 {
+		t.Errorf("want one sample, the drift's:\n%s", out)
+	}
+}
+
+// The unexplained gauge counts neither class the events account for: an attributed V1 fill is not unexplained.
+func TestStoredUnexplained(t *testing.T) {
+	row := func(unreconciled, explained, attributed uint32) clickhouse.LendingInterestStoredRow {
+		return clickhouse.LendingInterestStoredRow{
+			Row:               lendinginterest.HourRow{UnreconciledVersions: unreconciled},
+			ExplainedVersions: explained, AttributedVersions: attributed,
+		}
+	}
+	for _, c := range []struct {
+		row  clickhouse.LendingInterestStoredRow
+		want int64
+	}{{row(1, 0, 1), 0}, {row(3, 1, 2), 0}, {row(2, 0, 1), 1}, {row(1, 0, 0), 1}} {
+		if got := storedUnexplained(c.row); got != c.want {
+			t.Errorf("unreconciled %d explained %d attributed %d: %d, want %d", c.row.Row.UnreconciledVersions,
+				c.row.ExplainedVersions, c.row.AttributedVersions, got, c.want)
+		}
+	}
+}
+
 // backstopOnly makes the fake's version i its predecessor with backstop_credit moved by d: no accrual, b_rate
 // unmoved, so its pair is a backstop residual the pass classifies by its transaction's events. Every other version of
 // the fake moves b_rate and is never classified.
@@ -377,7 +434,12 @@ func TestInterestPass_UndecodableEventProves(t *testing.T) {
 	if explained != 0 || unexplained == 0 {
 		t.Fatalf("explained+attributed %d unexplained %d, want the poisoned residual unexplained", explained, unexplained)
 	}
-	if out, gauge, err := p.prove(t, lendingRun{}); err != nil || gauge != "0" {
+	r := lendingRun{heartbeat: filepath.Join(t.TempDir(), "state.prom")}
+	if out, gauge, err := p.prove(t, r); err != nil || gauge != "0" {
 		t.Fatalf("proof: %v gauge %s\n%s", err, gauge, out)
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(r.heartbeat), "ops_job_"+r.proveJob()+".prom")) //nolint:gosec // test temp dir
+	if err != nil || metric(string(raw), metricInterestUnexplained) != fmt.Sprint(unexplained) {
+		t.Fatalf("%s: %v\n%s, want %d", metricInterestUnexplained, err, raw, unexplained)
 	}
 }

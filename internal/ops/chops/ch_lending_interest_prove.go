@@ -77,7 +77,7 @@ type interestProof struct {
 
 const (
 	helpInterestProofFailed = "1 when the last lending interest proof found a stored row that disagrees with the lake, 0 otherwise."
-	helpInterestUnexplained = "Σ unreconciled_versions − explained_versions over the rows the last lending interest proof read; attributed versions count."
+	helpInterestUnexplained = "Σ unreconciled_versions − explained_versions − attributed_versions over the rows the last lending interest proof read."
 )
 
 // proveLendingInterest runs the proof holding -lock-file and the interest lock shared (proveLocks) and publishes its
@@ -434,7 +434,7 @@ func (pr *interestProof) window(ctx context.Context, p *interestPass, w foldedWi
 	for _, s := range stored {
 		k := interestKeyOf(s.Row)
 		seen[k] = true
-		pr.unexplained += int64(s.Row.UnreconciledVersions) - int64(s.ExplainedVersions)
+		pr.unexplained += storedUnexplained(s)
 		f, ok := fresh[k]
 		switch {
 		case !ok:
@@ -472,6 +472,12 @@ func (pr *interestProof) window(ctx context.Context, p *interestPass, w foldedWi
 	pr.checked.feeChecked += c.feeChecked
 	pr.checked.feeSkipped += c.feeSkipped
 	return nil
+}
+
+// storedUnexplained is a stored row's unexplained versions, which the table holds only as the remainder of the
+// other two classes: a V1 interest fill is attributed by design, so it never counts.
+func storedUnexplained(s clickhouse.LendingInterestStoredRow) int64 {
+	return int64(s.Row.UnreconciledVersions) - int64(s.ExplainedVersions) - int64(s.AttributedVersions)
 }
 
 // missingRows reports every fresh row, and every hour the lake holds a version in, with no stored row; false when
