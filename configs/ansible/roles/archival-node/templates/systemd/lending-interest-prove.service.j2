@@ -1,0 +1,65 @@
+# systemd unit: daily read-only proof of stellar.lending_interest_hourly.
+#
+# Rendered by Ansible where lending_interest_prove_enabled is set (default off:
+# no host has run -interest-init yet). Re-reads the lake's lending versions
+# over the floor-to-watermark range, folds them again and compares every stored
+# row (deploy/clickhouse/lending_interest.sql). Writes nothing to ClickHouse;
+# its verdict lands in the heartbeat textfile as
+# stellarindex_lending_interest_proof_failed, and the run's exit is non-zero on
+# a mismatch or INCOMPLETE hours. On a host whose interest pass is not
+# initialised it prints so and exits 0.
+
+[Unit]
+Description=Stellar Index — lending interest proof (daily, read-only)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-failed
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+# 75 = run-heavy-job lock skip; a mismatch is carried by the proof gauge and the exit code.
+SuccessExitStatus=75
+# Queue behind another heavy job for up to 12h instead of skipping the fire, as verify-lake does.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
+Environment=HEAVY_JOB_CLASS=scheduled
+EnvironmentFile=-/etc/default/lending-interest-prove
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# No -write: -prove only reads, and takes no lock, so it never holds up lending-state.timer.
+ExecStart=/usr/local/sbin/run-heavy-job.sh lending-interest-prove /usr/local/bin/stellarindex-ops ch-entry-history \
+  -lending-only \
+  -prove \
+  -interest \
+  -ch-addr ${CH_ADDR} \
+  $EXTRA_FLAGS
+
+User=stellarindex
+Group=stellarindex
+
+# full, not strict, as verify-lake: run-heavy-job.sh takes its locks under /run/lock,
+# and the heartbeat textfile is the only other write.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Floor to watermark in 100k-ledger windows, each read twice for coverage and once
+# for versions; 12h of queueing plus the run.
+TimeoutStartSec=86400
+
+# The fold holds one window's versions in process, as the derive does; a window
+# over lendingInterestMaxVersions is halved rather than meet this limit.
+MemoryMax=1G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

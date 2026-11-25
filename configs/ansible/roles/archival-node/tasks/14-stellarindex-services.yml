@@ -1516,6 +1516,49 @@
 # See archive_completeness_enabled in defaults/main.yml: the check's only
 # section is measured against the pubnet-only /srv/history-archive mirror,
 # and its fill phase pulls FROM pubnet archives.
+# ── lending-interest-prove — only where the interest pass is initialised ──
+# See lending_interest_prove_enabled in defaults/main.yml.
+- name: Install + enable lending-interest-prove (hosts whose interest pass is initialised)
+  when: lending_interest_prove_enabled | bool
+  tags: [ops-jobs]
+  block:
+    - name: Install lending-interest-prove unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - lending-interest-prove.service
+        - lending-interest-prove.timer
+      notify: Reload systemd
+      register: lending_interest_prove_units
+
+    - name: Enable + start lending-interest-prove.timer
+      ansible.builtin.systemd:
+        name: lending-interest-prove.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and lending_interest_prove_units is changed)
+
+- name: Stop + disable lending-interest-prove where the interest pass is not initialised
+  when: not (lending_interest_prove_enabled | bool)
+  tags: [ops-jobs]
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - lending-interest-prove.timer
+    - lending-interest-prove.service
+  register: retired_unit
+  # A unit this host never had is fine; any other stop/disable failure leaves the retired unit running.
+  failed_when: >-
+    retired_unit is failed and
+    'Could not find the requested service' not in (retired_unit.msg | default(''))
+
 - name: Install + enable archive-completeness (networks with a correct cross-anchor)
   when: archive_completeness_enabled | bool
   block:

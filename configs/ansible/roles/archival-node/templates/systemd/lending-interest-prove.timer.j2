@@ -1,0 +1,23 @@
+# systemd timer: daily lending interest proof.
+#
+# Rendered by Ansible where lending_interest_prove_enabled is set. Companion to
+# lending-interest-prove.service.
+#
+# Time slot: 07:35 UTC + up to 10 min jitter, in the daily proof cluster between
+# wasm-drift (07:10) and verify-lake (08:17); the heavy-job wrapper queues it
+# behind any other heavy job. Daily matches the 48h threshold of
+# stellarindex_lending_interest_proof_stale.
+# Persistent=true: if the box was off at 07:35, fire on next boot.
+
+[Unit]
+Description=Daily lending interest proof
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-interest-proof-failed
+
+[Timer]
+OnCalendar=*-*-* 07:35:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=lending-interest-prove.service
+
+[Install]
+WantedBy=timers.target
