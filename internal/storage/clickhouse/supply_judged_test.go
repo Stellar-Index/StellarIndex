@@ -14,7 +14,10 @@ const (
 	judgedPool = "CAOAVZOUDGYDI3QJTCDEQ3GJPWFN7QHM632EQZLWAIUWKILEFTKZUPE6"
 	// The pool's `burn` body at mainnet ledger 65648178: a map whose `amount` is a u128 liquidity figure.
 	judgedPoolBurnBody = "AAAAEQAAAAEAAAAGAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAs/+k8uDsAAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAASUJspE0AAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAPnT7H7cAAAADwAAAAVvd25lcgAAAAAAABIAAAABIzovoLDzgMm/PSicyUIChIApn2d5n/jeVHAlcu+O3HoAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAQAAAhwAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAEAAAJYA=="
-	unjudgedContract   = "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ"
+	secondJudgedPool   = "CBFY4Q26RW5TYMWFFIVBP3CRMWHWNUD2GUFRQWNKRG4U53VELSSZ2OFQ"
+	// Its `burn` body at mainnet ledger 65660039.
+	secondJudgedPoolBurnBody = "AAAAEQAAAAEAAAAGAAAADwAAAAZhbW91bnQAAAAAAAkAAAAAAAAAAAAAAhu6WyJ1AAAADwAAAAdhbW91bnQwAAAAAAkAAAAAAAAAAAAAAFIMHjt5AAAADwAAAAdhbW91bnQxAAAAAAkAAAAAAAAAAAAAAAAAAAAAAAAADwAAAAVvd25lcgAAAAAAABIAAAABXU1ExcP57syWoe2HRKg3Ug6rh87TcybzwVhIsVhLprsAAAAPAAAACnRpY2tfbG93ZXIAAAAAAAT//3UEAAAADwAAAAp0aWNrX3VwcGVyAAAAAAAE//93DA=="
+	unjudgedContract         = "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ"
 )
 
 func i128Body(t *testing.T, lo uint64) string {
@@ -32,6 +35,8 @@ func TestClassifySupplyEventXDR_Judged(t *testing.T) {
 	}{
 		{"listed contract, judged reason", judgedPool, judgedPoolBurnBody, SupplySkipJudgedNonToken},
 		{"unlisted contract, same body", unjudgedContract, judgedPoolBurnBody, SupplySkipAmountNotI128},
+		{"second listed pool, its own burn body", secondJudgedPool, secondJudgedPoolBurnBody, SupplySkipJudgedNonToken},
+		{"unlisted contract, second pool's body", unjudgedContract, secondJudgedPoolBurnBody, SupplySkipAmountNotI128},
 		{"listed contract, other failure", judgedPool, "not-base64-xdr!", SupplySkipBodyUnparseable},
 	} {
 		if amt, skip := ClassifySupplyEventXDR(tc.contract, tc.body); skip != tc.want || amt != nil {
