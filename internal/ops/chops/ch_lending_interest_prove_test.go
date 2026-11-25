@@ -69,17 +69,21 @@ func newProofFixture(t *testing.T, edit ...func(*fakeInterestLake)) *proofFixtur
 	return p
 }
 
-// prove runs -prove -interest and returns its report, error and the proof_failed gauge from its textfile.
+// prove runs -prove -interest and returns its report, error and the proof_failed gauge from its textfile; the
+// textfile lives beside r.heartbeat when set (so a later run reads it back), else in a fresh directory.
 func (p *proofFixture) prove(t *testing.T, r lendingRun) (out, gauge string, err error) {
 	t.Helper()
-	dir := t.TempDir()
-	r.chAddr, r.heartbeat = "fake", filepath.Join(dir, "state.prom")
+	if r.heartbeat == "" {
+		r.heartbeat = filepath.Join(t.TempDir(), "state.prom")
+	}
+	dir := filepath.Dir(r.heartbeat)
+	r.chAddr = "fake"
 	if r.lockFile == "" {
 		r.lockFile = filepath.Join(dir, "state.lock")
 	}
 	var report, log bytes.Buffer
 	err = r.proveLendingInterest(context.Background(), &report, &log)
-	raw, rerr := os.ReadFile(filepath.Join(dir, "ops_job_"+lendingInterestProveJob+".prom")) //nolint:gosec // test temp dir
+	raw, rerr := os.ReadFile(filepath.Join(dir, "ops_job_"+r.proveJob()+".prom")) //nolint:gosec // test temp dir
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
@@ -273,31 +277,153 @@ func TestProveInterest_UnprovedSeedIsIncomplete(t *testing.T) {
 	}
 }
 
-// Against a lending_state run holding -lock-file, the unit's fire skips with exit 0 and writes no heartbeat (so
-// proof_stale still ages); a run by hand refuses. Neither reads the lake.
-func TestProveInterest_StateLockHeld(t *testing.T) {
+// stubProveLockSleep counts the proof's lock waits instead of sleeping; at calls == release it runs onRelease.
+func stubProveLockSleep(t *testing.T, release int, onRelease func()) *int {
+	t.Helper()
+	calls := new(int)
+	orig := proveLockSleep
+	t.Cleanup(func() { proveLockSleep = orig })
+	proveLockSleep = func(_ context.Context, d time.Duration) error {
+		if d != proveLockRetry {
+			t.Errorf("waited %s, want %s", d, proveLockRetry)
+		}
+		*calls++
+		if *calls == release {
+			onRelease()
+		}
+		return nil
+	}
+	return calls
+}
+
+// Against a writer holding -lock-file or the interest lock past the 15-minute wait, the unit's fire skips with exit 0
+// and writes no heartbeat (so proof_stale still ages); a run by hand refuses. Neither reads the lake.
+func TestProveInterest_LockHeldPastTheWait(t *testing.T) {
+	for _, lock := range []string{"state.lock", interestLock} {
+		t.Run(lock, func(t *testing.T) {
+			p := newProofFixture(t)
+			dir := t.TempDir()
+			r := lendingRun{chAddr: "fake", lockFile: filepath.Join(dir, "state.lock"), heartbeat: filepath.Join(dir, "state.prom")}
+			unlock, err := acquireRollupLock("writer", filepath.Join(dir, lock))
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls := stubProveLockSleep(t, -1, nil)
+			reads := len(p.reads)
+			var out, log bytes.Buffer
+			t.Setenv("INVOCATION_ID", "")
+			if err := r.proveLendingInterest(context.Background(), &out, &log); err == nil || !strings.Contains(err.Error(), "prove once it finishes") {
+				t.Fatalf("run by hand under the lock: err %v, want a refusal", err)
+			}
+			if want := int(proveLockWait / proveLockRetry); *calls != want {
+				t.Fatalf("waited %d times before refusing, want %d (15 min every 10 s)", *calls, want)
+			}
+			t.Setenv("INVOCATION_ID", "0123456789abcdef")
+			if err := r.proveLendingInterest(context.Background(), &out, &log); err != nil ||
+				!strings.Contains(log.String(), "skipped, a lending_state or interest write run held its lock past 15m0s") {
+				t.Fatalf("unit fire under the lock: err %v, log %q; want a logged skip", err, log.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, "ops_job_"+r.proveJob()+".prom")); !os.IsNotExist(err) || len(p.reads) != reads || out.Len() != 0 {
+				t.Fatalf("a skipped proof wrote its heartbeat (%v), read the lake (%d reads) or reported %q", err, len(p.reads)-reads, out.String())
+			}
+			unlock()
+			if out, _, err := p.prove(t, lendingRun{lockFile: r.lockFile}); err != nil {
+				t.Fatalf("proof once the writer finished: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+// A fire that meets a short state pass waits it out and proves, rather than skipping the day.
+func TestProveInterest_WaitsOutAShortWriter(t *testing.T) {
 	p := newProofFixture(t)
 	dir := t.TempDir()
-	r := lendingRun{chAddr: "fake", lockFile: filepath.Join(dir, "state.lock"), heartbeat: filepath.Join(dir, "state.prom")}
-	unlock, err := acquireRollupLock(lendingJob, r.lockFile)
+	lock := filepath.Join(dir, "state.lock")
+	unlock, err := acquireRollupLock(lendingJob, lock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reads := len(p.reads)
-	var out, log bytes.Buffer
-	t.Setenv("INVOCATION_ID", "")
-	if err := r.proveLendingInterest(context.Background(), &out, &log); err == nil || !strings.Contains(err.Error(), "prove once it finishes") {
-		t.Fatalf("run by hand under the state lock: err %v, want a refusal", err)
-	}
+	calls := stubProveLockSleep(t, 3, unlock)
 	t.Setenv("INVOCATION_ID", "0123456789abcdef")
-	if err := r.proveLendingInterest(context.Background(), &out, &log); err != nil || !strings.Contains(log.String(), "skipped, a lending_state run holds its lock") {
-		t.Fatalf("unit fire under the state lock: err %v, log %q; want a logged skip", err, log.String())
+	out, gauge, err := p.prove(t, lendingRun{lockFile: lock})
+	if err != nil || gauge != "0" || *calls != 3 || !strings.Contains(out, ": PROVED: 4 hours proved") {
+		t.Fatalf("err %v gauge %s waits %d:\n%s", err, gauge, *calls, out)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "ops_job_"+lendingInterestProveJob+".prom")); !os.IsNotExist(err) || len(p.reads) != reads || out.Len() != 0 {
-		t.Fatalf("a skipped proof wrote its heartbeat (%v), read the lake (%d reads) or reported %q", err, len(p.reads)-reads, out.String())
+	// The proof holds the interest lock shared: an interest writer (exclusive) cannot start inside it.
+	unlockProof, err := lendingRun{lockFile: lock}.proveLocks(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	unlock()
-	if out, _, err := p.prove(t, lendingRun{lockFile: r.lockFile}); err != nil {
-		t.Fatalf("proof once the state run finished: %v\n%s", err, out)
+	defer unlockProof()
+	if _, err := acquireRollupLock(lendingInterestJob, filepath.Join(dir, interestLock)); err == nil {
+		t.Fatal("an interest writer took its lock while the proof held it")
+	}
+}
+
+// A run that errors before its verdict, or a spot check or INCOMPLETE run that proves, keeps the last verdict; only
+// a whole-range run that compares everything clears it.
+func TestProveInterest_OnlyAWholeVerdictClearsAMismatch(t *testing.T) {
+	p := newProofFixture(t)
+	hb := filepath.Join(t.TempDir(), "state.prom")
+	good := p.stored[1].Row.Gross
+	p.stored[1].Row.Gross = big.NewInt(-1)
+	if _, gauge, err := p.prove(t, lendingRun{heartbeat: hb}); err == nil || gauge != "1" {
+		t.Fatalf("mismatch: err %v gauge %s", err, gauge)
+	}
+	p.stored[1].Row.Gross = good
+	beyond := lendingInterestBeyond
+	lendingInterestBeyond = func(context.Context, string, []string, time.Time) ([]clickhouse.LendingInterestRowID, error) {
+		return nil, fmt.Errorf("lake down")
+	}
+	if _, gauge, err := p.prove(t, lendingRun{heartbeat: hb}); err == nil || gauge != "1" {
+		t.Fatalf("errored run: err %v gauge %s, want the last verdict 1 kept", err, gauge)
+	}
+	lendingInterestBeyond = beyond
+	if _, gauge, err := p.prove(t, lendingRun{heartbeat: hb, to: 199_996}); err != nil || gauge != "1" {
+		t.Fatalf("-to spot check: err %v gauge %s, want the last verdict 1 kept", err, gauge)
+	}
+	if _, gauge, err := p.prove(t, lendingRun{heartbeat: hb}); err != nil || gauge != "0" {
+		t.Fatalf("whole range proved: err %v gauge %s, want 0", err, gauge)
+	}
+}
+
+// A row of a contract the registry does not list is a mismatch at or below the watermark's hour, even when no pool
+// has a coverage row to take that hour from.
+func TestProveInterest_UnregisteredContract(t *testing.T) {
+	for _, gaps := range [][]clickhouse.LendingInterestPoolGap{nil, {{Pool: liPool, Deployed: 1, Thru: 0}}} {
+		p := newProofFixture(t)
+		p.gaps = gaps
+		s := p.stored[0]
+		s.Row.Pool = "CFOREIGN"
+		p.stored = append(p.stored, s)
+		out, gauge, err := p.prove(t, lendingRun{})
+		if err == nil || gauge != "1" || !strings.Contains(out, "mismatch CFOREIGN CASSET "+s.Row.Hour.Format(time.RFC3339)+
+			" row: stored present, recomputed none: the contract is not a pool in the registry") {
+			t.Fatalf("gaps %v: err %v gauge %s:\n%s", gaps, err, gauge, out)
+		}
+	}
+}
+
+// -prove-recent proves from the hour of watermark − N on, on the daily heartbeat; without it, the full range's.
+func TestProveInterest_Recent(t *testing.T) {
+	p := newProofFixture(t)
+	r := lendingRun{interest: interestFlags{recent: 10}}
+	out, gauge, err := p.prove(t, r)
+	if err != nil || gauge != "0" || !strings.Contains(out, "lending_interest [200004,200017] @200017: PROVED: 2 hours proved") ||
+		r.proveJob() != lendingInterestProveJob || (lendingRun{}).proveJob() != lendingInterestProveJob+"-full" {
+		t.Fatalf("err %v gauge %s:\n%s", err, gauge, out)
+	}
+	out, _, err = p.prove(t, lendingRun{interest: interestFlags{recent: 1_000_000}})
+	if err != nil || !strings.Contains(out, "[199990,200017]") {
+		t.Fatalf("-prove-recent past the floor: err %v:\n%s", err, out)
+	}
+	for _, bad := range []lendingRun{
+		{prove: true, interest: interestFlags{recent: 10}},
+		{prove: true, from: 199_997, interest: interestFlags{prove: true, recent: 10}},
+		{interest: interestFlags{recent: 10}},
+	} {
+		if err := bad.interest.check(bad); err == nil {
+			t.Errorf("%+v: -prove-recent accepted", bad)
+		}
 	}
 }

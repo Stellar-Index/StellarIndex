@@ -239,6 +239,26 @@ func (h *JobHeartbeat) Gauge(name, help string, value int64) {
 	h.mu.Unlock()
 }
 
+// LastGauge reads a job-specific gauge back from the textfile as the previous run left it; false when the file or the
+// gauge is absent. Call it before Start, which rewrites the file.
+func (h *JobHeartbeat) LastGauge(name string) (int64, bool) {
+	if !h.Enabled() {
+		return 0, false
+	}
+	raw, err := os.ReadFile(h.path)
+	if err != nil {
+		return 0, false
+	}
+	prefix := fmt.Sprintf("%s{%s=%q} ", name, jobHeartbeatLabel, h.job)
+	for _, l := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(l, prefix); ok {
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			return n, err == nil
+		}
+	}
+	return 0, false
+}
+
 // Stop halts the ticker and writes running=0 with last_finish_unix and last_exit_ok; safe on an inert heartbeat and when called twice.
 func (h *JobHeartbeat) Stop(exitOK bool) {
 	if !h.Enabled() {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -74,39 +75,119 @@ type interestProof struct {
 	notChecked      int             // stored rows whose window's row set or revisions differ, so not re-checked
 }
 
-// proveLendingInterest runs the proof holding -lock-file shared, as every interest run does, so no lending_state run
-// changes the rows it reads, and publishes its verdict gauges in its heartbeat textfile. Against a lending_state run
-// the unit's fire skips, writing no heartbeat so the last finished proof's age still reaches proof_stale; a run by
-// hand refuses.
+const (
+	helpInterestProofFailed = "1 when the last lending interest proof found a stored row that disagrees with the lake, 0 otherwise."
+	helpInterestUnexplained = "Σ unreconciled_versions − explained_versions over the rows the last lending interest proof read."
+)
+
+// proveLendingInterest runs the proof holding -lock-file and the interest lock shared (proveLocks) and publishes its
+// verdict gauges in its heartbeat textfile. Against a writer holding either past the wait the unit's fire skips,
+// writing no heartbeat so the last finished proof's age still reaches proof_stale; a run by hand refuses.
 func (r lendingRun) proveLendingInterest(ctx context.Context, out, log io.Writer) error {
-	unlock, err := acquireSharedLock(lendingJob, r.lockFile)
+	unlock, err := r.proveLocks(ctx)
 	if err != nil {
 		if !errors.Is(err, syscall.EWOULDBLOCK) {
 			return err
 		}
 		if launchedByUnit() {
-			_, _ = fmt.Fprintf(log, "%s: skipped, a lending_state run holds its lock; the next fire proves: %v\n", lendingInterestProveJob, err)
+			_, _ = fmt.Fprintf(log, "%s: skipped, a lending_state or interest write run held its lock past %s; the next fire proves: %v\n",
+				lendingInterestProveJob, proveLockWait, err)
 			return nil
 		}
-		return fmt.Errorf("%s: a lending_state run holds -lock-file, so the state it reads may change; prove once it finishes: %w",
-			lendingInterestProveJob, err)
+		return fmt.Errorf("%s: a lending_state or interest write run held its lock past %s, so what the proof reads may change; "+
+			"prove once it finishes: %w", lendingInterestProveJob, proveLockWait, err)
 	}
 	defer unlock()
-	hb := opsutil.NewJobHeartbeat(lendingInterestProveJob, r.siblingHeartbeat(lendingInterestProveJob), nil)
+	job := r.proveJob()
+	hb := opsutil.NewJobHeartbeat(job, r.siblingHeartbeat(job), nil)
+	// Until this run reaches a verdict the last one stands: a run that errors or reads no verdict clears no alert.
+	failed, hasFailed := hb.LastGauge(metricInterestProofFailed)
+	if hasFailed {
+		hb.Gauge(metricInterestProofFailed, helpInterestProofFailed, failed)
+	}
+	if v, ok := hb.LastGauge(metricInterestUnexplained); ok {
+		hb.Gauge(metricInterestUnexplained, helpInterestUnexplained, v)
+	}
 	hb.Start()
 	pr := &interestProof{keys: map[lendinginterest.ReserveKey]*interestProofCounts{}}
 	err = r.collectInterestProof(ctx, pr, hb, log)
 	if err == nil {
-		failed := int64(0)
-		if pr.mismatches.n > 0 {
-			failed = 1
+		switch {
+		case pr.mismatches.n > 0:
+			hb.Gauge(metricInterestProofFailed, helpInterestProofFailed, 1)
+		case !hasFailed || (pr.incomplete.n == 0 && !r.partialProof()):
+			// Only the whole range compared in full clears a mismatch; INCOMPLETE hours or a -from, -to or
+			// -interest-pool spot check may raise the verdict, never clear it.
+			hb.Gauge(metricInterestProofFailed, helpInterestProofFailed, 0)
 		}
-		hb.Gauge(metricInterestProofFailed, "1 when the last lending interest proof found a stored row that disagrees with the lake, 0 otherwise.", failed)
-		hb.Gauge(metricInterestUnexplained, "Σ unreconciled_versions − explained_versions over the rows the last lending interest proof read.", pr.unexplained)
+		if !r.partialProof() {
+			hb.Gauge(metricInterestUnexplained, helpInterestUnexplained, pr.unexplained)
+		}
 		err = pr.report(out)
 	}
 	hb.Stop(err == nil)
 	return err
+}
+
+// proveJob names the proof's heartbeat: the daily -prove-recent run's, which proof_stale ages, or the full range's.
+// Each holds its own verdict, so a recent range that proves never clears a mismatch only the full range reaches.
+func (r lendingRun) proveJob() string {
+	if r.interest.recent != 0 {
+		return lendingInterestProveJob
+	}
+	return lendingInterestProveJob + "-full"
+}
+
+// partialProof is a proof narrowed by hand to part of its range.
+func (r lendingRun) partialProof() bool { return r.from != 0 || r.to != 0 || r.interest.pool != "" }
+
+// The proof's wait for a writer's lock: state passes and the timer's interest windows are short, so a fire waits one
+// out rather than skipping the day.
+const (
+	proveLockRetry = 10 * time.Second
+	proveLockWait  = 15 * time.Minute
+)
+
+// proveLockSleep is the wait between lock tries; a seam so tests never sleep.
+var proveLockSleep = func(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// proveLocks holds -lock-file shared, so no lending_state run (exclusive) changes the state the proof folds, then the
+// interest lock shared, so no interest write (exclusive) changes the rows it compares. The timer's interest pass meets
+// the shared hold as it meets another interest run: a quiet skip.
+func (r lendingRun) proveLocks(ctx context.Context) (func(), error) {
+	unlockState, err := waitSharedLock(ctx, lendingJob, r.lockFile)
+	if err != nil {
+		return nil, err
+	}
+	unlockInterest, err := waitSharedLock(ctx, lendingInterestJob, filepath.Join(filepath.Dir(r.lockFile), interestLock))
+	if err != nil {
+		unlockState()
+		return nil, err
+	}
+	return func() { unlockInterest(); unlockState() }, nil
+}
+
+// waitSharedLock takes path shared, trying again every proveLockRetry for up to proveLockWait while it is held
+// exclusive; past that it returns the EWOULDBLOCK.
+func waitSharedLock(ctx context.Context, job, path string) (func(), error) {
+	for waited := time.Duration(0); ; waited += proveLockRetry {
+		unlock, err := acquireSharedLock(job, path)
+		if err == nil || !errors.Is(err, syscall.EWOULDBLOCK) || waited >= proveLockWait {
+			return unlock, err
+		}
+		if err := proveLockSleep(ctx, proveLockRetry); err != nil {
+			return nil, err
+		}
+	}
 }
 
 // launchedByUnit reports a run systemd started (the timer's unit): systemd sets INVOCATION_ID for every unit, as
@@ -198,11 +279,19 @@ func (r lendingRun) proveGroup(ctx context.Context, pr *interestProof, g interes
 	return err
 }
 
-// interestProofRange is [-from, -to] snapped to whole hours, by default the floor to the watermark.
+// interestProofRange is [-from, -to] snapped to whole hours, by default the floor to the watermark; -prove-recent N
+// starts at the hour of watermark − N instead, never below the floor.
 func (r lendingRun) interestProofRange(ctx context.Context, wm uint32) (uint32, uint32, error) {
 	start, err := lendingInterestFloor(ctx, r.chAddr)
 	if err != nil {
 		return 0, 0, err
+	}
+	if n := uint64(r.interest.recent); n != 0 && uint64(wm) > n && uint64(wm)-n > uint64(start) {
+		h, err := hourStart(ctx, r.chAddr, wm-uint32(n)) //nolint:gosec // n < wm, a uint32
+		if err != nil {
+			return 0, 0, err
+		}
+		start = max(start, h)
 	}
 	if r.from != 0 {
 		if r.from < start || r.from > wm {
@@ -465,18 +554,18 @@ func interestColumns(r lendinginterest.HourRow) []string {
 func (pr *interestProof) beyond(ctx context.Context, addr string, all []clickhouse.LendingContract, cuts map[string]time.Time, only string) error {
 	ids := make([]string, 0, len(all))
 	registered := map[string]bool{}
-	var after, wmHour time.Time // the earliest cut, and the latest (the watermark's hour)
+	var after time.Time // the earliest cut
 	for _, c := range all {
 		ids = append(ids, c.ID)
 		registered[c.ID] = true
-		if cut, ok := cuts[c.ID]; ok {
-			if after.IsZero() || cut.Before(after) {
-				after = cut
-			}
-			if cut.After(wmHour) {
-				wmHour = cut
-			}
+		if cut, ok := cuts[c.ID]; ok && (after.IsZero() || cut.Before(after)) {
+			after = cut
 		}
+	}
+	// The watermark's own hour, not the latest cut: with no pool covered there is none.
+	wmHour, err := lendingInterestHour(ctx, addr, pr.wm)
+	if err != nil {
+		return err
 	}
 	rows, err := lendingInterestBeyond(ctx, addr, ids, after)
 	if err != nil {
@@ -487,7 +576,7 @@ func (pr *interestProof) beyond(ctx context.Context, addr string, all []clickhou
 		switch {
 		case only != "" && r.Pool != only:
 		case covered && !r.Hour.After(cut):
-		case !registered[r.Pool] && !r.Hour.After(wmHour):
+		case !registered[r.Pool] && !r.Hour.After(wmHour.Hour):
 			pr.rowMismatch(lendinginterest.HourRow{Pool: r.Pool, Asset: r.Asset, Hour: r.Hour}, "present",
 				"none: the contract is not a pool in the registry")
 		default:

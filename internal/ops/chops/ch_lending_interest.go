@@ -30,6 +30,7 @@ type interestFlags struct {
 	maxWindows   int
 	maxUnordered int
 	pool         string
+	recent       uint // -prove-recent: with -prove -interest, prove the last N ledgers to the watermark
 }
 
 // register defines the -interest* flags on fs.
@@ -38,7 +39,8 @@ func (f *interestFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&f.only, "interest-only", false, "with -lending-only: skip the lending_state pass; -from (snapped down to its hour's first ledger) re-derives the interest rows and deletes the hours' superseded ones, -to is snapped up to its hour's last ledger")
 	fs.IntVar(&f.maxWindows, "interest-max-windows", 0, "with -lending-only: stop the interest pass after N windows (0 = to lending_state's watermark)")
 	fs.IntVar(&f.maxUnordered, "interest-max-unordered", 0, "with -lending-only: accept up to N versions per interest row whose apply order is unknown (intra_ledger_seq 0); more refuses the window")
-	fs.BoolVar(&f.prove, "interest", false, "with -lending-only -prove: prove stellar.lending_interest_hourly instead (reads only): per window of [-from, -to] (default the floor to the lending_interest watermark; -interest-pool one pool) the stored rows against a fresh fold of the lake's versions, version counts, telescoped gross and the in-line identities; exits non-zero on a mismatch or INCOMPLETE hours, 0 with nothing to prove on an uninitialised host")
+	fs.BoolVar(&f.prove, "interest", false, "with -lending-only -prove: prove stellar.lending_interest_hourly instead (reads only): per window of [-from, -to] (default the floor to the lending_interest watermark; -prove-recent the last N ledgers; -interest-pool one pool) the stored rows against a fresh fold of the lake's versions, version counts, telescoped gross and the in-line identities; exits non-zero on a mismatch or INCOMPLETE hours, 0 with nothing to prove on an uninitialised host")
+	fs.UintVar(&f.recent, "prove-recent", 0, "with -lending-only -prove -interest: prove from the hour of (watermark − N ledgers), never below the floor, to the watermark instead of the whole range (the daily unit's rolling week; a spot check by hand), its verdict on the daily proof's heartbeat; without it the proof's heartbeat is the full range's, ops_job …-prove-full")
 	fs.StringVar(&f.pool, "interest-pool", "", "with -lending-only: backfill the interest rows of one pool the lending_interest watermark does not cover, up to that watermark (skips the lending_state pass); with -prove -interest, prove that pool only")
 }
 
@@ -653,7 +655,7 @@ func reportInterestWindow(log io.Writer, from, to time.Time, rows []lendinginter
 	}
 	_, _ = fmt.Fprintf(log, "%s: hours [%s, %s): %s %d rows; versions %d, accrued %d, accrual errors %d, unordered %d; "+
 		"unreconciled %d (b_rate mismatches %d, fee mismatches %d, rows with a backstop residual %d), fee-only moves %d; "+
-		"checked: chain endpoints %d rows, gross telescoped %d (%d around %d excluded pairs, not recomputed), fee carry %d (%d not)\n",
+		"checked: chain endpoints %d rows, gross telescoped %d (%d of them around %d excluded pairs), fee carry %d (%d not)\n",
 		lendingInterestJob, from.Format(time.RFC3339), to.Format(time.RFC3339), verb, len(rows), versions, accrued, errs, unordered,
 		unreconciled, bRate, feeMis, residualRows, feeOnly, c.telescoped, c.telescoped, c.telescopeSplit, c.excludedPairs,
 		c.feeChecked, c.feeSkipped)

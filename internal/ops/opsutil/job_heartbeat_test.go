@@ -164,6 +164,32 @@ func TestJobHeartbeatJobGauges(t *testing.T) {
 	}
 }
 
+// LastGauge reads back what the previous run's Stop wrote, and nothing for an absent gauge or file.
+func TestJobHeartbeatLastGauge(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "j.prom")
+	first := opsutil.NewJobHeartbeat("prove", path, nil)
+	if _, ok := first.LastGauge("fixture_job_verdict"); ok {
+		t.Fatal("read a gauge from a file no run wrote")
+	}
+	first.Stop(true) // releases the path's claim
+	hb := opsutil.NewJobHeartbeat("prove", path, nil)
+	hb.Start()
+	hb.Gauge("fixture_job_verdict", "a verdict", 1)
+	hb.Gauge("fixture_job_count", "a count", -3)
+	hb.Stop(true)
+	next := opsutil.NewJobHeartbeat("prove", path, nil)
+	if v, ok := next.LastGauge("fixture_job_verdict"); !ok || v != 1 {
+		t.Errorf("verdict %d %t, want 1", v, ok)
+	}
+	if v, ok := next.LastGauge("fixture_job_count"); !ok || v != -3 {
+		t.Errorf("count %d %t, want -3", v, ok)
+	}
+	if _, ok := next.LastGauge("fixture_job"); ok {
+		t.Error("a gauge name's prefix read as the gauge")
+	}
+	next.Stop(true)
+}
+
 // TestJobHeartbeatCursorIsMonotoneMax: parallel walkers over DISJOINT chunks report out of order, so the cursor must be a running maximum, not last-write.
 func TestJobHeartbeatCursorIsMonotoneMax(t *testing.T) {
 	dir := t.TempDir()

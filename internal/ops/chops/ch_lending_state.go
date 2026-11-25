@@ -61,6 +61,9 @@ func (r lendingRun) start(lendingOnly bool, gate *opsutil.WriteGate) error {
 // check refuses -interest-* combinations whose range would be ambiguous.
 func (f interestFlags) check(r lendingRun) error {
 	explicit := f.only || f.init || f.maxWindows != 0 || f.maxUnordered != 0
+	if err := f.checkRecent(r); err != nil {
+		return err
+	}
 	if f.prove || r.prove || r.printPrefixes {
 		return f.checkReads(r, explicit)
 	}
@@ -74,6 +77,19 @@ func (f interestFlags) check(r lendingRun) error {
 		return fmt.Errorf("-floor-ledger sets where -interest-init or the state pass starts; an interest-only run ignores it")
 	case f.maxWindows < 0 || f.maxUnordered < 0:
 		return fmt.Errorf("-interest-max-windows and -interest-max-unordered must be >= 0")
+	}
+	return nil
+}
+
+// checkRecent refuses -prove-recent off -prove -interest, or beside -from.
+func (f interestFlags) checkRecent(r lendingRun) error {
+	switch {
+	case f.recent == 0:
+		return nil
+	case !f.prove || !r.prove:
+		return fmt.Errorf("-prove-recent applies to -prove -interest")
+	case r.from != 0:
+		return fmt.Errorf("-prove-recent sets where the proof starts; drop -from")
 	}
 	return nil
 }

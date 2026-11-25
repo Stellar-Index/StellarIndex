@@ -1482,7 +1482,8 @@ func liProve(t *testing.T, addr string) (out, gauge string, err error) {
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	prom, _ := os.ReadFile(filepath.Join(dir, "ops_job_ch-entry-history-lending-interest-prove.prom")) //nolint:gosec // test temp dir
+	// No -prove-recent: the full range's heartbeat.
+	prom, _ := os.ReadFile(filepath.Join(dir, "ops_job_ch-entry-history-lending-interest-prove-full.prom")) //nolint:gosec // test temp dir
 	for _, l := range strings.Split(string(prom), "\n") {
 		if strings.HasPrefix(l, "stellarindex_lending_interest_proof_failed{") {
 			gauge = l[strings.LastIndex(l, " ")+1:]
