@@ -69,6 +69,9 @@
  * listing, per-asset detail, etc.) is unchanged.
  */
 
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { API_BASE_URL, buildHeaders } from '@/api/client';
 import { CURRENT_NETWORK_ID } from './networks';
 import type { components } from '@/api/types';
@@ -208,6 +211,64 @@ function releaseSlot(): void {
 // `next build` worker, which is exactly the scope we want.
 const memo = new Map<string, Promise<unknown>>();
 
+// The literal segments of the OpenAPI paths (lockstep-tested against the
+// spec); any other segment of a request path is an id.
+const ROUTE_WORDS = new Set(
+  `account accounts activity admin aggregators anomalies archive assets at
+  auctions auth backstop backups batch begin-login begin-register begin-signup
+  callback challenge changes chart claimable-balances code-history cohort
+  config-history contracts coverage creators credentials cursors dashboard
+  deliveries diagnostics directory divergence earnings emissions entry-changes
+  export external finish-login finish-register finish-signup flows graph health
+  healthz history holders incidents incidents.atom ingestion interactions
+  issuers keys lake lastprice latest ledger ledgers lending liquidations
+  liquidity-pools livez login logout lookup markets me metadata methodology mev
+  movements network notices observations ohlc operations oracle orderbook pairs
+  passkey pools positions premium price price-alerts prices protocols rates
+  readyz register reserves resolve rotate-secret rwa sac-wrappers sdex search
+  sep10 series signer-on signup since-inception sources sponsors sponsorships
+  stablecoins stats status status-notices stream streams supply throughput tip
+  token top-accounts trades transactions transfers trustline-history tvl twap
+  tx usage verified verify verify-code version vwap wasm webhooks
+  x_last_price`.split(/\s+/),
+);
+
+/** routeTemplate maps a request path to its route: query dropped, each id segment `{id}`. */
+export function routeTemplate(path: string): string {
+  return path
+    .split('?')[0]
+    .split('/')
+    .map((seg, i) => (i < 2 || ROUTE_WORDS.has(seg) ? seg : '{id}'))
+    .join('/');
+}
+
+// HTTP requests this process sent, per route, retries included: what the API sees.
+const requestCounts = new Map<string, number>();
+
+/** buildRequestCounts is this process's route → requests-sent tally. */
+export function buildRequestCounts(): ReadonlyMap<string, number> {
+  return requestCounts;
+}
+
+// `next build` spreads pages over worker processes that are killed, not
+// exited, so each rewrites its tally to .next (wiped at build start) and the
+// postbuild step prints the sum.
+const COUNTS_DIR = join(process.cwd(), '.next', 'build-fetch-counts');
+
+function countRequest(route: string): void {
+  requestCounts.set(route, (requestCounts.get(route) ?? 0) + 1);
+  if (process.env.NEXT_PHASE !== 'phase-production-build') return;
+  try {
+    mkdirSync(COUNTS_DIR, { recursive: true });
+    writeFileSync(
+      join(COUNTS_DIR, `${process.pid}.json`),
+      JSON.stringify(Object.fromEntries(requestCounts)),
+    );
+  } catch {
+    // A report-only tally: an unwritable .next costs the summary line, never the request.
+  }
+}
+
 // One nonce per build process — see the edge-cache bypass note below.
 const BUILD_NONCE = Date.now().toString(36);
 
@@ -238,6 +299,17 @@ export function buildFetchData<T>(
 }
 
 /**
+ * buildFetchOptional is buildFetchData for decoration a page renders
+ * without (the /embed widgets): same memo, in-flight cap and retries, but
+ * any failure resolves to null instead of failing the build. It requests
+ * with the fail-hard defaults, so a URL it shares with a fail-hard page is
+ * memoised once with that page's contract.
+ */
+export function buildFetchOptional<T>(path: string): Promise<T | null> {
+  return buildFetchData<T>(path).catch(() => null);
+}
+
+/**
  * buildFetchEnvelope is buildFetchData's full-envelope sibling: same
  * transport/retry/fail-hard contract, but resolves `{data, flags, as_of}`
  * instead of discarding everything but `data`. Use this when a caller
@@ -262,7 +334,7 @@ export function buildFetchEnvelope<T>(
   const url = `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
   const hit = memo.get(url);
   if (hit) return hit as Promise<BuildFetchEnvelope<T>>;
-  const p = fetchWithRetry<T>(url, {
+  const p = fetchWithRetry<T>(url, routeTemplate(path), {
     timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxAttempts: opts?.attempts ?? MAX_ATTEMPTS,
     softFail: opts?.softFail ?? false,
@@ -273,6 +345,7 @@ export function buildFetchEnvelope<T>(
 
 async function fetchWithRetry<T>(
   url: string,
+  route: string,
   opts: { timeoutMs: number; maxAttempts: number; softFail: boolean },
 ): Promise<BuildFetchEnvelope<T>> {
   const { timeoutMs, maxAttempts, softFail } = opts;
@@ -284,6 +357,7 @@ async function fetchWithRetry<T>(
       await acquireSlot();
       let res: Response;
       try {
+        countRequest(route);
         res = await fetch(url, {
           headers: buildHeaders(),
           signal: AbortSignal.timeout(timeoutMs),
@@ -495,13 +569,26 @@ export async function buildFetchPairPrice(
     // narrows the price fetch, so fall through to the one-id batch.
   }
   const bases = (markets ?? []).filter((m) => m.quote === quote).map((m) => m.base);
-  if (bases.includes(base)) {
-    const prices = await buildFetchPriceBatch(bases, quote);
-    const hit = prices.get(base);
+  return buildFetchBatchedPrice(base, quote, bases);
+}
+
+/**
+ * buildFetchBatchedPrice prices one id from the memoised batch over
+ * `universe` — every id the build prices against `quote` — so N pages cost
+ * ⌈N/100⌉ requests. An id outside the universe, or in an unanswered chunk,
+ * costs one one-id batch, the request each page used to make on its own.
+ */
+export async function buildFetchBatchedPrice(
+  id: string,
+  quote: string,
+  universe: readonly string[],
+): Promise<PriceBatchRow | null> {
+  if (universe.includes(id)) {
+    const hit = (await buildFetchPriceBatch(universe, quote)).get(id);
     if (hit !== undefined) return hit?.row ?? null;
   }
   const rows = await buildFetchData<PriceBatchRow[]>(
-    `/v1/price/batch?asset_ids=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    `/v1/price/batch?asset_ids=${encodeURIComponent(id)}&quote=${encodeURIComponent(quote)}`,
     { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
   return rows?.[0] ?? null;

@@ -4,17 +4,18 @@ import { Suspense } from 'react';
 // Wire shapes from the generated OpenAPI contract (src/api/types.ts,
 // `make web-generate-api`).
 import type { components } from '@/api/types';
-import { API_BASE_URL, buildHeaders } from '@/api/client';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
 import { EmbedPairPathView } from './EmbedPairPathView';
 import { LiveChangeChip } from '../../LiveChangeChip';
-import { buildFetchPairPrice, isCIStub } from '@/lib/buildFetch';
+import {
+  buildFetchOptional,
+  buildFetchPairPrice,
+  isCIStub,
+} from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
 import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 const PAIR_SEPARATOR = '~';
 
@@ -46,23 +47,16 @@ export async function generateStaticParams() {
     },
   ];
   if (isCIStub) return fallback;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/markets?limit=100&order_by=volume_24h_usd_desc`,
-      {
-        headers: buildHeaders(),
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      },
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: Market[] };
-    const out = (env.data ?? [])
-      .filter((m) => m.base && m.quote)
-      .map((m) => ({ pair: `${m.base}${PAIR_SEPARATOR}${m.quote}` }));
-    return out.length > 0 ? [...out, SHELL] : fallback;
-  } catch {
-    return fallback;
-  }
+  // The top 100 of the listing /markets/[pair] builds from, so the two share
+  // one request and every embed pair is in its price batch.
+  const markets = await buildFetchOptional<Market[]>(
+    '/v1/markets?limit=500&order_by=volume_24h_usd_desc',
+  );
+  const out = (markets ?? [])
+    .slice(0, 100)
+    .filter((m) => m.base && m.quote)
+    .map((m) => ({ pair: `${m.base}${PAIR_SEPARATOR}${m.quote}` }));
+  return out.length > 0 ? [...out, SHELL] : fallback;
 }
 
 export async function generateMetadata({
@@ -92,21 +86,10 @@ async function fetchChart(
   base: string,
   quote: string,
 ): Promise<ChartResp | null> {
-  if (isCIStub) return null;
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
-      {
-        headers: buildHeaders(),
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: ChartResp };
-    return env.data ?? null;
-  } catch {
-    return null;
-  }
+  // Same URL as /markets/[pair]'s chart, so the memo serves both.
+  return buildFetchOptional<ChartResp>(
+    `/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
+  );
 }
 
 /**
