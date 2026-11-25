@@ -158,19 +158,6 @@ func TestReadset_FirstFillWinsAndBounded(t *testing.T) {
 	}
 }
 
-func TestReadset_CarryDetachedContext(t *testing.T) {
-	m := New()
-	req := With(context.Background(), m)
-	detached, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	if got := From(Carry(detached, req)); got != m {
-		t.Error("Carry dropped the request's memo")
-	}
-	if got := Carry(detached, context.Background()); got != detached || From(got) != nil {
-		t.Error("Carry without a memo must return dst unchanged")
-	}
-}
-
 func TestReadset_ConcurrentRows(t *testing.T) {
 	seam := NewSeam[int, ratAnswer]("test_race", cloneRat)
 	ctx := With(context.Background(), New())

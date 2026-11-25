@@ -148,6 +148,35 @@ func TestPrefetchTriangulated_FailedPrefetchFallsThrough(t *testing.T) {
 	}
 }
 
+type pfStubFreeze struct{}
+
+func (pfStubFreeze) FrozenForPair(context.Context, canonical.Asset, canonical.Asset) (bool, error) {
+	return true, nil
+}
+
+// Without a memo the decorators must cost the single /v1/price read nothing. Both inners are allocation-free (a stub,
+// and the Redis looker with no client) so the bound is exact: a live client's counts are process-wide and noisy.
+func TestPrefetchDecorators_NoMemoAllocatesNothingExtra(t *testing.T) {
+	ctx := context.Background()
+	dirc, usd := pfAsset(t, "DIRC-"+pfIssuer), pfAsset(t, "fiat:USD")
+
+	var inner v1.FrozenLooker = pfStubFreeze{}
+	var dec v1.FrozenLooker = PrefetchFreezeLooker{Looker: inner}
+	plain := testing.AllocsPerRun(200, func() { _, _ = inner.FrozenForPair(ctx, dirc, usd) })
+	decorated := testing.AllocsPerRun(200, func() { _, _ = dec.FrozenForPair(ctx, dirc, usd) })
+	if decorated > plain {
+		t.Errorf("freeze decorator without a memo: %.1f allocs, undecorated %.1f", decorated, plain)
+	}
+
+	var single v1.TriangulatedPriceLooker = RedisTriangulatedLooker{}
+	var tri v1.TriangulatedPriceLooker = PrefetchTriangulatedLooker{}
+	plain = testing.AllocsPerRun(200, func() { _, _, _ = single.LookupTriangulatedVWAP(ctx, dirc, usd, time.Minute) })
+	decorated = testing.AllocsPerRun(200, func() { _, _, _ = tri.LookupTriangulatedVWAP(ctx, dirc, usd, time.Minute) })
+	if decorated > plain {
+		t.Errorf("triangulated decorator without a memo: %.1f allocs, undecorated %.1f", decorated, plain)
+	}
+}
+
 func TestPrefetchFreeze_AnswersAsTheSingleRead(t *testing.T) {
 	mr, rdb := pfRedis(t)
 	native, cxlm, usd, eur := pfAsset(t, "native"), pfAsset(t, "crypto:XLM"), pfAsset(t, "fiat:USD"), pfAsset(t, "fiat:EUR")

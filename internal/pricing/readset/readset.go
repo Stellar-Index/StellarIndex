@@ -3,6 +3,8 @@
 // Invariant: the batch prefetch is a read-through memo beneath every gate: each seam answers a key exactly as its
 // single-key read would at the prefetch instant, and any key it did not read is read as before — it changes when reads
 // happen, never what they return or how they are judged.
+//
+// A memo must never be read inside a flight shared across requests, or one request's prefetch would answer another's.
 package readset
 
 import (
@@ -41,15 +43,6 @@ func With(ctx context.Context, m *Memo) context.Context { return context.WithVal
 func From(ctx context.Context) *Memo {
 	m, _ := ctx.Value(ctxKey{}).(*Memo)
 	return m
-}
-
-// Carry returns dst carrying src's memo, for a read that runs on a context detached from the request; dst is returned
-// unchanged when src has none.
-func Carry(dst, src context.Context) context.Context {
-	if m := From(src); m != nil {
-		return With(dst, m)
-	}
-	return dst
 }
 
 // PairKey is a pair read's memo key in the exact spellings it was asked for: never alias-folded, since each spelling

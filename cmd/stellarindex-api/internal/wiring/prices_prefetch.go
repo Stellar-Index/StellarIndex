@@ -35,6 +35,9 @@ type PrefetchTriangulatedLooker struct{ RedisTriangulatedLooker }
 func (p PrefetchTriangulatedLooker) LookupTriangulatedVWAP(
 	ctx context.Context, base, quote canonical.Asset, window time.Duration,
 ) (v1.CachedVWAP, bool, error) {
+	if readset.From(ctx) == nil { // the single /v1/price path: no key or closure to build
+		return p.RedisTriangulatedLooker.LookupTriangulatedVWAP(ctx, base, quote, window)
+	}
 	return triangulatedSeam.Read(ctx, readset.Pair(base, quote, window), func(ctx context.Context) (v1.CachedVWAP, bool, error) {
 		return p.RedisTriangulatedLooker.LookupTriangulatedVWAP(ctx, base, quote, window)
 	})
@@ -72,6 +75,9 @@ type PrefetchFreezeLooker struct {
 
 // FrozenForPair implements [v1.FrozenLooker].
 func (p PrefetchFreezeLooker) FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
+	if readset.From(ctx) == nil {
+		return p.Looker.FrozenForPair(ctx, asset, quote)
+	}
 	_, frozen, err := freezeSeam.Read(ctx, readset.Pair(asset, quote, 0), func(ctx context.Context) (struct{}, bool, error) {
 		frozen, err := p.Looker.FrozenForPair(ctx, asset, quote)
 		return struct{}{}, frozen, err

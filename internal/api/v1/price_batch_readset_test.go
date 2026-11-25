@@ -78,6 +78,13 @@ func (l rsTri) LookupTriangulatedVWAP(ctx context.Context, base, quote canonical
 	})
 }
 
+// rsTriMeta is rsTri over a next that has composite meta, forwarded unmemoised as the production decorator's embedding does.
+type rsTriMeta struct{ rsTri }
+
+func (l rsTriMeta) LookupCompositeMeta(ctx context.Context, base, quote canonical.Asset, window time.Duration) ([]byte, bool, error) {
+	return l.next.(v1.CompositeMetaLooker).LookupCompositeMeta(ctx, base, quote, window)
+}
+
 type rsFreeze struct {
 	next v1.FrozenLooker
 	rec  *rsReads
@@ -97,7 +104,9 @@ func rsServer(t *testing.T, spec eqSpec, rec *rsReads, seed bool) http.Handler {
 	t.Helper()
 	o := spec.build(t)
 	tri, frz := o.Triangulated, o.Freeze
-	if tri != nil {
+	if _, ok := tri.(v1.CompositeMetaLooker); ok {
+		o.Triangulated = rsTriMeta{rsTri{tri, rec}}
+	} else if tri != nil {
 		o.Triangulated = rsTri{tri, rec}
 	}
 	if frz != nil {
