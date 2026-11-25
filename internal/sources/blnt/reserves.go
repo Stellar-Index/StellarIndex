@@ -21,7 +21,9 @@ type (
 )
 
 // ProtocolInterestFeeRate is the pool's PROTOCOL_INTEREST_FEE_RATE (0.2%, 7 decimals), taken from
-// accrued borrower interest before the backstop's share.
+// accrued borrower interest before the backstop's share. It is not in Config and the contract is
+// closed-source: the value is INFERRED from chain data, where it reconciles every accrual of pools
+// CACSQWCM…MCY7 (ledgers 65638200–65658199), CAUTPSQD…VF4D and CCH3BNZW…C3XD (65578200–65658199).
 const ProtocolInterestFeeRate = 20_000
 
 const scalar7Int = 10_000_000
