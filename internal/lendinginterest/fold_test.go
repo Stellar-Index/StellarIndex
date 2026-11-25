@@ -774,6 +774,11 @@ func TestFold_BLNTFeePairing(t *testing.T) {
 			feeVersion(next, 2, blnt.ProtocolFees{"A": feeOf(t, "2469", "1360000")}),
 		}, "2469", "0", 0, 0},
 		{"no_fee_state", nil, []Version{prev, next}, "0", "0", 0, 1},
+		// A delete stores no fees: the empty map replaces the seeded 7, so next's prevFee is zero.
+		{"deleted_fees_are_empty", seed7, []Version{
+			prev, feeVersion(prev, 2, blnt.ProtocolFees{}), next,
+			feeVersion(next, 2, blnt.ProtocolFees{"A": feeOf(t, "2469", "1360000")}),
+		}, "2469", "0", 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -815,6 +820,21 @@ func TestFold_RefusesInput(t *testing.T) {
 		},
 		"fees on a blend pool": func() error {
 			_, _, err := Fold(Seeds{}, []Version{feeVersion(vs[0], 1, blnt.ProtocolFees{})}, lastHour(vs), v2Supplies.opts(0))
+			return err
+		},
+		// A removal of either is a delete, not an eviction gap that keeps the old value in force.
+		"removed fees": func() error {
+			prev, next := blntPair(t)
+			gone := feeVersion(prev, 2, nil)
+			gone.Removed = true
+			_, _, err := Fold(Seeds{Configs: map[string][]uint32{"P": {2_000_000}}}, []Version{prev, gone, next}, lastHour([]Version{next}),
+				Options{Protocols: map[string]Protocol{"P": BLNT}})
+			return err
+		},
+		"removed instance": func() error {
+			gone := vs[0]
+			gone.Kind, gone.Asset, gone.Reserve, gone.Removed, gone.ChangeIndex = KindConfig, "", blend.ReserveData{}, true, 9
+			_, _, err := Fold(v2Supplies.seed(), append([]Version{gone}, vs...), lastHour(vs), v2Supplies.opts(0))
 			return err
 		},
 	}

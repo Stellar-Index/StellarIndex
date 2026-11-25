@@ -77,6 +77,12 @@ type reserveModel struct {
 // blntModel is BLNT V3's reserve model: V2-scaled rates, the fee-adjusted supply rate.
 var blntModel = reserveModel{decode: blnt.DecodeReserveData, metrics: blnt.Metrics}
 
+// decodeBLNTFees decodes BLNT's PoolDataKey::ProtocolFees entry.
+var decodeBLNTFees = blnt.DecodeProtocolFees
+
+// noBLNTFees is the ProtocolFees state of a BLNT pool that never stored the entry.
+func noBLNTFees() blnt.ProtocolFees { return blnt.ProtocolFees{} }
+
 func blendModel(version blend.PoolVersion) reserveModel {
 	return reserveModel{
 		decode:  func(v xdr.ScVal) (blend.ReserveData, error) { return blend.DecodeReserveData(v, version) },

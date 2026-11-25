@@ -312,6 +312,8 @@ jobs:
               - 'internal/ops/archive/**'
               # The ops subcommands test/integration drives through chops.Run.
               - 'internal/ops/chops/**'
+              # The lending interest fold, whose only end-to-end test is the suite's synthetic lake.
+              - 'internal/lendinginterest/**'
               # The served API surface, handlers and subpackages.
               - 'internal/api/v1/**'
               - 'cmd/stellarindex-ops/**'
@@ -653,7 +655,7 @@ jobs:
     # required check.
     if: needs.preflight.outputs.integration == 'true'
     # §B: only when the diff touches the preflight `integration` class —
-    # internal/storage, internal/ops/archive|chops,
+    # internal/storage, internal/ops/archive|chops, internal/lendinginterest,
     # cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/,
     # test/harness/ or go.mod. The regressions this shard matrix exists to
     # catch live in the first group; the rest are the other INT_TEST_PKGS
