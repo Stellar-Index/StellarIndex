@@ -90,6 +90,19 @@ func pairSetSQL(single, cols, order string) string {
 		"CROSS JOIN LATERAL (" + pairKeyLegs.Replace(single) + ") AS " + cols + "\nORDER BY k.ord" + order
 }
 
+// substanceSetSQL runs a spelling-set statement once per key: $1..$3 are flat (key ordinal, leg, spelling) arrays,
+// regrouped into each key's base and quote sets.
+func substanceSetSQL(single string) string {
+	return `WITH k AS (
+            SELECT ord, array_agg(spelling) FILTER (WHERE leg = 'b') AS bases,
+                   array_agg(spelling) FILTER (WHERE leg = 'q') AS quotes
+              FROM unnest($1::bigint[], $2::text[], $3::text[]) AS s(ord, leg, spelling)
+             GROUP BY ord)
+        SELECT k.ord, x.* FROM k CROSS JOIN LATERAL (` + spellingsKeyLegs.Replace(single) +
+		`) AS x(volume_usd, buckets, span_seconds, valued_buckets)
+        ORDER BY k.ord`
+}
+
 func pairLegArrays(pairs []canonical.Pair) (bases, quotes []string) {
 	bases, quotes = make([]string, len(pairs)), make([]string, len(pairs))
 	for i, p := range pairs {
@@ -347,16 +360,7 @@ func (s *Store) PairMarketSubstanceSet(ctx context.Context, reads []SubstanceRea
 	if len(ords) == 0 {
 		return out, nil
 	}
-	q := `WITH k AS (
-            SELECT ord, array_agg(spelling) FILTER (WHERE leg = 'b') AS bases,
-                   array_agg(spelling) FILTER (WHERE leg = 'q') AS quotes
-              FROM unnest($1::bigint[], $2::text[], $3::text[]) AS s(ord, leg, spelling)
-             GROUP BY ord)
-        SELECT k.ord, x.* FROM k CROSS JOIN LATERAL (` +
-		spellingsKeyLegs.Replace(pairMarketSubstanceSQL(time.Now(), window)) +
-		`) AS x(volume_usd, buckets, span_seconds, valued_buckets)
-        ORDER BY k.ord`
-	rows, err := s.db.QueryContext(ctx, q, ords, legs, spellgs)
+	rows, err := s.db.QueryContext(ctx, substanceSetSQL(pairMarketSubstanceSQL(time.Now(), window)), ords, legs, spellgs)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: PairMarketSubstanceSet: %w", err)
 	}
