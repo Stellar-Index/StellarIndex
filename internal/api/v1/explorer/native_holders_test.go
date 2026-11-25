@@ -55,12 +55,16 @@ type holdersKeyReader struct {
 	*capReader
 	mu     sync.Mutex
 	assets []string
+	block  chan struct{} // when non-nil, AssetHolders waits for it; set before the refresh it should hold starts
 }
 
 func (r *holdersKeyReader) AssetHolders(_ context.Context, asset string, _ int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	r.mu.Lock()
 	r.assets = append(r.assets, asset)
 	r.mu.Unlock()
+	if r.block != nil {
+		<-r.block
+	}
 	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 554421152474348098}}, 9915982, time.Time{}, nil
 }
 

@@ -3,7 +3,6 @@ import { Suspense } from 'react';
 
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import type { components } from '@/api/types';
-import { API_BASE_URL, buildHeaders } from '@/api/client';
 import {
   changePct,
   compareDecimalStrings,
@@ -13,10 +12,8 @@ import {
 import { LivePrice } from '../../LivePrice';
 import { EmbedCurrencyPathView } from './EmbedCurrencyPathView';
 import { LiveUsdRate } from './LiveUsdRate';
-import { isCIStub } from '@/lib/buildFetch';
+import { buildFetchOptional, isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ ticker: string }>;
 
@@ -59,23 +56,14 @@ async function listedTickers(): Promise<{ ticker: string }[]> {
   if (isCIStub) return FALLBACK.map((ticker) => ({ ticker }));
   // Read from /v1/assets/verified; filter to class=fiat to keep the
   // pre-rendered set focused on FX-rate widget consumers.
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-      headers: buildHeaders(),
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as {
-      data: Array<{ ticker: string; class: string }>;
-    };
-    const tickers = (env.data ?? [])
-      .filter((row) => row.class === 'fiat')
-      .map((row) => row.ticker);
-    if (tickers.length === 0) return FALLBACK.map((t) => ({ ticker: t }));
-    return tickers.map((ticker) => ({ ticker }));
-  } catch {
-    return FALLBACK.map((t) => ({ ticker: t }));
-  }
+  const rows = await buildFetchOptional<
+    Array<{ ticker: string; class: string }>
+  >('/v1/assets/verified');
+  const tickers = (rows ?? [])
+    .filter((row) => row.class === 'fiat')
+    .map((row) => row.ticker);
+  if (tickers.length === 0) return FALLBACK.map((t) => ({ ticker: t }));
+  return tickers.map((ticker) => ({ ticker }));
 }
 
 export async function generateMetadata({
@@ -105,27 +93,16 @@ type ChartPoint = components['schemas']['HistoryPoint'];
 async function fetchFxSeries(
   ticker: string,
 ): Promise<{ date: string; inverse_usd: number; raw: string }[]> {
-  if (isCIStub) return [];
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(ticker)}&quote=fiat:USD&timeframe=1w&granularity=1d`,
-      {
-        headers: buildHeaders(),
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      },
-    );
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data?: { points?: ChartPoint[] } };
-    return (env.data?.points ?? [])
-      .map((p) => ({
-        date: p.t,
-        inverse_usd: p.p != null ? Number(p.p) : NaN,
-        raw: p.p ?? '',
-      }))
-      .filter((p) => Number.isFinite(p.inverse_usd) && p.inverse_usd > 0);
-  } catch {
-    return [];
-  }
+  const data = await buildFetchOptional<{ points?: ChartPoint[] }>(
+    `/v1/chart?asset=fiat:${encodeURIComponent(ticker)}&quote=fiat:USD&timeframe=1w&granularity=1d`,
+  );
+  return (data?.points ?? [])
+    .map((p) => ({
+      date: p.t,
+      inverse_usd: p.p != null ? Number(p.p) : NaN,
+      raw: p.p ?? '',
+    }))
+    .filter((p) => Number.isFinite(p.inverse_usd) && p.inverse_usd > 0);
 }
 
 async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
@@ -136,29 +113,18 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
   // of them. /v1/external/assets/{slug} resolves the same ticker fallback
   // (Server.lookupCatalogue) through the identical handleGlobalAsset view,
   // so the GlobalAssetView shape below is unchanged.
-  try {
-    const res = await fetch(
-      `${API_BASE_URL}/v1/external/assets/${encodeURIComponent(ticker.toUpperCase())}`,
-      {
-        headers: buildHeaders(),
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      },
-    );
-    if (!res.ok) return null;
-    const env = (await res.json()) as { data: GlobalAssetView };
-    const view = env.data;
-    if (!view || view.class !== 'fiat') return null;
-    const priceUSD = view.price_usd;
-    if (!priceUSD || compareDecimalStrings(priceUSD, '0') !== 1) return null;
-    return {
-      ticker: view.ticker,
-      name: view.name,
-      rate_usd: 1 / Number(priceUSD), // 1 USD = X local
-      inverse_usd: priceUSD, // 1 local = X USD
-    };
-  } catch {
-    return null;
-  }
+  const view = await buildFetchOptional<GlobalAssetView>(
+    `/v1/external/assets/${encodeURIComponent(ticker.toUpperCase())}`,
+  );
+  if (!view || view.class !== 'fiat') return null;
+  const priceUSD = view.price_usd;
+  if (!priceUSD || compareDecimalStrings(priceUSD, '0') !== 1) return null;
+  return {
+    ticker: view.ticker,
+    name: view.name,
+    rate_usd: 1 / Number(priceUSD), // 1 USD = X local
+    inverse_usd: priceUSD, // 1 local = X USD
+  };
 }
 
 /**
@@ -316,4 +282,3 @@ function Sparkline({
     </svg>
   );
 }
-

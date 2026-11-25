@@ -1,10 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildFetchBatchedPrice,
   buildFetchData,
   buildFetchPriceBatch,
+  buildRequestCounts,
   MAX_IN_FLIGHT,
   MAX_UNAVAILABLE_WAITS,
+  routeTemplate,
   throttleDelayMs,
 } from './buildFetch';
 
@@ -141,6 +147,48 @@ describe('non-authoritative 4xx (e.g. 403) handling', () => {
   });
 });
 
+describe('request counter', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('counts each request sent per route template, not memo hits', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse(200, { data: [] })),
+    );
+    const before = new Map(buildRequestCounts());
+    const delta = (route: string) =>
+      (buildRequestCounts().get(route) ?? 0) - (before.get(route) ?? 0);
+    await buildFetchData(`/v1/assets/CNT1-G${'A'.repeat(55)}`);
+    await buildFetchData('/v1/assets/cnt2');
+    await buildFetchData('/v1/assets/cnt2'); // memo hit: no request
+    await buildFetchData('/v1/assets/verified?cnt=1');
+    await buildFetchData('/v1/price/batch?asset_ids=crypto:CNT&quote=fiat:USD');
+    await buildFetchData('/v1/lending/pools/CCNT/reserves');
+    expect(delta('/v1/assets/{id}')).toBe(2);
+    expect(delta('/v1/assets/verified')).toBe(1);
+    expect(delta('/v1/price/batch')).toBe(1);
+    expect(delta('/v1/lending/pools/{id}/reserves')).toBe(1);
+  });
+
+  // An OpenAPI word missing from ROUTE_WORDS would read as an id and fold
+  // a route into its sibling's line.
+  it('templates every OpenAPI path to itself', () => {
+    const repo = join(__dirname, '..', '..', '..', '..');
+    const spec = readFileSync(join(repo, 'openapi', 'stellar-index.v1.yaml'));
+    const paths = String(spec)
+      .split('\n')
+      .map((line) => /^ {2}(\/\S+):\s*$/.exec(line)?.[1])
+      .filter((p): p is string => p !== undefined);
+    expect(paths.length).toBeGreaterThan(100);
+    for (const p of paths) {
+      const want = `/v1${p.replace(/\{[^}]+\}/g, '{id}')}`;
+      expect(routeTemplate(`/v1${p.replace(/\{[^}]+\}/g, 'x1')}`)).toBe(want);
+    }
+  });
+});
+
 describe('in-flight cap', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -197,6 +245,38 @@ describe('buildFetchPriceBatch', () => {
     expect(got.get('crypto:CHUNK3')?.stale).toBe(true);
     expect(got.get('crypto:CHUNK4')?.stale).toBe(false);
     expect(got.has('fiat:USD')).toBe(false);
+  });
+
+  it('serves an id from the universe batch and falls back to one request when its chunk is rejected', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        urls.push(url);
+        const ids = new URL(url).searchParams.get('asset_ids')!.split(',');
+        // The batch 400s a whole request on one id it cannot parse.
+        if (ids.length > 1 && ids.includes('crypto:FB99'))
+          return fakeResponse(400);
+        return fakeResponse(200, {
+          data: ids.map((id) => ({ asset_id: id, price: `${id.length}.5` })),
+          stale: [],
+          triangulated: [],
+        });
+      }),
+    );
+    // Sorted, FB3 and FB150 land in the first 100-id chunk, FB99 in the second.
+    const universe = Array.from({ length: 160 }, (_, i) => `crypto:FB${i}`);
+    const price = async (id: string) =>
+      (await buildFetchBatchedPrice(id, 'fiat:EUR', universe))?.price;
+    expect(await price('crypto:FB3')).toBe('10.5');
+    expect(await price('crypto:FB150')).toBe('12.5');
+    expect(urls).toHaveLength(2); // both chunks, once
+    // FB99 sits in the rejected chunk: one one-id request, the same row.
+    expect(await price('crypto:FB99')).toBe('11.5');
+    // Outside the universe: one one-id request.
+    expect(await price('crypto:OUT')).toBe('10.5');
+    expect(urls).toHaveLength(4);
+    expect(new URL(urls[3]).searchParams.get('asset_ids')).toBe('crypto:OUT');
   });
 
   it('leaves a row flag undefined when the OR flag is set without the id list', async () => {

@@ -15,25 +15,33 @@ import (
 )
 
 // serveHolders runs GET /v1/assets/native/holders against a pre-seeded cache entry and returns the stale flag the
-// handler hands the envelope writer.
-func serveHolders(t *testing.T, entry assetHoldersEntry, lakeStale bool) (stale bool) {
+// handler hands the envelope writer, then the flag once any refresh that serve kicked has landed. The refresh is
+// held during the first serve: one that lands first is rightly served clean, as the fresh board it is.
+func serveHolders(t *testing.T, entry assetHoldersEntry, lakeStale bool) (stale, afterRefresh bool) {
 	t.Helper()
-	h := newProbeHandler(&holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}, nil)
+	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}, block: make(chan struct{})}
+	h := newProbeHandler(reader, nil)
 	h.LakeWatermark = func(context.Context) (uint32, bool, bool) { return 0, lakeStale, true }
 	entry.holders = []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 7}}
 	entry.total = 1
 	h.assetHolders.put("native", entry)
-	written := false
-	h.WriteJSONAt = func(_ http.ResponseWriter, _ any, s, _ bool, _ time.Time) { written, stale = true, s }
-	h.WriteJSON = func(http.ResponseWriter, any, bool) { t.Fatal("handler bypassed WriteJSONAt") }
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/holders", nil)
-	req.SetPathValue("asset_id", "native")
-	h.AssetHolders(rec, req)
-	if !written {
-		t.Fatalf("no JSON written: code=%d", rec.Code)
+	serve := func() bool {
+		written, s := false, false
+		h.WriteJSONAt = func(_ http.ResponseWriter, _ any, st, _ bool, _ time.Time) { written, s = true, st }
+		h.WriteJSON = func(http.ResponseWriter, any, bool) { t.Fatal("handler bypassed WriteJSONAt") }
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/holders", nil)
+		req.SetPathValue("asset_id", "native")
+		h.AssetHolders(rec, req)
+		if !written {
+			t.Fatalf("no JSON written: code=%d", rec.Code)
+		}
+		return s
 	}
-	return stale
+	stale = serve()
+	close(reader.block)
+	waitFlightIdle(t, &h.assetHolders.flight, "native")
+	return stale, serve()
 }
 
 func TestAssetHolders_StaleBoundPerSource(t *testing.T) {
@@ -43,17 +51,22 @@ func TestAssetHolders_StaleBoundPerSource(t *testing.T) {
 		entry     assetHoldersEntry
 		lakeStale bool
 		want      bool
+		wantAfter bool // once the refresh the serve kicked (if any) has landed
 	}{
-		{"rollup board 10m old is healthy", assetHoldersEntry{computedAt: ago(10 * time.Minute), cachedAt: time.Now()}, false, false},
-		{"rollup board 80m old means the rollup is behind", assetHoldersEntry{computedAt: ago(80 * time.Minute), cachedAt: time.Now()}, false, true},
-		{"live board 6m old keeps the 300s bound", assetHoldersEntry{cachedAt: ago(6 * time.Minute)}, false, true},
-		{"live board 30s old is fresh", assetHoldersEntry{cachedAt: ago(30 * time.Second)}, false, false},
-		{"lake watermark stale wins over a fresh rollup", assetHoldersEntry{computedAt: ago(10 * time.Minute), cachedAt: time.Now()}, true, true},
+		{"rollup board 10m old is healthy", assetHoldersEntry{computedAt: ago(10 * time.Minute), cachedAt: time.Now()}, false, false, false},
+		{"rollup board 80m old means the rollup is behind", assetHoldersEntry{computedAt: ago(80 * time.Minute), cachedAt: time.Now()}, false, true, true},
+		{"live board 6m old keeps the 300s bound", assetHoldersEntry{cachedAt: ago(6 * time.Minute)}, false, true, false},
+		{"live board 30s old is fresh", assetHoldersEntry{cachedAt: ago(30 * time.Second)}, false, false, false},
+		{"lake watermark stale wins over a fresh rollup", assetHoldersEntry{computedAt: ago(10 * time.Minute), cachedAt: time.Now()}, true, true, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := serveHolders(t, c.entry, c.lakeStale); got != c.want {
+			got, after := serveHolders(t, c.entry, c.lakeStale)
+			if got != c.want {
 				t.Errorf("flags.stale = %v, want %v", got, c.want)
+			}
+			if after != c.wantAfter {
+				t.Errorf("after the refresh landed: flags.stale = %v, want %v", after, c.wantAfter)
 			}
 		})
 	}

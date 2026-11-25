@@ -1,5 +1,10 @@
 import { buildFetchData, isCIStub } from '@/lib/buildFetch';
-import { convertAssets, type ConvertAsset } from '@/lib/convert-params';
+import {
+  buildAssetConvertParams,
+  buildConvertParams,
+  convertAssets,
+  type ConvertAsset,
+} from '@/lib/convert-params';
 
 // Fallback majors so a brand-new build with no upstream still
 // produces a meaningful matrix. Same set as /currencies/[ticker]'s
@@ -64,4 +69,35 @@ async function loadCatalogue(): Promise<ConvertCatalogue> {
     .filter(Boolean);
   const fiat = tickers.length > 0 ? tickers : FALLBACK_TICKERS;
   return { fiat, assets: convertAssets(rows, fiat) };
+}
+
+let universePromise: Promise<Map<string, string[]>> | null = null;
+
+/**
+ * The ids the pre-rendered /convert pages price against `quote`
+ * (`fiat:<TO>`), derived from the same param builders as
+ * generateStaticParams, so one memoised batch per quote serves every page.
+ */
+export async function convertPriceUniverse(quote: string): Promise<string[]> {
+  universePromise ??= fetchConvertCatalogue().then(({ fiat, assets }) => {
+    const byQuote = new Map<string, string[]>();
+    const add = (id: string, to: string) => {
+      const q = `fiat:${to.toUpperCase()}`;
+      const ids = byQuote.get(q) ?? [];
+      ids.push(id);
+      byQuote.set(q, ids);
+    };
+    for (const p of buildConvertParams(fiat)) {
+      add(`fiat:${p.from.toUpperCase()}`, p.to);
+    }
+    const idOf = new Map(
+      assets.map((a) => [a.ticker.toUpperCase(), a.assetId]),
+    );
+    for (const p of buildAssetConvertParams(assets, fiat)) {
+      const id = idOf.get(p.from);
+      if (id) add(id, p.to);
+    }
+    return byQuote;
+  });
+  return (await universePromise).get(quote) ?? [];
 }
