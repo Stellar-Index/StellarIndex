@@ -32,7 +32,7 @@ while IFS= read -r changed; do
     # 44 of the 54 top-level internal/ directories. Mirrored in ci.yml and
     # check-change-class.sh; test/controlwiring/integration_pkgs_trigger_evidence_test.go
     # checks all three against the same derived closure.
-    migrations/*|test/fixtures/*|test/integration/*|test/harness/*|internal/*|cmd/stellarindex-ops/*|scripts/ops/*|go.mod)
+    migrations/*|test/fixtures/*|test/integration/*|test/harness/*|internal/*|cmd/stellarindex-ops/*|cmd/stellarindex-api/internal/wiring/*|scripts/ops/*|go.mod)
       echo "integration-policy: required by $changed"
       exit 0
       ;;

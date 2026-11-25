@@ -317,6 +317,8 @@ jobs:
               # The served API surface, handlers and subpackages.
               - 'internal/api/v1/**'
               - 'cmd/stellarindex-ops/**'
+              # The production price readers, with the batch prefetch's end-to-end test.
+              - 'cmd/stellarindex-api/internal/wiring/**'
               - 'migrations/**'
               - 'scripts/ops/**'
               - 'test/integration/**'

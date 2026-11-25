@@ -3,24 +3,48 @@ package wiring
 import (
 	"context"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// recordingPrefetchStore records the pairs and limit StorePriceReader asks it to prefetch.
+type recordingPrefetchStore struct {
+	PriceStore
+	pairs []canonical.Pair
+	limit int
+}
+
+func (s *recordingPrefetchStore) PrefetchLatest(_ context.Context, pairs []canonical.Pair, limit int) {
+	s.pairs, s.limit = pairs, limit
+}
+
+func TestStorePriceReader_PrefetchesTheStoreReadsLatestPriceMakes(t *testing.T) {
+	_ = latestPrefetcher(timescale.PrefetchStore{})
+	xlm, cxlm := canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetCrypto, Code: "XLM"}
+	usd := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
+	s := &recordingPrefetchStore{}
+	StorePriceReader{S: s}.PrefetchLatestPrices(context.Background(), []readset.PairRead{
+		{Base: xlm, Quote: usd}, {Base: cxlm, Quote: cxlm}, {Base: cxlm, Quote: usd, Window: time.Minute},
+	})
+	want := []canonical.Pair{{Base: xlm, Quote: usd}, {Base: cxlm, Quote: usd}}
+	if !reflect.DeepEqual(s.pairs, want) || s.limit != pricingguard.SampleFetch {
+		t.Errorf("prefetched %v limit %d, want %v limit %d (the guard's read)", s.pairs, s.limit, want, pricingguard.SampleFetch)
+	}
+}
 
 var (
 	_ v1.TriangulatedPriceLooker = PrefetchTriangulatedLooker{}
 	_ v1.CompositeMetaLooker     = PrefetchTriangulatedLooker{}
-	_ v1.FrozenLooker            = PrefetchFreezeLooker{}
 )
 
 const pfIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -149,103 +173,17 @@ func TestPrefetchTriangulated_FailedPrefetchFallsThrough(t *testing.T) {
 	}
 }
 
-type pfStubFreeze struct{}
-
-func (pfStubFreeze) FrozenForPair(context.Context, canonical.Asset, canonical.Asset) (bool, error) {
-	return true, nil
-}
-
-// Without a memo the decorators must cost the single /v1/price read nothing. Both inners are allocation-free (a stub,
-// and the Redis looker with no client) so the bound is exact: a live client's counts are process-wide and noisy.
+// Without a memo the decorator must cost the single /v1/price read nothing. The Redis looker with no client is
+// allocation-free, so the bound is exact: a live client's counts are process-wide and noisy.
 func TestPrefetchDecorators_NoMemoAllocatesNothingExtra(t *testing.T) {
 	ctx := context.Background()
 	dirc, usd := pfAsset(t, "DIRC-"+pfIssuer), pfAsset(t, "fiat:USD")
 
-	var inner v1.FrozenLooker = pfStubFreeze{}
-	var dec v1.FrozenLooker = PrefetchFreezeLooker{Looker: inner}
-	plain := testing.AllocsPerRun(200, func() { _, _ = inner.FrozenForPair(ctx, dirc, usd) })
-	decorated := testing.AllocsPerRun(200, func() { _, _ = dec.FrozenForPair(ctx, dirc, usd) })
-	if decorated > plain {
-		t.Errorf("freeze decorator without a memo: %.1f allocs, undecorated %.1f", decorated, plain)
-	}
-
 	var single v1.TriangulatedPriceLooker = RedisTriangulatedLooker{}
 	var tri v1.TriangulatedPriceLooker = PrefetchTriangulatedLooker{}
-	plain = testing.AllocsPerRun(200, func() { _, _, _ = single.LookupTriangulatedVWAP(ctx, dirc, usd, time.Minute) })
-	decorated = testing.AllocsPerRun(200, func() { _, _, _ = tri.LookupTriangulatedVWAP(ctx, dirc, usd, time.Minute) })
+	plain := testing.AllocsPerRun(200, func() { _, _, _ = single.LookupTriangulatedVWAP(ctx, dirc, usd, time.Minute) })
+	decorated := testing.AllocsPerRun(200, func() { _, _, _ = tri.LookupTriangulatedVWAP(ctx, dirc, usd, time.Minute) })
 	if decorated > plain {
 		t.Errorf("triangulated decorator without a memo: %.1f allocs, undecorated %.1f", decorated, plain)
-	}
-}
-
-func TestPrefetchFreeze_AnswersAsTheSingleRead(t *testing.T) {
-	mr, rdb := pfRedis(t)
-	native, cxlm, usd, eur := pfAsset(t, "native"), pfAsset(t, "crypto:XLM"), pfAsset(t, "fiat:USD"), pfAsset(t, "fiat:EUR")
-	wrong := pfAsset(t, "WRNG-"+pfIssuer)
-	if err := mr.Set(cachekeys.Freeze(native, usd).String(), "1"); err != nil {
-		t.Fatal(err)
-	}
-	mr.HSet(cachekeys.Freeze(wrong, usd).String(), "f", "v") // GET fails WRONGTYPE: an error, not a miss
-	fl, err := freeze.NewLooker(rdb)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dec := PrefetchFreezeLooker{Looker: fl, RDB: rdb}
-	reads := []readset.PairRead{{Base: native, Quote: usd}, {Base: cxlm, Quote: usd}, {Base: native, Quote: eur}, {Base: wrong, Quote: usd}}
-	type answer struct{ frozen, err bool }
-	want := make([]answer, len(reads))
-	for i, r := range reads {
-		f, err := fl.FrozenForPair(context.Background(), r.Base, r.Quote)
-		want[i] = answer{f, err != nil}
-		f, err = dec.FrozenForPair(context.Background(), r.Base, r.Quote)
-		if got := (answer{f, err != nil}); got != want[i] {
-			t.Errorf("no memo %+v: %+v, single read %+v", r, got, want[i])
-		}
-	}
-	if !want[0].frozen || want[1].frozen || !want[3].err {
-		t.Fatalf("fixture lost its shapes: %+v", want)
-	}
-
-	ctx := readset.With(context.Background(), readset.New())
-	dec.PrefetchFrozen(ctx, reads)
-	mr.Del(cachekeys.Freeze(native, usd).String())
-	if err := mr.Set(cachekeys.Freeze(native, eur).String(), "1"); err != nil {
-		t.Fatal(err)
-	}
-	for i, r := range reads {
-		f, err := dec.FrozenForPair(ctx, r.Base, r.Quote)
-		if got := (answer{f, err != nil}); got != want[i] {
-			t.Errorf("prefetched %+v: %+v, single read at the prefetch instant %+v", r, got, want[i])
-		}
-	}
-}
-
-func TestPrefetchFreeze_MarkerSetAfterPrefetchIsSeenOnceExpired(t *testing.T) {
-	mr, rdb := pfRedis(t)
-	native, usd := pfAsset(t, "native"), pfAsset(t, "fiat:USD")
-	fl, err := freeze.NewLooker(rdb)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dec := PrefetchFreezeLooker{Looker: fl, RDB: rdb}
-	var mu sync.Mutex
-	now := time.Now()
-	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	ctx := readset.With(context.Background(), readset.NewWithClock(clock))
-	dec.PrefetchFrozen(ctx, []readset.PairRead{{Base: native, Quote: usd}})
-	if err := mr.Set(cachekeys.Freeze(native, usd).String(), "1"); err != nil {
-		t.Fatal(err)
-	}
-	mu.Lock()
-	now = now.Add(readset.MaxAge)
-	mu.Unlock()
-	if f, err := dec.FrozenForPair(ctx, native, usd); f || err != nil {
-		t.Fatalf("within MaxAge: frozen=%v err=%v, want the prefetched not-frozen", f, err)
-	}
-	mu.Lock()
-	now = now.Add(time.Millisecond)
-	mu.Unlock()
-	if f, err := dec.FrozenForPair(ctx, native, usd); !f || err != nil {
-		t.Errorf("past MaxAge: frozen=%v err=%v, want the marker set after the prefetch", f, err)
 	}
 }

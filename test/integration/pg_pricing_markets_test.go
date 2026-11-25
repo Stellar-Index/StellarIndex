@@ -21,6 +21,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -2331,5 +2332,89 @@ func (s readerPinSeed) pinSubstance(ctx context.Context, t *testing.T) {
 		if !ratEqual(got.VolumeUSD, tc.volume) || got.Buckets != tc.buckets || got.SpanSeconds != tc.span || got.ValuedBuckets != tc.valued {
 			t.Errorf("%s: substance = %+v, want {%s %d %d %d}", tc.name, got, tc.volume, tc.buckets, tc.span, tc.valued)
 		}
+	}
+}
+
+// A /v1/price/batch prefetch of 100 fiat:USD pairs and 30 XLM-quoted ones answers every latest-bucket and guard
+// trailing read exactly as the single reads do. The prefetch runs on a second store that is then closed, so a read
+// that is not answered from the memo fails instead of passing by reading the database.
+func TestPrefetchStore_AnswersAsSingleReads(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, db := openOrientationStore(t, ctx, dsn)
+	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	usd := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
+	var pairs []canonical.Pair
+	for i := range 130 {
+		base, err := canonical.NewClassicAsset(fmt.Sprintf("PF%d", i), issuer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		quote := usd
+		if i >= 100 {
+			quote = canonical.NativeAsset()
+		}
+		p, err := canonical.NewPair(base, quote)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pairs = append(pairs, p)
+	}
+	t0 := time.Now().UTC().Add(-40 * time.Minute).Truncate(time.Minute)
+	for i, p := range pairs {
+		if i%3 == 2 { // a third of the pairs have no market: a definite miss
+			continue
+		}
+		for j := range 3 {
+			if err := store.InsertTrade(ctx, mkAPITrade(i*3+j, t0.Add(time.Duration(j*5)*time.Minute), p, 1_000_000_000, int64(10_000_000+i*1000+j))); err != nil {
+				t.Fatalf("InsertTrade %v: %v", p, err)
+			}
+		}
+	}
+	refreshPrices1m(t, ctx, db)
+
+	prefetchStore, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memoCtx := readset.With(ctx, readset.New())
+	ps := timescale.PrefetchStore{Store: prefetchStore}
+	ps.PrefetchLatest(memoCtx, pairs, pricingguard.SampleFetch)
+	_ = prefetchStore.Close()
+
+	hit := func(seam string) float64 {
+		return testutil.ToFloat64(obs.APIPriceBatchPrefetchTotal.WithLabelValues(seam, "hit"))
+	}
+	latest0, trailing0 := hit("latest_vwap_1m"), hit("trailing_vwap_1m")
+	priced := 0
+	for _, p := range pairs {
+		want, wantErr := store.LatestClosedVWAP1mForPair(ctx, p)
+		got, gotErr := ps.LatestClosedVWAP1mForPair(memoCtx, p)
+		if !reflect.DeepEqual(got, want) || (wantErr == nil) != (gotErr == nil) || (wantErr != nil && !errors.Is(gotErr, sql.ErrNoRows)) {
+			t.Fatalf("%v latest: prefetched %+v %v, single %+v %v", p, got, gotErr, want, wantErr)
+		}
+		if wantErr != nil {
+			continue
+		}
+		priced++
+		wantRows, err := store.RecentClosedVWAP1mCombined(ctx, p, pricingguard.SampleFetch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotRows, err := ps.RecentClosedVWAP1mCombined(memoCtx, p, pricingguard.SampleFetch)
+		if err != nil || !reflect.DeepEqual(gotRows, wantRows) {
+			t.Fatalf("%v trailing: prefetched %+v %v, single %+v", p, gotRows, err, wantRows)
+		}
+	}
+	if priced == 0 || priced == len(pairs) {
+		t.Fatalf("priced %d of %d pairs: the fixture has no hits or no misses", priced, len(pairs))
+	}
+	if d := hit("latest_vwap_1m") - latest0; d != float64(len(pairs)) {
+		t.Errorf("latest hits = %v, want %d", d, len(pairs))
+	}
+	if d := hit("trailing_vwap_1m") - trailing0; d != float64(priced) {
+		t.Errorf("trailing hits = %v, want %d", d, priced)
 	}
 }

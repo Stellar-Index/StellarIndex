@@ -405,7 +405,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("freeze looker: %w", err)
 		}
-		freezeLooker = wiring.PrefetchFreezeLooker{Looker: fl, RDB: rdb}
+		freezeLooker = fl
 		logger.Info("freeze looker wired")
 	}
 
@@ -441,7 +441,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	scamGate := pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{Logger: logger})
 	// The read side of `stellarindex-ops source-exclude`, shared so every reader agrees on one snapshot.
 	exclusionGate := pricingguard.NewSourceExclusionGate(store, pricingguard.SourceExclusionGateOptions{Logger: logger})
-	priceReader := wiring.StorePriceReader{S: store, Logger: logger, Substance: substanceGate, Scam: scamGate, Exclusions: exclusionGate}
+	priceReader := wiring.StorePriceReader{S: timescale.PrefetchStore{Store: store}, Logger: logger, Substance: substanceGate, Scam: scamGate, Exclusions: exclusionGate}
 
 	// The latest-oracle query is expensive; a Redis read-through cache inside the oracle push
 	// interval absorbs polling fan-out. Without Redis it reads the store directly.

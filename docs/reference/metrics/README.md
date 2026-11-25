@@ -164,7 +164,7 @@ A high `result="miss"` rate despite a running prewarm means prewarm-key drift. S
 
 Counter, labels `seam`, `result`.
 
-Outcomes of the request-scoped read memo behind `/v1/price/batch`, per read seam (`triangulated`, `freeze`). `hit` is a read answered from the batch prefetch; `fallthrough` a read made as before because the prefetch did not cover the key; `expired` a prefetched key read more than 2 s after the prefetch began, so read as before; `prefetch_error` a prefetch read that failed, leaving its key to be read as before; `capped` a prefetched answer dropped because the request's memo was full. Only requests carrying a memo are counted. `hit / (hit + fallthrough)` is the prefetch's coverage; dashboard-only, not alerted.
+Outcomes of the request-scoped read memo behind `/v1/price/batch`, per read seam (`triangulated` in Redis; `latest_vwap_1m` and `trailing_vwap_1m` in Postgres, the latest closed bucket and the serving guard's trailing buckets). A batch of 8 ids or more prefetches the alias spellings of its first 200 ids against the quote before its rows run; freeze markers are always read per row, after the price. `hit` is a read answered from the batch prefetch; `fallthrough` a read made as before because the prefetch did not cover the key; `expired` a prefetched key read more than 2 s after the prefetch began, so read as before; `prefetch_error` a prefetch read that failed, leaving its key to be read as before; `capped` a prefetched answer dropped because the request's memo was full. Only requests carrying a memo are counted. `hit / (hit + fallthrough)` is the prefetch's coverage; dashboard-only, not alerted.
 
 ### `stellarindex_api_sparkline7d_rows_total`
 

@@ -190,6 +190,7 @@ func (s *Server) batchChange24h(ctx context.Context, asset, quote canonical.Asse
 // occurrence order.
 // Misses are omitted; the first validation/internal failure in input order aborts the batch with a problem+json.
 func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []string, quote canonical.Asset) {
+	r = r.WithContext(s.prefetchBatch(r.Context(), ids, quote))
 	ctx := r.Context()
 	results := make([]batchRowResult, len(ids))
 
