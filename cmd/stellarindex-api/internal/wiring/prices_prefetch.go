@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 var (
@@ -64,6 +65,28 @@ func (p PrefetchTriangulatedLooker) PrefetchTriangulatedVWAP(ctx context.Context
 		v, found := cachedVWAPFrom(got)
 		triangulatedSeam.Fill(ctx, r.Key(), v, found)
 	}
+}
+
+// latestPrefetcher is the optional [PriceStore] capability [timescale.PrefetchStore] has.
+type latestPrefetcher interface {
+	PrefetchLatest(ctx context.Context, pairs []canonical.Pair, limit int)
+}
+
+// PrefetchLatestPrices prefetches, when S can, the store reads [StorePriceReader.LatestPrice] makes for each read's
+// pair: its latest closed bucket and the serving guard's trailing buckets. A read that is not a pair is skipped, as
+// LatestPrice reads nothing for it.
+func (r StorePriceReader) PrefetchLatestPrices(ctx context.Context, reads []readset.PairRead) {
+	pf, ok := r.S.(latestPrefetcher)
+	if !ok {
+		return
+	}
+	pairs := make([]canonical.Pair, 0, len(reads))
+	for _, read := range reads {
+		if pair, err := canonical.NewPair(read.Base, read.Quote); err == nil {
+			pairs = append(pairs, pair)
+		}
+	}
+	pf.PrefetchLatest(ctx, pairs, pricingguard.SampleFetch)
 }
 
 // PrefetchFreezeLooker is a freeze-marker looker answering a pair the request's batch prefetch read from that read,

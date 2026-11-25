@@ -15,7 +15,34 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// recordingPrefetchStore records the pairs and limit StorePriceReader asks it to prefetch.
+type recordingPrefetchStore struct {
+	PriceStore
+	pairs []canonical.Pair
+	limit int
+}
+
+func (s *recordingPrefetchStore) PrefetchLatest(_ context.Context, pairs []canonical.Pair, limit int) {
+	s.pairs, s.limit = pairs, limit
+}
+
+func TestStorePriceReader_PrefetchesTheStoreReadsLatestPriceMakes(t *testing.T) {
+	_ = latestPrefetcher(timescale.PrefetchStore{})
+	xlm, cxlm := canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetCrypto, Code: "XLM"}
+	usd := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
+	s := &recordingPrefetchStore{}
+	StorePriceReader{S: s}.PrefetchLatestPrices(context.Background(), []readset.PairRead{
+		{Base: xlm, Quote: usd}, {Base: cxlm, Quote: cxlm}, {Base: cxlm, Quote: usd, Window: time.Minute},
+	})
+	want := []canonical.Pair{{Base: xlm, Quote: usd}, {Base: cxlm, Quote: usd}}
+	if !reflect.DeepEqual(s.pairs, want) || s.limit != pricingguard.SampleFetch {
+		t.Errorf("prefetched %v limit %d, want %v limit %d (the guard's read)", s.pairs, s.limit, want, pricingguard.SampleFetch)
+	}
+}
 
 var (
 	_ v1.TriangulatedPriceLooker = PrefetchTriangulatedLooker{}

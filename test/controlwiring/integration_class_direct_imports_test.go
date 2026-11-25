@@ -57,6 +57,7 @@ var nightlyOnlyIntegrationImports = map[string]string{
 	"internal/platform":                          nightlyUnitTested,
 	"internal/pricealerts":                       nightlyUnitTested,
 	"internal/pricelesscoverage":                 nightlyUnitTested,
+	"internal/pricing/readset":                   nightlyUnitTested,
 	"internal/pricingguard":                      nightlyUnitTested,
 	"internal/projector":                         nightlyUnitTested,
 	"internal/ratelimit":                         nightlyOwnQueries,

@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -967,9 +968,9 @@ const priceReadFlightTimeout = 8 * time.Second
 func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
 	adm := ThinAdmissionFrom(ctx)
 	admit := adm.Requested() && adm.Covers(asset, quote)
-	key := asset.String() + "/" + quote.String() + "/admit:" + strconv.FormatBool(admit)
-	v, err, _ := s.priceReadFlight.Do(key, func() (any, error) { //nolint:contextcheck // singleflight deliberately survives per-caller cancellation, see internal/metadata/cache.go
-		fetchCtx, cancel := context.WithTimeout(context.Background(), priceReadFlightTimeout)
+	// read carries nothing of the caller's but, for a prefetched batch row, its memo.
+	read := func(base context.Context) (priceReadResult, error) {
+		fetchCtx, cancel := context.WithTimeout(base, priceReadFlightTimeout)
 		defer cancel()
 		fetchCtx, own := WithThinAdmission(fetchCtx, asset, quote, admit)
 		snap, srcs, stale, served, err := s.readPriceWithAliasesServedOnce(fetchCtx, reader, asset, quote)
@@ -979,8 +980,20 @@ func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceRea
 		}
 		res.snap, res.srcs, res.stale, res.served = snap, srcs, stale, served
 		return res, nil
-	})
-	r, _ := v.(priceReadResult)
+	}
+	var r priceReadResult
+	var err error
+	if m := readset.From(ctx); m != nil {
+		// A prefetched batch row reads alone, so no other caller is ever answered from its memo.
+		r, err = read(readset.With(context.Background(), m)) //nolint:contextcheck // detached as the flight below
+	} else {
+		key := asset.String() + "/" + quote.String() + "/admit:" + strconv.FormatBool(admit)
+		v, ferr, _ := s.priceReadFlight.Do(key, func() (any, error) { //nolint:contextcheck // singleflight deliberately survives per-caller cancellation, see internal/metadata/cache.go
+			return read(context.Background())
+		})
+		r, _ = v.(priceReadResult)
+		err = ferr
+	}
 	if adm.Covers(asset, quote) {
 		adm.Merge(r.thinAdmitted, r.evidence)
 	}
