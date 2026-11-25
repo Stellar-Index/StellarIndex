@@ -4,13 +4,16 @@ package wiring
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"testing"
@@ -29,6 +32,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricing/readset"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/test/harness"
 )
@@ -214,6 +219,84 @@ func TestPriceBatchPrefetch_EndToEnd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The change_24h anchor prefetch over real Postgres answers every anchor and guard-baseline read exactly as the store's
+// single reads at the same instant: both directions in one bucket, the flipped direction only, an anchor too old for a
+// baseline, and none.
+func TestChange24hAnchorPrefetch_AnswersAsTheStore(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	store := itStore(t, ctx)
+	usd := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
+	anchorAt := time.Now().UTC().Truncate(time.Minute).Add(-24*time.Hour - 5*time.Minute)
+	pairs := make([]canonical.Pair, 40)
+	for i := range pairs {
+		a, err := canonical.NewClassicAsset(fmt.Sprintf("CA%d", i), pfIssuer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pairs[i] = canonical.Pair{Base: a, Quote: usd}
+		flipped := canonical.Pair{Base: usd, Quote: a}
+		for j := range 13 { // the anchor and a 12-bucket baseline behind it
+			ts, nonce := anchorAt.Add(-time.Duration(j)*time.Minute), 10_000+i*20+j
+			switch i % 4 {
+			case 0: // both directions in each bucket, folded into one combined bucket
+				itTrade(t, ctx, store, nonce, ts, pairs[i], 1_000_000_000, int64(5_000_000+i))
+				itTrade(t, ctx, store, 50_000+i*20+j, ts, flipped, int64(5_100_000+i), 1_000_000_000)
+			case 1:
+				itTrade(t, ctx, store, nonce, ts, flipped, int64(5_000_000+i), 1_000_000_000)
+			case 2:
+				itTrade(t, ctx, store, nonce, ts.Add(-2*timescale.Change24hAnchorTolerance), pairs[i], 1_000_000_000, int64(5_000_000+i))
+			}
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if s := time.Now().Second(); s > 55 {
+		time.Sleep(time.Duration(61-s) * time.Second)
+	}
+	at := time.Now().Add(-24 * time.Hour)
+	notBefore := at.Add(-timescale.Change24hAnchorTolerance)
+	count := func(seam, result string) float64 {
+		return testutil.ToFloat64(obs.APIPriceBatchPrefetchTotal.WithLabelValues(seam, result))
+	}
+	hits := count("anchor_vwap_1m", "hit") + count("anchor_trailing_vwap_1m", "hit")
+	fell := count("anchor_vwap_1m", "fallthrough") + count("anchor_trailing_vwap_1m", "fallthrough")
+	p := timescale.PrefetchAnchors{AnchorReads: store}
+	mctx := readset.With(ctx, readset.New())
+	began := time.Now()
+	p.PrefetchChange24hAnchors(mctx, pairs, at, notBefore, pricingguard.SampleFetch)
+	t.Logf("prefetched %d anchors and their baselines in %v", len(pairs), time.Since(began))
+	reads, found := 0, 0
+	for i, pair := range pairs {
+		got, err := p.ClosedVWAP1mAtOrBefore(mctx, pair, at)
+		want, wantErr := store.ClosedVWAP1mAtOrBefore(ctx, pair, at)
+		reads++
+		if !reflect.DeepEqual(got, want) || (err == nil) != (wantErr == nil) || (i%4 == 3) != errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("%v: memo %+v %v, store %+v %v", pair, got, err, want, wantErr)
+		}
+		if err != nil || got.Bucket.Before(notBefore) {
+			continue
+		}
+		found++
+		gotRows, err := p.ClosedVWAP1mCombinedBefore(mctx, pair, got.Bucket, pricingguard.SampleFetch)
+		wantRows, wantErr := store.ClosedVWAP1mCombinedBefore(ctx, pair, got.Bucket, pricingguard.SampleFetch)
+		reads++
+		if err != nil || wantErr != nil || len(wantRows) != 12 || !reflect.DeepEqual(gotRows, wantRows) {
+			t.Fatalf("%v baseline: memo %d rows %v, store %d rows %v", pair, len(gotRows), err, len(wantRows), wantErr)
+		}
+	}
+	if found != 20 {
+		t.Fatalf("%d anchors inside the tolerance, want 20 (both directions and flipped only)", found)
+	}
+	if d := count("anchor_vwap_1m", "hit") + count("anchor_trailing_vwap_1m", "hit") - hits; int(d) != reads {
+		t.Errorf("%v of %d reads answered from the memo, want all", d, reads)
+	}
+	if d := count("anchor_vwap_1m", "fallthrough") + count("anchor_trailing_vwap_1m", "fallthrough") - fell; d != 0 {
+		t.Errorf("%v reads fell through", d)
 	}
 }
 

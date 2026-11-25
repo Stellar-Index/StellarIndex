@@ -61,6 +61,9 @@ func Covered(ctx context.Context, base, quote canonical.Asset) (held, found bool
 	return held, found
 }
 
+// Age is how long ago the prefetch instant was.
+func (m *Memo) Age() time.Duration { return m.now().Sub(m.at) }
+
 // expired reports whether a read now is more than [MaxAge] after the prefetch instant.
 func (m *Memo) expired() bool { return m.now().Sub(m.at) > MaxAge }
 

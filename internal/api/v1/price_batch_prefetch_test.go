@@ -65,6 +65,7 @@ type pfStats struct {
 	overrunDone chan struct{}
 	// afterPrices runs once a price prefetch has filled.
 	afterPrices func()
+	changeFills atomic.Int64
 }
 
 type pfRead struct {
@@ -174,6 +175,50 @@ func (l pfTri) PrefetchTriangulatedVWAP(ctx context.Context, reads []readset.Pai
 	}
 }
 
+type pfChangeAnswer struct {
+	v   string
+	err error
+}
+
+var pfChangeSeam = readset.NewSeam[readset.PairKey, pfChangeAnswer]("pf_change24h", nil)
+
+// pfChange24h keys an anchor read as the USD pair of the spelling asked, as the production reader reads it.
+type pfChange24h struct {
+	next v1.Change24hReader
+	st   *pfStats
+}
+
+func (c pfChange24h) USDPrice24hAgo(ctx context.Context, a canonical.Asset) (string, error) {
+	k := readset.Pair(a, canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}, 0)
+	ans, _, _ := pfChangeSeam.Read(ctx, k, func(ctx context.Context) (pfChangeAnswer, bool, error) {
+		c.st.rowRead(ctx, "change24h", k)
+		v, err := c.next.USDPrice24hAgo(ctx, a)
+		return pfChangeAnswer{v, err}, true, nil
+	})
+	return ans.v, ans.err
+}
+
+func (c pfChange24h) PrefetchUSDPrice24hAgo(ctx context.Context, assets []canonical.Asset) {
+	c.st.changeFills.Add(1)
+	switch c.st.fault {
+	case pfPanic:
+		panic("change_24h prefetch exploded")
+	case pfOverrun, pfCancel:
+		return
+	case pfOK, pfFail:
+	}
+	for _, a := range assets {
+		k := readset.Pair(a, canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}, 0)
+		v, err := c.next.USDPrice24hAgo(ctx, a)
+		if c.st.fault == pfFail || (err != nil && !errors.Is(err, v1.ErrChange24hUnavailable)) {
+			pfChangeSeam.Failed()
+			c.st.left("change24h", k)
+			continue
+		}
+		pfChangeSeam.Fill(ctx, k, pfChangeAnswer{v, err}, true)
+	}
+}
+
 type pfTriMeta struct{ pfTri }
 
 func (l pfTriMeta) LookupCompositeMeta(ctx context.Context, base, quote canonical.Asset, window time.Duration) ([]byte, bool, error) {
@@ -191,6 +236,9 @@ func pfOptions(t *testing.T, spec eqSpec, st *pfStats) v1.Options {
 		o.Triangulated = pfTriMeta{pfTri{o.Triangulated, st}}
 	} else if o.Triangulated != nil {
 		o.Triangulated = pfTri{o.Triangulated, st}
+	}
+	if o.Change24h != nil {
+		o.Change24h = pfChange24h{o.Change24h, st}
 	}
 	return o
 }
@@ -245,7 +293,7 @@ func pfInScope(t *testing.T, req eqBatchRequest, r pfRead) bool {
 }
 
 func TestPriceBatchPrefetch_GoldenIsByteIdenticalAndAnsweredFromTheMemo(t *testing.T) {
-	seams := []string{"pf_prices", "pf_triangulated"}
+	seams := []string{"pf_prices", "pf_triangulated", "pf_change24h"}
 	before := map[string]float64{}
 	for _, s := range seams {
 		before[s] = pfHits(s)
@@ -359,6 +407,37 @@ func TestPriceBatchPrefetch_BudgetStopsTheWaitNotTheFill(t *testing.T) {
 	}
 	if took := time.Since(start); !errors.Is(fctx.Err(), context.DeadlineExceeded) || took < readset.MaxAge {
 		t.Errorf("fill context ended after %v with %v, want readset.MaxAge's deadline", took, fctx.Err())
+	}
+}
+
+// A price fill that outlasts the planner's budget leaves the change_24h anchors unprefetched: started that late, their
+// statements would be cut off at readset.MaxAge.
+func TestPriceBatchPrefetch_LatePriceFillSkipsTheAnchorFill(t *testing.T) {
+	spec := pfUniverse(t)
+	st := newPfStats(pfOK)
+	priced := make(chan struct{})
+	st.afterPrices = func() {
+		time.Sleep(readset.MaxAge/2 + 200*time.Millisecond)
+		close(priced)
+	}
+	plain, on := v1.New(spec.build(t)).Handler(), v1.New(pfOptions(t, spec, st)).Handler()
+	var req eqBatchRequest
+	for _, r := range eqGoldenRequests(spec) {
+		if r.quote == "fiat:USD" {
+			req = pfPadded(r)
+			break
+		}
+	}
+	if req.quote == "" {
+		t.Fatal("no fiat:USD golden request")
+	}
+	if m := batchEnvelopeMismatch(t, plain, on, req); m != "" {
+		t.Errorf("differs from no planner: %s", m)
+	}
+	<-priced
+	time.Sleep(100 * time.Millisecond) // the step after the price fill
+	if n := st.changeFills.Load(); n != 0 {
+		t.Errorf("%d anchor fills started after the budget, want none", n)
 	}
 }
 
