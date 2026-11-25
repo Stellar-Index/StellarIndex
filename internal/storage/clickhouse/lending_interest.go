@@ -633,7 +633,7 @@ func checkLendingInterestRow(r lendinginterest.HourRow) error {
 }
 
 // DeleteSupersededLendingInterestRows deletes pools' rows of hours [fromHour, toHour] written before `before`. A
-// re-derive calls it after InsertLendingInterestRows, with ServerNow read before that insert, so an hour it no longer
+// re-derive calls it after InsertLendingInterestRows, with ServerNowMilli read before that insert, so an hour it no longer
 // writes loses its old row while every hour it does write stays readable throughout. It waits for the delete to apply.
 func DeleteSupersededLendingInterestRows(ctx context.Context, addr string, pools []LendingContract, fromHour, toHour,
 	before time.Time,

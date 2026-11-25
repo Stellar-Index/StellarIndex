@@ -73,7 +73,7 @@ var (
 	deleteSupersededInterest     = clickhouse.DeleteSupersededLendingInterestRows
 	setLendingInterestWM         = clickhouse.SetLendingInterestWatermark
 	setLendingInterestPoolWM     = clickhouse.SetLendingInterestPoolWatermark
-	lendingInterestServerNow     = clickhouse.ServerNow
+	lendingInterestServerNow     = clickhouse.ServerNowMilli
 	lendingInterestUnderived     = clickhouse.LendingInterestUnderivedPools
 	lendingInterestRedo          = clickhouse.LendingInterestPendingRedo
 	advanceLendingRedo           = clickhouse.AdvanceLendingInterestRedo
